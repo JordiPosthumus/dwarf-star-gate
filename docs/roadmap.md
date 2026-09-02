@@ -220,6 +220,61 @@ server, carrying its disk KV cache instead of paying for a full cold prefill?
 Worth investigating, **not implemented, and cross-device cache portability is
 not yet verified**. Matching API model names alone do not establish compatibility.
 
+### Agreed direction: compare four paths to completion
+
+**Planning decision — 2026-09-02:** long-context prefill is expensive on this
+fleet. A disk or remotely fetched checkpoint may be much cheaper than repeating
+it. A hot cache is a useful advantage, not an absolute routing rule. Choose the
+lowest expected completion time among feasible **server + cache-source** pairs:
+
+1. **Wait for the hot server:** its queue/residual work + new-suffix prefill +
+   generation. Waiting can outweigh the benefit of RAM residency.
+2. **Restore a local snapshot:** destination wait + local read/restore + uncached
+   suffix prefill + generation.
+3. **Fetch a remote snapshot:** destination wait and transfer/export scheduling +
+   integrity checks + destination restore + uncached suffix prefill + generation.
+4. **Prefill cold:** destination wait + full prefill + generation. This remains a
+   legitimate fallback when no compatible useful checkpoint exists.
+
+Model the critical path: transfer may overlap waiting, so do not blindly add
+durations that run in parallel. Include donor/export stalls, network contention,
+destination memory pressure and displacement of another valuable hot session.
+An older nearby checkpoint plus a small suffix can beat fetching the newest,
+largest remote checkpoint. No route is automatically best because it is "hot,"
+"local," "fast hardware" or "the latest checkpoint."
+
+**Proposed storage shape:** keep fast per-server local cache storage and give DSG
+a fleet-wide catalog of compatible snapshots. Fetch or selectively replicate a
+completed immutable snapshot to the destination's local storage when measured
+savings justify it. The catalog can be centralized without making one central
+disk or the M2 a mandatory bulk-data bottleneck. Do not mirror every update to
+every server by default. No shared mutable cache directory is being enabled.
+
+The source review supports investigation, not a portability claim:
+[Antirez's cache-format documentation](https://github.com/antirez/ds4/blob/main/README.md)
+describes persistent session/token/tensor state and limits portability to
+compatible engine builds/model layouts. The inspected cache manager also updates
+file headers, replaces entries and evicts files. A common writable network folder
+would need explicit multi-process ownership, atomic publication and eviction
+coordination; a common mount alone does not supply those properties.
+
+Record for the evaluator: checkpoint identity/version, exact compatible model
+cohort, cached-prefix token count, bytes, source/replica locations, evidence age,
+export/transfer/restore timings, network throughput under load, suffix-prefill
+cost, actual destination reused-token count and final latency. Snapshot identity
+must cover model weights, format/layout, exact token history and required
+tool/vision state. Embedding similarity may inform cost estimation, but must
+**never authorize KV reuse**. Keep whole checkpoints private: they can contain
+verbatim conversation text, not merely the anonymous-looking session hash.
+
+First experiment: a completed checkpoint restored between compatible Sparks,
+then a separately certified Spark/Mac pair. Prove correct continuation and a real
+warm-prefix hit versus cold execution; measure end-to-end savings at representative
+context lengths. Resolve the current accelerator-checkpoint/OOM failures before
+trusting a wider restore/replication path. A checkpoint failure alone does not
+prove the stored file is corrupt. No cache deletion, format conversion, replication
+daemon or automatic migration is authorized merely by this planning note.
+
 Start with **between-turn migration**, not a running decode or process migration:
 
 1. Respect operator eligibility: a paused, drained or quarantined target is not
