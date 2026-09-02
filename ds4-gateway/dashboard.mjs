@@ -7,8 +7,13 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { safeGatewayEvent, DeviceTelemetry, JournalReader } from './telemetry.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const assets = new Map([['/', ['index.html', 'text/html']], ['/ui.css', ['ui.css', 'text/css']], ['/ui.js', ['ui.js', 'text/javascript']]]);
-export function createDashboard(getSnapshot) {
+const assets = new Map([['/', ['index.html', 'text/html']], ['/ui.css', ['ui.css', 'text/css']], ['/brand.css', ['brand.css', 'text/css']], ['/ui.js', ['ui.js', 'text/javascript']], ['/logo.png', ['logo.png', 'image/png']]]);
+export function createDashboard(getSnapshot, assetsDirectory = path.join(here, 'ui')) {
+  // Freeze one complete release in memory: edits on disk cannot expose half an
+  // update to a live browser. Only the dashboard needs a reload to promote it.
+  const bundle = new Map([...assets].map(([route, [file, mime]]) => [route, { bytes:fs.readFileSync(path.join(assetsDirectory,file)), mime }]));
+  for (const match of bundle.get('/').bytes.toString('utf8').matchAll(/(?:src|href)="(\/[^"#]*)"/g))
+    if (!bundle.has(match[1]) && !['/api/status', '/api/diagnostics'].includes(match[1])) throw new Error(`Unserved dashboard asset: ${match[1]}`);
   return http.createServer((req, res) => {
     const port = res.socket.localPort;
     const hosts = [`127.0.0.1:${port}`, `localhost:${port}`];
@@ -23,10 +28,10 @@ export function createDashboard(getSnapshot) {
       if (req.url === '/api/diagnostics') headers['content-disposition'] = 'attachment; filename="spark-gateway-diagnostics.json"';
       res.writeHead(200, { ...headers, 'content-type': 'application/json' }); return res.end(JSON.stringify(getSnapshot()));
     }
-    const asset = assets.get(req.url);
+    const asset = bundle.get(req.url);
     if (!asset) { res.writeHead(404, headers); return res.end('Not found'); }
-    res.writeHead(200, { ...headers, 'content-type': `${asset[1]}; charset=utf-8` });
-    fs.createReadStream(path.join(here, 'ui', asset[0])).on('error', () => res.destroy()).pipe(res);
+    res.writeHead(200, { ...headers, 'content-type': asset.mime.startsWith('text/') ? `${asset.mime}; charset=utf-8` : asset.mime });
+    res.end(asset.bytes);
   });
 }
 

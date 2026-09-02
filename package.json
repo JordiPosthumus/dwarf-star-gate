@@ -10,6 +10,7 @@
     "check": "node scripts/check.mjs",
     "privacy-check": "node scripts/privacy-check.mjs",
     "start": "node ds4-gateway/gateway.mjs config.local.json",
-    "ui": "node ds4-gateway/dashboard.mjs config.local.json"
+    "ui": "node ds4-gateway/dashboard.mjs config.local.json",
+    "ui:demo": "node examples/dashboard-demo.mjs"
   }
 }

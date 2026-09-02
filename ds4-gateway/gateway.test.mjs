@@ -92,6 +92,16 @@ test('six workers configurable: all used, adding workers does not remap sessions
   await r.restart();
   for (let i = 0; i < 6; i++) assert.equal((await r.request('{}', `s${i}`)).headers['x-ds4-node'], mappings[i]);
 });
+test('N-worker pools (1, 3, 12, 20) distribute new sessions and retain every home', async t => {
+  for (const count of [1, 3, 12, 20]) {
+    const r = await rig(t, count);
+    const results = await Promise.all(Array.from({length:count},(_,i)=>r.request('{"delay":30}',`fleet-${count}-${i}`)));
+    assert.equal(r.gateway.stats().total,count); assert.equal(r.gateway.stats().healthy,count);
+    assert.equal(new Set(results.map(x=>x.headers['x-ds4-node'])).size,count);
+    for (let i=0;i<count;i++) assert.equal((await r.request('{}',`fleet-${count}-${i}`)).headers['x-ds4-node'],results[i].headers['x-ds4-node']);
+    assert.ok(r.backends.every(b=>b.peak===1));
+  }
+});
 test('expand from two to six without moving established sessions', async t => {
   const r = await rig(t);
   const original = (await r.request('{}', 'old')).headers['x-ds4-node'];

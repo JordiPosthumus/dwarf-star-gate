@@ -2,12 +2,31 @@
 
 **Small fleet. Big thoughts.**
 
-A lightweight, cache-friendly gateway and local control-room dashboard for a
-fleet of [DS4](https://github.com/antirez/ds4) inference servers. Built for two
-DGX Sparks; automated scheduling tests cover a six-worker fleet.
+A local gateway for **N DGX Sparks on your LAN**, with durable session affinity
+and a lightweight control-room dashboard for [DS4](https://github.com/antirez/ds4).
+Define your worker pool in configuration; fleet size is not hard-coded.
 
 Node.js built-ins only. No package installation, database, Kubernetes, frontend
 build system, CDN, analytics service or cloud telemetry.
+
+## Dashboard
+
+Terminal-inspired presentation, per-worker measurements, and a replaceable logo.
+These screenshots use **synthetic demo data**, not live sessions or benchmarks.
+
+![Dwarf Star Gate dashboard with illustrative telemetry](docs/images/dashboard-overview.png)
+
+<details>
+<summary>Cache and request-log view</summary>
+
+![Cache and request-log view with illustrative telemetry](docs/images/dashboard-cache-and-requests.png)
+
+</details>
+
+Run `npm run ui:demo` for the isolated screenshot preview on loopback port 30011.
+It does not connect to workers, read local logs or load production configuration.
+The regular dashboard is on port 30010. Artwork lives at
+`ds4-gateway/ui/logo.png`; it can be replaced without touching gateway behavior.
 
 ## The gateway
 
@@ -117,6 +136,15 @@ unavailable/drained **and** has no unresolved gateway work. The assignment is
 saved before dispatch. Never change a worker ID to mean a different machine
 without considering its persisted assignments and caches.
 
+To expand the fleet, add unique IDs and backend tunnel definitions to `nodes`.
+Existing IDs retain their assignments. Pool configuration is read at startup,
+so adding/removing definitions requires a planned gateway restart after draining
+work; it is not hot discovery. Per-worker drain/resume needs no restart.
+
+The UI snapshots and validates its full HTML/CSS/JS/image bundle at startup.
+Stage all UI files and test first, then reload only the dashboard to promote a
+complete release. Editing files does not partially update a running dashboard.
+
 ## Operator controls
 
 ```sh
@@ -140,11 +168,13 @@ npm test
 npm run privacy-check
 ```
 
-31 unit/integration tests exercise local HTTP fixtures—not GPUs. Coverage includes
+34 unit/integration tests exercise local HTTP fixtures—not GPUs. Coverage includes
 byte preservation, affinity persistence, FIFO admission, cancellation, no retries,
 two-to-six-worker expansion, draining four of six, private operator control,
 slow consumers, cache classification, journal deduplication, diagnostic redaction,
-six-worker monitoring and the dashboard's same-origin/read-only boundary.
+six-worker monitoring, complete UI asset bundles and the same-origin/read-only boundary.
+Pool-size tests cover 1, 2, 3, 6, 12 and 20 fixture workers. These are validation
+points, not configured limits or a claim of unlimited-scale load testing.
 GitHub Actions runs checks and tests on Linux and macOS.
 
 Real two-Spark acceptance also covered streaming, reasoning, vision, tool round

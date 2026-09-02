@@ -9,6 +9,6 @@ function walk(dir) {
     else if (/\.m?js$/.test(f)) execFileSync(process.execPath,['--check',f],{stdio:'inherit'});
   }
 }
-walk('ds4-gateway'); walk('scripts');
+walk('ds4-gateway'); walk('scripts'); walk('examples');
 for (const f of fs.readdirSync('.').filter(f=>f.endsWith('.sh'))) execFileSync('/bin/bash',['-n',f],{stdio:'inherit'});
 console.log('JavaScript and shell syntax checks passed.');

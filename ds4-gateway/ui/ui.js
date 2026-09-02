@@ -21,10 +21,10 @@ function device(d, w, now, stale) {
 }
 function render(s) {
   const g = s.gateway, now = s.time, stale = !!s.gateway_error;
-  $('connection').textContent = stale ? 'Status unavailable' : '● Live telemetry';
+  $('connection').textContent = s.demo ? '◉ Demo telemetry' : stale ? 'Status unavailable' : '● Live telemetry';
   $('warning').hidden = !s.gateway_error && !s.telemetry_error;
   $('warning').textContent = [s.gateway_error,s.telemetry_error].filter(Boolean).join(' · ');
-  $('model').textContent = `${g?.model || 'DS4'} · one active generation per Spark · session-affinity routing`;
+  $('model').textContent = s.demo ? `${g?.model || 'DS4'} · illustrative data · no workers connected` : `${g?.model || 'DS4'} · one active generation per Spark · session-affinity routing`;
   $('available').textContent = g ? `${g.available} / ${g.total}` : '—'; $('active').textContent = fmt(g?.active); $('queued').textContent = fmt(g?.queued); $('context').textContent = g ? `${fmt(g.context_length / 1024)} Ki tokens` : '—';
   $('devices').innerHTML = s.devices.map(d => device(d,g?.workers.find(w => w.id === d.id),now,stale)).join('');
   const rows = s.events.filter(e => e.event === 'request_finished').slice(-12).reverse();

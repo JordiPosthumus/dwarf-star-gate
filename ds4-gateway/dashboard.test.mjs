@@ -72,11 +72,37 @@ async function fixture(t) {
 }
 test('dashboard serves local assets and a downloadable read-only snapshot', async t => {
   const { url } = await fixture(t);
-  for (const route of ['/', '/ui.css', '/ui.js', '/api/status', '/api/diagnostics']) {
+  for (const route of ['/', '/ui.css', '/brand.css', '/logo.png', '/ui.js', '/api/status', '/api/diagnostics']) {
     const r = await fetch(url + route); assert.equal(r.status, 200); assert.match(r.headers.get('cache-control'), /no-store/);
     if (route === '/api/diagnostics') assert.match(r.headers.get('content-disposition'), /attachment/);
     await r.arrayBuffer();
   }
+});
+test('every HTML-referenced asset is served, including a real PNG logo with bounded fallback dimensions', async t => {
+  const { url } = await fixture(t);
+  const html = await (await fetch(url)).text();
+  const routes = [...new Set([...html.matchAll(/(?:src|href)="(\/[^"#]*)"/g)].map(m=>m[1]))];
+  assert.ok(routes.includes('/logo.png')); assert.ok(routes.includes('/brand.css'));
+  for (const route of routes) {
+    const r = await fetch(url+route); assert.equal(r.status,200,route);
+    const bytes = Buffer.from(await r.arrayBuffer()); assert.ok(bytes.length>0);
+    if (route === '/logo.png') { assert.equal(r.headers.get('content-type'),'image/png'); assert.equal(bytes.subarray(1,4).toString(),'PNG'); }
+  }
+  assert.match(html, /class="gate-art"[^>]*width="148" height="105"/);
+});
+test('an active dashboard serves a frozen complete bundle and rejects missing assets at startup', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(),'dwarf-gate-assets-'));
+  t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  fs.cpSync(new URL('./ui/',import.meta.url),dir,{recursive:true});
+  const server = createDashboard(()=>({read_only:true}),dir);
+  server.listen(0,'127.0.0.1'); await once(server,'listening');
+  t.after(()=>{server.closeAllConnections();server.close();});
+  const url = `http://127.0.0.1:${server.address().port}`;
+  const original = await(await fetch(url+'/brand.css')).text();
+  fs.writeFileSync(path.join(dir,'brand.css'),'temporary incomplete edit');
+  assert.equal(await(await fetch(url+'/brand.css')).text(),original);
+  fs.writeFileSync(path.join(dir,'index.html'),'<img src="/not-served.png">');
+  assert.throws(()=>createDashboard(()=>({}),dir),/Unserved dashboard asset/);
 });
 test('dashboard rejects mutation, unknown paths, cross-origin and DNS-rebinding requests', async t => {
   const { url } = await fixture(t);
