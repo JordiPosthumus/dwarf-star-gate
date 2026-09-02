@@ -291,6 +291,42 @@ test('collector records decision-time fleet and outcomes without altering body o
   assert.ok(rows[2].first_body_byte_ms>=0);assert.ok(rows[2].total_ms>=rows[2].service_ms);
 });
 
+test('shadow collection is opt-in, preserves bytes and affinity, and reassesses on worker completion',async t=>{
+  const r=await rig(t,2,{dataset_enabled:true,routing_shadow_enabled:true});
+  const first=r.request('{"stream":true,"delay":150}','same-private-session');
+  await until(()=>r.backends[0].active===1);
+  const body='{"stream":true,"messages":[{"role":"user","content":"PRIVATE_SHADOW_BODY"}],"delay":10}';
+  const second=r.request(body,'same-private-session');
+  await until(()=>r.gateway.stats().queued===1);
+  assert.equal(r.backends[1].records.length,0,'shadow must not dispatch to idle alternative');
+  assert.equal(r.gateway.stats().routing_shadow.last.verdict,'handover_blocked');
+  await Promise.all([first,second]);await until(()=>r.gateway.stats().dataset.finished===2);
+  assert.equal(r.backends[0].records[1].body.toString(),body);assert.equal(r.backends[1].records.length,0);
+  const dir=path.join(path.dirname(r.config.state_file),'training');
+  const text=fs.readdirSync(dir).map(f=>fs.readFileSync(path.join(dir,f),'utf8')).join('');
+  assert.ok(!text.includes('PRIVATE_SHADOW_BODY'));assert.ok(!text.includes('same-private-session'));
+  const rows=text.trim().split('\n').map(JSON.parse),shadow=rows.filter(x=>x.kind==='routing_shadow');
+  assert.equal(shadow.length,2);assert.ok(shadow.every(x=>x.confidence==='unvalidated'));
+  const decision=rows.filter(x=>x.kind==='decision')[1];assert.ok(decision.candidates[0].active_elapsed_ms>=0);
+  assert.equal(decision.candidates[0].active_request_id,rows.find(x=>x.kind==='decision').request_id);
+  assert.equal(decision.candidates[1].worker_idle_ms,null,'unknown initial history is not zero');
+});
+
+test('idle-worker event records shadow reassessment without consuming queued uploads or replay',async t=>{
+  const r=await rig(t,2,{dataset_enabled:true,routing_shadow_enabled:true});
+  const home=r.request('{"stream":true,"delay":200}','home');await until(()=>r.backends[0].active===1);
+  const other=r.request('{"stream":true,"delay":60}','other');await until(()=>r.backends[1].active===1);
+  const queued=r.request('{"stream":true,"delay":10}','home');await until(()=>r.gateway.stats().queued===1);
+  await other;await until(()=>r.gateway.stats().routing_shadow.last.reason==='worker_free');
+  assert.equal(r.gateway.stats().routing_shadow.last.verdict,'handover_blocked');assert.equal(r.backends[1].records.length,1);
+  await Promise.all([home,queued]);assert.equal(r.backends[0].records.length,2);
+});
+
+test('shadow flag without private collection remains disabled',async t=>{
+  const r=await rig(t,1,{routing_shadow_enabled:true});await r.request('{}','off');
+  assert.equal(r.gateway.stats().routing_shadow.enabled,false);assert.equal(r.gateway.stats().routing_shadow.evaluations,0);
+});
+
 test('requested thinking captures allowlisted controls, never nested prompt text or an assumed default', () => {
   for (const effort of ['none','minimal','low','medium','high','xhigh','max']) {
     assert.deepEqual(requestedThinking({reasoning_effort:effort}), {status:'specified',fields:{reasoning_effort:effort}});

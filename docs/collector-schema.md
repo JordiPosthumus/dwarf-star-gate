@@ -13,7 +13,7 @@ learning router or a cache-hit auditor.
 | `run_id` | UUID for this gateway process run |
 | `event_id` | UUID for this event |
 | `time` | Gateway wall-clock ISO timestamp |
-| `kind` | `decision`, `dispatch`, `finish`, `queued_cancel`, `queue_timeout`, or `unavailable_before_dispatch` |
+| `kind` | `decision`, `dispatch`, `finish`, `queued_cancel`, `queue_timeout`, `unavailable_before_dispatch`, or optional `routing_shadow` |
 | `request_id` | Gateway-assigned request UUID, shared across this request's events |
 | `node` | Selected registered server ID |
 
@@ -27,6 +27,7 @@ learning router or a cache-hit auditor.
 | `queued_cancel` | `total_ms` spent admitted before client cancellation |
 | `queue_timeout` | `total_ms` spent admitted before queue expiry |
 | `unavailable_before_dispatch` | `total_ms` spent admitted before rejecting dispatch to an unavailable assigned server |
+| `routing_shadow` | Repeatable, non-label assessment: `shadow_schema`, `reason`, `verdict`, `confidence`, `basis`, `source`, `alternative`, `session_busy`, `waiting_ms`, `saving_ms`, `candidates`, truncation flag |
 
 `affinity` is `new`, `existing`, `none`, or `reassigned`. `session`, when present,
 is the SHA-256 digest of the supplied affinity identifier, **not a hash of the
@@ -52,6 +53,14 @@ bound), including ineligible ones. It does **not** claim all were eligible for
 the particular affinity-bound request. It does not measure direct-client load,
 actual RAM use, GPU utilization, engine binary identity, KV occupancy or model-file
 digest. `profile` does not prove that a server's cache survived a restart.
+
+With the additional opt-in shadow flag, candidate snapshots also contain worker
+idle/active/byte ages, session recency on that worker, intervening dispatch count,
+prior usage and explicit unknown cache/process identity. Shadow candidates include
+historical sample counts and nullable remaining/wait/service/completion estimates.
+See [routing shadow](routing-shadow.md) for exact fields, bounds and limitations.
+Repeated `routing_shadow` events must not be mistaken for repeated admission
+decisions or completion labels; the offline trainer skips them explicitly.
 
 `usage`, when supplied by Chat Completions/Completions SSE or a bounded Responses
 terminal event, has `prompt_tokens`,

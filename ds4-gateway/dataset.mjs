@@ -6,7 +6,8 @@ import { safeRequestedThinking } from './requested-thinking.mjs';
 
 const number = x => Number.isFinite(x) && x >= 0 ? x : null;
 const id = x => typeof x === 'string' && /^[\w-]{1,64}$/.test(x) ? x : null;
-const kinds = new Set(['decision','dispatch','finish','queued_cancel','queue_timeout','unavailable_before_dispatch']);
+const kinds = new Set(['decision','dispatch','finish','queued_cancel','queue_timeout','unavailable_before_dispatch','routing_shadow']);
+const timingKeys=['worker_idle_ms','active_elapsed_ms','upstream_byte_age_ms','session_last_used_ms','session_last_finished_ms','intervening_requests','prior_prompt_tokens','prior_cached_tokens','observation_epoch'];
 export function evidence(kind, raw) {
   if (!kinds.has(kind)) return null;
   const row = { kind, request_id:id(raw.request_id), node:id(raw.node) };
@@ -19,11 +20,23 @@ export function evidence(kind, raw) {
   if (raw.usage) row.usage=Object.fromEntries(['prompt_tokens','completion_tokens','cached_tokens'].map(k=>[k,number(raw.usage[k])]));
   if(kind==='finish')row.finish_reason=['stop','length','tool_calls','function_call','content_filter'].includes(raw.finish_reason)?raw.finish_reason:null;
   if (raw.requested_thinking) row.requested_thinking=safeRequestedThinking(raw.requested_thinking);
+  if(kind==='routing_shadow') {
+    row.shadow_schema=1;
+    row.reason=['admission','worker_free'].includes(raw.reason)?raw.reason:null;
+    row.verdict=['would_move','would_stay','insufficient_evidence','handover_blocked','no_idle_alternative'].includes(raw.verdict)?raw.verdict:null;
+    row.confidence='unvalidated';row.basis='prior_session_prompt_bucket_mixed_cache';
+    row.source=id(raw.source);row.alternative=id(raw.alternative);row.session_busy=raw.session_busy===true;
+    row.waiting_ms=number(raw.waiting_ms);row.saving_ms=number(raw.saving_ms);
+  }
   if (Array.isArray(raw.candidates)) {
     row.candidates=raw.candidates.slice(0,128).map(w=>({node:id(w.node), healthy:w.healthy===true, paused:w.paused===true,
       active:number(w.active), queued:number(w.queued), assigned_sessions:number(w.assigned_sessions), context_length:number(w.context_length),
-      profile:/^[a-f0-9]{64}$/.test(w.profile)?w.profile:null}));
-    row.candidates_truncated=raw.candidates.length>128;
+      profile:/^[a-f0-9]{64}$/.test(w.profile)?w.profile:null,
+      ...('worker_idle_ms' in w?Object.fromEntries(timingKeys.map(k=>[k,number(w[k])])):{}),
+      ...('worker_idle_ms' in w?{cache_residence:'unknown',backend_epoch:null,
+        active_request_id:/^[a-f0-9-]{36}$/.test(w.active_request_id)?w.active_request_id:null}:{}),
+      ...(kind==='routing_shadow'?{eligible:w.eligible===true,...Object.fromEntries(['samples','remaining_ms','wait_ms','service_ms','completion_ms'].map(k=>[k,number(w[k])]))}:{})}));
+    row.candidates_truncated=raw.candidates.length>128 || raw.candidates_truncated===true;
   }
   return row;
 }

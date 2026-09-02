@@ -89,6 +89,10 @@ def build_rows(events, profiles):
     groups = collections.defaultdict(dict)
     excluded = collections.Counter()
     for event in events:
+        # Repeated shadow assessments are NOT lifecycle labels or extra training
+        # decisions. Their alternative ETAs are predictions, not observations.
+        if event["kind"] == "routing_shadow":
+            continue
         key = (event["run_id"], event["request_id"])
         if event["kind"] in groups[key]:
             raise ValueError("Multiple events of same kind for one request")

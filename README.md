@@ -16,6 +16,11 @@ Workers with recognized engine faults or repeated inference failures are
 [quarantined persistently](docs/generation-health.md); recovery requires a real
 generation check. Automatic model-service restarts are not implemented yet.
 
+Optional [queued-work shadow collection](docs/routing-shadow.md) records idle and
+session-recency clocks and compares a historical baseline without moving work.
+Its estimates are explicitly unvalidated; no embeddings or live XGB routing are
+implied by this feature.
+
 ## The engine is Antirez's. Start there.
 
 **Dwarf Star Gate exists because of [DwarfStar — the original `antirez/ds4`

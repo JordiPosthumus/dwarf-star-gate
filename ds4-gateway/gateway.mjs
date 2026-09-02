@@ -7,6 +7,7 @@ import { StringDecoder } from 'node:string_decoder';
 import { pathToFileURL } from 'node:url';
 import { RequestedThinkingObserver } from './requested-thinking.mjs';
 import { Dataset } from './dataset.mjs';
+import { RoutingShadow } from './routing-shadow.mjs';
 import { GenerationFaultObserver, verifyGeneration } from './generation-health.mjs';
 import { workerConfig, workerConfigs, assertUniqueWorker } from './worker-config.mjs';
 import net from 'node:net';
@@ -154,6 +155,8 @@ export function createGateway(config) {
   catch (e) { store.close(); throw e; }
   const nodes = definitions.map(makeNode);
   const dataset = new Dataset(path.join(path.dirname(config.state_file),'training'),{enabled:config.dataset_enabled===true});
+  const shadow = new RoutingShadow({enabled:config.routing_shadow_enabled===true && config.dataset_enabled===true});
+  const observe = fn => {if(shadow.enabled)try{return fn();}catch{shadow.state.errors++;}};
   let draining = false, shuttingDown = false, healthTimer;
   let mutation = Promise.resolve();
   const serialize = fn => { const next = mutation.then(fn); mutation = next.catch(() => {}); return next; };
@@ -161,7 +164,7 @@ export function createGateway(config) {
   const agent = new http.Agent({ keepAlive: true, maxSockets: 16 });
   const accepted = new Set(['POST /v1/chat/completions', 'POST /v1/completions', 'POST /v1/responses', 'POST /v1/messages', 'GET /v1/models']);
   const auth = Buffer.from(`Bearer ${config.api_key}`);
-  const stats = () => ({ version: 1, model: config.model, context_length: contextLimit(), draining, dataset:dataset.snapshot(),
+  const stats = () => ({ version: 1, model: config.model, context_length: contextLimit(), draining, dataset:dataset.snapshot(), routing_shadow:shadow.snapshot(),
     total: nodes.length, healthy: nodes.filter(n => n.healthy).length, available: nodes.filter(n => n.healthy && !n.drained).length,
     active: nodes.filter(n => n.active).length, queued: nodes.reduce((s, n) => s + n.queue.length, 0),
     workers: nodes.map(n => ({ id: n.id, url: n.url, is_healthy: n.healthy, drained: n.drained, quarantine:n.quarantine, inference_failures:n.inferenceFailures,
@@ -173,9 +176,36 @@ export function createGateway(config) {
       context_length: n.contextLength ?? null,
       last_probe: n.lastProbe, probe_error: n.probeError })) });
 
+  const briefJob = j => ({key:j.key,route:j.req.url,trafficClass:j.trafficClass});
+  function candidate(n,key) {
+    return {node:n.id,healthy:n.healthy,paused:n.drained,active:Number(!!n.active),queued:n.queue.length,
+      assigned_sessions:store.count(n.id),context_length:n.contextLength,
+      profile:digest(JSON.stringify({id:n.id,url:n.url,model:config.model,context:n.contextLength})),
+      ...(observe(()=>({...shadow.timing(n.id,key,n.active),active_request_id:n.active?.id??null}))??{})};
+  }
+  function evaluateShadow(node,job,reason) {
+    observe(()=>{
+      if(job.cancelled || job.upstream)return;
+      const sessionBusy=!!job.key && nodes.some(n=>n.active?.key===job.key || n.queue.some(j=>j!==job && j.key===job.key && !j.cancelled));
+      const candidates=nodes.slice(0,128).map(n=>({...candidate(n,job.key),active_job:n.active?briefJob(n.active):null,
+        ahead_jobs:n===node?n.queue.slice(0,n.queue.indexOf(job)).filter(j=>!j.cancelled).map(briefJob):[]}));
+      const result=shadow.assess({job:briefJob(job),home:node.id,candidates,reason,
+        waiting_ms:performance.now()-job.createdMono,session_busy:sessionBusy});
+      dataset.record('routing_shadow',{request_id:job.id,node:node.id,session:job.key,...result,candidates_truncated:nodes.length>128});
+    });
+  }
+  function evaluateWaiting() {
+    // At most one head-of-line request per worker, 32 workers per free event.
+    // This callback never reads/consumes queued uploads or changes ownership.
+    if(shuttingDown)return;
+    let count=0;
+    for(const n of nodes)if(n.queue.length){if(count++>=32){shadow.state.skipped++;continue;}evaluateShadow(n,n.queue[0],'worker_free');}
+  }
+
   function quarantine(node, reason, requestId) {
     if(node.quarantine)return;
     node.quarantine={reason,request_id:requestId,at:new Date().toISOString()};
+    observe(()=>shadow.reset(node.id));
     node.healthy=false;
     try {store.save({...store.data,quarantined:{...store.data.quarantined,[node.id]:node.quarantine}});}
     catch {draining=true;log('quarantine_persistence_failed',{node:node.id});}
@@ -203,6 +233,7 @@ export function createGateway(config) {
     const { req, res } = job;
     job.dispatched = Date.now();
     job.dispatchedMono=performance.now();
+    observe(()=>shadow.started(node.id,job.key));
     let requestBytes=0, firstBodyByte=null;
     const target = new URL(req.url, node.url);
     const headers = forwardHeaders(req.headers);
@@ -231,9 +262,12 @@ export function createGateway(config) {
       dataset.record('finish',{request_id:job.id,node:node.id,outcome,queue_ms:job.dispatchedMono-job.createdMono,
         service_ms:performance.now()-job.dispatchedMono,total_ms:performance.now()-job.createdMono,first_body_byte_ms:firstBodyByte,
         request_bytes:requestBytes,usage:observer.usage,finish_reason:observer.finish_reason,requested_thinking:job.thinking.result});
+      observe(()=>shadow.finished(node.id,job.key,{outcome,finish_reason:observer.finish_reason,
+        service_ms:performance.now()-job.dispatchedMono,usage:observer.usage,route:req.url,traffic_class:job.trafficClass}));
       job.cleanup();
       node.active = null;
       schedule(node);
+      if(shadow.enabled)setImmediate(evaluateWaiting);
     };
     const upstream = http.request(target, { method: req.method, headers, agent }, up => {
       response = up;
@@ -248,6 +282,7 @@ export function createGateway(config) {
       faults=new GenerationFaultObserver(isSSE);
       if(isSSE || up.statusCode>=400)up.on('data',chunk=>faults.accept(chunk));
       up.once('data',()=>{firstBodyByte=performance.now()-job.dispatchedMono;});
+      if(shadow.enabled)up.on('data',()=>{job.lastUpstreamByteMono=performance.now();});
       if (isSSE) up.on('data', chunk => observer.accept(chunk));
       up.on('error', e => { res.destroy(); finish(job.cancelled ? 'client_cancelled' : 'upstream_stream_error', e.code); });
       up.on('aborted', () => { res.destroy(); finish(job.cancelled ? 'client_cancelled' : 'upstream_aborted'); });
@@ -327,13 +362,13 @@ export function createGateway(config) {
       return;
     }
     if (node.queue.length >= (config.max_queued_per_node ?? 128)) { req.resume(); return error(res, 429, 'queue_full', 'Spark waiting queue is full; request was not dispatched'); }
-    const candidates=nodes.map(n=>({node:n.id,healthy:n.healthy,paused:n.drained,active:Number(!!n.active),queued:n.queue.length,
-      assigned_sessions:store.count(n.id),context_length:n.contextLength,profile:digest(JSON.stringify({id:n.id,url:n.url,model:config.model,context:n.contextLength}))}));
+    const candidates=nodes.map(n=>candidate(n,key));
     try { if (key && home?.node !== node.id) store.set(key, node.id); }
     catch (e) { log('state_write_error', { error: e.message }); req.resume(); return error(res, 503, 'state_unavailable', 'Cannot durably record affinity; request was not dispatched'); }
-    const job = { req, res, key, affinity, id: randomUUID(), created: Date.now(), createdMono:performance.now(), cancelled: false };
+    const job = { req, res, key, affinity, id: randomUUID(), created: Date.now(), createdMono:performance.now(), cancelled: false,
+      trafficClass:req.headers['x-dsg-observer']==='gate-genie'?'genie':'unclassified' };
     dataset.record('decision',{request_id:job.id,node:node.id,session:key,affinity,context_length:contextLimit(),candidates,
-      traffic_class:req.headers['x-dsg-observer']==='gate-genie'?'genie':'unclassified'});
+      traffic_class:job.trafficClass});
     const cancel = () => {
       if (res.writableFinished) return;
       job.cancelled = true;
@@ -353,7 +388,7 @@ export function createGateway(config) {
       dataset.record('queue_timeout',{request_id:job.id,node:node.id,total_ms:performance.now()-job.createdMono});
       job.cleanup(); req.resume();
     }, config.queue_timeout_ms ?? 3600000);
-    node.queue.push(job); schedule(node);
+    node.queue.push(job);evaluateShadow(node,job,'admission');schedule(node);
   });
   server.requestTimeout = 0; // Covers upload + queue; no hidden five-minute Node default.
   server.timeout = 0; // Long prefill/decode streams are intentionally allowed to be idle.
@@ -374,6 +409,7 @@ export function createGateway(config) {
         const was = node.healthy;
         if (ok) { node.failures = 0; node.healthy = !node.quarantine; }
         else if (++node.failures >= (config.health_failures ?? 3)) node.healthy = false;
+        if(was && !node.healthy)observe(()=>shadow.reset(node.id));
         if (was !== node.healthy) log('worker_health', { node: node.id, healthy: node.healthy, reason });
         resolve();
       };
@@ -385,7 +421,9 @@ export function createGateway(config) {
           try {
             const model = JSON.parse(body).data?.find(m => m.id === config.model);
             node.modelMatches = res.statusCode === 200 && !!model;
+            const previousContext=node.contextLength;
             node.contextLength = Number.isSafeInteger(model?.context_length) ? model.context_length : null;
+            if(previousContext!==undefined && previousContext!==node.contextLength)observe(()=>shadow.reset(node.id));
             const ok = res.statusCode === 200 && !!model && node.contextLength >= contextLimit();
             finish(ok, ok ? undefined : 'model_or_context_mismatch');
           } catch { finish(false, 'invalid_model_response'); }
@@ -475,6 +513,7 @@ export function createGateway(config) {
     const drained = { ...store.data.drained }; delete drained[id];
     store.setWorkers(next.map(definition), drained);
     nodes.splice(nodes.indexOf(node), 1);
+    observe(()=>shadow.remove(id));
     node.removed = true; node.probeRequest?.destroy(); node.stopTunnel?.();
     // Keep session homes. Their next request can be durably reassigned normally.
     log('worker_removed', { node: id });

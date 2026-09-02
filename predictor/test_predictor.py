@@ -36,6 +36,16 @@ def request(i, when, duration=2, session=None, node="box-a"):
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_repeated_shadow_predictions_are_not_training_labels(self):
+        events = request(1, 0)
+        expected, _ = build_rows(events, inventory())
+        for i in range(3):
+            events.append({**events[0], "event_id": f"shadow-{i}", "kind": "routing_shadow",
+                           "verdict": "would_move", "saving_ms": 999999})
+        rows, excluded = build_rows(events, inventory())
+        self.assertEqual(rows, expected)
+        self.assertEqual(excluded["orphan_without_decision"], 0)
+
     def test_duplicate_and_partial_tail(self):
         blob = b"".join((json.dumps(e) + "\n").encode() for e in request(1, 0))
         rows, report = parse_snapshots([blob, blob + b'{"unfinished":'])

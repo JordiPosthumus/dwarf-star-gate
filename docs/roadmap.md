@@ -38,6 +38,14 @@ and clearly distinguish earlier illustrative captures from new collection/Genie 
 
 ## First slice: evidence and an observation-only Gate Genie
 
+**Queued-work shadow now implemented, opt-in:** [setup and limits](routing-shadow.md).
+It records per-worker/session clocks and compares an unvalidated historical
+baseline without moving work. This is not the planned calibrated, cache-aware XGB
+router. Dedicated UI explanations, verified cache/process evidence and production
+handover are still outstanding. Embeddings remain unimplemented, not implied by
+the new timing features. "Remaining busy time" comes before demand forecasting of
+how long an idle machine will remain unused.
+
 - **Passive routing dataset:** opt-in private numerical records of fleet load at
   admission, placement, queue/service durations, reported token usage and failures.
   No raw conversations, answers, tool arguments or embeddings in this first slice.

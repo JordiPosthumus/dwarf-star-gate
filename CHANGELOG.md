@@ -1,5 +1,13 @@
 # Changelog
 
+## Queued-work shadow evidence
+
+- Opt-in per-worker idle/active clocks, session recency and intervening requests.
+- Admission/free-worker shadow comparisons using a bounded, explicitly unvalidated
+  historical baseline; unknown evidence stays unknown. No routing/model changes.
+- Repeated comparison events are isolated from XGB completion labels. No new
+  encoder or embeddings are implied. See [shadow setup](docs/routing-shadow.md).
+
 ## Unreleased
 
 - Correct SSE completion classification for Chat Completions/Completions,
