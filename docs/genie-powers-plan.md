@@ -77,6 +77,11 @@ action_id)`. These are structured identifiers, never shell fragments.
   action journal; record actor (`operator`, `genie`, `detector`), IDs, policy
   version, evidence, timestamps and sanitized before/after observations. No raw
   conversation text or credentials. Do not add another database for this slice.
+- Include existing register/drain/resume/remove controls in the action trail,
+  not only future recovery. Record channel and correlation ID; distinguish
+  authenticated identity from a caller's self-reported label. Today's control
+  log has no caller attribution. An inference-client configuration change must
+  not be translated into removing that client's backend from the fleet.
 - Duplicate action IDs return the same operation. If the controller crashes or
   SSH times out after sending restart, reconcile service invocation identity
   before doing anything else. Never blindly send restart again on reconnect.

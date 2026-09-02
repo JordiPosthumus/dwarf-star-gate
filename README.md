@@ -280,6 +280,19 @@ per-dashboard CSRF token. They do not change inference API authentication.
 4. **Enable** admits requests. **Drain** stops new admission while already admitted
    work finishes. **Remove** is available only when paused and idle.
 
+**Client routing is not worker membership.** To make a client use a Mac or Spark
+only through DSG, change that client's provider endpoint to DSG and remove its
+direct-provider entry. Keep the model server registered and enabled in DSG.
+Draining/removing that worker instead takes its capacity away from **all** gateway
+clients. Ask agents to distinguish these two operations explicitly.
+
+Unexpected **Paused** or missing workers warrant checking `workers_drain_changed`
+and `worker_removed` in the private gateway log. Failed health probes do not
+remove workers; generation quarantine is a separate state. Current control events
+record the action and target, but not authenticated caller identity: they cannot
+by themselves prove which local person or agent acted. The observation-only Genie
+cannot issue these controls. Restarting DSG preserves manual pauses and removals.
+
 <details>
 <summary>Worker-management UI (synthetic demo)</summary>
 
