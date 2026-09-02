@@ -118,6 +118,19 @@ test('dashboard names DS4 servers and explains gateway-only concurrency and avai
   assert.match(js,/one active gateway request per DS4 server/);
   assert.doesNotMatch(html+js,/AVAILABLE SPARKS|AVAILABLE WORKERS|active generation per Spark|active gateway request per worker/);
 });
+test('dashboard links the pinned Spark recommendation without implying live configuration or fixed disk slots', async t => {
+  const { url } = await fixture(t);
+  const html = await (await fetch(url)).text();
+  const profile = fs.readFileSync(new URL('../docs/recommended-spark-profile.md',import.meta.url),'utf8');
+  assert.match(html, /<details id="spark-profile"><summary>Recommended DGX Spark configuration/);
+  assert.match(html, /href="https:\/\/github.com\/JordiPosthumus\/dwarf-star-gate\/blob\/main\/docs\/recommended-spark-profile\.md" target="_blank" rel="noopener noreferrer"/);
+  assert.match(html, /153,600-token context, two hot sessions, one active request per Spark/);
+  assert.match(html, /349,525 MiB/); assert.match(html, /not a fixed ten-slot guarantee/);
+  assert.match(html, /guidance, not a reading of live settings/); assert.match(html, /does not change servers or apply to Macs/);
+  assert.match(profile, /552f6b834ce0b5c53b25a89a8468df5fdd1804de/);
+  for (const flag of ['--ctx 153600','--tokens 153600','--batched-session 2','--max-active-requests 1','--kv-disk-space-mb 349525','--prefill-chunk 4096']) assert.ok(profile.includes(flag),flag);
+  assert.match(profile, /DS4_KV_REWIND_REUSE=0/); assert.match(profile, /NV_ERR_NO_MEMORY/);
+});
 test('every HTML-referenced asset is served, including a real PNG logo with bounded fallback dimensions', async t => {
   const { url } = await fixture(t);
   const html = await (await fetch(url)).text();

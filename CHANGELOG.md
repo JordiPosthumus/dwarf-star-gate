@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Published the current, pinned DGX Spark recommendation with exact launch settings,
+  artifact hashes, measured acceptance and known limits; linked it from the dashboard.
+  Documentation only: no server or routing defaults changed.
 - Consistent DS4-server UI terminology and explicit gateway-only concurrency,
   availability and cache-slot definitions for mixed hardware.
 - Live worker registration/removal through an opt-in local UI and private CLI;

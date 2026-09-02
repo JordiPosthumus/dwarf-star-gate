@@ -90,6 +90,14 @@ are scheduled independently—DSG does not coordinate their shared RAM/GPU capac
 
 ## Quick start
 
+**Using DGX Sparks? Our [recommended Spark configuration](docs/recommended-spark-profile.md)
+is the exact profile currently running on both of ours:** Vision-Exp IQ2/Q2 with
+vision enabled, 153,600-token context/output allowance, two hot sessions, one active
+request per Spark, a 349,525 MiB disk-KV budget and the full acceleration cache.
+The guide pins the engine and weights and records measured results and limits.
+It remains our recommendation until explicitly superseded; it is not an upstream
+endorsement or a profile automatically applied to Macs or registered servers.
+
 Requires Node **22.22.2+**, running DS4 servers, and SSH for remote workers. Gateway runs on macOS or
 Linux. The optional click-to-open service scripts use macOS LaunchAgents.
 Install and understand the worker engine using
@@ -295,7 +303,7 @@ npm test
 npm run privacy-check
 ```
 
-52 unit/integration tests exercise local HTTP fixtures—not GPUs. Coverage includes
+53 unit/integration tests exercise local HTTP fixtures—not GPUs. Coverage includes
 byte preservation, affinity persistence, FIFO admission, cancellation, no retries,
 two-to-six-worker expansion, draining four of six, private operator control,
 slow consumers, cache classification, journal deduplication, diagnostic redaction,
