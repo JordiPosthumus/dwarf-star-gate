@@ -1,3 +1,4 @@
+import { capacity, phase } from './activity.js';
 const $ = id => document.getElementById(id);
 const fmt = n => Number.isFinite(n) ? n.toLocaleString(undefined, { maximumFractionDigits: 1 }) : '—';
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -22,9 +23,9 @@ function thinkingIndicator(w, stale, now) {
   const scope = stale ? 'Historical snapshot' : w?.load ? 'Current request' : w?.last_request_finished_at ? `Last request · ${age(Date.parse(w.last_request_finished_at),now)}` : 'No active request';
   return `<div class="requested-thinking"><span class="label">REQUESTED THINKING</span><strong title="${esc(info.detail)}">${esc(info.label)}</strong><span class="thinking-scope">${esc(scope)}</span></div>`;
 }
-function chart(series, kind, now) {
+function chart(series, kind, now, ceiling) {
   const values = series.filter(s => s.kind === kind && now - s.time < 900000);
-  const max = Math.max(1, ...values.map(s => s.tps));
+  const max = ceiling || Math.max(1, ...values.map(s => s.tps));
   const points = values.map(s => `${((s.time - (now - 900000)) / 900000 * 300).toFixed(1)},${(48 - s.tps / max * 40).toFixed(1)}`).join(' ');
   return `<svg class="chart ${kind}" viewBox="0 0 300 55" preserveAspectRatio="none" role="img" aria-label="${kind} last 15 minutes, scale zero to ${Math.ceil(max)} tokens per second"><line x1="0" y1="48" x2="300" y2="48"/><polyline points="${points}"/></svg>`;
 }
@@ -32,15 +33,22 @@ function telemetryStatus(d) {
   if (d.telemetry_configured === false) return 'Engine timings not configured';
   return `${d.telemetry_source === 'file' ? 'Model log' : 'Journal'} ${d.connected ? 'connected' : 'disconnected'}`;
 }
-function device(d, w, now, stale, index = 1) {
-  const state = stale ? 'status stale' : !w ? 'unknown' : !w.is_healthy ? 'unhealthy' : w.drained ? 'drained' : w.load ? d.connected && now - d.last_event < 30000 ? d.phase : 'working' : 'idle';
+function timeline(d,now) {
+  const rows=d.activity||[],start=now-900000;
+  return `<svg class="activity-timeline" viewBox="0 0 100 10" preserveAspectRatio="none" role="img" aria-label="Observed activity over the last fifteen minutes; blank sections are unknown">${rows.map(r=>{
+    const left=Math.max(start,r.start),right=Math.min(now,r.end),width=Math.max(0,(right-left)/9000);
+    return `<rect class="phase-${esc(r.phase)}" x="${Math.max(0,(left-start)/9000)}" width="${width}" height="10"><title>${esc(r.phase)} · ${Math.round((right-left)/1000)}s</title></rect>`;
+  }).join('')}</svg><div class="phase-legend"><span>Idle</span><span>Prefill</span><span>Thinking</span><span>Answering</span><span>Unknown / working</span></div><div class="chart-caption">15m activity · sampled every 2s · not GPU utilization</div>`;
+}
+function device(d, w, now, stale, index = 1, scales={}) {
+  const state = phase(d,w,now,stale);
   const bad = stale || !w?.is_healthy;
   const metric = (kind, title) => {
     const m = d[kind];
-    return `<div><span class="label">${title}</span><div class="rate ${kind}">${fmt(m?.tps)}<em>t/s</em></div><div class="metric-note">avg ${fmt(m?.average)} · ${age(m?.time, now)}</div>${chart(d.series, kind, now)}<div class="chart-caption">15m · zero-based, independent scale</div></div>`;
+    return `<div><span class="label">${title}</span><div class="rate ${kind}">${fmt(m?.tps)}<em>t/s</em></div><div class="metric-note">avg ${fmt(m?.average)} · ${age(m?.time, now)}</div>${chart(d.series, kind, now,scales[kind])}<div class="chart-caption">15m · 0–${fmt(scales[kind])} t/s · shared ${kind} scale</div></div>`;
   };
   const prompt = d.prompt ? `Last prompt: ${fmt(d.prompt.prompt)} tokens · ${fmt(d.prompt.cached)} reused · ${esc(d.prompt.cache)}` : 'No prompt start observed yet';
-  return `<article class="device"><div class="device-top"><div class="device-name"><span class="device-number">${String(index).padStart(2,'0')}</span>${esc(d.id.replace(/^spark/, 'Spark '))}</div><span class="badge ${bad ? 'bad' : w?.load ? 'busy' : ''}">${esc(state)}</span></div>${thinkingIndicator(w,stale,now)}<div class="metrics">${metric('decode','DECODE')}${metric('prefill','PREFILL')}</div><p class="prompt-note">${prompt}</p><div class="cache"><div><strong>${fmt(d.cache.reused)}</strong><span>Prefix reused</span></div><div><strong>${fmt(d.cache.cold)}</strong><span>Cold starts</span></div><div><strong>${fmt(d.cache.resident_misses)}</strong><span>Resident misses</span></div><div><strong>${fmt(d.cache.disk_restores)}</strong><span>Disk restores</span></div></div><p class="cache-note">Observed since ${d.observed_since ? clock(d.observed_since) : 'connecting'} · RAM misses ≠ cold starts</p><div class="device-foot"><span>${fmt(w?.queued)} queued · ${fmt(w?.assigned_sessions)} assigned sessions</span><span>${telemetryStatus(d)} · ${w?.load ? `${fmt(w.active_seconds)}s active` : 'last sample '+age(d.last_event,now)}</span></div></article>`;
+  return `<article class="device"><div class="device-top"><div class="device-name"><span class="device-number">${String(index).padStart(2,'0')}</span>${esc(d.id.replace(/^spark/, 'Spark '))}</div><span class="badge ${bad ? 'bad' : w?.load ? 'busy' : ''}">${esc(state==='decode'?'answering':state)}</span></div>${timeline(d,now)}${thinkingIndicator(w,stale,now)}<div class="metrics">${metric('decode','DECODE')}${metric('prefill','PREFILL')}</div><p class="prompt-note">${prompt}</p><div class="cache"><div><strong>${fmt(d.cache.reused)}</strong><span>Prefix reused</span></div><div><strong>${fmt(d.cache.cold)}</strong><span>Cold starts</span></div><div><strong>${fmt(d.cache.resident_misses)}</strong><span>Resident misses</span></div><div><strong>${fmt(d.cache.disk_restores)}</strong><span>Disk restores</span></div></div><p class="cache-note">Observed since ${d.observed_since ? clock(d.observed_since) : 'connecting'} · RAM misses ≠ cold starts</p><div class="device-foot"><span>${fmt(w?.queued)} queued · ${fmt(w?.assigned_sessions)} assigned sessions</span><span>${telemetryStatus(d)} · ${w?.load ? `${fmt(w.active_seconds)}s active` : 'last sample '+age(d.last_event,now)}</span></div></article>`;
 }
 function render(s) {
   const g = s.gateway, now = s.time, stale = !!s.gateway_error;
@@ -49,7 +57,14 @@ function render(s) {
   $('warning').textContent = [s.gateway_error,s.telemetry_error].filter(Boolean).join(' · ');
   $('model').textContent = s.demo ? `${g?.model || 'DS4'} · illustrative data · no real DS4 servers connected` : `${g?.model || 'DS4'} · one active gateway request per DS4 server · session-affinity routing`;
   $('available').textContent = g ? `${g.available} / ${g.total}` : '—'; $('active').textContent = fmt(g?.active); $('queued').textContent = fmt(g?.queued); $('context').textContent = g ? `${fmt(g.context_length / 1024)} Ki tokens` : '—';
-  $('devices').innerHTML = s.devices.map((d,i) => device(d,g?.workers.find(w => w.id === d.id),now,stale,i+1)).join('');
+  const cap=capacity(g,stale),scales=Object.fromEntries(['decode','prefill'].map(kind=>[kind,Math.ceil(Math.max(1,...s.devices.flatMap(d=>d.series.filter(p=>p.kind===kind && now-p.time<900000).map(p=>p.tps))))]));
+  $('capacity-value').textContent=cap?.percent!=null?`${cap.percent}% occupied`:'Unknown';
+  $('capacity-note').textContent=cap?`${cap.occupied} / ${cap.eligible} eligible slots occupied · ${cap.free} immediately free · ${fmt(g.queued)} waiting`:'Gateway status is unavailable';
+  $('capacity-meter').value=cap?.percent||0;$('capacity-meter').hidden=cap?.percent==null;
+  $('devices').innerHTML = s.devices.map((d,i) => device(d,g?.workers.find(w => w.id === d.id),now,stale,i+1,scales)).join('');
+  const ds=g?.dataset;
+  $('dataset-status').textContent=stale?'Collector status stale':!ds?.enabled?'Collector not enabled':ds.error||'Collecting routing evidence';
+  $('dataset-detail').textContent=ds?`${fmt(ds.written)} events saved this gateway run · ${fmt(ds.bytes/1048576)} MiB stored · ${fmt(ds.pending)} pending · ${fmt(ds.dropped)} dropped · ${fmt(ds.finished)} finishes (${fmt(ds.missing_usage)} missing usage, ${fmt(ds.truncated)} output-limited, ${fmt(ds.failed_or_cancelled)} failed/cancelled) · last write ${age(ds.last_write,now)}`:'Existing engine metrics are separate from the new request dataset.';
   $('worker-management').hidden = !s.worker_management;
   $('control-mode').textContent = s.worker_management ? '[ server controls ]' : '[ read only ]';
   $('control-note').textContent = 'Model settings unchanged.';
@@ -136,3 +151,23 @@ function wireWorkerControls() {
   });
 }
 poll();
+let genieToken=null,genieState=null;
+async function genieAction(input) {
+  try {const r=await fetch('/api/genie',{method:'POST',headers:{'content-type':'application/json','x-dsg-csrf':genieToken},body:JSON.stringify(input)});
+    const data=await r.json();if(!r.ok)throw new Error(data.error||'Genie request failed');await loadGenie();
+  } catch(e){$('genie-status').textContent=e.message;}
+}
+async function loadGenie() {
+  try {const r=await fetch('/api/genie',{signal:AbortSignal.timeout(5000)});if(!r.ok)throw new Error();const s=await r.json();genieToken=s.csrf_token;genieState=s;
+    $('genie-status').textContent=!s.configured?'Not configured':s.error||(!s.enabled?'Off':s.busy?'Reviewing fleet evidence…':`Enabled · last review ${age(s.last_check,Date.now())}`);
+    $('genie-toggle').disabled=!s.configured;$('genie-toggle').textContent=s.enabled?'Turn off':'Enable';
+    $('genie-source').disabled=!s.fallback_available||s.busy;$('genie-source').value=s.source||'primary';
+    $('genie-review').disabled=$('genie-send').disabled=!s.enabled||s.busy;
+    $('genie-reports').innerHTML=(s.reports||[]).slice(0,3).map(r=>`<details><summary>${clock(r.time)} · ${esc(r.source)} · assessment, no actions</summary><p class="genie-answer">${esc(r.text)}</p></details>`).join('');
+  } catch{$('genie-status').textContent='Genie status unavailable';}
+}
+$('genie-toggle').addEventListener('click',()=>genieAction({action:'enable',enabled:!genieState?.enabled}));
+$('genie-source').addEventListener('change',()=>genieAction({action:'source',source:$('genie-source').value}));
+$('genie-review').addEventListener('click',()=>genieAction({action:'ask'}));
+$('genie-chat').addEventListener('submit',e=>{e.preventDefault();void genieAction({action:'ask',question:$('genie-question').value});});
+void loadGenie();setInterval(loadGenie,5000);

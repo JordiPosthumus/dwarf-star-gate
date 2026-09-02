@@ -6,6 +6,11 @@ A local gateway for **N DS4 servers—DGX Sparks, Macs, or a mix**, with durable
 and a lightweight control-room dashboard for [DS4](https://github.com/antirez/ds4).
 Register workers through the local UI or CLI; fleet size is not hard-coded.
 
+**Growing next:** private routing evidence, clearer fleet activity, and **Gate
+Genie**, an opt-in local observer. See the [living feature roadmap](docs/roadmap.md)
+and [experimental collector/Genie setup](docs/observer.md). Planned cache-health
+auditing and XGBoost-guided routing are explicitly separate from today's features.
+
 ## The engine is Antirez's. Start there.
 
 **Dwarf Star Gate exists because of [DwarfStar — the original `antirez/ds4`

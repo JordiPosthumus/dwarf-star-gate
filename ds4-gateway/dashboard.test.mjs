@@ -75,7 +75,7 @@ test('local telemetry configuration requires an explicit private absolute path, 
   for(const input of [null,[],{studio:'relative.txt'},{studio:'ssh worker cat file'},{studio:'/tmp/bad\0file'},{'bad id':'/tmp/log'}, {studio:{command:'tail'}}]) assert.throws(()=>telemetryFiles(input));
 });
 test('UI distinguishes local model logs from journal connectivity', () => {
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/\npoll\(\);\s*$/,'');
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);
   const label=d=>vm.runInContext(`telemetryStatus(${JSON.stringify(d)})`,context);
   assert.equal(label({telemetry_source:'file',connected:true}),'Model log connected');
@@ -145,7 +145,7 @@ test('requested-thinking diagnostics include only scalar metadata and reject arb
   assert.ok(!JSON.stringify(e).includes('SECRET'));
 });
 test('thinking UI distinguishes requested controls, omitted/unknown, current/last and stale values', () => {
-  const source = fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/\npoll\(\);\s*$/,'');
+  const source = fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
   const context = vm.createContext({}); vm.runInContext(source,context);
   const info = input => vm.runInContext(`thinkingInfo(${JSON.stringify(input)})`,context);
   assert.equal(info({status:'specified',fields:{reasoning_effort:'xhigh'}}).label,'XHIGH');
@@ -266,7 +266,7 @@ test('opt-in worker controls require same origin, JSON and a CSRF token; diagnos
   const plain=await fixture(t);assert.deepEqual(await(await fetch(plain.url+'/api/workers')).json(),{enabled:false});
 });
 test('worker UI only offers removal after draining and finishing admitted work', () => {
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/\npoll\(\);\s*$/,'');
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);
   const rows=w=>vm.runInContext(`workerRows(${JSON.stringify([w])})`,context);
   assert.match(rows({id:'m3',is_healthy:true,drained:false,load:0,queued:0}),/data-action="remove"[^>]+disabled/);

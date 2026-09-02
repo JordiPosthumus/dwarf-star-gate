@@ -5,6 +5,7 @@ import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { RequestedThinkingObserver } from './requested-thinking.mjs';
+import { Dataset } from './dataset.mjs';
 import { workerConfig, workerConfigs, assertUniqueWorker } from './worker-config.mjs';
 import net from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -82,7 +83,7 @@ export class AffinityStore {
 // Buffers at most one SSE line, solely to observe usage. Forwarded bytes are
 // never decoded/re-encoded. No answer/reasoning text is logged.
 class UsageObserver {
-  pending = ''; usage = undefined; done = false;
+  pending = ''; usage = undefined; done = false; finish_reason = null;
   accept(chunk) {
     this.pending += chunk.toString('utf8');
     let pos;
@@ -91,7 +92,9 @@ class UsageObserver {
       if (line === 'data: [DONE]') this.done = true;
       if (line.startsWith('data: {')) {
         try {
-          const u = JSON.parse(line.slice(6)).usage;
+          const parsed=JSON.parse(line.slice(6)),u=parsed.usage;
+          const reason=parsed.choices?.[0]?.finish_reason;
+          if(['stop','length','tool_calls','function_call','content_filter'].includes(reason))this.finish_reason=reason;
           if (u) this.usage = { prompt_tokens: u.prompt_tokens, completion_tokens: u.completion_tokens,
             cached_tokens: u.prompt_tokens_details?.cached_tokens };
         } catch { /* A telemetry failure must not affect inference. */ }
@@ -112,6 +115,7 @@ export function createGateway(config) {
   try { definitions = store.data.workers === undefined ? initial : workerConfigs(store.data.workers); }
   catch (e) { store.close(); throw e; }
   const nodes = definitions.map(makeNode);
+  const dataset = new Dataset(path.join(path.dirname(config.state_file),'training'),{enabled:config.dataset_enabled===true});
   let draining = false, shuttingDown = false, healthTimer;
   let mutation = Promise.resolve();
   const serialize = fn => { const next = mutation.then(fn); mutation = next.catch(() => {}); return next; };
@@ -119,7 +123,7 @@ export function createGateway(config) {
   const agent = new http.Agent({ keepAlive: true, maxSockets: 16 });
   const accepted = new Set(['POST /v1/chat/completions', 'POST /v1/completions', 'POST /v1/responses', 'POST /v1/messages', 'GET /v1/models']);
   const auth = Buffer.from(`Bearer ${config.api_key}`);
-  const stats = () => ({ version: 1, model: config.model, context_length: contextLimit(), draining,
+  const stats = () => ({ version: 1, model: config.model, context_length: contextLimit(), draining, dataset:dataset.snapshot(),
     total: nodes.length, healthy: nodes.filter(n => n.healthy).length, available: nodes.filter(n => n.healthy && !n.drained).length,
     active: nodes.filter(n => n.active).length, queued: nodes.reduce((s, n) => s + n.queue.length, 0),
     workers: nodes.map(n => ({ id: n.id, url: n.url, is_healthy: n.healthy, drained: n.drained,
@@ -142,7 +146,7 @@ export function createGateway(config) {
       const job = node.queue.shift();
       if (job.cancelled) continue;
       clearTimeout(job.queueTimer);
-      if (!node.healthy) { error(job.res, 503, 'home_unavailable', 'Assigned Spark became unavailable while queued; request was not dispatched.'); job.cleanup(); job.req.resume(); continue; }
+      if (!node.healthy) { dataset.record('unavailable_before_dispatch',{request_id:job.id,node:node.id,total_ms:performance.now()-job.createdMono}); error(job.res, 503, 'home_unavailable', 'Assigned Spark became unavailable while queued; request was not dispatched.'); job.cleanup(); job.req.resume(); continue; }
       node.active = job;
       dispatch(node, job);
       return;
@@ -151,6 +155,8 @@ export function createGateway(config) {
   function dispatch(node, job) {
     const { req, res } = job;
     job.dispatched = Date.now();
+    job.dispatchedMono=performance.now();
+    let requestBytes=0, firstBodyByte=null;
     const target = new URL(req.url, node.url);
     const headers = forwardHeaders(req.headers);
     headers.host = target.host;
@@ -158,7 +164,7 @@ export function createGateway(config) {
     delete headers.expect;
     const observer = new UsageObserver();
     job.thinking = new RequestedThinkingObserver(req.headers['content-encoding']);
-    const observeBody = chunk => job.thinking.accept(chunk);
+    const observeBody = chunk => {requestBytes+=chunk.length;job.thinking.accept(chunk);};
     const bodyEnded = () => job.thinking.finish();
     let settled = false, response;
     const finish = (outcome, detail) => {
@@ -170,6 +176,9 @@ export function createGateway(config) {
       log('request_finished', { request_id: job.id, node: node.id, session: job.key?.slice(0, 12), outcome,
         queue_ms: job.dispatched - job.created, elapsed_ms: Date.now() - job.dispatched,
         usage: observer.usage, sse_done: observer.done, requested_thinking: job.thinking.result, detail });
+      dataset.record('finish',{request_id:job.id,node:node.id,outcome,queue_ms:job.dispatchedMono-job.createdMono,
+        service_ms:performance.now()-job.dispatchedMono,total_ms:performance.now()-job.createdMono,first_body_byte_ms:firstBodyByte,
+        request_bytes:requestBytes,usage:observer.usage,finish_reason:observer.finish_reason,requested_thinking:job.thinking.result});
       job.cleanup();
       node.active = null;
       schedule(node);
@@ -184,6 +193,7 @@ export function createGateway(config) {
       res.writeHead(up.statusCode, outHeaders);
       res.flushHeaders();
       const isSSE = String(up.headers['content-type']).includes('text/event-stream');
+      up.once('data',()=>{firstBodyByte=performance.now()-job.dispatchedMono;});
       if (isSSE) up.on('data', chunk => observer.accept(chunk));
       up.on('error', e => { res.destroy(); finish(job.cancelled ? 'client_cancelled' : 'upstream_stream_error', e.code); });
       up.on('aborted', () => { res.destroy(); finish(job.cancelled ? 'client_cancelled' : 'upstream_aborted'); });
@@ -208,6 +218,7 @@ export function createGateway(config) {
     });
     job.deadline = setTimeout(() => { upstream.destroy(Object.assign(new Error('100-hour request deadline'), { code: 'REQUEST_DEADLINE' })); }, config.request_timeout_ms ?? 360000000);
     log('request_dispatched', { request_id: job.id, node: node.id, session: job.key?.slice(0, 12), affinity: job.affinity, queue_ms: job.dispatched - job.created });
+    dataset.record('dispatch',{request_id:job.id,node:node.id,queue_ms:job.dispatchedMono-job.createdMono});
     // Passive observation only while dispatched; queued uploads remain untouched.
     // The original pipe retains streaming/backpressure and exact body bytes.
     req.on('data', observeBody); req.once('end', bodyEnded);
@@ -262,9 +273,13 @@ export function createGateway(config) {
       return;
     }
     if (node.queue.length >= (config.max_queued_per_node ?? 128)) { req.resume(); return error(res, 429, 'queue_full', 'Spark waiting queue is full; request was not dispatched'); }
+    const candidates=nodes.map(n=>({node:n.id,healthy:n.healthy,paused:n.drained,active:Number(!!n.active),queued:n.queue.length,
+      assigned_sessions:store.count(n.id),context_length:n.contextLength,profile:digest(JSON.stringify({id:n.id,url:n.url,model:config.model,context:n.contextLength}))}));
     try { if (key && home?.node !== node.id) store.set(key, node.id); }
     catch (e) { log('state_write_error', { error: e.message }); req.resume(); return error(res, 503, 'state_unavailable', 'Cannot durably record affinity; request was not dispatched'); }
-    const job = { req, res, key, affinity, id: randomUUID(), created: Date.now(), cancelled: false };
+    const job = { req, res, key, affinity, id: randomUUID(), created: Date.now(), createdMono:performance.now(), cancelled: false };
+    dataset.record('decision',{request_id:job.id,node:node.id,session:key,affinity,context_length:contextLimit(),candidates,
+      traffic_class:req.headers['x-dsg-observer']==='gate-genie'?'genie':'unclassified'});
     const cancel = () => {
       if (res.writableFinished) return;
       job.cancelled = true;
@@ -273,6 +288,7 @@ export function createGateway(config) {
         node.queue = node.queue.filter(j => j !== job);
         clearTimeout(job.queueTimer); job.cleanup();
         log('queued_request_cancelled', { request_id: job.id, node: node.id });
+        dataset.record('queued_cancel',{request_id:job.id,node:node.id,total_ms:performance.now()-job.createdMono});
       }
     };
     job.cleanup = () => { req.off('aborted', cancel); res.off('close', cancel); req.off('error', cancel); };
@@ -280,6 +296,7 @@ export function createGateway(config) {
     job.queueTimer = setTimeout(() => {
       node.queue = node.queue.filter(j => j !== job);
       error(res, 504, 'queue_timeout', 'One-hour queue deadline reached; request was not dispatched');
+      dataset.record('queue_timeout',{request_id:job.id,node:node.id,total_ms:performance.now()-job.createdMono});
       job.cleanup(); req.resume();
     }, config.queue_timeout_ms ?? 3600000);
     node.queue.push(job); schedule(node);
@@ -462,7 +479,7 @@ export function createGateway(config) {
       shuttingDown = true; draining = true;
       if (control) await new Promise(resolve => control.close(resolve));
       await new Promise(resolve => { server.close(resolve); server.closeIdleConnections(); });
-      clearInterval(healthTimer); agent.destroy(); store.close();
+      clearInterval(healthTimer); agent.destroy(); store.close(); await dataset.close();
       nodes.forEach(n => { n.removed = true; n.stopTunnel?.(); });
     },
   };

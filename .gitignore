@@ -2,6 +2,7 @@
 **/runtime/
 **/sessions/
 **/snapshots/
+**/training/
 **/backups/
 **/node_modules/
 **/.DS_Store

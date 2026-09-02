@@ -6,7 +6,7 @@
   "type": "module",
   "engines": { "node": ">=22.22.2" },
   "scripts": {
-    "test": "node --test ds4-gateway/gateway.test.mjs ds4-gateway/dashboard.test.mjs",
+    "test": "node --test ds4-gateway/gateway.test.mjs ds4-gateway/dashboard.test.mjs ds4-gateway/observer.test.mjs",
     "check": "node scripts/check.mjs",
     "privacy-check": "node scripts/privacy-check.mjs",
     "start": "node ds4-gateway/gateway.mjs config.local.json",

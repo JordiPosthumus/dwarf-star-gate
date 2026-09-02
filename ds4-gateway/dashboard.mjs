@@ -8,10 +8,14 @@ import { safeGatewayEvent, DeviceTelemetry, JournalReader } from './telemetry.mj
 import { safeRequestedThinking } from './requested-thinking.mjs';
 import { workerControl } from './worker-client.mjs';
 import { FileLogReader, telemetryFiles } from './file-telemetry.mjs';
+import { Activity } from './ui/activity.js';
+import { Genie } from './genie.mjs';
+import { genieTunnel } from './genie-tunnel.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const assets = new Map([['/', ['index.html', 'text/html']], ['/ui.css', ['ui.css', 'text/css']], ['/brand.css', ['brand.css', 'text/css']], ['/ui.js', ['ui.js', 'text/javascript']], ['/logo.png', ['logo.png', 'image/png']]]);
-export function createDashboard(getSnapshot, assetsDirectory = path.join(here, 'ui'), management = null) {
+assets.set('/activity.js',['activity.js','text/javascript']);
+export function createDashboard(getSnapshot, assetsDirectory = path.join(here, 'ui'), management = null, genie = null) {
   const csrf = randomBytes(32).toString('base64url');
   // Freeze one complete release in memory: edits on disk cannot expose half an
   // update to a live browser. Only the dashboard needs a reload to promote it.
@@ -28,6 +32,26 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
       res.writeHead(403, headers); return res.end('Local same-origin dashboard only');
     }
     const reply = (status, value) => { if (!res.destroyed && !res.headersSent) { res.writeHead(status,{...headers,'content-type':'application/json'}); res.end(JSON.stringify(value)); } };
+    if(req.url==='/api/genie' && req.method==='GET')return reply(200,{...(genie?.status()||{configured:false}),csrf_token:csrf});
+    if(req.url==='/api/genie' && req.method==='POST' && genie) {
+      const token=Buffer.from(req.headers['x-dsg-csrf']||''), expected=Buffer.from(csrf);
+      if(req.headers.origin!==`http://${req.headers.host}` || token.length!==expected.length || !timingSafeEqual(token,expected))return reply(403,{error:'Same-origin Genie control session required'});
+      if(req.headers['content-type']!=='application/json')return reply(415,{error:'JSON required'});
+      let body='',ended=false;
+      const timer=setTimeout(()=>{ended=true;reply(408,{error:'Incomplete request'});req.destroy();},5000);
+      const stop=()=>{ended=true;clearTimeout(timer);};req.on('error',stop);req.on('aborted',stop);
+      req.on('data',chunk=>{body+=chunk;if(Buffer.byteLength(body)>8192){stop();reply(413,{error:'Question too large'});req.destroy();}});
+      req.on('end',()=>{clearTimeout(timer);if(ended)return;
+        try {const input=JSON.parse(body);
+          if(input.action==='enable')return reply(200,genie.setEnabled(input.enabled));
+          if(input.action==='source')return reply(200,genie.setSource(input.source));
+          if(input.action!=='ask')return reply(400,{error:'Unknown Genie action'});
+          if(!genie.enabled || genie.busy)return reply(409,{error:'Genie is off or busy'});
+          if(input.question!==undefined && (typeof input.question!=='string'||input.question.length>2000))return reply(400,{error:'Question too long'});
+          void genie.ask(input.question);return reply(202,{accepted:true});
+        } catch {reply(400,{error:'Invalid Genie request'});}
+      });return;
+    }
     if (req.url === '/api/workers' && req.method === 'GET') {
       if (!management) return reply(200, { enabled:false });
       void management.read().then(registry => reply(200,{enabled:true,csrf_token:csrf,...registry})).catch(() => reply(503,{error:'Worker controls unavailable'}));
@@ -66,6 +90,7 @@ export async function runDashboard(configPath, port = 30010) {
   const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
   const fileSources = telemetryFiles(config.telemetry_files);
   const devices = new Map(), readers = new Map();
+  const activity=new Activity();
   for (const node of config.nodes) {
     if (node.ssh && (!/^[\w.@-]+$/.test(node.ssh) || node.ssh.startsWith('-'))) throw new Error('Unsupported SSH alias');
     if (node.telemetry_service !== null && !/^[\w@.-]+\.service$/.test(node.telemetry_service || 'ds4-vision-q2.service')) throw new Error('Unsupported journal unit');
@@ -176,26 +201,28 @@ export async function runDashboard(configPath, port = 30010) {
       if (!r.ok) throw new Error('Status unavailable');
       const s = await r.json();
       if (s.version !== 1 || !Array.isArray(s.workers)) throw new Error('Unsupported gateway');
-      gateway = { model: s.model, context_length: s.context_length, total: s.total, healthy: s.healthy, available: s.available, active: s.active, queued: s.queued, draining: s.draining,
+      gateway = { model: s.model, context_length: s.context_length, total: s.total, healthy: s.healthy, available: s.available, active: s.active, queued: s.queued, draining: s.draining, dataset:s.dataset,
         workers: s.workers.map(w => ({ id: w.id, is_healthy: w.is_healthy, drained: w.drained, load: w.load, queued: w.queued, active_seconds: w.active_seconds, completed: w.completed, failed: w.failed, assigned_sessions: w.assigned_sessions,
           context_length:Number.isSafeInteger(w.context_length)?w.context_length:null, requested_thinking: safeRequestedThinking(w.requested_thinking), last_requested_thinking: safeRequestedThinking(w.last_requested_thinking),
           last_request_finished_at: typeof w.last_request_finished_at === 'string' && Number.isFinite(Date.parse(w.last_request_finished_at)) ? w.last_request_finished_at : null })) };
       gatewayAt = Date.now(); gatewayError = null;
       syncDevices(s.workers);
     } catch { gatewayError = 'Gateway status unavailable; last snapshot is stale'; }
-    finally { polling = false; }
+    finally { activity.update([...devices.values()],gateway?.workers||[],Date.now(),!!gatewayError);polling = false; }
   }
   const started = Date.now();
   const managementEnabled = config.ui_worker_management === true && !!config.control_socket;
   const snapshot = () => ({ version: 1, time: Date.now(), started, read_only: !managementEnabled, worker_management:managementEnabled, gateway, gateway_at: gatewayAt, gateway_error: gatewayError, telemetry_error: writeError,
-    devices: [...devices.values()].map(d => d.snapshot()), events, notes: 'Rates are DS4 engine measurements. Cache counts cover observed prompt starts, not lifetime requests. Raw prompts and responses are excluded.' });
+    devices: [...devices.values()].map(d => ({...d.snapshot(),activity:activity.get(d.id)})), events, notes: 'Rates are DS4 engine measurements. Cache counts cover observed prompt starts, not lifetime requests. Raw prompts and responses are excluded.' });
+  const genie=new Genie(config.genie,snapshot);
+  const stopGenieTunnel=genieTunnel(config.genie);
   const server = createDashboard(snapshot, path.join(here,'ui'), managementEnabled ? {
     read:()=>workerControl(config.control_socket,'/workers'),
     act:(action,input)=>workerControl(config.control_socket,({add:'/add-worker',remove:'/remove-worker',drain:'/drain-workers',resume:'/resume-workers',context:'/set-context-limit'})[action],input),
-  } : null);
+  } : null,genie);
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
-  await poll(); const interval = setInterval(poll, 2000);
-  const close = () => { closed = true; clearInterval(interval); for (const t of timers) clearTimeout(t); for (const child of children) child.kill(); server.closeAllConnections(); server.close(); process.removeListener('SIGTERM', close); process.removeListener('SIGINT', close); };
+  await poll(); const interval = setInterval(poll, 2000), genieTimer=setInterval(()=>genie.tick(),10000);
+  const close = () => { closed = true; clearInterval(interval);clearInterval(genieTimer);genie.close();stopGenieTunnel(); for (const t of timers) clearTimeout(t); for (const child of children) child.kill(); server.closeAllConnections(); server.close(); process.removeListener('SIGTERM', close); process.removeListener('SIGINT', close); };
   process.once('SIGTERM', close); process.once('SIGINT', close);
   console.log(`Dwarf Star Gate: http://127.0.0.1:${server.address().port} (${managementEnabled ? 'local worker controls' : 'read-only'})`);
   return { server, snapshot, close };

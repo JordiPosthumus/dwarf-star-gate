@@ -78,6 +78,20 @@ async function rig(t, count = 2, overrides = {}) {
   return r;
 }
 
+test('collector records decision-time fleet and outcomes without altering body or stream',async t=>{
+  const r=await rig(t,2,{dataset_enabled:true});
+  const body=JSON.stringify({stream:true,messages:[{role:'user',content:'PRIVATE_UNIQUE_TEXT'}],reasoning_effort:'xhigh'});
+  const response=await r.request(body,'collector-test');assert.equal(response.status,200);assert.match(response.body,/\[DONE\]/);
+  assert.equal(r.backends[0].records[0].body.toString(),body);
+  await until(()=>r.gateway.stats().dataset.written===3);
+  const dir=path.join(path.dirname(r.config.state_file),'training'),file=fs.readdirSync(dir)[0],text=fs.readFileSync(path.join(dir,file),'utf8');
+  assert.ok(!text.includes('PRIVATE_UNIQUE_TEXT'));const rows=text.trim().split('\n').map(JSON.parse);
+  assert.deepEqual(rows.map(r=>r.kind),['decision','dispatch','finish']);assert.equal(new Set(rows.map(r=>r.request_id)).size,1);
+  assert.equal(rows[0].candidates.length,2);assert.equal(rows[0].candidates[0].assigned_sessions,0);assert.equal(rows[0].candidates[0].active,0);
+  assert.equal(rows[2].usage.cached_tokens,8192);assert.equal(rows[2].requested_thinking.fields.reasoning_effort,'xhigh');
+  assert.ok(rows[2].first_body_byte_ms>=0);assert.ok(rows[2].total_ms>=rows[2].service_ms);
+});
+
 test('requested thinking captures allowlisted controls, never nested prompt text or an assumed default', () => {
   for (const effort of ['none','minimal','low','medium','high','xhigh','max']) {
     assert.deepEqual(requestedThinking({reasoning_effort:effort}), {status:'specified',fields:{reasoning_effort:effort}});
