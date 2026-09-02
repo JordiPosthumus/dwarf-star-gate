@@ -5,6 +5,9 @@ import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { RequestedThinkingObserver } from './requested-thinking.mjs';
+import { workerConfig, workerConfigs, assertUniqueWorker } from './worker-config.mjs';
+import net from 'node:net';
+import { setTimeout as delay } from 'node:timers/promises';
 
 const digest = value => createHash('sha256').update(value).digest('hex');
 const log = (event, fields = {}) => process.stdout.write(JSON.stringify({ time: new Date().toISOString(), event, ...fields }) + '\n');
@@ -59,6 +62,9 @@ export class AffinityStore {
     for (const id of ids) next.drained[id] = drained;
     this.save(next);
   }
+  setWorkers(workers, drained = this.data.drained ?? {}) {
+    this.save({ ...this.data, workers, drained });
+  }
   save(next) {
     const tmp = `${this.filename}.${randomUUID()}.tmp`;
     const fd = fs.openSync(tmp, 'wx', 0o600);
@@ -94,11 +100,17 @@ class UsageObserver {
 }
 
 export function createGateway(config) {
-  if (!config.nodes?.length || new Set(config.nodes.map(n => n.id)).size !== config.nodes.length) throw new Error('Unique nodes required');
-  for (const n of config.nodes) if (!/^http:\/\/127\.0\.0\.1:\d+$/.test(n.url)) throw new Error('Backends must use explicit loopback HTTP tunnels');
+  const initial = workerConfigs(config.nodes);
   const store = new AffinityStore(config.state_file);
-  const nodes = config.nodes.map(n => ({ ...n, drained: store.data.drained?.[n.id] === true, healthy: false, failures: 0, active: null, queue: [], completed: 0, failed: 0, probing: false }));
+  const makeNode = n => ({ ...n, drained: store.data.drained?.[n.id] === true, healthy: false, failures: 0, active: null, queue: [], completed: 0, failed: 0, probing: false });
+  let definitions;
+  try { definitions = store.data.workers === undefined ? initial : workerConfigs(store.data.workers); }
+  catch (e) { store.close(); throw e; }
+  const nodes = definitions.map(makeNode);
   let draining = false, shuttingDown = false, healthTimer;
+  let mutation = Promise.resolve();
+  const serialize = fn => { const next = mutation.then(fn); mutation = next.catch(() => {}); return next; };
+  const definition = n => Object.fromEntries(['id','url','ssh','remote_port','telemetry_service'].filter(k => n[k] !== undefined).map(k => [k,n[k]]));
   const agent = new http.Agent({ keepAlive: true, maxSockets: 16 });
   const accepted = new Set(['POST /v1/chat/completions', 'POST /v1/completions', 'POST /v1/responses', 'POST /v1/messages', 'GET /v1/models']);
   const auth = Buffer.from(`Bearer ${config.api_key}`);
@@ -111,6 +123,7 @@ export function createGateway(config) {
       active_seconds: n.active ? Math.round((Date.now() - n.active.dispatched) / 1000) : 0,
       requested_thinking: n.active?.thinking?.result ?? null,
       last_requested_thinking: n.lastThinking ?? null, last_request_finished_at: n.lastFinishedAt ?? null,
+      context_length: n.contextLength ?? null,
       last_probe: n.lastProbe, probe_error: n.probeError })) });
 
   function pick(exclude) {
@@ -216,12 +229,27 @@ export function createGateway(config) {
       node = pick(node.id); affinity = 'reassigned';
     }
     if (!node) node = pick();
-    if (!node) { req.resume(); return error(res, 503, 'no_healthy_workers', 'Neither Spark is currently ready'); }
+    if (!node) { req.resume(); return error(res, 503, 'no_healthy_workers', 'No worker is currently ready'); }
     if (req.method === 'GET') {
       // Model-list requests must not sit behind a multi-hour generation.
       const probe = http.get(new URL(req.url, node.url), { agent }, up => {
-        up.on('error', () => res.destroy());
-        res.writeHead(up.statusCode, forwardHeaders(up.headers)); up.pipe(res);
+        let body = '';
+        up.on('data', chunk => { body += chunk; if (body.length > 1048576) probe.destroy(new Error('Model metadata too large')); });
+        up.on('error', () => error(res, 502, 'models_unavailable', 'Model metadata unavailable'));
+        up.on('end', () => {
+          try {
+            if (up.statusCode !== 200) throw new Error();
+            const data = JSON.parse(body); if (!Array.isArray(data.data)) throw new Error();
+            // Publish the pool guarantee, never one larger worker's limit.
+            // This only changes model-list metadata; generation bytes are untouched.
+            for (const model of data.data) {
+              model.context_length = config.context_length;
+              if (model.top_provider) model.top_provider = { ...model.top_provider, context_length:config.context_length,
+                max_completion_tokens: Math.min(model.top_provider.max_completion_tokens ?? config.context_length, config.context_length) };
+            }
+            json(res, 200, data);
+          } catch { error(res, 502, 'models_unavailable', 'Model metadata unavailable'); }
+        });
       });
       probe.setTimeout(config.health_timeout_ms ?? 5000, () => probe.destroy());
       probe.on('error', () => error(res, 502, 'models_unavailable', 'Model metadata unavailable'));
@@ -261,9 +289,10 @@ export function createGateway(config) {
     if (node.probing) return;
     node.probing = true;
     await new Promise(resolve => {
-      let settled = false;
+      let settled = false, deadline;
       const finish = (ok, reason) => {
         if (settled) return; settled = true;
+        clearTimeout(deadline); node.probeRequest = null;
         node.probing = false; node.lastProbe = new Date().toISOString(); node.probeError = reason;
         const was = node.healthy;
         if (ok) { node.failures = 0; node.healthy = true; }
@@ -278,14 +307,65 @@ export function createGateway(config) {
         res.on('end', () => {
           try {
             const model = JSON.parse(body).data?.find(m => m.id === config.model);
-            const ok = res.statusCode === 200 && !!model && model.context_length === config.context_length;
+            node.contextLength = Number.isSafeInteger(model?.context_length) ? model.context_length : null;
+            const ok = res.statusCode === 200 && !!model && node.contextLength >= config.context_length;
             finish(ok, ok ? undefined : 'model_or_context_mismatch');
           } catch { finish(false, 'invalid_model_response'); }
         });
       });
+      node.probeRequest = p;
+      // Total health-check deadline, not an inference or idle-stream limit.
+      deadline = setTimeout(() => { p.destroy(); finish(false, 'PROBE_TIMEOUT'); }, config.health_timeout_ms ?? 5000);
       p.setTimeout(config.health_timeout_ms ?? 5000, () => p.destroy(Object.assign(new Error('probe timeout'), { code: 'PROBE_TIMEOUT' })));
       p.on('error', e => finish(false, e.code));
     });
+  }
+  const startTunnel = node => {
+    if (node.ssh) node.stopTunnel = superviseTunnel(node, () => shuttingDown || node.removed);
+  };
+  const registry = () => ({ model: config.model, minimum_context: config.context_length,
+    workers: nodes.map(n => ({ ...definition(n), ...stats().workers.find(w => w.id === n.id) })) });
+  async function addWorker(raw) {
+    if (shuttingDown || draining) throw new Error('Gateway is draining');
+    const settings = workerConfig(raw, { registration: true });
+    assertUniqueWorker(nodes, settings);
+    // Do not mistake another process's listener for our new SSH tunnel.
+    if (settings.ssh) await new Promise((resolve, reject) => {
+      const check = net.createServer(); check.once('error', () => reject(new Error('Local tunnel port is already in use')));
+      check.listen(Number(new URL(settings.url).port), '127.0.0.1', () => check.close(resolve));
+    });
+    const node = makeNode(settings); node.drained = true;
+    try {
+      startTunnel(node);
+      const until = Date.now() + (config.registration_timeout_ms ?? 15000);
+      do {
+        if (shuttingDown) throw new Error('Gateway is stopping');
+        await probe(node);
+        if (node.healthy) break;
+        if (!node.ssh || node.probeError === 'model_or_context_mismatch' || node.probeError === 'invalid_model_response') break;
+        await delay(250);
+      } while (Date.now() < until);
+      if (shuttingDown) throw new Error('Gateway is stopping');
+      if (!node.healthy) throw new Error(`Compatibility check failed (${node.probeError || 'unavailable'}). Required model ${config.model}, context at least ${config.context_length}; observed context ${node.contextLength ?? 'unknown'}.`);
+      store.setWorkers([...nodes.map(definition), settings], { ...store.data.drained, [node.id]: true });
+      nodes.push(node);
+      log('worker_registered', { node: node.id, context_length: node.contextLength, drained: true });
+      return registry();
+    } catch (e) { node.removed = true; node.probeRequest?.destroy(); node.stopTunnel?.(); throw e; }
+  }
+  function removeWorker(id) {
+    if (shuttingDown) throw new Error('Gateway is stopping');
+    const node = nodes.find(n => n.id === id);
+    if (!node) throw new Error('Unknown worker');
+    if (!node.drained || node.active || node.queue.length) throw new Error('Drain this worker and wait for its admitted work to finish before removing it');
+    const next = nodes.filter(n => n !== node);
+    const drained = { ...store.data.drained }; delete drained[id];
+    store.setWorkers(next.map(definition), drained);
+    nodes.splice(nodes.indexOf(node), 1);
+    node.removed = true; node.probeRequest?.destroy(); node.stopTunnel?.();
+    // Keep session homes. Their next request can be durably reassigned normally.
+    log('worker_removed', { node: id });
+    return registry();
   }
   function drainNodes(ids, drained) {
     if (!Array.isArray(ids) || !ids.length || ids.some(id => !nodes.some(n => n.id === id))) throw new Error('Specify known worker IDs');
@@ -296,18 +376,26 @@ export function createGateway(config) {
   }
   // Operator-only Unix socket: never expose lifecycle mutation on the LAN.
   const control = config.control_socket ? http.createServer((req, res) => {
-    if (req.method !== 'POST' || !['/drain-workers', '/resume-workers'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
+    if (req.method === 'GET' && req.url === '/workers') return json(res, 200, registry());
+    if (req.method !== 'POST' || !['/drain-workers', '/resume-workers', '/add-worker', '/remove-worker'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
     let body = '';
     req.on('data', chunk => { body += chunk; if (body.length > 4096) req.destroy(); });
     req.on('error', () => {});
     req.on('end', () => {
-      try { json(res, 200, drainNodes(JSON.parse(body).workers, req.url === '/drain-workers')); }
-      catch (e) { error(res, 400, 'invalid_control_request', e.message); }
+      void serialize(async () => {
+        try {
+          const input = JSON.parse(body);
+          if (req.url === '/add-worker') return json(res, 201, await addWorker(input.worker));
+          if (req.url === '/remove-worker') return json(res, 200, removeWorker(input.id));
+          json(res, 200, drainNodes(input.workers, req.url === '/drain-workers'));
+        } catch (e) { error(res, 400, 'invalid_control_request', e.message); }
+      });
     });
   }) : null;
   return {
-    server, nodes, stats, store, drainNodes,
+    server, nodes, stats, store, drainNodes, registry,
     async start() {
+      nodes.forEach(startTunnel);
       await new Promise((resolve, reject) => { server.once('error', reject); server.listen(config.port, config.host, resolve); });
       if (control) {
         // Store ownership has already been acquired; only our stale socket may exist.
@@ -329,6 +417,7 @@ export function createGateway(config) {
       if (control) await new Promise(resolve => control.close(resolve));
       await new Promise(resolve => { server.close(resolve); server.closeIdleConnections(); });
       clearInterval(healthTimer); agent.destroy(); store.close();
+      nodes.forEach(n => { n.removed = true; n.stopTunnel?.(); });
     },
   };
 }
@@ -339,7 +428,7 @@ function superviseTunnel(node, stopping) {
     if (stopping()) return;
     const port = new URL(node.url).port;
     child = spawn('/usr/bin/ssh', ['-N', '-o', 'BatchMode=yes', '-o', 'ExitOnForwardFailure=yes', '-o', 'ConnectTimeout=10',
-      '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3', '-L', `127.0.0.1:${port}:127.0.0.1:8000`, node.ssh], { stdio: ['ignore', 'ignore', 'pipe'] });
+      '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3', '-L', `127.0.0.1:${port}:127.0.0.1:${node.remote_port ?? 8000}`, node.ssh], { stdio: ['ignore', 'ignore', 'pipe'] });
     log('tunnel_started', { node: node.id, pid: child.pid });
     child.stderr.on('data', chunk => log('tunnel_message', { node: node.id, message: chunk.toString().trim() }));
     child.on('error', e => log('tunnel_error', { node: node.id, error: e.message }));
@@ -358,17 +447,16 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   const gateway = createGateway(config);
   const awake = config.prevent_sleep ? spawn('/usr/bin/caffeinate', ['-i', '-w', String(process.pid)], { stdio: 'ignore' }) : null;
   awake?.on('error', e => log('caffeinate_error', { error: e.message }));
-  const tunnels = config.nodes.filter(n => n.ssh).map(n => superviseTunnel(n, () => stopping));
   const stop = async () => {
     if (stopping) return; stopping = true;
     log('shutdown_draining');
     await gateway.close();
-    tunnels.forEach(t => t()); awake?.kill('SIGTERM');
+    awake?.kill('SIGTERM');
     log('shutdown_complete'); process.exit(0);
   };
   process.on('SIGTERM', stop); process.on('SIGINT', stop);
   process.on('SIGUSR1', () => gateway.drain());
   process.on('SIGUSR2', () => gateway.drain(false));
   try { const address = await gateway.start(); log('gateway_started', { address, model: config.model }); }
-  catch (e) { log('startup_failed', { error: e.message }); stopping = true; tunnels.forEach(t => t()); awake?.kill('SIGTERM'); gateway.store.close(); process.exit(1); }
+  catch (e) { log('startup_failed', { error: e.message }); stopping = true; gateway.nodes.forEach(n => n.stopTunnel?.()); awake?.kill('SIGTERM'); gateway.store.close(); process.exit(1); }
 }

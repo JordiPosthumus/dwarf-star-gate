@@ -2,14 +2,16 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { safeGatewayEvent, DeviceTelemetry, JournalReader } from './telemetry.mjs';
 import { safeRequestedThinking } from './requested-thinking.mjs';
+import { workerControl } from './worker-client.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const assets = new Map([['/', ['index.html', 'text/html']], ['/ui.css', ['ui.css', 'text/css']], ['/brand.css', ['brand.css', 'text/css']], ['/ui.js', ['ui.js', 'text/javascript']], ['/logo.png', ['logo.png', 'image/png']]]);
-export function createDashboard(getSnapshot, assetsDirectory = path.join(here, 'ui')) {
+export function createDashboard(getSnapshot, assetsDirectory = path.join(here, 'ui'), management = null) {
+  const csrf = randomBytes(32).toString('base64url');
   // Freeze one complete release in memory: edits on disk cannot expose half an
   // update to a live browser. Only the dashboard needs a reload to promote it.
   const bundle = new Map([...assets].map(([route, [file, mime]]) => [route, { bytes:fs.readFileSync(path.join(assetsDirectory,file)), mime }]));
@@ -23,6 +25,29 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
     // Loopback binding alone doesn't fence a browser's cross-origin/DNS-rebinding access.
     if (!hosts.includes(req.headers.host) || (req.headers.origin && !hosts.some(h => req.headers.origin === `http://${h}`)) || req.headers['sec-fetch-site'] === 'cross-site') {
       res.writeHead(403, headers); return res.end('Local same-origin dashboard only');
+    }
+    const reply = (status, value) => { if (!res.destroyed && !res.headersSent) { res.writeHead(status,{...headers,'content-type':'application/json'}); res.end(JSON.stringify(value)); } };
+    if (req.url === '/api/workers' && req.method === 'GET') {
+      if (!management) return reply(200, { enabled:false });
+      void management.read().then(registry => reply(200,{enabled:true,csrf_token:csrf,...registry})).catch(() => reply(503,{error:'Worker controls unavailable'}));
+      return;
+    }
+    const actions = { '/api/workers/add':'add', '/api/workers/remove':'remove', '/api/workers/drain':'drain', '/api/workers/resume':'resume' };
+    if (management && req.method === 'POST' && Object.hasOwn(actions,req.url)) {
+      const token = Buffer.from(req.headers['x-dsg-csrf'] || ''), expected = Buffer.from(csrf);
+      if (req.headers.origin !== `http://${req.headers.host}` || token.length !== expected.length || !timingSafeEqual(token,expected)) return reply(403,{error:'Same-origin worker-control session required; refresh and retry'});
+      if (req.headers['content-type'] !== 'application/json') return reply(415,{error:'JSON required'});
+      let body = '', ended = false;
+      const timer = setTimeout(() => { ended=true; reply(408,{error:'Incomplete worker-control request'}); req.destroy(); },5000);
+      req.on('data', chunk => { if (ended) return; body += chunk; if (Buffer.byteLength(body)>8192) { ended=true;clearTimeout(timer);reply(413,{error:'Worker configuration too large'}); } });
+      req.on('error',()=>{ended=true;clearTimeout(timer);});
+      req.on('aborted',()=>{ended=true;clearTimeout(timer);});
+      req.on('end',()=>{
+        clearTimeout(timer); if(ended)return; ended=true;
+        let input; try { input=JSON.parse(body); } catch { return reply(400,{error:'Invalid JSON'}); }
+        void management.act(actions[req.url],input).then(value=>reply(200,value)).catch(e=>reply(400,{error:e.message}));
+      });
+      return;
     }
     if (req.method !== 'GET') { res.writeHead(405, headers); return res.end('Read-only'); }
     if (req.url === '/api/status' || req.url === '/api/diagnostics') {
@@ -38,10 +63,10 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
 
 export async function runDashboard(configPath, port = 30010) {
   const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-  const devices = config.nodes.map(n => new DeviceTelemetry(n.id));
+  const devices = new Map(), readers = new Map();
   for (const node of config.nodes) {
     if (node.ssh && (!/^[\w.@-]+$/.test(node.ssh) || node.ssh.startsWith('-'))) throw new Error('Unsupported SSH alias');
-    if (!/^[\w@.-]+\.service$/.test(node.telemetry_service || 'ds4-vision-q2.service')) throw new Error('Unsupported journal unit');
+    if (node.telemetry_service !== null && !/^[\w@.-]+\.service$/.test(node.telemetry_service || 'ds4-vision-q2.service')) throw new Error('Unsupported journal unit');
   }
   const runtime = path.join(path.dirname(config.state_file), 'dashboard');
   fs.mkdirSync(runtime, { recursive: true, mode: 0o700 });
@@ -53,13 +78,14 @@ export async function runDashboard(configPath, port = 30010) {
     catch { writeError = 'Telemetry file could not be written; live monitoring continues'; }
   };
   function follow(node, device, reader, resetCursor = false) {
-    if (closed || !node.ssh) return;
+    if (closed || !node.ssh || readers.get(node.id)?.node !== node) return;
     if (!/^[\w.@-]+$/.test(node.ssh) || node.ssh.startsWith('-')) throw new Error('Unsupported SSH alias');
     const service = node.telemetry_service || 'ds4-vision-q2.service';
     if (!/^[\w@.-]+\.service$/.test(service)) throw new Error('Unsupported journal unit');
     const resume = reader.cursor && !resetCursor ? `--after-cursor='${reader.cursor}'` : reader.last_time ? `--since=@${Math.floor(reader.last_time / 1000)}` : '--since=-15min';
     const remote = `journalctl --user -u ${service} -f -n 2000 --no-pager -o json --output-fields=MESSAGE,__REALTIME_TIMESTAMP,__CURSOR ${resume}`;
     const child = spawn('/usr/bin/ssh', ['-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=2', node.ssh, remote], { stdio: ['ignore', 'pipe', 'ignore'] });
+    child.workerNode = node;
     children.add(child); let buffer = '', skipping = false;
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', data => {
@@ -80,12 +106,35 @@ export async function runDashboard(configPath, port = 30010) {
     child.on('error', () => { device.connected = false; });
     child.on('close', code => {
       children.delete(child); device.connected = false;
-      if (!closed) {
+      if (!closed && readers.get(node.id)?.node === node) {
         // A vacuumed cursor may be invalid: reconnect from now, without replaying counted history.
         const t = setTimeout(() => { timers.delete(t); follow(node, device, reader, code !== 0 && code !== 255); }, 10000);
         timers.add(t);
       }
     });
+  }
+  function syncDevices(workers) {
+    let definitions = config.nodes;
+    try { definitions = JSON.parse(fs.readFileSync(config.state_file,'utf8')).workers ?? definitions; }
+    catch { /* Keep initial journal configuration; gateway status owns membership. */ }
+    const ids = new Set(workers.map(w=>w.id));
+    for (const [id,entry] of readers) if (!ids.has(id) || !definitions.some(n=>n.id===id && JSON.stringify(n)===entry.signature)) {
+      readers.delete(id);
+      devices.delete(id);
+      for(const child of children) if(child.workerNode===entry.node) child.kill();
+    }
+    for (const id of devices.keys()) if(!ids.has(id)) devices.delete(id);
+    for(const w of workers) {
+      if(!devices.has(w.id)) devices.set(w.id,new DeviceTelemetry(w.id));
+      const device=devices.get(w.id), node=definitions.find(n=>n.id===w.id);
+      device.telemetry_configured=!!(node?.ssh && node.telemetry_service!==null);
+      if(device.telemetry_configured && !readers.has(w.id)) {
+        // Validate before any dynamic journal-reader command is constructed.
+        if(!/^[a-zA-Z0-9][\w.@-]{0,252}$/.test(node.ssh) || !/^[\w@.-]+\.service$/.test(node.telemetry_service || 'ds4-vision-q2.service')) {device.telemetry_configured=false;continue;}
+        const reader=new JournalReader(device);
+        readers.set(w.id,{node,signature:JSON.stringify(node),reader}); follow(node,device,reader);
+      }
+    }
   }
   function readEvents() {
     const log = path.join(path.dirname(config.state_file), 'gateway.log');
@@ -119,22 +168,26 @@ export async function runDashboard(configPath, port = 30010) {
       if (s.version !== 1 || !Array.isArray(s.workers)) throw new Error('Unsupported gateway');
       gateway = { model: s.model, context_length: s.context_length, total: s.total, healthy: s.healthy, available: s.available, active: s.active, queued: s.queued, draining: s.draining,
         workers: s.workers.map(w => ({ id: w.id, is_healthy: w.is_healthy, drained: w.drained, load: w.load, queued: w.queued, active_seconds: w.active_seconds, completed: w.completed, failed: w.failed, assigned_sessions: w.assigned_sessions,
-          requested_thinking: safeRequestedThinking(w.requested_thinking), last_requested_thinking: safeRequestedThinking(w.last_requested_thinking),
+          context_length:Number.isSafeInteger(w.context_length)?w.context_length:null, requested_thinking: safeRequestedThinking(w.requested_thinking), last_requested_thinking: safeRequestedThinking(w.last_requested_thinking),
           last_request_finished_at: typeof w.last_request_finished_at === 'string' && Number.isFinite(Date.parse(w.last_request_finished_at)) ? w.last_request_finished_at : null })) };
       gatewayAt = Date.now(); gatewayError = null;
+      syncDevices(s.workers);
     } catch { gatewayError = 'Gateway status unavailable; last snapshot is stale'; }
     finally { polling = false; }
   }
   const started = Date.now();
-  const snapshot = () => ({ version: 1, time: Date.now(), started, read_only: true, gateway, gateway_at: gatewayAt, gateway_error: gatewayError, telemetry_error: writeError,
-    devices: devices.map(d => d.snapshot()), events, notes: 'Rates are DS4 engine measurements. Cache counts cover observed prompt starts, not lifetime requests. Raw prompts and responses are excluded.' });
-  const server = createDashboard(snapshot);
+  const managementEnabled = config.ui_worker_management === true && !!config.control_socket;
+  const snapshot = () => ({ version: 1, time: Date.now(), started, read_only: !managementEnabled, worker_management:managementEnabled, gateway, gateway_at: gatewayAt, gateway_error: gatewayError, telemetry_error: writeError,
+    devices: [...devices.values()].map(d => d.snapshot()), events, notes: 'Rates are DS4 engine measurements. Cache counts cover observed prompt starts, not lifetime requests. Raw prompts and responses are excluded.' });
+  const server = createDashboard(snapshot, path.join(here,'ui'), managementEnabled ? {
+    read:()=>workerControl(config.control_socket,'/workers'),
+    act:(action,input)=>workerControl(config.control_socket,({add:'/add-worker',remove:'/remove-worker',drain:'/drain-workers',resume:'/resume-workers'})[action],input),
+  } : null);
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
-  config.nodes.forEach((n, i) => follow(n, devices[i], new JournalReader(devices[i])));
   await poll(); const interval = setInterval(poll, 2000);
   const close = () => { closed = true; clearInterval(interval); for (const t of timers) clearTimeout(t); for (const child of children) child.kill(); server.closeAllConnections(); server.close(); process.removeListener('SIGTERM', close); process.removeListener('SIGINT', close); };
   process.once('SIGTERM', close); process.once('SIGINT', close);
-  console.log(`Dwarf Star Gate: http://127.0.0.1:${server.address().port} (read-only)`);
+  console.log(`Dwarf Star Gate: http://127.0.0.1:${server.address().port} (${managementEnabled ? 'local worker controls' : 'read-only'})`);
   return { server, snapshot, close };
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)

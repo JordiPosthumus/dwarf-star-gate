@@ -2,13 +2,19 @@
 
 ## Unreleased
 
+- Live worker registration/removal through an opt-in local UI and private CLI;
+  checked registrations start paused and membership persists across restarts.
+- Mixed Mac/Spark native context support without changing server settings;
+  model-list metadata advertises the configured common pool guarantee.
+- Absolute health-probe deadline and regression test for trickling responses;
+  long inference-stream timeouts are unchanged.
 - Per-worker requested-thinking indicator, with current/last-request distinction,
   explicit unknown/default states and allowlisted diagnostic metadata.
 - Bounded passive request observation; byte-preservation, streaming upload,
   per-worker isolation and oversized vision-upload regression tests.
 - Prominent credit and links to Antirez's original DwarfStar / DS4 project.
 - Contributor and security-reporting guidance.
-- Branded read-only UI, owner-provided replaceable artwork and synthetic screenshots.
+- Branded UI, owner-provided replaceable artwork and synthetic screenshots.
 - Complete startup asset bundles and regression coverage for missing UI assets.
 - Generic N-worker documentation and fixture-pool tests through 20 workers.
 

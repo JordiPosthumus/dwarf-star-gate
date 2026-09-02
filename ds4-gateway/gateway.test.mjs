@@ -7,15 +7,17 @@ import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { AffinityStore, createGateway } from './gateway.mjs';
 import { requestedThinking, RequestedThinkingObserver, THINKING_CAPTURE_BYTES, safeRequestedThinking } from './requested-thinking.mjs';
+import { workerControl } from './worker-client.mjs';
+import { runDashboard } from './dashboard.mjs';
 
 async function until(fn, timeout = 3000) {
   const end = Date.now() + timeout;
   while (!fn()) { if (Date.now() > end) throw new Error('Condition timed out'); await delay(10); }
 }
 async function backend(id) {
-  const b = { id, records: [], active: 0, peak: 0, aborts: 0, health: true, receivedBytes: 0 };
+  const b = { id, records: [], active: 0, peak: 0, aborts: 0, health: true, receivedBytes: 0, context_length:153600 };
   b.server = http.createServer((req, res) => {
-    if (req.url === '/v1/models') return res.end(JSON.stringify({ data: [{ id: b.health ? 'deepseek-v4-flash' : 'wrong-model', context_length: 153600 }] }));
+    if (req.url === '/v1/models') return res.end(JSON.stringify({ data: [{ id: b.health ? 'deepseek-v4-flash' : 'wrong-model', context_length: b.context_length, top_provider:{context_length:b.context_length,max_completion_tokens:b.context_length} }] }));
     const chunks = [];
     req.on('data', c => { chunks.push(c); b.receivedBytes += c.length; });
     req.on('end', () => {
@@ -163,6 +165,96 @@ test('chunked uploads reach the backend before metadata parsing; no buffer-then-
   assert.equal(r.backends[0].records[0].body.toString(),first+last);
   assert.equal(r.gateway.stats().workers[0].last_requested_thinking.fields.reasoning_effort,'xhigh');
   assert.ok(!JSON.stringify(r.gateway.stats()).includes('PRIVATE'));
+});
+
+test('hot registration admits larger-context machines paused, preserves pool metadata and persists removal', async t => {
+  const r=await rig(t,2,{control_socket:true});
+  const m=await backend('m3-studio');m.context_length=300000;r.backends.push(m);
+  const ctl=(route,body)=>workerControl(r.config.control_socket,route,body);
+  const original=r.gateway.server;
+  const added=await ctl('/add-worker',{worker:{id:'m3-studio',url:m.url+'/v1'}});
+  assert.equal(added.workers.length,3);assert.equal(added.workers[2].drained,true);assert.equal(added.workers[2].context_length,300000);
+  assert.equal(added.workers[2].telemetry_service,null);assert.equal(r.gateway.server,original);
+  assert.notEqual((await r.request('{}','before-enable')).headers['x-ds4-node'],'m3-studio');
+  await ctl('/resume-workers',{workers:['m3-studio']});
+  await ctl('/drain-workers',{workers:['spark1','spark2']});
+  const model=JSON.parse((await r.request('',null,{method:'GET',path:'/v1/models'})).body).data[0];
+  assert.equal(model.context_length,153600);assert.equal(model.top_provider.max_completion_tokens,153600);
+  assert.equal(m.context_length,300000);
+  const body='{ "reasoning_effort":"xhigh", "max_tokens":153600, "messages":[{"content":"UNCHANGED"}] }';
+  assert.equal((await r.request(body,'mac-session')).headers['x-ds4-node'],'m3-studio');
+  assert.equal(m.records[0].body.toString(),body);
+  await ctl('/remove-worker',{id:'spark2'});await r.restart();
+  assert.deepEqual(r.gateway.nodes.map(n=>n.id),['spark1','m3-studio']);
+  assert.equal((await r.request('{}','mac-session')).headers['x-ds4-node'],'m3-studio');
+});
+
+test('failed compatibility checks and duplicate registrations cannot mutate membership', async t => {
+  const r=await rig(t,1,{control_socket:true});
+  const m=await backend('candidate');r.backends.push(m);m.context_length=128000;
+  const ctl=(route,body)=>workerControl(r.config.control_socket,route,body), before=JSON.stringify(r.gateway.store.data);
+  await assert.rejects(ctl('/add-worker',{worker:{id:'candidate',url:m.url}}),/Compatibility check failed/);
+  assert.equal(JSON.stringify(r.gateway.store.data),before);
+  m.context_length=300000;m.health=false;
+  await assert.rejects(ctl('/add-worker',{worker:{id:'candidate',url:m.url}}),/Compatibility check failed/);
+  m.health=true;
+  const outcomes=await Promise.allSettled([ctl('/add-worker',{worker:{id:'candidate',url:m.url}}),ctl('/add-worker',{worker:{id:'candidate',url:m.url}})]);
+  assert.equal(outcomes.filter(x=>x.status==='fulfilled').length,1);assert.equal(r.gateway.nodes.length,2);
+  await assert.rejects(ctl('/add-worker',{worker:{id:'other',url:m.url}}),/endpoint already registered/);
+  for(const worker of [{id:'bad',url:'http://example.test:8000'},{id:'bad',url:'http://127.0.0.1:39999',ssh:'-oProxyCommand=bad'},{id:'bad',url:'http://127.0.0.1:39999',ssh:'host',remote_port:0},{id:'bad',url:m.url,command:'DO_NOT_RUN'}])
+    await assert.rejects(ctl('/add-worker',{worker}));
+  assert.equal(r.gateway.nodes.length,2);
+});
+
+test('hot removal requires paused and fully idle; existing conversation reassigns only on its next request', async t => {
+  const r=await rig(t,2,{control_socket:true}), ctl=(route,body)=>workerControl(r.config.control_socket,route,body);
+  const first=r.request('{"delay":250}','home');await until(()=>r.gateway.stats().active===1);
+  const second=r.request('{"delay":100}','home');await until(()=>r.gateway.stats().queued===1);
+  await assert.rejects(ctl('/remove-worker',{id:'spark1'}),/Drain this worker/);
+  await ctl('/drain-workers',{workers:['spark1']});
+  await assert.rejects(ctl('/remove-worker',{id:'spark1'}),/Drain this worker/);
+  await Promise.all([first,second]);await ctl('/remove-worker',{id:'spark1'});
+  assert.equal(r.backends[0].records.length,2);assert.equal(r.backends[0].server.listening,true);
+  assert.equal((await r.request('{}','home')).headers['x-ds4-node'],'spark2');
+  assert.equal((await r.request('{}',null,{path:'/add-worker'})).status,404);
+  assert.equal((await r.request('{}',null,{path:'/remove-worker'})).status,404);
+});
+
+test('enabled dashboard controls operate through the real Unix control client without changing model servers', async t => {
+  const r=await rig(t,1,{control_socket:true,ui_worker_management:true});
+  const candidate=await backend('studio');candidate.context_length=300000;r.backends.push(candidate);
+  const configPath=path.join(path.dirname(r.config.state_file),'dashboard-config.json');
+  fs.writeFileSync(configPath,JSON.stringify({...r.config,port:r.address.port}));
+  const dashboard=await runDashboard(configPath,0);t.after(()=>dashboard.close());
+  const url=`http://127.0.0.1:${dashboard.server.address().port}`;
+  const session=await (await fetch(`${url}/api/workers`)).json();assert.equal(session.enabled,true);
+  const act=async(action,body)=>{
+    const response=await fetch(`${url}/api/workers/${action}`,{method:'POST',headers:{origin:url,'content-type':'application/json','x-dsg-csrf':session.csrf_token},body:JSON.stringify(body)});
+    assert.equal(response.status,200);return response.json();
+  };
+  await act('add',{worker:{id:'studio',url:candidate.url}});
+  assert.equal(r.gateway.nodes[1].drained,true);assert.equal(candidate.records.length,0);
+  await act('resume',{workers:['studio']});assert.equal(r.gateway.stats().available,2);
+  await act('drain',{workers:['studio']});await act('remove',{id:'studio'});
+  assert.equal(r.gateway.stats().total,1);assert.equal(candidate.server.listening,true);
+  assert.equal(candidate.records.length,0);assert.equal(candidate.context_length,300000);
+});
+
+test('an empty dynamic registry survives restart and can accept a worker again', async t => {
+  const r=await rig(t,1,{control_socket:true}), ctl=(route,body)=>workerControl(r.config.control_socket,route,body);
+  await ctl('/drain-workers',{workers:['spark1']});await ctl('/remove-worker',{id:'spark1'});await r.restart();
+  assert.equal(r.gateway.stats().total,0);assert.equal((await r.request('{}')).status,503);
+  await ctl('/add-worker',{worker:{id:'spark1',url:r.backends[0].url}});await ctl('/resume-workers',{workers:['spark1']});
+  assert.equal((await r.request('{}')).status,200);
+});
+
+test('health probes have a total deadline even if a worker trickles response bytes', async t => {
+  const r=await rig(t,1,{health_interval_ms:30,health_timeout_ms:80,health_failures:1});
+  const b=r.backends[0];b.server.removeAllListeners('request');let calls=0;
+  b.server.on('request',(_req,res)=>{calls++;res.writeHead(200);res.write('{');const timer=setInterval(()=>res.write(' '),10);res.on('close',()=>clearInterval(timer));});
+  await until(()=>!r.gateway.nodes[0].healthy);
+  await until(()=>calls>=3);
+  assert.equal(r.gateway.nodes[0].healthy,false);
 });
 
 test('new sessions spread; existing sessions stay; restart keeps assignments', async t => {

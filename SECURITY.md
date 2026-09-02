@@ -18,8 +18,16 @@ development line; no long-term-support releases or response-time SLA are promise
   configured authentication, network and transport-security boundary.
 - Operator commands use a local private Unix socket. They must not be proxied
   into public worker-management endpoints.
-- The dashboard binds loopback, validates Host/Origin and accepts read-only GETs.
-  It reads journal events through the operator's existing SSH authority.
+- The dashboard binds loopback and validates Host/Origin. It is read-only by
+  default. Explicit `ui_worker_management` enables four routing actions through
+  the private Unix socket, requiring exact same-origin JSON requests and a
+  per-process CSRF token. No model launch/stop/settings controls exist. Do not
+  expose this operator UI through a public or LAN reverse proxy.
+- The management view includes local endpoints/SSH aliases, but diagnostic exports
+  exclude them and the CSRF token. Any process with the operator's local authority
+  can use the socket; the browser checks are not isolation from that account.
+- Journal followers and registered remote-worker tunnels use the operator's
+  existing SSH authority. Registration does not install keys or modify SSH trust.
 - Conversation affinity identifiers are routing hints, not authorization tokens.
 - Config/state directories, SSH access and service accounts must be protected by
   the operator. A compromised local account is outside this gateway's isolation.

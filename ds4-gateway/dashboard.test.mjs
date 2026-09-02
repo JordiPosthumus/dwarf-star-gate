@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { once } from 'node:events';
 import vm from 'node:vm';
+import { setTimeout as delay } from 'node:timers/promises';
 import { parseTiming, safeGatewayEvent, DeviceTelemetry, JournalReader } from './telemetry.mjs';
 import { createDashboard, runDashboard } from './dashboard.mjs';
 const parse = (s, t = 1000) => parseTiming(`0902 14:00:00 ds4-server: ${s}`, t);
@@ -91,8 +92,8 @@ test('thinking UI distinguishes requested controls, omitted/unknown, current/las
   assert.match(vm.runInContext(`thinkingIndicator(${JSON.stringify(worker)},true,1788310000000)`,context),/Historical snapshot/);
   assert.match(source,/thinkingIndicator\(w,stale,now\)/);
 });
-async function fixture(t) {
-  const server = createDashboard(() => ({ version:1, read_only:true, devices:[] }));
+async function fixture(t, management = null) {
+  const server = createDashboard(() => ({ version:1, read_only:true, devices:[] }), undefined, management);
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   t.after(() => { server.closeAllConnections(); server.close(); });
   return { server, url:`http://127.0.0.1:${server.address().port}` };
@@ -146,6 +147,49 @@ test('dashboard rejects mutation, unknown paths, cross-origin and DNS-rebinding 
     });
     assert.equal(status, code, JSON.stringify(options));
   }
+});
+test('opt-in worker controls require same origin, JSON and a CSRF token; diagnostics never contain the token', async t => {
+  const calls=[];
+  const {url}=await fixture(t,{read:async()=>({workers:[]}),act:async(action,body)=>{calls.push({action,body});return {ok:true};}});
+  const init=await(await fetch(url+'/api/workers')).json();assert.equal(init.enabled,true);assert.ok(init.csrf_token.length>30);
+  const post=(route,body,headers={})=>fetch(url+route,{method:'POST',headers,body});
+  const valid={origin:url,'content-type':'application/json','x-dsg-csrf':init.csrf_token};
+  assert.equal((await post('/api/workers/add','{}',{'content-type':'application/json'})).status,403);
+  assert.equal((await post('/api/workers/add','{}',{...valid,origin:'https://evil.example'})).status,403);
+  assert.equal((await post('/api/workers/add','{}',{...valid,'x-dsg-csrf':'wrong'})).status,403);
+  assert.equal((await post('/api/workers/add','{}',{...valid,'content-type':'text/plain'})).status,415);
+  assert.equal((await post('/api/workers/add','{bad',valid)).status,400);
+  assert.equal((await post('/api/workers/add','x'.repeat(9000),valid)).status,413);
+  assert.equal(calls.length,0);
+  for(const action of ['add','drain','resume','remove']) assert.equal((await post('/api/workers/'+action,JSON.stringify({id:'fake'}),valid)).status,200);
+  assert.deepEqual(calls.map(x=>x.action),['add','drain','resume','remove']);
+  assert.ok(!(await(await fetch(url+'/api/diagnostics')).text()).includes(init.csrf_token));
+  const plain=await fixture(t);assert.deepEqual(await(await fetch(plain.url+'/api/workers')).json(),{enabled:false});
+});
+test('worker UI only offers removal after draining and finishing admitted work', () => {
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/\npoll\(\);\s*$/,'');
+  const context=vm.createContext({});vm.runInContext(source,context);
+  const rows=w=>vm.runInContext(`workerRows(${JSON.stringify([w])})`,context);
+  assert.match(rows({id:'m3',is_healthy:true,drained:false,load:0,queued:0}),/data-action="remove"[^>]+disabled/);
+  assert.match(rows({id:'m3',is_healthy:true,drained:true,load:1,queued:0}),/data-action="remove"[^>]+disabled/);
+  assert.doesNotMatch(rows({id:'m3',is_healthy:true,drained:true,load:0,queued:0}),/data-action="remove"[^>]+disabled/);
+  assert.match(rows({id:'m3',is_healthy:true,drained:true,load:0,queued:0,context_length:300000}),/300,000/);
+});
+test('dashboard follows live membership and marks machines without engine logs explicitly', async t => {
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-membership-ui-'));
+  t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  let workers=[{id:'spark1',is_healthy:true,load:0,context_length:153600}];
+  const backend=http.createServer((_req,res)=>res.end(JSON.stringify({version:1,model:'ds4',context_length:153600,workers,total:workers.length,healthy:workers.length})));
+  backend.listen(0,'127.0.0.1');await once(backend,'listening');t.after(()=>{backend.closeAllConnections();backend.close();});
+  const config=path.join(dir,'config.json');fs.writeFileSync(config,JSON.stringify({port:backend.address().port,api_key:'test',state_file:path.join(dir,'state.json'),nodes:[{id:'spark1'}]}));
+  const app=await runDashboard(config,0);t.after(app.close);
+  workers=[...workers,{id:'m3-studio',is_healthy:true,load:0,context_length:300000}];
+  const wait=async fn=>{const end=Date.now()+3500;while(!fn()){if(Date.now()>end)throw new Error('Dashboard membership did not refresh');await delay(20);}};
+  await wait(()=>app.snapshot().devices.length===2);
+  assert.equal(app.snapshot().devices[1].telemetry_configured,false);
+  assert.equal(app.snapshot().gateway.workers[1].context_length,300000);
+  workers=workers.slice(1);await wait(()=>app.snapshot().devices.length===1);
+  assert.equal(app.snapshot().devices[0].id,'m3-studio');
 });
 test('six-worker monitoring only reads gateway status; credentials and addresses never enter snapshots', async t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dwarf-gate-ui-'));

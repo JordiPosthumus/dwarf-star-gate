@@ -1,8 +1,8 @@
 # Dwarf Star Gate
 
-A local gateway for **N DGX Sparks on your LAN**, with durable session affinity
+A local gateway for **N DS4 workers—DGX Sparks, Macs, or a mix**, with durable session affinity
 and a lightweight control-room dashboard for [DS4](https://github.com/antirez/ds4).
-Define your worker pool in configuration; fleet size is not hard-coded.
+Register workers through the local UI or CLI; fleet size is not hard-coded.
 
 ## The engine is Antirez's. Start there.
 
@@ -74,7 +74,7 @@ not prove a worker has no direct clients; verify those before stopping it.
 
 ## Quick start
 
-Requires Node **22.22.2+**, SSH, and Linux DS4 workers. Gateway runs on macOS or
+Requires Node **22.22.2+**, running DS4 servers, and SSH for remote workers. Gateway runs on macOS or
 Linux. The optional click-to-open service scripts use macOS LaunchAgents.
 Install and understand the worker engine using
 [Antirez's upstream instructions](https://github.com/antirez/ds4/blob/main/README.md)
@@ -101,8 +101,9 @@ On Linux, or for foreground UI operation:
 npm run ui
 ```
 
-Open **http://127.0.0.1:30010**. The UI is read-only and never starts, restarts,
-stops, drains or reconfigures inference. The macOS UI start/open scripts enable
+Open **http://127.0.0.1:30010**. The UI is read-only by default. Opt-in worker
+controls can register, enable, drain and remove routing endpoints; they never
+start, restart, stop or reconfigure model servers. The macOS UI start/open scripts enable
 only the dashboard at login. To unload it:
 
 ```sh
@@ -124,10 +125,14 @@ Per worker, the dashboard displays:
 - Observed prefix reuse, genuinely cold starts, resident misses and disk restores.
 - Recent request outcomes, queue time, elapsed time and returned usage counters.
 
-Timing comes from a read-only SSH journal follower. The default remote user unit
+Timing comes from a read-only SSH journal follower on Linux. The default remote user unit
 is `ds4-vision-q2.service`; set `telemetry_service` per worker if yours differs.
 The observer parses known DS4 log formats; missing information is unknown, never
-an invented hit or speed. No inference request is made for metrics.
+an invented hit or speed. No inference request is made for metrics. Newly registered
+workers default to `telemetry_service: null`. Mac engine-log ingestion is not yet
+implemented: gateway load, context and requested-thinking indicators work, but
+engine timings/cache-hit measurements remain unknown. An optional `--journal-unit`
+on CLI registration enables a Linux worker's journal follower.
 
 An idle Spark retains its **last** measured speed with its age. It is not current
 throughput. A resident-cache miss can still produce a disk hit. Positive cached
@@ -187,16 +192,62 @@ unavailable/drained **and** has no unresolved gateway work. The assignment is
 saved before dispatch. Never change a worker ID to mean a different machine
 without considering its persisted assignments and caches.
 
-To expand the fleet, add unique IDs and backend tunnel definitions to `nodes`.
-Existing IDs retain their assignments. Pool configuration is read at startup,
-so adding/removing definitions requires a planned gateway restart after draining
-work; it is not hot discovery. Per-worker drain/resume needs no restart.
+Worker membership can change live without restarting the gateway. Stable IDs retain
+their assignments. Removing a paused, idle worker leaves its old session homes in
+the store; the next request can reassign normally. It does not delete server caches.
 
 The UI snapshots and validates its full HTML/CSS/JS/image bundle at startup.
 Stage all UI files and test first, then reload only the dashboard to promote a
 complete release. Editing files does not partially update a running dashboard.
 
 ## Operator controls
+
+Set `"ui_worker_management": true` in your private config and reload the dashboard
+to expose **Manage workers**. Keep this dashboard on loopback, not behind a public
+proxy. The controls use the private Unix socket, exact same-origin checks and a
+per-dashboard CSRF token. They do not change inference API authentication.
+
+1. Enter a stable worker ID and choose **Local server** or **Remote server via SSH**.
+2. For a local server, enter its URL. For SSH, supply an existing SSH host/alias,
+   the remote server port and an unused local tunnel URL.
+3. **Check & register** verifies the configured model and sufficient context. A
+   successful registration is persisted **paused**, with no generation probe.
+4. **Enable** admits requests. **Drain** stops new admission while already admitted
+   work finishes. **Remove** is available only when paused and idle.
+
+<details>
+<summary>Worker-management UI (synthetic demo)</summary>
+
+![Register and manage DS4 workers locally](docs/images/worker-management.png)
+
+</details>
+
+Registration leaves native context, output limits, hot/disk slots, quantization,
+thinking and server concurrency unchanged. Every worker must support at least the
+configured pool `context_length`. A larger-context Mac keeps that native capacity;
+the gateway advertises only the common pool guarantee in `/v1/models`. It does not
+truncate prompts or outputs or automatically send oversized requests to that Mac.
+For its larger context, use that server directly or a separately configured pool.
+No per-request token counting or capability-tier routing is implemented.
+
+Remote connections use gateway-owned SSH tunnels; existing SSH authentication and
+host trust must already work. Registration does not install DS4 or provision keys.
+Use each physical server once: different SSH aliases can hide a duplicate endpoint,
+which model-name/context checks cannot detect.
+
+The same controls are available from the CLI:
+
+```sh
+./workers.sh list
+./workers.sh add studio --url http://127.0.0.1:8000
+./workers.sh add laptop --url http://127.0.0.1:38103 --ssh worker-c --remote-port 8000
+./workers.sh resume studio
+./workers.sh drain studio
+./workers.sh remove studio
+```
+
+`--config FILE` or `DWARF_GATE_CONFIG` selects your private config. The original
+drain/resume CLI also remains supported:
 
 ```sh
 node ds4-gateway/control.mjs status
@@ -211,6 +262,15 @@ SIGUSR1/SIGUSR2 globally pause/resume admission; SIGTERM requests graceful gatew
 shutdown. Service-manager deadlines can still interrupt long streams. Do not kill
 or restart a live gateway casually; there is no blind restart script.
 
+**Persistence and rollback:** `config.nodes` seeds the initial fleet. After the
+first add/remove, `workers` in the existing affinity state file becomes the
+authoritative roster, including an empty roster; editing seed nodes no longer
+changes it. Back up both config and state before upgrades. Before rolling back to
+an older gateway without registry support, copy the current roster into that older
+version's compatible config during a planned shutdown. Otherwise removed seed
+workers could return. Never restore an old affinity snapshot over newer sessions
+without explicitly accepting that loss of routing history.
+
 ## Tests
 
 ```sh
@@ -219,11 +279,13 @@ npm test
 npm run privacy-check
 ```
 
-34 unit/integration tests exercise local HTTP fixtures—not GPUs. Coverage includes
+51 unit/integration tests exercise local HTTP fixtures—not GPUs. Coverage includes
 byte preservation, affinity persistence, FIFO admission, cancellation, no retries,
 two-to-six-worker expansion, draining four of six, private operator control,
 slow consumers, cache classification, journal deduplication, diagnostic redaction,
-six-worker monitoring, complete UI asset bundles and the same-origin/read-only boundary.
+six-worker monitoring, complete UI asset bundles, hot registration/removal,
+larger-context workers, empty-roster persistence, bounded health probes and the
+opt-in same-origin/CSRF management boundary. Default dashboards remain read-only.
 Pool-size tests cover 1, 2, 3, 6, 12 and 20 fixture workers. These are validation
 points, not configured limits or a claim of unlimited-scale load testing.
 GitHub Actions runs checks and tests on Linux and macOS.
