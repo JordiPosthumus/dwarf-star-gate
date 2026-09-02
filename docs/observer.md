@@ -2,6 +2,9 @@
 
 ## Collector
 
+See the [exact field-by-field schema](collector-schema.md) for what is and is not
+recorded, including the distinction between routing evidence and engine logs.
+
 Set `"dataset_enabled": true` in your private gateway config, then restart the
 gateway when safe. Model servers and their settings do not need to change.
 The default is off. Evidence is written under `training/` beside the affinity

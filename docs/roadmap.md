@@ -68,6 +68,10 @@ Derived vectors are sensitive too and stay in private local storage.
   appending a different answer to an existing stream is not transparent recovery.
 - Keep manual controls authoritative and model inference independent of the Genie.
   His failure must never prevent ordinary routing.
+- Improve operator-control audit records: show when a pause/resume was applied,
+  the authenticated actor/channel where available, and a supplied reason. Current
+  worker-drain events record time and targets, not who requested the change or why.
+  Do not infer intent or blame from a paused flag alone.
 
 A frozen Pi adapter is a later packaging option. The first observer is a small
 OpenAI-compatible client, not an embedded Pi/Hermes bot with shell access.
@@ -80,6 +84,42 @@ compatibility checks and small calibration. Removed machines stop being routing
 candidates; their measurements need not be erased. Never lower the pool context
 guarantee just to admit an incompatible worker. The dedicated Genie endpoint is
 not itself required to match the worker pool's context size.
+
+## Moonshot next idea: cache-aware session relocation
+
+Could the Genie move a conversation from a congested server to an idle compatible
+server, carrying its disk KV cache instead of paying for a full cold prefill?
+Worth investigating, **not implemented, and cross-device cache portability is
+not yet verified**. Matching API model names alone do not establish compatibility.
+
+Start with **between-turn migration**, not a running decode or process migration:
+
+1. Respect operator eligibility: a paused, drained or quarantined target is not
+   spare capacity. Check target context, memory/cache headroom and competing work.
+2. Prove cache compatibility across engine/cache format versions, model weights
+   and quantization, tokenizer/template, vision state, and CPU/GPU backends. A
+   Spark-to-Mac transfer needs its own restore test; do not assume it from two
+   successful independent cold runs or from a matching filename.
+3. Obtain a completed, immutable session snapshot through a supported export or
+   verified safe disk mechanism. Prevent new source work during handover. Never
+   copy a mutable file out from under an active generation.
+4. Compare expected completion times: source queue + warm execution versus
+   transfer + verification + destination restore + execution + cache eviction
+   cost. Require a meaningful margin under uncertainty and avoid repeated moves.
+5. Transfer privately over authenticated transport, verify integrity and restore
+   into isolated destination state. KV files contain sensitive conversation state;
+   never put them in public diagnostics or datasets.
+6. Prove real prefix reuse at the destination and atomically hand over affinity
+   with an ownership/generation check. Do not let a racing next turn split the
+   conversation across machines. Keep the source copy until handover is confirmed;
+   failure retains a safe source route or rolls back, without deleting the cache.
+
+Acceptance: correct continuation and actual cache-hit evidence across each
+supported hardware pair; interrupted transfer, incompatible cache, full target,
+new turn during migration, and failed commit/rollback tests. If compatibility is
+not possible, ordinary cold re-prefill remains an explicit costed alternative,
+not a disguised cache transfer. The Genie could propose a move; an independently
+validated deterministic mechanism would enforce the handover.
 
 ## How this roadmap grows
 
