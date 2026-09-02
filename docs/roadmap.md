@@ -142,6 +142,11 @@ Derived vectors are sensitive too and stay in private local storage.
 
 ## Later: the Genie can operate tested switches
 
+The [Genie powers plan](genie-powers-plan.md) specifies the CUDA recovery scenario,
+the separation of Genie/XGB/scheduler/executor, narrow action permissions, UI
+controls, tests and shadow-to-canary deployment. It is proposed behavior, not a
+claim that automatic restarts or editable endpoint controls are enabled today.
+
 - Quarantine a demonstrably faulty server for **new conversations**, without
   disrupting admitted work; reinstate after evidence-backed recovery.
 - Run bounded XGBoost tuning/evaluation jobs and promote passing models through

@@ -61,6 +61,9 @@ state explicitly; deleting a registration must not become a recovery bypass.
 
 ## Self-healing boundary
 
+See the [Genie powers plan](genie-powers-plan.md) for the proposed action contract,
+evidence guards, UI controls, failure tests and staged rollout.
+
 This release **isolates faults automatically**, but does not automatically restart
 model servers, replay streams or give the Genie control tools. A future opt-in
 recovery runner can perform an allowlisted service restart, with bounded retry

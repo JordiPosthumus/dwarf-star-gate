@@ -44,6 +44,18 @@ embeddings or credentials are stored. Keep the dataset out of Git and public exp
 
 ## Genie
 
+In the web UI, find **Gate Genie** beside **Evidence collection**. **Enable** /
+**Turn off** controls the observer. The **Dedicated server / DSG pool fallback**
+dropdown chooses between existing configured endpoints; it does not edit their
+addresses. There is no URL/model/credential editor in the UI yet. Set these in
+your private config's `genie` / `genie.fallback` objects, then restart only the
+dashboard and enable the observer again. Do not change worker URLs or the pool
+model just to change the Genie's inference source.
+
+For planned recovery permissions and editable endpoint controls, see the
+[Genie powers plan](genie-powers-plan.md). The current Enable button grants no
+restart or routing authority.
+
 Example **private** config addition (illustrative ports/SSH alias):
 
 ```json
