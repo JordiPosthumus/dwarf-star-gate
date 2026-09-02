@@ -10,6 +10,8 @@ Register workers through the local UI or CLI; fleet size is not hard-coded.
 Genie**, an opt-in local observer. See the [living feature roadmap](docs/roadmap.md)
 and [experimental collector/Genie setup](docs/observer.md). Planned cache-health
 auditing and XGBoost-guided routing are explicitly separate from today's features.
+An optional [offline XGBoost experiment](predictor/README.md) now provides a
+reproducible fit/evaluate/save/reload path. It does not control routing.
 
 ## The engine is Antirez's. Start there.
 
@@ -43,6 +45,9 @@ of the engine it was built around, not a claim to its authorship.
 
 Node.js built-ins only. No package installation, database, Kubernetes, frontend
 build system, CDN, analytics service or cloud telemetry.
+
+The optional offline predictor is a separate, locked Python environment; it is
+not imported or required by the gateway or dashboard.
 
 ## Dashboard
 

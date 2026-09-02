@@ -3,6 +3,12 @@
 **/sessions/
 **/snapshots/
 **/training/
+**/.venv/
+**/__pycache__/
+**/*.pyc
+**/*.ubj
+predictor/artifacts/
+**/worker-profiles.local.json
 **/backups/
 **/node_modules/
 **/.DS_Store

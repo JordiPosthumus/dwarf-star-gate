@@ -34,6 +34,12 @@ rewrites, unrelated-session merging, or speculative cache deletion.
 
 ## Then: measured ETA prediction with XGBoost
 
+**First offline slice is implemented:** an optional [XGBoost training package](../predictor/README.md)
+fits real numerical evidence, separates machine identity from hardware class/RAM,
+performs chronological/session-disjoint evaluation and saves a checksummed model
+with its preprocessing and report. It has **no live routing or promotion path**.
+This establishes the training plumbing; a tiny first fit is not calibration.
+
 Optimize **expected completion time**, including waiting, cache restoration,
 prefill and generation—not raw tokens/second alone.
 
@@ -52,7 +58,7 @@ prefill and generation—not raw tokens/second alone.
 5. Shadow routing first. Deploy only after measured validation, with a fixed,
    immutable compatible fallback model and deterministic routing fallback.
 
-No embedding encoder or XGBoost predictor is installed by the current observer.
+No embedding encoder or live XGBoost predictor is installed by the current observer.
 Because raw text is not retained, old numerical records cannot later acquire
 embeddings. Embedding-enabled collection begins a new, versioned dataset slice.
 Derived vectors are sensitive too and stay in private local storage.

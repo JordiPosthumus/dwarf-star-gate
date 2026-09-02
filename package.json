@@ -9,6 +9,7 @@
     "test": "node --test ds4-gateway/gateway.test.mjs ds4-gateway/dashboard.test.mjs ds4-gateway/observer.test.mjs",
     "check": "node scripts/check.mjs",
     "privacy-check": "node scripts/privacy-check.mjs",
+    "predictor:test": "uv run --locked --project predictor python -m unittest discover -s predictor -v",
     "start": "node ds4-gateway/gateway.mjs config.local.json",
     "ui": "node ds4-gateway/dashboard.mjs config.local.json",
     "ui:demo": "node examples/dashboard-demo.mjs"

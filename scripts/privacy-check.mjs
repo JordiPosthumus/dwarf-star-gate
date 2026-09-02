@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 const git = (...args) => execFileSync('git',args,{encoding:'utf8'});
 const files = git('ls-files','-z').split('\0').filter(Boolean);
 const failures = [];
-const forbidden = /(?:^|\/)(?:runtime|sessions|snapshots|backups|\.pi|pi-setup|node_modules)(?:\/|$)|(?:^|\/)(?:auth|models-store|config\.local|config\.production|config\.candidate)\.json$|\.(?:kv|gguf|key|pem|log|jsonl|plist)$|\.bak/;
+const forbidden = /(?:^|\/)(?:runtime|sessions|snapshots|backups|training|artifacts|\.venv|__pycache__|\.pi|pi-setup|node_modules)(?:\/|$)|(?:^|\/)(?:auth|models-store|config\.local|config\.production|config\.candidate|worker-profiles\.local)\.json$|\.(?:kv|gguf|ubj|pyc|key|pem|log|jsonl|plist)$|\.bak/;
 const patterns = [
   ['personal home path', /\/(?:Users|home)\/[a-zA-Z][\w.-]*\//],
   ['private network address', /\b(?:192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+)\b/],
