@@ -6,6 +6,14 @@ import path from 'node:path';
 import http from 'node:http';
 import {Dataset,evidence} from './dataset.mjs';
 import {Genie,briefing} from './genie.mjs';
+import {safeQuarantine} from './generation-health.mjs';
+
+test('Genie receives an allowlisted quarantine fact, not raw backend text or credentials',()=>{
+  const bad={reason:'fatal_accelerator_error',at:'2026-09-02T00:00:00Z',request_id:'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',raw:'PRIVATE'};
+  assert.equal(safeQuarantine({reason:'PRIVATE'}),null);assert.ok(!JSON.stringify(safeQuarantine(bad)).includes('PRIVATE'));
+  const report=briefing({gateway:{workers:[{id:'spark1',quarantine:bad}]},devices:[],events:[]});
+  assert.equal(report.workers[0].quarantine.reason,'fatal_accelerator_error');assert.ok(!JSON.stringify(report).includes('PRIVATE'));
+});
 import {createDashboard} from './dashboard.mjs';
 import {capacity,phase,Activity} from './ui/activity.js';
 const snapshot=()=>({time:Date.now(),devices:[],events:[],gateway:{workers:[],context_length:262144,active:0,queued:0}});

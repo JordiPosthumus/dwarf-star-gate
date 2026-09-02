@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { RequestedThinkingObserver } from './requested-thinking.mjs';
 import { Dataset } from './dataset.mjs';
+import { GenerationFaultObserver, verifyGeneration } from './generation-health.mjs';
 import { workerConfig, workerConfigs, assertUniqueWorker } from './worker-config.mjs';
 import net from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -49,6 +50,8 @@ export class AffinityStore {
       if (fs.existsSync(filename)) data = JSON.parse(fs.readFileSync(filename, 'utf8'));
       if (data.version !== 1 || !data.sessions || Array.isArray(data.sessions)) throw new Error('Invalid affinity store');
       if (data.pool_context_length !== undefined && !validContext(data.pool_context_length)) throw new Error('Invalid saved pool context limit');
+      if(data.quarantined!==undefined && (!data.quarantined || typeof data.quarantined!=='object' || Array.isArray(data.quarantined)))throw new Error('Invalid saved quarantine state');
+      for(const entry of Object.values(data.quarantined??{}))if(!entry || !['fatal_accelerator_error','accelerator_checkpoint_failure','repeated_inference_failures'].includes(entry.reason) || typeof entry.request_id!=='string' || !Number.isFinite(Date.parse(entry.at)))throw new Error('Invalid saved quarantine entry');
       for (const [key, item] of Object.entries(data.sessions)) {
         if (!/^[a-f0-9]{64}$/.test(key) || typeof item.node !== 'string') throw new Error('Invalid affinity entry');
       }
@@ -110,7 +113,7 @@ export function createGateway(config) {
   const store = new AffinityStore(config.state_file);
   // Like registered workers, an explicit UI setting survives process restarts.
   const contextLimit = () => store.data.pool_context_length ?? config.context_length;
-  const makeNode = n => ({ ...n, drained: store.data.drained?.[n.id] === true, healthy: false, failures: 0, active: null, queue: [], completed: 0, failed: 0, probing: false });
+  const makeNode = n => ({ ...n, drained: store.data.drained?.[n.id] === true, quarantine:store.data.quarantined?.[n.id] ?? null, inferenceFailures:0, healthy: false, failures: 0, active: null, queue: [], completed: 0, failed: 0, probing: false });
   let definitions;
   try { definitions = store.data.workers === undefined ? initial : workerConfigs(store.data.workers); }
   catch (e) { store.close(); throw e; }
@@ -126,7 +129,7 @@ export function createGateway(config) {
   const stats = () => ({ version: 1, model: config.model, context_length: contextLimit(), draining, dataset:dataset.snapshot(),
     total: nodes.length, healthy: nodes.filter(n => n.healthy).length, available: nodes.filter(n => n.healthy && !n.drained).length,
     active: nodes.filter(n => n.active).length, queued: nodes.reduce((s, n) => s + n.queue.length, 0),
-    workers: nodes.map(n => ({ id: n.id, url: n.url, is_healthy: n.healthy, drained: n.drained,
+    workers: nodes.map(n => ({ id: n.id, url: n.url, is_healthy: n.healthy, drained: n.drained, quarantine:n.quarantine, inference_failures:n.inferenceFailures,
       gateway_drained: n.drained && !n.active && !n.queue.length, load: Number(!!n.active),
       queued: n.queue.length, assigned_sessions: store.count(n.id), completed: n.completed, failed: n.failed,
       active_seconds: n.active ? Math.round((Date.now() - n.active.dispatched) / 1000) : 0,
@@ -134,6 +137,15 @@ export function createGateway(config) {
       last_requested_thinking: n.lastThinking ?? null, last_request_finished_at: n.lastFinishedAt ?? null,
       context_length: n.contextLength ?? null,
       last_probe: n.lastProbe, probe_error: n.probeError })) });
+
+  function quarantine(node, reason, requestId) {
+    if(node.quarantine)return;
+    node.quarantine={reason,request_id:requestId,at:new Date().toISOString()};
+    node.healthy=false;
+    try {store.save({...store.data,quarantined:{...store.data.quarantined,[node.id]:node.quarantine}});}
+    catch {draining=true;log('quarantine_persistence_failed',{node:node.id});}
+    log('worker_quarantined',{node:node.id,...node.quarantine});
+  }
 
   function pick(exclude) {
     return nodes.filter(n => n.healthy && !n.drained && n.id !== exclude).sort((a, b) =>
@@ -166,9 +178,14 @@ export function createGateway(config) {
     job.thinking = new RequestedThinkingObserver(req.headers['content-encoding']);
     const observeBody = chunk => {requestBytes+=chunk.length;job.thinking.accept(chunk);};
     const bodyEnded = () => job.thinking.finish();
-    let settled = false, response;
+    let settled = false, response, faults;
     const finish = (outcome, detail) => {
       if (settled) return; settled = true;
+      const fault=faults?.finish();
+      if(fault){quarantine(node,fault,job.id);if(outcome==='complete')outcome='upstream_engine_error';}
+      else if(!job.cancelled && ((outcome==='upstream_http_error' && detail>=500) || ['incomplete_sse','upstream_error','upstream_stream_error','upstream_aborted','connection_closed'].includes(outcome))) {
+        if(++node.inferenceFailures>=3)quarantine(node,'repeated_inference_failures',job.id);
+      } else if(outcome==='complete')node.inferenceFailures=0;
       clearTimeout(job.deadline);
       req.off('data', observeBody); req.off('end', bodyEnded); job.thinking.dispose();
       node.lastThinking = job.thinking.result; node.lastFinishedAt = new Date().toISOString();
@@ -193,6 +210,8 @@ export function createGateway(config) {
       res.writeHead(up.statusCode, outHeaders);
       res.flushHeaders();
       const isSSE = String(up.headers['content-type']).includes('text/event-stream');
+      faults=new GenerationFaultObserver(isSSE);
+      if(isSSE || up.statusCode>=400)up.on('data',chunk=>faults.accept(chunk));
       up.once('data',()=>{firstBodyByte=performance.now()-job.dispatchedMono;});
       if (isSSE) up.on('data', chunk => observer.accept(chunk));
       up.on('error', e => { res.destroy(); finish(job.cancelled ? 'client_cancelled' : 'upstream_stream_error', e.code); });
@@ -318,7 +337,7 @@ export function createGateway(config) {
         node.probing = false; node.lastProbe = new Date().toISOString(); node.probeError = reason;
         if (reason && reason !== 'model_or_context_mismatch') node.modelMatches=false;
         const was = node.healthy;
-        if (ok) { node.failures = 0; node.healthy = true; }
+        if (ok) { node.failures = 0; node.healthy = !node.quarantine; }
         else if (++node.failures >= (config.health_failures ?? 3)) node.healthy = false;
         if (was !== node.healthy) log('worker_health', { node: node.id, healthy: node.healthy, reason });
         resolve();
@@ -373,7 +392,7 @@ export function createGateway(config) {
       fs.copyFileSync(store.filename,backup,fs.constants.COPYFILE_EXCL);fs.chmodSync(backup,0o600);
     }
     store.save({...store.data,pool_context_length:input.context_length});
-    for (const n of enabled) {n.healthy=true;n.failures=0;n.probeError=undefined;}
+    for (const n of enabled) {n.healthy=!n.quarantine;n.failures=0;n.probeError=undefined;}
     for (const n of nodes) if (!n.modelMatches || !validContext(n.contextLength) || n.contextLength<contextLimit()) {
       n.healthy=false;n.failures=config.health_failures ?? 3;
       n.probeError=n.probeError || 'model_or_context_mismatch';
@@ -449,6 +468,23 @@ export function createGateway(config) {
             const selected=nodes.filter(n=>input.workers.includes(n.id));
             await Promise.all(selected.map(freshProbe));
             if (selected.some(n=>n.probeError || !validContext(n.contextLength) || n.contextLength<contextLimit())) throw new Error('Cannot enable a server without a fresh compatible model/context probe');
+            const recovered=[];
+            for(const n of selected.filter(n=>n.quarantine)) {
+              if(n.active || n.queue.length)throw new Error('Wait for this worker to become idle before recovery verification');
+              const proof=await verifyGeneration(n.url,config.model);
+              if(shuttingDown || draining)throw new Error('Gateway is draining');
+              recovered.push({node:n,proof});
+            }
+            const quarantined={...store.data.quarantined},paused={...store.data.drained};
+            for(const {node} of recovered)delete quarantined[node.id];
+            for(const n of selected)paused[n.id]=false;
+            // Commit a multi-worker resume once, after every requested check
+            // passes. Partial verification must not partially enable a fleet.
+            store.save({...store.data,quarantined,drained:paused});
+            for(const {node,proof} of recovered){node.quarantine=null;node.inferenceFailures=0;node.healthy=true;log('worker_recovery_verified',{node:node.id,...proof});}
+            for(const n of selected)n.drained=false;
+            log('workers_drain_changed',{ids:input.workers,drained:false});
+            return json(res,200,stats());
           }
           json(res, 200, drainNodes(input.workers, req.url === '/drain-workers'));
         } catch (e) { error(res, 400, 'invalid_control_request', e.message); }

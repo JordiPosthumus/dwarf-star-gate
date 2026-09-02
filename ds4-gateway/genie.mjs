@@ -1,12 +1,13 @@
 // Observation-only MVG. No tools, shell, worker controls, or routing writes.
 import { randomUUID } from 'node:crypto';
 import { StringDecoder } from 'node:string_decoder';
+import { safeQuarantine } from './generation-health.mjs';
 
 export function briefing(snapshot) {
   const g=snapshot.gateway;
   return {time:snapshot.time,gateway_stale:!!snapshot.gateway_error,context_length:g?.context_length,
     active:g?.active,queued:g?.queued,dataset:g?.dataset ?? {enabled:false,status:'Running gateway does not expose the new collector'},
-    workers:(g?.workers||[]).slice(0,32).map(w=>({id:w.id,healthy:w.is_healthy,paused:w.drained,active:w.load,queued:w.queued,active_seconds:w.active_seconds,
+    workers:(g?.workers||[]).slice(0,32).map(w=>({id:w.id,healthy:w.is_healthy,paused:w.drained,quarantine:safeQuarantine(w.quarantine),active:w.load,queued:w.queued,active_seconds:w.active_seconds,
       context_length:w.context_length,requested_thinking:w.requested_thinking,
       telemetry:(()=>{const d=snapshot.devices.find(d=>d.id===w.id);return d?{connected:d.connected,last_event:d.last_event,phase:d.phase,
         decode:d.decode?.tps,prefill:d.prefill?.tps,last_prompt:d.prompt,cache:d.cache}:null;})()})),

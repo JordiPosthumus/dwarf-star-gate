@@ -27,7 +27,7 @@ export function safeGatewayEvent(raw) {
   if (typeof raw.request_id === 'string' && /^[\da-f-]{36}$/.test(raw.request_id)) e.request_id = raw.request_id;
   if (typeof raw.session === 'string' && /^[\da-f]{12}$/.test(raw.session)) e.session = raw.session;
   if (['new', 'existing', 'none', 'reassigned'].includes(raw.affinity)) e.affinity = raw.affinity;
-  if (['complete', 'client_cancelled', 'upstream_error', 'upstream_stream_error', 'upstream_aborted', 'upstream_http_error', 'incomplete_sse', 'connection_closed', 'timeout'].includes(raw.outcome)) e.outcome = raw.outcome;
+  if (['complete', 'client_cancelled', 'upstream_error', 'upstream_stream_error', 'upstream_aborted', 'upstream_http_error', 'upstream_engine_error', 'incomplete_sse', 'connection_closed', 'timeout'].includes(raw.outcome)) e.outcome = raw.outcome;
   else if (raw.outcome) e.outcome = 'other';
   for (const key of ['queue_ms', 'elapsed_ms']) if (Number.isFinite(raw[key]) && raw[key] >= 0) e[key] = raw[key];
   if (typeof raw.sse_done === 'boolean') e.sse_done = raw.sse_done;

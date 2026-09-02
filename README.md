@@ -12,6 +12,9 @@ and [experimental collector/Genie setup](docs/observer.md). Planned cache-health
 auditing and XGBoost-guided routing are explicitly separate from today's features.
 An optional [offline XGBoost experiment](predictor/README.md) now provides a
 reproducible fit/evaluate/save/reload path. It does not control routing.
+Workers with recognized engine faults or repeated inference failures are
+[quarantined persistently](docs/generation-health.md); recovery requires a real
+generation check. Automatic model-service restarts are not implemented yet.
 
 ## The engine is Antirez's. Start there.
 

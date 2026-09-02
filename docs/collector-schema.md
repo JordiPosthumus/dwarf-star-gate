@@ -78,7 +78,9 @@ remains incomplete evidence. There is no result label for an unchosen server.
 
 The `outcome` allowlist is `complete`, `client_cancelled`, `upstream_error`,
 `upstream_stream_error`, `upstream_aborted`, `upstream_http_error`,
-`incomplete_sse`, `connection_closed`, and `timeout`. Raw backend error strings
+`upstream_engine_error`, `incomplete_sse`, `connection_closed`, and `timeout`. The
+engine-error outcome covers a recognized error envelope even inside an HTTP-200
+SSE response. Raw backend error strings
 and response bodies are not copied into the dataset.
 
 ## Separately collected engine telemetry

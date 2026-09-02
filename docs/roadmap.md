@@ -93,11 +93,12 @@ Next additions should be:
    while predictions are disconnected. Keep prompts and vectors out of public
    diagnostic downloads and screenshots.
 
-Fatal-worker detection/quarantine is a separate urgent deterministic fix; it must
-not wait for embeddings, XGB training or the Genie LLM. Tests must include an API
-that still answers model-list probes while inference fails, repeated failures,
-existing session affinity, already queued work and evidence-backed reinstatement.
-Do not blindly replay partial streams or use quarantine to cancel admitted work.
+**Implemented separately:** [generation-failure quarantine](generation-health.md)
+does not depend on embeddings, XGB training or the Genie LLM. Its tests cover an
+API that still answers model-list probes while inference fails, repeated failures,
+existing session affinity, queued-but-undispatched rejection without replay and
+verified reinstatement. Automatic service restart and transparent client recovery
+remain unimplemented; already running streams are never blindly replayed.
 
 ## Next: cache health, not just cache counters
 

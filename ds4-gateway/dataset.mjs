@@ -15,7 +15,7 @@ export function evidence(kind, raw) {
   if (['new','existing','none','reassigned'].includes(raw.affinity)) row.affinity=raw.affinity;
   if (['genie','unclassified'].includes(raw.traffic_class)) row.traffic_class=raw.traffic_class;
   if (typeof raw.session==='string' && /^[a-f0-9]{64}$/.test(raw.session)) row.session=raw.session;
-  if (['complete','client_cancelled','upstream_error','upstream_stream_error','upstream_aborted','upstream_http_error','incomplete_sse','connection_closed','timeout'].includes(raw.outcome)) row.outcome=raw.outcome;
+  if (['complete','client_cancelled','upstream_error','upstream_stream_error','upstream_aborted','upstream_http_error','upstream_engine_error','incomplete_sse','connection_closed','timeout'].includes(raw.outcome)) row.outcome=raw.outcome;
   if (raw.usage) row.usage=Object.fromEntries(['prompt_tokens','completion_tokens','cached_tokens'].map(k=>[k,number(raw.usage[k])]));
   if(kind==='finish')row.finish_reason=['stop','length','tool_calls','function_call','content_filter'].includes(raw.finish_reason)?raw.finish_reason:null;
   if (raw.requested_thinking) row.requested_thinking=safeRequestedThinking(raw.requested_thinking);

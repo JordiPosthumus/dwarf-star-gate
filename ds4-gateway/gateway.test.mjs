@@ -9,6 +9,7 @@ import { AffinityStore, createGateway } from './gateway.mjs';
 import { requestedThinking, RequestedThinkingObserver, THINKING_CAPTURE_BYTES, safeRequestedThinking } from './requested-thinking.mjs';
 import { workerControl } from './worker-client.mjs';
 import { runDashboard } from './dashboard.mjs';
+import { GenerationFaultObserver } from './generation-health.mjs';
 
 async function until(fn, timeout = 3000) {
   const end = Date.now() + timeout;
@@ -25,6 +26,16 @@ async function backend(id) {
       b.records.push({ body, headers: req.headers, payload: p }); b.active++; b.peak = Math.max(b.peak, b.active);
       let ended = false;
       res.on('close', () => { b.active--; if (!ended) b.aborts++; });
+      if(p.messages?.[0]?.content==='Reply with exactly DSG_RECOVERY_OK and nothing else.') {
+        ended=true;res.setHeader('content-type','application/json');
+        return res.end(JSON.stringify({choices:[{finish_reason:'stop',message:{content:b.recoveryFails?'NO':'DSG_RECOVERY_OK'}}]}));
+      }
+      if(p.fatal_error) {
+        const finish=()=>{ended=true;res.end(JSON.stringify({error:{message:'cuda prefill state reset failed',type:'invalid_request_error'}}));};
+        res.writeHead(500,{'content-type':'application/json'});setTimeout(finish,p.delay??0);return;
+      }
+      if(p.fatal_sse) {ended=true;res.writeHead(200,{'content-type':'text/event-stream'});res.end('event: error\ndata: {"error":{"message":"cuda resumed prefill failed while extending checkpoint","type":"server_error"}}\n\ndata: [DONE]\n\n');return;}
+      if(p.client_error) {ended=true;res.writeHead(400);res.end('invalid request');return;}
       if (p.http_error) { ended = true; res.writeHead(503); res.end('backend-error'); return; }
       if (p.disconnect) { res.destroy(); return; }
       if (p.large_stream) {
@@ -77,6 +88,86 @@ async function rig(t, count = 2, overrides = {}) {
   t.after(async () => { await r.gateway.close(); await Promise.all(backends.map(b => b.close())); });
   return r;
 }
+
+test('fault observer recognizes split error envelopes but never quoted answers or oversized lines',()=>{
+  const raw=Buffer.from('event: error\ndata: {"error":{"message":"cuda resumed prefill failed while extending checkpoint"}}\n\n');
+  const o=new GenerationFaultObserver(true);for(let i=0;i<raw.length;i+=3)o.accept(raw.subarray(i,i+3));
+  assert.equal(o.finish(),'accelerator_checkpoint_failure');assert.equal(o.pending,'');
+  const answer=new GenerationFaultObserver(true);answer.accept(Buffer.from('data: {"choices":[{"delta":{"content":"cuda prefill state reset failed"}}]}\n\n'));assert.equal(answer.finish(),null);
+  const big=new GenerationFaultObserver(true);big.accept(Buffer.from('data: '+ 'x'.repeat(200000)+'\n\n'));assert.ok(big.pending.length<=65536);big.accept(raw);assert.equal(big.finish(),'accelerator_checkpoint_failure');
+  const json=new GenerationFaultObserver();json.accept(Buffer.from('{"message":"an illegal memory access was encountered","type":"invalid_request_error"}'));assert.equal(json.finish(),'fatal_accelerator_error');
+});
+
+test('fatal HTTP failure quarantines persistently despite good model probes and reassigns only next request',async t=>{
+  const r=await rig(t,2,{health_interval_ms:20,control_socket:true});
+  const failed=await r.request('{"fatal_error":true}','failed-session');
+  assert.equal(failed.status,500);assert.match(failed.body,/cuda prefill state reset failed/);
+  await until(()=>r.gateway.stats().workers[0].quarantine);
+  await delay(80);assert.equal(r.gateway.stats().workers[0].is_healthy,false);
+  assert.equal(r.backends[0].records.length,1);assert.equal(r.backends[1].records.length,0);
+  await r.restart();assert.equal(r.gateway.stats().workers[0].is_healthy,false);
+  const retry=await r.request('{}','failed-session');assert.equal(retry.headers['x-ds4-node'],'spark2');assert.equal(retry.headers['x-ds4-affinity'],'reassigned');
+  await workerControl(r.config.control_socket,'/set-context-limit',{context_length:153600,expected_context_length:153600});
+  assert.equal(r.gateway.stats().workers[0].is_healthy,false);
+  assert.equal((await r.request('{}',null,{path:'/resume-workers'})).status,404);
+});
+
+test('fatal SSE envelope cannot masquerade as a successful DONE response',async t=>{
+  const r=await rig(t,1,{dataset_enabled:true});const result=await r.request('{"fatal_sse":true}','sse-fail');
+  assert.equal(result.status,200);assert.match(result.body,/resumed prefill/);assert.match(result.body,/\[DONE\]/);
+  assert.equal(r.gateway.stats().workers[0].quarantine.reason,'accelerator_checkpoint_failure');
+  await until(()=>r.gateway.stats().dataset.finished===1);assert.equal(r.gateway.stats().dataset.failed_or_cancelled,1);
+});
+
+test('quarantine rejects queued unstarted requests without replay and allows their subsequent retry elsewhere',async t=>{
+  const r=await rig(t);const first=r.request('{"fatal_error":true,"delay":100}','a');
+  await until(()=>r.backends[0].records.length===1);
+  const queued=r.request('{}','a');await until(()=>r.gateway.stats().workers[0].queued===1);
+  assert.equal((await first).status,500);assert.equal((await queued).status,503);
+  assert.equal(r.backends[0].records.length,1);assert.equal(r.backends[1].records.length,0);
+  assert.equal((await r.request('{}','a')).headers['x-ds4-node'],'spark2');
+});
+
+test('ordinary 4xx does not quarantine; success resets repeated operational failure streak',async t=>{
+  const r=await rig(t,1,{health_interval_ms:20});
+  for(let i=0;i<4;i++)assert.equal((await r.request('{"client_error":true}','a')).status,400);
+  assert.equal(r.gateway.stats().workers[0].quarantine,null);
+  await r.request('{"http_error":true}','a');await r.request('{"http_error":true}','a');
+  assert.equal(r.gateway.stats().workers[0].quarantine,null);
+  await r.request('{}','a');assert.equal(r.gateway.stats().workers[0].inference_failures,0);
+  for(let i=0;i<3;i++)await r.request('{"http_error":true}','a');
+  assert.equal(r.gateway.stats().workers[0].quarantine.reason,'repeated_inference_failures');
+  await delay(80);assert.equal(r.gateway.stats().workers[0].is_healthy,false);
+});
+
+test('recovery requires real generation; failed verification retains quarantine and healthy recovery clears it durably',async t=>{
+  const r=await rig(t,1,{control_socket:true});await r.request('{"fatal_error":true}','a');
+  r.backends[0].recoveryFails=true;
+  await assert.rejects(workerControl(r.config.control_socket,'/resume-workers',{workers:['spark1']}),/generation did not pass/);
+  assert.ok(r.gateway.stats().workers[0].quarantine);assert.equal(r.gateway.stats().available,0);
+  r.backends[0].recoveryFails=false;
+  await workerControl(r.config.control_socket,'/resume-workers',{workers:['spark1']});
+  assert.equal(r.gateway.stats().available,1);assert.equal(r.gateway.stats().workers[0].quarantine,null);
+  await r.restart();assert.equal(r.gateway.stats().workers[0].quarantine,null);
+  assert.equal((await r.request('{}','a')).status,200);
+});
+
+test('quarantine save failure blocks new admission instead of silently losing the fault',async t=>{
+  const r=await rig(t,1);await r.request('{}','known');
+  const save=r.gateway.store.save;r.gateway.store.save=()=>{throw new Error('disk full');};
+  try {await r.request('{"fatal_error":true}','known');assert.equal(r.gateway.stats().draining,true);assert.equal((await r.request('{}')).status,503);}
+  finally {r.gateway.store.save=save;}
+});
+
+test('multi-worker recovery does not partially clear quarantine when one verification fails',async t=>{
+  const r=await rig(t,2,{control_socket:true});
+  await r.request('{"fatal_error":true}','a');await r.request('{"fatal_error":true}','b');
+  assert.equal(r.gateway.stats().available,0);r.backends[1].recoveryFails=true;
+  await assert.rejects(workerControl(r.config.control_socket,'/resume-workers',{workers:['spark1','spark2']}),/generation did not pass/);
+  assert.equal(r.gateway.stats().available,0);assert.ok(r.gateway.stats().workers.every(w=>w.quarantine));
+  r.backends[1].recoveryFails=false;await workerControl(r.config.control_socket,'/resume-workers',{workers:['spark1','spark2']});
+  assert.equal(r.gateway.stats().available,2);
+});
 
 test('collector records decision-time fleet and outcomes without altering body or stream',async t=>{
   const r=await rig(t,2,{dataset_enabled:true});
