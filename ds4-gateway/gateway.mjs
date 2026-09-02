@@ -10,6 +10,7 @@ import net from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const digest = value => createHash('sha256').update(value).digest('hex');
+const validContext = value => Number.isSafeInteger(value) && value > 0;
 const log = (event, fields = {}) => process.stdout.write(JSON.stringify({ time: new Date().toISOString(), event, ...fields }) + '\n');
 const hopHeaders = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade']);
 function forwardHeaders(headers) {
@@ -46,6 +47,7 @@ export class AffinityStore {
       let data = { version: 1, sessions: {} };
       if (fs.existsSync(filename)) data = JSON.parse(fs.readFileSync(filename, 'utf8'));
       if (data.version !== 1 || !data.sessions || Array.isArray(data.sessions)) throw new Error('Invalid affinity store');
+      if (data.pool_context_length !== undefined && !validContext(data.pool_context_length)) throw new Error('Invalid saved pool context limit');
       for (const [key, item] of Object.entries(data.sessions)) {
         if (!/^[a-f0-9]{64}$/.test(key) || typeof item.node !== 'string') throw new Error('Invalid affinity entry');
       }
@@ -100,8 +102,11 @@ class UsageObserver {
 }
 
 export function createGateway(config) {
+  if (!validContext(config.context_length)) throw new Error('Invalid configured pool context limit');
   const initial = workerConfigs(config.nodes);
   const store = new AffinityStore(config.state_file);
+  // Like registered workers, an explicit UI setting survives process restarts.
+  const contextLimit = () => store.data.pool_context_length ?? config.context_length;
   const makeNode = n => ({ ...n, drained: store.data.drained?.[n.id] === true, healthy: false, failures: 0, active: null, queue: [], completed: 0, failed: 0, probing: false });
   let definitions;
   try { definitions = store.data.workers === undefined ? initial : workerConfigs(store.data.workers); }
@@ -114,7 +119,7 @@ export function createGateway(config) {
   const agent = new http.Agent({ keepAlive: true, maxSockets: 16 });
   const accepted = new Set(['POST /v1/chat/completions', 'POST /v1/completions', 'POST /v1/responses', 'POST /v1/messages', 'GET /v1/models']);
   const auth = Buffer.from(`Bearer ${config.api_key}`);
-  const stats = () => ({ version: 1, model: config.model, context_length: config.context_length, draining,
+  const stats = () => ({ version: 1, model: config.model, context_length: contextLimit(), draining,
     total: nodes.length, healthy: nodes.filter(n => n.healthy).length, available: nodes.filter(n => n.healthy && !n.drained).length,
     active: nodes.filter(n => n.active).length, queued: nodes.reduce((s, n) => s + n.queue.length, 0),
     workers: nodes.map(n => ({ id: n.id, url: n.url, is_healthy: n.healthy, drained: n.drained,
@@ -243,9 +248,9 @@ export function createGateway(config) {
             // Publish the pool guarantee, never one larger worker's limit.
             // This only changes model-list metadata; generation bytes are untouched.
             for (const model of data.data) {
-              model.context_length = config.context_length;
-              if (model.top_provider) model.top_provider = { ...model.top_provider, context_length:config.context_length,
-                max_completion_tokens: Math.min(model.top_provider.max_completion_tokens ?? config.context_length, config.context_length) };
+              model.context_length = contextLimit();
+              if (model.top_provider) model.top_provider = { ...model.top_provider, context_length:contextLimit(),
+                max_completion_tokens: Math.min(model.top_provider.max_completion_tokens ?? contextLimit(), contextLimit()) };
             }
             json(res, 200, data);
           } catch { error(res, 502, 'models_unavailable', 'Model metadata unavailable'); }
@@ -294,6 +299,7 @@ export function createGateway(config) {
         if (settled) return; settled = true;
         clearTimeout(deadline); node.probeRequest = null;
         node.probing = false; node.lastProbe = new Date().toISOString(); node.probeError = reason;
+        if (reason && reason !== 'model_or_context_mismatch') node.modelMatches=false;
         const was = node.healthy;
         if (ok) { node.failures = 0; node.healthy = true; }
         else if (++node.failures >= (config.health_failures ?? 3)) node.healthy = false;
@@ -307,8 +313,9 @@ export function createGateway(config) {
         res.on('end', () => {
           try {
             const model = JSON.parse(body).data?.find(m => m.id === config.model);
+            node.modelMatches = res.statusCode === 200 && !!model;
             node.contextLength = Number.isSafeInteger(model?.context_length) ? model.context_length : null;
-            const ok = res.statusCode === 200 && !!model && node.contextLength >= config.context_length;
+            const ok = res.statusCode === 200 && !!model && node.contextLength >= contextLimit();
             finish(ok, ok ? undefined : 'model_or_context_mismatch');
           } catch { finish(false, 'invalid_model_response'); }
         });
@@ -323,8 +330,40 @@ export function createGateway(config) {
   const startTunnel = node => {
     if (node.ssh) node.stopTunnel = superviseTunnel(node, () => shuttingDown || node.removed);
   };
-  const registry = () => ({ model: config.model, minimum_context: config.context_length,
+  const registry = () => ({ model: config.model, minimum_context: contextLimit(), context_limit_control:true,
+    context_limit_source:store.data.pool_context_length === undefined ? 'config' : 'saved',
     workers: nodes.map(n => ({ ...definition(n), ...stats().workers.find(w => w.id === n.id) })) });
+  async function freshProbe(node) {
+    while (node.probing) await delay(10);
+    await probe(node);
+  }
+  async function setContextLimit(input) {
+    if (shuttingDown || draining) throw new Error('Gateway is draining');
+    if (!input || Object.keys(input).some(k=>!['context_length','expected_context_length'].includes(k)) || !validContext(input.context_length)) throw new Error('Context limit must be a positive whole token count');
+    if (input.expected_context_length !== contextLimit()) throw new Error('Pool context changed; refresh before applying');
+    const enabled=nodes.filter(n=>!n.drained);
+    if (!enabled.length) throw new Error('Enable at least one DS4 server before changing the pool context');
+    await Promise.all(enabled.map(freshProbe));
+    if (shuttingDown || draining) throw new Error('Gateway is draining');
+    const incompatible=enabled.filter(n=>!n.modelMatches || !validContext(n.contextLength) || n.contextLength<input.context_length);
+    if (incompatible.length) throw new Error(`Enabled servers unavailable or below requested context: ${incompatible.map(n=>n.id).join(', ')}`);
+    const before=contextLimit();
+    if (before === input.context_length && store.data.pool_context_length !== undefined) return registry();
+    // Backup before the existing atomic, fsynced store commit. Never overwrite
+    // worker registration or newer affinity assignments with a stale snapshot.
+    if (fs.existsSync(store.filename)) {
+      const backup=`${store.filename}.context-${Date.now()}-${randomUUID()}.bak`;
+      fs.copyFileSync(store.filename,backup,fs.constants.COPYFILE_EXCL);fs.chmodSync(backup,0o600);
+    }
+    store.save({...store.data,pool_context_length:input.context_length});
+    for (const n of enabled) {n.healthy=true;n.failures=0;n.probeError=undefined;}
+    for (const n of nodes) if (!n.modelMatches || !validContext(n.contextLength) || n.contextLength<contextLimit()) {
+      n.healthy=false;n.failures=config.health_failures ?? 3;
+      n.probeError=n.probeError || 'model_or_context_mismatch';
+    }
+    log('pool_context_changed',{previous:before,context_length:contextLimit()});
+    return registry();
+  }
   async function addWorker(raw) {
     if (shuttingDown || draining) throw new Error('Gateway is draining');
     const settings = workerConfig(raw, { registration: true });
@@ -346,7 +385,7 @@ export function createGateway(config) {
         await delay(250);
       } while (Date.now() < until);
       if (shuttingDown) throw new Error('Gateway is stopping');
-      if (!node.healthy) throw new Error(`Compatibility check failed (${node.probeError || 'unavailable'}). Required model ${config.model}, context at least ${config.context_length}; observed context ${node.contextLength ?? 'unknown'}.`);
+      if (!node.healthy) throw new Error(`Compatibility check failed (${node.probeError || 'unavailable'}). Required model ${config.model}, context at least ${contextLimit()}; observed context ${node.contextLength ?? 'unknown'}.`);
       store.setWorkers([...nodes.map(definition), settings], { ...store.data.drained, [node.id]: true });
       nodes.push(node);
       log('worker_registered', { node: node.id, context_length: node.contextLength, drained: true });
@@ -377,7 +416,7 @@ export function createGateway(config) {
   // Operator-only Unix socket: never expose lifecycle mutation on the LAN.
   const control = config.control_socket ? http.createServer((req, res) => {
     if (req.method === 'GET' && req.url === '/workers') return json(res, 200, registry());
-    if (req.method !== 'POST' || !['/drain-workers', '/resume-workers', '/add-worker', '/remove-worker'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
+    if (req.method !== 'POST' || !['/drain-workers', '/resume-workers', '/add-worker', '/remove-worker', '/set-context-limit'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
     let body = '';
     req.on('data', chunk => { body += chunk; if (body.length > 4096) req.destroy(); });
     req.on('error', () => {});
@@ -385,8 +424,15 @@ export function createGateway(config) {
       void serialize(async () => {
         try {
           const input = JSON.parse(body);
+          if (req.url === '/set-context-limit') return json(res,200,await setContextLimit(input));
           if (req.url === '/add-worker') return json(res, 201, await addWorker(input.worker));
           if (req.url === '/remove-worker') return json(res, 200, removeWorker(input.id));
+          if (req.url === '/resume-workers') {
+            if (!Array.isArray(input.workers) || !input.workers.length || input.workers.some(id=>!nodes.some(n=>n.id===id))) throw new Error('Specify known worker IDs');
+            const selected=nodes.filter(n=>input.workers.includes(n.id));
+            await Promise.all(selected.map(freshProbe));
+            if (selected.some(n=>n.probeError || !validContext(n.contextLength) || n.contextLength<contextLimit())) throw new Error('Cannot enable a server without a fresh compatible model/context probe');
+          }
           json(res, 200, drainNodes(input.workers, req.url === '/drain-workers'));
         } catch (e) { error(res, 400, 'invalid_control_request', e.message); }
       });

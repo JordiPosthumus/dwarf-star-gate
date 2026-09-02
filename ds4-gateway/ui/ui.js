@@ -64,6 +64,7 @@ async function poll() {
   finally { setTimeout(poll, document.hidden ? 10000 : 2000); }
 }
 let controlsWired = false, workerBusy = false, workersLoading = false, csrfToken = null;
+let contextDirty=false, contextExpected=null;
 function workerMessage(text, error = false) {
   $('worker-message').textContent = text; $('worker-message').classList.toggle('error',error);
 }
@@ -82,6 +83,9 @@ async function loadWorkers() {
     const r=await fetch('/api/workers',{cache:'no-store',signal:AbortSignal.timeout(5000)}), data=await r.json();
     if(!r.ok||!data.enabled)throw new Error(data.error||'Worker controls unavailable');
     csrfToken=data.csrf_token; $('worker-rows').innerHTML=workerRows(data.workers);
+    $('pool-context-form').hidden=!data.context_limit_control;
+    $('pool-context-note').hidden=!data.context_limit_control;
+    if(!contextDirty){contextExpected=data.minimum_context;$('pool-context-input').value=String(data.minimum_context);}
   } catch(e) { workerMessage(e.message,true); }
   finally { workersLoading=false; }
 }
@@ -90,15 +94,17 @@ async function workerAction(action, input) {
   if(!csrfToken){workerMessage('Worker controls are connecting; try again shortly.',true);return;}
   workerBusy=true;
   $('worker-form').querySelector('button').disabled=true;
+  $('pool-context-form').querySelector('button').disabled=true;
   $('worker-rows').querySelectorAll('button').forEach(b=>{b.disabled=true;});
-  workerMessage(action==='add'?'Checking model and context…':'Updating worker routing…');
+  workerMessage(action==='context'?'Checking enabled server capacities…':action==='add'?'Checking model and context…':'Updating worker routing…');
   try {
     const r=await fetch(`/api/workers/${action}`,{method:'POST',headers:{'content-type':'application/json','x-dsg-csrf':csrfToken},body:JSON.stringify(input),signal:AbortSignal.timeout(35000)});
     const data=await r.json();if(!r.ok)throw new Error(data.error||'Worker control failed');
-    workerMessage(action==='add'?'Registered paused. Enable routing when ready.':action==='drain'?'Draining. Admitted requests will finish before removal.':action==='remove'?'Removed from this gateway. Model server left running.':'Routing enabled.');
+    workerMessage(action==='context'?`Pool limit saved: ${fmt(data.minimum_context)} tokens. Applied now; model servers and Pi unchanged.`:action==='add'?'Registered paused. Enable routing when ready.':action==='drain'?'Draining. Admitted requests will finish before removal.':action==='remove'?'Removed from this gateway. Model server left running.':'Routing enabled.');
+    if(action==='context'){contextDirty=false;contextExpected=data.minimum_context;}
     if(action==='add')$('worker-form').reset();
   } catch(e) { workerMessage(`${e.message}. Check the worker list before retrying.`,true); }
-  finally { workerBusy=false;$('worker-form').querySelector('button').disabled=false;updateConnectionFields();void loadWorkers(); }
+  finally { workerBusy=false;$('worker-form').querySelector('button').disabled=false;$('pool-context-form').querySelector('button').disabled=false;updateConnectionFields();void loadWorkers(); }
 }
 function updateConnectionFields() {
   const form=$('worker-form'), remote=form.elements.connection.value==='ssh';
@@ -110,6 +116,13 @@ function updateConnectionFields() {
 function wireWorkerControls() {
   if(controlsWired)return;controlsWired=true;
   const form=$('worker-form');form.elements.connection.addEventListener('change',updateConnectionFields);
+  $('pool-context-input').addEventListener('input',()=>{contextDirty=true;});
+  $('pool-context-form').addEventListener('submit',e=>{
+    e.preventDefault();const value=Number($('pool-context-input').value);
+    if(!Number.isSafeInteger(value)||value<=0){workerMessage('Enter a positive whole token count.',true);return;}
+    if(value<contextExpected&&!window.confirm(`Lower the advertised pool context from ${fmt(contextExpected)} to ${fmt(value)} tokens? This can change client compaction behavior. Model servers and existing requests are not resized.`))return;
+    void workerAction('context',{context_length:value,expected_context_length:contextExpected});
+  });
   form.addEventListener('submit',e=>{
     e.preventDefault();const worker={id:form.elements.id.value.trim(),url:form.elements.url.value.trim()};
     if(form.elements.connection.value==='ssh'){worker.ssh=form.elements.ssh.value.trim();worker.remote_port=Number(form.elements.remote_port.value);}

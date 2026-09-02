@@ -197,11 +197,11 @@ test('dashboard links the pinned Spark recommendation without implying live conf
   const profile = fs.readFileSync(new URL('../docs/recommended-spark-profile.md',import.meta.url),'utf8');
   assert.match(html, /<details id="spark-profile"><summary>Recommended DGX Spark configuration/);
   assert.match(html, /href="https:\/\/github.com\/JordiPosthumus\/dwarf-star-gate\/blob\/main\/docs\/recommended-spark-profile\.md" target="_blank" rel="noopener noreferrer"/);
-  assert.match(html, /153,600-token context, two hot sessions, one active request per Spark/);
+  assert.match(html, /262,144-token context, two hot sessions, one active request per Spark/);
   assert.match(html, /349,525 MiB/); assert.match(html, /not a fixed ten-slot guarantee/);
   assert.match(html, /guidance, not a reading of live settings/); assert.match(html, /does not change servers or apply to Macs/);
   assert.match(profile, /552f6b834ce0b5c53b25a89a8468df5fdd1804de/);
-  for (const flag of ['--ctx 153600','--tokens 153600','--batched-session 2','--max-active-requests 1','--kv-disk-space-mb 349525','--prefill-chunk 4096']) assert.ok(profile.includes(flag),flag);
+  for (const flag of ['--ctx 262144','--tokens 262144','--batched-session 2','--max-active-requests 1','--kv-disk-space-mb 349525','--prefill-chunk 2048']) assert.ok(profile.includes(flag),flag);
   assert.match(profile, /DS4_KV_REWIND_REUSE=0/); assert.match(profile, /NV_ERR_NO_MEMORY/);
 });
 test('every HTML-referenced asset is served, including a real PNG logo with bounded fallback dimensions', async t => {
@@ -214,7 +214,7 @@ test('every HTML-referenced asset is served, including a real PNG logo with boun
     const bytes = Buffer.from(await r.arrayBuffer()); assert.ok(bytes.length>0);
     if (route === '/logo.png') { assert.equal(r.headers.get('content-type'),'image/png'); assert.equal(bytes.subarray(1,4).toString(),'PNG'); }
   }
-  assert.match(html, /class="gate-art"[^>]*width="148" height="105"/);
+  assert.match(html, /class="gate-art"[^>]*width="148" height="111"/);
 });
 test('an active dashboard serves a frozen complete bundle and rejects missing assets at startup', async t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(),'dwarf-gate-assets-'));
@@ -259,8 +259,9 @@ test('opt-in worker controls require same origin, JSON and a CSRF token; diagnos
   assert.equal((await post('/api/workers/add','{bad',valid)).status,400);
   assert.equal((await post('/api/workers/add','x'.repeat(9000),valid)).status,413);
   assert.equal(calls.length,0);
-  for(const action of ['add','drain','resume','remove']) assert.equal((await post('/api/workers/'+action,JSON.stringify({id:'fake'}),valid)).status,200);
-  assert.deepEqual(calls.map(x=>x.action),['add','drain','resume','remove']);
+  assert.equal((await post('/api/workers/context','{}',{'content-type':'application/json'})).status,403);
+  for(const action of ['add','drain','resume','remove','context']) assert.equal((await post('/api/workers/'+action,JSON.stringify({id:'fake'}),valid)).status,200);
+  assert.deepEqual(calls.map(x=>x.action),['add','drain','resume','remove','context']);
   assert.ok(!(await(await fetch(url+'/api/diagnostics')).text()).includes(init.csrf_token));
   const plain=await fixture(t);assert.deepEqual(await(await fetch(plain.url+'/api/workers')).json(),{enabled:false});
 });

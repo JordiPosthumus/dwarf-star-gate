@@ -21,12 +21,12 @@ Antirez release or endorsement. See [credits](../CREDITS.md).
 | Hardware | DGX Spark, NVIDIA GB10, 128 GB unified memory, local NVMe |
 | Model | DeepSeek V4 Flash **Vision-Exp**, mixed IQ2_XXS/Q2_K with selected Q8 components |
 | Vision | Matching separate vision encoder, enabled |
-| Context allocation | **153,600 tokens** (150 Ki tokens) |
-| Server default output allowance | **153,600 tokens**, subject to remaining context and client request |
+| Context allocation | **262,144 tokens** (256 Ki tokens) |
+| Server default output allowance | **262,144 tokens**, subject to remaining context and client request |
 | Hot resident sessions | **2** |
 | Active model requests | **1 per Spark**, including prefill and decode |
 | Disk KV budget | **349,525 MiB** (about 341.3 GiB); target: 10 retained histories, not a slot-count limit |
-| Prefill | 4,096-token chunks; mixed-prefill quantum 64 |
+| Prefill | 2,048-token chunks; mixed-prefill quantum 64 |
 | Acceleration | Warm weights; no explicit Q8→F16 weight-cache size cap |
 | Speculative decoding | Not enabled in this tested profile |
 | Network | Server on loopback port 8000; gateway reaches it over SSH |
@@ -34,6 +34,13 @@ Antirez release or endorsement. See [credits](../CREDITS.md).
 This is a **Spark-only recommendation**. Macs can join the same gateway with
 different native context/cache settings; registering them does not apply this
 profile. DSG's common pool context must fit every enabled server.
+
+This explicitly supersedes the earlier 153,600-context / 4,096-prefill profile.
+The only engine-setting changes are context, default output allowance and cold
+checkpoint maximum to 262,144, and prefill chunk size to 2,048. The smaller prefill
+workspace makes room for the larger contexts without capping the acceleration
+cache. No matched workload A/B test establishes identical or optimal prefill
+speed. See the measurements and caveats below.
 
 ## Pinned engine and weights
 
@@ -99,12 +106,12 @@ DS4_PREFILL_TIMING=1 \
   --vision /opt/ds4/gguf/DeepSeek-V4-Flash-Vision-Encoder.gguf \
   --host 127.0.0.1 \
   --port 8000 \
-  --ctx 153600 \
-  --tokens 153600 \
-  --prefill-chunk 4096 \
+  --ctx 262144 \
+  --tokens 262144 \
+  --prefill-chunk 2048 \
   --kv-disk-dir /var/lib/ds4/vision-q2 \
   --kv-disk-space-mb 349525 \
-  --kv-cache-cold-max-tokens 153600 \
+  --kv-cache-cold-max-tokens 262144 \
   --kv-cache-continued-interval-tokens 16384 \
   --warm-weights \
   --batched-session 2 \
@@ -120,8 +127,8 @@ was not validated alongside a second large model, video or music workload.
 ### What these settings mean
 
 - **Context is a shared envelope.** Prompt, reasoning and answer must fit within
-  153,600 tokens. This is not 153,600 input **plus** 153,600 output, nor a 262K
-  profile. Keep the full server allowance; clients must manage remaining context
+  262,144 tokens. This is not 262,144 input **plus** 262,144 output.
+  Keep the full server allowance; clients must manage remaining context
   and compaction without introducing an unrelated small production output cap.
 - **Two hot does not mean two generating.** Two sessions can retain resident KV
   state; only one request executes at a time. Further requests wait. The separate
@@ -133,7 +140,7 @@ was not validated alongside a second large model, video or music workload.
   weights, logs, temporary downloads and filesystem headroom outside that budget.
 - **Normal exact-prefix reuse remains enabled.** Rewind reuse is deliberately off
   in this baseline. The `256` rewind threshold is retained but does not enable it.
-  Cold histories can be checkpointed through 153,600 tokens, with continued
+  Cold histories can be checkpointed through 262,144 tokens, with continued
   checkpoints every 16,384 tokens. Gateway affinity improves locality; DS4 decides
   whether a resident or disk prefix is valid.
 - **Reasoning is passed through, not forced by DSG.** In the pinned
@@ -158,9 +165,10 @@ installation and its checked launcher. Network-online ordering is configured;
 the wrapper separately checks that conflicting workloads are absent.
 
 Verify reboot recovery on your own machine, including a real disk-cache restore.
-Our Spark B passed an actual reboot and subsequent text-cache/vision checks.
-Spark A has an enabled service and lingering; we did not repeat its actual reboot
-in the gateway acceptance suite.
+Our Spark B passed an actual reboot and subsequent text-cache/vision checks on
+the previous 153,600 profile. The 262,144 rollout uses the same enabled service and
+lingering mechanism. Service restarts are checked, but a fresh full-machine
+reboot of this larger-context profile is not claimed for either machine.
 
 In DSG, register each server **once**, through its SSH tunnel to port 8000. Use the
 [UI/CLI registration instructions](../README.md#operator-controls), keep stable
@@ -168,8 +176,12 @@ server IDs, and send a stable per-conversation affinity header. Registration
 checks compatibility and leaves the server paused until you enable it. It does
 not install the profile or modify the server.
 
-Our gateway model ID is `deepseek-v4-flash`, with `context_length: 153600` as the
-common pool guarantee. The production routing settings are
+Our gateway model ID is `deepseek-v4-flash`. The common pool guarantee is configured
+separately: apply `262144` in **Manage DS4 servers → Pool context limit** only after every enabled pool member
+supports it. DSG refreshes native worker metadata automatically, but does not
+automatically raise the configured pool guarantee. Follow
+[Context limits and rolling upgrades](context-limits.md), including persistence
+and separate client-metadata checks. The production routing settings are
 `request_timeout_ms: 360000000` (100 hours), `queue_timeout_ms: 3600000` (1 hour),
 and `max_queued_per_node: 128`. These are timeout/admission settings, not proof
 of a 100-hour successful generation. Preserve reasoning, tools, vision and
@@ -180,10 +192,52 @@ accounting and should not be mistaken for additional gateway capacity.
 
 ## Measured acceptance and limits
 
-These are **recorded deployment tests**, not new benchmarks run while publishing
-this page, and not promised speeds for every prompt. The verification date above
-means we rechecked the live launch profile, source identity and public artifact
-metadata. Dashboard screenshots elsewhere in the repo are synthetic, not evidence.
+These are **recorded deployment tests**, not promised speeds for every prompt.
+The larger-context rollout rechecked effective launch settings and binary identity;
+the large model artifacts are unchanged from the earlier hash verification.
+Dashboard screenshots elsewhere in the repo are synthetic, not evidence.
+
+### 262,144-token profile
+
+| Check | Observed result |
+| --- | --- |
+| Two resident near-limit histories on Spark A | 262,040 prompt tokens each; both returned the requested EDGE response |
+| Resident switching at 260K on Spark A | 260,009 tokens reused in each history, with no disk reload; 852ms and 630ms end-to-end for one-token continuations |
+| Almost-cold long prefill on Spark A | 257,960 newly processed tokens after 2,048 cached; 434.012s, 594.36t/s including checkpoint pauses |
+| Long reasoning on Spark A | 250,029-token prompt; correct arithmetic/explanation; 219 output tokens at 10.49t/s decode |
+| Thinking continuation on Spark A | 260,284 cached tokens, 26 new prompt tokens; correct answer to a different arithmetic question; 195 output tokens |
+| Evicted 260K history on Spark A | 260,019 tokens reloaded from NVMe in 3,168ms; 9.968s total including eviction/save and generation |
+| Oversize admission on Spark A | 265,008-token prompt rejected with context_length_exceeded |
+| Spark A persistent-service checks | Reasoning and vision passed; an existing 143,360-token checkpoint restored after restart; a fresh 11,008-token prompt went from 13.416s cold to 1.396s with 10,240 tokens restored |
+| Two resident near-limit histories on Spark B | 262,008 prompt tokens each; first reused 143,360 tokens from an older checkpoint, second was fully cold |
+| Fully cold prefill on Spark B | 262,008 new tokens in 377.787s, about 693.5t/s; overall client time also included queueing behind the first request |
+| Hot switching on Spark B | 262,009 cached tokens per history, eight new prompt tokens each; 611ms / 563ms end-to-end, no disk reload |
+| Long reasoning on Spark B | 250,024 prompt / 115 output tokens; correct arithmetic; 245,760 tokens restored, 25.675s total |
+| Spark B persistent-service checks | Vision passed all five fields; old 143,360-token checkpoint restored; oversize 265,008-token prompt rejected; service enabled with lingering |
+
+The first long-context client used a five-minute HTTP headers timeout and
+cancelled its requests. That client was corrected; those aborted attempts are
+not successful boundary tests. The completed Spark A 260K runs reused 217,088 and
+2,048 tokens respectively, so neither is labeled an entirely fresh cold 260K run.
+
+**Semantic caveat:** short nonthinking continuations of extremely repetitive 260K
+fixtures returned the previous OK instead of newly requested AGAIN/RESTORED.
+Later longer extensions returned EDGE correctly, and long thinking continuations
+answered new arithmetic correctly. The cause is unresolved. These capacity tests
+do not establish unchanged reasoning quality on arbitrary long coding workloads.
+
+**Memory remains tight and swap occurred.** Spark A's trial reported 9.10GiB of
+context buffers and 1.97GiB shared prefill workspace. Minimum sampled available
+memory after readiness was 4.896GiB. About 1,137MiB cumulative host swap-out and 957MiB
+swap-in occurred through one observation point; these are transferred pages, not
+unique bytes or exclusively model-process activity. No new runtime allocation
+failure or unintended restart was observed in that trial. Do not call it swap-free
+or infer long-duration stability from these checks.
+
+### Previous 153,600-token baseline — historical evidence
+
+The following older results establish the preceding deployment's behavior. They
+are not 262,144 benchmarks or a controlled speed comparison against the new profile.
 
 | Check | Observed result |
 | --- | --- |
@@ -199,9 +253,9 @@ metadata. Dashboard screenshots elsewhere in the repo are synthetic, not evidenc
 
 Small output allowances in near-limit and vision fixtures were **test controls**,
 not settings promoted to the production launcher. These tests do not prove a
-153,600-token continuous completion, every possible vision input, or every client.
+full-context continuous completion, every possible vision input, or every client.
 
-**Memory is tight.** In measured Spark A requests, minimum available memory was
+**Historical memory observations:** in the preceding Spark A profile, minimum available memory was
 roughly 5.3–5.8 GiB. Trials with three or more hot slots encountered severe memory
 pressure/allocation failures, which is why the accepted profile uses two. Startup
 NVRM `NV_ERR_NO_MEMORY` warnings were observed on both machines; their precise

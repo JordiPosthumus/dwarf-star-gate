@@ -7,7 +7,7 @@ const workers = [
   { id:'spark1', is_healthy:true, drained:false, load:1, queued:0, active_seconds:84, completed:42, failed:0, assigned_sessions:4 },
   { id:'spark2', is_healthy:true, drained:false, load:1, queued:1, active_seconds:37, completed:36, failed:1, assigned_sessions:3 },
 ];
-workers.forEach((w,i)=>{w.url=`http://127.0.0.1:${39101+i}`;w.context_length=153600;});
+workers.forEach((w,i)=>{w.url=`http://127.0.0.1:${39101+i}`;w.context_length=262144;});
 const devices = workers.map((w,i) => ({
   id:w.id, connected:true, observed_since:now-900000, last_event:now, phase:i ? 'decode':'thinking',
   decode:{ time:now-1000, tps:i ? 14.4:14.6, average:i ? 14.3:14.5 },
@@ -25,14 +25,20 @@ const events = Array.from({length:8},(_,i)=>({
   usage:{prompt_tokens:28500+i*3800,cached_tokens:27000+i*3800,completion_tokens:160+i*23},
 }));
 const snapshot = { version:1,demo:true,time:now,started:now-900000,read_only:false,worker_management:true,gateway_at:now,gateway_error:null,telemetry_error:null,
-  gateway:{model:'deepseek-v4-flash',context_length:153600,total:2,healthy:2,available:2,active:2,queued:1,draining:false,workers},devices,events };
-const registry=()=>({model:'deepseek-v4-flash',minimum_context:153600,workers});
+  gateway:{model:'deepseek-v4-flash',context_length:262144,total:2,healthy:2,available:2,active:2,queued:1,draining:false,workers},devices,events };
+const registry=()=>({model:'deepseek-v4-flash',minimum_context:snapshot.gateway.context_length,context_limit_control:true,context_limit_source:'saved',workers});
 const server = createDashboard(()=>({...snapshot,time:Date.now(),gateway_at:Date.now(),
   devices:workers.map(w=>devices.find(d=>d.id===w.id)||new DeviceTelemetry(w.id).snapshot()),
   gateway:{...snapshot.gateway,total:workers.length,healthy:workers.length,available:workers.filter(w=>!w.drained).length,active:workers.filter(w=>w.load).length,queued:workers.reduce((a,w)=>a+w.queued,0)}}),undefined,{
   read:async()=>registry(),
   act:async(action,input)=>{
-    if(action==='add') {
+    if(action==='context') {
+      if(input.expected_context_length!==snapshot.gateway.context_length)throw new Error('Pool context changed; refresh before applying');
+      if(!Number.isSafeInteger(input.context_length)||input.context_length<=0)throw new Error('Enter a positive whole token count');
+      const enabled=workers.filter(w=>!w.drained);
+      if(!enabled.length||enabled.some(w=>!w.is_healthy||w.context_length<input.context_length))throw new Error('Enabled servers do not support that context limit');
+      snapshot.gateway.context_length=input.context_length;
+    } else if(action==='add') {
       const w=workerConfig(input.worker,{registration:true});assertUniqueWorker(workers,w);
       workers.push({...w,is_healthy:true,drained:true,load:0,queued:0,context_length:300000,completed:0,failed:0,assigned_sessions:0});
     } else if(action==='remove') {

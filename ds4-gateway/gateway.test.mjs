@@ -189,6 +189,84 @@ test('hot registration admits larger-context machines paused, preserves pool met
   assert.equal((await r.request('{}','mac-session')).headers['x-ds4-node'],'m3-studio');
 });
 
+test('health refreshes native context without changing the pool guarantee; explicit restart raises it', async t => {
+  const r=await rig(t,2,{health_interval_ms:25,health_failures:2});
+  const metadata=async()=>JSON.parse((await r.request('',null,{method:'GET',path:'/v1/models'})).body).data[0];
+  r.backends[0].context_length=262144;
+  await until(()=>r.gateway.stats().workers[0].context_length===262144);
+  assert.equal(r.gateway.stats().context_length,153600);
+  assert.equal((await metadata()).context_length,153600);
+  r.backends[1].context_length=300000;
+  await until(()=>r.gateway.stats().workers[1].context_length===300000);
+  assert.equal((await metadata()).top_provider.max_completion_tokens,153600);
+  // A new config object represents an edited deployment config read at restart.
+  await r.gateway.close();
+  r.config={...r.config,context_length:262144};
+  r.gateway=createGateway(r.config);r.address=await r.gateway.start();
+  assert.equal(r.gateway.stats().healthy,2);
+  assert.equal((await metadata()).context_length,262144);
+  assert.equal((await metadata()).top_provider.max_completion_tokens,262144);
+  const body='{"messages":[{"role":"user","content":"unchanged"}],"max_tokens":262144,"reasoning_effort":"xhigh"}';
+  assert.equal((await r.request(body,'context-upgrade')).status,200);
+  assert.equal(r.backends[0].records.at(-1).body.toString(),body);
+  r.backends[0].context_length=153600;
+  await until(()=>!r.gateway.stats().workers[0].is_healthy);
+  assert.equal(r.gateway.stats().workers[0].probe_error,'model_or_context_mismatch');
+  assert.equal((await metadata()).context_length,262144);
+  assert.equal((await r.request('{}','new-after-downgrade')).headers['x-ds4-node'],'spark2');
+});
+
+test('operator context setting is validated, durable, backed up, and does not interrupt streams', async t => {
+  const r=await rig(t,2,{control_socket:true});
+  const ctl=(route,input)=>workerControl(r.config.control_socket,route,input);
+  const set=value=>ctl('/set-context-limit',{context_length:value,expected_context_length:r.gateway.stats().context_length});
+  for(const context_length of [0,-1,2.5,'262144',null,Number.MAX_SAFE_INTEGER+1])
+    await assert.rejects(set(context_length),/positive whole/);
+  await assert.rejects(set(262144),/Enabled servers/);
+  assert.equal(r.gateway.stats().context_length,153600);
+  r.backends.forEach(b=>{b.context_length=262144;});
+  const stream=r.request('{"stream":true,"delay":200}','context-live');
+  await until(()=>r.backends[0].active===1);
+  const previousSessions=structuredClone(r.gateway.store.data.sessions);
+  const result=await set(262144);
+  assert.equal(result.minimum_context,262144);assert.equal(result.context_limit_source,'saved');
+  assert.deepEqual(r.gateway.store.data.sessions,previousSessions);
+  assert.match((await stream).body,/\[DONE\]/);assert.equal(r.backends[0].aborts,0);
+  assert.ok(fs.readdirSync(path.dirname(r.config.state_file)).some(f=>f.includes('.context-')&&f.endsWith('.bak')));
+  await assert.rejects(ctl('/set-context-limit',{context_length:128000,expected_context_length:153600}),/changed/);
+  await r.restart();assert.equal(r.gateway.stats().context_length,262144);
+  assert.equal(r.config.context_length,153600); // Startup fallback was not secretly edited.
+  // A deliberately lower limit can recover a matching model below the old limit.
+  r.backends[1].context_length=153600;
+  await set(153600);assert.equal(r.gateway.stats().healthy,2);
+  // Paused smaller workers cannot slip through a resume after an increase.
+  await ctl('/drain-workers',{workers:['spark2']});
+  await set(262144);assert.equal(r.gateway.stats().workers[1].is_healthy,false);
+  await assert.rejects(ctl('/resume-workers',{workers:['spark2']}),/fresh compatible/);
+  r.backends[1].context_length=262144;
+  await ctl('/resume-workers',{workers:['spark2']});
+  assert.equal(r.gateway.stats().workers[1].drained,false);
+  // A failed durable save must not advertise the proposed value.
+  const save=r.gateway.store.save;
+  r.gateway.store.save=()=>{throw new Error('simulated storage failure');};
+  await assert.rejects(set(200000),/storage failure/);
+  assert.equal(r.gateway.stats().context_length,262144);
+  r.gateway.store.save=save;
+  assert.equal((await r.request('{}',null,{path:'/set-context-limit'})).status,404);
+});
+
+test('saved context values fail closed on corruption and unsupported models cannot authorize a change', async t => {
+  const r=await rig(t,1,{control_socket:true});
+  r.backends[0].health=false;
+  await assert.rejects(workerControl(r.config.control_socket,'/set-context-limit',{context_length:100000,expected_context_length:153600}),/Enabled servers/);
+  assert.equal(r.gateway.stats().context_length,153600);
+  r.gateway.store.setDrained(['spark1'],true);
+  await r.gateway.close();
+  const data=JSON.parse(fs.readFileSync(r.config.state_file,'utf8'));
+  fs.writeFileSync(r.config.state_file,JSON.stringify({...data,pool_context_length:'invalid'}));
+  assert.throws(()=>createGateway(r.config),/Invalid saved pool context/);
+});
+
 test('failed compatibility checks and duplicate registrations cannot mutate membership', async t => {
   const r=await rig(t,1,{control_socket:true});
   const m=await backend('candidate');r.backends.push(m);m.context_length=128000;

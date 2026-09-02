@@ -1,5 +1,7 @@
 # Dwarf Star Gate
 
+<img src="ds4-gateway/ui/logo.png" alt="Dwarf Star Gate logo" width="240">
+
 A local gateway for **N DS4 servers—DGX Sparks, Macs, or a mix**, with durable session affinity
 and a lightweight control-room dashboard for [DS4](https://github.com/antirez/ds4).
 Register workers through the local UI or CLI; fleet size is not hard-coded.
@@ -92,7 +94,7 @@ are scheduled independently—DSG does not coordinate their shared RAM/GPU capac
 
 **Using DGX Sparks? Our [recommended Spark configuration](docs/recommended-spark-profile.md)
 is the exact profile currently running on both of ours:** Vision-Exp IQ2/Q2 with
-vision enabled, 153,600-token context/output allowance, two hot sessions, one active
+vision enabled, 262,144-token context/output allowance, two hot sessions, one active
 request per Spark, a 349,525 MiB disk-KV budget and the full acceleration cache.
 The guide pins the engine and weights and records measured results and limits.
 It remains our recommendation until explicitly superseded; it is not an upstream
@@ -279,6 +281,15 @@ the gateway advertises only the common pool guarantee in `/v1/models`. It does n
 truncate prompts or outputs or automatically send oversized requests to that Mac.
 For its larger context, use that server directly or a separately configured pool.
 No per-request token counting or capability-tier routing is implemented.
+
+DSG automatically refreshes each worker's reported context during health probes,
+but **does not automatically raise or lower the pool guarantee**. Change it under
+**Manage DS4 servers → Pool context limit**: DSG checks every enabled server,
+backs up its metadata, saves the explicit setting and applies it immediately.
+No model or gateway restart is required to apply a limit with this control.
+The saved setting survives restart and overrides the startup `context_length`
+default. Pi/client settings are separate. See
+[Context limits and rolling upgrades](docs/context-limits.md).
 
 Remote connections use gateway-owned SSH tunnels; existing SSH authentication and
 host trust must already work. Registration does not install DS4 or provision keys.
