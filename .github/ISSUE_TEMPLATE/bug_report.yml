@@ -1,0 +1,34 @@
+name: Bug report
+description: Report a reproducible gateway or dashboard problem without private data.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For vulnerabilities, use the private reporting route in SECURITY.md.
+        Do not upload credentials, private configuration, prompts, answers or raw logs.
+        Review even sanitized diagnostics before sharing. For engine bugs, see CREDITS.md.
+  - type: textarea
+    id: environment
+    attributes:
+      label: Versions and environment
+      description: Gateway commit, Node version, OS, worker count and DS4 revision. No addresses or keys.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Prefer fixture steps or synthetic inputs; do not paste private conversations.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Reviewed, non-sensitive evidence
+      description: Optional test output, screenshots from the demo, or sanitized operational facts.

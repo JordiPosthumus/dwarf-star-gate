@@ -6,6 +6,36 @@ A local gateway for **N DGX Sparks on your LAN**, with durable session affinity
 and a lightweight control-room dashboard for [DS4](https://github.com/antirez/ds4).
 Define your worker pool in configuration; fleet size is not hard-coded.
 
+## The engine is Antirez's. Start there.
+
+**Dwarf Star Gate exists because of [DwarfStar — the original `antirez/ds4`
+project](https://github.com/antirez/ds4), created by
+[Salvatore “antirez” Sanfilippo](https://github.com/antirez) and its contributors.**
+That is the inference engine doing the substantial work: running the models,
+processing prompts, generating tokens, serving requests and managing KV state.
+The engine, not this gateway, deserves the credit for those capabilities.
+
+This repository adds a small routing and observation layer around it. We did not
+create DS4, its inference kernels, its quantization work, or its cache engine.
+Thank you, Salvatore, for making such an ambitious local-inference project
+available, understandable and adaptable. **If you find this gateway useful,
+please visit and star [the original project](https://github.com/antirez/ds4).**
+
+- **Start upstream:** [DwarfStar repository](https://github.com/antirez/ds4) ·
+  [setup and engine documentation](https://github.com/antirez/ds4/blob/main/README.md).
+- **Read the work:** [HTTP server](https://github.com/antirez/ds4/blob/main/ds4_server.c) ·
+  [KV store](https://github.com/antirez/ds4/blob/main/ds4_kvstore.c) ·
+  [CUDA backend](https://github.com/antirez/ds4/blob/main/ds4_cuda.cu).
+- **Contribute upstream thoughtfully:**
+  [contribution guide](https://github.com/antirez/ds4/blob/main/CONTRIBUTING.md) ·
+  [release QA](https://github.com/antirez/ds4/blob/main/QA_BEFORE_RELEASES.md) ·
+  [MIT license and copyright notices](https://github.com/antirez/ds4/blob/main/LICENSE).
+- **More:** [Antirez's writing](https://antirez.com/) · [full credits](CREDITS.md).
+
+Dwarf Star Gate is an independent companion project, not an official Antirez
+release and not a claim of his endorsement. The similar name is an acknowledgement
+of the engine it was built around, not a claim to its authorship.
+
 Node.js built-ins only. No package installation, database, Kubernetes, frontend
 build system, CDN, analytics service or cloud telemetry.
 
@@ -48,6 +78,9 @@ not prove a worker has no direct clients; verify those before stopping it.
 
 Requires Node **22.22.2+**, SSH, and Linux DS4 workers. Gateway runs on macOS or
 Linux. The optional click-to-open service scripts use macOS LaunchAgents.
+Install and understand the worker engine using
+[Antirez's upstream instructions](https://github.com/antirez/ds4/blob/main/README.md)
+first; this repository does not replace them or distribute the engine/model weights.
 
 ```sh
 cp examples/config.json config.local.json
