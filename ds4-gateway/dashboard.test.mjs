@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { once } from 'node:events';
+import vm from 'node:vm';
 import { parseTiming, safeGatewayEvent, DeviceTelemetry, JournalReader } from './telemetry.mjs';
 import { createDashboard, runDashboard } from './dashboard.mjs';
 const parse = (s, t = 1000) => parseTiming(`0902 14:00:00 ds4-server: ${s}`, t);
@@ -63,6 +64,32 @@ test('gateway diagnostics allowlist IDs and numeric usage, not headers, bodies o
   assert.equal(e.outcome, 'client_cancelled'); assert.equal(e.usage.cached_tokens, 8); assert.ok(!JSON.stringify(e).includes('secret'));
   assert.equal(safeGatewayEvent({ event:'raw_prompt', prompt:'secret' }), null);
   assert.equal(safeGatewayEvent({ event:'request_finished', outcome:'incomplete_sse' }).outcome, 'incomplete_sse');
+});
+test('requested-thinking diagnostics include only scalar metadata and reject arbitrary strings', () => {
+  const e = safeGatewayEvent({event:'request_finished',requested_thinking:{status:'specified',prompt:'SECRET',fields:{reasoning_effort:'xhigh','thinking.type':'SECRET','thinking.budget_tokens':100000,answer:'SECRET'}}});
+  assert.deepEqual(e.requested_thinking,{status:'specified',fields:{reasoning_effort:'xhigh','thinking.type':'unrecognized','thinking.budget_tokens':100000}});
+  assert.ok(!JSON.stringify(e).includes('SECRET'));
+});
+test('thinking UI distinguishes requested controls, omitted/unknown, current/last and stale values', () => {
+  const source = fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/\npoll\(\);\s*$/,'');
+  const context = vm.createContext({}); vm.runInContext(source,context);
+  const info = input => vm.runInContext(`thinkingInfo(${JSON.stringify(input)})`,context);
+  assert.equal(info({status:'specified',fields:{reasoning_effort:'xhigh'}}).label,'XHIGH');
+  assert.equal(info({status:'specified',fields:{thinking:false}}).label,'OFF');
+  assert.equal(info({status:'specified',fields:{'thinking.type':'disabled',reasoning_effort:'xhigh'}}).label,'OFF · XHIGH');
+  assert.equal(info({status:'specified',fields:{reasoning_effort:null}}).label,'Not set');
+  assert.equal(info({status:'not_specified'}).label,'Not specified');
+  assert.equal(info({status:'pending'}).label,'Reading request');
+  assert.equal(info({status:'unavailable',reason:'capture_limit'}).label,'Unknown');
+  assert.equal(info(null).label,'Unavailable');
+  const worker = {load:1,requested_thinking:{status:'specified',fields:{reasoning_effort:'low'}},last_requested_thinking:{status:'specified',fields:{reasoning_effort:'high'}},last_request_finished_at:'2026-09-02T00:00:00Z'};
+  const current = vm.runInContext(`thinkingIndicator(${JSON.stringify(worker)},false,1788310000000)`,context);
+  assert.match(current,/>LOW</); assert.match(current,/Current request/); assert.doesNotMatch(current,/>HIGH</);
+  worker.load=0;
+  const last = vm.runInContext(`thinkingIndicator(${JSON.stringify(worker)},false,1788310000000)`,context);
+  assert.match(last,/>HIGH</); assert.match(last,/Last request/);
+  assert.match(vm.runInContext(`thinkingIndicator(${JSON.stringify(worker)},true,1788310000000)`,context),/Historical snapshot/);
+  assert.match(source,/thinkingIndicator\(w,stale,now\)/);
 });
 async function fixture(t) {
   const server = createDashboard(() => ({ version:1, read_only:true, devices:[] }));
@@ -127,7 +154,9 @@ test('six-worker monitoring only reads gateway status; credentials and addresses
   const backend = http.createServer((req,res) => {
     calls.push(req.url); assert.equal(req.headers.authorization, 'Bearer SECRET_FOR_TEST');
     res.end(JSON.stringify({ version:1, model:'ds4', context_length:153600, total:6, healthy:6, available:6, active:2, queued:0,
-      workers:Array.from({ length:6 }, (_,i) => ({ id:`spark${i+1}`, is_healthy:true, load:0, url:'http://private-address', probe_error:'secret' })) }));
+      workers:Array.from({ length:6 }, (_,i) => ({ id:`spark${i+1}`, is_healthy:true, load:0, url:'http://private-address', probe_error:'secret',
+        requested_thinking:{status:'specified',fields:{reasoning_effort:i===0?'xhigh':'none',prompt:'NEVER_EXPORT'}},
+        last_requested_thinking:{status:'not_specified'},last_request_finished_at:'NEVER_EXPORT' })) }));
   });
   backend.listen(0, '127.0.0.1'); await once(backend, 'listening');
   t.after(() => { backend.closeAllConnections(); backend.close(); });
@@ -136,6 +165,9 @@ test('six-worker monitoring only reads gateway status; credentials and addresses
   fs.writeFileSync(path.join(dir,'gateway.log'), JSON.stringify({ event:'request_finished', node:'spark1', outcome:'complete', prompt:'NEVER_EXPORT' })+'\n');
   const app = await runDashboard(config, 0); t.after(app.close);
   const s = app.snapshot(); assert.equal(s.devices.length, 6); assert.equal(s.events.length, 1);
+  assert.deepEqual(s.gateway.workers[0].requested_thinking,{status:'specified',fields:{reasoning_effort:'xhigh'}});
+  assert.equal(s.gateway.workers[1].requested_thinking.fields.reasoning_effort,'none');
+  assert.equal(s.gateway.workers[0].last_request_finished_at,null);
   assert.ok(!/SECRET_FOR_TEST|private-address|NEVER_EXPORT/.test(JSON.stringify(s)));
   assert.deepEqual(calls, ['/gateway/status']);
 });

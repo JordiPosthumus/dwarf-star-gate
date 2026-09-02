@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { safeGatewayEvent, DeviceTelemetry, JournalReader } from './telemetry.mjs';
+import { safeRequestedThinking } from './requested-thinking.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const assets = new Map([['/', ['index.html', 'text/html']], ['/ui.css', ['ui.css', 'text/css']], ['/brand.css', ['brand.css', 'text/css']], ['/ui.js', ['ui.js', 'text/javascript']], ['/logo.png', ['logo.png', 'image/png']]]);
@@ -117,7 +118,9 @@ export async function runDashboard(configPath, port = 30010) {
       const s = await r.json();
       if (s.version !== 1 || !Array.isArray(s.workers)) throw new Error('Unsupported gateway');
       gateway = { model: s.model, context_length: s.context_length, total: s.total, healthy: s.healthy, available: s.available, active: s.active, queued: s.queued, draining: s.draining,
-        workers: s.workers.map(w => ({ id: w.id, is_healthy: w.is_healthy, drained: w.drained, load: w.load, queued: w.queued, active_seconds: w.active_seconds, completed: w.completed, failed: w.failed, assigned_sessions: w.assigned_sessions })) };
+        workers: s.workers.map(w => ({ id: w.id, is_healthy: w.is_healthy, drained: w.drained, load: w.load, queued: w.queued, active_seconds: w.active_seconds, completed: w.completed, failed: w.failed, assigned_sessions: w.assigned_sessions,
+          requested_thinking: safeRequestedThinking(w.requested_thinking), last_requested_thinking: safeRequestedThinking(w.last_requested_thinking),
+          last_request_finished_at: typeof w.last_request_finished_at === 'string' && Number.isFinite(Date.parse(w.last_request_finished_at)) ? w.last_request_finished_at : null })) };
       gatewayAt = Date.now(); gatewayError = null;
     } catch { gatewayError = 'Gateway status unavailable; last snapshot is stale'; }
     finally { polling = false; }

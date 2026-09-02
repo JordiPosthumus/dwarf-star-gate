@@ -137,6 +137,26 @@ tokens alone do not prove RAM residency. Counts cover observed prompt starts,
 including up to 15 minutes / 2,000 initial journal records, not lifetime hit rates.
 Non-streaming responses without observed usage show unknown token counters.
 
+Each worker's **Requested thinking** indicator reports the active client's
+controls, separately from the engine's current THINKING/DECODE phase. Idle workers
+show the last finished request and its age. Hover for the exact source fields:
+`reasoning_effort`, `reasoning.effort`, `output_config.effort`, boolean `thinking`
+or `thinking.type`, optional `thinking.budget_tokens`, and `enable_thinking`.
+These are observations, not a promise that a particular engine honors each field
+or distinguishes every requested level. Multiple controls are shown together;
+the gateway does not choose their precedence or rewrite them.
+
+Omitted controls show **Not specified**; unknown metadata never becomes an assumed
+level. The observer captures up to **8 MiB per dispatched upload in transient RAM**,
+parses it once at upload completion, then releases body references and retains only
+allowlisted scalar metadata. JSON parsing has a small CPU/temporary-memory cost.
+Over-budget, encoded, malformed or incomplete uploads show **Unknown**; their
+original bytes continue through the same streaming pipe. This budget is **not** a
+request-size, context or output cap. Queued bodies are not inspected before dispatch.
+Requested metadata is included in completion events and sanitized diagnostics,
+but not persisted in the affinity store. Last-request indicators reset on gateway
+restart; old events without metadata remain unavailable.
+
 ```sh
 ./gateway-status.sh
 ./gateway-logs.sh

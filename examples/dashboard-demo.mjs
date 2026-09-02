@@ -14,6 +14,8 @@ const devices = workers.map((w,i) => ({
   series:Array.from({length:70},(_,j)=>[{time:now-900000+j*12800,kind:'decode',tps:13.8+i*.1+Math.sin(j*.8)*.35+j*.008}, {time:now-900000+j*12800,kind:'prefill',tps:790+Math.sin(j*.65+i)*60}]).flat(),
   recent:[],
 }));
+workers[0].requested_thinking = { status:'specified', fields:{reasoning_effort:'xhigh'} };
+workers[1].requested_thinking = { status:'specified', fields:{thinking:false} };
 const events = Array.from({length:8},(_,i)=>({
   time:new Date(now-(8-i)*37000).toISOString(),event:'request_finished',node:`spark${i%2+1}`,
   request_id:`${(0xa1b2c300+i).toString(16)}-0000-4000-8000-000000000000`,outcome:i===1?'client_cancelled':'complete',queue_ms:i===4?4200:0,elapsed_ms:12340+i*3700,

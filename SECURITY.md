@@ -27,6 +27,12 @@ development line; no long-term-support releases or response-time SLA are promise
 ## Data handling
 
 Prompt and answer bodies are forwarded, not deliberately stored by the gateway.
+The requested-thinking observer transiently captures at most 8 MiB per active
+upload for one JSON parse. It releases body references on completion, overflow or
+cancellation and retains only allowlisted thinking-control scalars (not message
+text, images or tools). This is not secure memory erasure; JavaScript garbage
+collection owns reclamation. Larger/encoded uploads still pass through unchanged
+with unknown thinking metadata. No body capture is written to disk.
 Operational data is still sensitive: raw SSH errors can expose host details;
 diagnostics contain request IDs, hashed session IDs, timings and token counts.
 Review before sharing. Debug artifacts and runtime files are excluded from Git.

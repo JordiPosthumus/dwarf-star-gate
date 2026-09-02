@@ -4,6 +4,7 @@ import path from 'node:path';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
+import { RequestedThinkingObserver } from './requested-thinking.mjs';
 
 const digest = value => createHash('sha256').update(value).digest('hex');
 const log = (event, fields = {}) => process.stdout.write(JSON.stringify({ time: new Date().toISOString(), event, ...fields }) + '\n');
@@ -108,6 +109,8 @@ export function createGateway(config) {
       gateway_drained: n.drained && !n.active && !n.queue.length, load: Number(!!n.active),
       queued: n.queue.length, assigned_sessions: store.count(n.id), completed: n.completed, failed: n.failed,
       active_seconds: n.active ? Math.round((Date.now() - n.active.dispatched) / 1000) : 0,
+      requested_thinking: n.active?.thinking?.result ?? null,
+      last_requested_thinking: n.lastThinking ?? null, last_request_finished_at: n.lastFinishedAt ?? null,
       last_probe: n.lastProbe, probe_error: n.probeError })) });
 
   function pick(exclude) {
@@ -136,14 +139,19 @@ export function createGateway(config) {
     headers['x-request-id'] = job.id;
     delete headers.expect;
     const observer = new UsageObserver();
+    job.thinking = new RequestedThinkingObserver(req.headers['content-encoding']);
+    const observeBody = chunk => job.thinking.accept(chunk);
+    const bodyEnded = () => job.thinking.finish();
     let settled = false, response;
     const finish = (outcome, detail) => {
       if (settled) return; settled = true;
       clearTimeout(job.deadline);
+      req.off('data', observeBody); req.off('end', bodyEnded); job.thinking.dispose();
+      node.lastThinking = job.thinking.result; node.lastFinishedAt = new Date().toISOString();
       if (outcome === 'complete') node.completed++; else node.failed++;
       log('request_finished', { request_id: job.id, node: node.id, session: job.key?.slice(0, 12), outcome,
         queue_ms: job.dispatched - job.created, elapsed_ms: Date.now() - job.dispatched,
-        usage: observer.usage, sse_done: observer.done, detail });
+        usage: observer.usage, sse_done: observer.done, requested_thinking: job.thinking.result, detail });
       job.cleanup();
       node.active = null;
       schedule(node);
@@ -182,6 +190,9 @@ export function createGateway(config) {
     });
     job.deadline = setTimeout(() => { upstream.destroy(Object.assign(new Error('100-hour request deadline'), { code: 'REQUEST_DEADLINE' })); }, config.request_timeout_ms ?? 360000000);
     log('request_dispatched', { request_id: job.id, node: node.id, session: job.key?.slice(0, 12), affinity: job.affinity, queue_ms: job.dispatched - job.created });
+    // Passive observation only while dispatched; queued uploads remain untouched.
+    // The original pipe retains streaming/backpressure and exact body bytes.
+    req.on('data', observeBody); req.once('end', bodyEnded);
     req.pipe(upstream);
   }
 

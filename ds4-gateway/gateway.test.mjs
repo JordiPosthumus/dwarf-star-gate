@@ -6,17 +6,18 @@ import os from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { AffinityStore, createGateway } from './gateway.mjs';
+import { requestedThinking, RequestedThinkingObserver, THINKING_CAPTURE_BYTES, safeRequestedThinking } from './requested-thinking.mjs';
 
 async function until(fn, timeout = 3000) {
   const end = Date.now() + timeout;
   while (!fn()) { if (Date.now() > end) throw new Error('Condition timed out'); await delay(10); }
 }
 async function backend(id) {
-  const b = { id, records: [], active: 0, peak: 0, aborts: 0, health: true };
+  const b = { id, records: [], active: 0, peak: 0, aborts: 0, health: true, receivedBytes: 0 };
   b.server = http.createServer((req, res) => {
     if (req.url === '/v1/models') return res.end(JSON.stringify({ data: [{ id: b.health ? 'deepseek-v4-flash' : 'wrong-model', context_length: 153600 }] }));
     const chunks = [];
-    req.on('data', c => chunks.push(c));
+    req.on('data', c => { chunks.push(c); b.receivedBytes += c.length; });
     req.on('end', () => {
       const body = Buffer.concat(chunks); const p = JSON.parse(body.toString());
       b.records.push({ body, headers: req.headers, payload: p }); b.active++; b.peak = Math.max(b.peak, b.active);
@@ -74,6 +75,95 @@ async function rig(t, count = 2, overrides = {}) {
   t.after(async () => { await r.gateway.close(); await Promise.all(backends.map(b => b.close())); });
   return r;
 }
+
+test('requested thinking captures allowlisted controls, never nested prompt text or an assumed default', () => {
+  for (const effort of ['none','minimal','low','medium','high','xhigh','max']) {
+    assert.deepEqual(requestedThinking({reasoning_effort:effort}), {status:'specified',fields:{reasoning_effort:effort}});
+    assert.deepEqual(requestedThinking({reasoning:{effort}}), {status:'specified',fields:{'reasoning.effort':effort}});
+    assert.deepEqual(requestedThinking({output_config:{effort}}), {status:'specified',fields:{'output_config.effort':effort}});
+  }
+  for (const value of [true,false,null]) assert.equal(requestedThinking({thinking:value}).fields.thinking,value);
+  assert.deepEqual(requestedThinking({thinking:{type:'adaptive',budget_tokens:100000},reasoning_effort:'max'}),
+    {status:'specified',fields:{reasoning_effort:'max','thinking.type':'adaptive','thinking.budget_tokens':100000}});
+  assert.deepEqual(requestedThinking({reasoning_effort:null}),{status:'specified',fields:{reasoning_effort:null}});
+  assert.deepEqual(requestedThinking({messages:[{content:'PRIVATE',reasoning_effort:'xhigh'}]}),{status:'not_specified'});
+  assert.equal(requestedThinking({thinking:{new_field:'PRIVATE'}}).fields.thinking,'unrecognized');
+  const bad = requestedThinking({reasoning_effort:'PRIVATE',thinking:{type:'PRIVATE',budget_tokens:'PRIVATE'},enable_thinking:'PRIVATE'});
+  assert.ok(!JSON.stringify(bad).includes('PRIVATE'));
+  assert.deepEqual(safeRequestedThinking({...bad,prompt:'PRIVATE',fields:{...bad.fields,secret:'PRIVATE'}}),bad);
+});
+
+test('request observer handles split UTF-8 and fields after a large prompt; drops raw body after parsing', () => {
+  const o = new RequestedThinkingObserver();
+  const body = Buffer.from(JSON.stringify({messages:[{content:'星'.repeat(1000)}],reasoning_effort:'xhigh'}));
+  for (let i=0;i<body.length;i+=7) o.accept(body.subarray(i,i+7));
+  assert.equal(o.result.status,'pending');
+  assert.deepEqual(o.finish(),{status:'specified',fields:{reasoning_effort:'xhigh'}});
+  assert.equal(o.chunks.length,0); assert.ok(!JSON.stringify(o).includes('星'));
+});
+
+test('observation budget has an exact boundary and does not claim omitted fields on overflow or encoding', () => {
+  const body = Buffer.from('{"reasoning_effort":"high"}');
+  const exact = new RequestedThinkingObserver();
+  exact.accept(body); exact.accept(Buffer.alloc(THINKING_CAPTURE_BYTES-body.length,32));
+  assert.equal(exact.finish().fields.reasoning_effort,'high');
+  const big = new RequestedThinkingObserver(); big.accept(Buffer.alloc(THINKING_CAPTURE_BYTES+1,32));
+  assert.deepEqual(big.finish(),{status:'unavailable',reason:'capture_limit'}); assert.equal(big.chunks.length,0);
+  const encoded = new RequestedThinkingObserver('gzip'); encoded.accept(body);
+  assert.deepEqual(encoded.finish(),{status:'unavailable',reason:'encoded_body'});
+  const invalid = new RequestedThinkingObserver(); invalid.accept(Buffer.from('{bad'));
+  assert.equal(invalid.finish().reason,'invalid_json');
+  assert.equal(requestedThinking([]).reason,'invalid_json');
+  const cancelled = new RequestedThinkingObserver(); cancelled.accept(body); cancelled.dispose();
+  assert.equal(cancelled.result.reason,'incomplete_body'); assert.equal(cancelled.chunks.length,0);
+});
+
+test('per-worker requested thinking follows dispatch, not affinity or queued requests, and resets when idle', async t => {
+  const r = await rig(t);
+  const first = r.request('{"reasoning_effort":"xhigh","delay":250}', 'a');
+  const other = r.request('{"thinking":false,"delay":250}', 'b');
+  await until(()=>r.gateway.stats().workers.every(w=>w.requested_thinking?.status==='specified'));
+  const queued = r.request('{"reasoning":{"effort":"low"},"delay":150}', 'a');
+  await until(()=>r.gateway.stats().queued===1);
+  let workers = r.gateway.stats().workers;
+  assert.equal(workers[0].requested_thinking.fields.reasoning_effort,'xhigh');
+  assert.equal(workers[1].requested_thinking.fields.thinking,false);
+  await first;
+  await until(()=>r.gateway.stats().workers[0].requested_thinking?.fields?.['reasoning.effort']==='low');
+  await Promise.all([queued,other]);
+  workers = r.gateway.stats().workers;
+  assert.ok(workers.every(w=>w.requested_thinking===null));
+  assert.equal(workers[0].last_requested_thinking.fields['reasoning.effort'],'low');
+  assert.equal(workers[1].last_requested_thinking.fields.thinking,false);
+  await r.request('{}','a');
+  assert.deepEqual(r.gateway.stats().workers[0].last_requested_thinking,{status:'not_specified'});
+});
+
+test('oversized vision upload is forwarded byte-for-byte; only its thinking observation is unavailable', async t => {
+  const r = await rig(t,1);
+  const body = JSON.stringify({messages:[{content:[{type:'image_url',image_url:{url:'data:image/png;base64,'+'A'.repeat(THINKING_CAPTURE_BYTES)}}]}],reasoning_effort:'max',max_tokens:153600});
+  assert.equal((await r.request(body)).status,200);
+  assert.equal(r.backends[0].records[0].body.toString(),body);
+  assert.deepEqual(r.gateway.stats().workers[0].last_requested_thinking,{status:'unavailable',reason:'capture_limit'});
+});
+
+test('chunked uploads reach the backend before metadata parsing; no buffer-then-forward behavior', async t => {
+  const r = await rig(t,1);
+  let req;
+  const response = new Promise((resolve,reject)=>{
+    req = http.request({host:'127.0.0.1',port:r.address.port,path:'/v1/chat/completions',method:'POST',headers:{authorization:'Bearer none','content-type':'application/json'}},res=>{
+      res.resume();res.on('end',resolve);res.on('error',reject);
+    }); req.on('error',reject);
+  });
+  const first = '{ "messages":[{"content":"PRIVATE"}],';
+  req.write(first);
+  await until(()=>r.backends[0].receivedBytes===Buffer.byteLength(first));
+  assert.equal(r.gateway.stats().workers[0].requested_thinking.status,'pending');
+  const last = ' "reasoning_effort":"xhigh" }'; req.end(last); await response;
+  assert.equal(r.backends[0].records[0].body.toString(),first+last);
+  assert.equal(r.gateway.stats().workers[0].last_requested_thinking.fields.reasoning_effort,'xhigh');
+  assert.ok(!JSON.stringify(r.gateway.stats()).includes('PRIVATE'));
+});
 
 test('new sessions spread; existing sessions stay; restart keeps assignments', async t => {
   const r = await rig(t);

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Per-worker requested-thinking indicator, with current/last-request distinction,
+  explicit unknown/default states and allowlisted diagnostic metadata.
+- Bounded passive request observation; byte-preservation, streaming upload,
+  per-worker isolation and oversized vision-upload regression tests.
 - Prominent credit and links to Antirez's original DwarfStar / DS4 project.
 - Contributor and security-reporting guidance.
 - Branded read-only UI, owner-provided replaceable artwork and synthetic screenshots.

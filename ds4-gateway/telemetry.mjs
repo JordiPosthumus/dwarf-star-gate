@@ -1,4 +1,5 @@
 // Read-only, allowlisted DS4 telemetry. Never retain raw journal messages.
+import { safeRequestedThinking } from './requested-thinking.mjs';
 export function parseTiming(message, time = Date.now()) {
   if (typeof message !== 'string' || !message.includes('ds4-server:')) return null;
   let m;
@@ -30,6 +31,7 @@ export function safeGatewayEvent(raw) {
   else if (raw.outcome) e.outcome = 'other';
   for (const key of ['queue_ms', 'elapsed_ms']) if (Number.isFinite(raw[key]) && raw[key] >= 0) e[key] = raw[key];
   if (typeof raw.sse_done === 'boolean') e.sse_done = raw.sse_done;
+  if (raw.requested_thinking) e.requested_thinking = safeRequestedThinking(raw.requested_thinking);
   if (Number.isInteger(raw.detail)) e.http_status = raw.detail;
   if (raw.usage) {
     e.usage = {};
