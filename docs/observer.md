@@ -50,6 +50,24 @@ from engine failures. This observation limit does not truncate forwarded output.
 
 ## Genie
 
+The **Gate Genie health wire** above the capacity panel is a live, lightly wry
+news ticker. Red means attention is needed; green means no current flags in the
+available evidence; amber means the status feed is unavailable. It reports
+quarantined/unavailable/paused servers, per-server queue counts, free slots while
+work waits, collector errors and observed completed-request queue waits. Those
+waits are historical samples from the last 15 minutes of the available log tail,
+not the current queue's age or a predicted completion time. A slow response alone
+never produces a stall accusation, and missing thinking metadata is not called a
+reasoning failure.
+
+Headlines use deterministic templates and live DSG facts, not the LLM's prose.
+They cost no inference tokens and work with the optional Genie observer off.
+The five-minute model assessments remain separate below. This wire grants no
+new operational powers. Hover or keyboard-focus it to freeze motion and headline
+updates; **Pause ticker** holds that state until resumed. The displayed timestamp
+stays with the frozen evidence. Reduced-motion preferences show wrapped static
+text instead of scrolling, and the visual repeat is hidden from screen readers.
+
 In the web UI, find **Gate Genie** beside **Evidence collection**. **Enable** /
 **Turn off** controls the observer. The **Dedicated server / DSG pool fallback**
 dropdown chooses between existing configured endpoints; it does not edit their
@@ -107,6 +125,12 @@ multi-turn agent conversation. Twelve recent assessments live in memory and are
 not included in downloadable diagnostics or training records. The model has no
 tools or control credentials, and its prose is rendered as text, never executed.
 The dashboard's same-origin/CSRF checks protect its enable/source/ask controls.
+
+Click a report heading (or focus it and press Enter/Space) to read the assessment.
+The five-second status refresh preserves open reports and text selection. The
+panel normally shows the latest three reports; an older open or keyboard-focused
+report stays visible while you read, even as newer reports arrive. This is only
+page-local reading state, not durable history across a page/dashboard restart.
 
 See the [roadmap](roadmap.md) for embeddings, XGBoost, cache-health attribution,
 frozen-agent packaging and independently tested operational powers.

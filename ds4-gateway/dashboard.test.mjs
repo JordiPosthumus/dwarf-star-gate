@@ -171,6 +171,83 @@ async function fixture(t, management = null) {
   t.after(() => { server.closeAllConnections(); server.close(); });
   return { server, url:`http://127.0.0.1:${server.address().port}` };
 }
+// Minimal DOM contract for reconciliation tests; actual disclosure/keyboard
+// behavior is also checked in the browser, not inferred from this test double.
+function genieReportFixture() {
+  class Element {
+    constructor(tag) { this.tagName=tag; this.children=[]; this.dataset={}; this.open=false; this.parent=null; this.writes=0; }
+    set innerHTML(_) { throw new Error('Report rendering must not rebuild or parse HTML'); }
+    set textContent(value) { this.text=String(value); this.writes++; }
+    get textContent() { return this.text || ''; }
+    contains(node) { return this===node || this.children.some(child=>child.contains(node)); }
+    append(...nodes) { for(const node of nodes)this.insertBefore(node,null); }
+    insertBefore(node, reference) {
+      if(node===reference)return;
+      node.remove(); const index=reference===null?this.children.length:this.children.indexOf(reference);
+      assert.ok(index>=0); this.children.splice(index,0,node); node.parent=this;
+    }
+    remove() { if(this.parent){this.parent.children.splice(this.parent.children.indexOf(this),1);this.parent=null;} }
+  }
+  const container=new Element('div'), document={activeElement:null,getElementById:id=>id==='genie-reports'?container:null,createElement:tag=>new Element(tag)};
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const context=vm.createContext({document});vm.runInContext(source,context);
+  const render=reports=>{context.reports=reports;vm.runInContext('renderGenieReports(reports)',context);};
+  const report=id=>({id,time:1000,source:'primary',text:`Report ${id}`});
+  return {container,document,render,report};
+}
+test('Genie polling preserves report nodes, open state, focus and untouched text',()=>{
+  const {container,document,render,report}=genieReportFixture(), reports=['c','b','a'].map(report);
+  render(reports);const nodes=[...container.children], summary=nodes[1].children[0], answer=nodes[1].children[1];
+  nodes[1].open=true;document.activeElement=summary;
+  for(let i=0;i<5;i++)render(structuredClone(reports));
+  assert.deepEqual(container.children,nodes);assert.equal(nodes[1].open,true);assert.equal(nodes[0].open,false);
+  assert.equal(document.activeElement,summary);assert.equal(nodes[1].children[1],answer);assert.equal(answer.writes,1);
+  nodes[1].open=false;render(reports);assert.equal(nodes[1].open,false);
+});
+test('new Genie reports retain an open older report beyond the latest three and history rotation',()=>{
+  const {container,document,render,report}=genieReportFixture();
+  render(['c','b','a'].map(report));const oldest=container.children[2];oldest.open=true;
+  render(['d','c','b','a'].map(report));
+  assert.deepEqual(container.children.map(n=>n.dataset.reportId),['d','c','b','a']);assert.equal(container.children[3],oldest);assert.ok(oldest.open);
+  render(['e','d','c'].map(report));assert.equal(container.children[3],oldest);assert.ok(oldest.open);
+  oldest.open=false;document.activeElement=oldest.children[0];render(['e','d','c'].map(report));assert.equal(container.children[3],oldest);
+  document.activeElement=null;render(['e','d','c'].map(report));assert.equal(container.children.length,3);assert.equal(oldest.parent,null);
+});
+test('Genie report bodies remain inert text and an empty refresh does not close a report being read',()=>{
+  const {container,render,report}=genieReportFixture(), text='<img src=x onerror=alert(1)> & <script>bad()</script>';
+  render([{...report('a'),source:'<b>primary</b>',text}]);const node=container.children[0];node.open=true;
+  assert.equal(node.tagName,'details');assert.equal(node.children[0].tagName,'summary');
+  assert.equal(node.children[1].textContent,text);assert.equal(node.children[1].children.length,0);
+  render([]);assert.equal(container.children[0],node);assert.ok(node.open);
+  node.open=false;render([]);assert.equal(container.children.length,0);
+});
+test('health wire uses current facts and labels historical waits, without guessing stalls or thinking failures',()=>{
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const context=vm.createContext({});vm.runInContext(source,context);
+  const news=s=>vm.runInContext(`healthHeadlines(${JSON.stringify(s)})`,context);
+  const time=Date.parse('2026-09-02T20:00:00Z');
+  const s={time,gateway:{active:1,queued:9,workers:[
+    {id:'spark1',is_healthy:true,load:0,queued:0},
+    {id:'spark2',is_healthy:false,quarantine:{reason:'accelerator_checkpoint_failure'}},
+    {id:'studio',is_healthy:true,load:1,queued:9,active_seconds:9000,requested_thinking:{status:'unavailable',reason:'capture_limit'}}]},events:[
+      {event:'request_finished',outcome:'complete',node:'studio',time:new Date(time-60000).toISOString(),queue_ms:1183640},
+      {event:'request_finished',outcome:'complete',node:'old',time:new Date(time-1000000).toISOString(),queue_ms:99000000},
+      {event:'request_finished',outcome:'client_cancelled',node:'cancelled',time:new Date(time-1000).toISOString(),queue_ms:99000000}]};
+  const result=news(s),text=result.items.join(' ');assert.equal(result.level,'warn');
+  assert.match(text,/Spark 2: quarantined after accelerator\/checkpoint failure/);assert.match(text,/studio: 9 queued, 1 active/);
+  assert.match(text,/19m 43s spent queued/);assert.match(text,/not a current ETA/);assert.match(text,/1 eligible slot free while 9 requests wait/);
+  assert.doesNotMatch(text,/old:|cancelled:|stalled|unstable|thinking|xhigh|restarted|fixed/);
+  assert.equal(news({...s,gateway_error:true}).level,'unknown');assert.doesNotMatch(news({...s,gateway_error:true}).items.join(' '),/quarantined|9 queued/);
+  assert.equal(news({time,gateway:{workers:[{id:'one',is_healthy:true,load:1}],active:1}}).level,'ok');
+  assert.match(news({time,gateway:{workers:[{id:'one',is_healthy:true,drained:true}]}}).items.join(' '),/routing paused/);
+  assert.match(news({time,gateway:{workers:[]}}).items.join(' '),/No DS4 servers registered/);
+});
+test('health wire markup offers pause and keyboard access, with a nonduplicated reduced-motion view',()=>{
+  const html=fs.readFileSync(new URL('./ui/index.html',import.meta.url),'utf8'),css=fs.readFileSync(new URL('./ui/brand.css',import.meta.url),'utf8');
+  assert.match(html,/id="health-wire-pause"[^>]*aria-pressed="false"/);assert.match(html,/class="health-wire-window" tabindex="0"/);
+  assert.match(html,/id="health-wire-copy" aria-hidden="true"/);assert.match(html,/rule-written headlines/);
+  assert.match(css,/prefers-reduced-motion:reduce/);assert.match(css,/animation-play-state:paused/);assert.match(css,/aria-hidden="true"\]\{display:none\}/);
+});
 test('dashboard serves local assets and a downloadable read-only snapshot', async t => {
   const { url } = await fixture(t);
   for (const route of ['/', '/ui.css', '/brand.css', '/logo.png', '/ui.js', '/api/status', '/api/diagnostics']) {

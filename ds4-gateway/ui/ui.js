@@ -50,8 +50,52 @@ function device(d, w, now, stale, index = 1, scales={}) {
   const prompt = d.prompt ? `Last prompt: ${fmt(d.prompt.prompt)} tokens · ${fmt(d.prompt.cached)} reused · ${esc(d.prompt.cache)}` : 'No prompt start observed yet';
   return `<article class="device"><div class="device-top"><div class="device-name"><span class="device-number">${String(index).padStart(2,'0')}</span>${esc(d.id.replace(/^spark/, 'Spark '))}</div><span class="badge ${bad ? 'bad' : w?.load ? 'busy' : ''}">${esc(state==='decode'?'answering':state)}</span></div>${timeline(d,now)}${thinkingIndicator(w,stale,now)}<div class="metrics">${metric('decode','DECODE')}${metric('prefill','PREFILL')}</div><p class="prompt-note">${prompt}</p><div class="cache"><div><strong>${fmt(d.cache.reused)}</strong><span>Prefix reused</span></div><div><strong>${fmt(d.cache.cold)}</strong><span>Cold starts</span></div><div><strong>${fmt(d.cache.resident_misses)}</strong><span>Resident misses</span></div><div><strong>${fmt(d.cache.disk_restores)}</strong><span>Disk restores</span></div></div><p class="cache-note">Observed since ${d.observed_since ? clock(d.observed_since) : 'connecting'} · RAM misses ≠ cold starts</p><div class="device-foot"><span>${fmt(w?.queued)} queued · ${fmt(w?.assigned_sessions)} assigned sessions</span><span>${telemetryStatus(d)} · ${w?.load ? `${fmt(w.active_seconds)}s active` : 'last sample '+age(d.last_event,now)}</span></div></article>`;
 }
+function healthHeadlines(s) {
+  const g=s?.gateway;
+  if(!g || s.gateway_error)return {level:'unknown',items:['Status feed unavailable. No fresh health verdict until telemetry returns.']};
+  const items=[],workers=g.workers || [],name=w=>w.id.replace(/^spark(\d+)$/,'Spark $1');
+  for(const w of workers) {
+    if(w.quarantine) {
+      const reason=({accelerator_checkpoint_failure:'accelerator/checkpoint failure',fatal_accelerator_error:'fatal accelerator error',incomplete_sse:'incomplete response stream'})[w.quarantine.reason] || 'generation failure';
+      items.push(`${name(w)}: quarantined after ${reason}. Benched, not forgotten.`);
+    } else if(!w.is_healthy)items.push(`${name(w)}: unavailable; cause not established. No guesswork in this bulletin.`);
+    else if(w.drained)items.push(`${name(w)}: routing paused${w.load || w.queued ? '; admitted work is still draining' : ''}.`);
+  }
+  const queued=workers.filter(w=>w.queued>0).sort((a,b)=>b.queued-a.queued);
+  for(const w of queued.slice(0,3))items.push(`${name(w)}: ${w.queued} queued, ${w.load || 0} active.${w.queued>=3?' Patience is doing overtime.':''}`);
+  if(queued.length>3)items.push(`${queued.length-3} other servers also have waiting requests.`);
+  const waits=(s.events || []).filter(e=>e.event==='request_finished' && e.outcome==='complete' && Number.isFinite(e.queue_ms) && e.queue_ms>=60000 && Number.isFinite(Date.parse(e.time)) && s.time-Date.parse(e.time)>=0 && s.time-Date.parse(e.time)<=900000);
+  const longest=waits.reduce((best,e)=>!best || e.queue_ms>best.queue_ms?e:best,null);
+  if(longest) {
+    const seconds=Math.floor(longest.queue_ms/1000);
+    items.push(`Recent completed request on ${longest.node}: ${Math.floor(seconds/60)}m ${seconds%60}s spent queued — longest in the observed last 15 minutes, not a current ETA.`);
+  }
+  const free=g.draining?0:workers.filter(w=>w.is_healthy && !w.drained && !w.load && !w.queued).length;
+  if(free && g.queued>0)items.push(`${free} eligible slot${free===1?'':'s'} free while ${g.queued} requests wait. Affinity or ordering may be holding the line; not proof of a routing bug.`);
+  if(g.dataset?.error)items.push('Evidence collector reports an error. Check its panel; inference is a separate system.');
+  if(g.draining)items.push('Gateway is draining; new admission is stopped.');
+  if(!workers.length)items.push('No DS4 servers registered. The newsroom is open; the fleet is not.');
+  if(!items.length)items.push(`No fresh health flags: ${workers.length} available servers, ${g.active || 0} active requests, ${free} free slots. Suspiciously civilised.`);
+  return {level:items.length===1 && items[0].startsWith('No fresh health flags:')?'ok':'warn',items};
+}
+let wirePaused=false,wireSnapshot=null,wireSignature=null;
+function renderHealthWire(snapshot) {
+  wireSnapshot=snapshot;
+  const wire=$('health-wire');
+  if(wirePaused || wire.matches(':hover, :focus-within'))return;
+  const news=healthHeadlines(snapshot),signature=JSON.stringify(news);
+  $('health-wire-asof').textContent=`Live facts · ${clock(snapshot.time || Date.now())}`;
+  if(signature===wireSignature)return;
+  wireSignature=signature;wire.dataset.level=news.level;
+  const text=news.items.join('   •   ');
+  $('health-wire-text').textContent=text;$('health-wire-copy').textContent=text;
+  // Roughly 24px/s in this monospace face; the animated track itself is never
+  // replaced by polling, so unchanged bulletins do not jump back to the start.
+  $('health-wire-track').style.animationDuration=`${Math.max(30,text.length*7/24)}s`;
+}
 function render(s) {
   const g = s.gateway, now = s.time, stale = !!s.gateway_error;
+  renderHealthWire(s);
   $('connection').textContent = s.demo ? '◉ Demo telemetry' : stale ? 'Status unavailable' : '● Live telemetry';
   $('warning').hidden = !s.gateway_error && !s.telemetry_error;
   $('warning').textContent = [s.gateway_error,s.telemetry_error].filter(Boolean).join(' · ');
@@ -75,7 +119,7 @@ function render(s) {
 }
 async function poll() {
   try { const r = await fetch('/api/status', { cache: 'no-store', signal: AbortSignal.timeout(5000) }); if (!r.ok) throw new Error(); render(await r.json()); }
-  catch { $('connection').textContent = 'Disconnected'; $('warning').hidden = false; $('warning').textContent = 'Dashboard connection lost. Values below are historical, not live.'; }
+  catch { $('connection').textContent = 'Disconnected'; $('warning').hidden = false; $('warning').textContent = 'Dashboard connection lost. Values below are historical, not live.'; renderHealthWire({time:Date.now(),gateway_error:true}); }
   finally { setTimeout(poll, document.hidden ? 10000 : 2000); }
 }
 let controlsWired = false, workerBusy = false, workersLoading = false, csrfToken = null;
@@ -150,7 +194,46 @@ function wireWorkerControls() {
     void workerAction(action,action==='remove'?{id}:{workers:[id]});
   });
 }
+function renderGenieReports(reports = []) {
+  const container = $('genie-reports');
+  const existing = new Map([...container.children].map(node => [node.dataset.reportId, node]));
+  const keep = new Set();
+  let position = 0;
+  for (const [index, report] of reports.entries()) {
+    let node = existing.get(report.id);
+    if (index >= 3 && !node?.open && !node?.contains(document.activeElement)) continue;
+    if (keep.has(report.id)) continue;
+    keep.add(report.id);
+    if (!node) {
+      node = document.createElement('details');
+      node.dataset.reportId = report.id;
+      const summary = document.createElement('summary');
+      summary.textContent = `${clock(report.time)} · ${report.source} · assessment, no actions`;
+      const answer = document.createElement('p');
+      answer.className = 'genie-answer';
+      answer.textContent = report.text;
+      node.append(summary, answer);
+    }
+    // Completed reports are immutable. Keep their actual DOM nodes so polling
+    // cannot reset disclosure state, keyboard focus or a selected passage.
+    if (container.children[position] !== node) container.insertBefore(node, container.children[position] || null);
+    position++;
+  }
+  for (const node of [...container.children]) {
+    // Even a report rotated out of the server's history stays readable until
+    // the reader closes it. This is page-local, not persistent report storage.
+    if (!keep.has(node.dataset.reportId) && !node.open && !node.contains(document.activeElement)) node.remove();
+  }
+}
 poll();
+$('health-wire-pause').addEventListener('click',()=>{
+  wirePaused=!wirePaused;$('health-wire').dataset.paused=String(wirePaused);
+  $('health-wire-pause').textContent=wirePaused?'Resume ticker':'Pause ticker';
+  $('health-wire-pause').setAttribute('aria-pressed',String(wirePaused));
+  if(!wirePaused && wireSnapshot)renderHealthWire(wireSnapshot);
+});
+$('health-wire').addEventListener('mouseleave',()=>{if(wireSnapshot)renderHealthWire(wireSnapshot);});
+$('health-wire').addEventListener('focusout',()=>queueMicrotask(()=>{if(wireSnapshot)renderHealthWire(wireSnapshot);}));
 let genieToken=null,genieState=null;
 async function genieAction(input) {
   try {const r=await fetch('/api/genie',{method:'POST',headers:{'content-type':'application/json','x-dsg-csrf':genieToken},body:JSON.stringify(input)});
@@ -163,7 +246,7 @@ async function loadGenie() {
     $('genie-toggle').disabled=!s.configured;$('genie-toggle').textContent=s.enabled?'Turn off':'Enable';
     $('genie-source').disabled=!s.fallback_available||s.busy;$('genie-source').value=s.source||'primary';
     $('genie-review').disabled=$('genie-send').disabled=!s.enabled||s.busy;
-    $('genie-reports').innerHTML=(s.reports||[]).slice(0,3).map(r=>`<details><summary>${clock(r.time)} · ${esc(r.source)} · assessment, no actions</summary><p class="genie-answer">${esc(r.text)}</p></details>`).join('');
+    renderGenieReports(s.reports || []);
   } catch{$('genie-status').textContent='Genie status unavailable';}
 }
 $('genie-toggle').addEventListener('click',()=>genieAction({action:'enable',enabled:!genieState?.enabled}));
