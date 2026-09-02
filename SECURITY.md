@@ -28,6 +28,11 @@ development line; no long-term-support releases or response-time SLA are promise
   can use the socket; the browser checks are not isolation from that account.
 - Journal followers and registered remote-worker tunnels use the operator's
   existing SSH authority. Registration does not install keys or modify SSH trust.
+- Optional `telemetry_files` paths are set by the operator in private config, not
+  through browser controls. The dashboard opens local regular nonsymlink logs
+  read-only, with bounded reads and line buffers. It parses allowlisted engine
+  measurements; it never exports paths or raw lines. Protect log ownership and
+  config access: forged logs can forge telemetry, not issue gateway commands.
 - Conversation affinity identifiers are routing hints, not authorization tokens.
 - Config/state directories, SSH access and service accounts must be protected by
   the operator. A compromised local account is outside this gateway's isolation.

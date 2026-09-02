@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Read-only local Mac engine-log telemetry: bounded tailing, timestamped decode/
+  prefill/cache observations, rotation recovery and source-aware connectivity labels.
+  Explicit private path mapping; no engine changes or raw-log exports.
 - Published the current, pinned DGX Spark recommendation with exact launch settings,
   artifact hashes, measured acceptance and known limits; linked it from the dashboard.
   Documentation only: no server or routing defaults changed.

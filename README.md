@@ -153,10 +153,36 @@ Timing comes from a read-only SSH journal follower on Linux. The default remote 
 is `ds4-vision-q2.service`; set `telemetry_service` per worker if yours differs.
 The observer parses known DS4 log formats; missing information is unknown, never
 an invented hit or speed. No inference request is made for metrics. Newly registered
-workers default to `telemetry_service: null`. Mac engine-log ingestion is not yet
-implemented: gateway load, context and requested-thinking indicators work, but
-engine timings/cache-hit measurements remain unknown. An optional `--journal-unit`
+workers default to `telemetry_service: null`. An optional `--journal-unit`
 on CLI registration enables a Linux worker's journal follower.
+
+For a Mac DS4 engine on the **same host as the dashboard**, add an explicit path
+to its existing engine log in the ignored private gateway config, keyed by its
+registered worker ID:
+
+```json
+"telemetry_files": { "studio": "/var/log/ds4/engine.log" }
+```
+
+Use your actual log path; DSG does not create it, change model logging or restart
+the engine. Reload **only the dashboard** after editing this mapping. It takes
+precedence over journal telemetry for that worker and shows **Model log connected**.
+The file must be readable, regular and not a symlink. Missing/unreadable logs show
+disconnected, with old samples dated rather than replaced by invented zero rates.
+The mapping and raw lines are never exported by status/diagnostics or stored in
+measurement logs, and the UI cannot select arbitrary files. This does not yet
+follow logs on a remote Mac over SSH; configure a Linux journal or a local file
+as appropriate. Do not point it at a log containing interleaved model instances.
+
+Local logs use DS4's `MMDD HH:MM:SS ds4-server:` format and the dashboard host's
+timezone (the nearest year is inferred at New Year). Initial replay is limited to
+the last 256 KiB and 15 minutes; reads are at most 256 KiB per two-second poll,
+partial lines are capped at 64 KiB, and older/oversized/unrecognized lines are
+skipped. Rename rotation and copy-truncation are detected; a missing file is retried.
+Unread data removed by rotation can be lost: this is bounded observation, not a
+lossless logging service. Stable sample IDs permit replay deduplication. A prompt
+start outside the observed tail remains unknown until the next one, even if decode
+measurements are already visible. No model request is generated for telemetry.
 
 An idle Spark retains its **last** measured speed with its age. It is not current
 throughput. A resident-cache miss can still produce a disk hit. Positive cached
@@ -303,13 +329,15 @@ npm test
 npm run privacy-check
 ```
 
-53 unit/integration tests exercise local HTTP fixtures—not GPUs. Coverage includes
+61 unit/integration tests exercise local HTTP fixtures—not GPUs. Coverage includes
 byte preservation, affinity persistence, FIFO admission, cancellation, no retries,
 two-to-six-worker expansion, draining four of six, private operator control,
 slow consumers, cache classification, journal deduplication, diagnostic redaction,
 six-worker monitoring, complete UI asset bundles, hot registration/removal,
 larger-context workers, empty-roster persistence, bounded health probes and the
-opt-in same-origin/CSRF management boundary. Default dashboards remain read-only.
+opt-in same-origin/CSRF management boundary, local-log timing/cache parsing,
+partial/oversized lines, rotation, truncation, missing-file recovery and redaction.
+Default dashboards remain read-only.
 Pool-size tests cover 1, 2, 3, 6, 12 and 20 fixture workers. These are validation
 points, not configured limits or a claim of unlimited-scale load testing.
 GitHub Actions runs checks and tests on Linux and macOS.

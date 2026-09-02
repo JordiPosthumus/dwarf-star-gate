@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { safeGatewayEvent, DeviceTelemetry, JournalReader } from './telemetry.mjs';
 import { safeRequestedThinking } from './requested-thinking.mjs';
 import { workerControl } from './worker-client.mjs';
+import { FileLogReader, telemetryFiles } from './file-telemetry.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const assets = new Map([['/', ['index.html', 'text/html']], ['/ui.css', ['ui.css', 'text/css']], ['/brand.css', ['brand.css', 'text/css']], ['/ui.js', ['ui.js', 'text/javascript']], ['/logo.png', ['logo.png', 'image/png']]]);
@@ -63,6 +64,7 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
 
 export async function runDashboard(configPath, port = 30010) {
   const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  const fileSources = telemetryFiles(config.telemetry_files);
   const devices = new Map(), readers = new Map();
   for (const node of config.nodes) {
     if (node.ssh && (!/^[\w.@-]+$/.test(node.ssh) || node.ssh.startsWith('-'))) throw new Error('Unsupported SSH alias');
@@ -118,7 +120,8 @@ export async function runDashboard(configPath, port = 30010) {
     try { definitions = JSON.parse(fs.readFileSync(config.state_file,'utf8')).workers ?? definitions; }
     catch { /* Keep initial journal configuration; gateway status owns membership. */ }
     const ids = new Set(workers.map(w=>w.id));
-    for (const [id,entry] of readers) if (!ids.has(id) || !definitions.some(n=>n.id===id && JSON.stringify(n)===entry.signature)) {
+    const signature = id => JSON.stringify({node:definitions.find(n=>n.id===id),file:fileSources.get(id)});
+    for (const [id,entry] of readers) if (!ids.has(id) || signature(id)!==entry.signature) {
       readers.delete(id);
       devices.delete(id);
       for(const child of children) if(child.workerNode===entry.node) child.kill();
@@ -127,12 +130,19 @@ export async function runDashboard(configPath, port = 30010) {
     for(const w of workers) {
       if(!devices.has(w.id)) devices.set(w.id,new DeviceTelemetry(w.id));
       const device=devices.get(w.id), node=definitions.find(n=>n.id===w.id);
-      device.telemetry_configured=!!(node?.ssh && node.telemetry_service!==null);
+      const file=fileSources.get(w.id);
+      device.telemetry_configured=!!file || !!(node?.ssh && node.telemetry_service!==null);
+      device.telemetry_source=file?'file':device.telemetry_configured?'journal':null;
+      if(file) {
+        if(!readers.has(w.id)) readers.set(w.id,{node,signature:signature(w.id),reader:new FileLogReader(device,file,save)});
+        readers.get(w.id).reader.poll();
+        continue;
+      }
       if(device.telemetry_configured && !readers.has(w.id)) {
         // Validate before any dynamic journal-reader command is constructed.
         if(!/^[a-zA-Z0-9][\w.@-]{0,252}$/.test(node.ssh) || !/^[\w@.-]+\.service$/.test(node.telemetry_service || 'ds4-vision-q2.service')) {device.telemetry_configured=false;continue;}
         const reader=new JournalReader(device);
-        readers.set(w.id,{node,signature:JSON.stringify(node),reader}); follow(node,device,reader);
+        readers.set(w.id,{node,signature:signature(w.id),reader}); follow(node,device,reader);
       }
     }
   }

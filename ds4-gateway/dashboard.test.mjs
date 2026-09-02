@@ -9,7 +9,80 @@ import vm from 'node:vm';
 import { setTimeout as delay } from 'node:timers/promises';
 import { parseTiming, safeGatewayEvent, DeviceTelemetry, JournalReader } from './telemetry.mjs';
 import { createDashboard, runDashboard } from './dashboard.mjs';
+import { FileLogReader, parseLocalTiming, telemetryFiles } from './file-telemetry.mjs';
 const parse = (s, t = 1000) => parseTiming(`0902 14:00:00 ds4-server: ${s}`, t);
+
+const logTime = +new Date(2026,8,2,14,0,5);
+const logLine = message => `0902 14:00:00 ds4-server: ${message}\n`;
+function logFixture(t) {
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-local-log-'));
+  t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const file=path.join(dir,'engine.txt'), device=new DeviceTelemetry('studio'), events=[];
+  return {dir,file,device,events,reader:new FileLogReader(device,file,e=>events.push(e))};
+}
+test('local timestamps use the host clock, handle year rollover and reject stale/malformed text', () => {
+  const msg='chat ctx=0..100:100 prompt start';
+  assert.equal(parseLocalTiming(logLine(msg).trim(),logTime).time,+new Date(2026,8,2,14));
+  assert.equal(parseLocalTiming(`1231 23:59:59 ds4-server: ${msg}`,+new Date(2027,0,1,0,0,1)).time,+new Date(2026,11,31,23,59,59));
+  for(const line of [`0230 14:00:00 ds4-server: ${msg}`,`0902 25:00:00 ds4-server: ${msg}`,`0902 13:40:00 ds4-server: ${msg}`,`0902 14:01:00 ds4-server: ${msg}`,`private prompt ${logLine(msg)}`,logLine('private answer')]) assert.equal(parseLocalTiming(line,logTime),null);
+});
+test('local log parses prefill/decode and disk reuse once, buffers partial lines, and exports no raw data', t => {
+  const {file,device,events,reader}=logFixture(t);
+  fs.writeFileSync(file,logLine('private prompt: NEVER_EXPORT')+logLine('live kv cache miss live=500 prompt=600 common=1')+logLine('kv cache hit text tokens=512 text=2000 quant=2 key=token-text load=12.3 ms file=/private/NEVER_EXPORT.kv')+logLine('chat ctx=512..612:100 prompt start'));
+  reader.poll(logTime);assert.equal(device.prompt.cache,'disk restore');
+  fs.appendFileSync(file,logLine('chat ctx=512..612:100 prefill chunk 100/100 (100.0%) chunk=500.0 t/s avg=500.0 t/s 0.200s')+logLine('chat ctx=512..612:100 prompt done 0.200s'));
+  const decode=logLine('chat ctx=612..662:50 gen=50 THINKING decoding chunk=35.0 t/s avg=34.0 t/s 1.470s');
+  fs.appendFileSync(file,decode.slice(0,-1));reader.poll(logTime);
+  assert.equal(device.decode,null);assert.equal(device.prefill.tps,500);
+  fs.appendFileSync(file,'\n');reader.poll(logTime);reader.poll(logTime);
+  assert.equal(device.decode.tps,35);assert.equal(device.phase,'thinking');assert.equal(device.connected,true);
+  assert.deepEqual(device.cache,{starts:1,reused:1,cold:0,resident_misses:1,disk_restores:1});
+  assert.equal(events.length,6);assert.ok(!/NEVER_EXPORT|engine.txt|private prompt/.test(JSON.stringify({events,snapshot:device.snapshot()})));
+  const replay=[];new FileLogReader(new DeviceTelemetry('studio'),file,e=>replay.push(e)).poll(logTime);
+  assert.deepEqual(replay.map(e=>e.sample_id),events.map(e=>e.sample_id));
+});
+test('local reader handles rename rotation, truncation and regrowth beyond the previous offset', t => {
+  const {dir,file,device,reader}=logFixture(t);
+  fs.writeFileSync(file,logLine('chat ctx=0..10:10 prompt start'));reader.poll(logTime);
+  fs.renameSync(file,path.join(dir,'old.txt'));
+  fs.writeFileSync(file,logLine('chat ctx=0..20:20 prompt start'));reader.poll(logTime);
+  assert.equal(device.cache.starts,2);
+  fs.writeFileSync(file,'');reader.poll(logTime);
+  fs.appendFileSync(file,logLine('chat ctx=0..30:30 prompt start'));reader.poll(logTime);
+  fs.writeFileSync(file,logLine('chat ctx=0..40:40 prompt start')+'private padding\n'.repeat(100));reader.poll(logTime);reader.poll(logTime);
+  assert.equal(device.prompt.prompt,40);assert.equal(device.cache.starts,4);
+});
+test('local reads and partial lines stay bounded and oversized lines cannot become false events', t => {
+  const {file,device,reader}=logFixture(t);
+  fs.writeFileSync(file,'x'.repeat(1024*1024));reader.poll(logTime);
+  assert.ok(reader.fragment.length<=65536);assert.ok(reader.anchor.length<=64);
+  fs.appendFileSync(file,logLine('chat ctx=0..999:999 prompt start')+logLine('chat ctx=0..10:10 prompt start'));reader.poll(logTime);
+  assert.equal(device.cache.starts,1);assert.equal(device.prompt.prompt,10);
+  fs.appendFileSync(file,'x'.repeat(300000));const old=reader.offset;reader.poll(logTime);
+  assert.ok(reader.offset-old<=262144);assert.ok(reader.fragment.length<=65536);
+});
+test('missing and nonregular local logs fail closed without fabricating zero speeds and recover', t => {
+  const {dir,file,device,reader}=logFixture(t);
+  reader.poll(logTime);assert.equal(device.connected,false);assert.equal(device.decode,null);
+  fs.mkdirSync(file);reader.poll(logTime);assert.equal(device.connected,false);fs.rmdirSync(file);
+  fs.writeFileSync(path.join(dir,'real.txt'),logLine('chat ctx=0..10:10 prompt start'));
+  fs.symlinkSync(path.join(dir,'real.txt'),file);reader.poll(logTime);assert.equal(device.connected,false);fs.unlinkSync(file);
+  fs.writeFileSync(file,logLine('chat ctx=0..10:10 prompt start'));reader.poll(logTime);assert.equal(device.connected,true);
+  fs.unlinkSync(file);reader.poll(logTime);assert.equal(device.connected,false);assert.equal(device.cache.starts,1);
+});
+test('local telemetry configuration requires an explicit private absolute path, never a command', () => {
+  assert.equal(telemetryFiles().size,0);assert.equal(telemetryFiles({studio:'/var/log/ds4/engine.txt'}).size,1);
+  for(const input of [null,[],{studio:'relative.txt'},{studio:'ssh worker cat file'},{studio:'/tmp/bad\0file'},{'bad id':'/tmp/log'}, {studio:{command:'tail'}}]) assert.throws(()=>telemetryFiles(input));
+});
+test('UI distinguishes local model logs from journal connectivity', () => {
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/\npoll\(\);\s*$/,'');
+  const context=vm.createContext({});vm.runInContext(source,context);
+  const label=d=>vm.runInContext(`telemetryStatus(${JSON.stringify(d)})`,context);
+  assert.equal(label({telemetry_source:'file',connected:true}),'Model log connected');
+  assert.equal(label({telemetry_source:'file',connected:false}),'Model log disconnected');
+  assert.equal(label({telemetry_source:'journal',connected:true}),'Journal connected');
+  assert.equal(label({telemetry_configured:false}),'Engine timings not configured');
+});
 
 test('prefill measures newly processed tokens, not the reused prefix', () => {
   const e = parse('chat ctx=143360..145009:1649 TOOLS prefill chunk 1649/1649 (100.0%) chunk=479.41 t/s avg=479.34 t/s 3.440s');
@@ -215,6 +288,23 @@ test('dashboard follows live membership and marks machines without engine logs e
   assert.equal(app.snapshot().gateway.workers[1].context_length,300000);
   workers=workers.slice(1);await wait(()=>app.snapshot().devices.length===1);
   assert.equal(app.snapshot().devices[0].id,'m3-studio');
+});
+test('dashboard ingests a local engine log without inference calls or exporting the private path', async t => {
+  const {dir,file}=logFixture(t), calls=[];
+  const now=new Date(), pad=n=>String(n).padStart(2,'0');
+  const prefix=`${pad(now.getMonth()+1)}${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())} ds4-server: `;
+  fs.writeFileSync(file,prefix+'chat ctx=0..10:10 prompt start\n'+prefix+'chat ctx=10..60:50 gen=50 THINKING decoding chunk=36.2 t/s avg=35.7 t/s 1.40s\nprivate answer NEVER_EXPORT\n');
+  const backend=http.createServer((req,res)=>{calls.push(req.url);res.end(JSON.stringify({version:1,model:'ds4',workers:[{id:'studio',is_healthy:true,load:1}]}));});
+  backend.listen(0,'127.0.0.1');await once(backend,'listening');t.after(()=>{backend.closeAllConnections();backend.close();});
+  const config=path.join(dir,'config.json');
+  fs.writeFileSync(config,JSON.stringify({port:backend.address().port,api_key:'test',state_file:path.join(dir,'state.json'),nodes:[{id:'studio',telemetry_service:null}],telemetry_files:{studio:file}}));
+  const app=await runDashboard(config,0);t.after(app.close);
+  const d=app.snapshot().devices[0];assert.equal(d.telemetry_source,'file');assert.equal(d.connected,true);assert.equal(d.decode.tps,36.2);
+  const url=`http://127.0.0.1:${app.server.address().port}`;
+  const exported=await(await fetch(url+'/api/diagnostics')).text();
+  const persisted=fs.readdirSync(path.join(dir,'dashboard')).map(f=>fs.readFileSync(path.join(dir,'dashboard',f),'utf8')).join('');
+  for(const text of [exported,persisted]) {assert.ok(!text.includes(file));assert.ok(!text.includes('NEVER_EXPORT'));assert.ok(!text.includes('ds4-server:'));}
+  assert.deepEqual(calls,['/gateway/status']);
 });
 test('six-worker monitoring only reads gateway status; credentials and addresses never enter snapshots', async t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dwarf-gate-ui-'));
