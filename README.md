@@ -1,0 +1,169 @@
+# Dwarf Star Gate
+
+**Small fleet. Big thoughts.**
+
+A lightweight, cache-friendly gateway and local control-room dashboard for a
+fleet of [DS4](https://github.com/antirez/ds4) inference servers. Built for two
+DGX Sparks; automated scheduling tests cover a six-worker fleet.
+
+Node.js built-ins only. No package installation, database, Kubernetes, frontend
+build system, CDN, analytics service or cloud telemetry.
+
+## The gateway
+
+- Durable session affinity: later turns return to the same worker to improve the
+  chance of KV reuse. Busy conversations queue at home instead of bouncing.
+- Load-aware placement of **new** conversations; one active upstream request per
+  worker. Extra requests wait in bounded FIFO queues.
+- Transparent request/stream passthrough: no reasoning, output-limit, sampling,
+  vision or tool-call rewriting.
+- No automatic replay after an ambiguous upstream failure.
+- SSH tunnel recovery, model/context health checks and durable per-worker drain.
+- Private Unix-socket operator controls, not a public worker-admin endpoint.
+
+It does **not** move caches, guarantee hits, manage model containers, or know GPU
+memory pressure. DS4 owns cache validity and GPU concurrency. Draining here does
+not prove a worker has no direct clients; verify those before stopping it.
+
+## Quick start
+
+Requires Node **22.22.2+**, SSH, and Linux DS4 workers. Gateway runs on macOS or
+Linux. The optional click-to-open service scripts use macOS LaunchAgents.
+
+```sh
+cp examples/config.json config.local.json
+# Edit the ignored config: key, SSH aliases, model/context and loopback ports.
+./start-gateway.sh
+# In another terminal:
+./start-gateway-ui.sh
+./open-gateway-ui.sh
+```
+
+`start-gateway.sh` runs the gateway in the foreground, with operational output
+appended to `gateway.log` beside its configured state file. The example uses
+**127.0.0.1:30001**; it does not take over an existing service on port 30000.
+Workers are reached through SSH tunnels to their own `127.0.0.1:8000`.
+Provision SSH trust/authentication yourself. Change the example aliases to yours.
+
+On Linux, or for foreground UI operation:
+
+```sh
+npm run ui
+```
+
+Open **http://127.0.0.1:30010**. The UI is read-only and never starts, restarts,
+stops, drains or reconfigures inference. The macOS UI start/open scripts enable
+only the dashboard at login. To unload it:
+
+```sh
+node ds4-gateway/dashboard-control.mjs stop
+```
+
+`DWARF_GATE_CONFIG=/absolute/path/to/config.json` selects another config for the
+scripts. Run commands from the checkout root; relative state paths resolve there.
+The foreground UI supports `GATEWAY_UI_PORT`; convenience scripts use 30010.
+
+## Monitoring and debugging
+
+Per worker, the dashboard displays:
+
+- Actual decode chunk t/s and request-average t/s, including reasoning tokens.
+- Actual prefill chunk/average t/s for **new** tokens, excluding the cached prefix.
+- Timestamped last readings, independent 15-minute sparklines, gateway health,
+  active duration, waiting requests and assigned conversation counts.
+- Observed prefix reuse, genuinely cold starts, resident misses and disk restores.
+- Recent request outcomes, queue time, elapsed time and returned usage counters.
+
+Timing comes from a read-only SSH journal follower. The default remote user unit
+is `ds4-vision-q2.service`; set `telemetry_service` per worker if yours differs.
+The observer parses known DS4 log formats; missing information is unknown, never
+an invented hit or speed. No inference request is made for metrics.
+
+An idle Spark retains its **last** measured speed with its age. It is not current
+throughput. A resident-cache miss can still produce a disk hit. Positive cached
+tokens alone do not prove RAM residency. Counts cover observed prompt starts,
+including up to 15 minutes / 2,000 initial journal records, not lifetime hit rates.
+Non-streaming responses without observed usage show unknown token counters.
+
+```sh
+./gateway-status.sh
+./gateway-logs.sh
+./gateway-debug.sh
+```
+
+The **Debug snapshot** button or command exports allowlisted metadata only:
+status, bounded recent timings and the last 100 request events. It excludes
+prompts, answers, images, tool arguments, credentials, backend addresses and raw
+journal lines. Hashed conversation identifiers, request IDs and timings remain;
+review even sanitized diagnostics before sharing publicly.
+
+Parsed measurements are appended to private daily JSONL files under `dashboard/`
+beside the configured state file (the default is `ds4-gateway/runtime/dashboard/`).
+`sample_id` deduplicates history replay across dashboard restarts. Logs are **not**
+deleted or automatically rotated: choose retention for your installation.
+Raw gateway logs can contain SSH error messages and host details; do not publish
+them without review. Monitoring logs are separate from the inference path.
+
+## Client affinity
+
+Send a stable `x-session-affinity` header for each conversation. Other accepted
+headers are `x-ds4-conversation-id`, `x-session-id`, and `session_id`.
+Use distinct, unpredictable identifiers for independent conversations.
+Without a header, requests work but do not receive durable session affinity.
+
+The gateway returns `x-ds4-node`, `x-ds4-affinity`, and `x-request-id`. Bodies and
+SSE bytes remain unchanged. Reassignment only occurs when the old home is
+unavailable/drained **and** has no unresolved gateway work. The assignment is
+saved before dispatch. Never change a worker ID to mean a different machine
+without considering its persisted assignments and caches.
+
+## Operator controls
+
+```sh
+node ds4-gateway/control.mjs status
+node ds4-gateway/control.mjs drain-worker spark1
+node ds4-gateway/control.mjs resume-worker spark1
+```
+
+Drain stops new admission to the named worker; existing queued/active requests
+finish. State persists across gateway restarts. Six workers can drain four and
+continue with two. The controller cannot stop model servers or creative jobs.
+SIGUSR1/SIGUSR2 globally pause/resume admission; SIGTERM requests graceful gateway
+shutdown. Service-manager deadlines can still interrupt long streams. Do not kill
+or restart a live gateway casually; there is no blind restart script.
+
+## Tests
+
+```sh
+npm run check
+npm test
+npm run privacy-check
+```
+
+31 unit/integration tests exercise local HTTP fixtures—not GPUs. Coverage includes
+byte preservation, affinity persistence, FIFO admission, cancellation, no retries,
+two-to-six-worker expansion, draining four of six, private operator control,
+slow consumers, cache classification, journal deduplication, diagnostic redaction,
+six-worker monitoring and the dashboard's same-origin/read-only boundary.
+GitHub Actions runs checks and tests on Linux and macOS.
+
+Real two-Spark acceptance also covered streaming, reasoning, vision, tool round
+trips, 145K-token cold/warm requests and disk restoration. These are observations
+from one deployment, not a portable performance guarantee. A 100-hour stream soak,
+every client integration and every hardware/reboot combination are not certified.
+
+## Security and privacy
+
+The example binds loopback and contains only placeholders. **No private harness
+configuration, production configuration, private network addresses, conversation
+logs, model files, KV data or credentials are distributed.** Local configuration
+and runtime output are ignored. A privacy check catches accidentally staged files
+and common private data patterns; it is a guardrail, not a completeness guarantee.
+
+Treat this as a trusted-operator tool, not a multi-tenant security boundary. Keep
+the inference listener behind an access boundary if exposing it beyond loopback.
+The UI is loopback-only, validates Host/Origin, has no CORS grants, and uses a
+restrictive content policy. The observer account needs DS4 journal read access.
+Adding the UI does not change any model launch setting.
+
+There is no open-source license grant yet; public visibility alone is not a license.

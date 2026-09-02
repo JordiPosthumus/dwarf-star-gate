@@ -1,0 +1,16 @@
+{
+  "host": "127.0.0.1",
+  "port": 30001,
+  "api_key": "REPLACE_WITH_YOUR_KEY",
+  "model": "deepseek-v4-flash",
+  "context_length": 153600,
+  "state_file": "./ds4-gateway/runtime/example-affinity.json",
+  "control_socket": "./ds4-gateway/runtime/example-control.sock",
+  "request_timeout_ms": 360000000,
+  "queue_timeout_ms": 3600000,
+  "max_queued_per_node": 128,
+  "nodes": [
+    { "id": "spark1", "url": "http://127.0.0.1:38101", "ssh": "worker-a" },
+    { "id": "spark2", "url": "http://127.0.0.1:38102", "ssh": "worker-b" }
+  ]
+}

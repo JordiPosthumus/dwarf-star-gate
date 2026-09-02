@@ -1,0 +1,25 @@
+# Runtime state, logs, prompts, model files, and credentials never belong in Git.
+**/runtime/
+**/sessions/
+**/snapshots/
+**/backups/
+**/node_modules/
+**/.DS_Store
+**/*.log
+**/*.jsonl
+**/*.kv
+**/*.gguf
+**/*.key
+**/*.pem
+**/auth.json
+**/models-store.json
+**/.env
+**/.env.*
+config.local.json
+**/config.production.json
+**/config.candidate.json
+**/.pi/
+**/pi-setup/
+**/*.bak*
+**/*.plist
+coverage/

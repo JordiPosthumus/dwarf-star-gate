@@ -1,0 +1,15 @@
+{
+  "name": "dwarf-star-gate",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Transparent, durable session-affinity gateway for a pool of DS4 inference workers",
+  "type": "module",
+  "engines": { "node": ">=22.22.2" },
+  "scripts": {
+    "test": "node --test ds4-gateway/gateway.test.mjs ds4-gateway/dashboard.test.mjs",
+    "check": "node scripts/check.mjs",
+    "privacy-check": "node scripts/privacy-check.mjs",
+    "start": "node ds4-gateway/gateway.mjs config.local.json",
+    "ui": "node ds4-gateway/dashboard.mjs config.local.json"
+  }
+}
