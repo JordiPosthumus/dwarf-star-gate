@@ -1,7 +1,5 @@
 # Dwarf Star Gate
 
-**Small fleet. Big thoughts.**
-
 A local gateway for **N DGX Sparks on your LAN**, with durable session affinity
 and a lightweight control-room dashboard for [DS4](https://github.com/antirez/ds4).
 Define your worker pool in configuration; fleet size is not hard-coded.
