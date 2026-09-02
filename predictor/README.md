@@ -202,6 +202,7 @@ data must be evaluated separately, not presented as part of this frozen result.
 Operational failures are excluded from the successful-service-time target, but
 must remain visible in the collector and operations UI. In particular, a fatal
 CUDA worker error is not a slow successful request and must not be delegated to
-this predictor to diagnose, hide or recover. The current model-list health probe
-does not prove generation readiness; failure-aware quarantine remains separate
-gateway work, not a feature delivered by this offline package.
+this predictor to diagnose, hide or recover. Model-list probes alone do not prove
+generation readiness. The gateway now implements
+[failure-aware quarantine](../docs/generation-health.md), independently of this
+offline package; the predictor does not diagnose or recover workers.

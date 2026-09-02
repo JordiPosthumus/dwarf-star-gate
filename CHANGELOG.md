@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- Correct SSE completion classification for Chat Completions/Completions,
+  Responses and Messages. Output-limited Responses are censored, not failed
+  workers; explicit error terminals remain failures. Oversized unobservable
+  endings are recorded as unknown, not falsely successful or quarantined.
+- Bounded SSE observation skips whole oversized lines across chunks; suffixes
+  cannot spoof a terminal event. Split UTF-8 is preserved and usage is numeric-only.
+- Quarantined worker re-registration remains paused and retains its fault record;
+  verified recovery is reachable without manually editing state. Operator clients
+  use fresh control sockets across gateway restarts, without mutation retries.
+- Persistent generation-failure quarantine, fresh generation-verified recovery,
+  and sanitized fault evidence for diagnostics and the observation-only Genie.
+- Opt-in numerical routing collector, fleet occupancy/activity timelines and
+  Gate Genie chat with dedicated inference or explicitly selected pool fallback.
+  No embeddings, automatic restart tools or learning-based routing yet.
+- Optional locked offline XGBoost fit/evaluate/save/reload package with separate
+  machine identity/hardware-family features, leakage-aware chronological splits,
+  artifact checksums, tests and documented production tree-count validation gate.
+- Persistent pool-context UI control, the 262,144-token Spark deployment profile,
+  and explicit runtime-fault caveats alongside historical capacity measurements.
+- Updated operator guidance, maintenance review and prioritized delivery gates.
 - Read-only local Mac engine-log telemetry: bounded tailing, timestamped decode/
   prefill/cache observations, rotation recovery and source-aware connectivity labels.
   Explicit private path mapping; no engine changes or raw-log exports.

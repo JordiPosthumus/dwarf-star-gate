@@ -4,8 +4,11 @@ import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
-import { AffinityStore, createGateway } from './gateway.mjs';
+import { AffinityStore, createGateway, UsageObserver } from './gateway.mjs';
 import { requestedThinking, RequestedThinkingObserver, THINKING_CAPTURE_BYTES, safeRequestedThinking } from './requested-thinking.mjs';
 import { workerControl } from './worker-client.mjs';
 import { runDashboard } from './dashboard.mjs';
@@ -27,8 +30,9 @@ async function backend(id) {
       let ended = false;
       res.on('close', () => { b.active--; if (!ended) b.aborts++; });
       if(p.messages?.[0]?.content==='Reply with exactly DSG_RECOVERY_OK and nothing else.') {
-        ended=true;res.setHeader('content-type','application/json');
-        return res.end(JSON.stringify({choices:[{finish_reason:'stop',message:{content:b.recoveryFails?'NO':'DSG_RECOVERY_OK'}}]}));
+        res.setHeader('content-type','application/json');
+        const timer=setTimeout(()=>{ended=true;res.end(JSON.stringify({choices:[{finish_reason:'stop',message:{content:b.recoveryFails?'NO':'DSG_RECOVERY_OK'}}]}));},b.recoveryDelay??0);
+        res.once('close',()=>clearTimeout(timer));return;
       }
       if(p.fatal_error) {
         const finish=()=>{ended=true;res.end(JSON.stringify({error:{message:'cuda prefill state reset failed',type:'invalid_request_error'}}));};
@@ -36,6 +40,7 @@ async function backend(id) {
       }
       if(p.fatal_sse) {ended=true;res.writeHead(200,{'content-type':'text/event-stream'});res.end('event: error\ndata: {"error":{"message":"cuda resumed prefill failed while extending checkpoint","type":"server_error"}}\n\ndata: [DONE]\n\n');return;}
       if(p.client_error) {ended=true;res.writeHead(400);res.end('invalid request');return;}
+      if(typeof p.fixture_sse==='string') {ended=true;res.writeHead(200,{'content-type':'text/event-stream'});res.end(p.fixture_sse);return;}
       if (p.http_error) { ended = true; res.writeHead(503); res.end('backend-error'); return; }
       if (p.disconnect) { res.destroy(); return; }
       if (p.large_stream) {
@@ -89,6 +94,107 @@ async function rig(t, count = 2, overrides = {}) {
   return r;
 }
 
+test('usage observer skips an entire oversized SSE line, including a DONE-shaped suffix',()=>{
+  const o=new UsageObserver();
+  o.accept(Buffer.from('data: '+ 'x'.repeat(1048577)));
+  o.accept(Buffer.from('data: [DONE]\n'));
+  assert.equal(o.done,false,'a suffix inside the discarded line is not a separate SSE event');
+  assert.ok(o.pending.length<=1048576);
+  o.accept(Buffer.from('data: {"choices":[{"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":3}}\n\ndata: [DONE]\n\n'));
+  assert.equal(o.done,true);assert.equal(o.usage.prompt_tokens,12);assert.equal(o.finish_reason,'stop');
+});
+
+test('removed quarantined worker can register paused without bypassing verified recovery',async t=>{
+  const r=await rig(t,1,{control_socket:true});
+  await r.request('{"fatal_error":true}','a');
+  await workerControl(r.config.control_socket,'/drain-workers',{workers:['spark1']});
+  await workerControl(r.config.control_socket,'/remove-worker',{id:'spark1'});
+  await r.restart();
+  r.backends[0].health=false;
+  await assert.rejects(workerControl(r.config.control_socket,'/add-worker',{worker:{id:'spark1',url:r.backends[0].url}}),/Compatibility check failed/);
+  r.backends[0].health=true;
+  await workerControl(r.config.control_socket,'/add-worker',{worker:{id:'spark1',url:r.backends[0].url}});
+  assert.equal(r.gateway.stats().workers[0].drained,true);
+  assert.ok(r.gateway.stats().workers[0].quarantine);assert.equal(r.gateway.stats().available,0);
+  r.backends[0].recoveryFails=true;
+  await assert.rejects(workerControl(r.config.control_socket,'/resume-workers',{workers:['spark1']}),/generation did not pass/);
+  assert.ok(r.gateway.stats().workers[0].quarantine);
+  r.backends[0].recoveryFails=false;
+  await workerControl(r.config.control_socket,'/resume-workers',{workers:['spark1']});
+  assert.equal(r.gateway.stats().available,1);assert.equal(r.gateway.stats().workers[0].quarantine,null);
+});
+
+test('usage observation bounds huge single chunks, preserves split UTF-8 and only records numeric counts',()=>{
+  const o=new UsageObserver();o.accept(Buffer.from('data: '+ 'x'.repeat(3*1048576)+'\n'));
+  assert.equal(o.pending,'');assert.equal(o.done,false);
+  const row=Buffer.from('data:{"choices":[{"delta":{"content":"星"},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":42,"completion_tokens":"PRIVATE_VALUE","prompt_tokens_details":{"cached_tokens":-1}}}\r\n');
+  for(let i=0;i<row.length;i++)o.accept(row.subarray(i,i+1));
+  assert.equal(o.usage.prompt_tokens,42);assert.equal(o.usage.completion_tokens,undefined);assert.equal(o.usage.cached_tokens,undefined);
+  assert.equal(o.finish_reason,'tool_calls');assert.ok(!JSON.stringify(o).includes('PRIVATE_VALUE'));
+});
+
+test('worker control uses fresh connections across immediate gateway restarts',async t=>{
+  const r=await rig(t,1,{control_socket:true});
+  for(let i=0;i<3;i++) {
+    await workerControl(r.config.control_socket,'/drain-workers',{workers:['spark1']});
+    await r.restart();
+    await workerControl(r.config.control_socket,'/resume-workers',{workers:['spark1']});
+    assert.equal(r.gateway.stats().available,1);
+  }
+});
+
+test('legacy recovery CLI waits beyond its former five-second timeout',async t=>{
+  const r=await rig(t,1,{control_socket:true});await r.request('{"fatal_error":true}','a');
+  r.backends[0].recoveryDelay=5200;
+  const configPath=path.join(path.dirname(r.config.state_file),'fixture-config.json');
+  fs.writeFileSync(configPath,JSON.stringify(r.config));
+  const {stdout}=await promisify(execFile)(process.execPath,[fileURLToPath(new URL('./control.mjs',import.meta.url)),'resume-worker','spark1'],
+    {env:{...process.env,DWARF_GATE_CONFIG:configPath},timeout:12000});
+  assert.equal(JSON.parse(stdout).available,1);assert.equal(r.gateway.stats().workers[0].quarantine,null);
+});
+
+test('Messages and Responses completion events do not quarantine healthy workers',async t=>{
+  const r=await rig(t,1,{dataset_enabled:true});
+  const cases=[
+    ['/v1/messages','event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\n'],
+    ['/v1/responses','data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":20,"output_tokens":3,"input_tokens_details":{"cached_tokens":12}}}}\n\n']
+  ];
+  for(const [path,stream] of cases)for(let i=0;i<3;i++) {
+    const result=await r.request(JSON.stringify({fixture_sse:stream}),'a',{path});
+    assert.equal(result.status,200);assert.equal(result.body,stream);
+    assert.equal(r.gateway.stats().workers[0].inference_failures,0);
+    assert.equal(r.gateway.stats().workers[0].quarantine,null);
+  }
+  assert.equal(r.gateway.stats().workers[0].completed,6);
+});
+
+test('Responses output limits are censored, but explicit failed responses count as failures',async t=>{
+  const r=await rig(t,1,{dataset_enabled:true});
+  const limited='data: {"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}\n\n';
+  for(let i=0;i<3;i++)await r.request(JSON.stringify({fixture_sse:limited}),'a',{path:'/v1/responses'});
+  await until(()=>r.gateway.stats().dataset.finished===3);
+  assert.equal(r.gateway.stats().dataset.truncated,3);assert.equal(r.gateway.stats().workers[0].quarantine,null);
+  const failed='data: {"type":"response.failed","response":{"status":"failed","error":{"message":"generation failed"}}}\n\n';
+  for(let i=0;i<3;i++)await r.request(JSON.stringify({fixture_sse:failed}),'a',{path:'/v1/responses'});
+  assert.equal(r.gateway.stats().workers[0].quarantine.reason,'repeated_inference_failures');
+});
+
+test('an oversized unobservable terminal is unknown, not a proven failed or successful generation',async t=>{
+  const r=await rig(t,1,{dataset_enabled:true});
+  const stream='data: '+JSON.stringify({type:'response.completed',response:{status:'completed',output:'x'.repeat(1048577)}})+'\n\n';
+  for(let i=0;i<3;i++) {
+    const result=await r.request(JSON.stringify({fixture_sse:stream}),'a',{path:'/v1/responses'});
+    assert.equal(result.body,stream);
+  }
+  await until(()=>r.gateway.stats().dataset.finished===3);
+  assert.equal(r.gateway.stats().workers[0].quarantine,null);assert.equal(r.gateway.stats().workers[0].completed,0);
+  assert.equal(r.gateway.stats().workers[0].failed,0);assert.equal(r.gateway.stats().workers[0].observation_limited,3);
+  assert.equal(r.gateway.stats().dataset.failed_or_cancelled,0);assert.equal(r.gateway.stats().dataset.observation_limited,3);
+  const file=fs.readdirSync(path.join(path.dirname(r.config.state_file),'training'))[0];
+  const events=fs.readFileSync(path.join(path.dirname(r.config.state_file),'training',file),'utf8').trim().split('\n').map(JSON.parse);
+  assert.ok(events.filter(e=>e.kind==='finish').every(e=>e.outcome==='sse_observation_limited'));
+});
+
 test('fault observer recognizes split error envelopes but never quoted answers or oversized lines',()=>{
   const raw=Buffer.from('event: error\ndata: {"error":{"message":"cuda resumed prefill failed while extending checkpoint"}}\n\n');
   const o=new GenerationFaultObserver(true);for(let i=0;i<raw.length;i+=3)o.accept(raw.subarray(i,i+3));
@@ -96,6 +202,8 @@ test('fault observer recognizes split error envelopes but never quoted answers o
   const answer=new GenerationFaultObserver(true);answer.accept(Buffer.from('data: {"choices":[{"delta":{"content":"cuda prefill state reset failed"}}]}\n\n'));assert.equal(answer.finish(),null);
   const big=new GenerationFaultObserver(true);big.accept(Buffer.from('data: '+ 'x'.repeat(200000)+'\n\n'));assert.ok(big.pending.length<=65536);big.accept(raw);assert.equal(big.finish(),'accelerator_checkpoint_failure');
   const json=new GenerationFaultObserver();json.accept(Buffer.from('{"message":"an illegal memory access was encountered","type":"invalid_request_error"}'));assert.equal(json.finish(),'fatal_accelerator_error');
+  const response=new GenerationFaultObserver(true);response.accept(Buffer.from('data: {"type":"response.failed","response":{"status":"failed","error":{"message":"cuda prefill state reset failed"}}}\n\n'));
+  assert.equal(response.finish(),'accelerator_checkpoint_failure');
 });
 
 test('fatal HTTP failure quarantines persistently despite good model probes and reassigns only next request',async t=>{

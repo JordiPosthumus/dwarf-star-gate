@@ -19,7 +19,8 @@ development line; no long-term-support releases or response-time SLA are promise
 - Operator commands use a local private Unix socket. They must not be proxied
   into public worker-management endpoints.
 - The dashboard binds loopback and validates Host/Origin. It is read-only by
-  default. Explicit `ui_worker_management` enables four routing actions through
+  default. Explicit `ui_worker_management` enables register/enable/drain/remove
+  and pool-context controls through
   the private Unix socket, requiring exact same-origin JSON requests and a
   per-process CSRF token. No model launch/stop/settings controls exist. Do not
   expose this operator UI through a public or LAN reverse proxy.
@@ -50,6 +51,14 @@ Operational data is still sensitive: raw SSH errors can expose host details;
 diagnostics contain request IDs, hashed session IDs, timings and token counts.
 Review before sharing. Debug artifacts and runtime files are excluded from Git.
 Logs have no automatic retention/deletion policy; the operator controls retention.
+
+Generation quarantine records structured fault categories, not arbitrary error
+messages. The SSE observer is bounded; discarded oversized events are explicitly
+unknown, not evidence of successful generation or a reason alone to quarantine.
+The optional collector stores numerical/categorical evidence locally, not prompt
+text or embeddings. The optional Genie receives a sanitized briefing and has no
+control tools; its in-memory assessments are not action receipts. Offline XGBoost
+artifacts and hardware inventory also remain private and are excluded from Git.
 
 Source-level privacy checks catch common mistakes but cannot prove absence of all
 secrets or identifying data. Treat screenshots and binary metadata as reviewable

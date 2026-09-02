@@ -4,6 +4,38 @@ This is a living roadmap, not a claim that every feature below ships today.
 DSG remains a companion to [antirez's DS4 engine](https://github.com/antirez/ds4).
 The engine performs inference and manages KV state; DSG observes and routes.
 
+## Prioritized delivery order — reviewed 2026-09-02
+
+This table is the current order; the sections below retain the detailed design.
+See the [maintenance review](maintenance-review-2026-09-02.md) for reproduced bugs,
+fixes and remaining uncertainty. A source commit is not a live deployment receipt.
+
+| Order | Work | Exit evidence |
+| --- | --- | --- |
+| 0 | Promote protocol/quarantine maintenance fixes through a controlled cutover | Regression suites pass; versioned backup; real API-format smoke checks; unchanged fleet/context; explicit source-versus-running release record |
+| 1 | Diagnose the Spark CUDA/OOM incidents and identify backend process epochs | Correlated service/kernel/memory evidence and targeted reproduction; real cold/warm checks plus representative sustained work; no unapproved context/cache reductions |
+| 2 | Explain idle capacity and design cache-aware overflow scheduling | UI identifies session-home waits; replay/shadow comparisons of wait-at-home versus cold execution elsewhere; prove no overlapping ownership/replay; operator-approved policy before activation |
+| 3 | Data quality and local embedding collection, with a visible collection panel | Versioned encoder and bounded text extraction; current-request feature-availability timestamps; failure/backpressure/privacy tests; joined vectors and valid labels across hardware |
+| 4 | Refit the offline XGB experiment, then shadow ETA predictions | New immutable artifact versus baseline; hardware/context/session coverage; production tree count selected by time/session-aware CV before promotion |
+| 5 | Persistent Genie/operator activity and endpoint settings UI | Durable actor/channel/action receipts, stale-evidence labels, feedback, endpoint test/save/rollback; manual controls remain authoritative |
+| 6 | Opt-in deterministic recovery runner, then Genie access to it | Fresh-instance fault evidence; one bounded attempt; verified recovery; pause/remove race tests; shadow/manual/canary rollout |
+
+Orders 2 and 3 can be built alongside reliability diagnosis, without changing live
+routing. Do not wait for an LLM or trained predictor merely to explain why a queue
+is pinned. Do not turn on autonomous restart loops while recurrent OOM is unexplained.
+
+**Current scheduling limitation:** healthy session homes remain sticky even when
+their queue grows and another server is idle. Waiting counts are per-worker queues,
+not a globally stealable queue. Recovery/restart can reassign a home; when the old
+server returns, the session does not automatically move back. This preserves cache
+locality but does not prove minimum completion time. A future overflow policy must
+consider queued as well as active work and establish a safe per-session handover
+before changing affinity. Cache copying is not required for a first shadow policy.
+
+**Maintenance decisions:** the README explicitly has no open-source license grant;
+add license text only if the maintainer chooses it. Keep public screenshots synthetic
+and clearly distinguish earlier illustrative captures from new collection/Genie UI.
+
 ## First slice: evidence and an observation-only Gate Genie
 
 - **Passive routing dataset:** opt-in private numerical records of fleet load at

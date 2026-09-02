@@ -24,6 +24,18 @@ generation fails after a fatal accelerator error.
   prefill. This is not transparent mid-stream recovery or cache migration.
 - A known engine error in an HTTP-200 SSE stream is not a successful training
   sample, even if the stream includes `[DONE]`.
+- Completion observation is route-specific: Chat Completions/Completions use
+  `[DONE]`, Messages uses `message_stop`, and Responses uses its terminal response
+  event. An output-limited Responses event is censored, not an engine failure.
+  Explicit failed response/error events count toward operational failure isolation.
+  The legacy diagnostic field `sse_done` now means a recognized terminal was
+  observed for that route, not necessarily a literal `[DONE]` line.
+- If an oversized event exceeds the bounded observer and no terminal can be
+  established, record `sse_observation_limited`. Do not increment or reset the
+  inference-failure streak, mark a success, or quarantine solely on that missing
+  evidence. Bytes still pass unchanged. A separately recognized fatal error still
+  quarantines; actual connection failures remain failures. Unknown outcomes are
+  excluded from successful-service training.
 
 The current dashboard marks quarantined workers unavailable. Status/diagnostic
 JSON and the Genie's briefing include the allowlisted quarantine reason, timestamp
@@ -56,8 +68,9 @@ still roadmap work. Ordinary manual pause/drain is separate from quarantine.
    The socket remains local and operator-only; public inference cannot clear it.
 
 If a worker is removed while quarantined, its fault record is intentionally not
-erased by remove/re-add. Recover it before removal, or investigate the stored
-state explicitly; deleting a registration must not become a recovery bypass.
+erased by remove/re-add. Re-register the compatible endpoint with the same stable
+ID: it remains paused and quarantined until verified `resume` succeeds. No manual
+state editing is needed, and re-registration is not a recovery bypass.
 
 ## Self-healing boundary
 

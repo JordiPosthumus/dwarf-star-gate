@@ -7,7 +7,8 @@ Engine changes should follow [its own contribution guide](https://github.com/ant
 ## Start with a small, reproducible change
 
 1. Explain the problem and expected behavior in an issue or pull request.
-2. Use Node 22.22.2 or newer. No dependency installation is required.
+2. Use Node 22.22.2 or newer. The gateway/dashboard need no dependency installation;
+   the optional predictor uses its separate locked Python environment.
 3. Run `npm run check`, `npm test`, and `npm run privacy-check`.
 4. Add a regression test for changed behavior; use fixture workers, not live GPUs.
 5. Update the README when commands, guarantees or limitations change.
@@ -23,7 +24,8 @@ diff manually too. CI is a guardrail, not proof that a change is safe in product
 - Preserve stable worker IDs, durable affinity and per-worker FIFO admission.
 - Keep the dashboard read-only by default. Opt-in local server-routing controls
   must retain the same-origin/CSRF and private-socket boundary; model start/stop
-  and model-setting operations do not belong in the UI.
+  and model-setting operations are not current UI capabilities. Future recovery
+  work must follow the reviewed action-runner contract, not add arbitrary commands.
 - Missing measurements must remain unknown. Do not label a disk hit as a cold miss.
 - Keep startup/update failures out of live inference. Test UI assets as a complete
   bundle and reload only the dashboard when promoting presentation changes.

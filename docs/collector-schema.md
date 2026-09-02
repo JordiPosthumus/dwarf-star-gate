@@ -53,10 +53,12 @@ the particular affinity-bound request. It does not measure direct-client load,
 actual RAM use, GPU utilization, engine binary identity, KV occupancy or model-file
 digest. `profile` does not prove that a server's cache survived a restart.
 
-`usage`, when supplied by an SSE response, has `prompt_tokens`,
+`usage`, when supplied by Chat Completions/Completions SSE or a bounded Responses
+terminal event, has `prompt_tokens`,
 `completion_tokens` and `cached_tokens`. Missing numerical values become null;
-if no usage object was observed, the object is absent. Non-streaming JSON usage
-is not extracted in this slice. Missing is never silently treated as zero.
+if no usage object was observed, the object is absent. Non-streaming JSON and
+Messages start/delta usage are not extracted in this slice. Missing is never
+silently treated as zero.
 
 `requested_thinking` contains a parsing status and allowlisted scalar client
 controls: `reasoning_effort`, `reasoning.effort`, `output_config.effort`,
@@ -78,10 +80,18 @@ remains incomplete evidence. There is no result label for an unchosen server.
 
 The `outcome` allowlist is `complete`, `client_cancelled`, `upstream_error`,
 `upstream_stream_error`, `upstream_aborted`, `upstream_http_error`,
-`upstream_engine_error`, `incomplete_sse`, `connection_closed`, and `timeout`. The
+`upstream_engine_error`, `incomplete_sse`, `sse_observation_limited`,
+`connection_closed`, and `timeout`. The
 engine-error outcome covers a recognized error envelope even inside an HTTP-200
 SSE response. Raw backend error strings
 and response bodies are not copied into the dataset.
+
+`sse_observation_limited` means an oversized event was discarded and no terminal
+could be established within the observer budget. It is unknown, not successful
+training data or proof of an engine failure. The live dataset counters report it
+separately as `observation_limited`; it is not included in `failed_or_cancelled`.
+The schema-1 outcome enum is additive; readers must exclude unfamiliar outcomes
+from success training rather than assuming success.
 
 ## Separately collected engine telemetry
 

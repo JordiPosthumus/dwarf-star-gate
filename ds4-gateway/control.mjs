@@ -1,7 +1,7 @@
 // Generic operator client. Never starts/stops/restarts a model or gateway.
 import fs from 'node:fs';
-import http from 'node:http';
 import path from 'node:path';
+import { workerControl } from './worker-client.mjs';
 const config = JSON.parse(fs.readFileSync(process.env.DWARF_GATE_CONFIG || 'config.local.json', 'utf8'));
 const command = process.argv[2] || 'status';
 try {
@@ -11,10 +11,7 @@ try {
   } else if (command === 'drain-worker' || command === 'resume-worker') {
     if (!config.control_socket) throw new Error('No operator control socket configured');
     const workers = process.argv.slice(3); if (!workers.length) throw new Error('Specify worker IDs');
-    const body = await new Promise((resolve,reject) => {
-      const req = http.request({ socketPath:path.resolve(config.control_socket), path:command === 'drain-worker' ? '/drain-workers' : '/resume-workers', method:'POST' }, res => {
-        let data = ''; res.on('data',c=>{data+=c;}); res.on('end',()=>res.statusCode === 200 ? resolve(data) : reject(new Error(data)));
-      }); req.on('error',reject); req.setTimeout(5000,()=>req.destroy(new Error('Control timeout'))); req.end(JSON.stringify({ workers }));
-    }); console.log(body);
+    const body = await workerControl(path.resolve(config.control_socket),command === 'drain-worker' ? '/drain-workers' : '/resume-workers',{workers});
+    console.log(JSON.stringify(body));
   } else throw new Error('Usage: control.mjs status|drain-worker ID...|resume-worker ID...');
 } catch (e) { console.error(e.message); process.exitCode = 1; }

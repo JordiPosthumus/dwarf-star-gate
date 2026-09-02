@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { StringDecoder } from 'node:string_decoder';
 import { pathToFileURL } from 'node:url';
 import { RequestedThinkingObserver } from './requested-thinking.mjs';
 import { Dataset } from './dataset.mjs';
@@ -85,25 +86,59 @@ export class AffinityStore {
 
 // Buffers at most one SSE line, solely to observe usage. Forwarded bytes are
 // never decoded/re-encoded. No answer/reasoning text is logged.
-class UsageObserver {
+export class UsageObserver {
   pending = ''; usage = undefined; done = false; finish_reason = null;
+  skipping = false; limited = false; failed = false; decoder = new StringDecoder('utf8');
+  constructor(route='/v1/chat/completions'){this.route=route;}
   accept(chunk) {
-    this.pending += chunk.toString('utf8');
-    let pos;
-    while ((pos = this.pending.indexOf('\n')) !== -1) {
-      const line = this.pending.slice(0, pos).trim(); this.pending = this.pending.slice(pos + 1);
-      if (line === 'data: [DONE]') this.done = true;
-      if (line.startsWith('data: {')) {
-        try {
-          const parsed=JSON.parse(line.slice(6)),u=parsed.usage;
-          const reason=parsed.choices?.[0]?.finish_reason;
-          if(['stop','length','tool_calls','function_call','content_filter'].includes(reason))this.finish_reason=reason;
-          if (u) this.usage = { prompt_tokens: u.prompt_tokens, completion_tokens: u.completion_tokens,
-            cached_tokens: u.prompt_tokens_details?.cached_tokens };
-        } catch { /* A telemetry failure must not affect inference. */ }
+    // Bound transient decoding even if accept receives one enormous chunk.
+    // After overflow, discard through the actual newline, not just this chunk.
+    for(let i=0;i<chunk.length;i+=4096) {
+      const text=this.decoder.write(chunk.subarray(i,i+4096));
+      for(const [j,part] of text.split('\n').entries()) {
+        if(j) {if(!this.skipping)this.line();this.pending='';this.skipping=false;}
+        if(!this.skipping) {
+          if(this.pending.length+part.length>1048576){this.pending='';this.skipping=true;this.limited=true;}
+          else this.pending+=part;
+        }
       }
     }
-    if (this.pending.length > 1048576) this.pending = '';
+  }
+  line() {
+    const line=this.pending.trim();
+    if(!line.startsWith('data:'))return;
+    const payload=line.slice(5).trim();
+    if(payload==='[DONE]'){
+      if(['/v1/chat/completions','/v1/completions'].includes(this.route))this.done=true;
+      return;
+    }
+    try {
+      const parsed=JSON.parse(payload),u=parsed.usage,reason=parsed.choices?.[0]?.finish_reason;
+      const count=x=>Number.isFinite(x)&&x>=0?x:undefined;
+      if(parsed.type==='error' || parsed.error)this.failed=true;
+      if(this.route==='/v1/messages') {
+        if(parsed.type==='message_stop')this.done=true;
+        if(parsed.type==='message_delta')this.finish_reason=({end_turn:'stop',stop_sequence:'stop',tool_use:'tool_calls',max_tokens:'length'})[parsed.delta?.stop_reason]??null;
+        // Anthropic usage has different cache accounting; leave it unknown
+        // until its full start/delta contract is explicitly instrumented.
+        return;
+      }
+      if(this.route==='/v1/responses') {
+        if(['response.completed','response.incomplete','response.failed'].includes(parsed.type)) {
+          const r=parsed.response;
+          if(!r || !['completed','incomplete','failed'].includes(r.status))return;
+          this.done=true;
+          if(parsed.type==='response.failed' || r.status==='failed' || r.error)this.failed=true;
+          else if(parsed.type==='response.completed' && r.status==='completed')this.finish_reason='stop';
+          else if(['max_tokens','max_output_tokens'].includes(r.incomplete_details?.reason))this.finish_reason='length';
+          else this.finish_reason=null;
+          if(r.usage)this.usage={prompt_tokens:count(r.usage.input_tokens),completion_tokens:count(r.usage.output_tokens),cached_tokens:count(r.usage.input_tokens_details?.cached_tokens)};
+        }
+        return;
+      }
+      if(['stop','length','tool_calls','function_call','content_filter'].includes(reason))this.finish_reason=reason;
+      if(u)this.usage={prompt_tokens:count(u.prompt_tokens),completion_tokens:count(u.completion_tokens),cached_tokens:count(u.prompt_tokens_details?.cached_tokens)};
+    } catch { /* A telemetry failure must not affect inference. */ }
   }
 }
 
@@ -113,7 +148,7 @@ export function createGateway(config) {
   const store = new AffinityStore(config.state_file);
   // Like registered workers, an explicit UI setting survives process restarts.
   const contextLimit = () => store.data.pool_context_length ?? config.context_length;
-  const makeNode = n => ({ ...n, drained: store.data.drained?.[n.id] === true, quarantine:store.data.quarantined?.[n.id] ?? null, inferenceFailures:0, healthy: false, failures: 0, active: null, queue: [], completed: 0, failed: 0, probing: false });
+  const makeNode = n => ({ ...n, drained: store.data.drained?.[n.id] === true, quarantine:store.data.quarantined?.[n.id] ?? null, inferenceFailures:0, healthy: false, failures: 0, active: null, queue: [], completed: 0, failed: 0, observationLimited:0, probing: false });
   let definitions;
   try { definitions = store.data.workers === undefined ? initial : workerConfigs(store.data.workers); }
   catch (e) { store.close(); throw e; }
@@ -131,7 +166,7 @@ export function createGateway(config) {
     active: nodes.filter(n => n.active).length, queued: nodes.reduce((s, n) => s + n.queue.length, 0),
     workers: nodes.map(n => ({ id: n.id, url: n.url, is_healthy: n.healthy, drained: n.drained, quarantine:n.quarantine, inference_failures:n.inferenceFailures,
       gateway_drained: n.drained && !n.active && !n.queue.length, load: Number(!!n.active),
-      queued: n.queue.length, assigned_sessions: store.count(n.id), completed: n.completed, failed: n.failed,
+      queued: n.queue.length, assigned_sessions: store.count(n.id), completed: n.completed, failed: n.failed, observation_limited:n.observationLimited,
       active_seconds: n.active ? Math.round((Date.now() - n.active.dispatched) / 1000) : 0,
       requested_thinking: n.active?.thinking?.result ?? null,
       last_requested_thinking: n.lastThinking ?? null, last_request_finished_at: n.lastFinishedAt ?? null,
@@ -174,7 +209,7 @@ export function createGateway(config) {
     headers.host = target.host;
     headers['x-request-id'] = job.id;
     delete headers.expect;
-    const observer = new UsageObserver();
+    const observer = new UsageObserver(req.url);
     job.thinking = new RequestedThinkingObserver(req.headers['content-encoding']);
     const observeBody = chunk => {requestBytes+=chunk.length;job.thinking.accept(chunk);};
     const bodyEnded = () => job.thinking.finish();
@@ -183,13 +218,13 @@ export function createGateway(config) {
       if (settled) return; settled = true;
       const fault=faults?.finish();
       if(fault){quarantine(node,fault,job.id);if(outcome==='complete')outcome='upstream_engine_error';}
-      else if(!job.cancelled && ((outcome==='upstream_http_error' && detail>=500) || ['incomplete_sse','upstream_error','upstream_stream_error','upstream_aborted','connection_closed'].includes(outcome))) {
+      else if(!job.cancelled && ((outcome==='upstream_http_error' && detail>=500) || ['incomplete_sse','upstream_engine_error','upstream_error','upstream_stream_error','upstream_aborted','connection_closed'].includes(outcome))) {
         if(++node.inferenceFailures>=3)quarantine(node,'repeated_inference_failures',job.id);
       } else if(outcome==='complete')node.inferenceFailures=0;
       clearTimeout(job.deadline);
       req.off('data', observeBody); req.off('end', bodyEnded); job.thinking.dispose();
       node.lastThinking = job.thinking.result; node.lastFinishedAt = new Date().toISOString();
-      if (outcome === 'complete') node.completed++; else node.failed++;
+      if (outcome === 'complete') node.completed++; else if(outcome==='sse_observation_limited')node.observationLimited++;else node.failed++;
       log('request_finished', { request_id: job.id, node: node.id, session: job.key?.slice(0, 12), outcome,
         queue_ms: job.dispatched - job.created, elapsed_ms: Date.now() - job.dispatched,
         usage: observer.usage, sse_done: observer.done, requested_thinking: job.thinking.result, detail });
@@ -216,7 +251,7 @@ export function createGateway(config) {
       if (isSSE) up.on('data', chunk => observer.accept(chunk));
       up.on('error', e => { res.destroy(); finish(job.cancelled ? 'client_cancelled' : 'upstream_stream_error', e.code); });
       up.on('aborted', () => { res.destroy(); finish(job.cancelled ? 'client_cancelled' : 'upstream_aborted'); });
-      up.on('end', () => finish(up.statusCode >= 400 ? 'upstream_http_error' : isSSE && !observer.done ? 'incomplete_sse' : 'complete', up.statusCode));
+      up.on('end', () => finish(up.statusCode >= 400 ? 'upstream_http_error' : isSSE && observer.failed ? 'upstream_engine_error' : isSSE && !observer.done ? observer.limited ? 'sse_observation_limited' : 'incomplete_sse' : 'complete', up.statusCode));
       up.pipe(res);
     });
     job.upstream = upstream;
@@ -410,18 +445,21 @@ export function createGateway(config) {
       check.listen(Number(new URL(settings.url).port), '127.0.0.1', () => check.close(resolve));
     });
     const node = makeNode(settings); node.drained = true;
+    // Registration proves compatibility, not recovery. A retained quarantine
+    // must survive removal/re-add, but cannot make the recovery CLI unreachable.
+    const compatible=()=>node.modelMatches && validContext(node.contextLength) && node.contextLength>=contextLimit() && !node.probeError;
     try {
       startTunnel(node);
       const until = Date.now() + (config.registration_timeout_ms ?? 15000);
       do {
         if (shuttingDown) throw new Error('Gateway is stopping');
         await probe(node);
-        if (node.healthy) break;
+        if (compatible()) break;
         if (!node.ssh || node.probeError === 'model_or_context_mismatch' || node.probeError === 'invalid_model_response') break;
         await delay(250);
       } while (Date.now() < until);
       if (shuttingDown) throw new Error('Gateway is stopping');
-      if (!node.healthy) throw new Error(`Compatibility check failed (${node.probeError || 'unavailable'}). Required model ${config.model}, context at least ${contextLimit()}; observed context ${node.contextLength ?? 'unknown'}.`);
+      if (!compatible()) throw new Error(`Compatibility check failed (${node.probeError || 'unavailable'}). Required model ${config.model}, context at least ${contextLimit()}; observed context ${node.contextLength ?? 'unknown'}.`);
       store.setWorkers([...nodes.map(definition), settings], { ...store.data.drained, [node.id]: true });
       nodes.push(node);
       log('worker_registered', { node: node.id, context_length: node.contextLength, drained: true });

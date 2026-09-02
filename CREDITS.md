@@ -55,7 +55,8 @@ an inference engine and a gateway must not claim to have created them.
 ## What this repository contributes
 
 Dwarf Star Gate contributes session-affinity routing, per-worker admission and
-drain controls, a read-only dashboard, operational telemetry filtering and tests
+drain controls, a dashboard with opt-in local routing controls, operational
+telemetry filtering, an optional observer/offline predictor, and tests
 for that gateway layer. Credit for the original inference engine remains with
 Antirez and the upstream contributors. Errors introduced in this gateway are our
 responsibility, not theirs; gateway-specific bugs belong in this repository.

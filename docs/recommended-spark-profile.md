@@ -7,6 +7,16 @@ profile. Following a moving engine branch or swapping weights is not the same
 profile. This is a measured deployment recommendation, not a claim of universal
 optimality or an upstream certification.
 
+**Runtime reliability update, later on 2026-09-02:** this remains the deployed
+profile, but a production Spark subsequently suffered a fatal CUDA execution
+error and, after recovery, an OOM-killed model process during a roughly 118K-token
+prefill. The precise causes are unresolved. Earlier successful boundary tests
+remain valid observations, **not evidence that this profile is OOM-proof or
+long-context stable**. No context, output, cache or acceleration setting has been
+silently reduced. Root-cause investigation and representative sustained-workload
+validation are the first operational priorities; see the
+[maintenance review](maintenance-review-2026-09-02.md).
+
 The engine and model artifacts are the work of
 [Salvatore “antirez” Sanfilippo and DS4 contributors](https://github.com/antirez/ds4).
 Start with [their documentation](https://github.com/antirez/ds4/blob/main/README.md).

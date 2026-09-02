@@ -3,7 +3,9 @@ const paths = new Set(['/workers', '/add-worker', '/remove-worker', '/drain-work
 export function workerControl(socketPath, route, body) {
   if (!socketPath || !paths.has(route)) return Promise.reject(new Error('Worker control socket not configured'));
   return new Promise((resolve, reject) => {
-    const req = http.request({ socketPath, path: route, method: route === '/workers' ? 'GET' : 'POST', headers:{'content-type':'application/json'} }, res => {
+    // Controls are infrequent. A fresh socket avoids reusing a half-closed
+    // keep-alive connection after the gateway restarts; never replay mutations.
+    const req = http.request({ socketPath, path: route, agent:false, method: route === '/workers' ? 'GET' : 'POST', headers:{'content-type':'application/json'} }, res => {
       let data = '';
       res.on('data', chunk => { data += chunk; if (data.length > 1048576) req.destroy(new Error('Control response too large')); });
       res.on('error', reject);

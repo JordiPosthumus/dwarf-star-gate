@@ -14,6 +14,7 @@ export class GenerationFaultObserver {
   inspect(text) {
     try {
       const data=JSON.parse(text), message=data?.error?.message ??
+        (data?.type==='response.failed' && data.response?.status==='failed'?data.response.error?.message:null) ??
         (['invalid_request_error','server_error','api_error'].includes(data?.type)?data.message:null);
       if(typeof message!=='string')return;
       if(/(?:illegal memory access|device-side assert)/i.test(message))this.fault='fatal_accelerator_error';

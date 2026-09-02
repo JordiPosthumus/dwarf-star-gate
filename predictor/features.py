@@ -116,6 +116,9 @@ def build_rows(events, profiles):
             continue
         if any(group.get(k) for k in ("queued_cancel", "queue_timeout", "unavailable_before_dispatch")):
             raise ValueError("Conflicting lifecycle terminal events")
+        if f.get("outcome") == "sse_observation_limited":
+            excluded["observation_limited"] += 1
+            continue
         if f.get("outcome") != "complete":
             excluded["failed_or_cancelled"] += 1
             continue

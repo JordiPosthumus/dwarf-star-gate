@@ -3,7 +3,7 @@
   "port": 30001,
   "api_key": "REPLACE_WITH_YOUR_KEY",
   "model": "deepseek-v4-flash",
-  "context_length": 153600,
+  "context_length": 262144,
   "state_file": "./ds4-gateway/runtime/example-affinity.json",
   "control_socket": "./ds4-gateway/runtime/example-control.sock",
   "ui_worker_management": false,

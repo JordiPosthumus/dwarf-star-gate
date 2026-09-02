@@ -23,7 +23,8 @@ events or leave a partial trailing line. Readers must reject incomplete lines.
   explicit instrumentation. Do not treat unchanged profile as proof of cache survival.
 - Queue/service/total durations use a monotonic clock. `first_body_byte_ms` is
   explicitly first upstream body bytes, **not** guaranteed first semantic token.
-- SSE token usage is copied only when supplied. Non-SSE/missing usage is unknown.
+- Chat Completions/Completions SSE usage and bounded Responses terminal usage are
+  copied only when supplied. Non-SSE and Messages start/delta usage remain unknown.
   SSE finish reasons are retained when supplied: an HTTP-complete response with
   `finish_reason: length` is output-limited, not an uncensored completion target.
   Missing finish reasons remain unknown, not assumed `stop`.
@@ -41,6 +42,11 @@ it **does not delete evidence** or block inference. No automatic expiry yet.
 The UI shows current-run saved/pending/dropped counts, total stored bytes and last
 write. Retention and encoder choices remain operator decisions. No raw text,
 embeddings or credentials are stored. Keep the dataset out of Git and public exports.
+
+Completion observation understands each supported API's terminal event rather
+than requiring `[DONE]` for every stream. Oversized, unobservable endings are
+`sse_observation_limited`, excluded from successful training, and counted separately
+from engine failures. This observation limit does not truncate forwarded output.
 
 ## Genie
 

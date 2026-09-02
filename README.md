@@ -6,8 +6,8 @@ A local gateway for **N DS4 servers—DGX Sparks, Macs, or a mix**, with durable
 and a lightweight control-room dashboard for [DS4](https://github.com/antirez/ds4).
 Register workers through the local UI or CLI; fleet size is not hard-coded.
 
-**Growing next:** private routing evidence, clearer fleet activity, and **Gate
-Genie**, an opt-in local observer. See the [living feature roadmap](docs/roadmap.md)
+**Implemented, opt-in:** private routing evidence, fleet activity, and **Gate
+Genie**, a local observation-only assistant. See the [prioritized feature roadmap](docs/roadmap.md)
 and [experimental collector/Genie setup](docs/observer.md). Planned cache-health
 auditing and XGBoost-guided routing are explicitly separate from today's features.
 An optional [offline XGBoost experiment](predictor/README.md) now provides a
@@ -55,7 +55,9 @@ not imported or required by the gateway or dashboard.
 ## Dashboard
 
 Terminal-inspired presentation, per-worker measurements, and a replaceable logo.
-These screenshots use **synthetic demo data**, not live sessions or benchmarks.
+These earlier illustrative captures use **synthetic demo data**, not live sessions
+or benchmarks. They are not a complete feature tour: the current UI also includes
+the collection/activity panels and optional Gate Genie described below.
 
 ![Dwarf Star Gate dashboard with illustrative telemetry](docs/images/dashboard-overview.png)
 
@@ -112,6 +114,9 @@ request per Spark, a 349,525 MiB disk-KV budget and the full acceleration cache.
 The guide pins the engine and weights and records measured results and limits.
 It remains our recommendation until explicitly superseded; it is not an upstream
 endorsement or a profile automatically applied to Macs or registered servers.
+**Known reliability limits:** subsequent production use exposed a CUDA fault and
+an OOM restart on one Spark. The exact settings are preserved; they are not a
+long-context stability guarantee. Read the profile's incident update before adoption.
 
 Requires Node **22.22.2+**, running DS4 servers, and SSH for remote workers. Gateway runs on macOS or
 Linux. The optional click-to-open service scripts use macOS LaunchAgents.
@@ -366,7 +371,7 @@ npm test
 npm run privacy-check
 ```
 
-61 unit/integration tests exercise local HTTP fixtures—not GPUs. Coverage includes
+The Node unit/integration suite exercises local HTTP fixtures—not GPUs. Coverage includes
 byte preservation, affinity persistence, FIFO admission, cancellation, no retries,
 two-to-six-worker expansion, draining four of six, private operator control,
 slow consumers, cache classification, journal deduplication, diagnostic redaction,
@@ -374,6 +379,11 @@ six-worker monitoring, complete UI asset bundles, hot registration/removal,
 larger-context workers, empty-roster persistence, bounded health probes and the
 opt-in same-origin/CSRF management boundary, local-log timing/cache parsing,
 partial/oversized lines, rotation, truncation, missing-file recovery and redaction.
+It also covers protocol-specific SSE completion, persistent generation quarantine,
+verified reinstatement after remove/re-add, fresh control sockets after restart,
+collector privacy, and observation-only Genie boundaries. Optional predictor tests
+run with `npm run predictor:test` in the locked Python environment. See the
+[dated maintenance review](docs/maintenance-review-2026-09-02.md) for findings and scope.
 Default dashboards remain read-only.
 Pool-size tests cover 1, 2, 3, 6, 12 and 20 fixture workers. These are validation
 points, not configured limits or a claim of unlimited-scale load testing.

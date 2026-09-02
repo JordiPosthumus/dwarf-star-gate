@@ -80,6 +80,15 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(before[0]["features"], after[0]["features"])
         self.assertNotEqual(before[0]["target_service_s"], after[0]["target_service_s"])
 
+    def test_observation_limit_is_excluded_without_becoming_engine_failure_or_history(self):
+        unknown = request(1, 0, session="same")
+        unknown[-1]["outcome"] = "sse_observation_limited"
+        rows, excluded = build_rows(unknown + request(2, 10, session="same"), inventory())
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(excluded["observation_limited"], 1)
+        self.assertNotIn("failed_or_cancelled", excluded)
+        self.assertIsNone(rows[0]["features"]["prior_service_s"])
+
     def test_history_only_becomes_available_after_finish(self):
         events = request(1, 0, duration=20, session="same") + request(2, 5, session="same") + request(3, 30, session="same")
         rows, _ = build_rows(events, inventory())
