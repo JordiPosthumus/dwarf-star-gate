@@ -19,6 +19,17 @@ are isolated and locked: Python 3.12–3.14, XGBoost 3.4.1, NumPy 2.5.2, with th
 transitive dependency resolution in `uv.lock`. macOS needs an available OpenMP
 runtime for the XGBoost wheel; installation is not part of starting DSG.
 
+The first fit is a **plumbing smoke test**, not a cross-validation exercise. Its
+tiny chronological holdout is only an optional diagnostic, not a claim that tree
+count is tuned. For the production predictor, tree count (`ntrees`, expressed as
+`num_boost_round` here or `n_estimators` in the sklearn API) **must be selected by
+cross-validation inside training data**: forward-time, session-separated folds,
+with only labels available at each cutoff. Early stopping must use fold-internal
+validation, never the final test set. Refit with the selected count and assess on
+an untouched later-session test set. Save the fold definitions and selection
+evidence. This production selection pipeline is **not implemented yet**; the
+32-round smoke model and ordinary routing are unchanged.
+
 ## Reproduce a fit
 
 From the repository root, with `uv` installed:

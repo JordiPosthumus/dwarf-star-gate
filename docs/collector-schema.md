@@ -1,8 +1,9 @@
 # Exactly what the routing collector stores — schema 1
 
 Implementation: [`dataset.mjs`](../ds4-gateway/dataset.mjs), with observation
-points in [`gateway.mjs`](../ds4-gateway/gateway.mjs). This is a numerical evidence
-foundation, not yet a complete XGBoost training pipeline or a cache-hit auditor.
+points in [`gateway.mjs`](../ds4-gateway/gateway.mjs). This numerical evidence feeds
+the optional [offline XGBoost experiment](../predictor/README.md), not a live
+learning router or a cache-hit auditor.
 
 ## Common fields on every event
 
@@ -104,3 +105,5 @@ cannot be backfilled with vectors because their source conversation text was not
 retained. Compare metadata-only and embedding-assisted predictors before adopting.
 
 For storage bounds, permissions and UI counters, see [observer setup](observer.md).
+For the next embedding collection slice and its feature-availability boundaries,
+see the [delivery decisions in the roadmap](roadmap.md#immediate-next-delivery-decisions--2026-09-02).

@@ -23,6 +23,82 @@ The engine performs inference and manages KV state; DSG observes and routes.
 See [collection and Genie setup](observer.md) for the implemented boundaries and
 configuration. Opt-in capabilities remain off unless configured/enabled.
 
+## Immediate next delivery decisions — 2026-09-02
+
+**First XGB fit = a plumbing smoke test.** Cross-validation is not a prerequisite
+for this first artifact; fit/save/reload, schema consistency and no leakage are.
+Its existing tiny chronological holdout is diagnostic only. Before any production
+XGB predictor is promoted, cross-validate **tree count** (`n_estimators` /
+`num_boost_round`, often called `ntrees`) within training data, using forward-time
+folds with session-group separation and purged unavailable labels. If using early
+stopping, use each fold's validation subset, not the final test set. Select the
+tree count from those folds, refit on training data, and assess once on a separate
+untouched later-session test set. Record folds, candidate counts, selection rule,
+baseline and chosen count. Too little data means no validated production model,
+not random row CV or invented examples. This is a later release gate, not tonight's
+smoke-test gate; the current fixed 32-round experiment remains unchanged.
+
+**Embeddings are the next collection slice, not something to wait for a mature
+predictor to begin.** Planned implementation, not enabled yet:
+
+- Pin a small local encoder, revision, tokenizer, dimensions and extraction
+  policy. Do not assume DS4's chat endpoint supplies embeddings. Encoder choice
+  and measured host overhead are still to be verified before installation.
+- Embed two separately labelled inputs: the latest user text and a bounded slice
+  of preceding user/assistant-visible conversation. Exclude system/developer
+  instructions, hidden reasoning, tool arguments/results and image payloads in
+  the first version; document the resulting blind spots for tool-heavy workloads.
+  Apply explicit encoder-token and parser-memory bounds, with truncation flags.
+- Copy only the bounded text needed into a local, asynchronous work queue; never
+  await embeddings on the inference path or spool raw text to disk. Persist
+  vectors, request/run ID, encoder/schema version, token counts, missing/error
+  status and extraction/ready timestamps. Numeric collection continues on encoder
+  failure, queue overflow or disabled embeddings. No cloud calls or silent model
+  substitution; vectors remain sensitive private data.
+- Preserve request forwarding byte-for-byte. Instrument API formats explicitly;
+  unsupported or oversized bodies become missing-feature records, not broken
+  inference or silent truncation of the actual prompt. Test streaming upload,
+  backpressure, disconnects, malformed payloads and encoder failure/timeout.
+- The gateway currently places a request before reading its body. An embedding
+  generated after placement is usable for workload research, **not retroactively
+  available to that routing decision**. Collection comes first; future shadow/live
+  scheduling must define its prediction point and match feature availability in
+  training and serving. Exclude future answer text from every embedding input.
+- Refit a basic metadata-plus-embedding smoke model once joined labels exist;
+  compare against metadata-only later. Historical numerical rows stay without
+  embeddings because their raw conversations were not retained.
+
+**Gate Genie UI: evidence, commentary and actions must be distinct.** The current
+read-only panel is not an action executor or a durable conversation history.
+Next additions should be:
+
+1. Persistent chronological activity: observation, proposal, started, applied,
+   verified, failed, rejected and undone. Each entry names time, actor, target,
+   reason, evidence references and actual before/after state. Model prose is
+   commentary; only executor receipts and fresh checks establish action success.
+2. A clear mode/source strip: off, observing or authorized actions; dedicated
+   endpoint versus pool fallback; reviewing/busy/error and last fresh evidence.
+   Retain manual controls and show the exact permitted actions, not a blanket
+   implication that the Genie can already restart or migrate jobs.
+3. A worker alert badge with the fault and an evidence drawer. Distinguish API
+   reachability from generation health. A model-list response must not clear a
+   fatal execution quarantine; reinstate through explicit verified recovery.
+4. A durable question/answer thread plus per-assessment feedback (useful, wrong,
+   resolved, with optional note). Feedback attaches to its evidence/action ID and
+   remains separate from measured training labels; it is not an automatic edit
+   to the predictor or a machine's health state.
+5. Collection/training progress: eligible completed rows, coverage by hardware,
+   embeddings enabled/ready/pending/missing/failed, encoder version/latency and
+   latest fit/result. Clearly say **experimental/offline**, not "learning router"
+   while predictions are disconnected. Keep prompts and vectors out of public
+   diagnostic downloads and screenshots.
+
+Fatal-worker detection/quarantine is a separate urgent deterministic fix; it must
+not wait for embeddings, XGB training or the Genie LLM. Tests must include an API
+that still answers model-list probes while inference fails, repeated failures,
+existing session affinity, already queued work and evidence-backed reinstatement.
+Do not blindly replay partial streams or use quarantine to cancel admitted work.
+
 ## Next: cache health, not just cache counters
 
 Distinguish expected cold starts, useful prefix reuse, disk restores and
@@ -84,8 +160,8 @@ OpenAI-compatible client, not an embedded Pi/Hermes bot with shell access.
 
 ## Adding or removing devices
 
-Use stable worker identities and configuration-labelled evidence, not one model
-feature column per named machine. New machines start with limited confidence,
+Use stable categorical worker identities plus shared hardware-class features and
+configuration-labelled evidence, not machine-name-only predictions. New machines start with limited confidence,
 compatibility checks and small calibration. Removed machines stop being routing
 candidates; their measurements need not be erased. Never lower the pool context
 guarantee just to admit an incompatible worker. The dedicated Genie endpoint is
