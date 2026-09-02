@@ -21,7 +21,9 @@ diff manually too. CI is a guardrail, not proof that a change is safe in product
 - Do not rewrite prompts, reasoning settings, sampling parameters or output limits.
 - Do not replay requests automatically after ambiguous upstream failures.
 - Preserve stable worker IDs, durable affinity and per-worker FIFO admission.
-- Keep dashboard access read-only. Model operations do not belong in the UI.
+- Keep the dashboard read-only by default. Opt-in local server-routing controls
+  must retain the same-origin/CSRF and private-socket boundary; model start/stop
+  and model-setting operations do not belong in the UI.
 - Missing measurements must remain unknown. Do not label a disk hit as a cold miss.
 - Keep startup/update failures out of live inference. Test UI assets as a complete
   bundle and reload only the dashboard when promoting presentation changes.

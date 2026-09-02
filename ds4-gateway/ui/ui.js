@@ -43,11 +43,11 @@ function render(s) {
   $('connection').textContent = s.demo ? '◉ Demo telemetry' : stale ? 'Status unavailable' : '● Live telemetry';
   $('warning').hidden = !s.gateway_error && !s.telemetry_error;
   $('warning').textContent = [s.gateway_error,s.telemetry_error].filter(Boolean).join(' · ');
-  $('model').textContent = s.demo ? `${g?.model || 'DS4'} · illustrative data · no real workers connected` : `${g?.model || 'DS4'} · one active gateway request per worker · session-affinity routing`;
+  $('model').textContent = s.demo ? `${g?.model || 'DS4'} · illustrative data · no real DS4 servers connected` : `${g?.model || 'DS4'} · one active gateway request per DS4 server · session-affinity routing`;
   $('available').textContent = g ? `${g.available} / ${g.total}` : '—'; $('active').textContent = fmt(g?.active); $('queued').textContent = fmt(g?.queued); $('context').textContent = g ? `${fmt(g.context_length / 1024)} Ki tokens` : '—';
   $('devices').innerHTML = s.devices.map((d,i) => device(d,g?.workers.find(w => w.id === d.id),now,stale,i+1)).join('');
   $('worker-management').hidden = !s.worker_management;
-  $('control-mode').textContent = s.worker_management ? '[ worker controls ]' : '[ read only ]';
+  $('control-mode').textContent = s.worker_management ? '[ server controls ]' : '[ read only ]';
   $('control-note').textContent = 'Model settings unchanged.';
   if(s.worker_management) { wireWorkerControls(); void loadWorkers(); }
   const rows = s.events.filter(e => e.event === 'request_finished').slice(-12).reverse();

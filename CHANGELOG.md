@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Consistent DS4-server UI terminology and explicit gateway-only concurrency,
+  availability and cache-slot definitions for mixed hardware.
 - Live worker registration/removal through an opt-in local UI and private CLI;
   checked registrations start paused and membership persists across restarts.
 - Mixed Mac/Spark native context support without changing server settings;

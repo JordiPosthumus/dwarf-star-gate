@@ -1,6 +1,6 @@
 # Dwarf Star Gate
 
-A local gateway for **N DS4 workers—DGX Sparks, Macs, or a mix**, with durable session affinity
+A local gateway for **N DS4 servers—DGX Sparks, Macs, or a mix**, with durable session affinity
 and a lightweight control-room dashboard for [DS4](https://github.com/antirez/ds4).
 Register workers through the local UI or CLI; fleet size is not hard-coded.
 
@@ -58,10 +58,14 @@ The regular dashboard is on port 30010. Artwork lives at
 
 ## The gateway
 
+A **DS4 server** is one registered model-server endpoint. Code, configuration and
+CLI commands also call it a **worker**; these mean the same thing, not necessarily
+a physical machine. Each server may have its own native context and cache settings.
+
 - Durable session affinity: later turns return to the same worker to improve the
   chance of KV reuse. Busy conversations queue at home instead of bouncing.
-- Load-aware placement of **new** conversations; one active upstream request per
-  worker. Extra requests wait in bounded FIFO queues.
+- Load-aware placement of **new** conversations; at most one active upstream request
+  through DSG per registered DS4 server. Extra requests wait in bounded FIFO queues.
 - Transparent request/stream passthrough: no reasoning, output-limit, sampling,
   vision or tool-call rewriting.
 - No automatic replay after an ambiguous upstream failure.
@@ -71,6 +75,18 @@ The regular dashboard is on port 30010. Artwork lives at
 It does **not** move caches, guarantee hits, manage model containers, or know GPU
 memory pressure. DS4 owns cache validity and GPU concurrency. Draining here does
 not prove a worker has no direct clients; verify those before stopping it.
+
+**Concurrency and dashboard counts:** one active request includes prefill, thinking
+and decode, for both streaming and non-streaming responses. Three healthy, enabled
+servers can handle up to three active gateway requests, one each; session affinity
+may still queue requests at a busy home while another server is idle. Available
+means healthy and enabled, not idle. Direct clients bypass these gateway counts and
+limits. Warm/hot KV slots retain sessions and do not add simultaneous generation
+slots. DSG does not alter the native server's own concurrency configuration.
+
+Use one registration per server instance; duplicate aliases to the same instance
+can defeat the per-server limit. Separate instances on the same physical machine
+are scheduled independently—DSG does not coordinate their shared RAM/GPU capacity.
 
 ## Quick start
 
@@ -203,11 +219,11 @@ complete release. Editing files does not partially update a running dashboard.
 ## Operator controls
 
 Set `"ui_worker_management": true` in your private config and reload the dashboard
-to expose **Manage workers**. Keep this dashboard on loopback, not behind a public
+to expose **Manage DS4 servers**. Keep this dashboard on loopback, not behind a public
 proxy. The controls use the private Unix socket, exact same-origin checks and a
 per-dashboard CSRF token. They do not change inference API authentication.
 
-1. Enter a stable worker ID and choose **Local server** or **Remote server via SSH**.
+1. Enter a stable server ID and choose **Local server** or **Remote server via SSH**.
 2. For a local server, enter its URL. For SSH, supply an existing SSH host/alias,
    the remote server port and an unused local tunnel URL.
 3. **Check & register** verifies the configured model and sufficient context. A
@@ -279,7 +295,7 @@ npm test
 npm run privacy-check
 ```
 
-51 unit/integration tests exercise local HTTP fixtures—not GPUs. Coverage includes
+52 unit/integration tests exercise local HTTP fixtures—not GPUs. Coverage includes
 byte preservation, affinity persistence, FIFO admission, cancellation, no retries,
 two-to-six-worker expansion, draining four of six, private operator control,
 slow consumers, cache classification, journal deduplication, diagnostic redaction,

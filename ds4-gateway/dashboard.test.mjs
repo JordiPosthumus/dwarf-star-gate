@@ -106,6 +106,18 @@ test('dashboard serves local assets and a downloadable read-only snapshot', asyn
     await r.arrayBuffer();
   }
 });
+test('dashboard names DS4 servers and explains gateway-only concurrency and availability', async t => {
+  const { url } = await fixture(t);
+  const html = await (await fetch(url)).text();
+  const js = await (await fetch(url+'/ui.js')).text();
+  assert.match(html,/AVAILABLE DS4 SERVERS/);assert.match(html,/ACTIVE REQUESTS/);
+  assert.match(html,/Manage DS4 servers/);assert.match(html,/not necessarily one physical machine/);
+  assert.match(html,/Direct clients are outside this limit/);
+  assert.match(html,/Available means healthy and enabled, including busy servers/);
+  assert.match(html,/Warm cache slots retain sessions/);
+  assert.match(js,/one active gateway request per DS4 server/);
+  assert.doesNotMatch(html+js,/AVAILABLE SPARKS|AVAILABLE WORKERS|active generation per Spark|active gateway request per worker/);
+});
 test('every HTML-referenced asset is served, including a real PNG logo with bounded fallback dimensions', async t => {
   const { url } = await fixture(t);
   const html = await (await fetch(url)).text();
