@@ -16,7 +16,7 @@ import { loadConfig, isMain } from './config.mjs';
 import { Predictor } from './predictor.mjs';
 import { calibrationPreflight } from './calibration.mjs';
 import { AgentControl } from './agent-control.mjs';
-import {deadlineTimer,queueTimeout} from './deadline.mjs';
+import {deadlineTimer,queueTimeout,queueTimeoutMessage} from './deadline.mjs';
 import net from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -448,7 +448,7 @@ export function createGateway(config) {
     req.on('aborted', cancel); req.on('error', cancel); res.on('close', cancel);
     job.queueTimer = deadlineTimer(() => {
       node.queue = node.queue.filter(j => j !== job);
-      error(res, 504, 'queue_timeout', 'Configured queue deadline reached; request was not dispatched');
+      error(res, 504, 'queue_timeout', queueTimeoutMessage(job.queueTimeoutMs));
       dataset.record('queue_timeout',{request_id:job.id,node:node.id,total_ms:performance.now()-job.createdMono});
       job.cleanup(); req.resume();
     }, job.queueTimeoutMs);

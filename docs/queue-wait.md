@@ -13,6 +13,16 @@ queued requests retain their admission-time deadline, including when you lower
 the allowance; the UI asks for confirmation before reducing it. Active generations,
 model settings and Pi are untouched. Unsaved typing survives UI polling.
 
+If the queue deadline expires, DSG returns HTTP **504**, code `queue_timeout`,
+with the request's admission-time allowance and the location of the UI control:
+
+> This request reached its DSG queue waiting limit of 20,000 hours and was not dispatched to a model server. This limit is configurable in DSG under Manage DS4 servers → Queue waiting allowance (hours); changes apply to new requests.
+
+The duration reflects that request's actual limit, not a hard-coded default or a
+later UI change. Shorter custom limits are reported in minutes, seconds or
+milliseconds when appropriate. This error confirms no model-server dispatch;
+it does not mean a running generation timed out or that the client will retry.
+
 The explicit UI choice is backed up and atomically saved as `queue_timeout_ms` in
 the private affinity metadata store. It takes precedence over the startup config
 across restarts, just like the explicit pool context limit. The UI displays whether

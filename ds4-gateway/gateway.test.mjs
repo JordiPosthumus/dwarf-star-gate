@@ -856,7 +856,11 @@ test('queue bound rejects without dispatch, queue timeout does not cap generatio
   const first = r.request('{"delay":170}', 'a'); await until(() => r.gateway.stats().active === 1);
   const second = r.request('{}', 'a'); await until(() => r.gateway.stats().queued === 1);
   assert.equal((await r.request('{}', 'a')).status, 429);
-  assert.equal((await second).status, 504); assert.equal((await first).status, 200);
+  const expired=await second;assert.equal(expired.status,504);
+  const failure=JSON.parse(expired.body).error;assert.equal(failure.type,'gateway_error');assert.equal(failure.code,'queue_timeout');
+  assert.match(failure.message,/limit of 50 milliseconds/);assert.match(failure.message,/was not dispatched to a model server/);
+  assert.match(failure.message,/configurable in DSG under Manage DS4 servers → Queue waiting allowance \(hours\)/);
+  assert.equal((await first).status, 200);
   assert.equal(r.backends[0].records.length, 1);
 });
 test('default long queue has no timer overflow and cancellation/dispatch clear its timers',async t=>{
@@ -889,6 +893,18 @@ test('queue allowance control persists, is operator-only and preserves admitted 
   await r.restart();assert.equal(r.gateway.stats().queue_timeout_ms,40);assert.equal(r.gateway.stats().workers[0].oldest_queue_seconds,null);
   const grant=await workerControl(r.config.control_socket,'/grant-agent',{agent_id:'queue-tester',workers:['spark1']});
   const forbidden=await new Promise((resolve,reject)=>{const req=http.request({socketPath:r.config.control_socket,path:'/set-queue-timeout',method:'POST',headers:{authorization:`Bearer ${grant.token}`}},res=>{res.resume();res.on('end',()=>resolve(res.statusCode));});req.on('error',reject);req.end(JSON.stringify({queue_timeout_ms:80,expected_queue_timeout_ms:40}));});assert.equal(forbidden,403);assert.equal(r.gateway.stats().queue_timeout_ms,40);
+});
+test('queue timeout reports the admitted limit after the operator changes the allowance',async t=>{
+  const r=await rig(t,1,{control_socket:true,queue_timeout_ms:100});
+  const first=r.request('{"delay":300}','a');await until(()=>r.gateway.stats().active===1);
+  const second=r.request('{}','b');await until(()=>r.gateway.stats().queued===1);
+  await workerControl(r.config.control_socket,'/set-queue-timeout',{queue_timeout_ms:72000000000,expected_queue_timeout_ms:100});
+  assert.equal(r.gateway.stats().queue_timeout_ms,72000000000);
+  const expired=await second;assert.equal(expired.status,504);
+  const failure=JSON.parse(expired.body).error;assert.equal(failure.code,'queue_timeout');
+  assert.match(failure.message,/limit of 100 milliseconds/);assert.doesNotMatch(failure.message,/20,000 hours/);
+  assert.match(failure.message,/changes apply to new requests/);
+  assert.equal((await first).status,200);assert.equal(r.backends[0].records.length,1,'expired request was never dispatched');
 });
 test('SSE forwarded with usage and DONE; no Node five-minute or idle request timeout', async t => {
   const r = await rig(t);
