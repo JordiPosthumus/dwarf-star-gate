@@ -16,7 +16,7 @@ export class PredictionEvidence {
   }
   accept(row) {
     // Other versioned collector streams are not missing analytics joins.
-    if(row?.schema===1 && ['request_features','embedding','progress'].includes(row.kind))return;
+    if(row?.schema===1 && ['request_features','embedding','progress','rejection'].includes(row.kind))return;
     if(row?.schema!==1 || !kinds.has(row.kind) || !validId(row.run_id) || !validId(row.request_id) || !validId(row.event_id)) {this.rejected++;return;}
     const eventKey=`${row.run_id}:${row.event_id}`;
     if(this.seen.has(eventKey))return;

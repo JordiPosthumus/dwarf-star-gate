@@ -12,7 +12,7 @@ import { AffinityStore, createGateway, UsageObserver } from './gateway.mjs';
 import { requestedThinking, RequestedThinkingObserver, THINKING_CAPTURE_BYTES, safeRequestedThinking } from './requested-thinking.mjs';
 import { workerControl } from './worker-client.mjs';
 import {agentRequest} from './agent-client.mjs';
-import {randomUUID} from 'node:crypto';
+import {randomUUID,createHash} from 'node:crypto';
 import { runDashboard } from './dashboard.mjs';
 import { GenerationFaultObserver } from './generation-health.mjs';
 
@@ -850,6 +850,40 @@ test('no failover when old home has unresolved work', async t => {
   r.gateway.nodes[0].healthy = false;
   assert.equal((await r.request('{}', 'a')).status, 503); await first;
   assert.equal(r.backends[1].records.length, 0);
+});
+test('unrelated old-home work does not block conversation-scoped reassignment',async t=>{
+  const r=await rig(t,2,{dataset_enabled:true});
+  await r.request('{}','a');await r.request('{}','b');
+  const old=r.gateway.nodes[0];r.gateway.store.set(createHash('sha256').update('b').digest('hex'),old.id);
+  const busy=r.request('{"delay":250}','b');await until(()=>old.active);
+  old.healthy=false;
+  const result=await r.request('{}','a');assert.equal(result.status,200);assert.equal(result.headers['x-ds4-node'],'spark2');assert.equal(result.headers['x-ds4-affinity'],'reassigned');
+  const same=await r.request('{}','b');assert.equal(same.status,503);assert.equal(same.headers['x-dsg-dispatch-state'],'not_dispatched');
+  assert.equal(JSON.parse(same.body).error.continuity.reason,'same_session_active');
+  await busy;assert.equal(r.backends[1].records.length,2);
+});
+test('paused same-session queue retains ownership and typed receipts exclude private headers',async t=>{
+  const r=await rig(t,2,{dataset_enabled:true});
+  const first=r.request('{"delay":250}','a');await until(()=>r.gateway.nodes[0].active);
+  const second=r.request('{}','a');await until(()=>r.gateway.nodes[0].queue.length===1);
+  r.gateway.nodes[0].drained=true;
+  const call=randomUUID(),rejected=await r.request('{}','a',{headers:{'x-dsg-call-id':call,'x-private':'SECRET'}});
+  const e=JSON.parse(rejected.body).error;
+  assert.equal(e.continuity.call_id,call);assert.equal(e.continuity.dispatch_state,'not_dispatched');assert.equal(e.continuity.retry_class,'wait_then_retry');assert.equal(rejected.headers['x-request-id'],e.request_id);
+  assert.ok(!JSON.stringify(r.gateway.stats().continuity).includes('SECRET'));
+  assert.equal((await first).status,200);assert.equal((await second).status,200);assert.equal(r.backends[1].records.length,0);
+});
+test('queued conversation cannot split behind another active session; failed reassignment does not dispatch',async t=>{
+  const r=await rig(t,2);await r.request('{}','a');
+  r.gateway.store.set(createHash('sha256').update('b').digest('hex'),'spark1');
+  const first=r.request('{"delay":250}','b');await until(()=>r.gateway.nodes[0].active);
+  const second=r.request('{}','a');await until(()=>r.gateway.nodes[0].queue.length===1);
+  r.gateway.nodes[0].healthy=false;
+  const rejected=await r.request('{}','a');assert.equal(JSON.parse(rejected.body).error.continuity.reason,'same_session_queued');
+  await first;assert.equal((await second).status,503);
+  const save=r.gateway.store.save;r.gateway.store.save=()=>{throw new Error('fixture storage failure');};
+  const failed=await r.request('{}','a');assert.equal(JSON.parse(failed.body).error.continuity.retry_class,'operator_required');
+  assert.equal(r.backends[1].records.length,0);r.gateway.store.save=save;
 });
 test('queue bound rejects without dispatch, queue timeout does not cap generation', async t => {
   const r = await rig(t, 2, { max_queued_per_node: 1, queue_timeout_ms: 50 });

@@ -152,6 +152,9 @@ function render(s) {
   renderPredictor(g?.predictor,stale||!s.worker_management);
   $('calibration-status').textContent=stale?'Calibration safety status unavailable; no job is authorized.':g?.calibration?.execution_available===false?'Synthetic calibration skipped: no verified cache-preserving execution path. Idle does not prove warm caches are safe. Ordinary traffic collection and CPU training continue.':'Synthetic calibration is not configured; no job is authorized.';
   renderHealthWire(s);
+  const rejected=g?.continuity?.recent_rejections??[];
+  $('continuity-status').textContent=stale?'Historical evidence: gateway unavailable.':!g?.continuity?'This gateway version does not expose continuity receipts.':`${rejected.length} recent rejected attempts in this gateway run. Not dispatched means no inference started for that attempt, not that the client resumed. Long waits are not proof of a stall.`;
+  $('continuity-rejections').innerHTML=rejected.slice(0,8).map(r=>`<p><time>${esc(clock(r.time))}</time> · ${esc(r.node||'pool')} · ${esc(r.reason?.replaceAll('_',' '))} · ${r.retry_class==='wait_then_retry'?'compatible client may wait/retry':'operator investigation required'} · <code title="${esc(r.request_id)}">${esc(r.request_id?.slice(0,8))}</code></p>`).join('');
   $('connection').textContent = s.demo ? '◉ Demo telemetry' : stale ? 'Status unavailable' : '● Live telemetry';
   $('warning').hidden = !s.gateway_error && !s.telemetry_error;
   $('warning').textContent = [s.gateway_error,s.telemetry_error].filter(Boolean).join(' · ');

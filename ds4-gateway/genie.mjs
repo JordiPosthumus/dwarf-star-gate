@@ -8,6 +8,7 @@ export function briefing(snapshot) {
   const g=snapshot.gateway;
   return {time:snapshot.time,gateway_at:snapshot.gateway_at ?? snapshot.time,gateway_stale:!!snapshot.gateway_error,context_length:g?.context_length,draining:!!g?.draining,
     calibration:g?.calibration??null,queue_timeout_ms:g?.queue_timeout_ms??null,request_timeout_ms:g?.request_timeout_ms??null,
+    continuity:{recent_rejections:(g?.continuity?.recent_rejections??[]).slice(0,12).map(r=>({time:r.time,request_id:r.request_id,node:r.node,code:r.code,reason:r.reason,dispatch_state:r.dispatch_state,retry_class:r.retry_class}))},
     evidence_refs:['fleet','dataset','predictor',...(g?.workers||[]).slice(0,32).map(w=>`worker:${w.id}`)],
     predictor:g?.predictor?{...g.predictor,milestones:(g.predictor.milestones??[]).slice(0,6)}:{configured:false},
     active:g?.active,queued:g?.queued,dataset:g?.dataset ?? {enabled:false,status:'Running gateway does not expose the new collector'},
@@ -21,6 +22,7 @@ export function briefing(snapshot) {
         decode:d.decode?.tps,prefill:d.prefill?.tps,last_prompt:d.prompt,cache:d.cache}:null;})()})),
     recent_outcomes:(snapshot.events||[]).filter(e=>e.event==='request_finished').slice(-12).map(e=>({time:e.time,node:e.node,outcome:e.outcome,queue_ms:e.queue_ms,elapsed_ms:e.elapsed_ms,usage:e.usage})),
     semantics:['queue_ms and elapsed_ms are milliseconds for past requests, not the current queue age or an ETA; 120000 ms = 2 minutes',
+      'Continuity receipts prove only that the identified attempt was not dispatched. same_session_active/queued prevents overlapping conversation ownership; unrelated worker activity does not. Historical rejections do not prove the client is still waiting or has retried. Only a compatible opt-in client adapter continues typed safe retries; no automatic replay of partial responses',
       'oldest_queue_seconds is measured current waiting age. oldest_queue_remaining_seconds is time until that request expires, NOT predicted time to service. Queue allowance is separate from the active request timeout and cannot revive a Pi turn that exhausted client retries. Warn about prolonged waits using these facts; do not call them a proven engine stall. You cannot change timeout settings or resume client sessions',
       'Predictor max_mean_bias=0.30 is a dimensionless 30% tolerance, NOT 0.3 seconds. holdout_failed alone does not identify the failing gate; do not invent a failure reason from that label',
       'queued=0 means no waiting requests, NOT idle; active>0 is busy. Only immediately_free=true establishes a free gateway slot at this evidence time',

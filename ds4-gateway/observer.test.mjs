@@ -23,6 +23,10 @@ test('Genie queue briefing preserves measured age versus allowance and grants no
   const b=briefing(s);assert.equal(b.queue_timeout_ms,72000000000);assert.equal(b.workers[0].oldest_queue_seconds,125);assert.equal(b.workers[0].oldest_queue_remaining_seconds,71999875);
   assert.match(b.semantics.join(' '),/NOT predicted time to service/);assert.match(b.semantics.join(' '),/cannot change timeout/);assert.match(b.semantics.join(' '),/NOT 0.3 seconds/);assert.equal(briefing(snapshot()).queue_timeout_ms,null);
 });
+test('Genie sees typed continuity evidence without client/session identifiers or arbitrary fields',()=>{
+  const s=snapshot();s.gateway.continuity={recent_rejections:[{time:new Date().toISOString(),request_id:'fixture',node:'one',code:'home_unavailable',reason:'same_session_queued',dispatch_state:'not_dispatched',retry_class:'wait_then_retry',session:'PRIVATE',call_id:'PRIVATE',prompt:'PRIVATE'}]};
+  const b=briefing(s);assert.equal(b.continuity.recent_rejections[0].reason,'same_session_queued');assert.ok(!JSON.stringify(b).includes('PRIVATE'));
+});
 test('Genie briefing distinguishes an empty waiting queue from genuinely free capacity',()=>{
   const worker={id:'one',is_healthy:true,load:0,queued:0},s=snapshot();s.gateway.workers=[worker];
   assert.equal(briefing(s).workers[0].immediately_free,true);
