@@ -18,6 +18,7 @@ import { estimateCacheCost } from './cache-cost.mjs';
 import { loadConfig, dashboardPort, isMain } from './config.mjs';
 import {continuityForDisplay} from './continuity.mjs';
 import {dsgReport,invalidHttp} from './report.mjs';
+import {EngineAttribution} from './attribution.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const assets = new Map([['/', ['index.html', 'text/html']], ['/ui.css', ['ui.css', 'text/css']], ['/brand.css', ['brand.css', 'text/css']], ['/ui.js', ['ui.js', 'text/javascript']], ['/logo.png', ['logo.png', 'image/png']]]);
@@ -126,10 +127,12 @@ export async function runDashboard(configPath, port) {
   let closed = false, gateway = null, gatewayAt = null, gatewayError = 'Waiting for gateway', writeError = null;
   let events = [], offset = null, inode = null, fragment = '', polling = false;
   const children = new Set(), timers = new Set();
-  const save = entry => {
+  const appendMetric = entry => {
     try { fs.appendFileSync(path.join(runtime, `metrics-${new Date().toISOString().slice(0, 10)}.jsonl`), JSON.stringify(entry) + '\n', { mode: 0o600 }); }
     catch { writeError = 'Telemetry file could not be written; live monitoring continues'; }
   };
+  const attribution=new EngineAttribution(appendMetric);
+  const save = entry => {appendMetric(entry);attribution.acceptEngine(entry);};
   function follow(node, device, reader, resetCursor = false) {
     if (closed || !node.ssh || readers.get(node.id)?.node !== node) return;
     if (!/^[\w.@-]+$/.test(node.ssh) || node.ssh.startsWith('-')) throw new Error('Unsupported SSH alias');
@@ -213,7 +216,7 @@ export async function runDashboard(configPath, port) {
       offset += bytes;
       const lines = (fragment + buf.subarray(0, bytes).toString('utf8')).split('\n'); fragment = lines.pop();
       for (const line of lines) {
-        try { const e = safeGatewayEvent(JSON.parse(line)); if (e) events.push(e); } catch { /* partial line */ }
+        try { const e = safeGatewayEvent(JSON.parse(line)); if (e) {events.push(e);attribution.acceptGateway(e);} } catch { /* partial line */ }
       }
       events = events.slice(-100);
       if (fragment.length > 1048576) fragment = '!';
@@ -246,7 +249,7 @@ export async function runDashboard(configPath, port) {
   const started = Date.now();
   const managementEnabled = config.ui_worker_management === true && !!config.control_socket;
   const snapshot = () => ({ service:'dwarf-star-gate-dashboard', version: 1, time: Date.now(), started, read_only: !managementEnabled, worker_management:managementEnabled, gateway, gateway_at: gatewayAt, gateway_error: gatewayError, telemetry_error: writeError,
-    devices: [...devices.values()].map(d => ({...d.snapshot(),activity:activity.get(d.id)})), events, notes: 'Rates are DS4 engine measurements. Cache counts cover observed prompt starts, not lifetime requests. Raw prompts and responses are excluded.' });
+    devices: [...devices.values()].map(d => ({...d.snapshot(),activity:activity.get(d.id)})), events, attribution:attribution.snapshot(), notes: 'Rates are DS4 engine measurements. Cache counts cover observed prompt starts, not lifetime requests. Raw prompts and responses are excluded.' });
   const memory=new GenieMemory(path.join(path.dirname(config.state_file),'genie','memory'));
   const genie=new Genie(config.genie,snapshot,{memory,recover:managementEnabled?input=>workerControl(config.control_socket,'/genie-recover-worker',input):null,predict:managementEnabled?input=>workerControl(config.control_socket,'/genie-predictor',input):null});
   const stopGenieTunnel=genieTunnel(config.genie);

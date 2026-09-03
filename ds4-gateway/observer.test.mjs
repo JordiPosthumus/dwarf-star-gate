@@ -18,6 +18,11 @@ import {createDashboard} from './dashboard.mjs';
 import {capacity,phase,Activity} from './ui/activity.js';
 const snapshot=()=>({time:Date.now(),devices:[],events:[],gateway:{workers:[],context_length:262144,active:0,queued:0}});
 const authoredReview=()=>({assessment:'The fleet has no demonstrated fault in this snapshot.',ticker:[{severity:'info',text:'No current failure is evidenced.',recommendation:null,evidence_refs:['fleet']}]});
+test('Genie sees bounded attribution evidence without mistaking a candidate for protocol proof',()=>{
+  const s=snapshot();s.attribution={schema:1,mode:'shadow',request_identity:'heuristic_not_protocol_proof',counts:{corroborated:1,candidate:0,abstained:2},recent:[{node:'spark1',status:'corroborated',reason:'usage_match',request_id:'PRIVATE',prompt:'PRIVATE'}],secret:'PRIVATE'};
+  const b=briefing(s);assert.equal(b.attribution.counts.corroborated,1);assert.match(b.semantics.join(' '),/at best a high-confidence candidate/);
+  assert.ok(!JSON.stringify(b).includes('PRIVATE'));
+});
 test('Genie queue briefing preserves measured age versus allowance and grants no timeout power',()=>{
   const s=snapshot();s.gateway.queue_timeout_ms=72000000000;s.gateway.request_timeout_ms=360000000;s.gateway.workers=[{id:'one',oldest_queue_seconds:125,oldest_queue_remaining_seconds:71999875}];
   const b=briefing(s);assert.equal(b.queue_timeout_ms,72000000000);assert.equal(b.workers[0].oldest_queue_seconds,125);assert.equal(b.workers[0].oldest_queue_remaining_seconds,71999875);

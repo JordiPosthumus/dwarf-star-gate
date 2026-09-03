@@ -18,6 +18,7 @@ telemetry is a capability gap, not permission to change the server or fabricate 
 
 The implementation lives in [gateway.mjs](../ds4-gateway/gateway.mjs),
 [telemetry.mjs](../ds4-gateway/telemetry.mjs),
+[attribution.mjs](../ds4-gateway/attribution.mjs),
 [cache-cost.mjs](../ds4-gateway/cache-cost.mjs) and the optional recovery adapters.
 The engine owns inference and KV state. The gateway owns routing evidence and
 its own request IDs. DSG already sends `x-request-id`; sending that header does

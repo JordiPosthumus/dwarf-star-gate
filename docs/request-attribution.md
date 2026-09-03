@@ -1,0 +1,56 @@
+# Request-to-engine attribution
+
+**Implemented as shadow evidence; never a routing input or exact identity claim.**
+DSG now separates two questions that were previously conflated:
+
+1. Did the DS4 backend process change?
+2. Which gateway request, if any, plausibly caused one observed engine prompt?
+
+## Backend process epochs
+
+For systemd journal telemetry, DSG requests the stock
+`_SYSTEMD_INVOCATION_ID`, `_BOOT_ID` and `_PID` fields. It prefers the invocation
+ID and labels boot ID plus PID as a weaker fallback. The UI, metrics, diagnostics
+and Gate Genie receive only a domain-separated SHA-256 digest bound to the worker
+ID; raw OS identifiers are never retained.
+
+A journal reconnect with the same service invocation keeps the same epoch. A new
+epoch clears incomplete timing spans, speed history, cache counters and component
+cost samples in the dashboard observer. It does **not** restart DS4, remove cache
+files, change model settings, change routing or touch Pi. Local-file telemetry and
+missing journal metadata remain unknown.
+
+## Conservative request candidates
+
+The dashboard joins its bounded gateway lifecycle tail to DS4 `prompt start`
+events in the same worker and observed process epoch. A row is:
+
+- `candidate` when exactly one gateway dispatch window can explain the start;
+- `corroborated` when that one candidate later reports exactly matching prompt
+  and cached-token usage;
+- `abstained` when the epoch is missing, no window exists, windows overlap, one
+  request sees multiple starts, or returned usage conflicts.
+
+With a strong systemd epoch, `corroborated` means **high-confidence candidate**,
+not protocol proof; the boot/PID fallback remains explicitly bounded. DS4 does
+not currently echo the gateway request ID into its timing record. Invisible direct
+clients and unknown clock error cannot be ruled out merely by a time-and-usage
+match. Therefore these rows do not train XGB, accuse a route of a cache miss, move
+work, or authorize recovery.
+
+The correlator retains 15 minutes of completed history, but preserves an open
+attribution span for up to seven days so long-context xhigh generations are not
+discarded merely for being slow. It uses a five-second clock tolerance and a
+ten-minute maximum dispatch-to-prompt-start lead. Stable sample and revision
+digests allow later readers to deduplicate dashboard replay. Only allowlisted IDs,
+times, token counts, status and epoch digests are saved in the private dashboard
+metrics stream; prompts, responses, journal text, paths and credentials are absent.
+
+## Next proof boundary
+
+The next step is to validate candidate coverage and conflict/abstention rates on
+ordinary traffic. Exact attribution would require a stock DS4 protocol signal,
+such as safely propagating an opaque request ID into a structured timing event.
+That is an upstream opportunity to investigate, not a private server-patch
+requirement. Until then, cache acquisition remains component evidence and every
+ambiguous join stays unknown.

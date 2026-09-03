@@ -4,6 +4,21 @@ import { randomUUID } from 'node:crypto';
 import { StringDecoder } from 'node:string_decoder';
 import { safeQuarantine } from './generation-health.mjs';
 
+function attributionForBriefing(raw) {
+  const count=value=>Number.isSafeInteger(value)&&value>=0?value:0;
+  const safe={schema:1,mode:'shadow',request_identity:'heuristic_not_protocol_proof',counts:{corroborated:0,candidate:0,abstained:0},recent:[]};
+  if(!raw||raw.schema!==1||raw.mode!=='shadow')return safe;
+  safe.counts=Object.fromEntries(Object.keys(safe.counts).map(key=>[key,count(raw.counts?.[key])]));
+  if(Array.isArray(raw.recent))safe.recent=raw.recent.slice(0,16).flatMap(row=>{
+    if(!row||!['candidate','corroborated','abstained'].includes(row.status)||typeof row.node!=='string'||!/^\w[\w-]{0,63}$/.test(row.node))return [];
+    const clean={node:row.node,status:row.status};
+    if(['request_open','usage_match','backend_epoch_unavailable','no_gateway_request_window','overlapping_gateway_windows','multiple_engine_starts','completed_without_usage','censored_or_failed','usage_conflict'].includes(row.reason))clean.reason=row.reason;
+    for(const key of ['engine_started_at','dispatch_delta_ms','prompt_tokens','cached_tokens','new_tokens'])if(Number.isSafeInteger(row[key])&&row[key]>=0)clean[key]=row[key];
+    return [clean];
+  });
+  return safe;
+}
+
 export function briefing(snapshot) {
   const g=snapshot.gateway;
   return {time:snapshot.time,gateway_at:snapshot.gateway_at ?? snapshot.time,gateway_stale:!!snapshot.gateway_error,context_length:g?.context_length,draining:!!g?.draining,
@@ -11,6 +26,7 @@ export function briefing(snapshot) {
     continuity:{patient_wait:g?.continuity?.patient_wait===true,waiting:g?.continuity?.waiting??0,oldest_wait_seconds:g?.continuity?.oldest_wait_seconds??null,waiting_reasons:g?.continuity?.waiting_reasons??{},recent_rejections:(g?.continuity?.recent_rejections??[]).slice(0,12).map(r=>({time:r.time,request_id:r.request_id,node:r.node,code:r.code,reason:r.reason,dispatch_state:r.dispatch_state,retry_class:r.retry_class}))},
     evidence_refs:['fleet','dataset','predictor',...(g?.workers||[]).slice(0,32).map(w=>`worker:${w.id}`)],
     predictor:g?.predictor?{...g.predictor,milestones:(g.predictor.milestones??[]).slice(0,6)}:{configured:false},
+    attribution:attributionForBriefing(snapshot.attribution),
     active:g?.active,queued:g?.queued,dataset:g?.dataset ?? {enabled:false,status:'Running gateway does not expose the new collector'},
     recovery:{automatic:!!g?.recovery?.automatic,offers:(g?.recovery?.workers||[]).filter(w=>w.eligible).map(w=>({worker_id:w.worker_id,evidence_id:w.evidence_id})),recent_actions:g?.recovery?.operations?.slice(0,5)??[]},
     workers:(g?.workers||[]).slice(0,32).map(w=>({id:w.id,healthy:w.is_healthy,paused:w.drained,quarantine:safeQuarantine(w.quarantine),active:w.load,queued:w.queued,active_seconds:w.active_seconds,
@@ -38,6 +54,7 @@ export function briefing(snapshot) {
       'Operator pauses and agent holds are intentional reservations, not faults. Do not recover or enable a reserved server. Releasing one hold does not release other holds or an operator pause',
       'cache counters are observed starts/reuses/restores, not a guaranteed hit rate; resident miss may still restore from disk',
       'backend_epoch is a one-way process-lifetime digest from stock service metadata, not a cache ID or request association. A changed epoch proves a backend process boundary and invalidates telemetry spans; it does not prove why the process restarted',
+      'attribution corroborated is at best a high-confidence candidate, not protocol proof: it requires one bounded gateway window, one process epoch and matching returned usage; boot/PID epoch fallback stays bounded. abstained findings must never become cache accusations or training labels',
       'Cache counters may include diagnostic traffic and use different observation windows or recently restarted processes; unmatched counts do not establish worse efficiency'],
     limitations:['Optional embeddings and previous-turn similarity enter updated forecasts only, after upload; no embeddings in initial placement','No proven request-to-engine-event association','No counterfactual completion times','Only offered recovery/training/rollback requests; no arbitrary commands or model promotion authority']};
 }

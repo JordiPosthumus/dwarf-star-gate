@@ -532,6 +532,7 @@ test('dashboard ingests a local engine log without inference calls or exporting 
   fs.writeFileSync(config,JSON.stringify({port:backend.address().port,api_key:'test',state_file:path.join(dir,'state.json'),nodes:[{id:'studio',telemetry_service:null}],telemetry_files:{studio:file}}));
   const app=await runDashboard(config,0);t.after(app.close);
   const d=app.snapshot().devices[0];assert.equal(d.telemetry_source,'file');assert.equal(d.connected,true);assert.equal(d.decode.tps,36.2);
+  assert.equal(app.snapshot().attribution.mode,'shadow');assert.equal(app.snapshot().attribution.counts.abstained,1,'local log has no proven process epoch');
   const url=`http://127.0.0.1:${app.server.address().port}`;
   const exported=await(await fetch(url+'/api/diagnostics')).text();
   const persisted=fs.readdirSync(path.join(dir,'dashboard')).map(f=>fs.readFileSync(path.join(dir,'dashboard',f),'utf8')).join('');

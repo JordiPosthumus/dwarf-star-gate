@@ -284,6 +284,10 @@ Per worker, the dashboard displays:
 - Observed prefix reuse, genuinely cold starts, resident misses and disk restores.
 - Recent request outcomes, queue time, elapsed time and returned usage counters.
 
+The dashboard observer also records privacy-safe DS4 process epochs and exposes
+conservative request/engine attribution in local diagnostics and Gate Genie
+evidence. Ambiguous or conflicting evidence is unknown, never a cache claim.
+
 Timing comes from a read-only SSH journal follower on Linux. The default remote user unit
 is `ds4-vision-q2.service`; set `telemetry_service` per worker if yours differs.
 The observer parses known DS4 log formats; missing information is unknown, never
