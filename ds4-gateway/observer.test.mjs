@@ -45,7 +45,7 @@ test('Genie briefing distinguishes an empty waiting queue from genuinely free ca
   }
   s.gateway.workers=[worker];s.gateway.draining=true;assert.equal(briefing(s).workers[0].immediately_free,false);
   assert.match(briefing(s).semantics.join(' '),/queued=0.*NOT idle/);
-  assert.match(briefing(s).semantics.join(' '),/does not move already queued/);
+  assert.match(briefing(s).semantics.join(' '),/still-undispatched.*operator-confirmed offer/);
 });
 test('Genie parses bounded model-written ticker entries and rejects unknown evidence references',()=>{
   const evidence=briefing(snapshot()),data=authoredReview();
@@ -97,6 +97,10 @@ test('Genie withholds malformed headlines and never falls back to invented or ol
 test('dataset allowlist excludes raw data; unknown timings stay null',()=>{
   const e=evidence('finish',{request_id:'abc',node:'one',service_ms:NaN,usage:{prompt_tokens:0},prompt:'SECRET',answer:'SECRET',authorization:'SECRET'});
   assert.equal(e.service_ms,null);assert.equal(e.usage.prompt_tokens,0);assert.equal(e.usage.cached_tokens,null);assert.ok(!JSON.stringify(e).includes('SECRET'));
+  const move=evidence('queue_relocation',{request_id:'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',node:'two',source:'one',destination:'two',actor:'scheduler',waiting_ms:42,dispatch_state:'not_dispatched',body_replayed:false,deadline_preserved:true,body:'SECRET',session:'SECRET'});
+  assert.deepEqual({...move,request_id:undefined,node:undefined},{kind:'queue_relocation',request_id:undefined,node:undefined,relocation_schema:1,source:'one',destination:'two',actor:'scheduler',dispatch_state:'not_dispatched',body_replayed:false,deadline_preserved:true,cache_locality:'unknown',waiting_ms:42});
+  assert.ok(!JSON.stringify(move).includes('SECRET'));
+  assert.equal(evidence('queue_relocation',{...move,body_replayed:true}),null);
 });
 test('private dataset persists across runs, counts bytes, and never deletes on budget exhaustion',async t=>{
   const dir=await fs.mkdtemp(path.join(os.tmpdir(),'dsg-dataset-'));t.after(()=>fs.rm(dir,{recursive:true,force:true}));
@@ -124,7 +128,7 @@ test('activity uses elapsed durations and explicitly marks observation gaps',()=
   const a=new Activity(),w=[{id:'one',is_healthy:true,load:0}];a.update([],w,1000);a.update([],w,3000);a.update([],w,30000);
   assert.equal(a.get('one')[0].end,9000);assert.ok(a.get('one').some(r=>r.phase==='unknown'&&r.end-r.start===21000));
 });
-test('Genie is off by default, has no tools, strips snapshot secrets, uses explicit fallback only',async()=>{
+test('Genie is off by default, has no tools, strips snapshot secrets and supports explicit pool use',async()=>{
   let sent,calls=0,url,headers;
   const g=new Genie({url:'http://127.0.0.1:9001/v1',fallback:{url:'http://127.0.0.1:9002/v1',api_key:'TEST'}},snapshot,{fetchImpl:async(u,o)=>{
     calls++;url=u;sent=JSON.parse(o.body);headers=o.headers;return Response.json({choices:[{finish_reason:'stop',message:{content:'No confirmed issue.'}}]});}});
@@ -132,6 +136,7 @@ test('Genie is off by default, has no tools, strips snapshot secrets, uses expli
   g.setEnabled(true);await g.ask();assert.equal(calls,1);assert.equal(sent.tools,undefined);assert.equal(headers.authorization,undefined);
   assert.equal(g.status().reports[0].actions_taken.length,0);
   g.setSource('pool');await g.ask('Explain capacity');assert.equal(url,'http://127.0.0.1:9002/v1/chat/completions');assert.equal(headers.authorization,'Bearer TEST');
+  assert.equal(headers['x-session-affinity'],undefined);assert.equal(g.status().last_served_by,'pool');
   assert.ok(!JSON.stringify(g.status()).includes('TEST'));assert.ok(!JSON.stringify(briefing({...snapshot(),secret:'PRIVATE'})).includes('PRIVATE'));g.close();
 });
 
@@ -159,10 +164,21 @@ test('Genie question failures remain visible and an off Genie never silently acc
   assert.equal(g.status().question.state,'failed');assert.match(g.status().question.error,/Observation failed/);
   assert.ok(!JSON.stringify(g.status()).includes('private transport details'));g.close();
 });
-test('Genie does not auto-replay on failure and rejects nonloopback endpoint',async()=>{
+test('Genie automatically borrows one unpinned pool slot after dedicated-provider failure',async()=>{
   assert.throws(()=>new Genie({url:'http://example.com/v1'},snapshot),/loopback/);
+  const memory={retrieve:()=>({notes:[{id:'private-note',revision:1,data:{text:'PRIVATE_NOTE'}}],truncated:false}),status:()=>({available:true,enabled:true})};
+  const calls=[];const g=new Genie({url:'http://127.0.0.1:9001/v1',fallback:{url:'http://127.0.0.1:9002/v1'}},snapshot,{memory,fetchImpl:async(url,options)=>{
+    calls.push({url,headers:options.headers,body:JSON.parse(options.body)});if(calls.length===1)throw new Error('private details');
+    return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(authoredReview())}}]});
+  }});
+  g.setEnabled(true);await g.ask();assert.equal(calls.length,2);assert.match(calls[0].url,/9001/);assert.match(calls[1].url,/9002/);
+  assert.equal(calls[1].headers['x-session-affinity'],undefined);assert.equal(calls[1].headers['x-dsg-observer'],'gate-genie');
+  assert.deepEqual(JSON.parse(calls[1].body.messages[1].content).notebook_history.notes,[]);assert.ok(!JSON.stringify(calls[1]).includes('PRIVATE_NOTE'));
+  assert.equal(g.status().last_served_by,'pool_fallback');assert.equal(g.status().reports[0].served_by,'pool_fallback');assert.deepEqual(g.status().reports[0].memory_used,[]);g.close();
+});
+test('Genie reports failure only after both dedicated and pool providers fail',async()=>{
   let calls=0;const g=new Genie({url:'http://127.0.0.1:9001/v1',fallback:{url:'http://127.0.0.1:9002/v1'}},snapshot,{fetchImpl:async()=>{calls++;throw new Error('private details');}});
-  g.setEnabled(true);await g.ask();assert.equal(calls,1);assert.equal(g.status().error,'Observation failed; gateway unaffected');g.close();
+  g.setEnabled(true);await g.ask();assert.equal(calls,2);assert.equal(g.status().error,'Observation failed; gateway unaffected');g.close();
 });
 test('legacy gateway absence is explicit; LLM output-limited reviews are not accepted',async()=>{
   assert.equal(briefing(snapshot()).dataset.enabled,false);

@@ -5,7 +5,9 @@ export const validCallId=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{
 export function continuityForDisplay(value){
   if(value?.schema!==1)return null;
   const count=n=>Number.isSafeInteger(n)&&n>=0?n:0;
-  return {schema:1,safe_retry_contract:value.safe_retry_contract===true,queued_relocation:false,
+  return {schema:1,safe_retry_contract:value.safe_retry_contract===true,queued_relocation:value.queued_relocation===true,automatic_relocation:value.automatic_relocation===true,
+    automatic_relocation_scope:value.automatic_relocation_scope==='first_dsg_request_or_unaffined'?'first_dsg_request_or_unaffined':null,
+    relocation:value.relocation&&typeof value.relocation==='object'?{completed:count(value.relocation.completed),rejected:count(value.relocation.rejected),offers:count(value.relocation.offers)}:null,
     patient_wait:value.patient_wait===true,waiting:count(value.waiting),oldest_wait_seconds:Number.isFinite(value.oldest_wait_seconds)&&value.oldest_wait_seconds>=0?value.oldest_wait_seconds:null,
     waiting_reasons:Object.fromEntries(Object.entries(value.waiting_reasons??{}).filter(([r,n])=>rejectionReasons.has(r)&&count(n)>0)),
     recent_rejections:(Array.isArray(value.recent_rejections)?value.recent_rejections:[]).slice(0,20).filter(r=>validCallId(r?.request_id)&&r.dispatch_state==='not_dispatched'&&rejectionReasons.has(r.reason)&&Number.isFinite(Date.parse(r.time))).map(r=>({time:r.time,request_id:r.request_id,node:typeof r.node==='string'&&/^[\w-]{1,64}$/.test(r.node)?r.node:null,reason:r.reason,dispatch_state:'not_dispatched',retry_class:r.reason==='affinity_write_failed'?'operator_required':'wait_then_retry'}))};

@@ -1,8 +1,10 @@
 # Queued-work routing shadow
 
 This is an opt-in evidence collector and **unvalidated historical comparison**.
-It cannot move a request, change affinity, replay output, restart a server or
-modify model settings. The existing routing policy remains authoritative.
+The shadow itself cannot move a request, change affinity, replay output, restart
+a server or modify model settings. DSG separately implements a narrow
+[safe queued-handover contract](queued-handover.md); shadow verdicts neither
+trigger nor authorize it.
 
 ## Enable and observe
 
@@ -127,7 +129,9 @@ unchanged request bytes/affinity, reassessment and exclusion from XGB labels.
 4. Refit/evaluate the XGB estimator, including a remaining-service-time target and
    fixed fallback. Compare metadata-only versus embedding-assisted models.
 5. Validate counterfactual predictions with small controlled calibration trials;
-   then design atomic queued-session handover, uncertainty margin and hysteresis.
+   then decide whether the implemented exact established-session handover may be
+   automated behind an uncertainty margin and hysteresis. Until then it remains
+   operator-confirmed; only first/unaffined work moves automatically.
 
 Predicting **when a busy worker becomes free** is the first objective. Predicting
 how long an already idle worker will stay idle requires an arrival-demand model;

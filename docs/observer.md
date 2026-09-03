@@ -97,10 +97,12 @@ advice only; the wire grants no operational powers.
 
 Per-worker `immediately_free` is computed from health, pause/quarantine, gateway
 draining, active and queued state. An empty waiting queue does not make a busy
-server idle. The briefing also states that DSG cannot move already queued jobs,
-and that cache counters may include diagnostics or unequal observation windows.
-These explicit facts reduce misinterpretation; they are not an LLM accuracy
-guarantee or permission to execute its recommendations.
+server idle. The briefing distinguishes automatic first/unaffined queued handover
+from an exact operator-only established-session offer, and states that cache
+locality after the latter is unknown. It also warns that cache counters may include
+diagnostics or unequal observation windows. These explicit facts reduce
+misinterpretation; they are not an LLM accuracy guarantee or permission to execute
+its recommendations.
 
 Headlines scroll at approximately 42 CSS pixels/second, separated by 8rem gaps.
 Hover or keyboard-focus freezes motion and headline updates; **Pause ticker**
@@ -109,9 +111,11 @@ Reduced-motion preferences show wrapped static text, and the repeated scrolling
 copy is hidden from screen readers.
 
 In the web UI, find **Gate Genie** beside **Evidence collection**. **Enable** /
-**Turn off** controls the observer. The **Dedicated server / DSG pool fallback**
-dropdown chooses between existing configured endpoints; it does not edit their
-addresses. There is no URL/model/credential editor in the UI yet. Set these in
+**Turn off** controls the observer. The source dropdown chooses a dedicated-first
+policy or explicit DSG-pool use; it does not edit endpoint addresses. In dedicated-
+first mode, an explicit connection, HTTP, timeout or malformed-answer failure
+causes one attempt through the configured pool fallback. There is no URL/model/
+credential editor in the UI yet. Set these in
 your private config's `genie` / `genie.fallback` objects, then restart only the
 dashboard and enable the observer again. Do not change worker URLs or the pool
 model just to change the Genie's inference source.
@@ -159,11 +163,16 @@ own requests, **not production server defaults or limits on user requests**. A
 budget-exhausted answer is reported incomplete, never presented as a finished
 assessment. Existing server context, output settings and caches are unchanged.
 
-The source selector chooses the dedicated endpoint or normal DSG pool. Pool mode
-uses regular authenticated routing/affinity and competes for a normal slot. It
-does not move the ordinary gateway or register the dedicated observer server in
-the pool. Failure does not automatically replay on another machine. Off cancels
-the local review connection; that alone does not prove backend execution stopped.
+The source selector chooses dedicated-first or normal DSG-pool-only operation.
+Pool requests are deliberately unpinned: a Genie review contains its complete
+bounded live briefing, so any available DS4 server may serve it. It competes for
+one normal inference slot; first/unaffined queued-handover rules can move that
+still-undispatched call to a newly free server. Pool calls receive no private
+Genie notebook history. If the dedicated attempt fails explicitly, DSG makes one
+pool attempt and marks the report `pool_fallback`; it never combines partial model
+answers or processes actions from a failed attempt. If both fail, no report or
+action is accepted. Off cancels the local review connection; that alone does not
+prove backend execution stopped.
 
 This is a question + fresh-briefing interface, optionally augmented by bounded
 notebook history, not a persistent multi-turn agent conversation. Twelve recent assessments live in memory and are

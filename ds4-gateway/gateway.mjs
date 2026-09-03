@@ -192,6 +192,7 @@ export function createGateway(config) {
   // with backpressure; no prompt spool and no optimistic 200/SSE response.
   const waiting=[];
   let sequence=0;
+  const relocation={completed:0,rejected:0,last:null};
   const queueBound=()=>config.max_queued_per_node??128;
   const waitingBound=()=>Math.max(1,nodes.length)*queueBound();
   const parkedFor=n=>waiting.filter(j=>j.fixedHome===n);
@@ -229,7 +230,8 @@ export function createGateway(config) {
   const accepted = new Set(['POST /v1/chat/completions', 'POST /v1/completions', 'POST /v1/responses', 'POST /v1/messages', 'GET /v1/models']);
   const auth = Buffer.from(`Bearer ${config.api_key}`);
   const stats = () => ({ version: 1, agent_api_version:1, model: config.model, context_length: contextLimit(), queue_timeout_ms:queueTimeoutMs(), request_timeout_ms:config.request_timeout_ms??360000000, draining, dataset:{...dataset.snapshot(),embedding_collection:embeddings.snapshot()}, routing_shadow:shadow.snapshot(),recovery:recovery.status(),predictor:predictor.status(),
-    calibration:calibrationPreflight(nodes,{draining}),continuity:{schema:1,recent_rejections:rejections.slice(0,20),safe_retry_contract:true,queued_relocation:false,patient_wait:true,
+    calibration:calibrationPreflight(nodes,{draining}),continuity:{schema:1,recent_rejections:rejections.slice(0,20),safe_retry_contract:true,queued_relocation:true,automatic_relocation:true,automatic_relocation_scope:'first_dsg_request_or_unaffined',patient_wait:true,
+      relocation:{completed:relocation.completed,rejected:relocation.rejected,offers:relocationOffers().length,last:relocation.last},
       waiting:waiting.length,oldest_wait_seconds:waiting.length?Math.max(0,(performance.now()-waiting[0].createdMono)/1000):null,
       waiting_reasons:Object.fromEntries([...new Set(waiting.map(j=>j.waitReason))].map(reason=>[reason,waiting.filter(j=>j.waitReason===reason).length]))},
     total: nodes.length, healthy: nodes.filter(n => n.healthy).length, available: nodes.filter(n => n.healthy && !n.drained).length,
@@ -273,6 +275,66 @@ export function createGateway(config) {
     if(shuttingDown)return;
     let count=0;
     for(const n of nodes)if(n.queue.length){if(count++>=32){shadow.state.skipped++;continue;}evaluateShadow(n,n.queue[0],'worker_free');}
+  }
+
+  const eligibleDestination=n=>n.healthy&&!n.drained&&!n.quarantine&&!n.recovering&&!n.removed&&!n.active&&n.queue.length===0;
+  function conflictingSessionWork(job) {
+    if(!job.key)return null;
+    for(const node of nodes)if(node.active?.key===job.key)return {node,reason:'same_session_active'};
+    for(const node of nodes)if(node.queue.some(other=>other!==job&&!other.cancelled&&other.key===job.key))return {node,reason:'same_session_queued'};
+    if(waiting.some(other=>other!==job&&!other.cancelled&&other.key===job.key))return {node:null,reason:'same_session_waiting'};
+    return null;
+  }
+  const relocationEvidence=(job,source,destination)=>digest(['queue-relocation-v1',job.id,source.id,destination.id,job.sequence,job.created].join('\0'));
+  function relocationOffers() {
+    if(shuttingDown||draining)return [];
+    const idle=nodes.filter(eligibleDestination).sort((a,b)=>store.count(a.id)-store.count(b.id)||a.id.localeCompare(b.id));
+    if(!idle.length)return [];
+    const offers=[];
+    for(const source of nodes) {
+      const job=source.queue.find(candidate=>!candidate.cancelled);
+      if(!source.active||!job||source.queue[0]!==job||job.upstream||job.dispatched||conflictingSessionWork(job))continue;
+      const destination=idle.find(node=>node!==source);if(!destination)continue;
+      const home=job.key&&store.get(job.key);if(job.key&&home?.node!==source.id)continue;
+      offers.push({schema:1,evidence_id:relocationEvidence(job,source,destination),request_id:job.id,source:source.id,destination:destination.id,
+        waiting_seconds:Math.max(0,(performance.now()-job.createdMono)/1000),affinity:job.affinity,cache_locality:'unknown',automatic:false});
+    }
+    return offers.slice(0,32);
+  }
+  function relocateQueued(input,actor='operator') {
+    const keys=Object.keys(input??{}).sort().join(',');
+    if(keys!=='destination,evidence_id,request_id,source'||!validCallId(input.request_id)||!/^[a-f0-9]{64}$/.test(input.evidence_id)||
+      !/^[\w-]{1,64}$/.test(input.source)||!/^[\w-]{1,64}$/.test(input.destination))throw new Error('Specify one current queued-handover offer exactly');
+    const source=nodes.find(n=>n.id===input.source),destination=nodes.find(n=>n.id===input.destination),job=source?.queue[0];
+    const rejectMove=message=>{relocation.rejected++;throw new Error(message);};
+    if(!source||!destination||source===destination||!job||job.id!==input.request_id)return rejectMove('Queued-handover offer is stale; refresh before retrying');
+    if(job.cancelled||job.upstream||job.dispatched||!source.active||!eligibleDestination(destination))return rejectMove('Queued-handover state changed; request was left in place');
+    if(relocationEvidence(job,source,destination)!==input.evidence_id)return rejectMove('Queued-handover evidence changed; request was left in place');
+    if(conflictingSessionWork(job))return rejectMove('Same-session work prevents a safe handover; request was left in place');
+    const home=job.key&&store.get(job.key);
+    if(job.key&&home?.node!==source.id)return rejectMove('Durable session ownership changed; request was left in place');
+    // Persist the new conversation owner before changing in-memory queue
+    // ownership. A failed fsync leaves the original queue and client intact.
+    try {if(job.key)store.set(job.key,destination.id);}catch{
+      log('queue_relocation_persistence_failed',{request_id:job.id,source:source.id,destination:destination.id});
+      return rejectMove('Durable handover failed; request remains queued on its original server');
+    }
+    source.queue.shift();job.node=destination;job.affinity='rebalanced';destination.queue.push(job);
+    const receipt={schema:1,request_id:job.id,source:source.id,destination:destination.id,actor,waiting_ms:performance.now()-job.createdMono,
+      dispatch_state:'not_dispatched',body_replayed:false,deadline_preserved:true,cache_locality:'unknown'};
+    relocation.completed++;relocation.last={...receipt,time:new Date().toISOString()};
+    log('queued_request_relocated',receipt);dataset.record('queue_relocation',{...receipt,node:destination.id});
+    schedule(destination);evaluateWaiting();
+    return {state:'relocated',...receipt};
+  }
+  function rebalanceCacheNeutral() {
+    const offer=relocationOffers().find(candidate=>{
+      const job=nodes.find(node=>node.id===candidate.source)?.queue[0];
+      return job&&['new','none'].includes(job.affinity);
+    });
+    if(!offer)return;
+    try {relocateQueued({request_id:offer.request_id,source:offer.source,destination:offer.destination,evidence_id:offer.evidence_id},'scheduler');}
+    catch{/* Exact-offer revalidation failed; the untouched request remains queued. */}
   }
 
   function quarantine(node, reason, requestId) {
@@ -351,6 +413,7 @@ export function createGateway(config) {
       if(node.queue.length>=queueBound()){job.waitReason='queue_full';continue;}
       admit(job,node);
     }
+    rebalanceCacheNeutral();
   }
   function heartbeat(job) {
     // A standard informational response, NOT final 200/SSE headers. This lets
@@ -631,7 +694,7 @@ export function createGateway(config) {
   const registry = () => ({ model: config.model, minimum_context: contextLimit(), context_limit_control:true,
     context_limit_source:store.data.pool_context_length === undefined ? 'config' : 'saved',
     queue_timeout_ms:queueTimeoutMs(),queue_timeout_control:true,queue_timeout_source:store.data.queue_timeout_ms!==undefined?'saved':config.queue_timeout_ms!==undefined?'config':'default',
-    recovery:recovery.status(),
+    recovery:recovery.status(),queued_relocation:{schema:1,automatic:true,automatic_scope:'first_dsg_request_or_unaffined',offers:relocationOffers(),completed:relocation.completed,rejected:relocation.rejected},
     workers: nodes.map(n => ({ ...definition(n), ...stats().workers.find(w => w.id === n.id),...agents.pauseStatus(n.id,{includeReason:true}) })) });
   async function freshProbe(node) {
     while (node.probing) await delay(10);
@@ -740,7 +803,7 @@ export function createGateway(config) {
     if(req.method==='GET'&&req.url==='/agent/v1/status')return json(res,200,agents.status(actor));
     if(req.method==='GET'&&req.url==='/agents')return json(res,200,agents.adminStatus());
     if (req.method === 'GET' && req.url === '/workers') return json(res, 200, registry());
-    if (req.method !== 'POST' || !['/drain-workers', '/resume-workers', '/add-worker', '/remove-worker', '/set-context-limit','/set-queue-timeout','/recovery-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/predictor','/genie-predictor','/grant-agent','/revoke-agent','/release-agent-hold','/agent/v1/drain','/agent/v1/resume','/agent/v1/receipt'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
+    if (req.method !== 'POST' || !['/drain-workers', '/resume-workers', '/add-worker', '/remove-worker', '/set-context-limit','/set-queue-timeout','/relocate-queued','/recovery-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/predictor','/genie-predictor','/grant-agent','/revoke-agent','/release-agent-hold','/agent/v1/drain','/agent/v1/resume','/agent/v1/receipt'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
     let body = '';
     req.on('data', chunk => { body += chunk; if (body.length > 4096) req.destroy(); });
     req.on('error', () => {});
@@ -762,6 +825,7 @@ export function createGateway(config) {
           if(['/recover-worker','/genie-recover-worker','/recovery-canary'].includes(req.url))return json(res,202,recovery.request(input,req.url==='/genie-recover-worker'?'genie':'operator',{canary:req.url==='/recovery-canary'}));
           if (req.url === '/set-context-limit') return json(res,200,await setContextLimit(input));
           if (req.url === '/set-queue-timeout') return json(res,200,setQueueTimeout(input));
+          if (req.url === '/relocate-queued') return json(res,200,relocateQueued(input));
           if (req.url === '/add-worker') return json(res, 201, await addWorker(input.worker));
           if (req.url === '/remove-worker') return json(res, 200, removeWorker(input.id));
           if (req.url === '/resume-workers') {
@@ -795,7 +859,7 @@ export function createGateway(config) {
   }) : null;
   control?.on('clientError',invalidHttp);
   return {
-    server, nodes, stats, store, drainNodes, registry,recovery,
+    server, nodes, stats, store, drainNodes, registry,recovery,relocateQueued,
     async start() {
       nodes.forEach(startTunnel);
       await new Promise((resolve, reject) => { server.once('error', reject); server.listen(config.port, config.host, resolve); });

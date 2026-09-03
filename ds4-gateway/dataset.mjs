@@ -9,13 +9,19 @@ import {validCallId,rejectionReasons} from './continuity.mjs';
 
 const number = x => Number.isFinite(x) && x >= 0 ? x : null;
 const id = x => typeof x === 'string' && /^[\w-]{1,64}$/.test(x) ? x : null;
-const kinds = new Set(['decision','dispatch','finish','queued_cancel','queue_timeout','unavailable_before_dispatch','routing_shadow','request_features','embedding','progress','model_prediction','rejection','waiting']);
+const kinds = new Set(['decision','dispatch','finish','queued_cancel','queue_timeout','unavailable_before_dispatch','queue_relocation','routing_shadow','request_features','embedding','progress','model_prediction','rejection','waiting']);
 const timingKeys=['worker_idle_ms','active_elapsed_ms','upstream_byte_age_ms','session_last_used_ms','session_last_finished_ms','intervening_requests','prior_prompt_tokens','prior_cached_tokens','observation_epoch'];
 export function evidence(kind, raw) {
   if (!kinds.has(kind)) return null;
   const row = { kind, request_id:id(raw.request_id), node:id(raw.node) };
   if (!row.request_id) return null;
   if(kind==='waiting'){if(!rejectionReasons.has(raw.reason))return null;row.reason=raw.reason;row.dispatch_state='not_dispatched';}
+  if(kind==='queue_relocation'){
+    row.relocation_schema=1;row.source=id(raw.source);row.destination=id(raw.destination);
+    row.actor=['operator','scheduler'].includes(raw.actor)?raw.actor:null;row.dispatch_state=raw.dispatch_state==='not_dispatched'?'not_dispatched':null;
+    row.body_replayed=raw.body_replayed===false?false:null;row.deadline_preserved=raw.deadline_preserved===true;row.cache_locality='unknown';row.waiting_ms=number(raw.waiting_ms);
+    if(!row.source||!row.destination||!row.actor||!row.dispatch_state||row.body_replayed!==false||!row.deadline_preserved||row.waiting_ms===null)return null;
+  }
   if(kind==='rejection'){
     if(!rejectionReasons.has(raw.reason)||!['draining','home_unavailable','no_healthy_workers','queue_full','state_unavailable','queue_timeout'].includes(raw.code)||raw.dispatch_state!=='not_dispatched')return null;
     Object.assign(row,{continuity_schema:1,call_id:validCallId(raw.call_id),code:raw.code,reason:raw.reason,dispatch_state:'not_dispatched',retry_class:raw.reason==='affinity_write_failed'?'operator_required':'wait_then_retry',retry_after_ms:5000});

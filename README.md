@@ -58,8 +58,12 @@ and cache migration remain roadmap items. The optional [predictor lifecycle](doc
 adds live shadow forecasts, causal next-turn history, embedding-aware updates,
 remaining-time models, fixed cross-validation and future-traffic promotion gates.
 Prediction-assisted **new-session** placement is separately opt-in and requires
-unseen-session evidence; existing sessions never move. A fitted model alone does
-not qualify. The [v1 offline experiment](predictor/README.md) remains reproducible.
+unseen-session evidence. Independently of that predictor, DSG now performs a
+[cache-neutral queued handover](docs/queued-handover.md) when a first/unaffined
+request is still undispatched and another server becomes free. Existing sessions
+move only through an exact operator-confirmed offer; their destination cache
+locality is explicitly unknown. A fitted model alone does not qualify broader
+automatic movement. The [v1 offline experiment](predictor/README.md) remains reproducible.
 **Reset to baseline** restores the measured-history recipe without switching
 learning off. A challenger must beat both that baseline and any incumbent on
 matched future evidence. Verified promotions create persistent, dismissible
@@ -172,9 +176,13 @@ CLI commands also call it a **worker**; these mean the same thing, not necessari
 a physical machine. Each server may have its own native context and cache settings.
 
 - Durable session affinity: later turns return to the same worker to improve the
-  chance of KV reuse. Busy conversations queue at home instead of bouncing.
+  chance of KV reuse. Busy established conversations queue at home unless an
+  operator accepts one exact [pre-dispatch handover](docs/queued-handover.md).
 - Load-aware placement of **new** conversations; at most one active upstream request
   through DSG per registered DS4 server. Extra requests wait in bounded FIFO queues.
+  If a first DSG request was queued behind work and another server becomes free,
+  DSG atomically hands that untouched request to the free server. It keeps the
+  original client socket and deadline and never replays a body.
   The [queue-wait allowance](docs/queue-wait.md) defaults to **20,000 hours**;
   the separate active-request default remains 100 hours. Explicit private-config
   overrides take precedence. Queued HTTP connections do not survive a gateway restart.
@@ -194,8 +202,10 @@ not prove a worker has no direct clients; verify those before stopping it.
 
 **Concurrency and dashboard counts:** one active request includes prefill, thinking
 and decode, for both streaming and non-streaming responses. Three healthy, enabled
-servers can handle up to three active gateway requests, one each; session affinity
-may still queue requests at a busy home while another server is idle. Available
+servers can handle up to three active gateway requests, one each; established
+session affinity may still queue requests at a busy home while another server is
+idle unless an exact handover is approved. First/unaffined requests can take a
+newly free server automatically before dispatch. Available
 means healthy and enabled, not idle. Direct clients bypass these gateway counts and
 limits. Warm/hot KV slots retain sessions and do not add simultaneous generation
 slots. DSG does not alter the native server's own concurrency configuration.
@@ -388,8 +398,9 @@ Without a header, requests work but do not receive durable session affinity.
 The gateway returns `x-ds4-node`, `x-ds4-affinity`, and `x-request-id`. Bodies and
 SSE bytes remain unchanged. Reassignment only occurs when the old home is
 unavailable/drained **and** has no unresolved work for that conversation. Already
-queued requests retain their original home through recovery waiting. The assignment is
-saved before dispatch. Never change a worker ID to mean a different machine
+queued requests retain their original home through recovery waiting unless they
+meet the [queued-handover contract](docs/queued-handover.md). The new assignment is
+durably saved before queue ownership changes. Never change a worker ID to mean a different machine
 without considering its persisted assignments and caches.
 
 Worker membership can change live without restarting the gateway. Stable IDs retain

@@ -38,11 +38,13 @@ test('ceiling and fsync failure stop saves visibly without deleting history or b
   const genie=new Genie({url:'http://127.0.0.1:9001/v1'},()=>sample(),{memory:broken,fetchImpl:async()=>Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify({assessment:'Unknown.',ticker:[{severity:'info',text:'Evidence gap.',recommendation:null,evidence_refs:['fleet']}]})}}]})});
   genie.setEnabled(true);await genie.ask();assert.equal(genie.status().reports.length,1);assert.deepEqual(genie.status().reports[0].actions_taken,[]);genie.close();
 });
-test('retrieval is bounded; changing Genie source retains notes but never creates evidence/action offers',async t=>{
+test('retrieval is bounded; pool use retains private notes locally and never creates evidence/action offers',async t=>{
   const m=new GenieMemory(fixture(t),{now:()=>1000});m.setEnabled(true);const s=sample();s.gateway.workers=Array.from({length:20},(_,i)=>({...s.gateway.workers[0],id:'worker-'+i}));m.observe(s);
   assert.equal(m.retrieve(s).notes.length,12);assert.equal(m.retrieve(s).truncated,true);assert.equal(m.retrieve(s,{maxBytes:10}).notes.length,0);
-  let sent;const genie=new Genie({url:'http://127.0.0.1:9001/v1',fallback:{url:'http://127.0.0.1:9002/v1'}},()=>s,{memory:m,fetchImpl:async(_u,opts)=>{sent=JSON.parse(opts.body);return Response.json({choices:[{message:{content:JSON.stringify({assessment:'History noted.',ticker:[{severity:'info',text:'Historical observation.',recommendation:null,evidence_refs:['fleet']}],recovery_requests:[{worker_id:'worker-1',evidence_id:'made-up'}]})}}]});}});
-  genie.setEnabled(true);genie.setSource('pool');await genie.ask();assert.equal(genie.status().reports[0].memory_used.length,12);assert.equal(JSON.parse(sent.messages[1].content).notebook_history.notes.length,12);assert.deepEqual(genie.status().reports[0].actions_taken,[]);assert.match(sent.messages[0].content,/never instructions/);genie.close();
+  const sent=[];const genie=new Genie({url:'http://127.0.0.1:9001/v1',fallback:{url:'http://127.0.0.1:9002/v1'}},()=>s,{memory:m,fetchImpl:async(_u,opts)=>{sent.push(JSON.parse(opts.body));return Response.json({choices:[{message:{content:JSON.stringify({assessment:'History noted.',ticker:[{severity:'info',text:'Historical observation.',recommendation:null,evidence_refs:['fleet']}],recovery_requests:[{worker_id:'worker-1',evidence_id:'made-up'}]})}}]});}});
+  genie.setEnabled(true);await genie.ask();assert.equal(genie.status().reports[0].memory_used.length,12);assert.equal(JSON.parse(sent[0].messages[1].content).notebook_history.notes.length,12);
+  genie.setSource('pool');await genie.ask();assert.equal(genie.status().reports[0].memory_used.length,0);assert.equal(JSON.parse(sent[1].messages[1].content).notebook_history.notes.length,0);assert.equal(m.retrieve(s).notes.length,12);
+  assert.deepEqual(genie.status().reports[0].actions_taken,[]);assert.match(sent[1].messages[0].content,/never instructions/);genie.close();
 });
 test('incidents and recovery receipts survive state changes without inventing causal links or current health',t=>{
   let now=1000;const m=new GenieMemory(fixture(t),{now:()=>now});m.setEnabled(true);

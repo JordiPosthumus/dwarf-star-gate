@@ -1,8 +1,9 @@
 # Client continuity: keep safely waiting clients alive
 
 Status: **gateway-side patient waiting, pre-dispatch receipts, conversation-scoped
-reassignment and an opt-in Pi transport adapter implemented**. Queue relocation and post-dispatch recovery
-remain planned. Source availability is not automatic activation in existing Pi sessions.
+reassignment, safe queued handover and an opt-in Pi transport adapter implemented**.
+Post-dispatch recovery remains planned. Source availability is not automatic
+activation in existing Pi sessions.
 Raising the [queue allowance](queue-wait.md) removes one failure trigger; it does
 not make requests durable or recover a client that has exhausted its own retries.
 
@@ -12,8 +13,9 @@ Allowed inference POSTs now wait when no server is ready or the same conversatio
 still owns work on an unavailable/paused server. DSG keeps the original HTTP
 request instead of repeatedly returning `no_healthy_workers` / `home_unavailable`.
 An already queued, **never dispatched** request whose worker fails moves into a
-recovery waiting area. It retains its original server and deadline; it is not
-migrated, replayed, or silently given a new allowance. Independent conversations
+recovery waiting area. It retains its original server and deadline unless the
+separate [safe queued-handover contract](queued-handover.md) applies; it is never
+replayed or silently given a new allowance. Independent conversations
 can still proceed. Waiting requests for the same conversation cannot overtake one
 another or split active ownership.
 
@@ -41,8 +43,8 @@ that temporarily puts recovery waiting above its new-admission bound. Full queue
 still return a certified 429; authentication, invalid routes and storage failures
 do not become indefinite waits. Model metadata GETs remain fast-failing.
 
-`/gateway/status` publishes `continuity.patient_wait`, `waiting`,
-`oldest_wait_seconds` and reason counts. Fleet `queued` includes recovery waiting;
+`/gateway/status` publishes `continuity.patient_wait`, queued-handover scope and
+counters, `waiting`, `oldest_wait_seconds` and reason counts. Fleet `queued` includes recovery waiting;
 worker `queued` does not, and `recovery_waiting` counts that worker's parked homes.
 The dashboard shows a live waiting notice and Genie receives this evidence for
 reporting and its existing bounded recovery offers. These are ages, not ETAs.
@@ -87,11 +89,13 @@ show recent receipts; the opt-in dataset retains allowlisted rejection evidence.
 Client call IDs join attempts to later admitted decisions; they are stripped
 before DS4. No request/response text is retained by this mechanism.
 
-Reassignment is synchronous with durable affinity update. Same-session active
-work retains ownership until it settles, including cancellation in progress;
-same-session queued work also blocks a split. An unavailable home with only
-unrelated work may yield to a ready server. No active/queued request is moved by
-this change. A reassigned home may need cold prefill; cache movement is not implied.
+Reassignment and queued handover are synchronous with durable affinity update.
+Same-session active work retains ownership until it settles, including cancellation
+in progress; same-session queued work also blocks a split. An unavailable home
+with only unrelated work may yield to a ready server. No active or dispatched
+request is moved. A first/unaffined queue head may automatically take a newly free
+server. An established session is offered only for exact operator confirmation;
+the destination may need cold prefill and cache movement is not implied.
 
 ### Opt-in Pi adapter (tested with Pi 0.84.4)
 
@@ -137,16 +141,19 @@ checked to preserve model capabilities. No production model or Pi config is touc
    historical rejected attempts from a client demonstrably still waiting. Review
    remaining HTTP/SDK deadlines and incomplete streams separately; the 20,000-hour
    DSG queue allowance does not govern them. Do not silently change all providers.
-3. Add opt-in pre-dispatch queue relocation with exact ownership and deadline
-   preservation. Never replay a partially uploaded/dispatched request merely
-   because a health probe times out. A long active response is not proof of a stall.
+3. Validate pre-dispatch handover receipts in live traffic, then join them to
+   measured queue/cache-acquisition outcomes. Broader automatic movement of
+   established sessions requires a promoted cost model, uncertainty margin and
+   hysteresis. Never replay a partially uploaded/dispatched request merely because
+   a health probe times out. A long active response is not proof of a stall.
 4. Handle post-dispatch failures separately: retain independent guarded recovery,
    prove old execution stopped, and define client-visible stream recovery. Genie
    may request offered remedies; deterministic code enforces safety without an LLM.
 
-Current Genie can report live recovery waiting, queue age/remaining allowance and request eligible,
-enrolled Spark recovery. It cannot move queued requests, change timeout policy,
-resume a stopped Pi turn or restart arbitrary Mac services. Recovery rejects
+Current Genie can report live recovery waiting, queue age/remaining allowance,
+handover availability and request eligible, enrolled Spark recovery. It cannot
+execute queued handovers, change timeout policy, resume a stopped Pi turn or
+restart arbitrary Mac services. Recovery rejects
 workers with active/dispatch-queue work and requires supported fatal evidence and
 identity. Parked, undispatched requests are separate so they do not deadlock recovery.
 The full end-to-end acceptance test is a real compatible client surviving a

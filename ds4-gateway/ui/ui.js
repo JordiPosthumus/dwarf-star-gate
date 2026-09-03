@@ -296,6 +296,15 @@ async function loadWorkers() {
       $('queue-timeout-current').textContent=`Current: ${fmt(data.queue_timeout_ms/3600000)} hours (${data.queue_timeout_source}).`;
       if(!queueDirty){queueExpected=data.queue_timeout_ms;$('queue-timeout-input').value=String(data.queue_timeout_ms/3600000);}
     }
+    const offers=data.queued_relocation?.offers??[];
+    $('relocation-controls').hidden=!data.queued_relocation;
+    $('relocation-offers').replaceChildren(...(offers.length?offers.map(offer=>{
+      const p=document.createElement('p'),button=document.createElement('button');
+      p.append(document.createTextNode(`${offer.source} → ${offer.destination} · waiting ${fmt(offer.waiting_seconds)}s · `));
+      button.type='button';button.className='button';button.dataset.relocation=JSON.stringify(offer);button.textContent='Move queued request';
+      button.disabled=workerBusy;button.title='The request has not reached DS4. Preserve its client socket and deadline, but accept that the destination may not have its warm cache.';
+      p.append(button);return p;
+    }):[document.createTextNode('No continuity-safe queued handover is currently available.')]));
   } catch(e) { workerControlsReady=false;workerMessage(e.message,true);$('worker-rows').querySelectorAll('button').forEach(b=>{b.disabled=true;});$('recovery-status').textContent='Recovery controls unavailable; last state is stale';$('recovery-toggle').disabled=true; }
   finally { workersLoading=false;refreshRoutingControls(); }
 }
@@ -308,12 +317,13 @@ async function workerAction(action, input) {
   $('pool-context-form').querySelector('button').disabled=true;
   $('queue-timeout-form').querySelector('button').disabled=true;
   $('worker-rows').querySelectorAll('button').forEach(b=>{b.disabled=true;});
+  $('relocation-offers').querySelectorAll('button').forEach(b=>{b.disabled=true;});
   const target=input.workers?.join(', ');
   workerMessage(action==='context'?'Checking enabled server capacities…':action==='add'?'Checking model and context…':action==='resume'?`${target}: checking readiness and any required generation proof…`:'Updating worker routing…');
   try {
     const r=await fetch(`/api/workers/${action}`,{method:'POST',headers:{'content-type':'application/json','x-dsg-csrf':csrfToken},body:JSON.stringify(input),signal:AbortSignal.timeout(35000)});
     const data=await r.json();if(!r.ok)throw new Error(data.error||'Worker control failed');
-    workerMessage(action==='recover'?`Recovery accepted: ${data.id}. See executor receipts below.`:action==='recovery-policy'?`Automatic recovery ${data.automatic?'enabled':'disabled'}.`:action==='context'?`Pool limit saved: ${fmt(data.minimum_context)} tokens. Applied now; model servers and Pi unchanged.`:action==='add'?'Registered paused. Enable routing when ready.':action==='drain'?'Draining. Admitted requests will finish before removal.':action==='remove'?'Removed from this gateway. Model server left running.':'Routing enabled.');
+    workerMessage(action==='recover'?`Recovery accepted: ${data.id}. See executor receipts below.`:action==='recovery-policy'?`Automatic recovery ${data.automatic?'enabled':'disabled'}.`:action==='context'?`Pool limit saved: ${fmt(data.minimum_context)} tokens. Applied now; model servers and Pi unchanged.`:action==='add'?'Registered paused. Enable routing when ready.':action==='drain'?'Draining. Admitted requests will finish before removal.':action==='remove'?'Removed from this gateway. Model server left running.':action==='relocate'?`${data.source} → ${data.destination}: undispatched request handed over with its original client and deadline.`:'Routing enabled.');
     if(action==='context'){contextDirty=false;contextExpected=data.minimum_context;}
     if(action==='queue-timeout'){queueDirty=false;queueExpected=data.queue_timeout_ms;workerMessage(`Queue allowance saved: ${fmt(data.queue_timeout_ms/3600000)} hours for new requests. Existing waits and model servers unchanged.`);}
     if(action==='add')$('worker-form').reset();
@@ -360,6 +370,12 @@ function wireWorkerControls() {
   };
   $('worker-rows').addEventListener('click',handleWorkerClick);
   $('devices').addEventListener('click',handleWorkerClick);
+  $('relocation-offers').addEventListener('click',e=>{
+    const button=e.target.closest('button[data-relocation]');if(!button||button.disabled)return;
+    const offer=JSON.parse(button.dataset.relocation);
+    if(!window.confirm(`Move this undispatched request from ${offer.source} to ${offer.destination}? Its original client connection and deadline stay intact, but DSG cannot prove the destination has its warm cache.`))return;
+    void workerAction('relocate',{request_id:offer.request_id,source:offer.source,destination:offer.destination,evidence_id:offer.evidence_id});
+  });
 }
 function renderGenieReports(reports = []) {
   const container = $('genie-reports');
@@ -456,7 +472,8 @@ async function loadGenie() {
   try {const r=await fetch('/api/genie',{signal:AbortSignal.timeout(5000)});if(!r.ok)throw new Error();const s=await r.json();genieToken=s.csrf_token;genieState=s;wireState=s.ticker;
     if(wireSnapshot)renderHealthWire(wireSnapshot);
     const q=s.question,qtext=q?.state==='queued'?'Your question is queued behind the current review':q?.state==='answering'?'Answering your question…':q?.state==='answered'?`Question answered ${age(q.finished_at,Date.now())}`:['failed','cancelled'].includes(q?.state)?`Question ${q.state}: ${q.error}`:null;
-    $('genie-status').textContent=!s.configured?'Not configured':!s.enabled?'Off · enable Gate Genie before asking':qtext||s.error||(s.busy?'Scheduled fleet review in progress':`Enabled · last review ${age(s.last_check,Date.now())}`);
+    const provider=s.last_served_by==='pool_fallback'?' · dedicated provider failed; last review borrowed a DSG pool slot':s.last_served_by==='pool'?' · last review used the DSG pool':s.last_served_by==='dedicated'?' · last review used the dedicated provider':'';
+    $('genie-status').textContent=!s.configured?'Not configured':!s.enabled?'Off · enable Gate Genie before asking':qtext||s.error||(s.busy?'Scheduled fleet review in progress':`Enabled · last review ${age(s.last_check,Date.now())}${provider}`);
     $('genie-mode').textContent=[s.mode==='bounded-recovery'?'bounded recovery available':'observation',s.predictor_supervision?'predictor supervision':''].filter(Boolean).join(' · ');
     $('genie-toggle').disabled=!s.configured;$('genie-toggle').textContent=s.enabled?'Turn off':'Enable';
     $('genie-source').disabled=!s.fallback_available||s.busy;$('genie-source').value=s.source||'primary';

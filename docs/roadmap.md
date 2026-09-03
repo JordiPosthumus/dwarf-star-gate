@@ -78,13 +78,13 @@ is pinned. Recovery remains bounded to one attempt per failed instance with a
 30-minute per-worker cooldown; unexplained recurrence requires investigation,
 not an unbounded restart loop.
 
-**Current scheduling limitation:** healthy session homes remain sticky even when
-their queue grows and another server is idle. Waiting counts are per-worker queues,
-not a globally stealable queue. Recovery/restart can reassign a home; when the old
-server returns, the session does not automatically move back. This preserves cache
-locality but does not prove minimum completion time. A future overflow policy must
-consider queued as well as active work and establish a safe per-session handover
-before changing affinity. Cache copying is not required for a first shadow policy.
+**Current scheduling boundary:** [safe queued handover](queued-handover.md) is now
+implemented. A first DSG request or unaffined queue head automatically takes a
+newly free healthy server while it is still undispatched. Existing session homes
+remain sticky unless an operator confirms one exact offer because the destination's
+cache locality is unknown. Waiting counts remain per-worker queues, not a globally
+stealable queue. Broader automatic overflow must first prove that predicted waiting
+saved exceeds cache-acquisition cost with adequate margin and hysteresis.
 
 **Maintenance decisions:** the README explicitly has no open-source license grant;
 add license text only if the maintainer chooses it. Keep public screenshots synthetic
@@ -110,12 +110,14 @@ how long an idle machine will remain unused.
 - **Gate Genie:** an optional local LLM observer with dashboard chat. It receives
   a compact metrics briefing, not user conversations. With separately enrolled
   services and automatic recovery enabled, it can request the independently
-  guarded recovery action described above. It has no shell, arbitrary routing,
+  guarded recovery action described above. It can report an operator-confirmable
+  queued-handover offer, but cannot execute it. It has no shell, arbitrary routing,
   model-setting or cache-editing tools.
 - **Portable observer inference:** a dedicated compatible server is preferred;
-  an explicit dashboard selector can use the DSG pool as fallback. No silent
-  failover or requirement for a particular machine. Shared-pool reviews consume
-  ordinary inference capacity and must be interpreted as observer traffic.
+  after an explicit dedicated-provider failure, Genie automatically borrows one
+  unpinned DSG pool slot. The pool receives the bounded live briefing but not the
+  private notebook. An explicit dashboard selector can also use the pool directly.
+  Shared-pool reviews consume ordinary inference capacity and are marked observer traffic.
 
 See [collection and Genie setup](observer.md) for the implemented boundaries and
 configuration. Opt-in capabilities remain off unless configured/enabled.
