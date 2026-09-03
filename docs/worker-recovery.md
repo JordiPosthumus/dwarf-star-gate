@@ -67,6 +67,11 @@ The dashboard has a **DS4 service recovery** section:
   evidence that recovery completed. `actor` names the trusted ingress channel,
   not an authenticated human identity among processes sharing the same OS user.
 
+The worker row shows its **current** recovery/paused/quarantined/monitoring state.
+An older `verified_paused` receipt means the action finished while paused, not that
+the worker is still paused after an operator resumes it. Historical receipts are
+not rewritten when current routing state changes.
+
 Pause/removal wins over final reinstatement. Turning automatic mode off stops new
 automatic actions and cancels a proposal before issuance when possible; an issued
 restart continues reconciliation/verification. Do not assume a sent SSH command

@@ -95,6 +95,20 @@ test('operator canary requires pause, remains paused afterward and is not availa
   r.n.drained=true;r.recovery.request(r.input(),'operator',{canary:true});await r.recovery.task;
   assert.equal(r.restarts,1);assert.equal(r.n.drained,true);assert.equal(r.recovery.status().operations[0].state,'verified_paused');
 });
+test('current recovery worker status follows resume and later faults without rewriting historical receipts',async()=>{
+  const r=rig();r.n.quarantine=null;await r.ready();r.n.drained=true;
+  r.recovery.request(r.input(),'operator',{canary:true});await r.recovery.task;
+  const receipt=structuredClone(r.recovery.status().operations[0]);
+  assert.equal(r.recovery.workerStatus(r.n).state,'paused');
+  r.n.drained=false;r.n.healthy=true;
+  assert.equal(r.recovery.workerStatus(r.n).state,'monitoring');
+  assert.equal(r.recovery.workerStatus(r.n).last_action.state,'verified_paused');
+  r.n.healthy=false;assert.equal(r.recovery.workerStatus(r.n).state,'unavailable');
+  r.n.quarantine={reason:'accelerator_checkpoint_failure'};
+  assert.equal(r.recovery.workerStatus(r.n).state,'quarantined');
+  r.n.recovering=true;assert.equal(r.recovery.workerStatus(r.n).state,'recovering');
+  assert.deepEqual(r.recovery.status().operations[0],receipt);
+});
 test('generation/cache verifier checks exact outputs, usage, context and both cold-to-warm prefixes',async()=>{
   let count=0;const bodies=[];
   const fake=async(url,options)=>{

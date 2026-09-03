@@ -56,9 +56,12 @@ export class Recovery {
     const observed=this.observations.get(n.id),s=observed?.value;
     const reason=!observed || this.now()-observed.at>90000?'service_inspection_pending':observed.error||this.reason(n,s);
     const configured=this.configs.has(n.id),last=this.state.operations.filter(o=>o.worker_id===n.id).at(-1);
+    // Current worker state is not the last action's historical outcome. In
+    // particular, a successful paused canary may since have been resumed.
+    const state=n.recovering?'recovering':!configured?'manual':n.drained?'paused':n.quarantine?'quarantined':n.healthy===false?'unavailable':'monitoring';
     return {worker_id:n.id,configured,reason:configured?reason:'manual_recovery_required',eligible:configured&&!reason,
       evidence_id:configured&&!reason?this.evidence(n,s):null,inspected_at:observed?.at??null,
-      state:n.recovering?'recovering':last?.state??(configured?'monitoring':'manual'),last_action:last?publicOperation(last):null};
+      state,last_action:last?publicOperation(last):null};
   }
   status(){return {configured:!!this.configs.size,automatic:this.state.automatic,adapter:'systemd-user',workers:this.nodes.map(n=>this.workerStatus(n)),operations:this.state.operations.slice(-20).reverse().map(publicOperation)};}
   async inspect(id) {

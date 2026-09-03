@@ -29,7 +29,9 @@ process epochs, followed by the embedding collection slice already specified bel
 
 Orders 2 and 3 can be built alongside reliability diagnosis, without changing live
 routing. Do not wait for an LLM or trained predictor merely to explain why a queue
-is pinned. Do not turn on autonomous restart loops while recurrent OOM is unexplained.
+is pinned. Recovery remains bounded to one attempt per failed instance with a
+30-minute per-worker cooldown; unexplained recurrence requires investigation,
+not an unbounded restart loop.
 
 **Current scheduling limitation:** healthy session homes remain sticky even when
 their queue grows and another server is idle. Waiting counts are per-worker queues,
@@ -59,9 +61,11 @@ how long an idle machine will remain unused.
 - **Fleet activity:** serving-slot occupancy and immediately free slots, plus
   sampled idle/prefill/thinking/answering timelines. Prefill and decode use separate
   scales shared across servers. Serving slots are not GPU utilization or hot KV slots.
-- **Gate Genie:** an optional, local, read-only LLM observer with dashboard chat.
-  It receives a compact metrics briefing, not user conversations. It can explain
-  evidence but has no tools that modify workers, routing, model settings or caches.
+- **Gate Genie:** an optional local LLM observer with dashboard chat. It receives
+  a compact metrics briefing, not user conversations. With separately enrolled
+  services and automatic recovery enabled, it can request the independently
+  guarded recovery action described above. It has no shell, arbitrary routing,
+  model-setting or cache-editing tools.
 - **Portable observer inference:** a dedicated compatible server is preferred;
   an explicit dashboard selector can use the DSG pool as fallback. No silent
   failover or requirement for a particular machine. Shared-pool reviews consume
@@ -144,8 +148,9 @@ Broader persistent conversation/feedback and endpoint controls remain next addit
 does not depend on embeddings, XGB training or the Genie LLM. Its tests cover an
 API that still answers model-list probes while inference fails, repeated failures,
 existing session affinity, queued-but-undispatched rejection without replay and
-verified reinstatement. Automatic service restart and transparent client recovery
-remain unimplemented; already running streams are never blindly replayed.
+verified reinstatement. Bounded systemd-user service recovery now ships separately;
+transparent client recovery remains unimplemented. Already running streams are
+never blindly replayed.
 
 ## Next: cache health, not just cache counters
 
@@ -191,8 +196,10 @@ Derived vectors are sensitive too and stay in private local storage.
 
 The [Genie powers plan](genie-powers-plan.md) specifies the CUDA recovery scenario,
 the separation of Genie/XGB/scheduler/executor, narrow action permissions, UI
-controls, tests and shadow-to-canary deployment. It is proposed behavior, not a
-claim that automatic restarts or editable endpoint controls are enabled today.
+controls, tests and shadow-to-canary deployment. Systemd-user recovery is the
+implemented subset; the broader powers and editable endpoint controls remain
+proposed. Installation-specific enrollment, canary evidence and explicit opt-in
+are still required before automatic recovery is enabled.
 
 - Quarantine a demonstrably faulty server for **new conversations**, without
   disrupting admitted work; reinstate after evidence-backed recovery.

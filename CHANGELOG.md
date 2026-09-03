@@ -10,6 +10,9 @@
 
 ## Unreleased
 
+- Recovery worker rows show current state separately from historical action
+  receipts; resuming after a successful canary no longer looks like a stale pause.
+
 - Logo-derived SVG/ICO/PNG favicons, Apple touch icon and a transparent monochrome
   Safari pinned-tab mask. Versioned SVG/PNG URLs, frozen asset-bundle serving and
   icon format/dimension tests. Main logo and model settings unchanged.
