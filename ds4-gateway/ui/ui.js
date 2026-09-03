@@ -114,7 +114,7 @@ async function poll() {
   catch { $('connection').textContent = 'Disconnected'; $('warning').hidden = false; $('warning').textContent = 'Dashboard connection lost. Values below are historical, not live.'; renderHealthWire({time:Date.now(),gateway_error:true}); }
   finally { setTimeout(poll, document.hidden ? 10000 : 2000); }
 }
-let controlsWired = false, workerBusy = false, workersLoading = false, csrfToken = null;
+let controlsWired = false, workerBusy = false, workersLoading = false, csrfToken = null,recoveryState=null;
 let contextDirty=false, contextExpected=null;
 function workerMessage(text, error = false) {
   $('worker-message').textContent = text; $('worker-message').classList.toggle('error',error);
@@ -134,10 +134,11 @@ async function loadWorkers() {
     const r=await fetch('/api/workers',{cache:'no-store',signal:AbortSignal.timeout(5000)}), data=await r.json();
     if(!r.ok||!data.enabled)throw new Error(data.error||'Worker controls unavailable');
     csrfToken=data.csrf_token; $('worker-rows').innerHTML=workerRows(data.workers);
+    renderRecovery(data.recovery);
     $('pool-context-form').hidden=!data.context_limit_control;
     $('pool-context-note').hidden=!data.context_limit_control;
     if(!contextDirty){contextExpected=data.minimum_context;$('pool-context-input').value=String(data.minimum_context);}
-  } catch(e) { workerMessage(e.message,true); }
+  } catch(e) { workerMessage(e.message,true);$('recovery-status').textContent='Recovery controls unavailable; last state is stale';$('recovery-toggle').disabled=true; }
   finally { workersLoading=false; }
 }
 async function workerAction(action, input) {
@@ -151,7 +152,7 @@ async function workerAction(action, input) {
   try {
     const r=await fetch(`/api/workers/${action}`,{method:'POST',headers:{'content-type':'application/json','x-dsg-csrf':csrfToken},body:JSON.stringify(input),signal:AbortSignal.timeout(35000)});
     const data=await r.json();if(!r.ok)throw new Error(data.error||'Worker control failed');
-    workerMessage(action==='context'?`Pool limit saved: ${fmt(data.minimum_context)} tokens. Applied now; model servers and Pi unchanged.`:action==='add'?'Registered paused. Enable routing when ready.':action==='drain'?'Draining. Admitted requests will finish before removal.':action==='remove'?'Removed from this gateway. Model server left running.':'Routing enabled.');
+    workerMessage(action==='recover'?`Recovery accepted: ${data.id}. See executor receipts below.`:action==='recovery-policy'?`Automatic recovery ${data.automatic?'enabled':'disabled'}.`:action==='context'?`Pool limit saved: ${fmt(data.minimum_context)} tokens. Applied now; model servers and Pi unchanged.`:action==='add'?'Registered paused. Enable routing when ready.':action==='drain'?'Draining. Admitted requests will finish before removal.':action==='remove'?'Removed from this gateway. Model server left running.':'Routing enabled.');
     if(action==='context'){contextDirty=false;contextExpected=data.minimum_context;}
     if(action==='add')$('worker-form').reset();
   } catch(e) { workerMessage(`${e.message}. Check the worker list before retrying.`,true); }
@@ -200,10 +201,11 @@ function renderGenieReports(reports = []) {
       node = document.createElement('details');
       node.dataset.reportId = report.id;
       const summary = document.createElement('summary');
-      summary.textContent = `${clock(report.time)} · ${report.source} · assessment, no actions${report.evidence_at?` · evidence ${clock(report.evidence_at)}`:''}`;
+      summary.textContent = `${clock(report.time)} · ${report.source} · ${report.actions_taken?.length?'recovery requested; see executor receipts':'assessment, no actions'}${report.evidence_at?` · evidence ${clock(report.evidence_at)}`:''}`;
       const answer = document.createElement('p');
       answer.className = 'genie-answer';
       answer.textContent = report.text;
+      if(report.actions_taken?.length)answer.textContent+='\n\nAction request results: '+report.actions_taken.map(a=>`${a.worker_id}: ${a.state}${a.id?` (${a.id})`:''}`).join('; ');
       node.append(summary, answer);
     }
     // Completed reports are immutable. Keep their actual DOM nodes so polling
@@ -236,6 +238,7 @@ async function loadGenie() {
   try {const r=await fetch('/api/genie',{signal:AbortSignal.timeout(5000)});if(!r.ok)throw new Error();const s=await r.json();genieToken=s.csrf_token;genieState=s;wireState=s.ticker;
     if(wireSnapshot)renderHealthWire(wireSnapshot);
     $('genie-status').textContent=!s.configured?'Not configured':s.error||(!s.enabled?'Off':s.busy?'Reviewing fleet evidence…':`Enabled · last review ${age(s.last_check,Date.now())}`);
+    $('genie-mode').textContent=s.mode==='bounded-recovery'?'bounded recovery available':'observation only';
     $('genie-toggle').disabled=!s.configured;$('genie-toggle').textContent=s.enabled?'Turn off':'Enable';
     $('genie-source').disabled=!s.fallback_available||s.busy;$('genie-source').value=s.source||'primary';
     $('genie-review').disabled=$('genie-send').disabled=!s.enabled||s.busy;
@@ -247,3 +250,26 @@ $('genie-source').addEventListener('change',()=>genieAction({action:'source',sou
 $('genie-review').addEventListener('click',()=>genieAction({action:'ask'}));
 $('genie-chat').addEventListener('submit',e=>{e.preventDefault();void genieAction({action:'ask',question:$('genie-question').value});});
 void loadGenie();setInterval(loadGenie,5000);
+
+function renderRecovery(state) {
+  recoveryState=state;
+  $('recovery-status').textContent=!state?.configured?'Not configured. Endpoint registration alone grants no restart authority.':state.automatic?'Automatic recovery ON · GG + known-fatal watcher':'Automatic recovery OFF · operator recovery available';
+  $('recovery-toggle').textContent=state?.automatic?'Disable automatic recovery':'Enable automatic recovery';
+  $('recovery-toggle').disabled=!state?.configured||workerBusy;
+  $('recovery-workers').innerHTML=(state?.workers||[]).map(w=>`<p><strong>${esc(w.worker_id)}</strong> · ${esc(w.state)} · ${esc(w.eligible?'recovery eligible':(w.reason||'checking').replaceAll('_',' '))} <button type="button" class="button" data-recover="${esc(w.worker_id)}" ${!w.eligible||workerBusy?'disabled':''}>Recover</button>${w.last_action?.restart_issued&&['reconciliation_needed','failed'].includes(w.last_action.state)?` <button type="button" class="button" data-recheck="${esc(w.last_action.id)}" ${workerBusy?'disabled':''}>Recheck only</button>`:''}</p>`).join('');
+  // Plain text receipts, not another auto-collapsing disclosure panel.
+  $('recovery-actions').replaceChildren(...(state?.operations||[]).slice(0,8).map(op=>{
+    const p=document.createElement('p');p.textContent=`${clock(op.updated_at)} · ${op.worker_id} · ${op.actor} · ${op.state.replaceAll('_',' ')}${op.error?` · ${op.error.replaceAll('_',' ')}`:''}${op.proof?` · ${op.proof.samples.map(s=>`${s.label}: ${s.cached_tokens}/${s.prompt_tokens} cached`).join(' · ')}`:''} · ${op.id}`;return p;
+  }));
+}
+$('recovery-toggle').addEventListener('click',()=>{
+  if(!recoveryState?.configured)return;
+  if(!recoveryState.automatic&&!window.confirm('Allow GG and the known-fatal watcher to restart registered DS4 services after identity and fault checks? RAM-resident caches are lost; server settings and disk caches are preserved.'))return;
+  void workerAction('recovery-policy',{enabled:!recoveryState.automatic});
+});
+$('recovery-workers').addEventListener('click',event=>{
+  const recheck=event.target.closest('button[data-recheck]');if(recheck&&!recheck.disabled){void workerAction('recovery-recheck',{action_id:recheck.dataset.recheck});return;}
+  const button=event.target.closest('button[data-recover]');if(!button||button.disabled)return;
+  const worker=recoveryState?.workers.find(w=>w.worker_id===button.dataset.recover);
+  if(worker?.eligible)void workerAction('recover',{worker_id:worker.worker_id,evidence_id:worker.evidence_id,action_id:crypto.randomUUID()});
+});

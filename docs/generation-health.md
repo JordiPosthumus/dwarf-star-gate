@@ -39,8 +39,9 @@ generation fails after a fatal accelerator error.
 
 The current dashboard marks quarantined workers unavailable. Status/diagnostic
 JSON and the Genie's briefing include the allowlisted quarantine reason, timestamp
-and originating request ID. The dedicated action timeline/evidence drawer is
-still roadmap work. Ordinary manual pause/drain is separate from quarantine.
+and originating request ID. The [service recovery panel](worker-recovery.md) adds
+executor receipts and eligibility reasons. Ordinary manual pause/drain is separate
+from quarantine.
 
 ## Operator recovery
 
@@ -49,7 +50,8 @@ still roadmap work. Ordinary manual pause/drain is separate from quarantine.
 2. For a confirmed fatal CUDA context error, restart only the affected DS4 service
    using the deployment's existing service manager. Preserve the launcher, model
    configuration and disk caches; RAM-resident state necessarily disappears.
-   Wait for model loading to finish. DSG does **not** issue SSH restarts yet.
+   Wait for model loading to finish. Alternatively, use the enrolled, guarded
+   [DSG recovery action](worker-recovery.md), which performs restart and checks.
 3. Run a real generation and a cold-to-warm continuation check on that isolated
    endpoint. Long-context or vision-specific faults still require their own
    targeted reproduction; a small health check is not a complete certification.
@@ -74,18 +76,13 @@ state editing is needed, and re-registration is not a recovery bypass.
 
 ## Self-healing boundary
 
-See the [Genie powers plan](genie-powers-plan.md) for the proposed action contract,
-evidence guards, UI controls, failure tests and staged rollout.
-
-This release **isolates faults automatically**, but does not automatically restart
-model servers, replay streams or give the Genie control tools. A future opt-in
-recovery runner can perform an allowlisted service restart, with bounded retry
-and cooldown, fresh fault evidence, an exclusive per-worker recovery action,
-post-restart inference/cache checks and a durable action receipt. If it cannot
-verify recovery, keep the worker isolated and notify the operator. Never restart
-a healthy but slowly thinking request solely because it is taking a long time.
-The deterministic runner should work without an LLM; the Genie can explain and
-request permitted actions, not replace the recovery safeguards.
+See [bounded worker recovery](worker-recovery.md) for the implemented systemd-user
+adapter, opt-in policy, exact-service enrollment, fresh-instance evidence guards,
+UI controls, tests and canary procedure. GG and the deterministic fatal-fault
+watcher share that runner. Failure to verify leaves the worker isolated; a slow
+healthy response is never sufficient evidence. Stream replay, kernel repair and
+launchd/container recovery are not implemented. The [broader powers plan](genie-powers-plan.md)
+remains a roadmap for additional capabilities.
 
 ## Incident evidence — 2026-09-02
 

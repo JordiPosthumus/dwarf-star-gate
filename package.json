@@ -6,7 +6,8 @@
   "type": "module",
   "engines": { "node": ">=22.22.2" },
   "scripts": {
-    "test": "node --test ds4-gateway/gateway.test.mjs ds4-gateway/dashboard.test.mjs ds4-gateway/observer.test.mjs ds4-gateway/routing-shadow.test.mjs",
+    "test": "node --test ds4-gateway/gateway.test.mjs ds4-gateway/dashboard.test.mjs ds4-gateway/observer.test.mjs ds4-gateway/routing-shadow.test.mjs ds4-gateway/recovery.test.mjs",
+    "recovery:test": "python3 -m unittest discover -s ds4-gateway -p 'recovery_systemd_test.py' -v",
     "check": "node scripts/check.mjs",
     "privacy-check": "node scripts/privacy-check.mjs",
     "predictor:test": "uv run --locked --project predictor python -m unittest discover -s predictor -v",

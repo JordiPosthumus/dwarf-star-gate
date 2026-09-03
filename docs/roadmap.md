@@ -10,6 +10,13 @@ This table is the current order; the sections below retain the detailed design.
 See the [maintenance review](maintenance-review-2026-09-02.md) for reproduced bugs,
 fixes and remaining uncertainty. A source commit is not a live deployment receipt.
 
+**Recovery update:** order 6's first slice is now implemented in
+[bounded DS4 service recovery](worker-recovery.md): systemd-user enrollment, GG and
+detector requests, independent guards, durable receipts and cold/warm verification.
+This does not fix the CUDA defect or implement launchd/container recovery. The
+next reliability/data priority is request-to-engine attribution with backend
+process epochs, followed by the embedding collection slice already specified below.
+
 | Order | Work | Exit evidence |
 | --- | --- | --- |
 | 0 | Promote protocol/quarantine maintenance fixes through a controlled cutover | Regression suites pass; versioned backup; real API-format smoke checks; unchanged fleet/context; explicit source-versus-running release record |
@@ -18,7 +25,7 @@ fixes and remaining uncertainty. A source commit is not a live deployment receip
 | 3 | Data quality and local embedding collection, with a visible collection panel | Versioned encoder and bounded text extraction; current-request feature-availability timestamps; failure/backpressure/privacy tests; joined vectors and valid labels across hardware |
 | 4 | Refit the offline XGB experiment, then shadow ETA predictions | New immutable artifact versus baseline; hardware/context/session coverage; production tree count selected by time/session-aware CV before promotion |
 | 5 | Persistent Genie/operator activity and endpoint settings UI | Durable actor/channel/action receipts, stale-evidence labels, feedback, endpoint test/save/rollback; manual controls remain authoritative |
-| 6 | Opt-in deterministic recovery runner, then Genie access to it | Fresh-instance fault evidence; one bounded attempt; verified recovery; pause/remove race tests; shadow/manual/canary rollout |
+| 6 (first slice implemented) | Opt-in deterministic recovery runner and Genie access | Systemd-user only; see recovery guide for tested scope and deployment gates |
 
 Orders 2 and 3 can be built alongside reliability diagnosis, without changing live
 routing. Do not wait for an LLM or trained predictor merely to explain why a queue
@@ -108,9 +115,9 @@ predictor to begin.** Planned implementation, not enabled yet:
   compare against metadata-only later. Historical numerical rows stay without
   embeddings because their raw conversations were not retained.
 
-**Gate Genie UI: evidence, commentary and actions must be distinct.** The current
-read-only panel is not an action executor or a durable conversation history.
-Next additions should be:
+**Gate Genie UI: evidence, commentary and actions must be distinct.** Assessments
+remain in-memory; the separate recovery panel now shows durable executor receipts.
+Broader persistent conversation/feedback and endpoint controls remain next additions:
 
 1. Persistent chronological activity: observation, proposal, started, applied,
    verified, failed, rejected and undone. Each entry names time, actor, target,

@@ -10,6 +10,7 @@ import { Dataset } from './dataset.mjs';
 import { RoutingShadow } from './routing-shadow.mjs';
 import { GenerationFaultObserver, verifyGeneration } from './generation-health.mjs';
 import { workerConfig, workerConfigs, assertUniqueWorker } from './worker-config.mjs';
+import { Recovery } from './recovery.mjs';
 import net from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -157,14 +158,23 @@ export function createGateway(config) {
   const dataset = new Dataset(path.join(path.dirname(config.state_file),'training'),{enabled:config.dataset_enabled===true});
   const shadow = new RoutingShadow({enabled:config.routing_shadow_enabled===true && config.dataset_enabled===true});
   const observe = fn => {if(shadow.enabled)try{return fn();}catch{shadow.state.errors++;}};
-  let draining = false, shuttingDown = false, healthTimer;
+  let draining = false, shuttingDown = false, healthTimer, recoveryTimer;
   let mutation = Promise.resolve();
   const serialize = fn => { const next = mutation.then(fn); mutation = next.catch(() => {}); return next; };
   const definition = n => Object.fromEntries(['id','url','ssh','remote_port','telemetry_service'].filter(k => n[k] !== undefined).map(k => [k,n[k]]));
+  let recovery;
+  try { recovery=new Recovery(config.recovery,{store,nodes,model:config.model,stopping:()=>shuttingDown||draining,log,
+    reinstate:(n,expected,recoveryState)=>{
+      if(n.removed || n.drained || n.active || n.queue.length || JSON.stringify(n.quarantine)!==JSON.stringify(expected) || shuttingDown || draining)throw new Error('reinstatement_state_changed');
+      const quarantined={...store.data.quarantined};delete quarantined[n.id];
+      store.save({...store.data,quarantined,recovery:recoveryState});
+      n.quarantine=null;n.inferenceFailures=0;n.healthy=true;n.failures=0;
+      observe(()=>shadow.reset(n.id));
+    }}); } catch(e){store.close();throw e;}
   const agent = new http.Agent({ keepAlive: true, maxSockets: 16 });
   const accepted = new Set(['POST /v1/chat/completions', 'POST /v1/completions', 'POST /v1/responses', 'POST /v1/messages', 'GET /v1/models']);
   const auth = Buffer.from(`Bearer ${config.api_key}`);
-  const stats = () => ({ version: 1, model: config.model, context_length: contextLimit(), draining, dataset:dataset.snapshot(), routing_shadow:shadow.snapshot(),
+  const stats = () => ({ version: 1, model: config.model, context_length: contextLimit(), draining, dataset:dataset.snapshot(), routing_shadow:shadow.snapshot(),recovery:recovery.status(),
     total: nodes.length, healthy: nodes.filter(n => n.healthy).length, available: nodes.filter(n => n.healthy && !n.drained).length,
     active: nodes.filter(n => n.active).length, queued: nodes.reduce((s, n) => s + n.queue.length, 0),
     workers: nodes.map(n => ({ id: n.id, url: n.url, is_healthy: n.healthy, drained: n.drained, quarantine:n.quarantine, inference_failures:n.inferenceFailures,
@@ -407,7 +417,7 @@ export function createGateway(config) {
         node.probing = false; node.lastProbe = new Date().toISOString(); node.probeError = reason;
         if (reason && reason !== 'model_or_context_mismatch') node.modelMatches=false;
         const was = node.healthy;
-        if (ok) { node.failures = 0; node.healthy = !node.quarantine; }
+        if (ok) { node.failures = 0; node.healthy = !node.quarantine && !node.recovering; }
         else if (++node.failures >= (config.health_failures ?? 3)) node.healthy = false;
         if(was && !node.healthy)observe(()=>shadow.reset(node.id));
         if (was !== node.healthy) log('worker_health', { node: node.id, healthy: node.healthy, reason });
@@ -441,6 +451,7 @@ export function createGateway(config) {
   };
   const registry = () => ({ model: config.model, minimum_context: contextLimit(), context_limit_control:true,
     context_limit_source:store.data.pool_context_length === undefined ? 'config' : 'saved',
+    recovery:recovery.status(),
     workers: nodes.map(n => ({ ...definition(n), ...stats().workers.find(w => w.id === n.id) })) });
   async function freshProbe(node) {
     while (node.probing) await delay(10);
@@ -465,7 +476,7 @@ export function createGateway(config) {
       fs.copyFileSync(store.filename,backup,fs.constants.COPYFILE_EXCL);fs.chmodSync(backup,0o600);
     }
     store.save({...store.data,pool_context_length:input.context_length});
-    for (const n of enabled) {n.healthy=!n.quarantine;n.failures=0;n.probeError=undefined;}
+    for (const n of enabled) {n.healthy=!n.quarantine&&!n.recovering;n.failures=0;n.probeError=undefined;}
     for (const n of nodes) if (!n.modelMatches || !validContext(n.contextLength) || n.contextLength<contextLimit()) {
       n.healthy=false;n.failures=config.health_failures ?? 3;
       n.probeError=n.probeError || 'model_or_context_mismatch';
@@ -522,6 +533,7 @@ export function createGateway(config) {
   function drainNodes(ids, drained) {
     if (!Array.isArray(ids) || !ids.length || ids.some(id => !nodes.some(n => n.id === id))) throw new Error('Specify known worker IDs');
     store.setDrained(ids, drained);
+    if(drained)recovery.operatorPause(ids);
     for (const n of nodes) if (ids.includes(n.id)) n.drained = drained;
     log('workers_drain_changed', { ids, drained });
     return stats();
@@ -529,7 +541,7 @@ export function createGateway(config) {
   // Operator-only Unix socket: never expose lifecycle mutation on the LAN.
   const control = config.control_socket ? http.createServer((req, res) => {
     if (req.method === 'GET' && req.url === '/workers') return json(res, 200, registry());
-    if (req.method !== 'POST' || !['/drain-workers', '/resume-workers', '/add-worker', '/remove-worker', '/set-context-limit'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
+    if (req.method !== 'POST' || !['/drain-workers', '/resume-workers', '/add-worker', '/remove-worker', '/set-context-limit','/recovery-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
     let body = '';
     req.on('data', chunk => { body += chunk; if (body.length > 4096) req.destroy(); });
     req.on('error', () => {});
@@ -537,12 +549,19 @@ export function createGateway(config) {
       void serialize(async () => {
         try {
           const input = JSON.parse(body);
+          if(req.url==='/recovery-recheck')return json(res,202,recovery.reconcile(input));
+          if(req.url==='/recovery-policy') {
+            if(Object.keys(input).length!==1 || !Object.hasOwn(input,'enabled'))throw new Error('Specify enabled only');
+            return json(res,200,recovery.setAutomatic(input.enabled));
+          }
+          if(['/recover-worker','/genie-recover-worker','/recovery-canary'].includes(req.url))return json(res,202,recovery.request(input,req.url==='/genie-recover-worker'?'genie':'operator',{canary:req.url==='/recovery-canary'}));
           if (req.url === '/set-context-limit') return json(res,200,await setContextLimit(input));
           if (req.url === '/add-worker') return json(res, 201, await addWorker(input.worker));
           if (req.url === '/remove-worker') return json(res, 200, removeWorker(input.id));
           if (req.url === '/resume-workers') {
             if (!Array.isArray(input.workers) || !input.workers.length || input.workers.some(id=>!nodes.some(n=>n.id===id))) throw new Error('Specify known worker IDs');
             const selected=nodes.filter(n=>input.workers.includes(n.id));
+            if(selected.some(n=>n.recovering))throw new Error('Recovery owns this worker; pause is allowed but wait before enabling');
             await Promise.all(selected.map(freshProbe));
             if (selected.some(n=>n.probeError || !validContext(n.contextLength) || n.contextLength<contextLimit())) throw new Error('Cannot enable a server without a fresh compatible model/context probe');
             const recovered=[];
@@ -569,7 +588,7 @@ export function createGateway(config) {
     });
   }) : null;
   return {
-    server, nodes, stats, store, drainNodes, registry,
+    server, nodes, stats, store, drainNodes, registry,recovery,
     async start() {
       nodes.forEach(startTunnel);
       await new Promise((resolve, reject) => { server.once('error', reject); server.listen(config.port, config.host, resolve); });
@@ -584,12 +603,14 @@ export function createGateway(config) {
       }
       await Promise.all(nodes.map(probe));
       healthTimer = setInterval(() => { for (const n of nodes) void probe(n); }, config.health_interval_ms ?? 5000);
+      void recovery.tick();recoveryTimer=setInterval(()=>void recovery.tick(),30000);
       return server.address();
     },
     drain(value = true) { draining = value; log('drain_changed', { draining }); },
     async close() {
       if (shuttingDown) return;
       shuttingDown = true; draining = true;
+      clearInterval(recoveryTimer);await recovery.close();
       if (control) await new Promise(resolve => control.close(resolve));
       await new Promise(resolve => { server.close(resolve); server.closeIdleConnections(); });
       clearInterval(healthTimer); agent.destroy(); store.close(); await dataset.close();

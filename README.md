@@ -7,14 +7,16 @@ and a lightweight control-room dashboard for [DS4](https://github.com/antirez/ds
 Register workers through the local UI or CLI; fleet size is not hard-coded.
 
 **Implemented, opt-in:** private routing evidence, fleet activity, and **Gate
-Genie**, a local observation-only assistant. See the [prioritized feature roadmap](docs/roadmap.md)
+Genie**, a local fleet assistant with optional [bounded DS4 service recovery](docs/worker-recovery.md). See the [prioritized feature roadmap](docs/roadmap.md)
 and [experimental collector/Genie setup](docs/observer.md). Planned cache-health
 auditing and XGBoost-guided routing are explicitly separate from today's features.
 An optional [offline XGBoost experiment](predictor/README.md) now provides a
 reproducible fit/evaluate/save/reload path. It does not control routing.
 Workers with recognized engine faults or repeated inference failures are
 [quarantined persistently](docs/generation-health.md); recovery requires a real
-generation check. Automatic model-service restarts are not implemented yet.
+generation check. Opt-in recovery can restart an enrolled systemd-user DS4 service
+after current-instance fatal evidence, then verify generation and cold-to-warm
+reuse. Unsupported installs remain manual. No Pi or Hermes dependency.
 
 The dashboard's **Genie health wire** shows model-written observations and concise
 recommendations from the same fleet review as the detailed assessment. Evidence
@@ -57,7 +59,8 @@ Dwarf Star Gate is an independent companion project, not an official Antirez
 release and not a claim of his endorsement. The similar name is an acknowledgement
 of the engine it was built around, not a claim to its authorship.
 
-Node.js built-ins only. No package installation, database, Kubernetes, frontend
+The gateway/dashboard use Node.js built-ins only; the optional systemd recovery
+helper uses Python's standard library. No package installation, database, Kubernetes, frontend
 build system, CDN, analytics service or cloud telemetry.
 
 The optional offline predictor is a separate, locked Python environment; it is
@@ -158,7 +161,9 @@ npm run ui
 
 Open **http://127.0.0.1:30010**. The UI is read-only by default. Opt-in worker
 controls can register, enable, drain and remove routing endpoints; they never
-start, restart, stop or reconfigure model servers. The macOS UI start/open scripts enable
+start, restart, stop or reconfigure model servers. Separately enrolled
+[service recovery](docs/worker-recovery.md) adds a guarded restart capability.
+The macOS UI start/open scripts enable
 only the dashboard at login. To unload it:
 
 ```sh
@@ -306,8 +311,9 @@ Unexpected **Paused** or missing workers warrant checking `workers_drain_changed
 and `worker_removed` in the private gateway log. Failed health probes do not
 remove workers; generation quarantine is a separate state. Current control events
 record the action and target, but not authenticated caller identity: they cannot
-by themselves prove which local person or agent acted. The observation-only Genie
-cannot issue these controls. Restarting DSG preserves manual pauses and removals.
+by themselves prove which local person or agent acted. Genie cannot issue ordinary
+pause/remove controls; it can request only independently guarded recovery when
+authorized. Restarting DSG preserves manual pauses and removals.
 
 <details>
 <summary>Worker-management UI (synthetic demo)</summary>
@@ -392,7 +398,8 @@ opt-in same-origin/CSRF management boundary, local-log timing/cache parsing,
 partial/oversized lines, rotation, truncation, missing-file recovery and redaction.
 It also covers protocol-specific SSE completion, persistent generation quarantine,
 verified reinstatement after remove/re-add, fresh control sockets after restart,
-collector privacy, and observation-only Genie boundaries. Optional predictor tests
+collector privacy, and bounded Genie/recovery boundaries. `npm run recovery:test`
+also tests the optional Python adapter. Optional predictor tests
 run with `npm run predictor:test` in the locked Python environment. See the
 [dated maintenance review](docs/maintenance-review-2026-09-02.md) for findings and scope.
 Default dashboards remain read-only.

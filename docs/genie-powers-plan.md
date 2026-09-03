@@ -1,9 +1,13 @@
 # Gate Genie powers: recovery, model stewardship and operator controls
 
-Status: **design for review, not deployed powers**. The existing Genie is a
-read-only observer. [Generation quarantine](generation-health.md) is implemented
-in DSG independently; a deployment must activate that release before relying on
-it. A running older process is not upgraded merely by changing files on disk.
+Status: **recovery v1 implemented; broader powers below remain a design**.
+The authoritative shipped scope, setup, controls and limits are in
+[bounded worker recovery](worker-recovery.md): systemd-user only, private enrollment,
+one guarded runner shared by GG and a fatal-fault detector, durable receipts and
+verified reinstatement. Launchd/container adapters, editable Genie endpoints,
+persistent chat and predictor stewardship remain future work. The sections below
+retain the original broader plan; they are not a claim that every item shipped.
+A running process is not upgraded merely by changing files on disk.
 
 ## Division of responsibility
 

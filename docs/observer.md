@@ -101,9 +101,9 @@ your private config's `genie` / `genie.fallback` objects, then restart only the
 dashboard and enable the observer again. Do not change worker URLs or the pool
 model just to change the Genie's inference source.
 
-For planned recovery permissions and editable endpoint controls, see the
-[Genie powers plan](genie-powers-plan.md). The current Enable button grants no
-restart or routing authority.
+For implemented recovery permissions, see [bounded worker recovery](worker-recovery.md).
+The separate **Automatic recovery** switch authorizes the runner, not the Genie's
+Enable button alone. Editable endpoint controls remain in the [powers plan](genie-powers-plan.md).
 
 Example **private** config addition (illustrative ports/SSH alias):
 
@@ -148,7 +148,10 @@ the local review connection; that alone does not prove backend execution stopped
 This is a stateless question + fresh-briefing interface, not yet a persistent
 multi-turn agent conversation. Twelve recent assessments live in memory and are
 not included in downloadable diagnostics or training records. The model has no
-tools or control credentials, and its prose is rendered as text, never executed.
+shell or control credentials. Its optional structured `recovery_requests` are
+validated against offered worker/evidence pairs and rechecked by the runner;
+prose is rendered as text, never executed. Durable executor receipts are separate
+from in-memory assessments and are included in sanitized operational status.
 The dashboard's same-origin/CSRF checks protect its enable/source/ask controls.
 
 Click a report heading (or focus it and press Enter/Space) to read the assessment.

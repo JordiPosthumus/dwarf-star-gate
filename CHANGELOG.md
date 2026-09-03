@@ -10,11 +10,18 @@
 
 ## Unreleased
 
+- Opt-in systemd-user DS4 recovery: exact-service enrollment, current-invocation
+  fatal CUDA evidence, one fleet action, per-instance idempotency and cooldown,
+  durable intent/receipts, lost-ack reconciliation, generation/two-session cache
+  verification, operator pause precedence, UI automatic/recover/recheck controls.
+  GG and the deterministic detector share the same guarded action runner. No
+  model setting changes; launchd/container adapters remain unimplemented.
+
 - Genie-authored health ticker: structured observations and short recommendations
   from the existing review call, explicit evidence time and invalid/stale/changed
   state handling. Faster scrolling, wider gaps, pause and reduced-motion support.
-  No operational powers or model-server settings changed. Expanded reports remain
-  readable across polling. Recovery-adapter portability is documented as planned.
+  The ticker itself grants no operational powers and changes no model-server
+  settings. Expanded reports remain readable across polling.
 - Correct SSE completion classification for Chat Completions/Completions,
   Responses and Messages. Output-limited Responses are censored, not failed
   workers; explicit error terminals remain failures. Oversized unobservable
@@ -25,10 +32,10 @@
   verified recovery is reachable without manually editing state. Operator clients
   use fresh control sockets across gateway restarts, without mutation retries.
 - Persistent generation-failure quarantine, fresh generation-verified recovery,
-  and sanitized fault evidence for diagnostics and the observation-only Genie.
+  and sanitized fault evidence for diagnostics and Genie assessments.
 - Opt-in numerical routing collector, fleet occupancy/activity timelines and
   Gate Genie chat with dedicated inference or explicitly selected pool fallback.
-  No embeddings, automatic restart tools or learning-based routing yet.
+  No embeddings or learning-based routing yet; recovery is separately opt-in.
 - Optional locked offline XGBoost fit/evaluate/save/reload package with separate
   machine identity/hardware-family features, leakage-aware chronological splits,
   artifact checksums, tests and documented production tree-count validation gate.
