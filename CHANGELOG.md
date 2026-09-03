@@ -10,6 +10,17 @@
 
 ## Unreleased
 
+- Stable Continuity Door on the public DSG port: planned core restarts hold new
+  body streams unread, preserve existing proxied responses, start the replacement
+  behind a worker-probe barrier, and release only after a fresh health check. The
+  core is loopback-only; the Door never spools or replays request bodies. Lifecycle,
+  cancellation, startup-race and real Pi transport tests cover the boundary.
+- Gate Genie chat now accepts immediately, yields a replaceable scheduled review
+  to a human question, and keeps evidence-gated action reviews non-preemptible.
+  Dedicated and pool attempts have bounded deadlines; an explicit dedicated
+  timeout permits the same one-shot, unpinned pool fallback as a provider error.
+  Status exposes receipts and deadlines without endpoint or credential details.
+
 - Narrow DS4 JPEG compatibility protection for Chat Completions: DSG first
   forwards the request unchanged, then only on DS4's exact pre-generation JPEG
   rejection converts typed inline JPEG data to PNG and retries once on the same

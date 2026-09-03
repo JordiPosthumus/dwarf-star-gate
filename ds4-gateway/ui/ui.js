@@ -508,7 +508,7 @@ async function genieAction(input) {
 async function loadGenie() {
   try {const r=await fetch('/api/genie',{signal:AbortSignal.timeout(5000)});if(!r.ok)throw new Error();const s=await r.json();genieToken=s.csrf_token;genieState=s;wireState=s.ticker;
     if(wireSnapshot)renderHealthWire(wireSnapshot);
-    const q=s.question,qtext=q?.state==='queued'?'Your question is queued behind the current review':q?.state==='answering'?'Answering your question…':q?.state==='answered'?`Question answered ${age(q.finished_at,Date.now())}`:['failed','cancelled'].includes(q?.state)?`Question ${q.state}: ${q.error}`:null;
+    const q=s.question,qtext=q?.state==='queued'?(s.review_kind==='action'?'Your question is queued behind an evidence-gated action review':'Your question is queued; a routine review is being yielded'):q?.state==='answering'?'Answering your question…':q?.state==='answered'?`Question answered ${age(q.finished_at,Date.now())}`:['failed','cancelled'].includes(q?.state)?`Question ${q.state}: ${q.error}`:null;
     const provider=s.last_served_by==='pool_fallback'?' · dedicated provider failed; last review borrowed a DSG pool slot':s.last_served_by==='pool'?' · last review used the DSG pool':s.last_served_by==='dedicated'?' · last review used the dedicated provider':'';
     $('genie-status').textContent=!s.configured?'Not configured':!s.enabled?'Off · enable Gate Genie before asking':qtext||s.error||(s.busy?'Scheduled fleet review in progress':`Enabled · last review ${age(s.last_check,Date.now())}${provider}`);
     $('genie-mode').textContent=[s.action_supervision?'evidence-gated actions':'observation',s.predictor_supervision?'predictor supervision':''].filter(Boolean).join(' · ');

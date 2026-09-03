@@ -5,7 +5,8 @@ These are actual browser captures of fictional data, not edited production
 screenshots, benchmark results, a live incident report or a promoted model.
 
 - `dashboard-overview.png`: branding, Genie wire, slot capacity, mixed-server
-  activity, speeds, requested thinking, hourly fleet throughput and cache counters.
+  activity, speeds, requested thinking, hourly fleet throughput, cache counters
+  and the ready Continuity Door contract.
 - `overview-mobile.png`: the compact status row at 390px, including hourly output,
   peak, completed requests and prompt reuse.
 - `worker-management.png`: private fleet controls, the 20,000-hour queue allowance

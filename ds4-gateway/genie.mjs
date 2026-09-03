@@ -133,15 +133,16 @@ export class Genie {
     // A configured Genie is a core observer and starts on. Recovery, predictor
     // mutation and other powers remain separately authorized by their own gates.
     this.config=config;this.getSnapshot=snapshot;this.fetch=fetchImpl;this.enabled=!!config&&config.enabled!==false;this.busy=false;this.source=config?.default_source==='pool'?'pool':'primary';
-    this.last=null;this.reports=[];this.error=null;this.abort=null;this.closed=false;this.queuedQuestion=null;this.questionReceipt=null;this.actionOfferKey=null;this.actionOfferAt=0;
+    this.last=null;this.reports=[];this.error=null;this.abort=null;this.closed=false;this.queuedQuestion=null;this.questionReceipt=null;this.actionOfferKey=null;this.actionOfferAt=0;this.busyKind=null;this.preempted=false;
     this.recover=recover;this.predict=predict;this.rebalance=rebalance;this.memory=memory;
     for(const endpoint of [config,config?.fallback].filter(Boolean)) {
       const u=new URL(endpoint.url);
       if(u.protocol!=='http:' || u.hostname!=='127.0.0.1' || u.username || u.password || u.search || u.hash || !['/v1','/v1/'].includes(u.pathname))throw new Error('Genie must use a configured loopback /v1 endpoint');
+      if(endpoint.timeout_ms!==undefined&&(!Number.isSafeInteger(endpoint.timeout_ms)||endpoint.timeout_ms<1000||endpoint.timeout_ms>10*60000))throw new Error('Genie endpoint timeout_ms must be an integer from 1000 to 600000');
     }
   }
   publicQuestion(){return this.questionReceipt&&Object.fromEntries(['id','state','submitted_at','started_at','finished_at','report_id','error'].filter(k=>this.questionReceipt[k]!==undefined).map(k=>[k,this.questionReceipt[k]]));}
-  status(){const snapshot=this.getSnapshot(),actionSupervision=!!this.rebalance||!!this.predict||!!this.recover&&!!snapshot.gateway?.recovery?.automatic;return {configured:!!this.config,enabled:this.enabled,busy:this.busy,predictor_supervision:!!this.predict&&!!snapshot.gateway?.predictor?.configured,action_supervision:actionSupervision,mode:actionSupervision?'evidence-gated-actions':'observation-only',source:this.source,fallback_available:!!this.config?.fallback,last_served_by:this.reports[0]?.served_by??null,last_check:this.last,error:this.error,question:this.publicQuestion(),reports:this.reports,
+  status(){const snapshot=this.getSnapshot(),actionSupervision=!!this.rebalance||!!this.predict||!!this.recover&&!!snapshot.gateway?.recovery?.automatic;return {configured:!!this.config,enabled:this.enabled,busy:this.busy,review_kind:this.busyKind,predictor_supervision:!!this.predict&&!!snapshot.gateway?.predictor?.configured,action_supervision:actionSupervision,mode:actionSupervision?'evidence-gated-actions':'observation-only',source:this.source,fallback_available:!!this.config?.fallback,last_served_by:this.reports[0]?.served_by??null,primary_timeout_ms:this.config?(this.config.timeout_ms??120000):null,fallback_timeout_ms:this.config?.fallback?(this.config.fallback.timeout_ms??180000):null,last_check:this.last,error:this.error,question:this.publicQuestion(),reports:this.reports,
     ticker:tickerStatus(this.reports[0],this.getSnapshot(),this),memory:this.memory?{...this.memory.status(),...this.memory.retrieve(this.getSnapshot())}:{available:false,enabled:false,error:null}};}
   setSource(source) {
     if(this.busy)throw new Error('Wait for the current review to finish');
@@ -163,12 +164,16 @@ export class Genie {
     if(typeof question!=='string'||question.length>2000)throw new Error('Question must be at most 2000 characters');
     if(this.queuedQuestion||['accepted','answering'].includes(this.questionReceipt?.state))throw new Error('One question is already pending; wait for its receipt to finish');
     const receipt={id:randomUUID(),state:this.busy?'queued':'accepted',submitted_at:Date.now()};
-    this.questionReceipt=receipt;this.queuedQuestion={question,receipt};queueMicrotask(()=>this.runSubmitted());return this.publicQuestion();
+    this.questionReceipt=receipt;this.queuedQuestion={question,receipt};
+    // A human question outranks a routine periodic assessment. Abort only that
+    // replaceable inference call; never preempt an action-offer review.
+    if(this.busy&&this.busyKind==='scheduled'){this.preempted=true;this.abort?.abort();}
+    queueMicrotask(()=>this.runSubmitted());return this.publicQuestion();
   }
   async runSubmitted(){
     if(this.busy||!this.queuedQuestion||this.closed||!this.enabled)return;
     const item=this.queuedQuestion;this.queuedQuestion=null;Object.assign(item.receipt,{state:'answering',started_at:Date.now()});
-    const before=this.reports[0]?.id;await this.ask(item.question);
+    const before=this.reports[0]?.id;await this.ask(item.question,{kind:'manual'});
     Object.assign(item.receipt,{state:this.reports[0]?.id!==before?'answered':'failed',finished_at:Date.now()});
     if(item.receipt.state==='answered')item.receipt.report_id=this.reports[0].id;else item.receipt.error=this.error||'No complete report was produced';
     if(this.queuedQuestion)queueMicrotask(()=>this.runSubmitted());
@@ -177,7 +182,8 @@ export class Genie {
     const pool=servedBy!=='dedicated';
     const attempt=new AbortController();let timedOut=false;
     const cancelled=()=>attempt.abort();this.abort.signal.addEventListener('abort',cancelled,{once:true});
-    const timer=setTimeout(()=>{timedOut=true;attempt.abort();},10*60000);
+    const timeoutMs=endpoint.timeout_ms??(pool?180000:120000);
+    const timer=setTimeout(()=>{timedOut=true;attempt.abort();},timeoutMs);
     try {
       const response=await this.fetch(`${endpoint.url.replace(/\/$/,'')}/chat/completions`,{method:'POST',redirect:'error',signal:attempt.signal,
         // Pool failover has no affinity key: each review carries its complete
@@ -197,11 +203,12 @@ export class Genie {
     } catch(error) {if(timedOut)throw new Error('Model attempt timed out');throw error;}
     finally {clearTimeout(timer);this.abort.signal.removeEventListener('abort',cancelled);}
   }
-  async ask(question='Review the current fleet. Flag only evidence-backed issues; distinguish unknowns.') {
+  async ask(question='Review the current fleet. Flag only evidence-backed issues; distinguish unknowns.',{kind='manual'}={}) {
     if(!this.enabled || this.closed)throw new Error('Enable Gate Genie first');
     if(this.busy)throw new Error('Gate Genie is already reviewing');
     if(typeof question!=='string' || question.length>2000)throw new Error('Question must be at most 2000 characters');
-    this.busy=true;this.error=null;this.abort=new AbortController();this.attempt=Date.now();
+    if(!['manual','scheduled','action'].includes(kind))throw new Error('Unknown Genie review kind');
+    this.busy=true;this.busyKind=kind;this.preempted=false;this.error=null;this.abort=new AbortController();this.attempt=Date.now();
     try {
       const snapshot=this.getSnapshot(),data=briefing(snapshot),health_key=healthKey(snapshot);
       const history=this.memory?.retrieve(snapshot)??{notes:[],truncated:false};
@@ -234,8 +241,8 @@ export class Genie {
       this.last=Date.now();this.reports.unshift({id:randomUUID(),time:this.last,evidence_at:data.gateway_at,health_key,
         ...parsed,source:this.source,served_by:completion.served_by,actions_taken:actions,memory_used:completion.served_by==='dedicated'?history.notes.map(n=>({id:n.id,revision:n.revision})):[]});
       this.reports=this.reports.slice(0,12);
-    } catch(e) {this.error=this.enabled ? (/timed out/.test(e.message)||e.name==='AbortError'?'Observation timed out':/^Model HTTP \d+$/.test(e.message)?e.message:'Observation failed; gateway unaffected') : null;}
-    finally {this.busy=false;this.abort=null;if(this.queuedQuestion)queueMicrotask(()=>this.runSubmitted());}
+    } catch(e) {this.error=this.enabled&&!this.preempted ? (/timed out/.test(e.message)||e.name==='AbortError'?'Observation timed out after its bounded provider attempt(s)':/^Model HTTP \d+$/.test(e.message)?e.message:'Observation failed; gateway unaffected') : null;}
+    finally {this.busy=false;this.busyKind=null;this.preempted=false;this.abort=null;if(this.queuedQuestion)queueMicrotask(()=>this.runSubmitted());}
     return this.status();
   }
   tick(){
@@ -247,8 +254,8 @@ export class Genie {
     ].sort(),key=offers.join('|'),now=Date.now();
     if(!key)this.actionOfferKey=null;
     const urgent=key&&(key!==this.actionOfferKey||now-this.actionOfferAt>=60000);
-    if(urgent){this.actionOfferKey=key;this.actionOfferAt=now;this.attempt=now;void this.ask('Review the current deterministic action offers now. Request at most one exact offered action only when the evidence supports it.');}
-    else if(now-(this.attempt||0)>=5*60000){this.attempt=now;void this.ask();}
+    if(urgent){this.actionOfferKey=key;this.actionOfferAt=now;this.attempt=now;void this.ask('Review the current deterministic action offers now. Request at most one exact offered action only when the evidence supports it.',{kind:'action'});}
+    else if(now-(this.attempt||0)>=5*60000){this.attempt=now;void this.ask(undefined,{kind:'scheduled'});}
   }
   close(){this.closed=true;this.enabled=false;this.abort?.abort();if(this.queuedQuestion){Object.assign(this.queuedQuestion.receipt,{state:'cancelled',finished_at:Date.now(),error:'Dashboard stopped before answering'});this.queuedQuestion=null;}}
 }

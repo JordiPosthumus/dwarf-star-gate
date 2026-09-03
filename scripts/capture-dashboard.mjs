@@ -39,6 +39,7 @@ try {
   assert.match(await page.locator('#throughput-detail').innerText(),/153k peak · 12 done · 90% reused/);
   assert.match(await page.locator('#throughput-summary').getAttribute('title'),/11 \/ 12/);
   assert.match(await page.locator('#throughput-summary').getAttribute('title'),/Counts arrive when requests finish/);
+  assert.match(await page.locator('#continuity-door-status').innerText(),/Continuity Door ready.*2 active proxied streams.*no request-body spooling or replay/);
   assert.ok(await page.locator('.gate-art').evaluate(img=>img.complete&&img.naturalWidth>0));
   const output=path.join(projectRoot,'docs/images');await fs.mkdir(output,{recursive:true});
   await page.locator('#worker-management summary').click();

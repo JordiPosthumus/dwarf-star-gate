@@ -168,21 +168,35 @@ test('configured Genie is on by default, can be explicitly disabled, has no tool
   assert.equal(disabled.status().enabled,false);await assert.rejects(disabled.ask(),/Enable/);disabled.tick();assert.equal(calls,2);disabled.close();
 });
 
-test('a manual Genie question queues behind a scheduled review and exposes a stable in-memory receipt',async()=>{
-  let release;const blocked=new Promise(r=>{release=r;}),calls=[];
+test('a manual Genie question preempts a routine review and exposes a stable in-memory receipt',async()=>{
+  const calls=[];
   const g=new Genie({url:'http://127.0.0.1:9001/v1'},snapshot,{fetchImpl:async(_u,o)=>{
     const body=JSON.parse(o.body);calls.push(JSON.parse(body.messages[1].content).question);
+    if(calls.length===1)await new Promise((resolve,reject)=>{o.signal.addEventListener('abort',()=>reject(new DOMException('Aborted','AbortError')),{once:true});});
+    return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(authoredReview())}}]});
+  }});
+  g.setEnabled(true);const scheduled=g.ask(undefined,{kind:'scheduled'});await new Promise(r=>setImmediate(r));
+  const accepted=g.submit('Why is Spark 2 unavailable?');assert.equal(accepted.state,'queued');assert.equal(g.status().question.state,'queued');
+  assert.throws(()=>g.submit('Another question'),/already pending/);
+  await scheduled;
+  while(g.status().question.state==='queued'||g.status().question.state==='answering')await new Promise(r=>setImmediate(r));
+  assert.equal(g.status().question.state,'answered');assert.equal(calls[1],'Why is Spark 2 unavailable?');assert.ok(g.status().question.report_id);
+  assert.equal(g.status().error,null);
+  assert.ok(!JSON.stringify(g.status().question).includes('Why is'));
+  g.close();
+});
+
+test('manual questions wait behind action reviews rather than preempting authority decisions',async()=>{
+  let release;const blocked=new Promise(r=>{release=r;}),calls=[];
+  const g=new Genie({url:'http://127.0.0.1:9001/v1'},snapshot,{fetchImpl:async(_u,o)=>{
+    calls.push(JSON.parse(JSON.parse(o.body).messages[1].content).question);
     if(calls.length===1)await blocked;
     return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(authoredReview())}}]});
   }});
-  g.setEnabled(true);const scheduled=g.ask();await new Promise(r=>setImmediate(r));
-  const accepted=g.submit('Why is Spark 2 unavailable?');assert.equal(accepted.state,'queued');assert.equal(g.status().question.state,'queued');
-  assert.throws(()=>g.submit('Another question'),/already pending/);
-  release();await scheduled;
-  while(g.status().question.state==='queued'||g.status().question.state==='answering')await new Promise(r=>setImmediate(r));
-  assert.equal(g.status().question.state,'answered');assert.equal(calls[1],'Why is Spark 2 unavailable?');assert.ok(g.status().question.report_id);
-  assert.ok(!JSON.stringify(g.status().question).includes('Why is'));
-  g.close();
+  const action=g.ask('Review exact offer',{kind:'action'});await new Promise(r=>setImmediate(r));
+  assert.equal(g.submit('What happened?').state,'queued');assert.equal(g.status().review_kind,'action');release();await action;
+  while(['queued','answering'].includes(g.status().question?.state))await new Promise(r=>setImmediate(r));
+  assert.equal(g.status().question.state,'answered');assert.deepEqual(calls,['Review exact offer','What happened?']);g.close();
 });
 
 test('Genie question failures remain visible and an off Genie never silently accepts a question',async()=>{
@@ -203,6 +217,19 @@ test('Genie automatically borrows one unpinned pool slot after dedicated-provide
   assert.equal(calls[1].headers['x-session-affinity'],undefined);assert.equal(calls[1].headers['x-dsg-observer'],'gate-genie');
   assert.deepEqual(JSON.parse(calls[1].body.messages[1].content).notebook_history.notes,[]);assert.ok(!JSON.stringify(calls[1]).includes('PRIVATE_NOTE'));
   assert.equal(g.status().last_served_by,'pool_fallback');assert.equal(g.status().reports[0].served_by,'pool_fallback');assert.deepEqual(g.status().reports[0].memory_used,[]);g.close();
+});
+test('a bounded dedicated timeout aborts that attempt and borrows the pool',async()=>{
+  const calls=[];const g=new Genie({url:'http://127.0.0.1:9001/v1',timeout_ms:1000,fallback:{url:'http://127.0.0.1:9002/v1'}},snapshot,{fetchImpl:async(url,options)=>{
+    calls.push(url);if(calls.length===1)await new Promise((resolve,reject)=>options.signal.addEventListener('abort',()=>reject(new DOMException('Aborted','AbortError')),{once:true}));
+    return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(authoredReview())}}]});
+  }});
+  await g.ask();assert.equal(calls.length,2);assert.equal(g.status().last_served_by,'pool_fallback');assert.equal(g.status().error,null);g.close();
+});
+test('Genie endpoint deadlines are bounded and public status contains no endpoint details',()=>{
+  assert.throws(()=>new Genie({url:'http://127.0.0.1:9001/v1',timeout_ms:999},snapshot),/timeout_ms/);
+  assert.throws(()=>new Genie({url:'http://127.0.0.1:9001/v1',fallback:{url:'http://127.0.0.1:9002/v1',timeout_ms:600001}},snapshot),/timeout_ms/);
+  const g=new Genie({url:'http://127.0.0.1:9001/v1',timeout_ms:5000,fallback:{url:'http://127.0.0.1:9002/v1',timeout_ms:7000}},snapshot);
+  const status=g.status();assert.equal(status.primary_timeout_ms,5000);assert.equal(status.fallback_timeout_ms,7000);assert.ok(!JSON.stringify(status).includes('9001'));g.close();
 });
 test('Genie reports failure only after both dedicated and pool providers fail',async()=>{
   let calls=0;const g=new Genie({url:'http://127.0.0.1:9001/v1',fallback:{url:'http://127.0.0.1:9002/v1'}},snapshot,{fetchImpl:async()=>{calls++;throw new Error('private details');}});
