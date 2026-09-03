@@ -179,7 +179,7 @@ supports it. DSG refreshes native worker metadata automatically, but does not
 automatically raise the configured pool guarantee. Follow
 [Context limits and rolling upgrades](context-limits.md), including persistence
 and separate client-metadata checks. Compatible example routing settings are
-`request_timeout_ms: 360000000` (100 hours), `queue_timeout_ms: 3600000` (1 hour),
+`request_timeout_ms: 360000000` (100 hours), `queue_timeout_ms: 72000000000` (20,000 hours),
 and `max_queued_per_node: 128`. These are timeout/admission settings, not proof
 of a 100-hour successful generation. Preserve reasoning, tools, vision and
 output controls end-to-end; use real gateway credentials for your own deployment.

@@ -165,6 +165,9 @@ a physical machine. Each server may have its own native context and cache settin
   chance of KV reuse. Busy conversations queue at home instead of bouncing.
 - Load-aware placement of **new** conversations; at most one active upstream request
   through DSG per registered DS4 server. Extra requests wait in bounded FIFO queues.
+  The [queue-wait allowance](docs/queue-wait.md) defaults to **20,000 hours**;
+  the separate active-request default remains 100 hours. Explicit private-config
+  overrides take precedence. Queued HTTP connections do not survive a gateway restart.
 - Transparent request/stream passthrough: no reasoning, output-limit, sampling,
   vision or tool-call rewriting.
 - No automatic replay after an ambiguous upstream failure.

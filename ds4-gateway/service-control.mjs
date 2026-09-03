@@ -38,6 +38,18 @@ export function assertRegistration(saved,spec) {
   const args=saved.ProgramArguments;
   if(saved.Label!==spec.label||!Array.isArray(args)||typeof args[0]!=='string'||!path.isAbsolute(args[0])||JSON.stringify(args.slice(1))!==JSON.stringify(spec.args.slice(1))||saved.WorkingDirectory!==spec.root||saved.EnvironmentVariables?.GATEWAY_UI_PORT!==spec.variables.GATEWAY_UI_PORT)throw new Error('Service points to another checkout/config/port. Stop that installation before explicitly reinstalling.');
 }
+export async function unloadService(kind,{domain,launch,loaded,interrupt=false,wait=delay,now=Date.now,timeoutMs=10000}) {
+  if(!labels[kind])throw new Error('Choose gateway or dashboard');
+  if(!loaded(kind))return;
+  if(interrupt)try{launch('kill','SIGKILL',`${domain}/${labels[kind]}`);}catch{/* Already exited; still remove the registration. */}
+  launch('bootout',`${domain}/${labels[kind]}`);
+  // Wait for launchd's removal acknowledgment before testing for a replacement.
+  const deadline=now()+timeoutMs;
+  while(loaded(kind)){
+    if(now()>=deadline)throw new Error(`${kind} unload not confirmed; no replacement started. Inspect launchd before retrying.`);
+    await wait(100);
+  }
+}
 export async function serviceCommand(command,kinds=['gateway','dashboard'],{interrupt=false}={}) {
   const {config,filename}=loadConfig();
   if(command==='status'){
@@ -80,10 +92,7 @@ export async function serviceCommand(command,kinds=['gateway','dashboard'],{inte
         if(!state.draining)throw new Error('Admission fence was not acknowledged; service not stopped');assertIdle(state);
       }catch(error){if(fenced)launch('kill','SIGUSR2',`${domain}/${labels.gateway}`);throw error;}
     }
-    for(const kind of [...kinds].reverse())if(loaded(kind)){
-      if(interrupt)try{launch('kill','SIGKILL',`${domain}/${labels[kind]}`);}catch{/* Already exited; bootout still removes registration from launchd. */}
-      launch('bootout',`${domain}/${labels[kind]}`);
-    }
+    for(const kind of [...kinds].reverse())await unloadService(kind,{domain,launch,loaded,interrupt});
     if(command==='stop')return {stopped:kinds,model_servers_unchanged:true};
   }
   for(const kind of kinds){

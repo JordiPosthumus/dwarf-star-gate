@@ -8,8 +8,15 @@ import {spawn,execFile,execFileSync} from 'node:child_process';
 import {promisify} from 'node:util';
 import {setTimeout as delay} from 'node:timers/promises';
 import {configPath,loadConfig,projectRoot,dashboardPort,isDashboard,isMain} from './config.mjs';
-import {serviceSpec,assertIdle,assertRegistration} from './service-control.mjs';
+import {serviceSpec,assertIdle,assertRegistration,unloadService} from './service-control.mjs';
 const exec=promisify(execFile);
+test('restart waits for launchd removal; timeout cannot skip into bootstrap',async()=>{
+  let now=0;const calls=[];
+  await unloadService('gateway',{domain:'gui/test',interrupt:true,launch:(...a)=>calls.push(a),loaded:()=>now<300,now:()=>now,wait:async ms=>{now+=ms;}});
+  assert.equal(now,300);assert.deepEqual(calls,[['kill','SIGKILL','gui/test/local.dwarf-star-gate.gateway'],['bootout','gui/test/local.dwarf-star-gate.gateway']]);
+  await assert.rejects(unloadService('dashboard',{domain:'gui/test',launch:()=>{},loaded:()=>true,now:()=>now,timeoutMs:200,wait:async ms=>{now+=ms;}}),/unload not confirmed/);
+  await assert.rejects(unloadService('other',{domain:'gui/test'}),/Choose gateway or dashboard/);
+});
 const temporary=t=>{const dir=fs.mkdtempSync('/tmp/dsg-install-');t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));return dir;};
 async function until(fn,ms=8000){const end=Date.now()+ms;while(Date.now()<end){try{const v=await fn();if(v)return v;}catch{}await delay(30);}throw new Error('Readiness timeout');}
 async function port(){const s=http.createServer();s.listen(0,'127.0.0.1');await once(s,'listening');const p=s.address().port;await new Promise(r=>s.close(r));return p;}

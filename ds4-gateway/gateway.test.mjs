@@ -859,6 +859,16 @@ test('queue bound rejects without dispatch, queue timeout does not cap generatio
   assert.equal((await second).status, 504); assert.equal((await first).status, 200);
   assert.equal(r.backends[0].records.length, 1);
 });
+test('default long queue has no timer overflow and cancellation/dispatch clear its timers',async t=>{
+  const r=await rig(t,1);assert.equal(r.gateway.stats().queue_timeout_ms,72000000000);assert.equal(r.gateway.stats().request_timeout_ms,360000000);
+  const first=r.request('{"delay":200}','first');await until(()=>r.gateway.stats().active===1);
+  const second=r.request('{}','second');await until(()=>r.gateway.stats().queued===1);await delay(40);
+  assert.equal(r.gateway.stats().queued,1,'20,000 hours must not overflow into a 1 ms timeout');
+  assert.equal((await first).status,200);assert.equal((await second).status,200);assert.equal(r.gateway.stats().queued,0);
+  const active=r.request('{"delay":120}','first');await until(()=>r.gateway.stats().active===1);
+  const req=http.request({host:'127.0.0.1',port:r.address.port,path:'/v1/chat/completions',method:'POST',headers:{authorization:'Bearer none','content-type':'application/json'}});req.on('error',()=>{});req.end('{}');
+  await until(()=>r.gateway.stats().queued===1);req.destroy();await until(()=>r.gateway.stats().queued===0);await active;assert.equal(r.backends[0].records.length,3);
+});
 test('SSE forwarded with usage and DONE; no Node five-minute or idle request timeout', async t => {
   const r = await rig(t);
   const result = await r.request('{"stream":true}', 'a');

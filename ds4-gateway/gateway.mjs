@@ -16,6 +16,7 @@ import { loadConfig, isMain } from './config.mjs';
 import { Predictor } from './predictor.mjs';
 import { calibrationPreflight } from './calibration.mjs';
 import { AgentControl } from './agent-control.mjs';
+import {deadlineTimer,queueTimeout} from './deadline.mjs';
 import net from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -166,6 +167,7 @@ export class UsageObserver {
 
 export function createGateway(config) {
   if (!validContext(config.context_length)) throw new Error('Invalid configured pool context limit');
+  const queueTimeoutMs=queueTimeout(config.queue_timeout_ms);
   const initial = workerConfigs(config.nodes);
   const store = new AffinityStore(config.state_file);
   // Like registered workers, an explicit UI setting survives process restarts.
@@ -204,7 +206,7 @@ export function createGateway(config) {
   const agent = new http.Agent({ keepAlive: true, maxSockets: 16 });
   const accepted = new Set(['POST /v1/chat/completions', 'POST /v1/completions', 'POST /v1/responses', 'POST /v1/messages', 'GET /v1/models']);
   const auth = Buffer.from(`Bearer ${config.api_key}`);
-  const stats = () => ({ version: 1, agent_api_version:1, model: config.model, context_length: contextLimit(), draining, dataset:{...dataset.snapshot(),embedding_collection:embeddings.snapshot()}, routing_shadow:shadow.snapshot(),recovery:recovery.status(),predictor:predictor.status(),
+  const stats = () => ({ version: 1, agent_api_version:1, model: config.model, context_length: contextLimit(), queue_timeout_ms:queueTimeoutMs, request_timeout_ms:config.request_timeout_ms??360000000, draining, dataset:{...dataset.snapshot(),embedding_collection:embeddings.snapshot()}, routing_shadow:shadow.snapshot(),recovery:recovery.status(),predictor:predictor.status(),
     calibration:calibrationPreflight(nodes,{draining}),
     total: nodes.length, healthy: nodes.filter(n => n.healthy).length, available: nodes.filter(n => n.healthy && !n.drained).length,
     active: nodes.filter(n => n.active).length, queued: nodes.reduce((s, n) => s + n.queue.length, 0),
@@ -265,7 +267,7 @@ export function createGateway(config) {
     while (node.queue.length) {
       const job = node.queue.shift();
       if (job.cancelled) continue;
-      clearTimeout(job.queueTimer);
+      job.queueTimer?.cancel();
       if (!node.healthy) { dataset.record('unavailable_before_dispatch',{request_id:job.id,node:node.id,total_ms:performance.now()-job.createdMono}); error(job.res, 503, 'home_unavailable', 'Assigned Spark became unavailable while queued; request was not dispatched.'); job.cleanup(); job.req.resume(); continue; }
       node.active = job;
       dispatch(node, job);
@@ -433,19 +435,19 @@ export function createGateway(config) {
       if (job.upstream) job.upstream.destroy();
       else {
         node.queue = node.queue.filter(j => j !== job);
-        clearTimeout(job.queueTimer); job.cleanup();
+        job.queueTimer?.cancel(); job.cleanup();
         log('queued_request_cancelled', { request_id: job.id, node: node.id });
         dataset.record('queued_cancel',{request_id:job.id,node:node.id,total_ms:performance.now()-job.createdMono});
       }
     };
-    job.cleanup = () => { req.off('aborted', cancel); res.off('close', cancel); req.off('error', cancel); };
+    job.cleanup = () => { job.queueTimer?.cancel();req.off('aborted', cancel); res.off('close', cancel); req.off('error', cancel); };
     req.on('aborted', cancel); req.on('error', cancel); res.on('close', cancel);
-    job.queueTimer = setTimeout(() => {
+    job.queueTimer = deadlineTimer(() => {
       node.queue = node.queue.filter(j => j !== job);
-      error(res, 504, 'queue_timeout', 'One-hour queue deadline reached; request was not dispatched');
+      error(res, 504, 'queue_timeout', 'Configured queue deadline reached; request was not dispatched');
       dataset.record('queue_timeout',{request_id:job.id,node:node.id,total_ms:performance.now()-job.createdMono});
       job.cleanup(); req.resume();
-    }, config.queue_timeout_ms ?? 3600000);
+    }, queueTimeoutMs);
     node.queue.push(job);evaluateShadow(node,job,'admission');schedule(node);
   });
   server.requestTimeout = 0; // Covers upload + queue; no hidden five-minute Node default.
