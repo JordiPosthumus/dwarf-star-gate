@@ -13,6 +13,11 @@ helping you manage a home inference fleet with less manual effort and make bette
 use of your hardware. See which devices are busy or idle, where requests are
 waiting, and how much time is spent processing prompts and generating responses.
 
+**DSG also gives your local agents an easy control surface for managing the
+gateway.** Its [scoped API and CLI](docs/agent-api.md) let authorized agents
+inspect the fleet, temporarily take a server out of routing, and return it when
+their work is done—without overriding your pauses or another agent's reservation.
+
 Conversations stay with their assigned server to encourage cache reuse; new
 conversations are placed according to load. Add, pause, resume or remove servers
 through the local UI or CLI. DS4 handles inference and its caches; DSG handles
@@ -23,6 +28,23 @@ adapt to verified capabilities, and keep unknowns explicit. No custom DS4 patch
 or rebuild is required. See the [integration boundary](docs/ds4-integration.md).
 
 ## What DSG adds
+
+**Agent-friendly fleet management:** give a local coding agent a task such as
+“drain this server for my DS4 test, then return it to the gateway when finished.”
+With an explicit grant for that server, the agent can:
+
+- Read live gateway status: health, active requests, queues and reservations.
+- Drain the server while already admitted requests finish.
+- Release its own reservation afterward; routing resumes only when no other
+  hold or operator pause remains and readiness checks pass.
+- Check durable action receipts, so a lost reply does not mean blindly repeating
+  an operation. The dashboard shows who holds each server.
+
+This works with any local agent that can run the supplied client; no Pi or Hermes
+dependency. It uses the same private control executor as DSG's operator and
+Genie controls, with separately scoped permissions. It does not change DS4's
+settings or start a stopped engine. See the [agent setup and permission guide](docs/agent-api.md)
+for copyable instructions, commands and the local-account trust boundary.
 
 **Implemented, opt-in:** private routing evidence, fleet activity, and **Gate
 Genie**, a local fleet assistant with optional [bounded DS4 service recovery](docs/worker-recovery.md). See the [prioritized feature roadmap](docs/roadmap.md)
