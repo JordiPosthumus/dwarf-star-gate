@@ -1,6 +1,7 @@
 # Analytics and the latency-model plan
 
-The local dashboard has a compact **Analytics** panel. It evaluates predictions
+The local dashboard has a compact **Analytics** panel below the fleet, Gate Genie
+and service-recovery panels, just above the request log. It evaluates predictions
 already saved by the optional [routing shadow](routing-shadow.md); it neither
 fits a model nor changes placement. Enable the existing dataset and shadow
 options to collect forecasts. With collection alone, actual durations can be

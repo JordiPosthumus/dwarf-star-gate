@@ -114,6 +114,16 @@ test('UI polling preserves expansion and selected filter; stale results and tiny
   assert.match(get('analytics-status').textContent,/unvalidated/);assert.match(get('analytics-stats').innerHTML,/1,000s|1s/);
   ctx.sample.status='unavailable';call('renderAnalytics()');assert.match(get('analytics-status').textContent,/historical/);
 });
+test('analytics follows fleet, Genie and recovery controls but precedes the request log',()=>{
+  const html=fs.readFileSync(new URL('./ui/index.html',import.meta.url),'utf8');
+  let previous=-1;
+  for(const id of ['devices','genie-reports','recovery-actions','analytics','requests']) {
+    const marker=`id="${id}"`,position=html.indexOf(marker);
+    assert.ok(position>previous,`${id} must follow the previous section`);
+    assert.equal(html.indexOf(marker,position+marker.length),-1,`${id} must not be duplicated`);
+    previous=position;
+  }
+});
 test('analytics is same-origin read-only, reports no dataset path and is separate from diagnostic exports',async t=>{
   const server=createDashboard(()=>({version:1}),undefined,null,null,()=>({enabled:true,status:'ready',rows:[]}));
   server.listen(0,'127.0.0.1');await once(server,'listening');t.after(()=>{server.closeAllConnections();server.close();});
