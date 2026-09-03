@@ -108,8 +108,10 @@ The Analytics collection line shows enabled/ready, observed/encoded, queued,
 missing/failed/dropped, encoder identity and last latency. These are current-run
 encoding counters, not a claim every vector was durably saved; inspect the
 separate dataset write/drop/error counters too. The dashboard/diagnostic JSON
-does not expose vectors. Existing Analytics and metadata-only training explicitly
-ignore the new event streams instead of duplicating labels or counting false gaps.
+does not expose vectors. Baseline Analytics and historical v1 training ignore the
+embedding event stream rather than duplicating labels. V2 training can use the
+separately timestamped vectors in updated/remaining forecasts; Analytics displays
+those forecasts separately by stage and immutable model version.
 
 Vectors are **sensitive derived conversation data**, not anonymization. Keep the
 mode-0600 daily files and mode-0700 directory private, outside Git and public
@@ -120,7 +122,7 @@ continues. There is no historical backfill: old raw conversations were not kept.
 ## Availability and validation gates
 
 DSG currently assigns a server before reading the body. An embedding produced
-later is **not an initial-routing feature**. Future prediction code must use
+later is **not an initial-routing feature**. The v2 predictor must use
 only features available by its declared prediction time, in both training and
 serving. Do not silently turn after-upload features into hindsight admission
 forecasts. Do not treat embedding similarity as proof of compatible KV state.

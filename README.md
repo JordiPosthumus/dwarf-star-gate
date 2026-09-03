@@ -31,7 +31,7 @@ Optional [queued-work shadow collection](docs/routing-shadow.md) records idle an
 session-recency clocks and compares a historical baseline without moving work.
 Its estimates are explicitly unvalidated; no live XGB routing is implied.
 Separately opt in to [local embedding/progress collection](docs/embeddings.md)
-for future workload models. Analytics also includes a read-only
+for optional updated workload forecasts. Analytics also includes a read-only
 [cache-cost calculator](docs/cache-cost.md) using measured disk-load/prefill
 components. Unknown cache costs and unverified cache existence stay explicit.
 
@@ -76,16 +76,19 @@ the encoder runs only when explicitly configured, without cloud inference.
 ## Dashboard
 
 Terminal-inspired presentation, per-worker measurements, and a replaceable logo.
-These earlier illustrative captures use **synthetic demo data**, not live sessions
-or benchmarks. They are not a complete feature tour: the current UI also includes
-the collection/activity panels and optional Gate Genie described below.
+These captures show the current interface with **synthetic demo data**, not live
+sessions, measured benchmarks or proof of model accuracy. The example fleet mixes
+Sparks and a Mac; all displayed servers, reports and predictions are fictional.
+See [screenshot reproduction and checks](docs/screenshots.md).
 
 ![Dwarf Star Gate dashboard with illustrative telemetry](docs/images/dashboard-overview.png)
 
 <details>
-<summary>Cache and request-log view</summary>
+<summary>Gate Genie, evidence collection and analytics</summary>
 
-![Cache and request-log view with illustrative telemetry](docs/images/dashboard-cache-and-requests.png)
+![Synthetic Gate Genie assessment and local embedding collection](docs/images/dashboard-genie.png)
+
+![Synthetic XGB accuracy, validation controls, cache calculator and request log](docs/images/dashboard-cache-and-requests.png)
 
 </details>
 

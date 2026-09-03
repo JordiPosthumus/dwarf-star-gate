@@ -4,7 +4,7 @@ This is a living roadmap, not a claim that every feature below ships today.
 DSG remains a companion to [antirez's DS4 engine](https://github.com/antirez/ds4).
 The engine performs inference and manages KV state; DSG observes and routes.
 
-## Prioritized delivery order — reviewed 2026-09-02
+## Prioritized delivery order — reviewed 2026-09-03
 
 This table is the current order; the sections below retain the detailed design.
 See the [maintenance review](maintenance-review-2026-09-02.md) for reproduced bugs,
@@ -58,9 +58,9 @@ before changing affinity. Cache copying is not required for a first shadow polic
 
 **Maintenance decisions:** the README explicitly has no open-source license grant;
 add license text only if the maintainer chooses it. Keep public screenshots synthetic
-and clearly distinguish earlier illustrative captures from new collection/Genie UI.
+and use the [current reproducible demo](screenshots.md), including collection/Genie UI.
 
-## First slice: evidence and an observation-only Gate Genie
+## Implemented foundation: evidence and bounded Gate Genie actions
 
 **Queued-work shadow now implemented, opt-in:** [setup and limits](routing-shadow.md).
 It records per-worker/session clocks and compares an unvalidated historical
@@ -90,7 +90,12 @@ how long an idle machine will remain unused.
 See [collection and Genie setup](observer.md) for the implemented boundaries and
 configuration. Opt-in capabilities remain off unless configured/enabled.
 
-## Immediate next delivery decisions — 2026-09-02
+## Historical first-fit decisions — 2026-09-02
+
+The following paragraph records the v1 smoke-test agreement, not the current
+promotion path. V2 now cross-validates tree count and feature families with
+forward-time, label-purged folds; it additionally tests unseen sessions before
+new-session placement. The [lifecycle contract](predictor-lifecycle.md) is authoritative.
 
 **First XGB fit = a plumbing smoke test.** Cross-validation is not a prerequisite
 for this first artifact; fit/save/reload, schema consistency and no leakage are.
@@ -187,6 +192,22 @@ phase/elapsed remaining estimates and frozen artifacts. GG can request training
 or offered rollback; fixed validators decide promotion. New-session placement is
 separately armed and requires unseen-session evidence. Existing queues/sessions
 are not moved. The [historical v1 experiment](../predictor/README.md) is preserved.
+
+**Next model work, in order:**
+
+1. Audit accuracy and coverage separately by stage, hardware, context size and
+   long-running work. Keep the strongest causal baseline when XGB loses. Improve
+   timestamped prior-turn features and embedding ablations; do not lower promotion
+   gates simply to activate a model.
+2. Add explicit backend process/build/cache-profile identity and request-to-engine
+   attribution. Then separate cache acquisition/prefill from reasoning/output cost;
+   an endpoint fingerprint alone does not identify a surviving cache or engine.
+3. Add calibrated uncertainty and bounded, versioned training-window selection.
+   The trainer currently rejects oversized snapshots; design selection without
+   deleting retained evidence or mixing incompatible backend eras.
+4. Compare waiting for a warm home with local restore, remote fetch or cold prefill
+   in shadow. Existing-session overflow requires a separate tested handover protocol;
+   a promising ETA alone never authorizes moving active work or copying caches.
 
 Optimize **expected completion time**, including waiting, cache restoration,
 prefill and generation—not raw tokens/second alone.

@@ -169,5 +169,9 @@ panel normally shows the latest three reports; an older open or keyboard-focused
 report stays visible while you read, even as newer reports arrive. This is only
 page-local reading state, not durable history across a page/dashboard restart.
 
-See the [roadmap](roadmap.md) for embeddings, XGBoost, cache-health attribution,
-frozen-agent packaging and independently tested operational powers.
+The optional [predictor lifecycle](predictor-lifecycle.md) is implemented: GG can
+request offered training or evidence-backed rollback, while independent validators
+decide promotion. Turning Genie off does not disable predictor automation or the
+separately authorized recovery runner. [Embedding collection](embeddings.md) is
+also implemented and opt-in. See the [roadmap](roadmap.md) for exact cache-health
+attribution, persistent conversation/history and further operational powers.

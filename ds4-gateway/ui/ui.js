@@ -66,7 +66,7 @@ function renderAnalytics() {
   if(version.innerHTML!==options){const old=version.value;version.innerHTML=options;if(versions.some(m=>m.id===old))version.value=old;}
   const selected=versions.find(m=>m.id===version.value),m=analyticsMetrics(xgb?{rows:selected?.rows||[]}:a,xgb?'service':metric,worker.value);
   $('analytics-status').textContent=a?.demo?'Synthetic demo · not measured predictions':({disabled:'Enable evidence collection to see analytics.',waiting:'Waiting for saved evidence.',catching_up:'Reading recent evidence — counts are partial.',rescanning:'Evidence files changed — rebuilding the recent window.',unavailable:'Evidence unavailable — previous values are historical.',ready:'Shadow baseline · unvalidated'})[a?.status]||'Analytics unavailable — previous values are historical.';
-  if(xgb&&a?.status==='ready')$('analytics-status').textContent=selected?`XGB ${stage} · model ${selected.id.slice(0,12)} · ${selected.rows.some(r=>r.experimental)?'includes experimental forecasts':'validated forecasts'}`:'No forecasts at this stage yet';
+  if(xgb&&a?.status==='ready'&&!a.demo)$('analytics-status').textContent=selected?`XGB ${stage} · model ${selected.id.slice(0,12)} · ${selected.rows.some(r=>r.experimental)?'includes experimental forecasts':'validated forecasts'}`:'No forecasts at this stage yet';
   $('analytics-contract').textContent=xgb?stage==='remaining'?'One frozen forecast per request: the first at or after 30 seconds. Actual = server time remaining at that moment, not total duration.':stage==='admission'?'Frozen before dispatch/upload. Current prompt embeddings are not available.':'Updated total server-time forecast, frozen separately after upload or embeddings. Not an admission-time forecast.':'Admission-time historical baseline, not XGB. Embeddings do not enter this baseline.';
   const chartSignature=JSON.stringify(m.pairs);
   if(chartSignature!==analyticsChartSignature){analyticsChartSignature=chartSignature;$('analytics-chart').innerHTML=predictionChart(m.pairs);}
@@ -82,7 +82,7 @@ async function loadAnalytics() {
 function embeddingInfo(ds) {
   const e=ds?.embedding_collection;
   if(!e?.enabled)return 'Embeddings off. Numerical collection can continue independently.';
-  return `Local embeddings ${e.ready?'ready':e.error||'starting'} · ${fmt(e.completed)} encoded / ${fmt(e.observed)} observed · ${fmt(e.pending)} queued · ${fmt(e.failed)} failed · ${fmt(e.dropped)} dropped · ${fmt(e.missing)} unavailable text · last batch ${fmt(e.last_duration_ms)} ms · ${e.model||'unknown encoder'} @ ${typeof e.revision==='string'?e.revision.slice(0,8):'unknown revision'} · ${fmt(e.dimensions)} dimensions. Latest user + bounded recent conversation; no raw text saved. Not used for routing.`;
+  return `Local embeddings ${e.ready?'ready':e.error||'starting'} · ${fmt(e.completed)} encoded / ${fmt(e.observed)} observed · ${fmt(e.pending)} queued · ${fmt(e.failed)} failed · ${fmt(e.dropped)} dropped · ${fmt(e.missing)} unavailable text · last batch ${fmt(e.last_duration_ms)} ms · ${e.model||'unknown encoder'} @ ${typeof e.revision==='string'?e.revision.slice(0,8):'unknown revision'} · ${fmt(e.dimensions)} dimensions. Latest user + bounded recent conversation; no raw text saved. Optional updated-forecast inputs, not initial-routing features.`;
 }
 function cacheCostText(result) {
   const part=p=>p?.estimated_ms===null||p?.estimated_ms===undefined?
