@@ -90,9 +90,10 @@ pause/quarantine state survive. In-flight requests do not survive a forced stop.
 Dashboard stop/restart saves a private Genie report snapshot under
 `runtime/dashboard/backups/`. A single `restart` restores enabled/source settings;
 old in-memory reports remain in the archive, not re-imported into the live panel.
-A separate stop/start starts Genie off, as on ordinary dashboard startup. An
-interrupted health review is not resumed. Optional automatic recovery policy is
-separate and remains in durable gateway state.
+A separate stop/start uses the configured default: on unless
+`genie.enabled` is explicitly `false`. An interrupted health review is not
+resumed. Optional automatic recovery policy is separate and remains in durable
+gateway state.
 
 Service commands refuse a registration pointing to another checkout/config/port.
 Restart keeps the registered Node interpreter even if your shell uses a newer
@@ -151,9 +152,10 @@ run syntax or optional encoder/predictor dependency checks, so those failures do
 not prevent an otherwise valid managed shutdown.
 
 The existing dashboard controller separately archives Genie reports before
-stopping. After a separate stop/start, Genie observation starts **off**; turn it
-back on in the UI if wanted. An already-running dashboard retains its setting.
-Durable recovery authorization and worker pause/hold/quarantine state are retained.
+stopping. After a separate stop/start, a configured Genie starts **on** unless
+private config explicitly sets `genie.enabled` to `false`. Turning him off in the
+UI pauses observation until the next dashboard start. Durable recovery
+authorization remains a separate switch; worker pause/hold/quarantine state is retained.
 Services stay installed for the next login; stopping does not uninstall them.
 
 Useful options:

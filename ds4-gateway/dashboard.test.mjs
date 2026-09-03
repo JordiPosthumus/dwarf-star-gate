@@ -498,8 +498,8 @@ test('opt-in worker controls require same origin, JSON and a CSRF token; diagnos
   assert.equal(calls.length,0);
   assert.equal((await post('/api/workers/context','{}',{'content-type':'application/json'})).status,403);
   assert.equal((await post('/api/workers/queue-timeout','{}',{'content-type':'application/json'})).status,403);
-  for(const action of ['add','drain','resume','remove','context','queue-timeout','relocate']) assert.equal((await post('/api/workers/'+action,JSON.stringify({id:'fake'}),valid)).status,200);
-  assert.deepEqual(calls.map(x=>x.action),['add','drain','resume','remove','context','queue-timeout','relocate']);
+  for(const action of ['add','drain','resume','remove','context','queue-timeout','protection','relocate']) assert.equal((await post('/api/workers/'+action,JSON.stringify({id:'fake'}),valid)).status,200);
+  assert.deepEqual(calls.map(x=>x.action),['add','drain','resume','remove','context','queue-timeout','protection','relocate']);
   assert.ok(!(await(await fetch(url+'/api/diagnostics')).text()).includes(init.csrf_token));
   const plain=await fixture(t);assert.deepEqual(await(await fetch(plain.url+'/api/workers')).json(),{enabled:false});
 });
@@ -511,6 +511,27 @@ test('worker UI only offers removal after draining and finishing admitted work',
   assert.match(rows({id:'m3',is_healthy:true,drained:true,load:1,queued:0}),/data-action="remove"[^>]+disabled/);
   assert.doesNotMatch(rows({id:'m3',is_healthy:true,drained:true,load:0,queued:0}),/data-action="remove"[^>]+disabled/);
   assert.match(rows({id:'m3',is_healthy:true,drained:true,load:0,queued:0,context_length:300000}),/300,000/);
+});
+test('server verdicts expose backlog, oldest wait, pause, health and telemetry staleness without guessing speed',()=>{
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const context=vm.createContext({});vm.runInContext(source,context);
+  const verdict=(device,worker,stale=false)=>vm.runInContext(`serverVerdict(${JSON.stringify(device)},${JSON.stringify(worker)},100000,${stale})`,context);
+  assert.equal(verdict({connected:true,last_event:99000},{is_healthy:true,drained:false,load:0,queued:0}).label,'Ready · idle');
+  assert.deepEqual({...verdict({connected:true,last_event:99000},{is_healthy:true,drained:false,load:1,queued:4,oldest_queue_seconds:90})},{level:'warn',label:'Backed up · 4 waiting',detail:'4 requests are queued; oldest has waited 90 seconds.'});
+  assert.equal(verdict({connected:true,last_event:99000},{is_healthy:true,drained:true,load:0,queued:0}).label,'Paused');
+  assert.equal(verdict({connected:false,last_event:0},{is_healthy:true,drained:false,load:0,queued:0}).label,'Ready · telemetry stale');
+  assert.equal(verdict({}, {is_healthy:false,drained:false,load:0,queued:0}).label,'Unavailable');
+  assert.equal(verdict({}, {is_healthy:true,quarantine:{reason:'accelerator_checkpoint_failure'},load:0,queued:0}).label,'Quarantined');
+  assert.equal(verdict({}, {},true).label,'Status stale');
+});
+test('request log filters problems and slow work while treating compatibility guidance as non-failure',async t=>{
+  const {url}=await fixture(t),html=await(await fetch(url)).text(),js=await(await fetch(url+'/ui.js')).text();
+  assert.match(html,/id="request-filter"/);assert.match(html,/Problems only/);assert.match(html,/Slow only/);
+  assert.match(js,/\['complete','vision_guidance'\]/);assert.match(js,/elapsed_ms>=300000\|\|e\.queue_ms>=60000/);assert.match(js,/vision_guidance' \? 'protected'/);
+});
+test('fresh empty fleets get an explicit first-server setup path',async t=>{
+  const {url}=await fixture(t),html=await(await fetch(url)).text(),js=await(await fetch(url+'/ui.js')).text();
+  assert.match(html,/Manage DS4 servers/);assert.match(js,/Add your first DS4 server/);assert.match(js,/data-add-first/);assert.match(js,/panel\.open=true/);
 });
 test('dashboard follows live membership and marks machines without engine logs explicitly', async t => {
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-membership-ui-'));

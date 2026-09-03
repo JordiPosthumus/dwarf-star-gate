@@ -13,7 +13,8 @@ helping you manage a home inference fleet with less manual effort and make bette
 use of your hardware. See which devices are busy or idle, where requests are
 waiting, and how much time is spent processing prompts and generating responses.
 
-**Gate Genie is DSG's optional local fleet assistant.** Point him at a dedicated
+**Gate Genie is DSG's local fleet assistant, enabled by default once configured.**
+Point him at a dedicated
 OpenAI-compatible DS4 server—an excellent role for older or slower hardware that
 can still run a compatible model—or enable DSG pool fallback. If that dedicated
 endpoint fails, he can borrow one available inference slot from the fleet and
@@ -62,8 +63,9 @@ Genie controls, with separately scoped permissions. It does not change DS4's
 settings or start a stopped engine. See the [agent setup and permission guide](docs/agent-api.md)
 for copyable instructions, commands and the local-account trust boundary.
 
-**Implemented, opt-in:** private routing evidence, fleet activity, and **Gate
-Genie**, a local fleet assistant with optional [bounded DS4 service recovery](docs/worker-recovery.md). See the [prioritized feature roadmap](docs/roadmap.md)
+**Implemented:** private routing evidence, fleet activity, and **Gate Genie**, a
+configured-by-the-operator local fleet assistant that starts observing by default,
+with separately opt-in [bounded DS4 service recovery](docs/worker-recovery.md). See the [prioritized feature roadmap](docs/roadmap.md)
 and [experimental collector/Genie setup](docs/observer.md). Cache-health auditing
 and cache migration remain roadmap items. The optional [predictor lifecycle](docs/predictor-lifecycle.md)
 adds live shadow forecasts, causal next-turn history, embedding-aware updates,
@@ -197,8 +199,11 @@ a physical machine. Each server may have its own native context and cache settin
   The [queue-wait allowance](docs/queue-wait.md) defaults to **20,000 hours**;
   the separate active-request default remains 100 hours. Explicit private-config
   overrides take precedence. Queued HTTP connections do not survive a gateway restart.
-- Transparent request/stream passthrough: no reasoning, output-limit, sampling,
-  vision or tool-call rewriting.
+- Transparent request/stream passthrough: no reasoning, output-limit, sampling or
+  tool-call rewriting. The optional, narrowly scoped [JPEG compatibility
+  protection](docs/vision-protection.md) acts only after DS4 returns its exact
+  pre-generation JPEG rejection: it converts the typed image to PNG and retries
+  once on the same server, or completes the turn with practical resend guidance.
 - No automatic replay after an ambiguous upstream failure.
 - [Patient outage waiting](docs/client-continuity.md): undispatched calls wait for
   readiness/recovery under the same queue allowance, without exhausting the
@@ -542,7 +547,8 @@ six-worker monitoring, complete UI asset bundles, hot registration/removal,
 larger-context workers, empty-roster persistence, bounded health probes and the
 opt-in same-origin/CSRF management boundary, local-log timing/cache parsing,
 partial/oversized lines, rotation, truncation, missing-file recovery and redaction.
-It also covers protocol-specific SSE completion, persistent generation quarantine,
+It also covers protocol-specific SSE completion, bounded JPEG repair/guidance,
+persistent generation quarantine,
 verified reinstatement after remove/re-add, fresh control sockets after restart,
 collector privacy, and bounded Genie/recovery boundaries. `npm run recovery:test`
 also tests the optional Python adapter. Optional predictor tests

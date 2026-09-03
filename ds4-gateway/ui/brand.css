@@ -5,6 +5,10 @@
 .worker-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin:18px 0;align-items:end}
 .worker-form label{display:grid;gap:7px;font-size:10px;color:var(--muted)}
 .worker-form input,.worker-form select{width:100%;min-width:0;border:1px solid var(--line);background:var(--bg);color:var(--text);border-radius:4px;padding:10px;font:inherit}
+.protection-control{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px 18px;align-items:center;border-block:1px solid var(--line);padding:14px 0;margin:16px 0}
+.protection-control[hidden]{display:none}.protection-control p{margin:4px 0}.protection-control>p{grid-column:1/-1}
+.fleet-summary{margin:9px 4px 0;color:var(--muted);font-size:10px}.fleet-summary:not(:empty):first-letter{color:var(--text)}
+.protected{color:#c4d6e8}
 button.button{color:var(--text);font-family:inherit;cursor:pointer}.worker-actions{display:flex;gap:7px}.worker-actions .button{padding:6px 9px}
 button:disabled{opacity:.4;cursor:default}input:focus-visible,select:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 .worker-message{min-height:20px;white-space:pre-wrap;margin:12px 0;color:var(--accent)}.worker-message.error{color:var(--error)}
@@ -31,6 +35,8 @@ button:disabled{opacity:.4;cursor:default}input:focus-visible,select:focus-visib
 /* Per-server routing is a compact operational control beside the live state. */
 .routing-summary{margin:16px 0 0}
 .device-status{display:flex;align-items:center;gap:7px;min-width:0}
+.server-verdict{font-size:9px;line-height:1.2;padding:6px 8px;border:1px solid var(--line);border-radius:4px;color:var(--muted);white-space:nowrap}.server-verdict[data-level="ok"]{color:var(--accent);border-color:#4b6143}.server-verdict[data-level="busy"]{color:#dbe8cb;border-color:#526643}.server-verdict[data-level="warn"]{color:#ffd0a9;border-color:#80543e;background:#2f241f}.server-verdict[data-level="bad"]{color:var(--error);border-color:#63473e}.server-verdict[data-level="paused"]{color:#c8cfc9}.metric-stale .rate,.metric-stale .chart{opacity:.48}.metric-stale .metric-note{color:#bdc4bd}
+@media(max-width:750px){.device-top{align-items:flex-start}.device-status{flex-wrap:wrap;justify-content:flex-end}.server-verdict{white-space:normal;text-align:right}}
 .worker-routing{display:inline-flex;position:relative;flex:0 0 auto}
 .routing-toggle{position:relative;display:inline-grid;place-items:center;width:29px;height:29px;padding:0;border:1px solid #526643;border-radius:4px;background:#202622;color:var(--accent);cursor:pointer}
 .routing-toggle svg{display:block;width:13px;height:13px;fill:currentColor}

@@ -147,9 +147,12 @@ key is optional; omit it for unauthenticated DS4 behind authenticated SSH. SSH u
 your existing verified host key and login, loopback-only forwarding, and reconnects
 without changing the remote server. Keep the chosen local port free.
 
-Restart the dashboard, then **Enable** Gate Genie in its panel. It is off after
-every dashboard restart. The first enabled review starts within ten seconds;
-subsequent automatic reviews start no more often than every five minutes. Manual
+Restart the dashboard. A configured Genie is **on by default** and his first
+review starts within ten seconds. **Turn off** pauses him for the rest of that
+dashboard run; private config may set `"enabled": false` for an installation that
+should start off. Recovery and predictor mutation remain separately gated;
+enabling observation does not grant those powers. Subsequent automatic reviews
+start no more often than every five minutes. Manual
 questions have a 2,000-character limit and one review can run at a time. A manual
 question submitted during a scheduled review is held as the single pending
 question, then run next. Its in-memory receipt remains visibly `queued`,

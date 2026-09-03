@@ -10,6 +10,20 @@
 
 ## Unreleased
 
+- Narrow DS4 JPEG compatibility protection for Chat Completions: DSG first
+  forwards the request unchanged, then only on DS4's exact pre-generation JPEG
+  rejection converts typed inline JPEG data to PNG and retries once on the same
+  server. If safe repair is unavailable or rejected, DSG completes the turn with
+  practical PNG/WebP/RGB-JPEG resend guidance instead of terminating the client
+  session. Ambiguous/partial generations are never replayed, raw images are not
+  logged, and the UI exposes the protection and its bounded outcomes.
+- A configured Gate Genie now starts enabled by default; recovery and predictor
+  mutation remain separately gated. Server cards add evidence-based verdicts,
+  oldest-wait backlog context, stale-measurement treatment and clearer answering/
+  prompt-reading labels. The dashboard also adds a compact fleet summary, recent-
+  request filters and first-server onboarding without inventing incomparable
+  performance rankings.
+
 - Safe queued ownership handover: untouched first/unaffined requests automatically
   take a newly free DS4 server without replaying the body or resetting the client
   deadline. Existing affinity-bound sessions require an exact operator-confirmed

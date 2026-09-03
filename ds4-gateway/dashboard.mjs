@@ -69,7 +69,7 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
       void management.read().then(registry => reply(200,{enabled:true,csrf_token:csrf,...registry})).catch(() => reply(503,{error:'Worker controls unavailable'}));
       return;
     }
-    const actions = { '/api/workers/add':'add', '/api/workers/remove':'remove', '/api/workers/drain':'drain', '/api/workers/resume':'resume', '/api/workers/context':'context','/api/workers/queue-timeout':'queue-timeout','/api/workers/relocate':'relocate', '/api/workers/recover':'recover', '/api/workers/recovery-policy':'recovery-policy','/api/workers/recovery-recheck':'recovery-recheck','/api/workers/predictor':'predictor' };
+    const actions = { '/api/workers/add':'add', '/api/workers/remove':'remove', '/api/workers/drain':'drain', '/api/workers/resume':'resume', '/api/workers/context':'context','/api/workers/queue-timeout':'queue-timeout','/api/workers/protection':'protection','/api/workers/relocate':'relocate', '/api/workers/recover':'recover', '/api/workers/recovery-policy':'recovery-policy','/api/workers/recovery-recheck':'recovery-recheck','/api/workers/predictor':'predictor' };
     if (management && req.method === 'POST' && Object.hasOwn(actions,req.url)) {
       const token = Buffer.from(req.headers['x-dsg-csrf'] || ''), expected = Buffer.from(csrf);
       if (req.headers.origin !== `http://${req.headers.host}` || token.length !== expected.length || !timingSafeEqual(token,expected)) return reply(403,{error:'Same-origin worker-control session required; refresh and retry'});
@@ -230,7 +230,7 @@ export async function runDashboard(configPath, port) {
       if (!r.ok) throw new Error('Status unavailable');
       const s = await r.json();
       if (s.version !== 1 || !Array.isArray(s.workers)) throw new Error('Unsupported gateway');
-      gateway = { model: s.model, context_length: s.context_length,queue_timeout_ms:s.queue_timeout_ms,request_timeout_ms:s.request_timeout_ms, total: s.total, healthy: s.healthy, available: s.available, active: s.active, queued: s.queued, draining: s.draining, dataset:s.dataset,recovery:s.recovery,predictor:s.predictor,calibration:s.calibration,agent_api_version:s.agent_api_version,
+      gateway = { model: s.model, context_length: s.context_length,queue_timeout_ms:s.queue_timeout_ms,request_timeout_ms:s.request_timeout_ms, total: s.total, healthy: s.healthy, available: s.available, active: s.active, queued: s.queued, draining: s.draining, dataset:s.dataset,recovery:s.recovery,predictor:s.predictor,calibration:s.calibration,protections:s.protections,agent_api_version:s.agent_api_version,
         continuity:continuityForDisplay(s.continuity),
         workers: s.workers.map(w => ({ id: w.id, is_healthy: w.is_healthy, drained: w.drained, quarantine:safeQuarantine(w.quarantine), load: w.load, queued: w.queued, active_seconds: w.active_seconds, completed: w.completed, failed: w.failed, assigned_sessions: w.assigned_sessions,
           gateway_drained:w.gateway_drained,recovery_waiting:Number.isSafeInteger(w.recovery_waiting)?w.recovery_waiting:0,operator_paused:w.operator_paused,holds:Array.isArray(w.holds)?w.holds.slice(0,1024).map(h=>({id:h.id,owner_id:h.owner_id,created_at:h.created_at})):[],
@@ -255,7 +255,7 @@ export async function runDashboard(configPath, port) {
   const stopGenieTunnel=genieTunnel(config.genie);
   const server = createDashboard(snapshot, path.join(here,'ui'), managementEnabled ? {
     read:()=>workerControl(config.control_socket,'/workers'),
-    act:(action,input)=>workerControl(config.control_socket,({add:'/add-worker',remove:'/remove-worker',drain:'/drain-workers',resume:'/resume-workers',context:'/set-context-limit','queue-timeout':'/set-queue-timeout',relocate:'/relocate-queued',recover:'/recover-worker','recovery-policy':'/recovery-policy','recovery-recheck':'/recovery-recheck',predictor:'/predictor'})[action],input),
+    act:(action,input)=>workerControl(config.control_socket,({add:'/add-worker',remove:'/remove-worker',drain:'/drain-workers',resume:'/resume-workers',context:'/set-context-limit','queue-timeout':'/set-queue-timeout',protection:'/set-protection',relocate:'/relocate-queued',recover:'/recover-worker','recovery-policy':'/recovery-policy','recovery-recheck':'/recovery-recheck',predictor:'/predictor'})[action],input),
   } : null,genie,()=>analytics.snapshot());
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
   await poll(); const interval = setInterval(poll, 2000), genieTimer=setInterval(()=>genie.tick(),10000);

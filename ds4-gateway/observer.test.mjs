@@ -128,16 +128,17 @@ test('activity uses elapsed durations and explicitly marks observation gaps',()=
   const a=new Activity(),w=[{id:'one',is_healthy:true,load:0}];a.update([],w,1000);a.update([],w,3000);a.update([],w,30000);
   assert.equal(a.get('one')[0].end,9000);assert.ok(a.get('one').some(r=>r.phase==='unknown'&&r.end-r.start===21000));
 });
-test('Genie is off by default, has no tools, strips snapshot secrets and supports explicit pool use',async()=>{
+test('configured Genie is on by default, can be explicitly disabled, has no tools, strips secrets and supports pool use',async()=>{
   let sent,calls=0,url,headers;
   const g=new Genie({url:'http://127.0.0.1:9001/v1',fallback:{url:'http://127.0.0.1:9002/v1',api_key:'TEST'}},snapshot,{fetchImpl:async(u,o)=>{
     calls++;url=u;sent=JSON.parse(o.body);headers=o.headers;return Response.json({choices:[{finish_reason:'stop',message:{content:'No confirmed issue.'}}]});}});
-  await assert.rejects(g.ask(),/Enable/);g.tick();assert.equal(calls,0);
-  g.setEnabled(true);await g.ask();assert.equal(calls,1);assert.equal(sent.tools,undefined);assert.equal(headers.authorization,undefined);
+  assert.equal(g.status().enabled,true);await g.ask();assert.equal(calls,1);assert.equal(sent.tools,undefined);assert.equal(headers.authorization,undefined);
   assert.equal(g.status().reports[0].actions_taken.length,0);
   g.setSource('pool');await g.ask('Explain capacity');assert.equal(url,'http://127.0.0.1:9002/v1/chat/completions');assert.equal(headers.authorization,'Bearer TEST');
   assert.equal(headers['x-session-affinity'],undefined);assert.equal(g.status().last_served_by,'pool');
   assert.ok(!JSON.stringify(g.status()).includes('TEST'));assert.ok(!JSON.stringify(briefing({...snapshot(),secret:'PRIVATE'})).includes('PRIVATE'));g.close();
+  const disabled=new Genie({enabled:false,url:'http://127.0.0.1:9001/v1'},snapshot,{fetchImpl:async()=>{calls++;return Response.json({});}});
+  assert.equal(disabled.status().enabled,false);await assert.rejects(disabled.ask(),/Enable/);disabled.tick();assert.equal(calls,2);disabled.close();
 });
 
 test('a manual Genie question queues behind a scheduled review and exposes a stable in-memory receipt',async()=>{
@@ -158,7 +159,7 @@ test('a manual Genie question queues behind a scheduled review and exposes a sta
 });
 
 test('Genie question failures remain visible and an off Genie never silently accepts a question',async()=>{
-  const g=new Genie({url:'http://127.0.0.1:9001/v1'},snapshot,{fetchImpl:async()=>{throw new Error('private transport details');}});
+  const g=new Genie({enabled:false,url:'http://127.0.0.1:9001/v1'},snapshot,{fetchImpl:async()=>{throw new Error('private transport details');}});
   assert.throws(()=>g.submit('hello'),/off/);g.setEnabled(true);g.submit('hello');
   while(['accepted','answering'].includes(g.status().question?.state))await new Promise(r=>setImmediate(r));
   assert.equal(g.status().question.state,'failed');assert.match(g.status().question.error,/Observation failed/);

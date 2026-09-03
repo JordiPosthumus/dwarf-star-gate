@@ -61,7 +61,8 @@ The dashboard has a **DS4 service recovery** section:
 
 - **Enable/Disable automatic recovery** persists across gateway/dashboard restarts.
   It authorizes both GG requests and the known-fatal watcher. The GG commentary
-  switch is separate and still starts off after a dashboard restart.
+  switch is separate; a configured Genie now starts on unless private config
+  explicitly sets `genie.enabled` to `false`.
 - **Recover** is available only for a currently eligible worker. Operator recovery
   can be requested with automatic mode off; the same identity/evidence guards apply.
 - **Recheck only** observes an uncertain/failed issued operation and reruns its

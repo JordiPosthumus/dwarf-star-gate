@@ -44,7 +44,8 @@ async function backend(id) {
         res.writeHead(500,{'content-type':'application/json'});setTimeout(finish,p.delay??0);return;
       }
       if(p.fatal_sse) {ended=true;res.writeHead(200,{'content-type':'text/event-stream'});res.end('event: error\ndata: {"error":{"message":"cuda resumed prefill failed while extending checkpoint","type":"server_error"}}\n\ndata: [DONE]\n\n');return;}
-      if(p.client_error) {ended=true;res.writeHead(400);res.end('invalid request');return;}
+      if((b.rejectJpeg&&body.includes(Buffer.from('data:image/jpeg;base64,')))||(b.rejectNormalized&&body.includes(Buffer.from('data:image/png;base64,')))){b.jpegRejections=(b.jpegRejections??0)+1;ended=true;res.writeHead(400,{'content-type':'application/json'});res.end(JSON.stringify({message:'invalid or unsupported JPEG image',type:'invalid_request_error'}));return;}
+      if(p.client_error) {ended=true;res.writeHead(400,{'content-type':'text/plain'});res.end(typeof p.client_error==='string'?p.client_error:'invalid request');return;}
       if(typeof p.fixture_sse==='string') {ended=true;res.writeHead(200,{'content-type':'text/event-stream'});res.end(p.fixture_sse);return;}
       if(typeof p.fixture_json==='string') {ended=true;res.writeHead(200,{'content-type':'application/json'});res.end(p.fixture_json);return;}
       if (p.http_error) { ended = true; res.writeHead(503); res.end('backend-error'); return; }
@@ -81,10 +82,12 @@ async function backend(id) {
 async function rig(t, count = 2, overrides = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ds4-gateway-test-'));
   const backends = await Promise.all(Array.from({ length: count }, (_, i) => backend(`spark${i + 1}`)));
+  const {visionTranscode,...configOverrides}=overrides;
   const config = { host: '127.0.0.1', port: 0, api_key: 'none', model: 'deepseek-v4-flash', context_length: 153600,
-    state_file: path.join(dir, 'affinity.json'), health_interval_ms: 100000, nodes: backends.map(b => ({ id: b.id, url: b.url })), ...overrides };
+    state_file: path.join(dir, 'affinity.json'), health_interval_ms: 100000, nodes: backends.map(b => ({ id: b.id, url: b.url })), ...configOverrides };
   if (config.control_socket === true) config.control_socket = path.join(dir, 'control.sock');
-  const r = { config, backends, gateway: createGateway(config) };
+  const gatewayOptions=visionTranscode?{visionTranscode}:undefined;
+  const r = { config, backends, gateway: createGateway(config,gatewayOptions) };
   r.address = await r.gateway.start();
   r.request = (body = '{}', key, options = {}) => new Promise((resolve, reject) => {
     const req = http.request({ host: '127.0.0.1', port: r.address.port, path: options.path ?? '/v1/chat/completions', method: options.method ?? 'POST', agent: false,
@@ -96,7 +99,7 @@ async function rig(t, count = 2, overrides = {}) {
   });
   r.restart = async (extraNodes = []) => {
     await r.gateway.close(); r.config.nodes.push(...extraNodes);
-    r.gateway = createGateway(r.config); r.address = await r.gateway.start();
+    r.gateway = createGateway(r.config,gatewayOptions); r.address = await r.gateway.start();
   };
   t.after(async () => { await r.gateway.close(); await Promise.all(backends.map(b => b.close())); });
   return r;
@@ -951,6 +954,49 @@ test('body bytes and arbitrary DS4 fields survive exactly (vision, tools, xhigh,
   const body = '{ "model":"deepseek-v4-flash", "thinking":{"type":"disabled"}, "reasoning_effort":"xhigh", "max_tokens":153600, "unknown_future_field":{"a":1}, "messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,abcd"}}]}], "tools":[{"type":"function","function":{"name":"test","parameters":{}}}], "tool_choice":"auto", "stop":["END"] }';
   assert.equal((await r.request(body, 'raw')).status, 200);
   assert.equal(r.backends[0].records[0].body.toString(), body);
+});
+test('exact DS4 JPEG rejection is normalized once on the same server before Pi sees it',async t=>{
+  const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB','base64'),seen=[];
+  const r=await rig(t,1,{vision_compatibility:{enabled:true},visionTranscode:async jpeg=>{seen.push(jpeg);return png;}});
+  r.backends[0].rejectJpeg=true;
+  const jpeg=Buffer.from('/9j/2Q==','base64'),uri=`data:image/jpeg;base64,${jpeg.toString('base64')}`;
+  const body=JSON.stringify({model:'deepseek-v4-flash',stream:true,reasoning_effort:'xhigh',max_tokens:153600,note:uri,tools:[{type:'function',function:{name:'keep_me'}}],messages:[{role:'user',content:[{type:'image_url',image_url:{url:uri}}]}]});
+  const result=await r.request(body,'vision-rescue');
+  assert.equal(result.status,200);assert.match(result.body,/data: \[DONE\]/);assert.equal(result.headers['x-dsg-protection'],undefined);
+  assert.equal(r.backends[0].records.length,2);assert.equal(r.backends[0].jpegRejections,1);assert.deepEqual(seen,[jpeg]);
+  const original=r.backends[0].records[0].payload,retry=r.backends[0].records[1].payload;
+  assert.equal(original.messages[0].content[0].image_url.url,uri);assert.match(retry.messages[0].content[0].image_url.url,/^data:image\/png;base64,/);
+  assert.equal(retry.note,uri);assert.equal(retry.reasoning_effort,'xhigh');assert.equal(retry.max_tokens,153600);assert.deepEqual(retry.tools,original.tools);
+  assert.equal(r.gateway.stats().protections.vision_jpeg.rescued,1);assert.equal(r.gateway.stats().workers[0].completed,1);assert.equal(r.gateway.stats().workers[0].failed,0);
+});
+test('an unrepairable rejected JPEG becomes a valid in-session guidance turn, not a Pi error',async t=>{
+  const r=await rig(t,1,{vision_compatibility:{enabled:true},visionTranscode:async()=>{throw new Error('transcoder_failed');}});r.backends[0].rejectJpeg=true;
+  const uri='data:image/jpeg;base64,/9j/2Q==',body=JSON.stringify({stream:true,reasoning_effort:'xhigh',messages:[{role:'user',content:[{type:'image_url',image_url:{url:uri}}]}]});
+  const result=await r.request(body,'vision-guidance');
+  assert.equal(result.status,200);assert.equal(result.headers['x-dsg-protection'],'vision-jpeg-guidance');assert.match(result.body,/your session remains active/);assert.match(result.body,/data: \[DONE\]/);
+  assert.equal(r.backends[0].records.length,1);assert.equal(r.gateway.stats().workers[0].protected,1);assert.equal(r.gateway.stats().workers[0].completed,0);assert.equal(r.gateway.stats().workers[0].failed,0);
+  assert.equal(r.gateway.stats().protections.vision_jpeg.guided,1);assert.equal(JSON.stringify(r.gateway.stats()).includes(uri),false);
+});
+test('guidance-only mode keeps the Pi turn alive when this host has no image converter',async t=>{
+  const r=await rig(t,1,{vision_compatibility:{enabled:true,transcoder:'none'}});r.backends[0].rejectJpeg=true;
+  const result=await r.request(JSON.stringify({stream:false,messages:[{role:'user',content:[{type:'image_url',image_url:{url:'data:image/jpeg;base64,/9j/2Q=='}}]}]}),'vision-guidance-only');
+  assert.equal(result.status,200);assert.equal(result.headers['x-dsg-protection'],'vision-jpeg-guidance');assert.match(JSON.parse(result.body).choices[0].message.content,/resend it as PNG or WebP/);
+  assert.equal(r.backends[0].records.length,1);assert.equal(r.gateway.stats().protections.vision_jpeg.available,false);assert.equal(r.gateway.stats().protections.vision_jpeg.guided,1);
+});
+test('a normalized image rejected again receives guidance once; DSG never loops',async t=>{
+  const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB','base64');
+  const r=await rig(t,1,{vision_compatibility:{enabled:true},visionTranscode:async()=>png});r.backends[0].rejectJpeg=true;r.backends[0].rejectNormalized=true;
+  const result=await r.request(JSON.stringify({stream:false,messages:[{role:'user',content:[{type:'image_url',image_url:{url:'data:image/jpeg;base64,/9j/2Q=='}}]}]}),'vision-twice');
+  assert.equal(result.status,200);assert.equal(JSON.parse(result.body).choices[0].finish_reason,'stop');assert.equal(r.backends[0].records.length,2);assert.equal(r.backends[0].jpegRejections,2);
+  assert.equal(r.gateway.stats().protections.vision_jpeg.guided,1);assert.equal(r.gateway.stats().protections.vision_jpeg.rescued,0);
+});
+test('ordinary and oversized validation errors preserve exact status, headers and bytes; disabled protection never retries',async t=>{
+  const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB','base64'),r=await rig(t,1,{vision_compatibility:{enabled:true},visionTranscode:async()=>png});
+  const errorBody='x'.repeat(70*1024),ordinary=await r.request(JSON.stringify({client_error:errorBody}),'large-error');
+  assert.equal(ordinary.status,400);assert.equal(ordinary.body,errorBody);assert.equal(r.backends[0].records.length,1);
+  const disabled=await rig(t,1,{vision_compatibility:{enabled:false},visionTranscode:async()=>{throw new Error('must_not_run');}});disabled.backends[0].rejectJpeg=true;
+  const rejected=await disabled.request(JSON.stringify({messages:[{role:'user',content:[{type:'image_url',image_url:{url:'data:image/jpeg;base64,/9j/2Q=='}}]}]}),'disabled');
+  assert.equal(rejected.status,400);assert.match(rejected.body,/invalid or unsupported JPEG image/);assert.equal(disabled.backends[0].records.length,1);assert.equal(disabled.gateway.stats().protections.vision_jpeg.guided,0);
 });
 test('two simultaneous sessions execute one on each node', async t => {
   const r = await rig(t);

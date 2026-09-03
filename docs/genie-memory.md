@@ -27,7 +27,9 @@ The first release records:
 The private journal is `runtime/genie/memory/notebook.jsonl` beside the configured
 gateway state. Files are mode 0600 inside a mode-0700 directory. It survives model,
 source and dashboard changes; an existing enabled setting also survives restart.
-Genie's inference enable setting remains separate and resets off after restart.
+Genie's inference enable setting remains separate. A configured Genie starts on
+after restart unless private config explicitly sets `genie.enabled` to `false`;
+the notebook still has its own durable opt-in setting.
 The dashboard is its sole writer. Corrupt/partial journals, permission problems,
 conflicting writers and failed fsyncs stop memory writes; there is no automatic
 repair or deletion. Inspect/back up the journal before manual repair. A storage

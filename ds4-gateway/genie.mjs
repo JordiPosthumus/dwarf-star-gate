@@ -124,7 +124,9 @@ Use only supplied evidence; label hypotheses as hypotheses. Do not infer a stall
 
 export class Genie {
   constructor(config, snapshot, {fetchImpl=fetch,recover=null,predict=null,memory=null}={}) {
-    this.config=config;this.getSnapshot=snapshot;this.fetch=fetchImpl;this.enabled=false;this.busy=false;this.source='primary';
+    // A configured Genie is a core observer and starts on. Recovery, predictor
+    // mutation and other powers remain separately authorized by their own gates.
+    this.config=config;this.getSnapshot=snapshot;this.fetch=fetchImpl;this.enabled=!!config&&config.enabled!==false;this.busy=false;this.source='primary';
     this.last=null;this.reports=[];this.error=null;this.abort=null;this.closed=false;this.queuedQuestion=null;this.questionReceipt=null;
     this.recover=recover;this.predict=predict;this.memory=memory;
     for(const endpoint of [config,config?.fallback].filter(Boolean)) {

@@ -20,6 +20,7 @@ import {deadlineTimer,queueTimeout,queueTimeoutMessage} from './deadline.mjs';
 import {CALL_ID_HEADER,DISPATCH_HEADER,validCallId,unavailableReason,sessionWork,rejectionReceipt} from './continuity.mjs';
 import {JsonUsageObserver} from './json-usage.mjs';
 import {dsgReport,invalidHttp} from './report.mjs';
+import {JPEG_REJECTION_INSPECTION_BYTES,VisionProtection,isRejectedJpeg,visionGuidance} from './vision-protection.mjs';
 import net from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -64,6 +65,7 @@ export class AffinityStore {
       if (data.pool_context_length !== undefined && !validContext(data.pool_context_length)) throw new Error('Invalid saved pool context limit');
       if(data.queue_timeout_ms!==undefined){if(typeof data.queue_timeout_ms!=='number')throw new Error('Invalid saved queue allowance');queueTimeout(data.queue_timeout_ms);}
       if(data.quarantined!==undefined && (!data.quarantined || typeof data.quarantined!=='object' || Array.isArray(data.quarantined)))throw new Error('Invalid saved quarantine state');
+      if(data.protections!==undefined&&(!data.protections||typeof data.protections!=='object'||Array.isArray(data.protections)||Object.keys(data.protections).some(k=>k!=='vision_jpeg')||(data.protections.vision_jpeg!==undefined&&typeof data.protections.vision_jpeg!=='boolean')))throw new Error('Invalid saved protection state');
       for(const entry of Object.values(data.quarantined??{}))if(!entry || !['fatal_accelerator_error','accelerator_checkpoint_failure','repeated_inference_failures'].includes(entry.reason) || typeof entry.request_id!=='string' || !Number.isFinite(Date.parse(entry.at)))throw new Error('Invalid saved quarantine entry');
       for (const [key, item] of Object.entries(data.sessions)) {
         if (!/^[a-f0-9]{64}$/.test(key) || typeof item.node !== 'string') throw new Error('Invalid affinity entry');
@@ -169,7 +171,7 @@ export class UsageObserver {
   }
 }
 
-export function createGateway(config) {
+export function createGateway(config,{visionTranscode}={}) {
   if (!validContext(config.context_length)) throw new Error('Invalid configured pool context limit');
   const configuredQueueTimeout=queueTimeout(config.queue_timeout_ms);
   const initial = workerConfigs(config.nodes);
@@ -177,7 +179,7 @@ export function createGateway(config) {
   const queueTimeoutMs=()=>store.data.queue_timeout_ms??configuredQueueTimeout;
   // Like registered workers, an explicit UI setting survives process restarts.
   const contextLimit = () => store.data.pool_context_length ?? config.context_length;
-  const makeNode = n => ({ ...n, drained: store.data.drained?.[n.id] === true, quarantine:store.data.quarantined?.[n.id] ?? null, inferenceFailures:0, healthy: false, failures: 0, active: null, queue: [], completed: 0, failed: 0, observationLimited:0, probing: false, healthProbeDeferred:0 });
+  const makeNode = n => ({ ...n, drained: store.data.drained?.[n.id] === true, quarantine:store.data.quarantined?.[n.id] ?? null, inferenceFailures:0, healthy: false, failures: 0, active: null, queue: [], completed: 0, failed: 0, protected:0, observationLimited:0, probing: false, healthProbeDeferred:0 });
   let definitions;
   try { definitions = store.data.workers === undefined ? initial : workerConfigs(store.data.workers); }
   catch (e) { store.close(); throw e; }
@@ -225,11 +227,12 @@ export function createGateway(config) {
     if(shuttingDown||draining||n.recovering||n.quarantine||n.probeError||!n.modelMatches||!validContext(n.contextLength)||n.contextLength<contextLimit())throw new Error('Fresh compatible worker readiness required; hold retained');
   }});}catch(e){store.close();throw e;}
   const embeddings=new EmbeddingCollector(dataset.enabled?config.embeddings:null,(kind,row)=>dataset.record(kind,row));
+  const visionProtection=new VisionProtection(config.vision_compatibility,store,path.dirname(config.state_file),visionTranscode?{transcode:visionTranscode}:undefined);
   dataset.state.embeddings=embeddings.state.enabled;
   const agent = new http.Agent({ keepAlive: true, maxSockets: 16 });
   const accepted = new Set(['POST /v1/chat/completions', 'POST /v1/completions', 'POST /v1/responses', 'POST /v1/messages', 'GET /v1/models']);
   const auth = Buffer.from(`Bearer ${config.api_key}`);
-  const stats = () => ({ version: 1, agent_api_version:1, model: config.model, context_length: contextLimit(), queue_timeout_ms:queueTimeoutMs(), request_timeout_ms:config.request_timeout_ms??360000000, draining, dataset:{...dataset.snapshot(),embedding_collection:embeddings.snapshot()}, routing_shadow:shadow.snapshot(),recovery:recovery.status(),predictor:predictor.status(),
+  const stats = () => ({ version: 1, agent_api_version:1, model: config.model, context_length: contextLimit(), queue_timeout_ms:queueTimeoutMs(), request_timeout_ms:config.request_timeout_ms??360000000, draining, dataset:{...dataset.snapshot(),embedding_collection:embeddings.snapshot()}, routing_shadow:shadow.snapshot(),recovery:recovery.status(),predictor:predictor.status(),protections:visionProtection.status(),
     calibration:calibrationPreflight(nodes,{draining}),continuity:{schema:1,recent_rejections:rejections.slice(0,20),safe_retry_contract:true,queued_relocation:true,automatic_relocation:true,automatic_relocation_scope:'first_dsg_request_or_unaffined',patient_wait:true,
       relocation:{completed:relocation.completed,rejected:relocation.rejected,offers:relocationOffers().length,last:relocation.last},
       waiting:waiting.length,oldest_wait_seconds:waiting.length?Math.max(0,(performance.now()-waiting[0].createdMono)/1000):null,
@@ -239,7 +242,7 @@ export function createGateway(config) {
     workers: nodes.map(n => ({ id: n.id, url: n.url, is_healthy: n.healthy, drained: n.drained, quarantine:n.quarantine, inference_failures:n.inferenceFailures,
       ...agents.pauseStatus(n.id),
       gateway_drained: n.drained && !n.active && !n.queue.length, load: Number(!!n.active),
-      queued: n.queue.length, recovery_waiting:parkedFor(n).length, assigned_sessions: store.count(n.id), completed: n.completed, failed: n.failed, observation_limited:n.observationLimited,
+      queued: n.queue.length, recovery_waiting:parkedFor(n).length, assigned_sessions: store.count(n.id), completed: n.completed, failed: n.failed, protected:n.protected, observation_limited:n.observationLimited,
       oldest_queue_seconds:n.queue.length?Math.max(0,(performance.now()-n.queue[0].createdMono)/1000):null,
       oldest_queue_remaining_seconds:n.queue.length?Math.max(0,(n.queue[0].queueTimeoutMs-(performance.now()-n.queue[0].createdMono))/1000):null,
       active_seconds: n.active ? Math.round((Date.now() - n.active.dispatched) / 1000) : 0,
@@ -443,6 +446,10 @@ export function createGateway(config) {
     job.dispatchedMono=performance.now();
     observe(()=>shadow.started(node.id,job.key));
     let requestBytes=0, firstBodyByte=null;
+    const captureLimit=visionProtection.captureLimit(req.url,req.headers['content-encoding']);
+    let captureChunks=[],captureBytes=0,captureOverflow=false,captureResolved=false,resolveCapture;
+    const bodyReady=new Promise(resolve=>{resolveCapture=resolve;});
+    const finishCapture=value=>{if(captureResolved)return;captureResolved=true;resolveCapture(value);};
     const target = new URL(req.url, node.url);
     const headers = forwardHeaders(req.headers);
     delete headers[CLIENT_METADATA_HEADER]; // DSG hint only; never a DS4 setting.
@@ -456,9 +463,20 @@ export function createGateway(config) {
       job.requestedUsage=typeof body?.stream_options?.include_usage==='boolean'?body.stream_options.include_usage:null;
       embeddings.observe(body,thinking,{request_id:job.id,node:node.id,route:req.url,traffic_class:job.trafficClass});
     });
-    const observeBody = chunk => {requestBytes+=chunk.length;job.thinking.accept(chunk);};
-    const bodyEnded = () => job.thinking.finish();
-    let settled = false, response, faults,jsonUsage,responseFormat='no_response';
+    const observeBody = chunk => {
+      requestBytes+=chunk.length;job.thinking.accept(chunk);
+      if(captureLimit&&!captureOverflow){
+        if(captureBytes+chunk.length<=captureLimit){captureChunks.push(chunk);captureBytes+=chunk.length;}
+        else{captureOverflow=true;captureChunks=[];}
+      }
+    };
+    const bodyEnded = () => {
+      job.thinking.finish();
+      const body=captureLimit&&!captureOverflow?Buffer.concat(captureChunks,captureBytes):null;
+      captureChunks=[];finishCapture(body);
+    };
+    const bodyAborted=()=>{captureChunks=[];finishCapture(null);};
+    let settled = false, response, faults,jsonUsage,responseFormat='no_response',clientStatus=null;
     const progress=()=>{if(dataset.enabled && !settled && job.trafficClass!=='genie')dataset.record('progress',{request_id:job.id,node:node.id,
       active_elapsed_ms:performance.now()-job.dispatchedMono,phase:observer.phase,semantic_characters:observer.semanticCharacters,
       thinking_characters:observer.thinkingCharacters,answer_characters:observer.answerCharacters,tool_characters:observer.toolCharacters,
@@ -476,14 +494,19 @@ export function createGateway(config) {
       } else if(outcome==='complete')node.inferenceFailures=0;
       clearTimeout(job.deadline);
       clearInterval(progressTimer);
-      req.off('data', observeBody); req.off('end', bodyEnded); job.thinking.dispose();
+      req.off('data', observeBody);req.off('end',bodyEnded);req.off('aborted',bodyAborted);req.off('error',bodyAborted);job.thinking.dispose();
+      captureChunks=[];finishCapture(null);
       node.lastThinking = job.thinking.result; node.lastFinishedAt = new Date().toISOString();
-      if (outcome === 'complete') node.completed++; else if(outcome==='sse_observation_limited')node.observationLimited++;else node.failed++;
+      if (outcome === 'complete') node.completed++; else if(outcome==='vision_guidance')node.protected++;else if(outcome==='sse_observation_limited')node.observationLimited++;else node.failed++;
+      if(job.visionNormalized){
+        if(outcome==='complete'){visionProtection.record('rescued',{images:job.visionNormalized.images,node:node.id});log('vision_jpeg_rescued',{request_id:job.id,node:node.id,images:job.visionNormalized.images});}
+        else if(outcome!=='vision_guidance')visionProtection.record('failed',{reason:'normalized_retry_failed',node:node.id});
+      }
       log('request_finished', { request_id: job.id, node: node.id, session: job.key?.slice(0, 12), outcome,
         queue_ms: job.dispatched - job.created, elapsed_ms: Date.now() - job.dispatched,
         usage: observer.usage, sse_done: observer.done, requested_thinking: job.thinking.result, detail });
       dataset.record('finish',{request_id:job.id,node:node.id,outcome,queue_ms:job.dispatchedMono-job.createdMono,
-        route:req.url,response_format:responseFormat,http_status:response?.statusCode,usage_observation:usageObservation,request_stream:job.requestStream,requested_usage:job.requestedUsage,traffic_class:job.trafficClass,
+        route:req.url,response_format:responseFormat,http_status:clientStatus??response?.statusCode,usage_observation:usageObservation,request_stream:job.requestStream,requested_usage:job.requestedUsage,traffic_class:job.trafficClass,
         service_ms:performance.now()-job.dispatchedMono,total_ms:performance.now()-job.createdMono,first_body_byte_ms:firstBodyByte,
         request_bytes:requestBytes,usage:observer.usage,finish_reason:observer.finish_reason,requested_thinking:job.thinking.result,
         generation:jsonMetadata?.generation??(responseFormat==='sse'?{thinking_characters:observer.thinkingCharacters,answer_characters:observer.answerCharacters,tool_characters:observer.toolCharacters,first_semantic_ms:observer.firstSemanticAt===null?null:observer.firstSemanticAt-job.dispatchedMono}:null)});
@@ -495,8 +518,7 @@ export function createGateway(config) {
       pumpWaiting();
       if(shadow.enabled)setImmediate(evaluateWaiting);
     };
-    const upstream = http.request(target, { method: req.method, headers, agent }, up => {
-      response = up;
+    const responseHeaders=up=>{
       const outHeaders = forwardHeaders(up.headers);
       outHeaders['x-ds4-node'] = node.id;
       outHeaders['x-request-id'] = job.id;
@@ -504,44 +526,108 @@ export function createGateway(config) {
       // An upstream response can never attest that DSG did not dispatch it.
       outHeaders[DISPATCH_HEADER] = 'dispatched';
       outHeaders['x-accel-buffering'] = 'no';
-      res.writeHead(up.statusCode, outHeaders);
-      res.flushHeaders();
-      const isSSE = String(up.headers['content-type']).includes('text/event-stream');
+      return outHeaders;
+    };
+    const observeResponse=(up,isSSE)=>{
+      response=up;clientStatus=up.statusCode;
       responseFormat=isSSE?'sse':String(up.headers['content-type']).includes('application/json')?'json':'other';
-      if(responseFormat==='json'&&!up.headers['content-encoding']){jsonUsage=new JsonUsageObserver(req.url);up.on('data',chunk=>jsonUsage.accept(chunk));}
+      if(responseFormat==='json'&&!up.headers['content-encoding'])jsonUsage=new JsonUsageObserver(req.url);
       faults=new GenerationFaultObserver(isSSE);
-      if(isSSE || up.statusCode>=400)up.on('data',chunk=>faults.accept(chunk));
-      up.once('data',()=>{firstBodyByte=performance.now()-job.dispatchedMono;});
-      up.on('data',()=>{job.lastUpstreamByteMono=performance.now();});
-      if (isSSE) up.on('data', chunk => observer.accept(chunk));
-      up.on('error', e => { res.destroy(); finish(job.cancelled ? 'client_cancelled' : 'upstream_stream_error', e.code); });
-      up.on('aborted', () => { res.destroy(); finish(job.cancelled ? 'client_cancelled' : 'upstream_aborted'); });
-      up.on('end', () => finish(up.statusCode >= 400 ? 'upstream_http_error' : isSSE && observer.failed ? 'upstream_engine_error' : isSSE && !observer.done ? observer.limited ? 'sse_observation_limited' : 'incomplete_sse' : 'complete', up.statusCode));
+    };
+    const acceptResponseChunk=(up,chunk,isSSE)=>{
+      if(firstBodyByte===null)firstBodyByte=performance.now()-job.dispatchedMono;
+      job.lastUpstreamByteMono=performance.now();
+      if(jsonUsage)jsonUsage.accept(chunk);
+      if(isSSE||up.statusCode>=400)faults?.accept(chunk);
+      if(isSSE)observer.accept(chunk);
+    };
+    const sendBuffered=(up,body)=>{
+      const isSSE=String(up.headers['content-type']).includes('text/event-stream');
+      observeResponse(up,isSSE);if(body.length)acceptResponseChunk(up,body,isSSE);
+      res.writeHead(up.statusCode,responseHeaders(up));res.end(body);
+      finish(up.statusCode>=400?'upstream_http_error':isSSE&&observer.failed?'upstream_engine_error':isSSE&&!observer.done?observer.limited?'sse_observation_limited':'incomplete_sse':'complete',up.statusCode);
+    };
+    const sendGuidance=(reason,stream)=>{
+      const guide=visionGuidance({stream,model:config.model,requestId:job.id});
+      response=undefined;clientStatus=200;responseFormat=guide.format;observer.done=true;observer.finish_reason='stop';
+      const outHeaders={'content-type':guide.contentType,'content-length':guide.body.length,'cache-control':'no-store','x-ds4-node':node.id,'x-request-id':job.id,'x-ds4-affinity':job.affinity,[DISPATCH_HEADER]:'dispatched','x-accel-buffering':'no','x-dsg-protection':'vision-jpeg-guidance'};
+      firstBodyByte=performance.now()-job.dispatchedMono;
+      res.writeHead(200,outHeaders);res.end(guide.body);
+      visionProtection.record('guided',{reason,node:node.id});log('vision_jpeg_guidance',{request_id:job.id,node:node.id,reason});
+      finish('vision_guidance',reason);
+    };
+    const bufferCandidate=(up,retry)=>{
+      let chunks=[],bytes=0,passthrough=false,isSSE=false;
+      const write=chunk=>{acceptResponseChunk(up,chunk,isSSE);if(!res.write(chunk)){up.pause();res.once('drain',()=>up.resume());}};
+      const beginPassthrough=()=>{if(passthrough)return;passthrough=true;observeResponse(up,isSSE);res.writeHead(up.statusCode,responseHeaders(up));res.flushHeaders();for(const chunk of chunks)write(chunk);chunks=[];};
+      up.on('data',chunk=>{
+        if(passthrough)return write(chunk);
+        if(bytes+chunk.length<=JPEG_REJECTION_INSPECTION_BYTES){chunks.push(chunk);bytes+=chunk.length;}
+        else{beginPassthrough();write(chunk);}
+      });
+      up.on('error',e=>{res.destroy();finish(job.cancelled?'client_cancelled':'upstream_stream_error',e.code);});
+      up.on('aborted',()=>{res.destroy();finish(job.cancelled?'client_cancelled':'upstream_aborted');});
+      up.on('end',()=>void(async()=>{
+        if(passthrough){res.end();finish('upstream_http_error',up.statusCode);return;}
+        const rejected=Buffer.concat(chunks,bytes);
+        if(!isRejectedJpeg(up.statusCode,rejected)){sendBuffered(up,rejected);return;}
+        if(retry){sendGuidance('normalized_image_rejected',job.visionNormalized?.stream??job.requestStream===true);return;}
+        const original=await bodyReady;
+        if(job.cancelled){finish('client_cancelled','CLIENT_CLOSED');return;}
+        try{
+          const normalized=await visionProtection.normalize(original,req.url);
+          if(job.cancelled){finish('client_cancelled','CLIENT_CLOSED');return;}
+          job.visionNormalized={images:normalized.converted,stream:normalized.stream};firstBodyByte=null;
+          issue(normalized.body,true);
+        }catch(error){
+          let stream=job.requestStream===true;
+          if(Buffer.isBuffer(original))try{stream=JSON.parse(original.toString('utf8'))?.stream===true;}catch{}
+          sendGuidance(/^[a-z_]{1,64}$/.test(error.message)?error.message:'normalization_failed',stream);
+        }
+      }));
+    };
+    const forwardResponse=up=>{
+      const isSSE = String(up.headers['content-type']).includes('text/event-stream');
+      observeResponse(up,isSSE);
+      res.writeHead(up.statusCode,responseHeaders(up));res.flushHeaders();
+      up.on('data',chunk=>acceptResponseChunk(up,chunk,isSSE));
+      up.on('error',e=>{res.destroy();finish(job.cancelled?'client_cancelled':'upstream_stream_error',e.code);});
+      up.on('aborted',()=>{res.destroy();finish(job.cancelled?'client_cancelled':'upstream_aborted');});
+      up.on('end',()=>finish(up.statusCode>=400?'upstream_http_error':isSSE&&observer.failed?'upstream_engine_error':isSSE&&!observer.done?observer.limited?'sse_observation_limited':'incomplete_sse':'complete',up.statusCode));
       up.pipe(res);
-    });
-    job.upstream = upstream;
-    upstream.on('socket', socket => {
-      if (!socket.connecting) return;
-      const timer = setTimeout(() => upstream.destroy(Object.assign(new Error('Connect timeout'), { code: 'CONNECT_TIMEOUT' })), config.connect_timeout_ms ?? 10000);
-      socket.once('connect', () => clearTimeout(timer));
-      socket.once('close', () => clearTimeout(timer));
-    });
-    upstream.on('error', e => {
-      if (!res.headersSent) error(res, 502, 'upstream_error', 'Upstream connection failed. Execution may have started; gateway did not retry.');
-      else res.destroy();
-      finish(job.cancelled ? 'client_cancelled' : 'upstream_error', e.code);
-    });
-    // No automatic retries, including errors before response headers.
-    upstream.on('close', () => {
-      if (!settled && (job.cancelled || !response)) finish(job.cancelled ? 'client_cancelled' : 'connection_closed');
-    });
-    job.deadline = setTimeout(() => { upstream.destroy(Object.assign(new Error('100-hour request deadline'), { code: 'REQUEST_DEADLINE' })); }, config.request_timeout_ms ?? 360000000);
+    };
+    const issue=(replacement,retry=false)=>{
+      let gotResponse=false;
+      const attemptHeaders={...headers};
+      if(replacement){delete attemptHeaders['transfer-encoding'];attemptHeaders['content-length']=replacement.length;}
+      const upstream=http.request(target,{method:req.method,headers:attemptHeaders,agent},up=>{
+        gotResponse=true;
+        if(up.statusCode===400&&visionProtection.enabled&&(retry||captureLimit))bufferCandidate(up,retry);
+        else forwardResponse(up);
+      });
+      job.upstream=upstream;
+      upstream.on('socket',socket=>{
+        if(!socket.connecting)return;
+        const timer=setTimeout(()=>upstream.destroy(Object.assign(new Error('Connect timeout'),{code:'CONNECT_TIMEOUT'})),config.connect_timeout_ms??10000);
+        socket.once('connect',()=>clearTimeout(timer));socket.once('close',()=>clearTimeout(timer));
+      });
+      upstream.on('error',errorValue=>{
+        if(!res.headersSent)error(res,502,'upstream_error',retry?'Normalized image retry could not reach DS4. Execution may have started; DSG did not retry again.':'Upstream connection failed. Execution may have started; gateway did not retry.');
+        else res.destroy();
+        finish(job.cancelled?'client_cancelled':'upstream_error',errorValue.code);
+      });
+      upstream.on('close',()=>{if(!settled&&(job.cancelled||!gotResponse))finish(job.cancelled?'client_cancelled':'connection_closed');});
+      if(replacement)upstream.end(replacement);
+      return upstream;
+    };
+    const upstream=issue(null);
+    job.deadline = setTimeout(() => { job.upstream?.destroy(Object.assign(new Error('100-hour request deadline'), { code: 'REQUEST_DEADLINE' })); }, config.request_timeout_ms ?? 360000000);
     log('request_dispatched', { request_id: job.id, node: node.id, session: job.key?.slice(0, 12), affinity: job.affinity, queue_ms: job.dispatched - job.created });
     dataset.record('dispatch',{request_id:job.id,node:node.id,queue_ms:job.dispatchedMono-job.createdMono});
     progress();
     // Passive observation only while dispatched; queued uploads remain untouched.
     // The original pipe retains streaming/backpressure and exact body bytes.
-    req.on('data', observeBody); req.once('end', bodyEnded);
+    req.on('data',observeBody);req.once('end',bodyEnded);req.once('aborted',bodyAborted);req.once('error',bodyAborted);
     req.pipe(upstream);
   }
 
@@ -694,7 +780,7 @@ export function createGateway(config) {
   const registry = () => ({ model: config.model, minimum_context: contextLimit(), context_limit_control:true,
     context_limit_source:store.data.pool_context_length === undefined ? 'config' : 'saved',
     queue_timeout_ms:queueTimeoutMs(),queue_timeout_control:true,queue_timeout_source:store.data.queue_timeout_ms!==undefined?'saved':config.queue_timeout_ms!==undefined?'config':'default',
-    recovery:recovery.status(),queued_relocation:{schema:1,automatic:true,automatic_scope:'first_dsg_request_or_unaffined',offers:relocationOffers(),completed:relocation.completed,rejected:relocation.rejected},
+    recovery:recovery.status(),protections:visionProtection.status(),queued_relocation:{schema:1,automatic:true,automatic_scope:'first_dsg_request_or_unaffined',offers:relocationOffers(),completed:relocation.completed,rejected:relocation.rejected},
     workers: nodes.map(n => ({ ...definition(n), ...stats().workers.find(w => w.id === n.id),...agents.pauseStatus(n.id,{includeReason:true}) })) });
   async function freshProbe(node) {
     while (node.probing) await delay(10);
@@ -803,7 +889,7 @@ export function createGateway(config) {
     if(req.method==='GET'&&req.url==='/agent/v1/status')return json(res,200,agents.status(actor));
     if(req.method==='GET'&&req.url==='/agents')return json(res,200,agents.adminStatus());
     if (req.method === 'GET' && req.url === '/workers') return json(res, 200, registry());
-    if (req.method !== 'POST' || !['/drain-workers', '/resume-workers', '/add-worker', '/remove-worker', '/set-context-limit','/set-queue-timeout','/relocate-queued','/recovery-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/predictor','/genie-predictor','/grant-agent','/revoke-agent','/release-agent-hold','/agent/v1/drain','/agent/v1/resume','/agent/v1/receipt'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
+    if (req.method !== 'POST' || !['/drain-workers', '/resume-workers', '/add-worker', '/remove-worker', '/set-context-limit','/set-queue-timeout','/set-protection','/relocate-queued','/recovery-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/predictor','/genie-predictor','/grant-agent','/revoke-agent','/release-agent-hold','/agent/v1/drain','/agent/v1/resume','/agent/v1/receipt'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
     let body = '';
     req.on('data', chunk => { body += chunk; if (body.length > 4096) req.destroy(); });
     req.on('error', () => {});
@@ -825,6 +911,7 @@ export function createGateway(config) {
           if(['/recover-worker','/genie-recover-worker','/recovery-canary'].includes(req.url))return json(res,202,recovery.request(input,req.url==='/genie-recover-worker'?'genie':'operator',{canary:req.url==='/recovery-canary'}));
           if (req.url === '/set-context-limit') return json(res,200,await setContextLimit(input));
           if (req.url === '/set-queue-timeout') return json(res,200,setQueueTimeout(input));
+          if (req.url === '/set-protection') return json(res,200,visionProtection.set(input));
           if (req.url === '/relocate-queued') return json(res,200,relocateQueued(input));
           if (req.url === '/add-worker') return json(res, 201, await addWorker(input.worker));
           if (req.url === '/remove-worker') return json(res, 200, removeWorker(input.id));
@@ -859,7 +946,7 @@ export function createGateway(config) {
   }) : null;
   control?.on('clientError',invalidHttp);
   return {
-    server, nodes, stats, store, drainNodes, registry,recovery,relocateQueued,
+    server, nodes, stats, store, drainNodes, registry,recovery,relocateQueued,visionProtection,
     async start() {
       nodes.forEach(startTunnel);
       await new Promise((resolve, reject) => { server.once('error', reject); server.listen(config.port, config.host, resolve); });

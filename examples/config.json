@@ -10,6 +10,7 @@
   "request_timeout_ms": 360000000,
   "queue_timeout_ms": 72000000000,
   "max_queued_per_node": 128,
+  "vision_compatibility": { "enabled": true, "transcoder": "auto" },
   "nodes": [
     { "id": "spark1", "url": "http://127.0.0.1:38101", "ssh": "worker-a" },
     { "id": "spark2", "url": "http://127.0.0.1:38102", "ssh": "worker-b" }
