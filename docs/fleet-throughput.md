@@ -1,8 +1,14 @@
 # Fleet throughput counters
 
-One compact block below the gateway-status row. These are measured **completed
-request totals**, not predictions or instantaneous GPU utilization. No Genie
-inference, extra model calls, new persistence or model-server changes are needed.
+One compact tile in the main gateway-status row. It replaces the former pool-
+context headline: that setting remains available under **Manage DS4 servers**,
+where it can be inspected or changed. The tile leads with last-hour output and
+puts the other three values on one dense line; full definitions and evidence
+coverage are available on hover or keyboard focus.
+
+These are measured **completed request totals**, not predictions or instantaneous
+GPU utilization. No Genie inference, extra model calls, new persistence or model-
+server changes are needed.
 
 | Counter | Definition |
 | --- | --- |
@@ -21,7 +27,7 @@ using the normal pool; direct clients and a dedicated Genie endpoint are absent.
 
 ## Coverage and boundaries
 
-The block reuses the dashboard's read-only, bounded reader of the latest two daily
+The tile reuses the dashboard's read-only, bounded reader of the latest two daily
 routing-evidence files. **Evidence collection must already be enabled.** It never
 enables collection automatically or changes any private configuration. Disabling
 collection, unreadable files and an incomplete reload produce dashes with a status,

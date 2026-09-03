@@ -48,6 +48,6 @@ test('display exposes coverage and partial history; unavailable/disabled readers
   const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
   const nodes=new Map(),get=id=>{if(!nodes.has(id))nodes.set(id,{});return nodes.get(id);},context=vm.createContext({document:{getElementById:get}});vm.runInContext(source,context);
   const f=new FleetThroughput();f.accept(finish('a',now));f.accept(finish('b',now,null));context.sample={status:'ready',partial_history:true,throughput:f.snapshot(now)};
-  vm.runInContext('renderThroughput(sample)',context);assert.equal(get('throughput-output').textContent,'100');assert.match(get('throughput-output-note').textContent,/1 \/ 2/);assert.match(get('throughput-note').textContent,/undercount/);
+  vm.runInContext('renderThroughput(sample)',context);assert.equal(get('throughput-output').textContent,'100');assert.equal(get('throughput-peak').textContent,'100');assert.equal(get('throughput-requests').textContent,'2');assert.equal(get('throughput-cache-rate').textContent,'80%');assert.match(get('throughput-summary').title,/1 \/ 2/);assert.match(get('throughput-summary').title,/undercount/);
   for(const status of ['disabled','unavailable','catching_up','rescanning']){context.sample.status=status;vm.runInContext('renderThroughput(sample)',context);assert.equal(get('throughput-output').textContent,'—');}
 });

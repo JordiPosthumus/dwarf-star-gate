@@ -35,11 +35,10 @@ try {
   assert.equal(await page.locator('#throughput-output').innerText(),'74.8k');
   assert.equal(await page.locator('#throughput-peak').innerText(),'153k');
   assert.equal(await page.locator('#throughput-requests').innerText(),'12');
-  assert.equal(await page.locator('#throughput-cached').innerText(),'594k');
-  assert.match(await page.locator('#throughput-cache-note').innerText(),/90%/);
-  assert.match(await page.locator('#throughput-output-note').innerText(),/11 \/ 12/);
-  assert.equal(await page.locator('#throughput-status').innerText(),'Synthetic example');
-  assert.match(await page.locator('#throughput-note').innerText(),/credited when requests finish/);
+  assert.equal(await page.locator('#throughput-cache-rate').innerText(),'90%');
+  assert.match(await page.locator('#throughput-detail').innerText(),/153k peak · 12 done · 90% reused/);
+  assert.match(await page.locator('#throughput-summary').getAttribute('title'),/11 \/ 12/);
+  assert.match(await page.locator('#throughput-summary').getAttribute('title'),/Counts arrive when requests finish/);
   assert.ok(await page.locator('.gate-art').evaluate(img=>img.complete&&img.naturalWidth>0));
   const output=path.join(projectRoot,'docs/images');await fs.mkdir(output,{recursive:true});
   await page.locator('#worker-management summary').click();
@@ -93,7 +92,7 @@ try {
   assert.equal((await trainResponse).ok(),false,'The demo must refuse real training');
   await page.setViewportSize({width:390,height:844});
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),'Mobile page must not overflow horizontally');
-  await page.locator('#fleet-throughput').screenshot({path:path.join(output,'fleet-throughput-mobile.png'),animations:'disabled'});
+  await page.locator('.overview').screenshot({path:path.join(output,'overview-mobile.png'),animations:'disabled'});
   // Separate synthetic scenario: exercise persistent notice UX and safe reset.
   // No live configuration, telemetry or model server is read by either demo.
   learningServer=createDemoServer({learningMilestone:true});
@@ -134,7 +133,7 @@ try {
   const holdPoll=await page.locator('#updated').innerText();await page.waitForFunction(previous=>document.getElementById('updated').textContent!==previous,holdPoll,{timeout:10000});
   assert.match(await held.innerText(),/Held by test-agent/);assert.match(await held.innerText(),/Operator pause/);
   assert.deepEqual(errors,[]);
-  console.log('Saved three synthetic screenshots; verified polling, analytics, mobile, reset/milestones, escaped agent holds and Keep paused UX.');
+  console.log('Saved five synthetic dashboard screenshots; verified polling, analytics, mobile, reset/milestones, escaped agent holds and Keep paused UX.');
 } finally {
   await browser?.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));
   if(learningServer){learningServer.closeAllConnections();await new Promise(resolve=>learningServer.close(resolve));}

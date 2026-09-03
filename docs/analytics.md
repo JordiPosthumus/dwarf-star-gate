@@ -142,7 +142,7 @@ Genie may explain evidence and later request bounded training jobs; deterministi
 evaluation/promotion and routing guards remain independent of his commentary.
 ## Fleet counters versus prediction analytics
 
-The separate [Fleet throughput block](fleet-throughput.md) near the top of the
-page shows hourly output, peak hourly output, completed requests and prompt-token
-reuse. It reads saved usage, not XGB forecasts; it is independent of the model and
-worker filters in the prediction panel below.
+The compact [hourly throughput tile](fleet-throughput.md) in the main status row
+shows output with peak-hour, completed-request and prompt-reuse context beneath it.
+It reads saved usage, not XGB forecasts; it is independent of the model and worker
+filters in the prediction panel below.

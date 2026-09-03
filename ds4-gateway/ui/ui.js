@@ -55,16 +55,15 @@ let analyticsState=null,analyticsLoading=false,analyticsWorkerSignature='',analy
 function renderThroughput(a){
   const t=a?.throughput,ready=a?.status==='ready'&&t?.schema===1;
   const compact=n=>!Number.isFinite(n)?'—':n>=1000000?fmt(n/1000000)+'M':n>=10000?fmt(n/1000)+'k':fmt(n);
-  for(const [id,value] of [['output',t?.output_tokens_1h],['peak',t?.peak_output_tokens_1h],['requests',t?.completed_1h],['cached',t?.cached_tokens_1h]]){
-    const el=$('throughput-'+id);el.textContent=ready?compact(value):'—';el.title=ready?fmt(value):'Waiting for readable usage evidence';
-  }
   const partial=!!(a?.partial_history||a?.malformed_lines||t?.evicted_records||t?.rejected_records);
-  $('throughput-status').textContent=a?.demo?'Synthetic example':!ready?({disabled:'Evidence collection is off',catching_up:'Loading saved usage…',rescanning:'Rebuilding saved usage…',waiting:'No saved usage yet',unavailable:'Usage unavailable'})[a?.status]||'Waiting for saved usage':partial?'Observed totals · partial history':'Observed completions · last 60m';
-  $('throughput-output-note').textContent=ready?`Usage: ${fmt(t.output_known_1h)} / ${fmt(t.completed_1h)} completions`:'Reported output tokens';
-  $('throughput-peak-note').textContent=ready?`Observed 24h · usage ${fmt(t.output_known_24h)} / ${fmt(t.completed_24h)}`:'Observed in the last 24h';
-  $('throughput-requests-note').textContent=ready?`${fmt(t.excluded_terminal_1h)} failed/cancelled excluded`:'Requests, not sessions';
-  $('throughput-cache-note').textContent=ready?`${t.cache_reuse_pct_1h===null?'Reuse % unknown':fmt(t.cache_reuse_pct_1h)+'% of reported prompt tokens'} · ${fmt(t.cache_known_1h)} / ${fmt(t.completed_1h)} reports`:'Last hour · token-weighted reuse';
-  $('throughput-note').textContent='Tokens are credited when requests finish, not when generated. Missing usage and unfinished work are omitted; this is not live GPU throughput.'+(partial?' Bounded history or evidence gaps can undercount.':'')+' DSG traffic only; hover for definitions.';
+  $('throughput-output').textContent=ready?compact(t.output_tokens_1h):'—';
+  $('throughput-peak').textContent=ready?compact(t.peak_output_tokens_1h):'—';
+  $('throughput-requests').textContent=ready?compact(t.completed_1h):'—';
+  $('throughput-cache-rate').textContent=ready&&t.cache_reuse_pct_1h!==null?fmt(t.cache_reuse_pct_1h)+'%':'—';
+  const state=({disabled:'collection off',catching_up:'loading usage',rescanning:'rebuilding usage',waiting:'no saved usage',unavailable:'usage unavailable'})[a?.status]||'waiting for usage';
+  $('throughput-detail').title=ready?'Peak rolling hour · completed requests · token-weighted prompt reuse':state;
+  $('throughput-summary').title=ready?`DSG completed output, last 60m: ${fmt(t.output_tokens_1h)} tokens (${fmt(t.output_known_1h)} / ${fmt(t.completed_1h)} completions reported usage). Peak rolling hour observed in the last 24h: ${fmt(t.peak_output_tokens_1h)} (${fmt(t.output_known_24h)} / ${fmt(t.completed_24h)} reported usage). Successful requests completed in the last 60m: ${fmt(t.completed_1h)}; ${fmt(t.excluded_terminal_1h)} failed/cancelled excluded. Prompt tokens reused: ${fmt(t.cached_tokens_1h)} (${t.cache_reuse_pct_1h===null?'percentage unknown':fmt(t.cache_reuse_pct_1h)+'% of reported prompt tokens'}; ${fmt(t.cache_known_1h)} / ${fmt(t.completed_1h)} reports). Counts arrive when requests finish; this is not live GPU throughput.${partial?' Partial history or evidence gaps can undercount.':''}`:state;
+  $('throughput-summary').setAttribute?.('aria-label',ready?`Output last hour ${fmt(t.output_tokens_1h)} tokens; peak rolling hour ${fmt(t.peak_output_tokens_1h)}; ${fmt(t.completed_1h)} completed requests; ${t.cache_reuse_pct_1h===null?'prompt reuse unknown':fmt(t.cache_reuse_pct_1h)+' percent prompt reuse'}.`:state);
 }
 function renderAnalytics() {
   const a=analyticsState,worker=$('analytics-worker'),metric=$('analytics-metric').value;
@@ -228,7 +227,7 @@ function render(s) {
   $('warning').hidden = !s.gateway_error && !s.telemetry_error;
   $('warning').textContent = [s.gateway_error,s.telemetry_error].filter(Boolean).join(' · ');
   $('model').textContent = s.demo ? `${g?.model || 'DS4'} · illustrative data · no real DS4 servers connected` : `${g?.model || 'DS4'} · one active gateway request per DS4 server · session-affinity routing`;
-  $('available').textContent = g ? `${g.available} / ${g.total}` : '—'; $('active').textContent = fmt(g?.active); $('queued').textContent = fmt(g?.queued); $('context').textContent = g ? `${fmt(g.context_length / 1024)} Ki tokens` : '—';
+  $('available').textContent = g ? `${g.available} / ${g.total}` : '—'; $('active').textContent = fmt(g?.active); $('queued').textContent = fmt(g?.queued);
   const cap=capacity(g,stale),scales=Object.fromEntries(['decode','prefill'].map(kind=>[kind,Math.ceil(Math.max(1,...s.devices.flatMap(d=>d.series.filter(p=>p.kind===kind && now-p.time<900000).map(p=>p.tps))))]));
   $('capacity-value').textContent=cap?.percent!=null?`${cap.percent}% occupied`:'Unknown';
   $('capacity-note').textContent=cap?`${cap.occupied} / ${cap.eligible} eligible slots occupied · ${cap.free} immediately free · ${fmt(g.queued)} waiting`:'Gateway status is unavailable';

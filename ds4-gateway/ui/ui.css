@@ -9,10 +9,5 @@
 .learning-milestone { border-top: 1px solid var(--line); padding: 1rem 0; overflow-wrap: anywhere; }
 .learning-milestone p { margin: .4rem 0 .8rem; }
 .learning-milestone strong { color: var(--accent); }
-/* Saved usage counters, separate from live serving-slot occupancy. */
-.throughput-panel{margin:14px 0 18px;padding:18px 0 12px;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel)}
-.throughput-heading{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:0 26px 15px}.throughput-heading h2{font-size:13px;margin:0}.throughput-heading>span{font-size:10px}
-.throughput-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr))}.throughput-grid>div{padding:0 26px;border-right:1px solid var(--line);min-width:0}.throughput-grid>div:last-child{border:0}
-.throughput-grid strong{display:block;font-size:27px;letter-spacing:-1px;font-variant-numeric:tabular-nums;margin:8px 0 5px;color:var(--accent)}.throughput-grid>div:nth-child(2) strong{color:var(--orange)}.throughput-grid small{display:block;color:var(--muted);font-size:10px;line-height:1.5}.throughput-panel>p{font-size:10px;padding:0 26px;margin:14px 0 0}
-@media(max-width:750px){.throughput-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:20px 0}.throughput-grid>div:nth-child(2){border:0}.throughput-heading{align-items:flex-start;flex-direction:column}.throughput-grid>div{padding:0 18px}.throughput-heading,.throughput-panel>p{padding-left:18px;padding-right:18px}}
-@media(max-width:380px){.throughput-grid{grid-template-columns:minmax(0,1fr)}.throughput-grid>div{border:0}}
+/* Dense completed-work counter in the main overview row. */
+.overview>div{min-width:0}.throughput-summary:focus-visible{outline:2px solid var(--accent);outline-offset:-7px;border-radius:12px}.throughput-summary strong{color:var(--accent)}.throughput-summary small{display:block;margin-top:4px;color:var(--muted);font-size:10px;line-height:1.35;white-space:normal}.throughput-summary #throughput-peak{color:var(--orange)}
