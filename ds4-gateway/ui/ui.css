@@ -2,3 +2,4 @@
 .predictor-panel { border-top: 1px solid var(--line, #303631); margin-top: 1.5rem; padding-top: 1rem; }
 .predictor-panel .genie-controls { flex-wrap: wrap; }
 .predictor-panel th,.predictor-panel td { white-space: normal; min-width: 8rem; }
+.analytics-controls [hidden] { display: none !important; }
