@@ -13,6 +13,17 @@ helping you manage a home inference fleet with less manual effort and make bette
 use of your hardware. See which devices are busy or idle, where requests are
 waiting, and how much time is spent processing prompts and generating responses.
 
+**Gate Genie is DSG's optional local fleet assistant.** Point him at a dedicated
+OpenAI-compatible DS4 server—an excellent role for older or slower hardware that
+can still run a compatible model—or enable DSG pool fallback. If that dedicated
+endpoint fails, he can borrow one available inference slot from the fleet and
+keep watching the show. He reviews fleet evidence, explains problems in the
+dashboard, remembers evidence-linked operational notes, and can request only the
+bounded recovery actions you explicitly enable. Pool fallback consumes ordinary
+inference capacity and never grants unrestricted machine access. See
+[Genie setup and boundaries](docs/observer.md), [memory](docs/genie-memory.md),
+and [service recovery](docs/worker-recovery.md).
+
 **DSG also gives your local agents an easy control surface for managing the
 gateway.** Its [scoped API and CLI](docs/agent-api.md) let authorized agents
 inspect the fleet, temporarily take a server out of routing, and return it when
