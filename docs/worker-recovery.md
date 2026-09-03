@@ -201,3 +201,6 @@ current-invocation fatal signature matching and no-repeat guard.
 These tests use synthetic services. A live canary checks actual service restart,
 unchanged profile/context and real generation/cache reuse; it does **not** inject
 a CUDA fault or establish that the underlying accelerator defect is fixed.
+
+See the [two-Spark live canary record](recovery-canary-2026-09-03.md) for measured
+cold/warm results, preserved settings, policy-persistence checks and limitations.

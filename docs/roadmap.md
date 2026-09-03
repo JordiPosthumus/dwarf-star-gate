@@ -17,6 +17,11 @@ This does not fix the CUDA defect or implement launchd/container recovery. The
 next reliability/data priority is request-to-engine attribution with backend
 process epochs, followed by the embedding collection slice already specified below.
 
+**Live deployment checkpoint:** the [two-Spark canary record](recovery-canary-2026-09-03.md)
+documents the maintainer's completed cutover, real cache checks and explicit
+automatic-recovery opt-in. That deployment receipt does not enable recovery on
+another installation or promote any of the prediction/embedding work below.
+
 | Order | Work | Exit evidence |
 | --- | --- | --- |
 | 0 | Promote protocol/quarantine maintenance fixes through a controlled cutover | Regression suites pass; versioned backup; real API-format smoke checks; unchanged fleet/context; explicit source-versus-running release record |
