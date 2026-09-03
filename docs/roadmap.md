@@ -91,6 +91,16 @@ per-worker queues, not a globally stealable queue. Broader automatic overflow mu
 first prove that predicted waiting saved exceeds cache-acquisition cost with
 adequate margin and hysteresis.
 
+**Scheduling explainability implemented:** bounded relocation diagnostics now
+name why each live queue head is offered, waiting for the Genie threshold, kept at
+home by same-session ownership, or blocked by destination/readiness state. These
+reason codes are status evidence for the operator and Genie, not new routing
+authority. A validated-evidence-only remaining-time tie-break comparator now runs
+in shadow for equal deterministic loads and abstains if any tied candidate lacks
+fresh deployed evidence. It records `would_keep`/`would_change` without changing
+the selected worker. Next, evaluate coverage and realized queue outcomes before
+considering any policy change.
+
 **Maintenance decisions:** the README explicitly has no open-source license grant;
 add license text only if the maintainer chooses it. Keep public screenshots synthetic
 and use the [current reproducible demo](screenshots.md), including collection/Genie UI.

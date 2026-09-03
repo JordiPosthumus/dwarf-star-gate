@@ -3,7 +3,7 @@ import {test} from 'node:test';
 import {randomUUID} from 'node:crypto';
 import {createContinuityFetch,registerPiContinuity} from './continuity-client.mjs';
 import {evidence} from './dataset.mjs';
-import {continuityForDisplay,continuityDoorForDisplay} from './continuity.mjs';
+import {continuityForDisplay,continuityDoorForDisplay,fallbackTieBreakForDisplay} from './continuity.mjs';
 import {dsgReport,invalidHttp} from './report.mjs';
 
 test('DSG error labeling is idempotent and malformed HTTP receives an identified error',()=>{
@@ -68,6 +68,17 @@ test('patient-wait evidence is bounded metadata and keeps the pre-admission dela
 test('dashboard continuity projection is bounded and excludes private extra fields',()=>{
   const s=continuityForDisplay({schema:1,safe_retry_contract:true,patient_wait:true,waiting:2,oldest_wait_seconds:5,waiting_reasons:{worker_unhealthy:2,SECRET:999},recent_rejections:[{request_id:randomUUID(),time:new Date().toISOString(),reason:'same_session_queued',dispatch_state:'not_dispatched',node:'one',session:'SECRET',body:'SECRET'},{request_id:'INVALID'},{request_id:randomUUID(),time:new Date().toISOString(),reason:'same_session_queued',dispatch_state:'dispatched'}]});
   assert.equal(s.recent_rejections.length,1);assert.equal(s.waiting,2);assert.deepEqual(s.waiting_reasons,{worker_unhealthy:2});assert.ok(!JSON.stringify(s).includes('SECRET'));
+});
+test('relocation diagnostics projection retains allowlisted reasons and drops private fields',()=>{
+  const request_id=randomUUID(),s=continuityForDisplay({schema:1,relocation:{diagnostics:{schema:1,gateway_reason:null,idle_destinations:['two','BAD ID'],sources:[
+    {source:'one',request_id,affinity:'existing',waiting_seconds:12,reason:'same_session_active',destination:null,conflicting_worker:'one',automatic_reason:'same_session_active',genie_reason:'same_session_active',session:'PRIVATE',body:'PRIVATE'},
+    {source:'one',request_id:randomUUID(),affinity:'existing',waiting_seconds:12,reason:'PRIVATE'}],secret:'PRIVATE'}}});
+  assert.deepEqual(s.relocation.diagnostics.idle_destinations,['two']);assert.equal(s.relocation.diagnostics.sources.length,1);
+  assert.equal(s.relocation.diagnostics.sources[0].reason,'same_session_active');assert.ok(!JSON.stringify(s).includes('PRIVATE'));
+});
+test('fallback tie-break projection is bounded shadow evidence, never routing authority',()=>{
+  const request_id=randomUUID(),s=fallbackTieBreakForDisplay({schema:1,mode:'shadow',policy:'validated_remaining_tiebreak',evaluations:3,comparable:1,would_change:1,insufficient_evidence:2,errors:0,secret:'PRIVATE',last:{request_id,verdict:'would_change',selected:'one',alternative:'two',minimum_load:1,prompt:'PRIVATE',candidates:[{node:'one',load:1,status:'supported',predicted_wait_seconds:20,evidence:['active_remaining'],session:'PRIVATE'}]}});
+  assert.equal(s.last.verdict,'would_change');assert.equal(s.last.candidates.length,1);assert.ok(!JSON.stringify(s).includes('PRIVATE'));
 });
 test('dashboard continuity-door projection exposes state but not ports or arbitrary reasons',()=>{
   const s=continuityDoorForDisplay({service:'dwarf-star-gate-continuity-door',version:1,holding:true,hold_kind:'manual',reason:'PRIVATE',since:new Date().toISOString(),held:2,active:3,core_ready:false,core_failures:4,body_spooling:false,replay:false,core_port:30001,secret:'PRIVATE'});

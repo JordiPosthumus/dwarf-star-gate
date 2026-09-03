@@ -9,7 +9,7 @@ import {validCallId,rejectionReasons} from './continuity.mjs';
 
 const number = x => Number.isFinite(x) && x >= 0 ? x : null;
 const id = x => typeof x === 'string' && /^[\w-]{1,64}$/.test(x) ? x : null;
-const kinds = new Set(['decision','dispatch','finish','queued_cancel','queue_timeout','unavailable_before_dispatch','queue_relocation','routing_shadow','request_features','embedding','progress','model_prediction','rejection','waiting']);
+const kinds = new Set(['decision','dispatch','finish','queued_cancel','queue_timeout','unavailable_before_dispatch','queue_relocation','routing_shadow','routing_tiebreak_shadow','request_features','embedding','progress','model_prediction','rejection','waiting']);
 const timingKeys=['worker_idle_ms','active_elapsed_ms','upstream_byte_age_ms','session_last_used_ms','session_last_finished_ms','intervening_requests','prior_prompt_tokens','prior_cached_tokens','observation_epoch'];
 export function evidence(kind, raw) {
   if (!kinds.has(kind)) return null;
@@ -85,7 +85,15 @@ export function evidence(kind, raw) {
     row.source=id(raw.source);row.alternative=id(raw.alternative);row.session_busy=raw.session_busy===true;
     row.waiting_ms=number(raw.waiting_ms);row.saving_ms=number(raw.saving_ms);
   }
-  if (Array.isArray(raw.candidates)) {
+  if(kind==='routing_tiebreak_shadow'){
+    row.shadow_schema=1;row.mode='shadow';row.policy=raw.policy==='validated_remaining_tiebreak'?raw.policy:null;
+    row.verdict=['would_change','would_keep','insufficient_evidence','not_tied','free_tie'].includes(raw.verdict)?raw.verdict:null;
+    row.selected=id(raw.selected);row.alternative=id(raw.alternative);row.minimum_load=number(raw.minimum_load);
+    const statuses=new Set(['supported','immediately_free','missing_active_remaining','missing_queued_service','forecast_unavailable']);
+    row.candidate_costs=(Array.isArray(raw.candidates)?raw.candidates:[]).slice(0,128).flatMap(c=>id(c?.node)&&statuses.has(c.status)?[{node:id(c.node),load:number(c.load),status:c.status,predicted_wait_seconds:number(c.predicted_wait_seconds),evidence:(Array.isArray(c.evidence)?c.evidence:[]).filter(v=>['active_remaining','queued_service'].includes(v)).slice(0,32)}]:[]);
+    if(!row.policy||!row.verdict||!row.selected)return null;
+  }
+  if (kind!=='routing_tiebreak_shadow'&&Array.isArray(raw.candidates)) {
     row.candidates=raw.candidates.slice(0,128).map(w=>({node:id(w.node), healthy:w.healthy===true, paused:w.paused===true,
       active:number(w.active), queued:number(w.queued), assigned_sessions:number(w.assigned_sessions), context_length:number(w.context_length),
       profile:/^[a-f0-9]{64}$/.test(w.profile)?w.profile:null,

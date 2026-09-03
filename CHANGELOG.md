@@ -1,5 +1,13 @@
 # Changelog
 
+## Explainable handovers and passive remaining-time evidence
+
+- Queued-handover status now states the exact safety reason when no relocation is
+  offered, without exposing prompts, request bodies or raw session identifiers.
+- A fail-closed shadow comparator records whether fresh remaining-time evidence
+  would change the deterministic equal-load fallback. It cannot affect routing;
+  missing, stale or experimental forecasts produce an explicit abstention.
+
 ## Queued-work shadow evidence
 
 - Opt-in per-worker idle/active clocks, session recency and intervening requests.

@@ -104,6 +104,15 @@ function cacheCostText(result) {
     `${fmt(p.estimated_ms/1000)} s (${fmt(p.samples)} samples${p.status==='no_cache_payload'?', no payload to load':Number.isFinite(p.observed_min_ms)?`, observed ${fmt(p.observed_min_ms/1000)}–${fmt(p.observed_max_ms/1000)} s`:''})`;
   return `Disk payload load: ${part(result.disk_load)}. Prefill: ${part(result.prefill)}. These are component estimates, not total acquisition or completion time. Prefix search, later engine synchronization and remote transfer are unmeasured. Cache existence is not verified; observed ranges are not confidence intervals.`;
 }
+function relocationReason(row) {
+  const worker=row.conflicting_worker?` on ${row.conflicting_worker}`:'';
+  return ({gateway_stopping:'gateway is stopping',gateway_draining:'gateway is draining',source_not_active:'source became idle and should dispatch normally',cancelled_queue_head:'a cancelled queue head is still settling',already_dispatched:'request has already reached DS4',same_session_active:`the same session is still active${worker}`,same_session_queued:`the same session has earlier queued work${worker}`,same_session_waiting:'the same session has an earlier recovery wait',no_idle_destination:'no other DS4 server is immediately free',durable_home_mismatch:'durable session ownership changed',offer_ready:'an exact handover offer is ready'})[row.reason]||`blocked by ${row.reason}`;
+}
+function relocationEmpty(diagnostics) {
+  const rows=diagnostics?.sources??[];
+  if(!rows.length)return 'No continuity-safe queued handover is currently available.';
+  return `No safe handover right now — ${rows.slice(0,4).map(row=>`${row.source}: ${relocationReason(row)}`).join(' · ')}${rows.length>4?' · more queued work omitted':''}.`;
+}
 function timeline(d,now) {
   const rows=d.activity||[],start=now-900000;
   return `<svg class="activity-timeline" viewBox="0 0 100 10" preserveAspectRatio="none" role="img" aria-label="Observed activity over the last fifteen minutes; blank sections are unknown">${rows.map(r=>{
@@ -341,7 +350,7 @@ async function loadWorkers() {
       button.type='button';button.className='button';button.dataset.relocation=JSON.stringify(offer);button.textContent='Move queued request';
       button.disabled=workerBusy;button.title='The request has not reached DS4. Preserve its client socket and deadline, but accept that the destination may not have its warm cache.';
       p.append(button);return p;
-    }):[document.createTextNode('No continuity-safe queued handover is currently available.')]));
+    }):[document.createTextNode(relocationEmpty(data.queued_relocation?.diagnostics))]));
   } catch(e) { workerControlsReady=false;workerMessage(e.message,true);$('worker-rows').querySelectorAll('button').forEach(b=>{b.disabled=true;});$('recovery-status').textContent='Recovery controls unavailable; last state is stale';$('recovery-toggle').disabled=true; }
   finally { workersLoading=false;refreshRoutingControls(); }
 }

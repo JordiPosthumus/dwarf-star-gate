@@ -21,6 +21,7 @@ import {CALL_ID_HEADER,DISPATCH_HEADER,validCallId,unavailableReason,sessionWork
 import {JsonUsageObserver} from './json-usage.mjs';
 import {dsgReport,invalidHttp} from './report.mjs';
 import {JPEG_REJECTION_INSPECTION_BYTES,VisionProtection,isRejectedJpeg,visionGuidance} from './vision-protection.mjs';
+import {compareFallbackTieBreak} from './fallback-tiebreak.mjs';
 import net from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -196,6 +197,7 @@ export function createGateway(config,{visionTranscode}={}) {
   const waiting=[];
   let sequence=0;
   const relocation={completed:0,rejected:0,last:null};
+  const fallbackTieBreak={schema:1,mode:'shadow',policy:'validated_remaining_tiebreak',evaluations:0,comparable:0,would_change:0,insufficient_evidence:0,errors:0,last:null};
   const queueBound=()=>config.max_queued_per_node??128;
   const waitingBound=()=>Math.max(1,nodes.length)*queueBound();
   const parkedFor=n=>waiting.filter(j=>j.fixedHome===n);
@@ -233,9 +235,9 @@ export function createGateway(config,{visionTranscode}={}) {
   const agent = new http.Agent({ keepAlive: true, maxSockets: 16 });
   const accepted = new Set(['POST /v1/chat/completions', 'POST /v1/completions', 'POST /v1/responses', 'POST /v1/messages', 'GET /v1/models']);
   const auth = Buffer.from(`Bearer ${config.api_key}`);
-  const stats = () => ({ version: 1, agent_api_version:1, model: config.model, context_length: contextLimit(), queue_timeout_ms:queueTimeoutMs(), request_timeout_ms:config.request_timeout_ms??360000000, draining,startup:{...startup}, dataset:{...dataset.snapshot(),embedding_collection:embeddings.snapshot()}, routing_shadow:shadow.snapshot(),recovery:recovery.status(),predictor:predictor.status(),protections:visionProtection.status(),
+  const stats = () => ({ version: 1, agent_api_version:1, model: config.model, context_length: contextLimit(), queue_timeout_ms:queueTimeoutMs(), request_timeout_ms:config.request_timeout_ms??360000000, draining,startup:{...startup}, dataset:{...dataset.snapshot(),embedding_collection:embeddings.snapshot()}, routing_shadow:shadow.snapshot(),fallback_tiebreak_shadow:{...fallbackTieBreak},recovery:recovery.status(),predictor:predictor.status(),protections:visionProtection.status(),
     calibration:calibrationPreflight(nodes,{draining}),continuity:{schema:1,recent_rejections:rejections.slice(0,20),safe_retry_contract:true,queued_relocation:true,automatic_relocation:true,automatic_relocation_scope:'first_dsg_request_or_unaffined',patient_wait:true,
-      relocation:{completed:relocation.completed,rejected:relocation.rejected,offers:relocationOffers().length,genie_enabled:config.genie_load_balancing!==false,genie_offers:genieRelocationOffers(),last:relocation.last},
+      relocation:{completed:relocation.completed,rejected:relocation.rejected,offers:relocationOffers().length,genie_enabled:config.genie_load_balancing!==false,genie_offers:genieRelocationOffers(),diagnostics:relocationDiagnostics(),last:relocation.last},
       waiting:waiting.length,oldest_wait_seconds:waiting.length?Math.max(0,(performance.now()-waiting[0].createdMono)/1000):null,
       waiting_reasons:Object.fromEntries([...new Set(waiting.map(j=>j.waitReason))].map(reason=>[reason,waiting.filter(j=>j.waitReason===reason).length]))},
     total: nodes.length, healthy: nodes.filter(n => n.healthy).length, available: nodes.filter(n => n.healthy && !n.drained).length,
@@ -290,16 +292,44 @@ export function createGateway(config,{visionTranscode}={}) {
     return null;
   }
   const relocationEvidence=(job,source,destination)=>digest(['queue-relocation-v1',job.id,source.id,destination.id,job.sequence,job.created].join('\0'));
+  function relocationDecision(source,idle) {
+    const job=source.queue.find(candidate=>!candidate.cancelled);
+    if(!job)return null;
+    let reason='offer_ready',conflict=null;
+    if(!source.active)reason='source_not_active';
+    else if(source.queue[0]!==job)reason='cancelled_queue_head';
+    else if(job.upstream||job.dispatched)reason='already_dispatched';
+    else if((conflict=conflictingSessionWork(job)))reason=conflict.reason;
+    const destination=idle.find(node=>node!==source);
+    if(reason==='offer_ready'&&!destination)reason='no_idle_destination';
+    const home=job.key&&store.get(job.key);
+    if(reason==='offer_ready'&&job.key&&home?.node!==source.id)reason='durable_home_mismatch';
+    return {source,job,destination:reason==='offer_ready'?destination:null,reason,conflict};
+  }
+  function relocationDiagnostics() {
+    const idle=nodes.filter(eligibleDestination).sort((a,b)=>store.count(a.id)-store.count(b.id)||a.id.localeCompare(b.id));
+    const gateway_reason=shuttingDown?'gateway_stopping':draining?'gateway_draining':null;
+    const sources=[];
+    for(const source of nodes){
+      const decision=relocationDecision(source,idle);if(!decision)continue;
+      const {job,destination,reason,conflict}=decision,waiting_seconds=Math.max(0,(performance.now()-job.createdMono)/1000);
+      const automatic_reason=gateway_reason??(reason!=='offer_ready'?reason:['new','none'].includes(job.affinity)?'automatic_ready':'affinity_requires_exact_offer');
+      const minimum=(config.genie_rebalance_min_wait_ms??60000)/1000;
+      const genie_reason=gateway_reason??(reason!=='offer_ready'?reason:config.genie_load_balancing===false?'genie_disabled':waiting_seconds<minimum?'genie_wait_threshold':'genie_offer_ready');
+      sources.push({source:source.id,request_id:job.id,affinity:job.affinity,waiting_seconds,reason:gateway_reason??reason,
+        destination:gateway_reason?null:destination?.id??null,conflicting_worker:conflict?.node?.id??null,automatic_reason,genie_reason});
+      if(sources.length>=32)break;
+    }
+    return {schema:1,gateway_reason,idle_destinations:idle.map(node=>node.id).slice(0,32),sources,truncated:nodes.some(node=>node.queue.some(job=>!job.cancelled))&&sources.length>=32};
+  }
   function relocationOffers() {
     if(shuttingDown||draining)return [];
     const idle=nodes.filter(eligibleDestination).sort((a,b)=>store.count(a.id)-store.count(b.id)||a.id.localeCompare(b.id));
     if(!idle.length)return [];
     const offers=[];
     for(const source of nodes) {
-      const job=source.queue.find(candidate=>!candidate.cancelled);
-      if(!source.active||!job||source.queue[0]!==job||job.upstream||job.dispatched||conflictingSessionWork(job))continue;
-      const destination=idle.find(node=>node!==source);if(!destination)continue;
-      const home=job.key&&store.get(job.key);if(job.key&&home?.node!==source.id)continue;
+      const decision=relocationDecision(source,idle);if(!decision||decision.reason!=='offer_ready')continue;
+      const {job,destination}=decision;
       offers.push({schema:1,evidence_id:relocationEvidence(job,source,destination),request_id:job.id,source:source.id,destination:destination.id,
         waiting_seconds:Math.max(0,(performance.now()-job.createdMono)/1000),source_active_seconds:source.active?Math.max(0,(performance.now()-source.active.dispatchedMono)/1000):null,
         source_remaining_prediction:source.active?predictor.forecasts(source.active.id)?.remaining??null:null,
@@ -363,6 +393,17 @@ export function createGateway(config,{visionTranscode}={}) {
     return nodes.filter(n => n.healthy && !n.drained && n.id !== exclude).sort((a, b) =>
       (Number(!!a.active) + a.queue.length) - (Number(!!b.active) + b.queue.length) ||
       store.count(a.id) - store.count(b.id) || a.id.localeCompare(b.id))[0];
+  }
+  function evaluateFallbackTieBreak(selected,requestId) {
+    const eligible=nodes.filter(n=>n.healthy&&!n.drained&&!n.quarantine&&!n.recovering&&!n.removed);
+    const result=compareFallbackTieBreak(eligible,selected,id=>predictor.forecasts(id));
+    fallbackTieBreak.evaluations++;
+    if(['would_keep','would_change'].includes(result.verdict))fallbackTieBreak.comparable++;
+    if(result.verdict==='would_change')fallbackTieBreak.would_change++;
+    if(result.verdict==='insufficient_evidence')fallbackTieBreak.insufficient_evidence++;
+    fallbackTieBreak.last={...result,request_id:requestId};
+    dataset.record('routing_tiebreak_shadow',{request_id:requestId,node:selected.id,...result});
+    return result;
   }
   function detach(job) {
     if(job.node)job.node.queue=job.node.queue.filter(j=>j!==job);
@@ -654,7 +695,7 @@ export function createGateway(config,{visionTranscode}={}) {
     const admissionMetadata=clientMetadata(req.headers[CLIENT_METADATA_HEADER]);
     const keyValue = req.headers['x-session-affinity'] || req.headers['x-ds4-conversation-id'] || req.headers['x-session-id'] || req.headers.session_id;
     const key = keyValue && req.method === 'POST' ? digest(String(keyValue)) : null;
-    const requestId=randomUUID(),callId=validCallId(req.headers[CALL_ID_HEADER]);
+    const requestId=randomUUID(),callId=validCallId(req.headers[CALL_ID_HEADER]),trafficClass=req.headers['x-dsg-observer']==='gate-genie'?'genie':'unclassified';
     if(draining)return reject(req,res,503,'draining','Gateway is draining; no new requests admitted',{id:requestId,callId,key,reason:'gateway_draining'});
     const home = key && store.get(key);
     let node = home && nodes.find(n => n.id === home.node);
@@ -670,6 +711,7 @@ export function createGateway(config,{visionTranscode}={}) {
     }
     if (!node&&!waitReason) {
       node=pick();
+      if(node&&!home&&req.method==='POST'&&trafficClass!=='genie')try{evaluateFallbackTieBreak(node,requestId);}catch{fallbackTieBreak.errors++;}
       // Existing homes and reassignment retain their established safety/cache
       // behavior. Only genuinely new conversations may use validated placement.
       if(node&&key&&!home&&req.method==='POST')node=predictor.choose(nodes.filter(n=>n.healthy&&!n.drained&&!n.quarantine),key,node,candidate);
@@ -704,7 +746,7 @@ export function createGateway(config,{visionTranscode}={}) {
     }
     if ((node&&node.queue.length+parkedFor(node).length>=queueBound())||(!node&&waiting.length>=waitingBound()))return reject(req,res,429,'queue_full','DSG waiting capacity is full; request was not dispatched. Wait for capacity or use the patient client adapter.',{id:requestId,callId,key,node,reason:'queue_full'});
     const job = { req, res, key, affinity, id:requestId,callId, sequence:sequence++,admissionMetadata,created: Date.now(), createdMono:performance.now(), cancelled: false,queueTimeoutMs:queueTimeoutMs(),
-      trafficClass:req.headers['x-dsg-observer']==='gate-genie'?'genie':'unclassified' };
+      trafficClass };
     const cancel = () => {
       if (res.writableFinished) return;
       job.cancelled = true;
@@ -799,7 +841,7 @@ export function createGateway(config,{visionTranscode}={}) {
   const registry = () => ({ model: config.model, minimum_context: contextLimit(), context_limit_control:true,
     context_limit_source:store.data.pool_context_length === undefined ? 'config' : 'saved',
     queue_timeout_ms:queueTimeoutMs(),queue_timeout_control:true,queue_timeout_source:store.data.queue_timeout_ms!==undefined?'saved':config.queue_timeout_ms!==undefined?'config':'default',
-    recovery:recovery.status(),protections:visionProtection.status(),queued_relocation:{schema:1,automatic:true,automatic_scope:'first_dsg_request_or_unaffined',offers:relocationOffers(),completed:relocation.completed,rejected:relocation.rejected},
+    recovery:recovery.status(),protections:visionProtection.status(),queued_relocation:{schema:1,automatic:true,automatic_scope:'first_dsg_request_or_unaffined',offers:relocationOffers(),diagnostics:relocationDiagnostics(),completed:relocation.completed,rejected:relocation.rejected},
     workers: nodes.map(n => ({ ...definition(n), ...stats().workers.find(w => w.id === n.id),...agents.pauseStatus(n.id,{includeReason:true}) })) });
   async function freshProbe(node) {
     while (node.probing) await delay(10);

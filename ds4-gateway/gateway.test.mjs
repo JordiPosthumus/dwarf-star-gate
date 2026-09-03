@@ -570,11 +570,12 @@ test('collector records decision-time fleet and outcomes without altering body o
   await until(()=>r.gateway.stats().dataset.finished===1);
   const dir=path.join(path.dirname(r.config.state_file),'training'),file=fs.readdirSync(dir)[0],text=fs.readFileSync(path.join(dir,file),'utf8');
   assert.ok(!text.includes('PRIVATE_UNIQUE_TEXT'));const rows=text.trim().split('\n').map(JSON.parse);
-  assert.deepEqual(rows.map(r=>r.kind),['decision','dispatch','progress','finish']);assert.equal(new Set(rows.map(r=>r.request_id)).size,1);
-  assert.equal(rows[0].candidates.length,2);assert.equal(rows[0].candidates[0].assigned_sessions,0);assert.equal(rows[0].candidates[0].active,0);
-  assert.equal(rows[2].phase,'awaiting_content');assert.equal(rows[2].semantic_age_ms,null);
-  assert.equal(rows[3].usage.cached_tokens,8192);assert.equal(rows[3].requested_thinking.fields.reasoning_effort,'xhigh');
-  assert.ok(rows[3].first_body_byte_ms>=0);assert.ok(rows[3].total_ms>=rows[3].service_ms);
+  assert.deepEqual(rows.map(r=>r.kind),['routing_tiebreak_shadow','decision','dispatch','progress','finish']);assert.equal(new Set(rows.map(r=>r.request_id)).size,1);
+  assert.equal(rows[0].mode,'shadow');assert.equal(rows[0].verdict,'free_tie');
+  assert.equal(rows[1].candidates.length,2);assert.equal(rows[1].candidates[0].assigned_sessions,0);assert.equal(rows[1].candidates[0].active,0);
+  assert.equal(rows[3].phase,'awaiting_content');assert.equal(rows[3].semantic_age_ms,null);
+  assert.equal(rows[4].usage.cached_tokens,8192);assert.equal(rows[4].requested_thinking.fields.reasoning_effort,'xhigh');
+  assert.ok(rows[4].first_body_byte_ms>=0);assert.ok(rows[4].total_ms>=rows[4].service_ms);
 });
 
 test('shadow collection is opt-in, preserves bytes and affinity, and reassesses on worker completion',async t=>{
@@ -1022,6 +1023,8 @@ test('operator-confirmed pre-dispatch handover preserves body, client, deadline 
   await until(()=>r.gateway.nodes[0].queue.length===1);
   const registry=await workerControl(r.config.control_socket,'/workers'),offer=registry.queued_relocation.offers[0];
   assert.deepEqual({source:offer.source,destination:offer.destination,affinity:offer.affinity},{source:'spark1',destination:'spark2',affinity:'existing'});
+  const diagnostic=registry.queued_relocation.diagnostics.sources[0];
+  assert.deepEqual({source:diagnostic.source,destination:diagnostic.destination,reason:diagnostic.reason,automatic_reason:diagnostic.automatic_reason},{source:'spark1',destination:'spark2',reason:'offer_ready',automatic_reason:'affinity_requires_exact_offer'});
   assert.equal(registry.queued_relocation.automatic,true);assert.equal(registry.queued_relocation.automatic_scope,'first_dsg_request_or_unaffined');
   assert.equal(r.gateway.stats().continuity.automatic_relocation,true);
   const receipt=await workerControl(r.config.control_socket,'/relocate-queued',{request_id:offer.request_id,source:offer.source,destination:offer.destination,evidence_id:offer.evidence_id});
@@ -1060,8 +1063,18 @@ test('same-session queue is never offered for handover',async t=>{
   const r=await rig(t,2,{control_socket:true});
   const active=r.request('{"delay":120}','same');await until(()=>r.gateway.nodes[0].active);
   const queued=r.request('{}','same');await until(()=>r.gateway.nodes[0].queue.length===1);
-  assert.deepEqual((await workerControl(r.config.control_socket,'/workers')).queued_relocation.offers,[]);
+  const relocation=(await workerControl(r.config.control_socket,'/workers')).queued_relocation;
+  assert.deepEqual(relocation.offers,[]);assert.deepEqual(relocation.diagnostics.idle_destinations,['spark2']);
+  assert.deepEqual({source:relocation.diagnostics.sources[0].source,reason:relocation.diagnostics.sources[0].reason,conflicting_worker:relocation.diagnostics.sources[0].conflicting_worker},{source:'spark1',reason:'same_session_active',conflicting_worker:'spark1'});
   await Promise.all([active,queued]);
+});
+test('relocation diagnostics explain a busy fleet without exposing session identity',async t=>{
+  const r=await rig(t,2,{control_socket:true});
+  const first=r.request('{"delay":180}',null);const second=r.request('{"delay":180}',null);await until(()=>r.gateway.stats().active===2);
+  const queued=r.request('{}',null);await until(()=>r.gateway.stats().queued===1);
+  const d=(await workerControl(r.config.control_socket,'/workers')).queued_relocation.diagnostics;
+  assert.deepEqual(d.idle_destinations,[]);assert.equal(d.sources.length,1);assert.equal(d.sources[0].reason,'no_idle_destination');assert.equal(d.sources[0].automatic_reason,'no_idle_destination');
+  assert.equal(JSON.stringify(d).includes('session'),false);await Promise.all([first,second,queued]);
 });
 test('first DSG request automatically takes the first newly free server without a cache-locality tradeoff',async t=>{
   const r=await rig(t,2);

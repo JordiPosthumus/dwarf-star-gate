@@ -33,6 +33,29 @@ still-undispatched move, not general migration authority.
 Offers disappear as soon as their evidence changes. Same-session work anywhere
 in the gateway blocks an offer. No active request is eligible.
 
+## Why an idle server was not used
+
+The local status and control surfaces expose bounded `diagnostics` for each live
+queue head. They report the exact safety or policy reason that currently prevents
+a handover, such as `same_session_active`, `no_idle_destination`,
+`durable_home_mismatch`, `affinity_requires_exact_offer`, or
+`genie_wait_threshold`. The record contains worker IDs, a request ID, affinity
+class, waiting age and reason codes; it never contains the raw session key or
+request body. Gate Genie receives the same sanitized evidence.
+
+Diagnostics explain the current decision; they do not authorize a move and are
+not a durable receipt. A status refresh can legitimately produce a different
+reason as active work, ownership or destination availability changes. Only an
+exact offer accepted by the executor can relocate a request.
+
+DSG also records a separate `fallback_tiebreak_shadow` comparison when a new or
+unaffined ordinary request enters deterministic routing. It considers only
+workers tied on active-plus-queued count. If every tied busy worker has a fresh,
+deployed remaining forecast and every queued request has a deployed admission
+forecast, it reports whether a completion-time tie-break would have kept or
+changed the deterministic choice. Missing evidence from any tied candidate makes
+the comparator abstain. This evidence never changes the selected worker.
+
 ## Commit and failure contract
 
 The handover persists the new session owner before changing in-memory queues. If
