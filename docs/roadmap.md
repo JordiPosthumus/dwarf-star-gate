@@ -13,11 +13,12 @@ fixes and remaining uncertainty. A source commit is not a live deployment receip
 **Analytics implemented:** the compact [prediction-accuracy panel](analytics.md)
 joins existing admission-time shadow forecasts to observed queue/server durations,
 with per-server filters, missing-prediction coverage and error. This is an
-unvalidated historical baseline, not live XGB. Its model plan prioritizes total
+unvalidated historical baseline. Separate [v2 live XGB forecasts](predictor-lifecycle.md)
+and lifecycle controls are now implemented, off by default. The model plan prioritizes total
 service time and remaining busy time; queue wait is derived, not idle-demand
 forecasting. Optional [local embedding/progress collection](embeddings.md) and the
 [measured cache-cost calculator](cache-cost.md) are now implemented. Exact
-request-to-engine/cache attribution and learned live prediction remain next work.
+request-to-engine/cache attribution and proving learned prediction accuracy remain next work.
 
 **Recovery update:** order 6's first slice is now implemented in
 [bounded DS4 service recovery](worker-recovery.md): systemd-user enrollment, GG and
@@ -37,7 +38,7 @@ operator records, not this public roadmap.
 | 1 | Diagnose the Spark CUDA/OOM incidents and identify backend process epochs | Correlated service/kernel/memory evidence and targeted reproduction; real cold/warm checks plus representative sustained work; no unapproved context/cache reductions |
 | 2 | Explain idle capacity and design cache-aware overflow scheduling | UI identifies session-home waits; replay/shadow comparisons of wait-at-home versus cold execution elsewhere; prove no overlapping ownership/replay; operator-approved policy before activation |
 | 3 (collector implemented) | Validate local embeddings/progress on ordinary workload | Pinned CPU encoder, bounded extraction and visible status; collect joined future labels across hardware; exact cache/engine attribution still separate |
-| 4 (CV implemented) | Refit the offline XGB experiment, then shadow ETA predictions | Immutable artifact versus baseline; nested time/session-aware tree selection; remaining-time and embedding-aware feature contracts; no live XGB until evidence supports it |
+| 4 (lifecycle implemented) | Collect future validation evidence for v2 forecasts | Fixed forward-time tree/feature selection, separate unseen-session placement gate, per-worker future evidence; no experimental model controls routing |
 | 5 | Persistent Genie/operator activity and endpoint settings UI | Durable actor/channel/action receipts, stale-evidence labels, feedback, endpoint test/save/rollback; manual controls remain authoritative |
 | 6 (first slice implemented) | Opt-in deterministic recovery runner and Genie access | Systemd-user only; see recovery guide for tested scope and deployment gates |
 
@@ -180,11 +181,12 @@ rewrites, unrelated-session merging, or speculative cache deletion.
 
 ## Then: measured ETA prediction with XGBoost
 
-**First offline slice is implemented:** an optional [XGBoost training package](../predictor/README.md)
-fits real numerical evidence, separates machine identity from hardware class/RAM,
-performs chronological/session-disjoint evaluation and saves a checksummed model
-with its preprocessing and report. It has **no live routing or promotion path**.
-This establishes the training plumbing; a tiny first fit is not calibration.
+**v2 lifecycle is implemented:** [forecasts and bounded model stewardship](predictor-lifecycle.md)
+use causal request history, missing-data/peer priors, optional embedding updates,
+phase/elapsed remaining estimates and frozen artifacts. GG can request training
+or offered rollback; fixed validators decide promotion. New-session placement is
+separately armed and requires unseen-session evidence. Existing queues/sessions
+are not moved. The [historical v1 experiment](../predictor/README.md) is preserved.
 
 Optimize **expected completion time**, including waiting, cache restoration,
 prefill and generation—not raw tokens/second alone.
@@ -205,7 +207,8 @@ prefill and generation—not raw tokens/second alone.
    immutable compatible fallback model and deterministic routing fallback.
 
 No encoder is automatically installed by the observer; the optional pinned local
-bundle requires explicit preparation/configuration. No live XGBoost predictor is active.
+bundle requires explicit preparation/configuration. Live XGB is optional and its
+actual activation is reported by the local UI, not claimed by this public roadmap.
 Because raw text is not retained, old numerical records cannot later acquire
 embeddings. Embedding-enabled collection begins a new, versioned dataset slice.
 Derived vectors are sensitive too and stay in private local storage.

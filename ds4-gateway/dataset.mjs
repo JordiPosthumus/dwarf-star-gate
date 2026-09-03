@@ -7,7 +7,7 @@ import { ENCODER_MODEL, ENCODER_REVISION, EXTRACTION } from './embeddings.mjs';
 
 const number = x => Number.isFinite(x) && x >= 0 ? x : null;
 const id = x => typeof x === 'string' && /^[\w-]{1,64}$/.test(x) ? x : null;
-const kinds = new Set(['decision','dispatch','finish','queued_cancel','queue_timeout','unavailable_before_dispatch','routing_shadow','request_features','embedding','progress']);
+const kinds = new Set(['decision','dispatch','finish','queued_cancel','queue_timeout','unavailable_before_dispatch','routing_shadow','request_features','embedding','progress','model_prediction']);
 const timingKeys=['worker_idle_ms','active_elapsed_ms','upstream_byte_age_ms','session_last_used_ms','session_last_finished_ms','intervening_requests','prior_prompt_tokens','prior_cached_tokens','observation_epoch'];
 export function evidence(kind, raw) {
   if (!kinds.has(kind)) return null;
@@ -20,7 +20,13 @@ export function evidence(kind, raw) {
   if (['complete','client_cancelled','upstream_error','upstream_stream_error','upstream_aborted','upstream_http_error','upstream_engine_error','incomplete_sse','sse_observation_limited','connection_closed','timeout'].includes(raw.outcome)) row.outcome=raw.outcome;
   if (raw.usage) row.usage=Object.fromEntries(['prompt_tokens','completion_tokens','cached_tokens'].map(k=>[k,number(raw.usage[k])]));
   if(kind==='finish')row.finish_reason=['stop','length','tool_calls','function_call','content_filter'].includes(raw.finish_reason)?raw.finish_reason:null;
+  if(kind==='finish'&&raw.generation)row.generation=Object.fromEntries(['thinking_characters','answer_characters','tool_characters','first_semantic_ms'].map(k=>[k,number(raw.generation[k])]));
   if (raw.requested_thinking) row.requested_thinking=safeRequestedThinking(raw.requested_thinking);
+  if(kind==='model_prediction'){
+    if(raw.predictor_schema!==2||!/^[a-f0-9]{64}$/.test(raw.model_id)||!['admission','updated','remaining'].includes(raw.model_kind)||!['admission','upload','embedded','remaining'].includes(raw.prediction_stage))return null;
+    Object.assign(row,{predictor_schema:2,model_id:raw.model_id,model_kind:raw.model_kind,prediction_stage:raw.prediction_stage,experimental:raw.experimental===true});
+    for(const k of ['seconds','baseline_seconds','elapsed_s','available_at'])row[k]=number(raw[k]);if(row.seconds===null||row.available_at===null)return null;
+  }
   if(kind==='request_features') {
     row.feature_schema=1;row.prediction_point='after_upload';
     row.status=['ready','invalid_body','unsupported_route','unsupported_body','no_recent_user_text','capture_limit','encoded_body','invalid_json','incomplete_body'].includes(raw.status)?raw.status:'unavailable';
@@ -46,7 +52,7 @@ export function evidence(kind, raw) {
   }
   if(kind==='progress') {
     row.progress_schema=1;row.prediction_point='while_active';
-    for(const key of ['active_elapsed_ms','semantic_characters','semantic_age_ms'])row[key]=number(raw[key]);
+    for(const key of ['active_elapsed_ms','semantic_characters','semantic_age_ms','thinking_characters','answer_characters','tool_characters'])row[key]=number(raw[key]);
     row.phase=['awaiting_content','thinking','answering','tool_output'].includes(raw.phase)?raw.phase:'unknown';
     row.requested_thinking=safeRequestedThinking(raw.requested_thinking);
   }
@@ -89,9 +95,11 @@ export class Dataset {
     if (!this.enabled || this.closed) return;
     try {
       const row=evidence(kind,raw); if(!row)return;
-      const line=JSON.stringify({schema:1,run_id:this.run,event_id:randomUUID(),time:new Date().toISOString(),...row})+'\n';
+      const event={schema:1,run_id:this.run,event_id:randomUUID(),time:new Date().toISOString(),...row},line=JSON.stringify(event)+'\n';
       if(Buffer.byteLength(line)>65536 || this.queue.length>=this.maxPending) {this.state.dropped++;return;}
       this.queue.push(line); this.flush();
+      // Prediction failures cannot erase collected evidence or affect inference.
+      try{this.onRecord?.(event);}catch{}
     } catch {this.state.dropped++;this.state.error='Evidence serialization failed';}
   }
   flush() {

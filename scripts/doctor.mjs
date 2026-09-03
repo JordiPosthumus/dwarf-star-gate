@@ -33,5 +33,11 @@ try {
   if(c.host==='0.0.0.0'||c.host==='::')warnings.push('Gateway is LAN-facing; verify authentication and firewall policy. No setting was changed.');
   for(const file of Object.values(c.telemetry_files??{}))if(!fs.existsSync(file))warnings.push('A configured local telemetry file is missing; metrics will remain unavailable.');
   if(c.embeddings?.enabled===true){fs.accessSync(c.embeddings.python,fs.constants.X_OK);fs.accessSync(path.join(c.embeddings.model_dir,'manifest.json'),fs.constants.R_OK);}
+  if(c.predictor?.enabled===true){
+    if(c.dataset_enabled!==true)throw new Error('Predictor requires dataset_enabled');
+    fs.accessSync(c.predictor.python,fs.constants.X_OK);
+    const p=JSON.parse(fs.readFileSync(c.predictor.profiles));if(p.schema!==1||!p.workers)throw new Error('Predictor requires a versioned private worker inventory');
+    warnings.push('Predictor configuration is present; doctor does not certify fitted models or routing evidence. Inspect Analytics → Predictor lifecycle.');
+  }
   console.log(JSON.stringify({ok:true,read_only:true,config:filename,workers:nodes.length,gateway_port:c.port,dashboard_port:ui,context_length:c.context_length,warnings},null,2));
 }catch(error){console.error(error.message);process.exitCode=1;}

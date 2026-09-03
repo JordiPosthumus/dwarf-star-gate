@@ -2,10 +2,11 @@
 
 The local dashboard has a compact **Analytics** panel below the fleet, Gate Genie
 and service-recovery panels, just above the request log. It evaluates predictions
-already saved by the optional [routing shadow](routing-shadow.md); it neither
-fits a model nor changes placement. Enable the existing dataset and shadow
-options to collect forecasts. With collection alone, actual durations can be
-available while predictions remain missing.
+already saved by the optional [routing shadow](routing-shadow.md) and
+[predictor lifecycle](predictor-lifecycle.md). The reader does not fit models or
+change placement. Separate controls in the panel manage the bounded trainer,
+validation policy and optional new-session placement. With collection alone,
+actual durations can be available while predictions remain missing.
 
 ## Reading the panel
 
@@ -23,12 +24,21 @@ available while predictions remain missing.
   Neither is a calibration certificate, and neither measures outcomes on servers
   that were not chosen. Tiny or selectively predictable samples can look good.
 
-The current source is explicitly **unvalidated historical baseline, not XGB**.
+The baseline source is explicitly **unvalidated historical baseline, not XGB**.
 It uses prior-session prompt buckets with mixed cache conditions. Its initial
 admission forecast is frozen; later worker-free re-evaluations do not replace a
 bad forecast or count as extra independent examples. The saved elapsed admission
 time is added to predicted remaining wait before comparing with total queue wait.
 Null is unknown, not zero. No hindsight estimates are generated for older requests.
+
+XGB choices are separate: admission, after upload, after embeddings and remaining
+at the first recorded progress point at/after 30 seconds. Select one model version;
+versions/stages are not pooled. Experimental status is explicit. Remaining actual
+time subtracts elapsed from total server time; later updates never replace the
+frozen chart forecast. The lifecycle table separately scores all bounded remaining
+updates with one aggregate weight per request. Coverage in an XGB stage is among
+requests with at least one recorded forecast in that model/stage window, **not**
+all gateway traffic. Read missing/unsupported coverage as an evidence limitation.
 
 Joining requires the same gateway run, request and actual worker. Duplicate event
 IDs are ignored; conflicting lifecycle events are rejected. A queue wait is known
@@ -64,7 +74,8 @@ Genie assessments privately before restarting because they remain in memory.
 
 The panel now also exposes [local encoder status](embeddings.md) and a
 [measured cache-cost calculator](cache-cost.md). These are separate from the
-historical forecast chart: no fitted XGB or embedding changes those dots yet.
+historical forecast chart: fitted XGB and embeddings do not change baseline dots.
+New XGB dots appear only after the separately configured predictor is running.
 
 ## Which predictions are actually needed?
 
@@ -73,8 +84,8 @@ not maximum decode speed or minimum queue wait in isolation.
 
 | Quantity | Purpose | Initial implementation / next step |
 | --- | --- | --- |
-| Total server time for a new request | Cost after dispatch on each candidate | Existing offline XGB target; compare a fresh artifact with fixed baselines before any shadow/live promotion |
-| Remaining busy time of an active request | When a server can accept its next job | Existing conditional-history shadow estimate; later elapsed/phase-conditioned model with explicit censored observations |
+| Total server time for a new request | Cost after dispatch on each candidate | v2 admission and updated XGB contracts, fixed validation and optional new-session placement |
+| Remaining busy time of an active request | When a server can accept its next job | Conditional-history baseline plus optional v2 elapsed/phase-conditioned XGB; censored outcomes excluded and unsupported elapsed ranges abstain |
 | Cache acquisition + suffix prefill time | Cost of hot reuse, local restore or cold execution | Measured disk/prefill component baseline implemented; exact request/epoch attribution, cache existence and unmeasured costs remain next |
 | Generation duration, including reasoning | Work after prefill until the response ends | Initially part of total server time; separate only with trustworthy phase/output labels |
 | Queue wait | Remaining active work plus requests ahead | Derive from the quantities above and actual admission rules; no separate idle-demand model needed |
@@ -112,9 +123,11 @@ active time and the requests ahead, but inherit errors in those jobs' durations.
 Compare coverage and error, not just the apparent shape of the plotted subset;
 missing forecasts and failed/unfinished service jobs are not plotted as successes.
 
-Before promoting XGB: use forward-time, session-separated validation, select tree
-count within training folds, retain an untouched later holdout, compare with a
-fixed baseline and run shadow evaluation. Check error/coverage by hardware,
+Before promoting XGB: use forward-time validation with unavailable labels purged,
+select tree count within training folds, retain a later holdout, compare with
+fixed baselines and run independent future-shadow evaluation. Recurring-session
+forecasts and unseen-session placement have separate evidence requirements in
+[the lifecycle contract](predictor-lifecycle.md). Check error/coverage by hardware,
 context, cache tier and reasoning setting. The existing log-duration objective
 does not automatically yield a mean duration after exponentiation; verify or
 correct that before calling a score *expected* completion time.

@@ -23,6 +23,7 @@ export function loadConfig(explicit,options) {
   if(config.telemetry_files && typeof config.telemetry_files==='object'&&!Array.isArray(config.telemetry_files))
     config.telemetry_files=Object.fromEntries(Object.entries(config.telemetry_files).map(([id,file])=>[id,local(file,'telemetry_files')]));
   if(config.embeddings?.enabled===true)for(const key of ['python','model_dir'])config.embeddings[key]=local(config.embeddings[key],`embeddings.${key}`);
+  if(config.predictor?.enabled===true)for(const key of ['python','profiles'])config.predictor[key]=local(config.predictor[key],`predictor.${key}`);
   // Recovery helper/config paths are REMOTE paths; deliberately untouched.
   return {config,filename};
 }

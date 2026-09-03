@@ -10,6 +10,16 @@
 
 ## Unreleased
 
+- Optional v2 XGB lifecycle: shared causal offline/live features, missing-history
+  and measured hardware priors, prior output/thinking ratios, embedding-aware
+  updates and elapsed/phase-conditioned remaining forecasts. Cross-validated tree
+  count/features, native JS/Python parity, immutable bundles, future-shadow gates,
+  automatic rollback and separately armed new-session placement.
+- GG can request offered bounded training or measured-regression rollback, never
+  edit gates or promote a model itself. Analytics separates versions/stages and
+  exposes independent training, validation and placement switches with receipts.
+  First-request history is missing, not filled with an invented prior duration.
+
 - Single-checkout installation with ignored private config/runtime, non-overwriting
   setup, read-only doctor and explicit macOS gateway/dashboard login services.
   All entry points share config resolution, including paths with spaces/symlinks.

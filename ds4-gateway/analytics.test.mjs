@@ -144,5 +144,5 @@ test('analytics is same-origin read-only, reports no dataset path and is separat
   assert.equal((await fetch(url+'/api/analytics',{method:'POST'})).status,405);
   assert.equal((await fetch(url+'/api/analytics',{headers:{origin:'https://example.invalid'}})).status,403);
   assert.deepEqual(await(await fetch(url+'/api/diagnostics')).json(),{version:1});
-  const html=await(await fetch(url)).text();assert.match(html,/id="analytics"/);assert.match(html,/not XGB/);
+  const html=await(await fetch(url)).text();assert.match(html,/id="analytics"/);assert.match(html,/No model versions or forecast stages are mixed/);assert.match(html,/id="predictor-controls"/);
 });

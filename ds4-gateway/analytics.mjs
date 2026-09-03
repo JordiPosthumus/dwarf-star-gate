@@ -5,7 +5,7 @@ import path from 'node:path';
 
 const validId = x => typeof x === 'string' && /^[\w-]{1,64}$/.test(x);
 const number = x => Number.isFinite(x) && x >= 0 ? x : null;
-const kinds = new Set(['decision','routing_shadow','dispatch','finish','queued_cancel','queue_timeout','unavailable_before_dispatch']);
+const kinds = new Set(['decision','routing_shadow','dispatch','finish','queued_cancel','queue_timeout','unavailable_before_dispatch','model_prediction']);
 const LINE_BYTES = 65536, READ_BYTES = 262144, TAIL_BYTES = 8 * 1024 * 1024;
 
 export class PredictionEvidence {
@@ -29,13 +29,24 @@ export class PredictionEvidence {
     if(row.kind==='decision') {
       if(r){r.invalid=true;this.rejected++;return;}
       if(!validId(row.node)){this.rejected++;return;}
-      r={node:row.node,at:time,observer:row.traffic_class==='genie',invalid:false,prediction:null,dispatch:null,finish:null,terminal:null};
+      r={node:row.node,at:time,observer:row.traffic_class==='genie',invalid:false,prediction:null,models:new Map(),dispatch:null,finish:null,terminal:null};
       this.requests.set(key,r);
       if(this.requests.size>this.maxRequests){this.requests.delete(this.requests.keys().next().value);this.evicted++;}
       return;
     }
     if(!r || row.node!==r.node) {this.rejected++;return;}
     if(r.invalid)return;
+    if(row.kind==='model_prediction'){
+      const kind=row.model_kind,stage=row.prediction_stage;
+      if(row.predictor_schema!==2||!/^[a-f0-9]{64}$/.test(row.model_id)||!['admission','updated','remaining'].includes(kind)||!['admission','upload','embedded','remaining'].includes(stage)||number(row.seconds)===null||r.terminal||time<r.at||!Number.isFinite(row.available_at)||row.available_at>time){this.rejected++;return;}
+      if((kind==='admission'&&(stage!=='admission'||r.dispatch))||(kind!=='admission'&&!r.dispatch)||(kind==='remaining'&&(stage!=='remaining'||number(row.elapsed_s)===null))){this.rejected++;return;}
+      if(kind==='remaining'&&row.elapsed_s<30)return;
+      const key=row.model_id+':'+stage;
+      // Freeze one forecast per model/stage/request; later updates cannot
+      // replace an inaccurate earlier forecast in this chart.
+      if(!r.models.has(key)&&r.models.size<16)r.models.set(key,{id:row.model_id,kind,stage,at:time,seconds:row.seconds,elapsed_s:row.elapsed_s??0,experimental:row.experimental});
+      return;
+    }
     if(row.kind==='routing_shadow') {
       // Freeze the admission forecast. Re-evaluations when a worker becomes
       // free are NOT independent predictions or replacements for a poor one.
@@ -63,7 +74,9 @@ export class PredictionEvidence {
   snapshot() {
     const valid=[...this.requests.values()].filter(r=>!r.invalid && !r.observer);
     const rows=valid.filter(r=>r.dispatch).sort((a,b)=>b.dispatch.sequence-a.dispatch.sequence).slice(0,this.maxResults).reverse();
+    const series=new Map();for(const r of rows)for(const [key,p] of r.models){if(!series.has(key))series.set(key,{id:p.id,kind:p.kind,stage:p.stage,rows:[]});series.get(key).rows.push({node:r.node,at:p.at,experimental:p.experimental,predicted_service_ms:p.seconds*1000,service_ms:r.finish?.eligible?Math.max(0,r.finish.service_ms-(p.kind==='remaining'?p.elapsed_s*1000:0)):null,service_state:!r.finish?'pending':r.finish.eligible?'complete':'excluded'});}
     return {source:'historical_baseline',validation:'unvalidated',prediction_point:'admission',last_event_at:this.lastEvent,
+      model_series:[...series.values()].slice(-32),
       window_limit:this.maxResults,rows:rows.map(r=>({node:r.node,at:r.dispatch.at,queue_ms:r.dispatch.queue_ms,
         predicted_queue_ms:r.prediction?.wait_ms??null,service_ms:r.finish?.service_ms??null,
         predicted_service_ms:r.prediction?.service_ms??null,service_state:!r.finish?'pending':r.finish.eligible?'complete':'excluded'})),

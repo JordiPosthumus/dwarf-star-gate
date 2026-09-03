@@ -1,0 +1,209 @@
+# Predictors and Gate Genie
+
+Implemented, opt-in. Ordinary routing remains the default. A fitted model is
+experimental until it passes both a fixed backtest and an independent future
+shadow gate. This feature does not promise that the available data will pass.
+
+- DSG computes forecasts from a versioned, shared offline/live feature builder.
+  Admission uses past completed calls only. Upload/embedding updates and active
+  remaining-time forecasts have separate timestamps and evaluation targets.
+- Features include recent output/duration trends, variability, ratios, shared
+  hardware attributes, cache evidence, bounded semantic projections/similarity,
+  and observed generation phases. Character counts are not called token counts.
+- Python/XGBoost trains off the request path with fixed CPU/time/data budgets.
+  Immutable candidate bundles carry source, schema, inventory and data hashes.
+  Native JavaScript tree evaluation must match the Python model numerically.
+- Tree count and feature-family selection use forward-time folds within training,
+  purging labels not yet completed at each cutoff. Recurring sessions are allowed:
+  the target is the next request using only its available history. No session ID
+  enters the model. A separate unseen-session gate is required for new-session
+  placement. The later holdout is not used to select trees/features. Future shadow
+  evidence is the independent release gate, including after development experiments.
+- Admission service time, updated service time and remaining busy time are
+  distinct forecast contracts. Missing features or unsupported hardware produce
+  abstention, not fabricated confidence. Queue wait remains derived from active
+  remaining time and work ahead.
+- GG sees accuracy, coverage, current versions and executor receipts. It can
+  request a bounded training job or rollback, not run shell commands, choose
+  arbitrary models, alter gates or invent evidence. Automatic training can work
+  without GG. Switching GG off does not secretly disable other automation.
+- Collection, automatic training, validated forecast activation and routing use
+  are separately visible. Candidate forecasts are explicitly experimental.
+  Existing healthy session affinity, queues, context, inference settings and
+  model-server configurations are preserved.
+- Prediction-assisted placement applies only where its support is established;
+  unknown costs retain the existing deterministic placement. No active-stream
+  migration, cache movement or automatic replay is introduced by this feature.
+- All model artifacts, training evidence and operational action history are
+  private ignored runtime files. The public repository ships implementation,
+  synthetic tests and generic configuration, not fleet data.
+
+Evaluation must report coverage, error in seconds, bias and long-request error,
+per hardware and forecast stage. A log-duration prediction is not automatically
+an arithmetic expectation. No model is called better merely because it fitted,
+reloaded or produced an attractive chart. Sparse data can legitimately block
+promotion; collecting more evidence must not mean relaxing the tests.
+
+## Three forecast contracts, one lifecycle
+
+| Contract | Available evidence | Target |
+| --- | --- | --- |
+| Admission | Prior completed requests, worker identity/hardware, current queues | Total server seconds after dispatch |
+| Updated | Admission history plus bounded upload metadata; later a separately timestamped embedding update | Same total server duration, predicted later |
+| Remaining | Elapsed time, emitted character counts/phase and then-available metadata/embeddings | Successful server duration minus elapsed |
+
+The UI separates upload and embedded updates. Its remaining-time chart freezes
+the first forecast at or after 30 seconds; it does not replace that forecast with
+a more accurate late one. The trainer weights progress rows so a long request
+has the same total weight as a short request. Future promotion averages errors
+within each request before averaging requests. Those evaluation windows differ
+deliberately and are labelled. Queue-wait charts retain the existing historical
+baseline. The optional placement cost sums active remaining time, queued service
+estimates and the incoming service estimate; these are not added to total service
+again as separate prefill/decode costs.
+
+### First request and hardware changes
+
+Previous duration, output, prompt and thinking values stay `null`; history count
+is zero. XGB uses missing-value branches, not a fabricated previous call. Priors
+fall back from the server's recent same-profile history to matching hardware,
+accelerator, RAM and context, then the verified fleet's recent history. If none
+exists, the live baseline is unknown. A relative-log transform uses a neutral
+positive mathematical anchor when all priors are missing; this is not exposed
+as a one-second latency estimate. No fixed 60-second latency is imputed.
+
+Identity and hardware family are separate categorical features. New/unverified
+workers are not automatically calibrated by resemblance. The private inventory
+must match the collector's endpoint/model/context fingerprint. Add new profiles
+after verifying hardware and reload DSG to load the revised inventory. A profile
+mismatch abstains. Engine build/cache settings are **not** in this fingerprint;
+significant changes require clearing predictor activation through Rollback and
+collecting fresh evidence, not assuming old calibration still applies. Model
+settings and inference limits are never changed by this subsystem.
+
+## Install / reproduce
+
+Prepare the existing private inventory described in the
+[v1 experiment documentation](../predictor/README.md#identity-plus-hardware-family).
+Keep it under ignored `runtime/`; never commit inventory or learned models.
+
+```sh
+uv sync --locked --project predictor
+npm run predictor:test
+node predictor/prepare.mjs --data runtime/training \
+  --profiles runtime/worker-profiles.local.json \
+  --output runtime/predictor/candidates/candidate-example
+uv run --locked --project predictor python predictor/fit_v2.py \
+  --prepared runtime/predictor/candidates/candidate-example/prepared.json
+```
+
+Output directories must be new. Each stores frozen source evidence, prepared
+features, the evaluated `candidate.json`, and a checksummed `report.json`.
+Export uses numerical trees, not pickle or executable model code. The exact
+evaluated forest is exported, not an unevaluated all-data refit. JS inference is
+tested against the pinned Python XGBoost runtime, including float32 accumulation,
+missing values, category encoding and log back-transformation.
+
+Merge this optional block into `config.local.json` without changing other settings:
+
+```json
+{
+  "dataset_enabled": true,
+  "predictor": {
+    "enabled": true,
+    "python": "predictor/.venv/bin/python",
+    "profiles": "runtime/worker-profiles.local.json",
+    "automatic_training": false,
+    "automatic_promotion": false,
+    "placement": false
+  }
+}
+```
+
+Relative local paths resolve against the config file. Run `npm run doctor` and
+restart the gateway and dashboard in an approved maintenance window. No model
+server restart is required. Embeddings have their own explicit configuration;
+missing/failed embeddings do not interrupt inference. Once created, persisted UI
+policy in `runtime/predictor/state.json` wins over initial config defaults.
+
+## Fixed selection and release gates
+
+- CPU-only: XGBoost 3.4.1, NumPy 2.5.2, two XGB threads, shallow depth-2 trees.
+  Cross-validate 16/64/128 trees, raw/log/relative-log targets, and fixed feature
+  families (base; history; ratios; semantic). Remaining models also use progress.
+  Relative-log models use the causal prior even when the selected tree inputs
+  are only the base family. Full vectors stay private; semantic features include
+  12 fixed projections plus previous-turn similarities. Selection may reject
+  embeddings if they do not improve the inner-fold score.
+- At least 50 unique successful requests, 25 training and 10 holdout requests,
+  and two usable forward-time inner folds to fit. Categories fit training only.
+- Backtest promotion: at least 20 holdout requests across 3 sessions, MAE at
+  least 10% better than the best fixed comparison (worker mean, recent session
+  mean, causal hardware/history prior), and aggregate predicted/actual mean
+  ratio 0.7–1.3. Report long-request and per-worker errors separately.
+- Future gate: at least 30 requests across 5 sessions admitted **after artifact
+  creation**, 10% MAE improvement over the causal history fallback, ratio
+  0.7–1.3, at least 5 results on each observed worker and no worker MAE worse
+  than 1.1× fallback. Require 3 long requests if the holdout included long work.
+  Active forecasts still abstain on workers/profiles lacking local future support.
+- New-session placement additionally needs 20 unseen-session holdout requests
+  across 3 sessions passing the same gain/calibration test, plus 5 first-observed
+  training requests per candidate worker. First-observed is **not** proof of a
+  physically cold cache. Every candidate cost must be supported; otherwise use
+  ordinary deterministic routing. Busy costs require a validated remaining
+  forecast no older than 60 seconds, and all queued costs must be validated.
+- Remaining forecasts abstain beyond the training worker's observed elapsed-time
+  range. Long unsupported work is not confidently assigned zero time remaining.
+
+These are practical guardrails, not statistical proof of optimal routing.
+Observational data does not reveal what an unchosen server would have done.
+Success-only labels exclude errors, cancellations, truncations and incomplete
+requests; reliability continues to be tracked separately, never hidden in latency.
+The graph's selected-stage coverage and the model's future evidence counts should
+be inspected alongside MAE, not just a pooled score or an attractive chart.
+
+## Controls, GG and rollback
+
+Under **Analytics → Predictor lifecycle**:
+
+- **Train candidate:** one bounded background job, no activation bypass.
+- **Auto training:** with at least 50 new completions, the scheduler can train
+  every six hours. GG may request an offered training run sooner, with a ten-minute
+  offer cooldown and the same data/budget rules. Manual requests have a one-minute
+  cooldown. An offline-qualified shadow candidate gets up to six hours to gather
+  its 30-request/5-session release sample before automatic/Genie retraining can
+  replace it. Only one trainer runs at once.
+- **Auto validation:** promote passing frozen candidates without a user prompt.
+  This does not automatically enable placement.
+- **New-session placement:** arm validated placement independently. With no
+  eligible model it has no routing effect. Healthy existing affinity is unchanged;
+  no queued/active job is migrated or replayed.
+- **Rollback:** return to the prior non-rejected version, otherwise deterministic
+  fallback. The independent watchdog rolls back after 20 recent requests across
+  at least 3 sessions show MAE above 1.25× fallback. GG may request an offered
+  rollback at 1.1×; offers are rechecked when executed. Rejected versions are not
+  silently promoted again.
+
+GG receives versions, error/coverage evidence, forecasts, offers and executor
+receipts. It does not receive vectors or raw prompt text from this feature. It
+cannot supply commands, paths, new algorithms, arbitrary hyperparameters or gate
+changes. A training request is not a successful model, and model activation is
+not proof that placement is enabled. The UI shows actual receipts. Turning GG off
+does not disable collection, forecasting or the separately armed automations.
+
+Training has a 120-second overall budget (snapshot stage capped at 30 seconds),
+128 MiB source snapshot and 100,000 prepared-row limits. Exceeding those budgets
+fails explicitly; **no training input or stored user data is silently deleted**.
+As history grows, a reviewed rolling training-window policy will be needed; this
+version does not silently choose a retention policy. Failures keep the last
+working model/fallback and save a bounded private failure log. Restart interrupts
+training rather than activating a half-written candidate. Runtime history is
+bounded; on startup it replays up to 8 MiB from each of the last two daily files,
+and discloses partial history. Source evidence remains on disk.
+
+UI/control APIs use the existing loopback, same-origin CSRF and local control
+socket boundaries. Checksums protect artifact consistency, not against a malicious
+operator who can edit both code and private state. Native model evaluation is
+small and synchronous; Python training, embeddings and GG are never awaited by
+request forwarding. The gateway retains its existing session ownership and one
+active request per registered DS4 server.

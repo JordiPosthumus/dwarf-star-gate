@@ -1,11 +1,13 @@
 # Gate Genie powers: recovery, model stewardship and operator controls
 
-Status: **recovery v1 implemented; broader powers below remain a design**.
+Status: **recovery v1 and bounded predictor stewardship implemented; broader powers below remain a design**.
 The authoritative shipped scope, setup, controls and limits are in
 [bounded worker recovery](worker-recovery.md): systemd-user only, private enrollment,
 one guarded runner shared by GG and a fatal-fault detector, durable receipts and
 verified reinstatement. Launchd/container adapters, editable Genie endpoints,
-persistent chat and predictor stewardship remain future work. The sections below
+persistent chat remain future work. Predictor training/rollback, fixed promotion
+gates and operator switches are specified in [the shipped lifecycle](predictor-lifecycle.md).
+The sections below
 retain the original broader plan; they are not a claim that every item shipped.
 A running process is not upgraded merely by changing files on disk.
 
@@ -14,7 +16,8 @@ A running process is not upgraded merely by changing files on disk.
 - **XGB:** predicts service cost from a versioned request/worker feature contract.
 - **DSG scheduler:** applies deterministic compatibility, ownership, health and
   routing rules, and eventually combines predicted service time with waiting and
-  cache costs. Current experimental XGB artifacts do not participate in routing.
+  cache costs. Optional new-session placement uses only qualifying validated XGB
+  artifacts; experimental artifacts never control routing.
 - **Genie:** interprets evidence, requests approved operational actions, and
   stewards XGB training/calibration. It does not invent telemetry, choose commands
   or override hard routing constraints.

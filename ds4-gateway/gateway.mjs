@@ -12,6 +12,7 @@ import { GenerationFaultObserver, verifyGeneration } from './generation-health.m
 import { workerConfig, workerConfigs, assertUniqueWorker } from './worker-config.mjs';
 import { Recovery } from './recovery.mjs';
 import { loadConfig, isMain } from './config.mjs';
+import { Predictor } from './predictor.mjs';
 import net from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -91,6 +92,7 @@ export class AffinityStore {
 // never decoded/re-encoded. No answer/reasoning text is logged.
 export class UsageObserver {
   phase='awaiting_content';semanticCharacters=0;lastSemanticAt=null;
+  thinkingCharacters=0;answerCharacters=0;toolCharacters=0;firstSemanticAt=null;
   pending = ''; usage = undefined; done = false; finish_reason = null;
   skipping = false; limited = false; failed = false; decoder = new StringDecoder('utf8');
   constructor(route='/v1/chat/completions'){this.route=route;}
@@ -119,7 +121,7 @@ export class UsageObserver {
     try {
       const parsed=JSON.parse(payload),u=parsed.usage,reason=parsed.choices?.[0]?.finish_reason;
       const delta=parsed.choices?.[0]?.delta;
-      const progress=(text,phase)=>{if(typeof text==='string'&&text.length){this.semanticCharacters+=text.length;this.lastSemanticAt=performance.now();this.phase=phase;}};
+      const progress=(text,phase)=>{if(typeof text==='string'&&text.length){this.semanticCharacters+=text.length;this.lastSemanticAt=performance.now();this.firstSemanticAt??=this.lastSemanticAt;this.phase=phase;if(phase==='thinking')this.thinkingCharacters+=text.length;else if(phase==='answering')this.answerCharacters+=text.length;else if(phase==='tool_output')this.toolCharacters+=text.length;}};
       if(delta) {
         progress(delta.reasoning_content||delta.reasoning,'thinking');
         progress(delta.content,'answering');
@@ -171,9 +173,11 @@ export function createGateway(config) {
   catch (e) { store.close(); throw e; }
   const nodes = definitions.map(makeNode);
   const dataset = new Dataset(path.join(path.dirname(config.state_file),'training'),{enabled:config.dataset_enabled===true});
+  const predictor=new Predictor(dataset.enabled?config.predictor:null,{directory:path.join(path.dirname(config.state_file),'predictor'),dataDirectory:dataset.directory,record:(kind,row)=>dataset.record(kind,row)});
+  dataset.onRecord=row=>predictor.observe(row);
   const shadow = new RoutingShadow({enabled:config.routing_shadow_enabled===true && config.dataset_enabled===true});
   const observe = fn => {if(shadow.enabled)try{return fn();}catch{shadow.state.errors++;}};
-  let draining = false, shuttingDown = false, healthTimer, recoveryTimer;
+  let draining = false, shuttingDown = false, healthTimer, recoveryTimer, predictorTimer;
   let mutation = Promise.resolve();
   const serialize = fn => { const next = mutation.then(fn); mutation = next.catch(() => {}); return next; };
   const definition = n => Object.fromEntries(['id','url','ssh','remote_port','telemetry_service'].filter(k => n[k] !== undefined).map(k => [k,n[k]]));
@@ -191,13 +195,14 @@ export function createGateway(config) {
   const agent = new http.Agent({ keepAlive: true, maxSockets: 16 });
   const accepted = new Set(['POST /v1/chat/completions', 'POST /v1/completions', 'POST /v1/responses', 'POST /v1/messages', 'GET /v1/models']);
   const auth = Buffer.from(`Bearer ${config.api_key}`);
-  const stats = () => ({ version: 1, model: config.model, context_length: contextLimit(), draining, dataset:{...dataset.snapshot(),embedding_collection:embeddings.snapshot()}, routing_shadow:shadow.snapshot(),recovery:recovery.status(),
+  const stats = () => ({ version: 1, model: config.model, context_length: contextLimit(), draining, dataset:{...dataset.snapshot(),embedding_collection:embeddings.snapshot()}, routing_shadow:shadow.snapshot(),recovery:recovery.status(),predictor:predictor.status(),
     total: nodes.length, healthy: nodes.filter(n => n.healthy).length, available: nodes.filter(n => n.healthy && !n.drained).length,
     active: nodes.filter(n => n.active).length, queued: nodes.reduce((s, n) => s + n.queue.length, 0),
     workers: nodes.map(n => ({ id: n.id, url: n.url, is_healthy: n.healthy, drained: n.drained, quarantine:n.quarantine, inference_failures:n.inferenceFailures,
       gateway_drained: n.drained && !n.active && !n.queue.length, load: Number(!!n.active),
       queued: n.queue.length, assigned_sessions: store.count(n.id), completed: n.completed, failed: n.failed, observation_limited:n.observationLimited,
       active_seconds: n.active ? Math.round((Date.now() - n.active.dispatched) / 1000) : 0,
+      predictions:n.active?predictor.forecasts(n.active.id):null,
       requested_thinking: n.active?.thinking?.result ?? null,
       last_requested_thinking: n.lastThinking ?? null, last_request_finished_at: n.lastFinishedAt ?? null,
       context_length: n.contextLength ?? null,
@@ -274,6 +279,7 @@ export function createGateway(config) {
     let settled = false, response, faults;
     const progress=()=>{if(dataset.enabled && !settled && job.trafficClass!=='genie')dataset.record('progress',{request_id:job.id,node:node.id,
       active_elapsed_ms:performance.now()-job.dispatchedMono,phase:observer.phase,semantic_characters:observer.semanticCharacters,
+      thinking_characters:observer.thinkingCharacters,answer_characters:observer.answerCharacters,tool_characters:observer.toolCharacters,
       semantic_age_ms:observer.lastSemanticAt===null?null:performance.now()-observer.lastSemanticAt,requested_thinking:job.thinking.result});};
     const progressTimer=dataset.enabled?setInterval(progress,30000):null;progressTimer?.unref();
     const finish = (outcome, detail) => {
@@ -293,7 +299,8 @@ export function createGateway(config) {
         usage: observer.usage, sse_done: observer.done, requested_thinking: job.thinking.result, detail });
       dataset.record('finish',{request_id:job.id,node:node.id,outcome,queue_ms:job.dispatchedMono-job.createdMono,
         service_ms:performance.now()-job.dispatchedMono,total_ms:performance.now()-job.createdMono,first_body_byte_ms:firstBodyByte,
-        request_bytes:requestBytes,usage:observer.usage,finish_reason:observer.finish_reason,requested_thinking:job.thinking.result});
+        request_bytes:requestBytes,usage:observer.usage,finish_reason:observer.finish_reason,requested_thinking:job.thinking.result,
+        generation:{thinking_characters:observer.thinkingCharacters,answer_characters:observer.answerCharacters,tool_characters:observer.toolCharacters,first_semantic_ms:observer.firstSemanticAt===null?null:observer.firstSemanticAt-job.dispatchedMono}});
       observe(()=>shadow.finished(node.id,job.key,{outcome,finish_reason:observer.finish_reason,
         service_ms:performance.now()-job.dispatchedMono,usage:observer.usage,route:req.url,traffic_class:job.trafficClass}));
       job.cleanup();
@@ -366,7 +373,12 @@ export function createGateway(config) {
       if (node.active || node.queue.length) { req.resume(); return error(res, 503, 'home_unavailable', 'Home Spark has unresolved work; gateway will not split or replay it'); }
       node = pick(node.id); affinity = 'reassigned';
     }
-    if (!node) node = pick();
+    if (!node) {
+      node=pick();
+      // Existing homes and reassignment retain their established safety/cache
+      // behavior. Only genuinely new conversations may use validated placement.
+      if(node&&key&&!home&&req.method==='POST')node=predictor.choose(nodes.filter(n=>n.healthy&&!n.drained&&!n.quarantine),key,node,candidate);
+    }
     if (!node) { req.resume(); return error(res, 503, 'no_healthy_workers', 'No worker is currently ready'); }
     if (req.method === 'GET') {
       // Model-list requests must not sit behind a multi-hour generation.
@@ -564,7 +576,7 @@ export function createGateway(config) {
   // Operator-only Unix socket: never expose lifecycle mutation on the LAN.
   const control = config.control_socket ? http.createServer((req, res) => {
     if (req.method === 'GET' && req.url === '/workers') return json(res, 200, registry());
-    if (req.method !== 'POST' || !['/drain-workers', '/resume-workers', '/add-worker', '/remove-worker', '/set-context-limit','/recovery-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
+    if (req.method !== 'POST' || !['/drain-workers', '/resume-workers', '/add-worker', '/remove-worker', '/set-context-limit','/recovery-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/predictor','/genie-predictor'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
     let body = '';
     req.on('data', chunk => { body += chunk; if (body.length > 4096) req.destroy(); });
     req.on('error', () => {});
@@ -572,6 +584,7 @@ export function createGateway(config) {
       void serialize(async () => {
         try {
           const input = JSON.parse(body);
+          if(['/predictor','/genie-predictor'].includes(req.url))return json(res,200,predictor.control(input,req.url==='/genie-predictor'?'genie':'operator'));
           if(req.url==='/recovery-recheck')return json(res,202,recovery.reconcile(input));
           if(req.url==='/recovery-policy') {
             if(Object.keys(input).length!==1 || !Object.hasOwn(input,'enabled'))throw new Error('Specify enabled only');
@@ -627,12 +640,14 @@ export function createGateway(config) {
       await Promise.all(nodes.map(probe));
       healthTimer = setInterval(() => { for (const n of nodes) void probe(n); }, config.health_interval_ms ?? 5000);
       void recovery.tick();recoveryTimer=setInterval(()=>void recovery.tick(),30000);
+      predictorTimer=setInterval(()=>predictor.tick(),60000);predictorTimer.unref?.();
       return server.address();
     },
     drain(value = true) { draining = value; log('drain_changed', { draining }); },
     async close() {
       if (shuttingDown) return;
       shuttingDown = true; draining = true;
+      clearInterval(predictorTimer);predictor.close();
       clearInterval(recoveryTimer);await recovery.close();
       if (control) await new Promise(resolve => control.close(resolve));
       await new Promise(resolve => { server.close(resolve); server.closeIdleConnections(); });

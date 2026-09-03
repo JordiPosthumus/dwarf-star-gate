@@ -118,6 +118,17 @@ test('unavailable embedding encoder cannot change inference bytes, thinking, mod
   assert.ok(!lines.includes('PRIVATE_EMBED_TEST'));
 });
 
+test('predictor misconfiguration cannot change inference or model limits; split generation counts are metadata only',async t=>{
+  const r=await rig(t,1,{dataset_enabled:true,predictor:{enabled:true,python:'/no-such-predictor',profiles:'/no-such-inventory'}});
+  const sse='data: {"choices":[{"delta":{"reasoning_content":"think"}}]}\n\ndata: {"choices":[{"delta":{"content":"OK","tool_calls":[{"function":{"arguments":"{}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":100,"completion_tokens":7}}\n\ndata: [DONE]\n\n';
+  const body=JSON.stringify({fixture_sse:sse,model:'deepseek-v4-flash',reasoning_effort:'xhigh',max_tokens:131072,messages:[{role:'user',content:'SYNTHETIC PRIVATE TEXT'}]});
+  const response=await r.request(body,'pred-fallback');assert.equal(response.body,sse);assert.equal(r.backends[0].records[0].body.toString(),body);
+  assert.equal(r.gateway.stats().predictor.configured,false);assert.equal(r.gateway.stats().context_length,153600);
+  await until(()=>r.gateway.stats().dataset.finished===1);
+  const dir=path.join(path.dirname(r.config.state_file),'training'),events=fs.readdirSync(dir).flatMap(f=>fs.readFileSync(path.join(dir,f),'utf8').trim().split('\n').map(JSON.parse)),finish=events.find(e=>e.kind==='finish');
+  assert.equal(finish.generation.thinking_characters,5);assert.equal(finish.generation.answer_characters,2);assert.equal(finish.generation.tool_characters,2);assert.ok(!JSON.stringify(events).includes('SYNTHETIC PRIVATE TEXT'));
+});
+
 test('30-second progress is correlated to active work and its timer is cleared on completion',async t=>{
   const r=await rig(t,1,{dataset_enabled:true});
   const request=r.request(JSON.stringify({stream:true,delay:31000}),'progress-fixture');

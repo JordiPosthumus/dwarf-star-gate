@@ -1,6 +1,9 @@
 # Optional local embedding and progress collection
 
-**Implemented; off by default. Collection only, not live XGB or routing.**
+**Implemented; off by default. Collection is independent of routing.** The optional
+[v2 predictor](predictor-lifecycle.md) can use embeddings in timestamped updated
+forecasts, never retroactively in initial placement. Feature selection may reject
+them; collection alone does not prove predictive value.
 The gateway can send bounded visible-text slices to one private CPU encoder
 process. It never waits for an embedding before forwarding inference. Failed or
 overloaded encoding loses an observation, not a model request. No DS4 worker,

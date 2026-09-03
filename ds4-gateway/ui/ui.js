@@ -49,7 +49,7 @@ function predictionChart(pairs) {
   if(!pairs.length)return '<p class="analytics-empty">No matched predictions yet.<br>Unknown estimates are not plotted as zero.</p>';
   const max=Math.max(1000,...pairs.flatMap(p=>[p.actual,p.predicted])),unit=max>=120000?60000:1000,label=unit===60000?'min':'s';
   const x=v=>48+v/max*180,y=v=>202-v/max*180;
-  return `<svg viewBox="0 0 266 246" role="img" aria-label="Predicted versus actual duration in ${label}; identical axes; dots above the diagonal took longer than predicted"><title>${pairs.length} paired requests; predictions were saved at admission</title><text x="48" y="12">Actual (${label})</text>${[0,.5,1].map(f=>`<line class="analytics-grid" x1="48" x2="228" y1="${y(f*max)}" y2="${y(f*max)}"/><text x="41" y="${y(f*max)+4}" text-anchor="end">${fmt(f*max/unit)}</text><text x="${x(f*max)}" y="219" text-anchor="middle">${fmt(f*max/unit)}</text>`).join('')}<line class="analytics-equal" x1="48" y1="202" x2="228" y2="22"/>${pairs.map(p=>`<circle class="${p.actual>p.predicted?'underestimated':'estimated'}" cx="${x(p.predicted).toFixed(2)}" cy="${y(p.actual).toFixed(2)}" r="3"><title>${esc(p.node)}: predicted ${fmt(p.predicted/1000)}s, actual ${fmt(p.actual/1000)}s</title></circle>`).join('')}<text x="138" y="240" text-anchor="middle">Predicted (${label})</text></svg>`;
+  return `<svg viewBox="0 0 266 246" role="img" aria-label="Predicted versus actual duration in ${label}; identical axes; dots above the diagonal took longer than predicted"><title>${pairs.length} paired requests; frozen forecasts at the selected stage</title><text x="48" y="12">Actual (${label})</text>${[0,.5,1].map(f=>`<line class="analytics-grid" x1="48" x2="228" y1="${y(f*max)}" y2="${y(f*max)}"/><text x="41" y="${y(f*max)+4}" text-anchor="end">${fmt(f*max/unit)}</text><text x="${x(f*max)}" y="219" text-anchor="middle">${fmt(f*max/unit)}</text>`).join('')}<line class="analytics-equal" x1="48" y1="202" x2="228" y2="22"/>${pairs.map(p=>`<circle class="${p.actual>p.predicted?'underestimated':'estimated'}" cx="${x(p.predicted).toFixed(2)}" cy="${y(p.actual).toFixed(2)}" r="3"><title>${esc(p.node)}: predicted ${fmt(p.predicted/1000)}s, actual ${fmt(p.actual/1000)}s</title></circle>`).join('')}<text x="138" y="240" text-anchor="middle">Predicted (${label})</text></svg>`;
 }
 let analyticsState=null,analyticsLoading=false,analyticsWorkerSignature='',analyticsChartSignature='';
 function renderAnalytics() {
@@ -60,8 +60,14 @@ function renderAnalytics() {
     worker.innerHTML='<option value="">All servers</option>'+ids.map(id=>`<option value="${esc(id)}">${esc(id)}</option>`).join('');
     worker.value=ids.includes(previous)?previous:'';
   }
-  const m=analyticsMetrics(a,metric,worker.value);
+  const xgb=metric.startsWith('xgb-'),stage=metric.slice(4),versions=(a?.model_series||[]).filter(m=>m.stage===stage),version=$('analytics-version');
+  $('analytics-version-label').hidden=!xgb;
+  const options=versions.map(m=>`<option value="${esc(m.id)}">${esc(m.id.slice(0,12))}</option>`).join('');
+  if(version.innerHTML!==options){const old=version.value;version.innerHTML=options;if(versions.some(m=>m.id===old))version.value=old;}
+  const selected=versions.find(m=>m.id===version.value),m=analyticsMetrics(xgb?{rows:selected?.rows||[]}:a,xgb?'service':metric,worker.value);
   $('analytics-status').textContent=a?.demo?'Synthetic demo · not measured predictions':({disabled:'Enable evidence collection to see analytics.',waiting:'Waiting for saved evidence.',catching_up:'Reading recent evidence — counts are partial.',rescanning:'Evidence files changed — rebuilding the recent window.',unavailable:'Evidence unavailable — previous values are historical.',ready:'Shadow baseline · unvalidated'})[a?.status]||'Analytics unavailable — previous values are historical.';
+  if(xgb&&a?.status==='ready')$('analytics-status').textContent=selected?`XGB ${stage} · model ${selected.id.slice(0,12)} · ${selected.rows.some(r=>r.experimental)?'includes experimental forecasts':'validated forecasts'}`:'No forecasts at this stage yet';
+  $('analytics-contract').textContent=xgb?stage==='remaining'?'One frozen forecast per request: the first at or after 30 seconds. Actual = server time remaining at that moment, not total duration.':stage==='admission'?'Frozen before dispatch/upload. Current prompt embeddings are not available.':'Updated total server-time forecast, frozen separately after upload or embeddings. Not an admission-time forecast.':'Admission-time historical baseline, not XGB. Embeddings do not enter this baseline.';
   const chartSignature=JSON.stringify(m.pairs);
   if(chartSignature!==analyticsChartSignature){analyticsChartSignature=chartSignature;$('analytics-chart').innerHTML=predictionChart(m.pairs);}
   $('analytics-stats').innerHTML=`<div><span class="label">PAIRED REQUESTS</span><strong>${fmt(m.pairs.length)}</strong></div><div><span class="label">PREDICTION COVERAGE</span><strong>${m.coverage===null?'—':fmt(m.coverage)+'%'}</strong></div><div><span class="label">MEAN ABSOLUTE ERROR</span><strong>${m.mae===null?'—':fmt(m.mae/1000)+'s'}</strong></div>`;
@@ -99,7 +105,9 @@ function device(d, w, now, stale, index = 1, scales={}) {
     return `<div><span class="label">${title}</span><div class="rate ${kind}">${fmt(m?.tps)}<em>t/s</em></div><div class="metric-note">avg ${fmt(m?.average)} · ${age(m?.time, now)}</div>${chart(d.series, kind, now,scales[kind])}<div class="chart-caption">15m · 0–${fmt(scales[kind])} t/s · shared ${kind} scale</div></div>`;
   };
   const prompt = d.prompt ? `Last prompt: ${fmt(d.prompt.prompt)} tokens · ${fmt(d.prompt.cached)} reused · ${esc(d.prompt.cache)}` : 'No prompt start observed yet';
-  return `<article class="device"><div class="device-top"><div class="device-name"><span class="device-number">${String(index).padStart(2,'0')}</span>${esc(d.id.replace(/^spark/, 'Spark '))}</div><span class="badge ${bad ? 'bad' : w?.load ? 'busy' : ''}">${esc(state==='decode'?'answering':state)}</span></div>${timeline(d,now)}${thinkingIndicator(w,stale,now)}<div class="metrics">${metric('decode','DECODE')}${metric('prefill','PREFILL')}</div><p class="prompt-note">${prompt}</p><div class="cache"><div><strong>${fmt(d.cache.reused)}</strong><span>Prefix reused</span></div><div><strong>${fmt(d.cache.cold)}</strong><span>Cold starts</span></div><div><strong>${fmt(d.cache.resident_misses)}</strong><span>Resident misses</span></div><div><strong>${fmt(d.cache.disk_restores)}</strong><span>Disk restores</span></div></div><p class="cache-note">Observed since ${d.observed_since ? clock(d.observed_since) : 'connecting'} · RAM misses ≠ cold starts</p><div class="device-foot"><span>${fmt(w?.queued)} queued · ${fmt(w?.assigned_sessions)} assigned sessions</span><span>${telemetryStatus(d)} · ${w?.load ? `${fmt(w.active_seconds)}s active` : 'last sample '+age(d.last_event,now)}</span></div></article>`;
+  const f=w?.predictions?.remaining??w?.predictions?.updated??w?.predictions?.admission;
+  const forecast=f?`<p class="muted">${f.experimental?'Experimental':'Validated'} ${f.stage==='remaining'?'remaining':'total server-time'} estimate: ${fmt(f.seconds)}s · ${age(f.at,now)}${stale||now-f.at>60000?' · stale':''}</p>`:'';
+  return `<article class="device"><div class="device-top"><div class="device-name"><span class="device-number">${String(index).padStart(2,'0')}</span>${esc(d.id.replace(/^spark/, 'Spark '))}</div><span class="badge ${bad ? 'bad' : w?.load ? 'busy' : ''}">${esc(state==='decode'?'answering':state)}</span></div>${timeline(d,now)}${thinkingIndicator(w,stale,now)}${forecast}<div class="metrics">${metric('decode','DECODE')}${metric('prefill','PREFILL')}</div><p class="prompt-note">${prompt}</p><div class="cache"><div><strong>${fmt(d.cache.reused)}</strong><span>Prefix reused</span></div><div><strong>${fmt(d.cache.cold)}</strong><span>Cold starts</span></div><div><strong>${fmt(d.cache.resident_misses)}</strong><span>Resident misses</span></div><div><strong>${fmt(d.cache.disk_restores)}</strong><span>Disk restores</span></div></div><p class="cache-note">Observed since ${d.observed_since ? clock(d.observed_since) : 'connecting'} · RAM misses ≠ cold starts</p><div class="device-foot"><span>${fmt(w?.queued)} queued · ${fmt(w?.assigned_sessions)} assigned sessions</span><span>${telemetryStatus(d)} · ${w?.load ? `${fmt(w.active_seconds)}s active` : 'last sample '+age(d.last_event,now)}</span></div></article>`;
 }
 const headlineSeverity=value=>['good','info','warning','critical'].includes(value)?value:'info';
 function healthHeadlines(snapshot, ticker) {
@@ -141,6 +149,7 @@ function renderHealthWire(snapshot) {
 }
 function render(s) {
   const g = s.gateway, now = s.time, stale = !!s.gateway_error;
+  renderPredictor(g?.predictor,stale||!s.worker_management);
   renderHealthWire(s);
   $('connection').textContent = s.demo ? '◉ Demo telemetry' : stale ? 'Status unavailable' : '● Live telemetry';
   $('warning').hidden = !s.gateway_error && !s.telemetry_error;
@@ -258,11 +267,11 @@ function renderGenieReports(reports = []) {
       node = document.createElement('details');
       node.dataset.reportId = report.id;
       const summary = document.createElement('summary');
-      summary.textContent = `${clock(report.time)} · ${report.source} · ${report.actions_taken?.length?'recovery requested; see executor receipts':'assessment, no actions'}${report.evidence_at?` · evidence ${clock(report.evidence_at)}`:''}`;
+      summary.textContent = `${clock(report.time)} · ${report.source} · ${report.actions_taken?.length?'action requested; see executor receipts':'assessment, no actions'}${report.evidence_at?` · evidence ${clock(report.evidence_at)}`:''}`;
       const answer = document.createElement('p');
       answer.className = 'genie-answer';
       answer.textContent = report.text;
-      if(report.actions_taken?.length)answer.textContent+='\n\nAction request results: '+report.actions_taken.map(a=>`${a.worker_id}: ${a.state}${a.id?` (${a.id})`:''}`).join('; ');
+      if(report.actions_taken?.length)answer.textContent+='\n\nAction request results: '+report.actions_taken.map(a=>`${a.predictor?'predictor '+a.predictor:a.worker_id}: ${a.state??a.status??'pending'}${a.id?` (${a.id})`:''}`).join('; ');
       node.append(summary, answer);
     }
     // Completed reports are immutable. Keep their actual DOM nodes so polling
@@ -279,6 +288,7 @@ function renderGenieReports(reports = []) {
 poll();
 $('analytics-metric').addEventListener('change',renderAnalytics);
 $('analytics-worker').addEventListener('change',renderAnalytics);
+$('analytics-version').addEventListener('change',renderAnalytics);
 let cacheCostBusy=false;
 $('cache-cost-form').addEventListener('submit',async event=>{
   event.preventDefault();if(cacheCostBusy)return;cacheCostBusy=true;
@@ -307,7 +317,7 @@ async function loadGenie() {
   try {const r=await fetch('/api/genie',{signal:AbortSignal.timeout(5000)});if(!r.ok)throw new Error();const s=await r.json();genieToken=s.csrf_token;genieState=s;wireState=s.ticker;
     if(wireSnapshot)renderHealthWire(wireSnapshot);
     $('genie-status').textContent=!s.configured?'Not configured':s.error||(!s.enabled?'Off':s.busy?'Reviewing fleet evidence…':`Enabled · last review ${age(s.last_check,Date.now())}`);
-    $('genie-mode').textContent=s.mode==='bounded-recovery'?'bounded recovery available':'observation only';
+    $('genie-mode').textContent=[s.mode==='bounded-recovery'?'bounded recovery available':'observation',s.predictor_supervision?'predictor supervision':''].filter(Boolean).join(' · ');
     $('genie-toggle').disabled=!s.configured;$('genie-toggle').textContent=s.enabled?'Turn off':'Enable';
     $('genie-source').disabled=!s.fallback_available||s.busy;$('genie-source').value=s.source||'primary';
     $('genie-review').disabled=$('genie-send').disabled=!s.enabled||s.busy;
@@ -331,6 +341,27 @@ function renderRecovery(state) {
     const p=document.createElement('p');p.textContent=`${clock(op.updated_at)} · ${op.worker_id} · ${op.actor} · ${op.state.replaceAll('_',' ')}${op.error?` · ${op.error.replaceAll('_',' ')}`:''}${op.proof?` · ${op.proof.samples.map(s=>`${s.label}: ${s.cached_tokens}/${s.prompt_tokens} cached`).join(' · ')}`:''} · ${op.id}`;return p;
   }));
 }
+let predictorState=null,predictorControlBusy=false;
+function renderPredictor(state,unavailable=false){
+  predictorState=state;
+  const active=(state?.models||[]).filter(m=>m.active_model_id).length;
+  $('predictor-status').textContent=unavailable?'Predictor controls unavailable or stale':!state?.configured?'Optional predictor runtime not configured':state.error||`${state.busy?'Training candidate':'Collecting and scoring forecasts'} · ${active} validated models · ${fmt(state.new_requests)} new completed requests since training${state.placement?' · new-session placement armed (evidence gates still apply)':''}`;
+  for(const b of $('predictor-controls').querySelectorAll('button')){
+    const action=b.dataset.predictor;
+    b.disabled=unavailable||!state?.configured||predictorControlBusy||(action==='train'&&state.busy)||(action==='rollback'&&!active);
+    if(['automatic_training','automatic_promotion','placement'].includes(action)){const label={automatic_training:'Auto training',automatic_promotion:'Auto validation',placement:'New-session placement'}[action];b.textContent=`${label}: ${state?.[action]?'on':'off'}`;b.setAttribute('aria-pressed',String(!!state?.[action]));}
+  }
+  $('predictor-models').innerHTML=`<table><thead><tr><th>Forecast</th><th>Candidate</th><th>Backtest MAE</th><th>Future MAE / baseline</th><th>Future evidence</th><th>Selection</th></tr></thead><tbody>${(state?.models||[]).map(m=>`<tr><td>${esc(m.kind)}${m.active_model_id?' · active '+esc(m.active_model_id.slice(0,8)):''}</td><td>${esc(m.status.replaceAll('_',' '))}${m.candidate_model_id?' · '+esc(m.candidate_model_id.slice(0,8)):''}</td><td>${fmt(m.holdout?.mae_s)}s</td><td>${fmt(m.future?.mae_s)}s / ${fmt(m.future?.baseline_mae_s)}s</td><td>${fmt(m.future?.requests||0)} requests · ${fmt(m.future?.sessions||0)} sessions</td><td>${m.selected?esc(`${m.selected.rounds} trees · ${m.selected.transform} · ${m.selected.family.join(' + ')}`):'Not enough evidence'}</td></tr>`).join('')}</tbody></table>`;
+  $('predictor-actions').replaceChildren(...(state?.actions||[]).slice(0,5).map(a=>{const p=document.createElement('p');p.textContent=`${clock(a.time)} · ${a.actor} · ${a.action} · ${a.status}: ${a.reason}`;return p;}));
+}
+$('predictor-controls').addEventListener('click',async event=>{
+  const button=event.target.closest('button[data-predictor]');if(!button||button.disabled||!csrfToken)return;
+  const action=button.dataset.predictor,input=['train','rollback'].includes(action)?{action}:{action,enabled:!predictorState?.[action]};
+  if(action==='placement'&&input.enabled&&!window.confirm('Arm placement for new sessions only? It remains inactive until backtest, unseen-session and future-live gates pass. Existing sessions will not move.'))return;
+  predictorControlBusy=true;renderPredictor(predictorState);
+  try{const r=await fetch('/api/workers/predictor',{method:'POST',headers:{'content-type':'application/json','x-dsg-csrf':csrfToken},body:JSON.stringify(input)}),v=await r.json();if(!r.ok)throw new Error(v.error||'Action rejected');$('predictor-status').textContent=`${action} accepted; awaiting authoritative status`;}
+  catch(e){$('predictor-status').textContent=e.message;}finally{predictorControlBusy=false;}
+});
 $('recovery-toggle').addEventListener('click',()=>{
   if(!recoveryState?.configured)return;
   if(!recoveryState.automatic&&!window.confirm('Allow GG and the known-fatal watcher to restart registered DS4 services after identity and fault checks? RAM-resident caches are lost; server settings and disk caches are preserved.'))return;

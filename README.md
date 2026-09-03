@@ -8,10 +8,13 @@ Register workers through the local UI or CLI; fleet size is not hard-coded.
 
 **Implemented, opt-in:** private routing evidence, fleet activity, and **Gate
 Genie**, a local fleet assistant with optional [bounded DS4 service recovery](docs/worker-recovery.md). See the [prioritized feature roadmap](docs/roadmap.md)
-and [experimental collector/Genie setup](docs/observer.md). Planned cache-health
-auditing and XGBoost-guided routing are explicitly separate from today's features.
-An optional [offline XGBoost experiment](predictor/README.md) now provides a
-reproducible fit/evaluate/save/reload path. It does not control routing.
+and [experimental collector/Genie setup](docs/observer.md). Cache-health auditing
+and cache migration remain roadmap items. The optional [predictor lifecycle](docs/predictor-lifecycle.md)
+adds live shadow forecasts, causal next-turn history, embedding-aware updates,
+remaining-time models, fixed cross-validation and future-traffic promotion gates.
+Prediction-assisted **new-session** placement is separately opt-in and requires
+unseen-session evidence; existing sessions never move. A fitted model alone does
+not qualify. The [v1 offline experiment](predictor/README.md) remains reproducible.
 Workers with recognized engine faults or repeated inference failures are
 [quarantined persistently](docs/generation-health.md); recovery requires a real
 generation check. Opt-in recovery can restart an enrolled systemd-user DS4 service
@@ -66,7 +69,7 @@ The gateway/dashboard use Node.js built-ins only; the optional systemd recovery
 helper uses Python's standard library. No package installation, database, Kubernetes, frontend
 build system, CDN, analytics service or cloud telemetry.
 
-The optional offline predictor and CPU embedding encoder use separate, locked
+The optional predictor trainer and CPU embedding encoder use separate, locked
 Python environments. Neither is required for ordinary gateway/dashboard operation;
 the encoder runs only when explicitly configured, without cloud inference.
 
@@ -288,10 +291,13 @@ them without review. Monitoring logs are separate from the inference path.
 
 The local **Analytics** panel compares saved shadow forecasts with actual queue
 waits and server durations, with sample counts, missing-prediction coverage and
-per-server filtering. It is an unvalidated historical baseline, not a live XGB
-router. See [analytics definitions and the model plan](docs/analytics.md).
+per-server filtering. Select historical baselines or separately versioned XGB
+forecasts at admission, after upload/embeddings, or while active. See
+[analytics definitions](docs/analytics.md) and [validation/controls](docs/predictor-lifecycle.md).
 The same panel shows optional embedding collection status and the cache-cost
-calculator. Neither currently changes routing or replaces the historical charts.
+calculator. Those retain their independent meanings; they do not replace the
+historical charts. GG can request bounded training or measured-regression rollback;
+the fixed validator, not an LLM, decides whether a candidate qualifies.
 
 ## Client affinity
 
