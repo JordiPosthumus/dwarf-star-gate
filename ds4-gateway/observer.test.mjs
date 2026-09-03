@@ -18,6 +18,11 @@ import {createDashboard} from './dashboard.mjs';
 import {capacity,phase,Activity} from './ui/activity.js';
 const snapshot=()=>({time:Date.now(),devices:[],events:[],gateway:{workers:[],context_length:262144,active:0,queued:0}});
 const authoredReview=()=>({assessment:'The fleet has no demonstrated fault in this snapshot.',ticker:[{severity:'info',text:'No current failure is evidenced.',recommendation:null,evidence_refs:['fleet']}]});
+test('Genie queue briefing preserves measured age versus allowance and grants no timeout power',()=>{
+  const s=snapshot();s.gateway.queue_timeout_ms=72000000000;s.gateway.request_timeout_ms=360000000;s.gateway.workers=[{id:'one',oldest_queue_seconds:125,oldest_queue_remaining_seconds:71999875}];
+  const b=briefing(s);assert.equal(b.queue_timeout_ms,72000000000);assert.equal(b.workers[0].oldest_queue_seconds,125);assert.equal(b.workers[0].oldest_queue_remaining_seconds,71999875);
+  assert.match(b.semantics.join(' '),/NOT predicted time to service/);assert.match(b.semantics.join(' '),/cannot change timeout/);assert.match(b.semantics.join(' '),/NOT 0.3 seconds/);assert.equal(briefing(snapshot()).queue_timeout_ms,null);
+});
 test('Genie briefing distinguishes an empty waiting queue from genuinely free capacity',()=>{
   const worker={id:'one',is_healthy:true,load:0,queued:0},s=snapshot();s.gateway.workers=[worker];
   assert.equal(briefing(s).workers[0].immediately_free,true);

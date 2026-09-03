@@ -7,8 +7,29 @@ queue admission limits are unchanged. Effective values appear in `/gateway/statu
 
 An existing private config with an explicit shorter `queue_timeout_ms` continues
 to use it until the operator changes it. New setup configs use the new default.
-Set the positive integer milliseconds in private config, then perform an approved
-gateway restart. UI editing will be added separately; it is not in this first fix.
+Use **Manage DS4 servers → Queue waiting allowance (hours) → Save queue allowance**.
+The control applies immediately to **new admissions** without a restart. Existing
+queued requests retain their admission-time deadline, including when you lower
+the allowance; the UI asks for confirmation before reducing it. Active generations,
+model settings and Pi are untouched. Unsaved typing survives UI polling.
+
+The explicit UI choice is backed up and atomically saved as `queue_timeout_ms` in
+the private affinity metadata store. It takes precedence over the startup config
+across restarts, just like the explicit pool context limit. The UI displays whether
+the value comes from saved state, config or default. Revert using the same control,
+not by restoring an old whole-state backup over newer conversations.
+
+The operator Unix socket accepts `/set-queue-timeout` with exactly
+`queue_timeout_ms` and `expected_queue_timeout_ms` (positive safe-integer
+milliseconds). A stale expected value fails without overwriting the newer choice.
+The UI uses the existing loopback-only, same-origin, CSRF-protected control path;
+neither the inference listener, scoped worker agents nor Genie can change this
+policy. Read effective values from `/gateway/status` or `/workers`.
+
+Per-worker status also reports the oldest current queue age and its remaining
+deadline in seconds. Genie receives both for reporting: remaining allowance is
+**not** an ETA or proof of a stall. Unknown remains null. Long queues deserve
+attention even with a generous deadline. Genie cannot revive a stopped Pi turn.
 
 The implementation chains bounded timers against a monotonic deadline. Passing
 20,000 hours directly to Node's `setTimeout` would overflow its 2^31−1 ms limit

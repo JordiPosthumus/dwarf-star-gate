@@ -410,8 +410,9 @@ test('opt-in worker controls require same origin, JSON and a CSRF token; diagnos
   assert.equal((await post('/api/workers/add','x'.repeat(9000),valid)).status,413);
   assert.equal(calls.length,0);
   assert.equal((await post('/api/workers/context','{}',{'content-type':'application/json'})).status,403);
-  for(const action of ['add','drain','resume','remove','context']) assert.equal((await post('/api/workers/'+action,JSON.stringify({id:'fake'}),valid)).status,200);
-  assert.deepEqual(calls.map(x=>x.action),['add','drain','resume','remove','context']);
+  assert.equal((await post('/api/workers/queue-timeout','{}',{'content-type':'application/json'})).status,403);
+  for(const action of ['add','drain','resume','remove','context','queue-timeout']) assert.equal((await post('/api/workers/'+action,JSON.stringify({id:'fake'}),valid)).status,200);
+  assert.deepEqual(calls.map(x=>x.action),['add','drain','resume','remove','context','queue-timeout']);
   assert.ok(!(await(await fetch(url+'/api/diagnostics')).text()).includes(init.csrf_token));
   const plain=await fixture(t);assert.deepEqual(await(await fetch(plain.url+'/api/workers')).json(),{enabled:false});
 });

@@ -58,8 +58,8 @@ const events = Array.from({length:8},(_,i)=>({
   usage:{prompt_tokens:28500+i*3800,cached_tokens:27000+i*3800,completion_tokens:160+i*23},
 }));
 const snapshot = { version:1,demo:true,time:now,started:now-900000,read_only:false,worker_management:true,gateway_at:now,gateway_error:null,telemetry_error:null,
-  gateway:{model:'deepseek-v4-flash',context_length:262144,total:3,healthy:3,available:3,active:2,queued:1,draining:false,workers,dataset,predictor,recovery},devices,events };
-const registry=()=>({model:'deepseek-v4-flash',minimum_context:snapshot.gateway.context_length,context_limit_control:true,context_limit_source:'saved',workers,recovery});
+  gateway:{model:'deepseek-v4-flash',context_length:262144,queue_timeout_ms:72000000000,total:3,healthy:3,available:3,active:2,queued:1,draining:false,workers,dataset,predictor,recovery},devices,events };
+const registry=()=>({model:'deepseek-v4-flash',minimum_context:snapshot.gateway.context_length,context_limit_control:true,context_limit_source:'saved',queue_timeout_ms:snapshot.gateway.queue_timeout_ms,queue_timeout_control:true,queue_timeout_source:'saved',workers,recovery});
 if(agentHold)Object.assign(workers[2],{drained:true,operator_paused:false,holds:[{id:'demo-hold',owner_id:'test-agent',reason:'<DS4 compatibility test>'}]});
 return createDashboard(()=>({...snapshot,time:Date.now(),gateway_at:Date.now(),
   devices:workers.map(w=>devices.find(d=>d.id===w.id)||new DeviceTelemetry(w.id).snapshot()),
@@ -72,6 +72,10 @@ return createDashboard(()=>({...snapshot,time:Date.now(),gateway_at:Date.now(),
     }else if(action==='predictor'&&input.action==='reset_baseline'&&Object.keys(input).join(',')==='action'){
       for(const m of predictor.models)m.active_model_id=null;
       predictor.reset_at=Date.now();
+    }else if(action==='queue-timeout'){
+      if(Object.keys(input).sort().join(',')!=='expected_queue_timeout_ms,queue_timeout_ms'||!Number.isSafeInteger(input.queue_timeout_ms)||input.queue_timeout_ms<1)throw new Error('Invalid queue allowance');
+      if(input.expected_queue_timeout_ms!==snapshot.gateway.queue_timeout_ms)throw new Error('Queue allowance changed');
+      snapshot.gateway.queue_timeout_ms=input.queue_timeout_ms;
     }else if(action==='context') {
       if(input.expected_context_length!==snapshot.gateway.context_length)throw new Error('Pool context changed; refresh before applying');
       if(!Number.isSafeInteger(input.context_length)||input.context_length<=0)throw new Error('Enter a positive whole token count');

@@ -22,6 +22,11 @@
 <button class="button" type="submit">Apply pool limit</button>
 </form>
 <p id="pool-context-note" hidden>Checks every enabled server. Saved across gateway restarts and applied immediately; server settings and Pi are unchanged.</p>
+<form id="queue-timeout-form" class="worker-form" hidden>
+<label>Queue waiting allowance (hours)<input id="queue-timeout-input" type="number" min="1" step="1" required aria-describedby="queue-timeout-note"></label>
+<button class="button" type="submit">Save queue allowance</button>
+</form>
+<p id="queue-timeout-note" hidden><span id="queue-timeout-current"></span> Applies to newly arriving requests. Existing waits keep their admission-time deadline. Saved across restarts; no restart needed to change it. Active-generation timeout, DS4 and Pi settings are unchanged.</p>
 <div class="table-wrap"><table><thead><tr><th>DS4 server</th><th>Server context</th><th>Routing</th><th>Active / queued</th><th>Actions</th></tr></thead><tbody id="worker-rows"></tbody></table></div>
 <form id="worker-form" class="worker-form">
 <label>Server ID<input name="id" required maxlength="64" pattern="[a-zA-Z0-9][a-zA-Z0-9_-]*" placeholder="m2-max" autocomplete="off"></label>

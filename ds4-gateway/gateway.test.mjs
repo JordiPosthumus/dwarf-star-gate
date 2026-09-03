@@ -869,6 +869,27 @@ test('default long queue has no timer overflow and cancellation/dispatch clear i
   const req=http.request({host:'127.0.0.1',port:r.address.port,path:'/v1/chat/completions',method:'POST',headers:{authorization:'Bearer none','content-type':'application/json'}});req.on('error',()=>{});req.end('{}');
   await until(()=>r.gateway.stats().queued===1);req.destroy();await until(()=>r.gateway.stats().queued===0);await active;assert.equal(r.backends[0].records.length,3);
 });
+test('queue allowance control persists, is operator-only and preserves admitted deadlines',async t=>{
+  const r=await rig(t,1,{control_socket:true}),ctl=(b)=>workerControl(r.config.control_socket,'/set-queue-timeout',b);
+  const old=r.gateway.stats().queue_timeout_ms;
+  const first=r.request('{"delay":220}','a');await until(()=>r.gateway.stats().active===1);
+  const second=r.request('{}','b');await until(()=>r.gateway.stats().queued===1);
+  const initialJob=r.gateway.nodes[0].queue[0];assert.equal(initialJob.queueTimeoutMs,old);
+  const updated=await ctl({queue_timeout_ms:40,expected_queue_timeout_ms:old});assert.equal(updated.queue_timeout_ms,40);assert.equal(updated.queue_timeout_source,'saved');assert.equal(initialJob.queueTimeoutMs,old);
+  assert.ok(r.gateway.stats().workers[0].oldest_queue_remaining_seconds>1000000);
+  const expiry=await r.request('{}','c');assert.equal(expiry.status,504);assert.equal((await first).status,200);assert.equal((await second).status,200);
+  assert.equal(r.backends[0].records.length,2);assert.equal(r.gateway.stats().context_length,153600);assert.equal(r.gateway.stats().request_timeout_ms,360000000);
+  assert.ok(fs.readdirSync(path.dirname(r.config.state_file)).some(f=>f.includes('.queue-')));
+  await assert.rejects(ctl({queue_timeout_ms:50,expected_queue_timeout_ms:old}),/changed/);
+  for(const value of [0,-1,null,'20000',1.5])await assert.rejects(ctl({queue_timeout_ms:value,expected_queue_timeout_ms:40}),/positive whole/);
+  await assert.rejects(ctl({queue_timeout_ms:50,expected_queue_timeout_ms:40,model:'no'}),/positive whole/);
+  const save=r.gateway.store.save;r.gateway.store.save=()=>{throw new Error('simulated storage failure');};
+  await assert.rejects(ctl({queue_timeout_ms:60,expected_queue_timeout_ms:40}),/storage failure/);assert.equal(r.gateway.stats().queue_timeout_ms,40);r.gateway.store.save=save;
+  assert.equal((await r.request('{}',null,{path:'/set-queue-timeout'})).status,404);
+  await r.restart();assert.equal(r.gateway.stats().queue_timeout_ms,40);assert.equal(r.gateway.stats().workers[0].oldest_queue_seconds,null);
+  const grant=await workerControl(r.config.control_socket,'/grant-agent',{agent_id:'queue-tester',workers:['spark1']});
+  const forbidden=await new Promise((resolve,reject)=>{const req=http.request({socketPath:r.config.control_socket,path:'/set-queue-timeout',method:'POST',headers:{authorization:`Bearer ${grant.token}`}},res=>{res.resume();res.on('end',()=>resolve(res.statusCode));});req.on('error',reject);req.end(JSON.stringify({queue_timeout_ms:80,expected_queue_timeout_ms:40}));});assert.equal(forbidden,403);assert.equal(r.gateway.stats().queue_timeout_ms,40);
+});
 test('SSE forwarded with usage and DONE; no Node five-minute or idle request timeout', async t => {
   const r = await rig(t);
   const result = await r.request('{"stream":true}', 'a');

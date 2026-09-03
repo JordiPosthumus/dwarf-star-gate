@@ -47,6 +47,7 @@ calibration preflight are already implemented separately.
 
 | Order | Work | Exit evidence |
 | --- | --- | --- |
+| Immediate | [Client continuity](client-continuity.md): distinguish undispatched waits from interrupted generation, scope home ownership correctly, and avoid abandoning Pi turns | Real-client failure/continuation test; no duplicate inference/tool execution or replay of partial streams. Long queue allowance/UI is implemented; safe reassignment/client adapter remain planned |
 | 0 | Promote protocol/quarantine maintenance fixes through a controlled cutover | Regression suites pass; versioned backup; real API-format smoke checks; unchanged fleet/context; explicit source-versus-running release record |
 | 1 | Diagnose the Spark CUDA/OOM incidents and identify backend process epochs | Correlated service/kernel/memory evidence and targeted reproduction; real cold/warm checks plus representative sustained work; no unapproved context/cache reductions |
 | 2 | Explain idle capacity and design cache-aware overflow scheduling | UI identifies session-home waits; replay/shadow comparisons of wait-at-home versus cold execution elsewhere; prove no overlapping ownership/replay; operator-approved policy before activation |

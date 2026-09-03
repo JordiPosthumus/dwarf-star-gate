@@ -183,6 +183,7 @@ async function poll() {
 }
 let controlsWired = false, workerBusy = false, workersLoading = false, csrfToken = null,recoveryState=null;
 let contextDirty=false, contextExpected=null;
+let queueDirty=false,queueExpected=null;
 function workerMessage(text, error = false) {
   $('worker-message').textContent = text; $('worker-message').classList.toggle('error',error);
 }
@@ -208,6 +209,11 @@ async function loadWorkers() {
     $('pool-context-form').hidden=!data.context_limit_control;
     $('pool-context-note').hidden=!data.context_limit_control;
     if(!contextDirty){contextExpected=data.minimum_context;$('pool-context-input').value=String(data.minimum_context);}
+    $('queue-timeout-form').hidden=$('queue-timeout-note').hidden=!data.queue_timeout_control;
+    if(data.queue_timeout_control){
+      $('queue-timeout-current').textContent=`Current: ${fmt(data.queue_timeout_ms/3600000)} hours (${data.queue_timeout_source}).`;
+      if(!queueDirty){queueExpected=data.queue_timeout_ms;$('queue-timeout-input').value=String(data.queue_timeout_ms/3600000);}
+    }
   } catch(e) { workerMessage(e.message,true);$('recovery-status').textContent='Recovery controls unavailable; last state is stale';$('recovery-toggle').disabled=true; }
   finally { workersLoading=false; }
 }
@@ -217,6 +223,7 @@ async function workerAction(action, input) {
   workerBusy=true;
   $('worker-form').querySelector('button').disabled=true;
   $('pool-context-form').querySelector('button').disabled=true;
+  $('queue-timeout-form').querySelector('button').disabled=true;
   $('worker-rows').querySelectorAll('button').forEach(b=>{b.disabled=true;});
   workerMessage(action==='context'?'Checking enabled server capacities…':action==='add'?'Checking model and context…':'Updating worker routing…');
   try {
@@ -224,9 +231,10 @@ async function workerAction(action, input) {
     const data=await r.json();if(!r.ok)throw new Error(data.error||'Worker control failed');
     workerMessage(action==='recover'?`Recovery accepted: ${data.id}. See executor receipts below.`:action==='recovery-policy'?`Automatic recovery ${data.automatic?'enabled':'disabled'}.`:action==='context'?`Pool limit saved: ${fmt(data.minimum_context)} tokens. Applied now; model servers and Pi unchanged.`:action==='add'?'Registered paused. Enable routing when ready.':action==='drain'?'Draining. Admitted requests will finish before removal.':action==='remove'?'Removed from this gateway. Model server left running.':'Routing enabled.');
     if(action==='context'){contextDirty=false;contextExpected=data.minimum_context;}
+    if(action==='queue-timeout'){queueDirty=false;queueExpected=data.queue_timeout_ms;workerMessage(`Queue allowance saved: ${fmt(data.queue_timeout_ms/3600000)} hours for new requests. Existing waits and model servers unchanged.`);}
     if(action==='add')$('worker-form').reset();
   } catch(e) { workerMessage(`${e.message}. Check the worker list before retrying.`,true); }
-  finally { workerBusy=false;$('worker-form').querySelector('button').disabled=false;$('pool-context-form').querySelector('button').disabled=false;updateConnectionFields();void loadWorkers(); }
+  finally { workerBusy=false;$('worker-form').querySelector('button').disabled=false;$('pool-context-form').querySelector('button').disabled=false;$('queue-timeout-form').querySelector('button').disabled=false;updateConnectionFields();void loadWorkers(); }
 }
 function updateConnectionFields() {
   const form=$('worker-form'), remote=form.elements.connection.value==='ssh';
@@ -239,6 +247,13 @@ function wireWorkerControls() {
   if(controlsWired)return;controlsWired=true;
   const form=$('worker-form');form.elements.connection.addEventListener('change',updateConnectionFields);
   $('pool-context-input').addEventListener('input',()=>{contextDirty=true;});
+  $('queue-timeout-input').addEventListener('input',()=>{queueDirty=true;});
+  $('queue-timeout-form').addEventListener('submit',e=>{
+    e.preventDefault();const hours=Number($('queue-timeout-input').value),ms=hours*3600000;
+    if(!Number.isSafeInteger(hours)||hours<1||!Number.isSafeInteger(ms)){workerMessage('Enter a positive whole number of hours within the supported integer range.',true);return;}
+    if(ms<queueExpected&&!window.confirm(`Reduce the queue waiting allowance to ${fmt(hours)} hours for new requests? They may expire sooner. Existing queued requests and active generations keep their current deadlines.`))return;
+    void workerAction('queue-timeout',{queue_timeout_ms:ms,expected_queue_timeout_ms:queueExpected});
+  });
   $('pool-context-form').addEventListener('submit',e=>{
     e.preventDefault();const value=Number($('pool-context-input').value);
     if(!Number.isSafeInteger(value)||value<=0){workerMessage('Enter a positive whole token count.',true);return;}

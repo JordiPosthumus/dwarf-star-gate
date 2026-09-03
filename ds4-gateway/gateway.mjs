@@ -59,6 +59,7 @@ export class AffinityStore {
       if (fs.existsSync(filename)) data = JSON.parse(fs.readFileSync(filename, 'utf8'));
       if (data.version !== 1 || !data.sessions || Array.isArray(data.sessions)) throw new Error('Invalid affinity store');
       if (data.pool_context_length !== undefined && !validContext(data.pool_context_length)) throw new Error('Invalid saved pool context limit');
+      if(data.queue_timeout_ms!==undefined){if(typeof data.queue_timeout_ms!=='number')throw new Error('Invalid saved queue allowance');queueTimeout(data.queue_timeout_ms);}
       if(data.quarantined!==undefined && (!data.quarantined || typeof data.quarantined!=='object' || Array.isArray(data.quarantined)))throw new Error('Invalid saved quarantine state');
       for(const entry of Object.values(data.quarantined??{}))if(!entry || !['fatal_accelerator_error','accelerator_checkpoint_failure','repeated_inference_failures'].includes(entry.reason) || typeof entry.request_id!=='string' || !Number.isFinite(Date.parse(entry.at)))throw new Error('Invalid saved quarantine entry');
       for (const [key, item] of Object.entries(data.sessions)) {
@@ -167,9 +168,10 @@ export class UsageObserver {
 
 export function createGateway(config) {
   if (!validContext(config.context_length)) throw new Error('Invalid configured pool context limit');
-  const queueTimeoutMs=queueTimeout(config.queue_timeout_ms);
+  const configuredQueueTimeout=queueTimeout(config.queue_timeout_ms);
   const initial = workerConfigs(config.nodes);
   const store = new AffinityStore(config.state_file);
+  const queueTimeoutMs=()=>store.data.queue_timeout_ms??configuredQueueTimeout;
   // Like registered workers, an explicit UI setting survives process restarts.
   const contextLimit = () => store.data.pool_context_length ?? config.context_length;
   const makeNode = n => ({ ...n, drained: store.data.drained?.[n.id] === true, quarantine:store.data.quarantined?.[n.id] ?? null, inferenceFailures:0, healthy: false, failures: 0, active: null, queue: [], completed: 0, failed: 0, observationLimited:0, probing: false });
@@ -206,7 +208,7 @@ export function createGateway(config) {
   const agent = new http.Agent({ keepAlive: true, maxSockets: 16 });
   const accepted = new Set(['POST /v1/chat/completions', 'POST /v1/completions', 'POST /v1/responses', 'POST /v1/messages', 'GET /v1/models']);
   const auth = Buffer.from(`Bearer ${config.api_key}`);
-  const stats = () => ({ version: 1, agent_api_version:1, model: config.model, context_length: contextLimit(), queue_timeout_ms:queueTimeoutMs, request_timeout_ms:config.request_timeout_ms??360000000, draining, dataset:{...dataset.snapshot(),embedding_collection:embeddings.snapshot()}, routing_shadow:shadow.snapshot(),recovery:recovery.status(),predictor:predictor.status(),
+  const stats = () => ({ version: 1, agent_api_version:1, model: config.model, context_length: contextLimit(), queue_timeout_ms:queueTimeoutMs(), request_timeout_ms:config.request_timeout_ms??360000000, draining, dataset:{...dataset.snapshot(),embedding_collection:embeddings.snapshot()}, routing_shadow:shadow.snapshot(),recovery:recovery.status(),predictor:predictor.status(),
     calibration:calibrationPreflight(nodes,{draining}),
     total: nodes.length, healthy: nodes.filter(n => n.healthy).length, available: nodes.filter(n => n.healthy && !n.drained).length,
     active: nodes.filter(n => n.active).length, queued: nodes.reduce((s, n) => s + n.queue.length, 0),
@@ -214,6 +216,8 @@ export function createGateway(config) {
       ...agents.pauseStatus(n.id),
       gateway_drained: n.drained && !n.active && !n.queue.length, load: Number(!!n.active),
       queued: n.queue.length, assigned_sessions: store.count(n.id), completed: n.completed, failed: n.failed, observation_limited:n.observationLimited,
+      oldest_queue_seconds:n.queue.length?Math.max(0,(performance.now()-n.queue[0].createdMono)/1000):null,
+      oldest_queue_remaining_seconds:n.queue.length?Math.max(0,(n.queue[0].queueTimeoutMs-(performance.now()-n.queue[0].createdMono))/1000):null,
       active_seconds: n.active ? Math.round((Date.now() - n.active.dispatched) / 1000) : 0,
       predictions:n.active?predictor.forecasts(n.active.id):null,
       requested_thinking: n.active?.thinking?.result ?? null,
@@ -425,7 +429,7 @@ export function createGateway(config) {
     const candidates=nodes.map(n=>candidate(n,key));
     try { if (key && home?.node !== node.id) store.set(key, node.id); }
     catch (e) { log('state_write_error', { error: e.message }); req.resume(); return error(res, 503, 'state_unavailable', 'Cannot durably record affinity; request was not dispatched'); }
-    const job = { req, res, key, affinity, id: randomUUID(), created: Date.now(), createdMono:performance.now(), cancelled: false,
+    const job = { req, res, key, affinity, id: randomUUID(), created: Date.now(), createdMono:performance.now(), cancelled: false,queueTimeoutMs:queueTimeoutMs(),
       trafficClass:req.headers['x-dsg-observer']==='gate-genie'?'genie':'unclassified' };
     dataset.record('decision',{request_id:job.id,node:node.id,session:key,affinity,context_length:contextLimit(),candidates,
       traffic_class:job.trafficClass,client_metadata:admissionMetadata});
@@ -447,7 +451,7 @@ export function createGateway(config) {
       error(res, 504, 'queue_timeout', 'Configured queue deadline reached; request was not dispatched');
       dataset.record('queue_timeout',{request_id:job.id,node:node.id,total_ms:performance.now()-job.createdMono});
       job.cleanup(); req.resume();
-    }, queueTimeoutMs);
+    }, job.queueTimeoutMs);
     node.queue.push(job);evaluateShadow(node,job,'admission');schedule(node);
   });
   server.requestTimeout = 0; // Covers upload + queue; no hidden five-minute Node default.
@@ -501,11 +505,23 @@ export function createGateway(config) {
   };
   const registry = () => ({ model: config.model, minimum_context: contextLimit(), context_limit_control:true,
     context_limit_source:store.data.pool_context_length === undefined ? 'config' : 'saved',
+    queue_timeout_ms:queueTimeoutMs(),queue_timeout_control:true,queue_timeout_source:store.data.queue_timeout_ms!==undefined?'saved':config.queue_timeout_ms!==undefined?'config':'default',
     recovery:recovery.status(),
     workers: nodes.map(n => ({ ...definition(n), ...stats().workers.find(w => w.id === n.id),...agents.pauseStatus(n.id,{includeReason:true}) })) });
   async function freshProbe(node) {
     while (node.probing) await delay(10);
     await probe(node);
+  }
+  function setQueueTimeout(input){
+    if(shuttingDown||draining)throw new Error('Gateway is draining');
+    if(!input||Array.isArray(input)||Object.keys(input).sort().join(',')!=='expected_queue_timeout_ms,queue_timeout_ms'||!Number.isSafeInteger(input.queue_timeout_ms)||input.queue_timeout_ms<1)throw new Error('Specify a positive whole queue timeout and expected current value');
+    if(input.expected_queue_timeout_ms!==queueTimeoutMs())throw new Error('Queue allowance changed; refresh before applying');
+    const before=queueTimeoutMs();
+    if(before===input.queue_timeout_ms&&store.data.queue_timeout_ms!==undefined)return registry();
+    if(fs.existsSync(store.filename)){const backup=`${store.filename}.queue-${Date.now()}-${randomUUID()}.bak`;fs.copyFileSync(store.filename,backup,fs.constants.COPYFILE_EXCL);fs.chmodSync(backup,0o600);}
+    store.save({...store.data,queue_timeout_ms:input.queue_timeout_ms});
+    log('queue_allowance_changed',{before_ms:before,after_ms:queueTimeoutMs(),applies_to:'new_admissions'});
+    return registry();
   }
   async function setContextLimit(input) {
     if (shuttingDown || draining) throw new Error('Gateway is draining');
@@ -598,7 +614,7 @@ export function createGateway(config) {
     if(req.method==='GET'&&req.url==='/agent/v1/status')return json(res,200,agents.status(actor));
     if(req.method==='GET'&&req.url==='/agents')return json(res,200,agents.adminStatus());
     if (req.method === 'GET' && req.url === '/workers') return json(res, 200, registry());
-    if (req.method !== 'POST' || !['/drain-workers', '/resume-workers', '/add-worker', '/remove-worker', '/set-context-limit','/recovery-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/predictor','/genie-predictor','/grant-agent','/revoke-agent','/release-agent-hold','/agent/v1/drain','/agent/v1/resume','/agent/v1/receipt'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
+    if (req.method !== 'POST' || !['/drain-workers', '/resume-workers', '/add-worker', '/remove-worker', '/set-context-limit','/set-queue-timeout','/recovery-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/predictor','/genie-predictor','/grant-agent','/revoke-agent','/release-agent-hold','/agent/v1/drain','/agent/v1/resume','/agent/v1/receipt'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
     let body = '';
     req.on('data', chunk => { body += chunk; if (body.length > 4096) req.destroy(); });
     req.on('error', () => {});
@@ -619,6 +635,7 @@ export function createGateway(config) {
           }
           if(['/recover-worker','/genie-recover-worker','/recovery-canary'].includes(req.url))return json(res,202,recovery.request(input,req.url==='/genie-recover-worker'?'genie':'operator',{canary:req.url==='/recovery-canary'}));
           if (req.url === '/set-context-limit') return json(res,200,await setContextLimit(input));
+          if (req.url === '/set-queue-timeout') return json(res,200,setQueueTimeout(input));
           if (req.url === '/add-worker') return json(res, 201, await addWorker(input.worker));
           if (req.url === '/remove-worker') return json(res, 200, removeWorker(input.id));
           if (req.url === '/resume-workers') {

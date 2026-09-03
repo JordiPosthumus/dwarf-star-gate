@@ -8,7 +8,7 @@ export function queueTimeout(value){
   return ms;
 }
 export function deadlineTimer(callback,ms,{now=()=>performance.now(),setTimer=setTimeout,clearTimer=clearTimeout}={}){
-  queueTimeout(ms);
+  ms=queueTimeout(ms);
   const start=now();let timer,done=false;
   function step(){
     if(done)return;
