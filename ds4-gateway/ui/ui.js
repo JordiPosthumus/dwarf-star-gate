@@ -90,12 +90,13 @@ function device(d, w, now, stale, index = 1, scales={}) {
   const prompt = d.prompt ? `Last prompt: ${fmt(d.prompt.prompt)} tokens · ${fmt(d.prompt.cached)} reused · ${esc(d.prompt.cache)}` : 'No prompt start observed yet';
   return `<article class="device"><div class="device-top"><div class="device-name"><span class="device-number">${String(index).padStart(2,'0')}</span>${esc(d.id.replace(/^spark/, 'Spark '))}</div><span class="badge ${bad ? 'bad' : w?.load ? 'busy' : ''}">${esc(state==='decode'?'answering':state)}</span></div>${timeline(d,now)}${thinkingIndicator(w,stale,now)}<div class="metrics">${metric('decode','DECODE')}${metric('prefill','PREFILL')}</div><p class="prompt-note">${prompt}</p><div class="cache"><div><strong>${fmt(d.cache.reused)}</strong><span>Prefix reused</span></div><div><strong>${fmt(d.cache.cold)}</strong><span>Cold starts</span></div><div><strong>${fmt(d.cache.resident_misses)}</strong><span>Resident misses</span></div><div><strong>${fmt(d.cache.disk_restores)}</strong><span>Disk restores</span></div></div><p class="cache-note">Observed since ${d.observed_since ? clock(d.observed_since) : 'connecting'} · RAM misses ≠ cold starts</p><div class="device-foot"><span>${fmt(w?.queued)} queued · ${fmt(w?.assigned_sessions)} assigned sessions</span><span>${telemetryStatus(d)} · ${w?.load ? `${fmt(w.active_seconds)}s active` : 'last sample '+age(d.last_event,now)}</span></div></article>`;
 }
+const headlineSeverity=value=>['good','info','warning','critical'].includes(value)?value:'info';
 function healthHeadlines(snapshot, ticker) {
-  if(!snapshot?.gateway || snapshot.gateway_error)return {level:'unknown',items:['Gateway status unavailable; recommendations withheld until fresh evidence returns.']};
+  if(!snapshot?.gateway || snapshot.gateway_error)return {level:'unknown',items:[{severity:'info',text:'Gateway status unavailable; recommendations withheld until fresh evidence returns.'}]};
   if(ticker?.state==='ready' && ticker.entries?.length)return {
-    level:ticker.entries.some(e=>e.severity==='warning')?'warn':'ok',evidence_at:ticker.evidence_at,
+    level:ticker.entries.some(e=>e.severity==='critical')?'critical':ticker.entries.some(e=>e.severity==='warning')?'warn':ticker.entries.some(e=>e.severity==='good')?'ok':'info',evidence_at:ticker.evidence_at,
     label:`Genie assessment · evidence ${clock(ticker.evidence_at)}${ticker.refreshing?' · updating':ticker.review_error?' · latest refresh failed':''}`,
-    items:ticker.entries.map(e=>`${e.text}${e.recommendation?` Recommendation: ${e.recommendation}`:''}`),
+    items:ticker.entries.map(e=>({severity:headlineSeverity(e.severity),text:`${e.text}${e.recommendation?` Recommendation: ${e.recommendation}`:''}`})),
   };
   const message={off:'Gate Genie is off. Enable him below for generated health observations.',
     reviewing:'Gate Genie is reviewing fleet evidence. His observations and recommendations will appear here.',
@@ -105,7 +106,7 @@ function healthHeadlines(snapshot, ticker) {
     invalid:'Genie returned no valid ticker entries. Read his assessment below or request another review.',
     error:'The Genie review failed. Check his status below; no replacement advice has been invented.',
     unavailable:'Genie status is unavailable. Waiting for a fresh assessment.'};
-  return {level:'unknown',label:'Genie status',items:[message[ticker?.state] || 'Connecting to Gate Genie…']};
+  return {level:'unknown',label:'Genie status',items:[{severity:'info',text:message[ticker?.state] || 'Connecting to Gate Genie…'}]};
 }
 let wirePaused=false,wireSnapshot=null,wireSignature=null,wireState=null;
 function renderHealthWire(snapshot) {
@@ -117,8 +118,10 @@ function renderHealthWire(snapshot) {
   if(signature===wireSignature)return;
   wireSignature=signature;wire.dataset.level=news.level;
   for(const id of ['health-wire-text','health-wire-copy']) {
-    const group=$(id);group.replaceChildren(...news.items.map(text=>{
-      const item=document.createElement('span');item.className='health-wire-item';item.textContent=text;return item;
+    const group=$(id);group.replaceChildren(...news.items.map(entry=>{
+      const item=document.createElement('span');item.className='health-wire-item';item.dataset.severity=headlineSeverity(entry.severity);
+      const label=document.createElement('span');label.className='health-wire-severity';label.textContent={good:'Good',info:'Info',warning:'Warning',critical:'Critical'}[item.dataset.severity]+': ';
+      const text=document.createElement('span');text.textContent=entry.text;item.append(label,text);return item;
     }));
   }
   // Measure one complete group, including the deliberate gaps, at 42px/s.

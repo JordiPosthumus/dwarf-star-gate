@@ -10,6 +10,10 @@
 
 ## Unreleased
 
+- Color each Genie health-wire item by its own structured severity: good, info,
+  warning or critical. Add text labels and preserve pause, stale-evidence and
+  reduced-motion behavior; severity never grants recovery authority.
+
 - Add compact read-only Analytics: frozen admission forecasts versus actual queue
   and server durations, equal-axis chart, per-server filters, coverage/error,
   bounded evidence tailing and explicit unknown/censored outcomes. No live XGB

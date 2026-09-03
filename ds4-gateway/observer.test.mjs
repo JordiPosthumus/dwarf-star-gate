@@ -32,7 +32,7 @@ test('Genie parses bounded model-written ticker entries and rejects unknown evid
   const evidence=briefing(snapshot()),data=authoredReview();
   let result=parseGenieReview(JSON.stringify(data),evidence);assert.equal(result.ticker[0].text,data.ticker[0].text);assert.equal(result.ticker_error,null);
   assert.equal(parseGenieReview('```json\n'+JSON.stringify(data)+'\n```',evidence).ticker.length,1);
-  for(const mutate of [d=>d.ticker[0].evidence_refs=['worker:invented'],d=>d.ticker[0].recommendation='x'.repeat(181),d=>d.ticker[0].text='x'.repeat(281),d=>d.ticker[0].severity='critical',d=>d.ticker=[],d=>d.ticker=Array(5).fill(d.ticker[0])]) {
+  for(const mutate of [d=>d.ticker[0].evidence_refs=['worker:invented'],d=>d.ticker[0].recommendation='x'.repeat(181),d=>d.ticker[0].text='x'.repeat(281),d=>d.ticker[0].severity='invented',d=>d.ticker=[],d=>d.ticker=Array(5).fill(d.ticker[0])]) {
     const bad=structuredClone(data);mutate(bad);result=parseGenieReview(JSON.stringify(bad),evidence);
     assert.equal(result.ticker.length,0);assert.equal(result.ticker_error,'invalid_structured_review');
   }
@@ -46,6 +46,7 @@ test('one Genie call supplies assessment and ticker; unchanged budgets, evidence
   g.setEnabled(true);await g.ask();const status=g.status();
   assert.equal(calls,1);assert.equal(sent.max_tokens,8192);assert.equal(sent.reasoning_effort,'low');assert.equal(sent.tools,undefined);
   assert.match(sent.messages[0].content,/No humour/);assert.match(sent.messages[0].content,/Recommendations are advice/);
+  assert.match(sent.messages[0].content,/Choose severity per item/);assert.match(sent.messages[0].content,/never recovery permission/);
   assert.equal(status.reports[0].evidence_at,s.gateway_at);assert.deepEqual(status.reports[0].actions_taken,[]);
   assert.equal(status.ticker.state,'ready');assert.equal(status.ticker.entries[0].text,authoredReview().ticker[0].text);
   assert.ok(JSON.parse(sent.messages[1].content).evidence.semantics.some(v=>v.includes('complete request is forwarded unchanged')));
@@ -58,6 +59,15 @@ test('one Genie call supplies assessment and ticker; unchanged budgets, evidence
   s.gateway.workers.push({id:'new',is_healthy:true});assert.equal(g.status().ticker.state,'changed');
   s.gateway.workers=[];s.gateway.queued=10;assert.equal(g.status().ticker.state,'ready','ordinary queue churn remains a timestamped snapshot, not perpetual invalidation');
   s.gateway.draining=true;assert.equal(g.status().ticker.state,'changed');g.close();
+});
+test('all four ticker severities are accepted but none grants recovery permission',()=>{
+  const evidence=briefing(snapshot()),data=authoredReview();
+  for(const severity of ['good','info','warning','critical']) {
+    data.ticker[0].severity=severity;const parsed=parseGenieReview(JSON.stringify(data),evidence);
+    assert.equal(parsed.ticker[0].severity,severity);assert.deepEqual(parsed.recovery_requests,[]);
+    const bad={...data,recovery_requests:[{worker_id:'invented',evidence_id:'invented'}]};
+    assert.equal(parseGenieReview(JSON.stringify(bad),evidence).ticker_error,'invalid_structured_review');
+  }
 });
 test('Genie withholds malformed headlines and never falls back to invented or older ticker text',async()=>{
   let content=JSON.stringify(authoredReview());const g=new Genie({url:'http://127.0.0.1:9001/v1'},snapshot,{fetchImpl:async()=>Response.json({choices:[{finish_reason:'stop',message:{content}}]})});

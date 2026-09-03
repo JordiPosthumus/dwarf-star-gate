@@ -58,15 +58,20 @@ concise advice, not jokes. Enable Genie to receive these headlines; with Genie o
 the wire says so rather than substituting template diagnoses.
 
 Each review returns JSON with `assessment` and `ticker`. Entries contain
-`severity` (`warning` or `info`), `text`, nullable `recommendation`, and
+`severity` (`good`, `info`, `warning` or `critical`), `text`, nullable `recommendation`, and
 `evidence_refs` from the supplied fleet/dataset/worker vocabulary. Length, count
 and reference checks reject malformed output; they **do not prove the model's
 claims correct**. A rejected ticker leaves its answer readable in the report list
 and shows an explicit wire status, never an invented replacement diagnosis.
 Text is rendered inertly, not as HTML or executable commands.
 
-Red indicates a model warning; green an informational review; amber an absent,
-invalid or outdated assessment. These colors are not independent health proofs.
+Each headline has its own subdued shade and visible severity label: **Good** in
+green, **Info** in cool gray, **Warning** in amber, and **Critical** in soft red.
+One warning does not recolor unrelated headlines. Existing warning/info reports
+remain compatible; unknown or unavailable assessments appear neutral, not as an
+all-clear. The Genie chooses severity from supplied evidence, not keyword matching
+in the browser. These colors are advice, not independent health proofs or recovery
+permissions. Missing data, long thinking or a busy queue alone is not critical.
 The wire shows the **evidence snapshot's time**, not the answer completion time.
 After ten minutes, a changed inference source, or a change to fleet membership,
 health, pause, quarantine, context or gateway-draining state, previous advice is

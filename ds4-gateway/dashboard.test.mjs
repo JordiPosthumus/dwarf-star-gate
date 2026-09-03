@@ -230,22 +230,23 @@ test('health wire shows Genie-authored findings and recommendations, withholding
     {severity:'warning',text:'Server B is quarantined after an accelerator failure.',recommendation:'Inspect its backend logs before verified recovery.'},
     {severity:'info',text:'Nine requests were queued at the evidence time.',recommendation:null}]};
   const result=news(s,ticker);assert.equal(result.level,'warn');
-  assert.equal(result.items[0],'Server B is quarantined after an accelerator failure. Recommendation: Inspect its backend logs before verified recovery.');
-  assert.equal(result.items[1],ticker.entries[1].text);assert.equal(result.evidence_at,time-60000);
+  assert.equal(result.items[0].text,'Server B is quarantined after an accelerator failure. Recommendation: Inspect its backend logs before verified recovery.');
+  assert.equal(result.items[0].severity,'warning');
+  assert.equal(result.items[1].text,ticker.entries[1].text);assert.equal(result.evidence_at,time-60000);
   assert.match(result.label,/Genie assessment · evidence/);
-  assert.equal(news(s,{...ticker,entries:[ticker.entries[1]]}).level,'ok');
+  assert.equal(news(s,{...ticker,entries:[ticker.entries[1]]}).level,'info');
   assert.match(news(s,{...ticker,refreshing:true}).label,/updating/);
   assert.match(news(s,{...ticker,review_error:true}).label,/latest refresh failed/);
   for(const unavailable of [{...s,gateway_error:true},{time}]) {
-    assert.equal(news(unavailable,ticker).level,'unknown');assert.doesNotMatch(news(unavailable,ticker).items.join(' '),/Server B|Nine requests/);
+    assert.equal(news(unavailable,ticker).level,'unknown');assert.doesNotMatch(news(unavailable,ticker).items.map(i=>i.text).join(' '),/Server B|Nine requests/);
   }
   for(const state of ['off','reviewing','pending','stale','changed','invalid','error','unavailable']) {
     const value=news(s,{...ticker,state});assert.equal(value.level,'unknown');assert.equal(value.items.length,1);
-    assert.doesNotMatch(value.items[0],/Server B|Nine requests|Recommendation:/);
+    assert.equal(value.items[0].severity,'info');assert.doesNotMatch(value.items[0].text,/Server B|Nine requests|Recommendation:/);
   }
-  assert.match(news(s,{state:'off'}).items[0],/Enable him/);
-  assert.match(news(s,{state:'stale'}).items[0],/10 minutes/);
-  assert.match(news(s,{state:'changed'}).items[0],/changed since/);
+  assert.match(news(s,{state:'off'}).items[0].text,/Enable him/);
+  assert.match(news(s,{state:'stale'}).items[0].text,/10 minutes/);
+  assert.match(news(s,{state:'changed'}).items[0].text,/changed since/);
 });
 test('health wire markup offers pause and keyboard access, with a nonduplicated reduced-motion view',()=>{
   const html=fs.readFileSync(new URL('./ui/index.html',import.meta.url),'utf8'),css=fs.readFileSync(new URL('./ui/brand.css',import.meta.url),'utf8');
@@ -254,7 +255,44 @@ test('health wire markup offers pause and keyboard access, with a nonduplicated 
   assert.match(css,/prefers-reduced-motion:reduce/);assert.match(css,/animation-play-state:paused/);assert.match(css,/aria-hidden="true"\]\{display:none\}/);
   assert.match(css,/gap:8rem;padding-right:8rem/);
   const js=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8');
-  assert.match(js,/getBoundingClientRect\(\)\.width\/42/);assert.match(js,/item\.textContent=text/);
+  assert.match(js,/getBoundingClientRect\(\)\.width\/42/);assert.match(js,/text\.textContent=entry\.text/);
+});
+test('each headline keeps its own severity, inert text and label in both copies without disturbing reading',()=>{
+  class Element {
+    constructor(){this.children=[];this.dataset={};this.style={};this.hovered=false;}
+    set innerHTML(_){throw new Error('No headline HTML parsing');}
+    set textContent(v){this.text=String(v);}
+    get textContent(){return (this.text||'')+this.children.map(c=>c.textContent).join('');}
+    append(...children){this.children.push(...children);}
+    replaceChildren(...children){this.children=children;}
+    matches(){return this.hovered;}
+    getBoundingClientRect(){return {width:1680};}
+  }
+  const elements=new Map(),get=id=>{if(!elements.has(id))elements.set(id,new Element());return elements.get(id);};
+  const document={getElementById:get,createElement:()=>new Element()};
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const ctx=vm.createContext({document,snap:{gateway:{}},tick:{state:'ready',evidence_at:1000,entries:['good','info','warning','critical'].map(severity=>({severity,text:`${severity} <img onerror=bad()>`,recommendation:null}))}});
+  vm.runInContext(source,ctx);const render=()=>vm.runInContext('wireState=tick;renderHealthWire(snap)',ctx);render();
+  for(const id of ['health-wire-text','health-wire-copy']){
+    const children=get(id).children;assert.deepEqual(children.map(c=>c.dataset.severity),['good','info','warning','critical']);
+    assert.deepEqual(children.map(c=>c.children[0].textContent),['Good: ','Info: ','Warning: ','Critical: ']);
+    assert.equal(children[3].children[1].textContent,'critical <img onerror=bad()>');
+  }
+  const first=get('health-wire-text').children[0];render();assert.equal(get('health-wire-text').children[0],first);
+  get('health-wire').hovered=true;ctx.tick.entries=[{severity:'invented css-class',text:'New report'}];render();assert.equal(get('health-wire-text').children[0],first);
+  get('health-wire').hovered=false;vm.runInContext('wirePaused=true',ctx);render();assert.equal(get('health-wire-text').children[0],first);
+  vm.runInContext('wirePaused=false',ctx);render();assert.equal(get('health-wire-text').children[0].dataset.severity,'info');
+  assert.equal(get('health-wire-track').style.animationDuration,'40s');
+});
+test('headline shades retain readable contrast and are not overridden by aggregate wire severity',()=>{
+  const css=fs.readFileSync(new URL('./ui/brand.css',import.meta.url),'utf8');
+  const lum=hex=>[1,3,5].map(i=>parseInt(hex.slice(i,i+2),16)/255).map(c=>c<=.04045?c/12.92:((c+.055)/1.055)**2.4).reduce((n,c,i)=>n+c*[.2126,.7152,.0722][i],0);
+  const bg=lum('#1a1c1d'),colors=[];
+  for(const severity of ['good','info','warning','critical']){
+    const match=css.match(new RegExp(`\\.health-wire-item\\[data-severity="${severity}"\\]\\{color:(#[a-f0-9]{6})\\}`));
+    assert.ok(match,severity);assert.ok((lum(match[1])+.05)/(bg+.05)>=4.5,severity);colors.push(match[1]);
+  }
+  assert.equal(new Set(colors).size,4);assert.doesNotMatch(css,/\.health-wire\[data-level=.*?color:/);
 });
 test('dashboard serves local assets and a downloadable read-only snapshot', async t => {
   const { url } = await fixture(t);
