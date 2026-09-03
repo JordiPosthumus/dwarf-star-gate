@@ -384,11 +384,12 @@ async function genieAction(input) {
 async function loadGenie() {
   try {const r=await fetch('/api/genie',{signal:AbortSignal.timeout(5000)});if(!r.ok)throw new Error();const s=await r.json();genieToken=s.csrf_token;genieState=s;wireState=s.ticker;
     if(wireSnapshot)renderHealthWire(wireSnapshot);
-    $('genie-status').textContent=!s.configured?'Not configured':s.error||(!s.enabled?'Off':s.busy?'Reviewing fleet evidence…':`Enabled · last review ${age(s.last_check,Date.now())}`);
+    const q=s.question,qtext=q?.state==='queued'?'Your question is queued behind the current review':q?.state==='answering'?'Answering your question…':q?.state==='answered'?`Question answered ${age(q.finished_at,Date.now())}`:['failed','cancelled'].includes(q?.state)?`Question ${q.state}: ${q.error}`:null;
+    $('genie-status').textContent=!s.configured?'Not configured':!s.enabled?'Off · enable Gate Genie before asking':qtext||s.error||(s.busy?'Scheduled fleet review in progress':`Enabled · last review ${age(s.last_check,Date.now())}`);
     $('genie-mode').textContent=[s.mode==='bounded-recovery'?'bounded recovery available':'observation',s.predictor_supervision?'predictor supervision':''].filter(Boolean).join(' · ');
     $('genie-toggle').disabled=!s.configured;$('genie-toggle').textContent=s.enabled?'Turn off':'Enable';
     $('genie-source').disabled=!s.fallback_available||s.busy;$('genie-source').value=s.source||'primary';
-    $('genie-review').disabled=$('genie-send').disabled=!s.enabled||s.busy;
+    $('genie-review').disabled=$('genie-send').disabled=!s.enabled||q?.state==='queued'||q?.state==='answering';
     renderGenieReports(s.reports || []);
     renderMemory(s.memory);
   } catch{$('genie-status').textContent='Genie status unavailable';wireState={state:'unavailable'};if(wireSnapshot)renderHealthWire(wireSnapshot);}

@@ -23,7 +23,10 @@ async function until(fn, timeout = 3000) {
 async function backend(id) {
   const b = { id, records: [], active: 0, peak: 0, aborts: 0, health: true, receivedBytes: 0, context_length:153600 };
   b.server = http.createServer((req, res) => {
-    if (req.url === '/v1/models') return res.end(JSON.stringify({ data: [{ id: b.health ? 'deepseek-v4-flash' : 'wrong-model', context_length: b.context_length, top_provider:{context_length:b.context_length,max_completion_tokens:b.context_length} }] }));
+    if (req.url === '/v1/models') {
+      if(b.blockHealthWhileActive&&b.active){res.on('close',()=>{});return;}
+      return res.end(JSON.stringify({ data: [{ id: b.health ? 'deepseek-v4-flash' : 'wrong-model', context_length: b.context_length, top_provider:{context_length:b.context_length,max_completion_tokens:b.context_length} }] }));
+    }
     const chunks = [];
     req.on('data', c => { chunks.push(c); b.receivedBytes += c.length; });
     req.on('end', () => {
@@ -57,6 +60,8 @@ async function backend(id) {
       if (p.stream) {
         res.writeHead(200, { 'content-type': 'text/event-stream' });
         res.write('data: {"choices":[{"delta":{"reasoning_content":"thinking"}}]}\n\n');
+        const progress=p.progress?setInterval(()=>res.write('data: {"choices":[{"delta":{"reasoning_content":"working"}}]}\n\n'),15):null;
+        res.on('close',()=>clearInterval(progress));
         const timer = setTimeout(() => {
           if (res.destroyed) return;
           ended = true;
@@ -771,6 +776,33 @@ test('health probes have a total deadline even if a worker trickles response byt
   await until(()=>!r.gateway.nodes[0].healthy);
   await until(()=>calls>=3);
   assert.equal(r.gateway.nodes[0].healthy,false);
+});
+
+test('model-list timeouts do not contradict fresh inference bytes, without routing shadow enabled',async t=>{
+  const r=await rig(t,1,{health_interval_ms:20,health_timeout_ms:50,health_failures:1});
+  r.backends[0].blockHealthWhileActive=true;
+  const active=r.request(JSON.stringify({stream:true,delay:320,progress:true}),'busy');
+  await until(()=>r.backends[0].active===1);
+  await delay(140);
+  const during=r.gateway.stats().workers[0];
+  assert.equal(during.is_healthy,true);
+  assert.equal(during.load,1);
+  assert.equal(during.health_state_source,'recent_upstream_progress');
+  assert.ok(during.health_probe_deferred>0);
+  assert.equal((await active).status,200);
+  await until(()=>r.gateway.stats().workers[0].health_state_source==='model_probe');
+  assert.equal(r.gateway.stats().workers[0].is_healthy,true);
+});
+
+test('silent active work never masks a lost or stalled DS4 server',async t=>{
+  const r=await rig(t,1,{health_interval_ms:20,health_timeout_ms:50,health_failures:1});
+  r.backends[0].blockHealthWhileActive=true;
+  const active=r.request(JSON.stringify({stream:true,delay:220}),'silent');
+  await until(()=>r.backends[0].active===1);
+  await until(()=>!r.gateway.stats().workers[0].is_healthy);
+  assert.equal(r.gateway.stats().workers[0].load,1);
+  assert.equal(r.gateway.stats().workers[0].probe_error,'PROBE_TIMEOUT');
+  assert.equal((await active).status,200,'health checks never abort the active stream');
 });
 
 test('new sessions spread; existing sessions stay; restart keeps assignments', async t => {

@@ -124,6 +124,31 @@ test('Genie is off by default, has no tools, strips snapshot secrets, uses expli
   g.setSource('pool');await g.ask('Explain capacity');assert.equal(url,'http://127.0.0.1:9002/v1/chat/completions');assert.equal(headers.authorization,'Bearer TEST');
   assert.ok(!JSON.stringify(g.status()).includes('TEST'));assert.ok(!JSON.stringify(briefing({...snapshot(),secret:'PRIVATE'})).includes('PRIVATE'));g.close();
 });
+
+test('a manual Genie question queues behind a scheduled review and exposes a stable in-memory receipt',async()=>{
+  let release;const blocked=new Promise(r=>{release=r;}),calls=[];
+  const g=new Genie({url:'http://127.0.0.1:9001/v1'},snapshot,{fetchImpl:async(_u,o)=>{
+    const body=JSON.parse(o.body);calls.push(JSON.parse(body.messages[1].content).question);
+    if(calls.length===1)await blocked;
+    return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(authoredReview())}}]});
+  }});
+  g.setEnabled(true);const scheduled=g.ask();await new Promise(r=>setImmediate(r));
+  const accepted=g.submit('Why is Spark 2 unavailable?');assert.equal(accepted.state,'queued');assert.equal(g.status().question.state,'queued');
+  assert.throws(()=>g.submit('Another question'),/already pending/);
+  release();await scheduled;
+  while(g.status().question.state==='queued'||g.status().question.state==='answering')await new Promise(r=>setImmediate(r));
+  assert.equal(g.status().question.state,'answered');assert.equal(calls[1],'Why is Spark 2 unavailable?');assert.ok(g.status().question.report_id);
+  assert.ok(!JSON.stringify(g.status().question).includes('Why is'));
+  g.close();
+});
+
+test('Genie question failures remain visible and an off Genie never silently accepts a question',async()=>{
+  const g=new Genie({url:'http://127.0.0.1:9001/v1'},snapshot,{fetchImpl:async()=>{throw new Error('private transport details');}});
+  assert.throws(()=>g.submit('hello'),/off/);g.setEnabled(true);g.submit('hello');
+  while(['accepted','answering'].includes(g.status().question?.state))await new Promise(r=>setImmediate(r));
+  assert.equal(g.status().question.state,'failed');assert.match(g.status().question.error,/Observation failed/);
+  assert.ok(!JSON.stringify(g.status()).includes('private transport details'));g.close();
+});
 test('Genie does not auto-replay on failure and rejects nonloopback endpoint',async()=>{
   assert.throws(()=>new Genie({url:'http://example.com/v1'},snapshot),/loopback/);
   let calls=0;const g=new Genie({url:'http://127.0.0.1:9001/v1',fallback:{url:'http://127.0.0.1:9002/v1'}},snapshot,{fetchImpl:async()=>{calls++;throw new Error('private details');}});

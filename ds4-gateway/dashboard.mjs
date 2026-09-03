@@ -55,9 +55,10 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
           if(input.action==='memory'&&genie.memory){genie.memory.setEnabled(input.enabled);return reply(200,genie.status());}
           if(input.action==='memory-note'&&genie.memory){const receipt=genie.memory.saveOperatorNote(input.note,getSnapshot());return reply(200,{...genie.status(),memory_receipt:receipt});}
           if(input.action!=='ask')return reply(400,{error:'Unknown Genie action'});
-          if(!genie.enabled || genie.busy)return reply(409,{error:'Genie is off or busy'});
+          if(!genie.enabled)return reply(409,{error:'Gate Genie is off. Enable him before asking; the question was not queued.'});
           if(input.question!==undefined && (typeof input.question!=='string'||input.question.length>2000))return reply(400,{error:'Question too long'});
-          void genie.ask(input.question);return reply(202,{accepted:true});
+          try{return reply(202,{accepted:true,question:genie.submit(input.question)});}
+          catch(e){return reply(409,{error:e.message});}
         } catch {reply(400,{error:'Invalid Genie request'});}
       });return;
     }
@@ -231,6 +232,10 @@ export async function runDashboard(configPath, port) {
           gateway_drained:w.gateway_drained,operator_paused:w.operator_paused,holds:Array.isArray(w.holds)?w.holds.slice(0,1024).map(h=>({id:h.id,owner_id:h.owner_id,created_at:h.created_at})):[],
           oldest_queue_seconds:w.oldest_queue_seconds??null,oldest_queue_remaining_seconds:w.oldest_queue_remaining_seconds??null,
           context_length:Number.isSafeInteger(w.context_length)?w.context_length:null, requested_thinking: safeRequestedThinking(w.requested_thinking), last_requested_thinking: safeRequestedThinking(w.last_requested_thinking),predictions:w.predictions,
+          health_probe_deferred:Number.isSafeInteger(w.health_probe_deferred)?w.health_probe_deferred:0,
+          health_state_source:['model_probe','recent_upstream_progress'].includes(w.health_state_source)?w.health_state_source:null,
+          probe_error:['PROBE_TIMEOUT','busy_probe_deferred','ECONNREFUSED','ECONNRESET','EHOSTUNREACH','ENETUNREACH','model_or_context_mismatch','invalid_model_response'].includes(w.probe_error)?w.probe_error:null,
+          last_probe:typeof w.last_probe==='string'&&Number.isFinite(Date.parse(w.last_probe))?w.last_probe:null,
           last_request_finished_at: typeof w.last_request_finished_at === 'string' && Number.isFinite(Date.parse(w.last_request_finished_at)) ? w.last_request_finished_at : null })) };
       gatewayAt = Date.now(); gatewayError = null;
       syncDevices(s.workers);

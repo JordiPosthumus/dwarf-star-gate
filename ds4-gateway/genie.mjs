@@ -18,6 +18,7 @@ export function briefing(snapshot) {
       oldest_queue_seconds:w.oldest_queue_seconds??null,oldest_queue_remaining_seconds:w.oldest_queue_remaining_seconds??null,
       immediately_free:!!w.is_healthy && !w.drained && !w.quarantine && !g.draining && w.load===0 && w.queued===0,
       context_length:w.context_length,requested_thinking:w.requested_thinking,predictions:w.predictions,
+      health_evidence:{source:w.health_state_source??null,last_probe:w.last_probe??null,probe_error:w.probe_error??null,deferred_probes:w.health_probe_deferred??0},
       telemetry:(()=>{const d=snapshot.devices.find(d=>d.id===w.id);return d?{connected:d.connected,observed_since:d.observed_since,last_event:d.last_event,phase:d.phase,
         decode:d.decode?.tps,prefill:d.prefill?.tps,last_prompt:d.prompt,cache:d.cache}:null;})()})),
     recent_outcomes:(snapshot.events||[]).filter(e=>e.event==='request_finished').slice(-12).map(e=>({time:e.time,node:e.node,outcome:e.outcome,queue_ms:e.queue_ms,elapsed_ms:e.elapsed_ms,usage:e.usage})),
@@ -30,6 +31,7 @@ export function briefing(snapshot) {
       'requested_thinking unavailable/capture_limit means only that metadata capture was limited; the complete request is forwarded unchanged',
       'active_seconds is time since dispatch, not proof of a stall; last_event is an engine log timestamp, not a heartbeat',
       'healthy and paused/quarantine are separate; a model-list probe is not proof of working generation',
+      'health_evidence.source=recent_upstream_progress means a model-list timeout overlapped fresh bytes from the active inference stream; it does not prove semantic progress or final success. Active status alone never overrides failed health probes. A network or SSH outage is not a proven engine fault; service restart needs reachable, verified recovery evidence',
       'Operator pauses and agent holds are intentional reservations, not faults. Do not recover or enable a reserved server. Releasing one hold does not release other holds or an operator pause',
       'cache counters are observed starts/reuses/restores, not a guaranteed hit rate; resident miss may still restore from disk',
       'Cache counters may include diagnostic traffic and use different observation windows or recently restarted processes; unmatched counts do not establish worse efficiency'],
@@ -101,14 +103,15 @@ Use only supplied evidence; label hypotheses as hypotheses. Do not infer a stall
 export class Genie {
   constructor(config, snapshot, {fetchImpl=fetch,recover=null,predict=null,memory=null}={}) {
     this.config=config;this.getSnapshot=snapshot;this.fetch=fetchImpl;this.enabled=false;this.busy=false;this.source='primary';
-    this.last=null;this.reports=[];this.error=null;this.abort=null;this.closed=false;
+    this.last=null;this.reports=[];this.error=null;this.abort=null;this.closed=false;this.queuedQuestion=null;this.questionReceipt=null;
     this.recover=recover;this.predict=predict;this.memory=memory;
     for(const endpoint of [config,config?.fallback].filter(Boolean)) {
       const u=new URL(endpoint.url);
       if(u.protocol!=='http:' || u.hostname!=='127.0.0.1' || u.username || u.password || u.search || u.hash || !['/v1','/v1/'].includes(u.pathname))throw new Error('Genie must use a configured loopback /v1 endpoint');
     }
   }
-  status(){return {configured:!!this.config,enabled:this.enabled,busy:this.busy,predictor_supervision:!!this.predict&&!!this.getSnapshot().gateway?.predictor?.configured,mode:this.recover&&this.getSnapshot().gateway?.recovery?.automatic?'bounded-recovery':'observation-only',source:this.source,fallback_available:!!this.config?.fallback,last_check:this.last,error:this.error,reports:this.reports,
+  publicQuestion(){return this.questionReceipt&&Object.fromEntries(['id','state','submitted_at','started_at','finished_at','report_id','error'].filter(k=>this.questionReceipt[k]!==undefined).map(k=>[k,this.questionReceipt[k]]));}
+  status(){return {configured:!!this.config,enabled:this.enabled,busy:this.busy,predictor_supervision:!!this.predict&&!!this.getSnapshot().gateway?.predictor?.configured,mode:this.recover&&this.getSnapshot().gateway?.recovery?.automatic?'bounded-recovery':'observation-only',source:this.source,fallback_available:!!this.config?.fallback,last_check:this.last,error:this.error,question:this.publicQuestion(),reports:this.reports,
     ticker:tickerStatus(this.reports[0],this.getSnapshot(),this),memory:this.memory?{...this.memory.status(),...this.memory.retrieve(this.getSnapshot())}:{available:false,enabled:false,error:null}};}
   setSource(source) {
     if(this.busy)throw new Error('Wait for the current review to finish');
@@ -119,8 +122,26 @@ export class Genie {
     if(!this.config)throw new Error('Gate Genie is not configured');
     if(typeof value!=='boolean')throw new Error('enabled must be boolean');
     this.enabled=value;
-    if(!value)this.abort?.abort();
+    if(!value){
+      this.abort?.abort();
+      if(this.queuedQuestion){Object.assign(this.queuedQuestion.receipt,{state:'cancelled',finished_at:Date.now(),error:'Gate Genie was turned off before answering'});this.queuedQuestion=null;}
+    }
     return this.status();
+  }
+  submit(question='Review the current fleet. Flag only evidence-backed issues; distinguish unknowns.') {
+    if(!this.enabled||this.closed)throw new Error('Gate Genie is off. Enable him before asking; the question was not queued.');
+    if(typeof question!=='string'||question.length>2000)throw new Error('Question must be at most 2000 characters');
+    if(this.queuedQuestion||['accepted','answering'].includes(this.questionReceipt?.state))throw new Error('One question is already pending; wait for its receipt to finish');
+    const receipt={id:randomUUID(),state:this.busy?'queued':'accepted',submitted_at:Date.now()};
+    this.questionReceipt=receipt;this.queuedQuestion={question,receipt};queueMicrotask(()=>this.runSubmitted());return this.publicQuestion();
+  }
+  async runSubmitted(){
+    if(this.busy||!this.queuedQuestion||this.closed||!this.enabled)return;
+    const item=this.queuedQuestion;this.queuedQuestion=null;Object.assign(item.receipt,{state:'answering',started_at:Date.now()});
+    const before=this.reports[0]?.id;await this.ask(item.question);
+    Object.assign(item.receipt,{state:this.reports[0]?.id!==before?'answered':'failed',finished_at:Date.now()});
+    if(item.receipt.state==='answered')item.receipt.report_id=this.reports[0].id;else item.receipt.error=this.error||'No complete report was produced';
+    if(this.queuedQuestion)queueMicrotask(()=>this.runSubmitted());
   }
   async ask(question='Review the current fleet. Flag only evidence-backed issues; distinguish unknowns.') {
     if(!this.enabled || this.closed)throw new Error('Enable Gate Genie first');
@@ -164,9 +185,9 @@ export class Genie {
         ...parsed,source:this.source,actions_taken:actions,memory_used:history.notes.map(n=>({id:n.id,revision:n.revision}))});
       this.reports=this.reports.slice(0,12);
     } catch(e) {this.error=this.enabled ? (e.name==='AbortError'?'Observation timed out':/^Model HTTP \d+$/.test(e.message)?e.message:'Observation failed; gateway unaffected') : null;}
-    finally {clearTimeout(timer);this.busy=false;this.abort=null;}
+    finally {clearTimeout(timer);this.busy=false;this.abort=null;if(this.queuedQuestion)queueMicrotask(()=>this.runSubmitted());}
     return this.status();
   }
   tick(){if(this.enabled && !this.busy && Date.now()-(this.attempt||0)>=5*60000){this.attempt=Date.now();void this.ask();}}
-  close(){this.closed=true;this.enabled=false;this.abort?.abort();}
+  close(){this.closed=true;this.enabled=false;this.abort?.abort();if(this.queuedQuestion){Object.assign(this.queuedQuestion.receipt,{state:'cancelled',finished_at:Date.now(),error:'Dashboard stopped before answering'});this.queuedQuestion=null;}}
 }

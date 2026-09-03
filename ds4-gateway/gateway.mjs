@@ -176,7 +176,7 @@ export function createGateway(config) {
   const queueTimeoutMs=()=>store.data.queue_timeout_ms??configuredQueueTimeout;
   // Like registered workers, an explicit UI setting survives process restarts.
   const contextLimit = () => store.data.pool_context_length ?? config.context_length;
-  const makeNode = n => ({ ...n, drained: store.data.drained?.[n.id] === true, quarantine:store.data.quarantined?.[n.id] ?? null, inferenceFailures:0, healthy: false, failures: 0, active: null, queue: [], completed: 0, failed: 0, observationLimited:0, probing: false });
+  const makeNode = n => ({ ...n, drained: store.data.drained?.[n.id] === true, quarantine:store.data.quarantined?.[n.id] ?? null, inferenceFailures:0, healthy: false, failures: 0, active: null, queue: [], completed: 0, failed: 0, observationLimited:0, probing: false, healthProbeDeferred:0 });
   let definitions;
   try { definitions = store.data.workers === undefined ? initial : workerConfigs(store.data.workers); }
   catch (e) { store.close(); throw e; }
@@ -235,6 +235,8 @@ export function createGateway(config) {
       requested_thinking: n.active?.thinking?.result ?? null,
       last_requested_thinking: n.lastThinking ?? null, last_request_finished_at: n.lastFinishedAt ?? null,
       context_length: n.contextLength ?? null,
+      health_probe_deferred:n.healthProbeDeferred,
+      health_state_source:n.probeError==='busy_probe_deferred'?'recent_upstream_progress':'model_probe',
       last_probe: n.lastProbe, probe_error: n.probeError })) });
 
   const briefJob = j => ({key:j.key,route:j.req.url,trafficClass:j.trafficClass});
@@ -364,7 +366,7 @@ export function createGateway(config) {
       faults=new GenerationFaultObserver(isSSE);
       if(isSSE || up.statusCode>=400)up.on('data',chunk=>faults.accept(chunk));
       up.once('data',()=>{firstBodyByte=performance.now()-job.dispatchedMono;});
-      if(shadow.enabled)up.on('data',()=>{job.lastUpstreamByteMono=performance.now();});
+      up.on('data',()=>{job.lastUpstreamByteMono=performance.now();});
       if (isSSE) up.on('data', chunk => observer.accept(chunk));
       up.on('error', e => { res.destroy(); finish(job.cancelled ? 'client_cancelled' : 'upstream_stream_error', e.code); });
       up.on('aborted', () => { res.destroy(); finish(job.cancelled ? 'client_cancelled' : 'upstream_aborted'); });
@@ -492,12 +494,24 @@ export function createGateway(config) {
   async function probe(node) {
     if (node.probing) return;
     node.probing = true;
+    const activeAtStart=node.active;
     await new Promise(resolve => {
       let settled = false, deadline;
       const finish = (ok, reason) => {
         if (settled) return; settled = true;
         clearTimeout(deadline); node.probeRequest = null;
-        node.probing = false; node.lastProbe = new Date().toISOString(); node.probeError = reason;
+        node.probing = false; node.lastProbe = new Date().toISOString();
+        // A model-list timeout alone cannot contradict contemporaneous bytes
+        // from the live inference stream. Merely being active is NOT enough:
+        // silent prefill, a stuck socket and real network loss still fail probes.
+        const inference=node.active??activeAtStart;
+        if(!ok&&reason==='PROBE_TIMEOUT'&&inference?.lastUpstreamByteMono!==undefined&&
+          performance.now()-inference.lastUpstreamByteMono<(config.health_timeout_ms??5000)){
+          node.healthProbeDeferred++;
+          node.probeError='busy_probe_deferred';
+          resolve();return;
+        }
+        node.probeError = reason;
         if (reason && reason !== 'model_or_context_mismatch') node.modelMatches=false;
         const was = node.healthy;
         if (ok) { node.failures = 0; node.healthy = !node.quarantine && !node.recovering; }

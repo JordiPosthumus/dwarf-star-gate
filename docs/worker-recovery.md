@@ -39,6 +39,10 @@ If a new compatible invocation already started after the quarantined failure,
 the runner verifies it without redundantly restarting it. Missing/stopped services,
 unknown profiles, unreachable SSH, unsupported faults and uncertain ownership
 stay isolated for operator review. V1 does not start an arbitrary stopped install.
+The stopped-service extension is intentionally not inferred from a lost listener:
+it first needs a static enrolled-service identity proof that remains verifiable
+without a live DS4 PID. The 2026-09-03 [reachability incident](incidents/2026-09-03-worker-reachability.md)
+is the acceptance-test basis; it does not broaden the current restart authority.
 
 Readiness requires unchanged advertised context/model and configuration, exact
 synthetic answers, then **two conversations cold-to-warm**, with numerical cached

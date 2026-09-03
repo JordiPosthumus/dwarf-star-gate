@@ -146,7 +146,12 @@ without changing the remote server. Keep the chosen local port free.
 Restart the dashboard, then **Enable** Gate Genie in its panel. It is off after
 every dashboard restart. The first enabled review starts within ten seconds;
 subsequent automatic reviews start no more often than every five minutes. Manual
-questions have a 2,000-character limit and one review can run at a time.
+questions have a 2,000-character limit and one review can run at a time. A manual
+question submitted during a scheduled review is held as the single pending
+question, then run next. Its in-memory receipt remains visibly `queued`,
+`answering`, `answered`, `failed` or `cancelled`; question text is never included
+in status, diagnostics or the training dataset. Turning Genie off cancels a
+queued question. A dashboard restart cannot preserve unsent question text.
 
 The experimental observer uses low-effort, maximum-8,192-output-token review
 requests with a ten-minute deadline, to keep diagnostics bounded. These are its
@@ -170,6 +175,10 @@ from in-memory assessments and are included in sanitized operational status.
 The dashboard's same-origin/CSRF checks protect its enable/source/ask and notebook
 controls. Memory can collect while Genie inference is off; switching memory off
 retains its records. Notes are excluded from diagnostic exports and training data.
+
+See the sanitized [worker-reachability incident](incidents/2026-09-03-worker-reachability.md)
+for the distinction between tunnel self-healing, busy-server probe evidence and
+an evidence-authorized DS4 service recovery.
 
 Click a report heading (or focus it and press Enter/Space) to read the assessment.
 The five-second status refresh preserves open reports and text selection. The
