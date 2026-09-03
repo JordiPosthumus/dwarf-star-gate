@@ -294,6 +294,7 @@ function renderGenieReports(reports = []) {
       answer.className = 'genie-answer';
       answer.textContent = report.text;
       if(report.actions_taken?.length)answer.textContent+='\n\nAction request results: '+report.actions_taken.map(a=>`${a.predictor?'predictor '+a.predictor:a.worker_id}: ${a.state??a.status??'pending'}${a.id?` (${a.id})`:''}`).join('; ');
+      if(report.memory_used?.length)answer.textContent+='\n\nHistorical notebook references: '+report.memory_used.map(n=>`${n.id} r${n.revision}`).join(', ');
       node.append(summary, answer);
     }
     // Completed reports are immutable. Keep their actual DOM nodes so polling
@@ -329,10 +330,40 @@ $('health-wire-pause').addEventListener('click',()=>{
 });
 $('health-wire').addEventListener('mouseleave',()=>{if(wireSnapshot)renderHealthWire(wireSnapshot);});
 $('health-wire').addEventListener('focusout',()=>queueMicrotask(()=>{if(wireSnapshot)renderHealthWire(wireSnapshot);}));
-let genieToken=null,genieState=null;
+let genieToken=null,genieState=null,memoryEditing=null,memoryBusy=false;
+function memoryText(note){
+  const d=note.data,yes=v=>v===true?'yes':v===false?'no':'unknown';
+  if(note.kind==='operator_note')return d.text;
+  if(note.kind==='incident')return `Recorded ${d.reason.replaceAll('_',' ')} at ${clock(d.recorded_at)}.\nRequest: ${d.request_id}\nHistorical incident; check current evidence before acting.`;
+  if(note.kind==='recovery')return `Executor recorded: ${d.state.replaceAll('_',' ')} at ${clock(d.recorded_at)}.\nReceipt: ${d.operation_id}\nThis records a past action, not current health or a cure for the underlying fault.`;
+  return `Gateway healthy: ${yes(d.gateway_healthy)} · paused: ${yes(d.paused)}\nContext: ${fmt(d.context_length)} tokens · agent holds: ${fmt(d.agent_hold_count)}\n${d.quarantine?'Recorded quarantine: '+d.quarantine.replaceAll('_',' ')+'\n':''}Process/cache continuity: unknown. Generation success is not inferred.\n`+(note.recent_transitions??[]).map(p=>`${clock(p.at)}: healthy ${yes(p.data.gateway_healthy)}, paused ${yes(p.data.paused)}, quarantine ${p.data.quarantine??'none observed'}`).join('\n');
+}
+function renderMemory(m){
+  $('memory-status').textContent=m?.error?'· storage needs attention':m?.enabled?'· on':'· off';
+  $('memory-toggle').textContent=m?.enabled?'Turn memory off':'Enable memory';$('memory-toggle').disabled=memoryBusy||(!m?.enabled&&!m?.available);
+  $('memory-note-save').disabled=memoryBusy||!m?.enabled||!m?.available;
+  $('memory-detail').textContent=m?.error||`${fmt(m?.note_count??0)} indexed notes · ${fmt((m?.bytes??0)/1024)} / ${fmt((m?.max_bytes??16777216)/1024)} KiB · ${m?.truncated?'retrieval truncated to 12 notes / 16 KiB':'bounded retrieval'} · off retains records. Old observations are history, not live health.`;
+  const root=$('memory-notes'),existing=new Map([...root.children].map(n=>[n.dataset.noteId,n])),keep=new Set();
+  for(const note of m?.notes??[]){
+    let node=existing.get(note.id);keep.add(note.id);
+    if(!node){node=document.createElement('details');node.dataset.noteId=note.id;node.append(document.createElement('summary'),document.createElement('p'));root.append(node);}
+    if(node.dataset.revision!==String(note.revision)){
+      node.dataset.revision=String(note.revision);node.children[0].textContent=`${note.data.worker??'Fleet'} · ${note.kind.replaceAll('_',' ')} · ${clock(note.at)} · r${note.revision}`;
+      node.children[1].className='genie-answer';node.children[1].textContent=memoryText(note);
+      for(const b of node.querySelectorAll('button'))b.remove();
+      if(note.kind==='operator_note')for(const action of ['edit','archive']){const b=document.createElement('button');b.type='button';b.className='button';b.dataset.memoryAction=action;b.dataset.noteId=note.id;b.textContent=action==='edit'?'Edit':'Archive';node.append(b);}
+    }
+  }
+  for(const node of [...root.children]){
+    const current=keep.has(node.dataset.noteId);
+    if(!current&&!node.open&&!node.contains(document.activeElement)){node.remove();continue;}
+    for(const b of node.querySelectorAll('button'))b.disabled=!current||memoryBusy||!m?.enabled||!m?.available;
+    node.title=current?'':'Retained while you read; not in the current notebook retrieval.';
+  }
+}
 async function genieAction(input) {
   try {const r=await fetch('/api/genie',{method:'POST',headers:{'content-type':'application/json','x-dsg-csrf':genieToken},body:JSON.stringify(input)});
-    const data=await r.json();if(!r.ok)throw new Error(data.error||'Genie request failed');await loadGenie();
+    const data=await r.json();if(!r.ok)throw new Error(data.error||'Genie request failed');await loadGenie();return data;
   } catch(e){$('genie-status').textContent=e.message;}
 }
 async function loadGenie() {
@@ -344,12 +375,26 @@ async function loadGenie() {
     $('genie-source').disabled=!s.fallback_available||s.busy;$('genie-source').value=s.source||'primary';
     $('genie-review').disabled=$('genie-send').disabled=!s.enabled||s.busy;
     renderGenieReports(s.reports || []);
+    renderMemory(s.memory);
   } catch{$('genie-status').textContent='Genie status unavailable';wireState={state:'unavailable'};if(wireSnapshot)renderHealthWire(wireSnapshot);}
 }
 $('genie-toggle').addEventListener('click',()=>genieAction({action:'enable',enabled:!genieState?.enabled}));
 $('genie-source').addEventListener('change',()=>genieAction({action:'source',source:$('genie-source').value}));
 $('genie-review').addEventListener('click',()=>genieAction({action:'ask'}));
 $('genie-chat').addEventListener('submit',e=>{e.preventDefault();void genieAction({action:'ask',question:$('genie-question').value});});
+$('memory-toggle').addEventListener('click',async()=>{if(memoryBusy)return;memoryBusy=true;renderMemory(genieState?.memory);try{await genieAction({action:'memory',enabled:!genieState?.memory?.enabled});}finally{memoryBusy=false;renderMemory(genieState?.memory);}});
+$('memory-note-cancel').addEventListener('click',()=>{memoryEditing=null;$('memory-note-text').value='';$('memory-note-cancel').hidden=true;});
+$('memory-note-form').addEventListener('submit',async e=>{
+  e.preventDefault();if(memoryBusy)return;memoryBusy=true;renderMemory(genieState?.memory);
+  try{const note={worker:memoryEditing?.data.worker??null,text:$('memory-note-text').value,state:'active',...(memoryEditing?{id:memoryEditing.id,expected_revision:memoryEditing.revision}:{})};
+    const result=await genieAction({action:'memory-note',note});if(result?.memory_receipt){$('memory-message').textContent=`Saved ${result.memory_receipt.id} r${result.memory_receipt.revision}. No permissions changed.`;memoryEditing=null;$('memory-note-text').value='';$('memory-note-cancel').hidden=true;}else $('memory-message').textContent='Note was not saved; inspect the error above.';
+  }finally{memoryBusy=false;renderMemory(genieState?.memory);}
+});
+$('memory-notes').addEventListener('click',async e=>{
+  const b=e.target.closest('button[data-memory-action]');if(!b||memoryBusy)return;const n=genieState?.memory?.notes?.find(n=>n.id===b.dataset.noteId);if(!n)return;
+  if(b.dataset.memoryAction==='edit'){memoryEditing=n;$('memory-note-text').value=n.data.text;$('memory-note-cancel').hidden=false;$('memory-note-text').focus();return;}
+  memoryBusy=true;try{const result=await genieAction({action:'memory-note',note:{id:n.id,expected_revision:n.revision,...n.data,state:'archived'}});$('memory-message').textContent=result?.memory_receipt?'Archived in retrieval; journal history retained.':'Archive was not saved.';}finally{memoryBusy=false;renderMemory(genieState?.memory);}
+});
 void loadGenie();setInterval(loadGenie,5000);
 
 function renderRecovery(state) {

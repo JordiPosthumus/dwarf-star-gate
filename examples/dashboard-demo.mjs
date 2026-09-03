@@ -5,7 +5,9 @@ import { DeviceTelemetry } from '../ds4-gateway/telemetry.mjs';
 import { isMain } from '../ds4-gateway/config.mjs';
 import {TRAINING_RECIPES,DEFAULT_RECIPE} from '../ds4-gateway/training-recipes.mjs';
 import {calibrationPreflight} from '../ds4-gateway/calibration.mjs';
-export function createDemoServer({learningMilestone=false,agentHold=false}={}) {
+// Optional memory is supplied only by the isolated browser-test fixture. The
+// ordinary demo has no persistent storage and reads no installation config.
+export function createDemoServer({learningMilestone=false,agentHold=false,memory=null}={}) {
 const now = Date.now();
 const workers = [
   { id:'sparkA', is_healthy:true, drained:false, load:1, queued:1, active_seconds:84, completed:42, failed:0, assigned_sessions:4 },
@@ -42,8 +44,8 @@ const recovery={configured:true,automatic:false,workers:workers.slice(0,2).map(w
 const dataset={enabled:true,written:4200,bytes:18*1048576,pending:0,dropped:0,finished:312,missing_usage:2,truncated:3,failed_or_cancelled:1,last_write:now,
   embedding_collection:{enabled:true,ready:true,completed:308,observed:312,pending:0,failed:0,dropped:0,missing:4,last_duration_ms:24,
     model:'all-MiniLM-L6-v2',revision:'demo-only',dimensions:384}};
-const genie={enabled:true,busy:false,source:'primary',
-  status(){return {configured:true,enabled:this.enabled,busy:false,source:this.source,fallback_available:true,mode:'bounded-recovery',predictor_supervision:true,last_check:now-60000,
+const genie={enabled:true,busy:false,source:'primary',memory,
+  status(){return {configured:true,enabled:this.enabled,busy:false,source:this.source,fallback_available:true,mode:'bounded-recovery',predictor_supervision:true,last_check:now-60000,memory:memory?{...memory.status(),...memory.retrieve(snapshot)}:null,
     reports:[{id:'synthetic-review',time:now-60000,evidence_at:now-62000,source:'demo',text:'Synthetic demonstration, not a live assessment. One request is waiting at its session home while the Mac is idle. That preserves cache locality; it does not prove the fastest completion time. Compare warm-home wait against measured cache acquisition elsewhere before changing placement. The candidate models are still shadow-only.',actions_taken:[]}],
     ticker:{state:this.enabled?'ready':'off',evidence_at:now-62000,entries:[
       {severity:'warning',text:'Demo: one request is waiting at a busy session home.',recommendation:'Compare its warm-cache wait with idle-server acquisition cost.'},

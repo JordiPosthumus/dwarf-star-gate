@@ -10,6 +10,7 @@ import { workerControl } from './worker-client.mjs';
 import { FileLogReader, telemetryFiles } from './file-telemetry.mjs';
 import { Activity } from './ui/activity.js';
 import { Genie } from './genie.mjs';
+import {GenieMemory} from './genie-memory.mjs';
 import { genieTunnel } from './genie-tunnel.mjs';
 import { safeQuarantine } from './generation-health.mjs';
 import { AnalyticsReader } from './analytics.mjs';
@@ -51,6 +52,8 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
         try {const input=JSON.parse(body);
           if(input.action==='enable')return reply(200,genie.setEnabled(input.enabled));
           if(input.action==='source')return reply(200,genie.setSource(input.source));
+          if(input.action==='memory'&&genie.memory){genie.memory.setEnabled(input.enabled);return reply(200,genie.status());}
+          if(input.action==='memory-note'&&genie.memory){const receipt=genie.memory.saveOperatorNote(input.note,getSnapshot());return reply(200,{...genie.status(),memory_receipt:receipt});}
           if(input.action!=='ask')return reply(400,{error:'Unknown Genie action'});
           if(!genie.enabled || genie.busy)return reply(409,{error:'Genie is off or busy'});
           if(input.question!==undefined && (typeof input.question!=='string'||input.question.length>2000))return reply(400,{error:'Question too long'});
@@ -232,13 +235,14 @@ export async function runDashboard(configPath, port) {
       gatewayAt = Date.now(); gatewayError = null;
       syncDevices(s.workers);
     } catch { gatewayError = 'Gateway status unavailable; last snapshot is stale'; }
-    finally { activity.update([...devices.values()],gateway?.workers||[],Date.now(),!!gatewayError);polling = false; }
+    finally { activity.update([...devices.values()],gateway?.workers||[],Date.now(),!!gatewayError);try{memory.observe(snapshot());}catch{/* A notebook fault cannot stop fleet polling. */}polling = false; }
   }
   const started = Date.now();
   const managementEnabled = config.ui_worker_management === true && !!config.control_socket;
   const snapshot = () => ({ service:'dwarf-star-gate-dashboard', version: 1, time: Date.now(), started, read_only: !managementEnabled, worker_management:managementEnabled, gateway, gateway_at: gatewayAt, gateway_error: gatewayError, telemetry_error: writeError,
     devices: [...devices.values()].map(d => ({...d.snapshot(),activity:activity.get(d.id)})), events, notes: 'Rates are DS4 engine measurements. Cache counts cover observed prompt starts, not lifetime requests. Raw prompts and responses are excluded.' });
-  const genie=new Genie(config.genie,snapshot,{recover:managementEnabled?input=>workerControl(config.control_socket,'/genie-recover-worker',input):null,predict:managementEnabled?input=>workerControl(config.control_socket,'/genie-predictor',input):null});
+  const memory=new GenieMemory(path.join(path.dirname(config.state_file),'genie','memory'));
+  const genie=new Genie(config.genie,snapshot,{memory,recover:managementEnabled?input=>workerControl(config.control_socket,'/genie-recover-worker',input):null,predict:managementEnabled?input=>workerControl(config.control_socket,'/genie-predictor',input):null});
   const stopGenieTunnel=genieTunnel(config.genie);
   const server = createDashboard(snapshot, path.join(here,'ui'), managementEnabled ? {
     read:()=>workerControl(config.control_socket,'/workers'),

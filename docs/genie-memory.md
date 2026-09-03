@@ -1,9 +1,67 @@
-# Gate Genie memory — implementation plan
+# Gate Genie memory — first release and remaining plan
 
-Status: **planned, not implemented**. A small, private, DSG-owned operational
+Status: **first release implemented, opt-in and off by default**. A small, private, DSG-owned operational
 notebook, not a replacement for the collector, predictor or permission checks.
 It survives dashboard restarts and changing Genie's model or device. It needs
 neither Pi/Hermes nor a permanently warm DS4 session.
+
+## Available now
+
+Open **Genie memory** on the dashboard and select **Enable memory**. This enables
+only the notebook, not Genie inference, recovery or prediction-assisted routing.
+The initial storage ceiling is **16 MiB**, with **no automatic deletion**; enabling
+it accepts that ceiling. At the ceiling, writes pause visibly. Existing data,
+inference, the collector and ordinary stateless reviews remain available. Memory
+off retains the journal and removes notebook history from subsequent reviews.
+
+The first release records:
+
+- Fresh, changed worker observations: gateway health, pause/hold state, known
+  context and allowlisted quarantine reason. Missing samples do not become outages.
+- Incident request IDs and bounded recovery-operation receipt references. A past
+  `recovered` receipt is not proof of present health or a cure for the engine bug.
+  Incident and recovery rows are not automatically declared causally related.
+- Explicit operator notes, with create/edit/archive controls, revision checks and
+  save receipts. Archive excludes a note from retrieval without erasing history.
+
+The private journal is `runtime/genie/memory/notebook.jsonl` beside the configured
+gateway state. Files are mode 0600 inside a mode-0700 directory. It survives model,
+source and dashboard changes; an existing enabled setting also survives restart.
+Genie's inference enable setting remains separate and resets off after restart.
+The dashboard is its sole writer. Corrupt/partial journals, permission problems,
+conflicting writers and failed fsyncs stop memory writes; there is no automatic
+repair or deletion. Inspect/back up the journal before manual repair. A storage
+fault can prevent persisting a subsequent disable; verify the setting after repair.
+
+Retrieval is at most **12 records / 16 KiB**, with operator notes first and other
+records newest first, limited to current worker IDs plus fleet notes. Each worker
+observation can include its seven prior transitions; older revisions remain on
+disk. This is bounded retrieval, **not a complete notebook browser**. Removed
+workers' history stays on disk. Reusing an ID does not prove the same process:
+process/cache epochs and generation verification remain explicitly unknown.
+Records older than seven days are labelled review-due, never silently deleted.
+Reports show the IDs/revisions supplied to the model. They are context, not action
+offers; executor permissions and current evidence still govern every action.
+
+Notebook contents never enter diagnostic exports or XGB training. Do not save
+secrets, inference content or raw logs in operator notes. A configured Genie may
+receive the bounded notebook history, including notes, at its selected endpoint;
+choose that endpoint accordingly. HTML in notes is displayed as text.
+
+Tests cover real dashboard HTTP controls/CSRF, durable reload, corruption, write
+failure, stale samples, bounds, privacy and lack of additional action authority.
+`npm run memory:test` runs these tests. The optional browser fixture,
+`npm run ui:memory-screenshot`, checks actual controls, polling, restart persistence,
+escaping and mobile layout against synthetic workers and disposable storage only.
+
+![Synthetic operational notebook, not live fleet data](images/genie-memory.png)
+
+**Not yet implemented:** model-authored durable hypotheses, text search, scoped
+permanent deletion, performance/experiment rollups, full chat/report persistence,
+or measured operational benefit. The design below remains the roadmap for these
+extensions; it is not a claim that all of them are running.
+
+## Remaining design and guiding rules
 
 ## Purpose and ownership
 
@@ -111,7 +169,8 @@ existing source data. Proposed review defaults: incident notes review-due after
 7 days without new evidence; speed summaries refreshed from their stated window;
 cache-residence assertions expire with source validity/epoch, not an invented
 TTL. Resolved incidents remain history. Pins cannot make measurements current.
-Before deployment choose an explicit storage ceiling/retention setting. At the
+The first release requires opt-in to its 16 MiB ceiling and no-deletion policy.
+Future configurable ceilings/retention need an explicit operator decision. At the
 ceiling pause writes visibly, never silently evict. “Forget” must specify notebook
 content versus separately retained source evidence; erasing one is not both.
 
@@ -146,7 +205,7 @@ or broken. Memory is a failure-tolerant aid, not a dependency of safe operation.
 
 ## Next learning slices
 
-Planning memory need not delay early client metadata, reviewed bounded XGB
+Extending memory need not delay early client metadata, reviewed bounded XGB
 recipes and cache-preserving calibration preflight. Memory explains experiments;
 it never supplies labels or grades a model. Calibration may stay skipped until a
 non-displacing path is proved; organic traffic needs no synthetic generation.

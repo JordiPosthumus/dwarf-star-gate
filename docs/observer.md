@@ -7,8 +7,9 @@ recorded, including the distinction between routing evidence and engine logs.
 
 Optional [early client hints](client-metadata.md) are recorded at admission with
 client-reported provenance. They do not change inference or yet enter XGB.
-The [Genie memory plan](genie-memory.md) is separate from numerical collection;
-current health reports are still in-memory, not a persistent notebook.
+The opt-in [Genie notebook](genie-memory.md) persists operational observations,
+incident/recovery references and explicitly saved notes, separately from numerical
+collection. Full health reports and chat transcripts are not persisted.
 
 Set `"dataset_enabled": true` in your private gateway config, then restart the
 gateway when safe. Model servers and their settings do not need to change.
@@ -159,14 +160,16 @@ does not move the ordinary gateway or register the dedicated observer server in
 the pool. Failure does not automatically replay on another machine. Off cancels
 the local review connection; that alone does not prove backend execution stopped.
 
-This is a stateless question + fresh-briefing interface, not yet a persistent
-multi-turn agent conversation. Twelve recent assessments live in memory and are
+This is a question + fresh-briefing interface, optionally augmented by bounded
+notebook history, not a persistent multi-turn agent conversation. Twelve recent assessments live in memory and are
 not included in downloadable diagnostics or training records. The model has no
 shell or control credentials. Its optional structured `recovery_requests` are
 validated against offered worker/evidence pairs and rechecked by the runner;
 prose is rendered as text, never executed. Durable executor receipts are separate
 from in-memory assessments and are included in sanitized operational status.
-The dashboard's same-origin/CSRF checks protect its enable/source/ask controls.
+The dashboard's same-origin/CSRF checks protect its enable/source/ask and notebook
+controls. Memory can collect while Genie inference is off; switching memory off
+retains its records. Notes are excluded from diagnostic exports and training data.
 
 Click a report heading (or focus it and press Enter/Space) to read the assessment.
 The five-second status refresh preserves open reports and text selection. The

@@ -52,6 +52,6 @@ test('rejection dataset allowlists identifiers and refuses arbitrary reasons/tex
   assert.equal(evidence('rejection',{request_id:randomUUID(),reason:'PRIVATE',dispatch_state:'not_dispatched'}),null);
 });
 test('dashboard continuity projection is bounded and excludes private extra fields',()=>{
-  const s=continuityForDisplay({schema:1,safe_retry_contract:true,recent_rejections:[{request_id:randomUUID(),time:new Date().toISOString(),reason:'same_session_queued',node:'one',session:'SECRET',body:'SECRET'},{request_id:'INVALID'}]});
+  const s=continuityForDisplay({schema:1,safe_retry_contract:true,recent_rejections:[{request_id:randomUUID(),time:new Date().toISOString(),reason:'same_session_queued',dispatch_state:'not_dispatched',node:'one',session:'SECRET',body:'SECRET'},{request_id:'INVALID'},{request_id:randomUUID(),time:new Date().toISOString(),reason:'same_session_queued',dispatch_state:'dispatched'}]});
   assert.equal(s.recent_rejections.length,1);assert.ok(!JSON.stringify(s).includes('SECRET'));
 });

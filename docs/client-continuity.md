@@ -1,4 +1,4 @@
-# Next reliability slice: keep waiting clients alive
+# Client continuity: keep safely waiting clients alive
 
 Status: **pre-dispatch receipts, conversation-scoped reassignment and an opt-in
 Pi transport adapter implemented**. Queue relocation and post-dispatch recovery
@@ -69,24 +69,18 @@ checked to preserve model capabilities. No production model or Pi config is touc
 
 ## Next, in this order
 
-1. Extend the implemented privacy-safe rejection receipts with request/session correlation,
-   explicit reason (pause, probe failure, quarantine, same-conversation activity),
-   dispatch status and a stable retry classification. Expose queue age, deadline
-   risk and the actual recovery block to Genie/UI. No invented ETAs or crash claims.
-2. Continue testing conversation-scoped admission reassignment: unrelated old-home work must
-   not block a provably undispatched retry, while an active/queued **same-session**
-   call must never split across devices. Preserve atomic home assignment and
-   ordering; test cancellation, concurrent retries, pause/holds and store failures.
-   Cache loss/cold prefill on a new home must be disclosed, not promised free.
+1. Deploy the gateway release and opt-in client adapter as separate, backed-up
+   changes. Confirm the provider's model/auth/context/reasoning settings remain
+   unchanged and reload existing Pi sessions. The automated real-Pi test uses
+   synthetic workers; it is not evidence of recovery from every live engine fault.
+2. Follow new receipt reasons and matched call IDs in ordinary traffic. Distinguish
+   historical rejected attempts from a client demonstrably still waiting. Review
+   remaining HTTP/SDK deadlines and incomplete streams separately; the 20,000-hour
+   DSG queue allowance does not govern them. Do not silently change all providers.
 3. Add opt-in pre-dispatch queue relocation with exact ownership and deadline
    preservation. Never replay a partially uploaded/dispatched request merely
    because a health probe times out. A long active response is not proof of a stall.
-4. Deploy the opt-in Pi/client adapter that treats typed *not dispatched* responses
-   as recoverable waiting: abortable backoff/readiness checks, visible status and
-   automatic continuation, without re-running completed tool calls. Generic
-   clients may still use their own finite retries. Do not silently alter all Pi
-   providers or blindly replay partial output/tool-call fragments.
-5. Handle post-dispatch failures separately: retain independent guarded recovery,
+4. Handle post-dispatch failures separately: retain independent guarded recovery,
    prove old execution stopped, and define client-visible stream recovery. Genie
    may request offered remedies; deterministic code enforces safety without an LLM.
 

@@ -41,9 +41,11 @@ agents' holds win. UI ownership labels prevent unexplained Enable/Remove actions
 no extra service, model-server edit or automatic Genie authority is introduced.
 Source is tested independently of deployment; grants require the new gateway
 code to be activated. A thin MCP wrapper and remote agent transport remain future
-work. The [Genie memory plan](genie-memory.md) remains a plan, not a running memory
-store; bounded training recipes, early metadata collection and skip-only
-calibration preflight are already implemented separately.
+work. The [Genie notebook](genie-memory.md) now implements opt-in persistence of
+worker changes, incident/recovery references and explicit operator notes. Full
+chat persistence, generated hypotheses and notebook search remain planned. Bounded
+training recipes, early metadata collection and skip-only calibration preflight
+are implemented separately.
 
 | Order | Work | Exit evidence |
 | --- | --- | --- |
@@ -53,7 +55,7 @@ calibration preflight are already implemented separately.
 | 2 | Explain idle capacity and design cache-aware overflow scheduling | UI identifies session-home waits; replay/shadow comparisons of wait-at-home versus cold execution elsewhere; prove no overlapping ownership/replay; operator-approved policy before activation |
 | 3 (collector implemented) | Validate local embeddings/progress on ordinary workload | Pinned CPU encoder, bounded extraction and visible status; collect joined future labels across hardware; exact cache/engine attribution still separate |
 | 4 (lifecycle implemented) | Collect future validation evidence for v2 forecasts | Fixed forward-time tree/feature selection, separate unseen-session placement gate, per-worker future evidence; no experimental model controls routing |
-| 5 | Persistent Genie/operator activity and endpoint settings UI | Durable actor/channel/action receipts, stale-evidence labels, feedback, endpoint test/save/rollback; manual controls remain authoritative |
+| 5 (notebook first slice implemented) | Persistent Genie/operator activity and endpoint settings UI | Private notebook storage, revisioned notes and bounded historical retrieval tested; generated hypotheses, full chat persistence and endpoint test/save/rollback remain planned |
 | 6 (first slice implemented) | Opt-in deterministic recovery runner and Genie access | Systemd-user only; see recovery guide for tested scope and deployment gates |
 
 Orders 2 and 3 can be built alongside reliability diagnosis, without changing live
@@ -234,10 +236,10 @@ and optional Genie-written milestone commentary. A reset is not a training pause
 pre-reset snapshots cannot immediately restore the rejected model. See the
 [lifecycle controls](predictor-lifecycle.md#controls-gg-and-rollback).
 
-**Gate Genie memory plan:** [a small operational notebook](genie-memory.md) for
-evidence-linked incidents, experiments and explicit operator intent. Numerical
-telemetry and predictor artifacts remain authoritative; memory grants no powers.
-This is planned, not implemented. Also track
+**Gate Genie memory:** [a small operational notebook](genie-memory.md) now records
+worker transitions, incident/recovery references and explicit operator intent.
+Numerical telemetry and predictor artifacts remain authoritative; memory grants
+no powers. Experiment lessons, generated hypotheses and search remain planned. Also track
 [mutually beneficial upstream PR opportunities](ds4-integration.md#upstream-contributions)
 without changing DS4 or creating a private-fork dependency.
 
