@@ -41,8 +41,9 @@ not prove the engine records or echoes it in timing events.
    service invocation is not a restart; a changed digest invalidates in-flight
    telemetry spans and component samples without touching the engine. Local file
    sources and missing metadata remain unknown rather than receiving a guessed
-   epoch. Request-to-engine correlation remains the next step. Fail closed on
-   ambiguous spans, competing direct traffic, dropped events or clock alignment.
+   epoch. Conservative candidate correlation is implemented; exact protocol
+   association remains future work. Fail closed on ambiguous spans, competing
+   direct traffic, dropped events or clock alignment.
 5. If stock interfaces cannot establish an exact cache-to-request link, retain
    component-level estimates and abstention. Do not introduce a mandatory custom
    engine, fake cache-hit percentage or guessed zero acquisition cost to fill a UI.

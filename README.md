@@ -285,7 +285,7 @@ Per worker, the dashboard displays:
 - Recent request outcomes, queue time, elapsed time and returned usage counters.
 
 The dashboard observer also records privacy-safe DS4 process epochs and exposes
-conservative request/engine attribution in local diagnostics and Gate Genie
+conservative [request/engine attribution](docs/request-attribution.md) in local diagnostics and Gate Genie
 evidence. Ambiguous or conflicting evidence is unknown, never a cache claim.
 
 Timing comes from a read-only SSH journal follower on Linux. The default remote user unit
