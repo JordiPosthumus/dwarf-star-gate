@@ -12,6 +12,7 @@ test('cost baseline uses measured load and matching prefix/new-token prompt buck
  const c=observed(),r=estimateCacheCost(c.snapshot(2000),{tier:'local_disk',cached_tokens:1000,prompt_tokens:1100},2000);
  assert.equal(r.disk_load.estimated_ms,20);assert.equal(r.prefill.estimated_ms,100);assert.equal(r.measured_components_ms,120);
  assert.equal(r.total_acquisition_ms,null);assert.equal(r.cache_existence_verified,false);assert.equal(r.request_attribution,'unverified');
+ assert.equal(r.backend_epoch,'unverified');assert.equal(r.backend_epoch_confidence,'unavailable');
  assert.ok(!JSON.stringify(c.snapshot(2000)).includes('NEVER_EXPORT'));
  assert.equal(estimateCacheCost(c.snapshot(2000),{tier:'local_disk',cached_tokens:100000,prompt_tokens:100100},2000).disk_load.estimated_ms,null);
 });

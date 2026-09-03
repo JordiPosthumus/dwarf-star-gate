@@ -34,9 +34,14 @@ not prove the engine records or echoes it in timing events.
 3. Keep directly associated API measurements separate from heuristic engine-log
    associations. Preserve request/time/worker provenance and missing/error status.
    A candidate time-window association is a hypothesis, not an exact training label.
-4. Add backend process epochs from existing service/OS metadata where available;
-   a reconnect is not automatically a process restart. Fail closed on ambiguous
-   spans, competing direct traffic, dropped events or unknown clock alignment.
+4. Backend process epochs are now extracted for systemd journal sources from the
+   stock invocation ID, with boot ID plus PID as an explicitly weaker fallback.
+   DSG exports only a one-way, worker-bound digest. A reconnect with the same
+   service invocation is not a restart; a changed digest invalidates in-flight
+   telemetry spans and component samples without touching the engine. Local file
+   sources and missing metadata remain unknown rather than receiving a guessed
+   epoch. Request-to-engine correlation remains the next step. Fail closed on
+   ambiguous spans, competing direct traffic, dropped events or clock alignment.
 5. If stock interfaces cannot establish an exact cache-to-request link, retain
    component-level estimates and abstention. Do not introduce a mandatory custom
    engine, fake cache-hit percentage or guessed zero acquisition cost to fill a UI.

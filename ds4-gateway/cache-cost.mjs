@@ -3,7 +3,11 @@ const finite=x=>Number.isFinite(x)&&x>=0;
 const bucket=x=>x>0?Math.ceil(Math.log2(x)):0;
 const HOUR=3600000;
 export class CacheCosts {
-  constructor(){this.samples=[];this.started=null;this.rejected=0;}
+  constructor(backendEpoch=null,backendEpochConfidence='unavailable'){
+    this.samples=[];this.started=null;this.rejected=0;
+    this.backendEpoch=typeof backendEpoch==='string'&&/^[\da-f]{64}$/.test(backendEpoch)?backendEpoch:null;
+    this.backendEpochConfidence=this.backendEpoch&&['strong','bounded'].includes(backendEpochConfidence)?backendEpochConfidence:'unavailable';
+  }
   accept(e) {
     if(!finite(e?.time))return;
     let sample;
@@ -19,7 +23,7 @@ export class CacheCosts {
     if(sample){this.samples.push(sample);this.samples=this.samples.filter(x=>sample.time-x.time<=HOUR).slice(-128);}
   }
   snapshot(now=Date.now()) {
-    return {schema:1,source:'engine_component_timings',request_attribution:'unverified',backend_epoch:'unverified',
+    return {schema:1,source:'engine_component_timings',request_attribution:'unverified',backend_epoch:this.backendEpoch??'unverified',backend_epoch_confidence:this.backendEpochConfidence,
       samples:this.samples.filter(x=>now>=x.time&&now-x.time<=HOUR),rejected:this.rejected,
       note:'Disk-load span excludes prefix search and any later engine synchronization. No remote-copy or hot-lookup measurement.'};
   }
@@ -39,6 +43,7 @@ export function estimateCacheCost(snapshot,{tier,cached_tokens,prompt_tokens},no
   const load=tier==='local_disk'?estimate(samples,'disk_load',cached_tokens,{now}):tier==='cold'?{status:'no_cache_payload',samples:0,estimated_ms:0}:missing;
   const prefill=tier==='remote'?missing:estimate(samples,'prefill',prompt_tokens-cached_tokens,{prompt:prompt_tokens,reused:cached_tokens>0,now});
   return {tier,cached_tokens,prompt_tokens,source:'measured_component_baseline',validation:'unvalidated',
+    backend_epoch:typeof snapshot?.backend_epoch==='string'?snapshot.backend_epoch:'unverified',backend_epoch_confidence:['strong','bounded'].includes(snapshot?.backend_epoch_confidence)?snapshot.backend_epoch_confidence:'unavailable',
     disk_load:load,prefill,measured_components_ms:load.estimated_ms!==null&&prefill.estimated_ms!==null?load.estimated_ms+prefill.estimated_ms:null,
     total_acquisition_ms:null,cache_existence_verified:false,request_attribution:'unverified',
     excluded:['prefix_search','unmeasured_engine_sync','remote_transfer','queue_wait','generation'],

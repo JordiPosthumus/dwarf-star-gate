@@ -44,13 +44,16 @@ With shadow collection enabled, each admission's candidate snapshot also records
 | `intervening_requests` | Other dispatches since that last use; a cache-pressure clue, not a distinct-session count or eviction proof |
 | `prior_prompt_tokens`, `prior_cached_tokens` | Last successful observed usage for this session on this worker; not the current request's usage |
 | `cache_residence` | Always `unknown` in this slice; no claim of hot RAM or disk presence |
-| `backend_epoch` | Null: no verified engine process identity yet |
+| `backend_epoch` | Null in routing rows: the dashboard observes systemd process epochs, but no verified request-to-engine join exists yet |
 | `observation_epoch` | Local reset counter, **not** backend identity |
 
 Clocks are monotonic within the gateway run. A restart starts with unknown history,
 not invented zeros. Observed health loss, quarantine, removal or context changes
-discard affected in-memory history. An unobserved fast backend restart cannot yet
-be detected; this is a reason the estimator has no operational authority.
+discard affected in-memory history. The dashboard's journal observer can now
+detect systemd process-epoch changes, but that read-only evidence is not yet
+joined into gateway admission rows. An unobserved fast backend restart can
+therefore still be absent from a routing row; this is a reason the estimator has
+no operational authority.
 
 The new fields are retained for later feature engineering. The existing offline
 XGB feature schema is not silently replaced and does not yet consume these fields.

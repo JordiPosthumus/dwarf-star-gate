@@ -1,6 +1,24 @@
 // Read-only, allowlisted DS4 telemetry. Never retain raw journal messages.
+import { createHash } from 'node:crypto';
 import { safeRequestedThinking } from './requested-thinking.mjs';
 import { CacheCosts } from './cache-cost.mjs';
+const JOURNAL_ID=/^[\da-f]{32}$/i, WORKER_ID=/^[a-zA-Z0-9][\w-]{0,63}$/;
+
+// A stock systemd invocation ID is the strongest existing process-lifetime
+// boundary in the journal. The boot/PID fallback is explicitly weaker because
+// PIDs can eventually be reused. Export only a domain-separated digest: raw OS
+// identifiers never enter metrics, diagnostics or Genie evidence.
+export function journalProcessEpoch(record, workerId) {
+  if(!record||!WORKER_ID.test(workerId))return null;
+  const invocation=typeof record._SYSTEMD_INVOCATION_ID==='string'&&JOURNAL_ID.test(record._SYSTEMD_INVOCATION_ID)?record._SYSTEMD_INVOCATION_ID.toLowerCase():null;
+  const boot=typeof record._BOOT_ID==='string'&&JOURNAL_ID.test(record._BOOT_ID)?record._BOOT_ID.toLowerCase():null;
+  const pid=typeof record._PID==='string'&&/^[1-9]\d{0,9}$/.test(record._PID)?record._PID:null;
+  const source=invocation?'systemd_invocation':boot&&pid?'boot_pid_fallback':null;
+  const identity=invocation??(source?`${boot}:${pid}`:null);
+  if(!identity)return null;
+  return {backend_epoch:createHash('sha256').update(`dsg-backend-epoch-v1\0${workerId}\0${source}\0${identity}`).digest('hex'),
+    backend_epoch_source:source,backend_epoch_confidence:source==='systemd_invocation'?'strong':'bounded'};
+}
 export function parseTiming(message, time = Date.now()) {
   if (typeof message !== 'string' || !message.includes('ds4-server:')) return null;
   let m;
@@ -53,8 +71,11 @@ export class JournalReader {
     if (!Number.isFinite(time) || time <= 0) return null;
     this.cursor = cursor; this.last_time = time; this.seen.add(cursor);
     if (this.seen.size > 5000) this.seen.delete(this.seen.values().next().value);
-    const e = parseTiming(j.MESSAGE, time);
-    if (e) this.device.accept(e);
+    const parsed = parseTiming(j.MESSAGE, time);
+    if (!parsed)return null;
+    const epoch=journalProcessEpoch(j,this.device.id);
+    const e={...parsed,...(epoch??{backend_epoch:null,backend_epoch_source:null,backend_epoch_confidence:'unavailable'})};
+    this.device.accept(e);
     return e;
   }
 }
@@ -63,19 +84,41 @@ export class DeviceTelemetry {
   constructor(id) {
     this.costs=new CacheCosts();
     this.id = id; this.connected = false; this.observed_since = null; this.last_event = null;
+    this.backend_epoch=null;this.backend_epoch_source=null;this.backend_epoch_confidence='unavailable';
+    this.backend_epoch_observed_at=null;this.backend_epoch_changes=0;this.backend_epoch_evidence_gaps=0;this.cache_observed_since=null;
     this.phase = 'unknown'; this.decode = null; this.prefill = null; this.prompt = null;
     this.cache = { starts: 0, reused: 0, cold: 0, resident_misses: 0, disk_restores: 0 };
     this.series = []; this.recent = []; this.pending_disk = null; this.current = null;
   }
+  observeEpoch(e) {
+    const id=typeof e.backend_epoch==='string'&&/^[\da-f]{64}$/.test(e.backend_epoch)?e.backend_epoch:null;
+    const source=['systemd_invocation','boot_pid_fallback'].includes(e.backend_epoch_source)?e.backend_epoch_source:null;
+    const confidence=['strong','bounded'].includes(e.backend_epoch_confidence)?e.backend_epoch_confidence:null;
+    if(!id||!source||!confidence){this.backend_epoch_evidence_gaps++;return false;}
+    if(id===this.backend_epoch)return true;
+    const changed=!!this.backend_epoch;
+    this.backend_epoch=id;this.backend_epoch_source=source;this.backend_epoch_confidence=confidence;
+    this.backend_epoch_observed_at=e.time;this.cache_observed_since=e.time;
+    if(changed)this.backend_epoch_changes++;
+    // A process boundary invalidates spans and learned component samples. It
+    // does not touch DS4, its cache files, the service, routing or inference.
+    this.costs=new CacheCosts(id,confidence);this.phase='unknown';this.decode=null;this.prefill=null;this.prompt=null;
+    this.cache={starts:0,reused:0,cold:0,resident_misses:0,disk_restores:0};
+    this.series=[];this.recent=[];this.pending_disk=null;this.current=null;
+    return true;
+  }
   accept(e) {
     if (!e) return;
-    this.costs.accept(e);
+    const journalEvent=Object.hasOwn(e,'backend_epoch');
+    const attributable=!journalEvent||this.observeEpoch(e);
+    if(attributable)this.costs.accept(e);
     this.observed_since ??= e.time; this.last_event = e.time;
-    if (e.kind === 'resident_miss') this.cache.resident_misses++;
-    if (e.kind === 'disk_restore') { this.cache.disk_restores++; this.pending_disk = e; }
+    this.cache_observed_since??=e.time;
+    if (e.kind === 'resident_miss'&&attributable) this.cache.resident_misses++;
+    if (e.kind === 'disk_restore'&&attributable) { this.cache.disk_restores++; this.pending_disk = e; }
     if (e.kind === 'start') {
-      this.phase = 'prefill'; this.cache.starts++;
-      e.cached > 0 ? this.cache.reused++ : this.cache.cold++;
+      this.phase = 'prefill';
+      if(attributable){this.cache.starts++;e.cached > 0 ? this.cache.reused++ : this.cache.cold++;}
       const disk = this.pending_disk && e.time - this.pending_disk.time < 60000;
       this.prompt = { ...e, cache: e.cached === 0 ? 'cold' : disk ? 'disk restore' : 'prefix reuse' };
       this.pending_disk = null; this.current = { time: e.time, generated: 0 };

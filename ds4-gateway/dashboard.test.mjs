@@ -7,7 +7,7 @@ import path from 'node:path';
 import { once } from 'node:events';
 import vm from 'node:vm';
 import { setTimeout as delay } from 'node:timers/promises';
-import { parseTiming, safeGatewayEvent, DeviceTelemetry, JournalReader } from './telemetry.mjs';
+import { parseTiming, safeGatewayEvent, DeviceTelemetry, JournalReader, journalProcessEpoch } from './telemetry.mjs';
 import { createDashboard, runDashboard } from './dashboard.mjs';
 import { FileLogReader, parseLocalTiming, telemetryFiles } from './file-telemetry.mjs';
 const parse = (s, t = 1000) => parseTiming(`0902 14:00:00 ds4-server: ${s}`, t);
@@ -166,10 +166,48 @@ test('unrelated messages, tool arguments and error snippets are never retained',
 });
 test('journal cursors deduplicate reconnect replay and reject command-shaped input', () => {
   const d = new DeviceTelemetry('spark1'), r = new JournalReader(d);
-  const record = { __CURSOR:'s=abc;i=123;t=def', __REALTIME_TIMESTAMP:'1000000', MESSAGE:'ds4-server: chat ctx=0..10:10 prompt start' };
+  const record = { __CURSOR:'s=abc;i=123;t=def', __REALTIME_TIMESTAMP:'1000000', MESSAGE:'ds4-server: chat ctx=0..10:10 prompt start', _SYSTEMD_INVOCATION_ID:'0123456789abcdef0123456789abcdef' };
   assert.ok(r.accept(record)); assert.equal(r.accept(record), null); assert.equal(d.cache.starts, 1);
   assert.equal(r.accept({ ...record, __CURSOR:"';echo private;'" }), null);
   assert.equal(r.accept({ ...record, __CURSOR:'s=abc;i=124', __REALTIME_TIMESTAMP:'invalid' }), null);
+});
+test('journal process epochs are stable, private and explicit about fallback strength', () => {
+  const invocation='0123456789abcdef0123456789abcdef',other='1123456789abcdef0123456789abcdef';
+  const a=journalProcessEpoch({_SYSTEMD_INVOCATION_ID:invocation},'spark1');
+  assert.match(a.backend_epoch,/^[\da-f]{64}$/);assert.equal(a.backend_epoch_source,'systemd_invocation');assert.equal(a.backend_epoch_confidence,'strong');
+  assert.deepEqual(journalProcessEpoch({_SYSTEMD_INVOCATION_ID:invocation},'spark1'),a);
+  assert.notEqual(journalProcessEpoch({_SYSTEMD_INVOCATION_ID:other},'spark1').backend_epoch,a.backend_epoch);
+  assert.notEqual(journalProcessEpoch({_SYSTEMD_INVOCATION_ID:invocation},'spark2').backend_epoch,a.backend_epoch);
+  const fallback=journalProcessEpoch({_BOOT_ID:other,_PID:'4321'},'spark1');
+  assert.equal(fallback.backend_epoch_source,'boot_pid_fallback');assert.equal(fallback.backend_epoch_confidence,'bounded');
+  assert.ok(!JSON.stringify({a,fallback}).includes(invocation));assert.ok(!JSON.stringify({a,fallback}).includes('4321'));
+  for(const record of [{},{_SYSTEMD_INVOCATION_ID:'bad'},{_BOOT_ID:other,_PID:'0'},{_BOOT_ID:other,_PID:'1;id'}])assert.equal(journalProcessEpoch(record,'spark1'),null);
+  assert.equal(journalProcessEpoch({_SYSTEMD_INVOCATION_ID:invocation},'bad worker'),null);
+});
+test('a backend restart invalidates telemetry spans while a reader reconnect does not', () => {
+  const d=new DeviceTelemetry('spark1'),invocation='0123456789abcdef0123456789abcdef';
+  const record=(cursor,message,id=invocation)=>({__CURSOR:cursor,__REALTIME_TIMESTAMP:String(1000000+Number(cursor.match(/\d+$/)?.[0]??0)*1000),MESSAGE:`ds4-server: ${message}`,_SYSTEMD_INVOCATION_ID:id});
+  const r1=new JournalReader(d);
+  r1.accept(record('s=a;i=1','kv cache hit text tokens=512 load=12.3 ms'));
+  r1.accept(record('s=a;i=2','chat ctx=512..612:100 prompt start'));
+  assert.equal(d.cache.disk_restores,1);assert.equal(d.cache.starts,1);assert.equal(d.backend_epoch_changes,0);
+  const first=d.backend_epoch;
+  const r2=new JournalReader(d);r2.accept(record('s=a;i=3','chat ctx=512..612:100 prompt done 0.2s'));
+  assert.equal(d.backend_epoch,first);assert.equal(d.backend_epoch_changes,0);assert.equal(d.cache.starts,1);
+  r2.accept(record('s=b;i=4','chat ctx=0..40:40 prompt start','1123456789abcdef0123456789abcdef'));
+  assert.notEqual(d.backend_epoch,first);assert.equal(d.backend_epoch_changes,1);
+  assert.deepEqual(d.cache,{starts:1,reused:0,cold:1,resident_misses:0,disk_restores:0});
+  assert.equal(d.costs.samples.length,0);assert.equal(d.decode,null);assert.equal(d.prefill,null);
+  assert.equal(d.snapshot().cache_cost.backend_epoch,d.backend_epoch);assert.equal(d.snapshot().cache_cost.backend_epoch_confidence,'strong');
+});
+test('missing journal identity stays unverified and cannot contaminate epoch-scoped cache evidence', () => {
+  const d=new DeviceTelemetry('spark1'),r=new JournalReader(d);
+  const base={__REALTIME_TIMESTAMP:'1000000',MESSAGE:'ds4-server: chat ctx=0..10:10 prompt start'};
+  const e=r.accept({...base,__CURSOR:'s=a;i=1'});
+  assert.equal(e.backend_epoch,null);assert.equal(d.backend_epoch,null);assert.equal(d.cache.starts,0);assert.equal(d.backend_epoch_evidence_gaps,1);
+  const known='0123456789abcdef0123456789abcdef';
+  r.accept({...base,__CURSOR:'s=a;i=2',_SYSTEMD_INVOCATION_ID:known});assert.equal(d.cache.starts,1);
+  r.accept({...base,__CURSOR:'s=a;i=3'});assert.equal(d.cache.starts,1);assert.equal(d.backend_epoch_evidence_gaps,2);
 });
 test('rates are bounded historical samples; new prompts do not erase last observed speed', () => {
   const d = new DeviceTelemetry('spark1');

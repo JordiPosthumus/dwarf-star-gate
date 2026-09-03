@@ -33,9 +33,12 @@ request-to-engine/cache attribution and proving learned prediction accuracy rema
 [bounded DS4 service recovery](worker-recovery.md): systemd-user enrollment, GG and
 detector requests, independent guards, durable receipts and cold/warm verification.
 This does not fix the CUDA defect or implement launchd/container recovery. The
-next reliability/data priority is request-to-engine attribution with backend
-process epochs. The separate embedding slice now collects future workload features
-without waiting for improved stock-interface attribution or changing routing.
+backend-process-epoch foundation is now implemented for systemd journal telemetry:
+restart boundaries invalidate learned telemetry spans without changing DS4. The
+next reliability/data priority is the bounded request-to-engine correlator; it
+must abstain on direct or ambiguous traffic. The separate embedding slice now
+collects future workload features without waiting for improved stock-interface
+attribution or changing routing.
 
 Use the [recovery validation procedure](recovery-validation.md) before enabling
 an enrolled service. Deployment receipts and policy activation belong in private
@@ -58,7 +61,7 @@ are implemented separately.
 | --- | --- | --- |
 | Immediate | [Client continuity](client-continuity.md): distinguish undispatched waits from interrupted generation, scope home ownership correctly, and avoid abandoning Pi turns | Patient gateway waiting, receipts, conversation-scoped admission reassignment and opt-in Pi transport implemented; real Pi agent/tool-loop fixture covers native waiting and certified retries. Queued relocation, client deadline policy and post-dispatch recovery remain separate work |
 | 0 | Promote protocol/quarantine maintenance fixes through a controlled cutover | Regression suites pass; versioned backup; real API-format smoke checks; unchanged fleet/context; explicit source-versus-running release record |
-| 1 | Diagnose the Spark CUDA/OOM incidents and identify backend process epochs | Correlated service/kernel/memory evidence and targeted reproduction; real cold/warm checks plus representative sustained work; no unapproved context/cache reductions |
+| 1 (epoch foundation implemented) | Diagnose the Spark CUDA/OOM incidents and correlate requests within backend process epochs | Privacy-safe systemd invocation epochs now bind telemetry regimes; next evidence is a bounded gateway-request/log correlator, plus service/kernel/memory diagnosis, real cold/warm checks and representative sustained work; no unapproved context/cache reductions |
 | 2 | Explain idle capacity and design cache-aware overflow scheduling | UI identifies session-home waits; replay/shadow comparisons of wait-at-home versus cold execution elsewhere; prove no overlapping ownership/replay; operator-approved policy before activation |
 | 3 (collector implemented) | Validate local embeddings/progress on ordinary workload | Pinned CPU encoder, bounded extraction and visible status; collect joined future labels across hardware; exact cache/engine attribution still separate |
 | 4 (lifecycle implemented) | Collect future validation evidence for v2 forecasts | Fixed forward-time tree/feature selection, separate unseen-session placement gate, per-worker future evidence; no experimental model controls routing |

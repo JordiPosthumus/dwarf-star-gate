@@ -39,9 +39,11 @@ Restarting the dashboard rebuilds observations from its available log tail.
 
 - A scenario does **not** establish that its cache exists, is resident, is
   compatible, or belongs to that request. Similar text is not KV identity.
-- Timing events currently lack a verified gateway request ID and backend epoch.
-  They remain component observations, not request-attributed training labels.
-  Configuration changes/restarts can mix regimes within the bounded window.
+- Systemd journal timing events now carry a privacy-safe backend process epoch.
+  A proven epoch change clears component samples, so those observations do not
+  mix process lifetimes. Local-file telemetry and missing service metadata remain
+  unverified. Timing events still lack a verified gateway request ID, so they
+  remain component observations rather than request-attributed training labels.
 - Missing, sparse or stale measurements produce **unknown**, never a zero cost.
   A disconnected feed, unhealthy server or stale gateway snapshot rejects the
   calculation. Scenarios cannot exceed a known worker context capacity.
@@ -59,7 +61,8 @@ Follow the [stock DS4 integration boundary](ds4-integration.md): extract existin
 API/log/OS evidence, without editing the engine. If attribution cannot be proved,
 keep the component estimate and the uncertainty; do not force a guessed join.
 
-1. Correlate cache/phase events to request ID **and backend process epoch**.
+1. Correlate cache/phase events to a gateway request ID within the now-observed
+   backend process epoch, abstaining on ambiguity or direct competing traffic.
 2. Inventory compatible snapshot identity and measure lookup/restore/import
    boundaries, including real cold-to-warm verification.
 3. Evaluate estimates against later observations; add uncertainty and abstention

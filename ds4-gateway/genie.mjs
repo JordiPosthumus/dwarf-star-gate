@@ -20,6 +20,8 @@ export function briefing(snapshot) {
       context_length:w.context_length,requested_thinking:w.requested_thinking,predictions:w.predictions,
       health_evidence:{source:w.health_state_source??null,last_probe:w.last_probe??null,probe_error:w.probe_error??null,deferred_probes:w.health_probe_deferred??0},
       telemetry:(()=>{const d=snapshot.devices.find(d=>d.id===w.id);return d?{connected:d.connected,observed_since:d.observed_since,last_event:d.last_event,phase:d.phase,
+        backend_epoch:d.backend_epoch,backend_epoch_source:d.backend_epoch_source,backend_epoch_confidence:d.backend_epoch_confidence,
+        backend_epoch_observed_at:d.backend_epoch_observed_at,backend_epoch_changes:d.backend_epoch_changes,backend_epoch_evidence_gaps:d.backend_epoch_evidence_gaps,
         decode:d.decode?.tps,prefill:d.prefill?.tps,last_prompt:d.prompt,cache:d.cache}:null;})()})),
     recent_outcomes:(snapshot.events||[]).filter(e=>e.event==='request_finished').slice(-12).map(e=>({time:e.time,node:e.node,outcome:e.outcome,queue_ms:e.queue_ms,elapsed_ms:e.elapsed_ms,usage:e.usage})),
     semantics:['queue_ms and elapsed_ms are milliseconds for past requests, not the current queue age or an ETA; 120000 ms = 2 minutes',
@@ -35,6 +37,7 @@ export function briefing(snapshot) {
       'health_evidence.source=recent_upstream_progress means a model-list timeout overlapped fresh bytes from the active inference stream; it does not prove semantic progress or final success. Active status alone never overrides failed health probes. A network or SSH outage is not a proven engine fault; service restart needs reachable, verified recovery evidence',
       'Operator pauses and agent holds are intentional reservations, not faults. Do not recover or enable a reserved server. Releasing one hold does not release other holds or an operator pause',
       'cache counters are observed starts/reuses/restores, not a guaranteed hit rate; resident miss may still restore from disk',
+      'backend_epoch is a one-way process-lifetime digest from stock service metadata, not a cache ID or request association. A changed epoch proves a backend process boundary and invalidates telemetry spans; it does not prove why the process restarted',
       'Cache counters may include diagnostic traffic and use different observation windows or recently restarted processes; unmatched counts do not establish worse efficiency'],
     limitations:['Optional embeddings and previous-turn similarity enter updated forecasts only, after upload; no embeddings in initial placement','No proven request-to-engine-event association','No counterfactual completion times','Only offered recovery/training/rollback requests; no arbitrary commands or model promotion authority']};
 }

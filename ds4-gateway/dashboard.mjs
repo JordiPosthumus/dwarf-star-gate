@@ -136,7 +136,7 @@ export async function runDashboard(configPath, port) {
     const service = node.telemetry_service || 'ds4-vision-q2.service';
     if (!/^[\w@.-]+\.service$/.test(service)) throw new Error('Unsupported journal unit');
     const resume = reader.cursor && !resetCursor ? `--after-cursor='${reader.cursor}'` : reader.last_time ? `--since=@${Math.floor(reader.last_time / 1000)}` : '--since=-15min';
-    const remote = `journalctl --user -u ${service} -f -n 2000 --no-pager -o json --output-fields=MESSAGE,__REALTIME_TIMESTAMP,__CURSOR ${resume}`;
+    const remote = `journalctl --user -u ${service} -f -n 2000 --no-pager -o json --output-fields=MESSAGE,__REALTIME_TIMESTAMP,__CURSOR,_SYSTEMD_INVOCATION_ID,_BOOT_ID,_PID ${resume}`;
     const child = spawn('/usr/bin/ssh', ['-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=2', node.ssh, remote], { stdio: ['ignore', 'pipe', 'ignore'] });
     child.workerNode = node;
     children.add(child); let buffer = '', skipping = false;
