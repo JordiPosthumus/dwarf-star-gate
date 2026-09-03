@@ -2,12 +2,27 @@
 
 <img src="ds4-gateway/ui/logo.png" alt="Dwarf Star Gate logo" width="240">
 
-A local gateway for **N DS4 servers—DGX Sparks, Macs, or a mix**, with durable session affinity
-and a lightweight control-room dashboard for [DS4](https://github.com/antirez/ds4).
-Register workers through the local UI or CLI; fleet size is not hard-coded.
+[DS4](https://github.com/antirez/ds4) by [antirez](https://github.com/antirez) is an
+excellent local inference engine. Running it efficiently across a home fleet
+takes coordination: connecting your applications, preserving useful caches,
+keeping track of queues, and dealing with server failures.
+
+**Dwarf Star Gate is a local gateway for multiple devices running DS4—DGX Sparks,
+Macs, or a mix.** It gives your applications one endpoint and you one dashboard,
+helping you manage a home inference fleet with less manual effort and make better
+use of your hardware. See which devices are busy or idle, where requests are
+waiting, and how much time is spent processing prompts and generating responses.
+
+Conversations stay with their assigned server to encourage cache reuse; new
+conversations are placed according to load. Add, pause, resume or remove servers
+through the local UI or CLI. DS4 handles inference and its caches; DSG handles
+coordination and visibility across the fleet.
+
 **DS4-specific, without modifying DS4:** use the engine's existing API and logs,
 adapt to verified capabilities, and keep unknowns explicit. No custom DS4 patch
 or rebuild is required. See the [integration boundary](docs/ds4-integration.md).
+
+## What DSG adds
 
 **Implemented, opt-in:** private routing evidence, fleet activity, and **Gate
 Genie**, a local fleet assistant with optional [bounded DS4 service recovery](docs/worker-recovery.md). See the [prioritized feature roadmap](docs/roadmap.md)
