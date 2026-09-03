@@ -5,6 +5,7 @@ import { DeviceTelemetry } from '../ds4-gateway/telemetry.mjs';
 import { isMain } from '../ds4-gateway/config.mjs';
 import {TRAINING_RECIPES,DEFAULT_RECIPE} from '../ds4-gateway/training-recipes.mjs';
 import {calibrationPreflight} from '../ds4-gateway/calibration.mjs';
+import {FleetThroughput} from '../ds4-gateway/throughput.mjs';
 // Optional memory is supplied only by the isolated browser-test fixture. The
 // ordinary demo has no persistent storage and reads no installation config.
 export function createDemoServer({learningMilestone=false,agentHold=false,memory=null}={}) {
@@ -59,6 +60,11 @@ const events = Array.from({length:8},(_,i)=>({
   request_id:`${(0xa1b2c300+i).toString(16)}-0000-4000-8000-000000000000`,outcome:i===1?'client_cancelled':'complete',queue_ms:i===4?4200:0,elapsed_ms:12340+i*3700,
   usage:{prompt_tokens:28500+i*3800,cached_tokens:27000+i*3800,completion_tokens:160+i*23},
 }));
+const throughput=new FleetThroughput();
+// Fictional completions, independent of the 12-row request-log illustration.
+for(let i=0;i<30;i++)throughput.accept({schema:1,kind:'finish',run_id:'demo',request_id:`demo-usage-${i}`,node:workers[i%3].id,
+  time:new Date(now-(i<12?i*250000:7200000+(i-12)*180000)).toISOString(),outcome:'complete',
+  usage:i===0?null:{completion_tokens:i<12?6200+i*100:8500,prompt_tokens:60000,cached_tokens:54000}});
 const snapshot = { version:1,demo:true,time:now,started:now-900000,read_only:false,worker_management:true,gateway_at:now,gateway_error:null,telemetry_error:null,
   gateway:{model:'deepseek-v4-flash',context_length:262144,queue_timeout_ms:72000000000,total:3,healthy:3,available:3,active:2,queued:1,draining:false,workers,dataset,predictor,recovery},devices,events };
 const registry=()=>({model:'deepseek-v4-flash',minimum_context:snapshot.gateway.context_length,context_limit_control:true,context_limit_source:'saved',queue_timeout_ms:snapshot.gateway.queue_timeout_ms,queue_timeout_control:true,queue_timeout_source:'saved',workers,recovery});
@@ -101,7 +107,7 @@ return createDashboard(()=>({...snapshot,time:Date.now(),gateway_at:Date.now(),
     } else throw new Error('This screenshot demo does not run recovery or training. No real services are connected.');
     return registry();
   },
-},genie,()=>({enabled:true,status:'ready',demo:true,window_limit:500,not_dispatched:1,
+},genie,()=>({enabled:true,status:'ready',demo:true,window_limit:500,not_dispatched:1,throughput:throughput.snapshot(),
   model_series:['admission','upload','embedded','remaining'].map((stage,j)=>({id:modelIds[j===0?0:j===3?2:1],stage,
     rows:Array.from({length:24},(_,i)=>({node:workers[i%workers.length]?.id,at:now-i*30000,experimental:true,
       service_ms:8000+i*2600+(i%3)*3200,predicted_service_ms:i%7?10000+i*2450:null,service_state:'complete'}))})),

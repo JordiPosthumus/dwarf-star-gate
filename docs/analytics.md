@@ -140,3 +140,9 @@ transfer is a later compatibility-gated path whose critical path may overlap
 queue wait. The [roadmap](roadmap.md) retains the four cache-source alternatives.
 Genie may explain evidence and later request bounded training jobs; deterministic
 evaluation/promotion and routing guards remain independent of his commentary.
+## Fleet counters versus prediction analytics
+
+The separate [Fleet throughput block](fleet-throughput.md) near the top of the
+page shows hourly output, peak hourly output, completed requests and prompt-token
+reuse. It reads saved usage, not XGB forecasts; it is independent of the model and
+worker filters in the prediction panel below.

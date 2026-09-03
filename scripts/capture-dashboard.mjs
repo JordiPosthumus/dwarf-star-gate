@@ -31,6 +31,15 @@ try {
   assert.equal(await page.locator('#predictor-recipe').inputValue(),'standard-v1');
   assert.match(await page.locator('#calibration-status').innerText(),/skipped.*cache-preserving/);
   assert.match(await page.locator('#embedding-detail').innerText(),/384 dimensions/);
+  await page.waitForFunction(()=>document.getElementById('throughput-output').textContent!=='—');
+  assert.equal(await page.locator('#throughput-output').innerText(),'74.8k');
+  assert.equal(await page.locator('#throughput-peak').innerText(),'153k');
+  assert.equal(await page.locator('#throughput-requests').innerText(),'12');
+  assert.equal(await page.locator('#throughput-cached').innerText(),'594k');
+  assert.match(await page.locator('#throughput-cache-note').innerText(),/90%/);
+  assert.match(await page.locator('#throughput-output-note').innerText(),/11 \/ 12/);
+  assert.equal(await page.locator('#throughput-status').innerText(),'Synthetic example');
+  assert.match(await page.locator('#throughput-note').innerText(),/credited when requests finish/);
   assert.ok(await page.locator('.gate-art').evaluate(img=>img.complete&&img.naturalWidth>0));
   const output=path.join(projectRoot,'docs/images');await fs.mkdir(output,{recursive:true});
   await page.locator('#worker-management summary').click();
@@ -84,6 +93,7 @@ try {
   assert.equal((await trainResponse).ok(),false,'The demo must refuse real training');
   await page.setViewportSize({width:390,height:844});
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),'Mobile page must not overflow horizontally');
+  await page.locator('#fleet-throughput').screenshot({path:path.join(output,'fleet-throughput-mobile.png'),animations:'disabled'});
   // Separate synthetic scenario: exercise persistent notice UX and safe reset.
   // No live configuration, telemetry or model server is read by either demo.
   learningServer=createDemoServer({learningMilestone:true});

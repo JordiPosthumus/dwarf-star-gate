@@ -5,7 +5,9 @@ These are actual browser captures of fictional data, not edited production
 screenshots, benchmark results, a live incident report or a promoted model.
 
 - `dashboard-overview.png`: branding, Genie wire, slot capacity, mixed-server
-  activity, speeds, requested thinking and cache counters.
+  activity, speeds, requested thinking, hourly fleet throughput and cache counters.
+- `fleet-throughput-mobile.png`: the same synthetic throughput block at 390px,
+  with rolling-hour definitions and usage coverage rather than invented totals.
 - `dashboard-genie.png`: local collection/embedding status and an open assessment.
 - `dashboard-cache-and-requests.png`: stage-specific XGB chart, candidate lifecycle,
   recipe selector, calibration skip status, cache calculator, notebook/continuity

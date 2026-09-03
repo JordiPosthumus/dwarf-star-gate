@@ -2,6 +2,7 @@
 // No model fitting, inference, request bodies, routing or persistence here.
 import fs from 'node:fs';
 import path from 'node:path';
+import {FleetThroughput} from './throughput.mjs';
 
 const validId = x => typeof x === 'string' && /^[\w-]{1,64}$/.test(x);
 const number = x => Number.isFinite(x) && x >= 0 ? x : null;
@@ -89,7 +90,7 @@ export class PredictionEvidence {
 
 export class AnalyticsReader {
   constructor(directory,{enabled=false,readBytes=READ_BYTES,tailBytes=TAIL_BYTES}={}) {
-    Object.assign(this,{directory,enabled,readBytes,tailBytes});this.cursors=new Map();this.evidence=new PredictionEvidence();
+    Object.assign(this,{directory,enabled,readBytes,tailBytes});this.cursors=new Map();this.evidence=new PredictionEvidence();this.throughput=new FleetThroughput();
     this.status='waiting';this.lastRead=null;this.partialHistory=false;this.malformed=0;this.rescans=0;
   }
   poll(now=Date.now()) {
@@ -98,7 +99,7 @@ export class AnalyticsReader {
       if(!fs.lstatSync(this.directory).isDirectory())throw new Error('Not a directory');
       const files=fs.readdirSync(this.directory).filter(f=>/^routing-\d{4}-\d{2}-\d{2}\.jsonl$/.test(f)).sort().slice(-2);
       if([...this.cursors.keys()].some(file=>!files.includes(file))) {
-        this.cursors.clear();this.evidence=new PredictionEvidence();this.rescans++;this.status='rescanning';return;
+        this.cursors.clear();this.evidence=new PredictionEvidence();this.throughput=new FleetThroughput();this.rescans++;this.status='rescanning';return;
       }
       let backlog=false;
       for(const file of files) {
@@ -115,7 +116,7 @@ export class AnalyticsReader {
           if(changed) {
             // Rebuild a bounded window after replacement/truncation; do not mix
             // old labels with a new file that happens to reuse request IDs.
-            this.cursors.clear();this.evidence=new PredictionEvidence();this.rescans++;this.status='rescanning';return;
+            this.cursors.clear();this.evidence=new PredictionEvidence();this.throughput=new FleetThroughput();this.rescans++;this.status='rescanning';return;
           }
           if(!c) {
             const offset=Math.max(0,stat.size-this.tailBytes);this.partialHistory ||= offset>0;
@@ -127,7 +128,7 @@ export class AnalyticsReader {
           let from=0,end;
           while((end=buffer.indexOf(10,from))>=0) {
             if(!c.skipping && end-from<=LINE_BYTES) {
-              try {this.evidence.accept(JSON.parse(buffer.subarray(from,end).toString('utf8')));} catch {this.malformed++;}
+              try {const row=JSON.parse(buffer.subarray(from,end).toString('utf8'));this.evidence.accept(row);this.throughput.accept(row);} catch {this.malformed++;}
             } else if(!c.skipping)this.malformed++;
             c.skipping=false;from=end+1;
           }
@@ -145,9 +146,10 @@ export class AnalyticsReader {
       this.status=!files.length?'waiting':backlog?'catching_up':'ready';this.lastRead=now;
     } catch {this.status='unavailable';}
   }
-  snapshot() {
+  snapshot(now=Date.now()) {
     return {enabled:this.enabled,status:this.enabled?this.status:'disabled',last_read_at:this.lastRead,
       partial_history:this.partialHistory,malformed_lines:this.malformed,rescans:this.rescans,
+      throughput:this.throughput.snapshot(now),
       ...this.evidence.snapshot()};
   }
 }

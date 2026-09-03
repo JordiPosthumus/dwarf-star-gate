@@ -8,7 +8,7 @@
   "scripts": {
     "test": "node --test ds4-gateway/agent-control.test.mjs ds4-gateway/gateway.test.mjs ds4-gateway/dashboard.test.mjs ds4-gateway/observer.test.mjs ds4-gateway/routing-shadow.test.mjs ds4-gateway/recovery.test.mjs ds4-gateway/analytics.test.mjs ds4-gateway/embeddings.test.mjs ds4-gateway/cache-cost.test.mjs ds4-gateway/install.test.mjs ds4-gateway/predictor.test.mjs ds4-gateway/client-metadata.test.mjs ds4-gateway/deadline.test.mjs examples/dashboard-demo.test.mjs",
     "continuity:test": "node --test ds4-gateway/continuity-client.test.mjs ds4-gateway/pi-continuity.test.mjs",
-    "data:test": "node --test ds4-gateway/json-usage.test.mjs predictor/audit.test.mjs",
+    "data:test": "node --test ds4-gateway/json-usage.test.mjs ds4-gateway/throughput.test.mjs predictor/audit.test.mjs",
     "data:audit": "node predictor/audit.mjs",
     "memory:test": "node --test ds4-gateway/genie-memory.test.mjs",
     "recovery:test": "python3 -m unittest discover -s ds4-gateway -p 'recovery_systemd_test.py' -v",

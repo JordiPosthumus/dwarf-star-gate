@@ -65,6 +65,9 @@ are collection-only for now; [calibration preflight](docs/calibration.md) skips
 without a proven cache-preserving path. An opt-in [persistent Genie notebook](docs/genie-memory.md)
 records worker-state changes, incident/recovery references and explicit operator
 notes. It survives dashboard restarts, stays private and grants no new powers.
+The dashboard also shows [hourly fleet throughput](docs/fleet-throughput.md):
+reported output tokens, peak rolling hour, completed requests and prompt-token
+reuse, with explicit coverage and completion-time accounting.
 Workers with recognized engine faults or repeated inference failures are
 [quarantined persistently](docs/generation-health.md); recovery requires a real
 generation check. Opt-in recovery can restart an enrolled systemd-user DS4 service

@@ -52,8 +52,23 @@ function predictionChart(pairs) {
   return `<svg viewBox="0 0 266 246" role="img" aria-label="Predicted versus actual duration in ${label}; identical axes; dots above the diagonal took longer than predicted"><title>${pairs.length} paired requests; frozen forecasts at the selected stage</title><text x="48" y="12">Actual (${label})</text>${[0,.5,1].map(f=>`<line class="analytics-grid" x1="48" x2="228" y1="${y(f*max)}" y2="${y(f*max)}"/><text x="41" y="${y(f*max)+4}" text-anchor="end">${fmt(f*max/unit)}</text><text x="${x(f*max)}" y="219" text-anchor="middle">${fmt(f*max/unit)}</text>`).join('')}<line class="analytics-equal" x1="48" y1="202" x2="228" y2="22"/>${pairs.map(p=>`<circle class="${p.actual>p.predicted?'underestimated':'estimated'}" cx="${x(p.predicted).toFixed(2)}" cy="${y(p.actual).toFixed(2)}" r="3"><title>${esc(p.node)}: predicted ${fmt(p.predicted/1000)}s, actual ${fmt(p.actual/1000)}s</title></circle>`).join('')}<text x="138" y="240" text-anchor="middle">Predicted (${label})</text></svg>`;
 }
 let analyticsState=null,analyticsLoading=false,analyticsWorkerSignature='',analyticsChartSignature='';
+function renderThroughput(a){
+  const t=a?.throughput,ready=a?.status==='ready'&&t?.schema===1;
+  const compact=n=>!Number.isFinite(n)?'—':n>=1000000?fmt(n/1000000)+'M':n>=10000?fmt(n/1000)+'k':fmt(n);
+  for(const [id,value] of [['output',t?.output_tokens_1h],['peak',t?.peak_output_tokens_1h],['requests',t?.completed_1h],['cached',t?.cached_tokens_1h]]){
+    const el=$('throughput-'+id);el.textContent=ready?compact(value):'—';el.title=ready?fmt(value):'Waiting for readable usage evidence';
+  }
+  const partial=!!(a?.partial_history||a?.malformed_lines||t?.evicted_records||t?.rejected_records);
+  $('throughput-status').textContent=a?.demo?'Synthetic example':!ready?({disabled:'Evidence collection is off',catching_up:'Loading saved usage…',rescanning:'Rebuilding saved usage…',waiting:'No saved usage yet',unavailable:'Usage unavailable'})[a?.status]||'Waiting for saved usage':partial?'Observed totals · partial history':'Observed completions · last 60m';
+  $('throughput-output-note').textContent=ready?`Usage: ${fmt(t.output_known_1h)} / ${fmt(t.completed_1h)} completions`:'Reported output tokens';
+  $('throughput-peak-note').textContent=ready?`Observed 24h · usage ${fmt(t.output_known_24h)} / ${fmt(t.completed_24h)}`:'Observed in the last 24h';
+  $('throughput-requests-note').textContent=ready?`${fmt(t.excluded_terminal_1h)} failed/cancelled excluded`:'Requests, not sessions';
+  $('throughput-cache-note').textContent=ready?`${t.cache_reuse_pct_1h===null?'Reuse % unknown':fmt(t.cache_reuse_pct_1h)+'% of reported prompt tokens'} · ${fmt(t.cache_known_1h)} / ${fmt(t.completed_1h)} reports`:'Last hour · token-weighted reuse';
+  $('throughput-note').textContent='Tokens are credited when requests finish, not when generated. Missing usage and unfinished work are omitted; this is not live GPU throughput.'+(partial?' Bounded history or evidence gaps can undercount.':'')+' DSG traffic only; hover for definitions.';
+}
 function renderAnalytics() {
   const a=analyticsState,worker=$('analytics-worker'),metric=$('analytics-metric').value;
+  renderThroughput(a);
   const ids=[...new Set((a?.rows||[]).map(r=>r.node))].sort(),signature=JSON.stringify(ids);
   if(signature!==analyticsWorkerSignature) {
     analyticsWorkerSignature=signature;const previous=worker.value;
