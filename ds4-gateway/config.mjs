@@ -35,6 +35,12 @@ export function gatewayPort(config){
   if(continuityEnabled(config)&&value===Number(config.port))throw new Error('Continuity door and gateway core ports must differ');
   return value;
 }
+export function gatewayHost(config){
+  // In continuity mode only the stable Door may inherit the public/LAN bind.
+  // The replaceable core is a local implementation detail and is never exposed
+  // merely because an existing single-process installation used 0.0.0.0.
+  return continuityEnabled(config)?'127.0.0.1':config.host;
+}
 export function doorSocket(config){
   if(!continuityEnabled(config))return null;
   if(typeof config.continuity_door.control_socket!=='string'||!config.continuity_door.control_socket)throw new Error('continuity_door.control_socket is required when enabled');

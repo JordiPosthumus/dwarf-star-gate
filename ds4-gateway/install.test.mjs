@@ -7,7 +7,7 @@ import {once} from 'node:events';
 import {spawn,execFile,execFileSync} from 'node:child_process';
 import {promisify} from 'node:util';
 import {setTimeout as delay} from 'node:timers/promises';
-import {configPath,loadConfig,projectRoot,dashboardPort,isDashboard,isMain} from './config.mjs';
+import {configPath,loadConfig,projectRoot,dashboardPort,gatewayHost,isDashboard,isMain} from './config.mjs';
 import {serviceSpec,assertIdle,assertDoorIdle,assertRegistration,unloadService,coordinatedCoreRestart} from './service-control.mjs';
 const exec=promisify(execFile);
 test('restart waits for launchd removal; timeout cannot skip into bootstrap',async()=>{
@@ -36,6 +36,8 @@ test('configuration precedence and relative local paths are independent of calle
   assert.equal(config.state_file,path.join(root,'runtime/affinity.json'));assert.equal(config.embeddings.model_dir,path.join(root,'models/encoder'));
   assert.equal(config.predictor.python,path.join(root,'predictor/bin/python'));assert.equal(config.predictor.profiles,path.join(root,'runtime/profiles.json'));
   assert.equal(config.telemetry_files.worker,path.join(root,'engine.log'));assert.deepEqual(config.recovery,raw.recovery);assert.equal(config.context_length,262144);assert.equal(config.request_timeout_ms,360000000);
+  assert.equal(gatewayHost({host:'0.0.0.0'}),'0.0.0.0');
+  assert.equal(gatewayHost({host:'0.0.0.0',continuity_door:{enabled:true}}),'127.0.0.1');
   assert.equal(dashboardPort({ui_port:31000},{}),31000);assert.equal(dashboardPort({ui_port:31000},{GATEWAY_UI_PORT:'32000'}),32000);assert.throws(()=>dashboardPort({}, {GATEWAY_UI_PORT:'0'}));
 });
 test('readiness accepts enabled management; service manifests are portable and never contain API keys',()=>{

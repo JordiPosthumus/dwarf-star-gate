@@ -12,7 +12,7 @@ import { RoutingShadow } from './routing-shadow.mjs';
 import { GenerationFaultObserver, verifyGeneration } from './generation-health.mjs';
 import { workerConfig, workerConfigs, assertUniqueWorker } from './worker-config.mjs';
 import { Recovery } from './recovery.mjs';
-import { loadConfig, isMain, gatewayPort, continuityEnabled } from './config.mjs';
+import { loadConfig, isMain, gatewayPort, gatewayHost, continuityEnabled } from './config.mjs';
 import { Predictor } from './predictor.mjs';
 import { calibrationPreflight } from './calibration.mjs';
 import { AgentControl } from './agent-control.mjs';
@@ -985,7 +985,7 @@ export function createGateway(config,{visionTranscode}={}) {
         startup.complete=true;startup.completed_at=new Date().toISOString();
         log('startup_probe_barrier',{unavailable:startup.unavailable,allowance_ms:allowance});
       }
-      await new Promise((resolve, reject) => { server.once('error', reject); server.listen(gatewayPort(config), config.host, resolve); });
+      await new Promise((resolve, reject) => { server.once('error', reject); server.listen(gatewayPort(config), gatewayHost(config), resolve); });
       if (control) {
         // Store ownership has already been acquired; only our stale socket may exist.
         if (fs.existsSync(config.control_socket)) {
