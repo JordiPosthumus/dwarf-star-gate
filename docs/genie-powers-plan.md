@@ -99,6 +99,33 @@ Minimal operation states: proposed, rejected, queued, restarting, verifying,
 recovered, failed, reconciliation-needed. State transitions describe actual
 execution, not assertions produced by the LLM.
 
+### Portable deployment boundary
+
+The runner, policy checks, audit receipts and UI belong in this repository;
+host-specific identity and restart authority belong in private configuration.
+Registering a DS4 HTTP endpoint alone must never grant restart authority. A
+worker without a configured adapter remains observable/routable, but its UI
+must explicitly say **manual service recovery required** when quarantined.
+
+Start with a typed `systemd-user` adapter for the Spark canary, using a configured
+SSH alias and exact unit. A `launchd` adapter can target a configured Mac service;
+a container adapter can target an exact existing container service. They need the
+same bounded operations: inspect instance/config identity, obtain fault evidence,
+restart that instance's service, and inspect readiness. The common runner performs
+DS4 generation/cache verification and routing reinstatement. Do not claim platform
+support until that adapter has integration tests and a real deployment check.
+
+No operator's usernames, IPs, filesystem paths or SSH credentials ship as defaults.
+Transport permissions are provisioned by the installer. No arbitrary shell field,
+remote bootstrap, cache deletion or service reconfiguration is exposed to Genie.
+Thus another installation can use the same recovery logic without copying this
+deployment's credentials or assuming its hardware/service manager.
+
+An alive-but-CUDA-failed process explains why `Restart=on-failure` is insufficient:
+systemd sees a running process, while DSG sees failed inference. The proposed
+runner bridges that gap. It must also report errors during shutdown/cache save;
+a new PID alone is not a successful recovery receipt.
+
 ## UI: current controls versus proposed controls
 
 **Current:** the Gate Genie panel beside Evidence collection has Enable / Turn

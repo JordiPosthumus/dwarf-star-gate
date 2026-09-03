@@ -221,32 +221,40 @@ test('Genie report bodies remain inert text and an empty refresh does not close 
   render([]);assert.equal(container.children[0],node);assert.ok(node.open);
   node.open=false;render([]);assert.equal(container.children.length,0);
 });
-test('health wire uses current facts and labels historical waits, without guessing stalls or thinking failures',()=>{
+test('health wire shows Genie-authored findings and recommendations, withholding stale or unavailable advice',()=>{
   const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);
-  const news=s=>vm.runInContext(`healthHeadlines(${JSON.stringify(s)})`,context);
+  const news=(s,t)=>vm.runInContext(`healthHeadlines(${JSON.stringify(s)},${JSON.stringify(t)})`,context);
   const time=Date.parse('2026-09-02T20:00:00Z');
-  const s={time,gateway:{active:1,queued:9,workers:[
-    {id:'spark1',is_healthy:true,load:0,queued:0},
-    {id:'spark2',is_healthy:false,quarantine:{reason:'accelerator_checkpoint_failure'}},
-    {id:'studio',is_healthy:true,load:1,queued:9,active_seconds:9000,requested_thinking:{status:'unavailable',reason:'capture_limit'}}]},events:[
-      {event:'request_finished',outcome:'complete',node:'studio',time:new Date(time-60000).toISOString(),queue_ms:1183640},
-      {event:'request_finished',outcome:'complete',node:'old',time:new Date(time-1000000).toISOString(),queue_ms:99000000},
-      {event:'request_finished',outcome:'client_cancelled',node:'cancelled',time:new Date(time-1000).toISOString(),queue_ms:99000000}]};
-  const result=news(s),text=result.items.join(' ');assert.equal(result.level,'warn');
-  assert.match(text,/Spark 2: quarantined after accelerator\/checkpoint failure/);assert.match(text,/studio: 9 queued, 1 active/);
-  assert.match(text,/19m 43s spent queued/);assert.match(text,/not a current ETA/);assert.match(text,/1 eligible slot free while 9 requests wait/);
-  assert.doesNotMatch(text,/old:|cancelled:|stalled|unstable|thinking|xhigh|restarted|fixed/);
-  assert.equal(news({...s,gateway_error:true}).level,'unknown');assert.doesNotMatch(news({...s,gateway_error:true}).items.join(' '),/quarantined|9 queued/);
-  assert.equal(news({time,gateway:{workers:[{id:'one',is_healthy:true,load:1}],active:1}}).level,'ok');
-  assert.match(news({time,gateway:{workers:[{id:'one',is_healthy:true,drained:true}]}}).items.join(' '),/routing paused/);
-  assert.match(news({time,gateway:{workers:[]}}).items.join(' '),/No DS4 servers registered/);
+  const s={time,gateway:{active:1,queued:9,workers:[]}},ticker={state:'ready',evidence_at:time-60000,entries:[
+    {severity:'warning',text:'Server B is quarantined after an accelerator failure.',recommendation:'Inspect its backend logs before verified recovery.'},
+    {severity:'info',text:'Nine requests were queued at the evidence time.',recommendation:null}]};
+  const result=news(s,ticker);assert.equal(result.level,'warn');
+  assert.equal(result.items[0],'Server B is quarantined after an accelerator failure. Recommendation: Inspect its backend logs before verified recovery.');
+  assert.equal(result.items[1],ticker.entries[1].text);assert.equal(result.evidence_at,time-60000);
+  assert.match(result.label,/Genie assessment · evidence/);
+  assert.equal(news(s,{...ticker,entries:[ticker.entries[1]]}).level,'ok');
+  assert.match(news(s,{...ticker,refreshing:true}).label,/updating/);
+  assert.match(news(s,{...ticker,review_error:true}).label,/latest refresh failed/);
+  for(const unavailable of [{...s,gateway_error:true},{time}]) {
+    assert.equal(news(unavailable,ticker).level,'unknown');assert.doesNotMatch(news(unavailable,ticker).items.join(' '),/Server B|Nine requests/);
+  }
+  for(const state of ['off','reviewing','pending','stale','changed','invalid','error','unavailable']) {
+    const value=news(s,{...ticker,state});assert.equal(value.level,'unknown');assert.equal(value.items.length,1);
+    assert.doesNotMatch(value.items[0],/Server B|Nine requests|Recommendation:/);
+  }
+  assert.match(news(s,{state:'off'}).items[0],/Enable him/);
+  assert.match(news(s,{state:'stale'}).items[0],/10 minutes/);
+  assert.match(news(s,{state:'changed'}).items[0],/changed since/);
 });
 test('health wire markup offers pause and keyboard access, with a nonduplicated reduced-motion view',()=>{
   const html=fs.readFileSync(new URL('./ui/index.html',import.meta.url),'utf8'),css=fs.readFileSync(new URL('./ui/brand.css',import.meta.url),'utf8');
   assert.match(html,/id="health-wire-pause"[^>]*aria-pressed="false"/);assert.match(html,/class="health-wire-window" tabindex="0"/);
-  assert.match(html,/id="health-wire-copy" aria-hidden="true"/);assert.match(html,/rule-written headlines/);
+  assert.match(html,/id="health-wire-copy"[^>]*aria-hidden="true"/);assert.match(html,/Genie-written observations/);
   assert.match(css,/prefers-reduced-motion:reduce/);assert.match(css,/animation-play-state:paused/);assert.match(css,/aria-hidden="true"\]\{display:none\}/);
+  assert.match(css,/gap:8rem;padding-right:8rem/);
+  const js=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8');
+  assert.match(js,/getBoundingClientRect\(\)\.width\/42/);assert.match(js,/item\.textContent=text/);
 });
 test('dashboard serves local assets and a downloadable read-only snapshot', async t => {
   const { url } = await fixture(t);

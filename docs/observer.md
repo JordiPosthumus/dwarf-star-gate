@@ -50,23 +50,41 @@ from engine failures. This observation limit does not truncate forwarded output.
 
 ## Genie
 
-The **Gate Genie health wire** above the capacity panel is a live, lightly wry
-news ticker. Red means attention is needed; green means no current flags in the
-available evidence; amber means the status feed is unavailable. It reports
-quarantined/unavailable/paused servers, per-server queue counts, free slots while
-work waits, collector errors and observed completed-request queue waits. Those
-waits are historical samples from the last 15 minutes of the available log tail,
-not the current queue's age or a predicted completion time. A slow response alone
-never produces a stall accusation, and missing thinking metadata is not called a
-reasoning failure.
+The **Gate Genie health wire** above the capacity panel contains **Genie-written**
+observations and, when warranted, a short recommendation. The same model call
+produces the detailed assessment and one to four ticker entries; no second
+summarizer or extra periodic inference call is added. The prompt asks for serious,
+concise advice, not jokes. Enable Genie to receive these headlines; with Genie off,
+the wire says so rather than substituting template diagnoses.
 
-Headlines use deterministic templates and live DSG facts, not the LLM's prose.
-They cost no inference tokens and work with the optional Genie observer off.
-The five-minute model assessments remain separate below. This wire grants no
-new operational powers. Hover or keyboard-focus it to freeze motion and headline
-updates; **Pause ticker** holds that state until resumed. The displayed timestamp
-stays with the frozen evidence. Reduced-motion preferences show wrapped static
-text instead of scrolling, and the visual repeat is hidden from screen readers.
+Each review returns JSON with `assessment` and `ticker`. Entries contain
+`severity` (`warning` or `info`), `text`, nullable `recommendation`, and
+`evidence_refs` from the supplied fleet/dataset/worker vocabulary. Length, count
+and reference checks reject malformed output; they **do not prove the model's
+claims correct**. A rejected ticker leaves its answer readable in the report list
+and shows an explicit wire status, never an invented replacement diagnosis.
+Text is rendered inertly, not as HTML or executable commands.
+
+Red indicates a model warning; green an informational review; amber an absent,
+invalid or outdated assessment. These colors are not independent health proofs.
+The wire shows the **evidence snapshot's time**, not the answer completion time.
+After ten minutes, a changed inference source, or a change to fleet membership,
+health, pause, quarantine, context or gateway-draining state, previous advice is
+withheld. Missing gateway status also withholds recommendations. Ordinary queue
+movement does not invalidate every review; counts describe that timestamp, not a
+live ETA. A failed refresh is labelled while any still-valid review remains.
+
+The briefing explains that historical queue durations are milliseconds, missing
+thinking metadata does not alter forwarded reasoning settings, and a resident
+cache miss may still restore from disk. The model is instructed not to infer a
+stall from long thinking or to claim an action occurred. Recommendations are
+advice only; the wire grants no operational powers.
+
+Headlines scroll at approximately 42 CSS pixels/second, separated by 8rem gaps.
+Hover or keyboard-focus freezes motion and headline updates; **Pause ticker**
+holds that state until resumed. The timestamp stays with the frozen evidence.
+Reduced-motion preferences show wrapped static text, and the repeated scrolling
+copy is hidden from screen readers.
 
 In the web UI, find **Gate Genie** beside **Evidence collection**. **Enable** /
 **Turn off** controls the observer. The **Dedicated server / DSG pool fallback**

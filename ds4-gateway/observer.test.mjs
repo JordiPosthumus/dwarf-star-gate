@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import {Dataset,evidence} from './dataset.mjs';
-import {Genie,briefing} from './genie.mjs';
+import {Genie,briefing,parseGenieReview,tickerStatus} from './genie.mjs';
 import {safeQuarantine} from './generation-health.mjs';
 
 test('Genie receives an allowlisted quarantine fact, not raw backend text or credentials',()=>{
@@ -17,6 +17,44 @@ test('Genie receives an allowlisted quarantine fact, not raw backend text or cre
 import {createDashboard} from './dashboard.mjs';
 import {capacity,phase,Activity} from './ui/activity.js';
 const snapshot=()=>({time:Date.now(),devices:[],events:[],gateway:{workers:[],context_length:262144,active:0,queued:0}});
+const authoredReview=()=>({assessment:'The fleet has no demonstrated fault in this snapshot.',ticker:[{severity:'info',text:'No current failure is evidenced.',recommendation:null,evidence_refs:['fleet']}]});
+test('Genie parses bounded model-written ticker entries and rejects unknown evidence references',()=>{
+  const evidence=briefing(snapshot()),data=authoredReview();
+  let result=parseGenieReview(JSON.stringify(data),evidence);assert.equal(result.ticker[0].text,data.ticker[0].text);assert.equal(result.ticker_error,null);
+  assert.equal(parseGenieReview('```json\n'+JSON.stringify(data)+'\n```',evidence).ticker.length,1);
+  for(const mutate of [d=>d.ticker[0].evidence_refs=['worker:invented'],d=>d.ticker[0].recommendation='x'.repeat(181),d=>d.ticker[0].text='x'.repeat(281),d=>d.ticker[0].severity='critical',d=>d.ticker=[],d=>d.ticker=Array(5).fill(d.ticker[0])]) {
+    const bad=structuredClone(data);mutate(bad);result=parseGenieReview(JSON.stringify(bad),evidence);
+    assert.equal(result.ticker.length,0);assert.equal(result.ticker_error,'invalid_structured_review');
+  }
+  result=parseGenieReview('An ordinary unstructured assessment.',evidence);
+  assert.equal(result.text,'An ordinary unstructured assessment.');assert.equal(result.ticker.length,0);
+});
+test('one Genie call supplies assessment and ticker; unchanged budgets, evidence time and no action authority',async()=>{
+  const s=snapshot();s.gateway_at=s.time-2500;let sent,calls=0;
+  const g=new Genie({url:'http://127.0.0.1:9001/v1'},()=>s,{fetchImpl:async(_u,o)=>{
+    calls++;sent=JSON.parse(o.body);return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(authoredReview())}}]});}});
+  g.setEnabled(true);await g.ask();const status=g.status();
+  assert.equal(calls,1);assert.equal(sent.max_tokens,8192);assert.equal(sent.reasoning_effort,'low');assert.equal(sent.tools,undefined);
+  assert.match(sent.messages[0].content,/No humour/);assert.match(sent.messages[0].content,/Recommendations are advice/);
+  assert.equal(status.reports[0].evidence_at,s.gateway_at);assert.deepEqual(status.reports[0].actions_taken,[]);
+  assert.equal(status.ticker.state,'ready');assert.equal(status.ticker.entries[0].text,authoredReview().ticker[0].text);
+  assert.ok(JSON.parse(sent.messages[1].content).evidence.semantics.some(v=>v.includes('complete request is forwarded unchanged')));
+  const report=status.reports[0];
+  assert.equal(tickerStatus(report,s,{now:report.evidence_at+600001}).state,'stale');
+  assert.equal(tickerStatus(report,s,{now:report.evidence_at-1}).state,'stale');
+  assert.equal(tickerStatus(report,s,{enabled:false}).state,'off');
+  assert.equal(tickerStatus(report,{...s,gateway_error:'lost'}).state,'unavailable');
+  assert.equal(tickerStatus(report,s,{source:'pool'}).state,'pending');
+  s.gateway.workers.push({id:'new',is_healthy:true});assert.equal(g.status().ticker.state,'changed');
+  s.gateway.workers=[];s.gateway.queued=10;assert.equal(g.status().ticker.state,'ready','ordinary queue churn remains a timestamped snapshot, not perpetual invalidation');
+  s.gateway.draining=true;assert.equal(g.status().ticker.state,'changed');g.close();
+});
+test('Genie withholds malformed headlines and never falls back to invented or older ticker text',async()=>{
+  let content=JSON.stringify(authoredReview());const g=new Genie({url:'http://127.0.0.1:9001/v1'},snapshot,{fetchImpl:async()=>Response.json({choices:[{finish_reason:'stop',message:{content}}]})});
+  g.setEnabled(true);await g.ask();assert.equal(g.status().ticker.state,'ready');
+  content='A report without the required JSON.';await g.ask();assert.equal(g.status().ticker.state,'invalid');assert.deepEqual(g.status().ticker.entries,[]);
+  assert.equal(g.status().reports[0].text,content);g.close();
+});
 test('dataset allowlist excludes raw data; unknown timings stay null',()=>{
   const e=evidence('finish',{request_id:'abc',node:'one',service_ms:NaN,usage:{prompt_tokens:0},prompt:'SECRET',answer:'SECRET',authorization:'SECRET'});
   assert.equal(e.service_ms,null);assert.equal(e.usage.prompt_tokens,0);assert.equal(e.usage.cached_tokens,null);assert.ok(!JSON.stringify(e).includes('SECRET'));

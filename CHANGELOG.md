@@ -10,6 +10,11 @@
 
 ## Unreleased
 
+- Genie-authored health ticker: structured observations and short recommendations
+  from the existing review call, explicit evidence time and invalid/stale/changed
+  state handling. Faster scrolling, wider gaps, pause and reduced-motion support.
+  No operational powers or model-server settings changed. Expanded reports remain
+  readable across polling. Recovery-adapter portability is documented as planned.
 - Correct SSE completion classification for Chat Completions/Completions,
   Responses and Messages. Output-limited Responses are censored, not failed
   workers; explicit error terminals remain failures. Oversized unobservable

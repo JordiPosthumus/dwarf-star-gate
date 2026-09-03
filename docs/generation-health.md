@@ -97,5 +97,16 @@ Restarting that process with unchanged settings restored two test conversations;
 each subsequent continuation reused 3,831 of 3,845 prompt tokens. This proves
 small-workload recovery, **not the root cause or a long-context kernel fix**.
 
+A second Spark later hit illegal memory access while extending a 37,239-token
+checkpoint toward a 43,997-token prompt. The service remained alive, so its
+`Restart=on-failure` policy did not recover it; DSG quarantine prevented further
+dispatch. Manual recovery retained the launcher/environment/service hashes and
+disk cache. The failed process encountered an OOM event during shutdown after
+reporting that its RAM checkpoint could not be staged. The replacement passed
+two cold conversations and both warm continuations (2,199 of 2,211 prompt tokens
+reused each, about 0.4 seconds per continuation), then DSG's recovery marker and
+a routed gateway request. This is another recovery observation, **not a fix for
+the recurrent CUDA fault or a full-context reliability certification**.
+
 See [NVIDIA's CUDA runtime error documentation](https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html)
 for the process-relaunch requirement after `cudaErrorIllegalAddress`.

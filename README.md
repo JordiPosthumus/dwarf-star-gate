@@ -16,10 +16,11 @@ Workers with recognized engine faults or repeated inference failures are
 [quarantined persistently](docs/generation-health.md); recovery requires a real
 generation check. Automatic model-service restarts are not implemented yet.
 
-The dashboard's **Genie health wire** scrolls evidence-backed fleet bulletins with
-a little humour: quarantines, queues and observed long waits. It uses live facts,
-not LLM guesses or extra inference calls. Hover/focus or pause it to read; reduced
-motion shows static text. Expanded Genie assessments stay open across refreshes.
+The dashboard's **Genie health wire** shows model-written observations and concise
+recommendations from the same fleet review as the detailed assessment. Evidence
+time is explicit; stale or health-invalidated advice is withheld. This is advisory
+LLM output, not verified diagnosis or executed action. Hover/focus or pause to read;
+reduced motion shows static text. Expanded assessments stay open across refreshes.
 
 Optional [queued-work shadow collection](docs/routing-shadow.md) records idle and
 session-recency clocks and compares a historical baseline without moving work.
