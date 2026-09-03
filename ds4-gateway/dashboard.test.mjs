@@ -209,6 +209,13 @@ test('missing journal identity stays unverified and cannot contaminate epoch-sco
   r.accept({...base,__CURSOR:'s=a;i=2',_SYSTEMD_INVOCATION_ID:known});assert.equal(d.cache.starts,1);
   r.accept({...base,__CURSOR:'s=a;i=3'});assert.equal(d.cache.starts,1);assert.equal(d.backend_epoch_evidence_gaps,2);
 });
+test('dashboard requests process identity fields but exported telemetry contains digests only', () => {
+  const source=fs.readFileSync(new URL('./dashboard.mjs',import.meta.url),'utf8');
+  for(const field of ['_SYSTEMD_INVOCATION_ID','_BOOT_ID','_PID'])assert.match(source,new RegExp(`output-fields=[^\\n]+${field}`));
+  const invocation='0123456789abcdef0123456789abcdef',d=new DeviceTelemetry('spark1'),r=new JournalReader(d);
+  const e=r.accept({__CURSOR:'s=a;i=1',__REALTIME_TIMESTAMP:'1000000',MESSAGE:'ds4-server: chat ctx=0..10:10 prompt start',_SYSTEMD_INVOCATION_ID:invocation,_BOOT_ID:'1123456789abcdef0123456789abcdef',_PID:'4321'});
+  for(const exported of [JSON.stringify(e),JSON.stringify(d.snapshot())]){assert.ok(!exported.includes(invocation));assert.ok(!exported.includes('4321'));assert.ok(!exported.includes('_SYSTEMD'));}
+});
 test('rates are bounded historical samples; new prompts do not erase last observed speed', () => {
   const d = new DeviceTelemetry('spark1');
   for (let i = 0; i < 500; i++) d.accept({ time:1000+i*5000, kind:'decode', tps:14, average:14 });

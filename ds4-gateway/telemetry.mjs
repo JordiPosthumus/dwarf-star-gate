@@ -94,12 +94,12 @@ export class DeviceTelemetry {
     const id=typeof e.backend_epoch==='string'&&/^[\da-f]{64}$/.test(e.backend_epoch)?e.backend_epoch:null;
     const source=['systemd_invocation','boot_pid_fallback'].includes(e.backend_epoch_source)?e.backend_epoch_source:null;
     const confidence=['strong','bounded'].includes(e.backend_epoch_confidence)?e.backend_epoch_confidence:null;
-    if(!id||!source||!confidence){this.backend_epoch_evidence_gaps++;return false;}
+    if(!id||!source||!confidence){this.backend_epoch_evidence_gaps=Math.min(Number.MAX_SAFE_INTEGER,this.backend_epoch_evidence_gaps+1);return false;}
     if(id===this.backend_epoch)return true;
     const changed=!!this.backend_epoch;
     this.backend_epoch=id;this.backend_epoch_source=source;this.backend_epoch_confidence=confidence;
     this.backend_epoch_observed_at=e.time;this.cache_observed_since=e.time;
-    if(changed)this.backend_epoch_changes++;
+    if(changed)this.backend_epoch_changes=Math.min(Number.MAX_SAFE_INTEGER,this.backend_epoch_changes+1);
     // A process boundary invalidates spans and learned component samples. It
     // does not touch DS4, its cache files, the service, routing or inference.
     this.costs=new CacheCosts(id,confidence);this.phase='unknown';this.decode=null;this.prefill=null;this.prompt=null;
