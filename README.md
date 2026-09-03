@@ -373,11 +373,20 @@ clients. Ask agents to distinguish these two operations explicitly.
 
 Unexpected **Paused** or missing workers warrant checking `workers_drain_changed`
 and `worker_removed` in the private gateway log. Failed health probes do not
-remove workers; generation quarantine is a separate state. Current control events
-record the action and target, but not authenticated caller identity: they cannot
-by themselves prove which local person or agent acted. Genie cannot issue ordinary
+remove workers; generation quarantine is a separate state. Legacy operator events
+record the action and target, not an authenticated individual. The new scoped
+[agent API](docs/agent-api.md) records the credential's principal and owned hold;
+that identifies a grant, not which model or human possessed it. Genie cannot issue ordinary
 pause/remove controls; it can request only independently guarded recovery when
 authorized. Restarting DSG preserves manual pauses and removals.
+
+**Agent handoffs:** use `agents.sh` to grant access to named workers, inspect live
+status, acquire a drain hold and release only that agent's hold when its test is
+finished. Other agents' holds and operator pauses remain in force. The UI names
+holding agents and offers **Keep paused** for an operator reservation. Setup,
+copyable agent instructions, JSON API and retry/cleanup rules are in the
+[agent access guide](docs/agent-api.md). No Pi/Hermes dependency or LAN admin
+listener. “Resume” enables routing; it does not start a stopped model server.
 
 <details>
 <summary>Worker-management UI (synthetic demo)</summary>

@@ -15,6 +15,7 @@ import { Recovery } from './recovery.mjs';
 import { loadConfig, isMain } from './config.mjs';
 import { Predictor } from './predictor.mjs';
 import { calibrationPreflight } from './calibration.mjs';
+import { AgentControl } from './agent-control.mjs';
 import net from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -192,16 +193,23 @@ export function createGateway(config) {
       n.quarantine=null;n.inferenceFailures=0;n.healthy=true;n.failures=0;
       observe(()=>shadow.reset(n.id));
     }}); } catch(e){store.close();throw e;}
+  let agents;
+  try {agents=new AgentControl({store,nodes,log,onPause:ids=>recovery.operatorPause(ids),canResume:async n=>{
+    if(shuttingDown||draining)throw new Error('Gateway is draining; hold retained');
+    await freshProbe(n);
+    if(shuttingDown||draining||n.recovering||n.quarantine||n.probeError||!n.modelMatches||!validContext(n.contextLength)||n.contextLength<contextLimit())throw new Error('Fresh compatible worker readiness required; hold retained');
+  }});}catch(e){store.close();throw e;}
   const embeddings=new EmbeddingCollector(dataset.enabled?config.embeddings:null,(kind,row)=>dataset.record(kind,row));
   dataset.state.embeddings=embeddings.state.enabled;
   const agent = new http.Agent({ keepAlive: true, maxSockets: 16 });
   const accepted = new Set(['POST /v1/chat/completions', 'POST /v1/completions', 'POST /v1/responses', 'POST /v1/messages', 'GET /v1/models']);
   const auth = Buffer.from(`Bearer ${config.api_key}`);
-  const stats = () => ({ version: 1, model: config.model, context_length: contextLimit(), draining, dataset:{...dataset.snapshot(),embedding_collection:embeddings.snapshot()}, routing_shadow:shadow.snapshot(),recovery:recovery.status(),predictor:predictor.status(),
+  const stats = () => ({ version: 1, agent_api_version:1, model: config.model, context_length: contextLimit(), draining, dataset:{...dataset.snapshot(),embedding_collection:embeddings.snapshot()}, routing_shadow:shadow.snapshot(),recovery:recovery.status(),predictor:predictor.status(),
     calibration:calibrationPreflight(nodes,{draining}),
     total: nodes.length, healthy: nodes.filter(n => n.healthy).length, available: nodes.filter(n => n.healthy && !n.drained).length,
     active: nodes.filter(n => n.active).length, queued: nodes.reduce((s, n) => s + n.queue.length, 0),
     workers: nodes.map(n => ({ id: n.id, url: n.url, is_healthy: n.healthy, drained: n.drained, quarantine:n.quarantine, inference_failures:n.inferenceFailures,
+      ...agents.pauseStatus(n.id),
       gateway_drained: n.drained && !n.active && !n.queue.length, load: Number(!!n.active),
       queued: n.queue.length, assigned_sessions: store.count(n.id), completed: n.completed, failed: n.failed, observation_limited:n.observationLimited,
       active_seconds: n.active ? Math.round((Date.now() - n.active.dispatched) / 1000) : 0,
@@ -492,7 +500,7 @@ export function createGateway(config) {
   const registry = () => ({ model: config.model, minimum_context: contextLimit(), context_limit_control:true,
     context_limit_source:store.data.pool_context_length === undefined ? 'config' : 'saved',
     recovery:recovery.status(),
-    workers: nodes.map(n => ({ ...definition(n), ...stats().workers.find(w => w.id === n.id) })) });
+    workers: nodes.map(n => ({ ...definition(n), ...stats().workers.find(w => w.id === n.id),...agents.pauseStatus(n.id,{includeReason:true}) })) });
   async function freshProbe(node) {
     while (node.probing) await delay(10);
     await probe(node);
@@ -560,9 +568,10 @@ export function createGateway(config) {
     const node = nodes.find(n => n.id === id);
     if (!node) throw new Error('Unknown worker');
     if (!node.drained || node.active || node.queue.length) throw new Error('Drain this worker and wait for its admitted work to finish before removing it');
+    const agentControl=agents.forgetWorker(id);
     const next = nodes.filter(n => n !== node);
     const drained = { ...store.data.drained }; delete drained[id];
-    store.setWorkers(next.map(definition), drained);
+    store.save({...store.data,workers:next.map(definition),drained,agent_control:agentControl});
     nodes.splice(nodes.indexOf(node), 1);
     observe(()=>shadow.remove(id));
     node.removed = true; node.probeRequest?.destroy(); node.stopTunnel?.();
@@ -572,7 +581,7 @@ export function createGateway(config) {
   }
   function drainNodes(ids, drained) {
     if (!Array.isArray(ids) || !ids.length || ids.some(id => !nodes.some(n => n.id === id))) throw new Error('Specify known worker IDs');
-    store.setDrained(ids, drained);
+    store.save({...store.data,...agents.manualUpdate(ids,drained)});
     if(drained)recovery.operatorPause(ids);
     for (const n of nodes) if (ids.includes(n.id)) n.drained = drained;
     log('workers_drain_changed', { ids, drained });
@@ -580,8 +589,14 @@ export function createGateway(config) {
   }
   // Operator-only Unix socket: never expose lifecycle mutation on the LAN.
   const control = config.control_socket ? http.createServer((req, res) => {
+    const agentRoute=req.url?.startsWith('/agent/v1/');
+    const actor=agentRoute?agents.authenticate(req.headers.authorization):null;
+    if(agentRoute&&!actor)return error(res,401,'unauthorized','Valid agent credential required');
+    if(!agentRoute&&req.headers.authorization)return error(res,403,'wrong_ingress','Agent credentials are accepted only on the versioned agent API');
+    if(req.method==='GET'&&req.url==='/agent/v1/status')return json(res,200,agents.status(actor));
+    if(req.method==='GET'&&req.url==='/agents')return json(res,200,agents.adminStatus());
     if (req.method === 'GET' && req.url === '/workers') return json(res, 200, registry());
-    if (req.method !== 'POST' || !['/drain-workers', '/resume-workers', '/add-worker', '/remove-worker', '/set-context-limit','/recovery-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/predictor','/genie-predictor'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
+    if (req.method !== 'POST' || !['/drain-workers', '/resume-workers', '/add-worker', '/remove-worker', '/set-context-limit','/recovery-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/predictor','/genie-predictor','/grant-agent','/revoke-agent','/release-agent-hold','/agent/v1/drain','/agent/v1/resume','/agent/v1/receipt'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
     let body = '';
     req.on('data', chunk => { body += chunk; if (body.length > 4096) req.destroy(); });
     req.on('error', () => {});
@@ -589,6 +604,11 @@ export function createGateway(config) {
       void serialize(async () => {
         try {
           const input = JSON.parse(body);
+          // Actor is revalidated after waiting for the shared mutation queue.
+          if(agentRoute){agents.agent(actor);if(req.url==='/agent/v1/receipt')return json(res,200,agents.receipt(actor,input));return json(res,200,await agents.act(actor,req.url.endsWith('/drain')?'drain':'resume',input));}
+          if(req.url==='/grant-agent')return json(res,201,agents.grant(input));
+          if(req.url==='/revoke-agent')return json(res,200,agents.revoke(input));
+          if(req.url==='/release-agent-hold')return json(res,200,agents.clearHold(input));
           if(['/predictor','/genie-predictor'].includes(req.url))return json(res,200,predictor.control(input,req.url==='/genie-predictor'?'genie':'operator'));
           if(req.url==='/recovery-recheck')return json(res,202,recovery.reconcile(input));
           if(req.url==='/recovery-policy') {
@@ -602,6 +622,7 @@ export function createGateway(config) {
           if (req.url === '/resume-workers') {
             if (!Array.isArray(input.workers) || !input.workers.length || input.workers.some(id=>!nodes.some(n=>n.id===id))) throw new Error('Specify known worker IDs');
             const selected=nodes.filter(n=>input.workers.includes(n.id));
+            agents.manualUpdate(input.workers,false); // Reject owned holds before probes.
             if(selected.some(n=>n.recovering))throw new Error('Recovery owns this worker; pause is allowed but wait before enabling');
             await Promise.all(selected.map(freshProbe));
             if (selected.some(n=>n.probeError || !validContext(n.contextLength) || n.contextLength<contextLimit())) throw new Error('Cannot enable a server without a fresh compatible model/context probe');
@@ -612,19 +633,18 @@ export function createGateway(config) {
               if(shuttingDown || draining)throw new Error('Gateway is draining');
               recovered.push({node:n,proof});
             }
-            const quarantined={...store.data.quarantined},paused={...store.data.drained};
+            const quarantined={...store.data.quarantined};
             for(const {node} of recovered)delete quarantined[node.id];
-            for(const n of selected)paused[n.id]=false;
             // Commit a multi-worker resume once, after every requested check
             // passes. Partial verification must not partially enable a fleet.
-            store.save({...store.data,quarantined,drained:paused});
+            store.save({...store.data,quarantined,...agents.manualUpdate(input.workers,false)});
             for(const {node,proof} of recovered){node.quarantine=null;node.inferenceFailures=0;node.healthy=true;log('worker_recovery_verified',{node:node.id,...proof});}
             for(const n of selected)n.drained=false;
             log('workers_drain_changed',{ids:input.workers,drained:false});
             return json(res,200,stats());
           }
           json(res, 200, drainNodes(input.workers, req.url === '/drain-workers'));
-        } catch (e) { error(res, 400, 'invalid_control_request', e.message); }
+        } catch (e) { error(res, e.status??400, e.code??'invalid_control_request', e.message); }
       });
     });
   }) : null;

@@ -5,7 +5,7 @@ import { DeviceTelemetry } from '../ds4-gateway/telemetry.mjs';
 import { isMain } from '../ds4-gateway/config.mjs';
 import {TRAINING_RECIPES,DEFAULT_RECIPE} from '../ds4-gateway/training-recipes.mjs';
 import {calibrationPreflight} from '../ds4-gateway/calibration.mjs';
-export function createDemoServer({learningMilestone=false}={}) {
+export function createDemoServer({learningMilestone=false,agentHold=false}={}) {
 const now = Date.now();
 const workers = [
   { id:'sparkA', is_healthy:true, drained:false, load:1, queued:1, active_seconds:84, completed:42, failed:0, assigned_sessions:4 },
@@ -60,6 +60,7 @@ const events = Array.from({length:8},(_,i)=>({
 const snapshot = { version:1,demo:true,time:now,started:now-900000,read_only:false,worker_management:true,gateway_at:now,gateway_error:null,telemetry_error:null,
   gateway:{model:'deepseek-v4-flash',context_length:262144,total:3,healthy:3,available:3,active:2,queued:1,draining:false,workers,dataset,predictor,recovery},devices,events };
 const registry=()=>({model:'deepseek-v4-flash',minimum_context:snapshot.gateway.context_length,context_limit_control:true,context_limit_source:'saved',workers,recovery});
+if(agentHold)Object.assign(workers[2],{drained:true,operator_paused:false,holds:[{id:'demo-hold',owner_id:'test-agent',reason:'<DS4 compatibility test>'}]});
 return createDashboard(()=>({...snapshot,time:Date.now(),gateway_at:Date.now(),
   devices:workers.map(w=>devices.find(d=>d.id===w.id)||new DeviceTelemetry(w.id).snapshot()),
   gateway:{...snapshot.gateway,calibration:calibrationPreflight(workers.map(w=>({id:w.id,healthy:w.is_healthy,drained:w.drained,active:w.load,queue:Array(w.queued).fill(null)}))),total:workers.length,healthy:workers.length,available:workers.filter(w=>!w.drained).length,active:workers.filter(w=>w.load).length,queued:workers.reduce((a,w)=>a+w.queued,0)}}),undefined,{
@@ -81,11 +82,13 @@ return createDashboard(()=>({...snapshot,time:Date.now(),gateway_at:Date.now(),
       const w=workerConfig(input.worker,{registration:true});assertUniqueWorker(workers,w);
       workers.push({...w,is_healthy:true,drained:true,load:0,queued:0,context_length:300000,completed:0,failed:0,assigned_sessions:0});
     } else if(action==='remove') {
-      const w=workers.find(w=>w.id===input.id);if(!w||!w.drained||w.load||w.queued)throw new Error('Drain and wait before removal');
+      const w=workers.find(w=>w.id===input.id);if(!w||!w.drained||w.load||w.queued||w.holds?.length)throw new Error('Drain and release holds before removal');
       workers.splice(workers.indexOf(w),1);
     } else if(['drain','resume'].includes(action)) {
       for(const id of input.workers) {
         const w=workers.find(w=>w.id===id);if(!w)throw new Error('Unknown demo worker');
+        if(action==='resume'&&w.holds?.length)throw new Error('Release agent holds first');
+        w.operator_paused=action==='drain';
         w.drained=action==='drain';
         if(w.drained)setTimeout(()=>{w.load=0;w.queued=0;w.last_requested_thinking=w.requested_thinking;w.requested_thinking=null;w.last_request_finished_at=new Date().toISOString();},500);
       }

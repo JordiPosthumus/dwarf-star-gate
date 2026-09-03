@@ -189,9 +189,12 @@ function workerMessage(text, error = false) {
 function workerRows(workers) {
   return workers.map(w=>{
     const busy=!!w.load || w.queued>0;
+    const holds=w.holds??[],held=holds.length>0;
     const routing=w.drained ? busy ? 'Draining' : 'Paused' : w.is_healthy ? 'Enabled' : 'Unavailable';
     const id=esc(w.id);
-    return `<tr><td>${id}</td><td>${fmt(w.context_length)}</td><td>${routing}</td><td>${fmt(w.load)} / ${fmt(w.queued)}</td><td class="worker-actions"><button class="button" data-action="${w.drained?'resume':'drain'}" data-id="${id}" ${workerBusy || (w.drained&&!w.is_healthy)?'disabled':''}>${w.drained?'Enable':'Drain'}</button><button class="button" data-action="remove" data-id="${id}" ${workerBusy||!w.drained||busy?'disabled':''}>Remove</button></td></tr>`;
+    const ownership=`${w.operator_paused?'<br><small>Operator pause</small>':''}${holds.map(h=>`<br><small>Held by ${esc(h.owner_id)}${h.reason?`: ${esc(h.reason)}`:''}</small>`).join('')}`;
+    const toggleTitle=held?'Release agent holds before enabling.':w.drained?'Resume gateway routing after readiness checks. Does not start DS4.':'Stop new admission; already admitted requests finish. Does not stop DS4.';
+    return `<tr><td>${id}</td><td>${fmt(w.context_length)}</td><td>${routing}${ownership}</td><td>${fmt(w.load)} / ${fmt(w.queued)}</td><td class="worker-actions"><button class="button" title="${toggleTitle}" data-action="${w.drained?'resume':'drain'}" data-id="${id}" ${workerBusy || (w.drained&&(!w.is_healthy||held))?'disabled':''}>${w.drained?'Enable':'Drain'}</button>${held&&!w.operator_paused?`<button class="button" title="Keep an operator pause even after all agents release their holds." data-action="drain" data-id="${id}" ${workerBusy?'disabled':''}>Keep paused</button>`:''}<button class="button" title="Remove registration only after draining and releasing all agent holds. Does not stop DS4." data-action="remove" data-id="${id}" ${workerBusy||!w.drained||busy||held?'disabled':''}>Remove</button></td></tr>`;
   }).join('') || '<tr><td colspan="5">No workers registered.</td></tr>';
 }
 async function loadWorkers() {

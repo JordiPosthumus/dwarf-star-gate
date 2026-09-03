@@ -84,6 +84,17 @@ test('UI distinguishes local model logs from journal connectivity', () => {
   assert.equal(label({telemetry_configured:false}),'Engine timings not configured');
 });
 
+test('worker controls show escaped hold ownership and block ordinary Enable/Remove',()=>{
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const context=vm.createContext({});vm.runInContext(source,context);
+  const row=w=>vm.runInContext(`workerRows(${JSON.stringify([w])})`,context);
+  const w={id:'worker-a',is_healthy:true,drained:true,load:0,queued:0,operator_paused:false,holds:[{owner_id:'tester',reason:'<script>bad</script>'}]};
+  const html=row(w);assert.match(html,/Held by tester/);assert.ok(!html.includes('<script>'));assert.match(html,/&lt;script&gt;/);
+  assert.match(html,/data-action="resume"[^>]*disabled/);assert.match(html,/data-action="remove"[^>]*disabled/);assert.match(html,/>Keep paused</);
+  assert.ok(!row({...w,operator_paused:true}).includes('>Keep paused<'));assert.match(row({...w,operator_paused:true}),/Operator pause/);
+  const free=row({...w,holds:[]});assert.ok(!/data-action="resume"[^>]*disabled/.test(free));assert.ok(!/data-action="remove"[^>]*disabled/.test(free));
+});
+
 test('prefill measures newly processed tokens, not the reused prefix', () => {
   const e = parse('chat ctx=143360..145009:1649 TOOLS prefill chunk 1649/1649 (100.0%) chunk=479.41 t/s avg=479.34 t/s 3.440s');
   assert.equal(e.cached, 143360); assert.equal(e.total, 1649); assert.equal(e.tps, 479.41); assert.equal(e.average, 479.34);

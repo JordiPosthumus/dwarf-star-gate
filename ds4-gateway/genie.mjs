@@ -13,6 +13,7 @@ export function briefing(snapshot) {
     active:g?.active,queued:g?.queued,dataset:g?.dataset ?? {enabled:false,status:'Running gateway does not expose the new collector'},
     recovery:{automatic:!!g?.recovery?.automatic,offers:(g?.recovery?.workers||[]).filter(w=>w.eligible).map(w=>({worker_id:w.worker_id,evidence_id:w.evidence_id})),recent_actions:g?.recovery?.operations?.slice(0,5)??[]},
     workers:(g?.workers||[]).slice(0,32).map(w=>({id:w.id,healthy:w.is_healthy,paused:w.drained,quarantine:safeQuarantine(w.quarantine),active:w.load,queued:w.queued,active_seconds:w.active_seconds,
+      gateway_drained:w.gateway_drained,operator_paused:w.operator_paused,agent_holds:w.holds??[],
       immediately_free:!!w.is_healthy && !w.drained && !w.quarantine && !g.draining && w.load===0 && w.queued===0,
       context_length:w.context_length,requested_thinking:w.requested_thinking,predictions:w.predictions,
       telemetry:(()=>{const d=snapshot.devices.find(d=>d.id===w.id);return d?{connected:d.connected,observed_since:d.observed_since,last_event:d.last_event,phase:d.phase,
@@ -24,6 +25,7 @@ export function briefing(snapshot) {
       'requested_thinking unavailable/capture_limit means only that metadata capture was limited; the complete request is forwarded unchanged',
       'active_seconds is time since dispatch, not proof of a stall; last_event is an engine log timestamp, not a heartbeat',
       'healthy and paused/quarantine are separate; a model-list probe is not proof of working generation',
+      'Operator pauses and agent holds are intentional reservations, not faults. Do not recover or enable a reserved server. Releasing one hold does not release other holds or an operator pause',
       'cache counters are observed starts/reuses/restores, not a guaranteed hit rate; resident miss may still restore from disk',
       'Cache counters may include diagnostic traffic and use different observation windows or recently restarted processes; unmatched counts do not establish worse efficiency'],
     limitations:['Optional embeddings and previous-turn similarity enter updated forecasts only, after upload; no embeddings in initial placement','No proven request-to-engine-event association','No counterfactual completion times','Only offered recovery/training/rollback requests; no arbitrary commands or model promotion authority']};

@@ -11,6 +11,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { AffinityStore, createGateway, UsageObserver } from './gateway.mjs';
 import { requestedThinking, RequestedThinkingObserver, THINKING_CAPTURE_BYTES, safeRequestedThinking } from './requested-thinking.mjs';
 import { workerControl } from './worker-client.mjs';
+import {agentRequest} from './agent-client.mjs';
+import {randomUUID} from 'node:crypto';
 import { runDashboard } from './dashboard.mjs';
 import { GenerationFaultObserver } from './generation-health.mjs';
 
@@ -93,6 +95,77 @@ async function rig(t, count = 2, overrides = {}) {
   t.after(async () => { await r.gateway.close(); await Promise.all(backends.map(b => b.close())); });
   return r;
 }
+
+test('scoped agent ingress preserves admitted work, ownership and receipts across gateway restart',async t=>{
+  const r=await rig(t,1,{control_socket:true}),ctl=(route,body)=>workerControl(r.config.control_socket,route,body);
+  const grant=await ctl('/grant-agent',{agent_id:'tester',workers:['spark1']}),credential={control_socket:r.config.control_socket,token:grant.token};
+  const req=JSON.stringify({stream:true,delay:200,reasoning_effort:'xhigh',max_tokens:131072});
+  const active=r.request(req,'one');await until(()=>r.backends[0].active===1);
+  const waiting=r.request(req,'two');await until(()=>r.gateway.stats().queued===1);
+  const input={worker_id:'spark1',reason:'engine test',request_id:randomUUID()};
+  const d=await agentRequest(credential,'drain',input);assert.equal(r.gateway.stats().workers[0].operator_paused,false);
+  assert.equal((await agentRequest(credential,'status')).workers[0].gateway_drained,false);
+  assert.equal((await r.request('{}','new')).status,503);
+  assert.equal((await active).status,200);assert.equal((await waiting).status,200);
+  assert.equal(r.backends[0].records[0].body.toString(),req);assert.equal(r.backends[0].records[1].body.toString(),req);
+  assert.equal((await agentRequest(credential,'status')).workers[0].gateway_drained,true);
+  await assert.rejects(ctl('/resume-workers',{workers:['spark1']}),/agent holds/);
+  await assert.rejects(ctl('/remove-worker',{id:'spark1'}),/agent holds/);
+  await r.restart();assert.equal(r.gateway.stats().workers[0].holds[0].owner_id,'tester');
+  assert.deepEqual(await agentRequest(credential,'drain',input),d);
+  assert.deepEqual(await agentRequest(credential,'receipt',{request_id:input.request_id}),d);
+  const released=await agentRequest(credential,'resume',{hold_id:d.result.hold_id,request_id:randomUUID()});
+  assert.equal(released.result.routing_resumed,true);assert.equal(r.gateway.stats().available,1);
+  assert.equal(r.backends[0].records.length,2,'readiness checks do not synthesize generation');
+  assert.equal((await r.request('{}','new')).status,200);
+});
+test('agent API uses exact authenticated private routes, not inference or operator ingress',async t=>{
+  const r=await rig(t,2,{control_socket:true}),ctl=(route,body)=>workerControl(r.config.control_socket,route,body);
+  const grant=await ctl('/grant-agent',{agent_id:'tester',workers:['spark1']}),credential={control_socket:r.config.control_socket,token:grant.token};
+  const raw=(route,token=grant.token,method='POST',body=method==='GET'?'':'{}')=>new Promise((resolve,reject)=>{
+    const req=http.request({socketPath:r.config.control_socket,path:route,method,agent:false,headers:{'content-length':Buffer.byteLength(body),...(token?{authorization:'Bearer '+token}:{})}},res=>{res.resume();res.on('end',()=>resolve(res.statusCode));});req.on('error',e=>reject(new Error(`${method} ${route}: ${e.message}`)));req.end(body);
+  });
+  assert.equal(await raw('/agent/v1/status',null,'GET'),401);
+  assert.equal(await raw('/agent/v1/status','invalid','GET'),401);
+  for(const route of ['/resume-workers','/recover-worker','/workers','/grant-agent'])assert.equal(await raw(route),403);
+  assert.equal(await raw('/agent/v1/recover'),404);
+  assert.equal(await raw('/agent/v1/drain',grant.token,'GET'),404);
+  assert.equal(await raw('/agent/v1/drain',grant.token,'POST','[]'),400);
+  assert.equal((await r.request('',null,{path:'/agent/v1/status',method:'GET'})).status,404);
+  await assert.rejects(agentRequest(credential,'drain',{worker_id:'spark2',reason:'test',request_id:randomUUID()}),{code:'forbidden_worker'});
+  const status=await agentRequest(credential,'status');assert.equal(status.workers.length,2);assert.equal(status.workers[1].can_manage,false);
+  assert.ok(!JSON.stringify(status).includes('http://'));assert.ok(!JSON.stringify(status).includes(grant.token));
+  await ctl('/revoke-agent',{agent_id:'tester'});await assert.rejects(agentRequest(credential,'status'),{code:'unauthorized'});
+});
+test('agent cannot override operator pause, incompatible readiness or accelerator quarantine',async t=>{
+  const r=await rig(t,1,{control_socket:true}),ctl=(route,body)=>workerControl(r.config.control_socket,route,body);
+  const grant=await ctl('/grant-agent',{agent_id:'tester',workers:['spark1']}),credential={control_socket:r.config.control_socket,token:grant.token};
+  const drain=()=>agentRequest(credential,'drain',{worker_id:'spark1',reason:'test',request_id:randomUUID()});
+  const release=d=>agentRequest(credential,'resume',{hold_id:d.result.hold_id,request_id:randomUUID()});
+  const d=await drain();r.backends[0].context_length=100;
+  await assert.rejects(release(d),/readiness/);assert.equal(r.gateway.stats().workers[0].holds.length,1);
+  await ctl('/drain-workers',{workers:['spark1']});
+  assert.equal((await release(d)).result.routing_resumed,false);assert.equal(r.gateway.stats().workers[0].drained,true);
+  r.backends[0].context_length=153600;await ctl('/resume-workers',{workers:['spark1']});
+  await r.request('{"fatal_error":true}','fault');assert.ok(r.gateway.stats().workers[0].quarantine);
+  const q=await drain();await assert.rejects(release(q),{code:'recovery_required'});
+  assert.ok(r.gateway.stats().workers[0].quarantine);assert.equal(r.backends[0].records.length,1);
+});
+test('operator CLI creates private scoped credential; agent CLI needs no full gateway config',async t=>{
+  const r=await rig(t,1,{control_socket:true}),dir=path.dirname(r.config.state_file),config=path.join(dir,'config.json'),file=path.join(dir,'agent.json');
+  fs.writeFileSync(config,JSON.stringify(r.config));
+  const script=fileURLToPath(new URL('./agents.mjs',import.meta.url));
+  const cli=(...args)=>promisify(execFile)(process.execPath,[script,...args],{env:{...process.env,DSG_AGENT_CREDENTIALS:''}});
+  const granted=await cli('grant','tester','--config',config,'--workers','spark1','--out',file);
+  const secret=JSON.parse(fs.readFileSync(file,'utf8')).token;
+  assert.equal(fs.statSync(file).mode&0o777,0o600);assert.ok(!granted.stdout.includes(secret));
+  const before=fs.readFileSync(file,'utf8');await assert.rejects(cli('grant','other','--config',config,'--workers','spark1','--out',file));assert.equal(fs.readFileSync(file,'utf8'),before);
+  const status=JSON.parse((await cli('status','--credential-file',file)).stdout);assert.equal(status.agent.agent_id,'tester');
+  const request_id=randomUUID(),d=JSON.parse((await cli('drain','spark1','--reason','test','--request-id',request_id,'--credential-file',file)).stdout);
+  assert.deepEqual(JSON.parse((await cli('receipt',request_id,'--credential-file',file)).stdout),d);
+  assert.equal(JSON.parse((await cli('resume',d.result.hold_id,'--credential-file',file)).stdout).result.routing_resumed,true);
+  await cli('revoke','tester','--config',config);await assert.rejects(cli('status','--credential-file',file));
+});
 
 test('usage observer skips an entire oversized SSE line, including a DONE-shaped suffix',()=>{
   const o=new UsageObserver();
@@ -628,6 +701,17 @@ test('hot removal requires paused and fully idle; existing conversation reassign
   assert.equal((await r.request('{}','home')).headers['x-ds4-node'],'spark2');
   assert.equal((await r.request('{}',null,{path:'/add-worker'})).status,404);
   assert.equal((await r.request('{}',null,{path:'/remove-worker'})).status,404);
+});
+
+test('real dashboard polling exposes agent ownership and calibration, without private hold reasons',async t=>{
+  const r=await rig(t,1,{control_socket:true,ui_worker_management:true});
+  const granted=await workerControl(r.config.control_socket,'/grant-agent',{agent_id:'tester',workers:['spark1']});
+  await agentRequest({control_socket:r.config.control_socket,token:granted.token},'drain',{worker_id:'spark1',reason:'PRIVATE_OPERATOR_REASON',request_id:randomUUID()});
+  const configPath=path.join(path.dirname(r.config.state_file),'dashboard-config.json');fs.writeFileSync(configPath,JSON.stringify({...r.config,port:r.address.port}));
+  const dashboard=await runDashboard(configPath,0);t.after(()=>dashboard.close());
+  const s=dashboard.snapshot();assert.equal(s.gateway.agent_api_version,1);assert.deepEqual(s.gateway.calibration,r.gateway.stats().calibration);
+  assert.equal(s.gateway.workers[0].holds[0].owner_id,'tester');assert.equal(s.gateway.workers[0].gateway_drained,true);assert.equal(s.gateway.workers[0].operator_paused,false);
+  assert.ok(!JSON.stringify(s).includes('PRIVATE_OPERATOR_REASON'));assert.ok(!JSON.stringify(s).includes(granted.token));
 });
 
 test('enabled dashboard controls operate through the real Unix control client without changing model servers', async t => {

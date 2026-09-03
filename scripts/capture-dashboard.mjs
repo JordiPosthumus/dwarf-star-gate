@@ -8,7 +8,7 @@ import { projectRoot } from '../ds4-gateway/config.mjs';
 const modulePath=process.env.DSG_PLAYWRIGHT_MODULE;
 const {chromium}=await import(modulePath?pathToFileURL(path.resolve(modulePath)).href:'playwright');
 const server=createDemoServer();
-let browser,learningServer;
+let browser,learningServer,holdServer;
 try {
   await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});
   const origin=`http://127.0.0.1:${server.address().port}`;
@@ -92,9 +92,23 @@ try {
   await page.locator('[data-milestone]').click();await page.waitForFunction(()=>document.getElementById('learning-milestones').hidden);
   await page.reload();await page.waitForFunction(()=>document.querySelectorAll('.device').length===3);
   assert.equal(await page.locator('#learning-milestones').isHidden(),true,'Acknowledged milestone reappeared after reload');
+  holdServer=createDemoServer({agentHold:true});await new Promise(resolve=>holdServer.listen(0,'127.0.0.1',resolve));
+  const holdOrigin=`http://127.0.0.1:${holdServer.address().port}`;allowedOrigins.add(holdOrigin);
+  await page.setViewportSize({width:1440,height:1100});await page.goto(holdOrigin);
+  await page.locator('#worker-management summary').click();
+  const held=page.locator('#worker-rows tr').filter({hasText:'mac-ultra'});
+  await held.waitFor();assert.match(await held.innerText(),/Held by test-agent: <DS4 compatibility test>/);
+  assert.equal(await held.locator('[data-action="resume"]').isDisabled(),true);
+  assert.equal(await held.locator('[data-action="remove"]').isDisabled(),true);
+  await held.getByRole('button',{name:'Keep paused',exact:true}).click();
+  await page.waitForFunction(()=>document.getElementById('worker-rows').textContent.includes('Operator pause'));
+  assert.equal(await held.getByRole('button',{name:'Keep paused',exact:true}).count(),0);
+  const holdPoll=await page.locator('#updated').innerText();await page.waitForFunction(previous=>document.getElementById('updated').textContent!==previous,holdPoll,{timeout:10000});
+  assert.match(await held.innerText(),/Held by test-agent/);assert.match(await held.innerText(),/Operator pause/);
   assert.deepEqual(errors,[]);
-  console.log('Saved three synthetic screenshots; verified title, logo, polling, analytics labels, mobile width, persistent milestone dismissal and reset UX.');
+  console.log('Saved three synthetic screenshots; verified polling, analytics, mobile, reset/milestones, escaped agent holds and Keep paused UX.');
 } finally {
   await browser?.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));
   if(learningServer){learningServer.closeAllConnections();await new Promise(resolve=>learningServer.close(resolve));}
+  if(holdServer){holdServer.closeAllConnections();await new Promise(resolve=>holdServer.close(resolve));}
 }

@@ -34,6 +34,17 @@ Use the [recovery validation procedure](recovery-validation.md) before enabling
 an enrolled service. Deployment receipts and policy activation belong in private
 operator records, not this public roadmap.
 
+**Agent coordination implemented:** [scoped agent access](agent-api.md) adds
+per-principal worker grants, status, owned drain holds, checked release and durable
+idempotency receipts to the existing private executor. Manual pauses and other
+agents' holds win. UI ownership labels prevent unexplained Enable/Remove actions;
+no extra service, model-server edit or automatic Genie authority is introduced.
+Source is tested independently of deployment; grants require the new gateway
+code to be activated. A thin MCP wrapper and remote agent transport remain future
+work. The [Genie memory plan](genie-memory.md) remains a plan, not a running memory
+store; bounded training recipes, early metadata collection and skip-only
+calibration preflight are already implemented separately.
+
 | Order | Work | Exit evidence |
 | --- | --- | --- |
 | 0 | Promote protocol/quarantine maintenance fixes through a controlled cutover | Regression suites pass; versioned backup; real API-format smoke checks; unchanged fleet/context; explicit source-versus-running release record |
