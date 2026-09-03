@@ -10,6 +10,16 @@
 
 ## Unreleased
 
+- Safe queued ownership handover: untouched first/unaffined requests automatically
+  take a newly free DS4 server without replaying the body or resetting the client
+  deadline. Existing affinity-bound sessions require an exact operator-confirmed
+  offer because destination cache locality is unknown. Durable-write failure leaves
+  the original queue/client intact; private receipts and UI controls are included.
+- Gate Genie now tries its dedicated provider first and, after an explicit failure,
+  may borrow one unpinned normal DSG inference slot. Pool calls receive the bounded
+  live fleet briefing but not the private Genie notebook. A failed/partial attempt
+  cannot contribute prose or actions to the accepted report.
+
 - Gateway-side patient waiting across pre-dispatch worker outages, retaining
   original deadlines, conversation order and queued homes. No dispatched replay.
   HTTP 102 keep-alives, bounded waiting, cancellation, visible recovery-wait counts
