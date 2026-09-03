@@ -7,7 +7,7 @@ import {once} from 'node:events';
 import {spawn,execFile,execFileSync} from 'node:child_process';
 import {promisify} from 'node:util';
 import {setTimeout as delay} from 'node:timers/promises';
-import {configPath,loadConfig,projectRoot,dashboardPort,isDashboard} from './config.mjs';
+import {configPath,loadConfig,projectRoot,dashboardPort,isDashboard,isMain} from './config.mjs';
 import {serviceSpec,assertIdle} from './service-control.mjs';
 const exec=promisify(execFile);
 const temporary=t=>{const dir=fs.mkdtempSync('/tmp/dsg-install-');t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));return dir;};
@@ -25,6 +25,7 @@ test('configuration precedence and relative local paths are independent of calle
   assert.equal(dashboardPort({ui_port:31000},{}),31000);assert.equal(dashboardPort({ui_port:31000},{GATEWAY_UI_PORT:'32000'}),32000);assert.throws(()=>dashboardPort({}, {GATEWAY_UI_PORT:'0'}));
 });
 test('readiness accepts enabled management; service manifests are portable and never contain API keys',()=>{
+  assert.equal(isMain(import.meta.url,'-'),false);assert.equal(isMain(import.meta.url,'/does/not/exist'),false);
   for(const controls of [true,false])assert.ok(isDashboard({service:'dwarf-star-gate-dashboard',version:1,read_only:!controls,worker_management:controls}));
   assert.ok(!isDashboard({version:1,read_only:true}));
   const spec=serviceSpec('gateway','/tmp/DSG & space/config.local.json',{state_file:'/tmp/DSG & space/runtime/state.json',api_key:'PRIVATE_KEY_NOT_IN_MANIFEST'},{root:'/tmp/DSG & space',node:'/tmp/node',env:{PATH:'/usr/bin'}});
@@ -39,6 +40,8 @@ test('clean checkout: initialize, doctor, UI registration, exact forwarding, CLI
   execFileSync('git',['init','-q',checkout]);
   const env={...process.env};delete env.DWARF_GATE_CONFIG;delete env.GATEWAY_UI_PORT;
   const cli=(script,args=[])=>exec(process.execPath,[path.join(checkout,script),...args],{cwd:elsewhere,env,timeout:10000});
+  const imported=execFileSync(process.execPath,['--input-type=module','-'],{cwd:checkout,env,encoding:'utf8',timeout:10000,input:"await import('./ds4-gateway/config.mjs'); await import('./ds4-gateway/gateway.mjs'); await import('./ds4-gateway/dashboard.mjs'); await import('./ds4-gateway/service-control.mjs'); console.log('imports only');"});
+  assert.equal(imported.trim(),'imports only');
   const initialized=await cli('scripts/setup.mjs',['--controls']),configFile=path.join(checkout,'config.local.json');
   const c=JSON.parse(fs.readFileSync(configFile));assert.equal(fs.statSync(configFile).mode&0o777,0o600);assert.equal(c.nodes.length,0);assert.ok(!initialized.stdout.includes(c.api_key));
   await assert.rejects(cli('scripts/setup.mjs',['--controls']),/nothing overwritten/);assert.deepEqual(JSON.parse(fs.readFileSync(configFile)),c);

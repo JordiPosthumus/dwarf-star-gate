@@ -4,7 +4,6 @@ import path from 'node:path';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
-import { pathToFileURL } from 'node:url';
 import { RequestedThinkingObserver } from './requested-thinking.mjs';
 import { Dataset } from './dataset.mjs';
 import { EmbeddingCollector } from './embeddings.mjs';
@@ -12,7 +11,7 @@ import { RoutingShadow } from './routing-shadow.mjs';
 import { GenerationFaultObserver, verifyGeneration } from './generation-health.mjs';
 import { workerConfig, workerConfigs, assertUniqueWorker } from './worker-config.mjs';
 import { Recovery } from './recovery.mjs';
-import { loadConfig } from './config.mjs';
+import { loadConfig, isMain } from './config.mjs';
 import net from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -662,7 +661,7 @@ function superviseTunnel(node, stopping) {
   return () => { clearTimeout(timer); child?.kill('SIGTERM'); };
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href) {
+if (isMain(import.meta.url)) {
   const {config} = loadConfig(process.argv[2]);
   let stopping = false;
   const gateway = createGateway(config);

@@ -3,9 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import {execFileSync} from 'node:child_process';
-import {pathToFileURL} from 'node:url';
 import {setTimeout as delay} from 'node:timers/promises';
-import {loadConfig,projectRoot,dashboardPort,isDashboard} from './config.mjs';
+import {loadConfig,projectRoot,dashboardPort,isDashboard,isMain} from './config.mjs';
 export const labels={gateway:'local.dwarf-star-gate.gateway',dashboard:'local.dwarf-star-gate.dashboard'};
 const xml=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'})[c]);
 export function serviceSpec(kind,filename,config,{root=projectRoot,node=process.execPath,env=process.env}={}) {
@@ -94,7 +93,7 @@ export async function serviceCommand(command,kinds=['gateway','dashboard'],{inte
     const r=await fetch(url,{method:'POST',headers:{'content-type':'application/json',origin:`http://127.0.0.1:${dashboardPort(config)}`,'x-dsg-csrf':fresh.csrf_token},body:JSON.stringify(body)});if(!r.ok)throw new Error('Services started, but Genie settings could not be restored');}}
   return {started:kinds,model_servers_unchanged:true};
 }
-if(process.argv[1]&&import.meta.url===pathToFileURL(fs.realpathSync(process.argv[1])).href){
+if(isMain(import.meta.url)){
   try{const args=process.argv.slice(2),interrupt=args.includes('--interrupt');const rest=args.filter(x=>x!=='--interrupt');const [command='status',selected='all',...extra]=rest;
     if(extra.length||!['all','gateway','dashboard'].includes(selected))throw new Error('Usage: service-control.mjs install|start|status|stop|restart [all|gateway|dashboard] [--interrupt]');
     console.log(JSON.stringify(await serviceCommand(command,selected==='all'?['gateway','dashboard']:[selected],{interrupt}),null,2));

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { safeGatewayEvent, DeviceTelemetry, JournalReader } from './telemetry.mjs';
 import { safeRequestedThinking } from './requested-thinking.mjs';
 import { workerControl } from './worker-client.mjs';
@@ -14,7 +14,7 @@ import { genieTunnel } from './genie-tunnel.mjs';
 import { safeQuarantine } from './generation-health.mjs';
 import { AnalyticsReader } from './analytics.mjs';
 import { estimateCacheCost } from './cache-cost.mjs';
-import { loadConfig, dashboardPort } from './config.mjs';
+import { loadConfig, dashboardPort, isMain } from './config.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const assets = new Map([['/', ['index.html', 'text/html']], ['/ui.css', ['ui.css', 'text/css']], ['/brand.css', ['brand.css', 'text/css']], ['/ui.js', ['ui.js', 'text/javascript']], ['/logo.png', ['logo.png', 'image/png']]]);
@@ -247,5 +247,5 @@ export async function runDashboard(configPath, port) {
   console.log(`Dwarf Star Gate: http://127.0.0.1:${server.address().port} (${managementEnabled ? 'local worker controls' : 'read-only'})`);
   return { server, snapshot, close };
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href)
+if (isMain(import.meta.url))
   runDashboard(process.argv[2]).catch(e => { console.error(e.message); process.exitCode = 1; });

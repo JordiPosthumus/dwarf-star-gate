@@ -34,7 +34,11 @@ export function dashboardPort(config,env=process.env) {
 export function isDashboard(value) {
   return value?.service==='dwarf-star-gate-dashboard'&&value.version===1&&typeof value.read_only==='boolean'&&typeof value.worker_management==='boolean';
 }
-if(process.argv[1]&&import.meta.url===pathToFileURL(fs.realpathSync(process.argv[1])).href){
+export function isMain(url,entry=process.argv[1]) {
+  if(!entry||entry==='-')return false;
+  try{return url===pathToFileURL(fs.realpathSync(entry)).href;}catch{return false;}
+}
+if(isMain(import.meta.url)){
   try{if(process.argv[2]!=='runtime')throw new Error('Usage: config.mjs runtime [CONFIG]');console.log(path.dirname(loadConfig(process.argv[3]).config.state_file));}
   catch(error){console.error(error.message);process.exitCode=1;}
 }
