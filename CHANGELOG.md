@@ -10,6 +10,16 @@
 
 ## Unreleased
 
+- Measured cache-cost calculator in Analytics: per-server disk-load/prefill
+  components, bounded comparable samples, explicit unknowns and no cache-existence
+  claim. It does not change routing or operate caches.
+- Opt-in pinned local CPU embeddings of bounded visible conversation slices,
+  private vectors with feature-availability timestamps, and correlated 30-second
+  semantic progress records. Encoder failure/overload leaves forwarding intact;
+  collection status is visible and the existing charts remain historical baselines.
+- Offline XGB can select tree count using forward-time/session-disjoint folds
+  inside training only; the final holdout stays separate. No live model promotion.
+
 - Color each Genie health-wire item by its own structured severity: good, info,
   warning or critical. Add text labels and preserve pause, stale-evidence and
   reduced-motion behavior; severity never grants recovery authority.
@@ -58,7 +68,8 @@
   and sanitized fault evidence for diagnostics and Genie assessments.
 - Opt-in numerical routing collector, fleet occupancy/activity timelines and
   Gate Genie chat with dedicated inference or explicitly selected pool fallback.
-  No embeddings or learning-based routing yet; recovery is separately opt-in.
+  Learning-based routing remains unimplemented; embeddings and recovery are
+  separately opt-in features described above.
 - Optional locked offline XGBoost fit/evaluate/save/reload package with separate
   machine identity/hardware-family features, leakage-aware chronological splits,
   artifact checksums, tests and documented production tree-count validation gate.
