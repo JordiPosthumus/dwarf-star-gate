@@ -290,14 +290,18 @@ first):
 ```sh
 ./start-dsg.sh --open
 ./gateway-status.sh
+./park-dsg.sh
 ./stop-dsg.sh
 ```
 
-**Two commands for day-to-day operation:** `start-dsg.sh` checks Node, source and
+**Day-to-day operation:** `start-dsg.sh` checks Node, source and
 private configuration, makes a private control-state backup, installs missing
 login services, starts the gateway core/Continuity Door/dashboard and verifies
 their endpoints.
-It does not restart an already-running service. `stop-dsg.sh` backs up control
+It does not restart an already-running service. `park-dsg.sh` keeps the stable
+Continuity Door alive, holds new calls, drains and stops only the gateway core;
+the next normal `start-dsg.sh` verifies that core and releases the waiting calls.
+`stop-dsg.sh` backs up control
 state, refuses busy/unknown gateway state, fences admission and confirms shutdown.
 Both preserve worker exclusions. No configuration is generated or overwritten.
 Use `--help` for component selection, explicit client interruption and JSON output;

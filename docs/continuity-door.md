@@ -69,6 +69,12 @@ and dashboard. A normal `npm run service -- restart gateway` keeps the door aliv
 drains the old core, checks the replacement, and releases held work. `--interrupt`
 still means exactly that and is not continuity-safe.
 
+For a deliberate longer core outage, run `./park-dsg.sh`. It keeps the Door and
+dashboard running while it drains and stops only the core. A later ordinary
+`./start-dsg.sh` starts and verifies the core, then releases only the exact park
+hold. It does not release an unrelated operator hold. Full `./stop-dsg.sh` still
+stops the Door and therefore cannot preserve live continuity.
+
 The automated tests cover unread-body backpressure, exact single forwarding,
 active-stream preservation, held-client cancellation, release refusal while the
 core is unhealthy, clean-checkout first start, and replacement-core startup.

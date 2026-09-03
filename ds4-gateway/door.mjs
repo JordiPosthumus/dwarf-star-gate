@@ -59,7 +59,10 @@ export function createDoor(config,{now=Date.now}={}){
     req.on('error',()=>{ended=true;});
     req.on('end',async()=>{if(ended)return;ended=true;try{
       const input=body?JSON.parse(body):{};
-      if(req.url==='/hold')hold(input.reason);
+      if(req.url==='/hold'){
+        if(input.if_unheld===true&&state.holding)return report(res,409,'continuity_already_holding','Continuity Door already has a hold; it was preserved.');
+        hold(input.reason);
+      }
       else if(!await checkCore())return report(res,409,'continuity_core_not_ready','Replacement DSG core is not ready; the continuity door remains holding.');
       else release();
       json(res,200,status());

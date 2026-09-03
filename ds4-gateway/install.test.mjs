@@ -8,7 +8,7 @@ import {spawn,execFile,execFileSync} from 'node:child_process';
 import {promisify} from 'node:util';
 import {setTimeout as delay} from 'node:timers/promises';
 import {configPath,loadConfig,projectRoot,dashboardPort,gatewayHost,isDashboard,isMain} from './config.mjs';
-import {serviceSpec,assertIdle,assertDoorIdle,assertRegistration,unloadService,coordinatedCoreRestart} from './service-control.mjs';
+import {serviceSpec,assertIdle,assertDoorIdle,assertRegistration,unloadService,coordinatedCoreRestart,coordinatedCorePark,releaseParkedCore,PARK_REASON} from './service-control.mjs';
 const exec=promisify(execFile);
 test('restart waits for launchd removal; timeout cannot skip into bootstrap',async()=>{
   let now=0;const calls=[];
@@ -22,6 +22,15 @@ test('coordinated core restart holds first, waits for idle, and releases only af
   const result=await coordinatedCoreRestart(config,{hold:async b=>calls.push(['hold',b.reason]),release:async()=>calls.push(['release']),read:async()=>states[Math.min(index++,states.length-1)],stop:async()=>calls.push(['stop']),start:async()=>calls.push(['start']),wait:async ms=>{now+=ms;},now:()=>now});
   assert.equal(result.replacement_ready,true);assert.deepEqual(calls.map(x=>x[0]),['hold','stop','start','release']);
   await assert.rejects(coordinatedCoreRestart(config,{hold:async()=>{},release:async()=>{throw new Error('must not release');},read:async()=>({active:0,queued:0}),stop:async()=>{},start:async()=>{throw new Error('failed replacement');}}),error=>error.continuity_door_holding===true);
+});
+test('coordinated park drains after holding; start releases only the exact verified park hold',async()=>{
+  const config={continuity_door:{enabled:true,control_socket:'/tmp/fixture.sock'},request_timeout_ms:10000};let now=0,index=0;const calls=[],states=[{active:1,queued:1},{active:0,queued:0}];
+  const parked=await coordinatedCorePark(config,{doorStatus:async()=>({holding:false}),hold:async body=>calls.push(['hold',body]),read:async()=>states[Math.min(index++,states.length-1)],stop:async()=>calls.push(['stop']),wait:async ms=>{now+=ms;},now:()=>now});
+  assert.equal(parked.core_parked,true);assert.deepEqual(calls.map(x=>x[0]),['hold','stop']);assert.equal(calls[0][1].reason,PARK_REASON);assert.equal(calls[0][1].if_unheld,true);
+  const released=[];assert.deepEqual(await releaseParkedCore(config,{doorStatus:async()=>({holding:true,hold_kind:'manual',reason:PARK_REASON}),coreStatus:async()=>({startup:{complete:true},active:0,queued:0}),release:async()=>released.push('release')}),{released:true,reason:PARK_REASON});assert.deepEqual(released,['release']);
+  const preserved=await releaseParkedCore(config,{doorStatus:async()=>({holding:true,hold_kind:'manual',reason:'operator maintenance'}),coreStatus:async()=>{throw new Error('must not inspect core');},release:async()=>{throw new Error('must not release');}});assert.deepEqual(preserved,{released:false,preserved_hold:true});
+  await assert.rejects(coordinatedCorePark(config,{doorStatus:async()=>({holding:true,hold_kind:'manual',reason:'operator maintenance'})}),/different hold/);
+  for(const core of [{startup:{complete:false},active:0,queued:0},{startup:{complete:true},active:1,queued:0},{startup:{complete:true},active:0,queued:1}])await assert.rejects(releaseParkedCore(config,{doorStatus:async()=>({holding:true,hold_kind:'manual',reason:PARK_REASON}),coreStatus:async()=>core,release:async()=>{throw new Error('must not release');}}),/clean idle startup barrier/);
 });
 const temporary=t=>{const dir=fs.mkdtempSync('/tmp/dsg-install-');t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));return dir;};
 async function until(fn,ms=8000){const end=Date.now()+ms;while(Date.now()<end){try{const v=await fn();if(v)return v;}catch{}await delay(30);}throw new Error('Readiness timeout');}
@@ -65,7 +74,7 @@ test('clean checkout: initialize, doctor, UI registration, exact forwarding, CLI
   const cli=(script,args=[])=>exec(process.execPath,[path.join(checkout,script),...args],{cwd:elsewhere,env,timeout:10000});
   const imported=execFileSync(process.execPath,['--input-type=module','-'],{cwd:checkout,env,encoding:'utf8',timeout:10000,input:"await import('./ds4-gateway/config.mjs'); await import('./ds4-gateway/gateway.mjs'); await import('./ds4-gateway/door.mjs'); await import('./ds4-gateway/dashboard.mjs'); await import('./ds4-gateway/service-control.mjs'); console.log('imports only');"});
   assert.equal(imported.trim(),'imports only');
-  for(const launcher of ['start-dsg.sh','stop-dsg.sh']){
+  for(const launcher of ['start-dsg.sh','park-dsg.sh','stop-dsg.sh']){
     const help=execFileSync(path.join(checkout,launcher),['--help'],{cwd:elsewhere,env,encoding:'utf8',timeout:10000});
     assert.ok(help.includes('DS4 servers are never stopped.'));
   }

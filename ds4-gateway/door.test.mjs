@@ -46,3 +46,11 @@ test('private control refuses release until the replacement core is healthy',asy
   healthy=false;await assert.rejects(doorControl(config.continuity_door.control_socket,'/release'),/remains holding/);assert.equal(door.status().holding,true);
   healthy=true;const released=await doorControl(config.continuity_door.control_socket,'/release');assert.equal(released.holding,false);assert.equal(released.core_ready,true);
 });
+test('conditional hold preserves an existing operator hold',async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-door-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const core=http.createServer((req,res)=>res.end('ok')),corePort=await listen(core);t.after(()=>core.close());
+  const config={host:'127.0.0.1',port:0,api_key:'test',continuity_door:{enabled:true,core_port:corePort,control_socket:path.join(dir,'door.sock')}};
+  const door=createDoor(config);await door.start();t.after(()=>door.close());await doorControl(config.continuity_door.control_socket,'/hold',{reason:'operator maintenance'});
+  await assert.rejects(doorControl(config.continuity_door.control_socket,'/hold',{reason:'planned_gateway_core_park',if_unheld:true}),/already has a hold/);
+  assert.equal(door.status().reason,'operator maintenance');assert.equal(door.status().hold_kind,'manual');
+});

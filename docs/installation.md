@@ -114,10 +114,11 @@ gateway. Do not start two writers against the same affinity file.
 
 ## Start and stop scripts (macOS)
 
-Run from the checkout, or invoke either script by its full path from any directory:
+Run from the checkout, or invoke any script by its full path from any directory:
 
 ```sh
 ./start-dsg.sh --open
+./park-dsg.sh
 ./stop-dsg.sh
 ```
 
@@ -149,6 +150,19 @@ remote DS4 services, clear quarantines, release agent holds, resume workers or
 alter model/context/output/thinking/cache/concurrency settings. Missing setup is
 reported; it is never replaced with a guessed fallback.
 
+`park-dsg.sh` is the continuity-preserving way to leave the gateway core stopped
+temporarily. It atomically asks the stable Continuity Door to hold new request
+bodies unread, waits for active and already-queued core work to finish, fences
+admission, stops only the core, and verifies that the core port closed while the
+Door still listens. The dashboard and every DS4 server remain running. It refuses
+to overwrite a different manual Door hold.
+
+Run ordinary `./start-dsg.sh` to resume. Start launches the stopped core, waits
+for its startup barrier, checks the exact park marker, and only then releases held
+calls. A failed start leaves the Door holding. Park is an in-memory continuity
+operation for the current login session: stopping/restarting the Door, logging
+out, or rebooting cannot preserve its live client sockets.
+
 `stop-dsg.sh` backs up the same control files, then uses the existing controller's
 ownership checks, busy/unknown refusal and final admission fence. It stops the
 dashboard, Continuity Door and gateway core in that order and verifies every
@@ -168,6 +182,7 @@ Services stay installed for the next login; stopping does not uninstall them.
 Useful options:
 
 ```sh
+./park-dsg.sh --json
 ./start-dsg.sh --only dashboard --open
 ./stop-dsg.sh --only dashboard
 ./start-dsg.sh --config /path/to/private-config.json --json

@@ -18,11 +18,12 @@ function fixture(overrides={}){
 
 test('strict CLI: safe defaults, explicit interruption, valid components and no unsafe options',()=>{
   assert.deepEqual(parseArgs(['start']).kinds,['gateway','door','dashboard']);
+  assert.deepEqual(parseArgs(['park']).kinds,['gateway']);
   assert.equal(parseArgs(['stop']).interrupt,false);
   assert.equal(parseArgs(['stop','--interrupt','--confirm-interrupt']).interrupt,true);
   const selected=parseArgs(['start','--only','dashboard','--config','my file.json','--open','--json']);
   assert.equal(selected.config,'my file.json');assert.equal(selected.open,true);assert.equal(selected.json,true);assert.deepEqual(selected.kinds,['dashboard']);
-  for(const args of [['start','--interrupt'],['stop','--interrupt'],['stop','--confirm-interrupt'],['stop','--open'],['start','--only','constructor'],['start','--only','toString'],['start','--config'],['start','--only','gateway','--open'],['start','--json','--json'],['start','--force'],['restart']])assert.throws(()=>parseArgs(args),undefined,args.join(' '));
+  for(const args of [['start','--interrupt'],['stop','--interrupt'],['stop','--confirm-interrupt'],['stop','--open'],['park','--only','gateway'],['park','--open'],['start','--only','constructor'],['start','--only','toString'],['start','--config'],['start','--only','gateway','--open'],['start','--json','--json'],['start','--force'],['restart']])assert.throws(()=>parseArgs(args),undefined,args.join(' '));
 });
 test('platform/user/version gates run before mutation; later Node majors work',()=>{
   for(const version of ['22.22.2','22.23.0','24.0.0','26.0.0'])checkRuntime({platform:'darwin',version,uid:501});
@@ -78,6 +79,14 @@ test('stop delegates fenced idle check and does not run source/optional dependen
   await assert.rejects(lifecycle(parseArgs(['stop']),bad.ops),/busy/);
   assert.ok(!bad.calls.some(c=>c[2]?.interrupt));
 });
+test('park backs up, delegates coordinated core park, and verifies core down with door still listening',async()=>{
+  const {ops,calls,status}=fixture({listening:async kind=>kind==='door'});status.continuity={core_parked:true,door_holding:true};
+  const result=await lifecycle(parseArgs(['park']),ops);
+  assert.deepEqual(calls,[['preflight'],['backup'],['park',['gateway']]]);assert.equal(result.action,'park');assert.equal(result.verified,true);assert.equal(result.model_servers_unchanged,true);assert.ok(formatResult(result).includes('parked with continuity verified'));
+  const missing=fixture({registered:kind=>kind==='gateway'});await assert.rejects(lifecycle(parseArgs(['park']),missing.ops),/missing: door/);assert.ok(!missing.calls.some(c=>c[0]==='park'));
+  const noDoor=fixture();await assert.rejects(lifecycle(parseArgs(['park']),noDoor.ops),/Door is not listening/);
+  const coreSurvived=fixture({listening:async()=>true});await assert.rejects(lifecycle(parseArgs(['park']),coreSurvived.ops),/core port still has a listener/);
+});
 test('explicit interrupt is scoped; stop is idempotent before installation; surviving listener fails verification',async()=>{
   const {ops,calls}=fixture();await lifecycle(parseArgs(['stop','--only','gateway','--interrupt','--confirm-interrupt']),ops);
   assert.deepEqual(calls.at(-1),['stop',['gateway'],{interrupt:true}]);
@@ -106,7 +115,7 @@ test('local port verification distinguishes listening from closed without HTTP c
 });
 test('shell launchers are executable, work outside checkout, and help requires no configuration',()=>{
   const env={...process.env,DWARF_GATE_CONFIG:'/nonexistent/lifecycle-help.json'};
-  for(const file of ['start-dsg.sh','stop-dsg.sh']){
+  for(const file of ['start-dsg.sh','park-dsg.sh','stop-dsg.sh']){
     const script=path.join(projectRoot,file);assert.ok(fs.statSync(script).mode&0o111);
     const output=execFileSync(script,['--help'],{cwd:os.tmpdir(),env,encoding:'utf8'});
     assert.ok(output.includes('DS4 servers are never stopped.'));
