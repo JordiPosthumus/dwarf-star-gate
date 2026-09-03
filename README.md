@@ -130,16 +130,16 @@ are scheduled independently—DSG does not coordinate their shared RAM/GPU capac
 
 ## Quick start
 
-**Using DGX Sparks? Our [recommended Spark configuration](docs/recommended-spark-profile.md)
-is the exact profile currently running on both of ours:** Vision-Exp IQ2/Q2 with
+**Using DGX Sparks? The [recommended Spark configuration](docs/recommended-spark-profile.md)
+specifies this experimental baseline:** Vision-Exp IQ2/Q2 with
 vision enabled, 262,144-token context/output allowance, two hot sessions, one active
 request per Spark, a 349,525 MiB disk-KV budget and the full acceleration cache.
-The guide pins the engine and weights and records measured results and limits.
+The guide pins the engine and weights and describes acceptance checks and limits.
 It remains our recommendation until explicitly superseded; it is not an upstream
 endorsement or a profile automatically applied to Macs or registered servers.
-**Known reliability limits:** subsequent production use exposed a CUDA fault and
-an OOM restart on one Spark. The exact settings are preserved; they are not a
-long-context stability guarantee. Read the profile's incident update before adoption.
+**Known reliability limits:** CUDA faults and OOM conditions remain unresolved
+risks. The exact settings are preserved; they are not a long-context stability
+guarantee. Read the profile's caveats before adoption.
 
 Requires Node **22.22.2+**, running DS4 servers, and SSH for remote workers. Gateway runs on macOS or
 Linux. The optional click-to-open service scripts use macOS LaunchAgents.
@@ -395,6 +395,7 @@ without explicitly accepting that loss of routing history.
 npm run check
 npm test
 npm run privacy-check
+npm run privacy:test
 ```
 
 The Node unit/integration suite exercises local HTTP fixtures—not GPUs. Coverage includes
@@ -416,10 +417,9 @@ Pool-size tests cover 1, 2, 3, 6, 12 and 20 fixture workers. These are validatio
 points, not configured limits or a claim of unlimited-scale load testing.
 GitHub Actions runs checks and tests on Linux and macOS.
 
-Real two-Spark acceptance also covered streaming, reasoning, vision, tool round
-trips, 145K-token cold/warm requests and disk restoration. These are observations
-from one deployment, not a portable performance guarantee. A 100-hour stream soak,
-every client integration and every hardware/reboot combination are not certified.
+Validate streaming, reasoning, vision, tools, representative long-context work and
+real disk restoration on each deployment. Local fixture tests do not certify a
+100-hour stream soak, every client integration or every hardware/reboot combination.
 
 ## Security and privacy
 
@@ -428,6 +428,10 @@ configuration, production configuration, private network addresses, conversation
 logs, model files, KV data or credentials are distributed.** Local configuration
 and runtime output are ignored. A privacy check catches accidentally staged files
 and common private data patterns; it is a guardrail, not a completeness guarantee.
+Use `npm run hooks:install` to enable the repository-local pre-commit check.
+The [publication policy](docs/publication-policy.md) separates reusable public
+guidance from private deployment histories; exact staged blobs are checked and
+the installer preserves existing custom hooks. New clones must opt in.
 
 Treat this as a trusted-operator tool, not a multi-tenant security boundary. Keep
 the inference listener behind an access boundary if exposing it beyond loopback.

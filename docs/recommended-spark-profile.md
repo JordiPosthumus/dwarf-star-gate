@@ -1,27 +1,24 @@
 # Recommended DGX Spark configuration
 
-**Current recommendation, verified 2026-09-02.** This is the DS4 configuration
-we run on both DGX Sparks behind Dwarf Star Gate. It remains this project's
-recommended Spark baseline until we explicitly replace it with a newly tested
-profile. Following a moving engine branch or swapping weights is not the same
-profile. This is a measured deployment recommendation, not a claim of universal
-optimality or an upstream certification.
+**Experimental recommended baseline.** These exact settings remain this project's
+Spark recommendation until explicitly superseded by a newly tested profile.
+Following a moving engine branch or swapping weights is not the same profile.
+This is reusable configuration guidance, not a description of a particular fleet,
+a claim of universal optimality or an upstream certification.
 
-**Runtime reliability update, later on 2026-09-02:** this remains the deployed
-profile, but a production Spark subsequently suffered a fatal CUDA execution
-error and, after recovery, an OOM-killed model process during a roughly 118K-token
-prefill. The precise causes are unresolved. Earlier successful boundary tests
-remain valid observations, **not evidence that this profile is OOM-proof or
-long-context stable**. No context, output, cache or acceleration setting has been
-silently reduced. Root-cause investigation and representative sustained-workload
-validation are the first operational priorities; see the
+**Known reliability limits:** fatal CUDA execution errors and OOM conditions have
+been observed with this baseline; their precise causes remain unresolved. Passing
+boundary checks is **not evidence that the profile is OOM-proof or long-context
+stable**. No configuration reductions are implied by this documentation. Diagnose
+faults and validate representative sustained work before relying on stronger
+guarantees; see the
 [maintenance review](maintenance-review-2026-09-02.md).
 
 The engine and model artifacts are the work of
 [Salvatore “antirez” Sanfilippo and DS4 contributors](https://github.com/antirez/ds4).
 Start with [their documentation](https://github.com/antirez/ds4/blob/main/README.md).
 DSG supplies routing and observation, not inference kernels or model weights.
-Our deployment uses the pinned downstream fork below; it is **not** an official
+This baseline uses the pinned downstream fork below; it is **not** an official
 Antirez release or endorsement. See [credits](../CREDITS.md).
 
 ## At a glance
@@ -46,20 +43,20 @@ different native context/cache settings; registering them does not apply this
 profile. DSG's common pool context must fit every enabled server.
 
 This explicitly supersedes the earlier 153,600-context / 4,096-prefill profile.
-The only engine-setting changes are context, default output allowance and cold
+The differences are context, default output allowance and cold
 checkpoint maximum to 262,144, and prefill chunk size to 2,048. The smaller prefill
 workspace makes room for the larger contexts without capping the acceleration
 cache. No matched workload A/B test establishes identical or optimal prefill
-speed. See the measurements and caveats below.
+speed. See the acceptance requirements and caveats below.
 
 ## Pinned engine and weights
 
-Engine: [the deployed fork revision
+Engine: [the pinned fork revision
 `552f6b834ce0b5c53b25a89a8468df5fdd1804de`](https://github.com/JordiPosthumus/ds4/commit/552f6b834ce0b5c53b25a89a8468df5fdd1804de).
-Both Sparks use this revision. Build with **`make -j8 cuda-spark`**: the pinned
+Build with **`make -j8 cuda-spark`**: the pinned
 [Makefile](https://github.com/JordiPosthumus/ds4/blob/552f6b834ce0b5c53b25a89a8468df5fdd1804de/Makefile)
-selects the GB10 `sm_121` target with `sm_121a` code generation. Both installations
-currently have CUDA 13.0, `nvcc` V13.0.88. Build prerequisites and platform setup
+selects the GB10 `sm_121` target with `sm_121a` code generation. The reference
+toolchain is CUDA 13.0, `nvcc` V13.0.88. Build prerequisites and platform setup
 remain the engine's responsibility; this gateway does not install CUDA.
 
 For a **new, separate checkout**, after installing the engine's build prerequisites:
@@ -86,25 +83,17 @@ Put them in the checkout's `gguf/` directory and verify SHA-256 before use:
   — `DeepSeek-V4-Flash-Vision-Encoder.gguf`, **932,857,760 bytes**.
   SHA-256: `00cd4d81a435364967400a95c42703343e11da6b6f18c5143fe76e1d94d5035f`.
 
-These hashes were verified during deployment and match public artifact metadata
-checked on the verification date. We did not reread the large live weight files
-while publishing this page. Respect the model's own license and usage terms.
-
-The locally built, running `ds4-server` binaries have different SHA-256 values:
-
-- Spark A: `c9e093f9e9095630999839926384b5679f4dc7c4f247c5e10de2238f2480069f`
-- Spark B: `8890235e9339337c1eb6cfc706d9df1e0d0fcad2a293c06cca1b3aabb078a307`
-
-They share the source pin; this is not a claim of bit-for-bit reproducible builds.
-Record the hash of your own build and validate it on your machine.
+The hashes identify the pinned public artifacts, not private service enrollment.
+Respect the model's own license and usage terms. A source pin does not guarantee
+bit-for-bit reproducible binaries; record your own build fingerprint privately
+and validate it on your machine.
 
 ## Exact server launch profile
 
-The command below reproduces the effective options on both Sparks. Only filesystem
-paths are generalized: replace `/opt/ds4` with your staged checkout and
+The command below specifies the recommended options. Replace `/opt/ds4` with your staged checkout and
 `/var/lib/ds4/vision-q2` with a private, writable NVMe cache directory. Provision
-those paths first. Use a clean service environment: our live processes have **no
-`DS4_CUDA_WEIGHT_CACHE_MAX_*` override**, and no speculative-decoding flags.
+those paths first. This baseline uses a clean service environment with **no
+`DS4_CUDA_WEIGHT_CACHE_MAX_*` override** and no speculative-decoding flags.
 
 ```sh
 DS4_KV_REWIND_REUSE=0 \
@@ -129,10 +118,10 @@ DS4_PREFILL_TIMING=1 \
   --mixed-prefill-quantum 64
 ```
 
-The production wrapper also checks for missing artifacts, an occupied port and
-a conflicting GPU model container before starting; it refuses rather than
-stopping another workload. Do the equivalent for your installation. This profile
-was not validated alongside a second large model, video or music workload.
+Use a wrapper that checks for missing artifacts, an occupied port and conflicting
+GPU workloads before starting. It should refuse rather than stop another workload.
+Coexistence with another large model, video or music workload requires separate
+memory and contention validation.
 
 ### What these settings mean
 
@@ -166,19 +155,17 @@ was not validated alongside a second large model, video or music workload.
 
 ## Reboot persistence and gateway connection
 
-Our deployments use a systemd **user** service named `ds4-vision-q2.service`,
-enabled with user lingering so it can start without an interactive login. Its
-operational settings are `Type=simple`, `Restart=on-failure`, `RestartSec=10`,
+A systemd **user** service can run this profile; `ds4-vision-q2.service` is the
+example service name. Enable it with user lingering if it must start without an
+interactive login. Reference settings are `Type=simple`, `Restart=on-failure`, `RestartSec=10`,
 `TimeoutStopSec=300`, `KillSignal=SIGTERM`, `LimitNOFILE=1048576` and
 `WantedBy=default.target`. `WorkingDirectory` and `ExecStart` point at the staged
-installation and its checked launcher. Network-online ordering is configured;
-the wrapper separately checks that conflicting workloads are absent.
+installation and its checked launcher. Configure appropriate network-online
+ordering; separately check that conflicting workloads are absent.
 
 Verify reboot recovery on your own machine, including a real disk-cache restore.
-Our Spark B passed an actual reboot and subsequent text-cache/vision checks on
-the previous 153,600 profile. The 262,144 rollout uses the same enabled service and
-lingering mechanism. Service restarts are checked, but a fresh full-machine
-reboot of this larger-context profile is not claimed for either machine.
+Passing a service restart does not certify a full-machine reboot. Repeat the
+checks after context, model, engine or service-manager changes.
 
 In DSG, register each server **once**, through its SSH tunnel to port 8000. Use the
 [UI/CLI registration instructions](../README.md#operator-controls), keep stable
@@ -186,12 +173,12 @@ server IDs, and send a stable per-conversation affinity header. Registration
 checks compatibility and leaves the server paused until you enable it. It does
 not install the profile or modify the server.
 
-Our gateway model ID is `deepseek-v4-flash`. The common pool guarantee is configured
+Use model ID `deepseek-v4-flash` for this profile. The common pool guarantee is configured
 separately: apply `262144` in **Manage DS4 servers → Pool context limit** only after every enabled pool member
 supports it. DSG refreshes native worker metadata automatically, but does not
 automatically raise the configured pool guarantee. Follow
 [Context limits and rolling upgrades](context-limits.md), including persistence
-and separate client-metadata checks. The production routing settings are
+and separate client-metadata checks. Compatible example routing settings are
 `request_timeout_ms: 360000000` (100 hours), `queue_timeout_ms: 3600000` (1 hour),
 and `max_queued_per_node: 128`. These are timeout/admission settings, not proof
 of a 100-hour successful generation. Preserve reasoning, tools, vision and
@@ -200,78 +187,31 @@ For Linux engine timings, set `telemetry_service: "ds4-vision-q2.service"` with
 an SSH login able to read that user's journal. Direct clients bypass gateway
 accounting and should not be mistaken for additional gateway capacity.
 
-## Measured acceptance and limits
+## Acceptance requirements and limits
 
-These are **recorded deployment tests**, not promised speeds for every prompt.
-The larger-context rollout rechecked effective launch settings and binary identity;
-the large model artifacts are unchanged from the earlier hash verification.
-Dashboard screenshots elsewhere in the repo are synthetic, not evidence.
+Validate the exact build and hardware before enabling it for normal traffic.
+Keep detailed results privately; synthetic dashboard screenshots are not evidence.
 
-### 262,144-token profile
-
-| Check | Observed result |
+| Check | Required evidence |
 | --- | --- |
-| Two resident near-limit histories on Spark A | 262,040 prompt tokens each; both returned the requested EDGE response |
-| Resident switching at 260K on Spark A | 260,009 tokens reused in each history, with no disk reload; 852ms and 630ms end-to-end for one-token continuations |
-| Almost-cold long prefill on Spark A | 257,960 newly processed tokens after 2,048 cached; 434.012s, 594.36t/s including checkpoint pauses |
-| Long reasoning on Spark A | 250,029-token prompt; correct arithmetic/explanation; 219 output tokens at 10.49t/s decode |
-| Thinking continuation on Spark A | 260,284 cached tokens, 26 new prompt tokens; correct answer to a different arithmetic question; 195 output tokens |
-| Evicted 260K history on Spark A | 260,019 tokens reloaded from NVMe in 3,168ms; 9.968s total including eviction/save and generation |
-| Oversize admission on Spark A | 265,008-token prompt rejected with context_length_exceeded |
-| Spark A persistent-service checks | Reasoning and vision passed; an existing 143,360-token checkpoint restored after restart; a fresh 11,008-token prompt went from 13.416s cold to 1.396s with 10,240 tokens restored |
-| Two resident near-limit histories on Spark B | 262,008 prompt tokens each; first reused 143,360 tokens from an older checkpoint, second was fully cold |
-| Fully cold prefill on Spark B | 262,008 new tokens in 377.787s, about 693.5t/s; overall client time also included queueing behind the first request |
-| Hot switching on Spark B | 262,009 cached tokens per history, eight new prompt tokens each; 611ms / 563ms end-to-end, no disk reload |
-| Long reasoning on Spark B | 250,024 prompt / 115 output tokens; correct arithmetic; 245,760 tokens restored, 25.675s total |
-| Spark B persistent-service checks | Vision passed all five fields; old 143,360-token checkpoint restored; oversize 265,008-token prompt rejected; service enabled with lingering |
+| Context and resident capacity | Two independent near-limit histories, correct changed continuations and actual reused-token counts when switching |
+| Cold prefill | Explicitly measured reused versus newly processed tokens; enough client timeout for the complete request |
+| Disk reuse | A real evicted history restored from disk after churn/restart, with correct continuation and an observed disk-tier event |
+| Reasoning, vision and tools | Representative semantic checks, including new questions after reuse, not just a successful HTTP response |
+| Admission and cancellation | Native serialization, oversize rejection and verified backend behavior after client disconnect |
+| Memory and persistence | Warmed acceleration/KV memory behavior, swap/pressure observations, service restart and full reboot recovery |
 
-The first long-context client used a five-minute HTTP headers timeout and
-cancelled its requests. That client was corrected; those aborted attempts are
-not successful boundary tests. The completed Spark A 260K runs reused 217,088 and
-2,048 tokens respectively, so neither is labeled an entirely fresh cold 260K run.
+The baseline has been exercised with real inference and cache reuse, but it is
+not a portable speed or reliability guarantee. Near-limit repetitive fixtures can
+produce an old marker instead of a changed instruction; successful allocation or
+cached-token counts alone do not establish semantic correctness. This behavior
+requires targeted diagnosis rather than assuming every cache hit is correct.
 
-**Semantic caveat:** short nonthinking continuations of extremely repetitive 260K
-fixtures returned the previous OK instead of newly requested AGAIN/RESTORED.
-Later longer extensions returned EDGE correctly, and long thinking continuations
-answered new arithmetic correctly. The cause is unresolved. These capacity tests
-do not establish unchanged reasoning quality on arbitrary long coding workloads.
-
-**Memory remains tight and swap occurred.** Spark A's trial reported 9.10GiB of
-context buffers and 1.97GiB shared prefill workspace. Minimum sampled available
-memory after readiness was 4.896GiB. About 1,137MiB cumulative host swap-out and 957MiB
-swap-in occurred through one observation point; these are transferred pages, not
-unique bytes or exclusively model-process activity. No new runtime allocation
-failure or unintended restart was observed in that trial. Do not call it swap-free
-or infer long-duration stability from these checks.
-
-### Previous 153,600-token baseline — historical evidence
-
-The following older results establish the preceding deployment's behavior. They
-are not 262,144 benchmarks or a controlled speed comparison against the new profile.
-
-| Check | Observed result |
-| --- | --- |
-| Short warm text / reasoning on Spark A | About 17.7–17.8 generated tokens/s; complete xhigh stream with visible answer |
-| Vision on Spark A | All five fixture fields correct; about 17.4 generated tokens/s; vision also passed on Spark B and through DSG |
-| Near-limit cold prefill on Spark A | 145,009-token prompt; 181.23 s prefill, about 800 tokens/s |
-| Oversize admission on Spark A | 160,009-token prompt rejected before model execution |
-| Durable disk reuse | 143,360 cached tokens restored after resident churn and service restart; logs confirmed the disk tier |
-| Cold long prompt through DSG | 145,041 tokens; 185.03 s on Spark A, 179.38 s on Spark B |
-| Same-prompt repeats through DSG | 5.04 s / 4.35 s respectively, with 143,360 cached tokens |
-| One-active-request admission | Overlapping requests serialized at the model server; two Sparks could serve concurrently |
-| Gateway behavior | Affinity across gateway restart, tool round trip, vision, xhigh streams, cancellation and immediate recovery passed |
-
-Small output allowances in near-limit and vision fixtures were **test controls**,
-not settings promoted to the production launcher. These tests do not prove a
-full-context continuous completion, every possible vision input, or every client.
-
-**Historical memory observations:** in the preceding Spark A profile, minimum available memory was
-roughly 5.3–5.8 GiB. Trials with three or more hot slots encountered severe memory
-pressure/allocation failures, which is why the accepted profile uses two. Startup
-NVRM `NV_ERR_NO_MEMORY` warnings were observed on both machines; their precise
-allocator cause has not been established. The recorded gateway acceptance suite
-observed no new inference failure or unintended DS4 restart. That is not a claim
-of an error-free startup or an OOM-proof deployment.
+Memory pressure, swap, startup allocation warnings such as `NV_ERR_NO_MEMORY`, and fatal execution failures
+remain relevant risks. Do not infer swap-free operation or sustained reliability
+from readiness or a short successful canary. Increasing hot slots or colocating
+another model requires separate validation. No arbitrary capacity reductions are
+part of this guide.
 
 Before treating another machine/build as equivalent, verify its effective
 arguments/environment, artifact hashes, cold-to-warm **disk** hit, long-context

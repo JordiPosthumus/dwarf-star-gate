@@ -36,16 +36,16 @@ actual terminal-event implementations; they do not certify every client/version.
 - Example context matches the published 262,144-token Spark baseline. Operators
   must still configure the common capacity their own fleet supports; this changes
   neither existing private configs nor native model settings.
-- Spark profile retains exact settings and earlier measured results, but now leads
-  with the subsequent CUDA/OOM incidents and unproven sustained-workload stability.
+- Spark profile retains exact recommended settings and explicit CUDA/OOM and
+  sustained-workload caveats; deployment-specific measurements remain private.
 - Collector and recovery docs describe protocol-specific completion, unknown
   observation outcomes and quarantined re-registration accurately.
 
 ## Outstanding work, not hidden fixes
 
-1. **Backend reliability:** a production GB10 worker incurred a fatal CUDA error
-   and later an OOM during a roughly 118K-token prefill. Process restart and small
-   cache-hit checks do not establish the trigger or fix. Do not attribute this
+1. **Backend reliability:** CUDA execution faults and OOM conditions remain
+   unresolved reliability risks. Process restart and small cache-hit checks do
+   not establish the trigger or fix. Do not attribute a failure
    to a specific allocator, cancellation, cache corruption or another agent
    without correlated evidence. Preserve launcher/model/cache settings while
    investigating. Gateway isolation cannot repair the underlying model process.
@@ -62,11 +62,10 @@ actual terminal-event implementations; they do not certify every client/version.
    The first XGB artifact remains a smoke test, not an automatically improving
    routing model. Collect bounded local embeddings, refit independently, then
    validate tree count and compare against a fixed baseline before live promotion.
-5. **Operator/Genie UX:** current pause/remove logs lack caller attribution; the
-   Genie has no tools and its history is in memory. A quarantined worker's normal
-   UI Enable control may be disabled: use the documented verified-resume CLI
-   until a dedicated recovery control/evidence drawer is implemented. Endpoint
-   editing, durable activity, feedback and authorization modes remain planned.
+5. **Operator/Genie UX:** ordinary pause/remove logs lack caller attribution and
+   Genie assessments remain in memory. The later bounded recovery runner now
+   provides durable receipts and dedicated controls; see [recovery](worker-recovery.md).
+   Endpoint editing, persistent chat and feedback remain planned.
 6. **Restart and cancellation:** closing a gateway connection is not proof that
    the backend stopped computing. Service restarts, unresolved work and cache
    ownership need explicit checks before automatic retries or session relocation.

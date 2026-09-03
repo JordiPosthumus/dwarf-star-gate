@@ -10,6 +10,8 @@
     "recovery:test": "python3 -m unittest discover -s ds4-gateway -p 'recovery_systemd_test.py' -v",
     "check": "node scripts/check.mjs",
     "privacy-check": "node scripts/privacy-check.mjs",
+    "privacy:test": "node --test scripts/privacy.test.mjs",
+    "hooks:install": "node scripts/install-hooks.mjs",
     "predictor:test": "uv run --locked --project predictor python -m unittest discover -s predictor -v",
     "start": "node ds4-gateway/gateway.mjs config.local.json",
     "ui": "node ds4-gateway/dashboard.mjs config.local.json",

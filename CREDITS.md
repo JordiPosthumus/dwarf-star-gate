@@ -9,7 +9,7 @@ without it.
 
 The original project provides the native inference engine and its hardware
 backends, prompt handling, model-serving implementation and cache machinery.
-Our gateway sends requests to those servers and observes their results; it does
+DSG sends requests to those servers and observes their results; it does
 not create the intelligence or implement their token-generation kernels.
 The performance numbers shown in our UI are measurements of the worker engine,
 not a claim that Dwarf Star Gate invented that performance.

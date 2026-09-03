@@ -17,10 +17,9 @@ This does not fix the CUDA defect or implement launchd/container recovery. The
 next reliability/data priority is request-to-engine attribution with backend
 process epochs, followed by the embedding collection slice already specified below.
 
-**Live deployment checkpoint:** the [two-Spark canary record](recovery-canary-2026-09-03.md)
-documents the maintainer's completed cutover, real cache checks and explicit
-automatic-recovery opt-in. That deployment receipt does not enable recovery on
-another installation or promote any of the prediction/embedding work below.
+Use the [recovery validation procedure](recovery-validation.md) before enabling
+an enrolled service. Deployment receipts and policy activation belong in private
+operator records, not this public roadmap.
 
 | Order | Work | Exit evidence |
 | --- | --- | --- |
@@ -241,9 +240,9 @@ not yet verified**. Matching API model names alone do not establish compatibilit
 
 ### Agreed direction: compare four paths to completion
 
-**Planning decision — 2026-09-02:** long-context prefill is expensive on this
-fleet. A disk or remotely fetched checkpoint may be much cheaper than repeating
-it. A hot cache is a useful advantage, not an absolute routing rule. Choose the
+Long-context prefill can be expensive. A disk or remotely fetched checkpoint may
+be much cheaper than repeating it. A hot cache is a useful advantage, not an
+absolute routing rule. Choose the
 lowest expected completion time among feasible **server + cache-source** pairs:
 
 1. **Wait for the hot server:** its queue/residual work + new-suffix prefill +
@@ -266,7 +265,7 @@ largest remote checkpoint. No route is automatically best because it is "hot,"
 a fleet-wide catalog of compatible snapshots. Fetch or selectively replicate a
 completed immutable snapshot to the destination's local storage when measured
 savings justify it. The catalog can be centralized without making one central
-disk or the M2 a mandatory bulk-data bottleneck. Do not mirror every update to
+disk or the conductor host a mandatory bulk-data bottleneck. Do not mirror every update to
 every server by default. No shared mutable cache directory is being enabled.
 
 The source review supports investigation, not a portability claim:

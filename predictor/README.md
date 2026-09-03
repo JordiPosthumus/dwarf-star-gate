@@ -188,16 +188,18 @@ unknown workers, time/group splits, save/reload equality and checksum failures.
 CI uses synthetic fixtures only. Real data, inventory and fitted artifacts remain
 private and Git-ignored; the public privacy check rejects those files if staged.
 
-## First real-data smoke result — 2026-09-02
+## Interpreting an experiment
 
-The initial private experiment fitted six successful requests across two GB10
-workers (three each). Its session-disjoint chronological evaluation retained two
-training rows and two holdout rows, purging two others. Held-out MAE was **162.6
-seconds**, versus **149.1 seconds** for the training-median baseline. Save/reload
-predictions matched exactly. A registered Mac had no eligible labels in that
-snapshot. These are plumbing checks, **not evidence of improved routing**; the
-candidate remains unvalidated and disconnected from the gateway. Later collector
-data must be evaluated separately, not presented as part of this frozen result.
+Fit/save/reload success validates plumbing, not prediction quality. Read the
+candidate's private report: eligible rows, independent session groups, excluded
+evidence, hardware coverage, purged training rows and held-out error versus the
+median baseline. A model worse than its baseline must not be promoted. A tiny
+holdout is inconclusive even when the model happens to win.
+
+Each candidate describes its frozen input snapshot. Later collection does not
+update that model automatically. Keep numerical operational results, inventories
+and fitted bundles private; public documentation explains reproducible procedures
+and synthetic tests, not the state of an individual's experiment.
 
 Operational failures are excluded from the successful-service-time target, but
 must remain visible in the collector and operations UI. In particular, a fatal

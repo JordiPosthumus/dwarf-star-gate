@@ -16,6 +16,7 @@ jobs:
           node-version: '22.22.2'
       - run: npm run check
       - run: npm run privacy-check
+      - run: npm run privacy:test
       - run: npm test
       - run: npm run recovery:test
   predictor:

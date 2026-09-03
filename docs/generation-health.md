@@ -84,26 +84,23 @@ healthy response is never sufficient evidence. Stream replay, kernel repair and
 launchd/container recovery are not implemented. The [broader powers plan](genie-powers-plan.md)
 remains a roadmap for additional capabilities.
 
-## Incident evidence — 2026-09-02
+## Failure patterns to diagnose
 
-A production GB10 worker reported an illegal memory access during a 103,132-token
-prefill, after the last reported checkpoint at 38,912 tokens. The kernel recorded
-an out-of-range-address exception. Later reset and resumed-prefill errors came
-from the same poisoned process while model-list probes continued succeeding.
-Restarting that process with unchanged settings restored two test conversations;
-each subsequent continuation reused 3,831 of 3,845 prompt tokens. This proves
-small-workload recovery, **not the root cause or a long-context kernel fix**.
+A fatal CUDA execution error can leave the process alive and its model-list
+endpoint responsive while later prefill/reset operations fail. A service manager's
+`Restart=on-failure` cannot repair that condition if the process never exits.
+Quarantine must therefore depend on generation evidence, not only reachability.
 
-A second Spark later hit illegal memory access while extending a 37,239-token
-checkpoint toward a 43,997-token prompt. The service remained alive, so its
-`Restart=on-failure` policy did not recover it; DSG quarantine prevented further
-dispatch. Manual recovery retained the launcher/environment/service hashes and
-disk cache. The failed process encountered an OOM event during shutdown after
-reporting that its RAM checkpoint could not be staged. The replacement passed
-two cold conversations and both warm continuations (2,199 of 2,211 prompt tokens
-reused each, about 0.4 seconds per continuation), then DSG's recovery marker and
-a routed gateway request. This is another recovery observation, **not a fix for
-the recurrent CUDA fault or a full-context reliability certification**.
+Collect the current service invocation and bounded accelerator/kernel evidence
+privately. An illegal address, allocation failure and an OOM during shutdown are
+different observations; their causal relationship must not be guessed from a
+generic checkpoint error. Saving resident state during shutdown can itself need
+memory. Preserve disk caches and configuration while investigating.
+
+After a justified restart, require correct generation and real cold-to-warm
+reuse before reinstatement. A small successful check is not a long-context kernel
+fix. Keep machine-specific chronology and measurements outside the public repo;
+contribute minimal reproductions and sanitized failure mechanisms instead.
 
 See [NVIDIA's CUDA runtime error documentation](https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html)
 for the process-relaunch requirement after `cudaErrorIllegalAddress`.

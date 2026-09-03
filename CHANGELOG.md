@@ -10,6 +10,13 @@
 
 ## Unreleased
 
+- Generalized recovery/profile/incident and predictor documentation; detailed
+  operational records stay private. Exact recommended settings and known risks
+  remain documented. Current-tree cleanup does not erase previous Git history.
+- Optional staged-content pre-commit privacy hook, non-destructive installer,
+  deployment-narrative heuristics and real-Git regression tests in CI. Human
+  review is still required, particularly for prose, images and prior history.
+
 - Recovery worker rows show current state separately from historical action
   receipts; resuming after a successful canary no longer looks like a stale pause.
 

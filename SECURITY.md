@@ -22,7 +22,8 @@ development line; no long-term-support releases or response-time SLA are promise
   default. Explicit `ui_worker_management` enables register/enable/drain/remove
   and pool-context controls through
   the private Unix socket, requiring exact same-origin JSON requests and a
-  per-process CSRF token. No model launch/stop/settings controls exist. Do not
+  per-process CSRF token. Separately enrolled systemd-user recovery permits a
+  bounded exact-service restart; no arbitrary launch/settings controls exist. Do not
   expose this operator UI through a public or LAN reverse proxy.
 - The management view includes local endpoints/SSH aliases, but diagnostic exports
   exclude them and the CSRF token. Any process with the operator's local authority
@@ -56,13 +57,18 @@ Generation quarantine records structured fault categories, not arbitrary error
 messages. The SSE observer is bounded; discarded oversized events are explicitly
 unknown, not evidence of successful generation or a reason alone to quarantine.
 The optional collector stores numerical/categorical evidence locally, not prompt
-text or embeddings. The optional Genie receives a sanitized briefing and has no
-control tools; its in-memory assessments are not action receipts. Offline XGBoost
+text or embeddings. The optional Genie receives a sanitized briefing and can
+request only separately authorized, independently checked recovery. It has no
+shell or control credentials; its in-memory assessments are not action receipts. Offline XGBoost
 artifacts and hardware inventory also remain private and are excluded from Git.
 
 Source-level privacy checks catch common mistakes but cannot prove absence of all
 secrets or identifying data. Treat screenshots and binary metadata as reviewable
 data too. Published screenshots must use the isolated synthetic-data demo.
+The [publication policy](docs/publication-policy.md) also excludes personal
+deployment narratives and private experiment reports. Install the local
+pre-commit hook with `npm run hooks:install`; staged-content checks and CI are
+guardrails, not complete prose review or removal of previously published history.
 
 Upstream engine security issues belong with
 [Antirez's original DS4 project](https://github.com/antirez/ds4), subject to its

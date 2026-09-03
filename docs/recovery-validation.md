@@ -1,0 +1,64 @@
+# Validate service recovery on your deployment
+
+This is a reusable acceptance procedure, not a record of anyone's fleet or a
+claim that recovery is enabled on a particular installation. Follow
+[bounded worker recovery](worker-recovery.md) for enrollment and supported adapters.
+
+## Before the test
+
+1. Back up the private service/gateway configuration and current routing state.
+   Record exact model, executable, configuration and service identities privately.
+2. Confirm exclusive DSG ownership of the endpoint. Direct clients are not visible
+   to the gateway and must not be interrupted by an uncoordinated restart.
+3. Leave automatic recovery off initially. Drain the selected worker and wait for
+   both its active request and queue to empty. Keep other workers available.
+4. Confirm the enrolled helper reports the expected machine/profile and that the
+   service PID owns the loopback listener. Unknown identities stop the test.
+
+## Run the operator-only canary
+
+```sh
+node ds4-gateway/recovery-control.mjs status
+node ds4-gateway/recovery-control.mjs canary WORKER_ID
+node ds4-gateway/recovery-control.mjs status
+```
+
+The CLI uses `config.local.json`, or `DWARF_GATE_CONFIG`. Acceptance requires:
+
+- Exactly one restart of the enrolled service and a verified new invocation.
+- Unchanged model/settings and advertised context. No cache deletion or capability
+  reduction to make the check pass.
+- Two synthetic conversations starting cold, then two warm continuations, with
+  exact requested answers, normal completion and numerical reused-token evidence.
+- A durable verified receipt. An accepted request, new PID or model-list response
+  alone is insufficient. Lost acknowledgment requires observation, not resubmission.
+- The worker remains paused after the canary until the operator explicitly resumes
+  it. Current routing state and the historical receipt are separate.
+
+The built-in checks use approximately 2,200-token prompts, a 32-token response
+allowance and disabled thinking **for these synthetic requests only**. They do
+not change normal server/client defaults. The verifier requires cold usage near
+zero and substantial reuse of each continuation's original prefix; see
+[`recovery-verify.mjs`](../ds4-gateway/recovery-verify.mjs) for exact assertions.
+
+## Finish the rollout
+
+After successful verification, resume the worker, test a real request through
+DSG, and confirm the configured pool guarantee and existing session affinity.
+Enable automatic recovery only after validating each enrolled service. Check
+that policy, receipts and operator pauses survive an agreed idle gateway restart.
+Canaries count toward the normal per-worker recovery cooldown; enabling the policy
+does not bypass it. Unsupported installs remain manual recovery.
+
+Keep detailed timestamps, machine identities, exact runtime measurements and
+operator actions in private deployment notes, outside the public checkout.
+Public contributions should describe the procedure, synthetic regression evidence
+and known limitations. See the [publication policy](publication-policy.md).
+
+## Limits of this evidence
+
+Small cold/warm checks prove only the behavior exercised. They do not inject a
+CUDA fault, certify full-context or vision stability, establish every cache tier,
+fix an accelerator defect, or repair an already failed client stream. Validate
+long-context work, disk restoration, cancellation, service-manager behavior and
+fault handling separately before making stronger claims.

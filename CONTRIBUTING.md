@@ -9,13 +9,16 @@ Engine changes should follow [its own contribution guide](https://github.com/ant
 1. Explain the problem and expected behavior in an issue or pull request.
 2. Use Node 22.22.2 or newer. The gateway/dashboard need no dependency installation;
    the optional predictor uses its separate locked Python environment.
-3. Run `npm run check`, `npm test`, and `npm run privacy-check`.
+3. Install the local hook with `npm run hooks:install`. Run `npm run check`,
+   `npm test`, `npm run privacy-check`, and `npm run privacy:test`.
 4. Add a regression test for changed behavior; use fixture workers, not live GPUs.
 5. Update the README when commands, guarantees or limitations change.
 
 The privacy check examines tracked/staged files and working copies. Stage newly
 added files before running it so they are included. Review the complete staged
-diff manually too. CI is a guardrail, not proof that a change is safe in production.
+diff manually too. Follow the [publication policy](docs/publication-policy.md):
+deployment histories and experiment reports stay private even if they contain no
+password. CI is a guardrail, not proof that a change is safe in production.
 
 ## Preserve the contract
 
@@ -23,9 +26,9 @@ diff manually too. CI is a guardrail, not proof that a change is safe in product
 - Do not replay requests automatically after ambiguous upstream failures.
 - Preserve stable worker IDs, durable affinity and per-worker FIFO admission.
 - Keep the dashboard read-only by default. Opt-in local server-routing controls
-  must retain the same-origin/CSRF and private-socket boundary; model start/stop
-  and model-setting operations are not current UI capabilities. Future recovery
-  work must follow the reviewed action-runner contract, not add arbitrary commands.
+  must retain the same-origin/CSRF and private-socket boundary. Separately enrolled
+  recovery permits only the independently guarded exact-service action, not
+  arbitrary model launches, shell commands or setting changes.
 - Missing measurements must remain unknown. Do not label a disk hit as a cold miss.
 - Keep startup/update failures out of live inference. Test UI assets as a complete
   bundle and reload only the dashboard when promoting presentation changes.

@@ -11,4 +11,5 @@ function walk(dir) {
 }
 walk('ds4-gateway'); walk('scripts'); walk('examples');
 for (const f of fs.readdirSync('.').filter(f=>f.endsWith('.sh'))) execFileSync('/bin/bash',['-n',f],{stdio:'inherit'});
+execFileSync('/bin/sh',['-n','.githooks/pre-commit'],{stdio:'inherit'});
 console.log('JavaScript and shell syntax checks passed.');
