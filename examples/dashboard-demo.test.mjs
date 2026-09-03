@@ -19,7 +19,9 @@ test('public demo has synthetic mixed servers, current panels and no promoted mo
   assert.equal(s.gateway.dataset.embedding_collection.dimensions,384);
   assert.ok(s.gateway.predictor.models.every(m=>m.active_model_id===null));
   assert.equal(s.gateway.predictor.placement,false);
+  const registry=await get('/api/workers');assert.equal(registry.queued_relocation.automatic,true);assert.equal(registry.queued_relocation.offers.length,1);
   const g=await get('/api/genie');assert.match(g.reports[0].text,/Synthetic demonstration/);
+  assert.equal(g.last_served_by,'dedicated');
   assert.ok(g.ticker.entries.every(e=>e.text.startsWith('Demo:')));
   const a=await get('/api/analytics');assert.equal(a.demo,true);
   assert.deepEqual(a.model_series.map(s=>s.stage),['admission','upload','embedded','remaining']);
@@ -30,6 +32,9 @@ test('demo controls affect only in-memory fixtures and refuse recovery/training'
   assert.equal((await post('/api/workers/drain',{workers:['mac-ultra']})).status,200);
   assert.equal((await get('/api/workers')).workers[2].drained,true);
   assert.equal((await post('/api/workers/resume',{workers:['mac-ultra']})).status,200);
+  const registry=await get('/api/workers'),offer=registry.queued_relocation.offers[0];
+  const moved=await post('/api/workers/relocate',{request_id:offer.request_id,source:offer.source,destination:offer.destination,evidence_id:offer.evidence_id});
+  assert.equal(moved.status,200);assert.equal((await moved.json()).dispatch_state,'not_dispatched');assert.equal((await get('/api/workers')).queued_relocation.offers.length,0);
   assert.equal((await post('/api/workers/predictor',{action:'train'})).status,400);
   assert.equal((await post('/api/workers/recover',{worker_id:'sparkA'})).status,400);
   const fresh=await demo(t);assert.equal((await fresh.get('/api/workers')).workers[2].drained,false);

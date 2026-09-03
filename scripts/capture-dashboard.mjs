@@ -55,6 +55,9 @@ try {
   await page.waitForFunction(()=>document.getElementById('queue-timeout-current').textContent.includes('20,000'));
   await page.reload();await page.locator('#worker-management summary').click();await page.locator('#queue-timeout-form').waitFor();
   assert.equal(await page.locator('#queue-timeout-input').inputValue(),'20000');
+  assert.match(await page.locator('#relocation-controls').innerText(),/Safe queued handovers/);
+  assert.equal(await page.locator('#relocation-offers button').count(),1);
+  assert.match(await page.locator('#relocation-offers button').getAttribute('title'),/warm cache/);
   await page.locator('#worker-management').screenshot({path:path.join(output,'worker-management.png'),animations:'disabled'});
   await page.locator('#worker-management summary').click();
   await page.waitForFunction(()=>document.querySelectorAll('.device').length===3&&document.querySelectorAll('#analytics-chart circle').length>0);

@@ -46,7 +46,7 @@ const dataset={enabled:true,written:4200,bytes:18*1048576,pending:0,dropped:0,fi
   embedding_collection:{enabled:true,ready:true,completed:308,observed:312,pending:0,failed:0,dropped:0,missing:4,last_duration_ms:24,
     model:'all-MiniLM-L6-v2',revision:'demo-only',dimensions:384}};
 const genie={enabled:true,busy:false,source:'primary',memory,
-  status(){return {configured:true,enabled:this.enabled,busy:false,source:this.source,fallback_available:true,mode:'bounded-recovery',predictor_supervision:true,last_check:now-60000,memory:memory?{...memory.status(),...memory.retrieve(snapshot)}:null,
+  status(){return {configured:true,enabled:this.enabled,busy:false,source:this.source,fallback_available:true,last_served_by:'dedicated',mode:'bounded-recovery',predictor_supervision:true,last_check:now-60000,memory:memory?{...memory.status(),...memory.retrieve(snapshot)}:null,
     reports:[{id:'synthetic-review',time:now-60000,evidence_at:now-62000,source:'demo',text:'Synthetic demonstration, not a live assessment. One request is waiting at its session home while the Mac is idle. That preserves cache locality; it does not prove the fastest completion time. Compare warm-home wait against measured cache acquisition elsewhere before changing placement. The candidate models are still shadow-only.',actions_taken:[]}],
     ticker:{state:this.enabled?'ready':'off',evidence_at:now-62000,entries:[
       {severity:'warning',text:'Demo: one request is waiting at a busy session home.',recommendation:'Compare its warm-cache wait with idle-server acquisition cost.'},
@@ -65,9 +65,11 @@ const throughput=new FleetThroughput();
 for(let i=0;i<30;i++)throughput.accept({schema:1,kind:'finish',run_id:'demo',request_id:`demo-usage-${i}`,node:workers[i%3].id,
   time:new Date(now-(i<12?i*250000:7200000+(i-12)*180000)).toISOString(),outcome:'complete',
   usage:i===0?null:{completion_tokens:i<12?6200+i*100:8500,prompt_tokens:60000,cached_tokens:54000}});
+const relocation={schema:1,automatic:true,automatic_scope:'first_dsg_request_or_unaffined',completed:2,rejected:0,offers:[{schema:1,evidence_id:'d'.repeat(64),request_id:'12345678-1234-4234-8234-123456789abc',source:'sparkA',destination:'mac-ultra',waiting_seconds:84,affinity:'existing',cache_locality:'unknown',automatic:false}]};
 const snapshot = { version:1,demo:true,time:now,started:now-900000,read_only:false,worker_management:true,gateway_at:now,gateway_error:null,telemetry_error:null,
-  gateway:{model:'deepseek-v4-flash',context_length:262144,queue_timeout_ms:72000000000,total:3,healthy:3,available:3,active:2,queued:1,draining:false,workers,dataset,predictor,recovery},devices,events };
-const registry=()=>({model:'deepseek-v4-flash',minimum_context:snapshot.gateway.context_length,context_limit_control:true,context_limit_source:'saved',queue_timeout_ms:snapshot.gateway.queue_timeout_ms,queue_timeout_control:true,queue_timeout_source:'saved',workers,recovery});
+  gateway:{model:'deepseek-v4-flash',context_length:262144,queue_timeout_ms:72000000000,total:3,healthy:3,available:3,active:2,queued:1,draining:false,workers,dataset,predictor,recovery,
+    continuity:{patient_wait:true,queued_relocation:true,automatic_relocation:true,automatic_relocation_scope:'first_dsg_request_or_unaffined',relocation:{completed:2,rejected:0,offers:1}}},devices,events };
+const registry=()=>({model:'deepseek-v4-flash',minimum_context:snapshot.gateway.context_length,context_limit_control:true,context_limit_source:'saved',queue_timeout_ms:snapshot.gateway.queue_timeout_ms,queue_timeout_control:true,queue_timeout_source:'saved',workers,recovery,queued_relocation:relocation});
 if(agentHold)Object.assign(workers[2],{drained:true,operator_paused:false,holds:[{id:'demo-hold',owner_id:'test-agent',reason:'<DS4 compatibility test>'}]});
 if(quarantinedWorker)Object.assign(workers[2],{is_healthy:false,quarantine:{reason:'repeated_inference_failures',at:new Date(now-600000).toISOString()}});
 return createDashboard(()=>({...snapshot,time:Date.now(),gateway_at:Date.now(),
@@ -85,6 +87,11 @@ return createDashboard(()=>({...snapshot,time:Date.now(),gateway_at:Date.now(),
       if(Object.keys(input).sort().join(',')!=='expected_queue_timeout_ms,queue_timeout_ms'||!Number.isSafeInteger(input.queue_timeout_ms)||input.queue_timeout_ms<1)throw new Error('Invalid queue allowance');
       if(input.expected_queue_timeout_ms!==snapshot.gateway.queue_timeout_ms)throw new Error('Queue allowance changed');
       snapshot.gateway.queue_timeout_ms=input.queue_timeout_ms;
+    }else if(action==='relocate') {
+      const offer=relocation.offers[0];
+      if(!offer||Object.keys(input).sort().join(',')!=='destination,evidence_id,request_id,source'||['destination','evidence_id','request_id','source'].some(k=>input[k]!==offer[k]))throw new Error('Synthetic handover offer changed');
+      relocation.offers=[];relocation.completed++;workers[0].queued=0;workers[2].load=1;
+      return {state:'relocated',schema:1,request_id:offer.request_id,source:offer.source,destination:offer.destination,actor:'operator',waiting_ms:offer.waiting_seconds*1000,dispatch_state:'not_dispatched',body_replayed:false,deadline_preserved:true,cache_locality:'unknown'};
     }else if(action==='context') {
       if(input.expected_context_length!==snapshot.gateway.context_length)throw new Error('Pool context changed; refresh before applying');
       if(!Number.isSafeInteger(input.context_length)||input.context_length<=0)throw new Error('Enter a positive whole token count');

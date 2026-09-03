@@ -8,6 +8,8 @@ screenshots, benchmark results, a live incident report or a promoted model.
   activity, speeds, requested thinking, hourly fleet throughput and cache counters.
 - `overview-mobile.png`: the compact status row at 390px, including hourly output,
   peak, completed requests and prompt reuse.
+- `worker-management.png`: private fleet controls, the 20,000-hour queue allowance
+  and one synthetic exact queued-handover offer with its cache-locality warning.
 - `dashboard-genie.png`: local collection/embedding status and an open assessment.
 - `dashboard-cache-and-requests.png`: stage-specific XGB chart, candidate lifecycle,
   recipe selector, calibration skip status, cache calculator, notebook/continuity
