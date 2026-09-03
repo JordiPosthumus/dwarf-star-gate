@@ -109,6 +109,10 @@ test('excluded routing states are explicit; quarantine offers checked readmissio
   assert.equal(state({...q,quarantine:null,drained:true,operator_paused:true}).button,'Resume routing');
   assert.equal(state({...q,quarantine:null,drained:true,operator_paused:true}).blocked,false,'fresh probe may restore a previously unavailable paused server');
   const ready={...q,quarantine:null,is_healthy:true};assert.equal(state(ready).button,'Pause routing');assert.equal(state(ready).excluded,false);
+  const compact=markup(ready);assert.match(compact,/class="worker-routing"/);assert.match(compact,/data-action="drain"/);assert.match(compact,/<svg/);
+  assert.match(compact,/data-tooltip="ROUTING ENABLED[^\"]*New requests may use this server[^\"]*admitted requests finish/);
+  assert.match(compact,/aria-label="ROUTING ENABLED/);assert.doesNotMatch(compact,/<p(?:\s|>)|<strong|Pause routing<\/button>/);
+  const paused=markup({...ready,drained:true,operator_paused:true});assert.match(paused,/data-action="resume"/);assert.match(paused,/operator paused gateway routing/);
   assert.equal(state(ready,{stale:true}).action,null);assert.ok(!markup(ready,{controls:false}).includes('<button'));
   assert.ok(!markup({...q,holds:[{owner_id:'<script>evil</script>'}]}).includes('<script>'));
   assert.match(markup({...q,holds:[{owner_id:'<script>evil</script>'}]}),/&lt;script&gt;/);
@@ -116,6 +120,9 @@ test('excluded routing states are explicit; quarantine offers checked readmissio
   assert.ok(html.includes('id="routing-summary"'));assert.ok(html.indexOf('id="routing-message"')>html.indexOf('</details>'));
   assert.match(source,/\$\('devices'\)\.addEventListener\('click',handleWorkerClick\)/);
   assert.match(source,/Verify and readmit.*small test response/);
+  const css=fs.readFileSync(new URL('./ui/brand.css',import.meta.url),'utf8');
+  assert.match(css,/\.device-status\{display:flex/);assert.match(css,/\.routing-toggle\{[^}]*width:29px;height:29px/);
+  assert.match(css,/content:attr\(data-tooltip\)/);assert.doesNotMatch(css,/\.worker-routing\{margin:/);
 });
 
 test('routing control updates preserve focused buttons until state changes and refocus the replacement',()=>{
