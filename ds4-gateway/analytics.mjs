@@ -75,6 +75,7 @@ export class PredictionEvidence {
     const valid=[...this.requests.values()].filter(r=>!r.invalid && !r.observer);
     const rows=valid.filter(r=>r.dispatch).sort((a,b)=>b.dispatch.sequence-a.dispatch.sequence).slice(0,this.maxResults).reverse();
     const series=new Map();for(const r of rows)for(const [key,p] of r.models){if(!series.has(key))series.set(key,{id:p.id,kind:p.kind,stage:p.stage,rows:[]});series.get(key).rows.push({node:r.node,at:p.at,experimental:p.experimental,predicted_service_ms:p.seconds*1000,service_ms:r.finish?.eligible?Math.max(0,r.finish.service_ms-(p.kind==='remaining'?p.elapsed_s*1000:0)):null,service_state:!r.finish?'pending':r.finish.eligible?'complete':'excluded'});}
+    for(const [key,s] of series){s.first_forecast_at=Math.min(...s.rows.map(r=>r.at));for(const r of rows){if(r.models.has(key)||r.at<s.first_forecast_at)continue;const eligible=!!r.finish?.eligible&&(s.kind!=='remaining'||r.finish.service_ms>=30000);s.rows.push({node:r.node,at:r.at,predicted_service_ms:null,service_ms:s.kind==='remaining'?null:r.finish?.service_ms??null,forecast_eligible:eligible,service_state:!r.finish?'pending':eligible?'complete':'excluded'});}}
     return {source:'historical_baseline',validation:'unvalidated',prediction_point:'admission',last_event_at:this.lastEvent,
       model_series:[...series.values()].slice(-32),
       window_limit:this.maxResults,rows:rows.map(r=>({node:r.node,at:r.dispatch.at,queue_ms:r.dispatch.queue_ms,

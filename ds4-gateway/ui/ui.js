@@ -36,9 +36,9 @@ function telemetryStatus(d) {
 function analyticsMetrics(snapshot,metric='queue',worker='') {
   const finite=x=>Number.isFinite(x)&&x>=0;
   const rows=(snapshot?.rows||[]).filter(r=>!worker || r.node===worker);
-  const eligible=rows.filter(r=>metric==='queue'?finite(r.queue_ms)&&r.queue_ms>=1000:r.service_state==='complete'&&finite(r.service_ms));
+  const eligible=rows.filter(r=>metric==='queue'?finite(r.queue_ms)&&r.queue_ms>=1000:r.service_state==='complete'&&(finite(r.service_ms)||r.forecast_eligible===true));
   const pairs=eligible.map(r=>({node:r.node,at:r.at,actual:metric==='queue'?r.queue_ms:r.service_ms,
-    predicted:metric==='queue'?r.predicted_queue_ms:r.predicted_service_ms})).filter(r=>finite(r.predicted));
+    predicted:metric==='queue'?r.predicted_queue_ms:r.predicted_service_ms})).filter(r=>finite(r.predicted)&&finite(r.actual));
   return {pairs,eligible:eligible.length,missing:eligible.length-pairs.length,
     immediate:rows.filter(r=>finite(r.queue_ms)&&r.queue_ms<1000).length,
     unfinished:rows.filter(r=>r.service_state==='pending').length,excluded:rows.filter(r=>r.service_state==='excluded').length,

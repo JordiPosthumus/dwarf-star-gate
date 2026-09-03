@@ -36,9 +36,11 @@ at the first recorded progress point at/after 30 seconds. Select one model versi
 versions/stages are not pooled. Experimental status is explicit. Remaining actual
 time subtracts elapsed from total server time; later updates never replace the
 frozen chart forecast. The lifecycle table separately scores all bounded remaining
-updates with one aggregate weight per request. Coverage in an XGB stage is among
-requests with at least one recorded forecast in that model/stage window, **not**
-all gateway traffic. Read missing/unsupported coverage as an evidence limitation.
+updates with one aggregate weight per request. Coverage includes successful
+requests with no forecast admitted after the version/stage's first saved forecast,
+plus its matched requests. Remaining coverage requires at least 30 seconds of
+successful server time. Unsupported/missing forecasts count as missing, not zero
+or successes. This is a bounded observed deployment window, not all gateway history.
 
 Joining requires the same gateway run, request and actual worker. Duplicate event
 IDs are ignored; conflicting lifecycle events are rejected. A queue wait is known
