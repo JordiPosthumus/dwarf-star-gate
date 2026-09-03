@@ -102,6 +102,102 @@ async function rig(t, count = 2, overrides = {}) {
   return r;
 }
 
+test('all workers unavailable: one client request waits, then dispatches once with identical body and full settings',async t=>{
+  const r=await rig(t,2,{health_interval_ms:25,health_failures:1,dataset_enabled:true});
+  for(const b of r.backends)b.health=false;
+  await until(()=>r.gateway.stats().available===0);
+  const body=JSON.stringify({stream:true,reasoning_effort:'xhigh',max_tokens:262144,messages:[{role:'user',content:'private synthetic prompt'}]});
+  let finished=false;const result=r.request(body,'patient').then(x=>{finished=true;return x;});
+  await until(()=>r.gateway.stats().continuity.waiting===1);
+  await delay(3200);
+  assert.equal(finished,false);assert.equal(r.gateway.stats().queued,1);assert.equal(r.gateway.stats().active,0);
+  assert.equal(r.gateway.stats().continuity.recent_rejections.length,0);
+  assert.equal(r.gateway.stats().continuity.patient_wait,true);assert.ok(r.gateway.stats().continuity.oldest_wait_seconds>=3);
+  assert.equal(r.backends.reduce((n,b)=>n+b.receivedBytes,0),0,'no prompt bytes reach any backend during the outage');
+  r.backends[1].health=true;
+  const out=await result;assert.equal(out.status,200);assert.equal(out.headers['x-ds4-node'],'spark2');
+  assert.equal(r.backends[0].records.length,0);assert.equal(r.backends[1].records.length,1);assert.equal(r.backends[1].records[0].body.toString(),body);
+  assert.match(out.body,/\[DONE\]/);assert.equal(r.gateway.stats().continuity.waiting,0);
+  await until(()=>r.gateway.stats().dataset.finished===1);
+  await r.gateway.close();
+  const dir=path.join(path.dirname(r.config.state_file),'training'),rows=fs.readdirSync(dir).flatMap(f=>fs.readFileSync(path.join(dir,f),'utf8').trim().split('\n').map(JSON.parse));
+  assert.equal(rows.filter(x=>x.kind==='decision').length,1);assert.equal(rows.filter(x=>x.kind==='dispatch').length,1);
+  const wait=rows.find(x=>x.kind==='waiting'),finish=rows.find(x=>x.kind==='finish');
+  assert.equal(wait.reason,'no_ready_worker');assert.equal(wait.dispatch_state,'not_dispatched');assert.ok(finish.queue_ms>=3200);
+  assert.ok(!JSON.stringify(rows).includes('private synthetic prompt'));
+});
+
+test('patient upload cancellation removes its reservation and never dispatches later',async t=>{
+  const r=await rig(t,1,{health_interval_ms:25,health_failures:1});r.backends[0].health=false;
+  await until(()=>r.gateway.stats().available===0);
+  const req=http.request({host:'127.0.0.1',port:r.address.port,path:'/v1/chat/completions',method:'POST',headers:{authorization:'Bearer none','x-session-affinity':'cancelled'}});
+  req.on('error',()=>{});req.end(JSON.stringify({messages:[{role:'user',content:'x'.repeat(500000)}]}));
+  await until(()=>r.gateway.stats().continuity.waiting===1);req.destroy();
+  await until(()=>r.gateway.stats().queued===0,15000);r.backends[0].health=true;
+  await until(()=>r.gateway.stats().available===1);await delay(1100);
+  assert.equal(r.backends[0].records.length,0);assert.equal(r.backends[0].receivedBytes,0);
+});
+
+test('patient calls retain same-session ordering across quarantine and cannot displace manual pause',async t=>{
+  const r=await rig(t,2,{control_socket:true});
+  const failed=r.request('{"fatal_error":true,"delay":80}','a');await until(()=>r.gateway.stats().active===1);
+  const one=r.request('{"sequence":1}','a');await until(()=>r.gateway.stats().queued===1);await failed;
+  await until(()=>r.gateway.stats().continuity.waiting===1);
+  const two=r.request('{"sequence":2}','a');await until(()=>r.gateway.stats().continuity.waiting===2);
+  await workerControl(r.config.control_socket,'/drain-workers',{workers:['spark1']});
+  await assert.rejects(workerControl(r.config.control_socket,'/remove-worker',{id:'spark1'}),/waiting.*recover/);
+  assert.equal((await r.request('{}','independent')).headers['x-ds4-node'],'spark2');
+  await delay(1100);assert.equal(r.backends[0].records.length,1);assert.equal(r.gateway.stats().continuity.waiting,2);
+  await workerControl(r.config.control_socket,'/resume-workers',{workers:['spark1']});
+  assert.equal((await one).headers['x-ds4-node'],'spark1');assert.equal((await two).headers['x-ds4-node'],'spark1');
+  assert.deepEqual(r.backends[0].records.filter(x=>x.payload.sequence).map(x=>x.payload.sequence),[1,2]);
+  assert.equal(r.backends[0].peak,1);assert.equal(r.backends[1].records.length,1);
+});
+
+test('moving an undispatched call into recovery waiting does not reset its original deadline',async t=>{
+  const r=await rig(t,1,{queue_timeout_ms:400});
+  const failed=r.request('{"fatal_error":true,"delay":250}','a');await until(()=>r.gateway.stats().active===1);
+  const start=performance.now(),next=r.request('{}','a');await until(()=>r.gateway.stats().queued===1);await failed;
+  await until(()=>r.gateway.stats().continuity.waiting===1);
+  const response=await next,error=JSON.parse(response.body).error;
+  assert.equal(response.status,504);assert.ok(performance.now()-start<590,'parking must not start a second 400ms allowance');
+  assert.match(error.message,/^DSG Report: .*400 milliseconds/);assert.match(error.message,/configurable in DSG/);
+  assert.equal(error.continuity.dispatch_state,'not_dispatched');assert.equal(r.backends[0].records.length,1);
+});
+
+test('patient waiting is bounded; shutdown returns a certified DSG pre-dispatch error',async t=>{
+  const r=await rig(t,1,{max_queued_per_node:1});r.gateway.drainNodes(['spark1'],true);
+  const first=r.request('{}','a',{headers:{'x-dsg-call-id':randomUUID()}});await until(()=>r.gateway.stats().continuity.waiting===1);
+  const full=await r.request('{}','b');assert.equal(full.status,429);assert.match(JSON.parse(full.body).error.message,/^DSG Report: /);
+  assert.equal(r.gateway.stats().continuity.waiting,1);
+  await r.gateway.close();const stopped=await first,report=JSON.parse(stopped.body).error;
+  assert.equal(stopped.status,503);assert.match(report.message,/^DSG Report: Gateway is stopping/);
+  assert.equal(report.continuity.dispatch_state,'not_dispatched');assert.equal(report.continuity.retry_class,'wait_then_retry');assert.equal(r.backends[0].records.length,0);
+});
+
+test('recovered readiness cannot bypass failed durable affinity persistence',async t=>{
+  const r=await rig(t,1,{health_interval_ms:25,health_failures:1});r.backends[0].health=false;await until(()=>r.gateway.stats().available===0);
+  const held=r.request('{}','new');await until(()=>r.gateway.stats().continuity.waiting===1);
+  const save=r.gateway.store.save;r.gateway.store.save=()=>{throw new Error('fixture save failure');};
+  r.backends[0].health=true;
+  const result=await held;r.gateway.store.save=save;
+  assert.equal(result.status,503);const e=JSON.parse(result.body).error;
+  assert.match(e.message,/^DSG Report: /);assert.equal(e.code,'state_unavailable');assert.equal(e.continuity.retry_class,'operator_required');
+  assert.equal(r.backends[0].records.length,0);assert.equal(r.gateway.stats().queued,0);
+});
+
+test('DSG identifies its errors without prefixing upstream HTTP or SSE errors',async t=>{
+  const r=await rig(t,2,{control_socket:true});
+  for(const options of [{headers:{authorization:'Bearer wrong'}},{path:'/unknown'}]){
+    const result=await r.request('{}',null,options);assert.match(JSON.parse(result.body).error.message,/^DSG Report: /);
+  }
+  await assert.rejects(workerControl(r.config.control_socket,'/remove-worker',{id:'absent'}),/^Error: DSG Report: Unknown worker/);
+  const own=await r.request('{"disconnect":true}','a');assert.match(JSON.parse(own.body).error.message,/^DSG Report: /);
+  assert.equal((await r.request('{"http_error":true}','b')).body,'backend-error');
+  const sse='event: error\ndata: {"error":{"message":"engine error"}}\n\ndata: [DONE]\n\n';
+  assert.equal((await r.request(JSON.stringify({fixture_sse:sse}),'b')).body,sse);
+});
+
 test('scoped agent ingress preserves admitted work, ownership and receipts across gateway restart',async t=>{
   const r=await rig(t,1,{control_socket:true}),ctl=(route,body)=>workerControl(r.config.control_socket,route,body);
   const grant=await ctl('/grant-agent',{agent_id:'tester',workers:['spark1']}),credential={control_socket:r.config.control_socket,token:grant.token};
@@ -111,13 +207,13 @@ test('scoped agent ingress preserves admitted work, ownership and receipts acros
   const input={worker_id:'spark1',reason:'engine test',request_id:randomUUID()};
   const d=await agentRequest(credential,'drain',input);assert.equal(r.gateway.stats().workers[0].operator_paused,false);
   assert.equal((await agentRequest(credential,'status')).workers[0].gateway_drained,false);
-  assert.equal((await r.request('{}','new')).status,503);
+  const deferred=r.request('{}','new');await until(()=>r.gateway.stats().continuity.waiting===1);
   assert.equal((await active).status,200);assert.equal((await waiting).status,200);
   assert.equal(r.backends[0].records[0].body.toString(),req);assert.equal(r.backends[0].records[1].body.toString(),req);
   assert.equal((await agentRequest(credential,'status')).workers[0].gateway_drained,true);
   await assert.rejects(ctl('/resume-workers',{workers:['spark1']}),/agent holds/);
   await assert.rejects(ctl('/remove-worker',{id:'spark1'}),/agent holds/);
-  await r.restart();assert.equal(r.gateway.stats().workers[0].holds[0].owner_id,'tester');
+  await r.restart();assert.equal((await deferred).status,503);assert.equal(r.gateway.stats().workers[0].holds[0].owner_id,'tester');
   assert.deepEqual(await agentRequest(credential,'drain',input),d);
   assert.deepEqual(await agentRequest(credential,'receipt',{request_id:input.request_id}),d);
   const released=await agentRequest(credential,'resume',{hold_id:d.result.hold_id,request_id:randomUUID()});
@@ -407,13 +503,18 @@ test('fatal SSE envelope cannot masquerade as a successful DONE response',async 
   await until(()=>r.gateway.stats().dataset.finished===1);assert.equal(r.gateway.stats().dataset.failed_or_cancelled,1);
 });
 
-test('quarantine rejects queued unstarted requests without replay and allows their subsequent retry elsewhere',async t=>{
-  const r=await rig(t);const first=r.request('{"fatal_error":true,"delay":100}','a');
+test('quarantine parks undispatched requests without replay and verified readmission unblocks them',async t=>{
+  const r=await rig(t,2,{control_socket:true});const first=r.request('{"fatal_error":true,"delay":100}','a');
   await until(()=>r.backends[0].records.length===1);
   const queued=r.request('{}','a');await until(()=>r.gateway.stats().workers[0].queued===1);
-  assert.equal((await first).status,500);assert.equal((await queued).status,503);
+  assert.equal((await first).status,500);await until(()=>r.gateway.stats().continuity.waiting===1);
+  assert.equal(r.gateway.nodes[0].queue.length,0,'parked uploads must not block recovery verification');
+  assert.equal(r.gateway.stats().workers[0].recovery_waiting,1);
   assert.equal(r.backends[0].records.length,1);assert.equal(r.backends[1].records.length,0);
-  assert.equal((await r.request('{}','a')).headers['x-ds4-node'],'spark2');
+  await workerControl(r.config.control_socket,'/resume-workers',{workers:['spark1']});
+  assert.equal((await queued).headers['x-ds4-node'],'spark1');
+  assert.equal(r.backends[0].records.length,3,'one failure, one verification, one held request');
+  assert.equal(r.backends[1].records.length,0);
 });
 
 test('ordinary 4xx does not quarantine; success resets repeated operational failure streak',async t=>{
@@ -732,13 +833,14 @@ test('real dashboard polling exposes agent ownership and calibration, without pr
   const r=await rig(t,1,{control_socket:true,ui_worker_management:true});
   const granted=await workerControl(r.config.control_socket,'/grant-agent',{agent_id:'tester',workers:['spark1']});
   await agentRequest({control_socket:r.config.control_socket,token:granted.token},'drain',{worker_id:'spark1',reason:'PRIVATE_OPERATOR_REASON',request_id:randomUUID()});
-  assert.equal((await r.request('{}','blocked')).status,503);
+  const blocked=r.request('{}','blocked');await until(()=>r.gateway.stats().continuity.waiting===1);
   const configPath=path.join(path.dirname(r.config.state_file),'dashboard-config.json');fs.writeFileSync(configPath,JSON.stringify({...r.config,port:r.address.port}));
   const dashboard=await runDashboard(configPath,0);t.after(()=>dashboard.close());
   const s=dashboard.snapshot();assert.equal(s.gateway.agent_api_version,1);assert.deepEqual(s.gateway.calibration,r.gateway.stats().calibration);
-  assert.equal(s.gateway.continuity.recent_rejections[0].reason,'no_ready_worker');assert.equal(s.gateway.continuity.recent_rejections[0].dispatch_state,'not_dispatched');
+  assert.equal(s.gateway.continuity.waiting,1);assert.equal(s.gateway.queued,1);assert.equal(s.gateway.continuity.waiting_reasons.no_ready_worker,1);
   assert.equal(s.gateway.workers[0].holds[0].owner_id,'tester');assert.equal(s.gateway.workers[0].gateway_drained,true);assert.equal(s.gateway.workers[0].operator_paused,false);
   assert.ok(!JSON.stringify(s).includes('PRIVATE_OPERATOR_REASON'));assert.ok(!JSON.stringify(s).includes(granted.token));
+  await r.gateway.close();assert.equal((await blocked).status,503);
 });
 
 test('enabled dashboard controls operate through the real Unix control client without changing model servers', async t => {
@@ -764,9 +866,10 @@ test('enabled dashboard controls operate through the real Unix control client wi
 test('an empty dynamic registry survives restart and can accept a worker again', async t => {
   const r=await rig(t,1,{control_socket:true}), ctl=(route,body)=>workerControl(r.config.control_socket,route,body);
   await ctl('/drain-workers',{workers:['spark1']});await ctl('/remove-worker',{id:'spark1'});await r.restart();
-  assert.equal(r.gateway.stats().total,0);assert.equal((await r.request('{}')).status,503);
+  assert.equal(r.gateway.stats().total,0);assert.equal((await r.request('',null,{path:'/v1/models',method:'GET'})).status,503);
+  const held=r.request('{}');await until(()=>r.gateway.stats().continuity.waiting===1);
   await ctl('/add-worker',{worker:{id:'spark1',url:r.backends[0].url}});await ctl('/resume-workers',{workers:['spark1']});
-  assert.equal((await r.request('{}')).status,200);
+  assert.equal((await held).status,200);assert.equal((await r.request('{}')).status,200);
 });
 
 test('health probes have a total deadline even if a worker trickles response bytes', async t => {
@@ -898,12 +1001,14 @@ test('unhealthy idle home reassigns durably; recovery does not bounce session ba
   assert.equal((await r.request('{}', 'a')).headers['x-ds4-node'], 'spark2');
   await r.restart(); assert.equal((await r.request('{}', 'a')).headers['x-ds4-node'], 'spark2');
 });
-test('no failover when old home has unresolved work', async t => {
+test('patient wait cannot fail over while the same conversation is active', async t => {
   const r = await rig(t);
   const first = r.request('{"delay":180}', 'a'); await until(() => r.gateway.stats().active === 1);
   r.gateway.nodes[0].healthy = false;
-  assert.equal((await r.request('{}', 'a')).status, 503); await first;
-  assert.equal(r.backends[1].records.length, 0);
+  const next=r.request('{}','a');await until(()=>r.gateway.stats().continuity.waiting===1);
+  assert.equal(r.backends[1].records.length,0);await first;
+  assert.equal((await next).status,200);
+  assert.equal(r.backends[1].records.length, 1,'a new never-admitted call may reassign after ownership settles');
 });
 test('unrelated old-home work does not block conversation-scoped reassignment',async t=>{
   const r=await rig(t,2,{dataset_enabled:true});
@@ -912,12 +1017,12 @@ test('unrelated old-home work does not block conversation-scoped reassignment',a
   const busy=r.request('{"delay":250}','b');await until(()=>old.active);
   old.healthy=false;
   const result=await r.request('{}','a');assert.equal(result.status,200);assert.equal(result.headers['x-ds4-node'],'spark2');assert.equal(result.headers['x-ds4-affinity'],'reassigned');
-  const same=await r.request('{}','b');assert.equal(same.status,503);assert.equal(same.headers['x-dsg-dispatch-state'],'not_dispatched');
-  assert.equal(JSON.parse(same.body).error.continuity.reason,'same_session_active');
-  await busy;assert.equal(r.backends[1].records.length,2);
+  const same=r.request('{}','b');await until(()=>r.gateway.stats().continuity.waiting===1);
+  assert.equal(r.gateway.stats().continuity.waiting_reasons.same_session_active,1);
+  assert.equal(r.backends[1].records.length,2);await busy;assert.equal((await same).status,200);assert.equal(r.backends[1].records.length,3);
 });
-test('paused same-session queue retains ownership and typed receipts exclude private headers',async t=>{
-  const r=await rig(t,2,{dataset_enabled:true});
+test('paused same-session queue retains ownership and timeout receipts exclude private headers',async t=>{
+  const r=await rig(t,2,{dataset_enabled:true,queue_timeout_ms:150});
   const first=r.request('{"delay":250}','a');await until(()=>r.gateway.nodes[0].active);
   const second=r.request('{}','a');await until(()=>r.gateway.nodes[0].queue.length===1);
   r.gateway.nodes[0].drained=true;
@@ -925,19 +1030,21 @@ test('paused same-session queue retains ownership and typed receipts exclude pri
   const e=JSON.parse(rejected.body).error;
   assert.equal(e.continuity.call_id,call);assert.equal(e.continuity.dispatch_state,'not_dispatched');assert.equal(e.continuity.retry_class,'wait_then_retry');assert.equal(rejected.headers['x-request-id'],e.request_id);
   assert.ok(!JSON.stringify(r.gateway.stats().continuity).includes('SECRET'));
-  assert.equal((await first).status,200);assert.equal((await second).status,200);assert.equal(r.backends[1].records.length,0);
+  assert.equal((await first).status,200);assert.equal((await second).status,504);assert.equal(r.backends[1].records.length,0);
 });
 test('queued conversation cannot split behind another active session; failed reassignment does not dispatch',async t=>{
-  const r=await rig(t,2);await r.request('{}','a');
+  const r=await rig(t,2,{queue_timeout_ms:150});await r.request('{}','a');
   r.gateway.store.set(createHash('sha256').update('b').digest('hex'),'spark1');
   const first=r.request('{"delay":250}','b');await until(()=>r.gateway.nodes[0].active);
   const second=r.request('{}','a');await until(()=>r.gateway.nodes[0].queue.length===1);
   r.gateway.nodes[0].healthy=false;
-  const rejected=await r.request('{}','a');assert.equal(JSON.parse(rejected.body).error.continuity.reason,'same_session_queued');
-  await first;assert.equal((await second).status,503);
+  const later=r.request('{}','a');await until(()=>r.gateway.stats().continuity.waiting===1);
+  assert.equal(r.backends[1].records.length,0);
+  assert.equal((await second).status,504);assert.equal((await later).status,200);await first;
+  r.gateway.store.set(createHash('sha256').update('c').digest('hex'),'spark1');
   const save=r.gateway.store.save;r.gateway.store.save=()=>{throw new Error('fixture storage failure');};
-  const failed=await r.request('{}','a');assert.equal(JSON.parse(failed.body).error.continuity.retry_class,'operator_required');
-  assert.equal(r.backends[1].records.length,0);r.gateway.store.save=save;
+  const failed=await r.request('{}','c');assert.equal(JSON.parse(failed.body).error.continuity.retry_class,'operator_required');
+  assert.equal(r.backends[1].records.length,1);r.gateway.store.save=save;
 });
 test('queue bound rejects without dispatch, queue timeout does not cap generation', async t => {
   const r = await rig(t, 2, { max_queued_per_node: 1, queue_timeout_ms: 50 });
@@ -1028,15 +1135,16 @@ test('worker drain persists, drains admitted work, reassigns idle sessions and r
   const first = r.request('{"delay":140}', 'a'); await until(() => r.gateway.stats().active === 1);
   r.gateway.drainNodes(['spark1'], true);
   assert.equal(r.gateway.stats().workers[0].gateway_drained, false);
-  assert.equal((await r.request('{}', 'a')).status, 503);
+  const held=r.request('{}','a');await until(()=>r.gateway.stats().continuity.waiting===1);
   assert.equal((await r.request('{}', 'new')).headers['x-ds4-node'], 'spark2');
   await first; assert.equal(r.gateway.stats().workers[0].gateway_drained, true);
+  assert.equal((await held).headers['x-ds4-node'],'spark2');
   assert.equal((await r.request('{}', 'a')).headers['x-ds4-node'], 'spark2');
   await r.restart(); assert.equal(r.gateway.stats().workers[0].drained, true);
   r.gateway.drainNodes(['spark1'], false);
   assert.equal((await r.request('{}', 'a')).headers['x-ds4-node'], 'spark2');
   r.gateway.drainNodes(['spark1', 'spark2'], true);
-  assert.equal((await r.request('{}', 'next')).status, 503);
+  assert.equal((await r.request('',null,{path:'/v1/models',method:'GET'})).status,503);
   assert.throws(() => r.gateway.drainNodes(['spark999'], true), /known worker/);
 });
 test('six-node fleet can drain four nodes and keep routing on the two remaining', async t => {

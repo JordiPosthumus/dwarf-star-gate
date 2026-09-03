@@ -19,6 +19,7 @@ import { AgentControl } from './agent-control.mjs';
 import {deadlineTimer,queueTimeout,queueTimeoutMessage} from './deadline.mjs';
 import {CALL_ID_HEADER,DISPATCH_HEADER,validCallId,unavailableReason,sessionWork,rejectionReceipt} from './continuity.mjs';
 import {JsonUsageObserver} from './json-usage.mjs';
+import {dsgReport,invalidHttp} from './report.mjs';
 import net from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -35,7 +36,7 @@ function json(res, status, value) {
   res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
   res.end(JSON.stringify(value));
 }
-function error(res, status, code, message) { json(res, status, { error: { type: 'gateway_error', code, message } }); }
+function error(res, status, code, message) { json(res, status, { error: { type: 'gateway_error', code, message:dsgReport(message) } }); }
 
 // Tiny durable metadata store. No prompts, model outputs, or KV data live here.
 // Atomic replace + fsync; an unreadable/corrupt store fails startup, never resets.
@@ -186,7 +187,14 @@ export function createGateway(config) {
   dataset.onRecord=row=>predictor.observe(row);
   const shadow = new RoutingShadow({enabled:config.routing_shadow_enabled===true && config.dataset_enabled===true});
   const observe = fn => {if(shadow.enabled)try{return fn();}catch{shadow.state.errors++;}};
-  let draining = false, shuttingDown = false, healthTimer, recoveryTimer, predictorTimer;
+  let draining = false, shuttingDown = false, healthTimer, recoveryTimer, predictorTimer, waitingTimer;
+  // Undispatched HTTP requests only. Bodies remain on their original streams,
+  // with backpressure; no prompt spool and no optimistic 200/SSE response.
+  const waiting=[];
+  let sequence=0;
+  const queueBound=()=>config.max_queued_per_node??128;
+  const waitingBound=()=>Math.max(1,nodes.length)*queueBound();
+  const parkedFor=n=>waiting.filter(j=>j.fixedHome===n);
   const rejections=[];
   function reject(req,res,status,code,message,{id=randomUUID(),callId=validCallId(req.headers[CALL_ID_HEADER]),key=null,node=null,reason}={}){
     const receipt=rejectionReceipt({request_id:id,call_id:callId,session:key,node:node?.id??null,code,reason});
@@ -194,7 +202,7 @@ export function createGateway(config) {
     rejections.unshift(recorded);rejections.length=Math.min(rejections.length,32);
     log('request_rejected',receipt);dataset.record('rejection',receipt);
     if(!res.headersSent&&!res.destroyed){res.setHeader(DISPATCH_HEADER,'not_dispatched');res.setHeader('x-request-id',id);res.setHeader('retry-after','5');}
-    json(res,status,{error:{type:'gateway_error',code,message,request_id:id,continuity:receipt}});
+    json(res,status,{error:{type:'gateway_error',code,message:dsgReport(message),request_id:id,continuity:receipt}});
     req.resume();
   }
   let mutation = Promise.resolve();
@@ -221,13 +229,15 @@ export function createGateway(config) {
   const accepted = new Set(['POST /v1/chat/completions', 'POST /v1/completions', 'POST /v1/responses', 'POST /v1/messages', 'GET /v1/models']);
   const auth = Buffer.from(`Bearer ${config.api_key}`);
   const stats = () => ({ version: 1, agent_api_version:1, model: config.model, context_length: contextLimit(), queue_timeout_ms:queueTimeoutMs(), request_timeout_ms:config.request_timeout_ms??360000000, draining, dataset:{...dataset.snapshot(),embedding_collection:embeddings.snapshot()}, routing_shadow:shadow.snapshot(),recovery:recovery.status(),predictor:predictor.status(),
-    calibration:calibrationPreflight(nodes,{draining}),continuity:{schema:1,recent_rejections:rejections.slice(0,20),safe_retry_contract:true,queued_relocation:false},
+    calibration:calibrationPreflight(nodes,{draining}),continuity:{schema:1,recent_rejections:rejections.slice(0,20),safe_retry_contract:true,queued_relocation:false,patient_wait:true,
+      waiting:waiting.length,oldest_wait_seconds:waiting.length?Math.max(0,(performance.now()-waiting[0].createdMono)/1000):null,
+      waiting_reasons:Object.fromEntries([...new Set(waiting.map(j=>j.waitReason))].map(reason=>[reason,waiting.filter(j=>j.waitReason===reason).length]))},
     total: nodes.length, healthy: nodes.filter(n => n.healthy).length, available: nodes.filter(n => n.healthy && !n.drained).length,
-    active: nodes.filter(n => n.active).length, queued: nodes.reduce((s, n) => s + n.queue.length, 0),
+    active: nodes.filter(n => n.active).length, queued: waiting.length+nodes.reduce((s, n) => s + n.queue.length, 0),
     workers: nodes.map(n => ({ id: n.id, url: n.url, is_healthy: n.healthy, drained: n.drained, quarantine:n.quarantine, inference_failures:n.inferenceFailures,
       ...agents.pauseStatus(n.id),
       gateway_drained: n.drained && !n.active && !n.queue.length, load: Number(!!n.active),
-      queued: n.queue.length, assigned_sessions: store.count(n.id), completed: n.completed, failed: n.failed, observation_limited:n.observationLimited,
+      queued: n.queue.length, recovery_waiting:parkedFor(n).length, assigned_sessions: store.count(n.id), completed: n.completed, failed: n.failed, observation_limited:n.observationLimited,
       oldest_queue_seconds:n.queue.length?Math.max(0,(performance.now()-n.queue[0].createdMono)/1000):null,
       oldest_queue_remaining_seconds:n.queue.length?Math.max(0,(n.queue[0].queueTimeoutMs-(performance.now()-n.queue[0].createdMono))/1000):null,
       active_seconds: n.active ? Math.round((Date.now() - n.active.dispatched) / 1000) : 0,
@@ -280,13 +290,85 @@ export function createGateway(config) {
       (Number(!!a.active) + a.queue.length) - (Number(!!b.active) + b.queue.length) ||
       store.count(a.id) - store.count(b.id) || a.id.localeCompare(b.id))[0];
   }
+  function detach(job) {
+    if(job.node)job.node.queue=job.node.queue.filter(j=>j!==job);
+    const i=waiting.indexOf(job);if(i>=0)waiting.splice(i,1);
+  }
+  function park(job,node,reason) {
+    if(job.upstream)throw new Error('Cannot park dispatched work');
+    detach(job);
+    // Previously admitted work keeps its home. No cache migration or replay.
+    if(node)job.fixedHome=node;
+    job.node=null;job.waitReason=reason;
+    if(shuttingDown){reject(job.req,job.res,503,'draining','Gateway is stopping; the recovery-waiting request was not dispatched.',{...job,node:job.fixedHome,reason:'gateway_draining'});job.cleanup();return;}
+    waiting.push(job);waiting.sort((a,b)=>a.sequence-b.sequence);
+    heartbeat(job);
+    log('request_waiting',{request_id:job.id,node:job.fixedHome?.id??null,reason,dispatch_state:'not_dispatched'});
+    dataset.record('waiting',{request_id:job.id,node:job.fixedHome?.id??null,reason,total_ms:performance.now()-job.createdMono});
+  }
+  function admit(job,node) {
+    const home=job.key&&store.get(job.key);
+    const wasAdmitted=job.recordedDecision===true;
+    const candidates=job.recordedDecision?null:nodes.map(n=>candidate(n,job.key));
+    try {if(job.key&&home?.node!==node.id)store.set(job.key,node.id);}
+    catch(e){
+      detach(job);log('state_write_error',{error:e.message});
+      reject(job.req,job.res,503,'state_unavailable','Cannot durably record affinity; request was not dispatched',{...job,node,reason:'affinity_write_failed'});job.cleanup();return;
+    }
+    detach(job);job.node=node;
+    if(!job.recordedDecision){
+      dataset.record('decision',{request_id:job.id,call_id:job.callId,node:node.id,session:job.key,affinity:job.affinity,context_length:contextLimit(),candidates,
+        traffic_class:job.trafficClass,client_metadata:job.admissionMetadata,admission_wait_ms:performance.now()-job.createdMono});
+      job.recordedDecision=true;job.admissionMetadata=null;
+    }
+    if(job.waitReason)log('request_wait_resumed',{request_id:job.id,node:node.id,wait_ms:performance.now()-job.createdMono});
+    job.waitReason=null;
+    node.queue.push(job);node.queue.sort((a,b)=>a.sequence-b.sequence);
+    evaluateShadow(node,job,wasAdmitted?'worker_free':'admission');schedule(node);
+  }
+  function pumpWaiting() {
+    if(shuttingDown)return;
+    for(const n of nodes)for(const job of n.queue)heartbeat(job);
+    // Retain FIFO within each conversation; independent conversations can proceed.
+    for(const job of [...waiting]){
+      if(job.cancelled)continue;
+      heartbeat(job);
+      if(job.key&&waiting.some(j=>j!==job&&j.sequence<job.sequence&&j.key===job.key)){job.waitReason='same_session_queued';continue;}
+      const home=job.key&&store.get(job.key),outstanding=sessionWork(nodes,job.key);
+      let node=job.fixedHome??(home&&nodes.find(n=>n.id===home.node));
+      if(job.fixedHome){
+        if(node.removed||!node.healthy||node.drained||node.quarantine||node.recovering){job.waitReason=unavailableReason(node);continue;}
+        if(outstanding&&outstanding.node!==node){job.waitReason=outstanding.reason;continue;}
+      }else{
+        if(node&&(!node.healthy||node.drained||node.quarantine||node.recovering)){
+          if(outstanding){job.waitReason=outstanding.reason;continue;}
+          node=pick(node.id);job.affinity='reassigned';
+        }
+        if(!node)node=pick();
+        if(!node){job.waitReason='no_ready_worker';continue;}
+        if(outstanding&&outstanding.node!==node){job.waitReason=outstanding.reason;continue;}
+      }
+      if(node.queue.length>=queueBound()){job.waitReason='queue_full';continue;}
+      admit(job,node);
+    }
+  }
+  function heartbeat(job) {
+    // A standard informational response, NOT final 200/SSE headers. This lets
+    // TCP surface disconnects even when a large upload is backpressured and EOF
+    // is behind unread bytes. Clients must still set their own HTTP deadlines.
+    if(job.res.destroyed||job.res.headersSent||job.cancelled)return;
+    const now=performance.now();
+    if(job.lastHeartbeat!==undefined&&now-job.lastHeartbeat<5000)return;
+    job.lastHeartbeat=now;
+    try{job.res.writeProcessing();}catch{job.res.destroy();}
+  }
   function schedule(node) {
     if (node.active) return;
     while (node.queue.length) {
       const job = node.queue.shift();
       if (job.cancelled) continue;
+      if (!node.healthy || node.quarantine || node.recovering) { park(job,node,unavailableReason(node)); continue; }
       job.queueTimer?.cancel();
-      if (!node.healthy) { dataset.record('unavailable_before_dispatch',{request_id:job.id,node:node.id,total_ms:performance.now()-job.createdMono}); reject(job.req,job.res,503,'home_unavailable','Assigned DS4 server became unavailable while queued; request was not dispatched.',{...job,node,reason:unavailableReason(node)}); job.cleanup(); continue; }
       node.active = job;
       dispatch(node, job);
       return;
@@ -347,6 +429,7 @@ export function createGateway(config) {
       job.cleanup();
       node.active = null;
       schedule(node);
+      pumpWaiting();
       if(shadow.enabled)setImmediate(evaluateWaiting);
     };
     const upstream = http.request(target, { method: req.method, headers, agent }, up => {
@@ -405,7 +488,7 @@ export function createGateway(config) {
     // Reject absolute URLs and encoded/normalized alternate routes; no admin forwarding.
     const route = `${req.method} ${req.url}`;
     if (route === 'GET /gateway/status' || route === 'GET /workers') return json(res, 200, stats());
-    if (route === 'GET /health') return json(res, !draining && nodes.some(n => n.healthy && !n.drained) ? 200 : 503, stats());
+    if (route === 'GET /health') {const ready=!draining&&nodes.some(n=>n.healthy&&!n.drained);return json(res,ready?200:503,{...stats(),...(!ready?{error:{type:'gateway_error',code:'not_ready',message:dsgReport('Gateway is draining or no DS4 server is ready.')}}:{})});}
     if (!accepted.has(route)) { req.resume(); return error(res, 404, 'unsupported_route', 'Endpoint is not on the inference allowlist'); }
     const admissionMetadata=clientMetadata(req.headers[CLIENT_METADATA_HEADER]);
     const keyValue = req.headers['x-session-affinity'] || req.headers['x-ds4-conversation-id'] || req.headers['x-session-id'] || req.headers.session_id;
@@ -415,22 +498,24 @@ export function createGateway(config) {
     const home = key && store.get(key);
     let node = home && nodes.find(n => n.id === home.node);
     let affinity = key ? home ? 'existing' : 'new' : 'none';
+    let waitReason=null;
     if (node && (!node.healthy || node.drained)) {
       // Ownership is conversation-scoped. Unrelated work must not block a safe
       // undispatched retry; same-session work, including cancelled active work,
       // retains ownership until its dispatch actually settles.
       const outstanding=sessionWork(nodes,key);
-      if(outstanding)return reject(req,res,503,'home_unavailable','This conversation still has active or queued work on its assigned DS4 server; DSG will not split or replay it.',{id:requestId,callId,key,node:outstanding.node,reason:outstanding.reason});
-      node = pick(node.id); affinity = 'reassigned';
+      if(outstanding){waitReason=outstanding.reason;node=null;}
+      else {node = pick(node.id); affinity = 'reassigned';}
     }
-    if (!node) {
+    if (!node&&!waitReason) {
       node=pick();
       // Existing homes and reassignment retain their established safety/cache
       // behavior. Only genuinely new conversations may use validated placement.
       if(node&&key&&!home&&req.method==='POST')node=predictor.choose(nodes.filter(n=>n.healthy&&!n.drained&&!n.quarantine),key,node,candidate);
     }
-    if (!node)return reject(req,res,503,'no_healthy_workers','No DS4 server is currently ready; request was not dispatched',{id:requestId,callId,key,reason:'no_ready_worker'});
+    if(key&&waiting.some(j=>j.key===key)){node=null;waitReason='same_session_queued';}
     if (req.method === 'GET') {
+      if(!node)return reject(req,res,503,'no_healthy_workers','No DS4 server is currently ready; model metadata is unavailable',{id:requestId,callId,key,reason:'no_ready_worker'});
       // Model-list requests must not sit behind a multi-hour generation.
       const probe = http.get(new URL(req.url, node.url), { agent }, up => {
         let body = '';
@@ -456,40 +541,37 @@ export function createGateway(config) {
       res.on('close', () => probe.destroy());
       return;
     }
-    if (node.queue.length >= (config.max_queued_per_node ?? 128))return reject(req,res,429,'queue_full','DS4 server waiting queue is full; request was not dispatched',{id:requestId,callId,key,node,reason:'queue_full'});
-    const candidates=nodes.map(n=>candidate(n,key));
-    try { if (key && home?.node !== node.id) store.set(key, node.id); }
-    catch (e) { log('state_write_error', { error: e.message }); return reject(req,res,503,'state_unavailable','Cannot durably record affinity; request was not dispatched',{id:requestId,callId,key,node,reason:'affinity_write_failed'}); }
-    const job = { req, res, key, affinity, id:requestId,callId, created: Date.now(), createdMono:performance.now(), cancelled: false,queueTimeoutMs:queueTimeoutMs(),
+    if ((node&&node.queue.length+parkedFor(node).length>=queueBound())||(!node&&waiting.length>=waitingBound()))return reject(req,res,429,'queue_full','DSG waiting capacity is full; request was not dispatched. Wait for capacity or use the patient client adapter.',{id:requestId,callId,key,node,reason:'queue_full'});
+    const job = { req, res, key, affinity, id:requestId,callId, sequence:sequence++,admissionMetadata,created: Date.now(), createdMono:performance.now(), cancelled: false,queueTimeoutMs:queueTimeoutMs(),
       trafficClass:req.headers['x-dsg-observer']==='gate-genie'?'genie':'unclassified' };
-    dataset.record('decision',{request_id:job.id,call_id:job.callId,node:node.id,session:key,affinity,context_length:contextLimit(),candidates,
-      traffic_class:job.trafficClass,client_metadata:admissionMetadata});
     const cancel = () => {
       if (res.writableFinished) return;
       job.cancelled = true;
       if (job.upstream) job.upstream.destroy();
       else {
-        node.queue = node.queue.filter(j => j !== job);
+        detach(job);
         job.queueTimer?.cancel(); job.cleanup();
-        log('queued_request_cancelled', { request_id: job.id, node: node.id });
-        dataset.record('queued_cancel',{request_id:job.id,node:node.id,total_ms:performance.now()-job.createdMono});
+        log('queued_request_cancelled', { request_id: job.id, node: job.node?.id??job.fixedHome?.id??null });
+        dataset.record('queued_cancel',{request_id:job.id,node:job.node?.id??job.fixedHome?.id??null,total_ms:performance.now()-job.createdMono});
+        pumpWaiting();
       }
     };
     job.cleanup = () => { job.queueTimer?.cancel();req.off('aborted', cancel); res.off('close', cancel); req.off('error', cancel); };
     req.on('aborted', cancel); req.on('error', cancel); res.on('close', cancel);
     job.queueTimer = deadlineTimer(() => {
-      node.queue = node.queue.filter(j => j !== job);
-      reject(req,res,504,'queue_timeout',queueTimeoutMessage(job.queueTimeoutMs),{...job,node,reason:'queue_deadline'});
-      dataset.record('queue_timeout',{request_id:job.id,node:node.id,total_ms:performance.now()-job.createdMono});
-      job.cleanup(); req.resume();
+      detach(job);
+      const owner=job.node??job.fixedHome;
+      reject(req,res,504,'queue_timeout',queueTimeoutMessage(job.queueTimeoutMs),{...job,node:owner,reason:'queue_deadline'});
+      dataset.record('queue_timeout',{request_id:job.id,node:owner?.id??null,total_ms:performance.now()-job.createdMono});
+      job.cleanup(); req.resume();pumpWaiting();
     }, job.queueTimeoutMs);
-    node.queue.push(job);evaluateShadow(node,job,'admission');schedule(node);
+    if(node)admit(job,node);else park(job,null,waitReason??'no_ready_worker');
   });
   server.requestTimeout = 0; // Covers upload + queue; no hidden five-minute Node default.
   server.timeout = 0; // Long prefill/decode streams are intentionally allowed to be idle.
   server.headersTimeout = 60000;
   server.keepAliveTimeout = 5000;
-  server.on('clientError', (_e, socket) => socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n'));
+  server.on('clientError',invalidHttp);
 
   async function probe(node) {
     if (node.probing) return;
@@ -628,6 +710,7 @@ export function createGateway(config) {
     if (shuttingDown) throw new Error('Gateway is stopping');
     const node = nodes.find(n => n.id === id);
     if (!node) throw new Error('Unknown worker');
+    if(parkedFor(node).length)throw new Error('Undispatched requests are waiting for this server to recover. Readmit it or cancel those requests before removing its registration.');
     if (!node.drained || node.active || node.queue.length) throw new Error('Drain this worker and wait for its admitted work to finish before removing it');
     const agentControl=agents.forgetWorker(id);
     const next = nodes.filter(n => n !== node);
@@ -710,6 +793,7 @@ export function createGateway(config) {
       });
     });
   }) : null;
+  control?.on('clientError',invalidHttp);
   return {
     server, nodes, stats, store, drainNodes, registry,recovery,
     async start() {
@@ -726,6 +810,7 @@ export function createGateway(config) {
       }
       await Promise.all(nodes.map(probe));
       healthTimer = setInterval(() => { for (const n of nodes) void probe(n); }, config.health_interval_ms ?? 5000);
+      waitingTimer=setInterval(pumpWaiting,1000);waitingTimer.unref?.();
       void recovery.tick();recoveryTimer=setInterval(()=>void recovery.tick(),30000);
       predictorTimer=setInterval(()=>predictor.tick(),60000);predictorTimer.unref?.();
       return server.address();
@@ -734,6 +819,8 @@ export function createGateway(config) {
     async close() {
       if (shuttingDown) return;
       shuttingDown = true; draining = true;
+      clearInterval(waitingTimer);
+      for(const job of [...waiting]){detach(job);reject(job.req,job.res,503,'draining','Gateway is stopping; the waiting request was not dispatched. A compatible patient client may retry after DSG returns.',{...job,node:job.fixedHome,reason:'gateway_draining'});job.cleanup();}
       clearInterval(predictorTimer);predictor.close();
       clearInterval(recoveryTimer);await recovery.close();
       if (control) await new Promise(resolve => control.close(resolve));

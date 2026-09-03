@@ -10,7 +10,7 @@ import {createContinuityFetch,registerPiContinuity} from './continuity-client.mj
 
 // Exercise the real installed Pi serializer AND agent/tool loop, isolated from
 // operator settings, sessions and real DS4 devices. Set DSG_PI_ROOT explicitly.
-test('real Pi agent survives a certified wait between tool execution and continuation',{skip:!process.env.DSG_PI_ROOT},async t=>{
+for(const mode of ['gateway-wait','certified-retries'])test(`real Pi agent survives ${mode} between tool execution and continuation`,{skip:!process.env.DSG_PI_ROOT},async t=>{
   const root=process.env.DSG_PI_ROOT;
   const {streamSimple}=await import(pathToFileURL(path.join(root,'node_modules/@earendil-works/pi-ai/dist/api/openai-completions.js')));
   const {Agent}=await import(pathToFileURL(path.join(root,'node_modules/@earendil-works/pi-agent-core/dist/agent.js')));
@@ -35,9 +35,14 @@ test('real Pi agent survives a certified wait between tool execution and continu
   const config={baseUrl,api:'openai-completions',apiKey:'fixture',models:[model]};
   const native=composeModelProvider(model.provider,null,{getProvider:()=>config},registered);
   assert.deepEqual(native.getModels(),composeModelProvider(model.provider,null,{getProvider:()=>config},undefined).getModels(),'provider wrapper must not alter model capabilities');
-  const transport=createContinuityFetch({baseUrl,wait:async()=>{++waits;if(waits===4)gateway.nodes[0].drained=false;}});
-  const agent=new Agent({initialState:{model,thinkingLevel:'xhigh',tools:[{name:'count_once',label:'Count',description:'Count once',parameters:{type:'object',properties:{}},execute:async()=>{++tools;gateway.nodes[0].drained=true;return {content:[{type:'text',text:'counted'}],details:{}};}}]},sessionId:'fixture-session',getApiKey:()=> 'fixture',streamFn:(m,c,o)=>streamSimple(m,c,{...o,fetch:transport})});
+  const transport=createContinuityFetch({baseUrl,wait:async()=>{++waits;if(waits===4)gateway.drain(false);}});
+  const agent=new Agent({initialState:{model,thinkingLevel:'xhigh',tools:[{name:'count_once',label:'Count',description:'Count once',parameters:{type:'object',properties:{}},execute:async()=>{
+    ++tools;
+    if(mode==='certified-retries')gateway.drain();
+    else {gateway.nodes[0].drained=true;const timer=setTimeout(()=>{assert.equal(gateway.stats().continuity.waiting,1);gateway.nodes[0].drained=false;},1200);t.after(()=>clearTimeout(timer));}
+    return {content:[{type:'text',text:'counted'}],details:{}};
+  }}]},sessionId:'fixture-session',getApiKey:()=> 'fixture',streamFn:(m,c,o)=>streamSimple(m,c,{...o,...(mode==='certified-retries'?{fetch:transport}:{})})});
   await agent.prompt('Call count_once, then answer DONE.');
-  assert.equal(waits,4);assert.equal(requests,2);assert.equal(tools,1);assert.equal(agent.state.errorMessage,undefined);
+  assert.equal(waits,mode==='certified-retries'?4:0);assert.equal(requests,2);assert.equal(tools,1);assert.equal(agent.state.errorMessage,undefined);
   assert.ok(agent.state.messages.at(-1).content.some(c=>c.type==='text'&&c.text==='DONE'));
 });

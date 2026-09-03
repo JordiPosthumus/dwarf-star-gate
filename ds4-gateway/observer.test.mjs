@@ -23,6 +23,11 @@ test('Genie queue briefing preserves measured age versus allowance and grants no
   const b=briefing(s);assert.equal(b.queue_timeout_ms,72000000000);assert.equal(b.workers[0].oldest_queue_seconds,125);assert.equal(b.workers[0].oldest_queue_remaining_seconds,71999875);
   assert.match(b.semantics.join(' '),/NOT predicted time to service/);assert.match(b.semantics.join(' '),/cannot change timeout/);assert.match(b.semantics.join(' '),/NOT 0.3 seconds/);assert.equal(briefing(snapshot()).queue_timeout_ms,null);
 });
+test('Genie sees current patient waiting without inventing migration or replay authority',()=>{
+  const s=snapshot();s.gateway.queued=3;s.gateway.continuity={patient_wait:true,waiting:2,oldest_wait_seconds:120,waiting_reasons:{worker_quarantined:2}};
+  const b=briefing(s);assert.equal(b.continuity.waiting,2);assert.equal(b.continuity.oldest_wait_seconds,120);assert.equal(b.queued,3);
+  assert.match(b.semantics.join(' '),/INCLUDED in fleet queued/);assert.match(b.semantics.join(' '),/does not survive socket loss/);
+});
 test('Genie sees typed continuity evidence without client/session identifiers or arbitrary fields',()=>{
   const s=snapshot();s.gateway.continuity={recent_rejections:[{time:new Date().toISOString(),request_id:'fixture',node:'one',code:'home_unavailable',reason:'same_session_queued',dispatch_state:'not_dispatched',retry_class:'wait_then_retry',session:'PRIVATE',call_id:'PRIVATE',prompt:'PRIVATE'}]};
   const b=briefing(s);assert.equal(b.continuity.recent_rejections[0].reason,'same_session_queued');assert.ok(!JSON.stringify(b).includes('PRIVATE'));

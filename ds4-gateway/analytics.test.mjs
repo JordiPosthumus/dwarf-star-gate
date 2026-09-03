@@ -22,7 +22,8 @@ function fixture(t,options={}) {
 const serialize=rows=>rows.map(r=>JSON.stringify(r)+'\n').join('');
 test('versioned embedding and progress streams are ignored, not reported as broken analytics joins',()=>{
   const e=new PredictionEvidence();for(const r of lifecycle())e.accept(r);
-  for(const kind of ['embedding','request_features','progress'])e.accept(row(kind));
+  for(const kind of ['embedding','request_features','progress','waiting'])e.accept(row(kind));
+  e.accept(row('queued_cancel',{node:null,request_id:'never-admitted'}));
   assert.equal(e.snapshot().rows.length,1);assert.equal(e.snapshot().rejected_events,0);
   e.accept(row('unknown'));assert.equal(e.snapshot().rejected_events,1);
 });

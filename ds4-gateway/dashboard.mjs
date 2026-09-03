@@ -17,6 +17,7 @@ import { AnalyticsReader } from './analytics.mjs';
 import { estimateCacheCost } from './cache-cost.mjs';
 import { loadConfig, dashboardPort, isMain } from './config.mjs';
 import {continuityForDisplay} from './continuity.mjs';
+import {dsgReport,invalidHttp} from './report.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const assets = new Map([['/', ['index.html', 'text/html']], ['/ui.css', ['ui.css', 'text/css']], ['/brand.css', ['brand.css', 'text/css']], ['/ui.js', ['ui.js', 'text/javascript']], ['/logo.png', ['logo.png', 'image/png']]]);
@@ -36,9 +37,9 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
       'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'" };
     // Loopback binding alone doesn't fence a browser's cross-origin/DNS-rebinding access.
     if (!hosts.includes(req.headers.host) || (req.headers.origin && !hosts.some(h => req.headers.origin === `http://${h}`)) || req.headers['sec-fetch-site'] === 'cross-site') {
-      res.writeHead(403, headers); return res.end('Local same-origin dashboard only');
+      res.writeHead(403, headers); return res.end(dsgReport('Local same-origin dashboard only'));
     }
-    const reply = (status, value) => { if (!res.destroyed && !res.headersSent) { res.writeHead(status,{...headers,'content-type':'application/json'}); res.end(JSON.stringify(value)); } };
+    const reply = (status, value) => { if (!res.destroyed && !res.headersSent) { res.writeHead(status,{...headers,'content-type':'application/json'}); res.end(JSON.stringify(status>=400&&typeof value.error==='string'?{...value,error:dsgReport(value.error)}:value)); } };
     if(req.url==='/api/genie' && req.method==='GET')return reply(200,{...(genie?.status()||{configured:false}),csrf_token:csrf});
     if(req.url==='/api/genie' && req.method==='POST' && genie) {
       const token=Buffer.from(req.headers['x-dsg-csrf']||''), expected=Buffer.from(csrf);
@@ -84,7 +85,7 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
       });
       return;
     }
-    if (req.method !== 'GET') { res.writeHead(405, headers); return res.end('Read-only'); }
+    if (req.method !== 'GET') { res.writeHead(405, headers); return res.end(dsgReport('Read-only')); }
     if(req.url?.split('?')[0]==='/api/cache-cost') {
       try {
         const p=new URL(req.url,'http://localhost').searchParams;
@@ -103,10 +104,10 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
       res.writeHead(200, { ...headers, 'content-type': 'application/json' }); return res.end(JSON.stringify(getSnapshot()));
     }
     const asset = bundle.get(req.url);
-    if (!asset) { res.writeHead(404, headers); return res.end('Not found'); }
+    if (!asset) { res.writeHead(404, headers); return res.end(dsgReport('Not found')); }
     res.writeHead(200, { ...headers, 'content-type': asset.mime.startsWith('text/') ? `${asset.mime}; charset=utf-8` : asset.mime });
     res.end(asset.bytes);
-  });
+  }).on('clientError',invalidHttp);
 }
 
 export async function runDashboard(configPath, port) {
@@ -229,7 +230,7 @@ export async function runDashboard(configPath, port) {
       gateway = { model: s.model, context_length: s.context_length,queue_timeout_ms:s.queue_timeout_ms,request_timeout_ms:s.request_timeout_ms, total: s.total, healthy: s.healthy, available: s.available, active: s.active, queued: s.queued, draining: s.draining, dataset:s.dataset,recovery:s.recovery,predictor:s.predictor,calibration:s.calibration,agent_api_version:s.agent_api_version,
         continuity:continuityForDisplay(s.continuity),
         workers: s.workers.map(w => ({ id: w.id, is_healthy: w.is_healthy, drained: w.drained, quarantine:safeQuarantine(w.quarantine), load: w.load, queued: w.queued, active_seconds: w.active_seconds, completed: w.completed, failed: w.failed, assigned_sessions: w.assigned_sessions,
-          gateway_drained:w.gateway_drained,operator_paused:w.operator_paused,holds:Array.isArray(w.holds)?w.holds.slice(0,1024).map(h=>({id:h.id,owner_id:h.owner_id,created_at:h.created_at})):[],
+          gateway_drained:w.gateway_drained,recovery_waiting:Number.isSafeInteger(w.recovery_waiting)?w.recovery_waiting:0,operator_paused:w.operator_paused,holds:Array.isArray(w.holds)?w.holds.slice(0,1024).map(h=>({id:h.id,owner_id:h.owner_id,created_at:h.created_at})):[],
           oldest_queue_seconds:w.oldest_queue_seconds??null,oldest_queue_remaining_seconds:w.oldest_queue_remaining_seconds??null,
           context_length:Number.isSafeInteger(w.context_length)?w.context_length:null, requested_thinking: safeRequestedThinking(w.requested_thinking), last_requested_thinking: safeRequestedThinking(w.last_requested_thinking),predictions:w.predictions,
           health_probe_deferred:Number.isSafeInteger(w.health_probe_deferred)?w.health_probe_deferred:0,

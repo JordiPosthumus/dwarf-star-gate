@@ -180,6 +180,10 @@ a physical machine. Each server may have its own native context and cache settin
 - Transparent request/stream passthrough: no reasoning, output-limit, sampling,
   vision or tool-call rewriting.
 - No automatic replay after an ambiguous upstream failure.
+- [Patient outage waiting](docs/client-continuity.md): undispatched calls wait for
+  readiness/recovery under the same queue allowance, without exhausting the
+  client's short retry loop. Pauses and quarantine remain authoritative. DSG's
+  own API errors start `DSG Report:`; engine error bodies stay unchanged.
 - SSH tunnel recovery, model/context health checks and durable per-worker drain.
 - Private Unix-socket operator controls, not a public worker-admin endpoint.
 
@@ -378,7 +382,8 @@ Without a header, requests work but do not receive durable session affinity.
 
 The gateway returns `x-ds4-node`, `x-ds4-affinity`, and `x-request-id`. Bodies and
 SSE bytes remain unchanged. Reassignment only occurs when the old home is
-unavailable/drained **and** has no unresolved gateway work. The assignment is
+unavailable/drained **and** has no unresolved work for that conversation. Already
+queued requests retain their original home through recovery waiting. The assignment is
 saved before dispatch. Never change a worker ID to mean a different machine
 without considering its persisted assignments and caches.
 

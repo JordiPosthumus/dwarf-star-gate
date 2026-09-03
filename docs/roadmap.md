@@ -12,6 +12,13 @@ This table is the current order; the sections below retain the detailed design.
 See the [maintenance review](maintenance-review-2026-09-02.md) for reproduced bugs,
 fixes and remaining uncertainty. A source commit is not a live deployment receipt.
 
+**Continuity update:** [patient gateway waiting](client-continuity.md) now covers
+undispatched worker outages with original deadlines, FIFO conversation ownership,
+live wait evidence and no replay. Native Pi transport is covered by an opt-in
+real-library/fake-backend acceptance test. Client deadlines, gateway/socket loss,
+and post-dispatch recovery remain separate work; a green fleet does not resume an
+already stopped Pi turn. All DSG-owned API errors identify themselves.
+
 **Analytics implemented:** the compact [prediction-accuracy panel](analytics.md)
 joins existing admission-time shadow forecasts to observed queue/server durations,
 with per-server filters, missing-prediction coverage and error. This is an
@@ -49,7 +56,7 @@ are implemented separately.
 
 | Order | Work | Exit evidence |
 | --- | --- | --- |
-| Immediate | [Client continuity](client-continuity.md): distinguish undispatched waits from interrupted generation, scope home ownership correctly, and avoid abandoning Pi turns | Receipts, conversation-scoped admission reassignment and opt-in Pi transport implemented; real Pi agent/tool-loop fixture passes. Deploy adapter explicitly. Queued relocation and post-dispatch recovery remain planned |
+| Immediate | [Client continuity](client-continuity.md): distinguish undispatched waits from interrupted generation, scope home ownership correctly, and avoid abandoning Pi turns | Patient gateway waiting, receipts, conversation-scoped admission reassignment and opt-in Pi transport implemented; real Pi agent/tool-loop fixture covers native waiting and certified retries. Queued relocation, client deadline policy and post-dispatch recovery remain separate work |
 | 0 | Promote protocol/quarantine maintenance fixes through a controlled cutover | Regression suites pass; versioned backup; real API-format smoke checks; unchanged fleet/context; explicit source-versus-running release record |
 | 1 | Diagnose the Spark CUDA/OOM incidents and identify backend process epochs | Correlated service/kernel/memory evidence and targeted reproduction; real cold/warm checks plus representative sustained work; no unapproved context/cache reductions |
 | 2 | Explain idle capacity and design cache-aware overflow scheduling | UI identifies session-home waits; replay/shadow comparisons of wait-at-home versus cold execution elsewhere; prove no overlapping ownership/replay; operator-approved policy before activation |

@@ -1,9 +1,16 @@
-import {test} from 'node:test';
 import assert from 'node:assert/strict';
+import {test} from 'node:test';
 import {randomUUID} from 'node:crypto';
 import {createContinuityFetch,registerPiContinuity} from './continuity-client.mjs';
 import {evidence} from './dataset.mjs';
 import {continuityForDisplay} from './continuity.mjs';
+import {dsgReport,invalidHttp} from './report.mjs';
+
+test('DSG error labeling is idempotent and malformed HTTP receives an identified error',()=>{
+  assert.equal(dsgReport('bad'),'DSG Report: bad');assert.equal(dsgReport(dsgReport('bad')),'DSG Report: bad');
+  let wire='';invalidHttp({code:'HPE_HEADER_OVERFLOW'},{writable:true,end:s=>wire=s});
+  assert.match(wire,/^HTTP\/1.1 431/);assert.match(JSON.parse(wire.split('\r\n\r\n')[1]).error.message,/^DSG Report: /);
+});
 const baseUrl='http://127.0.0.1:30000/v1';
 function refusal(init,change={}){
   const id=randomUUID();return new Response(JSON.stringify({error:{type:'gateway_error',code:'home_unavailable',continuity:{schema:1,request_id:id,call_id:init.headers.get('x-dsg-call-id'),dispatch_state:'not_dispatched',retry_class:'wait_then_retry',reason:'same_session_active',...change}}}),{status:503,headers:{'x-dsg-dispatch-state':'not_dispatched','x-request-id':id}});
@@ -51,7 +58,14 @@ test('rejection dataset allowlists identifiers and refuses arbitrary reasons/tex
   assert.equal(row.retry_class,'wait_then_retry');assert.ok(!JSON.stringify(row).includes('PRIVATE'));
   assert.equal(evidence('rejection',{request_id:randomUUID(),reason:'PRIVATE',dispatch_state:'not_dispatched'}),null);
 });
+test('patient-wait evidence is bounded metadata and keeps the pre-admission delay explicit',()=>{
+  const request_id=randomUUID(),waiting=evidence('waiting',{request_id,node:null,reason:'no_ready_worker',prompt:'PRIVATE'});
+  assert.deepEqual(waiting,{kind:'waiting',request_id,node:null,reason:'no_ready_worker',dispatch_state:'not_dispatched'});
+  assert.equal(evidence('waiting',{request_id,node:null,reason:'PRIVATE'}),null);
+  const decision=evidence('decision',{request_id,node:'one',admission_wait_ms:123,client_metadata:{schema:1,status:'missing'}});
+  assert.equal(decision.admission_wait_ms,123);assert.ok(!JSON.stringify([waiting,decision]).includes('PRIVATE'));
+});
 test('dashboard continuity projection is bounded and excludes private extra fields',()=>{
-  const s=continuityForDisplay({schema:1,safe_retry_contract:true,recent_rejections:[{request_id:randomUUID(),time:new Date().toISOString(),reason:'same_session_queued',dispatch_state:'not_dispatched',node:'one',session:'SECRET',body:'SECRET'},{request_id:'INVALID'},{request_id:randomUUID(),time:new Date().toISOString(),reason:'same_session_queued',dispatch_state:'dispatched'}]});
-  assert.equal(s.recent_rejections.length,1);assert.ok(!JSON.stringify(s).includes('SECRET'));
+  const s=continuityForDisplay({schema:1,safe_retry_contract:true,patient_wait:true,waiting:2,oldest_wait_seconds:5,waiting_reasons:{worker_unhealthy:2,SECRET:999},recent_rejections:[{request_id:randomUUID(),time:new Date().toISOString(),reason:'same_session_queued',dispatch_state:'not_dispatched',node:'one',session:'SECRET',body:'SECRET'},{request_id:'INVALID'},{request_id:randomUUID(),time:new Date().toISOString(),reason:'same_session_queued',dispatch_state:'dispatched'}]});
+  assert.equal(s.recent_rejections.length,1);assert.equal(s.waiting,2);assert.deepEqual(s.waiting_reasons,{worker_unhealthy:2});assert.ok(!JSON.stringify(s).includes('SECRET'));
 });

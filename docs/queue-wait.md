@@ -16,7 +16,7 @@ model settings and Pi are untouched. Unsaved typing survives UI polling.
 If the queue deadline expires, DSG returns HTTP **504**, code `queue_timeout`,
 with the request's admission-time allowance and the location of the UI control:
 
-> This request reached its DSG queue waiting limit of 20,000 hours and was not dispatched to a model server. This limit is configurable in DSG under Manage DS4 servers → Queue waiting allowance (hours); changes apply to new requests.
+> DSG Report: This request reached its DSG queue waiting limit of 20,000 hours and was not dispatched to a model server. This limit is configurable in DSG under Manage DS4 servers → Queue waiting allowance (hours); changes apply to new requests.
 
 The duration reflects that request's actual limit, not a hard-coded default or a
 later UI change. Shorter custom limits are reported in minutes, seconds or
@@ -48,7 +48,9 @@ entire interval, check the boundary, and verify real queued requests/cancellatio
 
 A longer allowance avoids DSG's former one-hour rejection. It is **not a promise
 of persistent execution**: queued HTTP requests are in memory, not durable jobs.
-Client disconnect, an explicitly interrupted gateway restart, unavailable homes,
+Unavailable homes now use [patient recovery waiting](client-continuity.md) for
+undispatched inference requests, with the **same original allowance**. Client
+disconnect, an explicitly interrupted gateway restart, client/proxy deadlines,
 and incomplete upstream streams remain separate failure modes. This setting does
 not change session-affinity rules or permit replay after output starts. Do not
 mistake a long allowed wait for good capacity or a healthy backend.

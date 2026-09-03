@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {replay} from '../ds4-gateway/prediction-features.mjs';
 import {isMain} from '../ds4-gateway/config.mjs';
-const kinds=new Set(['decision','dispatch','finish','queued_cancel','queue_timeout','unavailable_before_dispatch','routing_shadow','request_features','embedding','progress','model_prediction','rejection']);
+const kinds=new Set(['decision','dispatch','finish','queued_cancel','queue_timeout','unavailable_before_dispatch','routing_shadow','request_features','embedding','progress','model_prediction','rejection','waiting']);
 const finite=x=>typeof x==='number'&&Number.isFinite(x);
 const identifier=x=>typeof x==='string'&&/^[\w-]{1,64}$/.test(x);
 const tally=(map,key)=>{map[key]=(map[key]??0)+1;};
@@ -24,14 +24,14 @@ export function auditEvidence(input,inventory=null,{maxEvents=200000,maxRequests
   if(input.length>maxEvents)throw new Error('Audit event budget exceeded');
   const seen=new Map(),rows=[];let duplicates=0,invalid=0;
   for(const r of input){
-    if(r?.schema!==1||!identifier(r.run_id)||!identifier(r.request_id)||!identifier(r.event_id)||!kinds.has(r.kind)||!finite(Date.parse(r.time))||(!identifier(r.node)&&!(r.kind==='rejection'&&r.node===null))){invalid++;continue;}
+    if(r?.schema!==1||!identifier(r.run_id)||!identifier(r.request_id)||!identifier(r.event_id)||!kinds.has(r.kind)||!finite(Date.parse(r.time))||(!identifier(r.node)&&!(['rejection','waiting','queued_cancel','queue_timeout'].includes(r.kind)&&r.node===null))){invalid++;continue;}
     const id=r.run_id+':'+r.event_id,canonical=JSON.stringify(r);
     if(seen.has(id)){if(seen.get(id)!==canonical)throw new Error('Conflicting evidence ID');duplicates++;continue;}
     seen.set(id,canonical);rows.push(r);
   }
   rows.sort((a,b)=>Date.parse(a.time)-Date.parse(b.time));
   const jobs=new Map(),counts=Object.create(null),workers=Object.create(null),embeddingStatus=Object.create(null),featureStatus=Object.create(null),runs=new Set();
-  for(const r of rows){tally(counts,r.kind);runs.add(r.run_id);if(r.kind==='rejection')continue;const k=key(r);let job=jobs.get(k);
+  for(const r of rows){tally(counts,r.kind);runs.add(r.run_id);if(['rejection','waiting'].includes(r.kind)||r.node===null)continue;const k=key(r);let job=jobs.get(k);
     if(!job){if(jobs.size>=maxRequests)throw new Error('Audit request budget exceeded');job={decision:[],dispatch:[],finish:[],terminal:[],features:[],embeddings:[]};jobs.set(k,job);}
     if(['decision','dispatch','finish'].includes(r.kind))job[r.kind].push(r);
     if(['queued_cancel','queue_timeout','unavailable_before_dispatch'].includes(r.kind))job.terminal.push(r);

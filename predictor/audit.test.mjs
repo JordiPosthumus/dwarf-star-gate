@@ -21,6 +21,10 @@ test('late embeddings and unresolved work stay distinct from missing text and fa
 test('pre-admission rejection receipts are counted separately, not as orphan training requests',()=>{
   const a=auditEvidence([row('rejection',0,{node:null})]);assert.equal(a.invalid,0);assert.equal(a.counts.rejection,1);assert.equal(a.totals.requests,0);assert.equal(a.totals.orphan_events,0);
 });
+test('patient waiting and pre-admission cancellation are evidence, not corrupt or orphan model rows',()=>{
+  const a=auditEvidence([row('waiting',0,{node:null}),row('queued_cancel',1,{node:null}),row('waiting',2,{request_id:'other'}),row('decision',3,{request_id:'other'}),row('dispatch',4,{request_id:'other'}),row('finish',5,{request_id:'other',outcome:'complete',usage:{prompt_tokens:1,completion_tokens:1}})]);
+  assert.equal(a.invalid,0);assert.equal(a.counts.waiting,2);assert.equal(a.totals.requests,1);assert.equal(a.totals.orphan_events,0);
+});
 test('duplicate and conflicting IDs, wrong-worker and noncausal joins are explicit',()=>{
   const d=row('decision',10),s=row('dispatch',5),f=row('finish',4,{node:'worker-b',outcome:'complete'});
   const a=auditEvidence([d,d,s,f]);assert.equal(a.duplicates,1);assert.equal(a.totals.wrong_worker_joins,1);assert.equal(a.totals.noncausal_joins,1);

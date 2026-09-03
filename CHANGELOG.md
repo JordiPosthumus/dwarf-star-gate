@@ -10,6 +10,13 @@
 
 ## Unreleased
 
+- Gateway-side patient waiting across pre-dispatch worker outages, retaining
+  original deadlines, conversation order and queued homes. No dispatched replay.
+  HTTP 102 keep-alives, bounded waiting, cancellation, visible recovery-wait counts
+  and Genie evidence; guarded worker verification is not blocked by parked uploads.
+  DSG-owned API errors start `DSG Report:`; upstream DS4 error bodies are unchanged.
+  Native Pi agent/tool-loop and fault-injection tests cover continuation and scope.
+
 - Optional v2 XGB lifecycle: shared causal offline/live features, missing-history
   and measured hardware priors, prior output/thinking ratios, embedding-aware
   updates and elapsed/phase-conditioned remaining forecasts. Cross-validated tree
