@@ -237,13 +237,19 @@ On macOS, use login services instead of the foreground processes (stop those
 first):
 
 ```sh
-npm run service -- install
-npm run service -- start
-npm run service -- status
-# Stops/restarts refuse busy or unknown gateway state unless explicitly approved:
-npm run service -- restart
-# npm run service -- restart --interrupt
+./start-dsg.sh --open
+./gateway-status.sh
+./stop-dsg.sh
 ```
+
+**Two commands for day-to-day operation:** `start-dsg.sh` checks Node, source and
+private configuration, makes a private control-state backup, installs missing
+login services, starts the gateway/dashboard and verifies their endpoints.
+It does not restart an already-running service. `stop-dsg.sh` backs up control
+state, refuses busy/unknown gateway state, fences admission and confirms shutdown.
+Both preserve worker exclusions. No configuration is generated or overwritten.
+Use `--help` for component selection, explicit client interruption and JSON output;
+see the [operator-script guide](docs/installation.md#start-and-stop-scripts-macos).
 
 These commands manage only DSG's gateway and dashboard, never model servers.
 Worker controls register/enable/drain/remove routing endpoints. Separately enrolled

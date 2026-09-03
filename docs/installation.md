@@ -60,7 +60,9 @@ paths first or make them absolute. There is no silent fallback to a separate
 
 ## macOS login services
 
-Stop foreground copies first. `npm run service -- install` writes two user
+For normal use, prefer the [start/stop scripts](#start-and-stop-scripts-macos)
+below. The lower-level controls remain available. Stop foreground copies first.
+`npm run service -- install` writes two user
 LaunchAgents and backs up previous DSG registrations. It refuses to replace a
 loaded service and does not start anything. Then use:
 
@@ -102,6 +104,94 @@ relocatable: recreate them from the locked projects rather than trusting moved
 console-script shebangs. Encoder model files and collected data can be preserved.
 Archive any older custom service registration so it cannot respawn a second
 gateway. Do not start two writers against the same affinity file.
+
+## Start and stop scripts (macOS)
+
+Run from the checkout, or invoke either script by its full path from any directory:
+
+```sh
+./start-dsg.sh --open
+./stop-dsg.sh
+```
+
+Run as the normal logged-in operator, **not sudo**. Node 22.22.2+ must be on PATH.
+These are macOS login-service helpers, not Linux service installers. On Linux,
+continue to use the foreground commands under your chosen supervisor.
+
+`start-dsg.sh` automatically:
+
+1. Validates the platform, Node version, source syntax and existing private config
+   with the read-only doctor. It does not run inference or install dependencies.
+2. Checks missing registrations for an existing listener or loaded service; it
+   refuses to take over an unidentified process.
+3. Copies the private config and existing atomic affinity file into a unique,
+   mode-0700 `backups/lifecycle-…` directory beside the state file. Files are
+   mode 0600, with a manifest identifying their source paths and source revision.
+4. Installs **only absent** gateway/dashboard LaunchAgents. Existing registration
+   paths, ports and Node interpreters are preserved; mismatches fail closed.
+5. Starts stopped DSG services and checks their authenticated gateway/status and
+   dashboard/status responses. Already-running services are not restarted.
+6. Reports endpoints, pool context, activity/queues and excluded workers, and
+   optionally opens the dashboard. Zero available workers or a retained global
+   admission drain produces a prominent warning, not a false inference-ready claim.
+
+Starting DSG also starts its **already-configured** SSH tunnels and optional
+collector/encoder/predictor components through the ordinary gateway. The script
+does not provision SSH trust, install Python environments, download models, start
+remote DS4 services, clear quarantines, release agent holds, resume workers or
+alter model/context/output/thinking/cache/concurrency settings. Missing setup is
+reported; it is never replaced with a guessed fallback.
+
+`stop-dsg.sh` backs up the same control files, then uses the existing controller's
+ownership checks, busy/unknown refusal and final admission fence. It stops the
+dashboard before the gateway and verifies both launchd removal and port closure.
+An unexpected surviving listener is an error; it is never killed by guessing its
+PID. Repeating stop on an already-stopped installation is safe. Stop does **not**
+run syntax or optional encoder/predictor dependency checks, so those failures do
+not prevent an otherwise valid managed shutdown.
+
+The existing dashboard controller separately archives Genie reports before
+stopping. After a separate stop/start, Genie observation starts **off**; turn it
+back on in the UI if wanted. An already-running dashboard retains its setting.
+Durable recovery authorization and worker pause/hold/quarantine state are retained.
+Services stay installed for the next login; stopping does not uninstall them.
+
+Useful options:
+
+```sh
+./start-dsg.sh --only dashboard --open
+./stop-dsg.sh --only dashboard
+./start-dsg.sh --config /path/to/private-config.json --json
+./stop-dsg.sh --help
+# ONLY when willing to abandon active/queued client requests:
+./stop-dsg.sh --interrupt --confirm-interrupt
+```
+
+Without both interruption flags, busy work is not cancelled. With both flags,
+clients may fail and need a retry; queued HTTP connections and partial streams
+are not persisted. DS4 processes stay running and may still be handling other
+direct clients. A dashboard-only stop interrupts Genie reviews, not model requests.
+
+`--config` takes precedence over `DWARF_GATE_CONFIG`; relative filenames belong to
+the caller's directory. Otherwise the default is this checkout's
+`config.local.json`. `--json` keeps the result on stdout and progress on stderr.
+Exit 0 verifies the requested **service** action, not a generation/cache test;
+inspect `fleet` and `warnings` before sending inference. Failure exits nonzero
+and never triggers an automatic rollback, model restart or settings change.
+If gateway start succeeds but dashboard start fails, the gateway is left running
+and the failure is reported. Resolve it and rerun start; do not blindly restart.
+
+The automatic backup is deliberately small: config and one atomic affinity-file
+snapshot, **not** a consistent backup of all logs, reports, embeddings or training
+data. Backups remain private and are not pruned automatically. For disaster
+recovery, safely stop writers and separately back up the complete runtime.
+Restoring config/state is an explicit stopped-service operation, never automatic.
+
+Tests cover option parsing, first/partial/repeated startup, busy refusal,
+interruption scope, ownership conflicts, listener verification, degraded status,
+private backup permissions and shell invocation from another directory. The
+orchestration tests inject the service controller; existing controller tests cover
+fencing/launchd removal. These do not constitute a remote DS4 performance test.
 
 ## Logs, upgrades and privacy
 

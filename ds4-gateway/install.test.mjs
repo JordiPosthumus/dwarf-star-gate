@@ -55,6 +55,10 @@ test('clean checkout: initialize, doctor, UI registration, exact forwarding, CLI
   const cli=(script,args=[])=>exec(process.execPath,[path.join(checkout,script),...args],{cwd:elsewhere,env,timeout:10000});
   const imported=execFileSync(process.execPath,['--input-type=module','-'],{cwd:checkout,env,encoding:'utf8',timeout:10000,input:"await import('./ds4-gateway/config.mjs'); await import('./ds4-gateway/gateway.mjs'); await import('./ds4-gateway/dashboard.mjs'); await import('./ds4-gateway/service-control.mjs'); console.log('imports only');"});
   assert.equal(imported.trim(),'imports only');
+  for(const launcher of ['start-dsg.sh','stop-dsg.sh']){
+    const help=execFileSync(path.join(checkout,launcher),['--help'],{cwd:elsewhere,env,encoding:'utf8',timeout:10000});
+    assert.ok(help.includes('DS4 servers are never stopped.'));
+  }
   const initialized=await cli('scripts/setup.mjs',['--controls']),configFile=path.join(checkout,'config.local.json');
   const c=JSON.parse(fs.readFileSync(configFile));assert.equal(fs.statSync(configFile).mode&0o777,0o600);assert.equal(c.nodes.length,0);assert.ok(!initialized.stdout.includes(c.api_key));
   await assert.rejects(cli('scripts/setup.mjs',['--controls']),/nothing overwritten/);assert.deepEqual(JSON.parse(fs.readFileSync(configFile)),c);
