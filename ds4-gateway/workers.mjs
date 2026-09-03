@@ -1,11 +1,10 @@
-import fs from 'node:fs';
+import { loadConfig } from './config.mjs';
 import { workerControl } from './worker-client.mjs';
 
 const args = process.argv.slice(2);
 const option = name => { const i=args.indexOf(name); if(i<0)return undefined; if(!args[i+1]||args[i+1].startsWith('--'))throw new Error(`Missing ${name} value`); const value=args[i+1];args.splice(i,2);return value; };
 try {
-  const configPath=option('--config') || process.env.DWARF_GATE_CONFIG || 'config.local.json';
-  const config=JSON.parse(fs.readFileSync(configPath,'utf8'));
+  const {config}=loadConfig(option('--config'));
   const url=option('--url'), ssh=option('--ssh'), remote=option('--remote-port'), journal=option('--journal-unit');
   const [command='list',id,...extra]=args;
   if(extra.length)throw new Error('Unexpected arguments');

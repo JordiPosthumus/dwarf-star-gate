@@ -12,6 +12,7 @@ import { RoutingShadow } from './routing-shadow.mjs';
 import { GenerationFaultObserver, verifyGeneration } from './generation-health.mjs';
 import { workerConfig, workerConfigs, assertUniqueWorker } from './worker-config.mjs';
 import { Recovery } from './recovery.mjs';
+import { loadConfig } from './config.mjs';
 import net from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -661,8 +662,8 @@ function superviseTunnel(node, stopping) {
   return () => { clearTimeout(timer); child?.kill('SIGTERM'); };
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-  const config = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+if (process.argv[1] && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href) {
+  const {config} = loadConfig(process.argv[2]);
   let stopping = false;
   const gateway = createGateway(config);
   const awake = config.prevent_sleep ? spawn('/usr/bin/caffeinate', ['-i', '-w', String(process.pid)], { stdio: 'ignore' }) : null;

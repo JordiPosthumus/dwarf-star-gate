@@ -1,10 +1,10 @@
 // Generic operator client. Never starts/stops/restarts a model or gateway.
-import fs from 'node:fs';
 import path from 'node:path';
 import { workerControl } from './worker-client.mjs';
-const config = JSON.parse(fs.readFileSync(process.env.DWARF_GATE_CONFIG || 'config.local.json', 'utf8'));
+import { loadConfig } from './config.mjs';
 const command = process.argv[2] || 'status';
 try {
+  const {config}=loadConfig();
   if (command === 'status') {
     const r = await fetch(`http://127.0.0.1:${config.port}/gateway/status`, { headers:{ authorization:`Bearer ${config.api_key}` }, signal:AbortSignal.timeout(5000) });
     if (!r.ok) throw new Error(`Status HTTP ${r.status}`); console.log(JSON.stringify(await r.json(), null, 2));

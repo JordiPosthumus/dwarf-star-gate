@@ -44,9 +44,9 @@ From the repository root, with `uv` installed:
 uv sync --locked --project predictor
 npm run predictor:test
 uv run --locked --project predictor python predictor/train.py \
-  --data ./ds4-gateway/runtime/training \
-  --profiles ./ds4-gateway/runtime/worker-profiles.local.json \
-  --output ./ds4-gateway/runtime/training/candidates/experiment-001 \
+  --data ./runtime/training \
+  --profiles ./runtime/worker-profiles.local.json \
+  --output ./runtime/training/candidates/experiment-001 \
   --cross-validate-trees
 ```
 
@@ -75,9 +75,9 @@ locked environment, without rereading the live collector:
 
 ```sh
 uv run --locked --project predictor python predictor/train.py \
-  --data ./ds4-gateway/runtime/training/candidates/experiment-001/snapshots \
-  --profiles ./ds4-gateway/runtime/training/candidates/experiment-001/snapshots/worker-inventory.json \
-  --output ./ds4-gateway/runtime/training/candidates/experiment-001-replay \
+  --data ./runtime/training/candidates/experiment-001/snapshots \
+  --profiles ./runtime/training/candidates/experiment-001/snapshots/worker-inventory.json \
+  --output ./runtime/training/candidates/experiment-001-replay \
   --cross-validate-trees
 ```
 
@@ -185,8 +185,8 @@ containing exactly the keys above (null for unavailable fields), then:
 
 ```sh
 uv run --locked --project predictor python predictor/predict.py \
-  --bundle ./ds4-gateway/runtime/training/candidates/experiment-001 \
-  --input ./ds4-gateway/runtime/prediction-input.json
+  --bundle ./runtime/training/candidates/experiment-001 \
+  --input ./runtime/prediction-input.json
 ```
 
 The loader checks artifact hashes, schema and feature order. Output is explicitly

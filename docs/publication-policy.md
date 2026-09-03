@@ -4,7 +4,9 @@ Publish reusable behavior, setup instructions, exact intentionally recommended
 profiles, public source/model pins, synthetic regressions and known limitations.
 Do not turn this repository into an operator's maintenance journal.
 
-Keep the following outside the public checkout:
+Keep the following out of Git and the published repository. They may live in the
+checkout's ignored `config.local.json` and `runtime/` directories; a second source
+checkout is neither required nor recommended:
 
 - Fleet inventory, hostnames, private addresses, accounts, service enrollment
   fingerprints, locally built binary fingerprints and enabled policy state.

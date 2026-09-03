@@ -1,9 +1,9 @@
 // Explicit operator CLI. A canary is never exposed to the LLM or browser.
-import fs from 'node:fs';
+import { loadConfig } from './config.mjs';
 import {randomUUID} from 'node:crypto';
 import {workerControl} from './worker-client.mjs';
 try {
-  const config=JSON.parse(fs.readFileSync(process.env.DWARF_GATE_CONFIG||'config.local.json','utf8'));
+  const {config}=loadConfig();
   const [command='status',argument]=process.argv.slice(2),control=(route,body)=>workerControl(config.control_socket,route,body);
   const registry=await control('/workers');let result;
   if(command==='status')result=registry.recovery;

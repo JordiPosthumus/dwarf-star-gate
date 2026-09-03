@@ -47,7 +47,7 @@ From the repository root, with `uv` available:
 ```sh
 uv sync --locked --project ds4-gateway/encoder
 uv run --locked --project ds4-gateway/encoder python ds4-gateway/encoder/prepare.py \
-  ./ds4-gateway/runtime/encoders/minilm-v1
+  ./runtime/encoders/minilm-v1
 npm run encoder:test
 ```
 

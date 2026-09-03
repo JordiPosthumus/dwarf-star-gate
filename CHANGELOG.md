@@ -10,6 +10,14 @@
 
 ## Unreleased
 
+- Single-checkout installation with ignored private config/runtime, non-overwriting
+  setup, read-only doctor and explicit macOS gateway/dashboard login services.
+  All entry points share config resolution, including paths with spaces/symlinks.
+  Service status accepts a controls-enabled dashboard; busy stops require an
+  explicit interruption flag, and dashboard restarts archive Genie reports.
+  A clean-checkout integration test covers setup, UI registration, exact request
+  forwarding, durable worker state and exclusion of private files from Git.
+
 - Measured cache-cost calculator in Analytics: per-server disk-load/prefill
   components, bounded comparable samples, explicit unknowns and no cache-existence
   claim. It does not change routing or operate caches.

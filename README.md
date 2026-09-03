@@ -152,40 +152,48 @@ Install and understand the worker engine using
 first; this repository does not replace them or distribute the engine/model weights.
 
 ```sh
-cp examples/config.json config.local.json
-# Edit the ignored config: key, SSH aliases, model/context and loopback ports.
-./start-gateway.sh
-# In another terminal:
-./start-gateway-ui.sh
-./open-gateway-ui.sh
-```
-
-`start-gateway.sh` runs the gateway in the foreground, with operational output
-appended to `gateway.log` beside its configured state file. The example uses
-**127.0.0.1:30001**; it does not take over an existing service on port 30000.
-Workers are reached through SSH tunnels to their own `127.0.0.1:8000`.
-Provision SSH trust/authentication yourself. Change the example aliases to yours.
-
-On Linux, or for foreground UI operation:
-
-```sh
+git clone https://github.com/JordiPosthumus/dwarf-star-gate.git ~/DSG
+cd ~/DSG
+npm run setup -- --controls
+npm run hooks:install
+npm run doctor
+npm start
+# In another terminal, from the same checkout:
 npm run ui
 ```
 
-Open **http://127.0.0.1:30010**. The UI is read-only by default. Opt-in worker
-controls can register, enable, drain and remove routing endpoints; they never
-start, restart, stop or reconfigure model servers. Separately enrolled
-[service recovery](docs/worker-recovery.md) adds a guarded restart capability.
-The macOS UI start/open scripts enable
-only the dashboard at login. To unload it:
+No `npm install` is needed for the core. Setup creates an ignored, mode-0600
+`config.local.json` with a random API key and an empty worker list. It never
+overwrites an existing configuration. Omit `--controls` for a read-only dashboard.
+Open **http://127.0.0.1:30010**, expand **Manage DS4 servers**, add existing DS4
+endpoints and enable them after the compatibility check. Remote servers need a
+working SSH alias; local servers use their loopback URL. DSG does not install DS4.
+New configurations use **127.0.0.1:30001/v1** for inference; existing port settings
+are not changed. Read the client key from your private config, never publish it.
+
+On macOS, use login services instead of the foreground processes (stop those
+first):
 
 ```sh
-node ds4-gateway/dashboard-control.mjs stop
+npm run service -- install
+npm run service -- start
+npm run service -- status
+# Stops/restarts refuse busy or unknown gateway state unless explicitly approved:
+npm run service -- restart
+# npm run service -- restart --interrupt
 ```
 
-`DWARF_GATE_CONFIG=/absolute/path/to/config.json` selects another config for the
-scripts. Run commands from the checkout root; relative state paths resolve there.
-The foreground UI supports `GATEWAY_UI_PORT`; convenience scripts use 30010.
+These commands manage only DSG's gateway and dashboard, never model servers.
+Worker controls register/enable/drain/remove routing endpoints. Separately enrolled
+[service recovery](docs/worker-recovery.md) adds a guarded DS4 restart capability.
+The convenience UI launch scripts remain supported on macOS.
+
+**One checkout, no deployment copy:** source, ignored `config.local.json` and
+ignored `runtime/` live together. All launchers/operator commands use that config
+by default, even from another working directory. `DWARF_GATE_CONFIG` selects a
+different file; explicit CLI config arguments take precedence where supported.
+Relative local paths resolve beside the config file. Remote SSH paths do not.
+See [installation, upgrades and private files](docs/installation.md) for details.
 
 ## Monitoring and debugging
 
@@ -272,7 +280,7 @@ journal lines. Hashed conversation identifiers, request IDs and timings remain;
 review even sanitized diagnostics before sharing publicly.
 
 Parsed measurements are appended to private daily JSONL files under `dashboard/`
-beside the configured state file (the default is `ds4-gateway/runtime/dashboard/`).
+beside the configured state file (the default is `runtime/dashboard/`).
 `sample_id` deduplicates history replay across dashboard restarts. Logs are **not**
 deleted or automatically rotated: choose retention for your installation.
 Raw gateway logs can contain SSH error messages and host details; do not publish

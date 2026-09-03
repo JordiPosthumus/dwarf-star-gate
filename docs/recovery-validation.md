@@ -51,7 +51,8 @@ Canaries count toward the normal per-worker recovery cooldown; enabling the poli
 does not bypass it. Unsupported installs remain manual recovery.
 
 Keep detailed timestamps, machine identities, exact runtime measurements and
-operator actions in private deployment notes, outside the public checkout.
+operator actions in private deployment notes, never in the published Git tree
+(the ignored local `runtime/` directory is suitable).
 Public contributions should describe the procedure, synthetic regression evidence
 and known limitations. See the [publication policy](publication-policy.md).
 

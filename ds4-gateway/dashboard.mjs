@@ -14,6 +14,7 @@ import { genieTunnel } from './genie-tunnel.mjs';
 import { safeQuarantine } from './generation-health.mjs';
 import { AnalyticsReader } from './analytics.mjs';
 import { estimateCacheCost } from './cache-cost.mjs';
+import { loadConfig, dashboardPort } from './config.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const assets = new Map([['/', ['index.html', 'text/html']], ['/ui.css', ['ui.css', 'text/css']], ['/brand.css', ['brand.css', 'text/css']], ['/ui.js', ['ui.js', 'text/javascript']], ['/logo.png', ['logo.png', 'image/png']]]);
@@ -103,8 +104,9 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
   });
 }
 
-export async function runDashboard(configPath, port = 30010) {
-  const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+export async function runDashboard(configPath, port) {
+  const {config} = loadConfig(configPath);
+  port ??= dashboardPort(config);
   const fileSources = telemetryFiles(config.telemetry_files);
   const devices = new Map(), readers = new Map();
   const activity=new Activity();
@@ -230,7 +232,7 @@ export async function runDashboard(configPath, port = 30010) {
   }
   const started = Date.now();
   const managementEnabled = config.ui_worker_management === true && !!config.control_socket;
-  const snapshot = () => ({ version: 1, time: Date.now(), started, read_only: !managementEnabled, worker_management:managementEnabled, gateway, gateway_at: gatewayAt, gateway_error: gatewayError, telemetry_error: writeError,
+  const snapshot = () => ({ service:'dwarf-star-gate-dashboard', version: 1, time: Date.now(), started, read_only: !managementEnabled, worker_management:managementEnabled, gateway, gateway_at: gatewayAt, gateway_error: gatewayError, telemetry_error: writeError,
     devices: [...devices.values()].map(d => ({...d.snapshot(),activity:activity.get(d.id)})), events, notes: 'Rates are DS4 engine measurements. Cache counts cover observed prompt starts, not lifetime requests. Raw prompts and responses are excluded.' });
   const genie=new Genie(config.genie,snapshot,{recover:managementEnabled?input=>workerControl(config.control_socket,'/genie-recover-worker',input):null});
   const stopGenieTunnel=genieTunnel(config.genie);
@@ -245,5 +247,5 @@ export async function runDashboard(configPath, port = 30010) {
   console.log(`Dwarf Star Gate: http://127.0.0.1:${server.address().port} (${managementEnabled ? 'local worker controls' : 'read-only'})`);
   return { server, snapshot, close };
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
-  runDashboard(path.resolve(process.argv[2] || path.join(here, 'config.production.json')), Number(process.env.GATEWAY_UI_PORT || 30010)).catch(e => { console.error(e.message); process.exitCode = 1; });
+if (process.argv[1] && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href)
+  runDashboard(process.argv[2]).catch(e => { console.error(e.message); process.exitCode = 1; });
