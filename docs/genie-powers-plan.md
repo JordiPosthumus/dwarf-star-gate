@@ -107,6 +107,14 @@ Registering a DS4 HTTP endpoint alone must never grant restart authority. A
 worker without a configured adapter remains observable/routable, but its UI
 must explicitly say **manual service recovery required** when quarantined.
 
+Adapter setup must verify that the configured service actually owns the DS4
+listener being registered, not merely that some endpoint advertises the expected
+model name. Record the service/process identity and supported DS4 capabilities;
+check that association again before recovery. A manually launched process, an
+unknown service manager, or a mismatched service/endpoint stays in manual-recovery
+mode. Differences in context, quantization and hot/disk cache settings are valid:
+preserve each installation's own verified profile, not a universal Spark preset.
+
 Start with a typed `systemd-user` adapter for the Spark canary, using a configured
 SSH alias and exact unit. A `launchd` adapter can target a configured Mac service;
 a container adapter can target an exact existing container service. They need the

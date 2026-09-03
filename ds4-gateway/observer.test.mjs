@@ -18,6 +18,16 @@ import {createDashboard} from './dashboard.mjs';
 import {capacity,phase,Activity} from './ui/activity.js';
 const snapshot=()=>({time:Date.now(),devices:[],events:[],gateway:{workers:[],context_length:262144,active:0,queued:0}});
 const authoredReview=()=>({assessment:'The fleet has no demonstrated fault in this snapshot.',ticker:[{severity:'info',text:'No current failure is evidenced.',recommendation:null,evidence_refs:['fleet']}]});
+test('Genie briefing distinguishes an empty waiting queue from genuinely free capacity',()=>{
+  const worker={id:'one',is_healthy:true,load:0,queued:0},s=snapshot();s.gateway.workers=[worker];
+  assert.equal(briefing(s).workers[0].immediately_free,true);
+  for(const change of [{load:1},{queued:1},{drained:true},{is_healthy:false},{load:undefined},{queued:undefined},{quarantine:{reason:'fatal_accelerator_error'}}]) {
+    s.gateway.workers=[{...worker,...change}];assert.equal(briefing(s).workers[0].immediately_free,false);
+  }
+  s.gateway.workers=[worker];s.gateway.draining=true;assert.equal(briefing(s).workers[0].immediately_free,false);
+  assert.match(briefing(s).semantics.join(' '),/queued=0.*NOT idle/);
+  assert.match(briefing(s).semantics.join(' '),/does not move already queued/);
+});
 test('Genie parses bounded model-written ticker entries and rejects unknown evidence references',()=>{
   const evidence=briefing(snapshot()),data=authoredReview();
   let result=parseGenieReview(JSON.stringify(data),evidence);assert.equal(result.ticker[0].text,data.ticker[0].text);assert.equal(result.ticker_error,null);

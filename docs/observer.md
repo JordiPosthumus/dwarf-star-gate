@@ -80,6 +80,13 @@ cache miss may still restore from disk. The model is instructed not to infer a
 stall from long thinking or to claim an action occurred. Recommendations are
 advice only; the wire grants no operational powers.
 
+Per-worker `immediately_free` is computed from health, pause/quarantine, gateway
+draining, active and queued state. An empty waiting queue does not make a busy
+server idle. The briefing also states that DSG cannot move already queued jobs,
+and that cache counters may include diagnostics or unequal observation windows.
+These explicit facts reduce misinterpretation; they are not an LLM accuracy
+guarantee or permission to execute its recommendations.
+
 Headlines scroll at approximately 42 CSS pixels/second, separated by 8rem gaps.
 Hover or keyboard-focus freezes motion and headline updates; **Pause ticker**
 holds that state until resumed. The timestamp stays with the frozen evidence.
