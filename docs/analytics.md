@@ -57,9 +57,14 @@ Analytics is separate from the existing diagnostic download. These measurements
 are still private deployment data: do not commit captures of the live panel.
 Use explicitly synthetic examples for public screenshots.
 
-New analytics code needs a dashboard-only restart. Inference and collection do
-not need restarting. The dashboard freezes its UI bundle at startup; preserve
+Analytics-only code needs a dashboard-only restart. Enabling new embedding or
+progress collection also needs a gateway restart in an approved window; model
+servers do not need restarting. The dashboard freezes its UI bundle at startup; preserve
 Genie assessments privately before restarting because they remain in memory.
+
+The panel now also exposes [local encoder status](embeddings.md) and a
+[measured cache-cost calculator](cache-cost.md). These are separate from the
+historical forecast chart: no fitted XGB or embedding changes those dots yet.
 
 ## Which predictions are actually needed?
 
@@ -70,7 +75,7 @@ not maximum decode speed or minimum queue wait in isolation.
 | --- | --- | --- |
 | Total server time for a new request | Cost after dispatch on each candidate | Existing offline XGB target; compare a fresh artifact with fixed baselines before any shadow/live promotion |
 | Remaining busy time of an active request | When a server can accept its next job | Existing conditional-history shadow estimate; later elapsed/phase-conditioned model with explicit censored observations |
-| Cache acquisition + suffix prefill time | Cost of hot reuse, local restore or cold execution | Measure request-attributed phases/cache tier first; use a simple measured cost baseline, then fit if justified |
+| Cache acquisition + suffix prefill time | Cost of hot reuse, local restore or cold execution | Measured disk/prefill component baseline implemented; exact request/epoch attribution, cache existence and unmeasured costs remain next |
 | Generation duration, including reasoning | Work after prefill until the response ends | Initially part of total server time; separate only with trustworthy phase/output labels |
 | Queue wait | Remaining active work plus requests ahead | Derive from the quantities above and actual admission rules; no separate idle-demand model needed |
 
@@ -94,8 +99,18 @@ versions with predictions so different candidates are not pooled unknowingly.
 
 The current gateway places requests before reading their bodies. Embeddings and
 current-request text features collected later cannot be used retrospectively at
-that decision point. Local bounded embedding collection is still the next data
-slice, not implemented by this panel. No raw text was retained to backfill old rows.
+that decision point. [Local bounded embedding collection](embeddings.md) is now
+an optional separate data slice, with feature-availability times. No raw text was
+retained to backfill old rows. Correlated 30-second progress records prepare the
+remaining-busy-time dataset; they do not activate a remaining-time learned model.
+
+Why can the service chart look poor? The baseline is a per-worker median in a
+broad **previous** prompt-size bucket. It does not distinguish current workload,
+thinking duration or hot/disk/cold cache state. Predictions can cluster together
+while actual durations vary widely. Queue forecasts additionally know elapsed
+active time and the requests ahead, but inherit errors in those jobs' durations.
+Compare coverage and error, not just the apparent shape of the plotted subset;
+missing forecasts and failed/unfinished service jobs are not plotted as successes.
 
 Before promoting XGB: use forward-time, session-separated validation, select tree
 count within training folds, retain an untouched later holdout, compare with a

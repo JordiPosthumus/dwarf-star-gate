@@ -12,6 +12,8 @@ training target and transforming predictions back to seconds. This includes
 upload/backend waiting, cache restoration, prefill and generation as observed by
 DSG; it is not pure decode time. Queue waiting in DSG is excluded from this target.
 A later completion-time scheduler must estimate waiting separately and add it.
+Exponentiating a log-duration fit is not automatically an arithmetic mean; the
+report labels this statistic explicitly. Do not call it calibrated expected time.
 
 The first fit uses fixed, small CPU settings: 32 boosting rounds, depth 2, seed 42,
 two XGBoost threads. It does not search hyperparameters on the holdout. Dependencies
@@ -27,8 +29,12 @@ cross-validation inside training data**: forward-time, session-separated folds,
 with only labels available at each cutoff. Early stopping must use fold-internal
 validation, never the final test set. Refit with the selected count and assess on
 an untouched later-session test set. Save the fold definitions and selection
-evidence. This production selection pipeline is **not implemented yet**; the
-32-round smoke model and ordinary routing are unchanged.
+evidence. The optional `--cross-validate-trees` flag now implements this nested
+selection for 16/32/64/128 rounds using the same fixed shallow-tree settings.
+It requires at least two usable forward-time/session-disjoint inner folds; otherwise
+it reports insufficient evidence and retains the unvalidated 32-round fallback.
+The final holdout is never passed into tree-count selection. This is evaluation
+machinery, not a production promotion path; ordinary routing remains unchanged.
 
 ## Reproduce a fit
 
@@ -40,7 +46,8 @@ npm run predictor:test
 uv run --locked --project predictor python predictor/train.py \
   --data ./ds4-gateway/runtime/training \
   --profiles ./ds4-gateway/runtime/worker-profiles.local.json \
-  --output ./ds4-gateway/runtime/training/candidates/experiment-001
+  --output ./ds4-gateway/runtime/training/candidates/experiment-001 \
+  --cross-validate-trees
 ```
 
 The input/output paths above are private deployment paths, not public sample data.
@@ -70,7 +77,8 @@ locked environment, without rereading the live collector:
 uv run --locked --project predictor python predictor/train.py \
   --data ./ds4-gateway/runtime/training/candidates/experiment-001/snapshots \
   --profiles ./ds4-gateway/runtime/training/candidates/experiment-001/snapshots/worker-inventory.json \
-  --output ./ds4-gateway/runtime/training/candidates/experiment-001-replay
+  --output ./ds4-gateway/runtime/training/candidates/experiment-001-replay \
+  --cross-validate-trees
 ```
 
 Tests verify identical model bytes and evaluation reports for a same-environment
@@ -145,6 +153,10 @@ utilization, actual cache residence, or engine-epoch features are fabricated.
 This intentionally limited predictor is not yet a per-prompt workload estimator.
 Current-request features should be instrumented at the actual prediction point
 before adding them, using the same feature contract in training and serving.
+The optional [embedding/progress collector](../docs/embeddings.md) now supplies
+after-upload/while-active evidence. Version-1 metadata-only training intentionally
+skips those separate rows: they are not available at its admission prediction point.
+The new vectors are not silently fed into this old feature contract.
 
 ## Evidence and evaluation rules
 

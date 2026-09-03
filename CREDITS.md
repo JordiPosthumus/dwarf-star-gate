@@ -52,6 +52,14 @@ We echo that acknowledgement and encourage readers to visit
 The model families and weights are the work of their respective model authors;
 an inference engine and a gateway must not claim to have created them.
 
+The optional CPU encoder uses [Sentence Transformers' all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2),
+with inference by [ONNX Runtime](https://onnxruntime.ai/) and tokenization by
+[Hugging Face Tokenizers](https://github.com/huggingface/tokenizers). The offline
+predictor uses [XGBoost](https://xgboost.readthedocs.io/). These projects and their
+contributors deserve credit for that machinery; DSG supplies the bounded
+extraction, evidence collection and evaluation integration. Their dependencies
+and model artifacts retain their own upstream licenses and notices.
+
 ## What this repository contributes
 
 Dwarf Star Gate contributes session-affinity routing, per-worker admission and

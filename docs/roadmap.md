@@ -15,14 +15,17 @@ joins existing admission-time shadow forecasts to observed queue/server duration
 with per-server filters, missing-prediction coverage and error. This is an
 unvalidated historical baseline, not live XGB. Its model plan prioritizes total
 service time and remaining busy time; queue wait is derived, not idle-demand
-forecasting. Phase/cache attribution and embeddings remain the next data work.
+forecasting. Optional [local embedding/progress collection](embeddings.md) and the
+[measured cache-cost calculator](cache-cost.md) are now implemented. Exact
+request-to-engine/cache attribution and learned live prediction remain next work.
 
 **Recovery update:** order 6's first slice is now implemented in
 [bounded DS4 service recovery](worker-recovery.md): systemd-user enrollment, GG and
 detector requests, independent guards, durable receipts and cold/warm verification.
 This does not fix the CUDA defect or implement launchd/container recovery. The
 next reliability/data priority is request-to-engine attribution with backend
-process epochs, followed by the embedding collection slice already specified below.
+process epochs. The separate embedding slice now collects future workload features
+without waiting for that engine instrumentation or changing routing.
 
 Use the [recovery validation procedure](recovery-validation.md) before enabling
 an enrolled service. Deployment receipts and policy activation belong in private
@@ -33,8 +36,8 @@ operator records, not this public roadmap.
 | 0 | Promote protocol/quarantine maintenance fixes through a controlled cutover | Regression suites pass; versioned backup; real API-format smoke checks; unchanged fleet/context; explicit source-versus-running release record |
 | 1 | Diagnose the Spark CUDA/OOM incidents and identify backend process epochs | Correlated service/kernel/memory evidence and targeted reproduction; real cold/warm checks plus representative sustained work; no unapproved context/cache reductions |
 | 2 | Explain idle capacity and design cache-aware overflow scheduling | UI identifies session-home waits; replay/shadow comparisons of wait-at-home versus cold execution elsewhere; prove no overlapping ownership/replay; operator-approved policy before activation |
-| 3 | Data quality and local embedding collection, with a visible collection panel | Versioned encoder and bounded text extraction; current-request feature-availability timestamps; failure/backpressure/privacy tests; joined vectors and valid labels across hardware |
-| 4 | Refit the offline XGB experiment, then shadow ETA predictions | New immutable artifact versus baseline; hardware/context/session coverage; production tree count selected by time/session-aware CV before promotion |
+| 3 (collector implemented) | Validate local embeddings/progress on ordinary workload | Pinned CPU encoder, bounded extraction and visible status; collect joined future labels across hardware; exact cache/engine attribution still separate |
+| 4 (CV implemented) | Refit the offline XGB experiment, then shadow ETA predictions | Immutable artifact versus baseline; nested time/session-aware tree selection; remaining-time and embedding-aware feature contracts; no live XGB until evidence supports it |
 | 5 | Persistent Genie/operator activity and endpoint settings UI | Durable actor/channel/action receipts, stale-evidence labels, feedback, endpoint test/save/rollback; manual controls remain authoritative |
 | 6 (first slice implemented) | Opt-in deterministic recovery runner and Genie access | Systemd-user only; see recovery guide for tested scope and deployment gates |
 
@@ -62,13 +65,14 @@ and clearly distinguish earlier illustrative captures from new collection/Genie 
 It records per-worker/session clocks and compares an unvalidated historical
 baseline without moving work. This is not the planned calibrated, cache-aware XGB
 router. Dedicated UI explanations, verified cache/process evidence and production
-handover are still outstanding. Embeddings remain unimplemented, not implied by
-the new timing features. "Remaining busy time" comes before demand forecasting of
+handover are still outstanding. Embeddings are a separate opt-in collector, not
+implicitly enabled by shadow timing. "Remaining busy time" comes before demand forecasting of
 how long an idle machine will remain unused.
 
 - **Passive routing dataset:** opt-in private numerical records of fleet load at
   admission, placement, queue/service durations, reported token usage and failures.
-  No raw conversations, answers, tool arguments or embeddings in this first slice.
+  No raw conversations, answers or tool arguments. Separately enabled embedding
+  collection adds sensitive derived vectors, never source-text retention.
 - **Fleet activity:** serving-slot occupancy and immediately free slots, plus
   sampled idle/prefill/thinking/answering timelines. Prefill and decode use separate
   scales shared across servers. Serving slots are not GPU utilization or hot KV slots.
@@ -97,15 +101,17 @@ stopping, use each fold's validation subset, not the final test set. Select the
 tree count from those folds, refit on training data, and assess once on a separate
 untouched later-session test set. Record folds, candidate counts, selection rule,
 baseline and chosen count. Too little data means no validated production model,
-not random row CV or invented examples. This is a later release gate, not tonight's
-smoke-test gate; the current fixed 32-round experiment remains unchanged.
+not random row CV or invented examples. The original fixed 32-round smoke mode
+remains available; `--cross-validate-trees` now performs the bounded inner
+selection. Neither creates routing authority, even if a candidate beats baseline.
 
-**Embeddings are the next collection slice, not something to wait for a mature
-predictor to begin.** Planned implementation, not enabled yet:
+**Embedding collection is implemented, off by default**, independently of any
+mature predictor. See [the exact extraction/setup contract](embeddings.md).
 
 - Pin a small local encoder, revision, tokenizer, dimensions and extraction
-  policy. Do not assume DS4's chat endpoint supplies embeddings. Encoder choice
-  and measured host overhead are still to be verified before installation.
+  policy. The first encoder is CPU ONNX all-MiniLM-L6-v2, pinned to an immutable
+  revision, 384 dimensions and 256 tokens per slice. DS4's chat endpoint is not
+  used for embeddings. Verify host overhead before each deployment.
 - Embed two separately labelled inputs: the latest user text and a bounded slice
   of preceding user/assistant-visible conversation. Exclude system/developer
   instructions, hidden reasoning, tool arguments/results and image payloads in
@@ -198,7 +204,8 @@ prefill and generation—not raw tokens/second alone.
 5. Shadow routing first. Deploy only after measured validation, with a fixed,
    immutable compatible fallback model and deterministic routing fallback.
 
-No embedding encoder or live XGBoost predictor is installed by the current observer.
+No encoder is automatically installed by the observer; the optional pinned local
+bundle requires explicit preparation/configuration. No live XGBoost predictor is active.
 Because raw text is not retained, old numerical records cannot later acquire
 embeddings. Embedding-enabled collection begins a new, versioned dataset slice.
 Derived vectors are sensitive too and stay in private local storage.

@@ -26,8 +26,11 @@ reduced motion shows static text. Expanded assessments stay open across refreshe
 
 Optional [queued-work shadow collection](docs/routing-shadow.md) records idle and
 session-recency clocks and compares a historical baseline without moving work.
-Its estimates are explicitly unvalidated; no embeddings or live XGB routing are
-implied by this feature.
+Its estimates are explicitly unvalidated; no live XGB routing is implied.
+Separately opt in to [local embedding/progress collection](docs/embeddings.md)
+for future workload models. Analytics also includes a read-only
+[cache-cost calculator](docs/cache-cost.md) using measured disk-load/prefill
+components. Unknown cache costs and unverified cache existence stay explicit.
 
 ## The engine is Antirez's. Start there.
 
@@ -63,8 +66,9 @@ The gateway/dashboard use Node.js built-ins only; the optional systemd recovery
 helper uses Python's standard library. No package installation, database, Kubernetes, frontend
 build system, CDN, analytics service or cloud telemetry.
 
-The optional offline predictor is a separate, locked Python environment; it is
-not imported or required by the gateway or dashboard.
+The optional offline predictor and CPU embedding encoder use separate, locked
+Python environments. Neither is required for ordinary gateway/dashboard operation;
+the encoder runs only when explicitly configured, without cloud inference.
 
 ## Dashboard
 
@@ -278,6 +282,8 @@ The local **Analytics** panel compares saved shadow forecasts with actual queue
 waits and server durations, with sample counts, missing-prediction coverage and
 per-server filtering. It is an unvalidated historical baseline, not a live XGB
 router. See [analytics definitions and the model plan](docs/analytics.md).
+The same panel shows optional embedding collection status and the cache-cost
+calculator. Neither currently changes routing or replaces the historical charts.
 
 ## Client affinity
 

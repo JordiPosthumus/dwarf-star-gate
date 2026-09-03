@@ -73,6 +73,17 @@ async function loadAnalytics() {
   catch {analyticsState={...analyticsState,status:'unavailable'};}
   finally {analyticsLoading=false;renderAnalytics();}
 }
+function embeddingInfo(ds) {
+  const e=ds?.embedding_collection;
+  if(!e?.enabled)return 'Embeddings off. Numerical collection can continue independently.';
+  return `Local embeddings ${e.ready?'ready':e.error||'starting'} · ${fmt(e.completed)} encoded / ${fmt(e.observed)} observed · ${fmt(e.pending)} queued · ${fmt(e.failed)} failed · ${fmt(e.dropped)} dropped · ${fmt(e.missing)} unavailable text · last batch ${fmt(e.last_duration_ms)} ms · ${e.model||'unknown encoder'} @ ${typeof e.revision==='string'?e.revision.slice(0,8):'unknown revision'} · ${fmt(e.dimensions)} dimensions. Latest user + bounded recent conversation; no raw text saved. Not used for routing.`;
+}
+function cacheCostText(result) {
+  const part=p=>p?.estimated_ms===null||p?.estimated_ms===undefined?
+    (p?.status==='insufficient_evidence'?`unknown (${fmt(p.samples)}/3 required matching samples)`:'unknown (not measured)'):
+    `${fmt(p.estimated_ms/1000)} s (${fmt(p.samples)} samples${p.status==='no_cache_payload'?', no payload to load':Number.isFinite(p.observed_min_ms)?`, observed ${fmt(p.observed_min_ms/1000)}–${fmt(p.observed_max_ms/1000)} s`:''})`;
+  return `Disk payload load: ${part(result.disk_load)}. Prefill: ${part(result.prefill)}. These are component estimates, not total acquisition or completion time. Prefix search, later engine synchronization and remote transfer are unmeasured. Cache existence is not verified; observed ranges are not confidence intervals.`;
+}
 function timeline(d,now) {
   const rows=d.activity||[],start=now-900000;
   return `<svg class="activity-timeline" viewBox="0 0 100 10" preserveAspectRatio="none" role="img" aria-label="Observed activity over the last fifteen minutes; blank sections are unknown">${rows.map(r=>{
@@ -142,6 +153,9 @@ function render(s) {
   $('capacity-meter').value=cap?.percent||0;$('capacity-meter').hidden=cap?.percent==null;
   $('devices').innerHTML = s.devices.map((d,i) => device(d,g?.workers.find(w => w.id === d.id),now,stale,i+1,scales)).join('');
   const ds=g?.dataset;
+  $('embedding-detail').textContent=embeddingInfo(ds);
+  const selector=$('cache-cost-worker'),selected=selector.value,options=(g?.workers||[]).map(w=>`<option value="${esc(w.id)}">${esc(w.id)}</option>`).join('');
+  if(selector.innerHTML!==options){selector.innerHTML=options;if((g?.workers||[]).some(w=>w.id===selected))selector.value=selected;}
   $('dataset-status').textContent=stale?'Collector status stale':!ds?.enabled?'Collector not enabled':ds.error||'Collecting routing evidence';
   $('dataset-detail').textContent=ds?`${fmt(ds.written)} events saved this gateway run · ${fmt(ds.bytes/1048576)} MiB stored · ${fmt(ds.pending)} pending · ${fmt(ds.dropped)} dropped · ${fmt(ds.finished)} finishes (${fmt(ds.missing_usage)} missing usage, ${fmt(ds.truncated)} output-limited, ${fmt(ds.failed_or_cancelled)} failed/cancelled) · last write ${age(ds.last_write,now)}`:'Existing engine metrics are separate from the new request dataset.';
   $('worker-management').hidden = !s.worker_management;
@@ -265,6 +279,15 @@ function renderGenieReports(reports = []) {
 poll();
 $('analytics-metric').addEventListener('change',renderAnalytics);
 $('analytics-worker').addEventListener('change',renderAnalytics);
+let cacheCostBusy=false;
+$('cache-cost-form').addEventListener('submit',async event=>{
+  event.preventDefault();if(cacheCostBusy)return;cacheCostBusy=true;
+  const form=event.currentTarget,button=form.querySelector('button');button.disabled=true;
+  const params=new URLSearchParams(new FormData(form));$('cache-cost-result').textContent='Reading measured component costs…';
+  try{const r=await fetch('/api/cache-cost?'+params,{signal:AbortSignal.timeout(5000)}),data=await r.json();if(!r.ok)throw new Error(data.error||'Cost evidence unavailable');$('cache-cost-result').textContent=cacheCostText(data);}
+  catch(e){$('cache-cost-result').textContent=e.message;}
+  finally{button.disabled=false;cacheCostBusy=false;}
+});
 void loadAnalytics();setInterval(()=>{if(!document.hidden)void loadAnalytics();},10000);
 $('health-wire-pause').addEventListener('click',()=>{
   wirePaused=!wirePaused;$('health-wire').dataset.paused=String(wirePaused);

@@ -13,7 +13,7 @@ learning router or a cache-hit auditor.
 | `run_id` | UUID for this gateway process run |
 | `event_id` | UUID for this event |
 | `time` | Gateway wall-clock ISO timestamp |
-| `kind` | `decision`, `dispatch`, `finish`, `queued_cancel`, `queue_timeout`, `unavailable_before_dispatch`, or optional `routing_shadow` |
+| `kind` | `decision`, `dispatch`, `finish`, `queued_cancel`, `queue_timeout`, `unavailable_before_dispatch`, `progress`, or optional `routing_shadow`, `request_features`, `embedding` |
 | `request_id` | Gateway-assigned request UUID, shared across this request's events |
 | `node` | Selected registered server ID |
 
@@ -28,6 +28,9 @@ learning router or a cache-hit auditor.
 | `queue_timeout` | `total_ms` spent admitted before queue expiry |
 | `unavailable_before_dispatch` | `total_ms` spent admitted before rejecting dispatch to an unavailable assigned server |
 | `routing_shadow` | Repeatable, non-label assessment: `shadow_schema`, `reason`, `verdict`, `confidence`, `basis`, `source`, `alternative`, `session_busy`, `waiting_ms`, `saving_ms`, `candidates`, truncation flag |
+| `progress` | `progress_schema:1`, `prediction_point:while_active`, `active_elapsed_ms`, `phase`, `semantic_characters`, `semantic_age_ms`, `requested_thinking` |
+| `request_features` | `feature_schema:1`, `prediction_point:after_upload`, extraction/status, `available_at`, bounded visible character/message counts and history-scan flag |
+| `embedding` | `embedding_schema:1`, status/extraction; ready rows add model/revision/dimensions, per-scope vectors/token metadata, queued/available times and encoding duration |
 
 `affinity` is `new`, `existing`, `none`, or `reassigned`. `session`, when present,
 is the SHA-256 digest of the supplied affinity identifier, **not a hash of the
@@ -110,20 +113,27 @@ restores and their load times, and observed finish events. This slice **does not
 join these to request IDs by guessing from timestamps**. They must not silently
 become request-level training features or accusations of a bad route.
 
-## What is not being collected or embedded
+## Optional derived embeddings and progress
 
 No raw prompts, answers, hidden reasoning text, image data, tool arguments,
-credentials, model/cache files, or conversation embeddings are stored by this
-collector. It is not calculating prompt similarity or generating vectors.
+credentials, or model/cache files are stored by this collector. Optional
+[local embedding collection](embeddings.md) stores derived vectors for bounded
+latest-user and preceding-visible-conversation slices. The linked contract names
+the exact encoder, revision, dimensions, pooling, tokenizer bounds, exclusions,
+failure behavior and sensitive-data handling. No prompt-similarity cache identity
+or cache-hit proof is inferred from those vectors.
 
-Proposed embedding phase: a separate, pinned local encoder processes the latest
-user text plus an explicitly bounded slice of prior conversation, selected before
-generation. Persist vectors and encoder/preprocessing metadata, not source text.
-Exact encoder, slice selection, image/tool treatment and budgets remain undecided.
-Do not embed the future answer and feed it into a placement predictor. Do not send
-private text to a cloud embedding service by default. Historical numerical records
-cannot be backfilled with vectors because their source conversation text was not
-retained. Compare metadata-only and embedding-assisted predictors before adopting.
+Progress records start at dispatch and repeat every 30 seconds until termination.
+Semantic character/age measurements come from recognized SSE text/reasoning/tool
+deltas, not heartbeats; they do not contain source text or prove prefill phase.
+Unknown/unsupported progress remains unknown. New stream kinds must not create
+duplicate training examples or false analytics gaps.
+
+Use only features available by a predictor's declared prediction time. Embedding
+ready times occur after initial placement and sometimes after a short request
+finishes. No future-answer embedding or hindsight routing prediction is permitted.
+Historical numerical records cannot be backfilled because raw text was not kept.
+Compare metadata-only and embedding-assisted predictors before adopting either.
 
 For storage bounds, permissions and UI counters, see [observer setup](observer.md).
 For the next embedding collection slice and its feature-availability boundaries,

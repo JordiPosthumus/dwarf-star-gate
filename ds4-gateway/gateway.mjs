@@ -7,6 +7,7 @@ import { StringDecoder } from 'node:string_decoder';
 import { pathToFileURL } from 'node:url';
 import { RequestedThinkingObserver } from './requested-thinking.mjs';
 import { Dataset } from './dataset.mjs';
+import { EmbeddingCollector } from './embeddings.mjs';
 import { RoutingShadow } from './routing-shadow.mjs';
 import { GenerationFaultObserver, verifyGeneration } from './generation-health.mjs';
 import { workerConfig, workerConfigs, assertUniqueWorker } from './worker-config.mjs';
@@ -86,9 +87,10 @@ export class AffinityStore {
   close() { if (this.lock) { fs.unlinkSync(this.lock); this.lock = null; } }
 }
 
-// Buffers at most one SSE line, solely to observe usage. Forwarded bytes are
+// Buffers at most one SSE line to observe usage and semantic progress. Forwarded bytes are
 // never decoded/re-encoded. No answer/reasoning text is logged.
 export class UsageObserver {
+  phase='awaiting_content';semanticCharacters=0;lastSemanticAt=null;
   pending = ''; usage = undefined; done = false; finish_reason = null;
   skipping = false; limited = false; failed = false; decoder = new StringDecoder('utf8');
   constructor(route='/v1/chat/completions'){this.route=route;}
@@ -116,6 +118,19 @@ export class UsageObserver {
     }
     try {
       const parsed=JSON.parse(payload),u=parsed.usage,reason=parsed.choices?.[0]?.finish_reason;
+      const delta=parsed.choices?.[0]?.delta;
+      const progress=(text,phase)=>{if(typeof text==='string'&&text.length){this.semanticCharacters+=text.length;this.lastSemanticAt=performance.now();this.phase=phase;}};
+      if(delta) {
+        progress(delta.reasoning_content||delta.reasoning,'thinking');
+        progress(delta.content,'answering');
+        if(Array.isArray(delta.tool_calls))for(const call of delta.tool_calls)progress(call?.function?.arguments,'tool_output');
+      } else if(parsed.type==='content_block_delta') {
+        const d=parsed.delta;if(d?.type==='thinking_delta')progress(d.thinking,'thinking');
+        else if(d?.type==='text_delta')progress(d.text,'answering');
+        else if(d?.type==='input_json_delta')progress(d.partial_json,'tool_output');
+      } else if(['response.output_text.delta','response.reasoning_summary_text.delta','response.reasoning_text.delta','response.function_call_arguments.delta'].includes(parsed.type)) {
+        progress(parsed.delta,parsed.type.includes('reasoning')?'thinking':parsed.type.includes('arguments')?'tool_output':'answering');
+      }
       const count=x=>Number.isFinite(x)&&x>=0?x:undefined;
       if(parsed.type==='error' || parsed.error)this.failed=true;
       if(this.route==='/v1/messages') {
@@ -171,10 +186,12 @@ export function createGateway(config) {
       n.quarantine=null;n.inferenceFailures=0;n.healthy=true;n.failures=0;
       observe(()=>shadow.reset(n.id));
     }}); } catch(e){store.close();throw e;}
+  const embeddings=new EmbeddingCollector(dataset.enabled?config.embeddings:null,(kind,row)=>dataset.record(kind,row));
+  dataset.state.embeddings=embeddings.state.enabled;
   const agent = new http.Agent({ keepAlive: true, maxSockets: 16 });
   const accepted = new Set(['POST /v1/chat/completions', 'POST /v1/completions', 'POST /v1/responses', 'POST /v1/messages', 'GET /v1/models']);
   const auth = Buffer.from(`Bearer ${config.api_key}`);
-  const stats = () => ({ version: 1, model: config.model, context_length: contextLimit(), draining, dataset:dataset.snapshot(), routing_shadow:shadow.snapshot(),recovery:recovery.status(),
+  const stats = () => ({ version: 1, model: config.model, context_length: contextLimit(), draining, dataset:{...dataset.snapshot(),embedding_collection:embeddings.snapshot()}, routing_shadow:shadow.snapshot(),recovery:recovery.status(),
     total: nodes.length, healthy: nodes.filter(n => n.healthy).length, available: nodes.filter(n => n.healthy && !n.drained).length,
     active: nodes.filter(n => n.active).length, queued: nodes.reduce((s, n) => s + n.queue.length, 0),
     workers: nodes.map(n => ({ id: n.id, url: n.url, is_healthy: n.healthy, drained: n.drained, quarantine:n.quarantine, inference_failures:n.inferenceFailures,
@@ -251,10 +268,14 @@ export function createGateway(config) {
     headers['x-request-id'] = job.id;
     delete headers.expect;
     const observer = new UsageObserver(req.url);
-    job.thinking = new RequestedThinkingObserver(req.headers['content-encoding']);
+    job.thinking = new RequestedThinkingObserver(req.headers['content-encoding'],(body,thinking)=>embeddings.observe(body,thinking,{request_id:job.id,node:node.id,route:req.url,traffic_class:job.trafficClass}));
     const observeBody = chunk => {requestBytes+=chunk.length;job.thinking.accept(chunk);};
     const bodyEnded = () => job.thinking.finish();
     let settled = false, response, faults;
+    const progress=()=>{if(dataset.enabled && !settled && job.trafficClass!=='genie')dataset.record('progress',{request_id:job.id,node:node.id,
+      active_elapsed_ms:performance.now()-job.dispatchedMono,phase:observer.phase,semantic_characters:observer.semanticCharacters,
+      semantic_age_ms:observer.lastSemanticAt===null?null:performance.now()-observer.lastSemanticAt,requested_thinking:job.thinking.result});};
+    const progressTimer=dataset.enabled?setInterval(progress,30000):null;progressTimer?.unref();
     const finish = (outcome, detail) => {
       if (settled) return; settled = true;
       const fault=faults?.finish();
@@ -263,6 +284,7 @@ export function createGateway(config) {
         if(++node.inferenceFailures>=3)quarantine(node,'repeated_inference_failures',job.id);
       } else if(outcome==='complete')node.inferenceFailures=0;
       clearTimeout(job.deadline);
+      clearInterval(progressTimer);
       req.off('data', observeBody); req.off('end', bodyEnded); job.thinking.dispose();
       node.lastThinking = job.thinking.result; node.lastFinishedAt = new Date().toISOString();
       if (outcome === 'complete') node.completed++; else if(outcome==='sse_observation_limited')node.observationLimited++;else node.failed++;
@@ -318,6 +340,7 @@ export function createGateway(config) {
     job.deadline = setTimeout(() => { upstream.destroy(Object.assign(new Error('100-hour request deadline'), { code: 'REQUEST_DEADLINE' })); }, config.request_timeout_ms ?? 360000000);
     log('request_dispatched', { request_id: job.id, node: node.id, session: job.key?.slice(0, 12), affinity: job.affinity, queue_ms: job.dispatched - job.created });
     dataset.record('dispatch',{request_id:job.id,node:node.id,queue_ms:job.dispatchedMono-job.createdMono});
+    progress();
     // Passive observation only while dispatched; queued uploads remain untouched.
     // The original pipe retains streaming/backpressure and exact body bytes.
     req.on('data', observeBody); req.once('end', bodyEnded);
@@ -613,7 +636,7 @@ export function createGateway(config) {
       clearInterval(recoveryTimer);await recovery.close();
       if (control) await new Promise(resolve => control.close(resolve));
       await new Promise(resolve => { server.close(resolve); server.closeIdleConnections(); });
-      clearInterval(healthTimer); agent.destroy(); store.close(); await dataset.close();
+      clearInterval(healthTimer); agent.destroy(); store.close();embeddings.close(); await dataset.close();
       nodes.forEach(n => { n.removed = true; n.stopTunnel?.(); });
     },
   };

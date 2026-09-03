@@ -3,10 +3,11 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { safeRequestedThinking } from './requested-thinking.mjs';
+import { ENCODER_MODEL, ENCODER_REVISION, EXTRACTION } from './embeddings.mjs';
 
 const number = x => Number.isFinite(x) && x >= 0 ? x : null;
 const id = x => typeof x === 'string' && /^[\w-]{1,64}$/.test(x) ? x : null;
-const kinds = new Set(['decision','dispatch','finish','queued_cancel','queue_timeout','unavailable_before_dispatch','routing_shadow']);
+const kinds = new Set(['decision','dispatch','finish','queued_cancel','queue_timeout','unavailable_before_dispatch','routing_shadow','request_features','embedding','progress']);
 const timingKeys=['worker_idle_ms','active_elapsed_ms','upstream_byte_age_ms','session_last_used_ms','session_last_finished_ms','intervening_requests','prior_prompt_tokens','prior_cached_tokens','observation_epoch'];
 export function evidence(kind, raw) {
   if (!kinds.has(kind)) return null;
@@ -20,6 +21,35 @@ export function evidence(kind, raw) {
   if (raw.usage) row.usage=Object.fromEntries(['prompt_tokens','completion_tokens','cached_tokens'].map(k=>[k,number(raw.usage[k])]));
   if(kind==='finish')row.finish_reason=['stop','length','tool_calls','function_call','content_filter'].includes(raw.finish_reason)?raw.finish_reason:null;
   if (raw.requested_thinking) row.requested_thinking=safeRequestedThinking(raw.requested_thinking);
+  if(kind==='request_features') {
+    row.feature_schema=1;row.prediction_point='after_upload';
+    row.status=['ready','invalid_body','unsupported_route','unsupported_body','no_recent_user_text','capture_limit','encoded_body','invalid_json','incomplete_body'].includes(raw.status)?raw.status:'unavailable';
+    row.extraction=EXTRACTION;
+    for(const key of ['available_at','visible_messages_considered','latest_characters','recent_characters'])row[key]=number(raw[key]);
+    row.bounded_slice=true;row.history_scan_limited=raw.history_scan_limited===true;
+  }
+  if(kind==='embedding') {
+    row.embedding_schema=1;row.extraction=EXTRACTION;
+    row.status=['ready','queue_full','worker_unavailable','worker_timeout','invalid_worker_output','collector_stopped'].includes(raw.status)?raw.status:'unavailable';
+    if(row.status==='ready') {
+      if(raw.model!==ENCODER_MODEL||raw.revision!==ENCODER_REVISION||raw.dimensions!==384)return null;
+      row.model=ENCODER_MODEL;row.revision=ENCODER_REVISION;row.dimensions=384;
+      for(const key of ['available_at','queued_at','elapsed_ms']){row[key]=number(raw[key]);if(row[key]===null)return null;}
+      row.vectors={};
+      for(const scope of ['latest_user','recent_conversation']) {
+        const v=raw.vectors?.[scope];if(!v)continue;
+        if(!Array.isArray(v.vector)||v.vector.length!==384||!v.vector.every(Number.isFinite)||Math.abs(Math.hypot(...v.vector)-1)>.001||!Number.isInteger(v.input_tokens)||v.input_tokens<1||v.used_tokens!==Math.min(v.input_tokens,256)||v.truncated!==(v.input_tokens>256))return null;
+        row.vectors[scope]={vector:v.vector,input_tokens:v.input_tokens,used_tokens:v.used_tokens,truncated:v.truncated};
+      }
+      if(!row.vectors.latest_user)return null;
+    }
+  }
+  if(kind==='progress') {
+    row.progress_schema=1;row.prediction_point='while_active';
+    for(const key of ['active_elapsed_ms','semantic_characters','semantic_age_ms'])row[key]=number(raw[key]);
+    row.phase=['awaiting_content','thinking','answering','tool_output'].includes(raw.phase)?raw.phase:'unknown';
+    row.requested_thinking=safeRequestedThinking(raw.requested_thinking);
+  }
   if(kind==='routing_shadow') {
     row.shadow_schema=1;
     row.reason=['admission','worker_free'].includes(raw.reason)?raw.reason:null;

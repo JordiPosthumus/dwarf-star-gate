@@ -8,7 +8,8 @@ import numpy as np
 
 from features import (SCHEMA, build_rows, chronological_split, encode, fit_encoding,
                       parse_snapshots, validate_profiles)
-from train import train
+from train import train, select_tree_count
+from unittest.mock import patch
 from predict import estimate, load_bundle
 
 FINGERPRINT = "a" * 64
@@ -36,6 +37,34 @@ def request(i, when, duration=2, session=None, node="box-a"):
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_new_embedding_and_progress_rows_cannot_duplicate_training_labels(self):
+        events = request(1, 0)
+        expected, _ = build_rows(events, inventory())
+        for kind in ('embedding', 'request_features', 'progress'):
+            events.extend({**events[0], 'kind': kind, 'event_id': f'{kind}-{i}'} for i in range(3))
+        self.assertEqual(build_rows(events, inventory())[0], expected)
+
+    def test_tree_selection_is_forward_time_session_disjoint_and_excludes_outer_holdout(self):
+        rows, _ = build_rows(sum((request(i, i * 10, session=f's-{i // 2}') for i in range(100)), []), inventory())
+        earlier, holdout, split = chronological_split(rows)
+        outer_ids = {row['request_id'] for row in holdout}
+        import train as trainer
+        original = trainer.fit
+        fitted = []
+        def checked_fit(training, rounds):
+            self.assertFalse(outer_ids & {row['request_id'] for row in training})
+            self.assertTrue(all(row['finish_time'] < split['cutoff'] for row in training))
+            fitted.append(training)
+            return original(training, rounds)
+        with patch.object(trainer, 'fit', side_effect=checked_fit):
+            selected, report = select_tree_count(list(reversed(earlier)))
+        self.assertIn(selected, (16, 32, 64, 128))
+        self.assertEqual(report['status'], 'selected_inside_training_only')
+        for fold, training in zip(report['folds'], fitted):
+            self.assertFalse(set(fold['train_groups']) & set(fold['validation_groups']))
+            self.assertTrue(all(row['finish_time'] < fold['cutoff'] for row in training))
+        self.assertEqual(select_tree_count(earlier[:4])[1]['status'], 'insufficient_time_session_folds')
+
     def test_repeated_shadow_predictions_are_not_training_labels(self):
         events = request(1, 0)
         expected, _ = build_rows(events, inventory())

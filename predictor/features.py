@@ -91,7 +91,7 @@ def build_rows(events, profiles):
     for event in events:
         # Repeated shadow assessments are NOT lifecycle labels or extra training
         # decisions. Their alternative ETAs are predictions, not observations.
-        if event["kind"] == "routing_shadow":
+        if event["kind"] not in ("decision", "dispatch", "finish", "queued_cancel", "queue_timeout", "unavailable_before_dispatch"):
             continue
         key = (event["run_id"], event["request_id"])
         if event["kind"] in groups[key]:

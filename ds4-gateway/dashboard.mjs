@@ -13,6 +13,7 @@ import { Genie } from './genie.mjs';
 import { genieTunnel } from './genie-tunnel.mjs';
 import { safeQuarantine } from './generation-health.mjs';
 import { AnalyticsReader } from './analytics.mjs';
+import { estimateCacheCost } from './cache-cost.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const assets = new Map([['/', ['index.html', 'text/html']], ['/ui.css', ['ui.css', 'text/css']], ['/brand.css', ['brand.css', 'text/css']], ['/ui.js', ['ui.js', 'text/javascript']], ['/logo.png', ['logo.png', 'image/png']]]);
@@ -78,6 +79,18 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
       return;
     }
     if (req.method !== 'GET') { res.writeHead(405, headers); return res.end('Read-only'); }
+    if(req.url?.split('?')[0]==='/api/cache-cost') {
+      try {
+        const p=new URL(req.url,'http://localhost').searchParams;
+        if([...p.keys()].some(k=>!['worker','tier','cached_tokens','prompt_tokens'].includes(k))||[...p.keys()].length!==4)throw new Error();
+        if(!/^\d+$/.test(p.get('cached_tokens'))||!/^\d+$/.test(p.get('prompt_tokens')))throw new Error();
+        const s=getSnapshot(),worker=s.gateway?.workers.find(w=>w.id===p.get('worker')),device=s.devices?.find(d=>d.id===p.get('worker'));
+        if(!worker||!device)return reply(404,{error:'Unknown worker'});
+        if(s.gateway_error||!worker.is_healthy||!device.connected)return reply(503,{error:'Fresh healthy-worker telemetry required'});
+        if(Number.isSafeInteger(worker.context_length)&&Number(p.get('prompt_tokens'))>worker.context_length)return reply(400,{error:'Scenario exceeds the worker context capacity'});
+        return reply(200,estimateCacheCost(device.cache_cost,{tier:p.get('tier'),cached_tokens:Number(p.get('cached_tokens')),prompt_tokens:Number(p.get('prompt_tokens'))}));
+      }catch{return reply(400,{error:'Specify worker, tier, integer cached_tokens and prompt_tokens'});}
+    }
     if (req.url === '/api/analytics') return reply(200,analytics?analytics():{enabled:false,status:'disabled',rows:[]});
     if (req.url === '/api/status' || req.url === '/api/diagnostics') {
       if (req.url === '/api/diagnostics') headers['content-disposition'] = 'attachment; filename="spark-gateway-diagnostics.json"';

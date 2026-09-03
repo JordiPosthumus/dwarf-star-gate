@@ -1,5 +1,6 @@
 // Read-only, allowlisted DS4 telemetry. Never retain raw journal messages.
 import { safeRequestedThinking } from './requested-thinking.mjs';
+import { CacheCosts } from './cache-cost.mjs';
 export function parseTiming(message, time = Date.now()) {
   if (typeof message !== 'string' || !message.includes('ds4-server:')) return null;
   let m;
@@ -60,6 +61,7 @@ export class JournalReader {
 
 export class DeviceTelemetry {
   constructor(id) {
+    this.costs=new CacheCosts();
     this.id = id; this.connected = false; this.observed_since = null; this.last_event = null;
     this.phase = 'unknown'; this.decode = null; this.prefill = null; this.prompt = null;
     this.cache = { starts: 0, reused: 0, cold: 0, resident_misses: 0, disk_restores: 0 };
@@ -67,6 +69,7 @@ export class DeviceTelemetry {
   }
   accept(e) {
     if (!e) return;
+    this.costs.accept(e);
     this.observed_since ??= e.time; this.last_event = e.time;
     if (e.kind === 'resident_miss') this.cache.resident_misses++;
     if (e.kind === 'disk_restore') { this.cache.disk_restores++; this.pending_disk = e; }
@@ -92,7 +95,7 @@ export class DeviceTelemetry {
     if (!['decode', 'prefill'].includes(e.kind)) { this.recent.push(e); this.recent = this.recent.slice(-30); }
   }
   snapshot() {
-    const { current, pending_disk, ...visible } = this;
-    return visible;
+    const { current, pending_disk, costs, ...visible } = this;
+    return {...visible,cache_cost:costs.snapshot()};
   }
 }

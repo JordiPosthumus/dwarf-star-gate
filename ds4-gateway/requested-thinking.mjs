@@ -44,7 +44,8 @@ export function requestedThinking(body) {
 }
 
 export class RequestedThinkingObserver {
-  constructor(encoding) {
+  constructor(encoding, onBody = null) {
+    this.onBody=onBody;this.notified=false;
     this.result = encoding && encoding !== 'identity' ? { status: 'unavailable', reason: 'encoded_body' } : { status: 'pending' };
     this.chunks = []; this.bytes = 0;
   }
@@ -56,15 +57,18 @@ export class RequestedThinkingObserver {
     } else this.chunks.push(chunk);
   }
   finish() {
+    let body;
     if (this.result.status === 'pending') {
-      try { this.result = requestedThinking(JSON.parse(Buffer.concat(this.chunks, this.bytes).toString('utf8'))); }
+      try { body=JSON.parse(Buffer.concat(this.chunks, this.bytes).toString('utf8'));this.result = requestedThinking(body); }
       catch { this.result = { status: 'unavailable', reason: 'invalid_json' }; }
     }
     this.chunks = [];
+    if(!this.notified){this.notified=true;try{this.onBody?.(body,this.result);}catch{/* Optional evidence cannot break forwarding. */}}
     return this.result;
   }
   dispose() {
     this.chunks = [];
     if (this.result.status === 'pending') this.result = { status: 'unavailable', reason: 'incomplete_body' };
+    if(!this.notified){this.notified=true;try{this.onBody?.(undefined,this.result);}catch{/* Observation only. */}}
   }
 }

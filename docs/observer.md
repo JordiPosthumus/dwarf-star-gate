@@ -40,8 +40,12 @@ decision (truncation explicitly flagged). These bound telemetry only, never flee
 size, context or inference. At 1 GiB stored, collection pauses and reports an error;
 it **does not delete evidence** or block inference. No automatic expiry yet.
 The UI shows current-run saved/pending/dropped counts, total stored bytes and last
-write. Retention and encoder choices remain operator decisions. No raw text,
-embeddings or credentials are stored. Keep the dataset out of Git and public exports.
+write. Retention and optional encoder activation remain operator decisions.
+No raw text or credentials are stored. Separately enabled
+[local embeddings](embeddings.md) add sensitive derived vectors and availability
+metadata. Numerical collection also records bounded semantic progress every 30
+seconds while active; it does not guess engine-phase attribution. Keep the dataset
+out of Git and public exports.
 
 Completion observation understands each supported API's terminal event rather
 than requiring `[DONE]` for every stream. Oversized, unobservable endings are

@@ -30,10 +30,10 @@ def matrix(rows, encoding):
     return np.vstack([encode(row["features"], encoding)[0] for row in rows])
 
 
-def fit(rows):
+def fit(rows, rounds=ROUNDS):
     encoding = fit_encoding(rows)
     data = xgb.DMatrix(matrix(rows, encoding), label=np.log1p([r["target_service_s"] for r in rows]), feature_names=encoding["feature_names"])
-    model = xgb.train(PARAMS, data, num_boost_round=ROUNDS)
+    model = xgb.train(PARAMS, data, num_boost_round=rounds)
     return model, encoding
 
 
@@ -48,7 +48,40 @@ def mae(actual, predicted):
     return float(np.mean(np.abs(np.asarray(actual) - np.asarray(predicted))))
 
 
-def train(data_directory, inventory_file, output):
+def select_tree_count(rows):
+    """Only call with the outer TRAINING partition, never the later holdout."""
+    rows = sorted(rows, key=lambda row: row['decision_time'])
+    folds = []
+    for fraction in (.4, .6, .8):
+        if len(rows) < 25:
+            break
+        index = int(len(rows) * fraction)
+        cutoff = rows[index]["decision_time"]
+        end_index = min(len(rows), int(len(rows) * (fraction + .2)))
+        end = rows[end_index]["decision_time"] if end_index < len(rows) else float("inf")
+        validation = [r for r in rows if cutoff <= r["decision_time"] < end]
+        groups = {r["group"] for r in validation}
+        earlier = [r for r in rows if r["decision_time"] < cutoff and r["finish_time"] < cutoff and r["group"] not in groups]
+        if len(earlier) >= 10 and len(validation) >= 5:
+            folds.append((earlier, validation, cutoff))
+    if len(folds) < 2:
+        return ROUNDS, {"status": "insufficient_time_session_folds", "selected": None, "fallback_rounds": ROUNDS}
+    scores = []
+    for rounds in (16, 32, 64, 128):
+        errors, sizes = [], []
+        for earlier, validation, _ in folds:
+            model, encoding = fit(earlier, rounds)
+            errors.append(mae([r["target_service_s"] for r in validation], predict(model, encoding, validation)))
+            sizes.append(len(validation))
+        scores.append({"rounds": rounds, "mae_seconds": float(np.average(errors, weights=sizes)), "fold_mae_seconds": errors})
+    selected = min(scores, key=lambda x: (x["mae_seconds"], x["rounds"]))["rounds"]
+    return selected, {"status": "selected_inside_training_only", "selected": selected, "scores": scores,
+                      "folds": [{"cutoff": cutoff, "train_rows": len(tr), "validation_rows": len(va),
+                                 "train_groups": sorted({r["group"] for r in tr}), "validation_groups": sorted({r["group"] for r in va})}
+                                for tr, va, cutoff in folds]}
+
+
+def train(data_directory, inventory_file, output, cross_validate_trees=False):
     os.umask(0o077)
     output = Path(output).resolve()
     if output.exists():
@@ -89,10 +122,14 @@ def train(data_directory, inventory_file, output):
                            "Unknown hardware and RAM outside training range are unsupported for performance claims",
                            "The fixed routing fallback remains unchanged; this artifact is not a production fallback"]}
     tr, te, split = chronological_split(rows)
+    rounds, selection = select_tree_count(tr) if cross_validate_trees else (ROUNDS, {"status": "fixed_smoke_test", "selected": None})
+    report["tree_selection"] = selection
+    report["boosting_rounds"] = rounds
+    report["prediction_statistic"] = "expm1 of fitted log-duration; not a calibrated arithmetic mean"
     evaluation = {"available": bool(te), "split": split, "train_rows": len(tr), "test_rows": len(te)}
     eval_model = None
     if te:
-        eval_model, eval_encoding = fit(tr)
+        eval_model, eval_encoding = fit(tr, rounds)
         predictions = predict(eval_model, eval_encoding, te)
         baseline = float(np.median([r["target_service_s"] for r in tr]))
         evaluation.update({"method": "chronological latest block, session-disjoint, train labels available before cutoff",
@@ -105,7 +142,7 @@ def train(data_directory, inventory_file, output):
     report["evaluation"] = evaluation
     # Diagnostic evidence criteria, not a promotion API. No parameter search on holdout.
     report["evidence_sufficient"] = len(rows) >= 100 and len({r["group"] for r in rows}) >= 20 and len(te) >= 20
-    model, encoding = fit(rows)
+    model, encoding = fit(rows, rounds)
     output.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=".dsg-candidate-", dir=output.parent))
     snapshots = staging / "snapshots"
@@ -146,8 +183,9 @@ def main():
     parser.add_argument("--data", required=True, help="Private directory of schema-1 routing JSONL files")
     parser.add_argument("--profiles", required=True, help="Private fingerprint-bound worker inventory JSON")
     parser.add_argument("--output", required=True, help="New private candidate directory; never overwritten")
+    parser.add_argument("--cross-validate-trees", action="store_true", help="Select tree count only inside the chronological/session-disjoint training partition")
     args = parser.parse_args()
-    report = train(args.data, args.profiles, args.output)
+    report = train(args.data, args.profiles, args.output, args.cross_validate_trees)
     print(json.dumps({"output": str(Path(args.output).resolve()), "status": report["status"], "usable_rows": report["usable_rows"],
                       "worker_rows": report["worker_rows"], "evaluation": report["evaluation"], "save_reload_exact": report["save_reload_exact"],
                       "routing_enabled": False}, indent=2))

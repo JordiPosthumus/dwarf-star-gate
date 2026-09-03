@@ -20,6 +20,12 @@ function fixture(t,options={}) {
   return {dir,file:path.join(dir,'routing-2000-01-01.jsonl'),reader:new AnalyticsReader(dir,{enabled:true,...options})};
 }
 const serialize=rows=>rows.map(r=>JSON.stringify(r)+'\n').join('');
+test('versioned embedding and progress streams are ignored, not reported as broken analytics joins',()=>{
+  const e=new PredictionEvidence();for(const r of lifecycle())e.accept(r);
+  for(const kind of ['embedding','request_features','progress'])e.accept(row(kind));
+  assert.equal(e.snapshot().rows.length,1);assert.equal(e.snapshot().rejected_events,0);
+  e.accept(row('unknown'));assert.equal(e.snapshot().rejected_events,1);
+});
 test('admission forecasts join by run/request and actual worker; future revisions and alternatives are not labels',()=>{
   const e=new PredictionEvidence();e.accept(row('decision'));e.accept(forecast());
   e.accept(forecast({reason:'worker_free',waiting_ms:2000,candidates:[{node:'worker-a',eligible:true,wait_ms:500}]}));
@@ -105,6 +111,12 @@ test('UI accuracy denominator includes missing forecasts, excludes trivial waits
   assert.match(call('predictionChart([])'),/No matched predictions/);
   assert.match(call('predictionChart(analyticsMetrics(sample).pairs)'),/above the diagonal/);
   assert.doesNotMatch(call('predictionChart([{node:"<script>bad</script>",actual:1000,predicted:2000}])'),/<script>/);
+});
+test('collection and cache UI distinguish missing metadata, sparse evidence and unmeasured costs',()=>{
+  const {call}=ui();assert.match(call('embeddingInfo({})'),/off/);
+  assert.match(call('embeddingInfo({embedding_collection:{enabled:true}})'),/unknown revision/);
+  assert.match(call('cacheCostText({disk_load:{estimated_ms:null,status:"insufficient_evidence",samples:2},prefill:{estimated_ms:null}})'),/2\/3 required matching samples/);
+  assert.match(call('cacheCostText({})'),/not total acquisition/);
 });
 test('UI polling preserves expansion and selected filter; stale results and tiny samples are explicit',()=>{
   const {ctx,get,call}=ui();get('analytics').open=false;get('analytics-metric').value='queue';
