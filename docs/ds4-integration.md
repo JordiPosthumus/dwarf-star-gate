@@ -46,6 +46,21 @@ already has full process-epoch correlation. See [cache-cost limits](cache-cost.m
 Future upstream capabilities can be supported when available and verified;
 installing a new server version remains a separate operator-controlled decision.
 
+## Upstream contributions
+
+Keep an eye out for small, mutually beneficial improvements to
+[antirez's DS4](https://github.com/antirez/ds4), especially observability/protocol
+information useful to other clients too. Record the limitation, alternatives,
+minimal reproducer and tests. Before proposing a PR, inspect current upstream
+source and issue/PR history for existing solutions; establish backward
+compatibility and low overhead. “Useful to DSG” alone is not proof of broad value.
+
+Bring high-confidence candidates to the operator first. Do not submit a PR,
+patch/rebuild a server or install an engine automatically. DSG must remain useful
+with stock interfaces; any proposed upstream feature is an optional capability,
+not a private-fork requirement. Preserve attribution/licences and keep private
+infrastructure/workload details out of issues, reproductions and benchmarks.
+
 ## Calibration must preserve production caches
 
 The planned manual/optional hourly development runner must have a proven

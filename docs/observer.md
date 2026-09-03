@@ -5,6 +5,11 @@
 See the [exact field-by-field schema](collector-schema.md) for what is and is not
 recorded, including the distinction between routing evidence and engine logs.
 
+Optional [early client hints](client-metadata.md) are recorded at admission with
+client-reported provenance. They do not change inference or yet enter XGB.
+The [Genie memory plan](genie-memory.md) is separate from numerical collection;
+current health reports are still in-memory, not a persistent notebook.
+
 Set `"dataset_enabled": true` in your private gateway config, then restart the
 gateway when safe. Model servers and their settings do not need to change.
 The default is off. Evidence is written under `training/` beside the affinity

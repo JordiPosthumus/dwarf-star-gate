@@ -3,6 +3,8 @@ import { createDashboard } from '../ds4-gateway/dashboard.mjs';
 import { workerConfig, assertUniqueWorker } from '../ds4-gateway/worker-config.mjs';
 import { DeviceTelemetry } from '../ds4-gateway/telemetry.mjs';
 import { isMain } from '../ds4-gateway/config.mjs';
+import {TRAINING_RECIPES,DEFAULT_RECIPE} from '../ds4-gateway/training-recipes.mjs';
+import {calibrationPreflight} from '../ds4-gateway/calibration.mjs';
 export function createDemoServer({learningMilestone=false}={}) {
 const now = Date.now();
 const workers = [
@@ -27,6 +29,7 @@ workers[2].last_requested_thinking = { status:'specified', fields:{reasoning_eff
 workers[2].last_request_finished_at = new Date(now-120000).toISOString();
 const modelIds=['a'.repeat(64),'b'.repeat(64),'c'.repeat(64)];
 const predictor={configured:true,automatic_training:true,automatic_promotion:true,placement:false,busy:false,new_requests:24,baseline:{id:'causal-history-v1',name:'Measured history baseline'},milestones:[],
+  training_recipes:TRAINING_RECIPES,default_recipe:DEFAULT_RECIPE,
   models:['admission','updated','remaining'].map((kind,i)=>({kind,active_model_id:null,candidate_model_id:modelIds[i],status:i===2?'awaiting_future':'holdout_failed',
     holdout:{mae_s:[64,48,26][i]},future:{mae_s:[58,44,25][i],baseline_mae_s:[51,42,31][i],requests:24,sessions:4},
     selected:{family:i===2?['base','progress']:['base','history'],rounds:i===1?16:128,transform:'log'}})),
@@ -59,7 +62,7 @@ const snapshot = { version:1,demo:true,time:now,started:now-900000,read_only:fal
 const registry=()=>({model:'deepseek-v4-flash',minimum_context:snapshot.gateway.context_length,context_limit_control:true,context_limit_source:'saved',workers,recovery});
 return createDashboard(()=>({...snapshot,time:Date.now(),gateway_at:Date.now(),
   devices:workers.map(w=>devices.find(d=>d.id===w.id)||new DeviceTelemetry(w.id).snapshot()),
-  gateway:{...snapshot.gateway,total:workers.length,healthy:workers.length,available:workers.filter(w=>!w.drained).length,active:workers.filter(w=>w.load).length,queued:workers.reduce((a,w)=>a+w.queued,0)}}),undefined,{
+  gateway:{...snapshot.gateway,calibration:calibrationPreflight(workers.map(w=>({id:w.id,healthy:w.is_healthy,drained:w.drained,active:w.load,queue:Array(w.queued).fill(null)}))),total:workers.length,healthy:workers.length,available:workers.filter(w=>!w.drained).length,active:workers.filter(w=>w.load).length,queued:workers.reduce((a,w)=>a+w.queued,0)}}),undefined,{
   read:async()=>registry(),
   act:async(action,input)=>{
     if(action==='predictor'&&input.action==='acknowledge_milestone'&&Object.keys(input).sort().join(',')==='action,milestone_id'){

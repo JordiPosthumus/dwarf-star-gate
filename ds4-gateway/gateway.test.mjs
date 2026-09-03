@@ -118,6 +118,28 @@ test('unavailable embedding encoder cannot change inference bytes, thinking, mod
   assert.ok(!lines.includes('PRIVATE_EMBED_TEST'));
 });
 
+test('client metadata is recorded while queued, never changes body settings or reaches DS4',async t=>{
+  const r=await rig(t,1,{dataset_enabled:true});
+  const first=r.request(JSON.stringify({stream:true,delay:400}),'busy');
+  await until(()=>r.backends[0].active===1);
+  const body=JSON.stringify({stream:true,reasoning_effort:'xhigh',max_tokens:131072});
+  const header=JSON.stringify({schema:1,prompt_tokens_estimate:262144,turn_index:4,compaction_count:1,reasoning_effort:'low'});
+  const second=r.request(body,'early',{headers:{'x-dsg-client-metadata':header}});
+  const read=()=>{const dir=path.join(path.dirname(r.config.state_file),'training');return fs.existsSync(dir)?fs.readdirSync(dir).flatMap(f=>fs.readFileSync(path.join(dir,f),'utf8').trim().split('\n').filter(Boolean).map(JSON.parse)):[];};
+  await until(()=>read().some(e=>e.kind==='decision'&&e.client_metadata?.status==='ready'));
+  const event=read().find(e=>e.client_metadata?.status==='ready');
+  assert.ok(!read().some(e=>e.request_id===event.request_id&&e.kind==='dispatch'));
+  assert.equal(event.client_metadata.reasoning_effort,'low');
+  assert.equal((await first).status,200);assert.equal((await second).status,200);
+  assert.equal(r.backends[0].records[1].body.toString(),body);
+  assert.equal(r.backends[0].records[1].headers['x-dsg-client-metadata'],undefined);
+  assert.equal(r.gateway.stats().context_length,153600,'hint is not capacity authority');
+  const invalid=await r.request(body,'bad-hint',{headers:{'x-dsg-client-metadata':'{"schema":1,"secret":"PRIVATE_HINT_FIXTURE"}'}});
+  assert.equal(invalid.status,200);await until(()=>r.gateway.stats().dataset.finished===3);
+  assert.ok(read().some(e=>e.client_metadata?.status==='invalid'));
+  assert.ok(!JSON.stringify(read()).includes('PRIVATE_HINT_FIXTURE'));
+});
+
 test('predictor misconfiguration cannot change inference or model limits; split generation counts are metadata only',async t=>{
   const r=await rig(t,1,{dataset_enabled:true,predictor:{enabled:true,python:'/no-such-predictor',profiles:'/no-such-inventory'}});
   const sse='data: {"choices":[{"delta":{"reasoning_content":"think"}}]}\n\ndata: {"choices":[{"delta":{"content":"OK","tool_calls":[{"function":{"arguments":"{}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":100,"completion_tokens":7}}\n\ndata: [DONE]\n\n';

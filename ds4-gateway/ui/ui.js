@@ -150,6 +150,7 @@ function renderHealthWire(snapshot) {
 function render(s) {
   const g = s.gateway, now = s.time, stale = !!s.gateway_error;
   renderPredictor(g?.predictor,stale||!s.worker_management);
+  $('calibration-status').textContent=stale?'Calibration safety status unavailable; no job is authorized.':g?.calibration?.execution_available===false?'Synthetic calibration skipped: no verified cache-preserving execution path. Idle does not prove warm caches are safe. Ordinary traffic collection and CPU training continue.':'Synthetic calibration is not configured; no job is authorized.';
   renderHealthWire(s);
   $('connection').textContent = s.demo ? '◉ Demo telemetry' : stale ? 'Status unavailable' : '● Live telemetry';
   $('warning').hidden = !s.gateway_error && !s.telemetry_error;
@@ -341,7 +342,7 @@ function renderRecovery(state) {
     const p=document.createElement('p');p.textContent=`${clock(op.updated_at)} · ${op.worker_id} · ${op.actor} · ${op.state.replaceAll('_',' ')}${op.error?` · ${op.error.replaceAll('_',' ')}`:''}${op.proof?` · ${op.proof.samples.map(s=>`${s.label}: ${s.cached_tokens}/${s.prompt_tokens} cached`).join(' · ')}`:''} · ${op.id}`;return p;
   }));
 }
-let predictorState=null,predictorControlBusy=false,predictorUnavailable=true,milestoneSignature=null;
+let predictorState=null,predictorControlBusy=false,predictorUnavailable=true,milestoneSignature=null,recipeSignature=null;
 function renderMilestones(milestones,unavailable){
   const signature=JSON.stringify(milestones);
   $('learning-milestones').hidden=!milestones.length;
@@ -364,6 +365,13 @@ function renderMilestones(milestones,unavailable){
 }
 function renderPredictor(state,unavailable=false){
   predictorState=state;predictorUnavailable=unavailable||!state?.configured;
+  const recipes=state?.training_recipes??[],signature=JSON.stringify(recipes),selector=$('predictor-recipe');
+  if(recipes.length&&signature!==recipeSignature){
+    recipeSignature=signature;const chosen=selector.value;
+    selector.replaceChildren(...recipes.map(r=>{const option=document.createElement('option');option.value=r.id;option.textContent=r.label;option.title=r.description;return option;}));
+    selector.value=recipes.some(r=>r.id===chosen)?chosen:state.default_recipe;
+  }
+  selector.disabled=predictorUnavailable||predictorControlBusy||!!state?.busy||!recipes.length;
   // During a telemetry outage keep already-seen notices visible, but read-only.
   if(state)renderMilestones(state.milestones||[],predictorUnavailable);
   else for(const b of $('learning-milestone-items').querySelectorAll('button'))b.disabled=true;
@@ -376,11 +384,12 @@ function renderPredictor(state,unavailable=false){
     if(['automatic_training','automatic_promotion','placement'].includes(action)){const label={automatic_training:'Auto training',automatic_promotion:'Auto validation',placement:'New-session placement'}[action];b.textContent=`${label}: ${state?.[action]?'on':'off'}`;b.setAttribute('aria-pressed',String(!!state?.[action]));}
   }
   $('predictor-models').innerHTML=`<table><thead><tr><th>Forecast</th><th>Candidate</th><th>Backtest MAE</th><th>Future MAE / baseline</th><th>Future evidence</th><th>Selection</th></tr></thead><tbody>${(state?.models||[]).map(m=>`<tr><td>${esc(m.kind)}${m.active_model_id?' · active '+esc(m.active_model_id.slice(0,8)):''}</td><td>${esc(m.status.replaceAll('_',' '))}${m.candidate_model_id?' · '+esc(m.candidate_model_id.slice(0,8)):''}</td><td>${fmt(m.holdout?.mae_s)}s</td><td>${fmt(m.future?.mae_s)}s / ${fmt(m.future?.baseline_mae_s)}s</td><td>${fmt(m.future?.requests||0)} requests · ${fmt(m.future?.sessions||0)} sessions</td><td>${m.selected?esc(`${m.selected.rounds} trees · ${m.selected.transform} · ${m.selected.family.join(' + ')}`):'Not enough evidence'}</td></tr>`).join('')}</tbody></table>`;
-  $('predictor-actions').replaceChildren(...(state?.actions||[]).slice(0,5).map(a=>{const p=document.createElement('p');p.textContent=`${clock(a.time)} · ${a.actor} · ${a.action} · ${a.status}: ${a.reason}`;return p;}));
+  $('predictor-actions').replaceChildren(...(state?.actions||[]).slice(0,5).map(a=>{const p=document.createElement('p');p.textContent=`${clock(a.time)} · ${a.actor} · ${a.action} · ${a.status}${a.recipe_id?' · '+a.recipe_id:''}: ${a.reason}`;return p;}));
 }
 $('predictor-controls').addEventListener('click',async event=>{
   const button=event.target.closest('button[data-predictor]');if(!button||button.disabled||!csrfToken)return;
   const action=button.dataset.predictor,input=['train','rollback','reset_baseline'].includes(action)?{action}:{action,enabled:!predictorState?.[action]};
+  if(action==='train'&&predictorState?.training_recipes?.length)input.recipe_id=$('predictor-recipe').value;
   if(action==='reset_baseline'&&!window.confirm('Restore the baseline for all forecasts? Existing candidates cannot immediately undo this. Collection continues; training, auto-validation and placement switches stay as set. Servers, sessions and caches are unchanged.'))return;
   if(action==='placement'&&input.enabled&&!window.confirm('Arm placement for new sessions only? It remains inactive until backtest, unseen-session and future-live gates pass. Existing sessions will not move.'))return;
   predictorControlBusy=true;renderPredictor(predictorState);

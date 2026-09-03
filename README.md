@@ -37,6 +37,11 @@ not qualify. The [v1 offline experiment](predictor/README.md) remains reproducib
 learning off. A challenger must beat both that baseline and any incumbent on
 matched future evidence. Verified promotions create persistent, dismissible
 learning milestones; Genie can add commentary, not invent the result.
+The UI and Genie can choose among [three reviewed XGB recipes](docs/predictor-lifecycle.md#reviewed-training-recipes)
+without changing the validation gates. [Early client hints](docs/client-metadata.md)
+are collection-only for now; [calibration preflight](docs/calibration.md) skips
+without a proven cache-preserving path. A small [persistent Genie notebook](docs/genie-memory.md)
+is planned, not yet implemented.
 Workers with recognized engine faults or repeated inference failures are
 [quarantined persistently](docs/generation-health.md); recovery requires a real
 generation check. Opt-in recovery can restart an enrolled systemd-user DS4 service

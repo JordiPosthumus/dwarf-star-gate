@@ -8,7 +8,8 @@ screenshots, benchmark results, a live incident report or a promoted model.
   activity, speeds, requested thinking and cache counters.
 - `dashboard-genie.png`: local collection/embedding status and an open assessment.
 - `dashboard-cache-and-requests.png`: stage-specific XGB chart, candidate lifecycle,
-  cache-calculator entry and request log. The filename is retained for existing links.
+  recipe selector, calibration skip status, cache calculator and request log.
+  The filename is retained for existing links.
 
 ## Refresh
 
@@ -43,6 +44,8 @@ An additional isolated scenario verifies that learning milestones remain readabl
 across polling/reload, escape Genie text, survive a reset and remain dismissed
 after acknowledgement/reload. Reset leaves the learning switches on. This does
 not read or reset any live predictor.
+The recipe test verifies all three options, selection across polling, and the
+exact submitted recipe ID. The synthetic server refuses training; no fit runs.
 
 Before committing, visually inspect all three PNGs and run `npm run check`,
 `npm test` and `npm run privacy-check`. Numerical fixture values must remain

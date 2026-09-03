@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "default": "standard-v1",
+  "common": {
+    "objective": "reg:squarederror", "tree_method": "hist", "device": "cpu",
+    "nthread": 2, "seed": 42, "subsample": 1, "colsample_bytree": 1
+  },
+  "rounds": [16, 64, 128],
+  "recipes": [
+    {"id": "standard-v1", "label": "Standard", "description": "Existing shallow-tree search; unchanged default.",
+     "parameters": {"max_depth": 2, "eta": 0.05, "min_child_weight": 3, "lambda": 10}},
+    {"id": "regularized-v1", "label": "More regularized", "description": "Larger leaves and stronger regularization for noisy or sparse evidence.",
+     "parameters": {"max_depth": 2, "eta": 0.05, "min_child_weight": 8, "lambda": 30}},
+    {"id": "interactions-v1", "label": "More interactions", "description": "Depth-three trees with stronger regularization; still independently validated.",
+     "parameters": {"max_depth": 3, "eta": 0.05, "min_child_weight": 5, "lambda": 20}}
+  ]
+}

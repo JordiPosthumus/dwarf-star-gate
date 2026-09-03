@@ -27,6 +27,9 @@ try {
   assert.equal(await page.locator('h1').innerText(),'Dwarf Star Gate');
   assert.match(await page.locator('#connection').innerText(),/Demo/);
   assert.match(await page.locator('#predictor-status').innerText(),/0 validated models/);
+  assert.equal(await page.locator('#predictor-recipe option').count(),3);
+  assert.equal(await page.locator('#predictor-recipe').inputValue(),'standard-v1');
+  assert.match(await page.locator('#calibration-status').innerText(),/skipped.*cache-preserving/);
   assert.match(await page.locator('#embedding-detail').innerText(),/384 dimensions/);
   assert.ok(await page.locator('.gate-art').evaluate(img=>img.complete&&img.naturalWidth>0));
   const output=path.join(projectRoot,'docs/images');await fs.mkdir(output,{recursive:true});
@@ -52,6 +55,15 @@ try {
   }
   await page.locator('#analytics-metric').selectOption('queue');
   assert.equal(await page.locator('#analytics-version-label').isVisible(),false);
+  await page.locator('#predictor-recipe').selectOption('interactions-v1');
+  const recipePoll=await page.locator('#updated').innerText();
+  await page.waitForFunction(previous=>document.getElementById('updated').textContent!==previous,recipePoll,{timeout:10000});
+  assert.equal(await page.locator('#predictor-recipe').inputValue(),'interactions-v1','Polling must preserve the operator choice');
+  const trainRequest=page.waitForRequest(r=>r.url().endsWith('/api/workers/predictor')&&r.method()==='POST');
+  const trainResponse=page.waitForResponse(r=>r.url().endsWith('/api/workers/predictor')&&r.request().method()==='POST');
+  await page.locator('[data-predictor="train"]').click();
+  assert.deepEqual((await trainRequest).postDataJSON(),{action:'train',recipe_id:'interactions-v1'});
+  assert.equal((await trainResponse).ok(),false,'The demo must refuse real training');
   await page.setViewportSize({width:390,height:844});
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),'Mobile page must not overflow horizontally');
   // Separate synthetic scenario: exercise persistent notice UX and safe reset.

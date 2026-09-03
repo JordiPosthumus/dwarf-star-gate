@@ -218,11 +218,20 @@ and optional Genie-written milestone commentary. A reset is not a training pause
 pre-reset snapshots cannot immediately restore the rejected model. See the
 [lifecycle controls](predictor-lifecycle.md#controls-gg-and-rollback).
 
-**Next implementation slices:** opt-in pre-assignment client metadata; bounded,
-reviewed XGB recipe/window choices for GG; manual/optional hourly development
-calibration. Calibration must skip when warm-cache preservation is uncertain.
-None of those three controls is shipped yet. Existing training uses recorded
-traffic and does not send calibration jobs to DS4.
+**Gate Genie memory plan:** [a small operational notebook](genie-memory.md) for
+evidence-linked incidents, experiments and explicit operator intent. Numerical
+telemetry and predictor artifacts remain authoritative; memory grants no powers.
+This is planned, not implemented. Also track
+[mutually beneficial upstream PR opportunities](ds4-integration.md#upstream-contributions)
+without changing DS4 or creating a private-fork dependency.
+
+**Implemented foundations:** [pre-assignment hint collection](client-metadata.md),
+[three XGB recipe choices](predictor-lifecycle.md#reviewed-training-recipes), and
+[read-only calibration preflight](calibration.md). Existing v2 model/feature
+compatibility is unchanged. Next: per-request client instrumentation, compatible
+hint-aware features, reviewed training windows and a proven non-displacing
+calibration adapter. No generation runner/hourly toggle yet; preflight skips.
+Ordinary training never invokes DS4.
 
 Optimize **expected completion time**, including waiting, cache restoration,
 prefill and generation—not raw tokens/second alone.

@@ -252,19 +252,38 @@ small and synchronous; Python training, embeddings and GG are never awaited by
 request forwarding. The gateway retains its existing session ownership and one
 active request per registered DS4 server.
 
-## Next learning work — agreed boundary, not yet implemented
+## Reviewed training recipes
 
-- Add opt-in, bounded client metadata available before assignment: requested
-  thinking, context usage and compaction signals, with client-reported provenance
-  and missing values. Do not buffer/rewrite prompts to manufacture early features.
-- Extend GG from one fixed recipe to a reviewed menu of versioned XGB recipes
-  and training windows. Keep tree-count cross-validation, untouched holdout/future
-  evidence, deterministic baseline and compute/privacy limits outside GG's control.
+The UI selector and GG's exact offered actions can choose `standard-v1` (unchanged
+depth-two default), `regularized-v1` (larger leaves/stronger regularization), or
+`interactions-v1` (depth three, stronger regularization). The shared
+[recipe definitions](../predictor/recipes.json) accept IDs only, not supplied
+parameters, commands or gates. One recipe per job; no sweep of all offers.
+These are alternatives, not claims of improvement. Scheduled training keeps the
+standard default; GG may choose another when an eligible offer exists.
+
+Every choice **cross-validates 16/64/128 trees** over the existing feature-family
+and target-transform combinations using purged forward-time training folds.
+Later holdout, future-live, matched-incumbent and unseen-session gates are unchanged.
+Two CPU threads, the 120-second total budget and data limits remain fixed. UI
+selection affects one run, not a permanent production setting. Artifacts record
+recipe ID, policy checksum and actual parameters; receipts record the choice.
+Legacy artifacts without recipe metadata still load. Existing feature definitions,
+trained models and collected evidence are preserved.
+
+## Next learning work and current boundaries
+
+- [Early client hint collection](client-metadata.md) is implemented. Per-request
+  client instrumentation and a compatible predictor feature-contract rollout
+  remain next; hints do not yet influence forecasting or placement.
+- Reviewed training-window selection remains future work. Recipe choices do not
+  silently shorten retained history. Independent evidence, baseline and
+  compute/privacy limits stay outside GG's control.
 - Add manual and optional hourly development calibration **only after** proving
   it cannot displace warm production caches or compete with admitted work.
   Automatic calibration skips on uncertainty. Idle alone does not prove a free
-  cache slot. There is currently no calibration request runner or hourly toggle;
-  the existing training button trains on recorded traffic without invoking DS4.
+  cache slot. [Read-only preflight](calibration.md) exposes skip reasons; there is
+  still no request runner/hourly toggle. Training uses recorded traffic, not DS4.
 - Improve DS4-specific measurement extraction under the
   [stock DS4 integration contract](ds4-integration.md). No DS4 source patch,
   custom binary, model-setting change or server restart is part of this feature.

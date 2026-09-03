@@ -44,6 +44,7 @@
 <h2 id="predictor-title">Predictor lifecycle</h2><p id="predictor-status" role="status">Checking predictor</p>
 <p id="predictor-baseline" class="muted">Default: measured history baseline.</p>
 <div id="predictor-controls" class="genie-controls">
+<label>Training recipe <select id="predictor-recipe" title="Choose a reviewed XGB search for this run. Every recipe cross-validates tree count and faces the same promotion gates." disabled><option value="standard-v1">Standard</option></select></label>
 <button data-predictor="train" class="button" disabled>Train candidate</button>
 <button data-predictor="automatic_training" class="button" disabled>Auto training: off</button>
 <button data-predictor="automatic_promotion" class="button" disabled>Auto validation: off</button>
@@ -53,6 +54,7 @@
 </div>
 <p class="muted">DSG computes forecasts without an LLM. GG can request offered training or measured-regression rollback; fixed tests decide activation. A challenger must beat the baseline and any incumbent on matched evidence. Reset keeps the learning switches unchanged. Placement is armed separately; existing sessions and model settings are never moved or changed.</p>
 <div id="predictor-models" class="table-wrap"></div><div id="predictor-actions" aria-live="polite"></div>
+<p id="calibration-status" class="muted">Synthetic calibration is not running. Warm-cache safety must be established first.</p>
 <p><a href="https://github.com/JordiPosthumus/dwarf-star-gate/blob/main/docs/predictor-lifecycle.md" target="_blank" rel="noopener noreferrer">Validation gates, cold starts and controls</a></p></section>
 <details class="cache-cost-panel"><summary>Cache-cost calculator · measured components</summary><form id="cache-cost-form" class="worker-form"><label>Server<select id="cache-cost-worker" name="worker" required></select></label><label>Cache source<select name="tier"><option value="local_disk">Local disk snapshot</option><option value="cold">Cold prefill</option><option value="hot">Hot cache</option><option value="remote">Remote snapshot</option></select></label><label>Cached prefix tokens<input name="cached_tokens" type="number" min="0" step="1" value="0" required></label><label>Total prompt tokens<input name="prompt_tokens" type="number" min="1" step="1" value="131072" required></label><button type="submit" class="button">Estimate components</button></form><p id="cache-cost-result" role="status">Hypothetical scenario, not proof that a cache exists. At least three matching size-bucket samples are required. Hot lookup and remote transfer are unmeasured; unknown is not zero.</p></details>
 <p class="muted analytics-caption">Same scale on both axes. Above the diagonal = took longer than predicted. Queue wait ends at dispatch; server time includes prefill, reasoning and answer, not just decode. <a href="https://github.com/JordiPosthumus/dwarf-star-gate/blob/main/docs/analytics.md" target="_blank" rel="noopener noreferrer">Definitions and model plan</a></p>

@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { safeRequestedThinking } from './requested-thinking.mjs';
+import { safeClientMetadata } from './client-metadata.mjs';
 import { ENCODER_MODEL, ENCODER_REVISION, EXTRACTION } from './embeddings.mjs';
 
 const number = x => Number.isFinite(x) && x >= 0 ? x : null;
@@ -13,6 +14,7 @@ export function evidence(kind, raw) {
   if (!kinds.has(kind)) return null;
   const row = { kind, request_id:id(raw.request_id), node:id(raw.node) };
   if (!row.request_id) return null;
+  if(kind==='decision')row.client_metadata=safeClientMetadata(raw.client_metadata??{schema:1,status:'missing'});
   for (const k of ['queue_ms','service_ms','total_ms','first_body_byte_ms','request_bytes','context_length']) if (k in raw) row[k]=number(raw[k]);
   if (['new','existing','none','reassigned'].includes(raw.affinity)) row.affinity=raw.affinity;
   if (['genie','unclassified'].includes(raw.traffic_class)) row.traffic_class=raw.traffic_class;

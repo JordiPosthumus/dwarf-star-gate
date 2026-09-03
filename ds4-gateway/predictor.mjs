@@ -7,6 +7,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {PredictionHistory} from './prediction-features.mjs';
 import {validateCandidate,predictTreeModel,supported,reference} from './xgb-runtime.mjs';
+import {TRAINING_RECIPES,DEFAULT_RECIPE,RECIPE_POLICY_SHA256,trainingRecipe} from './training-recipes.mjs';
 const root=fileURLToPath(new URL('../',import.meta.url));
 const hash=b=>createHash('sha256').update(b).digest('hex');
 const finite=x=>typeof x==='number'&&Number.isFinite(x)&&x>=0;
@@ -66,6 +67,12 @@ export class Predictor {
       const file=path.join(directory,name,'candidate.json'),reportFile=path.join(directory,name,'report.json');if(!fs.existsSync(file)||!fs.existsSync(reportFile))continue;
       if(!fs.lstatSync(file).isFile()||fs.statSync(file).size>8*1024**2)throw new Error('Invalid candidate file');const bytes=fs.readFileSync(file),report=JSON.parse(fs.readFileSync(reportFile));if(hash(bytes)!==report.candidate_sha256)throw new Error('Candidate checksum mismatch');
       const bundle=validateCandidate(JSON.parse(bytes));if(bundle.snapshot.feature_builder_sha256!==hash(fs.readFileSync(path.join(root,'ds4-gateway/prediction-features.mjs'))))throw new Error('Feature builder changed; retrain before use');
+      const requestFile=path.join(directory,name,'training-request.json');
+      if(fs.existsSync(requestFile)){
+        if(!fs.lstatSync(requestFile).isFile()||fs.statSync(requestFile).size>4096)throw new Error('Invalid training request');
+        const requested=JSON.parse(fs.readFileSync(requestFile));
+        if(requested.recipe_id!==bundle.training_recipe?.id||requested.recipe_policy_sha256!==bundle.training_recipe?.policy_sha256)throw new Error('Produced recipe differs from requested recipe');
+      }
       this.bundles.set(name,{...bundle,directory_id:name});
     }catch{this.candidateRejections++;}}
     this.shadow=[...this.bundles.values()].filter(b=>Object.keys(b.models).length).sort((a,b)=>Date.parse(b.created_at)-Date.parse(a.created_at))[0]??null;
@@ -82,7 +89,7 @@ export class Predictor {
     // evidence instead of replacing it on every busy burst. Manual training
     // remains explicit; automatic/Genie retraining waits at most six hours.
     if(this.shadow&&this.now()-Date.parse(this.shadow.created_at)<PREDICTION_POLICY.training_interval_ms&&Object.values(this.shadow.models).some(m=>m.holdout_passed&&((this.state.evaluations[m.id]?.length??0)<30||score(this.state.evaluations[m.id]??[]).sessions<5)))return null;
-    return hash(`${this.state.last_train_at}:${this.state.new_requests}:${this.shadow?.created_at??'first'}`).slice(0,24);
+    return hash(`${RECIPE_POLICY_SHA256}:${this.state.last_train_at}:${this.state.new_requests}:${this.shadow?.created_at??'first'}`).slice(0,24);
   }
   baseline(point) {
     return ['worker_service_median','hardware_service_median','fleet_service_median'].some(k=>finite(point.features[k]))?reference(point.features):null;
@@ -201,24 +208,25 @@ export class Predictor {
     if(!this.configured)throw new Error('Predictor is not configured');
     if(['acknowledge_milestone','annotate_milestone'].includes(input.action))return this.milestoneControl(input,actor);
     if(actor==='genie'){
-      if(Object.keys(input).sort().join(',')!=='action,evidence_id')throw new Error('Unsupported Genie action');
-      if(input.action==='train'&&this.state.automatic_training&&this.trainingOffer()&&input.evidence_id===this.trainingOffer())return this.train(actor);
-      if(input.action==='rollback'&&this.rollbackOffer()&&input.evidence_id===this.rollbackOffer())return this.rollback(actor,null,'Genie requested rollback against a fresh measured regression offer');
+      const keys=Object.keys(input).sort().join(',');
+      if(keys==='action,evidence_id,recipe_id'&&input.action==='train'&&this.state.automatic_training&&this.trainingOffer()&&input.evidence_id===this.trainingOffer())return this.train(actor,trainingRecipe(input.recipe_id).id);
+      if(keys==='action,evidence_id'&&input.action==='rollback'&&this.rollbackOffer()&&input.evidence_id===this.rollbackOffer())return this.rollback(actor,null,'Genie requested rollback against a fresh measured regression offer');
       throw new Error('Predictor offer is absent or stale');
     }
-    if(input.action==='train'&&Object.keys(input).length===1)return this.train(actor);
+    if(input.action==='train'&&['action','action,recipe_id'].includes(Object.keys(input).sort().join(',')))return this.train(actor,trainingRecipe(input.recipe_id).id);
     if(input.action==='rollback'&&Object.keys(input).length===1)return this.rollback(actor);
     if(input.action==='reset_baseline'&&Object.keys(input).length===1)return this.reset(actor);
     if(['automatic_training','automatic_promotion','placement'].includes(input.action)&&Object.keys(input).sort().join(',')==='action,enabled'&&typeof input.enabled==='boolean'){
       this.state[input.action]=input.enabled;return this.receipt(actor,input.action,'verified',input.enabled?'Enabled by operator':'Disabled by operator');
     }throw new Error('Unsupported predictor action');
   }
-  train(actor='operator') {
+  train(actor='operator',recipeId=DEFAULT_RECIPE) {
+    trainingRecipe(recipeId);
     if(this.busy||this.closed||!this.configured)throw new Error('Predictor trainer is unavailable or busy');
     if(this.now()-this.state.last_train_at<60000)throw new Error('Training cooldown; no duplicate job started');
     const name='candidate-'+this.now()+'-'+randomUUID().slice(0,8),destination=path.join(this.directory,'candidates',name);
-    this.busy=true;this.state.last_train_at=this.now();this.state.training={id:name,actor,started_at:this.now(),new_requests:this.state.new_requests};this.receipt(actor,'train','running','Frozen data, fixed feature/round search and two CPU threads',{candidate_id:name});
-    const initial={id:name,actor,state:'running',started_at:this.state.training.started_at};void this.runTraining(destination,name,actor);return initial;
+    this.busy=true;this.state.last_train_at=this.now();this.state.training={id:name,actor,recipe_id:recipeId,recipe_policy_sha256:RECIPE_POLICY_SHA256,started_at:this.now(),new_requests:this.state.new_requests};this.receipt(actor,'train','running','Frozen data, reviewed recipe, cross-validated tree count and two CPU threads',{candidate_id:name,recipe_id:recipeId});
+    const initial={id:name,actor,state:'running',recipe_id:recipeId,started_at:this.state.training.started_at};void this.runTraining(destination,name,actor,recipeId);return initial;
   }
   async runProcess(executable,args,timeout) {
     return new Promise((resolve,reject)=>{
@@ -229,15 +237,19 @@ export class Predictor {
       child.on('error',()=>{clearTimeout(timer);reject(failure('Trainer could not start'));});child.on('close',code=>{clearTimeout(timer);if(this.child===child)this.child=null;code===0&&bytes<=1024*1024?resolve(output):reject(failure('Trainer failed; inspect private candidate log'));});
     });
   }
-  async runTraining(destination,name,actor) {
+  async runTraining(destination,name,actor,recipeId=DEFAULT_RECIPE) {
     try{
       const start=this.now();await this.runProcess(process.execPath,[path.join(root,'predictor/prepare.mjs'),'--data',this.dataDirectory,'--profiles',this.config.profiles,'--output',destination],30000);
       if(this.closed)throw new Error('Gateway stopped; training interrupted');
-      const output=await this.runProcess(this.config.python,[path.join(root,'predictor/fit_v2.py'),'--prepared',path.join(destination,'prepared.json')],Math.max(1000,PREDICTION_POLICY.training_timeout_ms-(this.now()-start)));
-      if(this.closed)throw new Error('Gateway stopped; training interrupted');fs.writeFileSync(path.join(destination,'trainer.log'),output,{flag:'wx',mode:0o600});this.loadCandidates();
+      fs.writeFileSync(path.join(destination,'training-request.json'),JSON.stringify({schema:1,recipe_id:recipeId,recipe_policy_sha256:RECIPE_POLICY_SHA256})+'\n',{flag:'wx',mode:0o600});
+      const output=await this.runProcess(this.config.python,[path.join(root,'predictor/fit_v2.py'),'--prepared',path.join(destination,'prepared.json'),'--recipe',recipeId],Math.max(1000,PREDICTION_POLICY.training_timeout_ms-(this.now()-start)));
+      if(this.closed)throw new Error('Gateway stopped; training interrupted');fs.writeFileSync(path.join(destination,'trainer.log'),output,{flag:'wx',mode:0o600});
+      const produced=JSON.parse(fs.readFileSync(path.join(destination,'candidate.json')));
+      if(produced.training_recipe?.id!==recipeId||produced.training_recipe?.policy_sha256!==RECIPE_POLICY_SHA256)throw new Error('Training recipe changed or mismatched; candidate is not accepted');
+      this.loadCandidates();if(!this.bundles.has(name))throw new Error('Produced candidate did not pass artifact validation');
       this.state.new_requests=Math.max(0,this.state.new_requests-(this.state.training?.new_requests??0));
-      this.receipt(actor,'train','completed','Candidate evaluated; no model bypasses future-shadow validation',{candidate_id:name});this.error=null;
-    }catch(e){this.error='Predictor training failed; last working model retained';try{if(fs.existsSync(destination))fs.writeFileSync(path.join(destination,'failure.log'),String(e.privateOutput??e.message).slice(0,1024*1024),{flag:'wx',mode:0o600});}catch{}if(!this.closed)try{this.receipt(actor,'train','failed',this.error,{candidate_id:name});}catch{}}
+      this.receipt(actor,'train','completed','Candidate evaluated; no model bypasses future-shadow validation',{candidate_id:name,recipe_id:recipeId});this.error=null;
+    }catch(e){this.error='Predictor training failed; last working model retained';try{if(fs.existsSync(destination))fs.writeFileSync(path.join(destination,'failure.log'),String(e.privateOutput??e.message).slice(0,1024*1024),{flag:'wx',mode:0o600});}catch{}if(!this.closed)try{this.receipt(actor,'train','failed',this.error,{candidate_id:name,recipe_id:recipeId});}catch{}}
     finally{this.busy=false;if(!this.closed){this.state.training=null;try{this.persist();}catch{this.error='Predictor state could not be persisted';}}}
   }
   tick(){if(this.configured&&!this.closed&&this.state.automatic_training&&this.trainingOffer()&&this.now()-this.state.last_train_at>=PREDICTION_POLICY.training_interval_ms)try{this.train('scheduler');}catch{}}
@@ -263,9 +275,9 @@ export class Predictor {
     }catch{return fallback;}
   }
   status() {
-    const candidate=this.shadow,offers=this.state.automatic_training&&this.trainingOffer()?[{action:'train',evidence_id:this.trainingOffer()}]:[];
+    const candidate=this.shadow,offers=this.state.automatic_training&&this.trainingOffer()?TRAINING_RECIPES.map(r=>({action:'train',evidence_id:this.trainingOffer(),recipe_id:r.id})):[];
     if(this.rollbackOffer())offers.push({action:'rollback',evidence_id:this.rollbackOffer()});
-    return {configured:this.configured,error:this.error,candidate_rejections:this.candidateRejections??0,mode:this.state.placement?'validated-new-session-placement':'forecasts-only',automatic_training:this.state.automatic_training,automatic_promotion:this.state.automatic_promotion,placement:this.state.placement,busy:this.busy,training:this.state.training??null,new_requests:this.state.new_requests,history_partial:!!this.partialHistory,policy:PREDICTION_POLICY,offers,baseline:DEFAULT_BASELINE,reset_at:this.state.reset_at||null,milestones:this.state.milestones,
+    return {configured:this.configured,error:this.error,candidate_rejections:this.candidateRejections??0,mode:this.state.placement?'validated-new-session-placement':'forecasts-only',automatic_training:this.state.automatic_training,automatic_promotion:this.state.automatic_promotion,placement:this.state.placement,busy:this.busy,training:this.state.training??null,training_recipes:TRAINING_RECIPES,default_recipe:DEFAULT_RECIPE,candidate_recipe:candidate?.training_recipe?.id??null,new_requests:this.state.new_requests,history_partial:!!this.partialHistory,policy:PREDICTION_POLICY,offers,baseline:DEFAULT_BASELINE,reset_at:this.state.reset_at||null,milestones:this.state.milestones,
       models:['admission','updated','remaining'].map(kind=>{const m=candidate?.models[kind],active=this.model(kind,{active:true});return {kind,active_model_id:active?.id??null,candidate_model_id:m?.id??null,status:candidate?.reports[kind]?.status??'not_trained',selected:candidate?.reports[kind]?.selected?{family:candidate.reports[kind].selected.family,rounds:candidate.reports[kind].selected.rounds,transform:candidate.reports[kind].selected.transform}:null,
         default_model_id:DEFAULT_BASELINE.id,effective_model_id:active?.id??DEFAULT_BASELINE.id,promotion:m?this.promotionEvidence(candidate,kind):null,holdout:candidate?.reports[kind]?.holdout??null,baselines:candidate?.reports[kind]?.baselines??null,future:m?score(this.state.evaluations[m.id]??[]):null};}),actions:this.state.receipts.slice(0,10)};
   }

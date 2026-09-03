@@ -11,6 +11,10 @@ The sections below
 retain the original broader plan; they are not a claim that every item shipped.
 A running process is not upgraded merely by changing files on disk.
 
+The [persistent memory plan](genie-memory.md) adds a private evidence-linked
+notebook, not a new source of permissions or training labels. It remains planned;
+the current in-memory report list is not a durable operational memory.
+
 ## Division of responsibility
 
 - **XGB:** predicts service cost from a versioned request/worker feature contract.

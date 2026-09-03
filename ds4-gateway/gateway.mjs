@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
 import { RequestedThinkingObserver } from './requested-thinking.mjs';
 import { Dataset } from './dataset.mjs';
+import { clientMetadata, CLIENT_METADATA_HEADER } from './client-metadata.mjs';
 import { EmbeddingCollector } from './embeddings.mjs';
 import { RoutingShadow } from './routing-shadow.mjs';
 import { GenerationFaultObserver, verifyGeneration } from './generation-health.mjs';
@@ -13,6 +14,7 @@ import { workerConfig, workerConfigs, assertUniqueWorker } from './worker-config
 import { Recovery } from './recovery.mjs';
 import { loadConfig, isMain } from './config.mjs';
 import { Predictor } from './predictor.mjs';
+import { calibrationPreflight } from './calibration.mjs';
 import net from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -196,6 +198,7 @@ export function createGateway(config) {
   const accepted = new Set(['POST /v1/chat/completions', 'POST /v1/completions', 'POST /v1/responses', 'POST /v1/messages', 'GET /v1/models']);
   const auth = Buffer.from(`Bearer ${config.api_key}`);
   const stats = () => ({ version: 1, model: config.model, context_length: contextLimit(), draining, dataset:{...dataset.snapshot(),embedding_collection:embeddings.snapshot()}, routing_shadow:shadow.snapshot(),recovery:recovery.status(),predictor:predictor.status(),
+    calibration:calibrationPreflight(nodes,{draining}),
     total: nodes.length, healthy: nodes.filter(n => n.healthy).length, available: nodes.filter(n => n.healthy && !n.drained).length,
     active: nodes.filter(n => n.active).length, queued: nodes.reduce((s, n) => s + n.queue.length, 0),
     workers: nodes.map(n => ({ id: n.id, url: n.url, is_healthy: n.healthy, drained: n.drained, quarantine:n.quarantine, inference_failures:n.inferenceFailures,
@@ -269,6 +272,7 @@ export function createGateway(config) {
     let requestBytes=0, firstBodyByte=null;
     const target = new URL(req.url, node.url);
     const headers = forwardHeaders(req.headers);
+    delete headers[CLIENT_METADATA_HEADER]; // DSG hint only; never a DS4 setting.
     headers.host = target.host;
     headers['x-request-id'] = job.id;
     delete headers.expect;
@@ -363,6 +367,7 @@ export function createGateway(config) {
     if (route === 'GET /health') return json(res, !draining && nodes.some(n => n.healthy && !n.drained) ? 200 : 503, stats());
     if (!accepted.has(route)) { req.resume(); return error(res, 404, 'unsupported_route', 'Endpoint is not on the inference allowlist'); }
     if (draining) { req.resume(); return error(res, 503, 'draining', 'Gateway is draining; no new requests admitted'); }
+    const admissionMetadata=clientMetadata(req.headers[CLIENT_METADATA_HEADER]);
     const keyValue = req.headers['x-session-affinity'] || req.headers['x-ds4-conversation-id'] || req.headers['x-session-id'] || req.headers.session_id;
     const key = keyValue && req.method === 'POST' ? digest(String(keyValue)) : null;
     const home = key && store.get(key);
@@ -413,7 +418,7 @@ export function createGateway(config) {
     const job = { req, res, key, affinity, id: randomUUID(), created: Date.now(), createdMono:performance.now(), cancelled: false,
       trafficClass:req.headers['x-dsg-observer']==='gate-genie'?'genie':'unclassified' };
     dataset.record('decision',{request_id:job.id,node:node.id,session:key,affinity,context_length:contextLimit(),candidates,
-      traffic_class:job.trafficClass});
+      traffic_class:job.trafficClass,client_metadata:admissionMetadata});
     const cancel = () => {
       if (res.writableFinished) return;
       job.cancelled = true;

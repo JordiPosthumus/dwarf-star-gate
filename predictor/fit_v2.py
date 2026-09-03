@@ -12,10 +12,21 @@ import numpy as np
 import xgboost as xgb
 
 SCHEMA = 'dsg-latency-v2'
-PARAMS = {'objective': 'reg:squarederror', 'tree_method': 'hist', 'device': 'cpu',
-          'nthread': 2, 'max_depth': 2, 'eta': .05, 'min_child_weight': 3,
-          'lambda': 10, 'seed': 42, 'subsample': 1, 'colsample_bytree': 1}
-ROUNDS = (16, 64, 128)
+RECIPE_BYTES = Path(__file__).with_name('recipes.json').read_bytes()
+RECIPE_POLICY = json.loads(RECIPE_BYTES)
+RECIPE_HASH = hashlib.sha256(RECIPE_BYTES).hexdigest()
+DEFAULT_RECIPE = RECIPE_POLICY['default']
+ROUNDS = tuple(RECIPE_POLICY['rounds'])
+
+
+def recipe(identifier=DEFAULT_RECIPE):
+    selected = next((r for r in RECIPE_POLICY['recipes'] if r['id'] == identifier), None)
+    if selected is None:
+        raise ValueError('Unknown reviewed training recipe')
+    return {**RECIPE_POLICY['common'], **selected['parameters']}
+
+
+PARAMS = recipe()
 
 
 def model_identity(export, kind, snapshot, created_at):
@@ -94,14 +105,14 @@ def reference(features):
     return max(1.0,value)
 
 
-def fit(rows, names, cats, rounds, transform):
+def fit(rows, names, cats, rounds, transform, recipe_id=DEFAULT_RECIPE):
     enc = encoding(rows, names, cats)
     values = np.asarray([r['target_s'] for r in rows])
     data = matrix(rows, enc)
     references=np.asarray([reference(r['features']) for r in rows])
     data.set_label(np.log1p(values)-np.log1p(references) if transform=='relative_log' else np.log1p(values) if transform == 'log' else values)
     data.set_weight(weights(rows))
-    model = xgb.train(PARAMS, data, num_boost_round=rounds)
+    model = xgb.train(recipe(recipe_id), data, num_boost_round=rounds)
     # Log back-transformation alone predicts neither an arithmetic expectation
     # nor a calibrated conditional mean. Smearing is explicit and tested later.
     margin=model.predict(data)
@@ -169,14 +180,16 @@ def exported_prediction(model, features):
     return max(0, raw*model['factor'])
 
 
-def train(prepared):
+def train(prepared, recipe_id=DEFAULT_RECIPE):
+    parameters=recipe(recipe_id)  # Reject before reading data or fitting anything.
     if xgb.__version__!='3.4.1' or np.__version__!='2.5.2':
         raise ValueError('Use the locked predictor environment; dependency version mismatch')
     data=json.loads(Path(prepared).read_text()); rows=data['rows']
     if data['schema'] != SCHEMA or len(rows)>100000:
         raise ValueError('Unsupported prepared data')
     result={'schema':2,'feature_schema':SCHEMA,'created_at':dt.datetime.now(dt.timezone.utc).isoformat(),
-            'snapshot':data['snapshot'],'dependencies':{'xgboost':xgb.__version__,'numpy':np.__version__},'models':{},'reports':{},'routing_enabled':False}
+            'snapshot':data['snapshot'],'dependencies':{'xgboost':xgb.__version__,'numpy':np.__version__},'models':{},'reports':{},'routing_enabled':False,
+            'training_recipe':{'id':recipe_id,'policy_sha256':RECIPE_HASH,'parameters':parameters,'rounds':list(ROUNDS)}}
     for kind in ('admission','updated','remaining'):
         subset=[r for r in rows if r['kind']==kind and math.isfinite(r['target_s']) and r['target_s']>=0]
         count=unique(subset); report={'requests':count,'sessions':len({r['group'] for r in subset}),'status':'insufficient_evidence'}
@@ -195,12 +208,12 @@ def train(prepared):
                 for rounds in ROUNDS:
                     scores=[]
                     for training, validation in cv:
-                        model,enc,factor=fit(training,names,data['categorical'],rounds,transform)
+                        model,enc,factor=fit(training,names,data['categorical'],rounds,transform,recipe_id)
                         scores.append(metrics(validation,predict(model,enc,factor,validation,transform)))
                     score=sum(m['mae_s']*m['requests'] for m in scores)/sum(m['requests'] for m in scores)
                     candidates.append({'family':family,'rounds':rounds,'transform':transform,'mae_s':score,'fold_metrics':scores,'names':names})
         winner=min(candidates,key=lambda c:(c['mae_s'],len(c['names']),c['rounds']))
-        model,enc,factor=fit(tr,winner['names'],data['categorical'],winner['rounds'],winner['transform'])
+        model,enc,factor=fit(tr,winner['names'],data['categorical'],winner['rounds'],winner['transform'],recipe_id)
         predictions=predict(model,enc,factor,te,winner['transform']); measured=metrics(te,predictions)
         baselines,_,_=baseline(tr,te)
         by_worker={node:metrics([r for r in te if r['node']==node],[float(p) for r,p in zip(te,predictions) if r['node']==node]) for node in {r['node'] for r in te}}
@@ -227,13 +240,13 @@ def train(prepared):
 
 
 def main():
-    os.umask(0o077);parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--prepared',required=True);args=parser.parse_args()
+    os.umask(0o077);parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--prepared',required=True);parser.add_argument('--recipe',default=DEFAULT_RECIPE,choices=[r['id'] for r in RECIPE_POLICY['recipes']]);args=parser.parse_args()
     directory=Path(args.prepared).parent;target=directory/'candidate.json'
     if target.exists():raise ValueError('Candidate already exists')
-    candidate=train(args.prepared)
+    candidate=train(args.prepared,args.recipe)
     candidate['trainer_sha256']=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     with target.open('x') as f:json.dump(candidate,f,allow_nan=False,separators=(',',':'));f.write('\n')
-    report={'schema':2,'created_at':candidate['created_at'],'reports':candidate['reports'],'candidate_sha256':hashlib.sha256(target.read_bytes()).hexdigest(),'models':{k:v['id'] for k,v in candidate['models'].items()}}
+    report={'schema':2,'created_at':candidate['created_at'],'reports':candidate['reports'],'training_recipe':candidate['training_recipe'],'candidate_sha256':hashlib.sha256(target.read_bytes()).hexdigest(),'models':{k:v['id'] for k,v in candidate['models'].items()}}
     with (directory/'report.json').open('x') as f:json.dump(report,f,allow_nan=False,indent=2);f.write('\n')
     print(json.dumps({'models':list(candidate['models']),'reports':{k:{kk:vv for kk,vv in v.items() if kk in ('status','requests','holdout','baselines','selected')} for k,v in candidate['reports'].items()}}))
 

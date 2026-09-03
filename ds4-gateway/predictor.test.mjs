@@ -16,6 +16,7 @@ import {predictTreeModel,validateCandidate,reference,encode} from './xgb-runtime
 import {Predictor,promotionEligible,DEFAULT_BASELINE} from './predictor.mjs';
 import {PredictionEvidence} from './analytics.mjs';
 import {parseGenieReview,Genie,briefing} from './genie.mjs';
+import {TRAINING_RECIPES,DEFAULT_RECIPE,RECIPE_POLICY_SHA256} from './training-recipes.mjs';
 
 const origin=1700000000000;
 const inventory={schema:1,workers:{a:{matching_profiles:['p'],hardware_family:'spark',accelerator_family:'cuda',ram_gib:128},b:{matching_profiles:['q'],hardware_family:'spark',accelerator_family:'cuda',ram_gib:128}}};
@@ -157,6 +158,49 @@ test('Genie cannot change policy, train without an offer or promote; operator to
   const {p}=rig(t);for(const v of [{action:'placement',enabled:true},{action:'activate'},{action:'train',evidence_id:'fake'}])assert.throws(()=>p.control(v,'genie'));
   p.control({action:'automatic_training',enabled:true});assert.equal(p.state.automatic_training,true);assert.throws(()=>p.control({action:'train',command:'shell'}));
 });
+
+test('Genie chooses one exact reviewed recipe; stale, arbitrary and extra-field choices cannot train',t=>{
+  const {p,dir}=rig(t);p.history.completed=50;
+  assert.deepEqual(p.status().offers,[]);
+  p.control({action:'automatic_training',enabled:true});
+  const offers=p.status().offers;
+  assert.equal(offers.length,3);assert.equal(p.status().default_recipe,'standard-v1');
+  assert.deepEqual(offers.map(o=>o.recipe_id),TRAINING_RECIPES.map(r=>r.id));
+  const request=offers.find(o=>o.recipe_id==='regularized-v1');
+  for(const bad of [{...request,recipe_id:'custom'}, {...request,evidence_id:'old'}, {...request,max_depth:99}, {action:'train',evidence_id:request.evidence_id}])assert.throws(()=>p.control(bad,'genie'));
+  let dispatched;p.runTraining=async (...args)=>{dispatched=args;};
+  const receipt=p.control(request,'genie');
+  assert.equal(receipt.recipe_id,'regularized-v1');assert.equal(dispatched[3],receipt.recipe_id);
+  const saved=JSON.parse(fs.readFileSync(path.join(dir,'state.json')));
+  assert.equal(saved.training.recipe_policy_sha256,RECIPE_POLICY_SHA256);
+  assert.equal(saved.training.recipe_id,'regularized-v1');assert.deepEqual(saved.active,{});
+  assert.throws(()=>p.control(request,'genie'),'same offer cannot start a duplicate');
+});
+
+test('operator recipe default is unchanged and unknown recipes cannot launch a process',t=>{
+  const {p}=rig(t);let selected;p.runTraining=async (...args)=>{selected=args[3];};
+  assert.throws(()=>p.control({action:'train',recipe_id:'arbitrary'}));assert.equal(p.busy,false);
+  p.control({action:'train'});assert.equal(selected,DEFAULT_RECIPE);
+});
+
+test('training checks the emitted recipe before loading or declaring a candidate completed',async t=>{
+  const {p,dir}=rig(t),destination=path.join(dir,'candidates','candidate-wrong');
+  fs.mkdirSync(destination);fs.writeFileSync(path.join(destination,'candidate.json'),JSON.stringify({training_recipe:{id:'standard-v1',policy_sha256:RECIPE_POLICY_SHA256}}));
+  const calls=[];p.runProcess=async (_executable,args)=>{calls.push(args);return 'synthetic trainer output';};
+  await p.runTraining(destination,'candidate-wrong','genie','interactions-v1');
+  assert.deepEqual(calls[1].slice(-2),['--recipe','interactions-v1']);
+  assert.equal(p.state.receipts[0].status,'failed');assert.equal(p.bundles.size,0);
+  assert.ok(fs.readFileSync(path.join(destination,'failure.log'),'utf8').includes('recipe changed or mismatched'));
+});
+
+test('recipe mismatch remains rejected on reload without invalidating legacy artifacts',t=>{
+  const r=rig(t);install(r,'candidate-legacy',bundle());
+  const candidate=bundle(model({id:'b'.repeat(64)}));candidate.training_recipe={id:'standard-v1',policy_sha256:RECIPE_POLICY_SHA256};
+  install(r,'candidate-mismatch',candidate);
+  fs.writeFileSync(path.join(r.dir,'candidates','candidate-mismatch','training-request.json'),JSON.stringify({schema:1,recipe_id:'interactions-v1',recipe_policy_sha256:RECIPE_POLICY_SHA256}));
+  r.p.loadCandidates();assert.equal(r.p.bundles.has('candidate-mismatch'),false);
+  assert.equal(r.p.bundles.has('candidate-legacy'),true);
+});
 test('new-session placement abstains on missing validation, hardware or remaining-time evidence',t=>{
   const r=rig(t),b=bundle(),m=b.models.admission;install(r,'candidate-one',b);r.p.state.active.admission='candidate-one';r.p.state.placement=true;r.p.state.evaluations[m.id]=[...goodRows(),...goodRows('b','q')];
   const a={id:'a',queue:[]},bb={id:'b',queue:[]},candidate=n=>({node:n.id,profile:n.id==='a'?'p':'q',context_length:262144,active:Number(!!n.active),queued:n.queue.length});
@@ -180,6 +224,15 @@ test('Genie parses only exact predictor offers and reports executor actions, not
   assert.equal(parseGenieReview(JSON.stringify(answer),briefing(snapshot)).predictor_requests.length,1);
   assert.equal(parseGenieReview(JSON.stringify({...answer,predictor_requests:[{action:'activate',evidence_id:'offered'}]}),briefing(snapshot)).predictor_requests.length,0);
   const actions=[];const g=new Genie({url:'http://127.0.0.1:12345/v1'},()=>snapshot,{predict:async r=>{actions.push(r);return {state:'running'};},fetchImpl:async()=>new Response(JSON.stringify({choices:[{message:{content:JSON.stringify(answer)},finish_reason:'stop'}]}))});g.setEnabled(true);await g.ask();assert.equal(actions.length,1);assert.equal(g.reports[0].actions_taken[0].state,'running');g.close();
+});
+
+test('Genie recipe selection is exact and one action only',()=>{
+  const offer={action:'train',evidence_id:'offered',recipe_id:'interactions-v1'};
+  const evidence={evidence_refs:['predictor'],predictor:{offers:[offer]}};
+  const answer={assessment:'Test interactions on the next frozen dataset.',ticker:[{severity:'info',text:'Reviewed recipe offered',recommendation:null,evidence_refs:['predictor']}],predictor_requests:[offer]};
+  assert.deepEqual(parseGenieReview(JSON.stringify(answer),evidence).predictor_requests,[offer]);
+  for(const requests of [[{...offer,recipe_id:'custom'}],[{...offer,rounds:999}], [offer,offer]])
+    assert.deepEqual(parseGenieReview(JSON.stringify({...answer,predictor_requests:requests}),evidence).predictor_requests,[]);
 });
 test('Genie attaches commentary to a real milestone without gaining activation or acknowledgement powers',async()=>{
   const snapshot={time:origin,gateway_at:origin,gateway:{workers:[],predictor:{configured:true,milestones:[{id:'verified-win',commentary:null}],offers:[]}},devices:[]};

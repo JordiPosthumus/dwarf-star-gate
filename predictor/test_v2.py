@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 import numpy as np
 import fit_v2 as v
@@ -42,13 +43,43 @@ class PredictorV2Tests(unittest.TestCase):
               'groups':{'base':['history_count','server_id'],'history':['worker_service_median'],'ratios':[],'semantic':[]},'categorical':['server_id']}
         with tempfile.TemporaryDirectory() as directory:
             prepared=Path(directory)/'prepared.json';prepared.write_text(json.dumps(data))
-            first=v.train(prepared);second=v.train(prepared)
+            first=v.train(prepared);second=v.train(prepared,'regularized-v1');third=v.train(prepared,'interactions-v1')
         report=first['reports']['admission']
         self.assertGreaterEqual(report['folds'],2)
         self.assertIn(report['selected']['rounds'],v.ROUNDS)
         self.assertEqual({c['rounds'] for c in report['ablations']},set(v.ROUNDS))
         self.assertFalse(first['routing_enabled'])
         self.assertNotEqual(first['models']['admission']['id'],second['models']['admission']['id'])
+        for candidate,recipe_id in [(first,'standard-v1'),(second,'regularized-v1'),(third,'interactions-v1')]:
+            self.assertEqual(candidate['training_recipe']['id'],recipe_id)
+            self.assertEqual(candidate['training_recipe']['parameters'],v.recipe(recipe_id))
+            self.assertEqual(candidate['training_recipe']['policy_sha256'],v.RECIPE_HASH)
+            selected=candidate['reports']['admission']
+            self.assertGreaterEqual(selected['folds'],2)
+            self.assertEqual({c['rounds'] for c in selected['ablations']},set(v.ROUNDS))
+            self.assertEqual(selected['holdout_requests'],20)
+            self.assertFalse(candidate['routing_enabled'])
+
+    def test_reviewed_recipes_preserve_default_and_cannot_change_objective_or_budget(self):
+        self.assertEqual(v.PARAMS, {'objective':'reg:squarederror','tree_method':'hist','device':'cpu','nthread':2,
+            'max_depth':2,'eta':.05,'min_child_weight':3,'lambda':10,'seed':42,'subsample':1,'colsample_bytree':1})
+        with self.assertRaises(ValueError):v.train('/never-read-this-path','custom')
+        for item in v.RECIPE_POLICY['recipes']:
+            params=v.recipe(item['id'])
+            self.assertEqual(params['objective'],'reg:squarederror');self.assertEqual(params['nthread'],2)
+            self.assertLessEqual(params['max_depth'],3)
+            self.assertEqual(v.ROUNDS,(16,64,128))
+
+    def test_recipe_argument_changes_the_actual_xgboost_parameters(self):
+        rows=self.rows(50)
+        for item in v.RECIPE_POLICY['recipes']:
+            with patch.object(v.xgb,'train',wraps=v.xgb.train) as train:
+                model,enc,factor=v.fit(rows,['history_count'],[],16,'raw',item['id'])
+            self.assertEqual(train.call_args.args[0],v.recipe(item['id']))
+            self.assertEqual(train.call_args.kwargs['num_boost_round'],16)
+            native=v.predict(model,enc,factor,rows,'raw')
+            portable=v.portable(model,enc,factor,'raw')
+            np.testing.assert_allclose([v.exported_prediction(portable,r['features']) for r in rows],native,rtol=2e-5,atol=.001)
 
     def test_one_long_job_cannot_dominate_by_having_more_progress_rows(self):
         rows=self.rows(2);rows=[rows[0]]*10+[rows[1]]

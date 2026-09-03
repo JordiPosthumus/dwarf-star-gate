@@ -2,8 +2,9 @@
 
 Implementation: [`dataset.mjs`](../ds4-gateway/dataset.mjs), with observation
 points in [`gateway.mjs`](../ds4-gateway/gateway.mjs). This numerical evidence feeds
-the optional [offline XGBoost experiment](../predictor/README.md), not a live
-learning router or a cache-hit auditor.
+the optional [predictor lifecycle](predictor-lifecycle.md) and the preserved
+[v1 offline experiment](../predictor/README.md). Collection does not by itself
+enable prediction-based placement or constitute a cache-hit auditor.
 
 ## Common fields on every event
 
@@ -13,7 +14,7 @@ learning router or a cache-hit auditor.
 | `run_id` | UUID for this gateway process run |
 | `event_id` | UUID for this event |
 | `time` | Gateway wall-clock ISO timestamp |
-| `kind` | `decision`, `dispatch`, `finish`, `queued_cancel`, `queue_timeout`, `unavailable_before_dispatch`, `progress`, or optional `routing_shadow`, `request_features`, `embedding` |
+| `kind` | `decision`, `dispatch`, `finish`, `queued_cancel`, `queue_timeout`, `unavailable_before_dispatch`, `progress`, or optional `routing_shadow`, `request_features`, `embedding`, `model_prediction` |
 | `request_id` | Gateway-assigned request UUID, shared across this request's events |
 | `node` | Selected registered server ID |
 
@@ -21,16 +22,23 @@ learning router or a cache-hit auditor.
 
 | Event | Fields actually recorded |
 | --- | --- |
-| `decision` | `context_length` (pool guarantee), `affinity`, optional `session`, `traffic_class`, `candidates`, `candidates_truncated` |
+| `decision` | `context_length` (pool guarantee), `affinity`, optional `session`, `traffic_class`, `candidates`, `candidates_truncated`, `client_metadata` |
 | `dispatch` | `queue_ms` |
-| `finish` | `outcome`, `queue_ms`, `service_ms`, `total_ms`, `first_body_byte_ms`, `request_bytes`, optional `usage`, `finish_reason`, `requested_thinking` |
+| `finish` | `outcome`, `queue_ms`, `service_ms`, `total_ms`, `first_body_byte_ms`, `request_bytes`, optional `usage`, `finish_reason`, `requested_thinking`, `generation` (thinking/answer/tool characters, first semantic time) |
 | `queued_cancel` | `total_ms` spent admitted before client cancellation |
 | `queue_timeout` | `total_ms` spent admitted before queue expiry |
 | `unavailable_before_dispatch` | `total_ms` spent admitted before rejecting dispatch to an unavailable assigned server |
 | `routing_shadow` | Repeatable, non-label assessment: `shadow_schema`, `reason`, `verdict`, `confidence`, `basis`, `source`, `alternative`, `session_busy`, `waiting_ms`, `saving_ms`, `candidates`, truncation flag |
-| `progress` | `progress_schema:1`, `prediction_point:while_active`, `active_elapsed_ms`, `phase`, `semantic_characters`, `semantic_age_ms`, `requested_thinking` |
+| `progress` | `progress_schema:1`, `prediction_point:while_active`, `active_elapsed_ms`, `phase`, `semantic_characters`, `semantic_age_ms`, thinking/answer/tool character counts, `requested_thinking` |
 | `request_features` | `feature_schema:1`, `prediction_point:after_upload`, extraction/status, `available_at`, bounded visible character/message counts and history-scan flag |
 | `embedding` | `embedding_schema:1`, status/extraction; ready rows add model/revision/dimensions, per-scope vectors/token metadata, queued/available times and encoding duration |
+| `model_prediction` | `predictor_schema:2`, `model_id`, `model_kind`, `prediction_stage`, `experimental`, `seconds`, `baseline_seconds`, `elapsed_s`, `available_at` |
+
+`client_metadata` contains schema/status/source plus nullable prompt-token
+estimate, model-call index, compaction count and requested effort. It is untrusted
+client evidence, not an engine measurement. No raw header text is stored. See
+the [exact header contract and current collection-only limit](client-metadata.md).
+Older decision rows lack this field and must be treated as missing, not zero.
 
 `affinity` is `new`, `existing`, `none`, or `reassigned`. `session`, when present,
 is the SHA-256 digest of the supplied affinity identifier, **not a hash of the
