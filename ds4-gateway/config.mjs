@@ -20,12 +20,25 @@ export function loadConfig(explicit,options) {
   };
   config.state_file=local(config.state_file,'state_file');
   if(config.control_socket!=null)config.control_socket=local(config.control_socket,'control_socket');
+  if(config.continuity_door?.control_socket!=null)config.continuity_door.control_socket=local(config.continuity_door.control_socket,'continuity_door.control_socket');
   if(config.telemetry_files && typeof config.telemetry_files==='object'&&!Array.isArray(config.telemetry_files))
     config.telemetry_files=Object.fromEntries(Object.entries(config.telemetry_files).map(([id,file])=>[id,local(file,'telemetry_files')]));
   if(config.embeddings?.enabled===true)for(const key of ['python','model_dir'])config.embeddings[key]=local(config.embeddings[key],`embeddings.${key}`);
   if(config.predictor?.enabled===true)for(const key of ['python','profiles'])config.predictor[key]=local(config.predictor[key],`predictor.${key}`);
   // Recovery helper/config paths are REMOTE paths; deliberately untouched.
   return {config,filename};
+}
+export function continuityEnabled(config){return config.continuity_door?.enabled===true;}
+export function gatewayPort(config){
+  const value=continuityEnabled(config)?Number(config.continuity_door.core_port):Number(config.port);
+  if(!Number.isInteger(value)||value<(continuityEnabled(config)?1:0)||value>65535)throw new Error(continuityEnabled(config)?'continuity_door.core_port must be 1–65535':'port must be 0–65535');
+  if(continuityEnabled(config)&&value===Number(config.port))throw new Error('Continuity door and gateway core ports must differ');
+  return value;
+}
+export function doorSocket(config){
+  if(!continuityEnabled(config))return null;
+  if(typeof config.continuity_door.control_socket!=='string'||!config.continuity_door.control_socket)throw new Error('continuity_door.control_socket is required when enabled');
+  return config.continuity_door.control_socket;
 }
 export function dashboardPort(config,env=process.env) {
   const port=Number(env.GATEWAY_UI_PORT??config.ui_port??30010);

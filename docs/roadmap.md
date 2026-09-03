@@ -14,9 +14,11 @@ fixes and remaining uncertainty. A source commit is not a live deployment receip
 
 **Continuity update:** [patient gateway waiting](client-continuity.md) now covers
 undispatched worker outages with original deadlines, FIFO conversation ownership,
-live wait evidence and no replay. Native Pi transport is covered by an opt-in
-real-library/fake-backend acceptance test. Client deadlines, gateway/socket loss,
-and post-dispatch recovery remain separate work; a green fleet does not resume an
+live wait evidence and no replay. The [Continuity Door](continuity-door.md) now
+keeps the client endpoint stable across a coordinated DSG core replacement while
+preserving unread bodies and existing streams. Native Pi transport is covered by
+an opt-in real-library/fake-backend acceptance test. Arbitrary post-dispatch
+gateway/engine loss remains separate work; a green fleet does not resume an
 already stopped Pi turn. All DSG-owned API errors identify themselves.
 
 **Analytics implemented:** the compact [prediction-accuracy panel](analytics.md)
@@ -63,7 +65,7 @@ are implemented separately.
 
 | Order | Work | Exit evidence |
 | --- | --- | --- |
-| Immediate | [Client continuity](client-continuity.md): distinguish undispatched waits from interrupted generation, scope home ownership correctly, and avoid abandoning Pi turns | Patient gateway waiting, receipts, conversation-scoped admission reassignment and opt-in Pi transport implemented; real Pi agent/tool-loop fixture covers native waiting and certified retries. Queued relocation, client deadline policy and post-dispatch recovery remain separate work |
+| Immediate | [Client continuity](client-continuity.md): distinguish undispatched waits from interrupted generation, scope home ownership correctly, and avoid abandoning Pi turns | Patient waiting, receipts, Continuity Door, conversation-scoped admission reassignment and opt-in Pi transport implemented; real Pi agent/tool-loop fixture covers native waiting and certified retries. Arbitrary post-dispatch recovery remains separate work |
 | 0 | Promote protocol/quarantine maintenance fixes through a controlled cutover | Regression suites pass; versioned backup; real API-format smoke checks; unchanged fleet/context; explicit source-versus-running release record |
 | 1 (shadow attribution implemented) | Diagnose the Spark CUDA/OOM incidents and correlate requests within backend process epochs | Privacy-safe systemd epochs and a fail-closed request/log candidate correlator are implemented; next evidence is real candidate coverage/conflict measurement, service/kernel/memory diagnosis, real cold/warm checks and representative sustained work; no unapproved context/cache reductions |
 | 2 | Explain idle capacity and design cache-aware overflow scheduling | UI identifies session-home waits; replay/shadow comparisons of wait-at-home versus cold execution elsewhere; prove no overlapping ownership/replay; operator-approved policy before activation |
@@ -81,10 +83,13 @@ not an unbounded restart loop.
 **Current scheduling boundary:** [safe queued handover](queued-handover.md) is now
 implemented. A first DSG request or unaffined queue head automatically takes a
 newly free healthy server while it is still undispatched. Existing session homes
-remain sticky unless an operator confirms one exact offer because the destination's
-cache locality is unknown. Waiting counts remain per-worker queues, not a globally
-stealable queue. Broader automatic overflow must first prove that predicted waiting
-saved exceeds cache-acquisition cost with adequate margin and hysteresis.
+remain sticky until one exact offer matures because the destination's cache
+locality is unknown. The operator or Gate Genie can request that exact offer; a
+deterministic executor rechecks current ownership, destination availability and
+evidence before moving the still-undispatched client stream. Waiting counts remain
+per-worker queues, not a globally stealable queue. Broader automatic overflow must
+first prove that predicted waiting saved exceeds cache-acquisition cost with
+adequate margin and hysteresis.
 
 **Maintenance decisions:** the README explicitly has no open-source license grant;
 add license text only if the maintainer chooses it. Keep public screenshots synthetic
@@ -107,12 +112,15 @@ how long an idle machine will remain unused.
 - **Fleet activity:** serving-slot occupancy and immediately free slots, plus
   sampled idle/prefill/thinking/answering timelines. Prefill and decode use separate
   scales shared across servers. Serving slots are not GPU utilization or hot KV slots.
-- **Gate Genie:** an optional local LLM observer with dashboard chat. It receives
+- **Gate Genie:** a local LLM observer with dashboard chat, on by default unless
+  explicitly disabled. It receives
   a compact metrics briefing, not user conversations. With separately enrolled
   services and automatic recovery enabled, it can request the independently
-  guarded recovery action described above. It can report an operator-confirmable
-  queued-handover offer, but cannot execute it. It has no shell, arbitrary routing,
-  model-setting or cache-editing tools.
+  guarded recovery action described above. It can report a mature
+  queued-handover offer and may request exactly that offer. The independent
+  executor revalidates it. It has no shell, arbitrary routing, model-setting or
+  cache-editing tools. A dedicated endpoint automatically gains bounded pool
+  fallback; without one, Genie uses one ordinary unpinned pool slot.
 - **Portable observer inference:** a dedicated compatible server is preferred;
   after an explicit dedicated-provider failure, Genie automatically borrows one
   unpinned DSG pool slot. The pool receives the bounded live briefing but not the

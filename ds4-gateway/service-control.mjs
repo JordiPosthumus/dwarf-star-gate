@@ -4,13 +4,14 @@ import path from 'node:path';
 import os from 'node:os';
 import {execFileSync} from 'node:child_process';
 import {setTimeout as delay} from 'node:timers/promises';
-import {loadConfig,projectRoot,dashboardPort,isDashboard,isMain} from './config.mjs';
-export const labels={gateway:'local.dwarf-star-gate.gateway',dashboard:'local.dwarf-star-gate.dashboard'};
+import {loadConfig,projectRoot,dashboardPort,isDashboard,isMain,gatewayPort,continuityEnabled} from './config.mjs';
+import {doorControl} from './door-client.mjs';
+export const labels={gateway:'local.dwarf-star-gate.gateway',door:'local.dwarf-star-gate.continuity-door',dashboard:'local.dwarf-star-gate.dashboard'};
 const xml=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'})[c]);
 export function serviceSpec(kind,filename,config,{root=projectRoot,node=process.execPath,env=process.env}={}) {
-  if(!labels[kind])throw new Error('Choose gateway or dashboard');
-  const runtime=path.dirname(config.state_file),dir=kind==='gateway'?runtime:path.join(runtime,'dashboard');
-  const stdout=path.join(dir,kind==='gateway'?'gateway.log':'ui.log'),stderr=path.join(dir,kind==='gateway'?'gateway.stderr.log':'ui.error.log');
+  if(!labels[kind])throw new Error('Choose gateway, door or dashboard');
+  const runtime=path.dirname(config.state_file),dir=kind==='dashboard'?path.join(runtime,'dashboard'):runtime;
+  const stdout=path.join(dir,kind==='gateway'?'gateway.log':kind==='door'?'continuity-door.log':'ui.log'),stderr=path.join(dir,kind==='gateway'?'gateway.stderr.log':kind==='door'?'continuity-door.stderr.log':'ui.error.log');
   const args=[node,path.join(root,'ds4-gateway',`${kind}.mjs`),filename];
   const variables={PATH:[path.dirname(node),env.PATH||'/usr/bin:/bin:/usr/sbin:/sbin'].join(':'),GATEWAY_UI_PORT:String(dashboardPort(config,env))};
   // Let graceful shutdown retain the configured long-stream allowance. Only an
@@ -18,19 +19,22 @@ export function serviceSpec(kind,filename,config,{root=projectRoot,node=process.
   const exitSeconds=Math.ceil((config.request_timeout_ms??360000000)/1000);
   if(!Number.isSafeInteger(exitSeconds)||exitSeconds<1)throw new Error('Invalid request timeout');
   const text=`<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>Label</key><string>${labels[kind]}</string><key>ProgramArguments</key><array>${args.map(x=>`<string>${xml(x)}</string>`).join('')}</array><key>WorkingDirectory</key><string>${xml(root)}</string><key>EnvironmentVariables</key><dict>${Object.entries(variables).map(([k,v])=>`<key>${k}</key><string>${xml(v)}</string>`).join('')}</dict><key>RunAtLoad</key><true/><key>KeepAlive</key><true/><key>ThrottleInterval</key><integer>10</integer><key>StandardOutPath</key><string>${xml(stdout)}</string><key>StandardErrorPath</key><string>${xml(stderr)}</string></dict></plist>\n`;
-  const manifest=text.replace('<key>ThrottleInterval</key><integer>10</integer>',`<key>ThrottleInterval</key><integer>${kind==='gateway'?10:15}</integer>${kind==='gateway'?`<key>ExitTimeOut</key><integer>${exitSeconds}</integer>`:''}`);
+  const manifest=text.replace('<key>ThrottleInterval</key><integer>10</integer>',`<key>ThrottleInterval</key><integer>${kind==='gateway'?10:15}</integer>${kind!=='dashboard'?`<key>ExitTimeOut</key><integer>${exitSeconds}</integer>`:''}`);
   return {label:labels[kind],args,root,dir,stdout,stderr,variables,text:manifest};
 }
 export async function readService(kind,config) {
-  const port=kind==='gateway'?config.port:dashboardPort(config),route=kind==='gateway'?'/gateway/status':'/api/status';
-  const r=await fetch(`http://127.0.0.1:${port}${route}`,{headers:kind==='gateway'?{authorization:`Bearer ${config.api_key}`}:{},signal:AbortSignal.timeout(3000)});
+  const port=kind==='gateway'?gatewayPort(config):kind==='door'?config.port:dashboardPort(config),route=kind==='gateway'?'/gateway/status':kind==='door'?'/continuity/status':'/api/status';
+  const r=await fetch(`http://127.0.0.1:${port}${route}`,{headers:kind!=='dashboard'?{authorization:`Bearer ${config.api_key}`}:{},signal:AbortSignal.timeout(3000)});
   if(!r.ok)throw new Error(`${kind} HTTP ${r.status}`);
   const value=await r.json();
-  if(kind==='dashboard'?!isDashboard(value):value.version!==1||!Array.isArray(value.workers)||typeof value.draining!=='boolean')throw new Error(`Unexpected service on ${kind} port`);
+  if(kind==='dashboard'?!isDashboard(value):kind==='door'?value.service!=='dwarf-star-gate-continuity-door'||value.version!==1:value.version!==1||!Array.isArray(value.workers)||typeof value.draining!=='boolean')throw new Error(`Unexpected service on ${kind} port`);
   return value;
 }
 export function assertIdle(status,interrupt=false) {
   if(!interrupt&&(!status||status.active!==0||status.queued!==0))throw new Error('Gateway is busy or its state is unknown. Wait for idle, or explicitly use --interrupt.');
+}
+export function assertDoorIdle(status,interrupt=false){
+  if(!interrupt&&(!status||status.active!==0||status.held!==0))throw new Error('Continuity Door has active or held client streams, or its state is unknown. Keep it running, wait for idle, or explicitly use --interrupt.');
 }
 export function assertRegistration(saved,spec) {
   // The operator CLI may use a newer Node than the registered service. Keep the
@@ -39,7 +43,7 @@ export function assertRegistration(saved,spec) {
   if(saved.Label!==spec.label||!Array.isArray(args)||typeof args[0]!=='string'||!path.isAbsolute(args[0])||JSON.stringify(args.slice(1))!==JSON.stringify(spec.args.slice(1))||saved.WorkingDirectory!==spec.root||saved.EnvironmentVariables?.GATEWAY_UI_PORT!==spec.variables.GATEWAY_UI_PORT)throw new Error('Service points to another checkout/config/port. Stop that installation before explicitly reinstalling.');
 }
 export async function unloadService(kind,{domain,launch,loaded,interrupt=false,wait=delay,now=Date.now,timeoutMs=10000}) {
-  if(!labels[kind])throw new Error('Choose gateway or dashboard');
+  if(!labels[kind])throw new Error('Choose gateway, door or dashboard');
   if(!loaded(kind))return;
   if(interrupt)try{launch('kill','SIGKILL',`${domain}/${labels[kind]}`);}catch{/* Already exited; still remove the registration. */}
   launch('bootout',`${domain}/${labels[kind]}`);
@@ -50,12 +54,34 @@ export async function unloadService(kind,{domain,launch,loaded,interrupt=false,w
     await wait(100);
   }
 }
-export async function serviceCommand(command,kinds=['gateway','dashboard'],{interrupt=false}={}) {
+export async function coordinatedCoreRestart(config,{hold=body=>doorControl(config.continuity_door.control_socket,'/hold',body),release=()=>doorControl(config.continuity_door.control_socket,'/release'),read=()=>readService('gateway',config),stop,start,wait=delay,now=Date.now,timeoutMs=config.continuity_door?.restart_wait_ms??config.request_timeout_ms??360000000}={}){
+  if(!continuityEnabled(config))throw new Error('Continuity door is not enabled');
+  if(!Number.isSafeInteger(timeoutMs)||timeoutMs<1000)throw new Error('Invalid coordinated restart allowance');
+  await hold({reason:'planned_gateway_core_restart'});
+  const deadline=now()+timeoutMs;
+  try{
+    let status;
+    for(;;){
+      status=await read();
+      if(status.active===0&&status.queued===0)break;
+      if(now()>=deadline)throw new Error('Coordinated restart allowance expired; continuity door remains holding new requests');
+      await wait(Math.min(1000,Math.max(1,deadline-now())));
+    }
+    await stop(status);await start();
+    status=await read();
+    if(status.active!==0||status.queued!==0||status.startup?.complete!==true)throw new Error('Replacement core is not in a clean ready state; continuity door remains holding');
+    await release();
+    return {coordinated:true,held_new_requests:true,old_core_drained:true,replacement_ready:true};
+  }catch(error){error.continuity_door_holding=true;throw error;}
+}
+export async function serviceCommand(command,kinds=['gateway','door','dashboard'],{interrupt=false}={}) {
   const {config,filename}=loadConfig();
+  if(!continuityEnabled(config))kinds=kinds.filter(kind=>kind!=='door');
+  if(!kinds.length)throw new Error('Continuity door is not enabled in this configuration');
   if(command==='status'){
     const results={};for(const kind of kinds)results[kind]=await readService(kind,config);return results;
   }
-  if(process.platform!=='darwin')throw new Error('Automatic login services currently support macOS. On Linux use npm start and npm run ui in your service manager.');
+  if(process.platform!=='darwin')throw new Error('Automatic login services currently support macOS. On Linux use npm start, npm run door and npm run ui in your service manager.');
   if(!['install','start','stop','restart'].includes(command))throw new Error('Choose install, start, status, stop or restart');
   const domain=`gui/${process.getuid()}`,launch=(...args)=>execFileSync('/bin/launchctl',args,{encoding:'utf8',stdio:['ignore','pipe','pipe']});
   const loaded=kind=>{try{launch('print',`${domain}/${labels[kind]}`);return true;}catch{return false;}};
@@ -76,9 +102,30 @@ export async function serviceCommand(command,kinds=['gateway','dashboard'],{inte
     return {installed:kinds,started:false};
   }
   for(const kind of kinds)verifyRegistration(kind);
+  let coordinated=null;
+  if(command==='restart'&&!interrupt&&continuityEnabled(config)&&kinds.includes('gateway')&&loaded('gateway')&&loaded('door')){
+    coordinated=await coordinatedCoreRestart(config,{
+      stop:async()=>{
+        launch('kill','SIGUSR1',`${domain}/${labels.gateway}`);
+        let state;for(let i=0;i<20;i++){state=await readService('gateway',config);if(state.draining)break;await delay(50);}
+        if(!state?.draining)throw new Error('Gateway admission fence was not acknowledged; continuity door remains holding');
+        assertIdle(state);await unloadService('gateway',{domain,launch,loaded});
+      },
+      start:async()=>{
+        launch('bootstrap',domain,plist('gateway'));
+        for(let i=0;i<80;i++){try{const state=await readService('gateway',config);if(state.startup?.complete)return;}catch{}await delay(500);}
+        throw new Error(`Replacement core did not become ready. Inspect ${expected('gateway').stderr}; continuity door remains holding.`);
+      }
+    });
+    // The door is intentionally stable across a core restart. A requested
+    // dashboard restart still happens below; gateway has already been replaced.
+    kinds=kinds.filter(kind=>kind!=='gateway'&&kind!=='door');
+    if(!kinds.length)return {started:['gateway'],kept_running:['door'],model_servers_unchanged:true,continuity:coordinated};
+  }
   let genie;
   if(command==='stop'||command==='restart'){
     if(kinds.includes('gateway')&&loaded('gateway')){let status;try{status=await readService('gateway',config);}catch{}assertIdle(status,interrupt);}
+    if(kinds.includes('door')&&loaded('door')){let status;try{status=await readService('door',config);}catch{}assertDoorIdle(status,interrupt);}
     if(kinds.includes('dashboard')&&loaded('dashboard')){
       try{const response=await fetch(`http://127.0.0.1:${dashboardPort(config)}/api/genie`,{signal:AbortSignal.timeout(3000)});if(!response.ok)throw new Error();genie=await response.json();const archive=path.join(path.dirname(config.state_file),'dashboard','backups');fs.mkdirSync(archive,{recursive:true,mode:0o700});fs.writeFileSync(path.join(archive,`genie-${Date.now()}.json`),JSON.stringify(genie,null,2)+'\n',{mode:0o600,flag:'wx'});}catch{throw new Error('Could not preserve Genie reports; inspect before stopping the dashboard');}
     }
@@ -106,11 +153,11 @@ export async function serviceCommand(command,kinds=['gateway','dashboard'],{inte
   }
   if(genie?.configured){const url=`http://127.0.0.1:${dashboardPort(config)}/api/genie`,fresh=await(await fetch(url,{signal:AbortSignal.timeout(3000)})).json();for(const body of [{action:'source',source:genie.source},{action:'enable',enabled:genie.enabled}]){
     const r=await fetch(url,{method:'POST',headers:{'content-type':'application/json',origin:`http://127.0.0.1:${dashboardPort(config)}`,'x-dsg-csrf':fresh.csrf_token},body:JSON.stringify(body)});if(!r.ok)throw new Error('Services started, but Genie settings could not be restored');}}
-  return {started:kinds,model_servers_unchanged:true};
+  return {started:[...(coordinated?['gateway']:[]),...kinds],...(coordinated?{kept_running:['door'],continuity:coordinated}:{}),model_servers_unchanged:true};
 }
 if(isMain(import.meta.url)){
   try{const args=process.argv.slice(2),interrupt=args.includes('--interrupt');const rest=args.filter(x=>x!=='--interrupt');const [command='status',selected='all',...extra]=rest;
-    if(extra.length||!['all','gateway','dashboard'].includes(selected))throw new Error('Usage: service-control.mjs install|start|status|stop|restart [all|gateway|dashboard] [--interrupt]');
-    console.log(JSON.stringify(await serviceCommand(command,selected==='all'?['gateway','dashboard']:[selected],{interrupt}),null,2));
+    if(extra.length||!['all','gateway','door','dashboard'].includes(selected))throw new Error('Usage: service-control.mjs install|start|status|stop|restart [all|gateway|door|dashboard] [--interrupt]');
+    console.log(JSON.stringify(await serviceCommand(command,selected==='all'?['gateway','door','dashboard']:[selected],{interrupt}),null,2));
   }catch(error){console.error(error.message);process.exitCode=1;}
 }

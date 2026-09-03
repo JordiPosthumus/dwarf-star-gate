@@ -3,7 +3,7 @@ import {test} from 'node:test';
 import {randomUUID} from 'node:crypto';
 import {createContinuityFetch,registerPiContinuity} from './continuity-client.mjs';
 import {evidence} from './dataset.mjs';
-import {continuityForDisplay} from './continuity.mjs';
+import {continuityForDisplay,continuityDoorForDisplay} from './continuity.mjs';
 import {dsgReport,invalidHttp} from './report.mjs';
 
 test('DSG error labeling is idempotent and malformed HTTP receives an identified error',()=>{
@@ -68,4 +68,9 @@ test('patient-wait evidence is bounded metadata and keeps the pre-admission dela
 test('dashboard continuity projection is bounded and excludes private extra fields',()=>{
   const s=continuityForDisplay({schema:1,safe_retry_contract:true,patient_wait:true,waiting:2,oldest_wait_seconds:5,waiting_reasons:{worker_unhealthy:2,SECRET:999},recent_rejections:[{request_id:randomUUID(),time:new Date().toISOString(),reason:'same_session_queued',dispatch_state:'not_dispatched',node:'one',session:'SECRET',body:'SECRET'},{request_id:'INVALID'},{request_id:randomUUID(),time:new Date().toISOString(),reason:'same_session_queued',dispatch_state:'dispatched'}]});
   assert.equal(s.recent_rejections.length,1);assert.equal(s.waiting,2);assert.deepEqual(s.waiting_reasons,{worker_unhealthy:2});assert.ok(!JSON.stringify(s).includes('SECRET'));
+});
+test('dashboard continuity-door projection exposes state but not ports or arbitrary reasons',()=>{
+  const s=continuityDoorForDisplay({service:'dwarf-star-gate-continuity-door',version:1,holding:true,hold_kind:'manual',reason:'PRIVATE',since:new Date().toISOString(),held:2,active:3,core_ready:false,core_failures:4,body_spooling:false,replay:false,core_port:30001,secret:'PRIVATE'});
+  assert.equal(s.held,2);assert.equal(s.active,3);assert.equal(s.reason,null);assert.equal(s.body_spooling,false);assert.equal(s.replay,false);assert.ok(!JSON.stringify(s).includes('PRIVATE'));assert.equal(s.core_port,undefined);
+  assert.equal(continuityDoorForDisplay({service:'other',version:1}),null);
 });

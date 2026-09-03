@@ -15,8 +15,8 @@ import { genieTunnel } from './genie-tunnel.mjs';
 import { safeQuarantine } from './generation-health.mjs';
 import { AnalyticsReader } from './analytics.mjs';
 import { estimateCacheCost } from './cache-cost.mjs';
-import { loadConfig, dashboardPort, isMain } from './config.mjs';
-import {continuityForDisplay} from './continuity.mjs';
+import { loadConfig, dashboardPort, isMain, continuityEnabled } from './config.mjs';
+import {continuityForDisplay,continuityDoorForDisplay} from './continuity.mjs';
 import {dsgReport,invalidHttp} from './report.mjs';
 import {EngineAttribution} from './attribution.mjs';
 
@@ -24,6 +24,12 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const assets = new Map([['/', ['index.html', 'text/html']], ['/ui.css', ['ui.css', 'text/css']], ['/brand.css', ['brand.css', 'text/css']], ['/ui.js', ['ui.js', 'text/javascript']], ['/logo.png', ['logo.png', 'image/png']]]);
 assets.set('/activity.js',['activity.js','text/javascript']);
 for(const [file,mime] of [['favicon.ico','image/x-icon'],['favicon-v1.svg','image/svg+xml'],['dsg-pinned-v1.svg','image/svg+xml'],['favicon-v1.png','image/png'],['apple-touch-icon.png','image/png']])assets.set('/'+file,[file,mime]);
+export function genieRuntimeConfig(config){
+  if(config.genie===false)return null;
+  const pool={url:`http://127.0.0.1:${config.port}/v1`,model:config.model,api_key:config.api_key};
+  if(config.genie?.url)return {...config.genie,enabled:config.genie.enabled!==false,fallback:config.genie.fallback??pool};
+  return {...pool,enabled:config.genie?.enabled!==false,fallback:pool,default_source:'pool'};
+}
 export function createDashboard(getSnapshot, assetsDirectory = path.join(here, 'ui'), management = null, genie = null, analytics = null) {
   const csrf = randomBytes(32).toString('base64url');
   // Freeze one complete release in memory: edits on disk cannot expose half an
@@ -125,6 +131,7 @@ export async function runDashboard(configPath, port) {
   const analytics=new AnalyticsReader(path.join(path.dirname(config.state_file),'training'),{enabled:config.dataset_enabled===true});
   fs.mkdirSync(runtime, { recursive: true, mode: 0o700 });
   let closed = false, gateway = null, gatewayAt = null, gatewayError = 'Waiting for gateway', writeError = null;
+  let continuityDoor = null, continuityDoorError = continuityEnabled(config)?'Waiting for continuity door':null;
   let events = [], offset = null, inode = null, fragment = '', polling = false;
   const children = new Set(), timers = new Set();
   const appendMetric = entry => {
@@ -225,6 +232,10 @@ export async function runDashboard(configPath, port) {
   async function poll() {
     if (polling) return;
     polling = true; readEvents();analytics.poll();
+    if(continuityEnabled(config))try{
+      const response=await fetch(`http://127.0.0.1:${config.port}/continuity/status`,{headers:{authorization:`Bearer ${config.api_key}`},signal:AbortSignal.timeout(3000)});
+      if(!response.ok)throw new Error();continuityDoor=continuityDoorForDisplay(await response.json());continuityDoorError=continuityDoor?null:'Unsupported continuity door';
+    }catch{continuityDoorError='Continuity door status unavailable';}
     try {
       const r = await fetch(`http://127.0.0.1:${config.port}/gateway/status`, { headers: { authorization: `Bearer ${config.api_key}` }, signal: AbortSignal.timeout(3000) });
       if (!r.ok) throw new Error('Status unavailable');
@@ -249,9 +260,11 @@ export async function runDashboard(configPath, port) {
   const started = Date.now();
   const managementEnabled = config.ui_worker_management === true && !!config.control_socket;
   const snapshot = () => ({ service:'dwarf-star-gate-dashboard', version: 1, time: Date.now(), started, read_only: !managementEnabled, worker_management:managementEnabled, gateway, gateway_at: gatewayAt, gateway_error: gatewayError, telemetry_error: writeError,
+    continuity_door:continuityDoor,continuity_door_error:continuityDoorError,
     devices: [...devices.values()].map(d => ({...d.snapshot(),activity:activity.get(d.id)})), events, attribution:attribution.snapshot(), notes: 'Rates are DS4 engine measurements. Cache counts cover observed prompt starts, not lifetime requests. Raw prompts and responses are excluded.' });
   const memory=new GenieMemory(path.join(path.dirname(config.state_file),'genie','memory'));
-  const genie=new Genie(config.genie,snapshot,{memory,recover:managementEnabled?input=>workerControl(config.control_socket,'/genie-recover-worker',input):null,predict:managementEnabled?input=>workerControl(config.control_socket,'/genie-predictor',input):null});
+  const runtimeGenie=genieRuntimeConfig(config);
+  const genie=new Genie(runtimeGenie,snapshot,{memory,recover:managementEnabled?input=>workerControl(config.control_socket,'/genie-recover-worker',input):null,predict:managementEnabled?input=>workerControl(config.control_socket,'/genie-predictor',input):null,rebalance:managementEnabled?input=>workerControl(config.control_socket,'/genie-relocate-queued',input):null});
   const stopGenieTunnel=genieTunnel(config.genie);
   const server = createDashboard(snapshot, path.join(here,'ui'), managementEnabled ? {
     read:()=>workerControl(config.control_socket,'/workers'),

@@ -11,13 +11,13 @@ import {projectRoot} from './config.mjs';
 
 function fixture(overrides={}){
   const calls=[];
-  const status={gateway:{version:1,available:1,total:2,active:1,queued:3,draining:false,context_length:262144,workers:[{id:'worker-a',is_healthy:true,drained:false},{id:'worker-b',is_healthy:false,drained:true,operator_paused:true,quarantine:{reason:'fault'},holds:[{}]}]},dashboard:{service:'dwarf-star-gate-dashboard'}};
+  const status={gateway:{version:1,available:1,total:2,active:1,queued:3,draining:false,context_length:262144,workers:[{id:'worker-a',is_healthy:true,drained:false},{id:'worker-b',is_healthy:false,drained:true,operator_paused:true,quarantine:{reason:'fault'},holds:[{}]}]},door:{service:'dwarf-star-gate-continuity-door'},dashboard:{service:'dwarf-star-gate-dashboard'}};
   const ops={preflight:()=>calls.push(['preflight']),check:async()=>{calls.push(['check']);return[];},backup:()=>{calls.push(['backup']);return'/private-backup';},registered:()=>true,managed:()=>false,listening:async()=>false,progress:()=>{},open:()=>calls.push(['open']),service:async(...args)=>{calls.push(args);return status;},...overrides};
   return {ops,calls,status};
 }
 
 test('strict CLI: safe defaults, explicit interruption, valid components and no unsafe options',()=>{
-  assert.deepEqual(parseArgs(['start']).kinds,['gateway','dashboard']);
+  assert.deepEqual(parseArgs(['start']).kinds,['gateway','door','dashboard']);
   assert.equal(parseArgs(['stop']).interrupt,false);
   assert.equal(parseArgs(['stop','--interrupt','--confirm-interrupt']).interrupt,true);
   const selected=parseArgs(['start','--only','dashboard','--config','my file.json','--open','--json']);
@@ -31,9 +31,9 @@ test('platform/user/version gates run before mutation; later Node majors work',(
   assert.throws(()=>checkRuntime({platform:'darwin',version:'24.0.0',uid:0}),/not sudo/);
 });
 test('start installs only missing component; preserves running gateway and reports unchanged exclusions',async()=>{
-  const {ops,calls}=fixture({registered:k=>k==='gateway'});
+  const {ops,calls}=fixture({registered:k=>k==='gateway'||k==='door'});
   const result=await lifecycle(parseArgs(['start','--open']),ops);
-  assert.deepEqual(calls,[['preflight'],['check'],['backup'],['install',['dashboard']],['start',['gateway','dashboard']],['status',['gateway','dashboard']],['open']]);
+  assert.deepEqual(calls,[['preflight'],['check'],['backup'],['install',['dashboard']],['start',['gateway','door','dashboard']],['status',['gateway','door','dashboard']],['open']]);
   assert.equal(result.fleet.context_length,262144);assert.equal(result.fleet.active,1);assert.equal(result.fleet.queued,3);
   assert.ok(formatResult(result).includes('operator paused; 1 agent hold(s); drained; quarantined; not healthy (unchanged)'));
   assert.equal(result.model_servers_unchanged,true);
@@ -52,7 +52,7 @@ test('fresh install preflights all missing components before writing; unmanaged 
   }
   const {ops,calls}=fixture({registered:()=>false});
   await lifecycle(parseArgs(['start']),ops);
-  assert.deepEqual(calls.find(c=>c[0]==='install'),['install',['gateway','dashboard']]);
+  assert.deepEqual(calls.find(c=>c[0]==='install'),['install',['gateway','door','dashboard']]);
 });
 test('preflight and backup errors cannot start services; readiness failure does not trigger destructive rollback',async()=>{
   for(const fail of ['preflight','check','backup']){
@@ -72,7 +72,7 @@ test('zero workers or retained global drain is clearly degraded, not falsely rea
 });
 test('stop delegates fenced idle check and does not run source/optional dependency checks',async()=>{
   const {ops,calls}=fixture();const result=await lifecycle(parseArgs(['stop']),ops);
-  assert.deepEqual(calls,[['preflight'],['backup'],['stop',['gateway','dashboard'],{interrupt:false}]]);
+  assert.deepEqual(calls,[['preflight'],['backup'],['stop',['gateway','door','dashboard'],{interrupt:false}]]);
   assert.equal(result.verified,true);
   const bad=fixture({service:async(...a)=>{bad.calls.push(a);throw new Error('busy');}});
   await assert.rejects(lifecycle(parseArgs(['stop']),bad.ops),/busy/);

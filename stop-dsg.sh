@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Safely stop this checkout's gateway/dashboard; leave model servers alone.
+# Safely stop this checkout's gateway core/Continuity Door/dashboard; leave model servers alone.
 set -euo pipefail
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 if ! command -v node >/dev/null 2>&1; then

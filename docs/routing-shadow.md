@@ -131,7 +131,8 @@ unchanged request bytes/affinity, reassessment and exclusion from XGB labels.
 5. Validate counterfactual predictions with small controlled calibration trials;
    then decide whether the implemented exact established-session handover may be
    automated behind an uncertainty margin and hysteresis. Until then it remains
-   operator-confirmed; only first/unaffined work moves automatically.
+   evidence-bound and revalidated; an operator or Genie may request one mature
+   exact offer, while only first/unaffined work moves automatically.
 
 Predicting **when a busy worker becomes free** is the first objective. Predicting
 how long an already idle worker will stay idle requires an arrival-demand model;

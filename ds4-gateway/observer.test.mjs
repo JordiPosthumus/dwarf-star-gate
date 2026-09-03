@@ -14,10 +14,16 @@ test('Genie receives an allowlisted quarantine fact, not raw backend text or cre
   const report=briefing({gateway:{workers:[{id:'spark1',quarantine:bad}]},devices:[],events:[]});
   assert.equal(report.workers[0].quarantine.reason,'fatal_accelerator_error');assert.ok(!JSON.stringify(report).includes('PRIVATE'));
 });
-import {createDashboard} from './dashboard.mjs';
+import {createDashboard,genieRuntimeConfig} from './dashboard.mjs';
 import {capacity,phase,Activity} from './ui/activity.js';
 const snapshot=()=>({time:Date.now(),devices:[],events:[],gateway:{workers:[],context_length:262144,active:0,queued:0}});
 const authoredReview=()=>({assessment:'The fleet has no demonstrated fault in this snapshot.',ticker:[{severity:'info',text:'No current failure is evidenced.',recommendation:null,evidence_refs:['fleet']}]});
+test('Genie uses the DSG pool by default and an explicit dedicated endpoint gains pool fallback',()=>{
+  const base={port:30000,api_key:'PRIVATE',model:'deepseek-v4-flash'};
+  const pool=genieRuntimeConfig(base);assert.equal(pool.default_source,'pool');assert.equal(pool.enabled,true);assert.equal(pool.url,'http://127.0.0.1:30000/v1');assert.equal(pool.fallback.api_key,'PRIVATE');
+  const dedicated=genieRuntimeConfig({...base,genie:{url:'http://127.0.0.1:8001/v1',model:'deepseek-v4-flash'}});assert.equal(dedicated.url,'http://127.0.0.1:8001/v1');assert.equal(dedicated.fallback.url,'http://127.0.0.1:30000/v1');
+  assert.equal(genieRuntimeConfig({...base,genie:false}),null);
+});
 test('Genie sees bounded attribution evidence without mistaking a candidate for protocol proof',()=>{
   const s=snapshot();s.attribution={schema:1,mode:'shadow',request_identity:'heuristic_not_protocol_proof',counts:{corroborated:1,candidate:0,abstained:2},recent:[{node:'spark1',status:'corroborated',reason:'usage_match',request_id:'PRIVATE',prompt:'PRIVATE'}],secret:'PRIVATE'};
   const b=briefing(s);assert.equal(b.attribution.counts.corroborated,1);assert.match(b.semantics.join(' '),/at best a high-confidence candidate/);
@@ -31,7 +37,28 @@ test('Genie queue briefing preserves measured age versus allowance and grants no
 test('Genie sees current patient waiting without inventing migration or replay authority',()=>{
   const s=snapshot();s.gateway.queued=3;s.gateway.continuity={patient_wait:true,waiting:2,oldest_wait_seconds:120,waiting_reasons:{worker_quarantined:2}};
   const b=briefing(s);assert.equal(b.continuity.waiting,2);assert.equal(b.continuity.oldest_wait_seconds,120);assert.equal(b.queued,3);
-  assert.match(b.semantics.join(' '),/INCLUDED in fleet queued/);assert.match(b.semantics.join(' '),/does not survive socket loss/);
+  assert.match(b.semantics.join(' '),/INCLUDED in fleet queued/);assert.match(b.semantics.join(' '),/do not survive socket loss/);
+});
+test('Genie sees bounded Continuity Door state and its non-replay boundary',()=>{
+  const s=snapshot();s.continuity_door={schema:1,holding:true,hold_kind:'manual',reason:'planned_gateway_core_restart',held:2,active:1,core_ready:false,body_spooling:false,replay:false};
+  const b=briefing(s);assert.equal(b.continuity_door.held,2);assert.ok(b.evidence_refs.includes('continuity-door'));
+  assert.match(b.semantics.join(' '),/paused unread/);assert.match(b.semantics.join(' '),/does not recover an already-dispatched stream/);
+});
+test('Genie accepts only an exact deterministic relocation offer and records its executor receipt',async()=>{
+  const offer={schema:1,request_id:'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',source:'spark1',destination:'studio',evidence_id:'a'.repeat(64),waiting_seconds:90,destination_immediately_free:true,cache_locality:'unknown'};
+  const s=snapshot();s.gateway.continuity={relocation:{genie_enabled:true,genie_offers:[offer]}};
+  const answer={assessment:'The queued request can use the idle server.',ticker:[{severity:'info',text:'One mature relocation is offered.',recommendation:null,evidence_refs:['fleet']}],relocation_requests:[Object.fromEntries(['request_id','source','destination','evidence_id'].map(k=>[k,offer[k]]))]};
+  const evidence=briefing(s);assert.equal(parseGenieReview(JSON.stringify(answer),evidence).relocation_requests.length,1);
+  assert.equal(parseGenieReview(JSON.stringify({...answer,relocation_requests:[{...answer.relocation_requests[0],destination:'invented'}]}),evidence).relocation_requests.length,0);
+  const actions=[],g=new Genie({url:'http://127.0.0.1:9001/v1'},()=>s,{rebalance:async input=>{actions.push(input);return {state:'relocated',actor:'genie'};},fetchImpl:async()=>Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(answer)}}]})});
+  await g.ask();assert.equal(actions.length,1);assert.equal(g.status().reports[0].actions_taken[0].state,'relocated');g.close();
+});
+test('Genie promptly reviews a new mature action offer without polling it repeatedly',async()=>{
+  const offer={schema:1,request_id:'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',source:'spark1',destination:'studio',evidence_id:'b'.repeat(64),waiting_seconds:90,destination_immediately_free:true,cache_locality:'unknown'};
+  const s=snapshot();s.gateway.continuity={relocation:{genie_enabled:true,genie_offers:[offer]}};let calls=0;
+  const g=new Genie({url:'http://127.0.0.1:9001/v1'},()=>s,{rebalance:async()=>({}),fetchImpl:async()=>{calls++;return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(authoredReview())}}]});}});
+  g.attempt=Date.now();g.tick();while(g.busy)await new Promise(r=>setImmediate(r));assert.equal(calls,1);
+  g.tick();await new Promise(r=>setImmediate(r));assert.equal(calls,1,'same offer is not reviewed again immediately');g.close();
 });
 test('Genie sees typed continuity evidence without client/session identifiers or arbitrary fields',()=>{
   const s=snapshot();s.gateway.continuity={recent_rejections:[{time:new Date().toISOString(),request_id:'fixture',node:'one',code:'home_unavailable',reason:'same_session_queued',dispatch_state:'not_dispatched',retry_class:'wait_then_retry',session:'PRIVATE',call_id:'PRIVATE',prompt:'PRIVATE'}]};
@@ -45,7 +72,7 @@ test('Genie briefing distinguishes an empty waiting queue from genuinely free ca
   }
   s.gateway.workers=[worker];s.gateway.draining=true;assert.equal(briefing(s).workers[0].immediately_free,false);
   assert.match(briefing(s).semantics.join(' '),/queued=0.*NOT idle/);
-  assert.match(briefing(s).semantics.join(' '),/still-undispatched.*operator-confirmed offer/);
+  assert.match(briefing(s).semantics.join(' '),/still-undispatched.*exact offer.*Genie-authorized executor/);
 });
 test('Genie parses bounded model-written ticker entries and rejects unknown evidence references',()=>{
   const evidence=briefing(snapshot()),data=authoredReview();

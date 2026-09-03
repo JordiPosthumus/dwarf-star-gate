@@ -5,12 +5,12 @@ import path from 'node:path';
 import os from 'node:os';
 import net from 'node:net';
 import {execFileSync} from 'node:child_process';
-import {loadConfig,projectRoot,dashboardPort,isMain} from './config.mjs';
+import {loadConfig,projectRoot,dashboardPort,isMain,gatewayPort,continuityEnabled} from './config.mjs';
 import {labels,serviceCommand} from './service-control.mjs';
 
 export const help=`Usage:
-  ./start-dsg.sh [--open] [--only gateway|dashboard] [--config FILE] [--json]
-  ./stop-dsg.sh [--only gateway|dashboard] [--config FILE] [--json]
+  ./start-dsg.sh [--open] [--only gateway|door|dashboard] [--config FILE] [--json]
+  ./stop-dsg.sh [--only gateway|door|dashboard] [--config FILE] [--json]
   ./stop-dsg.sh --interrupt --confirm-interrupt
 
 macOS login services; run as your normal logged-in user, not sudo.
@@ -22,20 +22,20 @@ before stopping. --interrupt PLUS --confirm-interrupt permits abandoning client
 requests; this is not seamless recovery. DS4 servers are never stopped.
 
   --open               Open the dashboard after a successful start.
-  --only COMPONENT     Operate on gateway or dashboard, instead of both.
+  --only COMPONENT     Operate on gateway, door or dashboard instead of all three.
   --config FILE        Override DWARF_GATE_CONFIG / checkout config.local.json.
   --json               Machine-readable result on stdout; progress on stderr.
   --help               Show this help without loading config or changing state.
 
 Worker pauses, holds, quarantines, model settings and caches are not changed.
 Private config/affinity backups go beside the state file, under backups/.
-Linux: use npm start and npm run ui under your own service manager instead.
+Linux: use npm start, npm run door and npm run ui under your service manager.
 `;
 
 export function parseArgs(args) {
   const [command,...flags]=args;
   if(!['start','stop'].includes(command))throw new Error('Choose start or stop; use --help for options.');
-  const result={command,kinds:['gateway','dashboard'],open:false,json:false,help:false,interrupt:false};
+  const result={command,kinds:['gateway','door','dashboard'],open:false,json:false,help:false,interrupt:false};
   const seen=new Set();let confirmed=false;
   for(let i=0;i<flags.length;i++){
     const flag=flags[i];
@@ -49,7 +49,7 @@ export function parseArgs(args) {
       const value=flags[++i];
       if(!value||value.startsWith('--'))throw new Error(`${flag} requires a value.`);
       if(flag==='--config')result.config=value;
-      else {if(!Object.hasOwn(labels,value))throw new Error('--only must be gateway or dashboard.');result.kinds=[value];}
+      else {if(!Object.hasOwn(labels,value))throw new Error('--only must be gateway, door or dashboard.');result.kinds=[value];}
     }else throw new Error(`Unknown option for ${command}: ${flag}`);
   }
   if(!result.help&&result.interrupt!==confirmed)throw new Error('Interrupting clients requires both --interrupt and --confirm-interrupt. Otherwise wait for idle and use ./stop-dsg.sh.');
@@ -58,7 +58,7 @@ export function parseArgs(args) {
 }
 
 export function checkRuntime({platform=process.platform,version=process.versions.node,uid=process.getuid?.()}={}) {
-  if(platform!=='darwin')throw new Error('These managed-service scripts support macOS. On Linux run npm start and npm run ui under your own supervisor; no process changed.');
+  if(platform!=='darwin')throw new Error('These managed-service scripts support macOS. On Linux run npm start, npm run door and npm run ui under your own supervisor; no process changed.');
   if(uid===0)throw new Error('Run as your normal logged-in user, not sudo/root; DSG uses per-user login services.');
   const parts=version.split('.').map(Number);
   if(parts.length!==3||parts.some(n=>!Number.isInteger(n))||parts[0]<22||parts[0]===22&&(parts[1]<22||parts[1]===22&&parts[2]<2))throw new Error('Node.js 22.22.2 or newer is required; no service changed.');
@@ -112,7 +112,7 @@ export async function lifecycle(options,ops) {
     const fleet=options.kinds.includes('gateway')?fleetSummary(status.gateway):null;
     if(fleet?.draining)warnings.push('Gateway is running but admission is draining. The existing drain was preserved; use the operator controls to review it.');
     if(fleet&&fleet.available===0)warnings.push('No DS4 servers are currently available for inference. Services are up; inspect worker health and pauses in the UI. No worker was resumed or restarted.');
-    if(options.kinds.includes('dashboard'))warnings.push('A newly started dashboard begins with Genie observation off; an already-running dashboard keeps its setting. Durable recovery policy is unchanged.');
+    if(options.kinds.includes('dashboard'))warnings.push('A configured Genie starts enabled. Its dedicated provider and DSG-pool fallback are independently bounded; durable recovery policy is unchanged.');
     if(options.open)try{ops.open();}catch{warnings.push('Services are ready, but the browser could not be opened. Use the dashboard URL below.');}
     return {action:'start',verified:true,components:options.kinds,model_servers_unchanged:true,backup,fleet,warnings};
   }
@@ -146,13 +146,15 @@ export function formatResult(result) {
 
 if(isMain(import.meta.url)){
   try{
-    const options=parseArgs(process.argv.slice(2));
+      const options=parseArgs(process.argv.slice(2));
     if(options.help)console.log(help);
     else{
       checkRuntime();
       const loaded=loadConfig(options.config),{config,filename}=loaded;
+      if(!continuityEnabled(config))options.kinds=options.kinds.filter(kind=>kind!=='door');
+      if(!options.kinds.length)throw new Error('Continuity door is not enabled in this configuration.');
       process.env.DWARF_GATE_CONFIG=filename;
-      const urls={gateway:`http://127.0.0.1:${config.port}`,dashboard:`http://127.0.0.1:${dashboardPort(config)}`};
+      const urls={gateway:`http://127.0.0.1:${gatewayPort(config)}`,door:`http://127.0.0.1:${config.port}`,dashboard:`http://127.0.0.1:${dashboardPort(config)}`};
       const result=await lifecycle(options,{
         preflight:()=>{},progress:s=>console.error(s),
         check:async()=>{
@@ -164,7 +166,7 @@ if(isMain(import.meta.url)){
         registered:kind=>fs.existsSync(path.join(os.homedir(),'Library','LaunchAgents',labels[kind]+'.plist')),
         managed:kind=>{try{execFileSync('/bin/launchctl',['print',`gui/${process.getuid()}/${labels[kind]}`],{stdio:'ignore'});return true;}catch{return false;}},
         service:serviceCommand,
-        listening:kind=>portListening(kind==='gateway'?config.port:dashboardPort(config)),
+        listening:kind=>portListening(kind==='gateway'?gatewayPort(config):kind==='door'?config.port:dashboardPort(config)),
         open:()=>execFileSync('/usr/bin/open',[urls.dashboard],{stdio:'ignore'})
       });
       result.urls=Object.fromEntries(options.kinds.map(kind=>[kind,urls[kind]]));

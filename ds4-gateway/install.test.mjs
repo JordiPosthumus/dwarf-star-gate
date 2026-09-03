@@ -8,14 +8,20 @@ import {spawn,execFile,execFileSync} from 'node:child_process';
 import {promisify} from 'node:util';
 import {setTimeout as delay} from 'node:timers/promises';
 import {configPath,loadConfig,projectRoot,dashboardPort,isDashboard,isMain} from './config.mjs';
-import {serviceSpec,assertIdle,assertRegistration,unloadService} from './service-control.mjs';
+import {serviceSpec,assertIdle,assertDoorIdle,assertRegistration,unloadService,coordinatedCoreRestart} from './service-control.mjs';
 const exec=promisify(execFile);
 test('restart waits for launchd removal; timeout cannot skip into bootstrap',async()=>{
   let now=0;const calls=[];
   await unloadService('gateway',{domain:'gui/test',interrupt:true,launch:(...a)=>calls.push(a),loaded:()=>now<300,now:()=>now,wait:async ms=>{now+=ms;}});
   assert.equal(now,300);assert.deepEqual(calls,[['kill','SIGKILL','gui/test/local.dwarf-star-gate.gateway'],['bootout','gui/test/local.dwarf-star-gate.gateway']]);
   await assert.rejects(unloadService('dashboard',{domain:'gui/test',launch:()=>{},loaded:()=>true,now:()=>now,timeoutMs:200,wait:async ms=>{now+=ms;}}),/unload not confirmed/);
-  await assert.rejects(unloadService('other',{domain:'gui/test'}),/Choose gateway or dashboard/);
+  await assert.rejects(unloadService('other',{domain:'gui/test'}),/Choose gateway, door or dashboard/);
+});
+test('coordinated core restart holds first, waits for idle, and releases only after clean readiness',async()=>{
+  const config={continuity_door:{enabled:true,control_socket:'/tmp/fixture.sock'},request_timeout_ms:10000};let now=0,index=0;const calls=[],states=[{active:1,queued:2},{active:0,queued:0},{active:0,queued:0,startup:{complete:true}}];
+  const result=await coordinatedCoreRestart(config,{hold:async b=>calls.push(['hold',b.reason]),release:async()=>calls.push(['release']),read:async()=>states[Math.min(index++,states.length-1)],stop:async()=>calls.push(['stop']),start:async()=>calls.push(['start']),wait:async ms=>{now+=ms;},now:()=>now});
+  assert.equal(result.replacement_ready,true);assert.deepEqual(calls.map(x=>x[0]),['hold','stop','start','release']);
+  await assert.rejects(coordinatedCoreRestart(config,{hold:async()=>{},release:async()=>{throw new Error('must not release');},read:async()=>({active:0,queued:0}),stop:async()=>{},start:async()=>{throw new Error('failed replacement');}}),error=>error.continuity_door_holding===true);
 });
 const temporary=t=>{const dir=fs.mkdtempSync('/tmp/dsg-install-');t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));return dir;};
 async function until(fn,ms=8000){const end=Date.now()+ms;while(Date.now()<end){try{const v=await fn();if(v)return v;}catch{}await delay(30);}throw new Error('Readiness timeout');}
@@ -45,6 +51,8 @@ test('readiness accepts enabled management; service manifests are portable and n
   assert.throws(()=>assertRegistration({...registration,ProgramArguments:['/installed/node','/other/gateway.mjs',spec.args[2]]},spec));
   assert.throws(()=>assertRegistration({...registration,EnvironmentVariables:{GATEWAY_UI_PORT:'1'}},spec));
   assertIdle({active:0,queued:0});for(const state of [null,{active:1,queued:0},{active:0,queued:1}]){assert.throws(()=>assertIdle(state));assertIdle(state,true);}
+  assertDoorIdle({active:0,held:0});for(const state of [null,{active:1,held:0},{active:0,held:1}]){assert.throws(()=>assertDoorIdle(state));assertDoorIdle(state,true);}
+  const door=serviceSpec('door','/tmp/config.json',{state_file:'/tmp/runtime/state.json',request_timeout_ms:1000},{root:'/tmp/DSG',node:'/tmp/node',env:{PATH:'/usr/bin'}});assert.ok(door.args[1].endsWith('/ds4-gateway/door.mjs'));assert.ok(door.text.includes('local.dwarf-star-gate.continuity-door'));
 });
 test('clean checkout: initialize, doctor, UI registration, exact forwarding, CLI status and persisted restart',async t=>{
   const dir=temporary(t),checkout=path.join(dir,'DSG checkout & spaces'),elsewhere=path.join(dir,'elsewhere');fs.mkdirSync(checkout);fs.mkdirSync(elsewhere);
@@ -53,7 +61,7 @@ test('clean checkout: initialize, doctor, UI registration, exact forwarding, CLI
   execFileSync('git',['init','-q',checkout]);
   const env={...process.env};delete env.DWARF_GATE_CONFIG;delete env.GATEWAY_UI_PORT;
   const cli=(script,args=[])=>exec(process.execPath,[path.join(checkout,script),...args],{cwd:elsewhere,env,timeout:10000});
-  const imported=execFileSync(process.execPath,['--input-type=module','-'],{cwd:checkout,env,encoding:'utf8',timeout:10000,input:"await import('./ds4-gateway/config.mjs'); await import('./ds4-gateway/gateway.mjs'); await import('./ds4-gateway/dashboard.mjs'); await import('./ds4-gateway/service-control.mjs'); console.log('imports only');"});
+  const imported=execFileSync(process.execPath,['--input-type=module','-'],{cwd:checkout,env,encoding:'utf8',timeout:10000,input:"await import('./ds4-gateway/config.mjs'); await import('./ds4-gateway/gateway.mjs'); await import('./ds4-gateway/door.mjs'); await import('./ds4-gateway/dashboard.mjs'); await import('./ds4-gateway/service-control.mjs'); console.log('imports only');"});
   assert.equal(imported.trim(),'imports only');
   for(const launcher of ['start-dsg.sh','stop-dsg.sh']){
     const help=execFileSync(path.join(checkout,launcher),['--help'],{cwd:elsewhere,env,encoding:'utf8',timeout:10000});
@@ -62,7 +70,7 @@ test('clean checkout: initialize, doctor, UI registration, exact forwarding, CLI
   const initialized=await cli('scripts/setup.mjs',['--controls']),configFile=path.join(checkout,'config.local.json');
   const c=JSON.parse(fs.readFileSync(configFile));assert.equal(fs.statSync(configFile).mode&0o777,0o600);assert.equal(c.nodes.length,0);assert.ok(!initialized.stdout.includes(c.api_key));
   await assert.rejects(cli('scripts/setup.mjs',['--controls']),/nothing overwritten/);assert.deepEqual(JSON.parse(fs.readFileSync(configFile)),c);
-  const ports=new Set;while(ports.size<2)ports.add(await port());[c.port,c.ui_port]=ports;
+  const ports=new Set;while(ports.size<3)ports.add(await port());[c.port,c.continuity_door.core_port,c.ui_port]=ports;
   fs.writeFileSync(configFile,JSON.stringify(c));const checked=JSON.parse((await cli('scripts/doctor.mjs')).stdout);assert.ok(checked.ok);assert.equal(checked.workers,0);assert.ok(!fs.existsSync(path.join(checkout,'runtime')),'doctor must not create state');
   const backend=http.createServer((req,res)=>{if(req.url==='/v1/models')return res.end(JSON.stringify({data:[{id:c.model,context_length:c.context_length}]}));const chunks=[];req.on('data',x=>chunks.push(x));req.on('end',()=>{received=Buffer.concat(chunks).toString();res.writeHead(200,{'content-type':'text/event-stream'});res.end('data: {"choices":[{"delta":{"content":"OK"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');});});
   let received='';backend.listen(0,'127.0.0.1');await once(backend,'listening');
@@ -70,7 +78,7 @@ test('clean checkout: initialize, doctor, UI registration, exact forwarding, CLI
   const start=kind=>{const child=spawn(process.execPath,[path.join(checkout,'ds4-gateway',kind+'.mjs')],{cwd:elsewhere,env,stdio:['ignore','pipe','pipe']});children.push(child);child.stdout.on('data',x=>{logs+=x;});child.stderr.on('data',x=>{logs+=x;});return child;};
   const stop=async child=>{if(child.exitCode!==null)return;const exited=once(child,'exit');child.kill('SIGTERM');const timer=setTimeout(()=>child.kill('SIGKILL'),3000);try{await exited;}finally{clearTimeout(timer);}};
   t.after(async()=>{await Promise.all(children.map(stop));backend.closeAllConnections();await new Promise(r=>backend.close(r));});
-  let gateway=start('gateway');start('dashboard');
+  let gateway=start('gateway');start('door');start('dashboard');
   const base=`http://127.0.0.1:${c.ui_port}`,headers={authorization:`Bearer ${c.api_key}`};
   try{await until(async()=>{const s=await(await fetch(base+'/api/status')).json();return isDashboard(s)&&s.gateway?.total===0;});}catch(error){throw new Error(`${error.message}; child logs: ${logs}`);}
   const management=await(await fetch(base+'/api/workers')).json();

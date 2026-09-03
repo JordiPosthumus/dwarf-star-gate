@@ -59,7 +59,7 @@ requires a separate client-cooperation design.
 
 The dashboard has a **DS4 service recovery** section:
 
-- **Enable/Disable automatic recovery** persists across gateway/dashboard restarts.
+- **Enable/Disable automatic recovery** persists across DSG service restarts.
   It authorizes both GG requests and the known-fatal watcher. The GG commentary
   switch is separate; a configured Genie now starts on unless private config
   explicitly sets `genie.enabled` to `false`.
@@ -154,7 +154,7 @@ Do this per worker, initially with automatic mode **off**.
    ID/URL/SSH/port must match the registered worker. Recovery paths are absolute,
    shell-safe paths without spaces in v1. Endpoint registration cannot alter this
    separate allowlist. Copying the config does not apply it to a running process.
-5. Restart the gateway/dashboard at an agreed maintenance window. Inspect the
+5. Restart DSG at an agreed maintenance window. Inspect the
    policy/UI. The monitor inspects services every 30 seconds; ordinary inference
    and health-check timeouts are unchanged. Unreachable adapters do not block the
    inference event loop or restart anything.

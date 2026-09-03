@@ -92,14 +92,17 @@ live ETA. A failed refresh is labelled while any still-valid review remains.
 The briefing explains that historical queue durations are milliseconds, missing
 thinking metadata does not alter forwarded reasoning settings, and a resident
 cache miss may still restore from disk. The model is instructed not to infer a
-stall from long thinking or to claim an action occurred. Recommendations are
-advice only; the wire grants no operational powers.
+stall from long thinking or to claim an action occurred. The wire itself is
+advice only. Separately structured requests may ask deterministic executors for
+one exact offered recovery, predictor or queued-handover action; prose never
+grants a power.
 
 Per-worker `immediately_free` is computed from health, pause/quarantine, gateway
 draining, active and queued state. An empty waiting queue does not make a busy
 server idle. The briefing distinguishes automatic first/unaffined queued handover
-from an exact operator-only established-session offer, and states that cache
-locality after the latter is unknown. It also warns that cache counters may include
+from an exact evidence-bound established-session offer, and states that cache
+locality after the latter is unknown. An operator or Genie may request one mature
+offer; DSG revalidates it before moving the undispatched stream. It also warns that cache counters may include
 diagnostics or unequal observation windows. These explicit facts reduce
 misinterpretation; they are not an LLM accuracy guarantee or permission to execute
 its recommendations.
@@ -114,7 +117,10 @@ In the web UI, find **Gate Genie** beside **Evidence collection**. **Enable** /
 **Turn off** controls the observer. The source dropdown chooses a dedicated-first
 policy or explicit DSG-pool use; it does not edit endpoint addresses. In dedicated-
 first mode, an explicit connection, HTTP, timeout or malformed-answer failure
-causes one attempt through the configured pool fallback. There is no URL/model/
+causes one attempt through the configured pool fallback. With no `genie.url`, DSG
+uses its own pool by default and Gate Genie starts enabled; no extra bot framework
+or endpoint is required. An explicitly configured dedicated endpoint automatically
+gets a bounded pool fallback unless `genie.fallback` overrides it. There is no URL/model/
 credential editor in the UI yet. Set these in
 your private config's `genie` / `genie.fallback` objects, then restart only the
 dashboard and enable the observer again. Do not change worker URLs or the pool
@@ -180,8 +186,9 @@ prove backend execution stopped.
 This is a question + fresh-briefing interface, optionally augmented by bounded
 notebook history, not a persistent multi-turn agent conversation. Twelve recent assessments live in memory and are
 not included in downloadable diagnostics or training records. The model has no
-shell or control credentials. Its optional structured `recovery_requests` are
-validated against offered worker/evidence pairs and rechecked by the runner;
+shell or control credentials. Its optional structured `recovery_requests`,
+`predictor_requests` and `relocation_requests` are validated against exact current
+offers and rechecked by their deterministic runners;
 prose is rendered as text, never executed. Durable executor receipts are separate
 from in-memory assessments and are included in sanitized operational status.
 The dashboard's same-origin/CSRF checks protect its enable/source/ask and notebook

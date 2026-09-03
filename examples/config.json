@@ -1,11 +1,17 @@
 {
   "host": "127.0.0.1",
-  "port": 30001,
+  "port": 30000,
   "api_key": "REPLACE_WITH_YOUR_KEY",
   "model": "deepseek-v4-flash",
   "context_length": 262144,
   "state_file": "./runtime/affinity.json",
   "control_socket": "./runtime/control.sock",
+  "continuity_door": {
+    "enabled": true,
+    "core_port": 30001,
+    "control_socket": "./runtime/continuity-door.sock",
+    "startup_probe_ms": 12000
+  },
   "ui_worker_management": false,
   "request_timeout_ms": 360000000,
   "queue_timeout_ms": 72000000000,

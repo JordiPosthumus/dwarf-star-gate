@@ -35,6 +35,13 @@ conversations are placed according to load. Add, pause, resume or remove servers
 through the local UI or CLI. DS4 handles inference and its caches; DSG handles
 coordination and visibility across the fleet.
 
+**The Continuity Door keeps the client endpoint stable during planned DSG core
+maintenance.** It holds new request streams unread while existing responses drain,
+replaces only the gateway core, verifies worker startup, then forwards each held
+request exactly once. It never spools prompts or replays dispatched work. This
+protects coordinated DSG restarts; it is not transparent recovery from an
+arbitrary mid-generation engine crash. See the [exact contract](docs/continuity-door.md).
+
 Each server card shows whether it is routing, paused, reserved by an agent, or
 quarantined—and why. **Pause / Resume routing** is directly on the card; a
 quarantined server offers **Verify & readmit**, which checks actual generation
@@ -74,9 +81,12 @@ Prediction-assisted **new-session** placement is separately opt-in and requires
 unseen-session evidence. Independently of that predictor, DSG now performs a
 [cache-neutral queued handover](docs/queued-handover.md) when a first/unaffined
 request is still undispatched and another server becomes free. Existing sessions
-move only through an exact operator-confirmed offer; their destination cache
-locality is explicitly unknown. A fitted model alone does not qualify broader
-automatic movement. The [v1 offline experiment](predictor/README.md) remains reproducible.
+move only through an exact continuity-safe offer. After the configured wait
+threshold, Gate Genie may request one such move to an immediately free server.
+The deterministic executor revalidates the offer and preserves the original
+client stream and deadline. Destination cache locality remains explicitly
+unknown. A fitted model alone does not qualify broader automatic movement. The
+[v1 offline experiment](predictor/README.md) remains reproducible.
 **Reset to baseline** restores the measured-history recipe without switching
 learning off. A challenger must beat both that baseline and any incumbent on
 matched future evidence. Verified promotions create persistent, dismissible
@@ -141,12 +151,12 @@ Dwarf Star Gate is an independent companion project, not an official Antirez
 release and not a claim of his endorsement. The similar name is an acknowledgement
 of the engine it was built around, not a claim to its authorship.
 
-The gateway/dashboard use Node.js built-ins only; the optional systemd recovery
+The gateway core, Continuity Door and dashboard use Node.js built-ins only; the optional systemd recovery
 helper uses Python's standard library. No package installation, database, Kubernetes, frontend
 build system, CDN, analytics service or cloud telemetry.
 
 The optional predictor trainer and CPU embedding encoder use separate, locked
-Python environments. Neither is required for ordinary gateway/dashboard operation;
+Python environments. Neither is required for ordinary gateway operation;
 the encoder runs only when explicitly configured, without cloud inference.
 
 ## Dashboard
@@ -257,6 +267,8 @@ npm run hooks:install
 npm run doctor
 npm start
 # In another terminal, from the same checkout:
+npm run door
+# In a third terminal:
 npm run ui
 ```
 
@@ -266,8 +278,10 @@ overwrites an existing configuration. Omit `--controls` for a read-only dashboar
 Open **http://127.0.0.1:30010**, expand **Manage DS4 servers**, add existing DS4
 endpoints and enable them after the compatibility check. Remote servers need a
 working SSH alias; local servers use their loopback URL. DSG does not install DS4.
-New configurations use **127.0.0.1:30001/v1** for inference; existing port settings
-are not changed. Read the client key from your private config, never publish it.
+New configurations use the stable Continuity Door at
+**http://127.0.0.1:30000/v1** and a private replaceable core on loopback port
+`30001`; existing configurations are not silently migrated. Read the client key
+from your private config, never publish it.
 
 On macOS, use login services instead of the foreground processes (stop those
 first):
@@ -280,14 +294,16 @@ first):
 
 **Two commands for day-to-day operation:** `start-dsg.sh` checks Node, source and
 private configuration, makes a private control-state backup, installs missing
-login services, starts the gateway/dashboard and verifies their endpoints.
+login services, starts the gateway core/Continuity Door/dashboard and verifies
+their endpoints.
 It does not restart an already-running service. `stop-dsg.sh` backs up control
 state, refuses busy/unknown gateway state, fences admission and confirms shutdown.
 Both preserve worker exclusions. No configuration is generated or overwritten.
 Use `--help` for component selection, explicit client interruption and JSON output;
 see the [operator-script guide](docs/installation.md#start-and-stop-scripts-macos).
 
-These commands manage only DSG's gateway and dashboard, never model servers.
+These commands manage only DSG's gateway core, Continuity Door and dashboard,
+never model servers.
 Worker controls register/enable/drain/remove routing endpoints. Separately enrolled
 [service recovery](docs/worker-recovery.md) adds a guarded DS4 restart capability.
 The convenience UI launch scripts remain supported on macOS.

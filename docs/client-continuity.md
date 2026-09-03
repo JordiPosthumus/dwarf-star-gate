@@ -1,9 +1,10 @@
 # Client continuity: keep safely waiting clients alive
 
 Status: **gateway-side patient waiting, pre-dispatch receipts, conversation-scoped
-reassignment, safe queued handover and an opt-in Pi transport adapter implemented**.
-Post-dispatch recovery remains planned. Source availability is not automatic
-activation in existing Pi sessions.
+reassignment, safe queued handover, a stable Continuity Door for planned core
+replacement, and an opt-in Pi transport adapter implemented**. Post-dispatch
+recovery remains planned. Source availability is not automatic activation in
+existing Pi sessions.
 Raising the [queue allowance](queue-wait.md) removes one failure trigger; it does
 not make requests durable or recover a client that has exhausted its own retries.
 
@@ -52,11 +53,14 @@ Private `waiting` events contain identifiers/reasons/timing, never raw text;
 `decision.admission_wait_ms` separates time held before initial worker admission.
 The completion's `queue_ms` still includes the entire pre-dispatch wait.
 
-This works only **while the same DSG process and client connection survive**.
-Client/proxy HTTP deadlines still apply; 102 frames do not promise to extend them.
-During gateway shutdown, parked calls receive a certified, prefixed 503 so a
-compatible client adapter can retry. Forced termination or an ambiguous socket
-loss cannot prove non-execution. DSG cannot revive a Pi turn that already stopped.
+Core-queued patient waiting works only while that core process and client
+connection survive. For a **planned core replacement**, the separately supervised
+[Continuity Door](continuity-door.md) first pauses new body streams unread, lets
+existing proxied streams drain, starts a worker-probed replacement core, then
+forwards the held bytes exactly once. Client/proxy HTTP deadlines still apply;
+102 frames do not promise to extend them. Forced termination or an ambiguous
+post-dispatch socket loss cannot prove non-execution. DSG cannot revive a Pi turn
+that already stopped.
 
 ## Error attribution
 
@@ -94,8 +98,10 @@ Same-session active work retains ownership until it settles, including cancellat
 in progress; same-session queued work also blocks a split. An unavailable home
 with only unrelated work may yield to a ready server. No active or dispatched
 request is moved. A first/unaffined queue head may automatically take a newly free
-server. An established session is offered only for exact operator confirmation;
-the destination may need cold prefill and cache movement is not implied.
+server. An established session is offered only through an exact evidence-bound
+action; an operator or Genie may request it, but the deterministic executor
+revalidates it. The destination may need cold prefill and cache movement is not
+implied.
 
 ### Opt-in Pi adapter (tested with Pi 0.84.4)
 
@@ -141,7 +147,8 @@ checked to preserve model capabilities. No production model or Pi config is touc
    historical rejected attempts from a client demonstrably still waiting. Review
    remaining HTTP/SDK deadlines and incomplete streams separately; the 20,000-hour
    DSG queue allowance does not govern them. Do not silently change all providers.
-3. Validate pre-dispatch handover receipts in live traffic, then join them to
+3. Validate Continuity Door and pre-dispatch handover receipts in live traffic,
+   then join handovers to
    measured queue/cache-acquisition outcomes. Broader automatic movement of
    established sessions requires a promoted cost model, uncertainty margin and
    hysteresis. Never replay a partially uploaded/dispatched request merely because
@@ -150,9 +157,10 @@ checked to preserve model capabilities. No production model or Pi config is touc
    prove old execution stopped, and define client-visible stream recovery. Genie
    may request offered remedies; deterministic code enforces safety without an LLM.
 
-Current Genie can report live recovery waiting, queue age/remaining allowance,
-handover availability and request eligible, enrolled Spark recovery. It cannot
-execute queued handovers, change timeout policy, resume a stopped Pi turn or
+Current Genie can report live recovery waiting, Continuity Door state,
+queue age/remaining allowance, and exact mature handover availability. It may
+request one exact offered handover; the independent executor revalidates and
+records the outcome. It cannot change timeout policy, resume a stopped Pi turn or
 restart arbitrary Mac services. Recovery rejects
 workers with active/dispatch-queue work and requires supported fatal evidence and
 identity. Parked, undispatched requests are separate so they do not deadlock recovery.

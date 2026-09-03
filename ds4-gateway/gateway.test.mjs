@@ -44,7 +44,8 @@ async function backend(id) {
         res.writeHead(500,{'content-type':'application/json'});setTimeout(finish,p.delay??0);return;
       }
       if(p.fatal_sse) {ended=true;res.writeHead(200,{'content-type':'text/event-stream'});res.end('event: error\ndata: {"error":{"message":"cuda resumed prefill failed while extending checkpoint","type":"server_error"}}\n\ndata: [DONE]\n\n');return;}
-      if((b.rejectJpeg&&body.includes(Buffer.from('data:image/jpeg;base64,')))||(b.rejectNormalized&&body.includes(Buffer.from('data:image/png;base64,')))){b.jpegRejections=(b.jpegRejections??0)+1;ended=true;res.writeHead(400,{'content-type':'application/json'});res.end(JSON.stringify({message:'invalid or unsupported JPEG image',type:'invalid_request_error'}));return;}
+      const typedImageUrls=(Array.isArray(p.messages)?p.messages:[]).flatMap(message=>Array.isArray(message?.content)?message.content:[]).filter(block=>block?.type==='image_url').map(block=>typeof block.image_url==='string'?block.image_url:block.image_url?.url).filter(value=>typeof value==='string');
+      if((b.rejectJpeg&&typedImageUrls.some(value=>value.startsWith('data:image/jpeg;base64,')||value.startsWith('data:image/jpg;base64,')))||(b.rejectNormalized&&typedImageUrls.some(value=>value.startsWith('data:image/png;base64,')))){b.jpegRejections=(b.jpegRejections??0)+1;ended=true;res.writeHead(400,{'content-type':'application/json'});res.end(JSON.stringify({message:'invalid or unsupported JPEG image',type:'invalid_request_error'}));return;}
       if(p.client_error) {ended=true;res.writeHead(400,{'content-type':'text/plain'});res.end(typeof p.client_error==='string'?p.client_error:'invalid request');return;}
       if(typeof p.fixture_sse==='string') {ended=true;res.writeHead(200,{'content-type':'text/event-stream'});res.end(p.fixture_sse);return;}
       if(typeof p.fixture_json==='string') {ended=true;res.writeHead(200,{'content-type':'application/json'});res.end(p.fixture_json);return;}
@@ -1032,6 +1033,17 @@ test('operator-confirmed pre-dispatch handover preserves body, client, deadline 
   await until(()=>r.gateway.stats().dataset.finished>=2);await r.restart();
   assert.equal((await r.request('{}','a')).headers['x-ds4-node'],'spark2');
 });
+test('Genie can execute only an exact mature pre-dispatch relocation offer',async t=>{
+  const r=await rig(t,2,{control_socket:true,genie_rebalance_min_wait_ms:0});
+  await r.request('{"seed":"a"}','a');await r.request('{"seed":"b"}','b');await r.request('{"seed":"c"}','c');
+  const active=r.request('{"delay":250,"active":"c"}','c');await until(()=>r.gateway.nodes[0].active);
+  const queued=r.request('{"queued":"a"}','a');await until(()=>r.gateway.nodes[0].queue.length===1);
+  const offer=r.gateway.stats().continuity.relocation.genie_offers[0];assert.equal(offer.destination_immediately_free,true);assert.equal(offer.cache_locality,'unknown');
+  await assert.rejects(workerControl(r.config.control_socket,'/genie-relocate-queued',{...offer,destination:'spark1'}),/evidence or policy changed/);
+  const input=Object.fromEntries(['request_id','source','destination','evidence_id'].map(key=>[key,offer[key]]));
+  const receipt=await workerControl(r.config.control_socket,'/genie-relocate-queued',input);assert.equal(receipt.actor,'genie');assert.equal(receipt.dispatch_state,'not_dispatched');
+  assert.equal((await queued).headers['x-ds4-node'],'spark2');await active;
+});
 test('queued handover refuses stale or unsafe evidence and persistence failure leaves work at home',async t=>{
   const r=await rig(t,2,{control_socket:true});
   await r.request('{}','a');await r.request('{}','b');await r.request('{}','c');
@@ -1070,6 +1082,15 @@ test('cancel active SSE propagates; next queued request proceeds', async t => {
   });
   await until(() => r.backends[0].aborts === 1 && r.gateway.stats().active === 0);
   assert.equal((await r.request('{}', 'a')).status, 200);
+});
+test('disconnect before response headers cancels DS4 work and releases the gateway slot', async t => {
+  const r=await rig(t,1);
+  const req=http.request({host:'127.0.0.1',port:r.address.port,path:'/v1/chat/completions',method:'POST',headers:{authorization:'Bearer none','x-session-affinity':'early-close'}});
+  req.on('error',()=>{});req.end('{"stream":false,"delay":10000}');
+  await until(()=>r.backends[0].active===1&&r.gateway.stats().active===1);
+  req.destroy();
+  await until(()=>r.backends[0].aborts===1&&r.gateway.stats().active===0);
+  assert.equal((await r.request('{}','next')).status,200);
 });
 test('cancel queued request never executes upstream', async t => {
   const r = await rig(t);

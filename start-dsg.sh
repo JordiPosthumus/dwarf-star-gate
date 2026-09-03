@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start this checkout's gateway and dashboard, never its DS4 model servers.
+# Start this checkout's gateway core, Continuity Door and dashboard, never its DS4 model servers.
 set -euo pipefail
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 if ! command -v node >/dev/null 2>&1; then

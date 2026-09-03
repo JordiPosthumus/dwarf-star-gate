@@ -17,14 +17,18 @@ DSG automatically moves a queue-head request when all of these are true:
 This narrow scope has no previous DSG home cache to abandon. It does not claim
 that a direct client has never used a similar prompt or that caches are portable.
 
-## Established sessions: exact operator offer
+## Established sessions: exact evidence-bound offer
 
 For an affinity-bound session, DSG may expose a short-lived offer under **Manage
-DS4 servers → Safe queued handovers**. The operator must confirm the exact request,
-source, destination and evidence digest. DSG then revalidates every condition.
+DS4 servers → Safe queued handovers**. The operator may confirm the exact request,
+source, destination and evidence digest. After a configured wait threshold, Gate
+Genie may instead request one exact offer from his current bounded briefing. DSG
+then revalidates every condition; model prose never becomes a routing command.
 The destination's cache locality is unknown, so this can trade cold prefill for a
 shorter queue. DSG does not make that trade automatically until the wait-versus-
-cache-acquisition estimator has passed its independent promotion gates.
+cache-acquisition estimator has passed its independent promotion gates. Genie
+does not bypass that broader boundary: his present action is one offered,
+still-undispatched move, not general migration authority.
 
 Offers disappear as soon as their evidence changes. Same-session work anywhere
 in the gateway blocks an offer. No active request is eligible.

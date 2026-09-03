@@ -257,6 +257,8 @@ function render(s) {
   $('capacity-value').textContent=cap?.percent!=null?`${cap.percent}% occupied`:'Unknown';
   $('capacity-note').textContent=cap?`${cap.occupied} / ${cap.eligible} eligible slots occupied · ${cap.free} immediately free · ${fmt(g.queued)} waiting`:'Gateway status is unavailable';
   $('capacity-meter').value=cap?.percent||0;$('capacity-meter').hidden=cap?.percent==null;
+  const door=s.continuity_door;
+  $('continuity-door-status').textContent=s.continuity_door_error?`${s.continuity_door_error}.`:!door?'Continuity Door is not enabled.':door.holding?`Continuity Door holding ${fmt(door.held)} new request${door.held===1?'':'s'} while the core is ${door.core_ready?'ready':'unavailable'}; existing streams remain connected.`:`Continuity Door ready · ${fmt(door.active)} active proxied stream${door.active===1?'':'s'} · no request-body spooling or replay.`;
   visibleWorkers=g?.workers??[];workerUiStale=stale;workerControlsVisible=s.worker_management===true;
   const queueLeaders=visibleWorkers.filter(w=>w.queued>0).sort((a,b)=>b.queued-a.queued||((b.oldest_queue_seconds??-1)-(a.oldest_queue_seconds??-1))).slice(0,3);
   $('fleet-summary').textContent=stale?'Fleet summary is historical: live gateway status is unavailable.':!g?.total?'No DS4 servers are registered. Open Manage DS4 servers to add your first endpoint.':`${fmt(g.available)} of ${fmt(g.total)} servers are healthy and enabled · ${fmt(cap?.free)} immediately free · ${fmt(g.active)} active · ${fmt(g.queued)} waiting.${queueLeaders.length?` Backlog: ${queueLeaders.map(w=>`${w.id} ${fmt(w.queued)}${Number.isFinite(w.oldest_queue_seconds)?` (oldest ${fmt(w.oldest_queue_seconds)}s)`:''}`).join(' · ')}.`:''}`;
@@ -428,7 +430,7 @@ function renderGenieReports(reports = []) {
       const answer = document.createElement('p');
       answer.className = 'genie-answer';
       answer.textContent = report.text;
-      if(report.actions_taken?.length)answer.textContent+='\n\nAction request results: '+report.actions_taken.map(a=>`${a.predictor?'predictor '+a.predictor:a.worker_id}: ${a.state??a.status??'pending'}${a.id?` (${a.id})`:''}`).join('; ');
+      if(report.actions_taken?.length)answer.textContent+='\n\nAction request results: '+report.actions_taken.map(a=>`${a.predictor?'predictor '+a.predictor:a.relocation?'relocation '+a.relocation:a.worker_id}: ${a.state??a.status??'pending'}${a.id?` (${a.id})`:''}`).join('; ');
       if(report.memory_used?.length)answer.textContent+='\n\nHistorical notebook references: '+report.memory_used.map(n=>`${n.id} r${n.revision}`).join(', ');
       node.append(summary, answer);
     }
@@ -499,9 +501,9 @@ function renderMemory(m){
   }
 }
 async function genieAction(input) {
-  try {const r=await fetch('/api/genie',{method:'POST',headers:{'content-type':'application/json','x-dsg-csrf':genieToken},body:JSON.stringify(input)});
+  try {const r=await fetch('/api/genie',{method:'POST',headers:{'content-type':'application/json','x-dsg-csrf':genieToken},body:JSON.stringify(input),signal:AbortSignal.timeout(15000)});
     const data=await r.json();if(!r.ok)throw new Error(data.error||'Genie request failed');await loadGenie();return data;
-  } catch(e){$('genie-status').textContent=e.message;}
+  } catch(e){$('genie-status').textContent=e.name==='TimeoutError'?'Genie chat request timed out before it was accepted; no question receipt was created.':e.message;return null;}
 }
 async function loadGenie() {
   try {const r=await fetch('/api/genie',{signal:AbortSignal.timeout(5000)});if(!r.ok)throw new Error();const s=await r.json();genieToken=s.csrf_token;genieState=s;wireState=s.ticker;
@@ -509,7 +511,7 @@ async function loadGenie() {
     const q=s.question,qtext=q?.state==='queued'?'Your question is queued behind the current review':q?.state==='answering'?'Answering your question…':q?.state==='answered'?`Question answered ${age(q.finished_at,Date.now())}`:['failed','cancelled'].includes(q?.state)?`Question ${q.state}: ${q.error}`:null;
     const provider=s.last_served_by==='pool_fallback'?' · dedicated provider failed; last review borrowed a DSG pool slot':s.last_served_by==='pool'?' · last review used the DSG pool':s.last_served_by==='dedicated'?' · last review used the dedicated provider':'';
     $('genie-status').textContent=!s.configured?'Not configured':!s.enabled?'Off · enable Gate Genie before asking':qtext||s.error||(s.busy?'Scheduled fleet review in progress':`Enabled · last review ${age(s.last_check,Date.now())}${provider}`);
-    $('genie-mode').textContent=[s.mode==='bounded-recovery'?'bounded recovery available':'observation',s.predictor_supervision?'predictor supervision':''].filter(Boolean).join(' · ');
+    $('genie-mode').textContent=[s.action_supervision?'evidence-gated actions':'observation',s.predictor_supervision?'predictor supervision':''].filter(Boolean).join(' · ');
     $('genie-toggle').disabled=!s.configured;$('genie-toggle').textContent=s.enabled?'Turn off':'Enable';
     $('genie-source').disabled=!s.fallback_available||s.busy;$('genie-source').value=s.source||'primary';
     $('genie-review').disabled=$('genie-send').disabled=!s.enabled||q?.state==='queued'||q?.state==='answering';
@@ -519,8 +521,14 @@ async function loadGenie() {
 }
 $('genie-toggle').addEventListener('click',()=>genieAction({action:'enable',enabled:!genieState?.enabled}));
 $('genie-source').addEventListener('change',()=>genieAction({action:'source',source:$('genie-source').value}));
-$('genie-review').addEventListener('click',()=>genieAction({action:'ask'}));
-$('genie-chat').addEventListener('submit',e=>{e.preventDefault();void genieAction({action:'ask',question:$('genie-question').value});});
+$('genie-review').addEventListener('click',async()=>{if($('genie-review').disabled)return;$('genie-status').textContent='Submitting a fleet review…';$('genie-review').disabled=true;await genieAction({action:'ask'});});
+$('genie-chat').addEventListener('submit',async e=>{
+  e.preventDefault();const question=$('genie-question').value.trim();
+  if(!question){$('genie-status').textContent='Type a question first, or use Review now for the standard fleet review.';$('genie-question').focus();return;}
+  $('genie-status').textContent='Submitting your question…';$('genie-send').disabled=true;
+  const result=await genieAction({action:'ask',question});
+  if(result?.accepted){$('genie-question').value='';$('genie-status').textContent=result.question?.state==='queued'?'Question accepted and queued behind the current review.':'Question accepted; Gate Genie is answering.';}
+});
 $('memory-toggle').addEventListener('click',async()=>{if(memoryBusy)return;memoryBusy=true;renderMemory(genieState?.memory);try{await genieAction({action:'memory',enabled:!genieState?.memory?.enabled});}finally{memoryBusy=false;renderMemory(genieState?.memory);}});
 $('memory-note-cancel').addEventListener('click',()=>{memoryEditing=null;$('memory-note-text').value='';$('memory-note-cancel').hidden=true;});
 $('memory-note-form').addEventListener('submit',async e=>{

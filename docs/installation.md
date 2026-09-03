@@ -32,7 +32,9 @@ perform inference, create runtime state or repair anything. Passing doctor is no
 a claim that DS4 is ready: registration and gateway health probes check the actual
 model/context; inference and cache behavior require separate validation.
 
-Start both foreground processes, then use **Manage DS4 servers** to add a worker.
+Start all three foreground processes (`gateway.mjs`, `door.mjs`, and
+`dashboard.mjs`) when the Continuity Door is enabled, then use **Manage DS4
+servers** to add a worker. `./start-dsg.sh` is the recommended macOS path.
 A same-host DS4 endpoint needs a loopback URL. A remote worker needs an SSH alias,
 an unused local tunnel port and the remote model-server port. First establish SSH
 trust/authentication yourself. Registration probes compatibility and leaves the
@@ -62,7 +64,7 @@ paths first or make them absolute. There is no silent fallback to a separate
 
 For normal use, prefer the [start/stop scripts](#start-and-stop-scripts-macos)
 below. The lower-level controls remain available. Stop foreground copies first.
-`npm run service -- install` writes two user
+`npm run service -- install` writes three user
 LaunchAgents and backs up previous DSG registrations. It refuses to replace a
 loaded service and does not start anything. Then use:
 
@@ -73,17 +75,21 @@ npm run service -- restart dashboard
 npm run service -- stop
 ```
 
-Names are `local.dwarf-star-gate.gateway` and
+Names are `local.dwarf-star-gate.gateway`,
+`local.dwarf-star-gate.continuity-door`, and
 `local.dwarf-star-gate.dashboard`. One installation per macOS user is supported.
 These run at **login**, not before login as system LaunchDaemons. A logged-out
 user cannot rely on these agents to serve the fleet. Linux currently uses the
 foreground commands under the operator's own supervisor; DSG does not claim to
 install a Linux service.
 
-Gateway stop/restart refuses busy or unknown state by default. A final admission
-fence prevents a new request racing an idle check. `--interrupt` is an explicit
-permission to abandon active/queued requests; clients may need to retry. This is
-not seamless stream recovery. The commands never stop DS4 or alter worker policy,
+Gateway stop/restart refuses busy or unknown state by default. With the Continuity
+Door enabled, a normal gateway restart holds new unread calls at the stable door,
+drains the old core, verifies the replacement startup barrier, and releases only
+after a fresh health check. See the [exact boundary](continuity-door.md).
+`--interrupt` is explicit permission to abandon active/queued requests and bypass
+that safety. This is not arbitrary mid-stream engine recovery. The commands never
+stop DS4 or alter worker policy,
 context, sampling, cache or concurrency settings. Durable affinity and worker
 pause/quarantine state survive. In-flight requests do not survive a forced stop.
 
@@ -128,10 +134,10 @@ continue to use the foreground commands under your chosen supervisor.
 3. Copies the private config and existing atomic affinity file into a unique,
    mode-0700 `backups/lifecycle-…` directory beside the state file. Files are
    mode 0600, with a manifest identifying their source paths and source revision.
-4. Installs **only absent** gateway/dashboard LaunchAgents. Existing registration
+4. Installs **only absent** gateway/Continuity Door/dashboard LaunchAgents. Existing registration
    paths, ports and Node interpreters are preserved; mismatches fail closed.
-5. Starts stopped DSG services and checks their authenticated gateway/status and
-   dashboard/status responses. Already-running services are not restarted.
+5. Starts stopped DSG services and checks the authenticated core, Continuity Door
+   and dashboard status responses. Already-running services are not restarted.
 6. Reports endpoints, pool context, activity/queues and excluded workers, and
    optionally opens the dashboard. Zero available workers or a retained global
    admission drain produces a prominent warning, not a false inference-ready claim.
@@ -145,7 +151,8 @@ reported; it is never replaced with a guessed fallback.
 
 `stop-dsg.sh` backs up the same control files, then uses the existing controller's
 ownership checks, busy/unknown refusal and final admission fence. It stops the
-dashboard before the gateway and verifies both launchd removal and port closure.
+dashboard, Continuity Door and gateway core in that order and verifies every
+launchd removal and port closure.
 An unexpected surviving listener is an error; it is never killed by guessing its
 PID. Repeating stop on an already-stopped installation is safe. Stop does **not**
 run syntax or optional encoder/predictor dependency checks, so those failures do
