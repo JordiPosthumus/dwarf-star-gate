@@ -87,6 +87,15 @@ It does not connect to workers, read local logs or load production configuration
 The regular dashboard is on port 30010. Artwork lives at
 `ds4-gateway/ui/logo.png`; it can be replaced without touching gateway behavior.
 
+The dashboard also ships a logo-derived gate/star icon: SVG and 16/32px ICO
+favicons, a 32px PNG, a 180px Apple touch icon, and a monochrome Safari pinned-tab
+mask following [Apple's pinned-tab guidance](https://developer.apple.com/library/archive/documentation/AppleApplications/Reference/SafariWebContent/pinnedTabs/pinnedTabs.html).
+The wordmark is omitted at icon sizes for legibility. Safari may retain an older
+site icon; reload, then unpin/re-pin the tab if necessary. The vector source is
+`ds4-gateway/ui/dsg-pinned-v1.svg`; `scripts/build-icons.mjs` regenerates the other
+assets with development-only Sharp. Generated assets are committed, so using DSG
+does not require Sharp or an icon build step. The main logo is unchanged.
+
 ## The gateway
 
 A **DS4 server** is one registered model-server endpoint. Code, configuration and

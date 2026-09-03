@@ -315,6 +315,22 @@ test('an active dashboard serves a frozen complete bundle and rejects missing as
   fs.writeFileSync(path.join(dir,'index.html'),'<img src="/not-served.png">');
   assert.throws(()=>createDashboard(()=>({}),dir),/Unserved dashboard asset/);
 });
+test('logo-derived icons include a transparent monochrome Safari mask and correctly sized PNG/ICO assets',async t=>{
+  const {url}=await fixture(t),html=await(await fetch(url)).text();
+  assert.match(html,/rel="mask-icon" href="\/dsg-pinned-v1\.svg" color="#[a-f0-9]{6}"/);
+  assert.match(html,/rel="apple-touch-icon" sizes="180x180" href="\/apple-touch-icon\.png"/);
+  assert.match(html,/rel="icon" type="image\/svg\+xml" sizes="any"/);
+  const r=await fetch(url+'/dsg-pinned-v1.svg'),mask=await r.text();assert.equal(r.headers.get('content-type'),'image/svg+xml');
+  assert.match(mask,/viewBox="0 0 64 64"/);assert.match(mask,/<g fill="#000000">/);assert.equal((mask.match(/<path /g)||[]).length,3);
+  assert.doesNotMatch(mask,/<(?:rect|image|script|foreignObject)|href=|style=/);
+  for(const [file,size] of [['favicon-v1.png',32],['apple-touch-icon.png',180]]) {
+    const image=Buffer.from(await(await fetch(url+'/'+file)).arrayBuffer());assert.equal(image.subarray(1,4).toString(),'PNG');assert.equal(image.readUInt32BE(16),size);assert.equal(image.readUInt32BE(20),size);
+  }
+  const ico=Buffer.from(await(await fetch(url+'/favicon.ico')).arrayBuffer());assert.equal(ico.readUInt16LE(2),1);assert.equal(ico.readUInt16LE(4),2);
+  for(const [i,size] of [16,32].entries()) {
+    const entry=6+i*16,offset=ico.readUInt32LE(entry+12),length=ico.readUInt32LE(entry+8);assert.equal(ico[entry],size);assert.equal(ico[entry+1],size);assert.ok(offset+length<=ico.length);assert.equal(ico.readUInt32BE(offset+16),size);
+  }
+});
 test('dashboard rejects mutation, unknown paths, cross-origin and DNS-rebinding requests', async t => {
   const { url } = await fixture(t);
   for (const [route, options, code] of [
