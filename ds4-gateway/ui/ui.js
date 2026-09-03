@@ -74,11 +74,11 @@ function renderAnalytics() {
     worker.innerHTML='<option value="">All servers</option>'+ids.map(id=>`<option value="${esc(id)}">${esc(id)}</option>`).join('');
     worker.value=ids.includes(previous)?previous:'';
   }
-  const xgb=metric.startsWith('xgb-'),stage=metric.slice(4),versions=(a?.model_series||[]).filter(m=>m.stage===stage),version=$('analytics-version');
+  const xgb=metric.startsWith('xgb-'),stage=metric.slice(4),versions=(a?.model_series||[]).filter(m=>m.stage===stage).sort((a,b)=>(b.last_forecast_at??0)-(a.last_forecast_at??0)),version=$('analytics-version');
   $('analytics-version-label').hidden=!xgb;
-  const options=versions.map(m=>`<option value="${esc(m.id)}">${esc(m.id.slice(0,12))}</option>`).join('');
-  if(version.innerHTML!==options){const old=version.value;version.innerHTML=options;if(versions.some(m=>m.id===old))version.value=old;}
-  const selected=versions.find(m=>m.id===version.value),m=analyticsMetrics(xgb?{rows:selected?.rows||[]}:a,xgb?'service':metric,worker.value);
+  const latest=versions[0],options=latest?`<option value="">Current / latest · ${esc(latest.id.slice(0,12))}</option>`+versions.slice(1).map(m=>`<option value="${esc(m.id)}">History · ${esc(m.id.slice(0,12))}</option>`).join(''):'';
+  if(version.innerHTML!==options){const old=version.value;version.innerHTML=options;version.value=versions.slice(1).some(m=>m.id===old)?old:'';}
+  const selected=version.value?versions.find(m=>m.id===version.value):latest,m=analyticsMetrics(xgb?{rows:selected?.rows||[]}:a,xgb?'service':metric,worker.value);
   $('analytics-status').textContent=a?.demo?'Synthetic demo · not measured predictions':({disabled:'Enable evidence collection to see analytics.',waiting:'Waiting for saved evidence.',catching_up:'Reading recent evidence — counts are partial.',rescanning:'Evidence files changed — rebuilding the recent window.',unavailable:'Evidence unavailable — previous values are historical.',ready:'Shadow baseline · unvalidated'})[a?.status]||'Analytics unavailable — previous values are historical.';
   if(xgb&&a?.status==='ready'&&!a.demo)$('analytics-status').textContent=selected?`XGB ${stage} · model ${selected.id.slice(0,12)} · ${selected.rows.some(r=>r.experimental)?'includes experimental forecasts':'validated forecasts'}`:'No forecasts at this stage yet';
   $('analytics-contract').textContent=xgb?stage==='remaining'?'One frozen forecast per request: the first at or after 30 seconds. Actual = server time remaining at that moment, not total duration.':stage==='admission'?'Frozen before dispatch/upload. Current prompt embeddings are not available.':'Updated total server-time forecast, frozen separately after upload or embeddings. Not an admission-time forecast.':'Admission-time historical baseline, not XGB. Embeddings do not enter this baseline.';

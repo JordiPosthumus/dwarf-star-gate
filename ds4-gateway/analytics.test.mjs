@@ -127,6 +127,13 @@ test('UI polling preserves expansion and selected filter; stale results and tiny
   assert.match(get('analytics-status').textContent,/unvalidated/);assert.match(get('analytics-stats').innerHTML,/1,000s|1s/);
   ctx.sample.status='unavailable';call('renderAnalytics()');assert.match(get('analytics-status').textContent,/historical/);
 });
+test('model plots default to the latest real forecast while historical versions remain selectable',()=>{
+  const {ctx,get,call}=ui(),old='a'.repeat(64),latest='b'.repeat(64),point=(id,at,value)=>({id,stage:'admission',last_forecast_at:at,rows:[{node:'worker-a',at,service_state:'complete',service_ms:value,predicted_service_ms:value-1000}]});
+  get('analytics-metric').value='xgb-admission';ctx.sample={status:'ready',rows:[],model_series:[point(old,1000,5000),point(latest,2000,6000)]};call('analyticsState=sample;renderAnalytics()');
+  assert.equal(get('analytics-version').value,'');assert.match(get('analytics-version').innerHTML,/Current \/ latest · b{12}/);assert.match(get('analytics-status').textContent,/model b{12}/);
+  get('analytics-version').value=old;call('renderAnalytics()');assert.match(get('analytics-status').textContent,/model a{12}/);assert.match(get('analytics-version').innerHTML,/History · a{12}/);
+  const newest='c'.repeat(64);ctx.sample.model_series.push(point(newest,3000,7000));get('analytics-version').value='';call('renderAnalytics()');assert.match(get('analytics-status').textContent,/model c{12}/);
+});
 test('analytics follows fleet, Genie and recovery controls but precedes the request log',()=>{
   const html=fs.readFileSync(new URL('./ui/index.html',import.meta.url),'utf8');
   let previous=-1;
