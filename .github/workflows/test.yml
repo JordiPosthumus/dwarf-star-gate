@@ -19,6 +19,7 @@ jobs:
       - run: npm run privacy:test
       - run: npm test
       - run: npm run continuity:test
+      - run: npm run data:test
       - run: npm run recovery:test
   predictor:
     runs-on: ubuntu-latest

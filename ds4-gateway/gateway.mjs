@@ -18,6 +18,7 @@ import { calibrationPreflight } from './calibration.mjs';
 import { AgentControl } from './agent-control.mjs';
 import {deadlineTimer,queueTimeout,queueTimeoutMessage} from './deadline.mjs';
 import {CALL_ID_HEADER,DISPATCH_HEADER,validCallId,unavailableReason,sessionWork,rejectionReceipt} from './continuity.mjs';
+import {JsonUsageObserver} from './json-usage.mjs';
 import net from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -303,10 +304,14 @@ export function createGateway(config) {
     headers['x-request-id'] = job.id;
     delete headers.expect;
     const observer = new UsageObserver(req.url);
-    job.thinking = new RequestedThinkingObserver(req.headers['content-encoding'],(body,thinking)=>embeddings.observe(body,thinking,{request_id:job.id,node:node.id,route:req.url,traffic_class:job.trafficClass}));
+    job.thinking = new RequestedThinkingObserver(req.headers['content-encoding'],(body,thinking)=>{
+      job.requestStream=typeof body?.stream==='boolean'?body.stream:null;
+      job.requestedUsage=typeof body?.stream_options?.include_usage==='boolean'?body.stream_options.include_usage:null;
+      embeddings.observe(body,thinking,{request_id:job.id,node:node.id,route:req.url,traffic_class:job.trafficClass});
+    });
     const observeBody = chunk => {requestBytes+=chunk.length;job.thinking.accept(chunk);};
     const bodyEnded = () => job.thinking.finish();
-    let settled = false, response, faults;
+    let settled = false, response, faults,jsonUsage,responseFormat='no_response';
     const progress=()=>{if(dataset.enabled && !settled && job.trafficClass!=='genie')dataset.record('progress',{request_id:job.id,node:node.id,
       active_elapsed_ms:performance.now()-job.dispatchedMono,phase:observer.phase,semantic_characters:observer.semanticCharacters,
       thinking_characters:observer.thinkingCharacters,answer_characters:observer.answerCharacters,tool_characters:observer.toolCharacters,
@@ -314,6 +319,9 @@ export function createGateway(config) {
     const progressTimer=dataset.enabled?setInterval(progress,30000):null;progressTimer?.unref();
     const finish = (outcome, detail) => {
       if (settled) return; settled = true;
+      const jsonMetadata=jsonUsage?.finish();
+      if(jsonMetadata){observer.usage=jsonMetadata.usage??undefined;observer.finish_reason=jsonMetadata.finish_reason??null;}
+      const usageObservation=jsonMetadata?.status??(responseFormat!=='sse'?'unsupported_format':!observer.usage?'not_reported':observer.usage.prompt_tokens!=null&&observer.usage.completion_tokens!=null?'observed':'partial');
       const fault=faults?.finish();
       if(fault){quarantine(node,fault,job.id);if(outcome==='complete')outcome='upstream_engine_error';}
       else if(!job.cancelled && ((outcome==='upstream_http_error' && detail>=500) || ['incomplete_sse','upstream_engine_error','upstream_error','upstream_stream_error','upstream_aborted','connection_closed'].includes(outcome))) {
@@ -328,9 +336,10 @@ export function createGateway(config) {
         queue_ms: job.dispatched - job.created, elapsed_ms: Date.now() - job.dispatched,
         usage: observer.usage, sse_done: observer.done, requested_thinking: job.thinking.result, detail });
       dataset.record('finish',{request_id:job.id,node:node.id,outcome,queue_ms:job.dispatchedMono-job.createdMono,
+        route:req.url,response_format:responseFormat,http_status:response?.statusCode,usage_observation:usageObservation,request_stream:job.requestStream,requested_usage:job.requestedUsage,traffic_class:job.trafficClass,
         service_ms:performance.now()-job.dispatchedMono,total_ms:performance.now()-job.createdMono,first_body_byte_ms:firstBodyByte,
         request_bytes:requestBytes,usage:observer.usage,finish_reason:observer.finish_reason,requested_thinking:job.thinking.result,
-        generation:{thinking_characters:observer.thinkingCharacters,answer_characters:observer.answerCharacters,tool_characters:observer.toolCharacters,first_semantic_ms:observer.firstSemanticAt===null?null:observer.firstSemanticAt-job.dispatchedMono}});
+        generation:jsonMetadata?.generation??(responseFormat==='sse'?{thinking_characters:observer.thinkingCharacters,answer_characters:observer.answerCharacters,tool_characters:observer.toolCharacters,first_semantic_ms:observer.firstSemanticAt===null?null:observer.firstSemanticAt-job.dispatchedMono}:null)});
       observe(()=>shadow.finished(node.id,job.key,{outcome,finish_reason:observer.finish_reason,
         service_ms:performance.now()-job.dispatchedMono,usage:observer.usage,route:req.url,traffic_class:job.trafficClass}));
       job.cleanup();
@@ -350,6 +359,8 @@ export function createGateway(config) {
       res.writeHead(up.statusCode, outHeaders);
       res.flushHeaders();
       const isSSE = String(up.headers['content-type']).includes('text/event-stream');
+      responseFormat=isSSE?'sse':String(up.headers['content-type']).includes('application/json')?'json':'other';
+      if(responseFormat==='json'&&!up.headers['content-encoding']){jsonUsage=new JsonUsageObserver(req.url);up.on('data',chunk=>jsonUsage.accept(chunk));}
       faults=new GenerationFaultObserver(isSSE);
       if(isSSE || up.statusCode>=400)up.on('data',chunk=>faults.accept(chunk));
       up.once('data',()=>{firstBodyByte=performance.now()-job.dispatchedMono;});

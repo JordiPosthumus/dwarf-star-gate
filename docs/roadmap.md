@@ -209,6 +209,10 @@ are not moved. The [historical v1 experiment](../predictor/README.md) is preserv
 
 **Next model work, in order:**
 
+The [read-only data audit](data-quality.md) and bounded non-streaming OpenAI JSON
+usage collector now ship. They improve evidence/coverage; they do not promote a
+predictor or change routing. Historical missing usage remains missing.
+
 1. Audit accuracy and coverage separately by stage, hardware, context size and
    long-running work. Keep the strongest causal baseline when XGB loses. Improve
    timestamped prior-turn features and embedding ablations; do not lower promotion

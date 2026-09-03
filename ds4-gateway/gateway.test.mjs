@@ -43,6 +43,7 @@ async function backend(id) {
       if(p.fatal_sse) {ended=true;res.writeHead(200,{'content-type':'text/event-stream'});res.end('event: error\ndata: {"error":{"message":"cuda resumed prefill failed while extending checkpoint","type":"server_error"}}\n\ndata: [DONE]\n\n');return;}
       if(p.client_error) {ended=true;res.writeHead(400);res.end('invalid request');return;}
       if(typeof p.fixture_sse==='string') {ended=true;res.writeHead(200,{'content-type':'text/event-stream'});res.end(p.fixture_sse);return;}
+      if(typeof p.fixture_json==='string') {ended=true;res.writeHead(200,{'content-type':'application/json'});res.end(p.fixture_json);return;}
       if (p.http_error) { ended = true; res.writeHead(503); res.end('backend-error'); return; }
       if (p.disconnect) { res.destroy(); return; }
       if (p.large_stream) {
@@ -165,6 +166,25 @@ test('operator CLI creates private scoped credential; agent CLI needs no full ga
   assert.deepEqual(JSON.parse((await cli('receipt',request_id,'--credential-file',file)).stdout),d);
   assert.equal(JSON.parse((await cli('resume',d.result.hold_id,'--credential-file',file)).stdout).result.routing_resumed,true);
   await cli('revoke','tester','--config',config);await assert.rejects(cli('status','--credential-file',file));
+});
+
+test('non-streaming JSON usage is collected while request and response bytes remain unchanged',async t=>{
+  const r=await rig(t,1,{dataset_enabled:true});
+  const response=JSON.stringify({choices:[{finish_reason:'stop',message:{reasoning_content:'private thinking',content:'private answer'}}],usage:{prompt_tokens:1000,completion_tokens:20,prompt_tokens_details:{cached_tokens:900}}});
+  const body=JSON.stringify({fixture_json:response,stream:false,model:'deepseek-v4-flash',reasoning_effort:'xhigh',max_tokens:262144});
+  const result=await r.request(body,'json-usage');assert.equal(result.status,200);assert.equal(result.body,response);assert.equal(r.backends[0].records[0].body.toString(),body);
+  await until(()=>r.gateway.stats().dataset.finished===1);
+  const dir=path.join(path.dirname(r.config.state_file),'training'),rows=fs.readdirSync(dir).flatMap(f=>fs.readFileSync(path.join(dir,f),'utf8').trim().split('\n').map(JSON.parse)),f=rows.find(x=>x.kind==='finish');
+  assert.equal(f.response_format,'json');assert.equal(f.route,'/v1/chat/completions');assert.equal(f.request_stream,false);assert.equal(f.http_status,200);assert.equal(f.usage_observation,'observed');assert.equal(f.usage.completion_tokens,20);assert.equal(f.usage.cached_tokens,900);assert.equal(f.finish_reason,'stop');assert.equal(f.generation.first_semantic_ms,null);
+  assert.ok(!JSON.stringify(rows).includes('private answer'));assert.equal(r.gateway.stats().workers[0].quarantine,null);
+});
+test('oversized or invalid JSON observation does not reject or truncate successful upstream responses',async t=>{
+  const r=await rig(t,1,{dataset_enabled:true});
+  for(const value of ['not valid json',JSON.stringify({padding:'x'.repeat(4*1024*1024)})]){
+    const result=await r.request(JSON.stringify({fixture_json:value}));assert.equal(result.status,200);assert.equal(result.body,value);
+  }
+  await until(()=>r.gateway.stats().dataset.finished===2);
+  assert.equal(r.gateway.stats().workers[0].quarantine,null);assert.equal(r.gateway.stats().workers[0].is_healthy,true);
 });
 
 test('usage observer skips an entire oversized SSE line, including a DONE-shaped suffix',()=>{
@@ -707,9 +727,11 @@ test('real dashboard polling exposes agent ownership and calibration, without pr
   const r=await rig(t,1,{control_socket:true,ui_worker_management:true});
   const granted=await workerControl(r.config.control_socket,'/grant-agent',{agent_id:'tester',workers:['spark1']});
   await agentRequest({control_socket:r.config.control_socket,token:granted.token},'drain',{worker_id:'spark1',reason:'PRIVATE_OPERATOR_REASON',request_id:randomUUID()});
+  assert.equal((await r.request('{}','blocked')).status,503);
   const configPath=path.join(path.dirname(r.config.state_file),'dashboard-config.json');fs.writeFileSync(configPath,JSON.stringify({...r.config,port:r.address.port}));
   const dashboard=await runDashboard(configPath,0);t.after(()=>dashboard.close());
   const s=dashboard.snapshot();assert.equal(s.gateway.agent_api_version,1);assert.deepEqual(s.gateway.calibration,r.gateway.stats().calibration);
+  assert.equal(s.gateway.continuity.recent_rejections[0].reason,'no_ready_worker');assert.equal(s.gateway.continuity.recent_rejections[0].dispatch_state,'not_dispatched');
   assert.equal(s.gateway.workers[0].holds[0].owner_id,'tester');assert.equal(s.gateway.workers[0].gateway_drained,true);assert.equal(s.gateway.workers[0].operator_paused,false);
   assert.ok(!JSON.stringify(s).includes('PRIVATE_OPERATOR_REASON'));assert.ok(!JSON.stringify(s).includes(granted.token));
 });

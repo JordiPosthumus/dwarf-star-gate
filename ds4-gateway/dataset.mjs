@@ -27,6 +27,13 @@ export function evidence(kind, raw) {
   if (['complete','client_cancelled','upstream_error','upstream_stream_error','upstream_aborted','upstream_http_error','upstream_engine_error','incomplete_sse','sse_observation_limited','connection_closed','timeout'].includes(raw.outcome)) row.outcome=raw.outcome;
   if (raw.usage) row.usage=Object.fromEntries(['prompt_tokens','completion_tokens','cached_tokens'].map(k=>[k,number(raw.usage[k])]));
   if(kind==='finish')row.finish_reason=['stop','length','tool_calls','function_call','content_filter'].includes(raw.finish_reason)?raw.finish_reason:null;
+  if(kind==='finish'){
+    row.route=['/v1/chat/completions','/v1/completions','/v1/responses','/v1/messages'].includes(raw.route)?raw.route:null;
+    row.response_format=['sse','json','other','no_response'].includes(raw.response_format)?raw.response_format:null;
+    row.http_status=Number.isInteger(raw.http_status)&&raw.http_status>=100&&raw.http_status<=599?raw.http_status:null;
+    row.usage_observation=['observed','partial','not_reported','json_capture_limit','unsupported_format','invalid_json','unsupported_route'].includes(raw.usage_observation)?raw.usage_observation:null;
+    for(const k of ['request_stream','requested_usage'])row[k]=typeof raw[k]==='boolean'?raw[k]:null;
+  }
   if(kind==='finish'&&raw.generation)row.generation=Object.fromEntries(['thinking_characters','answer_characters','tool_characters','first_semantic_ms'].map(k=>[k,number(raw.generation[k])]));
   if (raw.requested_thinking) row.requested_thinking=safeRequestedThinking(raw.requested_thinking);
   if(kind==='model_prediction'){

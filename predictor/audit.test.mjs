@@ -1,0 +1,44 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {auditEvidence,readEvidence} from './audit.mjs';
+let sequence=0;
+const row=(kind,at=0,extra={})=>({schema:1,run_id:'run-a',event_id:'event-'+sequence++,request_id:'request-a',node:'worker-a',time:new Date(100000+at).toISOString(),kind,...extra});
+test('audit joins on run/request identity, counts missing labels and never emits vectors or sessions',()=>{
+  const rows=[row('decision',0,{session:'PRIVATE_SESSION',client_metadata:{status:'ready'}}),row('dispatch',1),row('request_features',2,{status:'ready'}),row('embedding',3,{status:'ready',available_at:100003,vectors:{latest_user:{truncated:true,vector:[.123456789]},recent_conversation:{truncated:false}}}),row('finish',4,{outcome:'complete',usage:{prompt_tokens:12,completion_tokens:3}}),
+    row('decision',5,{run_id:'run-b'}),row('dispatch',6,{run_id:'run-b'}),row('finish',7,{run_id:'run-b',outcome:'client_cancelled'})];
+  const a=auditEvidence(rows);assert.equal(a.totals.requests,2);assert.equal(a.totals.finishes,2);assert.equal(a.totals.missing_usage,1);assert.equal(a.totals.complete_missing_usage,0);
+  assert.equal(a.totals.embedding_before_finish,1);assert.equal(a.totals.ready_features_without_embedding,0);assert.equal(a.totals.early_metadata_present,1);assert.equal(a.totals.latest_embedding_truncated,1);
+  const text=JSON.stringify(a);for(const secret of ['PRIVATE_SESSION','.123456789','event-','request-a'])assert.ok(!text.includes(secret));
+});
+test('late embeddings and unresolved work stay distinct from missing text and failures',()=>{
+  const a=auditEvidence([row('decision'),row('dispatch',1),row('request_features',2,{status:'ready'}),row('finish',3,{outcome:'complete'}),row('embedding',4,{status:'ready',available_at:100004}),row('decision',6,{request_id:'open'}),row('request_features',7,{request_id:'open',status:'capture_limit'})]);
+  assert.equal(a.totals.complete_missing_usage,1);assert.equal(a.totals.embedding_after_finish,1);assert.equal(a.totals.no_terminal_observed,1);assert.equal(a.feature_status.capture_limit,1);
+  assert.equal(a.workers['worker-a'].failed_or_cancelled,0);
+});
+test('pre-admission rejection receipts are counted separately, not as orphan training requests',()=>{
+  const a=auditEvidence([row('rejection',0,{node:null})]);assert.equal(a.invalid,0);assert.equal(a.counts.rejection,1);assert.equal(a.totals.requests,0);assert.equal(a.totals.orphan_events,0);
+});
+test('duplicate and conflicting IDs, wrong-worker and noncausal joins are explicit',()=>{
+  const d=row('decision',10),s=row('dispatch',5),f=row('finish',4,{node:'worker-b',outcome:'complete'});
+  const a=auditEvidence([d,d,s,f]);assert.equal(a.duplicates,1);assert.equal(a.totals.wrong_worker_joins,1);assert.equal(a.totals.noncausal_joins,1);
+  assert.throws(()=>auditEvidence([d,{...d,node:'worker-b'}]),/Conflicting/);
+  assert.equal(auditEvidence([d,{...d,event_id:'different'}]).totals.ambiguous_joins,1);
+  assert.equal(auditEvidence([{...d,kind:'raw private text'}]).invalid,1);
+  assert.throws(()=>auditEvidence([d],null,{maxEvents:0}),/event budget/);
+  assert.throws(()=>auditEvidence([d],null,{maxRequests:0}),/request budget/);
+});
+test('shared replay establishes embedded features are not admission-time features',()=>{
+  const profile='a'.repeat(64),inventory={schema:1,workers:{'worker-a':{matching_profiles:[profile],hardware_family:'synthetic',accelerator_family:'cpu',ram_gib:16}}};
+  const rows=[row('decision',0,{session:'a'.repeat(64),candidates:[{node:'worker-a',profile,context_length:1000,queued:0,active:0}]}),row('dispatch',1),row('request_features',2,{status:'ready',available_at:100002}),row('embedding',3,{status:'ready',dimensions:384,available_at:100003,vectors:{latest_user:{vector:Array(384).fill(1/Math.sqrt(384))}}}),row('finish',4,{outcome:'complete',finish_reason:'stop',service_ms:3,usage:{prompt_tokens:1,completion_tokens:1}})];
+  const a=auditEvidence(rows,inventory);assert.equal(a.training.stages.admission.embedding_present,0);assert.equal(a.training.stages.embedded.embedding_present,1);assert.equal(a.training.stages.admission.zero_history,1);
+});
+test('reader reports a partial last line, rejects malformed complete lines and respects byte budget',t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-audit-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const file=path.join(dir,'routing-2026-01-01.jsonl');fs.writeFileSync(file,JSON.stringify(row('decision'))+'\n{"partial":');
+  const data=readEvidence(dir);assert.equal(data.events.length,1);assert.equal(data.source.incomplete_tails,1);
+  assert.throws(()=>readEvidence(dir,{maxBytes:1}),/byte budget/);
+  fs.writeFileSync(file,'invalid\n');assert.throws(()=>readEvidence(dir),/Malformed/);
+});

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {createContinuityFetch,registerPiContinuity} from './continuity-client.mjs';
 import {evidence} from './dataset.mjs';
+import {continuityForDisplay} from './continuity.mjs';
 const baseUrl='http://127.0.0.1:30000/v1';
 function refusal(init,change={}){
   const id=randomUUID();return new Response(JSON.stringify({error:{type:'gateway_error',code:'home_unavailable',continuity:{schema:1,request_id:id,call_id:init.headers.get('x-dsg-call-id'),dispatch_state:'not_dispatched',retry_class:'wait_then_retry',reason:'same_session_active',...change}}}),{status:503,headers:{'x-dsg-dispatch-state':'not_dispatched','x-request-id':id}});
@@ -49,4 +50,8 @@ test('rejection dataset allowlists identifiers and refuses arbitrary reasons/tex
   const row=evidence('rejection',{request_id:randomUUID(),session:'a'.repeat(64),node:'one',code:'home_unavailable',reason:'same_session_queued',dispatch_state:'not_dispatched',call_id:randomUUID(),prompt:'PRIVATE'});
   assert.equal(row.retry_class,'wait_then_retry');assert.ok(!JSON.stringify(row).includes('PRIVATE'));
   assert.equal(evidence('rejection',{request_id:randomUUID(),reason:'PRIVATE',dispatch_state:'not_dispatched'}),null);
+});
+test('dashboard continuity projection is bounded and excludes private extra fields',()=>{
+  const s=continuityForDisplay({schema:1,safe_retry_contract:true,recent_rejections:[{request_id:randomUUID(),time:new Date().toISOString(),reason:'same_session_queued',node:'one',session:'SECRET',body:'SECRET'},{request_id:'INVALID'}]});
+  assert.equal(s.recent_rejections.length,1);assert.ok(!JSON.stringify(s).includes('SECRET'));
 });

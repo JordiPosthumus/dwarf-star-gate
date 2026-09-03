@@ -16,14 +16,15 @@ enable prediction-based placement or constitute a cache-hit auditor.
 | `time` | Gateway wall-clock ISO timestamp |
 | `kind` | `decision`, `dispatch`, `finish`, `queued_cancel`, `queue_timeout`, `unavailable_before_dispatch`, `progress`, or optional `routing_shadow`, `request_features`, `embedding`, `model_prediction` |
 | `request_id` | Gateway-assigned request UUID, shared across this request's events |
-| `node` | Selected registered server ID |
+| `node` | Selected registered server ID; null on a pre-admission rejection with no selected server |
 
 ## Additional fields by event
 
 | Event | Fields actually recorded |
 | --- | --- |
-| `decision` | `context_length` (pool guarantee), `affinity`, optional `session`, `traffic_class`, `candidates`, `candidates_truncated`, `client_metadata` |
+| `decision` | `context_length` (pool guarantee), `affinity`, optional `session`, `traffic_class`, `candidates`, `candidates_truncated`, `client_metadata`, nullable client `call_id` |
 | `dispatch` | `queue_ms` |
+| `rejection` | `continuity_schema:1`, `call_id`, `session`, typed `code`/`reason`, `dispatch_state:not_dispatched`, `retry_class`, `retry_after_ms`; distinct from a completion/training label |
 | `finish` | `outcome`, `queue_ms`, `service_ms`, `total_ms`, `first_body_byte_ms`, `request_bytes`, optional `usage`, `finish_reason`, `requested_thinking`, `generation` (thinking/answer/tool characters, first semantic time) |
 | `queued_cancel` | `total_ms` spent admitted before client cancellation |
 | `queue_timeout` | `total_ms` spent admitted before queue expiry |
@@ -39,6 +40,19 @@ estimate, model-call index, compaction count and requested effort. It is untrust
 client evidence, not an engine measurement. No raw header text is stored. See
 the [exact header contract and current collection-only limit](client-metadata.md).
 Older decision rows lack this field and must be treated as missing, not zero.
+
+New `finish` events also carry allowlisted `route`, `response_format` (`sse`,
+`json`, `other`, `no_response`), nullable `http_status`, `usage_observation`, and
+captured `request_stream`/`requested_usage` flags. These flags are observations,
+not overrides. Non-streaming OpenAI Chat/Completions JSON usage and finish reasons
+are extracted within a **4 MiB metadata capture budget**. The entire response
+still forwards unchanged if capture exceeds that bound, cannot parse, or uses an
+unsupported format. No response text is stored; whole-response character counts
+do not invent a first-token timestamp. Responses/Messages JSON usage and Messages
+start/delta usage remain unsupported. Unknown is not zero.
+
+Run the [private data-quality audit](data-quality.md) before tuning. Rejection
+receipts are counted separately, not mistaken for orphan or zero-duration jobs.
 
 `affinity` is `new`, `existing`, `none`, or `reassigned`. `session`, when present,
 is the SHA-256 digest of the supplied affinity identifier, **not a hash of the
