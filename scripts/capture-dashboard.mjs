@@ -16,14 +16,20 @@ try {
   const context=await browser.newContext({viewport:{width:1440,height:1100},deviceScaleFactor:1,locale:'en-US',timezoneId:'UTC',reducedMotion:'reduce'});
   const errors=[];
   const allowedOrigins=new Set([origin]);
+  let workerControlFailures=1;
   await context.route('**/*',route=>{
-    if(allowedOrigins.has(new URL(route.request().url()).origin))return route.continue();
+    const request=route.request(),url=new URL(request.url());
+    if(allowedOrigins.has(url.origin)&&url.pathname==='/api/workers'&&request.method()==='GET'&&workerControlFailures-- > 0)return route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'Worker controls unavailable'})});
+    if(allowedOrigins.has(url.origin))return route.continue();
     errors.push('Unexpected non-demo network request');return route.abort();
   });
   const page=await context.newPage();
   page.on('pageerror',e=>errors.push(e.message));
   await page.goto(origin);
+  await page.waitForFunction(()=>document.getElementById('routing-message').classList.contains('error'));
+  await page.waitForFunction(()=>document.getElementById('routing-message').textContent===''&&!document.getElementById('routing-message').classList.contains('error'));
   await page.waitForFunction(()=>document.querySelectorAll('.device').length===3&&document.querySelectorAll('#genie-reports details').length===1&&document.querySelectorAll('#analytics-chart circle').length>0);
+  assert.equal(await page.locator('#routing-message').innerText(),'','A successful control read must clear a stale error banner');
   assert.equal(await page.locator('h1').innerText(),'Dwarf Star Gate');
   assert.match(await page.locator('#connection').innerText(),/Demo/);
   assert.match(await page.locator('#predictor-status').innerText(),/0 validated models/);

@@ -311,6 +311,10 @@ async function loadWorkers() {
     const r=await fetch('/api/workers',{cache:'no-store',signal:AbortSignal.timeout(5000)}), data=await r.json();
     if(!r.ok||!data.enabled)throw new Error(data.error||'Worker controls unavailable');
     csrfToken=data.csrf_token;workerControlsReady=true;
+    // A transient startup/socket race must not leave a permanent red banner
+    // after the authoritative control read succeeds. Preserve non-error action
+    // receipts so the operator still sees what they just requested.
+    if($('routing-message').classList.contains('error')||$('worker-message').classList.contains('error'))workerMessage('');
     renderRecovery(data.recovery);
     const rows=workerRows(data.workers);if($('worker-rows').innerHTML!==rows)$('worker-rows').innerHTML=rows;
     $('pool-context-form').hidden=!data.context_limit_control;
