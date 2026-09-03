@@ -5,6 +5,7 @@ import { verifyRecovery } from './recovery-verify.mjs';
 const hash=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const terminal=new Set(['recovered','verified_paused','failed','reconciliation_needed']);
 const faultReasons=new Set(['fatal_accelerator_error','accelerator_checkpoint_failure']);
+const adapterReasons=new Set(['adapter_timeout','adapter_output_limit','adapter_spawn_failed','adapter_dns_failure','adapter_host_key_failure','adapter_auth_failure','adapter_connect_timeout','adapter_connection_refused','adapter_route_unreachable','adapter_connection_reset','adapter_unreachable','adapter_check_failed']);
 const publicOperation=op=>Object.fromEntries(['id','worker_id','actor','state','created_at','updated_at','error','proof','restart_issued','operator_override'].filter(k=>op[k]!==undefined).map(k=>[k,op[k]]));
 
 // Lives in the gateway, not the dashboard or LLM process. Intent and outcomes
@@ -67,7 +68,7 @@ export class Recovery {
   async inspect(id) {
     const c=this.configs.get(id);
     try {const value=await this.call(c,{action:'inspect'});this.observations.set(id,{at:this.now(),value});return value;}
-    catch {this.observations.set(id,{at:this.now(),error:'adapter_unavailable_or_check_failed'});return null;}
+    catch(e) {this.observations.set(id,{at:this.now(),error:adapterReasons.has(e?.message)?e.message:'adapter_check_failed'});return null;}
   }
   request(input,actor='operator',{canary=false}={}) {
     if(!input || Object.keys(input).some(k=>!['worker_id','evidence_id','action_id'].includes(k)) || !['operator','genie','detector'].includes(actor))throw new Error('Invalid recovery request');

@@ -131,12 +131,33 @@ function routingInfo(w,{stale=false,recovering=false}={}) {
   if(!w.is_healthy&&!w.quarantine&&!recovering&&reasons.length)reasons.push('The last readiness check was also unavailable; resuming will recheck it.');
   const excluded=w.drained||!!w.quarantine||!w.is_healthy||recovering;
   const label=w.quarantine?'QUARANTINED · NOT ROUTING':held?'RESERVED · NOT ROUTING':w.drained?(busy?'PAUSING · ADMITTED WORK FINISHING':'PAUSED · NOT ROUTING'):recovering?'RECOVERING · NOT ROUTING':!w.is_healthy?'UNAVAILABLE · NOT ROUTING':'ROUTING ENABLED';
-  if(!reasons.length)reasons.push(w.drained?'Gateway routing is paused.':!w.is_healthy?'The server is not passing readiness checks. Check its DS4 process or connection, then try again.':'New requests may use this server. Pause stops new admission; admitted requests finish.');
+  if(!reasons.length)reasons.push(w.drained?'Gateway routing is paused.':!w.is_healthy?managementDetail(w):'New requests may use this server. Pause stops new admission; admitted requests finish.');
   if(w.quarantine)reasons.push('Verify & readmit checks model/context and generates a small test response. It does not restart DS4; failed checks keep it isolated.');
   return {level:w.quarantine||!w.is_healthy?'bad':excluded?'paused':'ok',label,detail:reasons.join(' '),excluded,
     action:excluded?'resume':'drain',button:w.quarantine?'Verify & readmit':excluded?'Resume routing':'Pause routing',
     blocked:held||recovering||!!w.quarantine&&busy,
     title:held?'Release agent holds first.':recovering?'Wait for service recovery.':w.quarantine&&busy?'Wait for admitted work to settle before verification.':excluded?'Check readiness and return to routing. Does not start or restart DS4.':'Stop new gateway admission. Existing admitted work, model process and caches stay intact.'};
+}
+function managementDetail(w) {
+  const m=w?.management_path,reason=m?.reason;
+  const reasons={
+    adapter_dns_failure:'The SSH management path cannot resolve its configured host alias.',
+    adapter_host_key_failure:'SSH rejected the configured host identity. Review the operator-owned known-host entry; DSG will not bypass host-key checking.',
+    adapter_auth_failure:'SSH authentication failed for the configured management path.',
+    adapter_connect_timeout:'The SSH management path timed out before a verified connection.',
+    adapter_connection_refused:'The configured machine refused the SSH connection.',
+    adapter_route_unreachable:'The configured machine has no reachable network route from this host.',
+    adapter_connection_reset:'The SSH connection was reset or closed remotely.',
+    adapter_spawn_failed:'The local SSH client could not be started.',
+    adapter_timeout:'The verified recovery inspection exceeded its bounded deadline.',
+    adapter_output_limit:'The recovery adapter exceeded its bounded output contract.',
+    adapter_unreachable:'The SSH management path exited before verification.',
+    adapter_check_failed:'The management path answered, but the enrolled recovery helper did not return a valid check.'};
+  if(reasons[reason])return reasons[reason];
+  if(m?.transport==='ssh_tunnel'&&m.state==='ssh_process_active')return 'The local SSH tunnel process exists, but the DS4 readiness probe is not succeeding; login, forwarding and service health are not yet distinguished.';
+  if(m?.transport==='ssh_tunnel'&&['connecting','retrying','ssh_error','pending'].includes(m.state))return 'The SSH tunnel is not verified; DSG is continuing its configured connection attempts.';
+  if(m?.transport==='local')return 'The local DS4 endpoint is not passing its readiness check.';
+  return 'The server is not passing readiness checks. Check its DS4 process or connection, then try again.';
 }
 function routingMarkup(w,{stale=false,controls=true,recovering=false,busy=workerBusy}={}) {
   const info=routingInfo(w,{stale,recovering});
@@ -162,7 +183,7 @@ function renderDevices(devices,workers,now,stale,scales,controls) {
     const fresh=template.content.firstElementChild;let current=existing.get(d.id);
     if(!current)current=fresh;
     else{
-      for(const selector of ['.device-name','.server-verdict','.badge','.device-readings']){const before=current.querySelector(selector),after=fresh.querySelector(selector);if(before.innerHTML!==after.innerHTML)before.innerHTML=after.innerHTML;if(before.className!==after.className)before.className=after.className;for(const name of ['data-level','title']){const value=after.getAttribute(name);if(value===null)before.removeAttribute(name);else before.setAttribute(name,value);}}
+      for(const selector of ['.device-name','.server-verdict','.badge','.device-readings']){const before=current.querySelector(selector),after=fresh.querySelector(selector);if(before.innerHTML!==after.innerHTML)before.innerHTML=after.innerHTML;if(before.className!==after.className)before.className=after.className;for(const name of ['data-level','title','hidden']){const value=after.getAttribute(name);if(value===null)before.removeAttribute(name);else before.setAttribute(name,value);}}
       updateRoutingNode(current.querySelector('.worker-routing'),fresh.querySelector('.worker-routing'));
     }
     if(container.children[i]!==current)container.insertBefore(current,container.children[i]||null);
@@ -180,7 +201,7 @@ function refreshRoutingControls() {
 function serverVerdict(d,w,now,stale=false) {
   if(stale||!w)return {level:'unknown',label:'Status stale',detail:'Live gateway status is unavailable; values are historical.'};
   if(w.quarantine)return {level:'bad',label:'Quarantined',detail:'DSG isolated this server after a generation fault. Use the recovery/readmission controls only after reviewing the evidence.'};
-  if(!w.is_healthy)return {level:'bad',label:'Unavailable',detail:'This server is not passing the current readiness check.'};
+  if(!w.is_healthy)return {level:'bad',label:'Unavailable',detail:managementDetail(w)};
   if(w.drained)return {level:'paused',label:w.load?'Pausing':'Paused',detail:w.load?'No new work is admitted; an already admitted request is still finishing.':'No new gateway requests are admitted to this server.'};
   const waiting=Number.isSafeInteger(w.queued)?w.queued:0,oldest=Number.isFinite(w.oldest_queue_seconds)?w.oldest_queue_seconds:null;
   if(waiting>0)return {level:waiting>=3||oldest>=60?'warn':'busy',label:`Backed up · ${fmt(waiting)} waiting`,detail:`${fmt(waiting)} request${waiting===1?' is':'s are'} queued${oldest===null?'':`; oldest has waited ${fmt(oldest)} seconds`}.`};
@@ -202,7 +223,8 @@ function device(d, w, now, stale, index = 1, scales={}, controls=false) {
   const f=w?.predictions?.remaining??w?.predictions?.updated??w?.predictions?.admission;
   const forecast=f?`<p class="muted">${f.experimental?'Experimental':'Validated'} ${f.stage==='remaining'?'remaining':'total server-time'} estimate: ${fmt(f.seconds)}s · ${age(f.at,now)}${stale||now-f.at>60000?' · stale':''}</p>`:'';
   const backlog=w?.queued?`${fmt(w.queued)} waiting${Number.isFinite(w.oldest_queue_seconds)?` · oldest ${fmt(w.oldest_queue_seconds)}s`:''}`:'No requests waiting';
-  return `<article class="device" data-worker-id="${esc(d.id)}"><div class="device-top"><div class="device-name"><span class="device-number">${String(index).padStart(2,'0')}</span>${esc(d.id.replace(/^spark/, 'Spark '))}</div><div class="device-status"><span class="server-verdict" data-level="${verdict.level}" title="${esc(verdict.detail)}">${esc(verdict.label)}</span><span class="badge ${bad ? 'bad' : w?.load ? 'busy' : ''}" title="Current generation phase">${esc(!stale&&w?.quarantine?'quarantined':state==='decode'?'answering':state)}</span>${routingMarkup(w,{stale,controls,recovering:recoveryState?.workers?.some(r=>r.worker_id===w?.id&&r.state==='recovering')})}</div></div><div class="device-readings">${timeline(d,now)}${thinkingIndicator(w,stale,now)}${forecast}<div class="metrics">${metric('decode','DECODE')}${metric('prefill','PREFILL')}</div><p class="prompt-note">${prompt}</p><div class="cache"><div><strong>${fmt(d.cache.reused)}</strong><span>Prefix reused</span></div><div><strong>${fmt(d.cache.cold)}</strong><span>Cold starts</span></div><div><strong>${fmt(d.cache.resident_misses)}</strong><span>Resident misses</span></div><div><strong>${fmt(d.cache.disk_restores)}</strong><span>Disk restores</span></div></div><p class="cache-note">Observed since ${d.cache_observed_since ? clock(d.cache_observed_since) : d.observed_since ? clock(d.observed_since) : 'connecting'} · RAM misses ≠ cold starts</p><div class="device-foot"><span>${backlog} · ${fmt(w?.assigned_sessions)} assigned sessions</span><span>${telemetryStatus(d)} · ${w?.load ? `${fmt(w.active_seconds)}s active` : 'last sample '+age(d.last_event,now)}</span></div></div></article>`;
+  const phaseRedundant=['unavailable','paused'].includes(state);
+  return `<article class="device" data-worker-id="${esc(d.id)}"><div class="device-top"><div class="device-name"><span class="device-number">${String(index).padStart(2,'0')}</span>${esc(d.id.replace(/^spark/, 'Spark '))}</div><div class="device-status"><span class="server-verdict" data-level="${verdict.level}" title="${esc(verdict.detail)}">${esc(verdict.label)}</span><span class="badge ${bad ? 'bad' : w?.load ? 'busy' : ''}" title="Current generation phase" ${phaseRedundant?'hidden':''}>${esc(!stale&&w?.quarantine?'quarantined':state==='decode'?'answering':state)}</span>${routingMarkup(w,{stale,controls,recovering:recoveryState?.workers?.some(r=>r.worker_id===w?.id&&r.state==='recovering')})}</div></div><div class="device-readings">${timeline(d,now)}${thinkingIndicator(w,stale,now)}${forecast}<div class="metrics">${metric('decode','DECODE')}${metric('prefill','PREFILL')}</div><p class="prompt-note">${prompt}</p><div class="cache"><div><strong>${fmt(d.cache.reused)}</strong><span>Prefix reused</span></div><div><strong>${fmt(d.cache.cold)}</strong><span>Cold starts</span></div><div><strong>${fmt(d.cache.resident_misses)}</strong><span>Resident misses</span></div><div><strong>${fmt(d.cache.disk_restores)}</strong><span>Disk restores</span></div></div><p class="cache-note">Observed since ${d.cache_observed_since ? clock(d.cache_observed_since) : d.observed_since ? clock(d.observed_since) : 'connecting'} · RAM misses ≠ cold starts</p><div class="device-foot"><span>${backlog} · ${fmt(w?.assigned_sessions)} assigned sessions</span><span>${telemetryStatus(d)} · ${w?.load ? `${fmt(w.active_seconds)}s active` : 'last sample '+age(d.last_event,now)}</span></div></div></article>`;
 }
 const headlineSeverity=value=>['good','info','warning','critical'].includes(value)?value:'info';
 function healthHeadlines(snapshot, ticker) {

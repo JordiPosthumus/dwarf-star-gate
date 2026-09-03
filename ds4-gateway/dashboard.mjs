@@ -21,6 +21,15 @@ import {dsgReport,invalidHttp} from './report.mjs';
 import {EngineAttribution} from './attribution.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+const managementStates=new Set(['local','pending','connecting','ssh_process_active','verified','ssh_error','retrying']);
+const managementReasons=new Set(['adapter_timeout','adapter_output_limit','adapter_spawn_failed','adapter_dns_failure','adapter_host_key_failure','adapter_auth_failure','adapter_connect_timeout','adapter_connection_refused','adapter_route_unreachable','adapter_connection_reset','adapter_unreachable','adapter_check_failed']);
+function safeManagementPath(raw){
+  if(!raw||!['local','ssh_tunnel'].includes(raw.transport)||!managementStates.has(raw.state))return null;
+  return {transport:raw.transport,state:raw.state,reason:managementReasons.has(raw.reason)?raw.reason:null,
+    attempts:Number.isSafeInteger(raw.attempts)&&raw.attempts>=0?raw.attempts:0,
+    changed_at:typeof raw.changed_at==='string'&&Number.isFinite(Date.parse(raw.changed_at))?raw.changed_at:null,
+    last_verified_at:typeof raw.last_verified_at==='string'&&Number.isFinite(Date.parse(raw.last_verified_at))?raw.last_verified_at:null};
+}
 const assets = new Map([['/', ['index.html', 'text/html']], ['/ui.css', ['ui.css', 'text/css']], ['/brand.css', ['brand.css', 'text/css']], ['/ui.js', ['ui.js', 'text/javascript']], ['/logo.png', ['logo.png', 'image/png']]]);
 assets.set('/activity.js',['activity.js','text/javascript']);
 for(const [file,mime] of [['favicon.ico','image/x-icon'],['favicon-v1.svg','image/svg+xml'],['dsg-pinned-v1.svg','image/svg+xml'],['favicon-v1.png','image/png'],['apple-touch-icon.png','image/png']])assets.set('/'+file,[file,mime]);
@@ -249,6 +258,7 @@ export async function runDashboard(configPath, port) {
           context_length:Number.isSafeInteger(w.context_length)?w.context_length:null, requested_thinking: safeRequestedThinking(w.requested_thinking), last_requested_thinking: safeRequestedThinking(w.last_requested_thinking),predictions:w.predictions,
           health_probe_deferred:Number.isSafeInteger(w.health_probe_deferred)?w.health_probe_deferred:0,
           health_state_source:['model_probe','recent_upstream_progress'].includes(w.health_state_source)?w.health_state_source:null,
+          management_path:safeManagementPath(w.management_path),
           probe_error:['PROBE_TIMEOUT','busy_probe_deferred','ECONNREFUSED','ECONNRESET','EHOSTUNREACH','ENETUNREACH','model_or_context_mismatch','invalid_model_response'].includes(w.probe_error)?w.probe_error:null,
           last_probe:typeof w.last_probe==='string'&&Number.isFinite(Date.parse(w.last_probe))?w.last_probe:null,
           last_request_finished_at: typeof w.last_request_finished_at === 'string' && Number.isFinite(Date.parse(w.last_request_finished_at)) ? w.last_request_finished_at : null })) };

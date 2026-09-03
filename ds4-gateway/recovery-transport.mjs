@@ -1,6 +1,30 @@
 import { spawn } from 'node:child_process';
 import { workerConfig } from './worker-config.mjs';
 
+const sshFailurePatterns = [
+  ['adapter_dns_failure', /could not resolve hostname|name or service not known|nodename nor servname provided/i],
+  ['adapter_host_key_failure', /host key verification failed|remote host identification has changed/i],
+  ['adapter_auth_failure', /permission denied|no supported authentication methods available/i],
+  ['adapter_connect_timeout', /connection timed out|operation timed out|connect timeout/i],
+  ['adapter_connection_refused', /connection refused/i],
+  ['adapter_route_unreachable', /no route to host|network is unreachable/i],
+  ['adapter_connection_reset', /connection reset|connection closed by remote host|connection closed by .* port/i],
+];
+
+// Public recovery state receives a bounded reason class, never SSH stderr,
+// aliases, addresses, usernames or command output.
+export function classifySshFailure(stderr='', errorCode=null, exitCode=null) {
+  const text=String(stderr).slice(-4096);
+  for(const [reason,pattern] of sshFailurePatterns)if(pattern.test(text))return reason;
+  if(errorCode==='ENOENT'||errorCode==='EACCES')return 'adapter_spawn_failed';
+  if(errorCode==='ETIMEDOUT')return 'adapter_connect_timeout';
+  if(errorCode==='ECONNREFUSED')return 'adapter_connection_refused';
+  if(errorCode==='EHOSTUNREACH'||errorCode==='ENETUNREACH')return 'adapter_route_unreachable';
+  if(errorCode==='ECONNRESET')return 'adapter_connection_reset';
+  if(errorCode===null&&exitCode===null)return null;
+  return exitCode===255?'adapter_unreachable':'adapter_check_failed';
+}
+
 export function recoveryConfig(raw={}) {
   if(Object.keys(raw).some(k=>!['workers'].includes(k)) || !Array.isArray(raw.workers??[]))throw new Error('Invalid recovery configuration');
   const configs=new Map(), machines=new Set();
@@ -22,14 +46,15 @@ export function recoveryConfig(raw={}) {
 export function systemdCall(config,request) {
   return new Promise((resolve,reject)=>{
     const child=spawn('/usr/bin/ssh',['-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','ConnectTimeout=8',config.ssh,
-      `python3 ${config.helper} ${config.config}`],{stdio:['pipe','pipe','ignore']});
-    let output='',settled=false;
+      `python3 ${config.helper} ${config.config}`],{stdio:['pipe','pipe','pipe']});
+    let output='',stderr='',settled=false;
     const finish=(err,result)=>{if(settled)return;settled=true;clearTimeout(timer);if(err)reject(err);else resolve(result);};
     const timer=setTimeout(()=>{child.kill();finish(new Error('adapter_timeout'));},45000);
     child.stdout.on('data',chunk=>{output+=chunk;if(output.length>65536){child.kill();finish(new Error('adapter_output_limit'));}});
-    child.on('error',()=>finish(new Error('adapter_unreachable')));
+    child.stderr.on('data',chunk=>{stderr=(stderr+chunk).slice(-4096);});
+    child.on('error',error=>finish(new Error(classifySshFailure(stderr,error.code))));
     child.stdin.on('error',()=>{});
-    child.on('exit',code=>{try {const result=JSON.parse(output);if(code!==0 || result.error)throw new Error();finish(null,result);}catch{finish(new Error('adapter_check_failed'));}});
+    child.on('exit',code=>{try {const result=JSON.parse(output);if(code!==0 || result.error)throw new Error();finish(null,result);}catch{finish(new Error(classifySshFailure(stderr,null,code)));}});
     child.stdin.end(JSON.stringify(request));
   });
 }

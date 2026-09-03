@@ -105,7 +105,11 @@ Workers with recognized engine faults or repeated inference failures are
 [quarantined persistently](docs/generation-health.md); recovery requires a real
 generation check. Opt-in recovery can restart an enrolled systemd-user DS4 service
 after current-instance fatal evidence, then verify generation and cold-to-warm
-reuse. Unsupported installs remain manual. No Pi or Hermes dependency.
+reuse. DSG separately reports sanitized management-path evidence—such as DNS,
+SSH authentication/identity, timeout or DS4 readiness—so the operator and Genie
+can distinguish a network problem from an engine fault without exposing private
+hosts or granting a restart. Unsupported installs remain manual. No Pi or Hermes
+dependency.
 
 The dashboard's **Genie health wire** shows model-written observations and concise
 recommendations from the same fleet review as the detailed assessment. Evidence

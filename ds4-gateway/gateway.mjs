@@ -12,6 +12,7 @@ import { RoutingShadow } from './routing-shadow.mjs';
 import { GenerationFaultObserver, verifyGeneration } from './generation-health.mjs';
 import { workerConfig, workerConfigs, assertUniqueWorker } from './worker-config.mjs';
 import { Recovery } from './recovery.mjs';
+import { classifySshFailure } from './recovery-transport.mjs';
 import { loadConfig, isMain, gatewayPort, gatewayHost, continuityEnabled } from './config.mjs';
 import { Predictor } from './predictor.mjs';
 import { calibrationPreflight } from './calibration.mjs';
@@ -180,7 +181,8 @@ export function createGateway(config,{visionTranscode}={}) {
   const queueTimeoutMs=()=>store.data.queue_timeout_ms??configuredQueueTimeout;
   // Like registered workers, an explicit UI setting survives process restarts.
   const contextLimit = () => store.data.pool_context_length ?? config.context_length;
-  const makeNode = n => ({ ...n, drained: store.data.drained?.[n.id] === true, quarantine:store.data.quarantined?.[n.id] ?? null, inferenceFailures:0, healthy: false, failures: 0, active: null, queue: [], completed: 0, failed: 0, protected:0, observationLimited:0, probing: false, healthProbeDeferred:0 });
+  const makeNode = n => ({ ...n, drained: store.data.drained?.[n.id] === true, quarantine:store.data.quarantined?.[n.id] ?? null, inferenceFailures:0, healthy: false, failures: 0, active: null, queue: [], completed: 0, failed: 0, protected:0, observationLimited:0, probing: false, healthProbeDeferred:0,
+    managementPath:n.ssh?{transport:'ssh_tunnel',state:'pending',reason:null,attempts:0,changed_at:new Date().toISOString(),last_verified_at:null}:{transport:'local',state:'local',reason:null,attempts:0,changed_at:new Date().toISOString(),last_verified_at:null} });
   let definitions;
   try { definitions = store.data.workers === undefined ? initial : workerConfigs(store.data.workers); }
   catch (e) { store.close(); throw e; }
@@ -255,6 +257,7 @@ export function createGateway(config,{visionTranscode}={}) {
       context_length: n.contextLength ?? null,
       health_probe_deferred:n.healthProbeDeferred,
       health_state_source:n.probeError==='busy_probe_deferred'?'recent_upstream_progress':'model_probe',
+      management_path:{...n.managementPath},
       last_probe: n.lastProbe, probe_error: n.probeError })) });
 
   const briefJob = j => ({key:j.key,route:j.req.url,trafficClass:j.trafficClass});
@@ -806,8 +809,12 @@ export function createGateway(config,{visionTranscode}={}) {
         node.probeError = reason;
         if (reason && reason !== 'model_or_context_mismatch') node.modelMatches=false;
         const was = node.healthy;
-        if (ok) { node.failures = 0; node.healthy = !node.quarantine && !node.recovering; }
+        if (ok) {
+          node.failures = 0; node.healthy = !node.quarantine && !node.recovering;
+          if(node.ssh)node.managementPath={...node.managementPath,state:'verified',reason:null,changed_at:new Date().toISOString(),last_verified_at:new Date().toISOString()};
+        }
         else if (++node.failures >= (config.health_failures ?? 3)) node.healthy = false;
+        if(!ok&&node.ssh&&node.managementPath.state==='verified')node.managementPath={...node.managementPath,state:'ssh_process_active',reason:null,changed_at:new Date().toISOString()};
         if(was && !node.healthy)observe(()=>shadow.reset(node.id));
         if (was !== node.healthy) log('worker_health', { node: node.id, healthy: node.healthy, reason });
         resolve();
@@ -1062,15 +1069,19 @@ export function createGateway(config,{visionTranscode}={}) {
 
 function superviseTunnel(node, stopping) {
   let child, timer;
+  const update=(state,reason=null)=>{node.managementPath={...node.managementPath,transport:'ssh_tunnel',state,reason,changed_at:new Date().toISOString()};};
   const start = () => {
     if (stopping()) return;
+    node.managementPath={...node.managementPath,transport:'ssh_tunnel',state:'connecting',reason:null,attempts:(node.managementPath?.attempts??0)+1,changed_at:new Date().toISOString()};
     const port = new URL(node.url).port;
     child = spawn('/usr/bin/ssh', ['-N', '-o', 'BatchMode=yes', '-o', 'ExitOnForwardFailure=yes', '-o', 'ConnectTimeout=10',
       '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3', '-L', `127.0.0.1:${port}:127.0.0.1:${node.remote_port ?? 8000}`, node.ssh], { stdio: ['ignore', 'ignore', 'pipe'] });
     log('tunnel_started', { node: node.id, pid: child.pid });
-    child.stderr.on('data', chunk => log('tunnel_message', { node: node.id, message: chunk.toString().trim() }));
-    child.on('error', e => log('tunnel_error', { node: node.id, error: e.message }));
+    child.once('spawn',()=>update('ssh_process_active'));
+    child.stderr.on('data', chunk => {const message=chunk.toString().trim(),reason=classifySshFailure(message);if(reason)update('ssh_error',reason);log('tunnel_message', { node: node.id, message });});
+    child.on('error', e => {update('ssh_error',classifySshFailure('',e.code));log('tunnel_error', { node: node.id, error: e.message });});
     child.on('exit', (code, signal) => {
+      update('retrying',node.managementPath?.reason??classifySshFailure('',null,code));
       log('tunnel_exited', { node: node.id, code, signal });
       if (!stopping()) timer = setTimeout(start, 3000);
     });

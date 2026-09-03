@@ -524,6 +524,17 @@ test('server verdicts expose backlog, oldest wait, pause, health and telemetry s
   assert.equal(verdict({}, {is_healthy:true,quarantine:{reason:'accelerator_checkpoint_failure'},load:0,queued:0}).label,'Quarantined');
   assert.equal(verdict({}, {},true).label,'Status stale');
 });
+test('unavailable server verdicts explain the observed management layer and avoid a duplicate phase badge',()=>{
+  const source = fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const context = vm.createContext({phase:()=> 'unavailable'});vm.runInContext(source,context);
+  const worker={id:'spark1',is_healthy:false,drained:false,load:0,queued:0,management_path:{transport:'ssh_tunnel',state:'ssh_error',reason:'adapter_dns_failure'}};
+  const verdict=vm.runInContext(`serverVerdict({},${JSON.stringify(worker)},100000,false)`,context);
+  assert.match(verdict.detail,/cannot resolve/);assert.ok(!verdict.detail.includes('worker.example'));
+  const html=vm.runInContext(`device({id:'spark1',cache:{},series:[]},${JSON.stringify(worker)},100000,false,1,{decode:1,prefill:1},true)`,context);
+  assert.match(html,/server-verdict[^>]*>Unavailable</);assert.match(html,/class="badge bad"[^>]*hidden>unavailable</);
+  const auth={...worker,management_path:{transport:'ssh_tunnel',state:'ssh_error',reason:'adapter_auth_failure'}};
+  assert.match(vm.runInContext(`serverVerdict({},${JSON.stringify(auth)},100000,false).detail`,context),/authentication failed/);
+});
 test('request log filters problems and slow work while treating compatibility guidance as non-failure',async t=>{
   const {url}=await fixture(t),html=await(await fetch(url)).text(),js=await(await fetch(url+'/ui.js')).text();
   assert.match(html,/id="request-filter"/);assert.match(html,/Problems only/);assert.match(html,/Slow only/);

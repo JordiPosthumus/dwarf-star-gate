@@ -1,5 +1,18 @@
 # Changelog
 
+## Layered worker-failure evidence
+
+- Gateway status now reports a sanitized management-path state separately from
+  DS4 readiness: local, connecting, SSH process active, model-probe verified,
+  retrying or failed. DNS, host-key, authentication, timeout, refusal, route and
+  reset failures remain bounded reason classes; raw SSH text and endpoints are
+  excluded from dashboard and Genie evidence.
+- The recovery adapter preserves the same bounded failure classes instead of
+  collapsing every transport/helper failure into one vague status. These facts
+  improve diagnosis only and grant no new restart authority.
+- An unavailable/paused server card no longer repeats the same state in both its
+  verdict and phase badge. The verdict tooltip gives the actionable layer detail.
+
 ## Explainable handovers and passive remaining-time evidence
 
 - Queued-handover status now states the exact safety reason when no relocation is

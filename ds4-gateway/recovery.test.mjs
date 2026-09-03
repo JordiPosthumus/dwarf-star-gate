@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {Recovery} from './recovery.mjs';
-import {recoveryConfig} from './recovery-transport.mjs';
+import {classifySshFailure,recoveryConfig} from './recovery-transport.mjs';
 import {verifyRecovery} from './recovery-verify.mjs';
 import {Genie,briefing,parseGenieReview} from './genie.mjs';
 import http from 'node:http';
@@ -32,6 +32,28 @@ test('recovery defaults off; registered endpoints alone convey no recovery autho
   const r=rig();assert.equal(r.recovery.status().automatic,false);assert.throws(()=>r.recovery.request(r.input(),'genie'),/off/);
   for(const patch of [{adapter:'launchd'},{helper:'/tmp/x;evil'},{machine:'unknown'},{shell:'reboot'}])assert.throws(()=>recoveryConfig({workers:[{...config,...patch}]}));
   assert.throws(()=>recoveryConfig({workers:[config,{...config,id:'two',url:'http://127.0.0.1:39002'}]}),/physical/);
+});
+test('SSH management failures become bounded reason classes without exposing transport text',()=>{
+  const cases=[
+    ['ssh: Could not resolve hostname worker.example: nodename nor servname provided','adapter_dns_failure'],
+    ['Host key verification failed.','adapter_host_key_failure'],
+    ['user@secret: Permission denied (publickey).','adapter_auth_failure'],
+    ['ssh: connect to host 192.0.2.8 port 22: Operation timed out','adapter_connect_timeout'],
+    ['ssh: connect to host 192.0.2.8 port 22: Connection refused','adapter_connection_refused'],
+    ['ssh: connect to host 192.0.2.8 port 22: No route to host','adapter_route_unreachable'],
+    ['Connection reset by peer','adapter_connection_reset']];
+  for(const [message,reason] of cases)assert.equal(classifySshFailure(message),reason);
+  assert.equal(classifySshFailure('ordinary warning'),null);
+  assert.equal(classifySshFailure('',null,255),'adapter_unreachable');
+  assert.equal(classifySshFailure('',null,1),'adapter_check_failed');
+  assert.equal(classifySshFailure('','ENOENT'),'adapter_spawn_failed');
+});
+test('recovery status preserves only an allowlisted management failure reason',async()=>{
+  const r=rig({call:async()=>{throw new Error('adapter_dns_failure');}});await r.ready();
+  assert.equal(r.recovery.workerStatus(r.n).reason,'adapter_dns_failure');
+  r.recovery.call=async()=>{throw new Error('worker.example leaked detail');};await r.ready();
+  assert.equal(r.recovery.workerStatus(r.n).reason,'adapter_check_failed');
+  assert.ok(!JSON.stringify(r.recovery.status()).includes('worker.example'));
 });
 test('fatal recovery persists before restart, verifies real checks before reinstatement, and is idempotent',async()=>{
   const r=rig();await r.ready();const input=r.input();let intent=false;

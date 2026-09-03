@@ -77,6 +77,15 @@ An older `verified_paused` receipt means the action finished while paused, not t
 the worker is still paused after an operator resumes it. Historical receipts are
 not rewritten when current routing state changes.
 
+Worker readiness and management reachability are separate evidence. DSG exposes
+only a sanitized management-path state and bounded reason class: for example DNS,
+host-key, authentication, connection timeout/refusal/reset, route unreachable,
+or a helper-contract failure. `ssh_process_active` proves only that a local SSH
+process exists; `verified` means the DS4 model probe succeeded through that path.
+The dashboard tooltip and Gate Genie briefing use these distinctions without
+publishing aliases, addresses, usernames or raw SSH output. A transport failure
+never becomes engine-fault evidence and never authorizes a service restart.
+
 Pause/removal wins over final reinstatement. Turning automatic mode off stops new
 automatic actions and cancels a proposal before issuance when possible; an issued
 restart continues reconciliation/verification. Do not assume a sent SSH command

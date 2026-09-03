@@ -35,6 +35,10 @@ exact protocol attribution and proving learned prediction accuracy remain work.
 **Recovery update:** order 6's first slice is now implemented in
 [bounded DS4 service recovery](worker-recovery.md): systemd-user enrollment, GG and
 detector requests, independent guards, durable receipts and cold/warm verification.
+Sanitized management-path evidence now distinguishes DS4 readiness from DNS,
+SSH identity/authentication, connection and recovery-helper failures. This makes
+operator and Genie advice specific without turning a network symptom into restart
+authority or exposing private transport details.
 This does not fix the CUDA defect or implement launchd/container recovery. The
 backend-process-epoch foundation is now implemented for systemd journal telemetry:
 restart boundaries invalidate learned telemetry spans without changing DS4. The

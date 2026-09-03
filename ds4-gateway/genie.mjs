@@ -21,6 +21,7 @@ function attributionForBriefing(raw) {
 
 export function briefing(snapshot) {
   const g=snapshot.gateway;
+  const recoveryByWorker=new Map((g?.recovery?.workers||[]).map(w=>[w.worker_id,w]));
   return {time:snapshot.time,gateway_at:snapshot.gateway_at ?? snapshot.time,gateway_stale:!!snapshot.gateway_error,context_length:g?.context_length,draining:!!g?.draining,
     continuity_door:snapshot.continuity_door??null,
     calibration:g?.calibration??null,queue_timeout_ms:g?.queue_timeout_ms??null,request_timeout_ms:g?.request_timeout_ms??null,
@@ -36,6 +37,8 @@ export function briefing(snapshot) {
       oldest_queue_seconds:w.oldest_queue_seconds??null,oldest_queue_remaining_seconds:w.oldest_queue_remaining_seconds??null,
       immediately_free:!!w.is_healthy && !w.drained && !w.quarantine && !g.draining && w.load===0 && w.queued===0,
       context_length:w.context_length,requested_thinking:w.requested_thinking,predictions:w.predictions,
+      management_path:w.management_path??null,
+      recovery_evidence:(()=>{const r=recoveryByWorker.get(w.id);return r?{configured:!!r.configured,state:r.state,reason:r.reason??null,inspected_at:r.inspected_at??null}:null;})(),
       health_evidence:{source:w.health_state_source??null,last_probe:w.last_probe??null,probe_error:w.probe_error??null,deferred_probes:w.health_probe_deferred??0},
       telemetry:(()=>{const d=snapshot.devices.find(d=>d.id===w.id);return d?{connected:d.connected,observed_since:d.observed_since,last_event:d.last_event,phase:d.phase,
         backend_epoch:d.backend_epoch,backend_epoch_source:d.backend_epoch_source,backend_epoch_confidence:d.backend_epoch_confidence,
@@ -54,6 +57,7 @@ export function briefing(snapshot) {
       'requested_thinking unavailable/capture_limit means only that metadata capture was limited; the complete request is forwarded unchanged',
       'active_seconds is time since dispatch, not proof of a stall; last_event is an engine log timestamp, not a heartbeat',
       'healthy and paused/quarantine are separate; a model-list probe is not proof of working generation',
+      'management_path is sanitized transport evidence. verified means a DS4 model probe succeeded through that path; ssh_process_active means only that the local SSH process exists, not that login, forwarding or DS4 is healthy. recovery_evidence reports the independently checked recovery adapter. DNS, authentication, host-key, route and timeout failures require different operator remedies and never authorize a restart by themselves',
       'health_evidence.source=recent_upstream_progress means a model-list timeout overlapped fresh bytes from the active inference stream; it does not prove semantic progress or final success. Active status alone never overrides failed health probes. A network or SSH outage is not a proven engine fault; service restart needs reachable, verified recovery evidence',
       'Operator pauses and agent holds are intentional reservations, not faults. Do not recover or enable a reserved server. Releasing one hold does not release other holds or an operator pause',
       'cache counters are observed starts/reuses/restores, not a guaranteed hit rate; resident miss may still restore from disk',
@@ -99,7 +103,7 @@ export function parseGenieReview(answer, evidence) {
 
 function healthKey(snapshot) {
   return JSON.stringify([!!snapshot.gateway_error,!!snapshot.gateway?.draining,snapshot.gateway?.context_length,!!snapshot.gateway?.recovery?.automatic,
-    (snapshot.gateway?.workers||[]).map(w=>[w.id,!!w.is_healthy,!!w.drained,safeQuarantine(w.quarantine)]).sort((a,b)=>a[0].localeCompare(b[0]))]);
+    (snapshot.gateway?.workers||[]).map(w=>[w.id,!!w.is_healthy,!!w.drained,safeQuarantine(w.quarantine),w.management_path?.state??null,w.management_path?.reason??null]).sort((a,b)=>a[0].localeCompare(b[0]))]);
 }
 
 export function tickerStatus(report,snapshot,{enabled=true,busy=false,error=null,source='primary',now=Date.now()}={}) {
