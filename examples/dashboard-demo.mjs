@@ -8,7 +8,7 @@ import {calibrationPreflight} from '../ds4-gateway/calibration.mjs';
 import {FleetThroughput} from '../ds4-gateway/throughput.mjs';
 // Optional memory is supplied only by the isolated browser-test fixture. The
 // ordinary demo has no persistent storage and reads no installation config.
-export function createDemoServer({learningMilestone=false,agentHold=false,memory=null}={}) {
+export function createDemoServer({learningMilestone=false,agentHold=false,quarantinedWorker=false,memory=null}={}) {
 const now = Date.now();
 const workers = [
   { id:'sparkA', is_healthy:true, drained:false, load:1, queued:1, active_seconds:84, completed:42, failed:0, assigned_sessions:4 },
@@ -69,9 +69,10 @@ const snapshot = { version:1,demo:true,time:now,started:now-900000,read_only:fal
   gateway:{model:'deepseek-v4-flash',context_length:262144,queue_timeout_ms:72000000000,total:3,healthy:3,available:3,active:2,queued:1,draining:false,workers,dataset,predictor,recovery},devices,events };
 const registry=()=>({model:'deepseek-v4-flash',minimum_context:snapshot.gateway.context_length,context_limit_control:true,context_limit_source:'saved',queue_timeout_ms:snapshot.gateway.queue_timeout_ms,queue_timeout_control:true,queue_timeout_source:'saved',workers,recovery});
 if(agentHold)Object.assign(workers[2],{drained:true,operator_paused:false,holds:[{id:'demo-hold',owner_id:'test-agent',reason:'<DS4 compatibility test>'}]});
+if(quarantinedWorker)Object.assign(workers[2],{is_healthy:false,quarantine:{reason:'repeated_inference_failures',at:new Date(now-600000).toISOString()}});
 return createDashboard(()=>({...snapshot,time:Date.now(),gateway_at:Date.now(),
   devices:workers.map(w=>devices.find(d=>d.id===w.id)||new DeviceTelemetry(w.id).snapshot()),
-  gateway:{...snapshot.gateway,calibration:calibrationPreflight(workers.map(w=>({id:w.id,healthy:w.is_healthy,drained:w.drained,active:w.load,queue:Array(w.queued).fill(null)}))),total:workers.length,healthy:workers.length,available:workers.filter(w=>!w.drained).length,active:workers.filter(w=>w.load).length,queued:workers.reduce((a,w)=>a+w.queued,0)}}),undefined,{
+  gateway:{...snapshot.gateway,calibration:calibrationPreflight(workers.map(w=>({id:w.id,healthy:w.is_healthy,drained:w.drained,active:w.load,queue:Array(w.queued).fill(null)}))),total:workers.length,healthy:workers.filter(w=>w.is_healthy).length,available:workers.filter(w=>w.is_healthy&&!w.drained).length,active:workers.filter(w=>w.load).length,queued:workers.reduce((a,w)=>a+w.queued,0)}}),undefined,{
   read:async()=>registry(),
   act:async(action,input)=>{
     if(action==='predictor'&&input.action==='acknowledge_milestone'&&Object.keys(input).sort().join(',')==='action,milestone_id'){
@@ -100,6 +101,8 @@ return createDashboard(()=>({...snapshot,time:Date.now(),gateway_at:Date.now(),
       for(const id of input.workers) {
         const w=workers.find(w=>w.id===id);if(!w)throw new Error('Unknown demo worker');
         if(action==='resume'&&w.holds?.length)throw new Error('Release agent holds first');
+        // Synthetic verification succeeds; never calls a real model endpoint.
+        if(action==='resume'&&w.quarantine){w.quarantine=null;w.is_healthy=true;}
         w.operator_paused=action==='drain';
         w.drained=action==='drain';
         if(w.drained)setTimeout(()=>{w.load=0;w.queued=0;w.last_requested_thinking=w.requested_thinking;w.requested_thinking=null;w.last_request_finished_at=new Date().toISOString();},500);

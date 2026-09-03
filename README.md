@@ -23,6 +23,11 @@ conversations are placed according to load. Add, pause, resume or remove servers
 through the local UI or CLI. DS4 handles inference and its caches; DSG handles
 coordination and visibility across the fleet.
 
+Each server card shows whether it is routing, paused, reserved by an agent, or
+quarantined—and why. **Pause / Resume routing** is directly on the card; a
+quarantined server offers **Verify & readmit**, which checks actual generation
+before returning it to the pool. No hidden exclusion toggle or blind fault reset.
+
 **DS4-specific, without modifying DS4:** use the engine's existing API and logs,
 adapt to verified capabilities, and keep unknowns explicit. No custom DS4 patch
 or rebuild is required. See the [integration boundary](docs/ds4-integration.md).

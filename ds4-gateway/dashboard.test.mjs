@@ -95,6 +95,41 @@ test('worker controls show escaped hold ownership and block ordinary Enable/Remo
   const free=row({...w,holds:[]});assert.ok(!/data-action="resume"[^>]*disabled/.test(free));assert.ok(!/data-action="remove"[^>]*disabled/.test(free));
 });
 
+test('excluded routing states are explicit; quarantine offers checked readmission even without a pause',()=>{
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const context=vm.createContext({});vm.runInContext(source,context);vm.runInContext('workerControlsReady=true',context);
+  const state=(w,options={})=>vm.runInContext(`routingInfo(${JSON.stringify(w)},${JSON.stringify(options)})`,context);
+  const markup=(w,options={})=>vm.runInContext(`routingMarkup(${JSON.stringify(w)},${JSON.stringify(options)})`,context);
+  const q={id:'worker-a',is_healthy:false,drained:false,load:0,queued:0,quarantine:{reason:'repeated_inference_failures',at:'2026-01-01T00:00:00Z'}};
+  assert.equal(state(q).button,'Verify & readmit');assert.equal(state(q).action,'resume');assert.equal(state(q).blocked,false);
+  assert.match(markup(q),/QUARANTINED · NOT ROUTING/);assert.match(markup(q),/repeated inference failures/);assert.match(markup(q),/recorded by DSG/);
+  assert.ok(!/data-action="resume"[^>]*disabled/.test(markup(q)),'original UI offered Drain or disabled Enable forever');
+  for(const w of [{...q,load:1},{...q,queued:1},{...q,holds:[{owner_id:'test-agent'}]}])assert.ok(state(w).blocked);
+  assert.ok(state(q,{recovering:true}).blocked);
+  assert.equal(state({...q,quarantine:null,drained:true,operator_paused:true}).button,'Resume routing');
+  assert.equal(state({...q,quarantine:null,drained:true,operator_paused:true}).blocked,false,'fresh probe may restore a previously unavailable paused server');
+  const ready={...q,quarantine:null,is_healthy:true};assert.equal(state(ready).button,'Pause routing');assert.equal(state(ready).excluded,false);
+  assert.equal(state(ready,{stale:true}).action,null);assert.ok(!markup(ready,{controls:false}).includes('<button'));
+  assert.ok(!markup({...q,holds:[{owner_id:'<script>evil</script>'}]}).includes('<script>'));
+  assert.match(markup({...q,holds:[{owner_id:'<script>evil</script>'}]}),/&lt;script&gt;/);
+  const html=fs.readFileSync(new URL('./ui/index.html',import.meta.url),'utf8');
+  assert.ok(html.includes('id="routing-summary"'));assert.ok(html.indexOf('id="routing-message"')>html.indexOf('</details>'));
+  assert.match(source,/\$\('devices'\)\.addEventListener\('click',handleWorkerClick\)/);
+  assert.match(source,/Verify and readmit.*small test response/);
+});
+
+test('routing control updates preserve focused buttons until state changes and refocus the replacement',()=>{
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const active={},doc={activeElement:active},focusCalls=[];let writes=0,value='<button>Resume routing</button>';
+  const current={dataset:{level:'paused'},contains:el=>el===active,querySelector:()=>({focus:options=>focusCalls.push(options)})};
+  Object.defineProperty(current,'innerHTML',{get:()=>value,set:v=>{value=v;writes++;}});
+  const context=vm.createContext({document:doc,current,fresh:{dataset:{level:'paused'},innerHTML:value}});vm.runInContext(source,context);
+  for(let i=0;i<4;i++)vm.runInContext('updateRoutingNode(current,fresh)',context);
+  assert.equal(writes,0);assert.equal(focusCalls.length,0);
+  context.fresh={dataset:{level:'ok'},innerHTML:'<button>Pause routing</button>'};vm.runInContext('updateRoutingNode(current,fresh)',context);
+  assert.equal(writes,1);assert.equal(focusCalls.length,1);assert.equal(focusCalls[0].preventScroll,true);assert.equal(current.dataset.level,'ok');
+});
+
 test('prefill measures newly processed tokens, not the reused prefix', () => {
   const e = parse('chat ctx=143360..145009:1649 TOOLS prefill chunk 1649/1649 (100.0%) chunk=479.41 t/s avg=479.34 t/s 3.440s');
   assert.equal(e.cached, 143360); assert.equal(e.total, 1649); assert.equal(e.tps, 479.41); assert.equal(e.average, 479.34);

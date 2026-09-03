@@ -37,11 +37,26 @@ generation fails after a fatal accelerator error.
   quarantines; actual connection failures remain failures. Unknown outcomes are
   excluded from successful-service training.
 
-The current dashboard marks quarantined workers unavailable. Status/diagnostic
-JSON and the Genie's briefing include the allowlisted quarantine reason, timestamp
-and originating request ID. The [service recovery panel](worker-recovery.md) adds
-executor receipts and eligibility reasons. Ordinary manual pause/drain is separate
-from quarantine.
+The dashboard always shows routing state on each server card, outside collapsed
+management controls. Quarantine is labelled **QUARANTINED · NOT ROUTING**, with
+the recorded failure reason/time and a **Verify & readmit** button. An overview
+warning lists excluded servers. Ordinary operator pause, agent reservation,
+unavailable endpoint and quarantine are distinct states, not interchangeable
+“idle” or “unavailable” labels.
+
+**Pause routing** stops new admission while admitted work finishes; **Resume
+routing** reverses the pause after readiness checks. Neither stops or starts DS4.
+**Verify & readmit** uses the existing checked operator-resume path below, not a
+blind quarantine reset. It asks for confirmation before generating the small
+verification response. Failed checks leave the exclusion intact. Agent holds and
+in-progress recovery cannot be bypassed by these buttons; the owning agent must
+release its hold. Controls are disabled while live status/control access is lost.
+Normal polling preserves card-button focus and tooltips.
+
+Status/diagnostic JSON and the Genie's briefing include the allowlisted quarantine
+reason, timestamp and originating request ID. The separate
+[service recovery panel](worker-recovery.md) supplies guarded **restart** actions
+for enrolled installations; **Verify & readmit** does not restart a model server.
 
 ## Operator recovery
 
