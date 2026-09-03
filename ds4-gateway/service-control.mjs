@@ -32,6 +32,12 @@ export async function readService(kind,config) {
 export function assertIdle(status,interrupt=false) {
   if(!interrupt&&(!status||status.active!==0||status.queued!==0))throw new Error('Gateway is busy or its state is unknown. Wait for idle, or explicitly use --interrupt.');
 }
+export function assertRegistration(saved,spec) {
+  // The operator CLI may use a newer Node than the registered service. Keep the
+  // installed interpreter until explicit reinstall; never change it on restart.
+  const args=saved.ProgramArguments;
+  if(saved.Label!==spec.label||!Array.isArray(args)||typeof args[0]!=='string'||!path.isAbsolute(args[0])||JSON.stringify(args.slice(1))!==JSON.stringify(spec.args.slice(1))||saved.WorkingDirectory!==spec.root||saved.EnvironmentVariables?.GATEWAY_UI_PORT!==spec.variables.GATEWAY_UI_PORT)throw new Error('Service points to another checkout/config/port. Stop that installation before explicitly reinstalling.');
+}
 export async function serviceCommand(command,kinds=['gateway','dashboard'],{interrupt=false}={}) {
   const {config,filename}=loadConfig();
   if(command==='status'){
@@ -47,7 +53,7 @@ export async function serviceCommand(command,kinds=['gateway','dashboard'],{inte
   const verifyRegistration=kind=>{
     let saved;try{saved=JSON.parse(execFileSync('/usr/bin/plutil',['-convert','json','-o','-',plist(kind)],{encoding:'utf8',stdio:['ignore','pipe','pipe']}));}catch{throw new Error('Missing/invalid DSG service registration; run npm run service -- install');}
     const spec=expected(kind);
-    if(saved.Label!==spec.label||JSON.stringify(saved.ProgramArguments)!==JSON.stringify(spec.args)||saved.WorkingDirectory!==spec.root||saved.EnvironmentVariables?.GATEWAY_UI_PORT!==spec.variables.GATEWAY_UI_PORT)throw new Error('Service points to another checkout/config/port. Stop that installation before explicitly reinstalling.');
+    assertRegistration(saved,spec);
   };
   if(command==='install'){
     // Preflight the entire set before writing any registration.

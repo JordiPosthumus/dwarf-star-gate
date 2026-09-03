@@ -8,7 +8,7 @@ import {spawn,execFile,execFileSync} from 'node:child_process';
 import {promisify} from 'node:util';
 import {setTimeout as delay} from 'node:timers/promises';
 import {configPath,loadConfig,projectRoot,dashboardPort,isDashboard,isMain} from './config.mjs';
-import {serviceSpec,assertIdle} from './service-control.mjs';
+import {serviceSpec,assertIdle,assertRegistration} from './service-control.mjs';
 const exec=promisify(execFile);
 const temporary=t=>{const dir=fs.mkdtempSync('/tmp/dsg-install-');t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));return dir;};
 async function until(fn,ms=8000){const end=Date.now()+ms;while(Date.now()<end){try{const v=await fn();if(v)return v;}catch{}await delay(30);}throw new Error('Readiness timeout');}
@@ -31,6 +31,11 @@ test('readiness accepts enabled management; service manifests are portable and n
   const spec=serviceSpec('gateway','/tmp/DSG & space/config.local.json',{state_file:'/tmp/DSG & space/runtime/state.json',api_key:'PRIVATE_KEY_NOT_IN_MANIFEST'},{root:'/tmp/DSG & space',node:'/tmp/node',env:{PATH:'/usr/bin'}});
   assert.ok(spec.text.includes('DSG &amp; space'));assert.ok(!spec.text.includes('PRIVATE_KEY_NOT_IN_MANIFEST'));assert.ok(spec.args[1].endsWith('/ds4-gateway/gateway.mjs'));
   assert.ok(spec.text.includes('<key>ExitTimeOut</key><integer>360000</integer>'));
+  const registration={Label:spec.label,ProgramArguments:['/installed/node',...spec.args.slice(1)],WorkingDirectory:spec.root,EnvironmentVariables:spec.variables};
+  assertRegistration(registration,spec);
+  assert.throws(()=>assertRegistration({...registration,WorkingDirectory:'/other/checkout'},spec));
+  assert.throws(()=>assertRegistration({...registration,ProgramArguments:['/installed/node','/other/gateway.mjs',spec.args[2]]},spec));
+  assert.throws(()=>assertRegistration({...registration,EnvironmentVariables:{GATEWAY_UI_PORT:'1'}},spec));
   assertIdle({active:0,queued:0});for(const state of [null,{active:1,queued:0},{active:0,queued:1}]){assert.throws(()=>assertIdle(state));assertIdle(state,true);}
 });
 test('clean checkout: initialize, doctor, UI registration, exact forwarding, CLI status and persisted restart',async t=>{

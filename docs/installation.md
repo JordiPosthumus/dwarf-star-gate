@@ -93,6 +93,8 @@ interrupted health review is not resumed. Optional automatic recovery policy is
 separate and remains in durable gateway state.
 
 Service commands refuse a registration pointing to another checkout/config/port.
+Restart keeps the registered Node interpreter even if your shell uses a newer
+Node; changing it requires an explicit stopped-service reinstall.
 To move this project: stop the old services, back up config and quiescent runtime,
 move the checkout and runtime, update only affected local paths, reinstall service
 registrations, then start and validate. Python virtual environments are not
