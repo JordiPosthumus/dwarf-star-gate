@@ -2,6 +2,7 @@
 import json
 import shutil
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 import numpy as np
@@ -26,6 +27,28 @@ class PredictorV2Tests(unittest.TestCase):
         for training,validation in v.folds(tr):
             self.assertLess(max(r['finish_time'] for r in training),min(r['decision_time'] for r in validation))
             self.assertLess(max(r['decision_time'] for r in validation),min(r['decision_time'] for r in te))
+
+    def test_model_identity_separates_releases_and_forecast_contracts(self):
+        export={'trees':[], 'base_margin':10}
+        snapshot={'created_at':'2026-01-01T00:00:00Z','hashes':{'fixture':'a'}}
+        identity=v.model_identity(export,'admission',snapshot,'2026-01-01T00:01:00Z')
+        self.assertEqual(identity,v.model_identity(export,'admission',snapshot,'2026-01-01T00:01:00Z'))
+        self.assertNotEqual(identity,v.model_identity(export,'updated',snapshot,'2026-01-01T00:01:00Z'))
+        self.assertNotEqual(identity,v.model_identity(export,'admission',snapshot,'2026-01-01T00:02:00Z'))
+        self.assertNotEqual(identity,v.model_identity(export,'admission',{**snapshot,'hashes':{'fixture':'b'}},'2026-01-01T00:01:00Z'))
+
+    def test_full_candidate_search_keeps_tree_cv_and_new_release_identity(self):
+        data={'schema':v.SCHEMA,'rows':self.rows(), 'snapshot':{'created_at':'2026-01-01T00:00:00Z','hashes':{}},
+              'groups':{'base':['history_count','server_id'],'history':['worker_service_median'],'ratios':[],'semantic':[]},'categorical':['server_id']}
+        with tempfile.TemporaryDirectory() as directory:
+            prepared=Path(directory)/'prepared.json';prepared.write_text(json.dumps(data))
+            first=v.train(prepared);second=v.train(prepared)
+        report=first['reports']['admission']
+        self.assertGreaterEqual(report['folds'],2)
+        self.assertIn(report['selected']['rounds'],v.ROUNDS)
+        self.assertEqual({c['rounds'] for c in report['ablations']},set(v.ROUNDS))
+        self.assertFalse(first['routing_enabled'])
+        self.assertNotEqual(first['models']['admission']['id'],second['models']['admission']['id'])
 
     def test_one_long_job_cannot_dominate_by_having_more_progress_rows(self):
         rows=self.rows(2);rows=[rows[0]]*10+[rows[1]]

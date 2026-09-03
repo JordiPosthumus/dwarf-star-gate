@@ -8,15 +8,16 @@ import { projectRoot } from '../ds4-gateway/config.mjs';
 const modulePath=process.env.DSG_PLAYWRIGHT_MODULE;
 const {chromium}=await import(modulePath?pathToFileURL(path.resolve(modulePath)).href:'playwright');
 const server=createDemoServer();
-let browser;
+let browser,learningServer;
 try {
   await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});
   const origin=`http://127.0.0.1:${server.address().port}`;
   browser=await chromium.launch({headless:true,channel:process.env.DSG_SCREENSHOT_CHANNEL||undefined});
   const context=await browser.newContext({viewport:{width:1440,height:1100},deviceScaleFactor:1,locale:'en-US',timezoneId:'UTC',reducedMotion:'reduce'});
   const errors=[];
+  const allowedOrigins=new Set([origin]);
   await context.route('**/*',route=>{
-    if(new URL(route.request().url()).origin===origin)return route.continue();
+    if(allowedOrigins.has(new URL(route.request().url()).origin))return route.continue();
     errors.push('Unexpected non-demo network request');return route.abort();
   });
   const page=await context.newPage();
@@ -53,8 +54,35 @@ try {
   assert.equal(await page.locator('#analytics-version-label').isVisible(),false);
   await page.setViewportSize({width:390,height:844});
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),'Mobile page must not overflow horizontally');
+  // Separate synthetic scenario: exercise persistent notice UX and safe reset.
+  // No live configuration, telemetry or model server is read by either demo.
+  learningServer=createDemoServer({learningMilestone:true});
+  await new Promise(resolve=>learningServer.listen(0,'127.0.0.1',resolve));
+  const learningOrigin=`http://127.0.0.1:${learningServer.address().port}`;allowedOrigins.add(learningOrigin);
+  await page.setViewportSize({width:1440,height:1100});await page.goto(learningOrigin);
+  await page.waitForFunction(()=>document.querySelectorAll('.learning-milestone').length===1);
+  assert.match(await page.locator('#learning-milestone-items').innerText(),/33\.3%.*42 requests/);
+  assert.match(await page.locator('#learning-milestone-items').innerText(),/<No HTML is interpreted\./);
+  await page.locator('[data-milestone]').focus();
+  const notice=await page.locator('.learning-milestone').elementHandle();
+  const updated=await page.locator('#updated').innerText();
+  await page.waitForFunction(previous=>document.getElementById('updated').textContent!==previous,updated,{timeout:10000});
+  assert.equal(await notice.evaluate(el=>el===document.querySelector('.learning-milestone')),true,'Polling replaced the notice being read');
+  assert.equal(await page.locator('[data-milestone]').evaluate(el=>el===document.activeElement),true);
+  await page.reload();await page.locator('[data-milestone]').waitFor();
+  page.once('dialog',dialog=>dialog.accept());await page.locator('[data-predictor="reset_baseline"]').click();
+  await page.waitForFunction(()=>document.getElementById('predictor-status').textContent.includes('0 validated models'));
+  assert.match(await page.locator('[data-predictor="automatic_training"]').innerText(),/on/);
+  assert.match(await page.locator('[data-predictor="automatic_promotion"]').innerText(),/on/);
+  assert.equal(await page.locator('.learning-milestone').count(),1,'Reset must not erase a historical milestone');
+  await page.setViewportSize({width:390,height:844});
+  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),'Milestone must wrap on mobile');
+  await page.locator('[data-milestone]').click();await page.waitForFunction(()=>document.getElementById('learning-milestones').hidden);
+  await page.reload();await page.waitForFunction(()=>document.querySelectorAll('.device').length===3);
+  assert.equal(await page.locator('#learning-milestones').isHidden(),true,'Acknowledged milestone reappeared after reload');
   assert.deepEqual(errors,[]);
-  console.log('Saved three synthetic screenshots; verified title, logo, polling, analytics labels and mobile width.');
+  console.log('Saved three synthetic screenshots; verified title, logo, polling, analytics labels, mobile width, persistent milestone dismissal and reset UX.');
 } finally {
   await browser?.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));
+  if(learningServer){learningServer.closeAllConnections();await new Promise(resolve=>learningServer.close(resolve));}
 }

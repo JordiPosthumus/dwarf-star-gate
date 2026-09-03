@@ -3,7 +3,7 @@ import { createDashboard } from '../ds4-gateway/dashboard.mjs';
 import { workerConfig, assertUniqueWorker } from '../ds4-gateway/worker-config.mjs';
 import { DeviceTelemetry } from '../ds4-gateway/telemetry.mjs';
 import { isMain } from '../ds4-gateway/config.mjs';
-export function createDemoServer() {
+export function createDemoServer({learningMilestone=false}={}) {
 const now = Date.now();
 const workers = [
   { id:'sparkA', is_healthy:true, drained:false, load:1, queued:1, active_seconds:84, completed:42, failed:0, assigned_sessions:4 },
@@ -26,11 +26,15 @@ workers[1].requested_thinking = { status:'specified', fields:{thinking:false} };
 workers[2].last_requested_thinking = { status:'specified', fields:{reasoning_effort:'high'} };
 workers[2].last_request_finished_at = new Date(now-120000).toISOString();
 const modelIds=['a'.repeat(64),'b'.repeat(64),'c'.repeat(64)];
-const predictor={configured:true,automatic_training:true,automatic_promotion:true,placement:false,busy:false,new_requests:24,
+const predictor={configured:true,automatic_training:true,automatic_promotion:true,placement:false,busy:false,new_requests:24,baseline:{id:'causal-history-v1',name:'Measured history baseline'},milestones:[],
   models:['admission','updated','remaining'].map((kind,i)=>({kind,active_model_id:null,candidate_model_id:modelIds[i],status:i===2?'awaiting_future':'holdout_failed',
     holdout:{mae_s:[64,48,26][i]},future:{mae_s:[58,44,25][i],baseline_mae_s:[51,42,31][i],requests:24,sessions:4},
     selected:{family:i===2?['base','progress']:['base','history'],rounds:i===1?16:128,transform:'log'}})),
   actions:[{time:now-120000,actor:'genie',action:'train',status:'completed',reason:'Synthetic example: candidate evaluated; no routing model activated.'}]};
+if(learningMilestone){
+  predictor.models[2].active_model_id=modelIds[2];
+  predictor.milestones.push({id:'demo-learning-win',time:now-60000,kind:'remaining',model_id:modelIds[2],baseline_id:'causal-history-v1',comparator_id:'causal-history-v1',commentary:{actor:'genie',text:'Synthetic celebration: the challenger brought receipts. <No HTML is interpreted.>'},evidence:{baseline:{mae_s:20,baseline_mae_s:30,requests:42,sessions:8},champion:null,workers:['sparkA','sparkB','mac-ultra']}});
+}
 const recovery={configured:true,automatic:false,workers:workers.slice(0,2).map(w=>({worker_id:w.id,state:'healthy',eligible:false,reason:'no_current_fatal_evidence'})),operations:[]};
 const dataset={enabled:true,written:4200,bytes:18*1048576,pending:0,dropped:0,finished:312,missing_usage:2,truncated:3,failed_or_cancelled:1,last_write:now,
   embedding_collection:{enabled:true,ready:true,completed:308,observed:312,pending:0,failed:0,dropped:0,missing:4,last_duration_ms:24,
@@ -58,7 +62,13 @@ return createDashboard(()=>({...snapshot,time:Date.now(),gateway_at:Date.now(),
   gateway:{...snapshot.gateway,total:workers.length,healthy:workers.length,available:workers.filter(w=>!w.drained).length,active:workers.filter(w=>w.load).length,queued:workers.reduce((a,w)=>a+w.queued,0)}}),undefined,{
   read:async()=>registry(),
   act:async(action,input)=>{
-    if(action==='context') {
+    if(action==='predictor'&&input.action==='acknowledge_milestone'&&Object.keys(input).sort().join(',')==='action,milestone_id'){
+      if(!predictor.milestones.some(m=>m.id===input.milestone_id))throw new Error('No such synthetic milestone');
+      predictor.milestones=predictor.milestones.filter(m=>m.id!==input.milestone_id);
+    }else if(action==='predictor'&&input.action==='reset_baseline'&&Object.keys(input).join(',')==='action'){
+      for(const m of predictor.models)m.active_model_id=null;
+      predictor.reset_at=Date.now();
+    }else if(action==='context') {
       if(input.expected_context_length!==snapshot.gateway.context_length)throw new Error('Pool context changed; refresh before applying');
       if(!Number.isSafeInteger(input.context_length)||input.context_length<=0)throw new Error('Enter a positive whole token count');
       const enabled=workers.filter(w=>!w.drained);

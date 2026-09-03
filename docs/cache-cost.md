@@ -55,6 +55,10 @@ or request text. Deployment data remains private even when this API is local.
 
 ## Next evidence, not another speculative model
 
+Follow the [stock DS4 integration boundary](ds4-integration.md): extract existing
+API/log/OS evidence, without editing the engine. If attribution cannot be proved,
+keep the component estimate and the uncertainty; do not force a guessed join.
+
 1. Correlate cache/phase events to request ID **and backend process epoch**.
 2. Inventory compatible snapshot identity and measure lookup/restore/import
    boundaries, including real cold-to-warm verification.

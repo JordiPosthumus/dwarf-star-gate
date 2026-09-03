@@ -3,6 +3,8 @@
 This is a living roadmap, not a claim that every feature below ships today.
 DSG remains a companion to [antirez's DS4 engine](https://github.com/antirez/ds4).
 The engine performs inference and manages KV state; DSG observes and routes.
+The [DS4 integration contract](ds4-integration.md) is explicit: learn the engine's
+existing interfaces deeply; do not edit DS4 or require a custom server build.
 
 ## Prioritized delivery order — reviewed 2026-09-03
 
@@ -26,7 +28,7 @@ detector requests, independent guards, durable receipts and cold/warm verificati
 This does not fix the CUDA defect or implement launchd/container recovery. The
 next reliability/data priority is request-to-engine attribution with backend
 process epochs. The separate embedding slice now collects future workload features
-without waiting for that engine instrumentation or changing routing.
+without waiting for improved stock-interface attribution or changing routing.
 
 Use the [recovery validation procedure](recovery-validation.md) before enabling
 an enrolled service. Deployment receipts and policy activation belong in private
@@ -199,8 +201,9 @@ are not moved. The [historical v1 experiment](../predictor/README.md) is preserv
    long-running work. Keep the strongest causal baseline when XGB loses. Improve
    timestamped prior-turn features and embedding ablations; do not lower promotion
    gates simply to activate a model.
-2. Add explicit backend process/build/cache-profile identity and request-to-engine
-   attribution. Then separate cache acquisition/prefill from reasoning/output cost;
+2. Extract explicit backend process/build/cache-profile identity and request-to-engine
+   attribution from existing DS4/API/OS evidence, with confidence and missingness.
+   No engine edits; ambiguous log joins stay component-level. Then separate cache acquisition/prefill from reasoning/output cost;
    an endpoint fingerprint alone does not identify a surviving cache or engine.
 3. Add calibrated uncertainty and bounded, versioned training-window selection.
    The trainer currently rejects oversized snapshots; design selection without
@@ -209,14 +212,28 @@ are not moved. The [historical v1 experiment](../predictor/README.md) is preserv
    in shadow. Existing-session overflow requires a separate tested handover protocol;
    a promising ETA alone never authorizes moving active work or copying caches.
 
+**Learning-system slice implemented:** named baseline/reset without disabling
+learning, paired incumbent promotion gates, durable improvement announcements
+and optional Genie-written milestone commentary. A reset is not a training pause;
+pre-reset snapshots cannot immediately restore the rejected model. See the
+[lifecycle controls](predictor-lifecycle.md#controls-gg-and-rollback).
+
+**Next implementation slices:** opt-in pre-assignment client metadata; bounded,
+reviewed XGB recipe/window choices for GG; manual/optional hourly development
+calibration. Calibration must skip when warm-cache preservation is uncertain.
+None of those three controls is shipped yet. Existing training uses recorded
+traffic and does not send calibration jobs to DS4.
+
 Optimize **expected completion time**, including waiting, cache restoration,
 prefill and generation—not raw tokens/second alone.
 
 1. Collect ordinary workload evidence, marking missing, cancelled and truncated
    results. Record only the chosen server's actual result; other servers' outcomes
    are unknown, not invented training labels.
-2. Add small, bounded idle-time calibration jobs for new devices. Real jobs take
-   priority; no large-context benchmark campaign by default.
+2. Add small, bounded calibration jobs for new devices only through a proven
+   non-displacing path. Real jobs and warm production caches take priority;
+   skip on uncertainty, including an idle server with unknown resident state.
+   No large-context benchmark campaign by default.
 3. Establish a simple measured baseline, then a narrowly scoped XGBoost predictor.
    Evaluate on later sessions held out from training. Prediction uncertainty and
    unfamiliar configurations must be visible.

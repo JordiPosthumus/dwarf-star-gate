@@ -29,6 +29,9 @@ shadow gate. This feature does not promise that the available data will pass.
   without GG. Switching GG off does not secretly disable other automation.
 - Collection, automatic training, validated forecast activation and routing use
   are separately visible. Candidate forecasts are explicitly experimental.
+  A named default baseline and **Reset to baseline** keep recovery distinct from
+  turning learning off. Qualified promotions create persistent, dismissible
+  learning milestones with independently measured evidence and optional Genie commentary.
   Existing healthy session affinity, queues, context, inference settings and
   model-server configurations are preserved.
 - Prediction-assisted placement applies only where its support is established;
@@ -103,6 +106,9 @@ Export uses numerical trees, not pickle or executable model code. The exact
 evaluated forest is exported, not an unevaluated all-data refit. JS inference is
 tested against the pinned Python XGBoost runtime, including float32 accumulation,
 missing values, category encoding and log back-transformation.
+New model IDs bind the forest, forecast contract, frozen snapshot and release
+time. Identical-looking retrains do not inherit an older release's validation
+evidence. Existing stored artifacts remain unchanged.
 
 Merge this optional block into `config.local.json` without changing other settings:
 
@@ -146,6 +152,14 @@ policy in `runtime/predictor/state.json` wins over initial config defaults.
   0.7–1.3, at least 5 results on each observed worker and no worker MAE worse
   than 1.1× fallback. Require 3 long requests if the holdout included long work.
   Active forecasts still abstain on workers/profiles lacking local future support.
+- If a model is already active, the challenger must **also beat that incumbent
+  policy** by 10% on matched future requests and the exact same forecast points,
+  with the same count/session/calibration/worker gates. Where the incumbent itself
+  abstains, its baseline fallback is the comparator and those points are counted
+  explicitly. Old incumbent errors from different traffic are not a comparison.
+  Existing saved evaluations lacking paired evidence cannot satisfy this new
+  gate; they are retained, and fresh traffic supplies the missing evidence.
+  A zero-error baseline tie is not an improvement and does not earn promotion.
 - New-session placement additionally needs 20 unseen-session holdout requests
   across 3 sessions passing the same gain/calibration test, plus 5 first-observed
   training requests per candidate worker. First-observed is **not** proof of a
@@ -183,11 +197,41 @@ Under **Analytics → Predictor lifecycle**:
   at least 3 sessions show MAE above 1.25× fallback. GG may request an offered
   rollback at 1.1×; offers are rechecked when executed. Rejected versions are not
   silently promoted again.
+- **Reset to baseline:** restore `causal-history-v1` for all three forecast
+  contracts and clear the previous-version pointers. This is the existing fixed
+  causal history/hardware recipe, not a newly invented XGB default or a fixed
+  guessed duration. Its observations keep updating; unavailable evidence is
+  still unknown. Ordinary deterministic routing remains the fallback. Reset
+  rejects the active/current shadow versions and requires a newly captured
+  snapshot plus fresh validation before another promotion. A snapshot prepared
+  before reset cannot immediately undo it. Collection, retained data, training
+  already in progress and the auto-training/auto-validation/placement switches
+  are **not** disabled or changed. No server, queue, session or cache is changed.
+
+### Durable learning milestones
+
+Activation and its pending announcement are stored together in private predictor
+state. The UI shows the forecast kind/version, evidence count and servers,
+baseline MAE, matched incumbent MAE when applicable, and the time of promotion.
+Announcements have no timeout and survive browser/dashboard/gateway restarts;
+only an explicit operator dismissal acknowledges one. Reset or rollback does
+not erase the historical achievement. Dismissal changes neither model selection
+nor learning, and the append-only action journal retains the original evidence.
+
+The fixed validator creates the facts even when GG is unavailable. During an
+ordinary review, Genie may add short, lightly humorous **labelled commentary**
+to an existing unannotated milestone. It cannot create promotions, edit evidence,
+acknowledge announcements or change tests. This uses the same review call, not
+another inference request. The health ticker remains sober operational advice.
+Duplicate activation is rejected; a failed state write produces neither active
+model nor a false success announcement. Better prediction accuracy is explicitly
+**not** presented as a measured improvement in routing completion time.
 
 GG receives versions, error/coverage evidence, forecasts, offers and executor
 receipts. It does not receive vectors or raw prompt text from this feature. It
 cannot supply commands, paths, new algorithms, arbitrary hyperparameters or gate
-changes. A training request is not a successful model, and model activation is
+changes. The one additional commentary action accepts a pending milestone ID and
+plain text only; it grants no model-management authority. A training request is not a successful model, and model activation is
 not proof that placement is enabled. The UI shows actual receipts. Turning GG off
 does not disable collection, forecasting or the separately armed automations.
 
@@ -207,3 +251,20 @@ operator who can edit both code and private state. Native model evaluation is
 small and synchronous; Python training, embeddings and GG are never awaited by
 request forwarding. The gateway retains its existing session ownership and one
 active request per registered DS4 server.
+
+## Next learning work — agreed boundary, not yet implemented
+
+- Add opt-in, bounded client metadata available before assignment: requested
+  thinking, context usage and compaction signals, with client-reported provenance
+  and missing values. Do not buffer/rewrite prompts to manufacture early features.
+- Extend GG from one fixed recipe to a reviewed menu of versioned XGB recipes
+  and training windows. Keep tree-count cross-validation, untouched holdout/future
+  evidence, deterministic baseline and compute/privacy limits outside GG's control.
+- Add manual and optional hourly development calibration **only after** proving
+  it cannot displace warm production caches or compete with admitted work.
+  Automatic calibration skips on uncertainty. Idle alone does not prove a free
+  cache slot. There is currently no calibration request runner or hourly toggle;
+  the existing training button trains on recorded traffic without invoking DS4.
+- Improve DS4-specific measurement extraction under the
+  [stock DS4 integration contract](ds4-integration.md). No DS4 source patch,
+  custom binary, model-setting change or server restart is part of this feature.

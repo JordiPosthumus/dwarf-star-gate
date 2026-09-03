@@ -3,3 +3,9 @@
 .predictor-panel .genie-controls { flex-wrap: wrap; }
 .predictor-panel th,.predictor-panel td { white-space: normal; min-width: 8rem; }
 .analytics-controls [hidden] { display: none !important; }
+.learning-milestones { margin: 1.5rem 0; padding: 1.25rem; border: 1px solid var(--accent); border-radius: 12px; background: var(--panel); }
+.learning-milestones[hidden] { display: none; }
+.learning-milestones h2 { font-size: 1rem; margin: 0; }
+.learning-milestone { border-top: 1px solid var(--line); padding: 1rem 0; overflow-wrap: anywhere; }
+.learning-milestone p { margin: .4rem 0 .8rem; }
+.learning-milestone strong { color: var(--accent); }

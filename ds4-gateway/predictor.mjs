@@ -11,7 +11,8 @@ const root=fileURLToPath(new URL('../',import.meta.url));
 const hash=b=>createHash('sha256').update(b).digest('hex');
 const finite=x=>typeof x==='number'&&Number.isFinite(x)&&x>=0;
 const id=x=>typeof x==='string'&&/^[a-zA-Z0-9][\w-]{0,95}$/.test(x);
-export const PREDICTION_POLICY={version:1,min_future_requests:30,min_future_sessions:5,required_mae_gain:.10,max_mean_bias:.30,rollback_ratio:1.25,rollback_window:20,training_interval_ms:6*3600000,min_new_requests:50,training_timeout_ms:120000};
+export const DEFAULT_BASELINE=Object.freeze({id:'causal-history-v1',name:'Measured history baseline',recipe:'Fixed causal history/hardware recipe; observations continue to update. Unknown without evidence.'});
+export const PREDICTION_POLICY=Object.freeze({version:2,min_future_requests:30,min_future_sessions:5,required_mae_gain:.10,max_mean_bias:.30,rollback_ratio:1.25,rollback_window:20,training_interval_ms:6*3600000,min_new_requests:50,training_timeout_ms:120000});
 export function score(rows) {
   if(!rows.length)return {requests:0,sessions:0,mae_s:null,baseline_mae_s:null,mean_ratio:null};
   const mean=k=>rows.reduce((s,r)=>s+r[k],0)/rows.length;
@@ -20,7 +21,7 @@ export function score(rows) {
 }
 export function promotionEligible(model,rows) {
   const s=score(rows),p=PREDICTION_POLICY;
-  if(!model.holdout_passed||s.requests<p.min_future_requests||s.sessions<p.min_future_sessions||s.mae_s>s.baseline_mae_s*(1-p.required_mae_gain)||Math.abs(s.mean_ratio-1)>p.max_mean_bias)return false;
+  if(!model.holdout_passed||s.requests<p.min_future_requests||s.sessions<p.min_future_sessions||!finite(s.mae_s)||!finite(s.baseline_mae_s)||s.baseline_mae_s<=0||!Number.isFinite(s.mean_ratio)||s.mae_s>s.baseline_mae_s*(1-p.required_mae_gain)||Math.abs(s.mean_ratio-1)>p.max_mean_bias)return false;
   // Require observed coverage per worker before its forecast is considered
   // calibrated. A paused/removed worker need not generate artificial traffic.
   for(const node of new Set(rows.map(r=>r.node))){const r=rows.filter(x=>x.node===node),m=score(r);if(r.length<5||m.mae_s>m.baseline_mae_s*1.1)return false;}
@@ -30,7 +31,7 @@ export function promotionEligible(model,rows) {
 export class Predictor {
   constructor(config,{directory,dataDirectory,record,now=Date.now,spawnImpl=spawn}={}) {
     Object.assign(this,{config,directory,dataDirectory,record,now,spawnImpl});this.configured=config?.enabled===true;this.error=null;this.busy=false;this.child=null;this.closed=false;this.pending=new Map();this.live=new Map();this.bundles=new Map();this.shadow=null;this.inventory={};this.history=new PredictionHistory();
-    this.state={schema:1,automatic_training:config?.automatic_training===true,automatic_promotion:config?.automatic_promotion===true,placement:config?.placement===true,active:{},previous:{},rejected:{},evaluations:{},new_requests:0,last_train_at:0,receipts:[]};
+    this.state={schema:1,automatic_training:config?.automatic_training===true,automatic_promotion:config?.automatic_promotion===true,placement:config?.placement===true,active:{},previous:{},rejected:{},evaluations:{},new_requests:0,last_train_at:0,reset_at:0,milestones:[],receipts:[]};
     const initialState=structuredClone(this.state);
     if(!this.configured)return;
     try{
@@ -38,6 +39,7 @@ export class Predictor {
       fs.accessSync(config.python,fs.constants.X_OK);this.inventory=JSON.parse(fs.readFileSync(config.profiles));if(this.inventory.schema!==1||!this.inventory.workers)throw new Error('Versioned predictor inventory required');
       this.history=new PredictionHistory(this.inventory);fs.mkdirSync(path.join(directory,'candidates'),{recursive:true,mode:0o700});
       const file=path.join(directory,'state.json');if(fs.existsSync(file)){if(!fs.lstatSync(file).isFile()||fs.statSync(file).size>8*1024**2)throw new Error('Invalid state file');const saved=JSON.parse(fs.readFileSync(file));if(saved.schema!==1||!Array.isArray(saved.receipts)||['active','previous','evaluations'].some(k=>!saved[k]||typeof saved[k]!=='object'||Array.isArray(saved[k]))||Object.values(saved.evaluations).some(v=>!Array.isArray(v))||['automatic_training','automatic_promotion','placement'].some(k=>typeof saved[k]!=='boolean'))throw new Error('Unsupported predictor state');this.state={...this.state,...saved};}
+      if(!finite(this.state.reset_at)||!Array.isArray(this.state.milestones)||this.state.milestones.some(m=>!id(m?.id)||!id(m?.model_id)||typeof m.kind!=='string'||!m.evidence))throw new Error('Invalid learning state');
       if(this.state.training){this.state.training=null;this.receipt('system','train','interrupted','Previous gateway exited before training completed');}
       this.restoreHistory();this.loadCandidates();
     }catch{this.state=initialState;this.error='Predictor configuration/state unavailable; deterministic routing is unchanged';this.configured=false;}
@@ -45,8 +47,11 @@ export class Predictor {
   persist(){const file=path.join(this.directory,'state.json'),tmp=file+'.'+randomUUID();const fd=fs.openSync(tmp,'wx',0o600);try{fs.writeFileSync(fd,JSON.stringify(this.state)+'\n');fs.fsyncSync(fd);}finally{fs.closeSync(fd);}fs.renameSync(tmp,file);}
   receipt(actor,action,status,reason,extra={}) {
     const row={id:randomUUID(),time:this.now(),actor,action,status,reason,...extra};this.state.receipts.unshift(row);this.state.receipts=this.state.receipts.slice(0,30);
-    fs.appendFileSync(path.join(this.directory,'actions.jsonl'),JSON.stringify(row)+'\n',{mode:0o600});this.persist();return row;
+    // The state and its pending announcement commit together. A failed state
+    // write must not leave a journal claiming an activation that never happened.
+    this.persist();try{fs.appendFileSync(path.join(this.directory,'actions.jsonl'),JSON.stringify(row)+'\n',{mode:0o600});}catch{this.error='Predictor state saved, but action journal append failed; inspect private runtime storage';}return row;
   }
+  transition(change){const before=structuredClone(this.state);try{return change();}catch(error){this.state=before;throw error;}}
   restoreHistory() {
     if(!fs.existsSync(this.dataDirectory))return;
     const events=[];for(const file of fs.readdirSync(this.dataDirectory).filter(f=>/^routing-\d{4}-\d{2}-\d{2}\.jsonl$/.test(f)).sort().slice(-2)){
@@ -104,7 +109,12 @@ export class Predictor {
           const samples=this.pending.get(key)??[];
           // Bounded forecast evidence; never score this request more heavily
           // merely because it produced many progress updates.
-          samples.push({model,point,seconds,baseline,experimental});if(samples.length>140)samples.splice(4,1);this.pending.set(key,samples);if(this.pending.size>4096)this.pending.delete(this.pending.keys().next().value);
+          // Score the challenger against the deployed policy at THIS exact
+          // forecast point, never a champion prediction made later. Unsupported
+          // champion hardware uses its normal baseline fallback, labelled below.
+          const direct=active&&this.activeSupported(active,point);
+          const comparator=active?{id:active.id,seconds:direct?predictTreeModel(active,point.features):baseline,source:direct?'model':'baseline'}:null;
+          samples.push({model,point,seconds,baseline,experimental,comparator});if(samples.length>140)samples.splice(4,1);this.pending.set(key,samples);if(this.pending.size>4096)this.pending.delete(this.pending.keys().next().value);
           const current=this.live.get(row.request_id)??{};current[point.kind]={seconds,at:point.at,experimental,stage:point.stage,model_id:model.id};this.live.set(row.request_id,current);if(this.live.size>4096)this.live.delete(this.live.keys().next().value);
         }
       }
@@ -114,6 +124,7 @@ export class Predictor {
   }
   scoreFinished(finish,job,samples) {
     const d=job.decision;
+    const scored=[];
     for(const modelId of new Set(samples.map(s=>s.model.id))){
       const group=samples.filter(s=>s.model.id===modelId&&finite(s.baseline));if(!group.length)continue;
       const model=group[0].model,bundle=[...this.bundles.values()].find(b=>b.models[model.kind]?.id===modelId);
@@ -123,17 +134,63 @@ export class Predictor {
       const g=model.kind==='remaining'?group:[group.at(-1)],n=g.length;
       const row={key:`${finish.run_id}:${finish.request_id}`,session:d.session??'unknown-session',node:finish.node,profile:group[0].point.profile,at:Date.parse(finish.time),long:finish.service_ms>=300000,
         error:0,baseline_error:0,prediction:0,actual:0};
-      for(const s of g){const actual=model.kind==='remaining'?Math.max(0,finish.service_ms/1000-s.point.features.elapsed_s):finish.service_ms/1000;row.error+=Math.abs(actual-s.seconds)/n;row.baseline_error+=Math.abs(actual-s.baseline)/n;row.prediction+=s.seconds/n;row.actual+=actual/n;}
+      const comparatorId=g[0].comparator?.id;
+      if(comparatorId&&g.every(s=>s.comparator?.id===comparatorId&&finite(s.comparator.seconds))){row.comparator_id=comparatorId;row.comparator_error=0;row.comparator_fallback_points=g.filter(s=>s.comparator.source==='baseline').length;row.comparator_points=n;}
+      for(const s of g){const actual=model.kind==='remaining'?Math.max(0,finish.service_ms/1000-s.point.features.elapsed_s):finish.service_ms/1000;row.error+=Math.abs(actual-s.seconds)/n;row.baseline_error+=Math.abs(actual-s.baseline)/n;row.prediction+=s.seconds/n;row.actual+=actual/n;if(row.comparator_id)row.comparator_error+=Math.abs(actual-s.comparator.seconds)/n;}
       const history=this.state.evaluations[modelId]??[];if(!history.some(x=>x.key===row.key))history.push(row);this.state.evaluations[modelId]=history.slice(-200);
       const keep=new Set([...this.bundles.values()].flatMap(b=>Object.values(b.models).map(m=>m.id)));for(const k of Object.keys(this.state.evaluations))if(!keep.has(k))delete this.state.evaluations[k];
-      if(this.state.active[model.kind]===bundle.directory_id){const window=history.slice(-PREDICTION_POLICY.rollback_window),m=score(window);if(window.length>=PREDICTION_POLICY.rollback_window&&m.sessions>=3&&m.mae_s>m.baseline_mae_s*PREDICTION_POLICY.rollback_ratio)this.rollback('watchdog',model.kind,'Recent prediction error exceeded fixed fallback threshold');}
-      else if(this.state.automatic_promotion&&!this.state.rejected[model.id]&&promotionEligible(model,history))this.activate(bundle,model.kind,'validator');
+      scored.push({model,bundle,history});
     }
+    // Finish all scoring before changing the active policy. Loop order must not
+    // turn a challenger into the incumbent halfway through this request.
+    for(const {model,bundle,history} of scored)if(this.state.active[model.kind]===bundle.directory_id){const window=history.slice(-PREDICTION_POLICY.rollback_window),m=score(window);if(window.length>=PREDICTION_POLICY.rollback_window&&m.sessions>=3&&m.mae_s>m.baseline_mae_s*PREDICTION_POLICY.rollback_ratio)this.rollback('watchdog',model.kind,'Recent prediction error exceeded fixed fallback threshold');}
+    for(const {model,bundle} of scored)if(this.state.automatic_promotion&&this.promotionEvidence(bundle,model.kind).eligible)this.activate(bundle,model.kind,'validator');
+  }
+  promotionEvidence(bundle,kind) {
+    const model=bundle?.models[kind],active=this.model(kind,{active:true}),rows=this.state.evaluations[model?.id]??[];
+    const base={eligible:false,baseline:score(rows),baseline_id:DEFAULT_BASELINE.id,comparator_id:active?.id??DEFAULT_BASELINE.id,champion:null};
+    if(!model||active?.id===model.id)return {...base,reason:'already_active_or_unavailable'};
+    if(this.state.rejected[model.id])return {...base,reason:'rejected_version'};
+    // Reset does not freeze learning, but a pre-reset snapshot cannot undo it.
+    if(this.state.reset_at&&!(Date.parse(bundle.snapshot?.created_at)>this.state.reset_at))return {...base,reason:'new_snapshot_required_after_reset'};
+    if(!promotionEligible(model,rows))return {...base,reason:'baseline_gate_pending'};
+    if(active){
+      const paired=rows.filter(r=>r.comparator_id===active.id&&finite(r.comparator_error));
+      const comparison=paired.map(r=>({...r,baseline_error:r.comparator_error}));
+      base.champion={...score(comparison),fallback_points:paired.reduce((n,r)=>n+(r.comparator_fallback_points??0),0),forecast_points:paired.reduce((n,r)=>n+(r.comparator_points??0),0)};
+      if(rows.some(r=>!paired.some(p=>p.node===r.node&&p.profile===r.profile))||!promotionEligible(model,paired)||!promotionEligible(model,comparison))return {...base,reason:'matched_champion_gate_pending'};
+    }
+    return {...base,eligible:true,reason:'independent_gates_passed'};
   }
   activate(bundle,kind,actor) {
-    const model=bundle.models[kind];if(this.state.rejected[model.id]||!promotionEligible(model,this.state.evaluations[model.id]??[]))throw new Error('Model has not passed the fixed future evidence gate');
-    this.state.previous[kind]=this.state.active[kind]??null;this.state.active[kind]=bundle.directory_id;
-    return this.receipt(actor,'activate','verified','Fixed holdout and future-shadow gates passed',{kind,model_id:model.id});
+    const evidence=this.promotionEvidence(bundle,kind),model=bundle.models[kind];if(!evidence.eligible)throw new Error('Model has not passed the fixed future evidence gate: '+evidence.reason);
+    return this.transition(()=>{
+      this.state.previous[kind]=this.state.active[kind]??null;this.state.active[kind]=bundle.directory_id;
+      const rows=this.state.evaluations[model.id]??[],milestone={id:randomUUID(),time:this.now(),kind,model_id:model.id,baseline_id:DEFAULT_BASELINE.id,comparator_id:evidence.comparator_id,evidence:{baseline:evidence.baseline,champion:evidence.champion,from:Math.min(...rows.map(r=>r.at).filter(finite)),to:Math.max(...rows.map(r=>r.at).filter(finite)),workers:[...new Set(rows.map(r=>r.node))]},commentary:null};
+      this.state.milestones.push(milestone);
+      return this.receipt(actor,'activate','verified','Baseline and matched incumbent gates passed; prediction accuracy, not a routing speed claim',{kind,model_id:model.id,milestone});
+    });
+  }
+  reset(actor='operator') {
+    return this.transition(()=>{
+      const rejected=[...new Set([...Object.keys(this.state.active).map(k=>this.model(k,{active:true})?.id),...Object.values(this.shadow?.models??{}).map(m=>m.id)].filter(Boolean))];
+      for(const modelId of rejected)this.state.rejected[modelId]=this.now();
+      this.state.active={};this.state.previous={};this.state.reset_at=this.now();
+      return this.receipt(actor,'reset_baseline','verified','Baseline restored. Collection and training continue; automation switches unchanged. A new snapshot and fresh validation are required.',{baseline_id:DEFAULT_BASELINE.id,rejected_models:rejected});
+    });
+  }
+  milestoneControl(input,actor) {
+    const {action,milestone_id}=input,milestone=this.state.milestones.find(m=>m.id===milestone_id);
+    if(!milestone)throw new Error('Milestone is absent or already acknowledged');
+    if(action==='acknowledge_milestone'&&actor==='operator'&&Object.keys(input).sort().join(',')==='action,milestone_id')return this.transition(()=>{
+      this.state.milestones=this.state.milestones.filter(m=>m.id!==milestone_id);
+      return this.receipt(actor,action,'verified','Announcement dismissed; model selection and learning unchanged',{milestone_id});
+    });
+    if(action==='annotate_milestone'&&actor==='genie'&&!milestone.commentary&&Object.keys(input).sort().join(',')==='action,milestone_id,text'&&typeof input.text==='string'&&input.text.trim()&&input.text.length<=240)return this.transition(()=>{
+      milestone.commentary={text:input.text.replace(/\s+/g,' ').trim(),actor:'genie',time:this.now()};
+      return this.receipt(actor,action,'verified','Genie commentary attached; verified evidence unchanged',{milestone_id,text:milestone.commentary.text});
+    });
+    throw new Error('Unsupported milestone action');
   }
   rollback(actor,kind=null,reason='Operator requested rollback') {
     const kinds=kind?[kind]:Object.keys(this.state.active);if(!kinds.length)throw new Error('No active predictor');
@@ -142,6 +199,7 @@ export class Predictor {
   }
   control(input,actor='operator') {
     if(!this.configured)throw new Error('Predictor is not configured');
+    if(['acknowledge_milestone','annotate_milestone'].includes(input.action))return this.milestoneControl(input,actor);
     if(actor==='genie'){
       if(Object.keys(input).sort().join(',')!=='action,evidence_id')throw new Error('Unsupported Genie action');
       if(input.action==='train'&&this.state.automatic_training&&this.trainingOffer()&&input.evidence_id===this.trainingOffer())return this.train(actor);
@@ -150,6 +208,7 @@ export class Predictor {
     }
     if(input.action==='train'&&Object.keys(input).length===1)return this.train(actor);
     if(input.action==='rollback'&&Object.keys(input).length===1)return this.rollback(actor);
+    if(input.action==='reset_baseline'&&Object.keys(input).length===1)return this.reset(actor);
     if(['automatic_training','automatic_promotion','placement'].includes(input.action)&&Object.keys(input).sort().join(',')==='action,enabled'&&typeof input.enabled==='boolean'){
       this.state[input.action]=input.enabled;return this.receipt(actor,input.action,'verified',input.enabled?'Enabled by operator':'Disabled by operator');
     }throw new Error('Unsupported predictor action');
@@ -206,9 +265,9 @@ export class Predictor {
   status() {
     const candidate=this.shadow,offers=this.state.automatic_training&&this.trainingOffer()?[{action:'train',evidence_id:this.trainingOffer()}]:[];
     if(this.rollbackOffer())offers.push({action:'rollback',evidence_id:this.rollbackOffer()});
-    return {configured:this.configured,error:this.error,candidate_rejections:this.candidateRejections??0,mode:this.state.placement?'validated-new-session-placement':'forecasts-only',automatic_training:this.state.automatic_training,automatic_promotion:this.state.automatic_promotion,placement:this.state.placement,busy:this.busy,training:this.state.training??null,new_requests:this.state.new_requests,history_partial:!!this.partialHistory,policy:PREDICTION_POLICY,offers,
+    return {configured:this.configured,error:this.error,candidate_rejections:this.candidateRejections??0,mode:this.state.placement?'validated-new-session-placement':'forecasts-only',automatic_training:this.state.automatic_training,automatic_promotion:this.state.automatic_promotion,placement:this.state.placement,busy:this.busy,training:this.state.training??null,new_requests:this.state.new_requests,history_partial:!!this.partialHistory,policy:PREDICTION_POLICY,offers,baseline:DEFAULT_BASELINE,reset_at:this.state.reset_at||null,milestones:this.state.milestones,
       models:['admission','updated','remaining'].map(kind=>{const m=candidate?.models[kind],active=this.model(kind,{active:true});return {kind,active_model_id:active?.id??null,candidate_model_id:m?.id??null,status:candidate?.reports[kind]?.status??'not_trained',selected:candidate?.reports[kind]?.selected?{family:candidate.reports[kind].selected.family,rounds:candidate.reports[kind].selected.rounds,transform:candidate.reports[kind].selected.transform}:null,
-        holdout:candidate?.reports[kind]?.holdout??null,baselines:candidate?.reports[kind]?.baselines??null,future:m?score(this.state.evaluations[m.id]??[]):null};}),actions:this.state.receipts.slice(0,10)};
+        default_model_id:DEFAULT_BASELINE.id,effective_model_id:active?.id??DEFAULT_BASELINE.id,promotion:m?this.promotionEvidence(candidate,kind):null,holdout:candidate?.reports[kind]?.holdout??null,baselines:candidate?.reports[kind]?.baselines??null,future:m?score(this.state.evaluations[m.id]??[]):null};}),actions:this.state.receipts.slice(0,10)};
   }
   close(){this.closed=true;this.child?.kill('SIGTERM');}
 }

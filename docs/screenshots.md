@@ -31,6 +31,7 @@ it accepts no production dashboard URL, loads no private config/logs and blocks
 non-demo browser requests. No model, encoder, trainer, SSH connection or Genie
 inference runs. Interactive `npm run ui:demo` uses the same fixture on port 30011.
 Recovery/training mutations are intentionally rejected in the demo.
+Reset and milestone dismissal manipulate synthetic in-memory UI fixtures only.
 
 The capture uses 1440px width, UTC, en-US and reduced motion so headlines are
 readable. It checks the real logo, exact title, populated cards, no activated
@@ -38,6 +39,10 @@ predictor, synthetic labels even when selecting XGB, report persistence across
 a real refresh, and a 390px mobile viewport without page-level horizontal overflow.
 Timestamps and platform fonts may differ; this is a content/privacy smoke test,
 not a pixel-perfect golden-image test.
+An additional isolated scenario verifies that learning milestones remain readable
+across polling/reload, escape Genie text, survive a reset and remain dismissed
+after acknowledgement/reload. Reset leaves the learning switches on. This does
+not read or reset any live predictor.
 
 Before committing, visually inspect all three PNGs and run `npm run check`,
 `npm test` and `npm run privacy-check`. Numerical fixture values must remain

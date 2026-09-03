@@ -18,6 +18,13 @@ PARAMS = {'objective': 'reg:squarederror', 'tree_method': 'hist', 'device': 'cpu
 ROUNDS = (16, 64, 128)
 
 
+def model_identity(export, kind, snapshot, created_at):
+    """A release identity, not just a forest hash: future evidence cannot be
+    inherited by an identical-looking retrain or a different forecast contract."""
+    release = {'model': export, 'kind': kind, 'snapshot': snapshot, 'created_at': created_at}
+    return hashlib.sha256(json.dumps(release, sort_keys=True).encode()).hexdigest()
+
+
 def unique(rows):
     return len({(r['run_id'], r['request_id']) for r in rows})
 
@@ -211,7 +218,7 @@ def train(prepared):
         # silently substituted for the artifact that earned these measurements.
         export=portable(model,enc,factor,winner['transform'])
         actual=np.asarray([exported_prediction(export,r['features']) for r in te]);np.testing.assert_allclose(actual,predictions,rtol=2e-5,atol=1e-3)
-        model_id=hashlib.sha256(json.dumps(export,sort_keys=True).encode()).hexdigest()
+        model_id=model_identity(export,kind,data['snapshot'],result['created_at'])
         export.update(id=model_id,kind=kind,holdout_passed=passed,holdout=measured,baseline_mae_s=best_baseline,new_session_validated=unseen_passed,
                       support={node:{'profiles':sorted({r['profile'] for r in tr if r['node']==node}),'requests':unique([r for r in tr if r['node']==node]),'first_observed_requests':unique([r for r in tr if r['node']==node and r['features'].get('history_count')==0]),'max_elapsed_s':max([r['features'].get('elapsed_s') or 0 for r in tr if r['node']==node])} for node in {r['node'] for r in tr}},
                       parity=[{'features':r['features'],'seconds':float(p)} for r,p in list(zip(te,predictions))[:8]])

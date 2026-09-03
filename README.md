@@ -5,6 +5,9 @@
 A local gateway for **N DS4 servers—DGX Sparks, Macs, or a mix**, with durable session affinity
 and a lightweight control-room dashboard for [DS4](https://github.com/antirez/ds4).
 Register workers through the local UI or CLI; fleet size is not hard-coded.
+**DS4-specific, without modifying DS4:** use the engine's existing API and logs,
+adapt to verified capabilities, and keep unknowns explicit. No custom DS4 patch
+or rebuild is required. See the [integration boundary](docs/ds4-integration.md).
 
 **Implemented, opt-in:** private routing evidence, fleet activity, and **Gate
 Genie**, a local fleet assistant with optional [bounded DS4 service recovery](docs/worker-recovery.md). See the [prioritized feature roadmap](docs/roadmap.md)
@@ -15,6 +18,10 @@ remaining-time models, fixed cross-validation and future-traffic promotion gates
 Prediction-assisted **new-session** placement is separately opt-in and requires
 unseen-session evidence; existing sessions never move. A fitted model alone does
 not qualify. The [v1 offline experiment](predictor/README.md) remains reproducible.
+**Reset to baseline** restores the measured-history recipe without switching
+learning off. A challenger must beat both that baseline and any incumbent on
+matched future evidence. Verified promotions create persistent, dismissible
+learning milestones; Genie can add commentary, not invent the result.
 Workers with recognized engine faults or repeated inference failures are
 [quarantined persistently](docs/generation-health.md); recovery requires a real
 generation check. Opt-in recovery can restart an enrolled systemd-user DS4 service

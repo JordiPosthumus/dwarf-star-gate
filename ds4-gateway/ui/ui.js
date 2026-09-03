@@ -341,10 +341,34 @@ function renderRecovery(state) {
     const p=document.createElement('p');p.textContent=`${clock(op.updated_at)} · ${op.worker_id} · ${op.actor} · ${op.state.replaceAll('_',' ')}${op.error?` · ${op.error.replaceAll('_',' ')}`:''}${op.proof?` · ${op.proof.samples.map(s=>`${s.label}: ${s.cached_tokens}/${s.prompt_tokens} cached`).join(' · ')}`:''} · ${op.id}`;return p;
   }));
 }
-let predictorState=null,predictorControlBusy=false;
+let predictorState=null,predictorControlBusy=false,predictorUnavailable=true,milestoneSignature=null;
+function renderMilestones(milestones,unavailable){
+  const signature=JSON.stringify(milestones);
+  $('learning-milestones').hidden=!milestones.length;
+  // Keep the reading position, focused button and selected text across polls.
+  if(signature!==milestoneSignature){
+    milestoneSignature=signature;
+    $('learning-milestone-items').replaceChildren(...milestones.map(m=>{
+      const article=document.createElement('article');article.className='learning-milestone';
+      const title=document.createElement('strong');title.textContent=`${m.kind}: a challenger earned its place.`;
+      const facts=document.createElement('p'),s=m.evidence.baseline,c=m.evidence.champion;
+      const gain=s.baseline_mae_s>0?100*(1-s.mae_s/s.baseline_mae_s):null;
+      facts.textContent=`Verified at ${clock(m.time)} · model ${m.model_id.slice(0,8)} · ${fmt(gain)}% lower mean absolute prediction error than ${m.baseline_id}: ${fmt(s.mae_s)}s vs ${fmt(s.baseline_mae_s)}s over ${s.requests} requests / ${s.sessions} sessions (${(m.evidence.workers||[]).join(', ')}).${c?` Matched incumbent ${m.comparator_id.slice(0,8)}: ${fmt(c.mae_s)}s vs ${fmt(c.baseline_mae_s)}s over ${c.requests} requests; ${c.fallback_points}/${c.forecast_points} incumbent forecast points used its baseline fallback.`:''} This is prediction accuracy, not a measured routing speedup.`;
+      article.append(title,facts);
+      if(m.commentary){const comment=document.createElement('p');comment.textContent=`Genie commentary: ${m.commentary.text}`;article.append(comment);}
+      const button=document.createElement('button');button.type='button';button.className='button';button.dataset.milestone=m.id;button.textContent='Dismiss announcement';article.append(button);
+      return article;
+    }));
+  }
+  for(const button of $('learning-milestone-items').querySelectorAll('button'))button.disabled=unavailable||predictorControlBusy;
+}
 function renderPredictor(state,unavailable=false){
-  predictorState=state;
+  predictorState=state;predictorUnavailable=unavailable||!state?.configured;
+  // During a telemetry outage keep already-seen notices visible, but read-only.
+  if(state)renderMilestones(state.milestones||[],predictorUnavailable);
+  else for(const b of $('learning-milestone-items').querySelectorAll('button'))b.disabled=true;
   const active=(state?.models||[]).filter(m=>m.active_model_id).length;
+  $('predictor-baseline').textContent=`Default: ${state?.baseline?.name||'Measured history baseline'} (${state?.baseline?.id||'causal-history-v1'}). Fixed recipe, continuously updated observations; no evidence means unknown. ${state?.reset_at?'Last reset: '+clock(state.reset_at)+'. ':''}${active?'Validated tuned forecasts are active where supported.':'No tuned forecast is active; ordinary routing remains in use.'}`;
   $('predictor-status').textContent=unavailable?'Predictor controls unavailable or stale':!state?.configured?'Optional predictor runtime not configured':state.error||`${state.busy?'Training candidate':'Collecting and scoring forecasts'} · ${active} validated models · ${fmt(state.new_requests)} new completed requests since training${state.placement?' · new-session placement armed (evidence gates still apply)':''}`;
   for(const b of $('predictor-controls').querySelectorAll('button')){
     const action=b.dataset.predictor;
@@ -356,11 +380,18 @@ function renderPredictor(state,unavailable=false){
 }
 $('predictor-controls').addEventListener('click',async event=>{
   const button=event.target.closest('button[data-predictor]');if(!button||button.disabled||!csrfToken)return;
-  const action=button.dataset.predictor,input=['train','rollback'].includes(action)?{action}:{action,enabled:!predictorState?.[action]};
+  const action=button.dataset.predictor,input=['train','rollback','reset_baseline'].includes(action)?{action}:{action,enabled:!predictorState?.[action]};
+  if(action==='reset_baseline'&&!window.confirm('Restore the baseline for all forecasts? Existing candidates cannot immediately undo this. Collection continues; training, auto-validation and placement switches stay as set. Servers, sessions and caches are unchanged.'))return;
   if(action==='placement'&&input.enabled&&!window.confirm('Arm placement for new sessions only? It remains inactive until backtest, unseen-session and future-live gates pass. Existing sessions will not move.'))return;
   predictorControlBusy=true;renderPredictor(predictorState);
   try{const r=await fetch('/api/workers/predictor',{method:'POST',headers:{'content-type':'application/json','x-dsg-csrf':csrfToken},body:JSON.stringify(input)}),v=await r.json();if(!r.ok)throw new Error(v.error||'Action rejected');$('predictor-status').textContent=`${action} accepted; awaiting authoritative status`;}
   catch(e){$('predictor-status').textContent=e.message;}finally{predictorControlBusy=false;}
+});
+$('learning-milestone-items').addEventListener('click',async event=>{
+  const button=event.target.closest('button[data-milestone]');if(!button||button.disabled||!csrfToken||predictorUnavailable)return;
+  predictorControlBusy=true;renderMilestones(predictorState?.milestones||[],predictorUnavailable);
+  try{const response=await fetch('/api/workers/predictor',{method:'POST',headers:{'content-type':'application/json','x-dsg-csrf':csrfToken},body:JSON.stringify({action:'acknowledge_milestone',milestone_id:button.dataset.milestone})});const result=await response.json();if(!response.ok)throw new Error(result.error||'Dismissal failed');}
+  catch(error){$('predictor-status').textContent=error.message;}finally{predictorControlBusy=false;}
 });
 $('recovery-toggle').addEventListener('click',()=>{
   if(!recoveryState?.configured)return;
