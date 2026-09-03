@@ -1,0 +1,111 @@
+# Analytics and the latency-model plan
+
+The local dashboard has a compact **Analytics** panel. It evaluates predictions
+already saved by the optional [routing shadow](routing-shadow.md); it neither
+fits a model nor changes placement. Enable the existing dataset and shadow
+options to collect forecasts. With collection alone, actual durations can be
+available while predictions remain missing.
+
+## Reading the panel
+
+- **Queue wait ≥ 1s:** admission to upstream dispatch. Waits below one second
+  are counted separately so immediate dispatches do not dominate the score.
+- **Server time:** dispatch to a successful complete response, including upload,
+  cache work, prefill, reasoning, answer and transport. It is not decode time or
+  pure GPU time. It excludes gateway queueing.
+- Each dot pairs one saved prediction with the chosen server's measured result.
+  Both axes use the same linear scale and units. Above the diagonal means an
+  underestimate. Hover for exact values; filter by server rather than assuming
+  pooled performance applies equally to every device.
+- Coverage is matched forecasts divided by eligible measured requests in the
+  selected window/filter. Mean absolute error uses only those matched pairs.
+  Neither is a calibration certificate, and neither measures outcomes on servers
+  that were not chosen. Tiny or selectively predictable samples can look good.
+
+The current source is explicitly **unvalidated historical baseline, not XGB**.
+It uses prior-session prompt buckets with mixed cache conditions. Its initial
+admission forecast is frozen; later worker-free re-evaluations do not replace a
+bad forecast or count as extra independent examples. The saved elapsed admission
+time is added to predicted remaining wait before comparing with total queue wait.
+Null is unknown, not zero. No hindsight estimates are generated for older requests.
+
+Joining requires the same gateway run, request and actual worker. Duplicate event
+IDs are ignored; conflicting lifecycle events are rejected. A queue wait is known
+at dispatch even if the response later fails. Cancelled/timed-out/otherwise rejected
+queues have no exact dispatch wait and are counted separately, not assigned zero.
+Failed, output-limited, incomplete and unfinished responses are not successful
+service-duration labels. Genie traffic is excluded. This success-only service
+score does **not** measure reliability or the cost of failures.
+
+## Scope and privacy
+
+This is a bounded recent window, not a warehouse or the offline training dataset:
+up to 500 dispatched requests, 4,096 lifecycle records and 16,384 deduplication
+IDs in memory. A read-only reader tails the latest two daily numerical evidence
+files, starts at most 8 MiB back per file, and processes at most 256 KiB per file
+per poll. Large histories may have missing joins. The UI discloses skipped history,
+unjoined/rejected events and malformed records. It preserves partial lines and
+handles observed file rotation/truncation by rebuilding the window. Queued and
+unfinished records can include old interrupted work, not just current jobs.
+
+The reader does not create, delete or edit evidence, follow file symlinks, call
+models, retrain XGB, restart servers or change routing. Its same-origin read-only
+`/api/analytics` response contains only selected worker/timing/coverage fields—no
+prompts, vectors, session/request identifiers, endpoints or filesystem paths.
+Analytics is separate from the existing diagnostic download. These measurements
+are still private deployment data: do not commit captures of the live panel.
+Use explicitly synthetic examples for public screenshots.
+
+New analytics code needs a dashboard-only restart. Inference and collection do
+not need restarting. The dashboard freezes its UI bundle at startup; preserve
+Genie assessments privately before restarting because they remain in memory.
+
+## Which predictions are actually needed?
+
+The objective is **shortest expected completion time among safe feasible routes**,
+not maximum decode speed or minimum queue wait in isolation.
+
+| Quantity | Purpose | Initial implementation / next step |
+| --- | --- | --- |
+| Total server time for a new request | Cost after dispatch on each candidate | Existing offline XGB target; compare a fresh artifact with fixed baselines before any shadow/live promotion |
+| Remaining busy time of an active request | When a server can accept its next job | Existing conditional-history shadow estimate; later elapsed/phase-conditioned model with explicit censored observations |
+| Cache acquisition + suffix prefill time | Cost of hot reuse, local restore or cold execution | Measure request-attributed phases/cache tier first; use a simple measured cost baseline, then fit if justified |
+| Generation duration, including reasoning | Work after prefill until the response ends | Initially part of total server time; separate only with trustworthy phase/output labels |
+| Queue wait | Remaining active work plus requests ahead | Derive from the quantities above and actual admission rules; no separate idle-demand model needed |
+
+Do not build five unrelated XGBs merely because there are five quantities. Start
+with one well-evaluated total-service predictor and a residual-busy estimator.
+Decompose service time only when attribution makes the parts identifiable.
+Predicting how long an *idle* server remains unused is demand forecasting; it is
+not a prerequisite for routing an already waiting request.
+
+For long thinking, `average duration − elapsed` is not a valid residual estimate.
+Condition on the request still running, its phase, elapsed time and fresh progress.
+Cancelled/interrupted jobs are censored observations, not short successful jobs.
+Beyond observed support, abstain rather than return a confident zero. Later
+intervals must have measured coverage; a point estimate is not a confidence band.
+
+Use device identity **and** shared hardware/configuration features, prompt length,
+reasoning controls, cache evidence, load, process epoch and feature-availability
+times. New devices start uncertain and can share hardware-class evidence without
+being declared equivalent to a particular existing machine. Freeze model/schema
+versions with predictions so different candidates are not pooled unknowingly.
+
+The current gateway places requests before reading their bodies. Embeddings and
+current-request text features collected later cannot be used retrospectively at
+that decision point. Local bounded embedding collection is still the next data
+slice, not implemented by this panel. No raw text was retained to backfill old rows.
+
+Before promoting XGB: use forward-time, session-separated validation, select tree
+count within training folds, retain an untouched later holdout, compare with a
+fixed baseline and run shadow evaluation. Check error/coverage by hardware,
+context, cache tier and reasoning setting. The existing log-duration objective
+does not automatically yield a mean duration after exponentiation; verify or
+correct that before calling a score *expected* completion time.
+
+When phase models are added, replace the aggregate estimate with their sum; do
+not add prefill/decode on top of an already total-service prediction. Remote cache
+transfer is a later compatibility-gated path whose critical path may overlap
+queue wait. The [roadmap](roadmap.md) retains the four cache-source alternatives.
+Genie may explain evidence and later request bounded training jobs; deterministic
+evaluation/promotion and routing guards remain independent of his commentary.

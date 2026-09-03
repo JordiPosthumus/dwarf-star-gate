@@ -33,6 +33,46 @@ function telemetryStatus(d) {
   if (d.telemetry_configured === false) return 'Engine timings not configured';
   return `${d.telemetry_source === 'file' ? 'Model log' : 'Journal'} ${d.connected ? 'connected' : 'disconnected'}`;
 }
+function analyticsMetrics(snapshot,metric='queue',worker='') {
+  const finite=x=>Number.isFinite(x)&&x>=0;
+  const rows=(snapshot?.rows||[]).filter(r=>!worker || r.node===worker);
+  const eligible=rows.filter(r=>metric==='queue'?finite(r.queue_ms)&&r.queue_ms>=1000:r.service_state==='complete'&&finite(r.service_ms));
+  const pairs=eligible.map(r=>({node:r.node,at:r.at,actual:metric==='queue'?r.queue_ms:r.service_ms,
+    predicted:metric==='queue'?r.predicted_queue_ms:r.predicted_service_ms})).filter(r=>finite(r.predicted));
+  return {pairs,eligible:eligible.length,missing:eligible.length-pairs.length,
+    immediate:rows.filter(r=>finite(r.queue_ms)&&r.queue_ms<1000).length,
+    unfinished:rows.filter(r=>r.service_state==='pending').length,excluded:rows.filter(r=>r.service_state==='excluded').length,
+    coverage:eligible.length?pairs.length/eligible.length*100:null,
+    mae:pairs.length?pairs.reduce((sum,r)=>sum+Math.abs(r.actual-r.predicted),0)/pairs.length:null};
+}
+function predictionChart(pairs) {
+  if(!pairs.length)return '<p class="analytics-empty">No matched predictions yet.<br>Unknown estimates are not plotted as zero.</p>';
+  const max=Math.max(1000,...pairs.flatMap(p=>[p.actual,p.predicted])),unit=max>=120000?60000:1000,label=unit===60000?'min':'s';
+  const x=v=>48+v/max*180,y=v=>202-v/max*180;
+  return `<svg viewBox="0 0 266 246" role="img" aria-label="Predicted versus actual duration in ${label}; identical axes; dots above the diagonal took longer than predicted"><title>${pairs.length} paired requests; predictions were saved at admission</title><text x="48" y="12">Actual (${label})</text>${[0,.5,1].map(f=>`<line class="analytics-grid" x1="48" x2="228" y1="${y(f*max)}" y2="${y(f*max)}"/><text x="41" y="${y(f*max)+4}" text-anchor="end">${fmt(f*max/unit)}</text><text x="${x(f*max)}" y="219" text-anchor="middle">${fmt(f*max/unit)}</text>`).join('')}<line class="analytics-equal" x1="48" y1="202" x2="228" y2="22"/>${pairs.map(p=>`<circle class="${p.actual>p.predicted?'underestimated':'estimated'}" cx="${x(p.predicted).toFixed(2)}" cy="${y(p.actual).toFixed(2)}" r="3"><title>${esc(p.node)}: predicted ${fmt(p.predicted/1000)}s, actual ${fmt(p.actual/1000)}s</title></circle>`).join('')}<text x="138" y="240" text-anchor="middle">Predicted (${label})</text></svg>`;
+}
+let analyticsState=null,analyticsLoading=false,analyticsWorkerSignature='',analyticsChartSignature='';
+function renderAnalytics() {
+  const a=analyticsState,worker=$('analytics-worker'),metric=$('analytics-metric').value;
+  const ids=[...new Set((a?.rows||[]).map(r=>r.node))].sort(),signature=JSON.stringify(ids);
+  if(signature!==analyticsWorkerSignature) {
+    analyticsWorkerSignature=signature;const previous=worker.value;
+    worker.innerHTML='<option value="">All servers</option>'+ids.map(id=>`<option value="${esc(id)}">${esc(id)}</option>`).join('');
+    worker.value=ids.includes(previous)?previous:'';
+  }
+  const m=analyticsMetrics(a,metric,worker.value);
+  $('analytics-status').textContent=a?.demo?'Synthetic demo · not measured predictions':({disabled:'Enable evidence collection to see analytics.',waiting:'Waiting for saved evidence.',catching_up:'Reading recent evidence — counts are partial.',rescanning:'Evidence files changed — rebuilding the recent window.',unavailable:'Evidence unavailable — previous values are historical.',ready:'Shadow baseline · unvalidated'})[a?.status]||'Analytics unavailable — previous values are historical.';
+  const chartSignature=JSON.stringify(m.pairs);
+  if(chartSignature!==analyticsChartSignature){analyticsChartSignature=chartSignature;$('analytics-chart').innerHTML=predictionChart(m.pairs);}
+  $('analytics-stats').innerHTML=`<div><span class="label">PAIRED REQUESTS</span><strong>${fmt(m.pairs.length)}</strong></div><div><span class="label">PREDICTION COVERAGE</span><strong>${m.coverage===null?'—':fmt(m.coverage)+'%'}</strong></div><div><span class="label">MEAN ABSOLUTE ERROR</span><strong>${m.mae===null?'—':fmt(m.mae/1000)+'s'}</strong></div>`;
+  $('analytics-detail').textContent=`Recent window: up to ${fmt(a?.window_limit||500)} dispatched non-Genie requests from the latest two daily evidence files. ${fmt(m.missing)} missing estimates; ${metric==='queue'?`${fmt(m.immediate)} waits under 1s excluded from this graph`:`${fmt(m.unfinished)} unfinished and ${fmt(m.excluded)} failed/output-limited or otherwise incomplete responses excluded`}. ${fmt(a?.not_dispatched||0)} observed requests ended before dispatch (all servers; not zero waits).${a?.partial_history?' Older file content was skipped by the bounded reader.':''}${a?.rejected_events||a?.malformed_lines?` Evidence gaps: ${fmt(a.rejected_events)} rejected/unjoined events, ${fmt(a.malformed_lines)} malformed/oversized lines.`:''}`;
+}
+async function loadAnalytics() {
+  if(analyticsLoading)return;analyticsLoading=true;
+  try {const r=await fetch('/api/analytics',{cache:'no-store',signal:AbortSignal.timeout(5000)});if(!r.ok)throw new Error();analyticsState=await r.json();}
+  catch {analyticsState={...analyticsState,status:'unavailable'};}
+  finally {analyticsLoading=false;renderAnalytics();}
+}
 function timeline(d,now) {
   const rows=d.activity||[],start=now-900000;
   return `<svg class="activity-timeline" viewBox="0 0 100 10" preserveAspectRatio="none" role="img" aria-label="Observed activity over the last fifteen minutes; blank sections are unknown">${rows.map(r=>{
@@ -220,6 +260,9 @@ function renderGenieReports(reports = []) {
   }
 }
 poll();
+$('analytics-metric').addEventListener('change',renderAnalytics);
+$('analytics-worker').addEventListener('change',renderAnalytics);
+void loadAnalytics();setInterval(()=>{if(!document.hidden)void loadAnalytics();},10000);
 $('health-wire-pause').addEventListener('click',()=>{
   wirePaused=!wirePaused;$('health-wire').dataset.paused=String(wirePaused);
   $('health-wire-pause').textContent=wirePaused?'Resume ticker':'Pause ticker';

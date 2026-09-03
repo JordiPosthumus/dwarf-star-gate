@@ -12,12 +12,13 @@ import { Activity } from './ui/activity.js';
 import { Genie } from './genie.mjs';
 import { genieTunnel } from './genie-tunnel.mjs';
 import { safeQuarantine } from './generation-health.mjs';
+import { AnalyticsReader } from './analytics.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const assets = new Map([['/', ['index.html', 'text/html']], ['/ui.css', ['ui.css', 'text/css']], ['/brand.css', ['brand.css', 'text/css']], ['/ui.js', ['ui.js', 'text/javascript']], ['/logo.png', ['logo.png', 'image/png']]]);
 assets.set('/activity.js',['activity.js','text/javascript']);
 for(const [file,mime] of [['favicon.ico','image/x-icon'],['favicon-v1.svg','image/svg+xml'],['dsg-pinned-v1.svg','image/svg+xml'],['favicon-v1.png','image/png'],['apple-touch-icon.png','image/png']])assets.set('/'+file,[file,mime]);
-export function createDashboard(getSnapshot, assetsDirectory = path.join(here, 'ui'), management = null, genie = null) {
+export function createDashboard(getSnapshot, assetsDirectory = path.join(here, 'ui'), management = null, genie = null, analytics = null) {
   const csrf = randomBytes(32).toString('base64url');
   // Freeze one complete release in memory: edits on disk cannot expose half an
   // update to a live browser. Only the dashboard needs a reload to promote it.
@@ -77,6 +78,7 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
       return;
     }
     if (req.method !== 'GET') { res.writeHead(405, headers); return res.end('Read-only'); }
+    if (req.url === '/api/analytics') return reply(200,analytics?analytics():{enabled:false,status:'disabled',rows:[]});
     if (req.url === '/api/status' || req.url === '/api/diagnostics') {
       if (req.url === '/api/diagnostics') headers['content-disposition'] = 'attachment; filename="spark-gateway-diagnostics.json"';
       res.writeHead(200, { ...headers, 'content-type': 'application/json' }); return res.end(JSON.stringify(getSnapshot()));
@@ -98,6 +100,7 @@ export async function runDashboard(configPath, port = 30010) {
     if (node.telemetry_service !== null && !/^[\w@.-]+\.service$/.test(node.telemetry_service || 'ds4-vision-q2.service')) throw new Error('Unsupported journal unit');
   }
   const runtime = path.join(path.dirname(config.state_file), 'dashboard');
+  const analytics=new AnalyticsReader(path.join(path.dirname(config.state_file),'training'),{enabled:config.dataset_enabled===true});
   fs.mkdirSync(runtime, { recursive: true, mode: 0o700 });
   let closed = false, gateway = null, gatewayAt = null, gatewayError = 'Waiting for gateway', writeError = null;
   let events = [], offset = null, inode = null, fragment = '', polling = false;
@@ -197,7 +200,7 @@ export async function runDashboard(configPath, port = 30010) {
   }
   async function poll() {
     if (polling) return;
-    polling = true; readEvents();
+    polling = true; readEvents();analytics.poll();
     try {
       const r = await fetch(`http://127.0.0.1:${config.port}/gateway/status`, { headers: { authorization: `Bearer ${config.api_key}` }, signal: AbortSignal.timeout(3000) });
       if (!r.ok) throw new Error('Status unavailable');
@@ -221,7 +224,7 @@ export async function runDashboard(configPath, port = 30010) {
   const server = createDashboard(snapshot, path.join(here,'ui'), managementEnabled ? {
     read:()=>workerControl(config.control_socket,'/workers'),
     act:(action,input)=>workerControl(config.control_socket,({add:'/add-worker',remove:'/remove-worker',drain:'/drain-workers',resume:'/resume-workers',context:'/set-context-limit',recover:'/recover-worker','recovery-policy':'/recovery-policy','recovery-recheck':'/recovery-recheck'})[action],input),
-  } : null,genie);
+  } : null,genie,()=>analytics.snapshot());
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
   await poll(); const interval = setInterval(poll, 2000), genieTimer=setInterval(()=>genie.tick(),10000);
   const close = () => { closed = true; clearInterval(interval);clearInterval(genieTimer);genie.close();stopGenieTunnel(); for (const t of timers) clearTimeout(t); for (const child of children) child.kill(); server.closeAllConnections(); server.close(); process.removeListener('SIGTERM', close); process.removeListener('SIGINT', close); };

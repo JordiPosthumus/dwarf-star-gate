@@ -10,6 +10,11 @@
 
 ## Unreleased
 
+- Add compact read-only Analytics: frozen admission forecasts versus actual queue
+  and server durations, equal-axis chart, per-server filters, coverage/error,
+  bounded evidence tailing and explicit unknown/censored outcomes. No live XGB
+  or routing changes; model/data next steps are documented separately.
+
 - Generalized recovery/profile/incident and predictor documentation; detailed
   operational records stay private. Exact recommended settings and known risks
   remain documented. Current-tree cleanup does not erase previous Git history.

@@ -10,6 +10,13 @@ This table is the current order; the sections below retain the detailed design.
 See the [maintenance review](maintenance-review-2026-09-02.md) for reproduced bugs,
 fixes and remaining uncertainty. A source commit is not a live deployment receipt.
 
+**Analytics implemented:** the compact [prediction-accuracy panel](analytics.md)
+joins existing admission-time shadow forecasts to observed queue/server durations,
+with per-server filters, missing-prediction coverage and error. This is an
+unvalidated historical baseline, not live XGB. Its model plan prioritizes total
+service time and remaining busy time; queue wait is derived, not idle-demand
+forecasting. Phase/cache attribution and embeddings remain the next data work.
+
 **Recovery update:** order 6's first slice is now implemented in
 [bounded DS4 service recovery](worker-recovery.md): systemd-user enrollment, GG and
 detector requests, independent guards, durable receipts and cold/warm verification.

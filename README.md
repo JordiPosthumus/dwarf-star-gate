@@ -274,6 +274,11 @@ deleted or automatically rotated: choose retention for your installation.
 Raw gateway logs can contain SSH error messages and host details; do not publish
 them without review. Monitoring logs are separate from the inference path.
 
+The local **Analytics** panel compares saved shadow forecasts with actual queue
+waits and server durations, with sample counts, missing-prediction coverage and
+per-server filtering. It is an unvalidated historical baseline, not a live XGB
+router. See [analytics definitions and the model plan](docs/analytics.md).
+
 ## Client affinity
 
 Send a stable `x-session-affinity` header for each conversation. Other accepted

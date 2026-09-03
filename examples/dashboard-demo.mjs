@@ -53,7 +53,10 @@ const server = createDashboard(()=>({...snapshot,time:Date.now(),gateway_at:Date
     }
     return registry();
   },
-});
-server.listen(30011,'127.0.0.1',()=>console.log('Demo only: http://127.0.0.1:30011'));
+},null,()=>({enabled:true,status:'ready',demo:true,window_limit:500,not_dispatched:1,
+  rows:Array.from({length:20},(_,i)=>({node:`spark${i%2+1}`,at:now-i*60000,
+    queue_ms:i?10000+i*3000:0,predicted_queue_ms:i%5?8000+i*2800:null,
+    service_ms:i<18?40000+i*2100:null,predicted_service_ms:i%4?35000+i*2500:null,service_state:i<18?'complete':i===18?'pending':'excluded'}))}));
+server.listen(Number(process.env.DEMO_PORT??30011),'127.0.0.1',()=>console.log(`Demo only: http://127.0.0.1:${server.address().port}`));
 const close = () => { server.closeAllConnections(); server.close(); };
 process.on('SIGINT',close); process.on('SIGTERM',close);
