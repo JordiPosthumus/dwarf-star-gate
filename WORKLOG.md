@@ -10,6 +10,10 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Corrected Mac recovery executable identification.** Real DS4 processes expose
+  multiple shared-library text mappings. Recovery now queries the kernel's exact
+  executable path instead; read-only live validation passed, with no service action.
+
 - **Fixed Safari refresh scroll jumps.** Updating machine-card content now keeps
   the reader's viewport in place. A live WebKit reproduction moved 1,000px → 398px
   before the fix and stayed at 1,000px after it; a synthetic browser check covers polling.

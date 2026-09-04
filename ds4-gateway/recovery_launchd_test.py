@@ -1,4 +1,5 @@
 import importlib.util
+import ctypes
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,27 @@ spec.loader.exec_module(adapter)
 
 
 class LaunchdAdapterTests(unittest.TestCase):
+    def test_kernel_executable_path_is_bounded_and_fail_closed(self):
+        for content,returned,valid in [(b'/opt/ds4/server',15,True),(b'relative',8,False),(b'/x',0,False),(b'/x',4096,False),(b'/x',3,False),(b'/\xff',2,False)]:
+            with patch.object(adapter.ctypes, 'CDLL') as library:
+                def query(pid,buffer,size):
+                    self.assertEqual(pid,123);self.assertEqual(size,4096)
+                    ctypes.memmove(buffer,content,len(content))
+                    return returned
+                library.return_value.proc_pidpath.side_effect=query
+                if valid:self.assertEqual(adapter.process_executable(123),content.decode())
+                else:
+                    with self.assertRaises(ValueError):adapter.process_executable(123)
+        with patch.object(adapter.ctypes,'CDLL',side_effect=OSError):
+            with self.assertRaises(ValueError):adapter.process_executable(123)
+        for pid in [True,0,-1,2147483648,'123']:
+            with self.assertRaises(ValueError):adapter.process_executable(pid)
+
+    def test_process_metadata_rechecks_kernel_executable_and_never_uses_text_mappings(self):
+        with patch.object(adapter,'process_executable',side_effect=['/opt/ds4/server','/other']), patch.object(adapter,'run',side_effect=[('Fri Sep  4 10:00:00 2026',0),('/opt/ds4/server --port 8001',0)]) as run:
+            with self.assertRaisesRegex(ValueError,'service_executable_changed'):adapter.process_info(123)
+            self.assertTrue(all(call.args[0][0]=='/bin/ps' for call in run.call_args_list))
+
     def files(self, temp):
         root = Path(temp)
         binary = root / "ds4-server"

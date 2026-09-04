@@ -1,5 +1,12 @@
 # Changelog
 
+## Correct macOS recovery executable lookup
+
+- Replace the invalid single-`lsof txt`-mapping assumption with bounded macOS
+  `proc_pidpath` lookup. Recheck the executable after process metadata reads;
+  reject unavailable, malformed, truncated or changed identity. Explicit launchd
+  enrollment, profile checks and recovery authorization remain unchanged.
+
 ## Preserve viewport during machine-card refresh
 
 - Preserve the viewport across synchronous card updates, preventing WebKit's

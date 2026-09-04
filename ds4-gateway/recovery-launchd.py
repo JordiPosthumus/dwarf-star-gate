@@ -8,6 +8,7 @@ accept shell commands, model settings or service names from Gate Genie.
 """
 
 import datetime
+import ctypes
 import fcntl
 import hashlib
 import json
@@ -132,11 +133,29 @@ def stopped_epoch(state, config):
     return digest(json.dumps(value, sort_keys=True).encode())
 
 
-def process_info(pid):
-    executable, _ = run(["/usr/sbin/lsof", "-a", "-p", str(pid), "-d", "txt", "-Fn"])
-    paths = [line[1:] for line in executable.splitlines() if line.startswith("n/")]
-    if len(paths) != 1:
+def process_executable(pid):
+    # lsof's txt mappings include shared libraries, not just the executable.
+    # Ask the kernel directly using libproc's fixed-size proc_pidpath API.
+    if type(pid) is not int or not 2 <= pid <= 2147483647:
         raise ValueError("service_executable_unverified")
+    try:
+        query = ctypes.CDLL("/usr/lib/libproc.dylib").proc_pidpath
+        query.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32]
+        query.restype = ctypes.c_int
+        buffer = ctypes.create_string_buffer(4096)
+        size = query(pid, buffer, len(buffer))
+        if not 0 < size < len(buffer) or len(buffer.value) != size:
+            raise ValueError("service_executable_unverified")
+        value = buffer.value.decode("utf-8", errors="strict")
+        if not value.startswith("/"):
+            raise ValueError("service_executable_unverified")
+        return value
+    except (OSError, AttributeError, UnicodeError):
+        raise ValueError("service_executable_unverified")
+
+
+def process_info(pid):
+    executable = process_executable(pid)
     started_text, _ = run(["/bin/ps", "-p", str(pid), "-o", "lstart="])
     command, _ = run(["/bin/ps", "-ww", "-p", str(pid), "-o", "command="])
     try:
@@ -145,7 +164,9 @@ def process_info(pid):
         raise ValueError("service_start_time_unverified")
     if not command.strip():
         raise ValueError("service_command_unverified")
-    return {"executable": paths[0], "started_at": started_at, "command": command.rstrip("\n")}
+    if process_executable(pid) != executable:
+        raise ValueError("service_executable_changed")
+    return {"executable": executable, "started_at": started_at, "command": command.rstrip("\n")}
 
 
 def owns_listener(pid, port):
