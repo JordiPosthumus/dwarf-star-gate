@@ -1,5 +1,14 @@
 # Changelog
 
+## Long-overlap attribution retention
+
+- Fixed a conservative-attribution lifetime mismatch: a completed request that
+  overlapped a still-running request is now retained until the bounded overlap
+  resolves, rather than disappearing after the ordinary 15-minute history.
+- The private candidate set is capped and never exported. Capacity pressure or
+  missing late evidence preserves the overlap abstention; it can never create a
+  unique request owner by forgetting a competing candidate.
+
 ## Privacy-safe cache-continuity audit
 
 - Added a read-only aggregate audit over existing DSG decision/completion

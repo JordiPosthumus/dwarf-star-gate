@@ -81,3 +81,25 @@ test('long xhigh work keeps its open attribution span, then retires after comple
   a.acceptGateway(finish(other,'spark2',twoHours+16*60000));
   assert.equal(a.snapshot().recent.find(row=>row.sample_id===sample),undefined);
 });
+
+test('a completed overlap candidate survives the short history window until the long peer resolves',()=>{
+  const a=new EngineAttribution();
+  a.acceptGateway(dispatch(request,'spark1',10000));a.acceptGateway(dispatch(other,'spark1',11000));a.acceptEngine(start(sample,'spark1',12000));
+  a.acceptGateway(finish(request,'spark1',13000,{prompt_tokens:1000,cached_tokens:900}));
+  assert.equal(a.snapshot().recent[0].reason,'overlapping_gateway_windows');
+  a.acceptGateway(finish(other,'spark1',2*3600000,{prompt_tokens:700,cached_tokens:600}));
+  const row=a.snapshot().recent[0];assert.equal(row.request_id,request);assert.equal(row.status,'corroborated');assert.equal(row.reason,'usage_disambiguated_overlap');
+  a.acceptGateway(dispatch('33333333-3333-4333-8333-333333333333','spark2',3*3600000));
+  assert.equal(a.snapshot().recent.find(value=>value.sample_id===sample),undefined,'settled evidence returns to the ordinary bounded history');
+});
+
+test('the request cap preserves overlap evidence before unrelated windows and never fabricates uniqueness',()=>{
+  const a=new EngineAttribution();
+  a.acceptGateway(dispatch(request,'spark1',10000));a.acceptGateway(dispatch(other,'spark1',11000));a.acceptEngine(start(sample,'spark1',12000));
+  for(let i=0;i<520;i++){
+    const id=i.toString(16).padStart(8,'0')+'-0000-4000-8000-'+i.toString(16).padStart(12,'0');
+    a.acceptGateway(dispatch(id,'spark2',13000+i));
+  }
+  assert.ok(a.requests.size<=512);const row=a.snapshot().recent.find(value=>value.sample_id===sample);
+  assert.equal(row.status,'abstained');assert.equal(row.reason,'overlapping_gateway_windows');assert.equal(row.request_id,null);
+});

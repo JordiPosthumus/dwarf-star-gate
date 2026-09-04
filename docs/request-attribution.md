@@ -47,13 +47,21 @@ timing record. Invisible direct clients and unknown clock error cannot be ruled
 out merely by a time-and-usage match. Therefore these rows do not train XGB,
 accuse a route of a cache miss, move work, or authorize recovery.
 
-The correlator retains 15 minutes of completed history, but preserves an open
-attribution span for up to seven days so long-context xhigh generations are not
-discarded merely for being slow. It uses a five-second clock tolerance and a
-ten-minute maximum dispatch-to-prompt-start lead. Stable sample and revision
-digests allow later readers to deduplicate dashboard replay. Only allowlisted IDs,
-times, token counts, status and epoch digests are saved in the private dashboard
-metrics stream; prompts, responses, journal text, paths and credentials are absent.
+The correlator normally retains 15 minutes of completed history, but preserves an
+open attribution span for up to seven days so long-context xhigh generations are
+not discarded merely for being slow. When one completed request overlaps a peer
+that is still running, its private candidate window is retained until every
+candidate has a terminal event. The set is capped at 64 candidates per start and
+512 lifecycle records overall. Under capacity pressure, a missing remembered
+candidate preserves the overlap abstention; forgetting evidence can never create
+a unique owner. Settled evidence returns to the ordinary history bound.
+
+It uses a five-second clock tolerance and a ten-minute maximum
+dispatch-to-prompt-start lead. Stable sample and revision digests allow later
+readers to deduplicate dashboard replay. Only allowlisted IDs, times, token counts,
+status and epoch digests are saved in the private dashboard metrics stream;
+private candidate sets, prompts, responses, journal text, paths and credentials
+are absent.
 
 ## Attribution-yield audit
 

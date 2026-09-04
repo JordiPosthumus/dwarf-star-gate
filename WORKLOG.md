@@ -10,6 +10,12 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Kept long overlap evidence alive without weakening attribution.** Completed
+  request windows that overlap a long-running peer now survive the short history
+  until every candidate has terminated. Candidate retention is private and
+  bounded; eviction keeps the start abstained instead of manufacturing a unique
+  owner. Regression tests cover multi-hour resolution and capacity pressure.
+
 - **Made cache continuity auditable without retaining conversations.** A bounded
   CLI now measures reuse across consecutive same-session completions, names every
   abstention, and refuses to turn missing client/epoch evidence into an accusation.
