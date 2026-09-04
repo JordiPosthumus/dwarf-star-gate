@@ -1,7 +1,7 @@
 # XGBoost predictors
 
-**Current v2:** [live forecast lifecycle, setup, validation and controls](../docs/predictor-lifecycle.md).
-Use `prepare.mjs` + `fit_v2.py` for new causal forecasts and bounded production
+**Current versioned lifecycle (V2 incumbent + V3 challenger):** [live forecast lifecycle, setup, validation and controls](../docs/predictor-lifecycle.md).
+Use `prepare.mjs` + the backward-named `fit_v2.py` trainer for new causal forecasts and bounded production
 training. Tree count is cross-validated on forward-time folds with label-availability
 purging; recurring sessions are allowed for next-turn forecasts, while a separate
 unseen-session gate guards new-session placement. JS evaluates exported trees
@@ -10,7 +10,7 @@ without Python on the inference path.
 ## Historical v1 offline experiment
 
 The remainder of this page documents the preserved `train.py`/`predict.py` v1
-workflow, **not the current v2 lifecycle**. Its session-disjoint split and optional
+workflow, **not the current V2/V3 lifecycle**. Its session-disjoint split and optional
 32-tree plumbing fallback have not been changed or imported into production.
 
 **Implemented: fit, evaluate, save, reload and inspect an experimental predictor.**

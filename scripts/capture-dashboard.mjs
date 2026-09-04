@@ -46,6 +46,7 @@ try {
   assert.match(await page.locator('#throughput-summary').getAttribute('title'),/11 \/ 12/);
   assert.match(await page.locator('#throughput-summary').getAttribute('title'),/Counts arrive when requests finish/);
   assert.match(await page.locator('#continuity-door-status').innerText(),/Continuity Door ready.*2 active proxied streams.*no request-body spooling or replay/);
+  assert.match(await page.locator('#fleet-summary').innerText(),/mac-ultra is free; sparkA's next queued session keeps its warm home for up to 4m more; then the DSG core may hand it over automatically/);
   assert.ok(await page.locator('.gate-art').evaluate(img=>img.complete&&img.naturalWidth>0));
   const output=path.join(projectRoot,'docs/images');await fs.mkdir(output,{recursive:true});
   await page.locator('#worker-management summary').click();
@@ -62,7 +63,7 @@ try {
   await page.waitForFunction(()=>document.getElementById('queue-timeout-current').textContent.includes('20,000'));
   await page.reload();await page.locator('#worker-management summary').click();await page.locator('#queue-timeout-form').waitFor();
   assert.equal(await page.locator('#queue-timeout-input').inputValue(),'20000');
-  assert.match(await page.locator('#relocation-controls').innerText(),/Safe queued handovers/);
+  assert.match(await page.locator('#relocation-controls').innerText(),/Safe queued handovers.*configured first-refusal window.*gateway core may move/s);
   assert.equal(await page.locator('#relocation-offers button').count(),1);
   assert.match(await page.locator('#relocation-offers button').getAttribute('title'),/warm cache/);
   await page.locator('#worker-management').screenshot({path:path.join(output,'worker-management.png'),animations:'disabled'});

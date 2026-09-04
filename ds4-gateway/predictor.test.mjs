@@ -12,6 +12,8 @@ import {createGateway} from './gateway.mjs';
 import {createDashboard} from './dashboard.mjs';
 import {workerControl} from './worker-client.mjs';
 import {PredictionHistory,replay,FEATURE_SCHEMA} from './prediction-features.mjs';
+import {PredictionHistory as PredictionHistoryV3,replay as replayV3,FEATURE_SCHEMA as FEATURE_SCHEMA_V3} from './prediction-features-v3.mjs';
+import {featureBuilderHash} from './prediction-feature-registry.mjs';
 import {predictTreeModel,validateCandidate,reference,encode} from './xgb-runtime.mjs';
 import {Predictor,promotionEligible,DEFAULT_BASELINE} from './predictor.mjs';
 import {PredictionEvidence} from './analytics.mjs';
@@ -26,6 +28,7 @@ function decision(id,at,session='s',extra={}){return row('decision',id,at,{sessi
 function complete(h,id,at,session='s',extra={}){h.observe(decision(id,at,session));h.observe(row('dispatch',id,at+1));return h.observe(row('finish',id,at+10001,{outcome:'complete',finish_reason:'stop',service_ms:10000,usage:{prompt_tokens:100,completion_tokens:40,cached_tokens:50},generation:{thinking_characters:30,answer_characters:10,tool_characters:0,first_semantic_ms:2000},...extra}));}
 function model(overrides={}){return {kind:'admission',id:'a'.repeat(64),encoding:{names:['history_count'],categorical:[],vocabulary:{},encoded_names:['f0']},base_margin:10,factor:1,transform:'raw',trees:[{left_children:[-1],right_children:[-1],split_indices:[0],split_conditions:[0],default_left:[1]}],parity:[{features:{history_count:0},seconds:10}],support:{a:{profiles:['p'],requests:50,first_observed_requests:8},b:{profiles:['q'],requests:50,first_observed_requests:8}},holdout_passed:true,holdout:{long_requests:0},new_session_validated:true,...overrides};}
 function bundle(m=model()){return {schema:2,feature_schema:FEATURE_SCHEMA,created_at:new Date(origin-1000).toISOString(),snapshot:{feature_builder_sha256:createHash('sha256').update(fs.readFileSync(new URL('./prediction-features.mjs',import.meta.url))).digest('hex')},models:{[m.kind]:m},reports:{[m.kind]:{status:'holdout_passed'}}};}
+function bundleV3(m=model({id:'3'.repeat(64)})){return {...bundle(m),feature_schema:FEATURE_SCHEMA_V3,created_at:new Date(origin).toISOString(),snapshot:{feature_builder_sha256:featureBuilderHash(FEATURE_SCHEMA_V3)}};}
 function rig(t){const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-predictor-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));fs.writeFileSync(path.join(dir,'profiles.json'),JSON.stringify(inventory));fs.mkdirSync(path.join(dir,'data'));let now=origin;const events=[];const p=new Predictor({enabled:true,python:process.execPath,profiles:path.join(dir,'profiles.json')},{directory:dir,dataDirectory:path.join(dir,'data'),now:()=>now,record:(kind,r)=>events.push({kind,...r})});t.after(()=>p.close());return {p,dir,events,setTime:n=>{now=n;}};}
 function install(r,name,b){const d=path.join(r.dir,'candidates',name);fs.mkdirSync(d);const text=JSON.stringify(b);fs.writeFileSync(path.join(d,'candidate.json'),text);fs.writeFileSync(path.join(d,'report.json'),JSON.stringify({candidate_sha256:createHash('sha256').update(text).digest('hex')}));r.p.loadCandidates();}
 const goodRows=(node='a',profile='p')=>Array.from({length:30},(_,i)=>({key:'r'+i,session:'s'+i%5,node,profile,at:origin+i*1000,error:1,baseline_error:10,prediction:100,actual:100,long:false}));
@@ -57,6 +60,31 @@ test('progress is post-dispatch, remaining target is elapsed-adjusted; replay eq
   assert.deepEqual(live,offline);assert.equal(live.length,2);assert.equal(live[1].target_s,10);assert.equal(live[1].features.thinking_characters,180);
   assert.throws(()=>replay([...events,{...events[0],node:'b'}],inventory),/Conflicting/);
 });
+test('v3 feeds collected admission, cache, request-shape and progress evidence into XGB rows without changing v2',()=>{
+  assert.equal(FEATURE_SCHEMA,'dsg-latency-v2');assert.equal(FEATURE_SCHEMA_V3,'dsg-latency-v3');
+  const candidate={node:'a',profile:'p',context_length:262144,active:1,queued:2,assigned_sessions:7,worker_idle_ms:null,active_elapsed_ms:9000,upstream_byte_age_ms:1200,
+    session_last_used_ms:4000,session_last_finished_ms:3000,intervening_requests:2,prior_prompt_tokens:900,prior_cached_tokens:810,observation_epoch:4,cache_residence:'unknown'};
+  const d=decision('v3',0,'v3-session',{admission_wait_ms:2500,client_metadata:{status:'ready',prompt_tokens_estimate:1000,turn_index:8,compaction_count:1,reasoning_effort:'xhigh'},candidates:[candidate]});
+  const events=[d,row('dispatch','v3',1),row('request_features','v3',2,{status:'ready',available_at:origin+2,request_bytes:12000,message_count:20,user_messages:10,assistant_messages:9,system_messages:1,tool_messages:0,text_characters:44000,image_parts:1,tool_definitions:12,max_output_tokens:32768,temperature:.7,top_p:.95,request_stream:true,request_route:'/v1/chat/completions'}),row('progress','v3',5002,{active_elapsed_ms:5000,semantic_characters:100,semantic_age_ms:20,phase:'thinking'}),row('finish','v3',10002,{outcome:'complete',finish_reason:'stop',service_ms:10000})];
+  const h=new PredictionHistoryV3(inventory),points=[],liveRows=[];for(const event of events){const result=h.observe(event);points.push(...result.points);liveRows.push(...result.rows);}
+  const admission=points[0].features,upload=points.find(point=>point.stage==='upload').features,progress=points.find(point=>point.stage==='remaining').features;
+  assert.deepEqual({prompt:admission.client_prompt_tokens_estimate,turn:admission.client_turn_index,compactions:admission.client_compaction_count,effort:admission.client_reasoning_effort,active:admission.selected_active,queued:admission.selected_queued,idle:admission.worker_idle_s,activeAge:admission.active_elapsed_at_admission_s,cache:admission.candidate_prior_cached_fraction,growth:admission.current_prompt_growth_ratio},
+    {prompt:1000,turn:8,compactions:1,effort:'xhigh',active:1,queued:2,idle:null,activeAge:9,cache:.9,growth:1000/900});
+  assert.deepEqual({bytes:upload.request_bytes,messages:upload.request_message_count,characters:upload.request_text_characters,images:upload.request_image_parts,tools:upload.request_tool_definitions,max:upload.request_max_output_tokens,route:upload.request_route},
+    {bytes:12000,messages:20,characters:44000,images:1,tools:12,max:32768,route:'/v1/chat/completions'});
+  assert.equal(progress.elapsed_s,5);assert.equal(progress.phase,'thinking');
+  assert.deepEqual(replayV3(events,inventory).rows,liveRows);
+});
+test('v2 remains active while a newer v3 challenger loads and scores in parallel',t=>{
+  const r=rig(t),incumbent=bundle(),challenger=bundleV3();
+  install(r,'candidate-v2',incumbent);r.p.state.active.admission='candidate-v2';
+  install(r,'candidate-v3',challenger);
+  assert.equal(r.p.model('admission',{active:true}).id,incumbent.models.admission.id);
+  assert.equal(r.p.model('admission').id,challenger.models.admission.id);
+  assert.equal(r.p.status().models[0].active_feature_schema,FEATURE_SCHEMA);
+  assert.equal(r.p.status().models[0].candidate_feature_schema,FEATURE_SCHEMA_V3);
+  assert.deepEqual([...r.p.histories.keys()].sort(),[FEATURE_SCHEMA,FEATURE_SCHEMA_V3].sort());
+});
 test('duplicate dispatch, unverified profiles, Genie and cancelled jobs do not produce training labels',()=>{
   const h=new PredictionHistory(inventory);h.observe(decision('dup',0));h.observe(row('dispatch','dup',1));h.observe(row('dispatch','dup',2));assert.equal(h.observe(row('finish','dup',100,{outcome:'complete',finish_reason:'stop',service_ms:99})).rows.length,0);
   complete(h,'genie',100,'g',{outcome:'client_cancelled'});assert.equal(h.completed,0);
@@ -68,6 +96,14 @@ test('native evaluator validates shape, missing branches, float32 and Python par
   assert.ok(Number.isNaN(encode({},m.encoding)[0]));assert.throws(()=>validateCandidate(bundle(model({parity:[{features:{},seconds:999}]}))),/disagreement/);
   const bad=model();bad.trees[0]={left_children:[0],right_children:[0],split_indices:[0],split_conditions:[0],default_left:[1]};assert.throws(()=>validateCandidate(bundle(bad)),/edge/);
   assert.throws(()=>validateCandidate(bundle(model({transform:'arbitrary-code'}))),/Unsupported/);
+});
+test('native evaluator rounds XGBoost split thresholds to float32 before branching',()=>{
+  const boundary={...model(),base_margin:0,factor:1,transform:'raw',encoding:{names:['elapsed_s'],categorical:[],vocabulary:{},encoded_names:['f0']},
+    trees:[{left_children:[1,-1,-1],right_children:[2,-1,-1],split_indices:[0,0,0],split_conditions:[42.436348,1,2],default_left:[0,0,0]}]};
+  // Both the feature and split become the same float32 value. XGBoost's strict
+  // less-than therefore takes the right branch; comparing to a JS double would
+  // incorrectly take the left branch.
+  assert.equal(predictTreeModel(boundary,{elapsed_s:42.43634796142578}),2);
 });
 test('holdout and future gates require multiple sessions, genuine gain, calibration and per-worker coverage',()=>{
   const m=model(),rows=goodRows();assert.ok(promotionEligible(m,rows));assert.ok(!promotionEligible({...m,holdout_passed:false},rows));assert.ok(!promotionEligible(m,rows.slice(0,29)));

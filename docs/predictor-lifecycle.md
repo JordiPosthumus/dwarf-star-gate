@@ -8,7 +8,8 @@ shadow gate. This feature does not promise that the available data will pass.
   Admission uses past completed calls only. Upload/embedding updates and active
   remaining-time forecasts have separate timestamps and evaluation targets.
 - Features include recent output/duration trends, variability, ratios, shared
-  hardware attributes, cache evidence, bounded semantic projections/similarity,
+  hardware attributes, queue/load age, candidate cache/session evidence, optional
+  early client counters, bounded request shape, semantic projections/similarity,
   and observed generation phases. Character counts are not called token counts.
 - Python/XGBoost trains off the request path with fixed CPU/time/data budgets.
   Immutable candidate bundles carry source, schema, inventory and data hashes.
@@ -51,8 +52,8 @@ promotion; collecting more evidence must not mean relaxing the tests.
 
 | Contract | Available evidence | Target |
 | --- | --- | --- |
-| Admission | Prior completed requests, worker identity/hardware, current queues | Total server seconds after dispatch |
-| Updated | Admission history plus bounded upload metadata; later a separately timestamped embedding update | Same total server duration, predicted later |
+| Admission | Prior completed requests, worker identity/hardware, current queues, cache/session ages, optional early client counters | Total server seconds after dispatch |
+| Updated | Admission history plus bounded upload shape (message/role/text/image/tool counts and output controls); later a separately timestamped embedding update | Same total server duration, predicted later |
 | Remaining | Elapsed time, emitted character counts/phase and then-available metadata/embeddings | Successful server duration minus elapsed |
 
 The UI separates upload and embedded updates. Its remaining-time chart freezes
@@ -110,6 +111,13 @@ New model IDs bind the forest, forecast contract, frozen snapshot and release
 time. Identical-looking retrains do not inherit an older release's validation
 evidence. Existing stored artifacts remain unchanged.
 
+`dsg-latency-v2` remains loadable and byte-compatible while
+`dsg-latency-v3` trains as a challenger. A V3 model cannot inherit V2 validation
+or replace it on a restart. The status API reports each candidate's schema,
+selected blocks, full-contract feature coverage and winning-tree split usage.
+Historical evidence cannot backfill new request-shape fields; those become useful
+only after the V3 collector runs.
+
 Merge this optional block into `config.local.json` without changing other settings:
 
 ```json
@@ -135,8 +143,10 @@ policy in `runtime/predictor/state.json` wins over initial config defaults.
 ## Fixed selection and release gates
 
 - CPU-only: XGBoost 3.4.1, NumPy 2.5.2, two XGB threads, shallow depth-2 trees.
-  Cross-validate 16/64/128 trees, raw/log/relative-log targets, and fixed feature
-  families (base; history; ratios; semantic). Remaining models also use progress.
+  Cross-validate 16/64/128 trees, raw/log/relative-log targets, and reviewed,
+  bounded feature-block combinations. V3 separates stable base, admission/cache
+  state, client counters, history/ratios, request shape, semantic and progress
+  blocks so noisy evidence is available without being forced into every model.
   Relative-log models use the causal prior even when the selected tree inputs
   are only the base family. Full vectors stay private; semantic features include
   12 fixed projections plus previous-turn similarities. Selection may reject

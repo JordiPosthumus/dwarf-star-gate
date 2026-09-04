@@ -5,7 +5,7 @@ import path from 'node:path';
 import {spawn} from 'node:child_process';
 import {createHash,randomUUID} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
-import {PredictionHistory} from './prediction-features.mjs';
+import {featureContract,featureBuilderHash,featureSchemas,CURRENT_FEATURE_SCHEMA} from './prediction-feature-registry.mjs';
 import {validateCandidate,predictTreeModel,supported,reference} from './xgb-runtime.mjs';
 import {TRAINING_RECIPES,DEFAULT_RECIPE,RECIPE_POLICY_SHA256,trainingRecipe} from './training-recipes.mjs';
 const root=fileURLToPath(new URL('../',import.meta.url));
@@ -31,20 +31,21 @@ export function promotionEligible(model,rows) {
 }
 export class Predictor {
   constructor(config,{directory,dataDirectory,record,now=Date.now,spawnImpl=spawn}={}) {
-    Object.assign(this,{config,directory,dataDirectory,record,now,spawnImpl});this.configured=config?.enabled===true;this.error=null;this.busy=false;this.child=null;this.closed=false;this.pending=new Map();this.live=new Map();this.bundles=new Map();this.shadow=null;this.inventory={};this.history=new PredictionHistory();
+    Object.assign(this,{config,directory,dataDirectory,record,now,spawnImpl});this.configured=config?.enabled===true;this.error=null;this.busy=false;this.child=null;this.closed=false;this.pending=new Map();this.live=new Map();this.bundles=new Map();this.shadow=null;this.inventory={};this.histories=this.makeHistories();this.history=this.histories.get(CURRENT_FEATURE_SCHEMA);
     this.state={schema:1,automatic_training:config?.automatic_training===true,automatic_promotion:config?.automatic_promotion===true,placement:config?.placement===true,active:{},previous:{},rejected:{},evaluations:{},new_requests:0,last_train_at:0,reset_at:0,milestones:[],receipts:[]};
     const initialState=structuredClone(this.state);
     if(!this.configured)return;
     try{
       if(!path.isAbsolute(config.python||'')||!path.isAbsolute(config.profiles||''))throw new Error('Absolute private predictor python/profiles paths required');
       fs.accessSync(config.python,fs.constants.X_OK);this.inventory=JSON.parse(fs.readFileSync(config.profiles));if(this.inventory.schema!==1||!this.inventory.workers)throw new Error('Versioned predictor inventory required');
-      this.history=new PredictionHistory(this.inventory);fs.mkdirSync(path.join(directory,'candidates'),{recursive:true,mode:0o700});
+      this.histories=this.makeHistories(this.inventory);this.history=this.histories.get(CURRENT_FEATURE_SCHEMA);fs.mkdirSync(path.join(directory,'candidates'),{recursive:true,mode:0o700});
       const file=path.join(directory,'state.json');if(fs.existsSync(file)){if(!fs.lstatSync(file).isFile()||fs.statSync(file).size>8*1024**2)throw new Error('Invalid state file');const saved=JSON.parse(fs.readFileSync(file));if(saved.schema!==1||!Array.isArray(saved.receipts)||['active','previous','evaluations'].some(k=>!saved[k]||typeof saved[k]!=='object'||Array.isArray(saved[k]))||Object.values(saved.evaluations).some(v=>!Array.isArray(v))||['automatic_training','automatic_promotion','placement'].some(k=>typeof saved[k]!=='boolean'))throw new Error('Unsupported predictor state');this.state={...this.state,...saved};}
       if(!finite(this.state.reset_at)||!Array.isArray(this.state.milestones)||this.state.milestones.some(m=>!id(m?.id)||!id(m?.model_id)||typeof m.kind!=='string'||!m.evidence))throw new Error('Invalid learning state');
       if(this.state.training){this.state.training=null;this.receipt('system','train','interrupted','Previous gateway exited before training completed');}
       this.restoreHistory();this.loadCandidates();
     }catch{this.state=initialState;this.error='Predictor configuration/state unavailable; deterministic routing is unchanged';this.configured=false;}
   }
+  makeHistories(inventory={}){return new Map(featureSchemas().map(schema=>[schema,new (featureContract(schema).PredictionHistory)(inventory)]));}
   persist(){const file=path.join(this.directory,'state.json'),tmp=file+'.'+randomUUID();const fd=fs.openSync(tmp,'wx',0o600);try{fs.writeFileSync(fd,JSON.stringify(this.state)+'\n');fs.fsyncSync(fd);}finally{fs.closeSync(fd);}fs.renameSync(tmp,file);}
   receipt(actor,action,status,reason,extra={}) {
     const row={id:randomUUID(),time:this.now(),actor,action,status,reason,...extra};this.state.receipts.unshift(row);this.state.receipts=this.state.receipts.slice(0,30);
@@ -57,7 +58,7 @@ export class Predictor {
     if(!fs.existsSync(this.dataDirectory))return;
     const events=[];for(const file of fs.readdirSync(this.dataDirectory).filter(f=>/^routing-\d{4}-\d{2}-\d{2}\.jsonl$/.test(f)).sort().slice(-2)){
       const full=path.join(this.dataDirectory,file);if(!fs.lstatSync(full).isFile())continue;const fd=fs.openSync(full,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);try{const size=fs.fstatSync(fd).size,start=Math.max(0,size-8*1024**2),b=Buffer.alloc(size-start);fs.readSync(fd,b,0,b.length,start);const text=b.toString('utf8'),lines=text.split('\n');if(start){lines.shift();this.partialHistory=true;}lines.pop();for(const line of lines)try{const row=JSON.parse(line);if(row.schema===1)events.push(row);}catch{this.partialHistory=true;}}finally{fs.closeSync(fd);}}
-    for(const row of events.sort((a,b)=>Date.parse(a.time)-Date.parse(b.time)))this.history.observe(row);
+    for(const row of events.sort((a,b)=>Date.parse(a.time)-Date.parse(b.time)))for(const history of this.histories.values())history.observe(row);
   }
   loadCandidates() {
     const directory=path.join(this.directory,'candidates');
@@ -66,7 +67,7 @@ export class Predictor {
     for(const name of names.filter(id)){try{
       const file=path.join(directory,name,'candidate.json'),reportFile=path.join(directory,name,'report.json');if(!fs.existsSync(file)||!fs.existsSync(reportFile))continue;
       if(!fs.lstatSync(file).isFile()||fs.statSync(file).size>8*1024**2)throw new Error('Invalid candidate file');const bytes=fs.readFileSync(file),report=JSON.parse(fs.readFileSync(reportFile));if(hash(bytes)!==report.candidate_sha256)throw new Error('Candidate checksum mismatch');
-      const bundle=validateCandidate(JSON.parse(bytes));if(bundle.snapshot.feature_builder_sha256!==hash(fs.readFileSync(path.join(root,'ds4-gateway/prediction-features.mjs'))))throw new Error('Feature builder changed; retrain before use');
+      const bundle=validateCandidate(JSON.parse(bytes));if(bundle.snapshot.feature_builder_sha256!==featureBuilderHash(bundle.feature_schema))throw new Error('Feature builder changed; retrain before use');
       const requestFile=path.join(directory,name,'training-request.json');
       if(fs.existsSync(requestFile)){
         if(!fs.lstatSync(requestFile).isFile()||fs.statSync(requestFile).size>4096)throw new Error('Invalid training request');
@@ -81,6 +82,7 @@ export class Predictor {
   model(kind,{active=false}={}) {
     const deployed=this.bundles.get(this.state.active[kind]);return active?deployed?.models[kind]:this.shadow?.models[kind]??deployed?.models[kind];
   }
+  bundleFor(model){return model?[...this.bundles.values()].find(bundle=>Object.values(bundle.models).some(candidate=>candidate.id===model.id))??null:null;}
   trainingOffer() {
     if(!this.configured||this.busy||this.closed||this.history.completed<50)return null;
     if(this.now()-this.state.last_train_at<600000)return null;
@@ -106,9 +108,11 @@ export class Predictor {
   observe(row) {
     if(!this.configured||this.closed||row.kind==='model_prediction')return;
     try{
-      const result=this.history.observe(row),key=row.run_id+':'+row.request_id;
-      for(const point of result.points){
-        const candidates=new Map();const experimental=this.model(point.kind),active=this.model(point.kind,{active:true});if(experimental)candidates.set(experimental.id,experimental);if(active)candidates.set(active.id,active);
+      const results=[...this.histories].map(([schema,history])=>({schema,result:history.observe(row)})),key=row.run_id+':'+row.request_id;
+      for(const {schema,result} of results)for(const point of result.points){
+        const candidates=new Map();const experimental=this.model(point.kind),active=this.model(point.kind,{active:true});
+        if(experimental&&this.bundleFor(experimental)?.feature_schema===schema)candidates.set(experimental.id,experimental);
+        if(active&&this.bundleFor(active)?.feature_schema===schema)candidates.set(active.id,active);
         for(const model of candidates.values()){
           if(!supported(model,point))continue;
           const seconds=predictTreeModel(model,point.features),baseline=this.baseline(point),experimental=model.id!==active?.id||!this.activeSupported(model,point);
@@ -122,10 +126,15 @@ export class Predictor {
           const direct=active&&this.activeSupported(active,point);
           const comparator=active?{id:active.id,seconds:direct?predictTreeModel(active,point.features):baseline,source:direct?'model':'baseline'}:null;
           samples.push({model,point,seconds,baseline,experimental,comparator});if(samples.length>140)samples.splice(4,1);this.pending.set(key,samples);if(this.pending.size>4096)this.pending.delete(this.pending.keys().next().value);
-          const current=this.live.get(row.request_id)??{};current[point.kind]={seconds,at:point.at,experimental,stage:point.stage,model_id:model.id};this.live.set(row.request_id,current);if(this.live.size>4096)this.live.delete(this.live.keys().next().value);
+          const current=this.live.get(row.request_id)??{},forecast={seconds,at:point.at,experimental,stage:point.stage,model_id:model.id};
+          // A challenger may use a newer feature schema, but never hide the
+          // independently validated deployed forecast used by routing.
+          if(!current[point.kind]||current[point.kind].experimental&&!experimental)current[point.kind]=forecast;
+          this.live.set(row.request_id,current);if(this.live.size>4096)this.live.delete(this.live.keys().next().value);
         }
       }
-      if(result.finished){this.state.new_requests++;this.scoreFinished(row,result.finished.job,this.pending.get(key)??[]);this.pending.delete(key);this.live.delete(row.request_id);this.persist();}
+      const finished=results.find(x=>x.schema===CURRENT_FEATURE_SCHEMA&&x.result.finished)?.result.finished??results.find(x=>x.result.finished)?.result.finished;
+      if(finished){this.state.new_requests++;this.scoreFinished(row,finished.job,this.pending.get(key)??[]);this.pending.delete(key);this.live.delete(row.request_id);this.persist();}
       else if(['finish','queued_cancel','queue_timeout','unavailable_before_dispatch'].includes(row.kind)){this.pending.delete(key);this.live.delete(row.request_id);}
     }catch(e){this.error='Predictor observation failed; inference unchanged';}
   }
@@ -258,10 +267,11 @@ export class Predictor {
     if(!this.configured||!this.state.placement||this.error)return fallback;
     const model=this.model('admission',{active:true});if(!model?.new_session_validated)return fallback;
     try{
-      const at=this.now(),costs=[];
+      const at=this.now(),costs=[],history=this.histories.get(this.bundleFor(model)?.feature_schema);
+      if(!history)return fallback;
       for(const n of nodes){
         const c=candidate(n,key),job={decision:{node:n.id,session:key,affinity:'new',candidates:nodes.map(x=>candidate(x,key))}};
-        const point=this.history.snapshot(job,'admission',at,null,c),support=model.support[n.id];
+        const point=history.snapshot(job,'admission',at,null,c),support=model.support[n.id];
         // New sessions need first-observed-call evidence, not a claim of actual
         // cold cache. No counterfactual hot-cache
         // assumption is smuggled in from a different conversation or machine.
@@ -278,7 +288,7 @@ export class Predictor {
     const candidate=this.shadow,offers=this.state.automatic_training&&this.trainingOffer()?TRAINING_RECIPES.map(r=>({action:'train',evidence_id:this.trainingOffer(),recipe_id:r.id})):[];
     if(this.rollbackOffer())offers.push({action:'rollback',evidence_id:this.rollbackOffer()});
     return {configured:this.configured,error:this.error,candidate_rejections:this.candidateRejections??0,mode:this.state.placement?'validated-new-session-placement':'forecasts-only',automatic_training:this.state.automatic_training,automatic_promotion:this.state.automatic_promotion,placement:this.state.placement,busy:this.busy,training:this.state.training??null,training_recipes:TRAINING_RECIPES,default_recipe:DEFAULT_RECIPE,candidate_recipe:candidate?.training_recipe?.id??null,new_requests:this.state.new_requests,history_partial:!!this.partialHistory,policy:PREDICTION_POLICY,offers,baseline:DEFAULT_BASELINE,reset_at:this.state.reset_at||null,milestones:this.state.milestones,
-      models:['admission','updated','remaining'].map(kind=>{const m=candidate?.models[kind],active=this.model(kind,{active:true});return {kind,active_model_id:active?.id??null,candidate_model_id:m?.id??null,status:candidate?.reports[kind]?.status??'not_trained',selected:candidate?.reports[kind]?.selected?{family:candidate.reports[kind].selected.family,rounds:candidate.reports[kind].selected.rounds,transform:candidate.reports[kind].selected.transform}:null,
+      models:['admission','updated','remaining'].map(kind=>{const m=candidate?.models[kind],active=this.model(kind,{active:true}),report=candidate?.reports[kind];return {kind,active_model_id:active?.id??null,candidate_model_id:m?.id??null,active_feature_schema:this.bundleFor(active)?.feature_schema??null,candidate_feature_schema:candidate?.feature_schema??null,status:report?.status??'not_trained',selected:report?.selected?{family:report.selected.family,rounds:report.selected.rounds,transform:report.selected.transform}:null,feature_coverage:report?.feature_coverage??null,split_usage:report?.split_usage?Object.fromEntries(Object.entries(report.split_usage).slice(0,12)):null,
         default_model_id:DEFAULT_BASELINE.id,effective_model_id:active?.id??DEFAULT_BASELINE.id,promotion:m?this.promotionEvidence(candidate,kind):null,holdout:candidate?.reports[kind]?.holdout??null,baselines:candidate?.reports[kind]?.baselines??null,future:m?score(this.state.evaluations[m.id]??[]):null};}),actions:this.state.receipts.slice(0,10)};
   }
   close(){this.closed=true;this.child?.kill('SIGTERM');}

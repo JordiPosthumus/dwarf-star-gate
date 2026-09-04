@@ -593,7 +593,7 @@ test('collector records decision-time fleet and outcomes without altering body o
   const dir=path.join(path.dirname(r.config.state_file),'training'),file=fs.readdirSync(dir)[0],text=fs.readFileSync(path.join(dir,file),'utf8');
   assert.ok(!text.includes('PRIVATE_UNIQUE_TEXT'));const rows=text.trim().split('\n').map(JSON.parse);
   assert.deepEqual(rows.map(r=>r.kind),['routing_tiebreak_shadow','decision','dispatch','progress','finish']);assert.equal(new Set(rows.map(r=>r.request_id)).size,1);
-  assert.equal(rows[0].mode,'shadow');assert.equal(rows[0].verdict,'free_tie');
+  assert.equal(rows[0].mode,'active_with_abstention');assert.equal(rows[0].applied,false);assert.equal(rows[0].verdict,'free_tie');
   assert.equal(rows[1].candidates.length,2);assert.equal(rows[1].candidates[0].assigned_sessions,0);assert.equal(rows[1].candidates[0].active,0);
   assert.equal(rows[3].phase,'awaiting_content');assert.equal(rows[3].semantic_age_ms,null);
   assert.equal(rows[4].usage.cached_tokens,8192);assert.equal(rows[4].requested_thinking.fields.reasoning_effort,'xhigh');

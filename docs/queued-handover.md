@@ -61,13 +61,14 @@ not a durable receipt. A status refresh can legitimately produce a different
 reason as active work, ownership or destination availability changes. Only an
 exact offer accepted by the executor can relocate a request.
 
-DSG also records a separate `fallback_tiebreak_shadow` comparison when a new or
+DSG also records a separate `routing_tiebreak_shadow` receipt when a new or
 unaffined ordinary request enters deterministic routing. It considers only
 workers tied on active-plus-queued count. If every tied busy worker has a fresh,
 deployed remaining forecast and every queued request has a deployed admission
-forecast, it reports whether a completion-time tie-break would have kept or
-changed the deterministic choice. Missing evidence from any tied candidate makes
-the comparator abstain. This evidence never changes the selected worker.
+forecast, it may select the shorter predicted wait within that exact load tie.
+Missing evidence from any tied candidate makes the comparator abstain. It never
+overrides a freer worker, an established session home or an ineligible worker;
+the receipt records whether the reviewed choice was actually applied.
 
 ## Commit and failure contract
 

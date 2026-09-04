@@ -77,9 +77,9 @@ test('relocation diagnostics projection retains allowlisted reasons and drops pr
   assert.equal(s.automatic_relocation_scope,'first_unaffined_or_affinity_wait_expired');assert.equal(s.automatic_affinity_rebalance_min_wait_ms,300000);
   assert.equal(s.relocation.diagnostics.sources[0].reason,'same_session_active');assert.ok(!JSON.stringify(s).includes('PRIVATE'));
 });
-test('fallback tie-break projection is bounded shadow evidence, never routing authority',()=>{
-  const request_id=randomUUID(),s=fallbackTieBreakForDisplay({schema:1,mode:'shadow',policy:'validated_remaining_tiebreak',evaluations:3,comparable:1,would_change:1,insufficient_evidence:2,errors:0,secret:'PRIVATE',last:{request_id,verdict:'would_change',selected:'one',alternative:'two',minimum_load:1,prompt:'PRIVATE',candidates:[{node:'one',load:1,status:'supported',predicted_wait_seconds:20,evidence:['active_remaining'],session:'PRIVATE'}]}});
-  assert.equal(s.last.verdict,'would_change');assert.equal(s.last.candidates.length,1);assert.ok(!JSON.stringify(s).includes('PRIVATE'));
+test('fallback tie-break projection exposes bounded active-with-abstention receipts',()=>{
+  const request_id=randomUUID(),s=fallbackTieBreakForDisplay({schema:1,mode:'active_with_abstention',policy:'validated_remaining_tiebreak',evaluations:3,comparable:1,would_change:1,applied:1,insufficient_evidence:2,errors:0,secret:'PRIVATE',last:{request_id,verdict:'would_change',applied:true,selected:'one',alternative:'two',minimum_load:1,prompt:'PRIVATE',candidates:[{node:'one',load:1,status:'supported',predicted_wait_seconds:20,evidence:['active_remaining'],session:'PRIVATE'}]}});
+  assert.equal(s.mode,'active_with_abstention');assert.equal(s.applied,1);assert.equal(s.last.applied,true);assert.equal(s.last.candidates.length,1);assert.ok(!JSON.stringify(s).includes('PRIVATE'));
 });
 test('dashboard continuity-door projection exposes state but not ports or arbitrary reasons',()=>{
   const s=continuityDoorForDisplay({service:'dwarf-star-gate-continuity-door',version:1,holding:true,hold_kind:'manual',reason:'PRIVATE',since:new Date().toISOString(),held:2,active:3,core_ready:false,core_failures:4,body_spooling:false,replay:false,core_port:30001,secret:'PRIVATE'});

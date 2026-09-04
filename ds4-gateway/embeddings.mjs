@@ -7,6 +7,17 @@ export const ENCODER_REVISION='1110a243fdf4706b3f48f1d95db1a4f5529b4d41';
 export const EXTRACTION='visible-head-tail-v1';
 const MAX_CHARS=8192;
 const object=x=>x && typeof x==='object' && !Array.isArray(x);
+const finite=x=>typeof x==='number'&&Number.isFinite(x)&&x>=0;
+function contentShape(content) {
+  if(typeof content==='string')return {characters:content.length,images:0};
+  if(!Array.isArray(content))return {characters:0,images:0};
+  let characters=0,images=0;
+  for(const part of content.slice(-256))if(object(part)){
+    if(['text','input_text','output_text'].includes(part.type)&&typeof part.text==='string')characters+=part.text.length;
+    else if(['image','image_url','input_image'].includes(part.type))images++;
+  }
+  return {characters,images};
+}
 function visible(content) {
   if(typeof content==='string')return content.slice(-MAX_CHARS);
   if(!Array.isArray(content))return '';
@@ -23,12 +34,22 @@ export function extractRequest(body,route) {
   // Bounded suffix only; system/developer/tool/hidden-thinking/image content is
   // never passed to the encoder. This is NOT a truncation of the forwarded body.
   const tail=messages.slice(-256),eligible=tail.filter(x=>object(x)&&['user','assistant'].includes(x.role)&&(!x.type||x.type==='message'));
+  const roles={user:0,assistant:0,system:0,tool:0};let textCharacters=0,imageParts=0;
+  for(const message of tail)if(object(message)){
+    if(message.role in roles)roles[message.role]++;
+    const shape=contentShape(message.content);textCharacters+=shape.characters;imageParts+=shape.images;
+  }
   let last=-1;for(let i=eligible.length-1;i>=0;i--)if(eligible[i].role==='user'){last=i;break;}
   if(last<0)return {status:'no_recent_user_text'};
   const latest=visible(eligible[last].content),recent=eligible.slice(Math.max(0,last-8),last).map(x=>`${x.role}: ${visible(x.content)}`).join('\n').slice(-MAX_CHARS);
   if(!latest)return {status:'no_recent_user_text'};
+  const maxOutput=[body.max_completion_tokens,body.max_tokens].find(finite)??null;
   return {status:'ready',texts:[latest,...(recent?[recent]:[])],scopes:['latest_user',...(recent?['recent_conversation']:[])],
     extraction:EXTRACTION,visible_messages_considered:eligible.length,latest_characters:latest.length,recent_characters:recent.length,
+    message_count:messages.length,user_messages:roles.user,assistant_messages:roles.assistant,system_messages:roles.system,tool_messages:roles.tool,
+    text_characters:textCharacters,image_parts:imageParts,tool_definitions:Array.isArray(body.tools)?body.tools.length:0,
+    max_output_tokens:maxOutput,temperature:finite(body.temperature)?body.temperature:null,top_p:finite(body.top_p)?body.top_p:null,
+    request_stream:typeof body.stream==='boolean'?body.stream:null,request_route:route,
     bounded_slice:true,history_scan_limited:messages.length>256};
 }
 

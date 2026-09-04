@@ -1,7 +1,7 @@
 # Optional local embedding and progress collection
 
 **Implemented; off by default. Collection is independent of routing.** The optional
-[v2 predictor](predictor-lifecycle.md) can use embeddings in timestamped updated
+[versioned predictor](predictor-lifecycle.md) can use embeddings in timestamped updated
 forecasts, never retroactively in initial placement. Feature selection may reject
 them; collection alone does not prove predictive value.
 The gateway can send bounded visible-text slices to one private CPU encoder
@@ -89,8 +89,9 @@ This is not a hardened OS sandbox against a compromised local executable.
 
 New schema-1 event kinds join by **gateway run + request ID + worker**:
 
-- `request_features`: extraction/version/status, bounded character/message
-  counts, requested thinking and `available_at`; prediction point `after_upload`.
+- `request_features`: extraction/version/status, request bytes, bounded
+  role/message/text/image/tool counts, output controls, requested thinking and
+  `available_at`; prediction point `after_upload`.
 - `embedding`: model/revision/dimensions, per-scope normalized vectors and encoder
   token/truncation metadata, queued/available times, encoding duration or failure.
 - `progress`: at dispatch and every 30 seconds while active, elapsed milliseconds,
@@ -109,7 +110,7 @@ missing/failed/dropped, encoder identity and last latency. These are current-run
 encoding counters, not a claim every vector was durably saved; inspect the
 separate dataset write/drop/error counters too. The dashboard/diagnostic JSON
 does not expose vectors. Baseline Analytics and historical v1 training ignore the
-embedding event stream rather than duplicating labels. V2 training can use the
+embedding event stream rather than duplicating labels. Versioned training can use the
 separately timestamped vectors in updated/remaining forecasts; Analytics displays
 those forecasts separately by stage and immutable model version.
 
@@ -122,7 +123,7 @@ continues. There is no historical backfill: old raw conversations were not kept.
 ## Availability and validation gates
 
 DSG currently assigns a server before reading the body. An embedding produced
-later is **not an initial-routing feature**. The v2 predictor must use
+later is **not an initial-routing feature**. The versioned predictor must use
 only features available by its declared prediction time, in both training and
 serving. Do not silently turn after-upload features into hindsight admission
 forecasts. Do not treat embedding similarity as proof of compatible KV state.

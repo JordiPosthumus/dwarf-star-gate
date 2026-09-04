@@ -29,6 +29,17 @@ class PredictorV2Tests(unittest.TestCase):
             self.assertLess(max(r['finish_time'] for r in training),min(r['decision_time'] for r in validation))
             self.assertLess(max(r['decision_time'] for r in validation),min(r['decision_time'] for r in te))
 
+    def test_v3_cross_validates_bounded_feature_blocks_without_forcing_every_signal(self):
+        data={'schema':'dsg-latency-v3','groups':{k:[] for k in ('base','admission_state','client','history','ratios','semantic','request','progress')}}
+        for kind in ('admission','updated','remaining'):
+            families=v.feature_families(data,kind)
+            self.assertLessEqual(len(families),7)
+            self.assertEqual(len(families),len({tuple(x) for x in families}))
+            self.assertTrue(all(x[0]=='base' for x in families))
+            self.assertEqual('progress' in families[0],kind=='remaining')
+        used={group for kind in ('admission','updated','remaining') for family in v.feature_families(data,kind) for group in family}
+        self.assertEqual(used,set(data['groups']))
+
     def test_model_identity_separates_releases_and_forecast_contracts(self):
         export={'trees':[], 'base_margin':10}
         snapshot={'created_at':'2026-01-01T00:00:00Z','hashes':{'fixture':'a'}}
@@ -48,6 +59,9 @@ class PredictorV2Tests(unittest.TestCase):
         self.assertGreaterEqual(report['folds'],2)
         self.assertIn(report['selected']['rounds'],v.ROUNDS)
         self.assertEqual({c['rounds'] for c in report['ablations']},set(v.ROUNDS))
+        self.assertIn('history_count',report['feature_coverage'])
+        self.assertEqual(set(report['feature_coverage']),{name for group in data['groups'].values() for name in group})
+        self.assertTrue(report['split_usage'])
         self.assertFalse(first['routing_enabled'])
         self.assertNotEqual(first['models']['admission']['id'],second['models']['admission']['id'])
         for candidate,recipe_id in [(first,'standard-v1'),(second,'regularized-v1'),(third,'interactions-v1')]:

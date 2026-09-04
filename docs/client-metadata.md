@@ -1,6 +1,6 @@
 # Early client metadata
 
-Implemented as **collection only**. An opt-in client can send admission hints
+Implemented as **versioned V3 predictor evidence**. An opt-in client can send admission hints
 before its body is uploaded or a queued request is dispatched. Existing clients
 need no changes. DSG does not buffer/rewrite prompts for these hints, infer hidden
 thinking, or alter model/context/output settings.
@@ -42,8 +42,9 @@ per-request harness hook using actual client state; test retries, subagents and
 compactions. Do not put changing per-request hints in static provider headers.
 
 The v2 feature builder stays byte-for-byte unchanged so existing model artifacts
-and evidence remain compatible. Hints are **not yet used by XGB or routing**.
-The next feature-contract revision needs causal live/replay parity, mismatch and
-coverage reporting, missing-data behavior and a fresh-traffic ablation. Preserve
-the old contract/model during rollout; do not invalidate active models merely by
-editing their feature builder. Early embeddings are not part of this header.
+and evidence remain compatible. V3 exposes these fields to XGB as a separately
+cross-validated client block; missing hints remain explicit missing values. A V3
+candidate still needs the fixed holdout and fresh-traffic gates before routing may
+use it. Preserve the old contract/model during rollout; do not invalidate active
+models merely by editing their feature builder. Early embeddings are not part of
+this header.

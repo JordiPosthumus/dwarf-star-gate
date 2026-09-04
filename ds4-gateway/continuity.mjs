@@ -11,14 +11,14 @@ export function continuityDoorForDisplay(value){
     core_ready:value.core_ready===true,core_failures:count(value.core_failures),body_spooling:value.body_spooling===false?false:null,replay:value.replay===false?false:null};
 }
 export function fallbackTieBreakForDisplay(value){
-  if(value?.schema!==1||value.mode!=='shadow'||value.policy!=='validated_remaining_tiebreak')return null;
+  if(value?.schema!==1||!['shadow','active_with_abstention'].includes(value.mode)||value.policy!=='validated_remaining_tiebreak')return null;
   const count=n=>Number.isSafeInteger(n)&&n>=0?n:0,worker=value=>typeof value==='string'&&/^[\w-]{1,64}$/.test(value)?value:null;
   const verdicts=new Set(['would_change','would_keep','insufficient_evidence','not_tied','free_tie']),statuses=new Set(['supported','immediately_free','missing_active_remaining','missing_queued_service','forecast_unavailable']);
   let last=null;
-  if(value.last&&validCallId(value.last.request_id)&&verdicts.has(value.last.verdict))last={schema:1,mode:'shadow',policy:'validated_remaining_tiebreak',request_id:value.last.request_id,verdict:value.last.verdict,
+  if(value.last&&validCallId(value.last.request_id)&&verdicts.has(value.last.verdict))last={schema:1,mode:value.mode,policy:'validated_remaining_tiebreak',request_id:value.last.request_id,verdict:value.last.verdict,applied:value.last.applied===true,
     selected:worker(value.last.selected),alternative:worker(value.last.alternative),minimum_load:Number.isSafeInteger(value.last.minimum_load)&&value.last.minimum_load>=0?value.last.minimum_load:null,
     candidates:(Array.isArray(value.last.candidates)?value.last.candidates:[]).slice(0,128).flatMap(c=>worker(c?.node)&&statuses.has(c.status)?[{node:worker(c.node),load:Number.isSafeInteger(c.load)&&c.load>=0?c.load:null,status:c.status,predicted_wait_seconds:Number.isFinite(c.predicted_wait_seconds)&&c.predicted_wait_seconds>=0?c.predicted_wait_seconds:null,evidence:(Array.isArray(c.evidence)?c.evidence:[]).filter(e=>['active_remaining','queued_service'].includes(e)).slice(0,32)}]:[])};
-  return {schema:1,mode:'shadow',policy:'validated_remaining_tiebreak',evaluations:count(value.evaluations),comparable:count(value.comparable),would_change:count(value.would_change),insufficient_evidence:count(value.insufficient_evidence),errors:count(value.errors),last};
+  return {schema:1,mode:value.mode,policy:'validated_remaining_tiebreak',evaluations:count(value.evaluations),comparable:count(value.comparable),would_change:count(value.would_change),applied:count(value.applied),insufficient_evidence:count(value.insufficient_evidence),errors:count(value.errors),last};
 }
 export function continuityForDisplay(value){
   if(value?.schema!==1)return null;

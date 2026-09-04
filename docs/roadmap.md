@@ -104,11 +104,11 @@ adequate margin and hysteresis.
 name why each live queue head is offered, waiting for the Genie threshold, kept at
 home by same-session ownership, or blocked by destination/readiness state. These
 reason codes are status evidence for the operator and Genie, not new routing
-authority. A validated-evidence-only remaining-time tie-break comparator now runs
-in shadow for equal deterministic loads and abstains if any tied candidate lacks
-fresh deployed evidence. It records `would_keep`/`would_change` without changing
-the selected worker. Next, evaluate coverage and realized queue outcomes before
-considering any policy change.
+authority. A validated-evidence-only remaining-time tie-break now applies only to
+new/unaffined requests tied on deterministic active-plus-queued load. It abstains
+if any tied candidate lacks fresh deployed evidence and never overrides a freer
+worker or established session home. Receipts distinguish proposed from applied;
+next evaluate realized queue outcomes before widening its scope.
 
 **Maintenance decisions:** the README explicitly has no open-source license grant;
 add license text only if the maintainer chooses it. Keep public screenshots synthetic
@@ -152,9 +152,10 @@ configuration. Opt-in capabilities remain off unless configured/enabled.
 ## Historical first-fit decisions — 2026-09-02
 
 The following paragraph records the v1 smoke-test agreement, not the current
-promotion path. V2 now cross-validates tree count and feature families with
-forward-time, label-purged folds; it additionally tests unseen sessions before
-new-session placement. The [lifecycle contract](predictor-lifecycle.md) is authoritative.
+promotion path. The current V2/V3 lifecycle cross-validates tree count and feature
+families with forward-time, label-purged folds; it additionally tests unseen
+sessions before new-session placement. The
+[lifecycle contract](predictor-lifecycle.md) is authoritative.
 
 **First XGB fit = a plumbing smoke test.** Cross-validation is not a prerequisite
 for this first artifact; fit/save/reload, schema consistency and no leakage are.
@@ -245,7 +246,7 @@ rewrites, unrelated-session merging, or speculative cache deletion.
 
 ## Then: measured ETA prediction with XGBoost
 
-**v2 lifecycle is implemented:** [forecasts and bounded model stewardship](predictor-lifecycle.md)
+**The versioned V2/V3 lifecycle is implemented:** [forecasts and bounded model stewardship](predictor-lifecycle.md)
 use causal request history, missing-data/peer priors, optional embedding updates,
 phase/elapsed remaining estimates and frozen artifacts. GG can request training
 or offered rollback; fixed validators decide promotion. New-session placement is
@@ -288,10 +289,11 @@ without changing DS4 or creating a private-fork dependency.
 
 **Implemented foundations:** [pre-assignment hint collection](client-metadata.md),
 [three XGB recipe choices](predictor-lifecycle.md#reviewed-training-recipes), and
-[read-only calibration preflight](calibration.md). Existing v2 model/feature
-compatibility is unchanged. Next: per-request client instrumentation, compatible
-hint-aware features, reviewed training windows and a proven non-displacing
-calibration adapter. No generation runner/hourly toggle yet; preflight skips.
+[read-only calibration preflight](calibration.md). Existing V2 artifacts remain
+compatible while V3 collects per-request client, cache/load and bounded
+request-shape features under a separate release contract. Next: reviewed training
+windows and a proven non-displacing calibration adapter. No generation
+runner/hourly toggle yet; preflight skips.
 Ordinary training never invokes DS4.
 
 Optimize **expected completion time**, including waiting, cache restoration,

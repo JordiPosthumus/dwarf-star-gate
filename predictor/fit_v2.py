@@ -11,7 +11,8 @@ import sys
 import numpy as np
 import xgboost as xgb
 
-SCHEMA = 'dsg-latency-v2'
+SCHEMA = 'dsg-latency-v2'  # Backward-compatible fixture/default identifier.
+SCHEMAS = {SCHEMA, 'dsg-latency-v3'}
 RECIPE_BYTES = Path(__file__).with_name('recipes.json').read_bytes()
 RECIPE_POLICY = json.loads(RECIPE_BYTES)
 RECIPE_HASH = hashlib.sha256(RECIPE_BYTES).hexdigest()
@@ -65,6 +66,23 @@ def folds(rows):
         if unique(tr) >= 15 and unique(va) >= 5 and len({r['group'] for r in tr}) >= 2:
             result.append((tr, va))
     return result
+
+
+def feature_families(data, kind):
+    """Reviewed, bounded feature-block search. V2 stays exactly compatible;
+    V3 exposes every collected signal without forcing noisy blocks into base."""
+    if data['schema'] == SCHEMA:
+        families=[['base'],['base','history'],['base','history','ratios'],['base','history','ratios','semantic']]
+        return [family+(['progress'] if kind=='remaining' else []) for family in families]
+    if kind == 'admission':
+        return [['base'],['base','admission_state'],['base','client'],['base','admission_state','client'],
+                ['base','history','ratios'],['base','admission_state','client','history','ratios']]
+    if kind == 'updated':
+        return [['base'],['base','admission_state'],['base','history','ratios'],['base','semantic'],['base','request'],
+                ['base','history','ratios','request'],['base','admission_state','client','history','ratios','semantic','request']]
+    return [['base','progress'],['base','admission_state','progress'],['base','history','ratios','progress'],
+            ['base','semantic','request','progress'],['base','history','ratios','semantic','progress'],
+            ['base','admission_state','client','history','ratios','semantic','request','progress']]
 
 
 def encoding(rows, names, categorical):
@@ -167,6 +185,21 @@ def portable(model, enc, factor, transform):
     return {'encoding':enc,'base_margin':base,'trees':trees,'transform':transform,'factor':factor}
 
 
+def feature_coverage(rows, names):
+    def present(value):
+        return isinstance(value,str) or (isinstance(value,(int,float)) and not isinstance(value,bool) and math.isfinite(value))
+    return {name:round(sum(present(r['features'].get(name)) for r in rows)/max(1,len(rows)),4) for name in names}
+
+
+def split_usage(export):
+    origin=[]
+    for name in export['encoding']['names']:
+        width=len(export['encoding']['vocabulary'].get(name,[]))+1 if name in export['encoding']['categorical'] else 1
+        origin.extend([name]*width)
+    counts=collections.Counter(origin[t['split_indices'][i]] for t in export['trees'] for i,left in enumerate(t['left_children']) if left!=-1)
+    return dict(sorted(counts.items(),key=lambda item:(-item[1],item[0])))
+
+
 def exported_prediction(model, features):
     x = vector(features, model['encoding']); margin = np.float32(model['base_margin'])
     for t in model['trees']:
@@ -185,9 +218,9 @@ def train(prepared, recipe_id=DEFAULT_RECIPE):
     if xgb.__version__!='3.4.1' or np.__version__!='2.5.2':
         raise ValueError('Use the locked predictor environment; dependency version mismatch')
     data=json.loads(Path(prepared).read_text()); rows=data['rows']
-    if data['schema'] != SCHEMA or len(rows)>100000:
+    if data['schema'] not in SCHEMAS or len(rows)>100000:
         raise ValueError('Unsupported prepared data')
-    result={'schema':2,'feature_schema':SCHEMA,'created_at':dt.datetime.now(dt.timezone.utc).isoformat(),
+    result={'schema':2,'feature_schema':data['schema'],'created_at':dt.datetime.now(dt.timezone.utc).isoformat(),
             'snapshot':data['snapshot'],'dependencies':{'xgboost':xgb.__version__,'numpy':np.__version__},'models':{},'reports':{},'routing_enabled':False,
             'training_recipe':{'id':recipe_id,'policy_sha256':RECIPE_HASH,'parameters':parameters,'rounds':list(ROUNDS)}}
     for kind in ('admission','updated','remaining'):
@@ -200,9 +233,7 @@ def train(prepared, recipe_id=DEFAULT_RECIPE):
         report.update(training_requests=unique(tr),holdout_requests=unique(te),folds=len(cv))
         if unique(tr)<25 or unique(te)<10 or len(cv)<2:continue
         candidates=[]
-        families=[['base'],['base','history'],['base','history','ratios'],['base','history','ratios','semantic']]
-        for family in families:
-            if kind=='remaining':family=family+['progress']
+        for family in feature_families(data,kind):
             names=[k for g in family for k in data['groups'][g]]
             for transform in ('raw','log','relative_log'):
                 for rounds in ROUNDS:
@@ -230,6 +261,12 @@ def train(prepared, recipe_id=DEFAULT_RECIPE):
         # Export the EXACT evaluated model. No unevaluated all-data refit is
         # silently substituted for the artifact that earned these measurements.
         export=portable(model,enc,factor,winner['transform'])
+        # Report coverage for the whole versioned contract, not only the winning
+        # block. This makes newly collected-but-not-yet-selected signals and
+        # historical zero-coverage fields visible instead of silently omitting
+        # them from the evidence used to review the challenger.
+        all_names=data.get('feature_names') or list(dict.fromkeys(name for group in data['groups'].values() for name in group))
+        report.update(feature_coverage=feature_coverage(tr,all_names),split_usage=split_usage(export))
         actual=np.asarray([exported_prediction(export,r['features']) for r in te]);np.testing.assert_allclose(actual,predictions,rtol=2e-5,atol=1e-3)
         model_id=model_identity(export,kind,data['snapshot'],result['created_at'])
         export.update(id=model_id,kind=kind,holdout_passed=passed,holdout=measured,baseline_mae_s=best_baseline,new_session_validated=unseen_passed,

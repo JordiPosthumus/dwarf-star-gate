@@ -49,10 +49,12 @@ export function evidence(kind, raw) {
     for(const k of ['seconds','baseline_seconds','elapsed_s','available_at'])row[k]=number(raw[k]);if(row.seconds===null||row.available_at===null)return null;
   }
   if(kind==='request_features') {
-    row.feature_schema=1;row.prediction_point='after_upload';
+    row.feature_schema=2;row.prediction_point='after_upload';
     row.status=['ready','invalid_body','unsupported_route','unsupported_body','no_recent_user_text','capture_limit','encoded_body','invalid_json','incomplete_body'].includes(raw.status)?raw.status:'unavailable';
     row.extraction=EXTRACTION;
-    for(const key of ['available_at','visible_messages_considered','latest_characters','recent_characters'])row[key]=number(raw[key]);
+    for(const key of ['available_at','visible_messages_considered','latest_characters','recent_characters','request_bytes','message_count','user_messages','assistant_messages','system_messages','tool_messages','text_characters','image_parts','tool_definitions','max_output_tokens','temperature','top_p'])row[key]=number(raw[key]);
+    row.request_stream=typeof raw.request_stream==='boolean'?raw.request_stream:null;
+    row.request_route=['/v1/chat/completions','/v1/responses','/v1/messages'].includes(raw.request_route)?raw.request_route:null;
     row.bounded_slice=true;row.history_scan_limited=raw.history_scan_limited===true;
   }
   if(kind==='embedding') {
@@ -86,12 +88,12 @@ export function evidence(kind, raw) {
     row.waiting_ms=number(raw.waiting_ms);row.saving_ms=number(raw.saving_ms);
   }
   if(kind==='routing_tiebreak_shadow'){
-    row.shadow_schema=1;row.mode='shadow';row.policy=raw.policy==='validated_remaining_tiebreak'?raw.policy:null;
+    row.shadow_schema=1;row.mode=['shadow','active_with_abstention'].includes(raw.mode)?raw.mode:null;row.applied=raw.applied===true;row.policy=raw.policy==='validated_remaining_tiebreak'?raw.policy:null;
     row.verdict=['would_change','would_keep','insufficient_evidence','not_tied','free_tie'].includes(raw.verdict)?raw.verdict:null;
     row.selected=id(raw.selected);row.alternative=id(raw.alternative);row.minimum_load=number(raw.minimum_load);
     const statuses=new Set(['supported','immediately_free','missing_active_remaining','missing_queued_service','forecast_unavailable']);
     row.candidate_costs=(Array.isArray(raw.candidates)?raw.candidates:[]).slice(0,128).flatMap(c=>id(c?.node)&&statuses.has(c.status)?[{node:id(c.node),load:number(c.load),status:c.status,predicted_wait_seconds:number(c.predicted_wait_seconds),evidence:(Array.isArray(c.evidence)?c.evidence:[]).filter(v=>['active_remaining','queued_service'].includes(v)).slice(0,32)}]:[]);
-    if(!row.policy||!row.verdict||!row.selected)return null;
+    if(!row.mode||!row.policy||!row.verdict||!row.selected)return null;
   }
   if (kind!=='routing_tiebreak_shadow'&&Array.isArray(raw.candidates)) {
     row.candidates=raw.candidates.slice(0,128).map(w=>({node:id(w.node), healthy:w.healthy===true, paused:w.paused===true,

@@ -57,8 +57,9 @@ joined into gateway admission rows. An unobserved fast backend restart can
 therefore still be absent from a routing row; this is a reason the estimator has
 no operational authority.
 
-The new fields are retained for later feature engineering. The existing offline
-XGB feature schema is not silently replaced and does not yet consume these fields.
+V2 remains unchanged. The separately versioned V3 XGB challenger consumes these
+fields through an independently cross-validated admission/cache-state block; it
+cannot inherit V2 validation or silently replace an incumbent.
 
 ## Assessments and prediction limits
 

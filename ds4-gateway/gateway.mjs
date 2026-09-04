@@ -22,7 +22,7 @@ import {CALL_ID_HEADER,DISPATCH_HEADER,validCallId,unavailableReason,sessionWork
 import {JsonUsageObserver} from './json-usage.mjs';
 import {dsgReport,invalidHttp} from './report.mjs';
 import {JPEG_REJECTION_INSPECTION_BYTES,VisionProtection,isRejectedJpeg,visionGuidance} from './vision-protection.mjs';
-import {compareFallbackTieBreak} from './fallback-tiebreak.mjs';
+import {compareFallbackTieBreak,selectFallbackTieBreak} from './fallback-tiebreak.mjs';
 import net from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -200,7 +200,10 @@ export function createGateway(config,{visionTranscode}={}) {
   const waiting=[];
   let sequence=0;
   const relocation={completed:0,rejected:0,last:null};
-  const fallbackTieBreak={schema:1,mode:'shadow',policy:'validated_remaining_tiebreak',evaluations:0,comparable:0,would_change:0,insufficient_evidence:0,errors:0,last:null};
+  // This may influence only genuinely new/unaffined work, where no established
+  // cache home exists. It still abstains unless every tied worker has fresh
+  // forecasts from the deployed, independently validated models.
+  const fallbackTieBreak={schema:1,mode:'active_with_abstention',policy:'validated_remaining_tiebreak',evaluations:0,comparable:0,would_change:0,applied:0,insufficient_evidence:0,errors:0,last:null};
   const queueBound=()=>config.max_queued_per_node??128;
   const waitingBound=()=>Math.max(1,nodes.length)*queueBound();
   // Long affinity-bound waits must not depend on the dashboard/Genie process.
@@ -411,9 +414,16 @@ export function createGateway(config,{visionTranscode}={}) {
     if(['would_keep','would_change'].includes(result.verdict))fallbackTieBreak.comparable++;
     if(result.verdict==='would_change')fallbackTieBreak.would_change++;
     if(result.verdict==='insufficient_evidence')fallbackTieBreak.insufficient_evidence++;
-    fallbackTieBreak.last={...result,request_id:requestId};
-    dataset.record('routing_tiebreak_shadow',{request_id:requestId,node:selected.id,...result});
+    fallbackTieBreak.last={...result,request_id:requestId,applied:false};
     return result;
+  }
+  function applyFallbackTieBreak(selected,requestId) {
+    const result=evaluateFallbackTieBreak(selected,requestId);
+    const alternative=selectFallbackTieBreak(nodes,selected,result);
+    const applied=alternative!==selected;if(applied)fallbackTieBreak.applied++;
+    fallbackTieBreak.last.applied=applied;
+    dataset.record('routing_tiebreak_shadow',{request_id:requestId,node:selected.id,...result,applied});
+    return alternative;
   }
   function detach(job) {
     if(job.node)job.node.queue=job.node.queue.filter(j=>j!==job);
@@ -521,7 +531,7 @@ export function createGateway(config,{visionTranscode}={}) {
     job.thinking = new RequestedThinkingObserver(req.headers['content-encoding'],(body,thinking)=>{
       job.requestStream=typeof body?.stream==='boolean'?body.stream:null;
       job.requestedUsage=typeof body?.stream_options?.include_usage==='boolean'?body.stream_options.include_usage:null;
-      embeddings.observe(body,thinking,{request_id:job.id,node:node.id,route:req.url,traffic_class:job.trafficClass});
+      embeddings.observe(body,thinking,{request_id:job.id,node:node.id,route:req.url,traffic_class:job.trafficClass,request_bytes:requestBytes});
     });
     const observeBody = chunk => {
       requestBytes+=chunk.length;job.thinking.accept(chunk);
@@ -721,7 +731,7 @@ export function createGateway(config,{visionTranscode}={}) {
     }
     if (!node&&!waitReason) {
       node=pick();
-      if(node&&!home&&req.method==='POST'&&trafficClass!=='genie')try{evaluateFallbackTieBreak(node,requestId);}catch{fallbackTieBreak.errors++;}
+      if(node&&!home&&req.method==='POST'&&trafficClass!=='genie')try{node=applyFallbackTieBreak(node,requestId);}catch{fallbackTieBreak.errors++;}
       // Existing homes and reassignment retain their established safety/cache
       // behavior. Only genuinely new conversations may use validated placement.
       if(node&&key&&!home&&req.method==='POST')node=predictor.choose(nodes.filter(n=>n.healthy&&!n.drained&&!n.quarantine),key,node,candidate);

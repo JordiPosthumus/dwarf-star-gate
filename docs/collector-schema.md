@@ -32,7 +32,7 @@ enable prediction-based placement or constitute a cache-hit auditor.
 | `queue_relocation` | Allowlisted pre-dispatch receipt: source/destination IDs, operator or scheduler actor, waiting time, `dispatch_state:not_dispatched`, `body_replayed:false`, `deadline_preserved:true`, and explicit unknown cache locality |
 | `routing_shadow` | Repeatable, non-label assessment: `shadow_schema`, `reason`, `verdict`, `confidence`, `basis`, `source`, `alternative`, `session_busy`, `waiting_ms`, `saving_ms`, `candidates`, truncation flag |
 | `progress` | `progress_schema:1`, `prediction_point:while_active`, `active_elapsed_ms`, `phase`, `semantic_characters`, `semantic_age_ms`, thinking/answer/tool character counts, `requested_thinking` |
-| `request_features` | `feature_schema:1`, `prediction_point:after_upload`, extraction/status, `available_at`, bounded visible character/message counts and history-scan flag |
+| `request_features` | `feature_schema:2`, `prediction_point:after_upload`, extraction/status, `available_at`, request bytes, bounded role/message/text/image/tool counts, output controls and history-scan flag |
 | `embedding` | `embedding_schema:1`, status/extraction; ready rows add model/revision/dimensions, per-scope vectors/token metadata, queued/available times and encoding duration |
 | `model_prediction` | `predictor_schema:2`, `model_id`, `model_kind`, `prediction_stage`, `experimental`, `seconds`, `baseline_seconds`, `elapsed_s`, `available_at` |
 

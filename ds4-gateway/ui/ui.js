@@ -113,6 +113,26 @@ function relocationEmpty(diagnostics) {
   if(!rows.length)return 'No continuity-safe queued handover is currently available.';
   return `No safe handover right now — ${rows.slice(0,4).map(row=>`${row.source}: ${relocationReason(row)}`).join(' · ')}${rows.length>4?' · more queued work omitted':''}.`;
 }
+function compactWait(seconds) {
+  if(!Number.isFinite(seconds)||seconds<0)return null;
+  if(seconds<120)return `${Math.ceil(seconds)}s`;
+  return `${Math.ceil(seconds/60)}m`;
+}
+function schedulingExplanation(g,workers,capacity) {
+  if(!g||!capacity?.free||!g.queued)return '';
+  const continuity=g.continuity,diagnostics=continuity?.relocation?.diagnostics,rows=diagnostics?.sources??[];
+  const row=rows.find(item=>item.destination&&item.reason==='offer_ready')??rows[0];
+  const idle=(diagnostics?.idle_destinations??[])[0]??workers.find(w=>w.is_healthy&&!w.drained&&!w.quarantine&&!w.load&&!w.queued)?.id;
+  if(!row)return ` ${idle||'A server'} is free, but this snapshot has no safe-handover explanation; inspect Manage DS4 servers.`;
+  const route=idle?`${idle} is free; `:'';
+  if(row.automatic_reason==='automatic_wait_threshold'){
+    const threshold=continuity.automatic_affinity_rebalance_min_wait_ms,remaining=Number.isFinite(threshold)?threshold/1000-row.waiting_seconds:null,wait=compactWait(remaining);
+    return ` ${route}${row.source}'s next queued session keeps its warm home${wait?` for up to ${wait} more`:''}; then the DSG core may hand it over automatically.`;
+  }
+  if(row.automatic_reason==='affinity_automatic_disabled')return ` ${route}strict affinity keeps ${row.source}'s queued session at home until an exact manual or Genie handover.`;
+  if(row.automatic_reason==='automatic_ready')return ` ${route}${row.source}'s queued request is eligible for automatic core handover now.`;
+  return ` ${route}${row.source}'s queue cannot move yet: ${relocationReason(row)}.`;
+}
 function timeline(d,now) {
   const rows=d.activity||[],start=now-900000;
   const band=phase=>phase==='prefill'?'prefill':phase==='thinking'||phase==='decode'?'decode':['idle','paused','unavailable'].includes(phase)?'idle-off':'unknown';
@@ -295,7 +315,7 @@ function render(s) {
   $('continuity-door-status').textContent=s.continuity_door_error?`${s.continuity_door_error}.`:!door?'Continuity Door is not enabled.':door.holding?`Continuity Door holding ${fmt(door.held)} new request${door.held===1?'':'s'} while the core is ${door.core_ready?'ready':'unavailable'}; existing streams remain connected.`:`Continuity Door ready · ${fmt(door.active)} active proxied stream${door.active===1?'':'s'} · no request-body spooling or replay.`;
   visibleWorkers=g?.workers??[];workerUiStale=stale;workerControlsVisible=s.worker_management===true;
   const queueLeaders=visibleWorkers.filter(w=>w.queued>0).sort((a,b)=>b.queued-a.queued||((b.oldest_queue_seconds??-1)-(a.oldest_queue_seconds??-1))).slice(0,3);
-  $('fleet-summary').textContent=stale?'Fleet summary is historical: live gateway status is unavailable.':!g?.total?'No DS4 servers are registered. Open Manage DS4 servers to add your first endpoint.':`${fmt(g.available)} of ${fmt(g.total)} servers are healthy and enabled · ${fmt(cap?.free)} immediately free · ${fmt(g.active)} active · ${fmt(g.queued)} waiting.${queueLeaders.length?` Backlog: ${queueLeaders.map(w=>`${w.id} ${fmt(w.queued)}${Number.isFinite(w.oldest_queue_seconds)?` (oldest ${fmt(w.oldest_queue_seconds)}s)`:''}`).join(' · ')}.`:''}`;
+  $('fleet-summary').textContent=stale?'Fleet summary is historical: live gateway status is unavailable.':!g?.total?'No DS4 servers are registered. Open Manage DS4 servers to add your first endpoint.':`${fmt(g.available)} of ${fmt(g.total)} servers are healthy and enabled · ${fmt(cap?.free)} immediately free · ${fmt(g.active)} active · ${fmt(g.queued)} waiting.${queueLeaders.length?` Backlog: ${queueLeaders.map(w=>`${w.id} ${fmt(w.queued)}${Number.isFinite(w.oldest_queue_seconds)?` (oldest ${fmt(w.oldest_queue_seconds)}s)`:''}`).join(' · ')}.`:''}${schedulingExplanation(g,visibleWorkers,cap)}`;
   const excluded=visibleWorkers.filter(w=>routingInfo(w).excluded);
   $('routing-summary').hidden=!excluded.length&&!stale&&!g?.draining;
   $('routing-summary').textContent=stale?'Routing status is stale. Controls are disabled until live status returns.':`${g?.draining?'The gateway is draining: all new admission is stopped. ':''}${excluded.length?`${excluded.length} server${excluded.length===1?' is':'s are'} not accepting new work: ${excluded.map(w=>w.id).join(', ')}. See the highlighted reason and routing control on each server card below.`:''}`;

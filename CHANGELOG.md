@@ -1,5 +1,24 @@
 # Changelog
 
+## Versioned XGBoost V3 evidence contract
+
+- A separately versioned V3 feature builder now supplies XGBoost with the
+  admission/cache clocks, early client counters, bounded request shape, prior
+  session history, semantic projections and live progress that DSG already
+  observes. V2 remains byte-compatible and continues serving any validated
+  incumbent while V3 earns independent evidence.
+- The trainer cross-validates bounded feature blocks and 16/64/128 trees instead
+  of forcing every noisy signal into one model. Candidate reports expose all
+  feature coverage and winning-tree split usage; unavailable historical fields
+  remain explicit zero coverage rather than invented values.
+- Python/JavaScript parity now rounds split thresholds to XGBoost's float32
+  representation. A regression test covers the exact-boundary case that had
+  correctly failed candidate loading but obscured an otherwise valid artifact.
+- For genuinely new or unaffined work only, a validated remaining-time forecast
+  may break an exact deterministic active-plus-queue load tie. Missing, stale or
+  experimental evidence abstains; established session homes and freer servers
+  are never overridden. Receipts say whether a comparison was applied.
+
 ## Core-owned affinity wait escape
 
 - A healthy, completely idle server no longer depends on the dashboard/Genie to
@@ -84,13 +103,13 @@
 - An unavailable/paused server card no longer repeats the same state in both its
   verdict and phase badge. The verdict tooltip gives the actionable layer detail.
 
-## Explainable handovers and passive remaining-time evidence
+## Explainable handovers and passive remaining-time evidence (historical precursor)
 
 - Queued-handover status now states the exact safety reason when no relocation is
   offered, without exposing prompts, request bodies or raw session identifiers.
-- A fail-closed shadow comparator records whether fresh remaining-time evidence
-  would change the deterministic equal-load fallback. It cannot affect routing;
-  missing, stale or experimental forecasts produce an explicit abstention.
+- This release first added the fail-closed shadow comparator. The newer V3 entry
+  above documents its narrow active successor; missing, stale or experimental
+  forecasts still produce an explicit abstention.
 
 ## Queued-work shadow evidence
 

@@ -86,8 +86,8 @@ not maximum decode speed or minimum queue wait in isolation.
 
 | Quantity | Purpose | Initial implementation / next step |
 | --- | --- | --- |
-| Total server time for a new request | Cost after dispatch on each candidate | v2 admission and updated XGB contracts, fixed validation and optional new-session placement |
-| Remaining busy time of an active request | When a server can accept its next job | Conditional-history baseline plus optional v2 elapsed/phase-conditioned XGB; censored outcomes excluded and unsupported elapsed ranges abstain |
+| Total server time for a new request | Cost after dispatch on each candidate | Versioned V2/V3 admission and updated XGB contracts, fixed validation and optional new-session placement |
+| Remaining busy time of an active request | When a server can accept its next job | Conditional-history baseline plus optional versioned elapsed/phase-conditioned XGB; censored outcomes excluded and unsupported elapsed ranges abstain |
 | Cache acquisition + suffix prefill time | Cost of hot reuse, local restore or cold execution | Measured disk/prefill component baseline implemented; exact request/epoch attribution, cache existence and unmeasured costs remain next |
 | Generation duration, including reasoning | Work after prefill until the response ends | Initially part of total server time; separate only with trustworthy phase/output labels |
 | Queue wait | Remaining active work plus requests ahead | Derive from the quantities above and actual admission rules; no separate idle-demand model needed |
