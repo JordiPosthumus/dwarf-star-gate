@@ -1,5 +1,12 @@
 # Changelog
 
+## Causal hardware challenger contract
+
+- Add explicit V4 hardware features with worker identity, observed-time and
+  freshness checks; preserve missing values and measurement scope.
+- Add hardware/no-hardware training alternatives and live/replay parity tests.
+  V3 remains default; production snapshot ingestion is not yet connected.
+
 ## Measured GPU power fallback
 
 - Capture NVIDIA GPU power when module power is unavailable, labelled GPU-only

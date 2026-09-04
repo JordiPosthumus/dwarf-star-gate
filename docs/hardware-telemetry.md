@@ -21,6 +21,13 @@ Missing measurements must remain unknown. Post-dispatch readings must never ente
 an admission forecast retrospectively. Enrollment and actual sample coverage must
 be verified on each deployment; demo charts are synthetic, not proof of collection.
 
+An explicit `dsg-latency-v4` challenger contract now accepts timestamped hardware
+snapshots on candidate and progress evidence. It checks worker identity, collection
+availability and 60-second freshness, and retains power/memory/activity scopes.
+The trainer tests hardware and no-hardware alternatives. V3 remains the default:
+gateway snapshot ingestion and live coverage validation are still pending, so
+registering this contract does not mean production XGB is using hardware readings.
+
 ## DGX Spark / NVIDIA Linux
 
 An enrolled worker with an existing, host-key-verified `ssh` alias can use the

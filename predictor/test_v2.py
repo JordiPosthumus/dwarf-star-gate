@@ -13,6 +13,14 @@ ROOT=Path(__file__).resolve().parent.parent
 
 
 class PredictorV2Tests(unittest.TestCase):
+    def test_hardware_challenger_keeps_no_hardware_ablations(self):
+        for kind in ('admission','updated','remaining'):
+            old=v.feature_families({'schema':'dsg-latency-v3'},kind)
+            new=v.feature_families({'schema':'dsg-latency-v4'},kind)
+            self.assertEqual(new[:-2],old)
+            self.assertTrue(all('hardware' in f for f in new[-2:]))
+            self.assertLessEqual(len(new),9)
+
     def test_duration_bands_expose_hour_long_misses_and_boundaries(self):
         rows=self.rows(5)
         for r, target in zip(rows, (299, 300, 3599, 3600, 7200)):

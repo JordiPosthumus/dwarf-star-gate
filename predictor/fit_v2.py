@@ -12,7 +12,7 @@ import numpy as np
 import xgboost as xgb
 
 SCHEMA = 'dsg-latency-v2'  # Backward-compatible fixture/default identifier.
-SCHEMAS = {SCHEMA, 'dsg-latency-v3'}
+SCHEMAS = {SCHEMA, 'dsg-latency-v3', 'dsg-latency-v4'}
 RECIPE_BYTES = Path(__file__).with_name('recipes.json').read_bytes()
 RECIPE_POLICY = json.loads(RECIPE_BYTES)
 RECIPE_HASH = hashlib.sha256(RECIPE_BYTES).hexdigest()
@@ -71,6 +71,9 @@ def folds(rows):
 def feature_families(data, kind):
     """Reviewed, bounded feature-block search. V2 stays exactly compatible;
     V3 exposes every collected signal without forcing noisy blocks into base."""
+    if data['schema'] == 'dsg-latency-v4':
+        families=feature_families({**data,'schema':'dsg-latency-v3'},kind)
+        return families+[families[0]+['hardware'],families[-1]+['hardware']]
     if data['schema'] == SCHEMA:
         families=[['base'],['base','history'],['base','history','ratios'],['base','history','ratios','semantic']]
         return [family+(['progress'] if kind=='remaining' else []) for family in families]

@@ -19,6 +19,28 @@ import {Predictor,promotionEligible,promotionGate,DEFAULT_BASELINE} from './pred
 import {PredictionEvidence} from './analytics.mjs';
 import {parseGenieReview,Genie,briefing} from './genie.mjs';
 import {TRAINING_RECIPES,DEFAULT_RECIPE,RECIPE_POLICY_SHA256} from './training-recipes.mjs';
+import {hardwareFeatures,HARDWARE_FEATURES} from './prediction-hardware.mjs';
+import {PredictionHistory as HardwareHistory,replay as hardwareReplay} from './prediction-features-v4.mjs';
+
+test('hardware challenger replay matches live snapshots and never backfills admission',()=>{
+  const sample={node:'a',time:origin,observed_at:origin,power_watts:26,power_scope:'gpu_only'};
+  const d=decision('hw',1);d.candidates[0].hardware=sample;
+  const events=[d,row('dispatch','hw',2),row('progress','hw',30002,{active_elapsed_ms:30000,hardware:{...sample,time:origin+30000,observed_at:origin+30001,power_watts:60}}),row('finish','hw',40002,{outcome:'complete',finish_reason:'stop',service_ms:40000})];
+  const h=new HardwareHistory(inventory),live=[];for(const e of events)live.push(...h.observe(e).rows);
+  assert.deepEqual(hardwareReplay(events,inventory).rows,live);
+  assert.equal(live[0].features.hardware_power_watts,26);
+  assert.equal(live[1].features.hardware_power_watts,60);
+  delete d.candidates[0].hardware;
+  assert.equal(hardwareReplay(events,inventory).rows[0].features.hardware_power_watts,null);
+});
+
+test('hardware features require same-worker, fresh measurements already observed at forecast time',()=>{
+  const at=100000,s={node:'a',time:85000,observed_at:90000,memory_total_bytes:128*2**30,memory_used_bytes:96*2**30,memory_scope:'host_unified',accelerator_activity_pct:0,accelerator_scope:'gpu_kernel_time',power_watts:26,power_scope:'gpu_only',clock_mhz:2100,clock_scope:'sm',private_note:'never exported'};
+  const f=hardwareFeatures(s,at,'a');assert.equal(f.hardware_sample_age_s,15);assert.equal(f.hardware_memory_used_fraction,.75);assert.equal(f.hardware_memory_available_gib,32);assert.equal(f.hardware_activity_pct,0);assert.equal(f.hardware_power_scope,'gpu_only');assert.equal(f.hardware_clock_mhz,2100);assert.deepEqual(Object.keys(f),HARDWARE_FEATURES);assert.ok(!JSON.stringify(f).includes('private'));
+  for(const change of [{node:'b'},{time:100001},{observed_at:100001},{observed_at:84000},{time:39999},{observed_at:null}])assert.ok(Object.values(hardwareFeatures({...s,...change},at,'a')).every(x=>x===null));
+  assert.equal(hardwareFeatures({...s,time:40000},at,'a').hardware_sample_age_s,60);
+  const partial=hardwareFeatures({...s,power_scope:'TDP',memory_used_bytes:200*2**30,accelerator_activity_pct:'0'},at,'a');assert.equal(partial.hardware_power_watts,null);assert.equal(partial.hardware_memory_used_fraction,null);assert.equal(partial.hardware_activity_pct,null);assert.equal(partial.hardware_clock_mhz,2100);
+});
 
 const origin=1700000000000;
 const inventory={schema:1,workers:{a:{matching_profiles:['p'],hardware_family:'spark',accelerator_family:'cuda',ram_gib:128},b:{matching_profiles:['q'],hardware_family:'spark',accelerator_family:'cuda',ram_gib:128}}};
@@ -112,7 +134,7 @@ test('v2 remains active while a newer v3 challenger loads and scores in parallel
   assert.equal(r.p.model('admission').id,challenger.models.admission.id);
   assert.equal(r.p.status().models[0].active_feature_schema,FEATURE_SCHEMA);
   assert.equal(r.p.status().models[0].candidate_feature_schema,FEATURE_SCHEMA_V3);
-  assert.deepEqual([...r.p.histories.keys()].sort(),[FEATURE_SCHEMA,FEATURE_SCHEMA_V3].sort());
+  assert.deepEqual([...r.p.histories.keys()].sort(),[FEATURE_SCHEMA,FEATURE_SCHEMA_V3,'dsg-latency-v4'].sort());
 });
 test('duplicate dispatch, unverified profiles, Genie and cancelled jobs do not produce training labels',()=>{
   const h=new PredictionHistory(inventory);h.observe(decision('dup',0));h.observe(row('dispatch','dup',1));h.observe(row('dispatch','dup',2));assert.equal(h.observe(row('finish','dup',100,{outcome:'complete',finish_reason:'stop',service_ms:99})).rows.length,0);

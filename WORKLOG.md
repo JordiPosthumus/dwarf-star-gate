@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Prepared causal hardware features for XGB.** An explicit V4 challenger can
+  compare fresh, already-observed hardware readings against no-hardware models.
+  Tests guard identity, timing, missing values and replay parity. Live ingestion
+  remains the next step; existing default models are unchanged.
+
 - **Display available GPU power honestly.** The Spark collector now uses measured
   GPU power when module readings are unavailable, without turning it into a
   whole-machine kWh claim. Parser and energy-boundary regressions pass.
