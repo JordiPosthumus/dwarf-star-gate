@@ -36,6 +36,11 @@ generation fails after a fatal accelerator error.
   evidence. Bytes still pass unchanged. A separately recognized fatal error still
   quarantines; actual connection failures remain failures. Unknown outcomes are
   excluded from successful-service training.
+- When an enrolled service manager has already replaced a quarantined process,
+  automatic recovery may verify and readmit that **new** exact machine/profile
+  instance for any supported quarantine. DSG sends no restart command in this
+  path. The same failed instance, a changed profile, missing listener, manual
+  pause or failed cold-to-warm verification remains isolated.
 
 The dashboard always shows routing state on each server card, outside collapsed
 management controls. Quarantine is labelled **QUARANTINED · NOT ROUTING**, with

@@ -36,8 +36,11 @@ context/output/thinking/concurrency, or cancels a merely slow xhigh response.
 deleted; normal DS4 service shutdown may save/checkpoint state as usual.
 
 If a new compatible invocation already started after the quarantined failure,
-the runner verifies it without redundantly restarting it. Missing/stopped services,
-unknown profiles, unreachable SSH, unsupported faults and uncertain ownership
+the runner verifies it without redundantly restarting it. This replacement-only
+readmission applies to fatal faults and repeated operational/stream failures: the
+new exact-profile invocation is the safety boundary, and the deterministic watcher
+can act without waiting for Genie prose. Missing/stopped services, unchanged failed
+instances, unknown profiles, unreachable SSH, unsupported faults and uncertain ownership
 stay isolated for operator review. V1 does not start an arbitrary stopped install.
 The stopped-service extension is intentionally not inferred from a lost listener:
 it first needs a static enrolled-service identity proof that remains verifiable

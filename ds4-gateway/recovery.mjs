@@ -42,11 +42,16 @@ export class Recovery {
     if(n.active || n.queue.length)return 'wait_for_admitted_work';
     if(canary)return n.drained?null:'drain_before_canary';
     if(n.drained)return 'operator_paused';
-    if(!faultReasons.has(n.quarantine?.reason))return 'no_supported_quarantine';
+    if(!n.quarantine)return 'no_supported_quarantine';
     const failedAt=Date.parse(n.quarantine.at);
     if(!Number.isFinite(failedAt))return 'fault_time_unknown';
     // A new invocation may already have auto-restarted. Verify, don't restart it.
     const replaced=s.started_at>failedAt+1000;
+    // Any supported quarantine may be safely cleared after the enrolled service
+    // manager has already produced a new exact-profile instance. DSG issues no
+    // restart in this path; the same failed instance remains ineligible unless
+    // it carries the separately supported fatal accelerator evidence below.
+    if(!faultReasons.has(n.quarantine?.reason)&&!replaced)return 'no_supported_quarantine';
     if(!replaced && (!s.fault || s.fault.reason!=='fatal_accelerator_error' || s.fault.at<failedAt-120000))return 'current_fatal_evidence_required';
     const previous=this.state.operations.filter(o=>o.worker_id===n.id);
     if(previous.some(o=>o.instance===s.instance))return 'instance_already_attempted';

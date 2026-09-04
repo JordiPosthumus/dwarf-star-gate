@@ -10,6 +10,16 @@
 - Explicit endpoint deadlines remain bounded to 24 hours. This changes Genie
   observation only; gateway queues, model requests and DS4 settings are untouched.
 
+## Verified replacement readmission
+
+- A quarantined enrolled DS4 service that has already been replaced by its service
+  manager can now be verified and readmitted automatically even when the original
+  quarantine was repeated transport/stream failure rather than a CUDA signature.
+- The replacement must be a newer exact machine/profile instance with its listener
+  open, no admitted work and successful cold-to-warm verification. DSG issues no
+  restart command in this path; unchanged, stopped or unreachable instances stay
+  isolated.
+
 ## Resilient enrolled SSH routes
 
 - A remote DS4 server may now have up to four additional OpenSSH aliases. The

@@ -123,6 +123,14 @@ test('healthy replacement already started after the fault is verified without a 
   const r=rig();r.replace();r.recovery.call=async()=>({...r.sample(),started_at:r.deps.now()+1});await r.ready();r.recovery.request(r.input());await r.recovery.task;
   assert.equal(r.restarts,0);assert.equal(r.proofs,1);assert.equal(r.recovery.status().operations[0].state,'recovered');
 });
+test('a new exact service instance is automatically verified after repeated stream failures without granting restart power',async()=>{
+  const stale=rig();stale.n.quarantine.reason='repeated_inference_failures';await stale.ready();
+  assert.equal(stale.recovery.workerStatus(stale.n).reason,'no_supported_quarantine');assert.equal(stale.restarts,0);
+  const r=rig();r.n.quarantine.reason='repeated_inference_failures';r.replace();r.recovery.call=async()=>({...r.sample(),started_at:r.deps.now()+1});r.recovery.setAutomatic(true);
+  await r.ready();await r.recovery.task;
+  assert.equal(r.restarts,0);assert.equal(r.proofs,1);assert.equal(r.n.quarantine,null);assert.equal(r.n.healthy,true);
+  assert.equal(r.recovery.status().operations[0].actor,'detector');assert.equal(r.recovery.status().operations[0].restart_issued,undefined);
+});
 test('controller restart resumes verification, never repeats an issued restart',async()=>{
   const r=rig();await r.ready();r.recovery.request(r.input());await r.recovery.task;
   const op=r.store.data.recovery.operations[0];op.state='restarting';r.n.quarantine=op.quarantine;r.n.healthy=false;
