@@ -84,6 +84,27 @@ test('UI distinguishes local model logs from journal connectivity', () => {
   assert.equal(label({telemetry_configured:false}),'Engine timings not configured');
 });
 
+test('activity view uses three honest operational colors and folds thinking into generation', () => {
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const context=vm.createContext({});vm.runInContext(source,context);
+  const now=1_000_000;
+  const html=vm.runInContext(`timeline(${JSON.stringify({activity:[
+    {phase:'idle',start:now-10_000,end:now-8_000},
+    {phase:'prefill',start:now-8_000,end:now-6_000},
+    {phase:'thinking',start:now-6_000,end:now-4_000},
+    {phase:'decode',start:now-4_000,end:now-2_000},
+    {phase:'unavailable',start:now-2_000,end:now-1_000},
+    {phase:'unknown',start:now-1_000,end:now}
+  ]})},${now})`,context);
+  assert.match(html,/phase-idle-off/);assert.match(html,/phase-prefill/);
+  assert.equal((html.match(/phase-decode/g)||[]).length,2,'thinking and answering share the generation band');
+  assert.match(html,/phase-unknown/);assert.doesNotMatch(html,/phase-thinking|phase-unavailable/);
+  assert.match(html,/Idle \/ off/);assert.match(html,/Prefill/);assert.match(html,/Decode \/ generation/);
+  assert.doesNotMatch(html,/>Thinking<|>Answering<|>Unknown \/ working</);
+  const css=fs.readFileSync(new URL('./ui/brand.css',import.meta.url),'utf8');
+  assert.match(css,/\.phase-prefill\{fill:#78aee8\}/);assert.match(css,/\.phase-decode\{fill:#b9d889\}/);assert.match(css,/\.phase-idle-off\{fill:#c48787\}/);
+});
+
 test('worker controls show escaped hold ownership and block ordinary Enable/Remove',()=>{
   const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);

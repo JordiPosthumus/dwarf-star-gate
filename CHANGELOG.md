@@ -1,5 +1,13 @@
 # Changelog
 
+## Three-state server activity view
+
+- Per-server history now uses three operational bands only: blue prefill, green
+  decode/generation (including thinking-token generation), and red idle/off.
+  Unknown telemetry remains an unlabelled dark gap rather than a fabricated
+  state; the separate server verdict still distinguishes healthy idle, paused
+  and unavailable machines.
+
 ## Layered worker-failure evidence
 
 - Gateway status now reports a sanitized management-path state separately from
