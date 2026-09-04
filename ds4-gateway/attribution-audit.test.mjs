@@ -88,6 +88,8 @@ test('fresh-start cohorts retain earlier ownership and competing-start evidence'
   assert.equal(owned.reconciliation_block_reasons.request_collision,1);
   const competing=reconcileAttributionRows([original],[earlyEngine(),engine(),{...engine(12),time:base-1}],gateway(),options);
   assert.equal(competing.reconciled_overlaps,0);assert.equal(competing.reconciliation_block_reasons.competing_engine_start,1);
+  assert.equal(competing.competing_start_details.identified_start,1);
+  assert.ok(Object.keys(competing.competing_start_details).every(k=>['identified_start','anonymous_start','same_prompt_cache_usage','different_prompt_cache_usage','corroborated_other_owner','unresolved_competing_owner'].includes(k)));
   assert.equal(reconcileAttributionRows([old],[],gateway(),options).summary.total_starts,0);
   for(const sinceMs of [NaN,-1,1.5,'today'])assert.throws(()=>reconcileAttributionRows([],[],[],{sinceMs}),/sinceMs/);
 });

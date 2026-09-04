@@ -1,5 +1,13 @@
 # Changelog
 
+## Explain competing-start attribution abstentions
+
+- The private read-only audit now distinguishes anonymous/identified competing
+  starts, matching/different prompt-cache usage and corroborated/unresolved other
+  ownership. Counts apply per blocked proposal and categories may overlap.
+- Attribution decisions remain unchanged; these diagnostics identify evidence
+  gaps before any proposed relaxation of reconciliation rules.
+
 ## Unprivileged local Mac telemetry
 
 - Add explicit `macos-local` enrollment for host RAM occupancy and AGX driver

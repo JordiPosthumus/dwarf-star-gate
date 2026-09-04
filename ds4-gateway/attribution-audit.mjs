@@ -128,20 +128,28 @@ export function reconcileAttributionRows(attributionRows=[],engineRows=[],gatewa
   const add=(requestId,sampleKey)=>{if(!UUID.test(requestId??''))return;const set=owners.get(requestId)??new Set();set.add(sampleKey);owners.set(requestId,set);};
   for(const row of original)add(row.request_id,`${row.node}:${row.sample_id}`);
   for(const [sampleKey,proposal] of proposals)add(proposal.request_id,sampleKey);
-  let reconciled_overlaps=0;
+  let reconciled_overlaps=0;const competing_start_details={};
   const revised=original.map(row=>{
     currentRow=row;
     const key=`${row.node}:${row.sample_id}`,proposal=proposals.get(key);
     if(!proposal)return row;
     if(owners.get(proposal.request_id)?.size!==1){block('request_collision');return row;}
     const request=lifecycle.get(proposal.request_id);
-    const competingStart=collisionStarts.some(start=>!(start.sample_id===row.sample_id&&start.node===row.node)&&start.node===request?.node&&request.dispatched_at<=start.time+SKEW_MS&&start.time-request.dispatched_at<=MAX_DISPATCH_LEAD_MS&&(request.finished_at===null||request.finished_at>=start.time-SKEW_MS));
-    if(competingStart){block('competing_engine_start');return row;}
+    const competing=collisionStarts.filter(start=>!(start.sample_id===row.sample_id&&start.node===row.node)&&start.node===request?.node&&request.dispatched_at<=start.time+SKEW_MS&&start.time-request.dispatched_at<=MAX_DISPATCH_LEAD_MS&&(request.finished_at===null||request.finished_at>=start.time-SKEW_MS));
+    if(competing.length){
+      if(inCohort(row)){
+        const flags=new Set(competing.map(s=>s.sample_id?'identified_start':'anonymous_start'));
+        for(const s of competing)flags.add(s.prompt===row.prompt_tokens&&s.cached===row.cached_tokens?'same_prompt_cache_usage':'different_prompt_cache_usage');
+        for(const s of competing){const owner=latest.get(`${s.node}:${s.sample_id}`);flags.add(owner?.status==='corroborated'&&owner.request_id&&owner.request_id!==proposal.request_id?'corroborated_other_owner':'unresolved_competing_owner');}
+        for(const flag of flags)competing_start_details[flag]=(competing_start_details[flag]??0)+1;
+      }
+      block('competing_engine_start');return row;
+    }
     if(inCohort(row))reconciled_overlaps++;
     return {...row,request_id:proposal.request_id,status:'corroborated',reason:'usage_disambiguated_overlap',
       confidence:row.backend_epoch_confidence==='strong'?'high_candidate':'bounded_candidate',dispatch_delta_ms:proposal.dispatch_delta_ms};
   });
-  return {summary:summarizeAttribution(revised.filter(inCohort)),reconciled_overlaps,remaining_overlap_abstentions:revised.filter(row=>inCohort(row)&&row.reason==='overlapping_gateway_windows').length,reconciliation_block_reasons:Object.fromEntries(Object.entries(blocks).sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0])))};
+  return {summary:summarizeAttribution(revised.filter(inCohort)),reconciled_overlaps,competing_start_details,remaining_overlap_abstentions:revised.filter(row=>inCohort(row)&&row.reason==='overlapping_gateway_windows').length,reconciliation_block_reasons:Object.fromEntries(Object.entries(blocks).sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0])))};
 }
 
 export function auditAttributionReconciliation(directory,gatewayLog,{maxFiles=MAX_FILES,maxBytesPerFile=MAX_RECONCILE_BYTES_PER_FILE,maxGatewayBytes=MAX_GATEWAY_BYTES,sinceMs=null}={}) {
@@ -174,7 +182,7 @@ export function auditAttributionReconciliation(directory,gatewayLog,{maxFiles=MA
   const recorded=summarizeAttribution(attributionRows.filter(inCohort)),later=reconcileAttributionRows(attributionRows,engineRows,gatewayRows,{complete,metricCoverageStart,sinceMs});
   return {schema:1,mode:'read_only_later_evidence_reconciliation',source_complete:complete,files_read:files.length-skipped_files,metric_files_omitted,partial_files,skipped_files,malformed_lines,oversized_lines,invalid_metric_records,anonymous_metric_starts,truncated_records,
     gateway_partial:gateway.partial,gateway_malformed_lines,gateway_oversized_lines,gateway_invalid_records,gateway_truncated_records,recorded,with_later_gateway_evidence:later.summary,
-    cohort_since:sinceMs===null?null:new Date(sinceMs).toISOString(),reconciled_overlaps:later.reconciled_overlaps,remaining_overlap_abstentions:later.remaining_overlap_abstentions,reconciliation_block_reasons:later.reconciliation_block_reasons,
+    cohort_since:sinceMs===null?null:new Date(sinceMs).toISOString(),reconciled_overlaps:later.reconciled_overlaps,remaining_overlap_abstentions:later.remaining_overlap_abstentions,reconciliation_block_reasons:later.reconciliation_block_reasons,competing_start_details:later.competing_start_details??{},
     privacy:'Counts, bounded reason codes and configured server IDs only. Original telemetry is not rewritten; no prompts, responses, request IDs, sample IDs, paths or credentials are returned.'};
 }
 

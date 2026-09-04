@@ -10,6 +10,10 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Explained remaining attribution overlaps.** Fresh-traffic audits now identify
+  competing starts with existing ownership versus unresolved evidence, helping
+  target safe reconciliation improvements without guessing request identity.
+
 - **Added an unprivileged Mac telemetry option.** Local host RAM occupancy and
   driver GPU activity can now be collected through explicit enrollment. Power
   and clocks stay unknown rather than guessed; live activation remains separate.
