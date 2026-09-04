@@ -1,5 +1,16 @@
 # Changelog
 
+## Stock disk-KV filename compatibility
+
+- Fixed the read-only cache inventory to recognize stock DS4 snapshot names in
+  their actual `<40-hex>.kv` form. The earlier bare-hex matcher silently ignored
+  every stock cache file, so absence evidence could never become usable.
+- Inventory scanning now accepts only the exact stock suffix while the private
+  HMAC helper deliberately canonicalizes either the filename or its 40-hex stem.
+  This lets future bounded log evidence and inventory evidence share one opaque
+  reference without exporting the raw prompt-derived name. Bare names, symlinks,
+  unrelated files and malformed headers remain ignored or rejected.
+
 ## Long-overlap attribution retention
 
 - Fixed a conservative-attribution lifetime mismatch: a completed request that

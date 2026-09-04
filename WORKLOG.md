@@ -10,6 +10,13 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Fixed stock DS4 snapshot discovery before trusting cache decisions.** A
+  source-and-log audit proved that DS4 writes `<40-hex>.kv`, while DSG's new
+  inventory prototype looked only for a bare 40-hex name. The scanner now uses
+  the exact stock shape, ignores lookalikes, and derives the same private HMAC
+  from either the filename or canonical stem so later log/inventory correlation
+  need not retain a prompt-derived cache name.
+
 - **Kept long overlap evidence alive without weakening attribution.** Completed
   request windows that overlap a long-running peer now survive the short history
   until every candidate has terminated. Candidate retention is private and

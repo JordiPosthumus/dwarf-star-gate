@@ -390,8 +390,10 @@ For a DS4 cache directory mounted on the **same host as the dashboard**, DSG can
 optionally inventory stock disk-KV headers without reading their embedded prompt
 text. Add an ignored private `cache_directories` mapping, keyed by registered
 worker ID. The scanner reads exactly the 52-byte stock header from regular,
-non-symlink files, replaces the prompt-derived SHA-1 filename with an
-installation-keyed HMAC, and exports only aggregate cohort/count/size evidence.
+non-symlink files named exactly like stock DS4 snapshots (`<40-hex>.kv`),
+replaces the prompt-derived 40-hex stem with an installation-keyed HMAC, and
+exports only aggregate cohort/count/size evidence. Bare 40-hex names and
+unrelated files are ignored.
 It never loads, copies, deletes or rewrites a cache. See
 [cache acquisition evidence](docs/cache-cost.md#privacy-safe-snapshot-inventory).
 The private inventory can support the fail-closed presence gate in the

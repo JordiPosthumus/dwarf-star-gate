@@ -79,7 +79,7 @@ regimes, unknown tiers, API validation and unchanged read-only authority.
 ## Privacy-safe snapshot inventory
 
 **Implemented as an opt-in local/mounted-directory foundation; it does not route
-or transfer caches.** Stock DS4 disk-KV files begin with a 48-byte compatibility
+or transfer caches.** Stock DS4 `<40-hex>.kv` disk-KV files begin with a 48-byte compatibility
 header and four-byte rendered-text length. Verbatim prompt bytes follow. DSG opens
 only regular 40-hex cache files with no-follow semantics and reads exactly those
 first 52 bytes. It validates magic/version/payload ABI, quantization, token count,
@@ -98,7 +98,8 @@ zero weights fingerprint is **unknown**, never compatible. Header agreement is
 still bounded evidence: it does not prove a cache is currently resident, that a
 request matches the byte prefix, or that a remote transfer/import path is safe.
 
-Configure only a directory already readable on the dashboard host:
+Configure only a directory already readable on the dashboard host. The scanner
+accepts the exact stock `<40-hex>.kv` filename shape; unrelated files are ignored:
 
 ```json
 "cache_directories": { "worker-a": "/srv/ds4/cache" }

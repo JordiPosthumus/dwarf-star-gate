@@ -5,7 +5,8 @@ import path from 'node:path';
 import {createHash,createHmac,randomBytes} from 'node:crypto';
 
 export const DS4_CACHE_HEADER_BYTES=52;
-const SHA_NAME=/^[\da-f]{40}$/i;
+const SHA_STEM=/^[\da-f]{40}$/i;
+const SHA_NAME=/^([\da-f]{40})\.kv$/i;
 const WORKER_ID=/^[a-zA-Z0-9][\w-]{0,63}$/;
 const MAX_CACHE_FILES=4096;
 const MAX_SAFE_BIGINT=BigInt(Number.MAX_SAFE_INTEGER);
@@ -17,9 +18,11 @@ function safeInteger64(buffer,offset){
 function cohort(fields){
   return createHash('sha256').update(['dsg-cache-cohort-v1',fields.model_id,fields.weights_fp24,fields.quant_bits,fields.ctx_size,fields.ext_flags,fields.payload_abi].join('\0')).digest('hex');
 }
-function key(secret,name){
+export function cacheSnapshotReference(secret,name){
   if(!Buffer.isBuffer(secret)||secret.length<32)throw new Error('Cache inventory key must contain at least 32 bytes');
-  return createHmac('sha256',secret).update('dsg-cache-key-v1\0').update(name.toLowerCase()).digest('hex');
+  const match=typeof name==='string'?(SHA_NAME.exec(name)??(SHA_STEM.test(name)?[name,name]:null)):null;
+  if(!match)throw new Error('Cache snapshot name must be a stock 40-hex .kv filename or canonical stem');
+  return createHmac('sha256',secret).update('dsg-cache-key-v1\0').update(match[1].toLowerCase()).digest('hex');
 }
 
 export function cacheInventoryDirectories(raw={}){
@@ -44,7 +47,7 @@ export function parseCacheHeader(buffer,{filename,file_size,secret}={}){
     ctx_size:buffer.readUInt32LE(16),ext_flags:buffer[6],payload_abi:buffer[20]
   };
   const created_at=safeInteger64(buffer,24),last_used=safeInteger64(buffer,32);if(created_at===null||last_used===null)return null;
-  return {schema:1,snapshot_ref:key(secret,filename),compatibility_cohort:cohort(fields),compatibility:fields,
+  return {schema:1,snapshot_ref:cacheSnapshotReference(secret,filename),compatibility_cohort:cohort(fields),compatibility:fields,
     compatibility_confidence:fields.weights_fp24===0?'legacy_unknown_weights':'bounded_header',
     reason:buffer[5]<=6?buffer[5]:0,tokens,hits:buffer.readUInt32LE(12),created_at,last_used,
     payload_bytes,text_bytes,file_bytes:file_size};
@@ -101,7 +104,7 @@ export function loadCacheInventoryKey(runtime){
 
 export class CacheInventoryReader{
   constructor(worker,directory,secret,{interval_ms=60000}={}){
-    cacheInventoryDirectories({[worker]:directory});key(secret,'0'.repeat(40));
+    cacheInventoryDirectories({[worker]:directory});cacheSnapshotReference(secret,'0'.repeat(40));
     if(!Number.isSafeInteger(interval_ms)||interval_ms<10000||interval_ms>3600000)throw new Error('Cache inventory interval must be 10 seconds–1 hour');
     this.worker=worker;this.directory=directory;this.secret=secret;this.intervalMs=interval_ms;this.lastPoll=null;this.inventory={schema:1,worker,status:'unavailable',entries:[]};
   }
