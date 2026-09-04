@@ -1,5 +1,21 @@
 # Changelog
 
+## Gate Genie provider deadline hardening
+
+- Replaced the Genie's built-in Fetch call with a loopback-only streaming HTTP
+  transport so the configured provider timeout—not Node's separate five-minute
+  response-header limit—is the authoritative deadline during long DS4 queues and
+  prefills. Dedicated and pool attempts retain their independent two-hour
+  defaults and explicit abort controls.
+- Provider-attempt receipts now describe only the current or latest review. When
+  dedicated inference and the DSG-pool fallback both fail, the health wire and
+  detailed status name both sanitized attempts instead of implying that fallback
+  did not run. Raw transport errors, endpoints, prompts and responses remain
+  private.
+- Added real loopback regression tests for delayed headers, explicit aborts,
+  fallback sequencing and receipt replacement. Gateway routing, DS4 processes,
+  caches, context limits and user-request deadlines are unchanged.
+
 ## Denser fleet summary and dedicated Settings view
 
 - Collapsed serving capacity, server availability, active/waiting work and recent

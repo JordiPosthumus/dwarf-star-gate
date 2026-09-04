@@ -10,6 +10,13 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Made the Genie's generous provider deadlines real.** A hidden five-minute
+  response-header limit in Node's Fetch transport could terminate both the
+  dedicated review and its DSG-pool fallback despite the visible two-hour
+  policy. Genie now uses a loopback-only streaming transport governed by the
+  configured deadline, and the UI names both attempted providers when both fail.
+  No gateway request, worker setting or model-server deadline changed.
+
 - **Made interrupted streams explainable without pretending to recover them.**
   DSG now records whether an SSE response ended cleanly between events, was cut
   off inside an event, declared an engine error, exceeded the observation bound or
