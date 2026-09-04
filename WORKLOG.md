@@ -10,6 +10,13 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Made post-collector model experiments reproducible.** The normal all-history
+  split left new hardware measurements exclusively in the holdout. Added an
+  explicit offline admission-time cohort with full raw snapshots, retained older
+  causal priors and selection provenance. Training/CV now has genuine post-cutover
+  telemetry when evidence is available; all existing minimum-support and future
+  validation gates remain unchanged. No live model replacement or data deletion.
+
 - **Checked genuinely later traffic and made model diagnostics explicit.** Fresh
   Mac attribution gained corroboration from later completion evidence without
   relaxing collision guards. The frozen occupancy challenger still failed to

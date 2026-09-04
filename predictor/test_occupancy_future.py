@@ -39,6 +39,28 @@ class OccupancyFutureTests(unittest.TestCase):
         self.candidate['models']['admission']['base_margin']=99;self.write('candidate',self.candidate)
         with self.assertRaisesRegex(ValueError,'identity changed'):self.evaluate()
 
+    def test_cohort_selection_is_bound_to_its_candidate_but_future_snapshot_can_be_unfiltered(self):
+        metadata={'schema':1,'kind':'admitted_since','since':'2019-01-01T00:00:00Z','selector_sha256':'selector'}
+        self.training['snapshot']['cohort']=metadata
+        self.write('training',self.training)
+        with self.assertRaisesRegex(ValueError,'snapshot does not match'):
+            audit.freeze(self.root/'candidate',self.root/'training',self.root/'mismatch-receipt')
+        self.assertFalse((self.root/'mismatch-receipt').exists())
+        self.candidate['snapshot']=copy.deepcopy(self.training['snapshot']);self.write('candidate',self.candidate)
+        receipt=audit.freeze(self.root/'candidate',self.root/'training',self.root/'cohort-receipt')
+        cut=audit.timestamp(receipt['frozen_at'])
+        # Future replay may include all historical evidence. Admission cutoff
+        # and frozen artifact identity, not repetition of the cohort filter,
+        # determine which new labels the audit can use.
+        self.future['rows']=[self.row('new',cut+1,cut+1000)]
+        self.future['snapshot']['created_at']=dt.datetime.fromtimestamp((cut+10000)/1000,dt.timezone.utc).isoformat()
+        self.assertNotIn('cohort',self.future['snapshot']);self.write('future',self.future)
+        result=audit.evaluate(self.root/'candidate',self.root/'training',self.root/'cohort-receipt',self.root/'future')
+        self.assertEqual(result['reports']['admission']['metrics']['requests'],1)
+        self.training['snapshot']['cohort']['since']='2018-01-01T00:00:00Z';self.write('training',self.training)
+        with self.assertRaises(ValueError):
+            audit.evaluate(self.root/'candidate',self.root/'training',self.root/'cohort-receipt',self.root/'future')
+
     def test_future_only_excludes_boundary_seen_jobs_preexisting_jobs_and_unfinished_labels(self):
         self.future['rows'] += [self.row('boundary',self.cut,self.cut+1000),self.row('old',self.cut+1,self.cut+1000),self.row('preexisting',self.cut-100,self.cut+1000),self.row('preexisting',self.cut+1,self.cut+1000,'remaining'),self.row('not_finished',self.cut+1,self.cut+20000)]
         result=self.evaluate();report=result['reports']['admission']

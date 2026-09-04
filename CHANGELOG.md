@@ -1,5 +1,16 @@
 # Changelog
 
+## Explicit post-collector occupancy experiments
+
+- Add opt-in `--cohort-since` preparation for offline occupancy experiments. Replay
+  full causal history and retain every source snapshot byte, then select labeled
+  requests by earliest admission time with hashed selector/count provenance.
+- Keep ordinary preparation, evidence budgets, live collection, training recipes
+  and promotion gates unchanged. Old-request progress cannot enter the new cohort;
+  missing, duplicate, mistyped, invalid or future cutoff options are rejected.
+- Test complete raw-byte retention, older causal priors, run-scoped request
+  identity, exact cutoff inclusion, empty cohorts and unchanged default behavior.
+
 ## Explain frozen-model input support and stage accuracy
 
 - Offline future audits distinguish collected live hardware fields, selected

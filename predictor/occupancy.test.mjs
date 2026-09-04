@@ -1,6 +1,10 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {replayOccupancy} from './occupancy.mjs';
+import {prepare,prepareArgs,selectOccupancyCohort} from './prepare.mjs';
 import {replay} from '../ds4-gateway/prediction-features-v4.mjs';
 import {validateCandidate} from '../ds4-gateway/xgb-runtime.mjs';
 const inventory={schema:1,workers:{a:{matching_profiles:['p'],hardware_family:'spark',accelerator_family:'cuda',ram_gib:128}}};
@@ -38,4 +42,53 @@ test('cancellations, unknown endings, relocations, mismatched profiles and ambig
     const events=fixture();change(events);assert.equal(replayOccupancy(events,inventory).rows.length,0);
   }
   const events=fixture();assert.equal(replayOccupancy([...events,events.at(-1)],inventory).rows.length,replayOccupancy(events,inventory).rows.length);
+});
+test('declared occupancy cohort preserves raw snapshots and older causal history',t=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-cohort-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  const source=path.join(root,'source');fs.mkdirSync(source);
+  const old=fixture();old.at(-1).finish_reason='stop';old.at(-1).usage={prompt_tokens:100,completion_tokens:10,cached_tokens:0};
+  const recent=old.map(event=>({...event,request_id:'new',event_id:'new-'+event.event_id,time:new Date(Date.parse(event.time)+8000000).toISOString(),
+    ...(event.available_at?{available_at:event.available_at+8000000}:{})}));
+  // Preserve the full snapshot bytes, including a partial trailing live line.
+  const raw=[...old,...recent].map(event=>JSON.stringify(event)+'\n').join('')+'{"partial":';
+  const file='routing-2026-09-04.jsonl';fs.writeFileSync(path.join(source,file),raw);
+  const profiles=path.join(root,'profiles.json');fs.writeFileSync(profiles,JSON.stringify(inventory));
+  const all=path.join(root,'all'),selected=path.join(root,'selected'),since=new Date(origin+8000000).toISOString();
+  prepare(source,profiles,all,'dsg-occupancy-v1');
+  const result=prepare(source,profiles,selected,'dsg-occupancy-v1',{cohortSince:since});
+  const original=JSON.parse(fs.readFileSync(path.join(all,'prepared.json'))),cohort=JSON.parse(fs.readFileSync(path.join(selected,'prepared.json')));
+  assert.deepEqual(cohort.rows,original.rows.filter(r=>r.request_id==='new'));
+  assert.ok(cohort.rows.length>0);assert.equal(cohort.rows.find(r=>r.stage==='admission').features.history_count,1);
+  assert.equal(original.snapshot.cohort,undefined);assert.equal(cohort.routing_enabled,false);
+  assert.equal(result.snapshot.cohort.source_requests,2);assert.equal(result.snapshot.cohort.selected_requests,1);
+  assert.equal(result.snapshot.cohort.excluded_requests,1);assert.equal(result.snapshot.cohort.excluded_points,original.rows.length-cohort.rows.length);
+  assert.match(result.snapshot.cohort.selector_sha256,/^[a-f0-9]{64}$/);
+  assert.deepEqual(cohort.snapshot.hashes,original.snapshot.hashes);
+  assert.equal(fs.readFileSync(path.join(selected,'snapshots',file),'utf8'),raw);
+  assert.equal(fs.readFileSync(path.join(source,file),'utf8'),raw);
+  assert.equal(fs.statSync(path.join(selected,'prepared.json')).mode&0o777,0o600);
+  assert.throws(()=>prepare(source,profiles,selected,'dsg-occupancy-v1',{cohortSince:since}),/already exists/);
+  const empty=path.join(root,'empty');const resultEmpty=prepare(source,profiles,empty,'dsg-occupancy-v1',{cohortSince:'2020-01-01T00:00:00Z'});
+  assert.equal(resultEmpty.rows,0);assert.equal(resultEmpty.snapshot.cohort.selected_requests,0);
+  assert.equal(fs.readFileSync(path.join(empty,'snapshots',file),'utf8'),raw);
+});
+test('cohort selection uses earliest admission per run/request, never later progress or outcomes',()=>{
+  const since='2020-01-01T00:00:00Z',cut=Date.parse(since);
+  const point=(run,id,time,kind='admission')=>({run_id:run,request_id:id,decision_time:time,kind});
+  const data={schema:'dsg-occupancy-v1',rows:[point('a','old',cut-1),point('a','old',cut+1,'remaining'),point('b','old',cut),point('a','new',cut+1)]};
+  const receipt=selectOccupancyCohort(data,since);
+  assert.equal(receipt.source_points,4);assert.equal(receipt.selected_points,2);assert.equal(receipt.selected_requests,2);
+  assert.deepEqual(data.rows.map(r=>[r.run_id,r.request_id]),[['b','old'],['a','new']]);
+});
+test('cohort selection rejects malformed dates and never silently changes ordinary preparation',()=>{
+  for(const since of ['2026-02-30T00:00:00Z','2026-01-01','2026-01-01T00:00:00+00:00','2999-01-01T00:00:00Z','bad','',0]){
+    assert.throws(()=>prepare('/missing','/missing','/missing','dsg-occupancy-v1',{cohortSince:since}),/Cohort start/);
+  }
+  assert.throws(()=>prepare('/missing','/missing','/missing','dsg-latency-v4',{cohortSince:'2020-01-01T00:00:00Z'}),/offline occupancy/);
+  assert.throws(()=>selectOccupancyCohort({schema:'dsg-occupancy-v1',rows:[{decision_time:NaN}]},'2020-01-01T00:00:00Z'),/admission time/);
+  const data={schema:'dsg-latency-v4',rows:[{unchanged:true}]},before=structuredClone(data);
+  assert.equal(selectOccupancyCohort(data,null),null);assert.deepEqual(data,before);
+  const base=['--data','input','--profiles','profiles','--output','output'];
+  assert.equal(prepareArgs(base).at(-1).cohortSince,null);
+  for(const suffix of [['--cohort-since'],['--cohort-since',''],['--cohort-since','2020-01-01T00:00:00Z','--cohort-since','2021-01-01T00:00:00Z'],['--cohort-sinc','2020-01-01T00:00:00Z']])assert.throws(()=>prepareArgs([...base,...suffix]),/option/);
 });

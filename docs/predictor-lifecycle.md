@@ -49,6 +49,45 @@ not tune on the holdout, change promotion gates or authorize occupancy deploymen
 
 ### Frozen occupancy future audit
 
+#### Experiments after a collector change
+
+An all-history chronological split can put every newly collected feature in the
+holdout and none in training/CV. Repeated ordinary retraining cannot teach a
+feature that the training partition never sees. For an explicitly declared
+collector-change experiment, occupancy preparation supports an admission-time
+cohort:
+
+```sh
+node predictor/prepare.mjs --schema dsg-occupancy-v1 \
+  --data /private/training --profiles /private/worker-inventory.json \
+  --output /private/post-collector-experiment \
+  --cohort-since 2026-01-01T00:00:00.000Z
+```
+
+Replace the illustrative timestamp with the independently recorded collector
+activation time, chosen before comparing this experiment's outcome scores. This
+is opt-in and restricted to offline occupancy experiments; ordinary preparation,
+the live collector, model settings and activation gates are unchanged. Invalid,
+future, duplicate or misspelled options fail instead of quietly changing the cohort.
+
+Preparation still snapshots **all source bytes** and replays all events first.
+Older completed requests continue to supply causal history. Only labeled examples
+whose earliest admission is at or after the cutoff enter the experiment; later
+progress on an older job cannot enter it. No outcome, duration or hardware-value
+filter selects favorable cases. `snapshot.cohort` records the cutoff, selector
+source hash and source/selected/excluded point and request counts. Empty cohorts
+stay empty, and the existing snapshot/row budgets are not bypassed. Original
+collector files and earlier candidates are not edited or removed.
+
+Use the unchanged trainer and inspect fold support before interpreting accuracy.
+Small cohorts can train yet still fail minimum holdout/session requirements; do
+not relax those gates. Changing the experiment cohort makes a **new candidate**,
+not a repaired score for the old one. Preserve the old freeze, freeze the new
+artifact separately, and evaluate on genuinely later traffic. Already-examined
+research data cannot become an unseen test for its successor.
+
+#### Freeze, then evaluate later traffic
+
 `predictor/occupancy_future.py` provides a separate offline check on genuinely
 later traffic. First freeze the completed candidate and its original prepared
 training file; then prepare another occupancy snapshot after new jobs finish:
