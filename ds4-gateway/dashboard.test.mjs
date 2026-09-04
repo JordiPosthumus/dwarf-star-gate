@@ -566,6 +566,13 @@ test('server verdicts expose backlog, oldest wait, pause, health and telemetry s
   assert.equal(verdict({}, {is_healthy:true,quarantine:{reason:'accelerator_checkpoint_failure'},load:0,queued:0}).label,'Quarantined');
   assert.equal(verdict({}, {},true).label,'Status stale');
 });
+test('headline waiting count includes Continuity Door holds without claiming Pi-local queues',()=>{
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const ctx=vm.createContext({console,document:{getElementById:()=>({})},window:{},fetch:async()=>{throw new Error('unused')},setInterval:()=>{},setTimeout:()=>{},clearTimeout:()=>{},AbortSignal,URL,Date,Intl});
+  vm.runInContext(source,ctx);
+  assert.deepEqual({...vm.runInContext(`knownWaiting({queued:3},{holding:true,held:6})`,ctx)},{core:3,held:6,total:9});
+  assert.deepEqual({...vm.runInContext(`knownWaiting({queued:3},{holding:false,held:99})`,ctx)},{core:3,held:0,total:3});
+});
 test('unavailable server verdicts explain the observed management layer and avoid a duplicate phase badge',()=>{
   const source = fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
   const context = vm.createContext({phase:()=> 'unavailable'});vm.runInContext(source,context);

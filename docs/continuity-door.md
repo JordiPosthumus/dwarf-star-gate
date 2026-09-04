@@ -20,7 +20,10 @@ Its narrow purpose is to make a **planned gateway-core restart** uneventful:
 The door and core use separate mode-0600 Unix control sockets. The public
 `GET /continuity/status` endpoint requires the ordinary DSG bearer key and exposes
 only bounded status. The dashboard shows whether the door is ready or holding,
-how many unread requests it holds, and how many streams it is proxying. Gate Genie
+how many unread requests it holds, and how many streams it is proxying. The
+headline `WAITING` total combines core-queued and Door-held requests, with the
+components named when the Door is holding. Requests that have not yet left a Pi,
+Hermes or other client remain outside DSG's observation boundary. Gate Genie
 receives the same sanitized facts.
 
 ## Guarantees and boundaries

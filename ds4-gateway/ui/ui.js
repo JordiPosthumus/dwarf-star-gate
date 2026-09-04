@@ -4,6 +4,11 @@ const fmt = n => Number.isFinite(n) ? n.toLocaleString(undefined, { maximumFract
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const age = (time, now) => !time ? 'no sample yet' : now - time < 5000 ? 'just now' : now - time < 60000 ? `${Math.floor((now-time)/1000)}s ago` : `${Math.floor((now-time)/60000)}m ago`;
 const clock = t => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+function knownWaiting(gateway,door) {
+  const core=Number.isSafeInteger(gateway?.queued)&&gateway.queued>=0?gateway.queued:0;
+  const held=door?.holding&&Number.isSafeInteger(door.held)&&door.held>=0?door.held:0;
+  return {core,held,total:core+held};
+}
 function thinkingInfo(t) {
   if (!t) return { label:'Unavailable', detail:'This request predates thinking telemetry, or no request has been observed.' };
   if (t.status === 'pending') return { label:'Reading request', detail:'Waiting for the request upload to finish.' };
@@ -306,16 +311,17 @@ function render(s) {
   $('warning').hidden = !s.gateway_error && !s.telemetry_error;
   $('warning').textContent = [s.gateway_error,s.telemetry_error].filter(Boolean).join(' · ');
   $('model').textContent = s.demo ? `${g?.model || 'DS4'} · illustrative data · no real DS4 servers connected` : `${g?.model || 'DS4'} · one active gateway request per DS4 server · session-affinity routing`;
-  $('available').textContent = g ? `${g.available} / ${g.total}` : '—'; $('active').textContent = fmt(g?.active); $('queued').textContent = fmt(g?.queued);
+  const door=s.continuity_door,waiting=knownWaiting(g,door);
+  $('available').textContent = g ? `${g.available} / ${g.total}` : '—'; $('active').textContent = fmt(g?.active); $('queued').textContent = g?fmt(waiting.total):'—';
+  $('queued').title=door?.holding?`${fmt(waiting.core)} admitted in the gateway core + ${fmt(waiting.held)} held safely at the Continuity Door. Pi/Hermes work not yet sent to DSG is not visible here.`:'Requests known to DSG and not yet dispatched. Pi/Hermes work not yet sent to DSG is not visible here.';
   const cap=capacity(g,stale),scales=Object.fromEntries(['decode','prefill'].map(kind=>[kind,Math.ceil(Math.max(1,...s.devices.flatMap(d=>d.series.filter(p=>p.kind===kind && now-p.time<900000).map(p=>p.tps))))]));
   $('capacity-value').textContent=cap?.percent!=null?`${cap.percent}% occupied`:'Unknown';
-  $('capacity-note').textContent=cap?`${cap.occupied} / ${cap.eligible} eligible slots occupied · ${cap.free} immediately free · ${fmt(g.queued)} waiting`:'Gateway status is unavailable';
+  $('capacity-note').textContent=cap?`${cap.occupied} / ${cap.eligible} eligible slots occupied · ${cap.free} immediately free · ${fmt(waiting.total)} waiting${waiting.held?` (${fmt(waiting.core)} core + ${fmt(waiting.held)} Continuity Door)`:''}`:'Gateway status is unavailable';
   $('capacity-meter').value=cap?.percent||0;$('capacity-meter').hidden=cap?.percent==null;
-  const door=s.continuity_door;
   $('continuity-door-status').textContent=s.continuity_door_error?`${s.continuity_door_error}.`:!door?'Continuity Door is not enabled.':door.holding?`Continuity Door holding ${fmt(door.held)} new request${door.held===1?'':'s'} while the core is ${door.core_ready?'ready':'unavailable'}; existing streams remain connected.`:`Continuity Door ready · ${fmt(door.active)} active proxied stream${door.active===1?'':'s'} · no request-body spooling or replay.`;
   visibleWorkers=g?.workers??[];workerUiStale=stale;workerControlsVisible=s.worker_management===true;
   const queueLeaders=visibleWorkers.filter(w=>w.queued>0).sort((a,b)=>b.queued-a.queued||((b.oldest_queue_seconds??-1)-(a.oldest_queue_seconds??-1))).slice(0,3);
-  $('fleet-summary').textContent=stale?'Fleet summary is historical: live gateway status is unavailable.':!g?.total?'No DS4 servers are registered. Open Manage DS4 servers to add your first endpoint.':`${fmt(g.available)} of ${fmt(g.total)} servers are healthy and enabled · ${fmt(cap?.free)} immediately free · ${fmt(g.active)} active · ${fmt(g.queued)} waiting.${queueLeaders.length?` Backlog: ${queueLeaders.map(w=>`${w.id} ${fmt(w.queued)}${Number.isFinite(w.oldest_queue_seconds)?` (oldest ${fmt(w.oldest_queue_seconds)}s)`:''}`).join(' · ')}.`:''}${schedulingExplanation(g,visibleWorkers,cap)}`;
+  $('fleet-summary').textContent=stale?'Fleet summary is historical: live gateway status is unavailable.':!g?.total?'No DS4 servers are registered. Open Manage DS4 servers to add your first endpoint.':`${fmt(g.available)} of ${fmt(g.total)} servers are healthy and enabled · ${fmt(cap?.free)} immediately free · ${fmt(g.active)} active · ${fmt(waiting.total)} waiting${waiting.held?` (${fmt(waiting.core)} core + ${fmt(waiting.held)} Continuity Door)`:''}.${queueLeaders.length?` Core backlog: ${queueLeaders.map(w=>`${w.id} ${fmt(w.queued)}${Number.isFinite(w.oldest_queue_seconds)?` (oldest ${fmt(w.oldest_queue_seconds)}s)`:''}`).join(' · ')}.`:''}${schedulingExplanation(g,visibleWorkers,cap)}`;
   const excluded=visibleWorkers.filter(w=>routingInfo(w).excluded);
   $('routing-summary').hidden=!excluded.length&&!stale&&!g?.draining;
   $('routing-summary').textContent=stale?'Routing status is stale. Controls are disabled until live status returns.':`${g?.draining?'The gateway is draining: all new admission is stopped. ':''}${excluded.length?`${excluded.length} server${excluded.length===1?' is':'s are'} not accepting new work: ${excluded.map(w=>w.id).join(', ')}. See the highlighted reason and routing control on each server card below.`:''}`;

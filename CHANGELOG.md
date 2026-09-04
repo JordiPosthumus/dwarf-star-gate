@@ -1,5 +1,15 @@
 # Changelog
 
+## Complete known-backlog headline
+
+- The dashboard's `WAITING` total now includes both requests admitted to the
+  gateway core and requests held safely at the Continuity Door during a planned
+  core replacement. Previously the Door's queue was shown only in its own panel,
+  so the fleet headline could misleadingly report zero while clients were parked.
+- Hover text and the fleet summary identify the two DSG-owned components and
+  state the visibility boundary: work still queued inside Pi, Hermes or another
+  client has not reached DSG and cannot be counted by the gateway.
+
 ## Versioned XGBoost V3 evidence contract
 
 - A separately versioned V3 feature builder now supplies XGBoost with the
