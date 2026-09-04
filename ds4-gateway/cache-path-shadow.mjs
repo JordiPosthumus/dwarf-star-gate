@@ -8,7 +8,7 @@ const COMPONENT_STATUS=new Set(['measured','validated_forecast','unvalidated_est
 const AVAILABILITY=new Set(['observed','absent','unknown']);
 const MAX_MS=30*24*3600000;
 const PATH_FIELDS={
-  wait_hot:new Set(['availability','worker','wait','generation']),
+  wait_hot:new Set(['availability','worker','wait','suffix_prefill','generation']),
   local_restore:new Set(['availability','compatibility','worker','wait','restore','suffix_prefill','generation']),
   remote_acquisition:new Set(['availability','compatibility','protocol','worker','source_worker','wait','transfer','import_restore','suffix_prefill','generation','parallel_staging_verified']),
   cold_prefill:new Set(['availability','worker','wait','prefill','generation'])
@@ -54,8 +54,8 @@ export function compareCachePaths(raw={}){
 
   blocked=gate(raw.wait_hot,'wait_hot');
   if(blocked)paths.wait_hot=blocked;else{
-    const values=[component(raw.wait_hot.wait,'wait'),component(raw.wait_hot.generation,'generation')],errors=values.filter(item=>item.error).map(item=>item.error);
-    paths.wait_hot=errors.length?unknown('wait_hot',errors,{worker:worker(raw.wait_hot.worker)}):ready('wait_hot',values,rows=>rows.reduce((sum,item)=>sum+item.ms,0),{worker:worker(raw.wait_hot.worker),critical_path:'wait + generation'});
+    const values=[component(raw.wait_hot.wait,'wait'),component(raw.wait_hot.suffix_prefill,'suffix_prefill'),component(raw.wait_hot.generation,'generation')],errors=values.filter(item=>item.error).map(item=>item.error);
+    paths.wait_hot=errors.length?unknown('wait_hot',errors,{worker:worker(raw.wait_hot.worker)}):ready('wait_hot',values,rows=>rows.reduce((sum,item)=>sum+item.ms,0),{worker:worker(raw.wait_hot.worker),critical_path:'wait + suffix prefill + generation'});
   }
 
   blocked=gate(raw.local_restore,'local_restore',{compatibility:true});

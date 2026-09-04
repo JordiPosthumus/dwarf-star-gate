@@ -4,7 +4,7 @@ import {compareCachePaths,snapshotPresence} from './cache-path-shadow.mjs';
 
 const measured=ms=>({ms,status:'measured'}),forecast=ms=>({ms,status:'validated_forecast'}),estimated=ms=>({ms,status:'unvalidated_estimate'});
 const evidence=()=>({
-  wait_hot:{availability:'observed',worker:'home',wait:forecast(100),generation:forecast(200)},
+  wait_hot:{availability:'observed',worker:'home',wait:forecast(100),suffix_prefill:measured(0),generation:forecast(200)},
   local_restore:{availability:'observed',compatibility:'compatible',worker:'local',wait:forecast(20),restore:measured(50),suffix_prefill:measured(20),generation:forecast(200)},
   remote_acquisition:{availability:'observed',compatibility:'compatible',protocol:'validated',worker:'remote',source_worker:'home',wait:forecast(100),transfer:measured(60),import_restore:measured(20),suffix_prefill:measured(20),generation:forecast(200),parallel_staging_verified:true},
   cold_prefill:{availability:'observed',worker:'cold',wait:forecast(0),prefill:measured(500),generation:forecast(200)}
@@ -15,6 +15,15 @@ test('four-path shadow uses critical-path math and ranks only complete evidence 
   const serial=evidence();serial.remote_acquisition.parallel_staging_verified=false;assert.equal(compareCachePaths(serial).paths.remote_acquisition.estimated_ms,400);
 });
 
+test('hot cache still pays for the new suffix and cannot win on missing prefill evidence',()=>{
+  const input=evidence();input.wait_hot.wait=forecast(0);
+  assert.equal(compareCachePaths(input).would_prefer,'wait_hot');
+  input.wait_hot.suffix_prefill=measured(150);
+  const result=compareCachePaths(input);assert.equal(result.paths.wait_hot.estimated_ms,350);assert.equal(result.would_prefer,'local_restore');
+  delete input.wait_hot.suffix_prefill;
+  assert.equal(compareCachePaths(input).would_prefer,null);
+  assert.deepEqual(compareCachePaths(input).paths.wait_hot.reasons,['suffix_prefill_unavailable']);
+});
 test('unknown evidence blocks a winner while proven absence safely excludes a path',()=>{
   const input=evidence();input.wait_hot.availability='unknown';input.remote_acquisition.availability='absent';const result=compareCachePaths(input);
   assert.equal(result.complete,false);assert.equal(result.would_prefer,null);assert.equal(result.best_known,'local_restore');assert.equal(result.paths.wait_hot.status,'unknown');assert.equal(result.paths.remote_acquisition.status,'excluded');

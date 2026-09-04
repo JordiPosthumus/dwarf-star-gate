@@ -1,5 +1,11 @@
 # Changelog
 
+## Correct hot-cache shadow cost
+
+- Include new-suffix prefill in the hot-cache completion estimate. Missing suffix
+  evidence now blocks a winner, preventing the comparison from unfairly favouring
+  the hot server. This corrects the offline comparator; routing is unchanged.
+
 ## Long-running request visibility
 
 - Show active request age on server cards and a deterministic capacity warning

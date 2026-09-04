@@ -10,6 +10,10 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Corrected the hot-cache comparison.** A warm prefix still needs its new suffix
+  processed. The shadow comparator now counts that cost explicitly, with a
+  regression demonstrating how it can change which path is fastest.
+
 - **Made long slot occupancy visible.** Active request age now sits on each server
   card. Long requests with waiting work raise a capacity advisory, including fresh
   engine token progress where available. This explains missing completions without

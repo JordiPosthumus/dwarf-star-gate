@@ -20,7 +20,7 @@ For the same request and generation target, the comparator uses:
 
 | Path | Estimated completion time |
 | --- | --- |
-| Wait hot | `wait + generation` |
+| Wait hot | `wait + suffix prefill + generation` |
 | Local restore | `wait + restore + suffix prefill + generation` |
 | Remote acquisition, serial | `wait + transfer + import/restore + suffix prefill + generation` |
 | Remote acquisition, verified staging overlap | `max(wait, transfer) + import/restore + suffix prefill + generation` |
@@ -31,6 +31,10 @@ independently verified. Otherwise the serial expression is mandatory. A measured
 component, a validated forecast and an unvalidated estimate retain distinct
 labels; composing bounded components does not itself validate the end-to-end
 forecast.
+
+RAM residency does not eliminate the new prompt suffix. The hot path requires an
+explicit `suffix_prefill` component, including an evidenced zero for no suffix;
+omitting it makes the path unknown instead of silently treating that work as free.
 
 Each path is `estimated`, `excluded` or `unknown`. Proven cache absence,
 incompatibility or protocol unavailability can exclude a path. Missing or stale
