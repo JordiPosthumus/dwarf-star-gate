@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Exercised real Pi continuity and its replay boundary.** Installed-agent
+  fixtures passed patient waiting, certified retries beyond three attempts and
+  a truncated post-tool stream. Tools execute once; ambiguous dispatched output
+  is not silently replayed. Broader post-dispatch recovery remains unfinished.
+
 - **Exposed future hardware coverage.** Challenger reports now separate training
   from holdout feature availability, and show hardware coverage by worker/stage.
   Missing sensors cannot hide behind a fleet-wide training average; gates are unchanged.

@@ -146,6 +146,13 @@ four certified client retries across a global admission drain. In both, the tool
 executes once and answer continuation is automatic. The installed Pi provider composer is also
 checked to preserve model capabilities. No production model or Pi config is touched.
 
+A third real-agent fixture truncates the answer after the tool has executed.
+The DSG transport does not replay that dispatched request: the tool count stays
+one, the two expected inference calls stay two, and the agent records the missing
+`finish_reason` error. This tests the agent core and transport, not the CLI's
+separate generic retry policy. It is a verified safety boundary, **not** successful
+post-dispatch recovery; suppressing that error alone would not make the agent resume.
+
 The same example extension can separately opt in to the advisory
 [Agent Watch](agent-watch.md) heartbeat with `DSG_AGENT_WATCH=1`. It reports only
 a random run reference and coarse lifecycle state. It does not extend retry

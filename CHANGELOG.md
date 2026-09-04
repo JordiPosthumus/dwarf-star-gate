@@ -1,5 +1,12 @@
 # Changelog
 
+## Verify real Pi partial-stream replay boundary
+
+- Add an opt-in installed-Pi agent/tool-loop regression for a truncated answer
+  after a completed tool call. Assert no DSG transport retry or duplicated tool,
+  and preserve the explicit missing-terminal error. This is not a CLI retry-policy
+  test or a claim of post-dispatch recovery. All three installed-Pi fixtures passed.
+
 ## Report holdout hardware coverage
 
 - Add holdout feature availability and separate training/holdout hardware coverage
