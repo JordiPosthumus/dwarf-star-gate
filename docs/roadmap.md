@@ -118,13 +118,18 @@ and use the [current reproducible demo](screenshots.md), including collection/Ge
 
 ## Implemented foundation: evidence and bounded Gate Genie actions
 
-**Queued-work shadow now implemented, opt-in:** [setup and limits](routing-shadow.md).
-It records per-worker/session clocks and compares an unvalidated historical
-baseline without moving work. This is not the planned calibrated, cache-aware XGB
-router. Dedicated UI explanations, verified cache/process evidence and production
-handover are still outstanding. Embeddings are a separate opt-in collector, not
-implicitly enabled by shadow timing. "Remaining busy time" comes before demand forecasting of
-how long an idle machine will remain unused.
+**Queued-work evidence now implemented, opt-in:** [setup and limits](routing-shadow.md).
+The original historical shadow still records per-worker/session clocks without
+moving work, and it remains an unvalidated baseline rather than a cache-aware
+router. Bounded UI explanations, backend process epochs, request-correlation
+candidates, optional embeddings, versioned XGB forecasts and exact safe
+pre-dispatch handover now ship as separate layers. The deterministic handover
+policy and validated-evidence-only tie-break are described above; neither turns
+an experimental shadow estimate into routing authority. Remaining work is to
+measure realized outcomes, improve cache-acquisition attribution and let the
+existing promotion gates decide whether a learned cost model earns any broader
+scope. Embeddings remain a separate opt-in collector. "Remaining busy time"
+comes before forecasting how long an idle machine will remain unused.
 
 - **Passive routing dataset:** opt-in private numerical records of fleet load at
   admission, placement, queue/service durations, reported token usage and failures.

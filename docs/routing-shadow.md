@@ -121,19 +121,30 @@ Tests cover monotonic recency/pressure, abstention, stale/missing/censored data,
 unavailable/paused alternatives, unresolved session work, bounded memory, privacy,
 unchanged request bytes/affinity, reassessment and exclusion from XGB labels.
 
-## Next increments
+## Next evidence gates
 
-1. Surface pinned queues, unavailable capacity, evidence age and comparisons in UI.
-2. Add verified process epochs and request-correlated cache/progress evidence.
-3. Collect bounded local embeddings and current-request features with explicit
-   availability timestamps; do not block request forwarding or spool raw text.
-4. Refit/evaluate the XGB estimator, including a remaining-service-time target and
-   fixed fallback. Compare metadata-only versus embedding-assisted models.
-5. Validate counterfactual predictions with small controlled calibration trials;
-   then decide whether the implemented exact established-session handover may be
-   automated behind an uncertainty margin and hysteresis. Until then it remains
-   evidence-bound and revalidated; an operator or Genie may request one mature
-   exact offer, while only first/unaffined work moves automatically.
+The former UI, process-epoch, bounded-embedding, progress-feature and versioned
+XGB increments now ship. They remain separate evidence layers: their presence is
+not proof that a cache survived, a candidate prediction is calibrated, or a move
+saved time.
+
+1. Measure request-to-engine candidate coverage, conflicts and abstentions on
+   ordinary traffic, segmented by backend process epoch. Ambiguous correlation
+   must remain unknown.
+2. Join each proposed and applied pre-dispatch handover to its eventual queue,
+   cache-reuse and completion outcome. Preserve the no-move counterfactual as an
+   estimate, not an invented label.
+3. Compare the deployed remaining/service forecasts with measured local restore
+   and cold-prefill components. Do not double-count acquisition costs already
+   present in a total-service forecast.
+4. Use only small, non-displacing calibration trials after the existing preflight
+   can prove cache preservation. Then decide whether any broader established-
+   session automation has enough margin, uncertainty bounds and hysteresis.
+
+Until those gates pass, exact established-session handover remains evidence-bound
+and revalidated. An operator or Genie may request one mature exact offer, while
+only first/unaffined work and the documented deterministic expiry path move
+automatically.
 
 Predicting **when a busy worker becomes free** is the first objective. Predicting
 how long an already idle worker will stay idle requires an arrival-demand model;
