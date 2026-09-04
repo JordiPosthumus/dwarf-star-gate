@@ -1,5 +1,5 @@
 import http from 'node:http';
-const paths = new Set(['/workers', '/add-worker', '/remove-worker', '/drain-workers', '/resume-workers', '/set-ssh-fallbacks','/set-context-limit','/set-queue-timeout','/set-protection','/relocate-queued','/genie-relocate-queued','/recovery-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/predictor','/genie-predictor','/agents','/grant-agent','/revoke-agent','/release-agent-hold']);
+const paths = new Set(['/workers', '/add-worker', '/remove-worker', '/drain-workers', '/resume-workers', '/set-ssh-fallbacks','/set-context-limit','/set-queue-timeout','/set-protection','/relocate-queued','/genie-relocate-queued','/recovery-policy','/recovery-handback-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/predictor','/genie-predictor','/agents','/grant-agent','/revoke-agent','/release-agent-hold']);
 export function workerControl(socketPath, route, body, {channel}={}) {
   if (!socketPath || !paths.has(route)) return Promise.reject(new Error('Worker control socket not configured'));
   if(channel!==undefined&&(typeof channel!=='string'||!/^[a-z][a-z0-9_]{0,31}$/.test(channel)))return Promise.reject(new Error('Invalid worker-control channel'));

@@ -98,7 +98,7 @@ are implemented separately.
 | 4 (V2/V3 lifecycle implemented) | Collect future validation evidence for versioned forecasts | Fixed forward-time tree/feature selection, separate unseen-session placement gate, per-worker future evidence and parallel V2/V3 evaluation; no experimental model controls routing |
 | 5 (notebook first slice implemented) | Persistent Genie/operator activity and endpoint settings UI | Private notebook storage, revisioned notes and bounded historical retrieval tested; generated hypotheses, full chat persistence and endpoint test/save/rollback remain planned |
 | 6 (bounded runner implemented) | Opt-in deterministic recovery runner and Genie access | Systemd-user canary complete; a separately enrolled launchd adapter is synthetically tested and still requires a private per-Mac canary. Exact fatal-instance restart plus separately enrolled stopped-service start; see recovery guide for deployment gates |
-| 6a (designed, not implemented) | Authorized maintenance hand-back and changed-profile adoption | A scoped maintenance ticket identifies the worker and expected change; the fixed adapter independently proves the same machine/service and reports bounded drift; model/context, generation and cold-to-warm reuse pass before a deliberately adopted profile can be recovered/readmitted. No arbitrary command, submitted fingerprint or silent trust update |
+| 6a (implemented in source) | Verified changed-profile hand-back | Default-on sub-policy under opt-in automatic recovery; separated identical inspections, same enrolled machine/service, no admitted work, fatal-or-new-invocation proof, private durable adoption, model/context + generation + two cold-to-warm verification. Pauses/agent holds win; no arbitrary command or submitted fingerprint |
 
 Orders 2 and 3 can be built alongside reliability diagnosis, without changing live
 routing. Do not wait for an LLM or trained predictor merely to explain why a queue
@@ -490,15 +490,55 @@ not possible, ordinary cold re-prefill remains an explicit costed alternative,
 not a disguised cache transfer. The Genie could propose a move; an independently
 validated deterministic mechanism would enforce the handover.
 
+## Future opt-in: Priority Lens
+
+**Priority Lens** is the proposed UI name for intent-aware dispatch. When the
+operator explicitly enables its persistent setting, DSG may give Gate Genie a
+small bounded slice of the newest visible user request for each *undispatched*
+stream. Genie can recommend which waiting work is most valuable to run next and
+write a concise, separately colored dispatch explanation to the health wire.
+This is proposed, not implemented or enabled.
+
+The content boundary must be unusually obvious: default off; visible while on;
+newest user text only; no system/developer messages, tool arguments, images,
+hidden reasoning or whole conversation; a documented byte limit; and no raw
+snippet in logs, training rows, receipts, notebook memory or browser snapshots.
+The configured Genie provider receives the snippet, so the UI must identify that
+trust boundary before opt-in. Turning the feature off stops new content capture
+immediately and returns scheduling to the deterministic policy.
+
+Genie supplies a bounded recommendation, reason category and confidence—not a
+queue mutation. Fixed code enforces eligibility, session/cache continuity,
+operator holds, starvation protection, FIFO aging, a maximum priority advantage
+and idempotent receipts. It can reorder only requests that DSG has not dispatched;
+it cannot interrupt or replay active work. Missing, late, malformed or failed
+advice is a deterministic abstention, never a blocked request.
+
+Chat may help the operator refine durable preferences such as project priority,
+deadline sensitivity, background-work treatment and maximum tolerated starvation.
+Genie should propose a concrete, reviewable policy delta; the UI shows and applies
+that version explicitly rather than silently treating conversational prose as
+authority. Every applied decision records only bounded metadata: policy version,
+priority class, reason category, alternatives considered, decision time and
+eventual wait/outcome. This gives us audit and learning evidence without retaining
+the request text.
+
+Acceptance: opt-in persistence and opt-out, provider-boundary disclosure, content
+exclusion/redaction tests, zero raw-text persistence, bounded inference timeout,
+starvation/adversarial-prompt resistance, same-session/cache invariants, decision
+receipts, deterministic fallback and a shadow-only evaluation showing that the
+policy improves an operator-defined objective before it gains routing authority.
+
 ## End-of-sprint item: lightweight hardware telemetry
 
 Add an optional low-rate hardware lane after maintenance hand-back recovery is
 complete. It must not slow the routing/control loop or require changes to DS4.
 
-- Keep availability, queues and phase state responsive at roughly two seconds,
-  but refresh decode/prefill history around five seconds and hardware samples
-  every 10–15 seconds. Measure payload and browser work before choosing final
-  intervals; do not replace evidence with an arbitrary slower timer.
+- Keep availability, queues, quarantine and recovery state responsive through a
+  small fast/event-driven lane, but refresh decode/prefill and hardware charts
+  every **10 seconds**. Do not make a critical alarm wait on the chart timer.
+  Measure payload and browser work after the split rather than slowing every
+  safety signal indiscriminately.
 - Add three compact 15-minute sparklines per server: memory used/pressure,
   accelerator activity and power draw. Show current clock speed as secondary
   context or a fourth chart only where the platform reports it reliably.

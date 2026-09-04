@@ -237,7 +237,7 @@ export function createGateway(config,{visionTranscode}={}) {
       observe(()=>shadow.reset(n.id));
     }}); } catch(e){store.close();throw e;}
   let agents;
-  try {agents=new AgentControl({store,nodes,log,onPause:ids=>recovery.operatorPause(ids),canResume:async n=>{
+  try {agents=new AgentControl({store,nodes,log,onPause:ids=>recovery.operatorPause(ids),canHandback:async n=>recovery.profileHandbackOffer(n,{ignorePause:true}),onHandback:()=>void recovery.tick(),canResume:async n=>{
     if(shuttingDown||draining)throw new Error('Gateway is draining; hold retained');
     await freshProbe(n);
     if(shuttingDown||draining||n.recovering||n.quarantine||n.probeError||!n.modelMatches||!validContext(n.contextLength)||n.contextLength<contextLimit())throw new Error('Fresh compatible worker readiness required; hold retained');
@@ -1049,7 +1049,7 @@ export function createGateway(config,{visionTranscode}={}) {
     if(req.method==='GET'&&req.url==='/agent/v1/status')return json(res,200,agents.status(actor));
     if(req.method==='GET'&&req.url==='/agents')return json(res,200,agents.adminStatus());
     if (req.method === 'GET' && req.url === '/workers') return json(res, 200, registry());
-    if (req.method !== 'POST' || !['/drain-workers', '/resume-workers', '/add-worker', '/remove-worker', '/set-ssh-fallbacks','/set-context-limit','/set-queue-timeout','/set-protection','/relocate-queued','/genie-relocate-queued','/recovery-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/predictor','/genie-predictor','/grant-agent','/revoke-agent','/release-agent-hold','/agent/v1/drain','/agent/v1/resume','/agent/v1/receipt'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
+    if (req.method !== 'POST' || !['/drain-workers', '/resume-workers', '/add-worker', '/remove-worker', '/set-ssh-fallbacks','/set-context-limit','/set-queue-timeout','/set-protection','/relocate-queued','/genie-relocate-queued','/recovery-policy','/recovery-handback-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/predictor','/genie-predictor','/grant-agent','/revoke-agent','/release-agent-hold','/agent/v1/drain','/agent/v1/resume','/agent/v1/receipt'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
     let body = '';
     req.on('data', chunk => { body += chunk; if (body.length > 4096) req.destroy(); });
     req.on('error', () => {});
@@ -1067,6 +1067,10 @@ export function createGateway(config,{visionTranscode}={}) {
           if(req.url==='/recovery-policy') {
             if(Object.keys(input).length!==1 || !Object.hasOwn(input,'enabled'))throw new Error('Specify enabled only');
             return json(res,200,recovery.setAutomatic(input.enabled));
+          }
+          if(req.url==='/recovery-handback-policy') {
+            if(Object.keys(input).length!==1 || !Object.hasOwn(input,'enabled'))throw new Error('Specify enabled only');
+            return json(res,200,recovery.setProfileHandbackAutomatic(input.enabled));
           }
           if(['/recover-worker','/genie-recover-worker','/recovery-canary'].includes(req.url))return json(res,202,recovery.request(input,req.url==='/genie-recover-worker'?'genie':'operator',{canary:req.url==='/recovery-canary'}));
           if (req.url === '/set-context-limit') return json(res,200,await setContextLimit(input));

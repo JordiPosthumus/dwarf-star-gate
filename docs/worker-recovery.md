@@ -116,16 +116,33 @@ produces a deterministic live alert with fleet availability and held-request
 counts; fresh Genie commentary may add context but cannot suppress the alarm.
 Intentional operator pauses and scoped agent maintenance holds are not faults.
 
-An authorized **maintenance hand-back** is the planned way to let Genie help after
-a legitimate upgrade. It is not implemented yet. The contract will require an
-exclusive, expiring agent maintenance ticket created before the change; an
-independent adapter inspection of the same machine and exact service; bounded
-component-level drift evidence; and unchanged expected model/context plus fresh
-generation and cold-to-warm cache verification. Only then may a separately
-enabled policy let Genie request adoption of the new inspected profile followed
-by guarded recovery/readmission. The agent or Genie will not be allowed to submit
-a replacement fingerprint or shell command. A changed profile without that
-provenance remains quarantined for operator review.
+**Verified profile hand-back** handles a legitimate upgrade that changed the
+enrolled runtime fingerprint. Its separate sub-policy defaults on, but it is
+dormant unless automatic recovery itself is enabled. The adapter must report the
+same enrolled machine and configured service transport, an active exact listener,
+and one identical changed profile/instance in at least two inspections separated
+by ten seconds. DSG additionally requires no admitted work and either a service
+invocation started after the quarantine or current fatal accelerator evidence.
+
+The candidate fingerprint is never accepted from Genie, an agent or the browser.
+The executor passes the independently inspected fingerprint back only to the
+already enrolled helper, issues no service action for an already replaced
+invocation, and otherwise restarts only that exact service. Model/context, fresh
+generation and two cold-to-warm conversations must pass before the private
+adoption and readmission commit together. The adoption survives controller
+restart, is invalidated if the operator changes the base private enrollment, and
+is represented publicly only as a bounded state/receipt—not a hash.
+
+If an inspection cannot prove a new static stopped-service profile, DSG does not
+carry the old value forward. Live verification/restart may still complete, but a
+later start-from-stopped remains disabled until that static identity is explicitly
+re-enrolled. Unknown evidence never becomes inherited authority.
+
+An operator pause or scoped agent hold blocks hand-back. This is how another
+agent can reserve a Spark for optimization without racing automatic recovery:
+hold it before work and release it only when ready for DSG verification. A future
+lease/explicit-completion extension may make forgotten holds reviewable, but this
+version never steals another actor's live reservation.
 
 Pause/removal wins over final reinstatement. Turning automatic mode off stops new
 automatic actions and cancels a proposal before issuance when possible; an issued

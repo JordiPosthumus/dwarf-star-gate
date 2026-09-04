@@ -63,14 +63,18 @@ With an explicit grant for that server, the agent can:
 - Read live gateway status: health, active requests, queues and reservations.
 - Drain the server while already admitted requests finish.
 - Release its own reservation afterward; routing resumes only when no other
-  hold or operator pause remains and readiness checks pass.
+  hold or operator pause remains and readiness checks pass. If a legitimate
+  patch changed a quarantined service profile, that explicit final release may
+  instead hand control to the fixed verified-recovery executor; quarantine stays
+  in force until full generation/cache checks pass.
 - Check durable action receipts, so a lost reply does not mean blindly repeating
   an operation. The dashboard shows who holds each server.
 
 This works with any local agent that can run the supplied client; no Pi or Hermes
 dependency. It uses the same private control executor as DSG's operator and
-Genie controls, with separately scoped permissions. It does not change DS4's
-settings or start a stopped engine. See the [agent setup and permission guide](docs/agent-api.md)
+Genie controls, with separately scoped permissions. It cannot submit commands,
+profiles or bypass a hold; only the fixed recovery controller can act after an
+explicit maintenance hand-back. See the [agent setup and permission guide](docs/agent-api.md)
 for copyable instructions, commands and the local-account trust boundary.
 
 **Implemented:** private routing evidence, fleet activity, and **Gate Genie**, a
@@ -129,6 +133,16 @@ SSH authentication/identity, timeout or DS4 readiness—so the operator and Geni
 can distinguish a network problem from an engine fault without exposing private
 hosts or granting a restart. Unsupported installs remain manual. No Pi or Hermes
 dependency.
+
+The **Verified profile hand-back** sub-policy starts enabled but is dormant unless
+automatic service recovery is also enabled. It closes a common maintenance trap:
+the same enrolled machine/service is patched or upgraded, its old fingerprint no
+longer matches, and it is left quarantined. DSG requires the identical changed
+profile across separated inspections, no admitted work, and either a proven new
+invocation or current fatal evidence; it then adopts the private fingerprint and
+runs the full recovery verification before readmission. Operator pauses and agent
+holds always block it. Genie may request the evidence offer, but cannot supply a
+profile or command.
 
 The dashboard's compact **health wire** always puts deterministic live quarantine
 and enabled-but-unavailable capacity alarms first, even if Gate Genie's model is

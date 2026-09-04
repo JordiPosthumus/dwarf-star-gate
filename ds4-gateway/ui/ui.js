@@ -291,6 +291,12 @@ function deterministicHealthAlerts(snapshot) {
       const recoveryState=recoveryByWorker.get(worker.id),reason=recoveryState?.reason;
       const recommendation=reason==='service_identity_or_profile_unverified'
         ?'Review and deliberately re-enroll the changed DS4 service profile before recovery; simply enabling routing would bypass the safety boundary.'
+        :reason==='profile_handback_confirmation_pending'
+          ?'Leave the server idle while DSG confirms the same changed profile in a second inspection; no action has been authorized yet.'
+          :reason==='profile_handback_disabled'
+            ?'Review the changed profile, then enable verified profile hand-back or complete an operator-led enrollment.'
+            :reason==='profile_handback_wait_for_admitted_work'
+              ?'Wait for admitted work to finish; profile adoption and recovery cannot begin while a request is owned by this server.'
         :recoveryState?.eligible
           ?'Use the verified recovery control; DSG will restart only the enrolled service and test it before readmission.'
           :'Inspect the recovery blocker before readmission; do not simply enable routing.';
@@ -460,7 +466,7 @@ async function loadWorkers() {
       button.disabled=workerBusy;button.title='The request has not reached DS4. Preserve its client socket and deadline, but accept that the destination may not have its warm cache.';
       p.append(button);return p;
     }):[document.createTextNode(relocationEmpty(data.queued_relocation?.diagnostics))]));
-  } catch(e) { workerControlsReady=false;workerMessage(e.message,true);$('worker-rows').querySelectorAll('button').forEach(b=>{b.disabled=true;});$('recovery-status').textContent='Recovery controls unavailable; last state is stale';$('recovery-toggle').disabled=true; }
+  } catch(e) { workerControlsReady=false;workerMessage(e.message,true);$('worker-rows').querySelectorAll('button').forEach(b=>{b.disabled=true;});$('recovery-status').textContent='Recovery controls unavailable; last state is stale';$('recovery-toggle').disabled=true;$('recovery-handback-toggle').disabled=true; }
   finally { workersLoading=false;refreshRoutingControls(); }
 }
 async function workerAction(action, input) {
@@ -479,7 +485,7 @@ async function workerAction(action, input) {
   try {
     const r=await fetch(`/api/workers/${action}`,{method:'POST',headers:{'content-type':'application/json','x-dsg-csrf':csrfToken},body:JSON.stringify(input),signal:AbortSignal.timeout(35000)});
     const data=await r.json();if(!r.ok)throw new Error(data.error||'Worker control failed');
-    workerMessage(action==='recover'?`Recovery accepted: ${data.id}. See executor receipts below.`:action==='recovery-policy'?`Automatic recovery ${data.automatic?'enabled':'disabled'}.`:action==='protection'?`Image compatibility protection ${data.vision_jpeg?.enabled?'enabled':'disabled'}. Existing requests and DS4 settings are unchanged.`:action==='context'?`Pool limit saved: ${fmt(data.minimum_context)} tokens. Applied now; model servers and Pi unchanged.`:action==='fallbacks'?`Management fallbacks saved. Active inference was not interrupted; the list applies on the next SSH reconnect.`:action==='add'?'Registered paused. Enable routing when ready.':action==='drain'?'Draining. Admitted requests will finish before removal.':action==='remove'?'Removed from this gateway. Model server left running.':action==='relocate'?`${data.source} → ${data.destination}: undispatched request handed over with its original client and deadline.`:'Routing enabled.');
+    workerMessage(action==='recover'?`Recovery accepted: ${data.id}. See executor receipts below.`:action==='recovery-policy'?`Automatic recovery ${data.automatic?'enabled':'disabled'}.`:action==='recovery-handback-policy'?`Verified profile hand-back ${data.profile_handback_automatic?'enabled':'disabled'}. Automatic recovery remains ${data.automatic?'on':'off'}.`:action==='protection'?`Image compatibility protection ${data.vision_jpeg?.enabled?'enabled':'disabled'}. Existing requests and DS4 settings are unchanged.`:action==='context'?`Pool limit saved: ${fmt(data.minimum_context)} tokens. Applied now; model servers and Pi unchanged.`:action==='fallbacks'?`Management fallbacks saved. Active inference was not interrupted; the list applies on the next SSH reconnect.`:action==='add'?'Registered paused. Enable routing when ready.':action==='drain'?'Draining. Admitted requests will finish before removal.':action==='remove'?'Removed from this gateway. Model server left running.':action==='relocate'?`${data.source} → ${data.destination}: undispatched request handed over with its original client and deadline.`:'Routing enabled.');
     if(action==='context'){contextDirty=false;contextExpected=data.minimum_context;}
     if(action==='queue-timeout'){queueDirty=false;queueExpected=data.queue_timeout_ms;workerMessage(`Queue allowance saved: ${fmt(data.queue_timeout_ms/3600000)} hours for new requests. Existing waits and model servers unchanged.`);}
     if(action==='add')$('worker-form').reset();
@@ -695,10 +701,12 @@ void loadGenie();setInterval(loadGenie,5000);
 
 function renderRecovery(state) {
   recoveryState=state;
-  $('recovery-status').textContent=!state?.configured?'Not configured. Endpoint registration alone grants no restart authority.':state.automatic?'Automatic recovery ON · GG + known-fatal watcher':'Automatic recovery OFF · operator recovery available';
+  $('recovery-status').textContent=!state?.configured?'Not configured. Endpoint registration alone grants no restart authority.':`${state.automatic?'Automatic recovery ON · GG + known-fatal watcher':'Automatic recovery OFF · operator recovery available'} · verified profile hand-back ${state.profile_handback_automatic?'ON':'OFF'}`;
   $('recovery-toggle').textContent=state?.automatic?'Disable automatic recovery':'Enable automatic recovery';
   $('recovery-toggle').disabled=!state?.configured||workerBusy;
-  $('recovery-workers').innerHTML=(state?.workers||[]).map(w=>`<p><strong>${esc(w.worker_id)}</strong> · ${esc(w.state)} · ${esc(w.eligible?'recovery eligible':(w.reason||'checking').replaceAll('_',' '))} <button type="button" class="button" data-recover="${esc(w.worker_id)}" ${!w.eligible||workerBusy?'disabled':''}>Recover</button>${recoveryRecheckable(w.last_action)?` <button type="button" class="button" data-recheck="${esc(w.last_action.id)}" ${workerBusy?'disabled':''}>Recheck only</button>`:''}</p>`).join('');
+  $('recovery-handback-toggle').textContent=state?.profile_handback_automatic?'Disable verified profile hand-back':'Enable verified profile hand-back';
+  $('recovery-handback-toggle').disabled=!state?.configured||workerBusy;
+  $('recovery-workers').innerHTML=(state?.workers||[]).map(w=>`<p><strong>${esc(w.worker_id)}</strong> · ${esc(w.state)} · ${esc(w.eligible?(w.profile_handback?.candidate?'verified hand-back eligible':'recovery eligible'):(w.reason||'checking').replaceAll('_',' '))}${w.profile_handback?.adopted?' · adopted profile active':''} <button type="button" class="button" data-recover="${esc(w.worker_id)}" ${!w.eligible||workerBusy?'disabled':''}>${w.profile_handback?.candidate?'Verify hand-back':'Recover'}</button>${recoveryRecheckable(w.last_action)?` <button type="button" class="button" data-recheck="${esc(w.last_action.id)}" ${workerBusy?'disabled':''}>Recheck only</button>`:''}</p>`).join('');
   // Plain text receipts, not another auto-collapsing disclosure panel.
   $('recovery-actions').replaceChildren(...(state?.operations||[]).slice(0,8).map(op=>{
     const p=document.createElement('p');p.textContent=`${clock(op.updated_at)} · ${op.worker_id} · ${op.actor}${op.service_action_issued?` · ${op.service_action} issued`:''} · ${op.state.replaceAll('_',' ')}${op.error?` · ${op.error.replaceAll('_',' ')}`:''}${op.proof?` · ${op.proof.samples.map(s=>`${s.label}: ${s.cached_tokens}/${s.prompt_tokens} cached`).join(' · ')}`:''} · ${op.id}`;return p;
@@ -770,6 +778,11 @@ $('recovery-toggle').addEventListener('click',()=>{
   if(!recoveryState?.configured)return;
   if(!recoveryState.automatic&&!window.confirm('Allow GG and the known-fatal watcher to restart registered DS4 services after identity and fault checks? RAM-resident caches are lost; server settings and disk caches are preserved.'))return;
   void workerAction('recovery-policy',{enabled:!recoveryState.automatic});
+});
+$('recovery-handback-toggle').addEventListener('click',()=>{
+  if(!recoveryState?.configured)return;
+  if(!recoveryState.profile_handback_automatic&&!window.confirm('Enable verified profile hand-back? With automatic recovery also on, DSG may adopt a stable changed profile on the same enrolled machine/service after all fixed ownership, fatal/replacement and verification gates pass. Pauses and agent holds still win.'))return;
+  void workerAction('recovery-handback-policy',{enabled:!recoveryState.profile_handback_automatic});
 });
 $('recovery-workers').addEventListener('click',event=>{
   const recheck=event.target.closest('button[data-recheck]');if(recheck&&!recheck.disabled){void workerAction('recovery-recheck',{action_id:recheck.dataset.recheck});return;}

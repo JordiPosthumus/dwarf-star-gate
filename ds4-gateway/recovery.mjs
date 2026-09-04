@@ -6,35 +6,58 @@ const hash=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const terminal=new Set(['recovered','verified_paused','failed','reconciliation_needed']);
 const faultReasons=new Set(['fatal_accelerator_error','accelerator_checkpoint_failure']);
 const adapterReasons=new Set(['adapter_timeout','adapter_output_limit','adapter_spawn_failed','adapter_dns_failure','adapter_host_key_failure','adapter_auth_failure','adapter_connect_timeout','adapter_connection_refused','adapter_route_unreachable','adapter_connection_reset','adapter_unreachable','adapter_check_failed']);
-const publicOperation=op=>Object.fromEntries(['id','worker_id','actor','service_action','state','created_at','updated_at','error','proof','service_action_issued','restart_issued','operator_override'].filter(k=>op[k]!==undefined).map(k=>[k,op[k]]));
+const publicOperation=op=>Object.fromEntries(['id','worker_id','actor','service_action','state','created_at','updated_at','error','proof','service_action_issued','restart_issued','operator_override','profile_adopted'].filter(k=>op[k]!==undefined).map(k=>[k,op[k]]));
+const digest=value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
+const blankState=()=>({version:1,automatic:false,profile_handback_automatic:true,adopted_profiles:{},operations:[]});
+const adoptionOperationValid=op=>{
+  const adoption=['adopt_profile','adopt_service_profile','configured_profile'].some(k=>Object.hasOwn(op,k))||String(op.service_action).startsWith('adopt_');
+  if(!adoption)return true;
+  return ['adopt_restart','adopt_verify'].includes(op.service_action)&&digest(op.adopt_profile)&&digest(op.configured_profile)&&
+    (op.adopt_service_profile===null||digest(op.adopt_service_profile))&&op.profile===op.adopt_profile&&digest(op.machine);
+};
 
 // Lives in the gateway, not the dashboard or LLM process. Intent and outcomes
 // share the gateway's atomic/fsynced metadata store. No inference text is saved.
 export class Recovery {
   constructor(raw,{store,nodes,model,stopping,reinstate,log=()=>{},call=recoveryCall,verify=verifyRecovery,now=Date.now}) {
     this.configs=recoveryConfig(raw);this.store=store;this.nodes=nodes;this.model=model;this.stopping=stopping;this.reinstate=reinstate;this.log=log;this.call=call;this.verify=verify;this.now=now;
-    this.observations=new Map();this.stoppedSince=new Map();this.busy=false;this.closed=false;this.task=null;this.abort=new AbortController();
+    this.observations=new Map();this.stoppedSince=new Map();this.handbackSeen=new Map();this.busy=false;this.closed=false;this.task=null;this.abort=new AbortController();
     const saved=store.data.recovery;
-    if(saved && (saved.version!==1 || typeof saved.automatic!=='boolean' || !Array.isArray(saved.operations)))throw new Error('Invalid recovery journal; inspect manually');
+    if(saved && (saved.version!==1 || typeof saved.automatic!=='boolean' || (saved.profile_handback_automatic!==undefined&&typeof saved.profile_handback_automatic!=='boolean') || !Array.isArray(saved.operations) || (saved.adopted_profiles!==undefined&&(!saved.adopted_profiles||typeof saved.adopted_profiles!=='object'||Array.isArray(saved.adopted_profiles)))))throw new Error('Invalid recovery journal; inspect manually');
+    for(const [worker,profile] of Object.entries(saved?.adopted_profiles??{}))if(!/^[a-zA-Z0-9][\w-]{0,63}$/.test(worker)||!profile||!digest(profile.config_profile)||!digest(profile.machine)||!digest(profile.profile)||(profile.service_profile!==null&&!digest(profile.service_profile))||!Number.isFinite(profile.adopted_at)||!/^[a-f0-9-]{36}$/.test(profile.operation_id))throw new Error('Invalid adopted recovery profile');
     for(const op of this.state.operations) {
-      if(!/^[a-f0-9-]{36}$/.test(op.id) || typeof op.worker_id!=='string' || typeof op.state!=='string')throw new Error('Invalid recovery operation');
+      if(!/^[a-f0-9-]{36}$/.test(op.id) || typeof op.worker_id!=='string' || typeof op.state!=='string'||!adoptionOperationValid(op))throw new Error('Invalid recovery operation');
       if(!terminal.has(op.state)) {
         // Resume observation/verification only. Never resend an uncertain command.
         const node=this.node(op.worker_id);if(node){node.recovering=true;node.healthy=false;}
       }
     }
   }
-  get state(){return this.store.data.recovery??{version:1,automatic:false,operations:[]};}
+  get state(){const saved=this.store.data.recovery;return saved?{...saved,profile_handback_automatic:saved.profile_handback_automatic??true,adopted_profiles:saved.adopted_profiles??{}}:blankState();}
   node(id){return this.nodes.find(n=>n.id===id);}
+  config(id){
+    const base=this.configs.get(id),adopted=this.state.adopted_profiles[id];
+    if(!base||!adopted||adopted.config_profile!==base.profile||adopted.machine!==base.machine)return base;
+    const effective={...base,profile:adopted.profile};
+    // A live-profile inspection may not be able to prove the static stopped-
+    // service profile. Never retain the old value and accidentally authorize a
+    // future start. That path stays disabled until deliberately re-enrolled.
+    if(adopted.service_profile)effective.service_profile=adopted.service_profile;
+    else {delete effective.service_profile;effective.start_stopped=false;}
+    return effective;
+  }
   commit(next){this.store.save({...this.store.data,recovery:next});}
   update(op,fields){Object.assign(op,this.current(op),fields,{updated_at:this.now()});this.commit({...this.state,operations:this.state.operations.map(x=>x.id===op.id?{...op}:x)});this.log('worker_recovery_action',publicOperation(op));}
   setAutomatic(value){if(typeof value!=='boolean' || !this.configs.size)throw new Error('Recovery is not configured or enabled is invalid');this.commit({...this.state,automatic:value});this.log('worker_recovery_policy',{automatic:value});return this.status();}
+  setProfileHandbackAutomatic(value){if(typeof value!=='boolean'||!this.configs.size)throw new Error('Profile hand-back is not configured or enabled is invalid');this.commit({...this.state,profile_handback_automatic:value});this.log('worker_recovery_handback_policy',{automatic:value});return this.status();}
   binding(n,c){return !!n && !!c && n.url===c.url && n.ssh===c.ssh && JSON.stringify(n.ssh_fallbacks??[])===JSON.stringify(c.ssh_fallbacks??[]) && (n.remote_port??8000)===(c.remote_port??8000);}
   valid(s,c){return s?.version===1 && s.machine===c.machine && s.profile===c.profile && s.active===true && s.listener===true && /^[a-f0-9]{32}$/.test(s.instance) && Number.isFinite(s.started_at);}
   validStopped(s,c){return c?.start_stopped===true && s?.version===1 && s.machine===c.machine && s.service_profile===c.service_profile && s.loaded===true && s.stopped===true && s.active===false && s.listener===false && /^[a-f0-9]{64}$/.test(s.stopped_epoch);}
-  evidence(n,s){return this.valid(s,this.configs.get(n.id))?hash([n.id,n.quarantine,'restart',s.instance,s.machine,s.profile]):hash([n.id,n.quarantine,'start',s.stopped_epoch,s.machine,s.service_profile]);}
-  reason(n,s,{canary=false,ignoreOwnership=false}={}) {
-    const c=this.configs.get(n?.id);
+  profileCandidate(s,c){return !!c&&s?.version===1&&s.machine===c.machine&&digest(s.profile)&&s.profile!==c.profile&&s.active===true&&s.listener===true&&/^[a-f0-9]{32}$/.test(s.instance)&&Number.isFinite(s.started_at)?{profile:s.profile,service_profile:digest(s.service_profile)?s.service_profile:null,instance:s.instance}:null;}
+  candidateStable(id,candidate){const seen=this.handbackSeen.get(id);return !!seen&&seen.profile===candidate.profile&&seen.service_profile===candidate.service_profile&&seen.instance===candidate.instance&&seen.count>=2&&seen.last_at-seen.first_at>=10000;}
+  evidence(n,s){const c=this.config(n.id),candidate=this.profileCandidate(s,c);return candidate?hash([n.id,n.quarantine,'adopt',candidate.instance,s.machine,c.profile,candidate.profile,candidate.service_profile]):this.valid(s,c)?hash([n.id,n.quarantine,'restart',s.instance,s.machine,s.profile]):hash([n.id,n.quarantine,'start',s.stopped_epoch,s.machine,s.service_profile]);}
+  reason(n,s,{canary=false,ignoreOwnership=false,ignorePause=false}={}) {
+    const c=this.config(n?.id);
     if(!this.binding(n,c))return 'manual_recovery_required';
     if(this.closed || this.stopping())return 'gateway_stopping';
     if(!Number.isSafeInteger(n.contextLength) || n.contextLength<=0)return 'context_unverified';
@@ -43,8 +66,9 @@ export class Recovery {
     // transient. Report the durable gate even while a worker is busy so the UI,
     // operator and Genie do not imply that an empty queue alone restores
     // recovery authority. The executor still independently rechecks identity.
-    const live=this.valid(s,c),stopped=this.validStopped(s,c);
-    if(!live&&!stopped)return s?.stopped===true&&c?.start_stopped!==true?'stopped_service_start_not_enrolled':'service_identity_or_profile_unverified';
+    const live=this.valid(s,c),stopped=this.validStopped(s,c),candidate=this.profileCandidate(s,c);
+    if(!live&&!stopped&&!candidate)return s?.stopped===true&&c?.start_stopped!==true?'stopped_service_start_not_enrolled':'service_identity_or_profile_unverified';
+    if(candidate&&(n.active||n.queue.length))return 'profile_handback_wait_for_admitted_work';
     if(n.active || n.queue.length)return 'wait_for_admitted_work';
     if(canary) {
       if(!n.drained)return 'drain_before_canary';
@@ -56,7 +80,19 @@ export class Recovery {
       }
       return 'service_identity_or_profile_unverified';
     }
-    if(n.drained)return 'operator_paused';
+    if(n.drained&&!ignorePause)return 'operator_paused';
+    if(candidate) {
+      if(!this.state.profile_handback_automatic)return 'profile_handback_disabled';
+      if(!n.quarantine)return 'profile_handback_requires_quarantine';
+      const failedAt=Date.parse(n.quarantine.at),replaced=Number.isFinite(failedAt)&&s.started_at>failedAt+1000;
+      if(!Number.isFinite(failedAt))return 'fault_time_unknown';
+      if(!replaced&&(!faultReasons.has(n.quarantine.reason)||!s.fault||s.fault.reason!=='fatal_accelerator_error'||s.fault.at<failedAt-120000))return 'current_fatal_evidence_required';
+      if(!this.candidateStable(n.id,candidate))return 'profile_handback_confirmation_pending';
+      const previous=this.state.operations.filter(o=>o.worker_id===n.id);
+      if(previous.some(o=>o.adopt_profile===candidate.profile&&o.instance===candidate.instance))return 'profile_candidate_already_attempted';
+      if(previous.some(o=>this.now()-o.created_at<30*60000))return 'recovery_cooldown';
+      return null;
+    }
     if(stopped) {
       if(n.healthy!==false)return 'worker_health_not_failed';
       const observed=this.stoppedSince.get(n.id);
@@ -89,15 +125,27 @@ export class Recovery {
     // Current worker state is not the last action's historical outcome. In
     // particular, a successful paused canary may since have been resumed.
     const state=n.recovering?'recovering':!configured?'manual':n.drained?'paused':n.quarantine?'quarantined':n.healthy===false?'unavailable':'monitoring';
+    const effective=this.config(n.id),candidate=this.profileCandidate(s,effective),adopted=!!this.state.adopted_profiles[n.id]&&effective?.profile===this.state.adopted_profiles[n.id].profile;
     return {worker_id:n.id,configured,adapter:configured?this.configs.get(n.id).adapter:null,reason:configured?reason:'manual_recovery_required',eligible:configured&&!reason,
       evidence_id:configured&&!reason?this.evidence(n,s):null,inspected_at:observed?.at??null,
-      state,last_action:last?publicOperation(last):null};
+      state,profile_handback:candidate?{candidate:true,stable:this.candidateStable(n.id,candidate),automatic:this.state.profile_handback_automatic}:adopted?{candidate:false,stable:true,automatic:this.state.profile_handback_automatic,adopted:true}:null,last_action:last?publicOperation(last):null};
   }
-  status(){const adapters=[...new Set([...this.configs.values()].map(c=>c.adapter))];return {configured:!!this.configs.size,automatic:this.state.automatic,adapter:adapters.length===1?adapters[0]:adapters.length?'mixed':null,workers:this.nodes.map(n=>this.workerStatus(n)),operations:this.state.operations.slice(-20).reverse().map(publicOperation)};}
+  profileHandbackOffer(n,{ignorePause=false}={}) {
+    if(!this.state.automatic)throw new Error('automatic_recovery_off');
+    const observed=this.observations.get(n?.id),s=observed?.value,c=this.config(n?.id);
+    if(!n||!observed||this.now()-observed.at>90000)throw new Error('service_inspection_pending');
+    if(!this.profileCandidate(s,c))throw new Error('no_profile_handback_candidate');
+    const reason=observed.error||this.reason(n,s,{ignorePause});if(reason)throw new Error(reason);
+    return {worker_id:n.id,evidence_id:this.evidence(n,s)};
+  }
+  status(){const adapters=[...new Set([...this.configs.values()].map(c=>c.adapter))];return {configured:!!this.configs.size,automatic:this.state.automatic,profile_handback_automatic:this.state.profile_handback_automatic,adapter:adapters.length===1?adapters[0]:adapters.length?'mixed':null,workers:this.nodes.map(n=>this.workerStatus(n)),operations:this.state.operations.slice(-20).reverse().map(publicOperation)};}
   async inspect(id) {
-    const c=this.configs.get(id);
+    const c=this.config(id);
     try {
       const value=await this.call(c,{action:'inspect'}),at=this.now();this.observations.set(id,{at,value});
+      const candidate=this.profileCandidate(value,c),prior=this.handbackSeen.get(id);
+      if(candidate)this.handbackSeen.set(id,prior&&prior.profile===candidate.profile&&prior.service_profile===candidate.service_profile&&prior.instance===candidate.instance?{...prior,last_at:at,count:prior.last_at===at?prior.count:prior.count+1}:{...candidate,first_at:at,last_at:at,count:1});
+      else this.handbackSeen.delete(id);
       if(this.validStopped(value,c)) {
         const prior=this.stoppedSince.get(id);if(!prior||prior.epoch!==value.stopped_epoch)this.stoppedSince.set(id,{epoch:value.stopped_epoch,since:at});
       } else this.stoppedSince.delete(id);
@@ -117,10 +165,12 @@ export class Recovery {
     const reason=this.reason(n,s,{canary});if(reason)throw new Error(reason);
     if(!canary && input.evidence_id!==this.evidence(n,s))throw new Error('Stale or invented recovery evidence');
     if(this.state.operations.length>=10000)throw new Error('Recovery journal full; review required');
-    const c=this.configs.get(n.id),serviceAction=this.validStopped(s,c)?'start':'restart';
+    const c=this.config(n.id),candidate=this.profileCandidate(s,c),failedAt=Date.parse(n.quarantine?.at),replacement=!!candidate&&Number.isFinite(failedAt)&&s.started_at>failedAt+1000;
+    const serviceAction=candidate?(replacement?'adopt_verify':'adopt_restart'):this.validStopped(s,c)?'start':'restart';
     const op={id,worker_id:n.id,actor,evidence_id:input.evidence_id??null,service_action:serviceAction,state:'queued',created_at:this.now(),updated_at:this.now(),instance:s.instance,
       stopped_epoch:serviceAction==='start'?s.stopped_epoch:null,service_profile:serviceAction==='start'?s.service_profile:null,
       machine:s.machine,profile:serviceAction==='start'?c.profile:s.profile,context_length:n.contextLength,canary,was_paused:n.drained,quarantine:n.quarantine?{...n.quarantine}:null,
+      ...(candidate?{adopt_profile:candidate.profile,adopt_service_profile:candidate.service_profile,configured_profile:this.configs.get(n.id).profile}:{}),
       binding:hash([n.url,n.ssh,n.ssh_fallbacks??[],n.remote_port??8000]),operator_override:false};
     this.commit({...this.state,operations:[...this.state.operations,op]});
     n.recovering=true;n.healthy=false;
@@ -137,16 +187,16 @@ export class Recovery {
   }
   current(op){return this.state.operations.find(o=>o.id===op.id)??op;}
   async execute(initial,reconcile) {
-    let op={...initial};const c=this.configs.get(op.worker_id),n=this.node(op.worker_id);
+    let op={...initial};const enrolled=this.configs.get(op.worker_id),effective=this.config(op.worker_id),adopting=digest(op.adopt_profile),c=adopting?{...effective,profile:op.adopt_profile,...(digest(op.adopt_service_profile)?{service_profile:op.adopt_service_profile}:{})}:effective,n=this.node(op.worker_id);
     try {
-      if(!n || !this.binding(n,c) || hash([n.url,n.ssh,n.ssh_fallbacks??[],n.remote_port??8000])!==op.binding || c.profile!==op.profile || c.machine!==op.machine)throw new Error('recovery_binding_changed');
-      const before=await this.inspect(n.id),starting=op.service_action==='start';
+      if(!n || !this.binding(n,enrolled) || hash([n.url,n.ssh,n.ssh_fallbacks??[],n.remote_port??8000])!==op.binding || c.profile!==op.profile || c.machine!==op.machine || (adopting&&op.configured_profile!==enrolled.profile))throw new Error('recovery_binding_changed');
+      const before=await this.inspect(n.id),starting=op.service_action==='start',adoptVerify=op.service_action==='adopt_verify';
       const activeBefore=this.valid(before,c),stoppedBefore=this.validStopped(before,c)&&before.stopped_epoch===op.stopped_epoch;
       if(!reconcile && !activeBefore && !(starting&&stoppedBefore))throw new Error('service_identity_or_profile_unverified');
       if(n.active || n.queue.length)throw new Error('worker_has_admitted_work');
       if(this.closed)throw new Error('controller_stopping');
       const failedAt=Date.parse(op.quarantine?.at);
-      const replacement=activeBefore && (starting || before.instance!==op.instance || (!op.canary && before.started_at>failedAt+1000));
+      const replacement=activeBefore && (starting || adoptVerify || before.instance!==op.instance || (!op.canary && before.started_at>failedAt+1000));
       if(!reconcile && !replacement) {
         if(starting) {
           if(!stoppedBefore || before.service_profile!==op.service_profile)throw new Error('stopped_service_identity_changed');
@@ -174,11 +224,13 @@ export class Recovery {
       if(!this.valid(final,c) || final.instance!==after.instance || final.fault)throw new Error('identity_changed_during_verification');
       op={...this.current(op)};
       const held=op.operator_override || op.was_paused || n.removed || this.node(n.id)!==n || n.drained || this.stopping();
+      const adoption=adopting?{config_profile:enrolled.profile,machine:enrolled.machine,profile:op.adopt_profile,service_profile:digest(op.adopt_service_profile)?op.adopt_service_profile:null,adopted_at:this.now(),operation_id:op.id}:null;
+      const nextState={...this.state,adopted_profiles:adoption?{...this.state.adopted_profiles,[n.id]:adoption}:this.state.adopted_profiles,operations:this.state.operations.map(x=>x.id===op.id?{...op,profile_adopted:!!adoption,state:held?'verified_paused':'recovered',proof,updated_at:this.now()}:x)};
       if(!held) {
-        Object.assign(op,{state:'recovered',proof,updated_at:this.now()});
-        this.reinstate(n,op.quarantine,{...this.state,operations:this.state.operations.map(x=>x.id===op.id?{...op}:x)});
+        Object.assign(op,{state:'recovered',proof,profile_adopted:!!adoption,updated_at:this.now()});
+        this.reinstate(n,op.quarantine,nextState);
         this.log('worker_recovery_action',publicOperation(op));
-      } else this.update(op,{state:'verified_paused',proof});
+      } else {this.commit(nextState);this.log('worker_recovery_action',publicOperation({...op,state:'verified_paused',proof,profile_adopted:!!adoption,updated_at:this.now()}));}
     } catch(e) {
       const issued=op.restart_issued||op.service_action_issued;
       const state=this.closed&&issued?'reconciling':issued && !op.new_instance?'reconciliation_needed':'failed';

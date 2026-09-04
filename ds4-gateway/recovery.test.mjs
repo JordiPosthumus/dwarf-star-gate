@@ -2,6 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {Recovery} from './recovery.mjs';
+import {AgentControl} from './agent-control.mjs';
 import {classifySshFailure,recoveryConfig,systemdCall} from './recovery-transport.mjs';
 import {verifyRecovery} from './recovery-verify.mjs';
 import {Genie,briefing,parseGenieReview} from './genie.mjs';
@@ -31,7 +32,7 @@ function rig(options={}) {
     async ready(){await recovery.tick();},input(){const s=recovery.workerStatus(n);return {worker_id:n.id,evidence_id:s.evidence_id,action_id:randomUUID()};}};
 }
 test('recovery defaults off; registered endpoints alone convey no recovery authority',()=>{
-  const r=rig();assert.equal(r.recovery.status().automatic,false);assert.throws(()=>r.recovery.request(r.input(),'genie'),/off/);
+  const r=rig();assert.equal(r.recovery.status().automatic,false);assert.equal(r.recovery.status().profile_handback_automatic,true);assert.throws(()=>r.recovery.request(r.input(),'genie'),/off/);
   for(const patch of [{adapter:'unknown'},{helper:'/tmp/x;evil'},{machine:'unknown'},{shell:'reboot'}])assert.throws(()=>recoveryConfig({workers:[{...config,...patch}]}));
   for(const patch of [{start_stopped:true},{start_stopped:'yes',service_profile:'c'.repeat(64)},{service_profile:'c'.repeat(64)}])assert.throws(()=>recoveryConfig({workers:[{...config,...patch}]}));
   assert.throws(()=>recoveryConfig({workers:[config,{...config,id:'two',url:'http://127.0.0.1:39002'}]}),/physical/);
@@ -39,6 +40,14 @@ test('recovery defaults off; registered endpoints alone convey no recovery autho
   assert.equal(recoveryConfig({workers:[launchd]}).get('mac').adapter,'launchd');
   const mixed=new Recovery({workers:[config,launchd]},{...r.deps,nodes:[r.n,{...r.n,...launchd,id:'mac'}]});
   assert.equal(mixed.status().adapter,'mixed');assert.equal(mixed.workerStatus(mixed.nodes[1]).adapter,'launchd');mixed.close();
+});
+test('malformed durable profile adoption state and operations fail closed',()=>{
+  const r=rig();r.recovery.setAutomatic(true);
+  r.store.data.recovery.adopted_profiles={one:{config_profile:'bad'}};
+  assert.throws(()=>new Recovery({workers:[config]},r.deps),/Invalid adopted recovery profile/);
+  r.store.data.recovery.adopted_profiles={};
+  r.store.data.recovery.operations=[{id:randomUUID(),worker_id:'one',state:'queued',service_action:'adopt_restart',adopt_profile:'bad'}];
+  assert.throws(()=>new Recovery({workers:[config]},r.deps),/Invalid recovery operation/);
 });
 test('SSH management failures become bounded reason classes without exposing transport text',()=>{
   const cases=[
@@ -100,9 +109,49 @@ test('recovery status exposes durable identity drift while admitted work is stil
     const r=rig();r.recovery.call=async()=>({...r.sample(),profile:'c'.repeat(64)});await r.ready();
     if(admitted==='active')r.n.active={thinking:'xhigh'};else r.n.queue.push({id:'waiting'});
     const status=r.recovery.workerStatus(r.n);
-    assert.equal(status.reason,'service_identity_or_profile_unverified');
+    assert.equal(status.reason,'profile_handback_wait_for_admitted_work');
     assert.equal(status.eligible,false);assert.equal(r.restarts,0);
   }
+});
+test('verified profile hand-back adopts a stable same-machine DS4 profile, restarts a fatal instance and survives controller restart',async()=>{
+  const r=rig(),changed='c'.repeat(64);let instance='1'.repeat(32),fault=true,restarts=0;
+  const observed=()=>({...r.sample(),profile:changed,instance,started_at:r.deps.now()-100000,fault:fault?{reason:'fatal_accelerator_error',at:r.deps.now()-1000}:null});
+  r.recovery.call=async(_config,input)=>{if(input.action==='restart'){assert.equal(input.profile,changed);restarts++;instance='2'.repeat(32);fault=false;return {state:'issued'};}return observed();};
+  await r.ready();assert.equal(r.recovery.workerStatus(r.n).reason,'profile_handback_confirmation_pending');
+  r.advance(11000);await r.ready();let status=r.recovery.workerStatus(r.n);assert.equal(status.eligible,true);assert.equal(status.profile_handback.stable,true);
+  const receipt=r.recovery.request(r.input(),'operator');assert.equal(receipt.service_action,'adopt_restart');await r.recovery.task;
+  assert.equal(restarts,1);assert.equal(r.n.quarantine,null);assert.equal(r.n.healthy,true);assert.equal(r.recovery.config(r.n.id).profile,changed);
+  status=r.recovery.workerStatus(r.n);assert.equal(status.profile_handback.adopted,true);assert.equal(status.last_action.profile_adopted,true);
+  assert.ok(!JSON.stringify(r.recovery.status()).includes(changed),'public status does not expose profile fingerprints');
+  const resumed=new Recovery({workers:[config]},{...r.deps,call:async()=>observed()});
+  assert.equal(resumed.config(r.n.id).profile,changed);assert.equal(resumed.status().profile_handback_automatic,true);await resumed.close();
+  const noStaleStart=new Recovery({workers:[{...config,start_stopped:true,service_profile:'f'.repeat(64)}]},{...r.deps,call:async()=>observed()});
+  assert.equal(noStaleStart.config(r.n.id).start_stopped,false);assert.equal(noStaleStart.config(r.n.id).service_profile,undefined);await noStaleStart.close();
+});
+test('profile hand-back can verify an already replaced instance, while pause and policy opt-out remain authoritative',async()=>{
+  const changed='d'.repeat(64),r=rig(),newer=()=>({...r.sample(),profile:changed,instance:'2'.repeat(32),started_at:r.deps.now()+2000,fault:null});
+  r.recovery.call=async()=>newer();await r.ready();r.advance(11000);await r.ready();
+  r.recovery.setProfileHandbackAutomatic(false);assert.equal(r.recovery.workerStatus(r.n).reason,'profile_handback_disabled');
+  r.recovery.setProfileHandbackAutomatic(true);r.n.drained=true;assert.equal(r.recovery.workerStatus(r.n).reason,'operator_paused');r.n.drained=false;
+  r.recovery.setAutomatic(true);await r.ready();await r.recovery.task;
+  const receipt=r.recovery.status().operations[0];assert.equal(receipt.actor,'detector');assert.equal(receipt.service_action,'adopt_verify');
+  assert.equal(r.restarts,0);assert.equal(r.n.healthy,true);assert.equal(r.recovery.config(r.n.id).profile,changed);
+});
+test('an agent maintenance hold blocks the detector until its owner explicitly hands back the verified candidate',async()=>{
+  const changed='e'.repeat(64),r=rig(),newer=()=>({...r.sample(),profile:changed,instance:'2'.repeat(32),started_at:r.deps.now()+2000,fault:null});
+  r.recovery.call=async()=>newer();r.recovery.setAutomatic(true);
+  let scheduled=null;
+  const agents=new AgentControl({store:r.store,nodes:[r.n],canResume:async()=>{},onPause:ids=>r.recovery.operatorPause(ids),
+    canHandback:n=>r.recovery.profileHandbackOffer(n,{ignorePause:true}),onHandback:()=>{scheduled=r.recovery.tick();}});
+  const grant=agents.grant({agent_id:'maintainer',workers:['one']});assert.ok(grant.token);
+  const held=await agents.act('maintainer','drain',{worker_id:'one',reason:'upgrade test',request_id:randomUUID()});
+  await r.recovery.tick();r.advance(11000);await r.recovery.tick();
+  assert.equal(r.recovery.workerStatus(r.n).reason,'operator_paused');assert.equal(r.recovery.status().operations.length,0);
+  const released=await agents.act('maintainer','resume',{hold_id:held.result.hold_id,request_id:randomUUID()});
+  assert.equal(released.result.state,'handback_released');assert.equal(released.result.routing_resumed,false);assert.ok(r.n.quarantine);
+  await scheduled;await r.recovery.task;
+  assert.equal(r.recovery.status().operations[0].actor,'detector');assert.equal(r.recovery.status().operations[0].service_action,'adopt_verify');
+  assert.equal(r.restarts,0);assert.equal(r.n.quarantine,null);assert.equal(r.n.healthy,true);assert.equal(r.recovery.config(r.n.id).profile,changed);
 });
 test('one fleet recovery; cooldown and same-instance attempt guard prevent restart loops',async()=>{
   const r=rig();await r.ready();r.recovery.request(r.input());assert.throws(()=>r.recovery.request(r.input()),/progress/);await r.recovery.task;
@@ -266,6 +315,8 @@ test('full HTTP quarantine → local recovery → two cold/warm checks → durab
     if(input.action==='restart'){restarts++;broken=false;instance='2'.repeat(32);return {state:'issued'};}
     return {version:1,machine:config.machine,profile:config.profile,active:true,listener:true,instance,started_at:Date.now()-600000,fault:broken?{reason:'fatal_accelerator_error',at:Date.now()}:null};
   };
+  let policy=await workerControl(socket,'/recovery-handback-policy',{enabled:false});assert.equal(policy.profile_handback_automatic,false);
+  policy=await workerControl(socket,'/recovery-handback-policy',{enabled:true});assert.equal(policy.profile_handback_automatic,true);
   const base=`http://127.0.0.1:${address.port}`,headers={authorization:'Bearer none','content-type':'application/json'};
   const failed=await fetch(base+'/v1/chat/completions',{method:'POST',headers,body:'{}'});await failed.text();assert.equal(failed.status,500);
   await gateway.recovery.tick();let registry=await workerControl(socket,'/workers');const offer=registry.recovery.workers[0];assert.equal(offer.eligible,true);
@@ -279,9 +330,9 @@ test('dashboard recovery policy and action controls require CSRF; canary has no 
   const calls=[],server=createDashboard(()=>({}),undefined,{read:async()=>({}),act:async(action,input)=>{calls.push({action,input});return {accepted:true};}});
   await new Promise(r=>server.listen(0,'127.0.0.1',r));t.after(()=>{server.closeAllConnections();server.close();});
   const base=`http://127.0.0.1:${server.address().port}`,token=(await(await fetch(base+'/api/workers')).json()).csrf_token;
-  for(const action of ['recover','recovery-policy','recovery-recheck']) {
+  for(const action of ['recover','recovery-policy','recovery-handback-policy','recovery-recheck']) {
     let res=await fetch(`${base}/api/workers/${action}`,{method:'POST',headers:{'content-type':'application/json'},body:'{}'});assert.equal(res.status,403);await res.text();
     res=await fetch(`${base}/api/workers/${action}`,{method:'POST',headers:{origin:base,'content-type':'application/json','x-dsg-csrf':token},body:'{}'});assert.equal(res.status,200);await res.text();
   }
-  assert.equal(calls.length,3);const res=await fetch(base+'/api/workers/recovery-canary',{method:'POST'});assert.equal(res.status,405);await res.text();
+  assert.equal(calls.length,4);assert.deepEqual(calls[2],{action:'recovery-handback-policy',input:{}});const res=await fetch(base+'/api/workers/recovery-canary',{method:'POST'});assert.equal(res.status,405);await res.text();
 });

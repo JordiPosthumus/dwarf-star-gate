@@ -1,6 +1,7 @@
 /* Small, local, legible. The owner's artwork supplies the character. */
 html,body{overflow-x:clip}
 .worker-management{max-width:none;border:1px solid var(--line);border-radius:7px;padding:16px;margin-top:18px}
+.recovery-policy-controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .table-wrap{max-width:100%;min-width:0;overflow-x:auto;contain:inline-size}
 .worker-management[hidden],.worker-form[hidden],.worker-form [hidden]{display:none}
 .worker-management summary{font-size:12px}

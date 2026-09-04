@@ -10,6 +10,20 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Closed the changed-profile recovery trap without trusting arbitrary code.**
+  A stable changed profile from the same enrolled machine/service can now be
+  adopted through a default-on sub-policy only after ownership and fatal-or-new-
+  invocation proof. The exact service is then verified through model/context,
+  generation and two cold-to-warm conversations before routing returns. Pauses
+  and agent holds win; Genie can request the action but fixed code proves it.
+
+- **Designed Priority Lens without quietly capturing request text.** The public
+  roadmap now specifies a default-off intent-aware dispatch experiment: bounded
+  newest-user snippets, an explicit Genie-provider trust boundary, no raw-text
+  persistence, deterministic starvation/cache/session gates, auditable metadata
+  and immediate fallback when Genie abstains or fails. No capture or routing
+  authority was enabled by this planning change.
+
 - **Made lost capacity impossible for a sleeping Genie to hide.** Quarantine and
   enabled-but-unavailable headlines now come directly from current DSG evidence,
   ahead of any model commentary. Planned pauses and agent reservations do not

@@ -10,8 +10,8 @@ function exact(input,keys){if(!input||typeof input!=='object'||Array.isArray(inp
 const publicAgent=a=>({agent_id:a.id,enabled:a.enabled,workers:a.workers,created_at:a.created_at});
 
 export class AgentControl {
-  constructor({store,nodes,canResume,onPause=()=>{},log=()=>{},now=Date.now}) {
-    Object.assign(this,{store,nodes,canResume,onPause,log,now});
+  constructor({store,nodes,canResume,canHandback=null,onPause=()=>{},onHandback=()=>{},log=()=>{},now=Date.now}) {
+    Object.assign(this,{store,nodes,canResume,canHandback,onPause,onHandback,log,now});
     const s=this.state;
     if(!s||s.schema!==1||!Array.isArray(s.agents)||s.agents.length>128||!Array.isArray(s.holds)||s.holds.length>1024||!Array.isArray(s.operations)||s.operations.length>10000||!s.manual_paused||typeof s.manual_paused!=='object'||Array.isArray(s.manual_paused))throw new Error('Invalid agent control state');
     if(s.agents.some(a=>!identifier(a.id)||typeof a.enabled!=='boolean'||!Number.isFinite(a.created_at)||!Array.isArray(a.workers)||a.workers.length>128||new Set(a.workers).size!==a.workers.length||a.workers.some(w=>!identifier(w))||!/^[a-f0-9]{64}$/.test(a.token_hash))||new Set(s.agents.map(a=>a.id)).size!==s.agents.length)throw new Error('Invalid agent grants');
@@ -102,17 +102,24 @@ export class AgentControl {
       if(!h||h.owner_id!==actor)fail('not_hold_owner','No hold owned by this agent with that ID',403);
       const n=this.worker(h.worker_id);if(!a.workers.includes(n.id))fail('forbidden_worker','Agent is not granted this worker',403);
       const other=this.holds(n.id).filter(x=>x.id!==h.id),manual=this.manualPaused(n.id);
+      let handback=false;
       if(!other.length&&!manual){
-        if(n.quarantine||n.recovering)fail('recovery_required','Recovery or quarantine requires operator review; hold retained',409);
-        await this.canResume(n);this.agent(actor); // Recheck after asynchronous probe.
+        if(n.recovering)fail('recovery_required','Recovery already owns this worker; hold retained',409);
+        if(n.quarantine){
+          if(!this.canHandback)fail('recovery_required','Recovery or quarantine requires operator review; hold retained',409);
+          try {await this.canHandback(n);} catch(error) {fail('recovery_required',`${error.message}; hold retained`,409);}
+          handback=true;
+        }else await this.canResume(n);
+        this.agent(actor); // Recheck after asynchronous probe/offer.
       }
       next=structuredClone(this.state);next.holds=next.holds.filter(x=>x.id!==h.id);
-      result={hold_id:h.id,worker_id:n.id,routing_resumed:!other.length&&!manual,state:'hold_released',remaining_holds:other.map(x=>x.id),operator_paused:manual};
+      result={hold_id:h.id,worker_id:n.id,routing_resumed:!other.length&&!manual&&!handback,state:handback?'handback_released':'hold_released',remaining_holds:other.map(x=>x.id),operator_paused:manual,...(handback?{recovery_pending:true}:{})};
     }else fail('unsupported_action','Unsupported agent action');
     const op={request_id:input.request_id,actor_id:actor,action,fingerprint,time:this.now(),result};next.operations.push(op);
     const paused=next.manual_paused[result.worker_id]===true||next.holds.some(h=>h.worker_id===result.worker_id);
     this.commit(next,{...this.store.data.drained,[result.worker_id]:paused});
     if(action==='drain')this.onPause([result.worker_id]);
+    if(result.recovery_pending)try{this.onHandback(this.worker(result.worker_id));}catch{this.log('agent_handback_schedule_failed',{worker_id:result.worker_id});}
     this.log('agent_worker_action',{request_id:op.request_id,actor_id:actor,action,worker_id:result.worker_id,hold_id:result.hold_id,routing_resumed:result.routing_resumed});
     return this.receipt(actor,{request_id:op.request_id});
   }

@@ -1,5 +1,23 @@
 # Changelog
 
+## Verified changed-profile hand-back
+
+- Added a default-on, independently switchable profile hand-back gate beneath
+  the existing opt-in automatic recovery policy. A repeatedly inspected changed
+  profile on the same enrolled machine/service may be adopted only with no
+  admitted work and either a proven replacement invocation or current fatal
+  accelerator evidence.
+- The guarded executor verifies model/context, real generation and two
+  cold-to-warm conversations before readmission. A current pause or scoped agent
+  hold blocks the action. Candidate and adopted profile fingerprints remain in
+  private durable state; public status exposes only bounded state and receipts.
+- Gate Genie and the deterministic watcher share the same evidence offer and
+  fixed executor. Neither can submit a fingerprint, command or bypass the normal
+  single-operation, cooldown, binding and verification gates.
+- A scoped maintenance agent's final explicit hold release can hand an eligible
+  quarantined worker to that executor. The release itself neither clears the
+  quarantine nor resumes routing, and any other hold or operator pause still wins.
+
 ## Deterministic quarantine and capacity alarms
 
 - The compact health wire now derives quarantine and enabled-but-unavailable

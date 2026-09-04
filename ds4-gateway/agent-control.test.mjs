@@ -7,11 +7,11 @@ import path from 'node:path';
 import {AgentControl} from './agent-control.mjs';
 import {readAgentCredential} from './agent-client.mjs';
 
-function rig(paused=false) {
+function rig(paused=false,overrides={}) {
   const nodes=['worker-a','worker-b'].map(id=>({id,healthy:true,drained:paused,active:null,queue:[],quarantine:null}));
   const store={data:{drained:Object.fromEntries(nodes.map(n=>[n.id,paused])),unrelated:{preserve:true}},save(data){this.data=structuredClone(data);}};
   const logs=[];let probes=0,pauseCalls=0;
-  const options={store,nodes,canResume:async()=>{probes++;},onPause:()=>{pauseCalls++;},log:(...x)=>logs.push(x)};
+  const options={store,nodes,canResume:async()=>{probes++;},onPause:()=>{pauseCalls++;},log:(...x)=>logs.push(x),...overrides};
   const api=new AgentControl(options);
   const a=api.grant({agent_id:'test-a',workers:['worker-a']}),b=api.grant({agent_id:'test-b',workers:['worker-a','worker-b']});
   const drain=(actor='test-a',worker_id='worker-a',request_id=randomUUID())=>api.act(actor,'drain',{worker_id,reason:'DS4 test',request_id});
@@ -83,6 +83,15 @@ test('failed readiness and quarantine keep hold; no implicit recovery powers',as
   await assert.rejects(r.release(d.result.hold_id),/unready/);assert.equal(r.api.holds('worker-a').length,1);
   for(const field of ['quarantine','recovering']){r.nodes[0][field]={};await assert.rejects(r.release(d.result.hold_id),{code:'recovery_required'});r.nodes[0][field]=null;}
   assert.equal(r.nodes[0].drained,true);
+});
+test('final agent hold can become an explicit verified hand-back without clearing quarantine itself',async()=>{
+  let offered=0,scheduled=0;
+  const r=rig(false,{canHandback:async node=>{assert.ok(node.quarantine);offered++;return {evidence_id:'private'};},onHandback:()=>{scheduled++;}}),d=await r.drain();
+  r.nodes[0].quarantine={reason:'accelerator_checkpoint_failure'};r.nodes[0].healthy=false;
+  const out=await r.release(d.result.hold_id);
+  assert.equal(out.result.state,'handback_released');assert.equal(out.result.recovery_pending,true);assert.equal(out.result.routing_resumed,false);
+  assert.equal(r.api.holds('worker-a').length,0);assert.equal(r.nodes[0].drained,false);assert.ok(r.nodes[0].quarantine);
+  assert.equal(offered,1);assert.equal(scheduled,1);
 });
 test('invalid action schemas cannot add authority or mutate state',async()=>{
   const r=rig(),before=JSON.stringify(r.store.data);

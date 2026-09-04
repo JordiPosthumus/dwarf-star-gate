@@ -94,10 +94,17 @@ a snapshot, not a promise that the machine will remain idle.
   gateway requests. Direct clients bypassing DSG are outside that observation.
 - **Resume HOLD_ID** releases this agent's hold only. If another hold or an
   operator pause remains, the release succeeds with `routing_resumed:false`.
-- Releasing the final hold when no operator pause remains requires a fresh
-  compatible model/context probe. A failed probe, quarantine, ongoing recovery
-  or gateway shutdown retains the hold. This API cannot clear quarantine or run
-  recovery. A model-list probe is not proof of successful future generation.
+- Releasing the final hold when no operator pause remains normally requires a
+  fresh compatible model/context probe. A failed probe, ongoing recovery or
+  gateway shutdown retains the hold. A model-list probe is not proof of
+  successful future generation.
+- A quarantined worker is one narrow exception: when automatic recovery and its
+  verified profile hand-back sub-policy are both on, the final hold can be
+  released into `handback_released` only after the fixed recovery controller has
+  independently offered the same-machine changed profile. The agent supplies no
+  fingerprint or command, the release does not clear quarantine, and routing
+  remains off while DSG performs its normal generation/cache verification. If
+  any gate is missing, the hold is retained.
 - **Wake** in this API means *resume routing to an already running DS4 server*.
   Starting a stopped engine or recovering a failed one is a separate capability;
   see [bounded worker recovery](worker-recovery.md).
