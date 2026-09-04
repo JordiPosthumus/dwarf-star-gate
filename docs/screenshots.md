@@ -1,6 +1,6 @@
 # Public dashboard screenshots
 
-Refreshed 2026-09-03 from the checked-in synthetic demo and current UI assets.
+Refreshed 2026-09-04 from the checked-in synthetic demo and current UI assets.
 These are actual browser captures of fictional data, not edited production
 screenshots, benchmark results, a live incident report or a promoted model.
 
