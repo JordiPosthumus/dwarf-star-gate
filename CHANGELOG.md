@@ -1,5 +1,12 @@
 # Changelog
 
+## Recheck macOS process start identity
+
+- Recheck process start time during launchd metadata inspection so PID reuse by
+  the same executable cannot pass merely because its path is unchanged. Tests
+  cover changed/missing start time and stable metadata; no recovery enrollment
+  or production settings are changed.
+
 ## Audit frozen occupancy models on future traffic
 
 - Add explicit private freeze receipts and a read-only future evaluator for the

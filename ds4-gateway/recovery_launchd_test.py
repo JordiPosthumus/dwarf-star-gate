@@ -31,9 +31,17 @@ class LaunchdAdapterTests(unittest.TestCase):
             with self.assertRaises(ValueError):adapter.process_executable(pid)
 
     def test_process_metadata_rechecks_kernel_executable_and_never_uses_text_mappings(self):
-        with patch.object(adapter,'process_executable',side_effect=['/opt/ds4/server','/other']), patch.object(adapter,'run',side_effect=[('Fri Sep  4 10:00:00 2026',0),('/opt/ds4/server --port 8001',0)]) as run:
+        with patch.object(adapter,'process_executable',side_effect=['/opt/ds4/server','/other']), patch.object(adapter,'run',side_effect=[('Fri Sep  4 10:00:00 2026',0),('/opt/ds4/server --port 8001',0),('Fri Sep  4 10:00:00 2026',0)]) as run:
             with self.assertRaisesRegex(ValueError,'service_executable_changed'):adapter.process_info(123)
             self.assertTrue(all(call.args[0][0]=='/bin/ps' for call in run.call_args_list))
+
+    def test_same_executable_pid_reuse_during_metadata_reads_is_rejected(self):
+        started='Fri Sep  4 10:00:00 2026'
+        for checked in ('Fri Sep  4 10:00:01 2026',''):
+            with patch.object(adapter,'process_executable',return_value='/opt/ds4/server'), patch.object(adapter,'run',side_effect=[(started,0),('/opt/ds4/server --port 8001',0),(checked,0)]):
+                with self.assertRaisesRegex(ValueError,'service_start_time_changed'):adapter.process_info(123)
+        with patch.object(adapter,'process_executable',return_value='/opt/ds4/server'), patch.object(adapter,'run',side_effect=[(started,0),('/opt/ds4/server --port 8001',0),(started+'\n',0)]):
+            self.assertEqual(adapter.process_info(123)['executable'],'/opt/ds4/server')
 
     def files(self, temp):
         root = Path(temp)

@@ -10,6 +10,10 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Narrowed a Mac recovery identity race.** Metadata inspection now rechecks
+  start time as well as the executable path. Same-binary PID replacement must
+  abstain; this is not a claim of atomic restart safety or a live recovery canary.
+
 - **Added a frozen occupancy future audit.** Bind the challenger and training
   artifacts before new traffic, then evaluate only new, completed jobs with the
   same feature/profile contract. Report errors and fixed baselines without

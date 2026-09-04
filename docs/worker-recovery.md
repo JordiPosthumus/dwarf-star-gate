@@ -311,6 +311,12 @@ It does not load plists, target LaunchDaemons, accept commands, edit settings or
 discover a service from an HTTP endpoint. The LaunchAgent's reported PID must be
 the configured DS4 binary and must own the configured loopback listener.
 
+Process metadata checks the kernel executable path before and after reading the
+command, and rechecks the reported process start time. A changed start time is
+rejected even if a reused PID runs the same binary. These are sampled identity
+checks, not an atomic launchd compare-and-restart operation; maintenance
+coordination and the per-installation canary remain mandatory.
+
 1. Keep automatic recovery off. Verify that every inference client uses DSG,
    back up the LaunchAgent/plist/launcher configuration, and choose a maintenance
    window for a later canary. Do not use a Mac reserved for another test.

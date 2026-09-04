@@ -164,6 +164,9 @@ def process_info(pid):
         raise ValueError("service_start_time_unverified")
     if not command.strip():
         raise ValueError("service_command_unverified")
+    checked_start, _ = run(["/bin/ps", "-p", str(pid), "-o", "lstart="])
+    if checked_start.strip() != started_text.strip():
+        raise ValueError("service_start_time_changed")
     if process_executable(pid) != executable:
         raise ValueError("service_executable_changed")
     return {"executable": executable, "started_at": started_at, "command": command.rstrip("\n")}
