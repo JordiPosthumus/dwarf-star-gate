@@ -15,7 +15,7 @@ import {PredictionHistory,replay,FEATURE_SCHEMA} from './prediction-features.mjs
 import {PredictionHistory as PredictionHistoryV3,replay as replayV3,FEATURE_SCHEMA as FEATURE_SCHEMA_V3} from './prediction-features-v3.mjs';
 import {featureBuilderHash} from './prediction-feature-registry.mjs';
 import {predictTreeModel,validateCandidate,reference,encode} from './xgb-runtime.mjs';
-import {Predictor,promotionEligible,DEFAULT_BASELINE} from './predictor.mjs';
+import {Predictor,promotionEligible,promotionGate,DEFAULT_BASELINE} from './predictor.mjs';
 import {PredictionEvidence} from './analytics.mjs';
 import {parseGenieReview,Genie,briefing} from './genie.mjs';
 import {TRAINING_RECIPES,DEFAULT_RECIPE,RECIPE_POLICY_SHA256} from './training-recipes.mjs';
@@ -114,6 +114,21 @@ test('native evaluator rounds XGBoost split thresholds to float32 before branchi
 test('holdout and future gates require multiple sessions, genuine gain, calibration and per-worker coverage',()=>{
   const m=model(),rows=goodRows();assert.ok(promotionEligible(m,rows));assert.ok(!promotionEligible({...m,holdout_passed:false},rows));assert.ok(!promotionEligible(m,rows.slice(0,29)));
   assert.ok(!promotionEligible(m,rows.map(r=>({...r,session:'same'}))));assert.ok(!promotionEligible(m,rows.map(r=>({...r,prediction:200}))));assert.ok(!promotionEligible(m,[...rows,{...rows[0],node:'new'}]));
+});
+test('promotion diagnostics identify the exact fixed gate without weakening eligibility',t=>{
+  const rows=goodRows(),reason=(m,r)=>promotionGate(m,r).reason;
+  assert.equal(reason({...model(),holdout_passed:false},rows),'historical_holdout_failed');
+  assert.equal(reason(model(),rows.slice(0,29)),'future_requests_pending');
+  assert.equal(reason(model(),rows.map(r=>({...r,session:'same'}))),'future_sessions_pending');
+  assert.equal(reason(model(),rows.map(r=>({...r,baseline_error:0}))),'future_metrics_invalid');
+  assert.equal(reason(model(),rows.map(r=>({...r,error:10}))),'future_gain_pending');
+  assert.equal(reason(model(),rows.map(r=>({...r,prediction:200}))),'future_bias_out_of_bounds');
+  assert.equal(reason(model(),[...rows,{...rows[0],node:'new'}]),'future_worker_coverage_pending');
+  assert.equal(reason(model(),rows.map((r,i)=>i<5?{...r,node:'b',error:2,baseline_error:1}:r)),'future_worker_regression');
+  assert.equal(reason(model({holdout:{long_requests:1}}),rows),'future_long_tail_pending');
+  const r=rig(t),b=bundle(model({holdout:{long_requests:1}}));install(r,'candidate-long-tail',b);r.p.state.evaluations[b.models.admission.id]=rows;
+  const evidence=r.p.promotionEvidence({...b,directory_id:'candidate-long-tail'},'admission');
+  assert.equal(evidence.reason,'baseline_gate_pending');assert.deepEqual(evidence.gate,{eligible:false,reason:'future_long_tail_pending',observed:0,required:3});
 });
 test('future-only scoring, successful activation, restart persistence and rollback rejection prevent promote loops',t=>{
   const r=rig(t),b=bundle();install(r,'candidate-one',b);r.p.state.automatic_promotion=true;

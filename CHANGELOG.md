@@ -1,5 +1,11 @@
 # Changelog
 
+## Predictor gate diagnostics
+
+- Predictor status now identifies the exact fixed promotion subgate that still
+  lacks evidence while preserving every threshold and the stable outer pending
+  state. The diagnostic is bounded metadata, not training data or a weaker gate.
+
 ## Relocation-aware predictor evidence audit
 
 - The private data-quality audit now shares the collector's event-kind contract,

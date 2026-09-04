@@ -161,6 +161,11 @@ policy in `runtime/predictor/state.json` wins over initial config defaults.
   creation**, 10% MAE improvement over the causal history fallback, ratio
   0.7–1.3, at least 5 results on each observed worker and no worker MAE worse
   than 1.1× fallback. Require 3 long requests if the holdout included long work.
+  The status API preserves the stable outer `baseline_gate_pending` state and
+  includes a bounded `promotion.gate` reason such as `future_requests_pending`,
+  `future_worker_coverage_pending`, or `future_long_tail_pending`. This explains
+  missing evidence without exposing sessions, prompts, embeddings or training
+  rows, and it does not relax or bypass any gate.
   Active forecasts still abstain on workers/profiles lacking local future support.
 - If a model is already active, the challenger must **also beat that incumbent
   policy** by 10% on matched future requests and the exact same forecast points,

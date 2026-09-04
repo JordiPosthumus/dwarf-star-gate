@@ -31,15 +31,25 @@ export function score(rows) {
   return {requests:rows.length,sessions:new Set(rows.map(r=>r.session)).size,mae_s:mean('error'),baseline_mae_s:mean('baseline_error'),mean_ratio:mean('prediction')/Math.max(.001,mean('actual')),
     long_requests:rows.filter(r=>r.long).length,long_mae_s:rows.some(r=>r.long)?rows.filter(r=>r.long).reduce((s,r)=>s+r.error,0)/rows.filter(r=>r.long).length:null};
 }
-export function promotionEligible(model,rows) {
+export function promotionGate(model,rows) {
   const s=score(rows),p=PREDICTION_POLICY;
-  if(!model.holdout_passed||s.requests<p.min_future_requests||s.sessions<p.min_future_sessions||!finite(s.mae_s)||!finite(s.baseline_mae_s)||s.baseline_mae_s<=0||!Number.isFinite(s.mean_ratio)||s.mae_s>s.baseline_mae_s*(1-p.required_mae_gain)||Math.abs(s.mean_ratio-1)>p.max_mean_bias)return false;
+  if(!model.holdout_passed)return {eligible:false,reason:'historical_holdout_failed'};
+  if(s.requests<p.min_future_requests)return {eligible:false,reason:'future_requests_pending',observed:s.requests,required:p.min_future_requests};
+  if(s.sessions<p.min_future_sessions)return {eligible:false,reason:'future_sessions_pending',observed:s.sessions,required:p.min_future_sessions};
+  if(!finite(s.mae_s)||!finite(s.baseline_mae_s)||s.baseline_mae_s<=0||!Number.isFinite(s.mean_ratio))return {eligible:false,reason:'future_metrics_invalid'};
+  if(s.mae_s>s.baseline_mae_s*(1-p.required_mae_gain))return {eligible:false,reason:'future_gain_pending',observed_mae_s:s.mae_s,baseline_mae_s:s.baseline_mae_s,required_gain:p.required_mae_gain};
+  if(Math.abs(s.mean_ratio-1)>p.max_mean_bias)return {eligible:false,reason:'future_bias_out_of_bounds',mean_ratio:s.mean_ratio,max_mean_bias:p.max_mean_bias};
   // Require observed coverage per worker before its forecast is considered
   // calibrated. A paused/removed worker need not generate artificial traffic.
-  for(const node of new Set(rows.map(r=>r.node))){const r=rows.filter(x=>x.node===node),m=score(r);if(r.length<5||m.mae_s>m.baseline_mae_s*1.1)return false;}
-  if((model.holdout?.long_requests??0)>0&&s.long_requests<3)return false;
-  return true;
+  for(const node of new Set(rows.map(r=>r.node))){
+    const r=rows.filter(x=>x.node===node),m=score(r);
+    if(r.length<5)return {eligible:false,reason:'future_worker_coverage_pending',node,observed:r.length,required:5};
+    if(m.mae_s>m.baseline_mae_s*1.1)return {eligible:false,reason:'future_worker_regression',node,observed_mae_s:m.mae_s,baseline_mae_s:m.baseline_mae_s,max_ratio:1.1};
+  }
+  if((model.holdout?.long_requests??0)>0&&s.long_requests<3)return {eligible:false,reason:'future_long_tail_pending',observed:s.long_requests,required:3};
+  return {eligible:true,reason:'independent_gates_passed'};
 }
+export const promotionEligible=(model,rows)=>promotionGate(model,rows).eligible;
 export class Predictor {
   constructor(config,{directory,dataDirectory,record,now=Date.now,spawnImpl=spawn}={}) {
     Object.assign(this,{config,directory,dataDirectory,record,now,spawnImpl});this.configured=config?.enabled===true;this.error=null;this.busy=false;this.child=null;this.closed=false;this.pending=new Map();this.live=new Map();this.bundles=new Map();this.shadow=null;this.inventory={};this.histories=this.makeHistories();this.history=this.histories.get(CURRENT_FEATURE_SCHEMA);
@@ -180,14 +190,16 @@ export class Predictor {
     if(this.state.rejected[model.id])return {...base,reason:'rejected_version'};
     // Reset does not freeze learning, but a pre-reset snapshot cannot undo it.
     if(this.state.reset_at&&!(Date.parse(bundle.snapshot?.created_at)>this.state.reset_at))return {...base,reason:'new_snapshot_required_after_reset'};
-    if(!promotionEligible(model,rows))return {...base,reason:'baseline_gate_pending'};
+    const baselineGate=promotionGate(model,rows);
+    if(!baselineGate.eligible)return {...base,reason:'baseline_gate_pending',gate:baselineGate};
     if(active){
       const paired=rows.filter(r=>r.comparator_id===active.id&&finite(r.comparator_error));
       const comparison=paired.map(r=>({...r,baseline_error:r.comparator_error}));
       base.champion={...score(comparison),fallback_points:paired.reduce((n,r)=>n+(r.comparator_fallback_points??0),0),forecast_points:paired.reduce((n,r)=>n+(r.comparator_points??0),0)};
-      if(rows.some(r=>!paired.some(p=>p.node===r.node&&p.profile===r.profile))||!promotionEligible(model,paired)||!promotionEligible(model,comparison))return {...base,reason:'matched_champion_gate_pending'};
+      const pairedGate=promotionGate(model,paired),championGate=promotionGate(model,comparison);
+      if(rows.some(r=>!paired.some(p=>p.node===r.node&&p.profile===r.profile))||!pairedGate.eligible||!championGate.eligible)return {...base,reason:'matched_champion_gate_pending',gate:{reason:'matched_champion_gate_pending',paired:pairedGate,champion:championGate}};
     }
-    return {...base,eligible:true,reason:'independent_gates_passed'};
+    return {...base,eligible:true,reason:'independent_gates_passed',gate:baselineGate};
   }
   activate(bundle,kind,actor) {
     const evidence=this.promotionEvidence(bundle,kind),model=bundle.models[kind];if(!evidence.eligible)throw new Error('Model has not passed the fixed future evidence gate: '+evidence.reason);

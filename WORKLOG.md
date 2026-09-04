@@ -10,6 +10,12 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Made predictor validation blockers explainable.** The current remaining-time
+  candidate reached 30 future requests across 6 sessions but correctly remained
+  pending because only one of three required fresh long jobs had arrived. DSG now
+  reports that exact subgate without changing the model, evidence window, routing
+  or promotion policy.
+
 - **Made prediction evidence audits relocation-aware.** Valid queued handovers
   and tie-break shadows no longer look corrupt; the audit distinguishes proven
   moves from unexplained worker joins, and moved work cannot label the source
