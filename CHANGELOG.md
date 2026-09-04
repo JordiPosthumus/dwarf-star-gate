@@ -1,5 +1,11 @@
 # Changelog
 
+## Explicit queue-visibility boundary
+
+- The headline now says `WAITING IN DSG`, and its visible summaries repeat that
+  scope. DSG counts core and Continuity Door queues; work still held inside Pi,
+  Hermes or another client has not reached the gateway and is not observable.
+
 ## Traceable manual routing controls
 
 - Manual pause/resume now retains a bounded timestamped control-channel receipt
