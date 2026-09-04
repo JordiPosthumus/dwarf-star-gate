@@ -53,13 +53,17 @@ ambiguous: supported DS4 deployments may serialize that endpoint behind work.
 2. Tunnel reconnection remains automatic and effect-free on the remote machine.
    It must not be presented as model-service recovery.
 3. Genie is told to classify network/SSH reachability separately from a proven
-   engine fault. The current recovery runner may restart only an enrolled,
-   reachable service with its existing exact evidence gate. It must not invent a
-   shell command or reboot an unreachable machine.
-4. Starting a known enrolled but stopped service is a separate future recovery
-   capability. It requires a static stopped-service identity proof in the remote
-   adapter plus new canary and lost-acknowledgement tests; this incident does not
-   weaken the existing fatal-fault gate to obtain it.
+   engine fault. The recovery runner may restart only an enrolled, reachable live
+   service with its existing exact fatal-evidence gate. Its separate stopped-service
+   path requires the reachable helper's static identity and stopped-epoch proof. It
+   must not invent a shell command or reboot an unreachable machine.
+4. Starting a known enrolled but stopped systemd-user service is now an optional,
+   separately enrolled recovery capability. It requires the exact static service
+   profile, a stable stopped epoch, failed gateway readiness, no admitted work and
+   no operator pause. Intent-before-effect, lost-acknowledgement and controller-
+   restart tests prove no duplicate start. It remains off unless a deployment
+   explicitly enrolls `start_stopped`; this incident does not weaken the live
+   fatal-fault restart gate or authorize host reboot.
 5. Client continuity remains independent. A recovered worker does not by itself
    revive a client turn whose dispatched stream already ended.
 
@@ -68,4 +72,7 @@ ambiguous: supported DS4 deployments may serialize that endpoint behind work.
 Tests cover both sides of the probe rule: a model-list timeout accompanied by
 fresh inference bytes does not contradict those bytes, while silent active work
 does not mask a lost or stalled backend. The existing total-deadline probe test
-still fails a trickling, non-model response.
+still fails a trickling, non-model response. Synthetic recovery tests cover stopped
+identity drift, pause/admitted-work races, one start per stopped epoch, uncertain
+acknowledgment and controller crash reconciliation. A real deployment still needs
+the operator-approved stopped-service canary before enabling that power.

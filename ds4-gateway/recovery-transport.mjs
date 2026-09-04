@@ -29,12 +29,15 @@ export function recoveryConfig(raw={}) {
   if(Object.keys(raw).some(k=>!['workers'].includes(k)) || !Array.isArray(raw.workers??[]))throw new Error('Invalid recovery configuration');
   const configs=new Map(), machines=new Set();
   for(const entry of raw.workers??[]) {
-    if(Object.keys(entry).some(k=>!['id','url','ssh','ssh_fallbacks','remote_port','adapter','helper','config','machine','profile','exclusive'].includes(k)))throw new Error('Unsupported recovery configuration field');
+    if(Object.keys(entry).some(k=>!['id','url','ssh','ssh_fallbacks','remote_port','adapter','helper','config','machine','profile','service_profile','start_stopped','exclusive'].includes(k)))throw new Error('Unsupported recovery configuration field');
     const worker=workerConfig(Object.fromEntries(['id','url','ssh','ssh_fallbacks','remote_port'].filter(k=>entry[k]!==undefined).map(k=>[k,entry[k]])));
     if(entry.adapter!=='systemd-user' || !worker.ssh)throw new Error('Recovery requires the systemd-user SSH adapter');
     if(entry.exclusive!==true)throw new Error('Recovery requires explicit exclusive DSG ownership of the endpoint');
     for(const field of ['helper','config'])if(typeof entry[field]!=='string' || !/^\/[A-Za-z0-9_./-]+$/.test(entry[field]) || entry[field].includes('/../'))throw new Error('Recovery paths must be absolute shell-safe paths');
     for(const field of ['machine','profile'])if(!/^[a-f0-9]{64}$/.test(entry[field]))throw new Error('Enroll the recovery machine and profile first');
+    if(entry.start_stopped!==undefined&&typeof entry.start_stopped!=='boolean')throw new Error('start_stopped must be boolean');
+    if(entry.start_stopped===true&&!/^[a-f0-9]{64}$/.test(entry.service_profile))throw new Error('Starting a stopped service requires its enrolled static service profile');
+    if(entry.start_stopped!==true&&entry.service_profile!==undefined)throw new Error('service_profile is valid only with start_stopped enabled');
     if(configs.has(worker.id) || machines.has(entry.machine))throw new Error('Only one registered recovery service per physical machine in v1');
     configs.set(worker.id,{...entry,...worker});machines.add(entry.machine);
   }

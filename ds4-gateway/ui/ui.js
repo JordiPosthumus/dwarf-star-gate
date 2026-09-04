@@ -161,6 +161,7 @@ function managementDetail(w) {
   if(m?.transport==='local')return 'The local DS4 endpoint is not passing its readiness check.';
   return 'The server is not passing readiness checks. Check its DS4 process or connection, then try again.';
 }
+function recoveryRecheckable(action){return !!(action?.restart_issued||action?.service_action_issued)&&['reconciliation_needed','failed'].includes(action.state);}
 function routingMarkup(w,{stale=false,controls=true,recovering=false,busy=workerBusy}={}) {
   const info=routingInfo(w,{stale,recovering});
   if(!controls||!info.action)return `<span class="worker-routing" data-level="${info.level}" aria-label="${esc(info.label)}"></span>`;
@@ -598,10 +599,10 @@ function renderRecovery(state) {
   $('recovery-status').textContent=!state?.configured?'Not configured. Endpoint registration alone grants no restart authority.':state.automatic?'Automatic recovery ON · GG + known-fatal watcher':'Automatic recovery OFF · operator recovery available';
   $('recovery-toggle').textContent=state?.automatic?'Disable automatic recovery':'Enable automatic recovery';
   $('recovery-toggle').disabled=!state?.configured||workerBusy;
-  $('recovery-workers').innerHTML=(state?.workers||[]).map(w=>`<p><strong>${esc(w.worker_id)}</strong> · ${esc(w.state)} · ${esc(w.eligible?'recovery eligible':(w.reason||'checking').replaceAll('_',' '))} <button type="button" class="button" data-recover="${esc(w.worker_id)}" ${!w.eligible||workerBusy?'disabled':''}>Recover</button>${w.last_action?.restart_issued&&['reconciliation_needed','failed'].includes(w.last_action.state)?` <button type="button" class="button" data-recheck="${esc(w.last_action.id)}" ${workerBusy?'disabled':''}>Recheck only</button>`:''}</p>`).join('');
+  $('recovery-workers').innerHTML=(state?.workers||[]).map(w=>`<p><strong>${esc(w.worker_id)}</strong> · ${esc(w.state)} · ${esc(w.eligible?'recovery eligible':(w.reason||'checking').replaceAll('_',' '))} <button type="button" class="button" data-recover="${esc(w.worker_id)}" ${!w.eligible||workerBusy?'disabled':''}>Recover</button>${recoveryRecheckable(w.last_action)?` <button type="button" class="button" data-recheck="${esc(w.last_action.id)}" ${workerBusy?'disabled':''}>Recheck only</button>`:''}</p>`).join('');
   // Plain text receipts, not another auto-collapsing disclosure panel.
   $('recovery-actions').replaceChildren(...(state?.operations||[]).slice(0,8).map(op=>{
-    const p=document.createElement('p');p.textContent=`${clock(op.updated_at)} · ${op.worker_id} · ${op.actor} · ${op.state.replaceAll('_',' ')}${op.error?` · ${op.error.replaceAll('_',' ')}`:''}${op.proof?` · ${op.proof.samples.map(s=>`${s.label}: ${s.cached_tokens}/${s.prompt_tokens} cached`).join(' · ')}`:''} · ${op.id}`;return p;
+    const p=document.createElement('p');p.textContent=`${clock(op.updated_at)} · ${op.worker_id} · ${op.actor}${op.service_action_issued?` · ${op.service_action} issued`:''} · ${op.state.replaceAll('_',' ')}${op.error?` · ${op.error.replaceAll('_',' ')}`:''}${op.proof?` · ${op.proof.samples.map(s=>`${s.label}: ${s.cached_tokens}/${s.prompt_tokens} cached`).join(' · ')}`:''} · ${op.id}`;return p;
   }));
 }
 let predictorState=null,predictorControlBusy=false,predictorUnavailable=true,milestoneSignature=null,recipeSignature=null;

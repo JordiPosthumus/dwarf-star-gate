@@ -116,6 +116,16 @@ test('worker controls show escaped hold ownership and block ordinary Enable/Remo
   const free=row({...w,holds:[]});assert.ok(!/data-action="resume"[^>]*disabled/.test(free));assert.ok(!/data-action="remove"[^>]*disabled/.test(free));
 });
 
+test('recovery recheck UI covers uncertain start and restart actions',()=>{
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const context=vm.createContext({});vm.runInContext(source,context);
+  const check=action=>vm.runInContext(`recoveryRecheckable(${JSON.stringify(action)})`,context);
+  assert.equal(check({state:'reconciliation_needed',restart_issued:true}),true);
+  assert.equal(check({state:'failed',service_action_issued:true,service_action:'start'}),true);
+  assert.equal(check({state:'failed',service_action:'start'}),false);
+  assert.equal(check({state:'recovered',service_action_issued:true,service_action:'start'}),false);
+});
+
 test('worker enrollment offers bounded SSH fallback aliases without accepting SSH options',()=>{
   const html=fs.readFileSync(new URL('./ui/index.html',import.meta.url),'utf8');
   const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8');

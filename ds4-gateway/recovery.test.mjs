@@ -33,6 +33,7 @@ function rig(options={}) {
 test('recovery defaults off; registered endpoints alone convey no recovery authority',()=>{
   const r=rig();assert.equal(r.recovery.status().automatic,false);assert.throws(()=>r.recovery.request(r.input(),'genie'),/off/);
   for(const patch of [{adapter:'launchd'},{helper:'/tmp/x;evil'},{machine:'unknown'},{shell:'reboot'}])assert.throws(()=>recoveryConfig({workers:[{...config,...patch}]}));
+  for(const patch of [{start_stopped:true},{start_stopped:'yes',service_profile:'c'.repeat(64)},{service_profile:'c'.repeat(64)}])assert.throws(()=>recoveryConfig({workers:[{...config,...patch}]}));
   assert.throws(()=>recoveryConfig({workers:[config,{...config,id:'two',url:'http://127.0.0.1:39002'}]}),/physical/);
 });
 test('SSH management failures become bounded reason classes without exposing transport text',()=>{
@@ -119,6 +120,41 @@ test('automatic detector uses same runner; disabling stops new automatic request
   assert.equal(r.restarts,1);assert.equal(r.recovery.status().operations[0].actor,'detector');
   r.recovery.setAutomatic(false);assert.throws(()=>r.recovery.request(r.input(),'genie'),/off/);
 });
+test('automatic stopped-service recovery waits for stable exact identity, starts once, verifies, and reinstates',async()=>{
+  let time=1788390000000,started=false,starts=0,proofs=0;
+  const enrolled={...config,start_stopped:true,service_profile:'c'.repeat(64)};
+  const n={...enrolled,healthy:false,drained:false,active:null,queue:[],contextLength:262144,quarantine:null};
+  const store={data:{sessions:{}},save(next){this.data=structuredClone(next);}};
+  const stopped=()=>({version:1,machine:enrolled.machine,service_profile:enrolled.service_profile,loaded:true,stopped:true,stopped_epoch:'d'.repeat(64),instance:'',active:false,listener:false});
+  const active=()=>({version:1,machine:enrolled.machine,service_profile:enrolled.service_profile,loaded:true,stopped:false,stopped_epoch:null,instance:'2'.repeat(32),profile:enrolled.profile,started_at:time,active:true,listener:true,fault:null});
+  const recovery=new Recovery({workers:[enrolled]},{store,nodes:[n],model:'deepseek-v4-flash',stopping:()=>false,now:()=>time,
+    call:async(_c,input)=>{if(input.action==='start'){starts++;started=true;return {state:'issued'};}return started?active():stopped();},
+    verify:async()=>{proofs++;return {samples:[],verified_at:new Date(time).toISOString()};},
+    reinstate:(node,expected,state)=>{assert.equal(expected,null);store.save({...store.data,recovery:state});node.quarantine=null;node.healthy=true;}});
+  recovery.setAutomatic(true);await recovery.tick();
+  assert.equal(recovery.workerStatus(n).reason,'stopped_service_confirmation_pending');assert.equal(starts,0);
+  time+=16000;await recovery.tick();await recovery.task;
+  const op=recovery.status().operations[0];
+  assert.equal(starts,1);assert.equal(proofs,1);assert.equal(n.healthy,true);assert.equal(op.state,'recovered');
+  assert.equal(op.service_action,'start');assert.equal(op.service_action_issued,true);assert.equal(op.restart_issued,undefined);
+  const publicStatus=JSON.stringify(recovery.status());
+  for(const secret of [enrolled.machine,enrolled.profile,enrolled.service_profile,'d'.repeat(64)])assert.ok(!publicStatus.includes(secret));
+  store.data.recovery.operations[0].state='starting';delete store.data.recovery.operations[0].new_instance;delete store.data.recovery.operations[0].proof;n.healthy=false;
+  const resumed=new Recovery({workers:[enrolled]},{store,nodes:[n],model:'deepseek-v4-flash',stopping:()=>false,now:()=>time,
+    call:recovery.call,verify:recovery.verify,reinstate:(node,expected,state)=>{assert.equal(expected,null);store.save({...store.data,recovery:state});node.quarantine=null;node.healthy=true;}});
+  await resumed.tick();await resumed.task;
+  assert.equal(starts,1,'controller reconciliation must never issue a second start');assert.equal(proofs,2);assert.equal(resumed.status().operations[0].state,'recovered');
+});
+test('stopped-service recovery never overrides pause, admitted work, static-profile drift, or explicit opt-out',async()=>{
+  const service_profile='c'.repeat(64),base={version:1,machine:config.machine,service_profile,loaded:true,stopped:true,stopped_epoch:'d'.repeat(64),instance:'',active:false,listener:false};
+  for(const mutate of [n=>n.drained=true,n=>n.active={},n=>n.queue.push({})]) {
+    const enrolled={...config,start_stopped:true,service_profile},r=rig();r.recovery.configs=recoveryConfig({workers:[enrolled]});r.recovery.call=async()=>base;await r.ready();r.advance(16000);await r.ready();mutate(r.n);
+    assert.throws(()=>r.recovery.request(r.input()));assert.equal(r.restarts,0);
+  }
+  const opted=rig();opted.recovery.call=async()=>base;await opted.ready();assert.equal(opted.recovery.workerStatus(opted.n).reason,'stopped_service_start_not_enrolled');
+  const drift=rig();drift.recovery.configs=recoveryConfig({workers:[{...config,start_stopped:true,service_profile}]});drift.recovery.call=async()=>({...base,service_profile:'e'.repeat(64)});await drift.ready();
+  assert.equal(drift.recovery.workerStatus(drift.n).reason,'service_identity_or_profile_unverified');assert.equal(drift.restarts,0);
+});
 test('healthy replacement already started after the fault is verified without a redundant restart',async()=>{
   const r=rig();r.replace();r.recovery.call=async()=>({...r.sample(),started_at:r.deps.now()+1});await r.ready();r.recovery.request(r.input());await r.recovery.task;
   assert.equal(r.restarts,0);assert.equal(r.proofs,1);assert.equal(r.recovery.status().operations[0].state,'recovered');
@@ -141,6 +177,21 @@ test('operator canary requires pause, remains paused afterward and is not availa
   const r=rig();r.n.quarantine=null;await r.ready();assert.throws(()=>r.recovery.request(r.input(),'operator',{canary:true}),/drain/);
   r.n.drained=true;r.recovery.request(r.input(),'operator',{canary:true});await r.recovery.task;
   assert.equal(r.restarts,1);assert.equal(r.n.drained,true);assert.equal(r.recovery.status().operations[0].state,'verified_paused');
+});
+test('operator canary can prove an enrolled stopped-service start while routing stays paused',async()=>{
+  let time=1788390000000,started=false,starts=0;
+  const enrolled={...config,start_stopped:true,service_profile:'c'.repeat(64)};
+  const n={...enrolled,healthy:false,drained:true,active:null,queue:[],contextLength:262144,quarantine:null};
+  const store={data:{sessions:{}},save(next){this.data=structuredClone(next);}};
+  const stopped={version:1,machine:enrolled.machine,service_profile:enrolled.service_profile,loaded:true,stopped:true,stopped_epoch:'d'.repeat(64),instance:'',active:false,listener:false};
+  const active=()=>({version:1,machine:enrolled.machine,service_profile:enrolled.service_profile,loaded:true,stopped:false,stopped_epoch:null,instance:'2'.repeat(32),profile:enrolled.profile,started_at:time,active:true,listener:true,fault:null});
+  const recovery=new Recovery({workers:[enrolled]},{store,nodes:[n],model:'deepseek-v4-flash',stopping:()=>false,now:()=>time,
+    call:async(_c,input)=>{if(input.action==='start'){starts++;started=true;return {state:'issued'};}return started?active():stopped;},
+    verify:async()=>({samples:[],verified_at:new Date(time).toISOString()}),reinstate:()=>{throw new Error('paused canary must not reinstate routing');}});
+  await recovery.inspect(n.id);time+=16000;await recovery.inspect(n.id);
+  recovery.request({worker_id:n.id,action_id:randomUUID()},'operator',{canary:true});await recovery.task;
+  assert.equal(starts,1);assert.equal(n.drained,true);assert.equal(n.healthy,false);
+  assert.equal(recovery.status().operations[0].service_action,'start');assert.equal(recovery.status().operations[0].state,'verified_paused');
 });
 test('current recovery worker status follows resume and later faults without rewriting historical receipts',async()=>{
   const r=rig();r.n.quarantine=null;await r.ready();r.n.drained=true;

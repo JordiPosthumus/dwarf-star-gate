@@ -79,12 +79,12 @@ are implemented separately.
 | 3 (collector implemented) | Validate local embeddings/progress on ordinary workload | Pinned CPU encoder, bounded extraction and visible status; collect joined future labels across hardware; exact cache/engine attribution still separate |
 | 4 (lifecycle implemented) | Collect future validation evidence for v2 forecasts | Fixed forward-time tree/feature selection, separate unseen-session placement gate, per-worker future evidence; no experimental model controls routing |
 | 5 (notebook first slice implemented) | Persistent Genie/operator activity and endpoint settings UI | Private notebook storage, revisioned notes and bounded historical retrieval tested; generated hypotheses, full chat persistence and endpoint test/save/rollback remain planned |
-| 6 (first slice implemented) | Opt-in deterministic recovery runner and Genie access | Systemd-user only; see recovery guide for tested scope and deployment gates |
+| 6 (bounded runner implemented) | Opt-in deterministic recovery runner and Genie access | Systemd-user only; exact fatal-instance restart plus separately enrolled stopped-service start; see recovery guide for deployment gates and required live canaries |
 
 Orders 2 and 3 can be built alongside reliability diagnosis, without changing live
 routing. Do not wait for an LLM or trained predictor merely to explain why a queue
-is pinned. Recovery remains bounded to one attempt per failed instance with a
-30-minute per-worker cooldown; unexplained recurrence requires investigation,
+is pinned. Recovery remains bounded to one attempt per failed instance or stopped
+epoch with a 30-minute per-worker cooldown; unexplained recurrence requires investigation,
 not an unbounded restart loop.
 
 **Current scheduling boundary:** [safe queued handover](queued-handover.md) is now

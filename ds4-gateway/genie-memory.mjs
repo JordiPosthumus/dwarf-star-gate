@@ -8,7 +8,7 @@ const hash=x=>createHash('sha256').update(JSON.stringify(x)).digest('hex');
 const workerId=x=>typeof x==='string'&&/^[a-zA-Z0-9][\w-]{0,63}$/.test(x);
 const bool=x=>typeof x==='boolean'?x:null;
 const uuid=x=>!!validCallId(x);
-const recoveryStates=new Set(['queued','reconciling','restarting','verifying','recovered','verified_paused','failed','reconciliation_needed']);
+const recoveryStates=new Set(['queued','reconciling','starting','restarting','verifying','recovered','verified_paused','failed','reconciliation_needed']);
 const recoveryRecord=op=>workerId(op?.worker_id)&&uuid(op.id)&&recoveryStates.has(op.state)&&Number.isSafeInteger(op.updated_at)?{worker:op.worker_id,operation_id:op.id,state:op.state,recorded_at:op.updated_at}:null;
 const incidentRecord=(worker,q)=>workerId(worker)&&uuid(q?.request_id)&&safeQuarantine(q)?.reason&&Number.isFinite(Date.parse(q.at))?{worker,request_id:q.request_id,reason:safeQuarantine(q).reason,recorded_at:Date.parse(q.at)}:null;
 export const MEMORY_LIMIT=16*1024*1024;

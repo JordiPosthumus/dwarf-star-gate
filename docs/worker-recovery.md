@@ -12,9 +12,9 @@ service on DGX Spark. This is an install-type boundary, not a hardware check.
 Macs remain ordinary supported inference workers; automatic **launchd recovery
 is not implemented**. Manually launched processes and containers require manual
 service recovery until a tested adapter exists. Adding an endpoint in the UI does
-not grant permission to restart it.
+not grant permission to start or restart it.
 
-Recovery requires all of the following:
+Running-process restart recovery requires all of the following:
 
 - An operator-enrolled worker/service, verified SSH host key, matching physical
   machine fingerprint, exact service-owned loopback listener, executable and
@@ -26,7 +26,8 @@ Recovery requires all of the following:
   current-invocation backend evidence of illegal CUDA memory access or a
   device-side assertion. A generic checkpoint message alone does **not** authorize
   a restart. Successful decode progress after the error invalidates that evidence.
-- No manual pause, no other fleet recovery, one attempt per failed instance, and
+- No manual pause, no other fleet recovery, one attempt per failed instance or
+  stopped epoch, and
   a minimum 30-minute per-worker cooldown. Recurrence is an alert, not a loop.
 
 It restarts exactly one configured `systemctl --user` service. It never reboots,
@@ -39,13 +40,20 @@ If a new compatible invocation already started after the quarantined failure,
 the runner verifies it without redundantly restarting it. This replacement-only
 readmission applies to fatal faults and repeated operational/stream failures: the
 new exact-profile invocation is the safety boundary, and the deterministic watcher
-can act without waiting for Genie prose. Missing/stopped services, unchanged failed
-instances, unknown profiles, unreachable SSH, unsupported faults and uncertain ownership
-stay isolated for operator review. V1 does not start an arbitrary stopped install.
-The stopped-service extension is intentionally not inferred from a lost listener:
-it first needs a static enrolled-service identity proof that remains verifiable
-without a live DS4 PID. The 2026-09-03 [reachability incident](incidents/2026-09-03-worker-reachability.md)
-is the acceptance-test basis; it does not broaden the current restart authority.
+can act without waiting for Genie prose. Unchanged failed instances, unknown profiles,
+unreachable SSH, unsupported faults and uncertain ownership stay isolated for operator
+review.
+
+An optional second path can start a **loaded but stopped** instance of that same exact
+systemd service. It is separately off by default and requires `start_stopped:true` plus
+an enrolled `service_profile`: a static fingerprint of the machine, exact unit,
+executable, declared profile files and listener port that remains verifiable without a
+live PID. DSG must observe the same stopped epoch for at least 15 seconds, the gateway
+worker must be failed, idle and unpaused, and normal one-operation/30-minute guards still
+apply. A missing unit, changed file, open listener, active process or unknown install is
+never started. Endpoint registration alone grants no such authority. The 2026-09-03
+[reachability incident](incidents/2026-09-03-worker-reachability.md) is the acceptance-test
+basis; it does not authorize a reboot or turn a network outage into service evidence.
 
 Readiness requires unchanged advertised context/model and configuration, exact
 synthetic answers, then **two conversations cold-to-warm**, with numerical cached
@@ -69,7 +77,7 @@ The dashboard has a **DS4 service recovery** section:
 - **Recover** is available only for a currently eligible worker. Operator recovery
   can be requested with automatic mode off; the same identity/evidence guards apply.
 - **Recheck only** observes an uncertain/failed issued operation and reruns its
-  verification. It **never issues another restart**.
+  verification. It **never issues another start or restart**.
 - The timeline shows executor receipts: actor channel, worker, action ID, actual
   state, error and cold/warm counts. GG's prose and “request accepted” are not
   evidence that recovery completed. `actor` names the trusted ingress channel,
@@ -96,9 +104,9 @@ can be recalled. Other workers continue serving.
 
 The gateway owns execution, so a dashboard/Genie restart does not abandon it.
 Intent and outcomes are atomic/fsynced metadata in the existing private affinity
-store. The remote helper also persists intent before issuing a restart, with an
-idempotency record per action and failed instance. Lost acknowledgments and
-controller restarts cause observation/reconciliation, never blind resubmission.
+store. The remote helper also persists intent before issuing a service action, with
+an idempotency record per action and failed instance/stopped epoch. Lost acknowledgments
+and controller restarts cause observation/reconciliation, never blind resubmission.
 After a 15-minute replacement-readiness deadline, uncertainty stays isolated.
 Either journal stops accepting new operations at 10,000 entries; it never silently
 deletes recovery history. Routine logs also record sanitized stage transitions.
@@ -140,8 +148,10 @@ Do this per worker, initially with automatic mode **off**.
    ```
 
    Require `active:true`, `listener:true`, the expected service identity and no
-   fault. Record the returned `machine` and `profile` hashes in private gateway
-   config; do not paste them or your private installation paths into a public issue.
+   fault. Record the returned `machine`, live `profile`, and static `service_profile`
+   hashes in private gateway config; do not paste them or your private installation
+   paths into a public issue. Capturing the static hash while healthy does not enable
+   stopped-service start by itself.
    A remote worker may declare up to four `ssh_fallbacks`. Each value is another
    preconfigured, host-key-verified OpenSSH alias for the **same machine**—not an
    address accepted from a request and not an SSH option. Inspect the machine over
@@ -169,7 +179,18 @@ Do this per worker, initially with automatic mode **off**.
    }
    ```
 
-   ID/URL/SSH aliases/port must match the registered worker. Recovery paths are absolute,
+   This is restart-only. After its canary passes, a deployment may opt in the exact
+   stopped-service path by adding the following two fields to that worker entry:
+
+   ```json
+   {
+     "start_stopped": true,
+     "service_profile": "REPLACE_WITH_INSPECTED_STATIC_SHA256"
+   }
+   ```
+
+   Never infer either value from the HTTP endpoint or a failed health probe. ID/URL/SSH
+   aliases/port must match the registered worker. Recovery paths are absolute,
    shell-safe paths without spaces in v1. Endpoint registration cannot alter this
    separate allowlist. Copying the config does not apply it to a running process.
 
@@ -188,8 +209,11 @@ Do this per worker, initially with automatic mode **off**.
    policy/UI. The monitor inspects services every 30 seconds; ordinary inference
    and health-check timeouts are unchanged. Unreachable adapters do not block the
    inference event loop or restart anything.
-6. With an idle, manually drained worker, run the operator-only canary. It restarts
-   the healthy service deliberately and **leaves it paused** after verification.
+6. With an idle, manually drained worker, run the operator-only canary. On a healthy
+   service it deliberately restarts that service. With separately enrolled
+   stopped-service support and a stable failed/stopped observation, the same command
+   issues exactly one start. Either path **leaves routing paused** after verification;
+   automatic recovery itself never overrides an operator pause.
 
    ```sh
    node ds4-gateway/recovery-control.mjs status
@@ -214,11 +238,14 @@ receives that key or shell access. Stronger deployments may provision a dedicate
 forced-command key. Normal SSH host-key verification is mandatory; first-time host
 trust must be established out of band, not accepted by the recovery code.
 
-This first helper recognizes specific fatal CUDA log signatures, not arbitrary
-errors, temperature, memory pressure, transport outages or lengthy thinking.
+This first helper recognizes specific fatal CUDA log signatures for a live-process
+restart. The stopped-service path instead requires the separate exact static enrollment;
+it is not triggered by arbitrary errors, temperature, memory pressure, transport outages
+or lengthy thinking.
 It reads at most 200 current-invocation journal records and rejects an oversized
 inspection. Missing/mismatched evidence means no restart. Do not broaden its
-matches merely to make a red status disappear.
+matches merely to make a red status disappear. Missing/mismatched static identity
+likewise means no stopped-service start.
 
 To roll back: disable automatic recovery, wait for or reconcile any issued action,
 then restore prior source/config after an agreed gateway restart. Preserve current
@@ -227,11 +254,13 @@ an old whole affinity file over live session changes as a routine rollback.
 
 ## Tests and evidence
 
-`npm test` covers policy, identity drift, forged GG requests, pause races, cooldown,
-idempotency, lost acknowledgment, crash-resume, verification failures, real local
+`npm test` covers policy, live/static identity drift, forged GG requests, pause races,
+cooldown, idempotency, lost acknowledgment, crash-resume without a duplicate start or
+restart, verification failures, real local
 HTTP orchestration and CSRF/no-public-action boundaries. `npm run recovery:test`
-tests the Python helper's exact-service issuance, intent-before-effect behavior,
-current-invocation fatal signature matching and no-repeat guard.
+tests the Python helper's exact-service issuance, original live-profile compatibility,
+intent-before-effect behavior, current-invocation fatal signature matching, exact stopped
+epoch/static identity and no-repeat guards.
 
 These tests use synthetic services. A live canary checks actual service restart,
 unchanged profile/context and real generation/cache reuse; it does **not** inject

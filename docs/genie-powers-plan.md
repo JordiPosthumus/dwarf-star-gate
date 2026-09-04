@@ -1,6 +1,6 @@
 # Gate Genie powers: recovery, model stewardship and operator controls
 
-Status: **recovery v1 and bounded predictor stewardship implemented; broader powers below remain a design**.
+Status: **bounded systemd recovery and predictor stewardship implemented; broader powers below remain a design**.
 The authoritative shipped scope, setup, controls and limits are in
 [bounded worker recovery](worker-recovery.md): systemd-user only, private enrollment,
 one guarded runner shared by GG and a fatal-fault detector, durable receipts and
@@ -47,9 +47,11 @@ and deterministic fallback routing intact.
 3. Genie can request recovery with the evidence IDs; a deterministic trigger may
    request the same operation without waiting for a five-minute LLM review.
 4. The runner checks that recovery is enabled for that worker, the process is
-   still the failed instance, no other recovery owns it, and the retry budget is
-   available. A slow healthy xhigh response is not restart evidence.
-5. Restart exactly the configured model service, preserving model weights,
+   still the failed instance or the separately enrolled service is stably stopped,
+   no other recovery owns it, and the retry budget is available. A slow healthy
+   xhigh response is not service-action evidence.
+5. Start or restart exactly the configured model service as authorized by that
+   evidence, preserving model weights,
    launcher/environment, context/output, concurrency and disk caches. Losing
    RAM-resident checkpoints is an explicit unavoidable consequence. No reboot,
    GPU reset, cache deletion, container replacement or kernel patch is implicit.
@@ -68,8 +70,9 @@ after partial streamed text/tool calls is a separate client-cooperation feature.
 
 ## Small v1 operation contract
 
-One operation: `recover_worker(worker_id, expected_instance, evidence_ids,
-action_id)`. These are structured identifiers, never shell fragments.
+One operation: `recover_worker(worker_id, evidence_id, action_id)`. The evidence
+offer binds either the expected live instance or stopped epoch inside DSG. These
+are structured identifiers, never shell fragments.
 
 - Resolve host, transport and exact service unit from operator-owned config.
   Genie cannot supply an endpoint, command, environment variable or service name.
@@ -79,8 +82,8 @@ action_id)`. These are structured identifiers, never shell fragments.
 - Current-instance identity is stronger than today's endpoint/model/context
   fingerprint: include the process start/service invocation identity. Old log
   entries must not authorize restarting a new healthy process.
-- Keep one active recovery per worker; proposed initial fleet limit: one recovery
-  at a time. Proposed retry policy: one automatic attempt per failed instance,
+- Keep one active recovery per worker; the fleet limit is one recovery at a time.
+  Retry policy is one automatic attempt per failed instance or stopped epoch,
   with a minimum 30-minute per-worker cooldown between automatic attempts. Early
   recurrence stays quarantined for operator review. These are proposed recovery
   bounds, not inference limits or permission to mutate production defaults.
@@ -113,21 +116,24 @@ execution, not assertions produced by the LLM.
 ### Portable deployment boundary
 
 The runner, policy checks, audit receipts and UI belong in this repository;
-host-specific identity and restart authority belong in private configuration.
-Registering a DS4 HTTP endpoint alone must never grant restart authority. A
+host-specific identity and service-action authority belong in private configuration.
+Registering a DS4 HTTP endpoint alone must never grant start/restart authority. A
 worker without a configured adapter remains observable/routable, but its UI
 must explicitly say **manual service recovery required** when quarantined.
 
 Adapter setup must verify that the configured service actually owns the DS4
 listener being registered, not merely that some endpoint advertises the expected
-model name. Record the service/process identity and supported DS4 capabilities;
-check that association again before recovery. A manually launched process, an
-unknown service manager, or a mismatched service/endpoint stays in manual-recovery
-mode. Differences in context, quantization and hot/disk cache settings are valid:
-preserve each installation's own verified profile, not a universal Spark preset.
+model name. Record both the live service/process identity and the static unit,
+binary, declared-files and port profile that remains checkable while stopped;
+check the applicable association again before recovery. A manually launched
+process, an unknown service manager, or a mismatched service/endpoint stays in
+manual-recovery mode. Differences in context, quantization and hot/disk cache
+settings are valid: preserve each installation's own verified profile, not a
+universal Spark preset.
 
-Start with a typed `systemd-user` adapter for the Spark canary, using a configured
-SSH alias and exact unit. A `launchd` adapter can target a configured Mac service;
+The typed `systemd-user` adapter now supports exact fatal-instance restart and a
+separately opt-in exact stopped-service start, using configured SSH aliases and
+an exact unit. A `launchd` adapter can target a configured Mac service;
 a container adapter can target an exact existing container service. They need the
 same bounded operations: inspect instance/config identity, obtain fault evidence,
 restart that instance's service, and inspect readiness. The common runner performs
@@ -180,7 +186,7 @@ dashboard restart; changing only Genie settings does not require a model restart
   and evidence IDs. Useful/wrong/resolved feedback is annotation, not fabricated
   ground truth for XGB. Operator override and disable controls stay accessible.
 
-Turning off automatic recovery stops new recovery actions. If a restart is
+Turning off automatic recovery stops new recovery actions. If a start or restart is
 already issued, do not abandon reconciliation or verification halfway through;
 finish in a safe isolated state and make that distinction explicit in the UI.
 Do not promise an already-issued remote command can be cancelled.
@@ -188,12 +194,13 @@ Do not promise an already-issued remote command can be cancelled.
 ## Test plan and acceptance evidence
 
 1. **Deterministic tests:** allowlist/policy checks; fresh versus stale process
-   evidence; duplicate action IDs; one-recovery ownership; cooldown; operator
+   evidence; duplicate action IDs; live/stopped identity; one-recovery ownership;
+   cooldown; operator
    pause/remove races; no new jobs dispatched to quarantined workers; failure
    leaves isolation intact; successful model-list alone never reinstates.
 2. **Transport/crash tests:** SSH unavailable, bad host key, timeout before/after
    command acceptance, process already restarted, controller crash at each
-   operation boundary. Verify reconciliation prevents duplicate restarts.
+   operation boundary. Verify reconciliation prevents duplicate starts/restarts.
 3. **Adversarial model tests:** malformed tool calls, injected log instructions,
    invented evidence IDs, wrong worker, attempts to change context or caches,
    false "I fixed it" commentary. No unapproved effect; UI remains truthful.
@@ -216,7 +223,7 @@ Do not promise an already-issued remote command can be cancelled.
 1. Activate and verify the tested DSG quarantine release first. Record exact
    public commit and live process version; preserve existing configs and affinity.
 2. Ship recovery in **shadow mode**: capture structured proposals and explain
-   denied/eligible actions, but issue no restart commands. Review real evidence.
+   denied/eligible actions, but issue no service commands. Review real evidence.
 3. Enable **operator-triggered recovery** for one configured worker. Run the real
    canary and verify rollback/disable controls before granting automatic authority.
 4. Opt in **automatic known-fatal recovery** on that one worker. Observe real

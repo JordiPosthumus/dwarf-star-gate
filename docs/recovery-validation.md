@@ -50,6 +50,25 @@ that policy, receipts and operator pauses survive an agreed idle gateway restart
 Canaries count toward the normal per-worker recovery cooldown; enabling the policy
 does not bypass it. Unsupported installs remain manual recovery.
 
+### Optional stopped-service canary
+
+Do not infer stopped-service permission from a successful restart canary. After the
+restart-only path passes, capture the helper's `service_profile` while healthy, add
+`start_stopped:true` and that exact private hash, then restart DSG at an agreed window.
+With the test worker drained and idle, deliberately stop **only the enrolled service**
+using the deployment's normal service manager. Wait for DSG to report the stable stopped
+identity, then run the same operator-only `canary WORKER_ID` command. Confirm it issues
+exactly one `start`, waits through normal model load, runs the same context/generation/
+cold-to-warm checks and leaves the worker paused. Ordinary automatic recovery never
+overrides a pause; this exact operator canary is the only stopped-service action allowed
+while drained. A changed unit/binary/profile file, missing unit, open listener, failed
+verification, lost acknowledgment or controller restart must never produce a second
+start for the same stopped epoch. Preserve the pre-test configuration and receipts.
+
+This canary interrupts that worker and loses its RAM-resident caches. Run it only with
+explicit operator approval; synthetic tests are not evidence that a particular remote
+service has been enrolled correctly.
+
 Keep detailed timestamps, machine identities, exact runtime measurements and
 operator actions in private deployment notes, never in the published Git tree
 (the ignored local `runtime/` directory is suitable).

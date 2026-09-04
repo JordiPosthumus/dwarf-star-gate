@@ -1,5 +1,22 @@
 # Changelog
 
+## Exact stopped-service recovery (opt-in)
+
+- The existing systemd-user recovery adapter can now optionally start an exact
+  loaded-but-stopped DS4 service. This power is off unless private enrollment sets
+  `start_stopped:true` with the inspected static service-profile hash; registering,
+  pausing or resuming a worker does not grant it.
+- DSG requires a stable stopped epoch, failed readiness, no admitted work, no
+  operator pause, one action per epoch and the existing fleet/cooldown bounds. It
+  then rechecks the exact machine/unit/binary/profile identity and performs the
+  normal model/context/generation/two-prefix cache verification before readmission.
+- Both journals persist intent before effect. Lost acknowledgments and controller
+  restarts reconcile without repeating `start`; UI receipts distinguish start from
+  restart. Existing live-profile hashes and restart-only deployments remain compatible.
+- Coverage is synthetic until an operator runs the documented drained-worker canary
+  for a particular installation. No live fleet or DS4 model settings are changed by
+  this source release.
+
 ## Patient Gate Genie provider deadline
 
 - Gate Genie's dedicated-provider and pool-fallback deadlines are now two hours by

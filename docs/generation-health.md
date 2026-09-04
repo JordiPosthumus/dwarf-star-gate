@@ -60,8 +60,10 @@ Normal polling preserves card-button focus and tooltips.
 
 Status/diagnostic JSON and the Genie's briefing include the allowlisted quarantine
 reason, timestamp and originating request ID. The separate
-[service recovery panel](worker-recovery.md) supplies guarded **restart** actions
-for enrolled installations; **Verify & readmit** does not restart a model server.
+[service recovery panel](worker-recovery.md) supplies guarded service actions for
+separately enrolled installations: exact fatal-instance restart and, when explicitly
+enabled, exact loaded-but-stopped systemd service start. **Verify & readmit** does not
+start or restart a model server.
 
 ## Operator recovery
 
@@ -97,7 +99,7 @@ state editing is needed, and re-registration is not a recovery bypass.
 ## Self-healing boundary
 
 See [bounded worker recovery](worker-recovery.md) for the implemented systemd-user
-adapter, opt-in policy, exact-service enrollment, fresh-instance evidence guards,
+adapter, opt-in policy, exact-service enrollment, fresh-instance/stopped-epoch evidence guards,
 UI controls, tests and canary procedure. GG and the deterministic fatal-fault
 watcher share that runner. Failure to verify leaves the worker isolated; a slow
 healthy response is never sufficient evidence. Stream replay, kernel repair and

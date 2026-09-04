@@ -493,6 +493,9 @@ holding agents and offers **Keep paused** for an operator reservation. Setup,
 copyable agent instructions, JSON API and retry/cleanup rules are in the
 [agent access guide](docs/agent-api.md). No Pi/Hermes dependency or LAN admin
 listener. “Resume” enables routing; it does not start a stopped model server.
+Separately opt-in [service recovery](docs/worker-recovery.md) can start an exact
+loaded-but-stopped systemd service only after static identity enrollment and all
+recovery guards; ordinary worker controls and endpoint registration cannot.
 
 <details>
 <summary>Worker-management UI (synthetic demo)</summary>

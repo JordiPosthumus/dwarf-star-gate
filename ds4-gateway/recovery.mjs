@@ -6,14 +6,14 @@ const hash=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const terminal=new Set(['recovered','verified_paused','failed','reconciliation_needed']);
 const faultReasons=new Set(['fatal_accelerator_error','accelerator_checkpoint_failure']);
 const adapterReasons=new Set(['adapter_timeout','adapter_output_limit','adapter_spawn_failed','adapter_dns_failure','adapter_host_key_failure','adapter_auth_failure','adapter_connect_timeout','adapter_connection_refused','adapter_route_unreachable','adapter_connection_reset','adapter_unreachable','adapter_check_failed']);
-const publicOperation=op=>Object.fromEntries(['id','worker_id','actor','state','created_at','updated_at','error','proof','restart_issued','operator_override'].filter(k=>op[k]!==undefined).map(k=>[k,op[k]]));
+const publicOperation=op=>Object.fromEntries(['id','worker_id','actor','service_action','state','created_at','updated_at','error','proof','service_action_issued','restart_issued','operator_override'].filter(k=>op[k]!==undefined).map(k=>[k,op[k]]));
 
 // Lives in the gateway, not the dashboard or LLM process. Intent and outcomes
 // share the gateway's atomic/fsynced metadata store. No inference text is saved.
 export class Recovery {
   constructor(raw,{store,nodes,model,stopping,reinstate,log=()=>{},call=systemdCall,verify=verifyRecovery,now=Date.now}) {
     this.configs=recoveryConfig(raw);this.store=store;this.nodes=nodes;this.model=model;this.stopping=stopping;this.reinstate=reinstate;this.log=log;this.call=call;this.verify=verify;this.now=now;
-    this.observations=new Map();this.busy=false;this.closed=false;this.task=null;this.abort=new AbortController();
+    this.observations=new Map();this.stoppedSince=new Map();this.busy=false;this.closed=false;this.task=null;this.abort=new AbortController();
     const saved=store.data.recovery;
     if(saved && (saved.version!==1 || typeof saved.automatic!=='boolean' || !Array.isArray(saved.operations)))throw new Error('Invalid recovery journal; inspect manually');
     for(const op of this.state.operations) {
@@ -31,17 +31,36 @@ export class Recovery {
   setAutomatic(value){if(typeof value!=='boolean' || !this.configs.size)throw new Error('Recovery is not configured or enabled is invalid');this.commit({...this.state,automatic:value});this.log('worker_recovery_policy',{automatic:value});return this.status();}
   binding(n,c){return !!n && !!c && n.url===c.url && n.ssh===c.ssh && JSON.stringify(n.ssh_fallbacks??[])===JSON.stringify(c.ssh_fallbacks??[]) && (n.remote_port??8000)===(c.remote_port??8000);}
   valid(s,c){return s?.version===1 && s.machine===c.machine && s.profile===c.profile && s.active===true && s.listener===true && /^[a-f0-9]{32}$/.test(s.instance) && Number.isFinite(s.started_at);}
-  evidence(n,s){return hash([n.id,n.quarantine,s.instance,s.machine,s.profile]);}
+  validStopped(s,c){return c?.start_stopped===true && s?.version===1 && s.machine===c.machine && s.service_profile===c.service_profile && s.loaded===true && s.stopped===true && s.active===false && s.listener===false && /^[a-f0-9]{64}$/.test(s.stopped_epoch);}
+  evidence(n,s){return this.valid(s,this.configs.get(n.id))?hash([n.id,n.quarantine,'restart',s.instance,s.machine,s.profile]):hash([n.id,n.quarantine,'start',s.stopped_epoch,s.machine,s.service_profile]);}
   reason(n,s,{canary=false,ignoreOwnership=false}={}) {
     const c=this.configs.get(n?.id);
     if(!this.binding(n,c))return 'manual_recovery_required';
     if(this.closed || this.stopping())return 'gateway_stopping';
-    if(!this.valid(s,c))return 'service_identity_or_profile_unverified';
     if(!Number.isSafeInteger(n.contextLength) || n.contextLength<=0)return 'context_unverified';
     if(!ignoreOwnership && (this.task || this.state.operations.some(o=>!terminal.has(o.state))))return 'fleet_recovery_in_progress';
     if(n.active || n.queue.length)return 'wait_for_admitted_work';
-    if(canary)return n.drained?null:'drain_before_canary';
+    if(canary) {
+      if(!n.drained)return 'drain_before_canary';
+      if(this.valid(s,c))return null;
+      if(this.validStopped(s,c)) {
+        if(n.healthy!==false)return 'worker_health_not_failed';
+        const observed=this.stoppedSince.get(n.id);
+        return !observed||observed.epoch!==s.stopped_epoch||this.now()-observed.since<15000?'stopped_service_confirmation_pending':null;
+      }
+      return 'service_identity_or_profile_unverified';
+    }
     if(n.drained)return 'operator_paused';
+    if(this.validStopped(s,c)) {
+      if(n.healthy!==false)return 'worker_health_not_failed';
+      const observed=this.stoppedSince.get(n.id);
+      if(!observed || observed.epoch!==s.stopped_epoch || this.now()-observed.since<15000)return 'stopped_service_confirmation_pending';
+      const previous=this.state.operations.filter(o=>o.worker_id===n.id);
+      if(previous.some(o=>o.stopped_epoch===s.stopped_epoch))return 'stopped_epoch_already_attempted';
+      if(previous.some(o=>this.now()-o.created_at<30*60000))return 'recovery_cooldown';
+      return null;
+    }
+    if(!this.valid(s,c))return s?.stopped===true&&c?.start_stopped!==true?'stopped_service_start_not_enrolled':'service_identity_or_profile_unverified';
     if(!n.quarantine)return 'no_supported_quarantine';
     const failedAt=Date.parse(n.quarantine.at);
     if(!Number.isFinite(failedAt))return 'fault_time_unknown';
@@ -72,8 +91,14 @@ export class Recovery {
   status(){return {configured:!!this.configs.size,automatic:this.state.automatic,adapter:'systemd-user',workers:this.nodes.map(n=>this.workerStatus(n)),operations:this.state.operations.slice(-20).reverse().map(publicOperation)};}
   async inspect(id) {
     const c=this.configs.get(id);
-    try {const value=await this.call(c,{action:'inspect'});this.observations.set(id,{at:this.now(),value});return value;}
-    catch(e) {this.observations.set(id,{at:this.now(),error:adapterReasons.has(e?.message)?e.message:'adapter_check_failed'});return null;}
+    try {
+      const value=await this.call(c,{action:'inspect'}),at=this.now();this.observations.set(id,{at,value});
+      if(this.validStopped(value,c)) {
+        const prior=this.stoppedSince.get(id);if(!prior||prior.epoch!==value.stopped_epoch)this.stoppedSince.set(id,{epoch:value.stopped_epoch,since:at});
+      } else this.stoppedSince.delete(id);
+      return value;
+    }
+    catch(e) {this.stoppedSince.delete(id);this.observations.set(id,{at:this.now(),error:adapterReasons.has(e?.message)?e.message:'adapter_check_failed'});return null;}
   }
   request(input,actor='operator',{canary=false}={}) {
     if(!input || Object.keys(input).some(k=>!['worker_id','evidence_id','action_id'].includes(k)) || !['operator','genie','detector'].includes(actor))throw new Error('Invalid recovery request');
@@ -87,8 +112,10 @@ export class Recovery {
     const reason=this.reason(n,s,{canary});if(reason)throw new Error(reason);
     if(!canary && input.evidence_id!==this.evidence(n,s))throw new Error('Stale or invented recovery evidence');
     if(this.state.operations.length>=10000)throw new Error('Recovery journal full; review required');
-    const op={id,worker_id:n.id,actor,evidence_id:input.evidence_id??null,state:'queued',created_at:this.now(),updated_at:this.now(),instance:s.instance,
-      machine:s.machine,profile:s.profile,context_length:n.contextLength,canary,was_paused:n.drained,quarantine:n.quarantine?{...n.quarantine}:null,
+    const c=this.configs.get(n.id),serviceAction=this.validStopped(s,c)?'start':'restart';
+    const op={id,worker_id:n.id,actor,evidence_id:input.evidence_id??null,service_action:serviceAction,state:'queued',created_at:this.now(),updated_at:this.now(),instance:s.instance,
+      stopped_epoch:serviceAction==='start'?s.stopped_epoch:null,service_profile:serviceAction==='start'?s.service_profile:null,
+      machine:s.machine,profile:serviceAction==='start'?c.profile:s.profile,context_length:n.contextLength,canary,was_paused:n.drained,quarantine:n.quarantine?{...n.quarantine}:null,
       binding:hash([n.url,n.ssh,n.ssh_fallbacks??[],n.remote_port??8000]),operator_override:false};
     this.commit({...this.state,operations:[...this.state.operations,op]});
     n.recovering=true;n.healthy=false;
@@ -99,7 +126,7 @@ export class Recovery {
   reconcile(input) {
     if(!input || Object.keys(input).join(',')!=='action_id')throw new Error('Specify action_id only');
     const op=this.state.operations.find(o=>o.id===input.action_id),n=this.node(op?.worker_id);
-    if(!op || !['reconciliation_needed','failed'].includes(op.state) || !op.restart_issued || !n || n.active || n.queue.length || this.task || this.closed || this.stopping())throw new Error('Recovery cannot be rechecked now');
+    if(!op || !['reconciliation_needed','failed'].includes(op.state) || !(op.restart_issued||op.service_action_issued) || !n || n.active || n.queue.length || this.task || this.closed || this.stopping())throw new Error('Recovery cannot be rechecked now');
     this.update(op,{state:'reconciling',error:null});n.recovering=true;n.healthy=false;
     this.task=this.execute(op,true).finally(()=>{this.task=null;});return publicOperation(op);
   }
@@ -108,17 +135,20 @@ export class Recovery {
     let op={...initial};const c=this.configs.get(op.worker_id),n=this.node(op.worker_id);
     try {
       if(!n || !this.binding(n,c) || hash([n.url,n.ssh,n.ssh_fallbacks??[],n.remote_port??8000])!==op.binding || c.profile!==op.profile || c.machine!==op.machine)throw new Error('recovery_binding_changed');
-      const before=await this.inspect(n.id);
-      if(!reconcile && !this.valid(before,c))throw new Error('service_identity_or_profile_unverified');
+      const before=await this.inspect(n.id),starting=op.service_action==='start';
+      const activeBefore=this.valid(before,c),stoppedBefore=this.validStopped(before,c)&&before.stopped_epoch===op.stopped_epoch;
+      if(!reconcile && !activeBefore && !(starting&&stoppedBefore))throw new Error('service_identity_or_profile_unverified');
       if(n.active || n.queue.length)throw new Error('worker_has_admitted_work');
       if(this.closed)throw new Error('controller_stopping');
       const failedAt=Date.parse(op.quarantine?.at);
-      const replacement=this.valid(before,c) && (before.instance!==op.instance || (!op.canary && before.started_at>failedAt+1000));
+      const replacement=activeBefore && (starting || before.instance!==op.instance || (!op.canary && before.started_at>failedAt+1000));
       if(!reconcile && !replacement) {
-        if(before.instance!==op.instance || (!op.canary && (!before.fault || before.fault.at<failedAt-120000)))throw new Error('current_fatal_evidence_required');
-        if(this.current(op).operator_override || (op.actor!=='operator'&&!this.state.automatic))throw new Error('operator_cancelled_before_restart');
-        this.update(op,{state:'restarting',restart_issued:true}); // durable BEFORE command
-        try {await this.call(c,{action:'restart',action_id:op.id,instance:before.instance,machine:c.machine,profile:c.profile,canary:op.canary,fault_after:op.canary?0:failedAt-120000});}
+        if(starting) {
+          if(!stoppedBefore || before.service_profile!==op.service_profile)throw new Error('stopped_service_identity_changed');
+        } else if(before.instance!==op.instance || (!op.canary && (!before.fault || before.fault.at<failedAt-120000)))throw new Error('current_fatal_evidence_required');
+        if(this.current(op).operator_override || (op.actor!=='operator'&&!this.state.automatic))throw new Error(starting?'operator_cancelled_before_start':'operator_cancelled_before_restart');
+        this.update(op,{state:starting?'starting':'restarting',service_action_issued:true,...(starting?{}:{restart_issued:true})}); // durable BEFORE command
+        try {await this.call(c,starting?{action:'start',action_id:op.id,stopped_epoch:before.stopped_epoch,machine:c.machine,service_profile:c.service_profile}:{action:'restart',action_id:op.id,instance:before.instance,machine:c.machine,profile:c.profile,canary:op.canary,fault_after:op.canary?0:failedAt-120000});}
         catch {this.update(op,{state:'reconciling'});} // Never replay after lost acknowledgement.
       } else if(reconcile && !replacement) {
         this.update(op,{state:'reconciling'});
@@ -127,8 +157,8 @@ export class Recovery {
       let after=before;
       while(!this.closed) {
         after=await this.inspect(n.id);
-        if(this.valid(after,c) && (after.instance!==op.instance || replacement))break;
-        if(this.now()>=deadline)throw new Error('restart_not_verified');
+        if(this.valid(after,c) && (starting || after.instance!==op.instance || replacement))break;
+        if(this.now()>=deadline)throw new Error(starting?'start_not_verified':'restart_not_verified');
         await new Promise(resolve=>{this.wake=resolve;this.waitTimer=setTimeout(resolve,3000);});this.wake=null;
       }
       if(this.closed)throw new Error('controller_stopping');
@@ -145,7 +175,8 @@ export class Recovery {
         this.log('worker_recovery_action',publicOperation(op));
       } else this.update(op,{state:'verified_paused',proof});
     } catch(e) {
-      const state=this.closed&&op.restart_issued?'reconciling':op.restart_issued && !op.new_instance?'reconciliation_needed':'failed';
+      const issued=op.restart_issued||op.service_action_issued;
+      const state=this.closed&&issued?'reconciling':issued && !op.new_instance?'reconciliation_needed':'failed';
       const code=/^[a-z_]+$/.test(e.message)?e.message:'recovery_verification_failed';
       try {this.update({...this.current(op)},{state,error:code});}catch{this.closed=true;}
     } finally {
