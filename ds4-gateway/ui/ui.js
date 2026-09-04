@@ -3,6 +3,7 @@ const $ = id => document.getElementById(id);
 const fmt = n => Number.isFinite(n) ? n.toLocaleString(undefined, { maximumFractionDigits: 1 }) : '—';
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const age = (time, now) => !time ? 'no sample yet' : now - time < 5000 ? 'just now' : now - time < 60000 ? `${Math.floor((now-time)/1000)}s ago` : `${Math.floor((now-time)/60000)}m ago`;
+const remaining = (time, now) => !time ? 'unknown' : time <= now ? 'expired' : time-now < 60000 ? `${Math.ceil((time-now)/1000)}s` : time-now < 3600000 ? `${Math.ceil((time-now)/60000)}m` : `${(Math.ceil((time-now)/360000)/10).toFixed(1).replace(/\.0$/,'')}h`;
 const clock = t => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 function knownWaiting(gateway,door) {
   const core=Number.isSafeInteger(gateway?.queued)&&gateway.queued>=0?gateway.queued:0;
@@ -584,7 +585,7 @@ async function genieAction(input) {
 async function loadGenie() {
   try {const r=await fetch('/api/genie',{signal:AbortSignal.timeout(5000)});if(!r.ok)throw new Error();const s=await r.json();genieToken=s.csrf_token;genieState=s;wireState=s.ticker;
     if(wireSnapshot)renderHealthWire(wireSnapshot);
-    const now=Date.now(),activeProvider=s.active_provider==='pool_fallback'?'DSG pool fallback':s.active_provider==='pool'?'DSG pool':'dedicated provider',providerProgress=s.busy&&s.provider_started_at?`${activeProvider} · ${age(s.provider_started_at,now)} elapsed${s.provider_deadline_at?` · deadline in ${age(s.provider_deadline_at,now)}`:''}`:null;
+    const now=Date.now(),activeProvider=s.active_provider==='pool_fallback'?'DSG pool fallback':s.active_provider==='pool'?'DSG pool':'dedicated provider',providerProgress=s.busy&&s.provider_started_at?`${activeProvider} · ${age(s.provider_started_at,now)} elapsed${s.provider_deadline_at?` · deadline in ${remaining(s.provider_deadline_at,now)}`:''}`:null;
     const q=s.question,qtext=q?.state==='queued'?(s.review_kind==='action'?'Your question is queued behind an evidence-gated action review':'Your question is queued; a routine review is being yielded'):q?.state==='answering'?`Answering your question · ${providerProgress??'provider starting…'}`:q?.state==='answered'?`Question answered ${age(q.finished_at,now)}`:['failed','cancelled'].includes(q?.state)?`Question ${q.state}: ${q.error}`:null;
     const provider=s.last_served_by==='pool_fallback'?' · dedicated provider failed; last review borrowed a DSG pool slot':s.last_served_by==='pool'?' · last review used the DSG pool':s.last_served_by==='dedicated'?' · last review used the dedicated provider':'';
     $('genie-status').textContent=!s.configured?'Not configured':!s.enabled?'Off · enable Gate Genie before asking':qtext||s.error||(s.busy?`Scheduled fleet review · ${providerProgress??'provider starting…'}`:`Enabled · last review ${age(s.last_check,now)}${provider}`);

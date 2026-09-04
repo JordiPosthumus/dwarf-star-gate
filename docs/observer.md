@@ -127,13 +127,16 @@ dashboard and enable the observer again. Do not change worker URLs or the pool
 model just to change the Genie's inference source.
 
 For implemented recovery permissions, see [bounded worker recovery](worker-recovery.md).
-Each provider attempt is bounded: two minutes for a dedicated provider and three
-minutes for the pool by default. Set an endpoint's `timeout_ms` from 1,000 through
-600,000 milliseconds only when its hardware needs a different budget. A timeout
+Each provider attempt is bounded: both the dedicated provider and pool default to
+two hours so long local reasoning is not mistaken for failure. Set an endpoint's
+`timeout_ms` from 1,000 through 86,400,000 milliseconds only when its hardware
+needs a different budget. The UI separately shows elapsed time and actual remaining
+allowance; it does not format a future deadline as an elapsed timestamp. A timeout
 counts as an explicit attempt failure and permits the single configured fallback.
 A dashboard question preempts an ordinary periodic assessment so chat does not sit
-behind replaceable health commentary; it still waits for an evidence-gated action
-review, which is not safe to interrupt halfway through its decision.
+behind replaceable health commentary; it never shortens the provider allowance and
+still waits for an evidence-gated action review, which is not safe to interrupt
+halfway through its decision.
 
 The separate **Automatic recovery** switch authorizes the runner, not the Genie's
 Enable button alone. Editable endpoint controls remain in the [powers plan](genie-powers-plan.md).

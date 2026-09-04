@@ -6,6 +6,12 @@
   unexplained count. Newly trained artifacts retain the exact category in their
   private failure record while the last working predictor remains unchanged.
 
+## Accurate Gate Genie provider deadline
+
+- The dashboard now displays the actual remaining provider allowance instead of
+  formatting a future deadline as an elapsed timestamp. Manual questions still
+  preempt routine reviews without shortening the two-hour inference allowance.
+
 ## Explicit queue-visibility boundary
 
 - The headline now says `WAITING IN DSG`, and its visible summaries repeat that

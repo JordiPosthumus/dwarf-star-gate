@@ -346,6 +346,11 @@ test('Genie polling preserves report nodes, open state, focus and untouched text
   assert.equal(document.activeElement,summary);assert.equal(nodes[1].children[1],answer);assert.equal(answer.writes,1);
   nodes[1].open=false;render(reports);assert.equal(nodes[1].open,false);
 });
+test('Genie progress formats future provider deadlines as remaining time',()=>{
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8');
+  assert.match(source,/deadline in \$\{remaining\(s\.provider_deadline_at,now\)\}/);
+  assert.doesNotMatch(source,/deadline in \$\{age\(s\.provider_deadline_at,now\)\}/);
+});
 test('new Genie reports retain an open older report beyond the latest three and history rotation',()=>{
   const {container,document,render,report}=genieReportFixture();
   render(['c','b','a'].map(report));const oldest=container.children[2];oldest.open=true;
