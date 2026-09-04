@@ -15,6 +15,7 @@ import { genieTunnel } from './genie-tunnel.mjs';
 import { safeQuarantine } from './generation-health.mjs';
 import { AnalyticsReader } from './analytics.mjs';
 import { estimateCacheCost } from './cache-cost.mjs';
+import {CacheInventoryReader,cacheInventoryDirectories,loadCacheInventoryKey} from './cache-inventory.mjs';
 import { loadConfig, dashboardPort, isMain, continuityEnabled } from './config.mjs';
 import {continuityForDisplay,continuityDoorForDisplay,fallbackTieBreakForDisplay} from './continuity.mjs';
 import {dsgReport,invalidHttp} from './report.mjs';
@@ -137,7 +138,8 @@ export async function runDashboard(configPath, port) {
   const {config} = loadConfig(configPath);
   port ??= dashboardPort(config);
   const fileSources = telemetryFiles(config.telemetry_files);
-  const devices = new Map(), readers = new Map();
+  const cacheSources=cacheInventoryDirectories(config.cache_directories);
+  const devices = new Map(), readers = new Map(),cacheReaders=new Map();
   const activity=new Activity();
   for (const node of config.nodes) {
     if (node.ssh && (!/^[\w.@-]+$/.test(node.ssh) || node.ssh.startsWith('-'))) throw new Error('Unsupported SSH alias');
@@ -146,6 +148,8 @@ export async function runDashboard(configPath, port) {
   const runtime = path.join(path.dirname(config.state_file), 'dashboard');
   const analytics=new AnalyticsReader(path.join(path.dirname(config.state_file),'training'),{enabled:config.dataset_enabled===true});
   fs.mkdirSync(runtime, { recursive: true, mode: 0o700 });
+  let cacheInventoryKey=null,cacheInventoryError=null;
+  if(cacheSources.size)try{cacheInventoryKey=loadCacheInventoryKey(runtime);}catch{cacheInventoryError='Cache inventory key unavailable';}
   let closed = false, gateway = null, gatewayAt = null, gatewayError = 'Waiting for gateway', writeError = null;
   let continuityDoor = null, continuityDoorError = continuityEnabled(config)?'Waiting for continuity door':null;
   let events = [], offset = null, inode = null, fragment = '', polling = false;
@@ -204,10 +208,17 @@ export async function runDashboard(configPath, port) {
       for(const child of children) if(child.workerNode===entry.node) child.kill();
     }
     for (const id of devices.keys()) if(!ids.has(id)) devices.delete(id);
+    for(const [id,reader] of cacheReaders)if(!ids.has(id)||reader.directory!==cacheSources.get(id))cacheReaders.delete(id);
     for(const w of workers) {
       if(!devices.has(w.id)) devices.set(w.id,new DeviceTelemetry(w.id));
       const device=devices.get(w.id), node=definitions.find(n=>n.id===w.id);
       const file=fileSources.get(w.id);
+      const cacheDirectory=cacheSources.get(w.id);
+      device.cache_inventory_configured=!!cacheDirectory;
+      if(cacheDirectory&&cacheInventoryKey){
+        if(!cacheReaders.has(w.id))cacheReaders.set(w.id,new CacheInventoryReader(w.id,cacheDirectory,cacheInventoryKey));
+        device.cache_inventory=cacheReaders.get(w.id).poll();
+      }else device.cache_inventory={schema:1,worker:w.id,status:cacheDirectory?'unavailable':'not_configured',accepted:0,cohorts:[],...(cacheDirectory&&cacheInventoryError?{error:'key_unavailable'}:{})};
       device.telemetry_configured=!!file || !!(node?.ssh && node.telemetry_service!==null);
       device.telemetry_source=file?'file':device.telemetry_configured?'journal':null;
       if(file) {

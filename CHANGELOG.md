@@ -1,5 +1,18 @@
 # Changelog
 
+## Privacy-safe cache inventory foundation
+
+- An opt-in local/mounted-directory scanner now inventories stock DS4 disk-KV
+  compatibility metadata by reading exactly the 52 bytes before verbatim prompt
+  text. It rejects symlinks, special files, malformed/truncated headers and scans
+  at most 4,096 cache-shaped files once per minute.
+- Prompt-derived SHA-1 filenames never leave the scanner. A private persistent
+  installation key produces comparable HMAC pseudonyms internally; diagnostics
+  expose only aggregate cohorts, counts, byte totals and maximum token coverage.
+- Compatibility mirrors DS4's bounded model/weights/quant/context header gates
+  and abstains on legacy zero weight fingerprints. No cache is loaded, copied,
+  deleted, rewritten or used for routing.
+
 ## Worker credential boundary
 
 - DSG's bearer credential now terminates at the gateway instead of being

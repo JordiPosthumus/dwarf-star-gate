@@ -10,6 +10,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { parseTiming, safeGatewayEvent, DeviceTelemetry, JournalReader, journalProcessEpoch } from './telemetry.mjs';
 import { createDashboard, runDashboard } from './dashboard.mjs';
 import { FileLogReader, parseLocalProcessStart, parseLocalTiming, telemetryFiles } from './file-telemetry.mjs';
+import {cacheInventoryDirectories} from './cache-inventory.mjs';
 const parse = (s, t = 1000) => parseTiming(`0902 14:00:00 ds4-server: ${s}`, t);
 
 const logTime = +new Date(2026,8,2,14,0,5);
@@ -663,6 +664,16 @@ test('dashboard ingests a local engine log without inference calls or exporting 
   const persisted=fs.readdirSync(path.join(dir,'dashboard')).map(f=>fs.readFileSync(path.join(dir,'dashboard',f),'utf8')).join('');
   for(const text of [exported,persisted]) {assert.ok(!text.includes(file));assert.ok(!text.includes('NEVER_EXPORT'));assert.ok(!text.includes('ds4-server:'));}
   assert.deepEqual(calls,['/gateway/status']);
+});
+test('opt-in local cache inventory exports header aggregates without reading or exposing prompt bytes and paths',async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-cache-ui-')),cache=path.join(dir,'cache');fs.mkdirSync(cache);t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const name='a'.repeat(40),header=Buffer.alloc(52),prompt=Buffer.from('PRIVATE PROMPT');header.write('KVC');header[3]=1;header[4]=2;header[5]=2;header[7]=2;header.writeUInt32LE(1024,8);header.writeUInt32LE(5,12);header.writeUInt32LE(262144,16);header[20]=2;header[21]=1;header.writeBigUInt64LE(100n,24);header.writeBigUInt64LE(200n,32);header.writeBigUInt64LE(16n,40);header.writeUInt32LE(prompt.length,48);fs.writeFileSync(path.join(cache,name),Buffer.concat([header,prompt,Buffer.alloc(16)]));
+  const calls=[],backend=http.createServer((req,res)=>{calls.push(req.url);res.end(JSON.stringify({version:1,model:'ds4',workers:[{id:'studio',is_healthy:true,load:0}]}));});backend.listen(0,'127.0.0.1');await once(backend,'listening');t.after(()=>{backend.closeAllConnections();backend.close();});
+  const config=path.join(dir,'config.json');fs.writeFileSync(config,JSON.stringify({port:backend.address().port,api_key:'test',state_file:path.join(dir,'state.json'),nodes:[{id:'studio',telemetry_service:null}],cache_directories:{studio:cache}}));
+  const app=await runDashboard(config,0);t.after(app.close);const inventory=app.snapshot().devices[0].cache_inventory;
+  assert.equal(inventory.status,'ready');assert.equal(inventory.accepted,1);assert.equal(inventory.cohorts[0].max_tokens,1024);assert.equal(fs.statSync(path.join(dir,'dashboard','cache-inventory.key')).mode&0o077,0);
+  const exported=JSON.stringify(app.snapshot());for(const privateValue of [cache,name,'PRIVATE PROMPT'])assert.ok(!exported.includes(privateValue));assert.deepEqual(calls,['/gateway/status']);
+  assert.throws(()=>cacheInventoryDirectories({studio:'relative'}));
 });
 test('six-worker monitoring only reads gateway status; credentials and addresses never enter snapshots', async t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dwarf-gate-ui-'));

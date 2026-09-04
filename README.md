@@ -376,6 +376,15 @@ evidence. Its bounded local audit reports attribution yield and abstention cause
 without request identities or text. Ambiguous or conflicting evidence is unknown,
 never a cache claim.
 
+For a DS4 cache directory mounted on the **same host as the dashboard**, DSG can
+optionally inventory stock disk-KV headers without reading their embedded prompt
+text. Add an ignored private `cache_directories` mapping, keyed by registered
+worker ID. The scanner reads exactly the 52-byte stock header from regular,
+non-symlink files, replaces the prompt-derived SHA-1 filename with an
+installation-keyed HMAC, and exports only aggregate cohort/count/size evidence.
+It never loads, copies, deletes or rewrites a cache. See
+[cache acquisition evidence](docs/cache-cost.md#privacy-safe-snapshot-inventory).
+
 Timing comes from a read-only SSH journal follower on Linux. The default remote user unit
 is `ds4-vision-q2.service`; set `telemetry_service` per worker if yours differs.
 The observer parses known DS4 log formats; missing information is unknown, never

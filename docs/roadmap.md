@@ -255,6 +255,13 @@ Similarity alone does not prove KV compatibility; a RAM miss may be a disk hit.
 Reports must show evidence, uncertainty and concrete checks. No automatic prompt
 rewrites, unrelated-session merging, or speculative cache deletion.
 
+**Implemented foundation:** an opt-in local/mounted-directory inventory reads
+only stock DS4's 52-byte disk-KV header, replaces prompt-derived filenames with
+installation-keyed HMACs, reports aggregate compatibility cohorts and abstains on
+legacy unknown weights. It does not expose snapshot references, read prompt bytes,
+copy caches or change routing. Next: explicitly enrolled remote inventory and the
+four-path shadow comparison using measured critical-path components.
+
 ## Then: measured ETA prediction with XGBoost
 
 **The versioned V2/V3 lifecycle is implemented:** [forecasts and bounded model stewardship](predictor-lifecycle.md)

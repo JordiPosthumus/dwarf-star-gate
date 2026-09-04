@@ -23,6 +23,8 @@ export function loadConfig(explicit,options) {
   if(config.continuity_door?.control_socket!=null)config.continuity_door.control_socket=local(config.continuity_door.control_socket,'continuity_door.control_socket');
   if(config.telemetry_files && typeof config.telemetry_files==='object'&&!Array.isArray(config.telemetry_files))
     config.telemetry_files=Object.fromEntries(Object.entries(config.telemetry_files).map(([id,file])=>[id,local(file,'telemetry_files')]));
+  if(config.cache_directories && typeof config.cache_directories==='object'&&!Array.isArray(config.cache_directories))
+    config.cache_directories=Object.fromEntries(Object.entries(config.cache_directories).map(([id,directory])=>[id,local(directory,'cache_directories')]));
   if(config.embeddings?.enabled===true)for(const key of ['python','model_dir'])config.embeddings[key]=local(config.embeddings[key],`embeddings.${key}`);
   if(config.predictor?.enabled===true)for(const key of ['python','profiles'])config.predictor[key]=local(config.predictor[key],`predictor.${key}`);
   // Recovery helper/config paths are REMOTE paths; deliberately untouched.

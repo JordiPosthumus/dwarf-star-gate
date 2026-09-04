@@ -10,6 +10,12 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Started the privacy-safe cache-continuity auditor.** DSG can opt into bounded
+  same-host or read-only-mounted cache inventory using only stock DS4 header
+  metadata. Prompt bytes, paths and raw prompt-derived names stay private; no
+  cache or routing state is touched. This supplies trustworthy inventory evidence
+  for the coming wait/restore/fetch/cold shadow comparison.
+
 - **Closed the worker credential boundary.** DSG's client bearer key now stops at
   the gateway. Stock DS4 workers remain private behind loopback or authenticated
   SSH, and receive neither the ingress key during inference nor metadata probes.

@@ -59,7 +59,8 @@ authenticated OpenAI backends are not part of this DS4-specific worker contract.
 
 An explicit relative config filename is resolved against the caller's cwd.
 Inside the JSON, relative **local** paths are resolved against the config file's
-directory: state, control socket, telemetry files and encoder executable/model.
+directory: state, control socket, telemetry files, optional cache directories and
+encoder executable/model.
 Remote recovery helper paths are deliberately not rewritten. Set `ui_port` to
 change the dashboard port; `GATEWAY_UI_PORT` overrides it consistently in both
 foreground and convenience commands. macOS installation records the effective
@@ -69,6 +70,20 @@ the service manifest.
 When migrating an older config that relied on cwd-relative paths, review those
 paths first or make them absolute. There is no silent fallback to a separate
 `config.production.json`; select legacy filenames explicitly if retaining them.
+
+An optional local, read-only cache inventory uses:
+
+```json
+"cache_directories": { "studio": "/srv/ds4/cache" }
+```
+
+The worker must already be registered and the directory must be readable on the
+dashboard host. This can be a same-host DS4 directory or an operator-mounted
+read-only filesystem; DSG does not mount it. A private 32-byte HMAC key is created
+under the ignored mode-0700 dashboard runtime only when this feature is configured.
+Changing or losing that key invalidates cross-scan pseudonyms but never changes a
+DS4 cache. Remote SSH inventory is not silently inferred from a worker's management
+route and remains future explicitly enrolled work.
 
 ## macOS login services
 

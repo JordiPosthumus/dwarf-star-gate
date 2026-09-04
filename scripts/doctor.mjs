@@ -5,6 +5,7 @@ import net from 'node:net';
 import {loadConfig,dashboardPort,gatewayPort,continuityEnabled,doorSocket} from '../ds4-gateway/config.mjs';
 import {workerConfigs} from '../ds4-gateway/worker-config.mjs';
 import {recoveryConfig} from '../ds4-gateway/recovery-transport.mjs';
+import {cacheInventoryDirectories} from '../ds4-gateway/cache-inventory.mjs';
 try {
   if(process.argv.length>2)throw new Error('Usage: npm run doctor (select config with DWARF_GATE_CONFIG)');
   const version=process.versions.node.split('.').map(Number);
@@ -16,6 +17,7 @@ try {
   if(typeof c.api_key!=='string'||!c.api_key||c.api_key==='REPLACE_WITH_YOUR_KEY')throw new Error('Set a private inference API key');
   if(typeof c.model!=='string'||!c.model||!Number.isSafeInteger(c.context_length)||c.context_length<1)throw new Error('Set the served model and positive pool context limit');
   const configuredNodes=workerConfigs(c.nodes);let nodes=configuredNodes;recoveryConfig(c.recovery);
+  const cacheDirectories=cacheInventoryDirectories(c.cache_directories);
   const warnings=[];
   const registry={present:false,configured_workers:configuredNodes.length,durable_workers:null,configured_workers_missing:0,recovery_bindings_differ:0};
   if(fs.existsSync(c.state_file)){
@@ -46,6 +48,11 @@ try {
   if((fs.statSync(filename).mode&0o077)!==0)warnings.push('Private config is readable by other accounts; restrict its permissions to 0600.');
   if(c.host==='0.0.0.0'||c.host==='::')warnings.push('Gateway is LAN-facing; verify authentication and firewall policy. No setting was changed.');
   for(const file of Object.values(c.telemetry_files??{}))if(!fs.existsSync(file))warnings.push('A configured local telemetry file is missing; metrics will remain unavailable.');
+  for(const [worker,directory] of cacheDirectories){
+    if(!nodes.some(node=>node.id===worker))warnings.push('A cache inventory directory names a worker absent from the current registry; it will not be scanned.');
+    try{const stat=fs.lstatSync(directory);if(!stat.isDirectory()||stat.isSymbolicLink())throw new Error();fs.accessSync(directory,fs.constants.R_OK);}
+    catch{warnings.push('A configured cache inventory directory is missing, unreadable or not a regular directory; cache evidence will remain unavailable.');}
+  }
   if(c.embeddings?.enabled===true){fs.accessSync(c.embeddings.python,fs.constants.X_OK);fs.accessSync(path.join(c.embeddings.model_dir,'manifest.json'),fs.constants.R_OK);}
   if(c.predictor?.enabled===true){
     if(c.dataset_enabled!==true)throw new Error('Predictor requires dataset_enabled');

@@ -75,3 +75,37 @@ keep the component estimate and the uncertainty; do not force a guessed join.
 
 Unit tests exercise span matching, freshness, sample bounds, distinct cold/warm
 regimes, unknown tiers, API validation and unchanged read-only authority.
+
+## Privacy-safe snapshot inventory
+
+**Implemented as an opt-in local/mounted-directory foundation; it does not route
+or transfer caches.** Stock DS4 disk-KV files begin with a 48-byte compatibility
+header and four-byte rendered-text length. Verbatim prompt bytes follow. DSG opens
+only regular 40-hex cache files with no-follow semantics and reads exactly those
+first 52 bytes. It validates magic/version/payload ABI, quantization, token count,
+file bounds and numerical metadata before accepting an entry.
+
+The filename is a SHA-1 of a rendered prompt prefix and is therefore sensitive to
+dictionary guessing. DSG never exports it. A private installation key converts it
+to an HMAC pseudonym that is comparable across explicitly inventoried directories
+inside one DSG installation but useless to another installation. Local
+diagnostics expose only aggregate cohort count, byte and maximum-token summaries;
+paths, raw names, pseudonymous snapshot references and prompt bytes remain absent.
+
+Compatibility follows DS4's conservative header gates: model shape, target
+context capacity, quantization policy and same-quant weights fingerprint. A legacy
+zero weights fingerprint is **unknown**, never compatible. Header agreement is
+still bounded evidence: it does not prove a cache is currently resident, that a
+request matches the byte prefix, or that a remote transfer/import path is safe.
+
+Configure only a directory already readable on the dashboard host:
+
+```json
+"cache_directories": { "worker-a": "/srv/ds4/cache" }
+```
+
+Scans run no more than once per minute and examine at most 4,096 cache-shaped
+files. Missing, symlinked, unreadable, oversized or invalid inputs abstain. The
+scanner performs no inference and no writes to the DS4 directory. The next stage
+is an explicitly enrolled remote helper plus a four-path shadow comparator; no
+remote command, copy protocol or automatic routing is claimed yet.
