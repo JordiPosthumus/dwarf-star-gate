@@ -1,5 +1,22 @@
 # Predictors and Gate Genie
 
+## Long jobs and output-limit censoring
+
+Current normal-completion contracts exclude `finish_reason: length`, cancelled
+work and unverified terminal responses. Those events remain in the raw dataset
+but do not become training labels. The data audit reports `duration_evidence` by
+duration band and terminal class, including observed service seconds; ambiguous
+finish records are excluded. `normal_terminal` describes only the ending, not
+eligibility under every other training gate.
+
+Do not relabel output-limited work as natural completion. The next extension should
+distinguish observed resource-occupancy duration from time to a natural answer,
+retain the output-limit/cancellation cause, use causally known request limits and
+validate long-duration holdout coverage separately. No existing feature contract,
+training eligibility or routing threshold changes with this audit.
+
+## Current lifecycle
+
 Implemented, opt-in. Ordinary routing remains the default. A fitted model is
 experimental until it passes both a fixed backtest and an independent future
 shadow gate. This feature does not promise that the available data will pass.

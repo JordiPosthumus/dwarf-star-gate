@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Explained the long-job training gap.** The data audit now separates normal,
+  output-limited, unverified and failed/cancelled durations. Long capped runs stay
+  recorded without masquerading as natural completions; occupancy modeling is
+  the next distinct forecast extension, not a silent eligibility change.
+
 - **Corrected Mac recovery executable identification.** Real DS4 processes expose
   multiple shared-library text mappings. Recovery now queries the kernel's exact
   executable path instead; read-only live validation passed, with no service action.

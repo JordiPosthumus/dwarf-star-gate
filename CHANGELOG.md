@@ -1,5 +1,11 @@
 # Changelog
 
+## Expose censored long-job evidence
+
+- Add privacy-safe duration-band counts and service seconds by terminal class
+  to the offline data audit. Separate output-limited occupancy from natural
+  completion labels, and reject ambiguous finish records. No training gate changes.
+
 ## Correct macOS recovery executable lookup
 
 - Replace the invalid single-`lsof txt`-mapping assumption with bounded macOS

@@ -41,9 +41,16 @@ export function auditEvidence(input,inventory=null,{maxEvents=200000,maxRequests
     if(r.kind==='embedding'){job.embeddings.push(r);tally(embeddingStatus,r.status==='ready'?'ready':'not_ready');}
   }
   const totals={requests:jobs.size,decisions:0,finishes:0,missing_usage:0,complete_missing_usage:0,no_terminal_observed:0,orphan_events:0,ambiguous_joins:0,noncausal_joins:0,relocated_requests:0,known_relocated_joins:0,wrong_worker_joins:0,ready_feature_requests:0,ready_embedding_requests:0,embedding_before_finish:0,embedding_after_finish:0,ready_features_without_embedding:0,observer_requests:0,latest_embedding_truncated:0,recent_embedding_truncated:0,early_metadata_present:0};
-  const missingOutcomes={},missingFeatureStatus={},missingFormats={};
+  const missingOutcomes={},missingFeatureStatus={},missingFormats={},durationEvidence={};
   for(const j of jobs.values()){
     const d=j.decision[0],s=j.dispatch[0],f=j.finish[0],features=j.features.find(x=>x.status==='ready'),e=j.embeddings.find(x=>x.status==='ready');
+    if(j.finish.length===1&&finite(f.service_ms)&&f.service_ms>0){
+      const terminal=f.outcome!=='complete'?'failed_or_cancelled':f.finish_reason==='length'?'output_limited':
+        ['stop','tool_calls','function_call'].includes(f.finish_reason)?'normal_terminal':'unverified_terminal';
+      const band=f.service_ms>=3600000?'1h_plus':f.service_ms>=300000?'5m_to_1h':'under_5m';
+      const group=durationEvidence[terminal]??={};const sample=group[band]??={requests:0,service_seconds:0,max_service_seconds:0};
+      sample.requests++;sample.service_seconds+=f.service_ms/1000;sample.max_service_seconds=Math.max(sample.max_service_seconds,f.service_ms/1000);
+    }
     if(!d)totals.orphan_events++;else {totals.decisions++;if(d.traffic_class==='genie')totals.observer_requests++;if(d.client_metadata?.status==='ready')totals.early_metadata_present++;}
     if(j.decision.length>1||j.dispatch.length>1||j.finish.length>1||j.terminal.length>1||j.relocations.length>1||j.finish.length&&j.terminal.length)totals.ambiguous_joins++;
     const joined=[...j.dispatch,...j.finish,...j.features,...j.embeddings],moved=d&&joined.some(r=>r.node!==d.node);
@@ -77,7 +84,7 @@ export function auditEvidence(input,inventory=null,{maxEvents=200000,maxRequests
       if(f.embedding_present===1)s.embedding_present++;if(finite(f.similarity_previous_user))s.user_similarity++;if(finite(f.similarity_previous_conversation))s.recent_similarity++;}
     for(const s of Object.values(training.stages)){s.requests=s.requests.size;s.workers=s.workers.size;}
   }
-  return {schema:1,events:rows.length,runs:runs.size,duplicates,invalid,counts,totals,workers,feature_status:featureStatus,embedding_status:embeddingStatus,missing_usage_outcomes:missingOutcomes,missing_usage_feature_status:missingFeatureStatus,missing_usage_response_format:missingFormats,training,
+  return {schema:1,events:rows.length,runs:runs.size,duplicates,invalid,counts,totals,workers,feature_status:featureStatus,embedding_status:embeddingStatus,missing_usage_outcomes:missingOutcomes,missing_usage_feature_status:missingFeatureStatus,missing_usage_response_format:missingFormats,duration_evidence:durationEvidence,training,
     limitations:['Unresolved requests may be in flight or interrupted; missing terminal records are not invented failures.','Historical response format/usage-request flags were not recorded; missing usage cannot be attributed conclusively to a protocol.','Repeated progress rows are not independent requests. Training weights them per request.','Embedding truncation is bounded encoder input, never truncation of the DS4 request.','Worker names and counts are private operational data; do not publish this report.']};
 }
 if(isMain(import.meta.url))try{

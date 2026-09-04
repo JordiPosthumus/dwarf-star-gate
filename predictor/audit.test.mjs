@@ -6,6 +6,16 @@ import path from 'node:path';
 import {auditEvidence,readEvidence} from './audit.mjs';
 let sequence=0;
 const row=(kind,at=0,extra={})=>({schema:1,run_id:'run-a',event_id:'event-'+sequence++,request_id:'request-a',node:'worker-a',time:new Date(100000+at).toISOString(),kind,...extra});
+test('duration audit separates output-limited occupancy from normal terminal labels',()=>{
+  const rows=[['stop',299999],['length',3600000],['tool_calls',300000],[null,4000000]].map(([finish_reason,service_ms],i)=>row('finish',i,{request_id:`duration-${i}`,outcome:'complete',finish_reason,service_ms}));
+  rows.push(row('finish',5,{request_id:'failed',outcome:'client_cancelled',service_ms:3600000}));
+  const d=auditEvidence(rows).duration_evidence;
+  assert.equal(d.normal_terminal.under_5m.requests,1);assert.equal(d.normal_terminal['5m_to_1h'].requests,1);
+  assert.equal(d.output_limited['1h_plus'].service_seconds,3600);
+  assert.equal(d.unverified_terminal['1h_plus'].requests,1);assert.equal(d.failed_or_cancelled['1h_plus'].requests,1);
+  const ambiguous=[row('finish',1,{service_ms:3600000,outcome:'complete',finish_reason:'stop'}),row('finish',2,{service_ms:4000000,outcome:'complete',finish_reason:'length'})];
+  assert.deepEqual(auditEvidence(ambiguous).duration_evidence,{});
+});
 test('audit joins on run/request identity, counts missing labels and never emits vectors or sessions',()=>{
   const rows=[row('decision',0,{session:'PRIVATE_SESSION',client_metadata:{status:'ready'}}),row('dispatch',1),row('request_features',2,{status:'ready'}),row('embedding',3,{status:'ready',available_at:100003,vectors:{latest_user:{truncated:true,vector:[.123456789]},recent_conversation:{truncated:false}}}),row('finish',4,{outcome:'complete',usage:{prompt_tokens:12,completion_tokens:3}}),
     row('decision',5,{run_id:'run-b'}),row('dispatch',6,{run_id:'run-b'}),row('finish',7,{run_id:'run-b',outcome:'client_cancelled'})];
