@@ -207,6 +207,17 @@ def feature_coverage(rows, names):
     return {name:round(sum(present(r['features'].get(name)) for r in rows)/max(1,len(rows)),4) for name in names}
 
 
+def hardware_coverage(rows, names):
+    """Observed point coverage, separated by worker and causal prediction stage."""
+    names=[name for name in names if name.startswith('hardware_')]
+    if not names:return []
+    cohorts=collections.defaultdict(list)
+    for row in rows:cohorts[(row['node'],row.get('stage',row['kind']))].append(row)
+    return [{'node':node,'stage':stage,'requests':unique(points),'points':len(points),
+             'feature_coverage':feature_coverage(points,names)}
+            for (node,stage),points in sorted(cohorts.items())]
+
+
 def split_usage(export):
     origin=[]
     for name in export['encoding']['names']:
@@ -282,7 +293,11 @@ def train(prepared, recipe_id=DEFAULT_RECIPE):
         # historical zero-coverage fields visible instead of silently omitting
         # them from the evidence used to review the challenger.
         all_names=data.get('feature_names') or list(dict.fromkeys(name for group in data['groups'].values() for name in group))
-        report.update(feature_coverage=feature_coverage(tr,all_names),split_usage=split_usage(export))
+        report.update(feature_coverage=feature_coverage(tr,all_names),
+                      holdout_feature_coverage=feature_coverage(te,all_names),
+                      hardware_coverage={'training':hardware_coverage(tr,data['groups'].get('hardware',[])),
+                                         'holdout':hardware_coverage(te,data['groups'].get('hardware',[]))},
+                      split_usage=split_usage(export))
         actual=np.asarray([exported_prediction(export,r['features']) for r in te]);np.testing.assert_allclose(actual,predictions,rtol=2e-5,atol=1e-3)
         model_id=model_identity(export,kind,data['snapshot'],result['created_at'])
         export.update(id=model_id,kind=kind,holdout_passed=passed,holdout=measured,baseline_mae_s=best_baseline,new_session_validated=unseen_passed,

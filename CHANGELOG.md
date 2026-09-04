@@ -1,5 +1,12 @@
 # Changelog
 
+## Report holdout hardware coverage
+
+- Add holdout feature availability and separate training/holdout hardware coverage
+  by worker and prediction stage. Counts distinguish requests from sample points;
+  coverage is point-based, and zero measurements remain valid. No model-selection
+  or activation thresholds changed.
+
 ## Bound cache inventory traversal
 
 - Limit directory traversal to 16,384 entries as well as 4,096 cache headers.

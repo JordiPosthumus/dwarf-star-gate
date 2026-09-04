@@ -27,7 +27,20 @@ class PredictorV2Tests(unittest.TestCase):
         self.assertIn('hardware',report['selected']['family'])
         self.assertGreater(report['split_usage'].get('hardware_power_watts',0),0)
         self.assertEqual(report['feature_coverage']['hardware_power_watts'],1)
+        self.assertEqual(report['holdout_feature_coverage']['hardware_power_watts'],1)
+        self.assertTrue(report['hardware_coverage']['holdout'])
         self.assertFalse(result['routing_enabled'])
+
+    def test_hardware_coverage_separates_workers_stages_and_missing_values(self):
+        rows=self.rows(4)
+        for row,node,stage,value in zip(rows,['a','a','a','b'],['upload','upload','embedded','upload'],[0,None,80,float('nan')]):
+            row['node']=node;row['stage']=stage;row['features']['hardware_power_watts']=value
+        result={(r['node'],r['stage']):r for r in v.hardware_coverage(rows,['hardware_power_watts'])}
+        self.assertEqual(result['a','upload']['points'],2)
+        self.assertEqual(result['a','upload']['feature_coverage']['hardware_power_watts'],.5)
+        self.assertEqual(result['a','embedded']['feature_coverage']['hardware_power_watts'],1)
+        self.assertEqual(result['b','upload']['feature_coverage']['hardware_power_watts'],0)
+        self.assertEqual(v.hardware_coverage([],['hardware_power_watts']),[])
 
     def test_hardware_challenger_keeps_no_hardware_ablations(self):
         for kind in ('admission','updated','remaining'):
@@ -109,6 +122,8 @@ class PredictorV2Tests(unittest.TestCase):
         self.assertIn(report['selected']['rounds'],v.ROUNDS)
         self.assertEqual({c['rounds'] for c in report['ablations']},set(v.ROUNDS))
         self.assertIn('history_count',report['feature_coverage'])
+        self.assertEqual(set(report['holdout_feature_coverage']),set(report['feature_coverage']))
+        self.assertEqual(report['hardware_coverage'],{'training':[],'holdout':[]})
         self.assertEqual(set(report['feature_coverage']),{name for group in data['groups'].values() for name in group})
         self.assertTrue(report['split_usage'])
         self.assertFalse(first['routing_enabled'])

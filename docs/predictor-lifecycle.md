@@ -125,6 +125,11 @@ evidence. Existing stored artifacts remain unchanged.
 `dsg-latency-v3` trains as a challenger. A V3 model cannot inherit V2 validation
 or replace it on a restart. The status API reports each candidate's schema,
 selected blocks, full-contract feature coverage and winning-tree split usage.
+Reports separate training and future-holdout feature coverage. V4 hardware
+coverage is also broken down by worker and prediction stage, with request and
+sample-point counts. Coverage fractions are point-based, not request-balanced;
+valid zero readings count as available, while missing/non-finite readings do not.
+These are diagnostics, not additional promotion gates or evidence of routing gains.
 Historical evidence cannot backfill new request-shape fields; those become useful
 only after the V3 collector runs.
 

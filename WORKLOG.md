@@ -10,6 +10,10 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Exposed future hardware coverage.** Challenger reports now separate training
+  from holdout feature availability, and show hardware coverage by worker/stage.
+  Missing sensors cannot hide behind a fleet-wide training average; gates are unchanged.
+
 - **Bounded inventory directory traversal.** Unrelated files now count toward a
   separate scan budget so they cannot cause unbounded synchronous traversal.
   Partial inventories stay inconclusive for cache absence; DS4 caches are untouched.
