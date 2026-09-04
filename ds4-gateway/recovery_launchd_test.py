@@ -74,11 +74,11 @@ class LaunchdAdapterTests(unittest.TestCase):
     def test_restart_is_exact_launchd_job_and_durable_idempotent(self):
         current = {"active": True, "listener": True, "instance": "1" * 32, "machine": "a" * 64, "profile": "b" * 64, "fault": {"at": 1000}}
         request = {"action": "restart", "action_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "instance": current["instance"], "machine": current["machine"], "profile": current["profile"], "canary": False, "fault_after": 900}
-        with tempfile.TemporaryDirectory() as temp, patch.object(adapter, "inspect", return_value=current), patch.object(adapter, "run") as command, patch.object(adapter.os, "getuid", return_value=501):
+        with tempfile.TemporaryDirectory() as temp, patch.object(adapter, "inspect", return_value=current), patch.object(adapter, "run") as command:
             state = Path(temp) / "actions.json"
             def issued(args):
                 self.assertEqual(json.loads(state.read_text())[request["action_id"]]["state"], "intent")
-                self.assertEqual(args, ["/bin/launchctl", "kickstart", "-k", "gui/501/com.example.ds4"])
+                self.assertEqual(args, ["/bin/launchctl", "kickstart", "-k", f"gui/{os.getuid()}/com.example.ds4"])
                 return "", 0
             command.side_effect = issued
             first = adapter.handle({"label": "com.example.ds4"}, request, state)
@@ -104,11 +104,11 @@ class LaunchdAdapterTests(unittest.TestCase):
     def test_stopped_start_requires_exact_static_identity_and_issues_no_kill(self):
         current = {"active": False, "listener": False, "loaded": True, "stopped": True, "stopped_epoch": "d" * 64, "instance": "", "machine": "a" * 64, "service_profile": "c" * 64}
         request = {"action": "start", "action_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "stopped_epoch": current["stopped_epoch"], "machine": current["machine"], "service_profile": current["service_profile"]}
-        with tempfile.TemporaryDirectory() as temp, patch.object(adapter, "inspect", return_value=current), patch.object(adapter, "run") as command, patch.object(adapter.os, "getuid", return_value=501):
+        with tempfile.TemporaryDirectory() as temp, patch.object(adapter, "inspect", return_value=current), patch.object(adapter, "run") as command:
             state = Path(temp) / "actions.json"
             command.return_value = "", 0
             adapter.handle({"label": "com.example.ds4"}, request, state)
-            command.assert_called_once_with(["/bin/launchctl", "kickstart", "gui/501/com.example.ds4"])
+            command.assert_called_once_with(["/bin/launchctl", "kickstart", f"gui/{os.getuid()}/com.example.ds4"])
             self.assertEqual(adapter.handle({"label": "com.example.ds4"}, request, state)["state"], "issued")
             self.assertEqual(command.call_count, 1)
 

@@ -1,5 +1,19 @@
 # Changelog
 
+## Cross-platform CI signal hardening
+
+- Fixed two test-harness defects exposed by GitHub's Ubuntu runner. Launchd
+  recovery tests no longer replace the process-wide UID while exercising the
+  exact `gui/<uid>/<label>` target, which had made correctly private temporary
+  state look foreign-owned. The production ownership check remains unchanged.
+- The worker-free shadow test now waits for and checks the durable reassessment
+  record instead of racing the intentionally replaceable latest-event summary.
+  This strengthens the assertion without lengthening a timeout or weakening the
+  no-consume/no-replay contract.
+- Linux and macOS matrix jobs no longer cancel each other on failure. Checkout
+  and Node setup remain SHA-pinned while moving to their official v5, Node
+  24-based action runtimes.
+
 ## Verified changed-profile hand-back
 
 - Added a default-on, independently switchable profile hand-back gate beneath

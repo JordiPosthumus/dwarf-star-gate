@@ -653,8 +653,10 @@ test('idle-worker event records shadow reassessment without consuming queued upl
   const home=r.request('{"stream":true,"delay":200}','home');await until(()=>r.backends[0].active===1);
   const other=r.request('{"stream":true,"delay":60}','other');await until(()=>r.backends[1].active===1);
   const queued=r.request('{"stream":true,"delay":10}','home');await until(()=>r.gateway.stats().queued===1);
-  await other;await until(()=>r.gateway.stats().routing_shadow.last.reason==='worker_free');
-  assert.equal(r.gateway.stats().routing_shadow.last.verdict,'handover_blocked');assert.equal(r.backends[1].records.length,1);
+  const read=()=>{const dir=path.join(path.dirname(r.config.state_file),'training');return fs.existsSync(dir)?fs.readdirSync(dir).flatMap(f=>fs.readFileSync(path.join(dir,f),'utf8').trim().split('\n').filter(Boolean).map(JSON.parse)):[];};
+  await other;await until(()=>read().some(row=>row.kind==='routing_shadow'&&row.reason==='worker_free'));
+  const reassessment=read().find(row=>row.kind==='routing_shadow'&&row.reason==='worker_free');
+  assert.equal(reassessment.verdict,'handover_blocked');assert.equal(r.backends[1].records.length,1);
   await Promise.all([home,queued]);assert.equal(r.backends[0].records.length,2);
 });
 

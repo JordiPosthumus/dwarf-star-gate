@@ -10,6 +10,13 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Restored a trustworthy cross-platform CI signal.** Launchd recovery tests
+  now preserve the runner's real file-owner identity while checking the exact
+  per-user launch target, and the worker-free shadow test verifies its durable
+  evidence row rather than a transient latest-event slot. Linux and macOS matrix
+  legs finish independently, and pinned Actions use their Node 24-based v5
+  runtimes instead of emitting Node 20 deprecation warnings.
+
 - **Closed the changed-profile recovery trap without trusting arbitrary code.**
   A stable changed profile from the same enrolled machine/service can now be
   adopted through a default-on sub-policy only after ownership and fatal-or-new-
