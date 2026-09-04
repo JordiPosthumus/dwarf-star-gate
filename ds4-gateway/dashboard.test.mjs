@@ -116,6 +116,14 @@ test('worker controls show escaped hold ownership and block ordinary Enable/Remo
   const free=row({...w,holds:[]});assert.ok(!/data-action="resume"[^>]*disabled/.test(free));assert.ok(!/data-action="remove"[^>]*disabled/.test(free));
 });
 
+test('worker enrollment offers bounded SSH fallback aliases without accepting SSH options',()=>{
+  const html=fs.readFileSync(new URL('./ui/index.html',import.meta.url),'utf8');
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8');
+  assert.match(html,/name="ssh_fallbacks"/);assert.match(html,/host-key-verified SSH aliases/);
+  assert.match(source,/ssh_fallbacks\.value\.split\(','\)/);assert.match(source,/worker\.ssh_fallbacks=fallbacks/);
+  assert.doesNotMatch(html,/ProxyCommand|StrictHostKeyChecking=no/);
+});
+
 test('excluded routing states are explicit; quarantine offers checked readmission even without a pause',()=>{
   const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);vm.runInContext('workerControlsReady=true',context);
@@ -548,9 +556,9 @@ test('server verdicts expose backlog, oldest wait, pause, health and telemetry s
 test('unavailable server verdicts explain the observed management layer and avoid a duplicate phase badge',()=>{
   const source = fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
   const context = vm.createContext({phase:()=> 'unavailable'});vm.runInContext(source,context);
-  const worker={id:'spark1',is_healthy:false,drained:false,load:0,queued:0,management_path:{transport:'ssh_tunnel',state:'ssh_error',reason:'adapter_dns_failure'}};
+  const worker={id:'spark1',is_healthy:false,drained:false,load:0,queued:0,management_path:{transport:'ssh_tunnel',state:'ssh_error',reason:'adapter_dns_failure',route_count:3}};
   const verdict=vm.runInContext(`serverVerdict({},${JSON.stringify(worker)},100000,false)`,context);
-  assert.match(verdict.detail,/cannot resolve/);assert.ok(!verdict.detail.includes('worker.example'));
+  assert.match(verdict.detail,/cannot resolve/);assert.match(verdict.detail,/cycling through 3 enrolled SSH routes/);assert.ok(!verdict.detail.includes('worker.example'));
   const html=vm.runInContext(`device({id:'spark1',cache:{},series:[]},${JSON.stringify(worker)},100000,false,1,{decode:1,prefill:1},true)`,context);
   assert.match(html,/server-verdict[^>]*>Unavailable</);assert.match(html,/class="badge bad"[^>]*hidden>unavailable</);
   const auth={...worker,management_path:{transport:'ssh_tunnel',state:'ssh_error',reason:'adapter_auth_failure'}};

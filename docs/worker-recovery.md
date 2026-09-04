@@ -139,6 +139,11 @@ Do this per worker, initially with automatic mode **off**.
    Require `active:true`, `listener:true`, the expected service identity and no
    fault. Record the returned `machine` and `profile` hashes in private gateway
    config; do not paste them or your private installation paths into a public issue.
+   A remote worker may declare up to four `ssh_fallbacks`. Each value is another
+   preconfigured, host-key-verified OpenSSH alias for the **same machine**—not an
+   address accepted from a request and not an SSH option. Inspect the machine over
+   every alias before enrollment. A static DHCP reservation or private overlay
+   network is generally a better fallback than an unverified changing address.
 4. Add an enrollment entry (illustrative placeholders, intentionally not runnable):
 
    ```json
@@ -148,6 +153,7 @@ Do this per worker, initially with automatic mode **off**.
          "id": "worker-a",
          "url": "http://127.0.0.1:38001",
          "ssh": "my-ds4-server",
+         "ssh_fallbacks": ["my-ds4-server-lan", "my-ds4-server-tailnet"],
          "remote_port": 8000,
          "adapter": "systemd-user",
          "exclusive": true,
@@ -160,7 +166,7 @@ Do this per worker, initially with automatic mode **off**.
    }
    ```
 
-   ID/URL/SSH/port must match the registered worker. Recovery paths are absolute,
+   ID/URL/SSH aliases/port must match the registered worker. Recovery paths are absolute,
    shell-safe paths without spaces in v1. Endpoint registration cannot alter this
    separate allowlist. Copying the config does not apply it to a running process.
 5. Restart DSG at an agreed maintenance window. Inspect the

@@ -282,7 +282,11 @@ No `npm install` is needed for the core. Setup creates an ignored, mode-0600
 overwrites an existing configuration. Omit `--controls` for a read-only dashboard.
 Open **http://127.0.0.1:30010**, expand **Manage DS4 servers**, add existing DS4
 endpoints and enable them after the compatibility check. Remote servers need a
-working SSH alias; local servers use their loopback URL. DSG does not install DS4.
+working, host-key-verified OpenSSH alias; local servers use their loopback URL.
+You may give a remote server up to four fallback aliases (for example stable LAN
+DNS, a reserved LAN address alias and a private overlay-network alias). DSG tries
+them in order after a tunnel exits. It never accepts SSH options or shell commands,
+and private aliases remain in ignored local state. DSG does not install DS4.
 New configurations use the stable Continuity Door at
 **http://127.0.0.1:30000/v1** and a private replaceable core on loopback port
 `30001`; existing configurations are not silently migrated. Read the client key

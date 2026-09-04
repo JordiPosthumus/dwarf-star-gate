@@ -1,5 +1,27 @@
 # Changelog
 
+## Patient Gate Genie provider deadline
+
+- Gate Genie's dedicated-provider and pool-fallback deadlines are now two hours by
+  default. Long-context local reasoning no longer falls through after two minutes
+  or dies three minutes into its fallback.
+- The local UI reports the active provider, elapsed time and remaining provider
+  deadline while a manual question or scheduled review is running.
+- Explicit endpoint deadlines remain bounded to 24 hours. This changes Genie
+  observation only; gateway queues, model requests and DS4 settings are untouched.
+
+## Resilient enrolled SSH routes
+
+- A remote DS4 server may now have up to four additional OpenSSH aliases. The
+  tunnel supervisor rotates to the next verified alias only after a route exits;
+  the guarded systemd recovery adapter uses the same ordered set.
+- Aliases remain private configuration. DSG accepts neither SSH options nor
+  commands, prevents overlapping endpoint registrations, and exports only the
+  bounded route count and transport state—not aliases, addresses or stderr.
+- The local worker form and CLI accept optional fallbacks. Existing single-alias
+  configurations are unchanged. Compatibility enrollment allows 15 seconds per
+  configured route unless the operator supplied an explicit deadline.
+
 ## Three-state server activity view
 
 - Per-server history now uses three operational bands only: blue prefill, green

@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {Recovery} from './recovery.mjs';
-import {classifySshFailure,recoveryConfig} from './recovery-transport.mjs';
+import {classifySshFailure,recoveryConfig,systemdCall} from './recovery-transport.mjs';
 import {verifyRecovery} from './recovery-verify.mjs';
 import {Genie,briefing,parseGenieReview} from './genie.mjs';
 import http from 'node:http';
@@ -12,6 +12,8 @@ import path from 'node:path';
 import {createGateway} from './gateway.mjs';
 import {workerControl} from './worker-client.mjs';
 import {createDashboard} from './dashboard.mjs';
+import {EventEmitter} from 'node:events';
+import {PassThrough} from 'node:stream';
 
 const config={id:'one',url:'http://127.0.0.1:39001',ssh:'test-host',adapter:'systemd-user',helper:'/opt/dsg/adapter.py',config:'/opt/dsg/private.json',machine:'a'.repeat(64),profile:'b'.repeat(64),exclusive:true};
 function rig(options={}) {
@@ -47,6 +49,21 @@ test('SSH management failures become bounded reason classes without exposing tra
   assert.equal(classifySshFailure('',null,255),'adapter_unreachable');
   assert.equal(classifySshFailure('',null,1),'adapter_check_failed');
   assert.equal(classifySshFailure('','ENOENT'),'adapter_spawn_failed');
+});
+test('recovery inspection tries bounded SSH aliases in order and returns no route names',async()=>{
+  const calls=[];
+  const spawnFn=(_file,args)=>{
+    const child=new EventEmitter();child.stdout=new PassThrough();child.stderr=new PassThrough();child.stdin=new PassThrough();child.kill=()=>{};
+    const target=args.at(-2);calls.push(target);
+    setImmediate(()=>{
+      if(target==='primary'){child.stderr.write('Could not resolve hostname private-primary');child.emit('exit',255,null);}
+      else {child.stdout.write(JSON.stringify({version:1,active:true}));child.emit('exit',0,null);}
+    });
+    return child;
+  };
+  const result=await systemdCall({...config,ssh:'primary',ssh_fallbacks:['backup']},{action:'inspect'},{spawnFn,timeoutMs:1000});
+  assert.deepEqual(calls,['primary','backup']);assert.deepEqual(result,{version:1,active:true});
+  assert.ok(!JSON.stringify(result).includes('primary'));assert.ok(!JSON.stringify(result).includes('backup'));
 });
 test('recovery status preserves only an allowlisted management failure reason',async()=>{
   const r=rig({call:async()=>{throw new Error('adapter_dns_failure');}});await r.ready();

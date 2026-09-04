@@ -10,7 +10,7 @@ import { clientMetadata, CLIENT_METADATA_HEADER } from './client-metadata.mjs';
 import { EmbeddingCollector } from './embeddings.mjs';
 import { RoutingShadow } from './routing-shadow.mjs';
 import { GenerationFaultObserver, verifyGeneration } from './generation-health.mjs';
-import { workerConfig, workerConfigs, assertUniqueWorker } from './worker-config.mjs';
+import { workerConfig, workerConfigs, assertUniqueWorker, sshTargets } from './worker-config.mjs';
 import { Recovery } from './recovery.mjs';
 import { classifySshFailure } from './recovery-transport.mjs';
 import { loadConfig, isMain, gatewayPort, gatewayHost, continuityEnabled } from './config.mjs';
@@ -28,6 +28,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 const digest = value => createHash('sha256').update(value).digest('hex');
 const validContext = value => Number.isSafeInteger(value) && value > 0;
+export const workerRegistrationTimeout=(config,node)=>config.registration_timeout_ms??Math.max(15000,sshTargets(node).length*15000);
 const log = (event, fields = {}) => process.stdout.write(JSON.stringify({ time: new Date().toISOString(), event, ...fields }) + '\n');
 const hopHeaders = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade']);
 function forwardHeaders(headers) {
@@ -182,7 +183,7 @@ export function createGateway(config,{visionTranscode}={}) {
   // Like registered workers, an explicit UI setting survives process restarts.
   const contextLimit = () => store.data.pool_context_length ?? config.context_length;
   const makeNode = n => ({ ...n, drained: store.data.drained?.[n.id] === true, quarantine:store.data.quarantined?.[n.id] ?? null, inferenceFailures:0, healthy: false, failures: 0, active: null, queue: [], completed: 0, failed: 0, protected:0, observationLimited:0, probing: false, healthProbeDeferred:0,
-    managementPath:n.ssh?{transport:'ssh_tunnel',state:'pending',reason:null,attempts:0,changed_at:new Date().toISOString(),last_verified_at:null}:{transport:'local',state:'local',reason:null,attempts:0,changed_at:new Date().toISOString(),last_verified_at:null} });
+    managementPath:n.ssh?{transport:'ssh_tunnel',state:'pending',reason:null,attempts:0,route_count:sshTargets(n).length,changed_at:new Date().toISOString(),last_verified_at:null}:{transport:'local',state:'local',reason:null,attempts:0,route_count:0,changed_at:new Date().toISOString(),last_verified_at:null} });
   let definitions;
   try { definitions = store.data.workers === undefined ? initial : workerConfigs(store.data.workers); }
   catch (e) { store.close(); throw e; }
@@ -215,7 +216,7 @@ export function createGateway(config,{visionTranscode}={}) {
   }
   let mutation = Promise.resolve();
   const serialize = fn => { const next = mutation.then(fn); mutation = next.catch(() => {}); return next; };
-  const definition = n => Object.fromEntries(['id','url','ssh','remote_port','telemetry_service'].filter(k => n[k] !== undefined).map(k => [k,n[k]]));
+  const definition = n => Object.fromEntries(['id','url','ssh','ssh_fallbacks','remote_port','telemetry_service'].filter(k => n[k] !== undefined).map(k => [k,n[k]]));
   let recovery;
   try { recovery=new Recovery(config.recovery,{store,nodes,model:config.model,stopping:()=>shuttingDown||draining,log,
     reinstate:(n,expected,recoveryState)=>{
@@ -907,7 +908,7 @@ export function createGateway(config,{visionTranscode}={}) {
     const compatible=()=>node.modelMatches && validContext(node.contextLength) && node.contextLength>=contextLimit() && !node.probeError;
     try {
       startTunnel(node);
-      const until = Date.now() + (config.registration_timeout_ms ?? 15000);
+      const until = Date.now() + workerRegistrationTimeout(config,node);
       do {
         if (shuttingDown) throw new Error('Gateway is stopping');
         await probe(node);
@@ -1068,14 +1069,15 @@ export function createGateway(config,{visionTranscode}={}) {
 }
 
 function superviseTunnel(node, stopping) {
-  let child, timer;
+  let child, timer,targetIndex=0;
+  const targets=sshTargets(node);
   const update=(state,reason=null)=>{node.managementPath={...node.managementPath,transport:'ssh_tunnel',state,reason,changed_at:new Date().toISOString()};};
   const start = () => {
     if (stopping()) return;
     node.managementPath={...node.managementPath,transport:'ssh_tunnel',state:'connecting',reason:null,attempts:(node.managementPath?.attempts??0)+1,changed_at:new Date().toISOString()};
     const port = new URL(node.url).port;
     child = spawn('/usr/bin/ssh', ['-N', '-o', 'BatchMode=yes', '-o', 'ExitOnForwardFailure=yes', '-o', 'ConnectTimeout=10',
-      '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3', '-L', `127.0.0.1:${port}:127.0.0.1:${node.remote_port ?? 8000}`, node.ssh], { stdio: ['ignore', 'ignore', 'pipe'] });
+      '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3', '-L', `127.0.0.1:${port}:127.0.0.1:${node.remote_port ?? 8000}`, targets[targetIndex]], { stdio: ['ignore', 'ignore', 'pipe'] });
     log('tunnel_started', { node: node.id, pid: child.pid });
     child.once('spawn',()=>update('ssh_process_active'));
     child.stderr.on('data', chunk => {const message=chunk.toString().trim(),reason=classifySshFailure(message);if(reason)update('ssh_error',reason);log('tunnel_message', { node: node.id, message });});
@@ -1083,6 +1085,7 @@ function superviseTunnel(node, stopping) {
     child.on('exit', (code, signal) => {
       update('retrying',node.managementPath?.reason??classifySshFailure('',null,code));
       log('tunnel_exited', { node: node.id, code, signal });
+      targetIndex=(targetIndex+1)%targets.length;
       if (!stopping()) timer = setTimeout(start, 3000);
     });
   };

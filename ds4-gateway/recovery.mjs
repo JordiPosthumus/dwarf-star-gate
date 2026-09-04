@@ -29,7 +29,7 @@ export class Recovery {
   commit(next){this.store.save({...this.store.data,recovery:next});}
   update(op,fields){Object.assign(op,this.current(op),fields,{updated_at:this.now()});this.commit({...this.state,operations:this.state.operations.map(x=>x.id===op.id?{...op}:x)});this.log('worker_recovery_action',publicOperation(op));}
   setAutomatic(value){if(typeof value!=='boolean' || !this.configs.size)throw new Error('Recovery is not configured or enabled is invalid');this.commit({...this.state,automatic:value});this.log('worker_recovery_policy',{automatic:value});return this.status();}
-  binding(n,c){return !!n && !!c && n.url===c.url && n.ssh===c.ssh && (n.remote_port??8000)===(c.remote_port??8000);}
+  binding(n,c){return !!n && !!c && n.url===c.url && n.ssh===c.ssh && JSON.stringify(n.ssh_fallbacks??[])===JSON.stringify(c.ssh_fallbacks??[]) && (n.remote_port??8000)===(c.remote_port??8000);}
   valid(s,c){return s?.version===1 && s.machine===c.machine && s.profile===c.profile && s.active===true && s.listener===true && /^[a-f0-9]{32}$/.test(s.instance) && Number.isFinite(s.started_at);}
   evidence(n,s){return hash([n.id,n.quarantine,s.instance,s.machine,s.profile]);}
   reason(n,s,{canary=false,ignoreOwnership=false}={}) {
@@ -84,7 +84,7 @@ export class Recovery {
     if(this.state.operations.length>=10000)throw new Error('Recovery journal full; review required');
     const op={id,worker_id:n.id,actor,evidence_id:input.evidence_id??null,state:'queued',created_at:this.now(),updated_at:this.now(),instance:s.instance,
       machine:s.machine,profile:s.profile,context_length:n.contextLength,canary,was_paused:n.drained,quarantine:n.quarantine?{...n.quarantine}:null,
-      binding:hash([n.url,n.ssh,n.remote_port??8000]),operator_override:false};
+      binding:hash([n.url,n.ssh,n.ssh_fallbacks??[],n.remote_port??8000]),operator_override:false};
     this.commit({...this.state,operations:[...this.state.operations,op]});
     n.recovering=true;n.healthy=false;
     this.task=this.execute(op,false).finally(()=>{this.task=null;});
@@ -102,7 +102,7 @@ export class Recovery {
   async execute(initial,reconcile) {
     let op={...initial};const c=this.configs.get(op.worker_id),n=this.node(op.worker_id);
     try {
-      if(!n || !this.binding(n,c) || hash([n.url,n.ssh,n.remote_port??8000])!==op.binding || c.profile!==op.profile || c.machine!==op.machine)throw new Error('recovery_binding_changed');
+      if(!n || !this.binding(n,c) || hash([n.url,n.ssh,n.ssh_fallbacks??[],n.remote_port??8000])!==op.binding || c.profile!==op.profile || c.machine!==op.machine)throw new Error('recovery_binding_changed');
       const before=await this.inspect(n.id);
       if(!reconcile && !this.valid(before,c))throw new Error('service_identity_or_profile_unverified');
       if(n.active || n.queue.length)throw new Error('worker_has_admitted_work');

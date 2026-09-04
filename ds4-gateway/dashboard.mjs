@@ -27,6 +27,7 @@ function safeManagementPath(raw){
   if(!raw||!['local','ssh_tunnel'].includes(raw.transport)||!managementStates.has(raw.state))return null;
   return {transport:raw.transport,state:raw.state,reason:managementReasons.has(raw.reason)?raw.reason:null,
     attempts:Number.isSafeInteger(raw.attempts)&&raw.attempts>=0?raw.attempts:0,
+    route_count:Number.isSafeInteger(raw.route_count)&&raw.route_count>=0&&raw.route_count<=5?raw.route_count:0,
     changed_at:typeof raw.changed_at==='string'&&Number.isFinite(Date.parse(raw.changed_at))?raw.changed_at:null,
     last_verified_at:typeof raw.last_verified_at==='string'&&Number.isFinite(Date.parse(raw.last_verified_at))?raw.last_verified_at:null};
 }

@@ -225,9 +225,10 @@ test('a bounded dedicated timeout aborts that attempt and borrows the pool',asyn
   }});
   await g.ask();assert.equal(calls.length,2);assert.equal(g.status().last_served_by,'pool_fallback');assert.equal(g.status().error,null);g.close();
 });
-test('Genie endpoint deadlines are bounded and public status contains no endpoint details',()=>{
+test('Genie endpoint deadlines are bounded, default to two hours and expose live progress without endpoint details',()=>{
   assert.throws(()=>new Genie({url:'http://127.0.0.1:9001/v1',timeout_ms:999},snapshot),/timeout_ms/);
-  assert.throws(()=>new Genie({url:'http://127.0.0.1:9001/v1',fallback:{url:'http://127.0.0.1:9002/v1',timeout_ms:600001}},snapshot),/timeout_ms/);
+  assert.throws(()=>new Genie({url:'http://127.0.0.1:9001/v1',fallback:{url:'http://127.0.0.1:9002/v1',timeout_ms:86400001}},snapshot),/timeout_ms/);
+  const defaults=new Genie({url:'http://127.0.0.1:9001/v1',fallback:{url:'http://127.0.0.1:9002/v1'}},snapshot);assert.equal(defaults.status().primary_timeout_ms,7200000);assert.equal(defaults.status().fallback_timeout_ms,7200000);defaults.close();
   const g=new Genie({url:'http://127.0.0.1:9001/v1',timeout_ms:5000,fallback:{url:'http://127.0.0.1:9002/v1',timeout_ms:7000}},snapshot);
   const status=g.status();assert.equal(status.primary_timeout_ms,5000);assert.equal(status.fallback_timeout_ms,7000);assert.ok(!JSON.stringify(status).includes('9001'));g.close();
 });

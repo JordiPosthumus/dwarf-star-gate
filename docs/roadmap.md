@@ -39,6 +39,9 @@ Sanitized management-path evidence now distinguishes DS4 readiness from DNS,
 SSH identity/authentication, connection and recovery-helper failures. This makes
 operator and Genie advice specific without turning a network symptom into restart
 authority or exposing private transport details.
+Remote workers can also carry a bounded ordered set of verified OpenSSH aliases;
+the tunnel and guarded recovery adapter share it. This improves route resilience
+without granting arbitrary SSH arguments, commands or host-reboot authority.
 This does not fix the CUDA defect or implement launchd/container recovery. The
 backend-process-epoch foundation is now implemented for systemd journal telemetry:
 restart boundaries invalidate learned telemetry spans without changing DS4. The

@@ -8,13 +8,14 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
-import { AffinityStore, createGateway, UsageObserver } from './gateway.mjs';
+import { AffinityStore, createGateway, UsageObserver, workerRegistrationTimeout } from './gateway.mjs';
 import { requestedThinking, RequestedThinkingObserver, THINKING_CAPTURE_BYTES, safeRequestedThinking } from './requested-thinking.mjs';
 import { workerControl } from './worker-client.mjs';
 import {agentRequest} from './agent-client.mjs';
 import {randomUUID,createHash} from 'node:crypto';
 import { runDashboard } from './dashboard.mjs';
 import { GenerationFaultObserver } from './generation-health.mjs';
+import {workerConfig,sshTargets,assertUniqueWorker} from './worker-config.mjs';
 
 async function until(fn, timeout = 3000) {
   const end = Date.now() + timeout;
@@ -80,6 +81,22 @@ async function backend(id) {
   b.close = async () => { b.server.closeAllConnections(); await new Promise(r => b.server.close(r)); };
   return b;
 }
+
+test('remote workers accept bounded verified SSH alias fallbacks, never options or duplicate routes',()=>{
+  const worker=workerConfig({id:'worker-a',url:'http://127.0.0.1:38001',ssh:'worker-a',ssh_fallbacks:['worker-a-lan','worker-a-tailnet','worker-a-lan'],remote_port:8000});
+  assert.deepEqual(sshTargets(worker),['worker-a','worker-a-lan','worker-a-tailnet']);
+  assert.deepEqual(worker.ssh_fallbacks,['worker-a-lan','worker-a-tailnet']);
+  for(const bad of [
+    {...worker,ssh_fallbacks:'worker-b'},
+    {...worker,ssh_fallbacks:['-oProxyCommand=bad']},
+    {...worker,ssh_fallbacks:['worker-a']},
+    {id:'worker-a',url:'http://127.0.0.1:38001',ssh_fallbacks:['worker-a-lan']},
+    {...worker,ssh_fallbacks:['a','b','c','d','e']}
+  ])assert.throws(()=>workerConfig(bad));
+  assert.throws(()=>assertUniqueWorker([worker],workerConfig({id:'worker-b',url:'http://127.0.0.1:38002',ssh:'worker-b',ssh_fallbacks:['worker-a-tailnet'],remote_port:8000})),/SSH endpoint/);
+  assert.equal(workerRegistrationTimeout({},worker),45000);
+  assert.equal(workerRegistrationTimeout({registration_timeout_ms:9000},worker),9000);
+});
 async function rig(t, count = 2, overrides = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ds4-gateway-test-'));
   const backends = await Promise.all(Array.from({ length: count }, (_, i) => backend(`spark${i + 1}`)));

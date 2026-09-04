@@ -154,9 +154,10 @@ function managementDetail(w) {
     adapter_output_limit:'The recovery adapter exceeded its bounded output contract.',
     adapter_unreachable:'The SSH management path exited before verification.',
     adapter_check_failed:'The management path answered, but the enrolled recovery helper did not return a valid check.'};
-  if(reasons[reason])return reasons[reason];
+  const routes=Number.isSafeInteger(m?.route_count)&&m.route_count>1?` DSG is automatically cycling through ${m.route_count} enrolled SSH routes.`:'';
+  if(reasons[reason])return reasons[reason]+routes;
   if(m?.transport==='ssh_tunnel'&&m.state==='ssh_process_active')return 'The local SSH tunnel process exists, but the DS4 readiness probe is not succeeding; login, forwarding and service health are not yet distinguished.';
-  if(m?.transport==='ssh_tunnel'&&['connecting','retrying','ssh_error','pending'].includes(m.state))return 'The SSH tunnel is not verified; DSG is continuing its configured connection attempts.';
+  if(m?.transport==='ssh_tunnel'&&['connecting','retrying','ssh_error','pending'].includes(m.state))return 'The SSH tunnel is not verified; DSG is continuing its configured connection attempts.'+routes;
   if(m?.transport==='local')return 'The local DS4 endpoint is not passing its readiness check.';
   return 'The server is not passing readiness checks. Check its DS4 process or connection, then try again.';
 }
@@ -404,8 +405,8 @@ async function workerAction(action, input) {
 }
 function updateConnectionFields() {
   const form=$('worker-form'), remote=form.elements.connection.value==='ssh';
-  $('ssh-host-field').hidden=!remote;$('remote-port-field').hidden=!remote;
-  form.elements.ssh.disabled=!remote;form.elements.ssh.required=remote;form.elements.remote_port.disabled=!remote;
+  $('ssh-host-field').hidden=!remote;$('ssh-fallback-field').hidden=!remote;$('remote-port-field').hidden=!remote;
+  form.elements.ssh.disabled=!remote;form.elements.ssh.required=remote;form.elements.ssh_fallbacks.disabled=!remote;form.elements.remote_port.disabled=!remote;
   $('endpoint-label').textContent=remote?'Local tunnel URL (free port)':'Local server URL';
   form.elements.url.placeholder=remote?'http://127.0.0.1:38003':'http://127.0.0.1:8000';
 }
@@ -429,7 +430,10 @@ function wireWorkerControls() {
   });
   form.addEventListener('submit',e=>{
     e.preventDefault();const worker={id:form.elements.id.value.trim(),url:form.elements.url.value.trim()};
-    if(form.elements.connection.value==='ssh'){worker.ssh=form.elements.ssh.value.trim();worker.remote_port=Number(form.elements.remote_port.value);}
+    if(form.elements.connection.value==='ssh'){
+      worker.ssh=form.elements.ssh.value.trim();worker.remote_port=Number(form.elements.remote_port.value);
+      const fallbacks=[...new Set(form.elements.ssh_fallbacks.value.split(',').map(v=>v.trim()).filter(Boolean))];if(fallbacks.length)worker.ssh_fallbacks=fallbacks;
+    }
     void workerAction('add',{worker});
   });
   const handleWorkerClick=e=>{
@@ -544,9 +548,10 @@ async function genieAction(input) {
 async function loadGenie() {
   try {const r=await fetch('/api/genie',{signal:AbortSignal.timeout(5000)});if(!r.ok)throw new Error();const s=await r.json();genieToken=s.csrf_token;genieState=s;wireState=s.ticker;
     if(wireSnapshot)renderHealthWire(wireSnapshot);
-    const q=s.question,qtext=q?.state==='queued'?(s.review_kind==='action'?'Your question is queued behind an evidence-gated action review':'Your question is queued; a routine review is being yielded'):q?.state==='answering'?'Answering your question…':q?.state==='answered'?`Question answered ${age(q.finished_at,Date.now())}`:['failed','cancelled'].includes(q?.state)?`Question ${q.state}: ${q.error}`:null;
+    const now=Date.now(),activeProvider=s.active_provider==='pool_fallback'?'DSG pool fallback':s.active_provider==='pool'?'DSG pool':'dedicated provider',providerProgress=s.busy&&s.provider_started_at?`${activeProvider} · ${age(s.provider_started_at,now)} elapsed${s.provider_deadline_at?` · deadline in ${age(s.provider_deadline_at,now)}`:''}`:null;
+    const q=s.question,qtext=q?.state==='queued'?(s.review_kind==='action'?'Your question is queued behind an evidence-gated action review':'Your question is queued; a routine review is being yielded'):q?.state==='answering'?`Answering your question · ${providerProgress??'provider starting…'}`:q?.state==='answered'?`Question answered ${age(q.finished_at,now)}`:['failed','cancelled'].includes(q?.state)?`Question ${q.state}: ${q.error}`:null;
     const provider=s.last_served_by==='pool_fallback'?' · dedicated provider failed; last review borrowed a DSG pool slot':s.last_served_by==='pool'?' · last review used the DSG pool':s.last_served_by==='dedicated'?' · last review used the dedicated provider':'';
-    $('genie-status').textContent=!s.configured?'Not configured':!s.enabled?'Off · enable Gate Genie before asking':qtext||s.error||(s.busy?'Scheduled fleet review in progress':`Enabled · last review ${age(s.last_check,Date.now())}${provider}`);
+    $('genie-status').textContent=!s.configured?'Not configured':!s.enabled?'Off · enable Gate Genie before asking':qtext||s.error||(s.busy?`Scheduled fleet review · ${providerProgress??'provider starting…'}`:`Enabled · last review ${age(s.last_check,now)}${provider}`);
     $('genie-mode').textContent=[s.action_supervision?'evidence-gated actions':'observation',s.predictor_supervision?'predictor supervision':''].filter(Boolean).join(' · ');
     $('genie-toggle').disabled=!s.configured;$('genie-toggle').textContent=s.enabled?'Turn off':'Enable';
     $('genie-source').disabled=!s.fallback_available||s.busy;$('genie-source').value=s.source||'primary';
