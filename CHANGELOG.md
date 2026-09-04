@@ -19,6 +19,10 @@
   open, no admitted work and successful cold-to-warm verification. DSG issues no
   restart command in this path; unchanged, stopped or unreachable instances stay
   isolated.
+- Existing remote registrations can update only their bounded SSH fallback list
+  through the local UI or CLI without remove/re-add, inference interruption or
+  model changes. Optimistic concurrency rejects stale edits; the tunnel supervisor
+  reads the latest durable list on its next reconnect.
 
 ## Resilient enrolled SSH routes
 

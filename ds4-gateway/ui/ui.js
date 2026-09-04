@@ -334,7 +334,8 @@ function workerRows(workers) {
     const routing=info.label;
     const id=esc(w.id);
     const ownership=`${w.operator_paused?'<br><small>Operator pause</small>':''}${holds.map(h=>`<br><small>Held by ${esc(h.owner_id)}${h.reason?`: ${esc(h.reason)}`:''}</small>`).join('')}`;
-    return `<tr><td>${id}</td><td>${fmt(w.context_length)}</td><td title="${esc(info.detail)}">${routing}${ownership}</td><td>${fmt(w.load)} / ${fmt(w.queued)}</td><td class="worker-actions"><button class="button" title="${esc(info.title)}" data-action="${info.action}" data-id="${id}" ${workerBusy||info.blocked?'disabled':''}>${info.button}</button>${held&&!w.operator_paused?`<button class="button" title="Keep an operator pause even after all agents release their holds." data-action="drain" data-id="${id}" ${workerBusy?'disabled':''}>Keep paused</button>`:''}<button class="button" title="Remove registration only after draining and releasing all agent holds. Does not stop DS4." data-action="remove" data-id="${id}" ${workerBusy||!w.drained||busy||held?'disabled':''}>Remove</button></td></tr>`;
+    const routes=w.ssh?`<button class="button" title="Edit only the host-key-verified SSH fallback aliases. The current inference stream and primary route are not interrupted; the new list applies on the next reconnect." data-action="fallbacks" data-id="${id}" ${workerBusy?'disabled':''}>Routes ${fmt(1+(w.ssh_fallbacks?.length??0))}</button>`:'';
+    return `<tr><td>${id}</td><td>${fmt(w.context_length)}</td><td title="${esc(info.detail)}">${routing}${ownership}</td><td>${fmt(w.load)} / ${fmt(w.queued)}</td><td class="worker-actions"><button class="button" title="${esc(info.title)}" data-action="${info.action}" data-id="${id}" ${workerBusy||info.blocked?'disabled':''}>${info.button}</button>${held&&!w.operator_paused?`<button class="button" title="Keep an operator pause even after all agents release their holds." data-action="drain" data-id="${id}" ${workerBusy?'disabled':''}>Keep paused</button>`:''}${routes}<button class="button" title="Remove registration only after draining and releasing all agent holds. Does not stop DS4." data-action="remove" data-id="${id}" ${workerBusy||!w.drained||busy||held?'disabled':''}>Remove</button></td></tr>`;
   }).join('') || '<tr><td colspan="5">No workers registered.</td></tr>';
 }
 async function loadWorkers() {
@@ -390,11 +391,11 @@ async function workerAction(action, input) {
   $('worker-rows').querySelectorAll('button').forEach(b=>{b.disabled=true;});
   $('relocation-offers').querySelectorAll('button').forEach(b=>{b.disabled=true;});
   const target=input.workers?.join(', ');
-  workerMessage(action==='context'?'Checking enabled server capacities…':action==='add'?'Checking model and context…':action==='resume'?`${target}: checking readiness and any required generation proof…`:'Updating worker routing…');
+  workerMessage(action==='context'?'Checking enabled server capacities…':action==='add'?'Checking model and context…':action==='fallbacks'?'Saving verified management-route fallbacks…':action==='resume'?`${target}: checking readiness and any required generation proof…`:'Updating worker routing…');
   try {
     const r=await fetch(`/api/workers/${action}`,{method:'POST',headers:{'content-type':'application/json','x-dsg-csrf':csrfToken},body:JSON.stringify(input),signal:AbortSignal.timeout(35000)});
     const data=await r.json();if(!r.ok)throw new Error(data.error||'Worker control failed');
-    workerMessage(action==='recover'?`Recovery accepted: ${data.id}. See executor receipts below.`:action==='recovery-policy'?`Automatic recovery ${data.automatic?'enabled':'disabled'}.`:action==='protection'?`JPEG compatibility protection ${data.vision_jpeg?.enabled?'enabled':'disabled'}. Existing requests and DS4 settings are unchanged.`:action==='context'?`Pool limit saved: ${fmt(data.minimum_context)} tokens. Applied now; model servers and Pi unchanged.`:action==='add'?'Registered paused. Enable routing when ready.':action==='drain'?'Draining. Admitted requests will finish before removal.':action==='remove'?'Removed from this gateway. Model server left running.':action==='relocate'?`${data.source} → ${data.destination}: undispatched request handed over with its original client and deadline.`:'Routing enabled.');
+    workerMessage(action==='recover'?`Recovery accepted: ${data.id}. See executor receipts below.`:action==='recovery-policy'?`Automatic recovery ${data.automatic?'enabled':'disabled'}.`:action==='protection'?`JPEG compatibility protection ${data.vision_jpeg?.enabled?'enabled':'disabled'}. Existing requests and DS4 settings are unchanged.`:action==='context'?`Pool limit saved: ${fmt(data.minimum_context)} tokens. Applied now; model servers and Pi unchanged.`:action==='fallbacks'?`Management fallbacks saved. Active inference was not interrupted; the list applies on the next SSH reconnect.`:action==='add'?'Registered paused. Enable routing when ready.':action==='drain'?'Draining. Admitted requests will finish before removal.':action==='remove'?'Removed from this gateway. Model server left running.':action==='relocate'?`${data.source} → ${data.destination}: undispatched request handed over with its original client and deadline.`:'Routing enabled.');
     if(action==='context'){contextDirty=false;contextExpected=data.minimum_context;}
     if(action==='queue-timeout'){queueDirty=false;queueExpected=data.queue_timeout_ms;workerMessage(`Queue allowance saved: ${fmt(data.queue_timeout_ms/3600000)} hours for new requests. Existing waits and model servers unchanged.`);}
     if(action==='add')$('worker-form').reset();
@@ -439,6 +440,13 @@ function wireWorkerControls() {
   const handleWorkerClick=e=>{
     const button=e.target.closest('button[data-action]');if(!button||button.disabled)return;
     const {action,id}=button.dataset;
+    if(action==='fallbacks'){
+      const worker=visibleWorkers.find(candidate=>candidate.id===id),before=worker?.ssh_fallbacks??[];
+      const answer=window.prompt(`Fallback SSH aliases for ${id}, comma-separated. Primary route ${worker?.ssh} is unchanged. Leave empty to clear.`,before.join(', '));
+      if(answer===null)return;
+      const fallbacks=[...new Set(answer.split(',').map(value=>value.trim()).filter(Boolean))];
+      void workerAction('fallbacks',{id,expected_ssh_fallbacks:before,ssh_fallbacks:fallbacks});return;
+    }
     if(action==='remove'&&!window.confirm(`Remove ${id} from the gateway? Its model server and caches will be left running.`))return;
     if(action==='resume'&&visibleWorkers.find(w=>w.id===id)?.quarantine&&!window.confirm(`Verify and readmit ${id}? DSG will check model/context and generate a small test response. Failed checks keep it quarantined. This does not restart DS4 or change its settings.`))return;
     void workerAction(action,action==='remove'?{id}:{workers:[id]});

@@ -17,7 +17,14 @@ try {
     if(!id)throw new Error(`${command} requires a worker ID`);
     route={drain:'/drain-workers',resume:'/resume-workers',remove:'/remove-worker'}[command];
     body=command==='remove'?{id}:{workers:[id]};
-  } else throw new Error('Usage: workers.mjs [--config FILE] list|add ID --url URL [--ssh HOST --ssh-fallbacks HOST,HOST --remote-port PORT]|drain ID|resume ID|remove ID');
+  } else if(['fallbacks','clear-fallbacks'].includes(command)) {
+    if(!id)throw new Error(`${command} requires a worker ID`);
+    if(command==='fallbacks'&&fallback===undefined)throw new Error('fallbacks requires --ssh-fallbacks HOST,HOST');
+    if(command==='clear-fallbacks'&&fallback!==undefined)throw new Error('clear-fallbacks takes no --ssh-fallbacks option');
+    const registered=await workerControl(config.control_socket,'/workers'),current=registered.workers?.find(worker=>worker.id===id);
+    if(!current)throw new Error('Unknown worker');
+    route='/set-ssh-fallbacks';body={id,expected_ssh_fallbacks:current.ssh_fallbacks??[],ssh_fallbacks:command==='clear-fallbacks'?[]:fallback.split(',').map(value=>value.trim()).filter(Boolean)};
+  } else throw new Error('Usage: workers.mjs [--config FILE] list|add ID --url URL [--ssh HOST --ssh-fallbacks HOST,HOST --remote-port PORT]|fallbacks ID --ssh-fallbacks HOST,HOST|clear-fallbacks ID|drain ID|resume ID|remove ID');
   const result=await workerControl(config.control_socket,route,body);
   console.log(JSON.stringify(result,null,2));
   if(command==='add')console.log('Registered paused. Enable routing in the local UI or run resume ID. Model settings were not changed.');

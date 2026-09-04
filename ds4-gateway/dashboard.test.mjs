@@ -121,6 +121,9 @@ test('worker enrollment offers bounded SSH fallback aliases without accepting SS
   const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8');
   assert.match(html,/name="ssh_fallbacks"/);assert.match(html,/host-key-verified SSH aliases/);
   assert.match(source,/ssh_fallbacks\.value\.split\(','\)/);assert.match(source,/worker\.ssh_fallbacks=fallbacks/);
+  const executable=source.replace(/^import .*;\n/,'').split('\npoll();')[0],context=vm.createContext({});vm.runInContext(executable,context);
+  const row=vm.runInContext(`workerRows(${JSON.stringify([{id:'remote',ssh:'primary',ssh_fallbacks:['backup'],is_healthy:true,drained:false,load:1,queued:0}])})`,context);
+  assert.match(row,/data-action="fallbacks"/);assert.match(row,/>Routes 2</);
   assert.doesNotMatch(html,/ProxyCommand|StrictHostKeyChecking=no/);
 });
 
@@ -527,8 +530,8 @@ test('opt-in worker controls require same origin, JSON and a CSRF token; diagnos
   assert.equal(calls.length,0);
   assert.equal((await post('/api/workers/context','{}',{'content-type':'application/json'})).status,403);
   assert.equal((await post('/api/workers/queue-timeout','{}',{'content-type':'application/json'})).status,403);
-  for(const action of ['add','drain','resume','remove','context','queue-timeout','protection','relocate']) assert.equal((await post('/api/workers/'+action,JSON.stringify({id:'fake'}),valid)).status,200);
-  assert.deepEqual(calls.map(x=>x.action),['add','drain','resume','remove','context','queue-timeout','protection','relocate']);
+  for(const action of ['add','drain','resume','remove','fallbacks','context','queue-timeout','protection','relocate']) assert.equal((await post('/api/workers/'+action,JSON.stringify({id:'fake'}),valid)).status,200);
+  assert.deepEqual(calls.map(x=>x.action),['add','drain','resume','remove','fallbacks','context','queue-timeout','protection','relocate']);
   assert.ok(!(await(await fetch(url+'/api/diagnostics')).text()).includes(init.csrf_token));
   const plain=await fixture(t);assert.deepEqual(await(await fetch(plain.url+'/api/workers')).json(),{enabled:false});
 });

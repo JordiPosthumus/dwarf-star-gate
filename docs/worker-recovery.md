@@ -172,6 +172,18 @@ Do this per worker, initially with automatic mode **off**.
    ID/URL/SSH aliases/port must match the registered worker. Recovery paths are absolute,
    shell-safe paths without spaces in v1. Endpoint registration cannot alter this
    separate allowlist. Copying the config does not apply it to a running process.
+
+   For an existing remote registration, update the fallback list without
+   remove/re-add by using its **Routes** control in the local UI, or:
+
+   ```text
+   node ds4-gateway/workers.mjs fallbacks worker-a --ssh-fallbacks my-ds4-server-lan,my-ds4-server-tailnet
+   ```
+
+   The optimistic, backed-up write changes only host-key-verified fallback aliases.
+   It does not interrupt the current tunnel or alter inference/model settings; the
+   tunnel supervisor reads the latest durable list on its next reconnect. Use
+   `clear-fallbacks worker-a` to return to the primary alias only.
 5. Restart DSG at an agreed maintenance window. Inspect the
    policy/UI. The monitor inspects services every 30 seconds; ordinary inference
    and health-check timeouts are unchanged. Unreachable adapters do not block the

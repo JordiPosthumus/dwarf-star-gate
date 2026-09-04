@@ -10,7 +10,7 @@ import { clientMetadata, CLIENT_METADATA_HEADER } from './client-metadata.mjs';
 import { EmbeddingCollector } from './embeddings.mjs';
 import { RoutingShadow } from './routing-shadow.mjs';
 import { GenerationFaultObserver, verifyGeneration } from './generation-health.mjs';
-import { workerConfig, workerConfigs, assertUniqueWorker, sshTargets } from './worker-config.mjs';
+import { workerConfig, workerConfigs, assertUniqueWorker, sshTargets, replaceSshFallbacks } from './worker-config.mjs';
 import { Recovery } from './recovery.mjs';
 import { classifySshFailure } from './recovery-transport.mjs';
 import { loadConfig, isMain, gatewayPort, gatewayHost, continuityEnabled } from './config.mjs';
@@ -924,6 +924,17 @@ export function createGateway(config,{visionTranscode}={}) {
       return registry();
     } catch (e) { node.removed = true; node.probeRequest?.destroy(); node.stopTunnel?.(); throw e; }
   }
+  function setSshFallbacks(input) {
+    if(shuttingDown||draining)throw new Error('Gateway is draining');
+    const next=replaceSshFallbacks(nodes.map(definition),input),updated=next.find(worker=>worker.id===input.id),node=nodes.find(worker=>worker.id===input.id);
+    if(JSON.stringify(updated.ssh_fallbacks??[])===JSON.stringify(node.ssh_fallbacks??[]))return registry();
+    if(fs.existsSync(store.filename)){const backup=`${store.filename}.routes-${Date.now()}-${randomUUID()}.bak`;fs.copyFileSync(store.filename,backup,fs.constants.COPYFILE_EXCL);fs.chmodSync(backup,0o600);}
+    store.save({...store.data,workers:next});
+    if(updated.ssh_fallbacks)node.ssh_fallbacks=[...updated.ssh_fallbacks];else delete node.ssh_fallbacks;
+    node.managementPath={...node.managementPath,route_count:sshTargets(node).length,changed_at:new Date().toISOString()};
+    log('worker_management_routes_changed',{node:node.id,route_count:sshTargets(node).length});
+    return registry();
+  }
   function removeWorker(id) {
     if (shuttingDown) throw new Error('Gateway is stopping');
     const node = nodes.find(n => n.id === id);
@@ -958,7 +969,7 @@ export function createGateway(config,{visionTranscode}={}) {
     if(req.method==='GET'&&req.url==='/agent/v1/status')return json(res,200,agents.status(actor));
     if(req.method==='GET'&&req.url==='/agents')return json(res,200,agents.adminStatus());
     if (req.method === 'GET' && req.url === '/workers') return json(res, 200, registry());
-    if (req.method !== 'POST' || !['/drain-workers', '/resume-workers', '/add-worker', '/remove-worker', '/set-context-limit','/set-queue-timeout','/set-protection','/relocate-queued','/genie-relocate-queued','/recovery-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/predictor','/genie-predictor','/grant-agent','/revoke-agent','/release-agent-hold','/agent/v1/drain','/agent/v1/resume','/agent/v1/receipt'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
+    if (req.method !== 'POST' || !['/drain-workers', '/resume-workers', '/add-worker', '/remove-worker', '/set-ssh-fallbacks','/set-context-limit','/set-queue-timeout','/set-protection','/relocate-queued','/genie-relocate-queued','/recovery-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/predictor','/genie-predictor','/grant-agent','/revoke-agent','/release-agent-hold','/agent/v1/drain','/agent/v1/resume','/agent/v1/receipt'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
     let body = '';
     req.on('data', chunk => { body += chunk; if (body.length > 4096) req.destroy(); });
     req.on('error', () => {});
@@ -987,6 +998,7 @@ export function createGateway(config,{visionTranscode}={}) {
             return json(res,200,relocateQueued(input,'genie'));
           }
           if (req.url === '/add-worker') return json(res, 201, await addWorker(input.worker));
+          if (req.url === '/set-ssh-fallbacks') return json(res, 200, setSshFallbacks(input));
           if (req.url === '/remove-worker') return json(res, 200, removeWorker(input.id));
           if (req.url === '/resume-workers') {
             if (!Array.isArray(input.workers) || !input.workers.length || input.workers.some(id=>!nodes.some(n=>n.id===id))) throw new Error('Specify known worker IDs');
@@ -1070,10 +1082,10 @@ export function createGateway(config,{visionTranscode}={}) {
 
 function superviseTunnel(node, stopping) {
   let child, timer,targetIndex=0;
-  const targets=sshTargets(node);
   const update=(state,reason=null)=>{node.managementPath={...node.managementPath,transport:'ssh_tunnel',state,reason,changed_at:new Date().toISOString()};};
   const start = () => {
     if (stopping()) return;
+    const targets=sshTargets(node);targetIndex%=targets.length;
     node.managementPath={...node.managementPath,transport:'ssh_tunnel',state:'connecting',reason:null,attempts:(node.managementPath?.attempts??0)+1,changed_at:new Date().toISOString()};
     const port = new URL(node.url).port;
     child = spawn('/usr/bin/ssh', ['-N', '-o', 'BatchMode=yes', '-o', 'ExitOnForwardFailure=yes', '-o', 'ConnectTimeout=10',
@@ -1085,7 +1097,7 @@ function superviseTunnel(node, stopping) {
     child.on('exit', (code, signal) => {
       update('retrying',node.managementPath?.reason??classifySshFailure('',null,code));
       log('tunnel_exited', { node: node.id, code, signal });
-      targetIndex=(targetIndex+1)%targets.length;
+      targetIndex=(targetIndex+1)%sshTargets(node).length;
       if (!stopping()) timer = setTimeout(start, 3000);
     });
   };

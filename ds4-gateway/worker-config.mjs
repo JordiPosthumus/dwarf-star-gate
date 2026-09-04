@@ -1,6 +1,12 @@
 // Operator-supplied routing endpoints only. No model launch commands or settings.
 const keys = new Set(['id', 'url', 'ssh', 'ssh_fallbacks', 'remote_port', 'telemetry_service']);
 const validSshAlias=value=>typeof value==='string'&&/^[a-zA-Z0-9][\w.@-]{0,252}$/.test(value);
+const fallbackList=(value,primary)=>{
+  if(!Array.isArray(value)||value.length>4||value.some(alias=>!validSshAlias(alias)))throw new Error('SSH fallbacks must be an array of at most four host aliases');
+  const fallbacks=[...new Set(value)];
+  if(fallbacks.includes(primary))throw new Error('Primary SSH alias cannot also be a fallback');
+  return fallbacks;
+};
 export function sshTargets(worker) {
   return worker?.ssh?[worker.ssh,...(worker.ssh_fallbacks??[])]:[];
 }
@@ -14,9 +20,7 @@ export function workerConfig(raw, { registration = false } = {}) {
     if (!validSshAlias(raw.ssh)) throw new Error('Invalid SSH host or alias');
     result.ssh = raw.ssh;
     if(raw.ssh_fallbacks!==undefined){
-      if(!Array.isArray(raw.ssh_fallbacks)||raw.ssh_fallbacks.length>4||raw.ssh_fallbacks.some(alias=>!validSshAlias(alias)))throw new Error('SSH fallbacks must be an array of at most four host aliases');
-      const fallbacks=[...new Set(raw.ssh_fallbacks)];
-      if(fallbacks.includes(raw.ssh))throw new Error('Primary SSH alias cannot also be a fallback');
+      const fallbacks=fallbackList(raw.ssh_fallbacks,raw.ssh);
       if(fallbacks.length)result.ssh_fallbacks=fallbacks;
     }
     const port = raw.remote_port ?? 8000;
@@ -39,4 +43,20 @@ export function assertUniqueWorker(list, worker) {
   if (list.some(n => n.id === worker.id)) throw new Error('Worker ID already registered');
   if (list.some(n => n.url === worker.url)) throw new Error('Local endpoint already registered');
   if (worker.ssh && list.some(n => (n.remote_port ?? 8000) === (worker.remote_port ?? 8000) && sshTargets(n).some(alias=>sshTargets(worker).includes(alias)))) throw new Error('SSH endpoint already registered');
+}
+
+// Optimistic, management-only edit. The inference URL, primary route, remote
+// port, telemetry and worker identity are immutable here.
+export function replaceSshFallbacks(rawList,input) {
+  const list=workerConfigs(rawList);
+  if(!input||Array.isArray(input)||Object.keys(input).sort().join(',')!=='expected_ssh_fallbacks,id,ssh_fallbacks'||typeof input.id!=='string')throw new Error('Specify worker ID, expected fallbacks and replacement fallbacks only');
+  const index=list.findIndex(worker=>worker.id===input.id);
+  if(index<0)throw new Error('Unknown worker');
+  const current=list[index];
+  if(!current.ssh)throw new Error('SSH fallbacks require a remote worker');
+  const expected=fallbackList(input.expected_ssh_fallbacks,current.ssh),replacement=fallbackList(input.ssh_fallbacks,current.ssh);
+  if(JSON.stringify(expected)!==JSON.stringify(current.ssh_fallbacks??[]))throw new Error('SSH fallbacks changed; refresh before applying');
+  const candidate=workerConfig({...current,ssh_fallbacks:replacement});
+  assertUniqueWorker(list.filter((_,i)=>i!==index),candidate);
+  return list.map((worker,i)=>i===index?candidate:worker);
 }

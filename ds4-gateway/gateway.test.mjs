@@ -15,7 +15,7 @@ import {agentRequest} from './agent-client.mjs';
 import {randomUUID,createHash} from 'node:crypto';
 import { runDashboard } from './dashboard.mjs';
 import { GenerationFaultObserver } from './generation-health.mjs';
-import {workerConfig,sshTargets,assertUniqueWorker} from './worker-config.mjs';
+import {workerConfig,sshTargets,assertUniqueWorker,replaceSshFallbacks} from './worker-config.mjs';
 
 async function until(fn, timeout = 3000) {
   const end = Date.now() + timeout;
@@ -96,6 +96,11 @@ test('remote workers accept bounded verified SSH alias fallbacks, never options 
   assert.throws(()=>assertUniqueWorker([worker],workerConfig({id:'worker-b',url:'http://127.0.0.1:38002',ssh:'worker-b',ssh_fallbacks:['worker-a-tailnet'],remote_port:8000})),/SSH endpoint/);
   assert.equal(workerRegistrationTimeout({},worker),45000);
   assert.equal(workerRegistrationTimeout({registration_timeout_ms:9000},worker),9000);
+  const changed=replaceSshFallbacks([worker],{id:'worker-a',expected_ssh_fallbacks:['worker-a-lan','worker-a-tailnet'],ssh_fallbacks:['worker-a-wifi']});
+  assert.deepEqual(changed[0].ssh_fallbacks,['worker-a-wifi']);assert.equal(changed[0].url,worker.url);assert.equal(changed[0].ssh,worker.ssh);
+  assert.throws(()=>replaceSshFallbacks(changed,{id:'worker-a',expected_ssh_fallbacks:[],ssh_fallbacks:[]}),/changed/);
+  assert.throws(()=>replaceSshFallbacks([{id:'local',url:'http://127.0.0.1:8000'}],{id:'local',expected_ssh_fallbacks:[],ssh_fallbacks:['remote']}),/remote worker/);
+  assert.throws(()=>replaceSshFallbacks([worker,{id:'worker-b',url:'http://127.0.0.1:38002',ssh:'worker-b'}],{id:'worker-b',expected_ssh_fallbacks:[],ssh_fallbacks:['worker-a-lan']}),/SSH endpoint/);
 });
 async function rig(t, count = 2, overrides = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ds4-gateway-test-'));
@@ -834,6 +839,7 @@ test('failed compatibility checks and duplicate registrations cannot mutate memb
   await assert.rejects(ctl('/add-worker',{worker:{id:'other',url:m.url}}),/endpoint already registered/);
   for(const worker of [{id:'bad',url:'http://example.test:8000'},{id:'bad',url:'http://127.0.0.1:39999',ssh:'-oProxyCommand=bad'},{id:'bad',url:'http://127.0.0.1:39999',ssh:'host',remote_port:0},{id:'bad',url:m.url,command:'DO_NOT_RUN'}])
     await assert.rejects(ctl('/add-worker',{worker}));
+  await assert.rejects(ctl('/set-ssh-fallbacks',{id:'spark1',expected_ssh_fallbacks:[],ssh_fallbacks:['remote']}),/remote worker/);
   assert.equal(r.gateway.nodes.length,2);
 });
 
