@@ -111,8 +111,8 @@ routing authority unless it passes the independent holdout and future-traffic
 gates. [Calibration preflight](docs/calibration.md) skips without a proven
 cache-preserving path. An opt-in [persistent Genie notebook](docs/genie-memory.md)
 records worker-state changes, incident/recovery references, explicit operator
-notes and evidence-gated developer hardening suggestions. A compact panel at the
-top of the control room lists the newest suggestion first. Genie may describe a
+notes and evidence-gated developer hardening suggestions. A compact notice above
+the focused views lists the newest suggestion first. Genie may describe a
 test or design improvement only for a deterministic, privacy-bounded failure
 candidate selected by DSG code; the suggestion is a hypothesis, cannot modify the
 gateway or servers and never includes inference content. It survives dashboard
@@ -205,6 +205,10 @@ the encoder runs only when explicitly configured, without cloud inference.
 ## Dashboard
 
 Terminal-inspired presentation, per-worker measurements, and a replaceable logo.
+Four focused views keep the control room compact: **Fleet** for live capacity and
+server cards, **Gate Genie** for reports and recovery, **Analytics** for evidence
+and predictors, and **Activity** for continuity and request history. The health
+wire remains visible above every view so a focused page does not hide an incident.
 These captures show the current interface with **synthetic demo data**, not live
 sessions, measured benchmarks or proof of model accuracy. The example fleet mixes
 Sparks and a Mac; all displayed servers, reports and predictions are fictional.
@@ -213,11 +217,13 @@ See [screenshot reproduction and checks](docs/screenshots.md).
 ![Dwarf Star Gate dashboard with illustrative telemetry](docs/images/dashboard-overview.png)
 
 <details>
-<summary>Gate Genie, evidence collection and analytics</summary>
+<summary>Gate Genie, analytics and activity views</summary>
 
-![Synthetic Gate Genie assessment and local embedding collection](docs/images/dashboard-genie.png)
+![Synthetic Gate Genie assessment and recovery view](docs/images/dashboard-genie.png)
 
-![Synthetic XGB accuracy, validation controls, cache calculator and request log](docs/images/dashboard-cache-and-requests.png)
+![Synthetic evidence collection, XGB accuracy and cache calculator](docs/images/dashboard-analytics.png)
+
+![Synthetic continuity evidence and request history](docs/images/dashboard-activity.png)
 
 </details>
 

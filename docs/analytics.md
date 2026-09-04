@@ -1,8 +1,8 @@
 # Analytics and the latency-model plan
 
-The local dashboard has a compact **Analytics** panel below the fleet, Gate Genie
-and service-recovery panels, just above the request log. It evaluates predictions
-already saved by the optional [routing shadow](routing-shadow.md) and
+The local dashboard has a focused **Analytics** view, separate from live fleet,
+Gate Genie and request-history controls. It evaluates predictions already saved
+by the optional [routing shadow](routing-shadow.md) and
 [predictor lifecycle](predictor-lifecycle.md). The reader does not fit models or
 change placement. Separate controls in the panel manage the bounded trainer,
 validation policy and optional new-session placement. With collection alone,

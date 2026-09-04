@@ -29,6 +29,16 @@ try {
   await page.waitForFunction(()=>document.getElementById('routing-message').classList.contains('error'));
   await page.waitForFunction(()=>document.getElementById('routing-message').textContent===''&&!document.getElementById('routing-message').classList.contains('error'));
   await page.waitForFunction(()=>document.querySelectorAll('.device').length===3&&document.querySelectorAll('#genie-reports details').length===1&&document.querySelectorAll('#analytics-chart circle').length>0);
+  assert.equal(await page.locator('#tab-fleet').getAttribute('aria-selected'),'true');
+  assert.equal(await page.locator('#view-fleet').isVisible(),true);
+  assert.equal(await page.locator('#view-genie').isHidden(),true);
+  await page.locator('#tab-fleet').focus();await page.keyboard.press('ArrowRight');
+  assert.equal(await page.locator('#tab-genie').getAttribute('aria-selected'),'true');
+  assert.equal(new URL(page.url()).hash,'#genie');
+  await page.keyboard.press('ArrowLeft');
+  assert.equal(await page.locator('#tab-fleet').getAttribute('aria-selected'),'true');
+  assert.equal(new URL(page.url()).hash,'');
+  await page.locator('#tab-genie').click();
   assert.equal(await page.locator('#genie-hardening').isVisible(),true);
   assert.match(await page.locator('#genie-hardening-status').innerText(),/1 suggestion.*1 durable.*newest first/);
   await page.locator('#genie-hardening summary').click();
@@ -37,11 +47,13 @@ try {
   assert.equal(await page.locator('#routing-message').innerText(),'','A successful control read must clear a stale error banner');
   assert.equal(await page.locator('h1').innerText(),'Dwarf Star Gate');
   assert.match(await page.locator('#connection').innerText(),/Demo/);
+  await page.locator('#tab-analytics').click();
   assert.match(await page.locator('#predictor-status').innerText(),/0 validated models/);
   assert.equal(await page.locator('#predictor-recipe option').count(),3);
   assert.equal(await page.locator('#predictor-recipe').inputValue(),'standard-v1');
   assert.match(await page.locator('#calibration-status').innerText(),/skipped.*cache-preserving/);
   assert.match(await page.locator('#embedding-detail').innerText(),/384 dimensions/);
+  await page.locator('#tab-fleet').click();
   await page.waitForFunction(()=>document.getElementById('throughput-output').textContent!=='—');
   assert.equal(await page.locator('#throughput-output').innerText(),'74.8k');
   assert.equal(await page.locator('#throughput-peak').innerText(),'153k');
@@ -77,25 +89,27 @@ try {
   await page.evaluate(()=>window.scrollTo(0,0));
   const devices=await page.locator('#devices').boundingBox();
   await page.screenshot({path:path.join(output,'dashboard-overview.png'),fullPage:true,clip:{x:0,y:0,width:1440,height:Math.ceil(devices.y+devices.height+24)},animations:'disabled'});
+  await page.locator('#tab-genie').click();
   await page.locator('#genie-reports summary').click();
   // A real poll must not collapse the open report; don't replace DOM to stage screenshots.
   const checked=await page.locator('#updated').innerText();
   await page.waitForFunction(previous=>document.getElementById('updated').textContent!==previous,checked,{timeout:10000});
   assert.equal(await page.locator('#genie-reports details').getAttribute('open'),'');
-  await page.locator('.insights').screenshot({path:path.join(output,'dashboard-genie.png'),animations:'disabled'});
+  await page.locator('#view-genie').screenshot({path:path.join(output,'dashboard-genie.png'),animations:'disabled'});
+  await page.locator('#tab-analytics').click();
   await page.locator('#analytics-metric').selectOption('xgb-remaining');
   await page.waitForFunction(()=>document.querySelectorAll('#analytics-chart circle').length===20);
   assert.match(await page.locator('#analytics-status').innerText(),/Synthetic demo/);
   assert.equal(await page.locator('#analytics-version-label').isVisible(),true);
   await page.evaluate(()=>window.scrollTo(0,0));
-  const analytics=await page.locator('#analytics').boundingBox();
-  const requests=await page.locator('#requests').boundingBox();
-  await page.screenshot({path:path.join(output,'dashboard-cache-and-requests.png'),fullPage:true,clip:{x:0,y:Math.floor(analytics.y-16),width:1440,height:Math.ceil(requests.y+requests.height-analytics.y+40)},animations:'disabled'});
-  for(const [file,minHeight] of [['dashboard-overview.png',950],['dashboard-genie.png',250],['dashboard-cache-and-requests.png',700]]) {
+  await page.locator('#view-analytics').screenshot({path:path.join(output,'dashboard-analytics.png'),animations:'disabled'});
+  await page.locator('#tab-activity').click();
+  await page.locator('#view-activity').screenshot({path:path.join(output,'dashboard-activity.png'),animations:'disabled'});
+  for(const [file,minHeight] of [['dashboard-overview.png',950],['dashboard-genie.png',250],['dashboard-analytics.png',700],['dashboard-activity.png',150]]) {
     const png=await fs.readFile(path.join(output,file));
     assert.ok(png.readUInt32BE(20)>=minHeight,`${file}: screenshot was clipped`);
   }
-  await page.locator('#analytics-metric').selectOption('queue');
+  await page.locator('#tab-analytics').click();await page.locator('#analytics-metric').selectOption('queue');
   assert.equal(await page.locator('#analytics-version-label').isVisible(),false);
   await page.locator('#predictor-recipe').selectOption('interactions-v1');
   const recipePoll=await page.locator('#updated').innerText();
@@ -106,6 +120,7 @@ try {
   await page.locator('[data-predictor="train"]').click();
   assert.deepEqual((await trainRequest).postDataJSON(),{action:'train',recipe_id:'interactions-v1'});
   assert.equal((await trainResponse).ok(),false,'The demo must refuse real training');
+  await page.locator('#tab-fleet').click();
   await page.setViewportSize({width:390,height:844});
   const mobileLayout=await page.evaluate(()=>({
     width:window.innerWidth,
@@ -125,6 +140,7 @@ try {
   const learningOrigin=`http://127.0.0.1:${learningServer.address().port}`;allowedOrigins.add(learningOrigin);
   await page.setViewportSize({width:1440,height:1100});await page.goto(learningOrigin);
   await page.waitForFunction(()=>document.querySelectorAll('.learning-milestone').length===1);
+  await page.locator('#tab-genie').click();
   assert.match(await page.locator('#learning-milestone-items').innerText(),/33\.3%.*42 requests/);
   assert.match(await page.locator('#learning-milestone-items').innerText(),/<No HTML is interpreted\./);
   await page.locator('[data-milestone]').focus();
@@ -134,10 +150,12 @@ try {
   assert.equal(await notice.evaluate(el=>el===document.querySelector('.learning-milestone')),true,'Polling replaced the notice being read');
   assert.equal(await page.locator('[data-milestone]').evaluate(el=>el===document.activeElement),true);
   await page.reload();await page.locator('[data-milestone]').waitFor();
+  await page.locator('#tab-analytics').click();
   page.once('dialog',dialog=>dialog.accept());await page.locator('[data-predictor="reset_baseline"]').click();
   await page.waitForFunction(()=>document.getElementById('predictor-status').textContent.includes('0 validated models'));
   assert.match(await page.locator('[data-predictor="automatic_training"]').innerText(),/on/);
   assert.match(await page.locator('[data-predictor="automatic_promotion"]').innerText(),/on/);
+  await page.locator('#tab-genie').click();
   assert.equal(await page.locator('.learning-milestone').count(),1,'Reset must not erase a historical milestone');
   await page.setViewportSize({width:390,height:844});
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),'Milestone must wrap on mobile');
@@ -158,7 +176,7 @@ try {
   const holdPoll=await page.locator('#updated').innerText();await page.waitForFunction(previous=>document.getElementById('updated').textContent!==previous,holdPoll,{timeout:10000});
   assert.match(await held.innerText(),/Held by test-agent/);assert.match(await held.innerText(),/Operator pause/);
   assert.deepEqual(errors,[]);
-  console.log('Saved five synthetic dashboard screenshots; verified polling, analytics, mobile, reset/milestones, escaped agent holds and Keep paused UX.');
+  console.log('Saved six synthetic dashboard screenshots; verified tab navigation, polling, analytics, mobile, reset/milestones, escaped agent holds and Keep paused UX.');
 } finally {
   await browser?.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));
   if(learningServer){learningServer.closeAllConnections();await new Promise(resolve=>learningServer.close(resolve));}

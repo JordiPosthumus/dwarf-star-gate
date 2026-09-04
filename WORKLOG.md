@@ -10,6 +10,12 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Split the growing control room into four focused views.** Fleet remains the
+  default; Gate Genie, Analytics and Activity each get a stable tab while the
+  health wire and important notices stay visible everywhere. Keyboard navigation,
+  URL hashes, live polling state, mobile overflow and the settings-gear handoff are browser-tested,
+  with fresh synthetic screenshots and no change to routing or model servers.
+
 - **Restored a trustworthy cross-platform CI signal.** Launchd recovery tests
   now preserve the runner's real file-owner identity while checking the exact
   per-user launch target, and the worker-free shadow test verifies its durable

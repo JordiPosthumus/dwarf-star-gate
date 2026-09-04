@@ -583,10 +583,36 @@ function renderGenieReports(reports = []) {
     if (!keep.has(node.dataset.reportId) && !node.open && !node.contains(document.activeElement)) node.remove();
   }
 }
+const workspaceNames=['fleet','genie','analytics','activity'];
+function activateWorkspaceTab(requested,{focus=false,updateHash=false}={}) {
+  const name=workspaceNames.includes(requested)?requested:'fleet';
+  for(const button of document.querySelectorAll('[data-workspace-tab]')){
+    const selected=button.dataset.workspaceTab===name;
+    button.setAttribute('aria-selected',String(selected));button.tabIndex=selected?0:-1;
+  }
+  for(const panel of document.querySelectorAll('[data-workspace-view]'))panel.hidden=panel.dataset.workspaceView!==name;
+  if(updateHash&&globalThis.history?.replaceState){
+    const url=new URL(globalThis.location.href);url.hash=name==='fleet'?'':name;globalThis.history.replaceState(null,'',url);
+  }
+  if(focus)document.querySelector(`[data-workspace-tab="${name}"]`)?.focus({preventScroll:true});
+  return name;
+}
+function setupWorkspaceTabs(){
+  const list=document.querySelector('.workspace-tabs'),buttons=[...list.querySelectorAll('[data-workspace-tab]')];
+  activateWorkspaceTab(globalThis.location?.hash?.slice(1));
+  list.addEventListener('click',event=>{const button=event.target.closest('[data-workspace-tab]');if(button)activateWorkspaceTab(button.dataset.workspaceTab,{updateHash:true});});
+  list.addEventListener('keydown',event=>{
+    const current=buttons.indexOf(event.target.closest('[data-workspace-tab]'));if(current<0)return;
+    const next=event.key==='Home'?0:event.key==='End'?buttons.length-1:event.key==='ArrowRight'||event.key==='ArrowDown'?(current+1)%buttons.length:event.key==='ArrowLeft'||event.key==='ArrowUp'?(current+buttons.length-1)%buttons.length:null;
+    if(next===null)return;event.preventDefault();activateWorkspaceTab(buttons[next].dataset.workspaceTab,{focus:true,updateHash:true});
+  });
+  globalThis.addEventListener?.('hashchange',()=>activateWorkspaceTab(globalThis.location.hash.slice(1)));
+}
 poll();
+setupWorkspaceTabs();
 $('request-filter').addEventListener('change',()=>{requestFilter=$('request-filter').value;renderRequests(wireSnapshot?.events??[]);});
-function openServerSettings({focus=false}={}){const panel=$('worker-management');panel.open=true;$('server-settings').setAttribute('aria-expanded','true');panel.scrollIntoView({behavior:'smooth',block:'start'});if(focus)panel.querySelector('input[name="id"]')?.focus({preventScroll:true});}
-$('server-settings').addEventListener('click',()=>{const panel=$('worker-management');if(panel.open){panel.open=false;$('server-settings').setAttribute('aria-expanded','false');}else openServerSettings();});
+function openServerSettings({focus=false}={}){activateWorkspaceTab('fleet',{updateHash:true});const panel=$('worker-management');panel.open=true;$('server-settings').setAttribute('aria-expanded','true');panel.scrollIntoView({behavior:'smooth',block:'start'});if(focus)panel.querySelector('input[name="id"]')?.focus({preventScroll:true});}
+$('server-settings').addEventListener('click',()=>{const panel=$('worker-management'),visible=!$('view-fleet').hidden;if(visible&&panel.open){panel.open=false;$('server-settings').setAttribute('aria-expanded','false');}else openServerSettings();});
 $('worker-management').addEventListener('toggle',()=>{$('server-settings').setAttribute('aria-expanded',String($('worker-management').open));});
 $('devices').addEventListener('click',event=>{if(!event.target.closest('[data-add-first]'))return;openServerSettings({focus:true});});
 $('analytics-metric').addEventListener('change',renderAnalytics);

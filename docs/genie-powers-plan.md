@@ -153,8 +153,8 @@ a new PID alone is not a successful recovery receipt.
 
 ## UI: current controls versus proposed controls
 
-**Current:** the Gate Genie panel beside Evidence collection has Enable / Turn
-off, Dedicated server / DSG pool fallback, Review now and Ask. Once configured,
+**Current:** the focused Gate Genie view has Enable / Turn off, Dedicated server /
+DSG pool fallback, Review now and Ask. Once configured,
 it starts on after a dashboard restart unless private config sets `enabled:false`.
 The dropdown selects already configured endpoints;
 it is not a URL editor. Endpoint/model/auth/tunnel settings live in the private

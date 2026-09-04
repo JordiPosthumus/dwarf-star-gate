@@ -1,7 +1,7 @@
 # Cache acquisition: measured component baseline
 
 **Implemented, read-only, unvalidated. No routing or cache mutation.** The
-Analytics panel includes a cache-cost calculator for one hypothetical server,
+Analytics view includes a cache-cost calculator for one hypothetical server,
 cache tier, cached-prefix length and total prompt length. It uses the existing
 DS4 timing feed; it does not call an LLM, copy a cache, or run a benchmark.
 

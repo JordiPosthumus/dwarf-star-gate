@@ -1,5 +1,20 @@
 # Changelog
 
+## Focused dashboard views
+
+- Replaced the increasingly long single dashboard flow with four persistent,
+  accessible views: Fleet, Gate Genie, Analytics and Activity. Fleet remains the
+  default; the compact health wire, hardening notices and dismissible learning
+  milestones remain global so changing views cannot hide urgent evidence.
+- Added roving keyboard focus, Arrow/Home/End navigation and stable URL hashes.
+  Hidden views continue receiving the same polling data, so switching views does
+  not reset reports, selected predictors or request evidence. The settings gear
+  always returns to Fleet before opening server controls.
+- Split the public synthetic browser captures by view and extended the browser
+  check across tab state, polling, settings, desktop and mobile layouts. This is
+  presentation-only; gateway routing, recovery permissions and DS4 settings are
+  unchanged.
+
 ## Cross-platform CI signal hardening
 
 - Fixed two test-harness defects exposed by GitHub's Ubuntu runner. Launchd
