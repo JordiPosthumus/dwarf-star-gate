@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Verified hardware ingestion through the real core callbacks.** Fake-backend
+  integration tests cover decision, after-upload and progress records, worker
+  identity, privacy filtering, stale/malformed samples and disabled collection.
+  Missing telemetry must not change inference bytes or quarantine a worker.
+
 - **Fixed mutable-request retries.** A reproduced client-side race could reuse
   changed URL/options after a certified wait. The transport now pins the original
   destination, body and cancellation signal, without changing patient deadlines

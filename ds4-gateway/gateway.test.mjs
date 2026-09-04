@@ -456,6 +456,37 @@ test('predictor misconfiguration cannot change inference or model limits; split 
   assert.equal(finish.generation.thinking_characters,5);assert.equal(finish.generation.answer_characters,2);assert.equal(finish.generation.tool_characters,2);assert.ok(!JSON.stringify(events).includes('SYNTHETIC PRIVATE TEXT'));
 });
 
+test('core hardware evidence reaches causal dataset stages without becoming an inference dependency',async t=>{
+  for(const scenario of ['fresh','stale','malformed','disabled'])await t.test(scenario,async t=>{
+    const r=await rig(t,1,{dataset_enabled:true,hardware_telemetry:{enabled:scenario!=='disabled'},
+      embeddings:{enabled:true,python:'/does-not-exist/dsg-python',model_dir:'/does-not-exist/encoder'}});
+    const root=path.dirname(r.config.state_file),dashboard=path.join(root,'dashboard');fs.mkdirSync(dashboard);
+    const at=Date.now()-(scenario==='stale'?60001:0);
+    const sample={node:'spark1',time:at,observed_at:at,power_watts:42,power_scope:'gpu_only',
+      memory_used_bytes:64,memory_total_bytes:128,memory_scope:'host_unified',private_note:'PRIVATE_HARDWARE_FIXTURE'};
+    fs.writeFileSync(path.join(dashboard,'hardware-current.json'),scenario==='malformed'?'invalid json':
+      JSON.stringify({schema:1,samples:[sample,{...sample,node:'other-worker',power_watts:999}]}));
+    const body=JSON.stringify({messages:[{role:'user',content:'PRIVATE_REQUEST_FIXTURE'}],stream:true,reasoning_effort:'xhigh',max_tokens:131072});
+    const result=await r.request(body,'hardware-fixture');
+    assert.equal(result.status,200);assert.ok(result.body.includes('[DONE]'));
+    assert.equal(r.backends[0].records[0].body.toString(),body,'telemetry cannot alter inference bytes');
+    await until(()=>r.gateway.stats().dataset.finished===1);
+    const directory=path.join(root,'training'),text=fs.readdirSync(directory).map(f=>fs.readFileSync(path.join(directory,f),'utf8')).join('');
+    const rows=text.trim().split('\n').map(JSON.parse),decision=rows.find(row=>row.kind==='decision');
+    const requestFeatures=rows.find(row=>row.kind==='request_features'),progress=rows.find(row=>row.kind==='progress');
+    assert.ok(decision&&requestFeatures&&progress,'real core callbacks wrote every requested stage');
+    assert.equal(progress.request_id,decision.request_id);assert.equal(requestFeatures.request_id,decision.request_id);
+    for(const evidence of [decision.candidates.find(c=>c.node==='spark1'),requestFeatures,progress]){
+      if(scenario==='fresh'){
+        assert.equal(evidence.hardware.node,'spark1');assert.equal(evidence.hardware.power_watts,42);
+        assert.equal(evidence.hardware.power_scope,'gpu_only');assert.equal(evidence.hardware.memory_used_bytes,64);
+      }else assert.equal(evidence.hardware,null,'missing or disabled telemetry remains unknown, not zero');
+    }
+    assert.ok(!text.includes('PRIVATE_HARDWARE_FIXTURE'));assert.ok(!text.includes('PRIVATE_REQUEST_FIXTURE'));
+    assert.equal(r.gateway.stats().workers[0].quarantine,null);
+  });
+});
+
 test('30-second progress is correlated to active work and its timer is cleared on completion',async t=>{
   const r=await rig(t,1,{dataset_enabled:true});
   const request=r.request(JSON.stringify({stream:true,delay:31000}),'progress-fixture');

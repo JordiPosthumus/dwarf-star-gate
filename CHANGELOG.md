@@ -1,5 +1,14 @@
 # Changelog
 
+## Verify core hardware evidence integration
+
+- Exercise real gateway decision, request-feature and initial progress callbacks
+  against a private hardware snapshot. Fresh evidence stays worker-specific and
+  allowlisted; stale, malformed or disabled evidence stays null. Requests retain
+  their exact body and complete even when the optional encoder is unavailable.
+- These are fake-backend integration checks, not a claim that a particular
+  deployment has restarted or collected hardware-enabled training traffic.
+
 ## Pin certified client retries to the original request
 
 - Snapshot eligible retry destination, method, text body, headers and abort
