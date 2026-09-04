@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Covered hardware at every forecast stage.** Upload and embedding completion
+  now carry their own snapshots. Synthetic training proves that hardware signals
+  can reach selected/exported XGB splits; this is plumbing evidence, not a claim
+  of improved prediction accuracy on the live fleet.
+
 - **Connected hardware measurements to forecast evidence.** A private bounded
   snapshot now links dashboard collection to admission/progress records, with
   freshness, identity and privacy checks. Deployment and validated V4 training

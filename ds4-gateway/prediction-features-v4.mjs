@@ -11,7 +11,7 @@ export class PredictionHistory extends v3.PredictionHistory {
     const c=candidate??job.decision.candidates?.find(w=>w.node===point.node);
     // Never backfill an earlier stage with a later measurement. A missing
     // progress snapshot is unknown, rather than recycling admission telemetry.
-    const sample=stage==='admission'?c?.hardware:progress?.hardware;
+    const sample=stage==='admission'?c?.hardware:stage==='upload'?job.body?.hardware:stage==='embedded'?job.embedding?.hardware:progress?.hardware;
     Object.assign(point.features,hardwareFeatures(sample,at,point.node));
     return point;
   }

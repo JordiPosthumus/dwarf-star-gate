@@ -52,6 +52,7 @@ export function evidence(kind, raw) {
     for(const k of ['seconds','baseline_seconds','elapsed_s','available_at'])row[k]=number(raw[k]);if(row.seconds===null||row.available_at===null)return null;
   }
   if(kind==='request_features') {
+    row.hardware=safeHardwareSnapshot(raw.hardware,row.node);
     row.feature_schema=2;row.prediction_point='after_upload';
     row.status=['ready','invalid_body','unsupported_route','unsupported_body','no_recent_user_text','capture_limit','encoded_body','invalid_json','incomplete_body'].includes(raw.status)?raw.status:'unavailable';
     row.extraction=EXTRACTION;
@@ -61,6 +62,7 @@ export function evidence(kind, raw) {
     row.bounded_slice=true;row.history_scan_limited=raw.history_scan_limited===true;
   }
   if(kind==='embedding') {
+    row.hardware=safeHardwareSnapshot(raw.hardware,row.node);
     row.embedding_schema=1;row.extraction=EXTRACTION;
     row.status=['ready','queue_full','worker_unavailable','worker_timeout','invalid_worker_output','collector_stopped'].includes(raw.status)?raw.status:'unavailable';
     if(row.status==='ready') {

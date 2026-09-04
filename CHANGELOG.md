@@ -1,5 +1,12 @@
 # Changelog
 
+## Hardware coverage across forecast stages
+
+- Attach fresh hardware snapshots to upload and embedding-completion evidence,
+  completing the stage coverage alongside admission and progress forecasts.
+- Verify with synthetic training that XGB can select hardware features and export
+  hardware-based splits, without activating routing or changing existing models.
+
 ## Hardware evidence ingestion
 
 - Bridge allowlisted dashboard hardware samples to admission and progress records

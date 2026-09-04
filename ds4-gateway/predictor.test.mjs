@@ -32,6 +32,12 @@ test('hardware challenger replay matches live snapshots and never backfills admi
   assert.equal(live[1].features.hardware_power_watts,60);
   delete d.candidates[0].hardware;
   assert.equal(hardwareReplay(events,inventory).rows[0].features.hardware_power_watts,null);
+  const upload=row('request_features','hw',10000,{status:'ready',available_at:origin+10000,hardware:{...sample,time:origin+9999,observed_at:origin+9999,power_watts:40}});
+  const embedded=row('embedding','hw',20000,{status:'ready',available_at:origin+20000,dimensions:384,hardware:{...sample,time:origin+19999,observed_at:origin+19999,power_watts:50}});
+  const staged=hardwareReplay([...events,upload,embedded],inventory).rows;
+  assert.equal(staged.find(r=>r.stage==='admission').features.hardware_power_watts,null);
+  assert.equal(staged.find(r=>r.stage==='upload').features.hardware_power_watts,40);
+  assert.equal(staged.find(r=>r.stage==='embedded').features.hardware_power_watts,50);
 });
 
 test('hardware features require same-worker, fresh measurements already observed at forecast time',()=>{

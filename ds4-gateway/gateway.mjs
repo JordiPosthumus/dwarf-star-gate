@@ -267,7 +267,7 @@ export function createGateway(config,{visionTranscode}={}) {
     await freshProbe(n);
     if(shuttingDown||draining||n.recovering||n.quarantine||n.probeError||!n.modelMatches||!validContext(n.contextLength)||n.contextLength<contextLimit())throw new Error('Fresh compatible worker readiness required; hold retained');
   }});}catch(e){store.close();throw e;}
-  const embeddings=new EmbeddingCollector(dataset.enabled?config.embeddings:null,(kind,row)=>dataset.record(kind,row));
+  const embeddings=new EmbeddingCollector(dataset.enabled?config.embeddings:null,(kind,row)=>dataset.record(kind,{...row,hardware:hardwareSnapshot?.get(row.node)??null}));
   const visionProtection=new VisionProtection(config.vision_compatibility,store,path.dirname(config.state_file),visionTranscode?{transcode:visionTranscode}:undefined);
   dataset.state.embeddings=embeddings.state.enabled;
   const agent = new http.Agent({ keepAlive: true, maxSockets: 16 });

@@ -13,6 +13,22 @@ ROOT=Path(__file__).resolve().parent.parent
 
 
 class PredictorV2Tests(unittest.TestCase):
+    def test_hardware_challenger_trains_and_exports_real_hardware_splits(self):
+        rows=self.rows(100)
+        for i,r in enumerate(rows):
+            r['features']['hardware_power_watts']=float((i%11)*10)
+            r['target_s']=20+2*r['features']['hardware_power_watts']
+        groups={k:[] for k in ('base','admission_state','client','history','ratios','semantic','request','progress')}
+        groups['base']=['server_id'];groups['hardware']=['hardware_power_watts']
+        data={'schema':'dsg-latency-v4','rows':rows,'snapshot':{'hashes':{}},'groups':groups,'categorical':['server_id']}
+        with tempfile.TemporaryDirectory() as directory:
+            prepared=Path(directory)/'prepared.json';prepared.write_text(json.dumps(data));result=v.train(prepared)
+        report=result['reports']['admission']
+        self.assertIn('hardware',report['selected']['family'])
+        self.assertGreater(report['split_usage'].get('hardware_power_watts',0),0)
+        self.assertEqual(report['feature_coverage']['hardware_power_watts'],1)
+        self.assertFalse(result['routing_enabled'])
+
     def test_hardware_challenger_keeps_no_hardware_ablations(self):
         for kind in ('admission','updated','remaining'):
             old=v.feature_families({'schema':'dsg-latency-v3'},kind)

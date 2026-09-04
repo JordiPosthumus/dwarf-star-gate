@@ -16,7 +16,9 @@ Dynamic RAM usage, GPU activity, power and clock samples feed dashboard telemetr
 The dashboard also writes a private atomic `runtime/dashboard/hardware-current.json`
 snapshot. When hardware telemetry is enabled, the gateway reads this bounded file
 (at most once per second) and records fresh, same-worker measurements with admission
-candidates and progress events. File failures produce unknowns, never inference
+candidates, upload metadata, embedding completion and progress events. Each stage
+uses its own available snapshot; later observations never amend earlier forecasts.
+File failures produce unknowns, never inference
 failures. Activating the core ingestion requires a gateway restart in addition to
 the dashboard reload. Static hardware family and RAM capacity in the worker
 inventory remain separate existing predictor inputs.
