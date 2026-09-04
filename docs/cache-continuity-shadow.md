@@ -64,3 +64,9 @@ Until those gates are satisfied, this module is a testable decision contract—n
 an automatic cache mover. The next safe step is to produce bounded live shadow
 records only where all required identities and components can be proven, then
 compare the forecast with the realized outcome before considering scheduler use.
+
+The separate [cache-continuity audit](cache-continuity-audit.md) now supplies a
+privacy-safe realized baseline: aggregate reuse ratios and exact abstention
+reasons for consecutive same-session work. It deliberately does not manufacture
+the missing snapshot identity, remote protocol or unchosen-path outcome needed to
+feed this four-path comparator live.

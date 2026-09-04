@@ -76,8 +76,10 @@ for copyable instructions, commands and the local-account trust boundary.
 **Implemented:** private routing evidence, fleet activity, and **Gate Genie**, a
 configured-by-the-operator local fleet assistant that starts observing by default,
 with separately opt-in [bounded DS4 service recovery](docs/worker-recovery.md). See the [prioritized feature roadmap](docs/roadmap.md)
-and [experimental collector/Genie setup](docs/observer.md). Cache-health auditing
-and cache migration remain roadmap items. The optional [predictor lifecycle](docs/predictor-lifecycle.md)
+and [experimental collector/Genie setup](docs/observer.md). A read-only
+[cache-continuity audit](docs/cache-continuity-audit.md) now measures same-session
+reuse and keeps weak low-reuse evidence unconfirmed; cache migration remains a
+roadmap item. The optional [predictor lifecycle](docs/predictor-lifecycle.md)
 adds live shadow forecasts, causal next-turn history, embedding-aware updates,
 remaining-time models, fixed cross-validation and future-traffic promotion gates.
 Prediction-assisted **new-session** placement is separately opt-in and requires
@@ -395,6 +397,11 @@ It never loads, copies, deletes or rewrites a cache. See
 The private inventory can support the fail-closed presence gate in the
 [four-path shadow](docs/cache-continuity-shadow.md), but DSG cannot yet derive an
 exact live snapshot identity or transfer a cache between arbitrary servers.
+Separately, `npm run cache-continuity:audit` evaluates consecutive same-session
+reuse from the private numerical dataset. It reports only aggregate counts,
+ratios and abstention reasons; low reuse is not called high-suspicion without
+unchanged epoch plus consecutive turn/compaction guards, and is never presented
+as protocol proof.
 
 Timing comes from a read-only SSH journal follower on Linux. The default remote user unit
 is `ds4-vision-q2.service`; set `telemetry_service` per worker if yours differs.

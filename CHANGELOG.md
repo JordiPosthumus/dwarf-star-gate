@@ -1,5 +1,15 @@
 # Changelog
 
+## Privacy-safe cache-continuity audit
+
+- Added a read-only aggregate audit over existing DSG decision/completion
+  evidence. It measures consecutive same-session reuse, separates observed,
+  partial, strongly guarded low reuse and unconfirmed low reuse, and abstains on
+  relocation, compaction, worker/profile/epoch changes, stale or censored work.
+- Reports expose only counts, ratios, fixed reason codes and configured worker
+  IDs—never text, embeddings or request/session/cache identifiers. The auditor
+  cannot route, move or mutate caches. Deployment smoke counts remain private.
+
 ## Explicitly enrolled macOS launchd recovery adapter
 
 - Added a separate mode-0600, no-follow macOS helper that can inspect, start or

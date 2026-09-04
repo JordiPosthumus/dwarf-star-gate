@@ -37,6 +37,11 @@ The pure [four-path cache-continuity comparator](cache-continuity-shadow.md) is
 also implemented with fail-closed presence/compatibility gates and no scheduler
 authority. Live rendered-prefix identity, a validated remote transfer/import
 protocol and future component validation remain prerequisites for live shadows.
+The first [privacy-safe cache-continuity audit](cache-continuity-audit.md) now
+measures consecutive same-session reuse from existing numerical evidence and
+abstains on relocation, compaction, profile/epoch change, stale or censored work.
+It separates strongly guarded suspicion from unconfirmed low reuse and has no
+cache or routing authority.
 
 **Recovery update:** order 6's first slice is now implemented in
 [bounded DS4 service recovery](worker-recovery.md): systemd-user enrollment, GG and
@@ -265,6 +270,13 @@ installation-keyed HMACs, reports aggregate compatibility cohorts and abstains o
 legacy unknown weights. It does not expose snapshot references, read prompt bytes,
 copy caches or change routing. Next: explicitly enrolled remote inventory and the
 four-path shadow comparison using measured critical-path components.
+
+**Implemented audit slice:** a bounded read-only dataset audit measures reuse on
+consecutive same-session/same-worker completions. It reports aggregate ratios and
+fixed abstention reasons, never IDs or text. Strong suspicion additionally needs
+an unchanged observation epoch plus consecutive client turn and compaction
+evidence; without those, low reuse remains unconfirmed. Exact rendered-prefix
+identity and a remote cache protocol remain separate prerequisites.
 
 ## Then: measured ETA prediction with XGBoost
 

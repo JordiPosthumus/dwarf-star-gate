@@ -111,3 +111,8 @@ now has a pure [four-path shadow comparator](cache-continuity-shadow.md). It
 compares wait-hot, local-restore, remote-acquisition and cold-prefill critical
 paths while preserving unknown evidence. It is not yet fed from live requests;
 no remote command, copy protocol or automatic routing is claimed.
+
+A separate [cache-continuity audit](cache-continuity-audit.md) measures realized
+same-session reuse from the private numerical dataset. Its aggregate ratios help
+find evidence gaps and anomalous low reuse, but do not prove snapshot presence or
+supply an unchosen path's acquisition cost.

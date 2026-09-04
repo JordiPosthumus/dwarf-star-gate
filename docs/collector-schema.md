@@ -4,7 +4,10 @@ Implementation: [`dataset.mjs`](../ds4-gateway/dataset.mjs), with observation
 points in [`gateway.mjs`](../ds4-gateway/gateway.mjs). This numerical evidence feeds
 the optional [predictor lifecycle](predictor-lifecycle.md) and the preserved
 [v1 offline experiment](../predictor/README.md). Collection does not by itself
-enable prediction-based placement or constitute a cache-hit auditor.
+enable prediction-based placement or by itself constitute a cache-hit auditor.
+The separate [cache-continuity audit](cache-continuity-audit.md) joins only
+allowlisted numerical/session metadata, reports aggregate evidence and preserves
+the distinction between measured reuse, high suspicion and an unconfirmed anomaly.
 
 ## Common fields on every event
 

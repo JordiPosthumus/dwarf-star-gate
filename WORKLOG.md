@@ -10,6 +10,12 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Made cache continuity auditable without retaining conversations.** A bounded
+  CLI now measures reuse across consecutive same-session completions, names every
+  abstention, and refuses to turn missing client/epoch evidence into an accusation.
+  It is aggregate, read-only and deliberately disconnected from routing/cache
+  movement. Tests cover the privacy boundary and false-positive guards.
+
 - **Added the missing macOS recovery boundary.** An explicitly enrolled launchd
   helper now offers the same exact-service, durable-intent and verified-readmission
   contract as systemd without accepting arbitrary commands. It is source-complete
