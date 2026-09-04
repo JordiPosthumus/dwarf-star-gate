@@ -1,5 +1,11 @@
 # Changelog
 
+## Measured GPU power fallback
+
+- Capture NVIDIA GPU power when module power is unavailable, labelled GPU-only
+  on server cards. Prefer module measurements when present, preserve unknowns,
+  and exclude GPU-only samples from whole-fleet energy estimates.
+
 ## Refresh live progress forecasts
 
 - Fix live forecast status retaining the first estimate indefinitely despite

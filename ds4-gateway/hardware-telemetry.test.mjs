@@ -9,6 +9,15 @@ import {HardwareTelemetry,hardwareTelemetryConfig,nvidiaLinuxCommand,parseNvidia
 
 const now=Date.UTC(2026,8,4,12),valid='DSG_HW_V1|131072,32768|88.5,42,1200';
 
+test('GPU-only power is measured but never labelled as module power',()=>{
+  const sample=parseNvidiaLinux('DSG_HW_V2|131072,32768|[N/A],25.6,91,2177',now);
+  assert.equal(sample.power_watts,25.6);assert.equal(sample.power_scope,'gpu_only');
+  assert.equal(sample.accelerator_activity_pct,91);assert.equal(sample.clock_mhz,2177);
+  assert.equal(parseNvidiaLinux('DSG_HW_V2|131072,32768|80,25.6,91,2177',now).power_scope,'compute_module');
+  assert.equal(parseNvidiaLinux('DSG_HW_V2|131072,32768|0,25.6,91,2177',now).power_watts,0);
+  assert.equal(parseNvidiaLinux('DSG_HW_V2|131072,32768|[N/A],[N/A],91,2177',now).power_watts,undefined);
+});
+
 test('Spark parser labels unified host memory and accepts only measured module power',()=>{
   assert.deepEqual(parseNvidiaLinux(valid,now),{time:now,memory_used_bytes:100663296,memory_total_bytes:134217728,memory_scope:'host_unified',accelerator_activity_pct:42,accelerator_scope:'gpu_kernel_time',power_watts:88.5,power_scope:'compute_module',clock_mhz:1200,clock_scope:'sm'});
   const partial=parseNvidiaLinux('DSG_HW_V1|131072,32768|,0,',now);assert.equal(partial.power_watts,undefined);assert.equal(partial.clock_mhz,undefined);assert.equal(partial.accelerator_activity_pct,0);

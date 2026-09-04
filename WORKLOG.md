@@ -10,6 +10,10 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Display available GPU power honestly.** The Spark collector now uses measured
+  GPU power when module readings are unavailable, without turning it into a
+  whole-machine kWh claim. Parser and energy-boundary regressions pass.
+
 - **Validated the Spark hardware adapter against real drivers.** Read-only probes
   returned RAM, GPU activity and clock samples. Documented the important missing-
   module-power case: a narrower GPU power reading must not become a fictional

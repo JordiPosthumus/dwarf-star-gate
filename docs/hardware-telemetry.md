@@ -51,7 +51,8 @@ It samples:
 DSG deliberately does not use `nvidia-smi` framebuffer memory on DGX Spark as a
 stand-in for unified memory: NVIDIA documents that reading as unsupported on
 Spark in its [known issues](https://docs.nvidia.com/dgx/dgx-spark/known-issues.html).
-It also does not fall back from module power to a GPU-only or TDP figure. See the
+For energy totals it does not substitute GPU-only power or TDP for module power.
+GPU-only measurements can still be displayed with their narrower scope. See the
 official [`nvidia-smi` field definitions](https://docs.nvidia.com/deploy/nvidia-smi/index.html).
 Unsupported fields stay unknown. The observer uses a bounded line buffer, a
 no-sample watchdog and reconnect delay. It does not invoke DS4 or touch its
@@ -62,8 +63,9 @@ service.
 A supported query name does not guarantee a measurement: a driver can return
 `[N/A]` for both module power fields while reporting utilization and clocks.
 The narrower `power.draw` GPU reading is not interchangeable with module or
-wall power. The current adapter leaves power unknown in this case, so RAM/GPU/
-clock charts can work while energy remains unavailable. Check the exact query
+wall power. The adapter now uses it when module power is unavailable, explicitly
+labelled **GPU only** and excluded from fleet kWh. If both are unavailable, power
+stays unknown. RAM/GPU/clock charts can work while energy remains unavailable. Check the exact query
 result before treating a blank power chart as a stopped collector. Do not use a
 configured power limit or TDP as if it were a measured draw.
 
@@ -95,7 +97,7 @@ Allowed scopes are:
 
 - memory: `host` or `host_unified`;
 - activity: `gpu_kernel_time` or `accelerator`;
-- power: `compute_module` or `system`;
+- power: `compute_module`, `system`, or `gpu_only` (display only, excluded from fleet energy);
 - clock: `sm` or `accelerator`.
 
 DSG does not ship or silently launch a privileged macOS power collector. A

@@ -11,7 +11,7 @@ const MAX_LINE=4096,MAX_READ=256*1024,HISTORY_MS=15*60000,MAX_SAMPLES=180;
 const ADAPTERS=new Set(['nvidia-linux','jsonl-file']);
 const MEMORY_SCOPES=new Set(['host','host_unified']);
 const ACTIVITY_SCOPES=new Set(['gpu_kernel_time','accelerator']);
-const POWER_SCOPES=new Set(['compute_module','system']);
+const POWER_SCOPES=new Set(['compute_module','system','gpu_only']);
 const CLOCK_SCOPES=new Set(['sm','accelerator']);
 
 // This command is a source constant: configuration can choose the adapter and
@@ -21,7 +21,7 @@ const CLOCK_SCOPES=new Set(['sm','accelerator']);
 export function nvidiaLinuxCommand(intervalMs){
   const seconds=intervalMs/1000;
   if(!Number.isInteger(seconds)||seconds<10||seconds>60)throw new Error('Hardware interval must be whole seconds from 10–60');
-  return `while :; do mem=$(awk '/^MemTotal:/{t=$2}/^MemAvailable:/{a=$2}END{printf "%s,%s",t,a}' /proc/meminfo); gpu=$(timeout 3s nvidia-smi --query-gpu=module.power.draw.instant,utilization.gpu,clocks.current.sm --format=csv,noheader,nounits -i 0 2>/dev/null | head -n 1 | tr -d ' '); case "$gpu" in *,*,*) ;; *) gpu=",$(timeout 3s nvidia-smi --query-gpu=utilization.gpu,clocks.current.sm --format=csv,noheader,nounits -i 0 2>/dev/null | head -n 1 | tr -d ' ')" ;; esac; printf 'DSG_HW_V1|%s|%s\\n' "$mem" "$gpu"; sleep ${seconds}; done`;
+  return `while :; do mem=$(awk '/^MemTotal:/{t=$2}/^MemAvailable:/{a=$2}END{printf "%s,%s",t,a}' /proc/meminfo); gpu=$(timeout 3s nvidia-smi --query-gpu=module.power.draw.instant,power.draw,utilization.gpu,clocks.current.sm --format=csv,noheader,nounits -i 0 2>/dev/null | head -n 1 | tr -d ' '); case "$gpu" in *,*,*,*) ;; *) gpu=",$(timeout 3s nvidia-smi --query-gpu=power.draw,utilization.gpu,clocks.current.sm --format=csv,noheader,nounits -i 0 2>/dev/null | head -n 1 | tr -d ' ')" ;; esac; printf 'DSG_HW_V2|%s|%s\\n' "$mem" "$gpu"; sleep ${seconds}; done`;
 }
 
 const finite=(value,min,max)=>{
@@ -43,14 +43,16 @@ const sampleShape=(raw,time=Date.now())=>{
 };
 
 export function parseNvidiaLinux(line,time=Date.now()){
-  if(typeof line!=='string'||line.length>MAX_LINE||!line.startsWith('DSG_HW_V1|'))return null;
-  const [tag,memory,gpu,...extra]=line.trim().split('|');if(tag!=='DSG_HW_V1'||extra.length)return null;
-  const [totalKiB,availableKiB,...memoryExtra]=(memory??'').split(','),[watts,activity,clock,...gpuExtra]=(gpu??'').split(',');
+  if(typeof line!=='string'||line.length>MAX_LINE)return null;
+  const [tag,memory,gpu,...extra]=line.trim().split('|');if(!['DSG_HW_V1','DSG_HW_V2'].includes(tag)||extra.length)return null;
+  const fields=(gpu??'').split(','),gpuWatts=tag==='DSG_HW_V2'?fields.splice(1,1)[0]:null;
+  const [totalKiB,availableKiB,...memoryExtra]=(memory??'').split(','),[watts,activity,clock,...gpuExtra]=fields;
   if(memoryExtra.length||gpuExtra.length)return null;
   const total=finite(totalKiB,1,2**50),available=finite(availableKiB,0,2**50),raw={time};
   if(total!==null&&available!==null&&available<=total)Object.assign(raw,{memory_used_bytes:(total-available)*1024,memory_total_bytes:total*1024,memory_scope:'host_unified'});
   if(finite(activity,0,100)!==null)Object.assign(raw,{accelerator_activity_pct:Number(activity),accelerator_scope:'gpu_kernel_time'});
   if(finite(watts,0,5000)!==null)Object.assign(raw,{power_watts:Number(watts),power_scope:'compute_module'});
+  else if(finite(gpuWatts,0,5000)!==null)Object.assign(raw,{power_watts:Number(gpuWatts),power_scope:'gpu_only'});
   if(finite(clock,0,100000)!==null)Object.assign(raw,{clock_mhz:Number(clock),clock_scope:'sm'});
   return sampleShape(raw,time);
 }
