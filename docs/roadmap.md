@@ -490,6 +490,34 @@ not possible, ordinary cold re-prefill remains an explicit costed alternative,
 not a disguised cache transfer. The Genie could propose a move; an independently
 validated deterministic mechanism would enforce the handover.
 
+## End-of-sprint item: lightweight hardware telemetry
+
+Add an optional low-rate hardware lane after maintenance hand-back recovery is
+complete. It must not slow the routing/control loop or require changes to DS4.
+
+- Keep availability, queues and phase state responsive at roughly two seconds,
+  but refresh decode/prefill history around five seconds and hardware samples
+  every 10–15 seconds. Measure payload and browser work before choosing final
+  intervals; do not replace evidence with an arbitrary slower timer.
+- Add three compact 15-minute sparklines per server: memory used/pressure,
+  accelerator activity and power draw. Show current clock speed as secondary
+  context or a fourth chart only where the platform reports it reliably.
+- Use one allowlisted numerical schema behind platform-specific, opt-in adapters.
+  A Spark/Linux adapter may use supported NVIDIA/system counters; a macOS adapter
+  must report only available non-sensitive counters and must not pretend that a
+  missing privileged power/GPU metric is zero.
+- The adapter may be reached through an already enrolled management transport,
+  but it accepts no caller-supplied command. Bound execution time, output, sample
+  history and cardinality. Hardware telemetry grants no restart or routing power.
+- Label memory semantics honestly across unified-memory Macs and Sparks. Separate
+  host memory pressure from accelerator allocation when the platform exposes both;
+  never call a proxy “GPU RAM” without proof.
+
+Acceptance: mixed-platform fixtures, missing/unsupported metrics, adapter timeout,
+stale data, reconnect, bounded history, low dashboard CPU/network overhead and no
+private host/path/command leakage. The UI must remain useful when only decode and
+prefill telemetry exist.
+
 ## How this roadmap grows
 
 Keep proposed, implemented, experimentally validated and enabled capabilities
