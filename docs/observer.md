@@ -108,8 +108,8 @@ misinterpretation; they are not an LLM accuracy guarantee or permission to execu
 its recommendations.
 
 Headlines scroll at approximately 42 CSS pixels/second, separated by 8rem gaps.
-Hover or keyboard-focus freezes motion and headline updates; **Pause ticker**
-holds that state until resumed. The timestamp stays with the frozen evidence.
+Hover or keyboard focus temporarily freezes motion and headline updates so the
+current item can be read. The timestamp stays with the frozen evidence.
 Reduced-motion preferences show wrapped static text, and the repeated scrolling
 copy is hidden from screen readers.
 
