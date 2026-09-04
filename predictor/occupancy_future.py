@@ -7,7 +7,7 @@ import math
 import os
 import stat
 
-from fit_v2 import baseline, exported_prediction, metrics, split, target_coverage
+from fit_v2 import baseline, exported_prediction, feature_coverage, metrics, split, split_usage, target_coverage
 
 
 def read_json(path):
@@ -35,6 +35,24 @@ def contracts(candidate,training):
         raise ValueError('Training snapshot does not match the frozen candidate')
     if not candidate.get('models') or any(k not in ('admission','updated','remaining') for k in candidate['models']):
         raise ValueError('Unsupported occupancy model kinds')
+
+
+def input_support(model, training_rows, future_rows, hardware_names):
+    """Collection, selection and actual tree use are different facts, not importance.
+
+    Use the versioned hardware group, not a name prefix: hardware_family and
+    hardware_service_median are static/history inputs, not live telemetry.
+    Fractions describe forecast points, not independent request counts.
+    """
+    selected=set(model['encoding']['names']);used=split_usage(model)
+    names=sorted(set(hardware_names))
+    return {'selected_features':len(selected),'split_features':len(used),
+            'hardware':{'collected_features':len(names),
+                        'selected':[name for name in names if name in selected],
+                        'used_in_splits':{name:used[name] for name in names if name in used},
+                        'training_point_coverage':feature_coverage(training_rows,names) if training_rows else None,
+                        'future_point_coverage':feature_coverage(future_rows,names) if future_rows else None},
+            'note':'Split counts are structural use, not importance or causal benefit. Coverage is per forecast point; no future-data fitting.'}
 
 
 def freeze(candidate_path,training_path,receipt_path):
@@ -81,7 +99,8 @@ def evaluate(candidate_path,training_path,receipt_path,prepared_path):
         # jobs as independent new traffic.
         rows=[r for r in prepared['rows'] if r['kind']==kind and cutoff<r['decision_time']<=r['finish_time']<=end and first[(r['run_id'],r['request_id'])]>cutoff and (r['run_id'],r['request_id']) not in seen]
         tr,_=split([r for r in training['rows'] if r['kind']==kind],candidate['reports'][kind]['cutoff'])
-        report={'status':'no_future_labels','target_coverage':target_coverage(rows)};result['reports'][kind]=report
+        report={'status':'no_future_labels','target_coverage':target_coverage(rows),
+                'input_support':input_support(model,tr,rows,training.get('groups',{}).get('hardware',[]))};result['reports'][kind]=report
         if not rows:continue
         if not tr:raise ValueError('Frozen training partition is empty')
         predictions=[exported_prediction(model,r['features']) for r in rows]
@@ -89,6 +108,14 @@ def evaluate(candidate_path,training_path,receipt_path,prepared_path):
         report.update(status='observed_not_promoted',metrics=metrics(rows,predictions),baselines=baseline(tr,rows)[0],
             terminal_classes={label:metrics([r for r in rows if r['terminal_class']==label],[p for r,p in zip(rows,predictions) if r['terminal_class']==label])
                 if any(r['terminal_class']==label for r in rows) else None for label in ('normal','output_limited')})
+        # The updated model is called both after upload and after embeddings.
+        # Keep those causal stages visible rather than hiding one behind an average.
+        report['by_stage']={}
+        for stage in ('admission','upload','embedded','remaining'):
+            pairs=[(row,p) for row,p in zip(rows,predictions) if row.get('stage',row['kind'])==stage]
+            if pairs:
+                points,estimates=map(list,zip(*pairs))
+                report['by_stage'][stage]={'metrics':metrics(points,estimates),'baselines':baseline(tr,points)[0]}
     return result
 
 

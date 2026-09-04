@@ -10,6 +10,13 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Checked genuinely later traffic and made model diagnostics explicit.** Fresh
+  Mac attribution gained corroboration from later completion evidence without
+  relaxing collision guards. The frozen occupancy challenger still failed to
+  beat the fixed baselines; it remains offline. Future audits now expose live
+  hardware collection versus actual model use and upload versus embedding-stage
+  accuracy. Private evidence stays private; no holdout retuning or promotion.
+
 - **Retained bounded Mac service identity evidence.** A private last-instance
   snapshot survives gateway restart, without writing on unchanged polls or
   exposing process/profile details. Tests reject malformed evidence and changed

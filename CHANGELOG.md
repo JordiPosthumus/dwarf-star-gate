@@ -1,5 +1,17 @@
 # Changelog
 
+## Explain frozen-model input support and stage accuracy
+
+- Offline future audits distinguish collected live hardware fields, selected
+  model inputs and actual tree splits, with separate training/future coverage.
+  Static hardware family/history features are not mislabeled as live telemetry.
+- Report upload and embedding-stage errors separately while preserving the
+  existing request-balanced aggregate and frozen artifact checks. These are
+  diagnostics, not feature importance, retraining or promotion authority.
+- Regression tests cover unseen telemetry, selected-but-unused inputs, one-hot
+  split mapping, empty future evidence and different errors for the same job's
+  upload/embedding points. No live forecasting or routing settings change.
+
 ## Durable private Mac identity observations
 
 - Retain one last identity-checked, non-faulted active launchd instance per enrolled

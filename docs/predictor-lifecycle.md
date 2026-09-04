@@ -80,6 +80,23 @@ change natural-completion models or relax their existing gates. Keep input files
 receipts and reports private; hashes bind local artifacts, not adversarially
 tamper-proof publication certificates.
 
+`input_support` distinguishes live telemetry **collected in the feature contract**,
+**selected by this frozen model**, and **used in actual tree splits**. Training
+and future point-coverage fractions are reported separately; no future rows means
+unknown coverage (`null`), not zero observed coverage. Hardware is identified by
+the contract's explicit hardware group, not a name prefix: hardware family and
+hardware-history priors do not prove that RAM, power or activity telemetry is used.
+Split counts are not feature importance or a causal benefit measurement. A model
+trained before telemetry existed cannot learn from new samples without a separately
+trained and frozen challenger. More telemetry alone does not validate that challenger.
+
+`by_stage` also separates after-upload from after-embedding accuracy. The same
+updated model can produce identical predictions at both stages if it selected no
+inputs that change when embeddings arrive. Stage counts can contain the same job;
+they must not be added and called independent requests. Use these diagnostics to
+design the next training experiment, never to retune the frozen model on its
+already-examined future cohort or bypass the activation gates.
+
 ## Current lifecycle
 
 Implemented, opt-in. Ordinary routing remains the default. A fitted model is

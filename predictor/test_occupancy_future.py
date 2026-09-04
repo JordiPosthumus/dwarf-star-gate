@@ -51,6 +51,57 @@ class OccupancyFutureTests(unittest.TestCase):
         self.future['rows']=self.training['rows']
         report=self.evaluate()['reports']['admission']
         self.assertEqual(report['status'],'no_future_labels');self.assertNotIn('metrics',report)
+        self.assertIsNone(report['input_support']['hardware']['future_point_coverage'])
+
+    def test_hardware_collection_is_not_model_selection_or_tree_use(self):
+        model=copy.deepcopy(self.candidate['models']['admission'])
+        model['encoding']['names']=['hardware_family','hardware_power_watts','hardware_gpu_utilization_pct']
+        model['encoding']['categorical']=['hardware_family']
+        model['encoding']['vocabulary']={'hardware_family':['example-family']}
+        # Encoded indexes 0/1 are the category and unknown bucket; power is 2.
+        model['trees']=[{'left_children':[1,-1,-1],'split_indices':[2,0,0]}]
+        training=[{'features':{'hardware_family':'example-family','hardware_power_watts':None}}]
+        future=[{'features':{'hardware_power_watts':0,'hardware_gpu_utilization_pct':80}},
+                {'features':{'hardware_power_watts':50,'hardware_gpu_utilization_pct':None}}]
+        original=copy.deepcopy((model,training,future))
+        result=audit.input_support(model,training,future,['hardware_power_watts','hardware_gpu_utilization_pct','hardware_ram_used_bytes'])
+        self.assertEqual(result['selected_features'],3);self.assertEqual(result['split_features'],1)
+        h=result['hardware']
+        self.assertEqual(h['used_in_splits'],{'hardware_power_watts':1})
+        self.assertNotIn('hardware_family',h['selected'])
+        self.assertNotIn('hardware_ram_used_bytes',h['selected'])
+        self.assertEqual(h['training_point_coverage']['hardware_power_watts'],0)
+        self.assertEqual(h['future_point_coverage']['hardware_power_watts'],1)
+        self.assertEqual(h['future_point_coverage']['hardware_gpu_utilization_pct'],.5)
+        self.assertEqual((model,training,future),original)
+        self.assertNotIn('example-family',json.dumps(result))
+        model['encoding']['names']=['x'];model['encoding']['categorical']=[];model['trees']=[]
+        h=audit.input_support(model,training,future,['hardware_power_watts'])['hardware']
+        self.assertEqual(h['selected'],[]);self.assertEqual(h['used_in_splits'],{})
+        self.assertEqual(h['future_point_coverage']['hardware_power_watts'],1)
+
+    def test_future_stage_metrics_do_not_mix_upload_and_embedded_errors(self):
+        self.training['rows']=[self.row('old',100,110,'updated')]
+        self.training['rows'][0]['stage']='upload'
+        self.candidate['models']={'updated':self.candidate['models']['admission']}
+        self.candidate['reports']={'updated':{'cutoff':500}}
+        # A fixed tree predicts 10 for x=1 and 20 for x=2. Both points have target 10.
+        self.candidate['models']['updated'].update(base_margin=0,trees=[{'left_children':[1,-1,-1],
+            'right_children':[2,-1,-1],'split_indices':[0,0,0],'split_conditions':[1.5,10,20],'default_left':[True,False,False]}])
+        self.write('candidate',self.candidate);self.write('training',self.training)
+        # The changed model needs its own freeze, not reuse of the earlier receipt.
+        self.receipt=audit.freeze(self.root/'candidate',self.root/'training',self.root/'tree-receipt')
+        cut=audit.timestamp(self.receipt['frozen_at'])
+        self.future['rows']=[{**self.row('new',cut+1,cut+1000,'updated'),'stage':'upload'},
+                             {**self.row('new',cut+1,cut+1000,'updated'),'stage':'embedded','features':{'x':2}}]
+        self.future['snapshot']['created_at']=dt.datetime.fromtimestamp((cut+10000)/1000,dt.timezone.utc).isoformat()
+        self.write('future',self.future)
+        r=audit.evaluate(self.root/'candidate',self.root/'training',self.root/'tree-receipt',self.root/'future')['reports']['updated']
+        self.assertEqual(r['metrics']['requests'],1);self.assertEqual(r['metrics']['mae_s'],5)
+        self.assertEqual(r['by_stage']['upload']['metrics']['mae_s'],0)
+        self.assertEqual(r['by_stage']['embedded']['metrics']['mae_s'],10)
+        self.assertEqual(r['by_stage']['embedded']['baselines']['worker_mean']['mae_s'],0)
+        self.assertNotIn('request_id',json.dumps(r))
 
     def test_changed_builder_profile_or_invalid_labels_fail_closed(self):
         for change in ('builder','profile','label','time'):
