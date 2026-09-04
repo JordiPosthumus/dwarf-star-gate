@@ -1,5 +1,12 @@
 # Changelog
 
+## Visible cache-evidence health
+
+- The compact cache-cost section now reports process-epoch coverage and recent
+  request/engine correlation outcomes, including leading abstention reasons.
+  It keeps corroborated candidates distinct from protocol proof and cache-hit
+  verdicts, and it does not occupy headline dashboard space.
+
 ## Bounded local-log process epochs
 
 - File-backed stock DS4 telemetry can now derive a bounded process epoch from

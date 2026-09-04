@@ -86,6 +86,10 @@ The panel now also exposes [local encoder status](embeddings.md) and a
 [measured cache-cost calculator](cache-cost.md). These are separate from the
 historical forecast chart: fitted XGB and embeddings do not change baseline dots.
 New XGB dots appear only after the separately configured predictor is running.
+The same collapsed cache section reports process-epoch coverage and recent
+request/engine correlation outcomes. `Corroborated` remains a bounded candidate,
+not protocol identity or proof that a particular KV tier supplied the request;
+abstentions and their leading reasons remain visible rather than becoming zeros.
 
 ## Which predictions are actually needed?
 

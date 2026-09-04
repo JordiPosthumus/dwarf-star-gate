@@ -472,6 +472,11 @@ test('dashboard names DS4 servers and explains gateway-only concurrency and avai
   assert.match(js,/one active gateway request per DS4 server/);
   assert.doesNotMatch(html+js,/AVAILABLE SPARKS|AVAILABLE WORKERS|active generation per Spark|active gateway request per worker/);
 });
+test('cache evidence health exposes epoch coverage and abstention without claiming a cache hit',async t=>{
+  const {url}=await fixture(t),html=await (await fetch(url)).text(),js=await (await fetch(url+'/ui.js')).text();
+  assert.match(html,/Cache evidence and cost · measured components/);assert.match(html,/id="cache-evidence-status"/);
+  assert.match(js,/telemetry-enabled servers have an observed process epoch/);assert.match(js,/Corroborated is still a bounded candidate, not protocol proof or a cache-hit verdict/);
+});
 test('dashboard links the pinned Spark recommendation without implying live configuration or fixed disk slots', async t => {
   const { url } = await fixture(t);
   const html = await (await fetch(url)).text();

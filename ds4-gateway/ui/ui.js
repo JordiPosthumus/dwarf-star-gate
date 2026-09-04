@@ -111,6 +111,15 @@ function cacheCostText(result) {
     `${fmt(p.estimated_ms/1000)} s (${fmt(p.samples)} samples${p.status==='no_cache_payload'?', no payload to load':Number.isFinite(p.observed_min_ms)?`, observed ${fmt(p.observed_min_ms/1000)}–${fmt(p.observed_max_ms/1000)} s`:''})`;
   return `Disk payload load: ${part(result.disk_load)}. Prefill: ${part(result.prefill)}. These are component estimates, not total acquisition or completion time. Prefix search, later engine synchronization and remote transfer are unmeasured. Cache existence is not verified; observed ranges are not confidence intervals.`;
 }
+function cacheEvidenceText(snapshot,stale=false) {
+  if(stale)return 'Cache evidence health unavailable; no prior value is treated as current.';
+  const devices=snapshot?.devices||[],configured=devices.filter(d=>d.telemetry_configured).length;
+  const epochs=devices.filter(d=>d.telemetry_configured&&typeof d.backend_epoch==='string').length,a=snapshot?.attribution,counts=a?.counts;
+  if(!a||!counts)return `${fmt(epochs)} / ${fmt(configured)} telemetry-enabled servers have an observed process epoch · request attribution unavailable.`;
+  const reasons={};for(const row of a.recent||[])if(row.status==='abstained')reasons[row.reason]=(reasons[row.reason]||0)+1;
+  const gaps=Object.entries(reasons).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([reason,n])=>`${fmt(n)} ${reason.replaceAll('_',' ')}`).join(' · ');
+  return `${fmt(epochs)} / ${fmt(configured)} telemetry-enabled servers have an observed process epoch · recent engine starts: ${fmt(counts.corroborated)} corroborated, ${fmt(counts.candidate)} pending candidates, ${fmt(counts.abstained)} abstained${gaps?` (${gaps})`:''}. Corroborated is still a bounded candidate, not protocol proof or a cache-hit verdict.`;
+}
 function relocationReason(row) {
   const worker=row.conflicting_worker?` on ${row.conflicting_worker}`:'';
   return ({gateway_stopping:'gateway is stopping',gateway_draining:'gateway is draining',source_not_active:'source became idle and should dispatch normally',cancelled_queue_head:'a cancelled queue head is still settling',already_dispatched:'request has already reached DS4',same_session_active:`the same session is still active${worker}`,same_session_queued:`the same session has earlier queued work${worker}`,same_session_waiting:'the same session has an earlier recovery wait',no_idle_destination:'no other DS4 server is immediately free',durable_home_mismatch:'durable session ownership changed',offer_ready:'an exact handover offer is ready'})[row.reason]||`blocked by ${row.reason}`;
@@ -331,6 +340,7 @@ function render(s) {
   renderDevices(s.devices,visibleWorkers,now,stale,scales,workerControlsVisible);
   const ds=g?.dataset;
   $('embedding-detail').textContent=embeddingInfo(ds);
+  $('cache-evidence-status').textContent=cacheEvidenceText(s,stale);
   const selector=$('cache-cost-worker'),selected=selector.value,options=(g?.workers||[]).map(w=>`<option value="${esc(w.id)}">${esc(w.id)}</option>`).join('');
   if(selector.innerHTML!==options){selector.innerHTML=options;if((g?.workers||[]).some(w=>w.id===selected))selector.value=selected;}
   $('dataset-status').textContent=stale?'Collector status stale':!ds?.enabled?'Collector not enabled':ds.error||'Collecting routing evidence';
