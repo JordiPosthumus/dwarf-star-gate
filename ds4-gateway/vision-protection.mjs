@@ -14,6 +14,8 @@ export const JPEG_REJECTION_INSPECTION_BYTES=64*1024;
 export const JPEG_GUIDANCE='DSG: DS4 could not use this JPEG file. Please resend it as PNG or WebP, or export it again as a standard RGB JPEG. Nothing was generated from the rejected file, and your session remains active. (This is a message from the DSG gateway.)';
 export const GIF_GUIDANCE='DSG: GIF files are not supported by this gateway. Please send selected frames from the GIF as PNGs. Nothing was generated from the GIF, and your session remains active. (This is a message from the DSG gateway.)';
 export const IMAGE_LIMIT_GUIDANCE="DSG: This request contains more than DS4's limit of 16 images across the submitted conversation. Send 16 or fewer images—choose representative frames, combine them into a contact sheet, or compact/start a fresh visual turn—and try again. Nothing was generated, and your session remains active. (This is a message from the DSG gateway.)";
+export const GIF_RECOVERY_NOTICE=count=>`DSG compatibility recovery for the agent: DS4 rejected this turn because it contained ${count} GIF file${count===1?'':'s'}, which DS4 does not support. ${count===1?'That GIF was':'Those GIFs were'} withheld from this recovery call only and ${count===1?'remains':'remain'} in the client session. Decide and take the next valid action now: use available tools to extract selected frames from the GIF as PNGs, continue without the GIF if it is irrelevant, or ask the user for suitable frames. Do not claim to have inspected withheld GIF content.`;
+export const IMAGE_LIMIT_RECOVERY_NOTICE=(count,maxImages=16)=>`DSG compatibility recovery for the agent: DS4 rejected this turn because the submitted conversation contained ${count} images; DS4 accepts at most ${maxImages}. All visual blocks were withheld from this recovery call only and remain in the client session. Decide and take the next valid action now: use available tools to select representative images or build a contact sheet, compact/reset visual history, or ask the user. Do not claim to have inspected withheld visual content.`;
 
 function boundedInteger(value,fallback,min,max,name){
   const n=value??fallback;
@@ -83,6 +85,61 @@ function typedImageCount(payload,route){
   return count;
 }
 
+function isTypedImageBlock(block){
+  if(!block||block.type!=='image_url')return false;
+  const value=typeof block.image_url==='string'?block.image_url:block.image_url?.url;
+  return typeof value==='string'&&value.length>0;
+}
+
+function recoveryPlaceholder(){return {type:'text',text:'[Visual content withheld from this DSG compatibility recovery call.]'};}
+function appendRecoveryMessage(payload,text){payload.messages.push({role:'user',content:[{type:'text',text}]});}
+
+export function recoverOpenAIImageLimit(payload,route,maxImages=16){
+  if(route!=='/v1/chat/completions'||!Number.isSafeInteger(maxImages)||maxImages<1)throw new Error('image_limit_repair_unsupported');
+  const messages=Array.isArray(payload?.messages)?payload.messages:null;
+  if(!messages)throw new Error('request_json_invalid');
+  const total=typedImageCount(payload,route);
+  if(total<=maxImages)throw new Error('image_limit_not_proven');
+  let removed=0;
+  for(const message of messages){
+    if(!Array.isArray(message?.content))continue;
+    const content=[];let removedHere=0;
+    for(const block of message.content){
+      if(!isTypedImageBlock(block)){content.push(block);continue;}
+      removed++;removedHere++;
+    }
+    if(removedHere&&content.length===0)content.push(recoveryPlaceholder());
+    message.content=content;
+  }
+  if(removed!==total||typedImageCount(payload,route)!==0)throw new Error('image_limit_recovery_invariant');
+  appendRecoveryMessage(payload,IMAGE_LIMIT_RECOVERY_NOTICE(total,maxImages));
+  return {payload,total,removed,retained:0,stream:payload.stream===true};
+}
+
+export function recoverOpenAIGifs(payload,route){
+  if(route!=='/v1/chat/completions')throw new Error('gif_repair_unsupported');
+  const messages=Array.isArray(payload?.messages)?payload.messages:null;
+  if(!messages)throw new Error('request_json_invalid');
+  let removed=0;
+  for(const message of messages){
+    if(!Array.isArray(message?.content))continue;
+    const content=[];let removedHere=0;
+    for(const block of message.content){
+      const value=block?.type==='image_url'?(typeof block.image_url==='string'?block.image_url:block.image_url?.url):null;
+      if(typeof value!=='string'||!value.startsWith(GIF_PREFIXES[0])){content.push(block);continue;}
+      const encoded=strictBase64(value.slice(GIF_PREFIXES[0].length));
+      const valid=encoded?.length>=6&&(encoded.subarray(0,6).equals(GIF87_MAGIC)||encoded.subarray(0,6).equals(GIF89_MAGIC));
+      if(!encoded||!valid)throw new Error('gif_payload_invalid');
+      removed++;removedHere++;
+    }
+    if(removedHere&&content.length===0)content.push(recoveryPlaceholder());
+    message.content=content;
+  }
+  if(!removed)throw new Error('typed_gif_not_found');
+  appendRecoveryMessage(payload,GIF_RECOVERY_NOTICE(removed));
+  return {payload,removed,stream:payload.stream===true};
+}
+
 function run(executable,args,timeoutMs,tmpdir){
   return new Promise((resolve,reject)=>{
     const child=spawn(executable,args,{stdio:['ignore','ignore','ignore'],env:{PATH:'/usr/bin:/bin:/usr/sbin:/sbin',TMPDIR:tmpdir}});
@@ -140,7 +197,7 @@ export class VisionProtection{
   // available: the exact pre-generation rejection still becomes a normal,
   // actionable assistant turn instead of killing the client session.
   get enabled(){return (this.store.data.protections?.vision_jpeg??this.config.enabled)===true;}
-  status(){return {schema:1,vision_jpeg:{available:this.available,enabled:this.enabled,transcoder:this.command?.kind??null,formats:['jpeg','gif-guidance'],max_request_bytes:this.maxRequest,max_image_bytes:this.maxImage,max_normalized_bytes:this.maxNormalized,rescued:this.rescued,guided:this.guided,failed:this.failed,last:this.last}};}
+  status(){return {schema:1,vision_jpeg:{available:this.available,enabled:this.enabled,transcoder:this.command?.kind??null,formats:['jpeg','gif-recovery','image-limit-recovery'],max_request_bytes:this.maxRequest,max_image_bytes:this.maxImage,max_normalized_bytes:this.maxNormalized,rescued:this.rescued,guided:this.guided,failed:this.failed,last:this.last}};}
   set(input){
     if(!input||Array.isArray(input)||Object.keys(input).sort().join(',')!=='enabled,id'||input.id!=='vision_jpeg'||typeof input.enabled!=='boolean')throw new Error('Specify protection id vision_jpeg and enabled true or false');
     const protections={...this.store.data.protections,vision_jpeg:input.enabled};
@@ -156,6 +213,16 @@ export class VisionProtection{
     const images=typedImageCount(payload,route);if(images<=16)throw new Error('image_limit_not_proven');
     return {images,stream:payload.stream===true};
   }
+  recoverImageLimit(body,route){
+    if(!this.enabled)throw new Error('protection_disabled');
+    if(!Buffer.isBuffer(body)||body.length===0||body.length>this.maxRequest)throw new Error('request_capture_unavailable');
+    let payload;try{payload=JSON.parse(body.toString('utf8'));}catch{throw new Error('request_json_invalid');}
+    if(!payload||typeof payload!=='object'||Array.isArray(payload))throw new Error('request_json_invalid');
+    const repaired=recoverOpenAIImageLimit(payload,route,16);
+    const normalized=Buffer.from(JSON.stringify(repaired.payload));
+    if(normalized.length>this.maxNormalized)throw new Error('normalized_request_too_large');
+    return {...repaired,body:normalized};
+  }
   inspectGif(body,route){
     if(!this.enabled)throw new Error('protection_disabled');
     if(!Buffer.isBuffer(body)||body.length===0||body.length>this.maxRequest)throw new Error('request_capture_unavailable');
@@ -169,6 +236,15 @@ export class VisionProtection{
       if(!encoded||encoded.length>this.maxImage||!valid)throw new Error('gif_payload_invalid');
     }
     return {images:refs.length,stream:payload.stream===true};
+  }
+  recoverGif(body,route){
+    const inspected=this.inspectGif(body,route);
+    let payload;try{payload=JSON.parse(body.toString('utf8'));}catch{throw new Error('request_json_invalid');}
+    const repaired=recoverOpenAIGifs(payload,route);
+    if(repaired.removed!==inspected.images)throw new Error('gif_repair_invariant');
+    const normalized=Buffer.from(JSON.stringify(repaired.payload));
+    if(normalized.length>this.maxNormalized)throw new Error('normalized_request_too_large');
+    return {...repaired,body:normalized,totalImages:typedImageCount(repaired.payload,route)};
   }
   async transcode(encoded){
     if(this.transcodeOverride){
@@ -216,7 +292,7 @@ export class VisionProtection{
   record(kind,fields={}){
     if(kind==='rescued')this.rescued++;else if(kind==='guided')this.guided++;else this.failed++;
     const reason=typeof fields.reason==='string'&&/^[a-z_]{1,64}$/.test(fields.reason)?fields.reason:null;
-    const formats=Array.isArray(fields.formats)?[...new Set(fields.formats.filter(value=>value==='jpeg'||value==='gif'))]:[];
+    const formats=Array.isArray(fields.formats)?[...new Set(fields.formats.filter(value=>value==='jpeg'||value==='gif'||value==='image_limit'))]:[];
     this.last={time:new Date().toISOString(),kind,...(Number.isSafeInteger(fields.images)?{images:fields.images}:{}),...(formats.length?{formats}:{}),...(typeof fields.node==='string'?{node:fields.node}:{}),...(reason?{reason}:{})};
   }
 }

@@ -200,11 +200,12 @@ The regular dashboard is on port 30010. Artwork lives at
 The dashboard also ships a logo-derived gate/star icon: SVG and 16/32px ICO
 favicons, a 32px PNG, a 180px Apple touch icon, and a monochrome Safari pinned-tab
 mask following [Apple's pinned-tab guidance](https://developer.apple.com/library/archive/documentation/AppleApplications/Reference/SafariWebContent/pinnedTabs/pinnedTabs.html).
-The wordmark is omitted at icon sizes for legibility. Safari may retain an older
-site icon; reload, then unpin/re-pin the tab if necessary. The vector source is
-`ds4-gateway/ui/dsg-pinned-v1.svg`; `scripts/build-icons.mjs` regenerates the other
-assets with development-only Sharp. Generated assets are committed, so using DSG
-does not require Sharp or an icon build step. The main logo is unchanged.
+The wordmark is omitted at icon sizes for legibility. The HTML uses versioned
+`v2` icon routes so Safari does not keep the old numeric hostname fallback; if an
+already pinned tab still shows it, reload once and unpin/re-pin it. The vector
+source is `ds4-gateway/ui/dsg-pinned-v1.svg`; `scripts/build-icons.mjs` regenerates
+the other assets with development-only Sharp. Generated assets are committed, so
+using DSG does not require Sharp or an icon build step. The main logo is unchanged.
 
 ## The gateway
 
@@ -229,10 +230,13 @@ a physical machine. Each server may have its own native context and cache settin
   tool-call rewriting. The optional, narrowly scoped [image compatibility
   protection](docs/vision-protection.md) handles DS4's proven pre-generation JPEG
   and GIF rejections. It converts JPEGs to PNG and retries once on the same
-  server. A proven GIF rejection becomes a completed turn asking for selected
-  frames from the GIF as PNGs; DSG never silently drops or converts a GIF. DS4's exact
-  16-image rejection also becomes a completed guidance turn
-  only when DSG proves the valid request really contains more than 16 typed images.
+  server. After DS4's exact 16-image rejection, DSG retries once on the same server only when it
+  independently proves the valid request really contains more than 16 typed images.
+  DSG chooses no images: it withholds all visual blocks from a single recovery
+  call and adds an explicit diagnostic telling the model to decide how to recover.
+  For a proven GIF rejection, only the unsupported GIF is withheld and the model
+  is told to consider selected PNG frames. The client's stored conversation stays
+  untouched. A second rejection becomes a completed guidance turn; there is no loop.
   Generic JSON errors are never intercepted unless the captured request
   independently proves a valid typed GIF caused that exact DS4 response.
 - No automatic replay after an ambiguous upstream failure.

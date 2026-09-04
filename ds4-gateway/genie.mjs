@@ -45,6 +45,23 @@ function attributionForBriefing(raw) {
   return safe;
 }
 
+function visualProtectionForBriefing(raw) {
+  const value=raw?.vision_jpeg;
+  if(!value||typeof value!=='object')return {configured:false};
+  const count=key=>Number.isSafeInteger(value[key])&&value[key]>=0?value[key]:0;
+  const result={configured:true,enabled:value.enabled===true,converter_available:value.available===true,
+    rescued:count('rescued'),guided:count('guided'),failed:count('failed')};
+  const last=value.last;
+  if(last&&['rescued','guided','failed'].includes(last.kind)&&typeof last.time==='string'&&Number.isFinite(Date.parse(last.time))){
+    const formats=Array.isArray(last.formats)?last.formats.filter(format=>['jpeg','gif','image_limit'].includes(format)).slice(0,3):[];
+    result.last={time:last.time,kind:last.kind,...(formats.length?{formats}:{}),
+      ...(Number.isSafeInteger(last.images)&&last.images>=0?{images:last.images}:{}),
+      ...(typeof last.node==='string'&&/^\w[\w-]{0,63}$/.test(last.node)?{node:last.node}:{}),
+      ...(typeof last.reason==='string'&&/^[a-z_]{1,64}$/.test(last.reason)?{reason:last.reason}:{})};
+  }
+  return result;
+}
+
 export function briefing(snapshot) {
   const g=snapshot.gateway;
   const recoveryByWorker=new Map((g?.recovery?.workers||[]).map(w=>[w.worker_id,w]));
@@ -55,6 +72,7 @@ export function briefing(snapshot) {
       relocation:g?.continuity?.relocation??null,waiting:g?.continuity?.waiting??0,oldest_wait_seconds:g?.continuity?.oldest_wait_seconds??null,waiting_reasons:g?.continuity?.waiting_reasons??{},recent_rejections:(g?.continuity?.recent_rejections??[]).slice(0,12).map(r=>({time:r.time,request_id:r.request_id,node:r.node,code:r.code,reason:r.reason,dispatch_state:r.dispatch_state,retry_class:r.retry_class}))},
     evidence_refs:['fleet','dataset','predictor',...(snapshot.continuity_door?['continuity-door']:[]),...(g?.workers||[]).slice(0,32).map(w=>`worker:${w.id}`)],
     predictor:g?.predictor?{...g.predictor,milestones:(g.predictor.milestones??[]).slice(0,6)}:{configured:false},fallback_tiebreak_shadow:g?.fallback_tiebreak_shadow??null,
+    protections:{visual_compatibility:visualProtectionForBriefing(g?.protections)},
     attribution:attributionForBriefing(snapshot.attribution),
     active:g?.active,queued:g?.queued,dataset:g?.dataset ?? {enabled:false,status:'Running gateway does not expose the new collector'},
     recovery:{automatic:!!g?.recovery?.automatic,offers:(g?.recovery?.workers||[]).filter(w=>w.eligible).map(w=>({worker_id:w.worker_id,evidence_id:w.evidence_id})),recent_actions:g?.recovery?.operations?.slice(0,5)??[]},
@@ -81,6 +99,7 @@ export function briefing(snapshot) {
       'DSG automatically hands over a still-undispatched first or unaffined request to an empty healthy destination. The core also has a conservative, independently enforced affinity-wait escape threshold shown in continuity: after that measured wait, one affinity-bound queue head may move without depending on this observer. Before that threshold, a Genie-authorized executor may revalidate and execute only a supplied genie_offer. Every path preserves the original client socket and deadline and blocks overlapping same-session work; existing-session cache locality after a move is unknown. Never claim a handover without its executor receipt',
       'continuity.relocation.diagnostics explains why each current queue head is or is not eligible. Reason codes are current evidence, not authority. fallback_tiebreak_shadow is a passive comparison of the deterministic choice with fresh deployed remaining/service forecasts for equal-load workers; would_change means only that the comparator disagreed, never that DSG rerouted the request',
       'requested_thinking unavailable/capture_limit means only that metadata capture was limited; the complete request is forwarded unchanged',
+      'protections.visual_compatibility is deterministic gateway evidence. rescued means a proof-gated same-server compatibility recovery reached a normal model completion; guided means the bounded recovery could not continue and DSG returned labelled synthetic guidance. The agent, not DSG, chooses the task remedy. These counters do not grant action authority',
       'active_seconds is time since dispatch, not proof of a stall; last_event is an engine log timestamp, not a heartbeat',
       'healthy and paused/quarantine are separate; a model-list probe is not proof of working generation',
       'management_path is sanitized transport evidence. verified means a DS4 model probe succeeded through that path; ssh_process_active means only that the local SSH process exists, not that login, forwarding or DS4 is healthy. recovery_evidence reports the independently checked recovery adapter. DNS, authentication, host-key, route and timeout failures require different operator remedies and never authorize a restart by themselves',

@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {GIF_GUIDANCE,IMAGE_LIMIT_GUIDANCE,JPEG_GUIDANCE,JPEG_REJECTION_INSPECTION_BYTES,VisionProtection,isRejectedJpeg,visionGuidance,visionRejectionKind} from './vision-protection.mjs';
+import {GIF_GUIDANCE,GIF_RECOVERY_NOTICE,IMAGE_LIMIT_GUIDANCE,IMAGE_LIMIT_RECOVERY_NOTICE,JPEG_GUIDANCE,JPEG_REJECTION_INSPECTION_BYTES,VisionProtection,isRejectedJpeg,recoverOpenAIGifs,recoverOpenAIImageLimit,visionGuidance,visionRejectionKind} from './vision-protection.mjs';
 
 const JPEG=Buffer.from('/9j/2Q==','base64');
 const GIF=Buffer.from('R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==','base64');
@@ -42,7 +42,7 @@ test('operator toggle persists and normalization touches only typed Chat Complet
   assert.match(parsed.messages[0].content[1].image_url.url,/^data:image\/png;base64,/);
   assert.equal(parsed.reasoning_effort,'xhigh');assert.deepEqual(parsed.tools,[{type:'function',function:{name:'x'}}]);
   assert.deepEqual(store.data.protections,{vision_jpeg:true});
-  assert.deepEqual(protection.status().vision_jpeg.formats,['jpeg','gif-guidance']);
+  assert.deepEqual(protection.status().vision_jpeg.formats,['jpeg','gif-recovery','image-limit-recovery']);
 });
 
 test('a valid typed GIF is proven without conversion so DSG can return fixed guidance',t=>{
@@ -54,6 +54,21 @@ test('a valid typed GIF is proven without conversion so DSG can return fixed gui
   assert.throws(()=>protection.inspectGif(Buffer.from(JSON.stringify({messages:[{content:[{type:'image_url',image_url:{url:uri}}]}]})),'/v1/chat/completions'),/typed_gif_not_found/);
 });
 
+test('GIF recovery removes only proven GIF blocks and gives the agent a diagnostic turn',()=>{
+  const payload={stream:true,reasoning_effort:'xhigh',tools:[{type:'function',function:{name:'work'}}],messages:[{role:'user',content:[
+    {type:'text',text:'inspect assets'},
+    {type:'image_url',image_url:{url:gifUri}},
+    {type:'image_url',image_url:{url:'data:image/png;base64,aQ=='}},
+  ]}]};
+  const repaired=recoverOpenAIGifs(structuredClone(payload),'/v1/chat/completions');
+  assert.equal(repaired.removed,1);assert.equal(repaired.stream,true);assert.equal(repaired.payload.reasoning_effort,'xhigh');assert.deepEqual(repaired.payload.tools,payload.tools);
+  assert.deepEqual(repaired.payload.messages[0].content,[{type:'text',text:'inspect assets'},{type:'image_url',image_url:{url:'data:image/png;base64,aQ=='}}]);
+  assert.deepEqual(repaired.payload.messages.at(-1),{role:'user',content:[{type:'text',text:GIF_RECOVERY_NOTICE(1)}]});
+  assert.throws(()=>recoverOpenAIGifs(structuredClone(payload),'/v1/responses'),/unsupported/);
+  const invalid=structuredClone(payload);invalid.messages[0].content[1].image_url.url='data:image/gif;base64,RkFLRQ==';
+  assert.throws(()=>recoverOpenAIGifs(invalid,'/v1/chat/completions'),/gif_payload_invalid/);
+});
+
 test('image-limit proof requires valid Chat Completions JSON with more than sixteen typed images',t=>{
   const {protection}=fixture(t,{enabled:true}),block={type:'image_url',image_url:{url:'data:image/png;base64,aQ=='}};
   const proven=protection.inspectImageLimit(Buffer.from(JSON.stringify({stream:true,messages:[{role:'user',content:Array.from({length:17},()=>block)}]})),'/v1/chat/completions');
@@ -61,6 +76,22 @@ test('image-limit proof requires valid Chat Completions JSON with more than sixt
   assert.throws(()=>protection.inspectImageLimit(Buffer.from(JSON.stringify({messages:[{content:Array.from({length:16},()=>block)}]})),'/v1/chat/completions'),/image_limit_not_proven/);
   assert.throws(()=>protection.inspectImageLimit(Buffer.from('{'),'/v1/chat/completions'),/request_json_invalid/);
   assert.throws(()=>protection.inspectImageLimit(Buffer.from(JSON.stringify({messages:[{content:Array.from({length:17},()=>block)}]})),'/v1/responses'),/image_limit_not_proven/);
+});
+
+test('image-limit recovery chooses no images and gives the agent a diagnostic turn',()=>{
+  const image=index=>({type:'image_url',image_url:{url:`data:image/png;base64,${Buffer.from(String(index)).toString('base64')}`},detail:'high'});
+  const payload={stream:true,reasoning_effort:'xhigh',tools:[{type:'function',function:{name:'work'}}],messages:[
+    {role:'user',content:[{type:'text',text:'old context'},image(0),image(1)]},
+    {role:'assistant',content:[{type:'text',text:'intermediate'},...Array.from({length:15},(_,index)=>image(index+2))]},
+    {role:'user',content:[image(17),{type:'text',text:'current task'}]},
+  ]};
+  const repaired=recoverOpenAIImageLimit(structuredClone(payload),'/v1/chat/completions');
+  assert.equal(repaired.total,18);assert.equal(repaired.removed,18);assert.equal(repaired.retained,0);assert.equal(repaired.stream,true);
+  assert.equal(repaired.payload.reasoning_effort,'xhigh');assert.deepEqual(repaired.payload.tools,payload.tools);
+  const blocks=repaired.payload.messages.flatMap(message=>message.content),images=blocks.filter(block=>block.type==='image_url');
+  assert.equal(images.length,0);assert.deepEqual(repaired.payload.messages.at(-1),{role:'user',content:[{type:'text',text:IMAGE_LIMIT_RECOVERY_NOTICE(18)}]});
+  assert.equal(blocks.some(block=>block.text==='old context'),true);assert.equal(blocks.some(block=>block.text==='current task'),true);
+  assert.throws(()=>recoverOpenAIImageLimit(structuredClone(payload),'/v1/responses'),/unsupported/);
 });
 
 test('unsupported routes, malformed payloads and bounds fail closed without retaining image data',async t=>{

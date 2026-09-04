@@ -29,6 +29,12 @@ test('Genie sees bounded attribution evidence without mistaking a candidate for 
   const b=briefing(s);assert.equal(b.attribution.counts.corroborated,1);assert.equal(b.attribution.quality.corroboration_rate_pct,33.3);assert.equal(b.attribution.quality.by_worker[0].resolved,3);assert.match(b.semantics.join(' '),/at best a high-confidence candidate/);
   assert.ok(!JSON.stringify(b).includes('PRIVATE'));
 });
+test('Genie sees bounded visual-continuation outcomes without media or task authority',()=>{
+  const s=snapshot();s.gateway.protections={vision_jpeg:{enabled:true,available:true,rescued:4,guided:1,failed:2,secret:'PRIVATE',last:{time:'2026-09-04T12:00:00Z',kind:'rescued',formats:['gif','PRIVATE'],images:1,node:'spark1',reason:'gif_recovery_rejected',prompt:'PRIVATE'}}};
+  const b=briefing(s),v=b.protections.visual_compatibility;
+  assert.deepEqual(v,{configured:true,enabled:true,converter_available:true,rescued:4,guided:1,failed:2,last:{time:'2026-09-04T12:00:00Z',kind:'rescued',formats:['gif'],images:1,node:'spark1',reason:'gif_recovery_rejected'}});
+  assert.match(b.semantics.join(' '),/agent, not DSG, chooses the task remedy/);assert.ok(!JSON.stringify(b).includes('PRIVATE'));
+});
 test('Genie queue briefing preserves measured age versus allowance and grants no timeout power',()=>{
   const s=snapshot();s.gateway.queue_timeout_ms=72000000000;s.gateway.request_timeout_ms=360000000;s.gateway.workers=[{id:'one',oldest_queue_seconds:125,oldest_queue_remaining_seconds:71999875}];
   const b=briefing(s);assert.equal(b.queue_timeout_ms,72000000000);assert.equal(b.workers[0].oldest_queue_seconds,125);assert.equal(b.workers[0].oldest_queue_remaining_seconds,71999875);

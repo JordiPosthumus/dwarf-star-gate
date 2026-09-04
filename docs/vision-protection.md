@@ -17,9 +17,12 @@ engine failure succeeded.
 3. Eligible JPEGs are decoded under fixed byte limits, converted to PNG and
    retried once on the **same** DS4 server. Reasoning, output limits, tools,
    message order and every unrelated field are retained.
-4. A proven GIF rejection is not converted or retried. DSG returns a fixed,
-   successful assistant turn asking the user to send selected frames from the
-   GIF as PNGs. The GIF is never silently omitted from a model request.
+4. A proven GIF rejection is never converted. DSG withholds only the unsupported
+   GIF from one transient recovery view, appends an explicit diagnostic and calls
+   the **same** server once. The diagnostic says the GIF remains in client history,
+   forbids pretending it was inspected and leaves the agent to extract selected
+   PNG frames with tools, continue without it or ask the user. If that recovery
+   call is rejected, DSG falls back to the fixed selected-PNG-frames guidance.
 5. If JPEG conversion cannot be completed safely, or DS4 rejects the converted image,
    DSG returns HTTP 200 with a valid assistant turn explaining that the user should
    resend PNG/WebP or a standard RGB JPEG. Streaming callers receive a complete
@@ -27,13 +30,24 @@ engine failure succeeded.
    object with `finish_reason: "stop"`. Pi therefore remains alive.
 6. DS4's exact `too many images; at most 16 are allowed` response is handled only
    when the captured request independently parses as valid Chat Completions JSON
-   with more than 16 typed `image_url` blocks. DSG does not discard images. It
-   completes the turn with advice to choose representative frames, build a contact
-   sheet, or compact/start a fresh visual turn.
+   with more than 16 typed `image_url` blocks. DSG chooses no subset. It builds a
+   transient recovery view with every visual block withheld, appends an explicit
+   diagnostic for the model, and calls the **same** server once. The diagnostic
+   gives the exact count and limit, says the images remain in client history,
+   forbids pretending they were inspected, and leaves the agent to select images,
+   build a contact sheet, compact visual history or ask the user. The client
+   session and stored conversation are not edited. Text, roles, tools, reasoning,
+   output limits and unrelated request fields are preserved.
+7. A successful image-limit recovery is a normal model completion carrying
+   `x-dsg-protection: vision-image-limit-recovery` and a bounded withheld-image
+   count. If DS4 rejects the recovery request again, DSG completes the turn with
+   the prior representative-frame/contact-sheet guidance. It never loops.
 
 This guidance is labelled `DSG:` and the response carries
 `x-dsg-protection: vision-jpeg-guidance`, `vision-gif-guidance` or
-`vision-image-limit-guidance`. Every synthetic message ends with
+`vision-image-limit-guidance`. A successful image-limit recovery instead carries
+`vision-image-limit-recovery`; successful GIF recovery carries
+`vision-gif-recovery`. Every synthetic guidance message ends with
 `(This is a message from the DSG gateway.)`. It is counted as a protected
 compatibility turn—not model completion and not model failure.
 
@@ -41,8 +55,9 @@ compatibility turn—not model completion and not model failure.
 
 - First release: `POST /v1/chat/completions` only. DSG does not synthesize a
   response in a protocol it cannot represent faithfully.
-- JPEG: one conversion and one same-server retry. GIF: no conversion and no
-  retry. There is no loop and no cross-server replay.
+- JPEG: one conversion and one same-server retry. Image-limit/GIF recovery: one
+  bounded same-server diagnostic model call. GIF is never converted. There is no
+  loop and no cross-server replay.
 - The request is captured only while the protection is enabled, is not compressed,
   and stays within configured bounds. It is held in memory for that request and is
   never written to DSG logs, diagnostics, state or training data.
@@ -55,7 +70,9 @@ compatibility turn—not model completion and not model failure.
   is never intercepted.
 - The image-count rule is proof-gated: the exact backend wording alone is not
   sufficient. If DSG cannot parse and count the original typed images within its
-  capture bound, the upstream 400 remains untouched.
+  capture bound, the upstream 400 remains untouched. Visuals are withheld only
+  from the diagnostic recovery call, never deleted from client history, and the
+  model is explicitly told what happened and required to choose the next action.
 - Automatic discovery uses the fixed stock `/usr/bin/sips` path on macOS.
   ImageMagick must be selected explicitly and is invoked from a fixed allowlist of
   absolute executable paths; DSG never searches a mutable `PATH` for image tools.
@@ -73,8 +90,8 @@ compatibility turn—not model completion and not model failure.
 `sips`, `magick`, `convert` or `none` when appropriate. With no converter, the
 protection remains useful in **guidance-only** mode: it does not attempt JPEG
 repair, but still turns a proven pre-generation JPEG rejection into a normal
-resend instruction so the client chat stays alive. GIF guidance never requires a
-converter. The local **Manage DS4 servers** panel
+resend instruction so the client chat stays alive. GIF recovery/guidance never
+requires a converter. The local **Manage DS4 servers** panel
 shows converter availability, repaired/guidance/failure counts and a durable
 Enable/Disable control. The toggle is stored in DSG's private state file and does
 not restart or reconfigure DS4.
@@ -86,16 +103,17 @@ them can turn more rejected images into the safe resend-guidance path.
 
 The persisted toggle and operator-control ID remain `vision_jpeg` for backward
 compatibility with existing DSG installations; the control covers documented
-JPEG repair and deterministic GIF guidance.
+JPEG normalization and deterministic, agent-driven GIF recovery.
 
 ## Validation
 
 The automated suite proves exact-error matching, byte-for-byte passthrough for
-other errors, typed-field-only JPEG rewriting, preservation of
-thinking/tools/output settings, same-server one-shot JPEG retry, streaming and
-non-streaming guidance, bounded metadata, invalid-transcoder handling, toggle
-persistence and no retry when disabled. A deployment should additionally send
+other errors, typed-field-only JPEG rewriting, no-selection visual recovery,
+model-visible diagnostics, preservation of text/thinking/tools/output settings,
+same-server one-shot recovery, no recovery loop, streaming and non-streaming guidance,
+bounded metadata, invalid-transcoder handling, toggle persistence and no retry
+when disabled. A deployment should additionally send
 one representative rejected JPEG and GIF and confirm a successful PNG rescue (or
-JPEG guidance) and the fixed GIF guidance turn. For GIF, also confirm there was
-no normalized retry and that unrelated `invalid JSON request` responses remain
-untouched.
+JPEG guidance) and a model-driven GIF recovery turn. For GIF, also confirm there
+was no conversion, exactly one same-server recovery call and that unrelated
+`invalid JSON request` responses remain untouched.

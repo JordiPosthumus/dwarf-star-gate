@@ -602,6 +602,13 @@ export function createGateway(config,{visionTranscode}={}) {
       // An upstream response can never attest that DSG did not dispatch it.
       outHeaders[DISPATCH_HEADER] = 'dispatched';
       outHeaders['x-accel-buffering'] = 'no';
+      if(job.visionNormalized?.kind==='image_limit'){
+        outHeaders['x-dsg-protection']='vision-image-limit-recovery';
+        outHeaders['x-dsg-images-withheld']=String(job.visionNormalized.images);
+      }else if(job.visionNormalized?.kind==='gif'){
+        outHeaders['x-dsg-protection']='vision-gif-recovery';
+        outHeaders['x-dsg-gifs-withheld']=String(job.visionNormalized.images);
+      }
       return outHeaders;
     };
     const observeResponse=(up,isSSE)=>{
@@ -654,13 +661,16 @@ export function createGateway(config,{visionTranscode}={}) {
           const original=await bodyReady;
           if(job.cancelled){finish('client_cancelled','CLIENT_CLOSED');return;}
           try{
-            const inspected=visionProtection.inspectImageLimit(original,req.url);
-            sendGuidance('image_limit_exceeded',inspected.stream,'image_limit');
+            const repaired=visionProtection.recoverImageLimit(original,req.url);
+            job.visionNormalized={images:repaired.removed,formats:['image_limit'],totalImages:repaired.retained,kind:'image_limit',stream:repaired.stream};firstBodyByte=null;
+            log('vision_image_limit_recovery',{request_id:job.id,node:node.id,withheld:repaired.removed,retained:repaired.retained});
+            issue(repaired.body,true);
           }catch{sendBuffered(up,rejected);}
           return;
         }
         if(rejection==='image_limit'&&retry){
-          if(job.visionNormalized?.totalImages>16)sendGuidance('image_limit_exceeded',job.visionNormalized.stream,'image_limit');
+          if(job.visionNormalized?.kind==='image_limit')sendGuidance('image_limit_recovery_rejected',job.visionNormalized.stream,'image_limit');
+          else if(job.visionNormalized?.totalImages>16)sendGuidance('image_limit_exceeded',job.visionNormalized.stream,'image_limit');
           else sendBuffered(up,rejected);
           return;
         }
@@ -668,8 +678,15 @@ export function createGateway(config,{visionTranscode}={}) {
           const original=await bodyReady;
           if(job.cancelled){finish('client_cancelled','CLIENT_CLOSED');return;}
           try{
-            const inspected=visionProtection.inspectGif(original,req.url);
-            sendGuidance('gif_not_supported',inspected.stream,'gif');
+            if(retry){
+              const inspected=visionProtection.inspectGif(original,req.url);
+              sendGuidance('gif_recovery_rejected',job.visionNormalized?.stream??inspected.stream,'gif');
+            }else{
+              const repaired=visionProtection.recoverGif(original,req.url);
+              job.visionNormalized={images:repaired.removed,formats:['gif'],totalImages:repaired.totalImages,kind:'gif',stream:repaired.stream};firstBodyByte=null;
+              log('vision_gif_recovery',{request_id:job.id,node:node.id,withheld:repaired.removed});
+              issue(repaired.body,true);
+            }
           }catch{
             // A generic JSON response is not enough evidence. Preserve it
             // exactly unless the submitted Chat Completions body proves that a
@@ -722,7 +739,8 @@ export function createGateway(config,{visionTranscode}={}) {
         socket.once('connect',()=>clearTimeout(timer));socket.once('close',()=>clearTimeout(timer));
       });
       upstream.on('error',errorValue=>{
-        if(!res.headersSent)error(res,502,'upstream_error',retry?'Normalized image retry could not reach DS4. Execution may have started; DSG did not retry again.':'Upstream connection failed. Execution may have started; gateway did not retry.');
+        const retryMessage=job.visionNormalized?.kind==='image_limit'?'Image-limit recovery turn could not reach DS4. Execution may have started; DSG did not retry again.':job.visionNormalized?.kind==='gif'?'GIF recovery turn could not reach DS4. Execution may have started; DSG did not retry again.':'Normalized image retry could not reach DS4. Execution may have started; DSG did not retry again.';
+        if(!res.headersSent)error(res,502,'upstream_error',retry?retryMessage:'Upstream connection failed. Execution may have started; gateway did not retry.');
         else res.destroy();
         finish(job.cancelled?'client_cancelled':'upstream_error',errorValue.code);
       });

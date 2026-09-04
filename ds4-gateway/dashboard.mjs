@@ -33,7 +33,13 @@ function safeManagementPath(raw){
 }
 const assets = new Map([['/', ['index.html', 'text/html']], ['/ui.css', ['ui.css', 'text/css']], ['/brand.css', ['brand.css', 'text/css']], ['/ui.js', ['ui.js', 'text/javascript']], ['/logo.png', ['logo.png', 'image/png']]]);
 assets.set('/activity.js',['activity.js','text/javascript']);
-for(const [file,mime] of [['favicon.ico','image/x-icon'],['favicon-v1.svg','image/svg+xml'],['dsg-pinned-v1.svg','image/svg+xml'],['favicon-v1.png','image/png'],['apple-touch-icon.png','image/png']])assets.set('/'+file,[file,mime]);
+for(const [route,file,mime] of [
+  ['favicon.ico','favicon.ico','image/x-icon'],['favicon-v2.ico','favicon.ico','image/x-icon'],
+  ['favicon-v1.svg','favicon-v1.svg','image/svg+xml'],['favicon-v2.svg','favicon-v1.svg','image/svg+xml'],
+  ['dsg-pinned-v1.svg','dsg-pinned-v1.svg','image/svg+xml'],['dsg-pinned-v2.svg','dsg-pinned-v1.svg','image/svg+xml'],
+  ['favicon-v1.png','favicon-v1.png','image/png'],['favicon-v2.png','favicon-v1.png','image/png'],
+  ['apple-touch-icon.png','apple-touch-icon.png','image/png'],['apple-touch-icon-v2.png','apple-touch-icon.png','image/png'],
+])assets.set('/'+route,[file,mime]);
 export function genieRuntimeConfig(config){
   if(config.genie===false)return null;
   const pool={url:`http://127.0.0.1:${config.port}/v1`,model:config.model,api_key:config.api_key};
@@ -219,8 +225,11 @@ export async function runDashboard(configPath, port) {
   }
   function readEvents() {
     const log = path.join(path.dirname(config.state_file), 'gateway.log');
+    let fd;
     try {
-      const s = fs.statSync(log);
+      fd = fs.openSync(log, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+      const s = fs.fstatSync(fd);
+      if (!s.isFile()) throw new Error('Gateway event source is not a regular file');
       if (offset === null || inode !== s.ino || s.size < offset) {
         offset = Math.max(0, s.size - 262144); inode = s.ino; fragment = '';
         // Initial tail starts mid-line; skip that first fragment.
@@ -228,8 +237,8 @@ export async function runDashboard(configPath, port) {
       }
       const length = Math.min(262144, s.size - offset);
       if (!length) return;
-      const fd = fs.openSync(log, 'r'), buf = Buffer.alloc(length);
-      let bytes; try { bytes = fs.readSync(fd, buf, 0, length, offset); } finally { fs.closeSync(fd); }
+      const buf = Buffer.alloc(length);
+      const bytes = fs.readSync(fd, buf, 0, length, offset);
       offset += bytes;
       const lines = (fragment + buf.subarray(0, bytes).toString('utf8')).split('\n'); fragment = lines.pop();
       for (const line of lines) {
@@ -237,7 +246,8 @@ export async function runDashboard(configPath, port) {
       }
       events = events.slice(-100);
       if (fragment.length > 1048576) fragment = '!';
-    } catch { /* Status works even before a local gateway log exists. */ }
+    } catch { /* Status works even before a safe local gateway log exists. */ }
+    finally { if (fd !== undefined) fs.closeSync(fd); }
   }
   async function poll() {
     if (polling) return;

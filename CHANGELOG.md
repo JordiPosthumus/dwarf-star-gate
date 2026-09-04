@@ -1,5 +1,25 @@
 # Changelog
 
+## Proof-gated, agent-driven visual continuation
+
+- After DS4 proves a Chat Completions request exceeds its 16-image limit, DSG now
+  chooses no images. It withholds all visuals from one transient recovery call,
+  gives the model the exact failure and limits, and lets the agent decide whether
+  to select frames, build a contact sheet, compact or ask the user. A proven GIF
+  follows the same pattern with only the unsupported GIF withheld. Pi, Hermes and
+  other OpenAI-compatible clients receive the model's real response/tool calls
+  instead of stopping on a successful synthetic guidance turn.
+- The client's stored conversation is untouched; text, roles, tools, reasoning,
+  output limits and unrelated request fields are preserved. The model is told not
+  to claim it saw withheld media. A second rejection becomes guidance and cannot
+  loop. Ambiguous failures remain non-replayable.
+
+## Safari icon cache bust
+
+- The dashboard now advertises explicit versioned favicon, Apple touch-icon and
+  Safari pinned-tab routes, including `shortcut icon`, so an old numeric localhost
+  fallback is not reused as DSG's identity.
+
 ## Bounded attribution-audit file handling
 
 - The public attribution audit now opens each evidence file once with no-follow
@@ -48,10 +68,8 @@
 - Unrelated generic JSON errors remain byte-for-byte upstream errors. The fixed
   GIF response works in streaming and non-streaming Chat Completions and does not
   depend on an image converter.
-- DS4's exact 16-image rejection receives the same graceful treatment only after
-  DSG proves the captured request contains more than 16 typed images. DSG never
-  silently drops images; the guidance explains representative frames, contact
-  sheets and conversation compaction, and identifies itself as gateway-authored.
+- DS4's exact 16-image rejection is proof-gated. The newer visual-continuation
+  behavior above supersedes this initial guidance-only implementation.
 
 ## Gate Genie review lifecycle receipts
 

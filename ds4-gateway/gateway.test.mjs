@@ -1009,14 +1009,16 @@ test('exact DS4 JPEG rejection is normalized once on the same server before Pi s
   assert.equal(retry.note,uri);assert.equal(retry.reasoning_effort,'xhigh');assert.equal(retry.max_tokens,153600);assert.deepEqual(retry.tools,original.tools);
   assert.equal(r.gateway.stats().protections.vision_jpeg.rescued,1);assert.equal(r.gateway.stats().workers[0].completed,1);assert.equal(r.gateway.stats().workers[0].failed,0);
 });
-test('DS4 generic GIF rejection is proven, never converted, and becomes fixed guidance',async t=>{
+test('DS4 generic GIF rejection starts a model-driven recovery turn without conversion',async t=>{
   const gif=Buffer.from('R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==','base64'),seen=[];
   const r=await rig(t,1,{vision_compatibility:{enabled:true},visionTranscode:async(value,kind)=>{seen.push({value,kind});throw new Error('must_not_convert_gif');}});r.backends[0].rejectGif=true;
   const uri=`data:image/gif;base64,${gif.toString('base64')}`,body=JSON.stringify({model:'deepseek-v4-flash',stream:true,thinking:{type:'enabled'},reasoning_effort:'xhigh',max_tokens:153600,note:uri,tools:[{type:'function',function:{name:'keep_me'}}],messages:[{role:'user',content:[{type:'image_url',image_url:{url:uri}}]}]});
   const result=await r.request(body,'gif-rescue');
-  assert.equal(result.status,200);assert.equal(result.headers['x-dsg-protection'],'vision-gif-guidance');assert.match(result.body,/send selected frames from the GIF as PNGs/);assert.match(result.body,/data: \[DONE\]/);
-  assert.equal(r.backends[0].records.length,1);assert.equal(r.backends[0].gifRejections,1);assert.deepEqual(seen,[]);
-  assert.equal(r.gateway.stats().protections.vision_jpeg.rescued,0);assert.equal(r.gateway.stats().protections.vision_jpeg.guided,1);assert.deepEqual(r.gateway.stats().protections.vision_jpeg.last.formats,['gif']);
+  assert.equal(result.status,200);assert.equal(result.headers['x-dsg-protection'],'vision-gif-recovery');assert.equal(result.headers['x-dsg-gifs-withheld'],'1');assert.match(result.body,/"content":"OK"/);assert.match(result.body,/data: \[DONE\]/);
+  assert.equal(r.backends[0].records.length,2);assert.equal(r.backends[0].gifRejections,1);assert.deepEqual(seen,[]);
+  const retry=r.backends[0].records[1].payload;assert.equal(retry.messages[0].content.some(block=>block.type==='image_url'),false);assert.match(retry.messages.at(-1).content[0].text,/extract selected frames from the GIF as PNGs/);assert.match(retry.messages.at(-1).content[0].text,/Decide and take the next valid action now/);
+  assert.equal(retry.note,uri);assert.equal(retry.thinking.type,'enabled');assert.equal(retry.reasoning_effort,'xhigh');assert.equal(retry.max_tokens,153600);assert.deepEqual(retry.tools,[{type:'function',function:{name:'keep_me'}}]);
+  assert.equal(r.gateway.stats().protections.vision_jpeg.rescued,1);assert.equal(r.gateway.stats().protections.vision_jpeg.guided,0);assert.deepEqual(r.gateway.stats().protections.vision_jpeg.last.formats,['gif']);
 });
 test('generic invalid JSON response without a proven real GIF passes through byte-for-byte',async t=>{
   const r=await rig(t,1,{vision_compatibility:{enabled:true},visionTranscode:async()=>{throw new Error('must_not_run');}});
@@ -1027,19 +1029,32 @@ test('generic invalid JSON response without a proven real GIF passes through byt
   assert.equal(fake.status,400);assert.match(fake.body,/invalid JSON request/);
   assert.equal(r.gateway.stats().protections.vision_jpeg.guided,0);
 });
-test('GIF guidance does not depend on a converter and keeps Pi alive',async t=>{
+test('a GIF recovery rejected a second time becomes guidance without conversion or a loop',async t=>{
   const gif=Buffer.from('R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==','base64');
   const r=await rig(t,1,{vision_compatibility:{enabled:true},visionTranscode:async()=>{throw new Error('transcoder_failed');}});r.backends[0].rejectGif=true;
-  const result=await r.request(JSON.stringify({stream:true,messages:[{role:'user',content:[{type:'image_url',image_url:{url:`data:image/gif;base64,${gif.toString('base64')}`}}]}]}),'gif-guidance');
+  const result=await r.request(JSON.stringify({generic_json_error:true,stream:true,messages:[{role:'user',content:[{type:'image_url',image_url:{url:`data:image/gif;base64,${gif.toString('base64')}`}}]}]}),'gif-guidance');
   assert.equal(result.status,200);assert.equal(result.headers['x-dsg-protection'],'vision-gif-guidance');assert.match(result.body,/send selected frames from the GIF as PNGs/);assert.match(result.body,/data: \[DONE\]/);
-  assert.equal(r.backends[0].records.length,1);assert.equal(r.gateway.stats().protections.vision_jpeg.guided,1);assert.deepEqual(r.gateway.stats().protections.vision_jpeg.last.formats,['gif']);
+  assert.equal(r.backends[0].records.length,2);assert.equal(r.gateway.stats().protections.vision_jpeg.guided,1);assert.deepEqual(r.gateway.stats().protections.vision_jpeg.last.formats,['gif']);
 });
-test('proven DS4 image-count rejection becomes a complete gateway guidance turn instead of crashing Pi',async t=>{
+test('proven DS4 image-count rejection starts a no-selection model-driven recovery turn',async t=>{
   const r=await rig(t,1,{vision_compatibility:{enabled:true}});r.backends[0].rejectTooManyImages=true;
+  const images=Array.from({length:18},(_,index)=>({type:'image_url',image_url:{url:`data:image/png;base64,${Buffer.from(String(index)).toString('base64')}`}}));
+  const result=await r.request(JSON.stringify({stream:true,reasoning_effort:'xhigh',tools:[{type:'function',function:{name:'work'}}],messages:[{role:'user',content:[{type:'text',text:'keep me'},...images]}]}),'too-many-images');
+  assert.equal(result.status,200);assert.equal(result.headers['x-dsg-protection'],'vision-image-limit-recovery');assert.equal(result.headers['x-dsg-images-withheld'],'18');assert.match(result.body,/"content":"OK"/);assert.match(result.body,/data: \[DONE\]/);
+  assert.equal(r.backends[0].records.length,2);assert.equal(r.backends[0].records[0].payload.messages[0].content.filter(block=>block.type==='image_url').length,18);
+  const repaired=r.backends[0].records[1].payload;
+  assert.equal(repaired.reasoning_effort,'xhigh');assert.deepEqual(repaired.tools,[{type:'function',function:{name:'work'}}]);assert.equal(repaired.messages.flatMap(message=>message.content).filter(block=>block.type==='image_url').length,0);
+  assert.match(repaired.messages.at(-1).content[0].text,/contained 18 images/);assert.match(repaired.messages.at(-1).content[0].text,/Decide and take the next valid action now/);assert.match(repaired.messages.at(-1).content[0].text,/Do not claim to have inspected/);
+  assert.equal(repaired.messages[0].content.some(block=>block.text==='keep me'),true);
+  assert.equal(r.gateway.stats().workers[0].completed,1);assert.equal(r.gateway.stats().workers[0].protected,0);assert.equal(r.gateway.stats().workers[0].failed,0);
+  assert.equal(r.gateway.stats().protections.vision_jpeg.rescued,1);assert.deepEqual(r.gateway.stats().protections.vision_jpeg.last.formats,['image_limit']);
+});
+test('an image-limit recovery rejected a second time becomes guidance and never loops',async t=>{
+  const r=await rig(t,1,{vision_compatibility:{enabled:true}});
   const images=Array.from({length:17},(_,index)=>({type:'image_url',image_url:{url:`data:image/png;base64,${Buffer.from(String(index)).toString('base64')}`}}));
-  const result=await r.request(JSON.stringify({stream:true,reasoning_effort:'xhigh',messages:[{role:'user',content:images}]}),'too-many-images');
+  const result=await r.request(JSON.stringify({too_many_images_error:true,stream:true,messages:[{role:'user',content:images}]}),'too-many-images-twice');
   assert.equal(result.status,200);assert.equal(result.headers['x-dsg-protection'],'vision-image-limit-guidance');assert.match(result.body,/limit of 16 images/);assert.match(result.body,/This is a message from the DSG gateway/);assert.match(result.body,/data: \[DONE\]/);
-  assert.equal(r.backends[0].records.length,1);assert.equal(r.gateway.stats().workers[0].protected,1);assert.equal(r.gateway.stats().workers[0].failed,0);
+  assert.equal(r.backends[0].records.length,2);assert.equal(r.gateway.stats().workers[0].protected,1);assert.equal(r.gateway.stats().workers[0].failed,0);
 });
 test('an image-limit error without more than sixteen proven typed images remains the original upstream 400',async t=>{
   const r=await rig(t,1,{vision_compatibility:{enabled:true}});

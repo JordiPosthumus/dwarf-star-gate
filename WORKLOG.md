@@ -81,9 +81,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
   foundation for a trustworthy cache-health auditor.
 
 - **Protected client sessions from proven image compatibility failures.** Rejected
-  JPEGs may be normalized once on the same server. Proven GIF and over-16-image
-  cases become useful completed guidance turns instead of crashing Pi; unrelated
-  400 responses remain untouched.
+  JPEGs may be normalized once on the same server. Proven GIF cases become useful
+  completed guidance turns. Proven GIF/over-16-image requests now receive one
+  model-driven recovery call with explicit diagnostics and no gateway-selected
+  image subset; the agent chooses what to do, client history is untouched and
+  unrelated 400 responses remain unchanged.
 
 - **Made fleet state much harder to misread.** The dashboard now distinguishes
   healthy, paused, quarantined and unreachable servers; counts only DSG-owned

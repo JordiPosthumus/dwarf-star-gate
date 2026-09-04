@@ -529,16 +529,17 @@ test('an active dashboard serves a frozen complete bundle and rejects missing as
 });
 test('logo-derived icons include a transparent monochrome Safari mask and correctly sized PNG/ICO assets',async t=>{
   const {url}=await fixture(t),html=await(await fetch(url)).text();
-  assert.match(html,/rel="mask-icon" href="\/dsg-pinned-v1\.svg" color="#[a-f0-9]{6}"/);
-  assert.match(html,/rel="apple-touch-icon" sizes="180x180" href="\/apple-touch-icon\.png"/);
+  assert.match(html,/rel="shortcut icon" href="\/favicon-v2\.ico"/);
+  assert.match(html,/rel="mask-icon" href="\/dsg-pinned-v2\.svg" color="#[a-f0-9]{6}"/);
+  assert.match(html,/rel="apple-touch-icon" sizes="180x180" href="\/apple-touch-icon-v2\.png"/);
   assert.match(html,/rel="icon" type="image\/svg\+xml" sizes="any"/);
-  const r=await fetch(url+'/dsg-pinned-v1.svg'),mask=await r.text();assert.equal(r.headers.get('content-type'),'image/svg+xml');
+  const r=await fetch(url+'/dsg-pinned-v2.svg'),mask=await r.text();assert.equal(r.headers.get('content-type'),'image/svg+xml');
   assert.match(mask,/viewBox="0 0 64 64"/);assert.match(mask,/<g fill="#000000">/);assert.equal((mask.match(/<path /g)||[]).length,3);
   assert.doesNotMatch(mask,/<(?:rect|image|script|foreignObject)|href=|style=/);
-  for(const [file,size] of [['favicon-v1.png',32],['apple-touch-icon.png',180]]) {
+  for(const [file,size] of [['favicon-v2.png',32],['apple-touch-icon-v2.png',180]]) {
     const image=Buffer.from(await(await fetch(url+'/'+file)).arrayBuffer());assert.equal(image.subarray(1,4).toString(),'PNG');assert.equal(image.readUInt32BE(16),size);assert.equal(image.readUInt32BE(20),size);
   }
-  const ico=Buffer.from(await(await fetch(url+'/favicon.ico')).arrayBuffer());assert.equal(ico.readUInt16LE(2),1);assert.equal(ico.readUInt16LE(4),2);
+  const ico=Buffer.from(await(await fetch(url+'/favicon-v2.ico')).arrayBuffer());assert.equal(ico.readUInt16LE(2),1);assert.equal(ico.readUInt16LE(4),2);
   for(const [i,size] of [16,32].entries()) {
     const entry=6+i*16,offset=ico.readUInt32LE(entry+12),length=ico.readUInt32LE(entry+8);assert.equal(ico[entry],size);assert.equal(ico[entry+1],size);assert.ok(offset+length<=ico.length);assert.equal(ico.readUInt32BE(offset+16),size);
   }
@@ -684,4 +685,19 @@ test('six-worker monitoring only reads gateway status; credentials and addresses
   assert.equal(s.gateway.workers[0].last_request_finished_at,null);
   assert.ok(!/SECRET_FOR_TEST|private-address|NEVER_EXPORT/.test(JSON.stringify(s)));
   assert.deepEqual(calls, ['/gateway/status']);
+});
+test('dashboard refuses a symlinked gateway event log and recovers when a regular log appears', async t => {
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-gateway-log-'));
+  const outside=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-gateway-private-'));
+  t.after(()=>{fs.rmSync(dir,{recursive:true,force:true});fs.rmSync(outside,{recursive:true,force:true});});
+  const event=JSON.stringify({event:'request_finished',node:'spark1',outcome:'complete',request_id:'fixture'});
+  const target=path.join(outside,'private.jsonl');fs.writeFileSync(target,event+'\n');
+  fs.symlinkSync(target,path.join(dir,'gateway.log'));
+  const backend=http.createServer((_req,res)=>res.end(JSON.stringify({version:1,model:'ds4',workers:[{id:'spark1',is_healthy:true,load:0}]})));
+  backend.listen(0,'127.0.0.1');await once(backend,'listening');t.after(()=>{backend.closeAllConnections();backend.close();});
+  const config=path.join(dir,'config.json');fs.writeFileSync(config,JSON.stringify({port:backend.address().port,api_key:'test',state_file:path.join(dir,'state.json'),nodes:[{id:'spark1'}]}));
+  const app=await runDashboard(config,0);t.after(app.close);assert.equal(app.snapshot().events.length,0);
+  fs.unlinkSync(path.join(dir,'gateway.log'));fs.writeFileSync(path.join(dir,'gateway.log'),event+'\n');
+  const end=Date.now()+3500;while(!app.snapshot().events.length){if(Date.now()>end)throw new Error('Dashboard did not resume a regular gateway log');await delay(20);}
+  assert.equal(app.snapshot().events.length,1);assert.equal(fs.readFileSync(target,'utf8'),event+'\n');
 });

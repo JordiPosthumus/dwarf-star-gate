@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cd -- "$(dirname -- "$0")"
-exec node ds4-gateway/dashboard-control.mjs snapshot
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+exec node "$script_dir/ds4-gateway/dashboard-control.mjs" snapshot
