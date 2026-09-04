@@ -1,5 +1,11 @@
 # Changelog
 
+## Bound cache inventory traversal
+
+- Limit directory traversal to 16,384 entries as well as 4,096 cache headers.
+  Unrelated entries count toward the traversal limit. Capped scans cannot prove
+  cache absence. Regression tests cover unrelated files and the exact boundary.
+
 ## Reconcile independently owned competing starts
 
 - Allow the offline attribution audit to exclude a competing start only when

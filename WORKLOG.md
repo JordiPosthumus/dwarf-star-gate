@@ -10,6 +10,10 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Bounded inventory directory traversal.** Unrelated files now count toward a
+  separate scan budget so they cannot cause unbounded synchronous traversal.
+  Partial inventories stay inconclusive for cache absence; DS4 caches are untouched.
+
 - **Recovered unnecessary overlap abstentions.** The offline audit can now use
   an independently corroborated other owner to distinguish nearby engine starts.
   Fresh-traffic validation recovered additional matches while unresolved cases

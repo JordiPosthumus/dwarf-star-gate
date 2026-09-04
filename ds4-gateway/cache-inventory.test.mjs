@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import {snapshotPresence} from './cache-path-shadow.mjs';
 import {CacheInventoryReader,cacheCompatibility,cacheInventoryDirectories,cacheSnapshotReference,loadCacheInventoryKey,parseCacheHeader,scanCacheDirectory,summarizeCacheInventory} from './cache-inventory.mjs';
 
 const secret=Buffer.alloc(32,7),stem='a'.repeat(40),name=stem+'.kv';
@@ -44,6 +45,20 @@ test('the installation key is private and stable while reader polling is bounded
   const reader=new CacheInventoryReader('studio',directory,first,{interval_ms:10000});assert.equal(reader.poll(1000).accepted,1);
   fs.unlinkSync(path.join(directory,name));assert.equal(reader.poll(5000).accepted,1,'polls inside interval use the prior bounded snapshot');assert.equal(reader.poll(11001).accepted,0);
   fs.chmodSync(path.join(runtime,'cache-inventory.key'),0o644);assert.throws(()=>loadCacheInventoryKey(runtime),/private/);
+});
+
+test('unrelated directory entries consume the scan budget and cannot prove cache absence',t=>{
+  const dir=fixture(t);
+  for(let i=0;i<5;i++)fs.writeFileSync(path.join(dir,`unrelated-${i}`),'');
+  const capped=scanCacheDirectory(dir,{worker:'studio',secret,now:1000,max_entries:4});
+  assert.equal(capped.scanned,0);assert.equal(capped.capped,true);
+  assert.equal(summarizeCacheInventory(capped).capped,true);
+  const target=parseCacheHeader(header(),{filename:name,file_size:80,secret}).compatibility;
+  assert.equal(snapshotPresence(capped,cacheSnapshotReference(secret,name),target,{now:1000}).status,'unknown');
+  const complete=scanCacheDirectory(dir,{worker:'studio',secret,now:1000,max_entries:5});
+  assert.equal(complete.capped,false);
+  assert.equal(snapshotPresence(complete,cacheSnapshotReference(secret,name),target,{now:1000}).status,'absent');
+  for(const max_entries of [0,-1,1.5,16385,NaN])assert.throws(()=>scanCacheDirectory(dir,{worker:'studio',secret,max_entries}));
 });
 
 test('compatibility mirrors stock DS4 header gates and abstains on legacy weight fingerprints',()=>{

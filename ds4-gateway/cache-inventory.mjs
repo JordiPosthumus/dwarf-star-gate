@@ -9,6 +9,7 @@ const SHA_STEM=/^[\da-f]{40}$/i;
 const SHA_NAME=/^([\da-f]{40})\.kv$/i;
 const WORKER_ID=/^[a-zA-Z0-9][\w-]{0,63}$/;
 const MAX_CACHE_FILES=4096;
+const MAX_DIRECTORY_ENTRIES=16384;
 const MAX_SAFE_BIGINT=BigInt(Number.MAX_SAFE_INTEGER);
 
 function safeInteger64(buffer,offset){
@@ -59,16 +60,20 @@ function readHeader(fd){
   return offset===buffer.length?buffer:null;
 }
 
-export function scanCacheDirectory(directory,{worker,secret,now=Date.now(),max_files=MAX_CACHE_FILES}={}){
+export function scanCacheDirectory(directory,{worker,secret,now=Date.now(),max_files=MAX_CACHE_FILES,max_entries=MAX_DIRECTORY_ENTRIES}={}){
   cacheInventoryDirectories({[worker]:directory});
   if(!Number.isSafeInteger(max_files)||max_files<1||max_files>MAX_CACHE_FILES)throw new Error(`max_files must be 1–${MAX_CACHE_FILES}`);
+  if(!Number.isSafeInteger(max_entries)||max_entries<1||max_entries>MAX_DIRECTORY_ENTRIES)throw new Error(`max_entries must be 1–${MAX_DIRECTORY_ENTRIES}`);
   const observed_at=Number.isFinite(now)&&now>=0?now:Date.now();
   const result={schema:1,worker,source:'stock_ds4_kvstore_headers',privacy:'installation_keyed_hmac',observed_at,status:'ready',scanned:0,accepted:0,rejected:0,capped:false,entries:[]};
   let dir;
   try{
     const stat=fs.lstatSync(directory);if(!stat.isDirectory()||stat.isSymbolicLink())throw new Error('not_regular_directory');
     dir=fs.opendirSync(directory);
+    let visited=0;
     for(let item;(item=dir.readSync())!==null;){
+      if(visited>=max_entries){result.capped=true;break;}
+      visited++;
       if(!SHA_NAME.test(item.name))continue;
       if(result.scanned>=max_files){result.capped=true;break;}
       result.scanned++;

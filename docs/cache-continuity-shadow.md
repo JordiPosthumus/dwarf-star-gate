@@ -49,6 +49,10 @@ fresh compatible header match. Absence requires a complete, uncapped scan with
 zero rejected cache-shaped files. A stale, capped or partially unreadable scan,
 or a legacy zero weights fingerprint, abstains.
 
+Inventory traversal is bounded to 16,384 directory entries and 4,096 cache
+headers per scan. Unrelated files count toward the traversal budget. Hitting
+either cap makes absence inconclusive; no cache files are changed or removed.
+
 This is stronger than treating “not found” as absence and keeps a permissions or
 filesystem problem from becoming a routing claim.
 
