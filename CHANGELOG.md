@@ -1,5 +1,11 @@
 # Changelog
 
+## Keep attribution audits within runtime limits
+
+- Replace a timestamp argument spread that overflows at the supported 250,000
+  source-record budget with a constant-auxiliary-space minimum calculation.
+  A full-budget file regression verifies no truncation or stack overflow.
+
 ## Reject ambiguous cache-shadow evidence
 
 - Duplicate snapshot references no longer use the first matching header to claim

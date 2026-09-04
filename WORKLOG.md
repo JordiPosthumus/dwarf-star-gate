@@ -10,6 +10,10 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Verified full-size attribution audits.** The supported 250,000-record input
+  no longer overflows JavaScript's function-argument limit. The minimum-time
+  calculation avoids an extra timestamp array; attribution rules are unchanged.
+
 - **Removed false confidence from cache shadow evidence.** Conflicting snapshot
   entries and unspecified scan completeness now abstain rather than claim a
   usable cache or proven absence. No live cache or routing behavior changed.

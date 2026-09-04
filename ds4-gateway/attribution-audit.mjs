@@ -193,7 +193,10 @@ export function auditAttributionReconciliation(directory,gatewayLog,{maxFiles=MA
     catch{gateway_malformed_lines++;}
   }
   const complete=partial_files===0&&skipped_files===0&&truncated_records===0&&malformed_lines===0&&oversized_lines===0&&invalid_metric_records===0&&!gateway.partial&&gateway_malformed_lines===0&&gateway_oversized_lines===0&&gateway_invalid_records===0&&gateway_truncated_records===0;
-  const metricCoverageStart=Math.min(...engineRows.map(row=>safeCollisionStart(row)?.time??Infinity));
+  // The supported source budget exceeds JavaScript's function-argument limit.
+  // Reduce in constant auxiliary space rather than spreading timestamps.
+  let metricCoverageStart=Infinity;
+  for(const row of engineRows)metricCoverageStart=Math.min(metricCoverageStart,safeCollisionStart(row)?.time??Infinity);
   const recorded=summarizeAttribution(attributionRows.filter(inCohort)),later=reconcileAttributionRows(attributionRows,engineRows,gatewayRows,{complete,metricCoverageStart,sinceMs});
   return {schema:1,mode:'read_only_later_evidence_reconciliation',source_complete:complete,files_read:files.length-skipped_files,metric_files_omitted,partial_files,skipped_files,malformed_lines,oversized_lines,invalid_metric_records,anonymous_metric_starts,truncated_records,
     gateway_partial:gateway.partial,gateway_malformed_lines,gateway_oversized_lines,gateway_invalid_records,gateway_truncated_records,recorded,with_later_gateway_evidence:later.summary,

@@ -130,3 +130,16 @@ test('bounded reconciliation audit reports recorded and later-evidence views wit
   const output=JSON.stringify(report);assert.ok(!output.includes(dir));assert.ok(!output.includes(requestA));assert.ok(!output.includes(requestB));assert.ok(!output.includes(sample(10)));
   const link=path.join(dir,'gateway-link.log');fs.symlinkSync(gatewayLog,link);assert.throws(()=>auditAttributionReconciliation(dir,link),/regular file/);
 });
+
+test('reconciliation supports the full source-record budget without argument-stack overflow',t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-attribution-budget-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const metrics=path.join(dir,'metrics-2026-09-04.jsonl'),gatewayLog=path.join(dir,'gateway.log');
+  const line=JSON.stringify({kind:'start',node:'a',time:base,prompt:1,cached:0,new_tokens:1})+'\n';
+  assert.ok(Buffer.byteLength(line)*250000<32*1024*1024);
+  fs.writeFileSync(metrics,line.repeat(250000));fs.writeFileSync(gatewayLog,'');
+  const report=auditAttributionReconciliation(dir,gatewayLog);
+  assert.equal(report.source_complete,true);
+  assert.equal(report.anonymous_metric_starts,250000);
+  assert.equal(report.truncated_records,0);
+  assert.equal(report.reconciled_overlaps,0);
+});
