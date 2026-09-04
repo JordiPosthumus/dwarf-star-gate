@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Recovered unnecessary overlap abstentions.** The offline audit can now use
+  an independently corroborated other owner to distinguish nearby engine starts.
+  Fresh-traffic validation recovered additional matches while unresolved cases
+  stayed unknown; no cache-hit or protocol-identity claim follows from this.
+
 - **Explained remaining attribution overlaps.** Fresh-traffic audits now identify
   competing starts with existing ownership versus unresolved evidence, helping
   target safe reconciliation improvements without guessing request identity.

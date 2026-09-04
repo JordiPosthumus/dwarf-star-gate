@@ -94,6 +94,19 @@ test('fresh-start cohorts retain earlier ownership and competing-start evidence'
   for(const sinceMs of [NaN,-1,1.5,'today'])assert.throws(()=>reconcileAttributionRows([],[],[],{sinceMs}),/sinceMs/);
 });
 
+test('independently corroborated other ownership can resolve an overlap without circular proposals',()=>{
+  const other={...engine(11),time:base-500,prompt:800,cached:700};
+  const owner=overlap(11,{engine_started_at:other.time,request_id:requestA,status:'corroborated',reason:'usage_match',confidence:'high_candidate',prompt_tokens:800,cached_tokens:700});
+  const run=(o=owner,e=other,g=gateway())=>reconcileAttributionRows([overlap(),o],[earlyEngine(),engine(),e],g,{complete:true});
+  assert.equal(run().reconciled_overlaps,1);
+  for(const change of [{status:'candidate',reason:'request_open'},{request_id:requestB},{backend_epoch:'b'.repeat(64)},{engine_started_at:base-501},{prompt_tokens:801,new_tokens:101}])assert.equal(run({...owner,...change}).reconciled_overlaps,0);
+  assert.equal(run(owner,{...other,sample_id:undefined}).reconciled_overlaps,0);
+  const failed=gateway();failed[3].outcome='client_cancelled';assert.equal(run(owner,other,failed).reconciled_overlaps,0);
+  assert.equal(run({...owner,confidence:'none'}).reconciled_overlaps,0);
+  const conflict=gateway();conflict.push({...conflict[3],time:iso(base+1500)});assert.equal(run(owner,other,conflict).reconciled_overlaps,0);
+  assert.equal(run({...owner,status:'abstained',reason:'overlapping_gateway_windows',request_id:null}).reconciled_overlaps,0,'proposals may not corroborate one another');
+});
+
 test('incomplete evidence, missing coverage, missing usage and request collisions keep overlap abstention',()=>{
   const original=overlap();
   assert.equal(reconcileAttributionRows([original],[engine()],gateway(),{complete:false}).reconciled_overlaps,0);

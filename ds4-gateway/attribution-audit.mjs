@@ -103,8 +103,10 @@ export function reconcileAttributionRows(attributionRows=[],engineRows=[],gatewa
     const at=Date.parse(event.time);coverageStart=Math.min(coverageStart,at);
     const request=lifecycle.get(event.request_id)??{request_id:event.request_id,node:event.node,dispatched_at:null,finished_at:null,usage:null,conflict:false};
     if(request.node!==event.node)request.conflict=true;
-    if(event.event==='request_dispatched')request.dispatched_at??=at;
-    else{request.finished_at=at;request.usage={prompt_tokens:integer(event.usage?.prompt_tokens),cached_tokens:integer(event.usage?.cached_tokens)};}
+    if(event.event==='request_dispatched'){if(request.dispatched_at!==null&&request.dispatched_at!==at)request.conflict=true;request.dispatched_at??=at;}
+    else{const usage={prompt_tokens:integer(event.usage?.prompt_tokens),cached_tokens:integer(event.usage?.cached_tokens)};
+      if(request.finished_at!==null&&(request.finished_at!==at||request.outcome!==event.outcome||JSON.stringify(request.usage)!==JSON.stringify(usage)))request.conflict=true;
+      request.finished_at=at;request.outcome=event.outcome;request.usage=usage;}
     lifecycle.set(event.request_id,request);
   }
   const requests=[...lifecycle.values()].filter(request=>!request.conflict&&Number.isFinite(request.dispatched_at));
@@ -128,6 +130,18 @@ export function reconcileAttributionRows(attributionRows=[],engineRows=[],gatewa
   const add=(requestId,sampleKey)=>{if(!UUID.test(requestId??''))return;const set=owners.get(requestId)??new Set();set.add(sampleKey);owners.set(requestId,set);};
   for(const row of original)add(row.request_id,`${row.node}:${row.sample_id}`);
   for(const [sampleKey,proposal] of proposals)add(proposal.request_id,sampleKey);
+  // Only ORIGINAL corroboration can establish an independent owner. Never use
+  // a proposal from this pass: mutually ambiguous starts cannot prove each other.
+  const independentlyOwned=(start,proposal,target)=>{
+    const owner=latest.get(`${start.node}:${start.sample_id}`),request=lifecycle.get(owner?.request_id);
+    return !!(start.sample_id&&owner?.status==='corroborated'&&['high_candidate','bounded_candidate'].includes(owner.confidence)&&['usage_match','usage_disambiguated_overlap'].includes(owner.reason)&&
+      owner.request_id!==proposal.request_id&&owners.get(owner.request_id)?.size===1&&request&&!request.conflict&&request.outcome==='complete'&&
+      request.node===start.node&&Number.isFinite(request.dispatched_at)&&Number.isFinite(request.finished_at)&&request.finished_at>=request.dispatched_at&&
+      start.time>=request.dispatched_at-SKEW_MS&&start.time<=request.finished_at+SKEW_MS&&start.time-request.dispatched_at<=MAX_DISPATCH_LEAD_MS&&
+      start.backend_epoch&&start.backend_epoch===owner.backend_epoch&&start.backend_epoch===target.backend_epoch&&owner.engine_started_at===start.time&&
+      owner.prompt_tokens===start.prompt&&owner.cached_tokens===start.cached&&request.usage?.prompt_tokens===start.prompt&&request.usage?.cached_tokens===start.cached&&
+      (start.prompt!==target.prompt_tokens||start.cached!==target.cached_tokens));
+  };
   let reconciled_overlaps=0;const competing_start_details={};
   const revised=original.map(row=>{
     currentRow=row;
@@ -136,7 +150,8 @@ export function reconcileAttributionRows(attributionRows=[],engineRows=[],gatewa
     if(owners.get(proposal.request_id)?.size!==1){block('request_collision');return row;}
     const request=lifecycle.get(proposal.request_id);
     const competing=collisionStarts.filter(start=>!(start.sample_id===row.sample_id&&start.node===row.node)&&start.node===request?.node&&request.dispatched_at<=start.time+SKEW_MS&&start.time-request.dispatched_at<=MAX_DISPATCH_LEAD_MS&&(request.finished_at===null||request.finished_at>=start.time-SKEW_MS));
-    if(competing.length){
+    const unresolved=competing.filter(start=>!independentlyOwned(start,proposal,row));
+    if(unresolved.length){
       if(inCohort(row)){
         const flags=new Set(competing.map(s=>s.sample_id?'identified_start':'anonymous_start'));
         for(const s of competing)flags.add(s.prompt===row.prompt_tokens&&s.cached===row.cached_tokens?'same_prompt_cache_usage':'different_prompt_cache_usage');

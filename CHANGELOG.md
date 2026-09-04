@@ -1,5 +1,13 @@
 # Changelog
 
+## Reconcile independently owned competing starts
+
+- Allow the offline attribution audit to exclude a competing start only when
+  original corroboration, unique different ownership, successful completion,
+  timing, epoch and distinct exact usage agree. Never use new proposals as proof.
+- Reject contradictory duplicate lifecycle records and retain ambiguity for
+  anonymous, failed, conflicting or incomplete evidence. Live routing is unchanged.
+
 ## Explain competing-start attribution abstentions
 
 - The private read-only audit now distinguishes anonymous/identified competing

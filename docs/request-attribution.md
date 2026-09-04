@@ -108,6 +108,14 @@ abstention. The report presents the recorded view beside the later-evidence view
 it never rewrites telemetry or hides the original decision. Private request and
 sample IDs are used only inside the bounded join and never returned.
 
+A competing start can be excluded only when its **original recorded** attribution
+already corroborates a different, uniquely owned, successfully completed request:
+its engine timestamp, process epoch, prompt/cache tuple and gateway lifetime must
+agree, and its tuple must differ from the target's. New reconciliation proposals
+never establish that independent ownership, so circular inference remains blocked.
+Anonymous starts, conflicting lifecycle records, missing usage and inconsistent
+epochs continue to abstain. This changes only the offline later-evidence view.
+
 This measures evidence yield on ordinary traffic; it does not validate a cache
 hit or upgrade a candidate into protocol identity. Exact attribution would still
 require a stock DS4 protocol signal, such as safely propagating an opaque request
