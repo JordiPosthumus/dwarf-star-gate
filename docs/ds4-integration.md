@@ -70,6 +70,10 @@ with stock interfaces; any proposed upstream feature is an optional capability,
 not a private-fork requirement. Preserve attribution/licences and keep private
 infrastructure/workload details out of issues, reproductions and benchmarks.
 
+See the [upstream observability research note](upstream-observability.md) for a
+pinned-source request-correlation opportunity and related Responses/cache work.
+It records investigation, not an approved or implemented server change.
+
 ## Calibration must preserve production caches
 
 The planned manual/optional hourly development runner must have a proven

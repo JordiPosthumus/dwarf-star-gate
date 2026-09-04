@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Investigated a narrow upstream observability opportunity.** Checked current
+  DS4 request parsing and related PRs; recorded bounded request correlation as
+  a candidate, with privacy, compatibility and test requirements. No DS4 change
+  or PR submission was made.
+
 - **Narrowed a Mac recovery identity race.** Metadata inspection now rechecks
   start time as well as the executable path. Same-binary PID replacement must
   abstain; this is not a claim of atomic restart safety or a live recovery canary.
