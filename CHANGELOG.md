@@ -1,5 +1,16 @@
 # Changelog
 
+## Conservative attribution overlap resolution
+
+- Request-to-engine shadow attribution now waits for every clock-overlapped
+  gateway request to finish and uses the directly reported prompt/cache token
+  tuple only when it identifies exactly one request. This resolves back-to-back
+  gateway windows blurred by bounded clock tolerance without pretending DS4
+  echoes a protocol request ID.
+- Zero matching tuples, duplicate matches, missing usage, open requests and
+  missing backend epochs still abstain. The evidence remains diagnostic only and
+  grants no routing or recovery authority.
+
 ## Observed handover outcomes
 
 - Analytics now joins an applied pre-dispatch handover to its actual destination

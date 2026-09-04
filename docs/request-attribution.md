@@ -27,9 +27,11 @@ events in the same worker and observed process epoch. A row is:
 
 - `candidate` when exactly one gateway dispatch window can explain the start;
 - `corroborated` when that one candidate later reports exactly matching prompt
-  and cached-token usage;
+  and cached-token usage, or when every clock-overlapped gateway window has
+  completed and exactly one reports that matching usage tuple;
 - `abstained` when the epoch is missing, no window exists, windows overlap, one
-  request sees multiple starts, or returned usage conflicts.
+  request sees multiple starts, returned usage conflicts, or more than one
+  overlapped request reports the same tuple.
 
 With a strong systemd epoch, `corroborated` means **high-confidence candidate**,
 not protocol proof; the boot/PID fallback remains explicitly bounded. DS4 does

@@ -42,7 +42,21 @@ function result(start,requests) {
   const candidates=requests.filter(request=>request.node===start.node&&request.dispatched_at<=start.time+SKEW_MS&&
     start.time-request.dispatched_at<=MAX_DISPATCH_LEAD_MS&&(request.finished_at===null||request.finished_at>=start.time-SKEW_MS));
   if(!candidates.length)return {...base,reason:'no_gateway_request_window'};
-  if(candidates.length!==1)return {...base,reason:'overlapping_gateway_windows'};
+  if(candidates.length!==1){
+    // Clock tolerance can make two sequential gateway windows appear to
+    // overlap around a prompt boundary. Wait until every candidate has a
+    // completed, directly reported usage tuple, then use that tuple only when
+    // it identifies exactly one request. This remains a corroborated candidate,
+    // not protocol proof: invisible direct clients are still possible.
+    const resolved=candidates.every(request=>request.finished_at!==null&&request.usage?.prompt_tokens!==null&&request.usage?.prompt_tokens!==undefined&&
+      request.usage?.cached_tokens!==null&&request.usage?.cached_tokens!==undefined);
+    if(!resolved)return {...base,reason:'overlapping_gateway_windows'};
+    const matching=candidates.filter(request=>request.usage.prompt_tokens===start.prompt&&request.usage.cached_tokens===start.cached);
+    if(matching.length!==1)return {...base,reason:matching.length?'overlapping_usage_matches':'usage_conflict'};
+    const request=matching[0];
+    return {...base,request_id:request.request_id,status:'corroborated',reason:'usage_disambiguated_overlap',
+      confidence:start.backend_epoch_confidence==='strong'?'high_candidate':'bounded_candidate',dispatch_delta_ms:Math.round(start.time-request.dispatched_at)};
+  }
   const request=candidates[0];
   return {...base,request_id:request.request_id,status:'candidate',reason:request.finished_at===null?'request_open':'usage_unavailable',confidence:'heuristic',
     dispatch_delta_ms:Math.round(start.time-request.dispatched_at)};
@@ -73,7 +87,7 @@ export class EngineAttribution {
     for(const row of rows)if(row.request_id){const list=byRequest.get(row.request_id)??[];list.push(row);byRequest.set(row.request_id,list);}
     for(const row of rows){
       if(row.request_id&&byRequest.get(row.request_id).length>1)Object.assign(row,{status:'abstained',reason:'multiple_engine_starts',confidence:'none'});
-      else if(row.request_id){
+      else if(row.request_id&&row.status!=='corroborated'){
         const request=this.requests.get(row.request_id);
         if(request?.finished_at!==null){
           const prompt=request.usage?.prompt_tokens,cached=request.usage?.cached_tokens;

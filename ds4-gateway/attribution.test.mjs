@@ -38,6 +38,24 @@ test('usage disagreement abstains and an out-of-order arrival can be reconciled 
   assert.equal(a.snapshot().recent[0].reason,'usage_conflict');assert.equal(a.snapshot().recent[0].request_id,request);
   assert.deepEqual(saved.map(row=>row.reason),['no_gateway_request_window','request_open','usage_conflict']);
 });
+test('completed usage can disambiguate a clock-tolerance overlap without guessing',()=>{
+  const a=new EngineAttribution();
+  a.acceptGateway(dispatch(request,'spark1',10000));a.acceptGateway(dispatch(other,'spark1',11000));a.acceptEngine(start(sample,'spark1',12000));
+  assert.equal(a.snapshot().recent[0].reason,'overlapping_gateway_windows');
+  a.acceptGateway(finish(request,'spark1',13000,{prompt_tokens:700,cached_tokens:600}));
+  assert.equal(a.snapshot().recent[0].reason,'overlapping_gateway_windows');
+  a.acceptGateway(finish(other,'spark1',14000,{prompt_tokens:1000,cached_tokens:900}));
+  const row=a.snapshot().recent[0];
+  assert.equal(row.request_id,other);assert.equal(row.status,'corroborated');assert.equal(row.reason,'usage_disambiguated_overlap');assert.equal(row.confidence,'high_candidate');
+});
+test('overlap disambiguation abstains when usage identifies zero or multiple requests',()=>{
+  const conflict=new EngineAttribution();conflict.acceptGateway(dispatch(request));conflict.acceptGateway(dispatch(other));conflict.acceptEngine(start());
+  conflict.acceptGateway(finish(request,'spark1',13000,{prompt_tokens:700,cached_tokens:600}));conflict.acceptGateway(finish(other,'spark1',14000,{prompt_tokens:800,cached_tokens:700}));
+  assert.equal(conflict.snapshot().recent[0].reason,'usage_conflict');
+  const duplicate=new EngineAttribution();duplicate.acceptGateway(dispatch(request));duplicate.acceptGateway(dispatch(other));duplicate.acceptEngine(start());
+  duplicate.acceptGateway(finish(request,'spark1',13000));duplicate.acceptGateway(finish(other,'spark1',14000));
+  assert.equal(duplicate.snapshot().recent[0].reason,'overlapping_usage_matches');assert.equal(duplicate.snapshot().recent[0].status,'abstained');
+});
 test('boot and PID fallback can corroborate but never receives strong-epoch confidence',()=>{
   const a=new EngineAttribution();a.acceptGateway(dispatch());a.acceptEngine(start(sample,'spark1',12000,{backend_epoch_confidence:'bounded'}));a.acceptGateway(finish());
   assert.equal(a.snapshot().recent[0].status,'corroborated');assert.equal(a.snapshot().recent[0].confidence,'bounded_candidate');
