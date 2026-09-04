@@ -1,5 +1,15 @@
 # Changelog
 
+## Later-evidence attribution reconciliation
+
+- A separate read-only audit can now revisit historical clock-overlap
+  abstentions after every candidate request has finished. It upgrades the audit
+  view only for one exact prompt/cache usage match with no competing engine
+  start; incomplete coverage, missing usage and collisions still abstain.
+- The recorded rows remain immutable and are reported beside the reconciled
+  view. Metric and gateway reads are regular-file-only and bounded to 32 MiB per
+  source file; identifiers and paths never enter output.
+
 ## Local-log process-epoch attribution
 
 - Timing records from a same-host stock DS4 log now inherit the bounded digest of

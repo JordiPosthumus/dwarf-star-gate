@@ -11,6 +11,7 @@
     "data:test": "node --test ds4-gateway/json-usage.test.mjs ds4-gateway/throughput.test.mjs predictor/audit.test.mjs",
     "data:audit": "node predictor/audit.mjs",
     "attribution:audit": "node ds4-gateway/attribution-audit.mjs --directory runtime/dashboard",
+    "attribution:reconcile-audit": "node ds4-gateway/attribution-audit.mjs --directory runtime/dashboard --gateway-log runtime/gateway.log",
     "memory:test": "node --test ds4-gateway/genie-memory.test.mjs",
     "recovery:test": "python3 -m unittest discover -s ds4-gateway -p 'recovery_systemd_test.py' -v",
     "check": "node scripts/check.mjs",

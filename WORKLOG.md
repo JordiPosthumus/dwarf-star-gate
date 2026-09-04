@@ -10,6 +10,10 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Recovered safe later attribution evidence without revising history.** A
+  bounded read-only join can revisit old clock overlaps once exact returned usage
+  exists, while collisions, incomplete files and missing usage still abstain.
+
 - **Restored evidence for local Mac attribution.** DSG now carries a privacy-safe
   stock-log process digest from a proven listen marker to later timing records in
   strict file order. Missing markers and rotations abstain instead of inheriting

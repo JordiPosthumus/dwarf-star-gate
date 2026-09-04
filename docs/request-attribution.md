@@ -75,6 +75,24 @@ history. Output contains counts, fixed reason codes and configured server IDs—
 prompts, responses, request/sample IDs, paths or credentials. Treat the report as
 private deployment metadata and do not commit it.
 
+An optional second, still read-only view can revisit recorded clock-overlap
+abstentions after their gateway requests have finished:
+
+```sh
+npm run attribution:reconcile-audit
+# or add --gateway-log /absolute/private/runtime/gateway.log
+```
+
+This mode reads at most 32 MiB from each selected metric file and 32 MiB from the
+gateway lifecycle log. It acts only when all selected sources are complete,
+regular, parseable and within their bounds; the gateway coverage must begin at
+least ten minutes before the engine start. Every overlapped request must have
+finished with an exact prompt/cached-token tuple, exactly one tuple must match,
+and no other engine start may own that request. Otherwise the row remains an
+abstention. The report presents the recorded view beside the later-evidence view;
+it never rewrites telemetry or hides the original decision. Private request and
+sample IDs are used only inside the bounded join and never returned.
+
 This measures evidence yield on ordinary traffic; it does not validate a cache
 hit or upgrade a candidate into protocol identity. Exact attribution would still
 require a stock DS4 protocol signal, such as safely propagating an opaque request

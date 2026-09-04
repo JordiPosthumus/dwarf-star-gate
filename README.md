@@ -376,8 +376,10 @@ Per worker, the dashboard displays:
 The dashboard observer also records privacy-safe DS4 process epochs and exposes
 conservative [request/engine attribution](docs/request-attribution.md) in local diagnostics and Gate Genie
 evidence. Its bounded local audit reports attribution yield and abstention causes
-without request identities or text. Ambiguous or conflicting evidence is unknown,
-never a cache claim.
+without request identities or text. A separate complete-source reconciliation
+view can count later exact usage evidence without rewriting the original
+abstentions. Ambiguous, partial or conflicting evidence remains unknown—never a
+cache claim.
 
 For a DS4 cache directory mounted on the **same host as the dashboard**, DSG can
 optionally inventory stock disk-KV headers without reading their embedded prompt
