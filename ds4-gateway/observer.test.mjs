@@ -25,8 +25,8 @@ test('Genie uses the DSG pool by default and an explicit dedicated endpoint gain
   assert.equal(genieRuntimeConfig({...base,genie:false}),null);
 });
 test('Genie sees bounded attribution evidence without mistaking a candidate for protocol proof',()=>{
-  const s=snapshot();s.attribution={schema:1,mode:'shadow',request_identity:'heuristic_not_protocol_proof',counts:{corroborated:1,candidate:0,abstained:2},recent:[{node:'spark1',status:'corroborated',reason:'usage_match',request_id:'PRIVATE',prompt:'PRIVATE'}],secret:'PRIVATE'};
-  const b=briefing(s);assert.equal(b.attribution.counts.corroborated,1);assert.match(b.semantics.join(' '),/at best a high-confidence candidate/);
+  const s=snapshot();s.attribution={schema:1,mode:'shadow',request_identity:'heuristic_not_protocol_proof',counts:{corroborated:1,candidate:0,abstained:2},quality:{schema:1,resolved_starts:3,pending_starts:0,corroboration_rate_pct:33.3,reason_counts:{backend_epoch_unavailable:2,PRIVATE:99},by_worker:[{node:'spark1',corroborated:1,candidate:0,abstained:2,resolved:3,corroboration_rate_pct:33.3,PRIVATE:'PRIVATE'}]},recent:[{node:'spark1',status:'corroborated',reason:'usage_match',request_id:'PRIVATE',prompt:'PRIVATE'}],secret:'PRIVATE'};
+  const b=briefing(s);assert.equal(b.attribution.counts.corroborated,1);assert.equal(b.attribution.quality.corroboration_rate_pct,33.3);assert.equal(b.attribution.quality.by_worker[0].resolved,3);assert.match(b.semantics.join(' '),/at best a high-confidence candidate/);
   assert.ok(!JSON.stringify(b).includes('PRIVATE'));
 });
 test('Genie queue briefing preserves measured age versus allowance and grants no timeout power',()=>{

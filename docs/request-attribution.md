@@ -52,11 +52,29 @@ digests allow later readers to deduplicate dashboard replay. Only allowlisted ID
 times, token counts, status and epoch digests are saved in the private dashboard
 metrics stream; prompts, responses, journal text, paths and credentials are absent.
 
-## Next proof boundary
+## Attribution-yield audit
 
-The next step is to validate candidate coverage and conflict/abstention rates on
-ordinary traffic. Exact attribution would require a stock DS4 protocol signal,
-such as safely propagating an opaque request ID into a structured timing event.
-That is an upstream opportunity to investigate, not a private server-patch
-requirement. Until then, cache acquisition remains component evidence and every
-ambiguous join stays unknown.
+The dashboard now reports an honest corroboration rate over **resolved** engine
+starts, with pending candidates outside that denominator. It also exposes bounded
+abstention causes. A local read-only audit can deduplicate final revisions across
+up to seven recent daily metric files and break the result down by configured
+server:
+
+```sh
+npm run attribution:audit
+# or: node ds4-gateway/attribution-audit.mjs --directory /absolute/private/dashboard --files 7
+```
+
+The audit reads at most 8 MiB per file and 65,536 attribution records. It rejects
+symlink roots, skips symlinked/non-regular metric files, bounds individual lines,
+and reports malformed/partial/truncated input instead of implying complete
+history. Output contains counts, fixed reason codes and configured server IDs—no
+prompts, responses, request/sample IDs, paths or credentials. Treat the report as
+private deployment metadata and do not commit it.
+
+This measures evidence yield on ordinary traffic; it does not validate a cache
+hit or upgrade a candidate into protocol identity. Exact attribution would still
+require a stock DS4 protocol signal, such as safely propagating an opaque request
+ID into a structured timing event. That is an upstream opportunity to investigate,
+not a private server-patch requirement. Until then, cache acquisition remains
+component evidence and every ambiguous join stays unknown.

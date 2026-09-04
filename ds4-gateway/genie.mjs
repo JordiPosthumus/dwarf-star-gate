@@ -31,6 +31,17 @@ function attributionForBriefing(raw) {
     for(const key of ['engine_started_at','dispatch_delta_ms','prompt_tokens','cached_tokens','new_tokens'])if(Number.isSafeInteger(row[key])&&row[key]>=0)clean[key]=row[key];
     return [clean];
   });
+  const q=raw.quality;
+  if(q?.schema===1){
+    const rate=value=>Number.isFinite(value)&&value>=0&&value<=100?Math.round(value*10)/10:null;
+    const reasons=['backend_epoch_unavailable','no_gateway_request_window','overlapping_gateway_windows','overlapping_usage_matches','usage_conflict','multiple_engine_starts','completed_without_usage','censored_or_failed'];
+    const reason_counts=Object.fromEntries(reasons.flatMap(reason=>Number.isSafeInteger(q.reason_counts?.[reason])&&q.reason_counts[reason]>=0?[[reason,q.reason_counts[reason]]]:[]));
+    const by_worker=Array.isArray(q.by_worker)?q.by_worker.slice(0,32).flatMap(worker=>{
+      if(!worker||typeof worker.node!=='string'||!/^\w[\w-]{0,63}$/.test(worker.node))return [];
+      return [{node:worker.node,corroborated:count(worker.corroborated),candidate:count(worker.candidate),abstained:count(worker.abstained),resolved:count(worker.resolved),corroboration_rate_pct:rate(worker.corroboration_rate_pct)}];
+    }):[];
+    safe.quality={schema:1,resolved_starts:count(q.resolved_starts),pending_starts:count(q.pending_starts),corroboration_rate_pct:rate(q.corroboration_rate_pct),reason_counts,by_worker};
+  }
   return safe;
 }
 

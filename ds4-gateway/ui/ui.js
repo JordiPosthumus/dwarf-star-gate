@@ -120,6 +120,12 @@ function cacheEvidenceText(snapshot,stale=false) {
   const devices=snapshot?.devices||[],configured=devices.filter(d=>d.telemetry_configured).length;
   const epochs=devices.filter(d=>d.telemetry_configured&&typeof d.backend_epoch==='string').length,a=snapshot?.attribution,counts=a?.counts;
   if(!a||!counts)return `${fmt(epochs)} / ${fmt(configured)} telemetry-enabled servers have an observed process epoch · request attribution unavailable.`;
+  const quality=a.quality;
+  if(quality?.schema===1&&Number.isFinite(quality.resolved_starts)&&Number.isFinite(quality.counts?.corroborated)){
+    const gaps=Object.entries(quality.reason_counts||{}).slice(0,3).map(([reason,n])=>`${fmt(n)} ${reason.replaceAll('_',' ')}`).join(' · ');
+    const rate=Number.isFinite(quality.corroboration_rate_pct)?`${fmt(quality.corroboration_rate_pct)}%`:'unknown';
+    return `${fmt(epochs)} / ${fmt(configured)} telemetry-enabled servers have an observed process epoch · attribution yield: ${fmt(quality.counts.corroborated)} / ${fmt(quality.resolved_starts)} resolved starts corroborated (${rate}), ${fmt(quality.pending_starts)} pending, ${fmt(quality.counts.abstained)} abstained${gaps?` (${gaps})`:''}. Corroborated remains bounded shadow evidence, not protocol proof or a cache-hit verdict.`;
+  }
   const reasons={};for(const row of a.recent||[])if(row.status==='abstained')reasons[row.reason]=(reasons[row.reason]||0)+1;
   const gaps=Object.entries(reasons).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([reason,n])=>`${fmt(n)} ${reason.replaceAll('_',' ')}`).join(' · ');
   return `${fmt(epochs)} / ${fmt(configured)} telemetry-enabled servers have an observed process epoch · recent engine starts: ${fmt(counts.corroborated)} corroborated, ${fmt(counts.candidate)} pending candidates, ${fmt(counts.abstained)} abstained${gaps?` (${gaps})`:''}. Corroborated is still a bounded candidate, not protocol proof or a cache-hit verdict.`;

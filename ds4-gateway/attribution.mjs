@@ -3,6 +3,7 @@
 // without a request ID echoed by DS4, even an exact usage match is corroborated
 // shadow evidence rather than proof.
 import { createHash } from 'node:crypto';
+import { summarizeAttribution } from './attribution-summary.mjs';
 
 const UUID=/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/;
 const ID=/^[a-zA-Z0-9][\w-]{0,63}$/;
@@ -115,6 +116,6 @@ export class EngineAttribution {
     const rows=this.rows??[],counts={corroborated:0,candidate:0,abstained:0};
     for(const row of rows)counts[row.status]++;
     return {schema:1,mode:'shadow',request_identity:'heuristic_not_protocol_proof',recent_history_ms:WINDOW_MS,max_open_span_ms:MAX_OPEN_SPAN_MS,clock_tolerance_ms:SKEW_MS,
-      counts,recent:rows.slice(0,16),note:'Corroborated means one bounded gateway window plus matching DS4 usage inside one observed process epoch. Ambiguity or conflict abstains; routing is unchanged.'};
+      counts,quality:summarizeAttribution(rows),recent:rows.slice(0,16),note:'Corroborated means one bounded gateway window plus matching DS4 usage inside one observed process epoch. Ambiguity or conflict abstains; routing is unchanged.'};
   }
 }

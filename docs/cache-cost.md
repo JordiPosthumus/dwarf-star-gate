@@ -63,8 +63,9 @@ Follow the [stock DS4 integration boundary](ds4-integration.md): extract existin
 API/log/OS evidence, without editing the engine. If attribution cannot be proved,
 keep the component estimate and the uncertainty; do not force a guessed join.
 
-1. Correlate cache/phase events to a gateway request ID within the now-observed
-   backend process epoch, abstaining on ambiguity or direct competing traffic.
+1. Measure the implemented shadow correlator's yield across real backend process
+   epochs, preserving every ambiguity and direct-traffic conflict as an
+   abstention. Exact protocol identity remains unavailable.
 2. Inventory compatible snapshot identity and measure lookup/restore/import
    boundaries, including real cold-to-warm verification.
 3. Evaluate estimates against later observations; add uncertainty and abstention

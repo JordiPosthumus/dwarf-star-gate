@@ -16,6 +16,7 @@ test('one epoch-bound request window becomes a corroborated candidate only after
   a.acceptGateway(finish());row=a.snapshot().recent[0];
   assert.equal(row.status,'corroborated');assert.equal(row.reason,'usage_match');assert.equal(row.confidence,'high_candidate');
   assert.equal(a.snapshot().request_identity,'heuristic_not_protocol_proof');assert.equal(saved.length,2);
+  assert.equal(a.snapshot().quality.corroboration_rate_pct,100);assert.equal(a.snapshot().quality.resolved_starts,1);
   assert.match(saved[0].attribution_revision_id,/^[\da-f]{64}$/);assert.notEqual(saved[0].attribution_revision_id,saved[1].attribution_revision_id);
 });
 

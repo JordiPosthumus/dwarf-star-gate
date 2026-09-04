@@ -136,8 +136,8 @@ test('collection and cache UI distinguish missing metadata, sparse evidence and 
   assert.match(call('cacheCostText({})'),/not total acquisition/);
   const evidence=call(`cacheEvidenceText({devices:[
     {telemetry_configured:true,backend_epoch:"${'a'.repeat(64)}"},{telemetry_configured:true,backend_epoch:null},{telemetry_configured:false,backend_epoch:"${'b'.repeat(64)}"}],
-    attribution:{counts:{corroborated:3,candidate:2,abstained:4},recent:[{status:"abstained",reason:"backend_epoch_unavailable"},{status:"abstained",reason:"backend_epoch_unavailable"},{status:"abstained",reason:"usage_conflict"}]}})`);
-  assert.match(evidence,/1 \/ 2 telemetry-enabled servers/);assert.match(evidence,/3 corroborated, 2 pending candidates, 4 abstained/);
+    attribution:{counts:{corroborated:3,candidate:2,abstained:4},quality:{schema:1,resolved_starts:7,pending_starts:2,corroboration_rate_pct:42.9,counts:{corroborated:3,candidate:2,abstained:4},reason_counts:{backend_epoch_unavailable:2,usage_conflict:1}}}})`);
+  assert.match(evidence,/1 \/ 2 telemetry-enabled servers/);assert.match(evidence,/3 \/ 7 resolved starts corroborated \(42.9%\), 2 pending, 4 abstained/);
   assert.match(evidence,/2 backend epoch unavailable/);assert.match(evidence,/not protocol proof or a cache-hit verdict/);
   assert.match(call('cacheEvidenceText({},true)'),/unavailable/);
 });

@@ -355,7 +355,9 @@ Per worker, the dashboard displays:
 
 The dashboard observer also records privacy-safe DS4 process epochs and exposes
 conservative [request/engine attribution](docs/request-attribution.md) in local diagnostics and Gate Genie
-evidence. Ambiguous or conflicting evidence is unknown, never a cache claim.
+evidence. Its bounded local audit reports attribution yield and abstention causes
+without request identities or text. Ambiguous or conflicting evidence is unknown,
+never a cache claim.
 
 Timing comes from a read-only SSH journal follower on Linux. The default remote user unit
 is `ds4-vision-q2.service`; set `telemetry_service` per worker if yours differs.
