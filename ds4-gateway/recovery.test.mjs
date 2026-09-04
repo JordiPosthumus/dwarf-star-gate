@@ -49,6 +49,42 @@ test('malformed durable profile adoption state and operations fail closed',()=>{
   r.store.data.recovery.operations=[{id:randomUUID(),worker_id:'one',state:'queued',service_action:'adopt_restart',adopt_profile:'bad'}];
   assert.throws(()=>new Recovery({workers:[config]},r.deps),/Invalid recovery operation/);
 });
+test('Mac identity observations persist once per instance and remain private non-authorizing evidence',async()=>{
+  const r=rig(),c={...config,adapter:'launchd'};r.recovery.configs.set('one',c);
+  let sample={...r.sample(),pid:123,service_profile:'c'.repeat(64),fault:null};
+  r.recovery.call=async()=>sample;
+  let saves=0;const save=r.store.save.bind(r.store);r.store.save=value=>{saves++;save(value);};
+  await r.recovery.inspect('one');const first=r.recovery.priorIdentity('one');
+  assert.equal(first.pid,123);assert.equal(first.instance,sample.instance);assert.equal(saves,1);
+  const publicState=JSON.stringify(r.recovery.status());
+  assert.ok(!publicState.includes(first.enrollment));assert.ok(!publicState.includes(first.service_profile));assert.ok(!publicState.includes('last_identities'));
+  r.advance(30000);await r.recovery.inspect('one');assert.equal(saves,1);assert.equal(r.recovery.priorIdentity('one').observed_at,first.observed_at);
+  const restored=new Recovery({workers:[c]},r.deps);assert.deepEqual(restored.priorIdentity('one'),first);
+  restored.call=async()=>({version:1,machine:c.machine,registration:'absent',loaded:false,active:false,stopped:false,pid:0,instance:'',listener:false});
+  await restored.inspect('one');assert.deepEqual(restored.priorIdentity('one'),first);
+  assert.equal(restored.workerStatus(r.n).eligible,false);assert.equal(restored.workerStatus(r.n).evidence_id,null);
+  assert.throws(()=>restored.request({worker_id:'one'},'operator',{canary:true}),/launchd_registration_absent/);
+  assert.equal(restored.state.operations.length,0);
+  restored.configs.set('one',{...c,helper:'/opt/dsg/changed.py'});assert.equal(restored.priorIdentity('one'),null);
+  sample={...sample,instance:'2'.repeat(32),pid:456,started_at:sample.started_at+1000};await r.recovery.inspect('one');assert.equal(saves,2);assert.equal(r.recovery.priorIdentity('one').pid,456);
+  await restored.close();await r.recovery.close();
+});
+test('invalid, faulted or unpersisted Mac identity cannot seed removal evidence',async()=>{
+  for(const change of [{pid:undefined},{pid:1},{pid:3.5},{service_profile:undefined},{started_at:Infinity},{fault:{at:1}},{profile:'d'.repeat(64)}]){
+    const r=rig();r.recovery.configs.set('one',{...config,adapter:'launchd'});
+    r.recovery.call=async()=>({...r.sample(),pid:123,service_profile:'c'.repeat(64),fault:null,...change});
+    await r.recovery.inspect('one');assert.equal(r.recovery.priorIdentity('one'),null);assert.equal(r.store.data.recovery,undefined);await r.recovery.close();
+  }
+  const r=rig(),c={...config,adapter:'launchd'};r.recovery.configs.set('one',c);
+  r.recovery.call=async()=>({...r.sample(),pid:123,service_profile:'c'.repeat(64),fault:null});
+  r.store.save=()=>{throw new Error('private disk failure');};
+  assert.equal(await r.recovery.inspect('one'),null);assert.equal(r.recovery.workerStatus(r.n).reason,'adapter_check_failed');
+  assert.equal(r.recovery.priorIdentity('one'),null);await r.recovery.close();
+  for(const last_identities of [[],null,{one:{pid:123}},{'bad/path':{}}]){
+    const malformed=rig();malformed.store.data.recovery={...malformed.recovery.state,last_identities};
+    assert.throws(()=>new Recovery({workers:[c]},malformed.deps),/Invalid recovery identity history/);
+  }
+});
 test('launchd absence diagnostics reach Genie but never authorize recovery or override a pause',async()=>{
   for(const [registration,loaded,reason] of [['absent',false,'launchd_registration_absent'],['gui_domain_unavailable',null,'launchd_gui_domain_unavailable'],['unverified',null,'launchd_state_unverified']]){
     const r=rig(),local={...config,adapter:'launchd',start_stopped:true,service_profile:'c'.repeat(64)};

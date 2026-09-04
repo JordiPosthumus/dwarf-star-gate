@@ -380,6 +380,22 @@ uses observed `launchctl` exit codes and checks domain output conservatively;
 Apple does not promise `print` output as a stable API. Changed formats/codes remain
 unverified and require per-installation validation, not permissive parsing.
 
+The controller now retains one **private last-identity observation per enrolled
+Mac worker** in its existing recovery state. It records the exact PID, instance,
+start time, machine/profile/static identity and an enrollment-binding digest only
+after a matching active service-owned listener inspection with no reported fault.
+This is identity evidence, not a generation-health certificate. The timestamp is
+when that identity was first retained, not a continuously refreshed liveness clock.
+Unchanged polls do not rewrite it; a newly observed identity replaces this single
+snapshot. Existing action journals are untouched. No prompts, output, paths or
+identity digests are added to public status or Genie briefs.
+
+The observation survives controller restart and an absent/failed inspection;
+changed enrollment bindings make it unusable. A missing, malformed or failed
+write cannot seed later removal evidence. Historical identity alone never creates
+a recovery offer or authorizes a start. Matching it to exact OS removal provenance,
+explicit stop-intent vetoes and retained-definition bootstrap remains unfinished.
+
 Planned support for this case needs separate opt-in enrollment of an exact,
 private, retained service definition;
 verified GUI domain, machine, binary/profile and empty listener; durable one-shot

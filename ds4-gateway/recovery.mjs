@@ -8,6 +8,11 @@ const faultReasons=new Set(['fatal_accelerator_error','accelerator_checkpoint_fa
 const adapterReasons=new Set(['adapter_timeout','adapter_output_limit','adapter_spawn_failed','adapter_dns_failure','adapter_host_key_failure','adapter_auth_failure','adapter_connect_timeout','adapter_connection_refused','adapter_route_unreachable','adapter_connection_reset','adapter_unreachable','adapter_check_failed','adapter_local_unavailable','adapter_local_identity_unverified']);
 const publicOperation=op=>Object.fromEntries(['id','worker_id','actor','service_action','state','created_at','updated_at','error','proof','service_action_issued','restart_issued','operator_override','profile_adopted'].filter(k=>op[k]!==undefined).map(k=>[k,op[k]]));
 const digest=value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
+const identityFields=['enrollment','instance','machine','observed_at','pid','profile','service_profile','started_at'];
+const validIdentityRecord=value=>value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).sort().join(',')===identityFields.join(',')&&
+  ['enrollment','machine','profile','service_profile'].every(key=>digest(value[key]))&&/^[a-f0-9]{32}$/.test(value.instance)&&
+  Number.isSafeInteger(value.pid)&&value.pid>=2&&value.pid<=2147483647&&Number.isSafeInteger(value.started_at)&&value.started_at>=0&&
+  Number.isSafeInteger(value.observed_at)&&value.observed_at>=value.started_at;
 const blankState=()=>({version:1,automatic:false,profile_handback_automatic:true,adopted_profiles:{},operations:[]});
 const adoptionOperationValid=op=>{
   const adoption=['adopt_profile','adopt_service_profile','configured_profile'].some(k=>Object.hasOwn(op,k))||String(op.service_action).startsWith('adopt_');
@@ -23,6 +28,10 @@ export class Recovery {
     this.configs=recoveryConfig(raw);this.store=store;this.nodes=nodes;this.model=model;this.stopping=stopping;this.reinstate=reinstate;this.log=log;this.call=call;this.verify=verify;this.now=now;
     this.observations=new Map();this.stoppedSince=new Map();this.handbackSeen=new Map();this.busy=false;this.closed=false;this.task=null;this.abort=new AbortController();
     const saved=store.data.recovery;
+    if(saved?.last_identities!==undefined){
+      if(!saved.last_identities||typeof saved.last_identities!=='object'||Array.isArray(saved.last_identities))throw new Error('Invalid recovery identity history');
+      for(const [worker,value] of Object.entries(saved.last_identities))if(!/^[a-zA-Z0-9][\w-]{0,63}$/.test(worker)||!validIdentityRecord(value))throw new Error('Invalid recovery identity history');
+    }
     if(saved && (saved.version!==1 || typeof saved.automatic!=='boolean' || (saved.profile_handback_automatic!==undefined&&typeof saved.profile_handback_automatic!=='boolean') || !Array.isArray(saved.operations) || (saved.adopted_profiles!==undefined&&(!saved.adopted_profiles||typeof saved.adopted_profiles!=='object'||Array.isArray(saved.adopted_profiles)))))throw new Error('Invalid recovery journal; inspect manually');
     for(const [worker,profile] of Object.entries(saved?.adopted_profiles??{}))if(!/^[a-zA-Z0-9][\w-]{0,63}$/.test(worker)||!profile||!digest(profile.config_profile)||!digest(profile.machine)||!digest(profile.profile)||(profile.service_profile!==null&&!digest(profile.service_profile))||!Number.isFinite(profile.adopted_at)||!/^[a-f0-9-]{36}$/.test(profile.operation_id))throw new Error('Invalid adopted recovery profile');
     for(const op of this.state.operations) {
@@ -47,6 +56,21 @@ export class Recovery {
     return effective;
   }
   commit(next){this.store.save({...this.store.data,recovery:next});}
+  priorIdentity(id){
+    const record=this.state.last_identities?.[id],c=this.config(id);
+    return c?.adapter==='launchd'&&validIdentityRecord(record)&&record.enrollment===hash(c)?record:null;
+  }
+  rememberIdentity(id,s,at){
+    const c=this.config(id);
+    // Preserve one private identity observation, not inference content or a
+    // health verdict. Future removal evidence must join this exact PID/epoch.
+    if(c?.adapter!=='launchd'||!this.valid(s,c)||s.fault)return;
+    const record={enrollment:hash(c),instance:s.instance,machine:s.machine,observed_at:at,pid:s.pid,profile:s.profile,service_profile:s.service_profile,started_at:s.started_at};
+    if(!validIdentityRecord(record))return;
+    const previous=this.priorIdentity(id);
+    if(previous&&identityFields.filter(key=>key!=='observed_at').every(key=>previous[key]===record[key]))return;
+    this.commit({...this.state,last_identities:{...this.state.last_identities,[id]:record}});
+  }
   update(op,fields){Object.assign(op,this.current(op),fields,{updated_at:this.now()});this.commit({...this.state,operations:this.state.operations.map(x=>x.id===op.id?{...op}:x)});this.log('worker_recovery_action',publicOperation(op));}
   setAutomatic(value){if(typeof value!=='boolean' || !this.configs.size)throw new Error('Recovery is not configured or enabled is invalid');this.commit({...this.state,automatic:value});this.log('worker_recovery_policy',{automatic:value});return this.status();}
   setProfileHandbackAutomatic(value){if(typeof value!=='boolean'||!this.configs.size)throw new Error('Profile hand-back is not configured or enabled is invalid');this.commit({...this.state,profile_handback_automatic:value});this.log('worker_recovery_handback_policy',{automatic:value});return this.status();}
@@ -151,6 +175,7 @@ export class Recovery {
     const c=this.config(id);
     try {
       const value=await this.call(c,{action:'inspect'}),at=this.now();this.observations.set(id,{at,value});
+      this.rememberIdentity(id,value,at);
       const candidate=this.profileCandidate(value,c),prior=this.handbackSeen.get(id);
       if(candidate)this.handbackSeen.set(id,prior&&prior.profile===candidate.profile&&prior.service_profile===candidate.service_profile&&prior.instance===candidate.instance?{...prior,last_at:at,count:prior.last_at===at?prior.count:prior.count+1}:{...candidate,first_at:at,last_at:at,count:1});
       else this.handbackSeen.delete(id);

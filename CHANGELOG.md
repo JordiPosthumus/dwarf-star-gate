@@ -1,5 +1,16 @@
 # Changelog
 
+## Durable private Mac identity observations
+
+- Retain one last identity-checked, non-faulted active launchd instance per enrolled
+  Mac in existing private recovery state. Skip unchanged observations, validate
+  restored records and invalidate their use when the enrollment binding changes.
+- Keep identity snapshots separate from health verdicts, live status, action
+  offers and immutable recovery receipts. Failed/absent inspections preserve the
+  snapshot but cannot use it to start a service. No new service action is enabled.
+- Test restart persistence, constant write count on unchanged polls, replacement
+  observations, malformed evidence, failed writes, privacy and absence rejection.
+
 ## Distinguish Mac registration absence from unknown service state
 
 - Confirm repeated missing-job observations around a readable exact GUI domain;

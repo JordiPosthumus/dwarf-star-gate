@@ -10,6 +10,12 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Retained bounded Mac service identity evidence.** A private last-instance
+  snapshot survives gateway restart, without writing on unchanged polls or
+  exposing process/profile details. Tests reject malformed evidence and changed
+  enrollment; a historical snapshot cannot authorize recovery. Exact OS-removal
+  attribution and bootstrap execution remain the next steps.
+
 - **Separated a missing Mac job from a failed inspection.** Recovery now reports
   missing registration, unavailable GUI domain and unknown inspection separately.
   Genie and deterministic alerts explain the actual block; none grants bootstrap
