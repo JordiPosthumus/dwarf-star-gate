@@ -49,6 +49,30 @@ test('malformed durable profile adoption state and operations fail closed',()=>{
   r.store.data.recovery.operations=[{id:randomUUID(),worker_id:'one',state:'queued',service_action:'adopt_restart',adopt_profile:'bad'}];
   assert.throws(()=>new Recovery({workers:[config]},r.deps),/Invalid recovery operation/);
 });
+test('launchd absence diagnostics reach Genie but never authorize recovery or override a pause',async()=>{
+  for(const [registration,loaded,reason] of [['absent',false,'launchd_registration_absent'],['gui_domain_unavailable',null,'launchd_gui_domain_unavailable'],['unverified',null,'launchd_state_unverified']]){
+    const r=rig(),local={...config,adapter:'launchd',start_stopped:true,service_profile:'c'.repeat(64)};
+    r.recovery.configs.set('one',local);
+    const sample={version:1,machine:local.machine,service_profile:local.service_profile,registration,loaded,active:false,stopped:false,pid:0,instance:'',listener:null};
+    const actions=[];r.recovery.call=async(_config,request)=>{actions.push(request.action);return sample;};
+    r.recovery.setAutomatic(true);r.n.drained=true;
+    await r.recovery.tick();
+    const status=r.recovery.workerStatus(r.n);
+    assert.equal(status.reason,reason);assert.equal(status.state,'paused');assert.equal(status.eligible,false);assert.equal(status.evidence_id,null);
+    assert.throws(()=>r.recovery.request(r.input(),'genie'),new RegExp(reason));
+    assert.throws(()=>r.recovery.request(r.input(),'operator',{canary:true}),new RegExp(reason));
+    const data=briefing({devices:[],gateway:{workers:[{id:'one'}],recovery:r.recovery.status()}});
+    assert.equal(data.workers[0].recovery_evidence.reason,reason);
+    assert.deepEqual(data.recovery.offers,[]);
+    r.n.drained=false;await r.recovery.tick();
+    assert.equal(r.recovery.workerStatus(r.n).eligible,false);
+    assert.ok(actions.every(action=>action==='inspect'));assert.equal(r.store.data.recovery.operations.length,0);
+    for(const change of [{machine:'d'.repeat(64)},{service_profile:'d'.repeat(64)},{registration:'private raw stderr'}, {active:true}]){
+      assert.equal(r.recovery.reason(r.n,{...sample,...change}),'service_identity_or_profile_unverified');
+    }
+    r.recovery.close();
+  }
+});
 function localEnrollment(t){
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-local-recovery-'));
   t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));

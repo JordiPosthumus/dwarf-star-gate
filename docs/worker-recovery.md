@@ -364,6 +364,22 @@ fault. An idle GPU or successful prior canary does not supply missing bootstrap
 authority. Restore the established launcher manually and verify it before
 readmission; do not clear quarantine just because the process starts.
 
+Inspection now distinguishes three bounded diagnostic blocks:
+
+- `launchd_registration_absent`: the service was reported missing twice around
+  a successful inspection of the exact GUI domain. A job appearing in between is
+  inspected as loaded instead. This does not establish why the job was removed.
+- `launchd_gui_domain_unavailable`: the GUI domain could not be found, not proof
+  of a DS4 engine crash. Inspect login/session state with the operator.
+- `launchd_state_unverified`: other failed or unfamiliar inspection evidence;
+  absence is not proven. Unknown state is not reported as `loaded:false`.
+
+These reasons reach Genie and the deterministic quarantine alert. They never
+create a recovery offer, bypass a pause or authorize bootstrap. The fixed helper
+uses observed `launchctl` exit codes and checks domain output conservatively;
+Apple does not promise `print` output as a stable API. Changed formats/codes remain
+unverified and require per-installation validation, not permissive parsing.
+
 Planned support for this case needs separate opt-in enrollment of an exact,
 private, retained service definition;
 verified GUI domain, machine, binary/profile and empty listener; durable one-shot

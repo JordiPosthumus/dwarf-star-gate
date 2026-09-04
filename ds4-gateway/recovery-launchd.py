@@ -110,6 +110,9 @@ def parse_launchctl(output):
     pid_value = value("pid")
     runs_value = value("runs")
     exit_value = value("last exit code")
+    if pid_value is not None and (not pid_value.isascii() or not pid_value.isdigit() or len(pid_value) > 10
+                                  or int(pid_value) == 1 or not 0 <= int(pid_value) <= 2147483647):
+        raise ValueError("service_pid_unverified")
     pid = int(pid_value) if pid_value and pid_value.isdigit() else 0
     return {
         "state": state_value,
@@ -120,13 +123,36 @@ def parse_launchctl(output):
 
 
 def launch_state(config):
+    unknown = {"loaded": None, "active": False, "stopped": False, "pid": 0,
+               "state": None, "runs": None, "last_exit": None, "registration": "unverified"}
     output, code = run(["/bin/launchctl", "print", target(config)], check=False)
+    # Observed launchctl codes distinguish missing service (113) from missing
+    # GUI domain (112). They are diagnostic evidence, never bootstrap authority.
+    # print is not a stable API: unfamiliar output/codes must remain unknown.
+    if code == 113:
+        domain = f"gui/{os.getuid()}"
+        domain_output, domain_code = run(["/bin/launchctl", "print", domain], check=False)
+        if domain_code == 112:
+            return {**unknown, "registration": "gui_domain_unavailable"}
+        if domain_code or not domain_output.startswith(domain + " = {\n") or not domain_output.rstrip().endswith("}"):
+            return unknown
+        # A job may have appeared while the domain was being inspected.
+        output, code = run(["/bin/launchctl", "print", target(config)], check=False)
+        if code == 113:
+            return {**unknown, "loaded": False, "registration": "absent"}
+    if code == 112:
+        return {**unknown, "registration": "gui_domain_unavailable"}
     if code:
-        return {"loaded": False, "active": False, "stopped": False, "pid": 0, "state": None, "runs": None, "last_exit": None}
-    parsed = parse_launchctl(output)
+        return unknown
+    try:
+        parsed = parse_launchctl(output)
+    except ValueError:
+        return unknown
+    if parsed["state"] is None:
+        return unknown
     active = parsed["state"] == "running" and parsed["pid"] >= 2
     stopped = parsed["pid"] == 0 and parsed["state"] in {"not running", "exited"}
-    return {**parsed, "loaded": True, "active": active, "stopped": stopped}
+    return {**parsed, "loaded": True, "active": active, "stopped": stopped, "registration": "loaded"}
 
 
 def stopped_epoch(state, config):
@@ -281,6 +307,7 @@ def inspect(config):
         "machine": machine,
         "service_profile": static_profile,
         "loaded": state["loaded"],
+        "registration": state.get("registration"),
         "stopped": state["stopped"],
         "stopped_epoch": stopped_epoch(state, config) if state["loaded"] and state["stopped"] else None,
         "instance": "",
@@ -289,6 +316,8 @@ def inspect(config):
         "listener": False,
     }
     if not state["active"]:
+        if state["loaded"] is None:
+            return {**base, "listener": None}
         return {**base, "listener": port_occupied(config["port"])}
     process = process_info(state["pid"])
     if str(Path(process["executable"]).resolve()) != str(Path(config["binary"]).resolve()):

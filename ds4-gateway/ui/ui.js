@@ -329,7 +329,12 @@ function deterministicHealthAlerts(snapshot) {
     if(worker?.quarantine) {
       const waiting=Number.isSafeInteger(worker.recovery_waiting)&&worker.recovery_waiting>0?` ${fmt(worker.recovery_waiting)} request${worker.recovery_waiting===1?' is':'s are'} being held for this server.`:' ';
       const recoveryState=recoveryByWorker.get(worker.id),reason=recoveryState?.reason;
-      const recommendation=reason==='service_identity_or_profile_unverified'
+      const launchdAdvice={
+        launchd_registration_absent:'The Mac service registration is missing. Ask the operator to inspect the established launcher; kickstart cannot restore a removed job, and DSG has no bootstrap authority.',
+        launchd_gui_domain_unavailable:'The Mac GUI service domain is unavailable. Ask the operator to check the login/session state; this does not prove a DS4 or accelerator fault.',
+        launchd_state_unverified:'Mac service inspection could not establish the state. Check local permissions and service-manager output before taking action; absence is not proven.'
+      }[reason];
+      const recommendation=launchdAdvice??(reason==='service_identity_or_profile_unverified'
         ?'Review and deliberately re-enroll the changed DS4 service profile before recovery; simply enabling routing would bypass the safety boundary.'
         :reason==='profile_handback_confirmation_pending'
           ?'Leave the server idle while DSG confirms the same changed profile in a second inspection; no action has been authorized yet.'
@@ -339,7 +344,7 @@ function deterministicHealthAlerts(snapshot) {
               ?'Wait for admitted work to finish; profile adoption and recovery cannot begin while a request is owned by this server.'
         :recoveryState?.eligible
           ?'Use the verified recovery control; DSG will restart only the enrolled service and test it before readmission.'
-          :'Inspect the recovery blocker before readmission; do not simply enable routing.';
+          :'Inspect the recovery blocker before readmission; do not simply enable routing.');
       alerts.push({severity:'critical',text:`${name} is quarantined after ${String(worker.quarantine.reason||'a generation fault').replaceAll('_',' ')}; ${fleet}.${waiting} Recommendation: ${recommendation}`});
       continue;
     }

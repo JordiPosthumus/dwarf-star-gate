@@ -14,6 +14,61 @@ spec.loader.exec_module(adapter)
 
 
 class LaunchdAdapterTests(unittest.TestCase):
+    def test_absent_job_requires_repeated_absence_and_readable_exact_gui_domain(self):
+        config = {"label": "com.example.ds4"}
+        domain = f"gui/{os.getuid()}"
+        with patch.object(adapter, "run", side_effect=[("", 113), (domain + " = {\n}\n", 0), ("", 113)]) as command:
+            state = adapter.launch_state(config)
+        self.assertEqual(state["registration"], "absent")
+        self.assertIs(state["loaded"], False)
+        self.assertFalse(state["active"] or state["stopped"])
+        self.assertEqual([call.args[0] for call in command.call_args_list], [
+            ["/bin/launchctl", "print", domain + "/com.example.ds4"],
+            ["/bin/launchctl", "print", domain],
+            ["/bin/launchctl", "print", domain + "/com.example.ds4"],
+        ])
+
+    def test_unreadable_or_changed_domain_is_not_absent_and_inspection_never_mutates(self):
+        domain = f"gui/{os.getuid()}"
+        scenarios = [
+            ([("", 112)], "gui_domain_unavailable"),
+            ([("", 1)], "unverified"),
+            ([("", 113), ("", 112)], "gui_domain_unavailable"),
+            ([("", 113), ("private diagnostic", 1)], "unverified"),
+            ([("", 113), ("wrong-domain = {\n}\n", 0)], "unverified"),
+            ([("", 113), (domain + " = {\n}\n", 0), ("", 112)], "gui_domain_unavailable"),
+            ([("", 113), (domain + " = {\n}\n", 0), ("", 1)], "unverified"),
+        ]
+        for results, expected in scenarios:
+            with self.subTest(expected=expected, results=results), patch.object(adapter, "run", side_effect=results) as command:
+                state = adapter.launch_state({"label": "com.example.ds4"})
+                self.assertEqual(state["registration"], expected)
+                self.assertIsNone(state["loaded"])
+                self.assertFalse(state["active"] or state["stopped"])
+                self.assertTrue(all(call.args[0][1] == "print" for call in command.call_args_list))
+                self.assertNotIn("private diagnostic", json.dumps(state))
+
+    def test_job_appearing_during_absence_check_is_reported_loaded(self):
+        domain = f"gui/{os.getuid()}"
+        with patch.object(adapter, "run", side_effect=[("", 113), (domain + " = {\n}\n", 0), ("state = running\npid = 123\n", 0)]):
+            state = adapter.launch_state({"label": "com.example.ds4"})
+        self.assertEqual(state["registration"], "loaded")
+        self.assertTrue(state["active"])
+        self.assertEqual(state["pid"], 123)
+
+    def test_malformed_pid_is_not_interpreted_as_a_stopped_job(self):
+        for pid in ("unknown", "-1", "2147483648", "1"):
+            with self.subTest(pid=pid), patch.object(adapter, "run", return_value=(f"state = exited\npid = {pid}\n", 0)):
+                state = adapter.launch_state({"label": "com.example.ds4"})
+                self.assertEqual(state["registration"], "unverified")
+                self.assertIsNone(state["loaded"])
+                self.assertFalse(state["stopped"])
+        for output in ("state = exited\n", "state = exited\npid = 0\n", "state = not running\n"):
+            with patch.object(adapter, "run", return_value=(output, 0)):
+                state = adapter.launch_state({"label": "com.example.ds4"})
+                self.assertEqual(state["registration"], "loaded")
+                self.assertTrue(state["stopped"])
+
     def test_kernel_executable_path_is_bounded_and_fail_closed(self):
         for content,returned,valid in [(b'/opt/ds4/server',15,True),(b'relative',8,False),(b'/x',0,False),(b'/x',4096,False),(b'/x',3,False),(b'/\xff',2,False)]:
             with patch.object(adapter.ctypes, 'CDLL') as library:

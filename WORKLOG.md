@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Separated a missing Mac job from a failed inspection.** Recovery now reports
+  missing registration, unavailable GUI domain and unknown inspection separately.
+  Genie and deterministic alerts explain the actual block; none grants bootstrap
+  authority. Repeated absence checks handle a job appearing during inspection.
+
 - **Made recovery setup an agent handoff.** A linked guide addresses the owner's
   local agent directly: inspect, propose exact authority, obtain approval, preserve
   settings, privately enroll, run an approved canary and report measured results.

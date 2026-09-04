@@ -1,5 +1,18 @@
 # Changelog
 
+## Distinguish Mac registration absence from unknown service state
+
+- Confirm repeated missing-job observations around a readable exact GUI domain;
+  preserve unknown load/listener state for unavailable domains or failed checks.
+  A job appearing during the check is handled as loaded, never as absent.
+- Reject malformed/out-of-range PID fields instead of treating them as PID zero
+  and potentially classifying unfamiliar output as a stopped job.
+- Surface bounded, identity-checked recovery reasons to Genie and deterministic
+  quarantine advice. No shell output, host paths or fingerprints are published.
+  These are diagnostic blocks, not new recovery offers or bootstrap authority.
+- Test absence/domain races, unknown errors, pause preservation, empty action
+  offers and unchanged profile guards. Existing demo layout is unchanged.
+
 ## Agent-facing recovery enrollment guide
 
 - Add a standalone setup handoff for the owner's agent, linked from the README,

@@ -67,6 +67,14 @@ export class Recovery {
     // operator and Genie do not imply that an empty queue alone restores
     // recovery authority. The executor still independently rechecks identity.
     const live=this.valid(s,c),stopped=this.validStopped(s,c),candidate=this.profileCandidate(s,c);
+    // Missing launchd registration and unreadable domains are different
+    // diagnostic blocks. Neither creates a recovery offer or start authority.
+    if(c.adapter==='launchd'&&s?.version===1&&s.machine===c.machine&&s.active===false&&s.stopped===false&&s.pid===0&&s.instance===''&&
+      (!c.service_profile||s.service_profile===c.service_profile)){
+      if(s.loaded===false&&s.registration==='absent')return 'launchd_registration_absent';
+      if(s.loaded===null&&s.registration==='gui_domain_unavailable')return 'launchd_gui_domain_unavailable';
+      if(s.loaded===null&&s.registration==='unverified')return 'launchd_state_unverified';
+    }
     if(!live&&!stopped&&!candidate)return s?.stopped===true&&c?.start_stopped!==true?'stopped_service_start_not_enrolled':'service_identity_or_profile_unverified';
     if(candidate&&(n.active||n.queue.length))return 'profile_handback_wait_for_admitted_work';
     if(n.active || n.queue.length)return 'wait_for_admitted_work';
