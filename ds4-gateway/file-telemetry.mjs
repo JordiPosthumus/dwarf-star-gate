@@ -4,7 +4,8 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { parseTiming } from './telemetry.mjs';
 
-const READ_BYTES = 256 * 1024, LINE_BYTES = 64 * 1024, HISTORY_MS = 15 * 60000;
+const READ_BYTES = 256 * 1024, EPOCH_SCAN_BYTES = 8 * 1024 * 1024, LINE_BYTES = 64 * 1024, HISTORY_MS = 15 * 60000;
+const EPOCH_HISTORY_MS = 366 * 24 * 3600000;
 export function telemetryFiles(raw = {}) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Invalid telemetry_files map');
   const files = new Map();
@@ -18,7 +19,7 @@ export function telemetryFiles(raw = {}) {
 
 // DS4's MMDD HH:MM:SS prefix has no year or zone. This adapter is for a local
 // engine using the dashboard host's clock/zone; choose the nearest valid year.
-export function parseLocalTiming(line, now = Date.now()) {
+function localTime(line,now,maxAge) {
   const m = line.match(/^(\d{2})(\d{2}) (\d{2}):(\d{2}):(\d{2}) ds4-server: /);
   if (!m) return null;
   const [month, day, hour, minute, second] = m.slice(1).map(Number);
@@ -29,8 +30,21 @@ export function parseLocalTiming(line, now = Date.now()) {
   }
   if (!dates.length) return null;
   const time = dates.sort((a,b) => Math.abs(a-now)-Math.abs(b-now))[0];
-  if (time < now - HISTORY_MS || time > now + 5000) return null;
+  if (time < now - maxAge || time > now + 5000) return null;
+  return time;
+}
+export function parseLocalTiming(line, now = Date.now()) {
+  const time=localTime(line,now,HISTORY_MS);if(time===null)return null;
   return parseTiming(line, time);
+}
+export function parseLocalProcessStart(line,now=Date.now()) {
+  const time=localTime(line,now,EPOCH_HISTORY_MS);if(time===null||!/ ds4-server: listening on https?:\/\//.test(line))return null;
+  return {time,kind:'process_start'};
+}
+function processEpoch(worker,identity,offset,event) {
+  if(!/^[a-zA-Z0-9][\w-]{0,63}$/.test(worker)||typeof identity!=='string'||!Number.isSafeInteger(offset)||offset<0||event?.kind!=='process_start')return null;
+  return {...event,backend_epoch:createHash('sha256').update(`dsg-backend-epoch-v1\0${worker}\0local_listen_marker\0${identity}:${offset}:${event.time}`).digest('hex'),
+    backend_epoch_source:'local_listen_marker',backend_epoch_confidence:'bounded'};
 }
 
 export class FileLogReader {
@@ -39,6 +53,25 @@ export class FileLogReader {
     this.device = device; this.file = file; this.save = save;
     this.identity = null; this.offset = 0; this.anchor = Buffer.alloc(0);
     this.fragment = Buffer.alloc(0); this.skipping = false; this.seen = new Set();
+  }
+  accept(event,identity,offset,now) {
+    if(!event)return;
+    // Stable restart/replay IDs use only file identity, byte location and
+    // allowlisted parsed values, never the path or raw message text.
+    const sample=createHash('sha256').update(`${this.device.id}:${identity}:${offset}:${JSON.stringify(event)}`).digest('hex');
+    if(this.seen.has(sample))return;
+    this.seen.add(sample);if(this.seen.size>5000)this.seen.delete(this.seen.values().next().value);
+    this.device.accept(event);this.save({sample_id:sample,observed_at:now,node:this.device.id,...event});
+  }
+  scanEpoch(fd,stat,now,identity) {
+    const start=Math.max(0,stat.size-EPOCH_SCAN_BYTES),length=stat.size-start,chunk=Buffer.alloc(length);
+    const n=length?fs.readSync(fd,chunk,0,length,start):0;let from=0,end,last=null;
+    if(start){end=chunk.indexOf(10);from=end<0?n:end+1;}
+    while((end=chunk.indexOf(10,from))>=0){
+      if(end-from<=LINE_BYTES){const line=chunk.subarray(from,end).toString('utf8').replace(/\r$/,'');const event=processEpoch(this.device.id,identity,start+from,parseLocalProcessStart(line,now));if(event)last={event,offset:start+from};}
+      from=end+1;
+    }
+    if(last)this.accept(last.event,identity,last.offset,now);
   }
   poll(now = Date.now()) {
     let fd;
@@ -62,6 +95,10 @@ export class FileLogReader {
         this.identity = identity; this.offset = Math.max(0, stat.size - READ_BYTES);
         this.fragment = Buffer.alloc(0); this.skipping = this.offset > 0;
         this.anchor = Buffer.alloc(0);
+        // A bounded backward scan recovers the latest stock DS4 listen marker
+        // after a dashboard restart even when ordinary timing tailing begins
+        // later in a large log. Absence remains an explicit unknown epoch.
+        this.scanEpoch(fd,stat,now,identity);
       }
       const start = this.offset, length = Math.min(READ_BYTES, Math.max(0, stat.size - start));
       const chunk = Buffer.alloc(length);
@@ -72,17 +109,9 @@ export class FileLogReader {
       let from = 0, end;
       while ((end = buffer.indexOf(10, from)) >= 0) {
         if (!this.skipping && end - from <= LINE_BYTES) {
-          const event = parseLocalTiming(buffer.subarray(from,end).toString('utf8').replace(/\r$/, ''), now);
-          if (event) {
-            // Stable restart/replay IDs use only file identity, byte location and
-            // allowlisted parsed values, never the path or raw message text.
-            const sample = createHash('sha256').update(`${this.device.id}:${identity}:${base+from}:${JSON.stringify(event)}`).digest('hex');
-            if (!this.seen.has(sample)) {
-              this.seen.add(sample);
-              if (this.seen.size > 5000) this.seen.delete(this.seen.values().next().value);
-              this.device.accept(event); this.save({ sample_id:sample, observed_at:now, node:this.device.id, ...event });
-            }
-          }
+          const line=buffer.subarray(from,end).toString('utf8').replace(/\r$/,'');
+          const event=processEpoch(this.device.id,identity,base+from,parseLocalProcessStart(line,now))??parseLocalTiming(line,now);
+          this.accept(event,identity,base+from,now);
         }
         this.skipping = false; from = end + 1;
       }

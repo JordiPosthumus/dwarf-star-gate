@@ -37,11 +37,13 @@ not prove the engine records or echoes it in timing events.
    A candidate time-window association is a hypothesis, not an exact training label.
 4. Backend process epochs are now extracted for systemd journal sources from the
    stock invocation ID, with boot ID plus PID as an explicitly weaker fallback.
-   DSG exports only a one-way, worker-bound digest. A reconnect with the same
-   service invocation is not a restart; a changed digest invalidates in-flight
-   telemetry spans and component samples without touching the engine. Local file
-   sources and missing metadata remain unknown rather than receiving a guessed
-   epoch. Conservative candidate correlation is implemented; exact protocol
+   A local stock log can use the timestamped DS4 listen marker plus bounded file
+   identity/location as a weaker epoch; if that marker is not present in the
+   latest 8 MiB, the epoch remains unknown. DSG exports only a one-way,
+   worker-bound digest. A reconnect with the same service invocation is not a
+   restart; a changed digest invalidates in-flight telemetry spans and component
+   samples without touching the engine. Missing metadata never receives a
+   guessed epoch. Conservative candidate correlation is implemented; exact protocol
    association remains future work. Fail closed on ambiguous spans, competing
    direct traffic, dropped events or clock alignment.
 5. If stock interfaces cannot establish an exact cache-to-request link, retain

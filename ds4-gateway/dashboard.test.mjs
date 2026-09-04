@@ -9,7 +9,7 @@ import vm from 'node:vm';
 import { setTimeout as delay } from 'node:timers/promises';
 import { parseTiming, safeGatewayEvent, DeviceTelemetry, JournalReader, journalProcessEpoch } from './telemetry.mjs';
 import { createDashboard, runDashboard } from './dashboard.mjs';
-import { FileLogReader, parseLocalTiming, telemetryFiles } from './file-telemetry.mjs';
+import { FileLogReader, parseLocalProcessStart, parseLocalTiming, telemetryFiles } from './file-telemetry.mjs';
 const parse = (s, t = 1000) => parseTiming(`0902 14:00:00 ds4-server: ${s}`, t);
 
 const logTime = +new Date(2026,8,2,14,0,5);
@@ -25,6 +25,17 @@ test('local timestamps use the host clock, handle year rollover and reject stale
   assert.equal(parseLocalTiming(logLine(msg).trim(),logTime).time,+new Date(2026,8,2,14));
   assert.equal(parseLocalTiming(`1231 23:59:59 ds4-server: ${msg}`,+new Date(2027,0,1,0,0,1)).time,+new Date(2026,11,31,23,59,59));
   for(const line of [`0230 14:00:00 ds4-server: ${msg}`,`0902 25:00:00 ds4-server: ${msg}`,`0902 13:40:00 ds4-server: ${msg}`,`0902 14:01:00 ds4-server: ${msg}`,`private prompt ${logLine(msg)}`,logLine('private answer')]) assert.equal(parseLocalTiming(line,logTime),null);
+});
+test('local stock listen markers provide a bounded private process epoch',t=>{
+  const {file,device,events,reader}=logFixture(t),listen=logLine('listening on http://127.0.0.1:8000');
+  assert.equal(parseLocalProcessStart(listen.trim(),logTime).kind,'process_start');
+  assert.equal(parseLocalProcessStart(logLine('private answer').trim(),logTime),null);
+  fs.writeFileSync(file,listen+'padding\n'.repeat(140000)+logLine('chat ctx=0..10:10 prompt start'));
+  reader.poll(logTime);const first=device.backend_epoch;
+  assert.match(first,/^[\da-f]{64}$/);assert.equal(device.backend_epoch_source,'local_listen_marker');assert.equal(device.backend_epoch_confidence,'bounded');assert.equal(device.cache.starts,1);
+  assert.ok(events.some(e=>e.kind==='process_start'));assert.ok(!JSON.stringify(events).includes('127.0.0.1'));
+  fs.appendFileSync(file,`0902 14:00:04 ds4-server: listening on http://127.0.0.1:8000\n`+`0902 14:00:05 ds4-server: chat ctx=0..20:20 prompt start\n`);
+  reader.poll(logTime+5000);assert.notEqual(device.backend_epoch,first);assert.equal(device.backend_epoch_changes,1);assert.equal(device.cache.starts,1);
 });
 test('local log parses prefill/decode and disk reuse once, buffers partial lines, and exports no raw data', t => {
   const {file,device,events,reader}=logFixture(t);

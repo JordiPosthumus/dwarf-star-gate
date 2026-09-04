@@ -14,11 +14,15 @@ ID and labels boot ID plus PID as a weaker fallback. The UI, metrics, diagnostic
 and Gate Genie receive only a domain-separated SHA-256 digest bound to the worker
 ID; raw OS identifiers are never retained.
 
-A journal reconnect with the same service invocation keeps the same epoch. A new
+A journal reconnect with the same service invocation keeps the same epoch. For a
+local stock-DS4 log, DSG can derive a weaker bounded epoch from the most recent
+timestamped `listening on` marker, file identity and byte location. It scans at
+most the latest 8 MiB on reader startup; an older/missing marker stays unknown.
+Only the derived digest is retained—the endpoint and raw line are not. A new
 epoch clears incomplete timing spans, speed history, cache counters and component
 cost samples in the dashboard observer. It does **not** restart DS4, remove cache
-files, change model settings, change routing or touch Pi. Local-file telemetry and
-missing journal metadata remain unknown.
+files, change model settings, change routing or touch Pi. Missing process evidence
+remains unknown.
 
 ## Conservative request candidates
 

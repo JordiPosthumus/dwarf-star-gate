@@ -92,7 +92,7 @@ export class DeviceTelemetry {
   }
   observeEpoch(e) {
     const id=typeof e.backend_epoch==='string'&&/^[\da-f]{64}$/.test(e.backend_epoch)?e.backend_epoch:null;
-    const source=['systemd_invocation','boot_pid_fallback'].includes(e.backend_epoch_source)?e.backend_epoch_source:null;
+    const source=['systemd_invocation','boot_pid_fallback','local_listen_marker'].includes(e.backend_epoch_source)?e.backend_epoch_source:null;
     const confidence=['strong','bounded'].includes(e.backend_epoch_confidence)?e.backend_epoch_confidence:null;
     if(!id||!source||!confidence){this.backend_epoch_evidence_gaps=Math.min(Number.MAX_SAFE_INTEGER,this.backend_epoch_evidence_gaps+1);return false;}
     if(id===this.backend_epoch)return true;

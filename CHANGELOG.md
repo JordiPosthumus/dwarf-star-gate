@@ -1,5 +1,14 @@
 # Changelog
 
+## Bounded local-log process epochs
+
+- File-backed stock DS4 telemetry can now derive a bounded process epoch from
+  the latest timestamped listen marker, file identity and byte location. This
+  gives local Mac servers the same fail-closed cache-span boundary used by the
+  systemd observer without editing DS4 or retaining the endpoint/raw log line.
+- Startup scans are capped at the latest 8 MiB. Missing or older markers remain
+  unknown; the local marker is explicitly weaker than a systemd invocation ID.
+
 ## Conservative attribution overlap resolution
 
 - Request-to-engine shadow attribution now waits for every clock-overlapped
