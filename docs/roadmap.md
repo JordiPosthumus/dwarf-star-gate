@@ -91,6 +91,7 @@ are implemented separately.
 | Order | Work | Exit evidence |
 | --- | --- | --- |
 | Immediate | [Client continuity](client-continuity.md): distinguish undispatched waits from interrupted generation, scope home ownership correctly, and avoid abandoning Pi turns | Patient waiting, receipts, Continuity Door, conversation-scoped admission reassignment and opt-in Pi transport implemented; real Pi agent/tool-loop fixture covers native waiting and certified retries. Arbitrary post-dispatch recovery remains separate work |
+| Immediate follow-up (planned) | Opt-in **Agent Watch** for Pi/Hermes runs that stall before submitting their next DSG request | Privacy-safe client heartbeat distinguishes local tool work, client-side admission wait and a genuinely stale run; Genie reports the diagnosis first. Any future nudge/revive adapter is separately enrolled, idempotent and receipt-backed; DSG never guesses from silence alone |
 | 0 | Promote protocol/quarantine maintenance fixes through a controlled cutover | Regression suites pass; versioned backup; real API-format smoke checks; unchanged fleet/context; explicit source-versus-running release record |
 | 1 (shadow attribution + audits implemented) | Diagnose the Spark CUDA/OOM incidents and correlate requests within backend process epochs | Privacy-safe strong systemd epochs and file-ordered bounded local-log epochs plus a fail-closed request/log candidate correlator, long-overlap candidate retention, immutable recorded audit and complete-source later-evidence view are implemented; next evidence is fresh post-fix Mac traffic, review of the remaining true overlaps across real process epochs, service/kernel/memory diagnosis, real cold/warm checks and representative sustained work; no unapproved context/cache reductions |
 | 2 (pure comparator implemented) | Explain idle capacity and design cache-aware overflow scheduling | UI identifies session-home waits; the offline wait-hot/local-restore/remote-acquisition/cold-prefill contract is tested and abstains on unknowns; next prove live identity, remote protocol, realized forecast accuracy and no overlapping ownership/replay before any operator-approved activation |
@@ -390,6 +391,19 @@ are still required before automatic recovery is enabled.
 
 A frozen Pi adapter is a later packaging option. The first observer is a small
 OpenAI-compatible client, not an embedded Pi/Hermes bot with shell access.
+
+### Planned: Agent Watch for pre-gateway stalls
+
+DSG cannot currently distinguish an agent legitimately running a local tool from
+one frozen between that tool result and its next provider request. Both are silent
+at the gateway. An opt-in Pi/Hermes heartbeat may expose only a hashed run/session
+reference, coarse state (`local_tool`, `waiting_for_model`, `idle`, `done`), last
+activity, process liveness and the latest DSG request receipt. It must not include
+the task, prompt, tool arguments or output. Correlating that heartbeat with DSG's
+own queue evidence lets Genie say “client-side wait” or “no request reached DSG”
+without blaming a DS4 server. The first slice is advisory. A later revive/nudge
+operation requires an explicitly enrolled client adapter, one idempotent action,
+current stale evidence and an action-ledger receipt; silence alone grants no power.
 
 ## Adding or removing devices
 

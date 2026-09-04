@@ -61,7 +61,7 @@ function predictionChart(pairs) {
   const x=v=>48+v/max*180,y=v=>202-v/max*180;
   return `<svg viewBox="0 0 266 246" role="img" aria-label="Predicted versus actual duration in ${label}; identical axes; dots above the diagonal took longer than predicted"><title>${pairs.length} paired requests; frozen forecasts at the selected stage</title><text x="48" y="12">Actual (${label})</text>${[0,.5,1].map(f=>`<line class="analytics-grid" x1="48" x2="228" y1="${y(f*max)}" y2="${y(f*max)}"/><text x="41" y="${y(f*max)+4}" text-anchor="end">${fmt(f*max/unit)}</text><text x="${x(f*max)}" y="219" text-anchor="middle">${fmt(f*max/unit)}</text>`).join('')}<line class="analytics-equal" x1="48" y1="202" x2="228" y2="22"/>${pairs.map(p=>`<circle class="${p.actual>p.predicted?'underestimated':'estimated'}" cx="${x(p.predicted).toFixed(2)}" cy="${y(p.actual).toFixed(2)}" r="3"><title>${esc(p.node)}: predicted ${fmt(p.predicted/1000)}s, actual ${fmt(p.actual/1000)}s</title></circle>`).join('')}<text x="138" y="240" text-anchor="middle">Predicted (${label})</text></svg>`;
 }
-let analyticsState=null,analyticsLoading=false,analyticsWorkerSignature='',analyticsChartSignature='';
+let analyticsState=null,analyticsLoading=false,analyticsWorkerSignature='',analyticsChartSignature='',genieState=null;
 function renderThroughput(a){
   const t=a?.throughput,ready=a?.status==='ready'&&t?.schema===1;
   const compact=n=>!Number.isFinite(n)?'—':n>=1000000?fmt(n/1000000)+'M':n>=10000?fmt(n/1000)+'k':fmt(n);
@@ -405,6 +405,7 @@ function render(s) {
     wireWorkerControls(); void loadWorkers();
   } else if(currentWorkspace==='settings')activateWorkspaceTab('fleet',{updateHash:true});
   renderRequests(s.events);
+  renderGenieActionLedger();
   $('updated').textContent = `Gateway checked ${s.gateway_at ? clock(s.gateway_at) : '—'} · dashboard started ${clock(s.started)}`;
 }
 async function poll() {
@@ -588,6 +589,47 @@ function renderGenieReports(reports = []) {
     if (!keep.has(node.dataset.reportId) && !node.open && !node.contains(document.activeElement)) node.remove();
   }
 }
+function genieActionRows(snapshot,genie,analytics) {
+  const clean=value=>String(value??'').replaceAll('_',' ').replace(/\s+/g,' ').trim().slice(0,240);
+  const rows=[];
+  for(const report of genie?.reports??[])if(report.served_by==='pool_fallback'&&Number.isFinite(report.time))rows.push({
+    id:`provider:${report.id}`,kind:'provider',at:report.time,level:'good',
+    title:`Pool commandeered${report.served_on?` · ${clean(report.served_on)}`:''}`,
+    detail:`Dedicated provider unavailable · review completed${report.served_on?' on the named DSG server':' on an unpinned DSG slot; exact server unproven'}`
+  });
+  for(const op of snapshot?.gateway?.recovery?.operations??[])if(op.actor==='genie'&&Number.isFinite(op.updated_at??op.created_at)){
+    const state=clean(op.state),good=['recovered','verified paused'].includes(state),attention=['failed','reconciliation needed'].includes(state);
+    rows.push({id:`recovery:${op.id}`,kind:'recovery',at:op.updated_at??op.created_at,level:attention?'attention':good?'good':'pending',
+      title:`Recovery · ${clean(op.worker_id)}`,detail:`${clean(op.service_action)||'service check'} · ${state}${op.profile_adopted?' · verified profile hand-back':''}${op.proof?' · cache proof recorded':''}`});
+  }
+  for(const action of snapshot?.gateway?.predictor?.actions??[])if(action.actor==='genie'&&Number.isFinite(action.time)){
+    const status=clean(action.status),good=['verified','complete','completed'].includes(status),attention=['failed','interrupted','rejected'].includes(status);
+    rows.push({id:`predictor:${action.id??`${action.time}:${action.action}`}`,kind:'predictor',at:action.time,level:attention?'attention':good?'good':status==='running'?'pending':'neutral',
+      title:`Predictor · ${clean(action.action)}`,detail:[status,clean(action.reason)].filter(Boolean).join(' · ')});
+  }
+  for(const move of analytics?.handovers?.rows??[])if(move.actor==='genie'&&Number.isFinite(move.at)){
+    const state=clean(move.service_state),cache=Number.isFinite(move.cached_fraction)?` · ${Math.round(move.cached_fraction*100)}% prompt reused`:'';
+    rows.push({id:`routing:${move.at}:${move.source}:${move.destination}`,kind:'routing',at:move.at,level:state==='complete'?'good':state==='pending'?'pending':'attention',
+      title:`Queue move · ${clean(move.source)} → ${clean(move.destination)}`,detail:`after ${compactWait(move.waiting_before_move_ms/1000)??'an unknown wait'} · ${state}${cache}`});
+  }
+  return rows.sort((a,b)=>b.at-a.at||a.id.localeCompare(b.id)).slice(0,30);
+}
+let genieLedgerSignature='';
+function renderGenieActionLedger() {
+  const rows=genieActionRows(wireSnapshot,genieState,analyticsState),filter=$('genie-action-filter')?.value??'all';
+  const visible=rows.filter(row=>filter==='all'?true:filter==='attention'?row.level==='attention':row.kind===filter),attention=rows.filter(row=>row.level==='attention').length;
+  $('genie-action-summary').textContent=rows.length?`${rows.length} evidenced · ${attention?`${attention} need attention`:'all settled or in progress'}`:'No evidenced Genie actions yet';
+  const signature=JSON.stringify([filter,visible]);if(signature===genieLedgerSignature)return;genieLedgerSignature=signature;
+  const items=visible.slice(0,20).map(row=>{
+    const item=document.createElement('li');item.dataset.level=row.level;
+    const time=document.createElement('time');time.dateTime=new Date(row.at).toISOString();time.textContent=clock(row.at);
+    const title=document.createElement('strong');title.textContent=row.title;
+    const detail=document.createElement('span');detail.textContent=row.detail;detail.title=row.detail;
+    item.append(time,title,detail);return item;
+  });
+  if(!items.length){const empty=document.createElement('li');empty.className='muted';empty.textContent=rows.length?'No actions match this filter.':'Waiting for action evidence.';items.push(empty);}
+  $('genie-action-items').replaceChildren(...items);
+}
 const workspaceNames=['fleet','genie','analytics','activity','settings'];
 let currentWorkspace='fleet';
 function activateWorkspaceTab(requested,{focus=false,updateHash=false}={}) {
@@ -617,6 +659,7 @@ function setupWorkspaceTabs(){
   globalThis.addEventListener?.('hashchange',()=>activateWorkspaceTab(globalThis.location.hash.slice(1)));
 }
 poll();
+$('genie-action-filter').addEventListener('change',renderGenieActionLedger);
 setupWorkspaceTabs();
 $('request-filter').addEventListener('change',()=>{requestFilter=$('request-filter').value;renderRequests(wireSnapshot?.events??[]);});
 function openServerSettings({focus=false}={}){activateWorkspaceTab('settings',{updateHash:true});const panel=$('worker-management');panel.scrollIntoView({behavior:'smooth',block:'start'});if(focus)panel.querySelector('input[name="id"]')?.focus({preventScroll:true});}
@@ -636,7 +679,7 @@ $('cache-cost-form').addEventListener('submit',async event=>{
 void loadAnalytics();setInterval(()=>{if(!document.hidden)void loadAnalytics();},10000);
 $('health-wire').addEventListener('mouseleave',()=>{if(wireSnapshot)renderHealthWire(wireSnapshot);});
 $('health-wire').addEventListener('focusout',()=>queueMicrotask(()=>{if(wireSnapshot)renderHealthWire(wireSnapshot);}));
-let genieToken=null,genieState=null,memoryEditing=null,memoryBusy=false;
+let genieToken=null,memoryEditing=null,memoryBusy=false;
 let hardeningSignature=null;
 function renderHardeningNotes(notes=[],memory={}){
   const panel=$('genie-hardening'),items=$('genie-hardening-items');panel.hidden=!genieState?.configured;
@@ -704,6 +747,7 @@ async function loadGenie() {
     renderHardeningNotes(s.hardening_notes||[],s.memory||{});
     renderGenieReports(s.reports || []);
     renderMemory(s.memory);
+    renderGenieActionLedger();
   } catch{$('genie-status').textContent='Genie status unavailable';wireState={state:'unavailable'};if(wireSnapshot)renderHealthWire(wireSnapshot);}
 }
 $('genie-toggle').addEventListener('click',()=>genieAction({action:'enable',enabled:!genieState?.enabled}));

@@ -1,5 +1,19 @@
 # Changelog
 
+## Gate Genie action ledger
+
+- Added a compact, reverse-chronological ledger to the Gate Genie view with
+  filters for pool commandeering, recovery, queue moves, predictor work and items
+  needing attention. It merges only sanitized executor/provider evidence and
+  excludes operator actions, request/session identifiers, prompts and answers.
+- Pool fallback receipts now retain a validated `x-ds4-node` response header so
+  the ledger can name the borrowed server when proven. Missing or malformed
+  identity remains explicitly unnamed rather than inferred.
+- Recovery and predictor history comes from durable journals; relocation history
+  is bounded by the analytics reader; provider fallback covers the current
+  dashboard run. The ledger does not claim that model prose acted directly and
+  changes no Genie, routing or recovery permission.
+
 ## Gate Genie provider deadline hardening
 
 - Replaced the Genie's built-in Fetch call with a loopback-only streaming HTTP

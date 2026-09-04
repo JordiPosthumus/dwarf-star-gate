@@ -160,6 +160,9 @@ The dropdown selects already configured endpoints;
 it is not a URL editor. Endpoint/model/auth/tunnel settings live in the private
 configuration's `genie` and `genie.fallback` blocks. Changes currently require a
 dashboard restart; changing only Genie settings does not require a model restart.
+The view also has a compact filtered action ledger. It merges proven Genie
+provider fallback, durable recovery/predictor receipts and bounded queue-move
+evidence, newest first; it is not persistent chat history.
 
 **Proposed next controls:**
 
@@ -176,9 +179,9 @@ dashboard restart; changing only Genie settings does not require a model restart
   small generation test. Neither test grants recovery powers. Save atomically,
   keep the previous working config on failure, and never switch mid-review.
   Source changes must not alter worker registration or ordinary inference.
-- **Action timeline**: target, actor, reason, evidence, queued/running/verified
-  state, elapsed time and failures. Separate Genie commentary from executor
-  receipts. Include an operator-triggered Recover control and an evidence drawer.
+- **Deeper action evidence**: expand the implemented concise ledger into an
+  optional evidence drawer with elapsed time and bounded proof details. Keep
+  Genie commentary separate from executor receipts.
 - **Worker badges** distinguish manually paused, quarantined, restarting,
   verification failed and available. Persist why/when/who; do not call a
   quarantined server idle or count it as immediately usable capacity.

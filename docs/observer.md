@@ -113,7 +113,7 @@ current item can be read. The timestamp stays with the frozen evidence.
 Reduced-motion preferences show wrapped static text, and the repeated scrolling
 copy is hidden from screen readers.
 
-In the web UI, find **Gate Genie** beside **Evidence collection**. **Enable** /
+In the web UI, open the **Gate Genie** tab. **Enable** /
 **Turn off** controls the observer. The source dropdown chooses a dedicated-first
 policy or explicit DSG-pool use; it does not edit endpoint addresses. In dedicated-
 first mode, an explicit connection, HTTP, timeout or malformed-answer failure
@@ -188,6 +188,17 @@ pool or pool fallback; start/finish times; `complete`, `failed` or `cancelled`;
 and a fixed reason category. It never includes endpoint details, credentials,
 prompts, raw responses or raw transport errors. This makes a slow provider,
 explicit fallback and failed review distinguishable without granting new powers.
+
+The same tab has a compact, reverse-chronological **Action ledger** with filters
+for pool commandeering, recovery, queue moves, predictor work and items needing
+attention. “Pool commandeering” means a dedicated-provider attempt failed and a
+completed review was proven to have used the unpinned DSG fallback; the server is
+named only when the gateway returned a validated `x-ds4-node` receipt. Recovery
+and predictor rows come from their durable executor journals, queue moves from
+the bounded recent evidence reader, and provider fallback from the current
+dashboard run. Operator actions are excluded. No prompt, answer, request/session
+identifier, endpoint, credential or raw error enters the ledger, and no row is a
+claim that model prose directly performed an action.
 
 The experimental observer uses low-effort, maximum-8,192-output-token review
 requests with a configurable bounded provider deadline. The current default is

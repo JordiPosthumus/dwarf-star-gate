@@ -10,6 +10,12 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Made the Genie's value auditable at a glance.** A compact newest-first ledger
+  now merges proven pool commandeering, Genie recovery and predictor receipts,
+  and bounded queue moves with useful filters. Exact borrowed servers appear only
+  when DSG proves them; operator actions, request identities, prompts, answers,
+  endpoints and raw errors stay out.
+
 - **Made the Genie's generous provider deadlines real.** A hidden five-minute
   response-header limit in Node's Fetch transport could terminate both the
   dedicated review and its DSG-pool fallback despite the visible two-hour

@@ -397,6 +397,27 @@ test('Genie report bodies remain inert text and an empty refresh does not close 
   render([]);assert.equal(container.children[0],node);assert.ok(node.open);
   node.open=false;render([]);assert.equal(container.children.length,0);
 });
+test('Genie action ledger is concise, newest-first and includes proven pool commandeering',()=>{
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const context=vm.createContext({});vm.runInContext(source,context);
+  const snapshot={gateway:{
+    recovery:{operations:[
+      {id:'operator',actor:'operator',worker_id:'private-worker',service_action:'restart',state:'recovered',updated_at:6000},
+      {id:'recover',actor:'genie',worker_id:'spark1',service_action:'adopt_restart',state:'recovered',updated_at:4000,profile_adopted:true,proof:{samples:[]}}
+    ]},
+    predictor:{actions:[{id:'predict',actor:'genie',action:'train',status:'verified',reason:'Fresh evidence passed',time:2000}]}
+  }};
+  const genie={reports:[{id:'report',time:5000,served_by:'pool_fallback',served_on:'spark2'},{id:'ordinary',time:7000,served_by:'dedicated'}]};
+  const analytics={handovers:{rows:[{actor:'genie',at:3000,source:'spark1',destination:'m3-studio',waiting_before_move_ms:91000,service_state:'complete',cached_fraction:.75},{actor:'operator',at:8000,source:'private-worker',destination:'spark2',waiting_before_move_ms:1,service_state:'complete'}]}};
+  context.snapshot=snapshot;context.genie=genie;context.analytics=analytics;
+  const rows=JSON.parse(vm.runInContext('JSON.stringify(genieActionRows(snapshot,genie,analytics))',context));
+  assert.deepEqual(rows.map(row=>row.kind),['provider','recovery','routing','predictor']);
+  assert.match(rows[0].title,/Pool commandeered · spark2/);assert.match(rows[1].detail,/verified profile hand-back/);assert.match(rows[2].detail,/75% prompt reused/);
+  assert.equal(rows.find(row=>row.level==='attention'),undefined);assert.ok(!JSON.stringify(rows).includes('private-worker'));
+  const html=fs.readFileSync(new URL('./ui/index.html',import.meta.url),'utf8'),css=fs.readFileSync(new URL('./ui/brand.css',import.meta.url),'utf8');
+  assert.match(html,/id="genie-action-ledger"/);assert.match(html,/Pool commandeering/);assert.match(html,/Newest first|title="Proven executor receipts/);
+  assert.match(css,/\.genie-action-items li\{display:grid/);assert.match(source,/textContent=row\.detail/);assert.doesNotMatch(source,/innerHTML=.*genieActionRows/);
+});
 test('health wire shows Genie-authored findings and recommendations, withholding stale or unavailable advice',()=>{
   const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);

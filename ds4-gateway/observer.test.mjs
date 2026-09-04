@@ -251,12 +251,12 @@ test('Genie automatically borrows one unpinned pool slot after dedicated-provide
   const memory={retrieve:()=>({notes:[{id:'private-note',revision:1,data:{text:'PRIVATE_NOTE'}}],truncated:false}),status:()=>({available:true,enabled:true})};
   const calls=[];const g=new Genie({url:'http://127.0.0.1:9001/v1',fallback:{url:'http://127.0.0.1:9002/v1'}},snapshot,{memory,fetchImpl:async(url,options)=>{
     calls.push({url,headers:options.headers,body:JSON.parse(options.body)});if(calls.length===1)throw new Error('private details');
-    return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(authoredReview())}}]});
+    return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(authoredReview())}}]},{headers:{'x-ds4-node':'spark2'}});
   }});
   g.setEnabled(true);await g.ask();assert.equal(calls.length,2);assert.match(calls[0].url,/9001/);assert.match(calls[1].url,/9002/);
   assert.equal(calls[1].headers['x-session-affinity'],undefined);assert.equal(calls[1].headers['x-dsg-observer'],'gate-genie');
   assert.deepEqual(JSON.parse(calls[1].body.messages[1].content).notebook_history.notes,[]);assert.ok(!JSON.stringify(calls[1]).includes('PRIVATE_NOTE'));
-  assert.equal(g.status().last_served_by,'pool_fallback');assert.equal(g.status().reports[0].served_by,'pool_fallback');assert.deepEqual(g.status().reports[0].memory_used,[]);g.close();
+  assert.equal(g.status().last_served_by,'pool_fallback');assert.equal(g.status().reports[0].served_by,'pool_fallback');assert.equal(g.status().reports[0].served_on,'spark2');assert.deepEqual(g.status().reports[0].memory_used,[]);g.close();
 });
 test('a bounded dedicated timeout aborts that attempt and borrows the pool',async()=>{
   const calls=[];const g=new Genie({url:'http://127.0.0.1:9001/v1',timeout_ms:1000,fallback:{url:'http://127.0.0.1:9002/v1'}},snapshot,{fetchImpl:async(url,options)=>{
@@ -267,10 +267,16 @@ test('a bounded dedicated timeout aborts that attempt and borrows the pool',asyn
   assert.deepEqual(g.status().provider_attempts.map(x=>[x.provider,x.outcome,x.reason]),[['pool_fallback','complete',null],['dedicated','failed','timeout']]);g.close();
 });
 test('Genie loopback transport waits for delayed headers until its explicit signal and streams the response',async t=>{
-  const server=http.createServer((req,res)=>{setTimeout(()=>{res.writeHead(200,{'content-type':'application/json'});res.end('{"ok":true}');},40);});
+  const server=http.createServer((req,res)=>{setTimeout(()=>{res.writeHead(200,{'content-type':'application/json','x-ds4-node':'spark2'});res.end('{"ok":true}');},40);});
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>server.close());
   const response=await genieLoopbackFetch(`http://127.0.0.1:${server.address().port}/v1/chat/completions`,{body:'{}',signal:AbortSignal.timeout(1000)});
-  assert.equal(response.ok,true);let body='';for await(const chunk of response.body)body+=chunk;assert.equal(body,'{"ok":true}');
+  assert.equal(response.ok,true);assert.equal(response.node,'spark2');let body='';for await(const chunk of response.body)body+=chunk;assert.equal(body,'{"ok":true}');
+});
+test('Genie loopback transport rejects an invalid server identity header',async t=>{
+  const server=http.createServer((_req,res)=>{res.writeHead(200,{'content-type':'application/json','x-ds4-node':'private.example'});res.end('{}');});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>server.close());
+  const response=await genieLoopbackFetch(`http://127.0.0.1:${server.address().port}/v1/chat/completions`,{body:'{}',signal:AbortSignal.timeout(1000)});
+  assert.equal(response.node,null);for await(const _chunk of response.body){}
 });
 test('Genie loopback transport obeys the explicit provider abort while awaiting headers',async t=>{
   const server=http.createServer(()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>server.closeAllConnections());t.after(()=>server.close());

@@ -25,7 +25,8 @@ export function genieLoopbackFetch(url,{method='POST',headers={},body='',signal}
     const abortError=()=>new DOMException('Aborted','AbortError');
     const request=http.request(target,{method,agent:false,headers:{...headers,'content-length':Buffer.byteLength(payload)}},incoming=>{
       response=incoming;settled=true;
-      resolve({ok:incoming.statusCode>=200&&incoming.statusCode<300,status:incoming.statusCode,body:incoming});
+      const node=typeof incoming.headers['x-ds4-node']==='string'&&/^[\w-]{1,64}$/.test(incoming.headers['x-ds4-node'])?incoming.headers['x-ds4-node']:null;
+      resolve({ok:incoming.statusCode>=200&&incoming.statusCode<300,status:incoming.statusCode,body:incoming,node});
     });
     const abort=()=>{const error=abortError();response?.destroy(error);request.destroy(error);};
     if(signal?.aborted){abort();return;}
@@ -344,7 +345,8 @@ export class Genie {
       if(choice?.finish_reason==='length')throw new Error('Observation reached its token budget; no complete report');
       const answer=choice?.message?.content;if(typeof answer!=='string'||!answer.trim())throw new Error('Model returned no answer');
       this.providerAttempts.unshift({provider:servedBy,started_at:this.providerStartedAt,finished_at:Date.now(),outcome:'complete',reason:null});this.providerAttempts=this.providerAttempts.slice(0,8);
-      return {answer,served_by:servedBy};
+      const headerNode=response.node??response.headers?.get?.('x-ds4-node'),served_on=pool&&typeof headerNode==='string'&&/^[\w-]{1,64}$/.test(headerNode)?headerNode:null;
+      return {answer,served_by:servedBy,served_on};
     } catch(error) {
       const reason=providerFailure(error,{timedOut});
       this.providerAttempts.unshift({provider:servedBy,started_at:this.providerStartedAt,finished_at:Date.now(),outcome:reason==='cancelled'?'cancelled':'failed',reason});this.providerAttempts=this.providerAttempts.slice(0,8);
@@ -393,7 +395,7 @@ export class Genie {
       if(parsed.hardening_notes.length&&this.memory)try{hardening_receipts.push(...this.memory.saveHardeningNotes(parsed.hardening_notes,data.hardening_candidates));}
       catch{hardening_receipts.push({state:'not_saved',error:'Private hardening notebook unavailable; inference and routing continued'});}
       this.last=Date.now();this.reports.unshift({id:randomUUID(),time:this.last,evidence_at:data.gateway_at,health_key,
-        ...parsed,source:this.source,served_by:completion.served_by,actions_taken:actions,hardening_receipts,memory_used:completion.served_by==='dedicated'?history.notes.map(n=>({id:n.id,revision:n.revision})):[]});
+        ...parsed,source:this.source,served_by:completion.served_by,served_on:completion.served_on,actions_taken:actions,hardening_receipts,memory_used:completion.served_by==='dedicated'?history.notes.map(n=>({id:n.id,revision:n.revision})):[]});
       this.reports=this.reports.slice(0,12);this.consecutiveFailures=0;
     } catch(e) {this.error=this.enabled&&!this.preempted ? (/timed out/.test(e.message)||e.name==='AbortError'?'Observation timed out after its bounded provider attempt(s)':/^Model HTTP \d+$/.test(e.message)?e.message:'Observation failed; gateway unaffected') : null;if(this.error)this.consecutiveFailures++;}
     finally {this.reviewFinishedAt=Date.now();this.attempt=this.reviewFinishedAt;this.busy=false;this.busyKind=null;this.preempted=false;this.abort=null;this.activeProvider=null;this.providerStartedAt=null;this.providerDeadlineAt=null;if(this.queuedQuestion)queueMicrotask(()=>this.runSubmitted());}
