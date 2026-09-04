@@ -1,5 +1,15 @@
 # Changelog
 
+## Bounded attribution-audit file handling
+
+- The public attribution audit now opens each evidence file once with no-follow
+  semantics, verifies the opened descriptor is a regular file and reads from that
+  same descriptor. A same-user path swap can no longer redirect a bounded audit
+  after its file check.
+- Programmatic callers now receive the same fixed file-count and byte ceilings as
+  the command-line interface; invalid bounds fail closed instead of being silently
+  clamped.
+
 ## Attribution evidence yield
 
 - A bounded read-only audit now deduplicates final request-to-engine attribution

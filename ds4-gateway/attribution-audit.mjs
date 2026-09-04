@@ -8,20 +8,27 @@ const FILE=/^metrics-\d{4}-\d{2}-\d{2}\.jsonl$/;
 const MAX_FILES=7,MAX_BYTES_PER_FILE=8*1024*1024,MAX_LINE_BYTES=64*1024,MAX_RECORDS=65536;
 
 function boundedLines(file,maxBytes=MAX_BYTES_PER_FILE) {
-  const stat=fs.lstatSync(file);if(!stat.isFile()||stat.isSymbolicLink())return {lines:[],skipped:'not_regular'};
-  const length=Math.min(stat.size,maxBytes),offset=stat.size-length,buffer=Buffer.alloc(length),fd=fs.openSync(file,'r');
-  try{fs.readSync(fd,buffer,0,length,offset);}finally{fs.closeSync(fd);}
-  const text=buffer.toString('utf8'),lines=text.split('\n');if(offset>0)lines.shift();
-  return {lines,partial:offset>0};
+  let fd;
+  try{fd=fs.openSync(file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK);}
+  catch(error){if(['ELOOP','ENOENT','ENOTDIR'].includes(error.code))return {lines:[],skipped:'not_regular'};throw error;}
+  try{
+    const stat=fs.fstatSync(fd);if(!stat.isFile())return {lines:[],skipped:'not_regular'};
+    const length=Math.min(stat.size,maxBytes),offset=stat.size-length,buffer=Buffer.alloc(length);
+    if(length)fs.readSync(fd,buffer,0,length,offset);
+    const text=buffer.toString('utf8'),lines=text.split('\n');if(offset>0)lines.shift();
+    return {lines,partial:offset>0};
+  }finally{fs.closeSync(fd);}
 }
 
 export function auditAttributionDirectory(directory,{maxFiles=MAX_FILES,maxBytesPerFile=MAX_BYTES_PER_FILE}={}) {
   if(typeof directory!=='string'||!path.isAbsolute(directory))throw new Error('Attribution audit directory must be an absolute path');
+  if(!Number.isSafeInteger(maxFiles)||maxFiles<1||maxFiles>MAX_FILES)throw new Error(`maxFiles must be an integer from 1 to ${MAX_FILES}`);
+  if(!Number.isSafeInteger(maxBytesPerFile)||maxBytesPerFile<1024||maxBytesPerFile>MAX_BYTES_PER_FILE)throw new Error(`maxBytesPerFile must be an integer from 1024 to ${MAX_BYTES_PER_FILE}`);
   const root=fs.lstatSync(directory);if(!root.isDirectory()||root.isSymbolicLink())throw new Error('Attribution audit directory must be a real directory');
-  const files=fs.readdirSync(directory).filter(name=>FILE.test(name)).sort().slice(-Math.max(1,Math.min(MAX_FILES,maxFiles)));
+  const files=fs.readdirSync(directory).filter(name=>FILE.test(name)).sort().slice(-maxFiles);
   const rows=[];let malformed_lines=0,oversized_lines=0,partial_files=0,skipped_files=0,truncated_records=0;
   for(const name of files){
-    const result=boundedLines(path.join(directory,name),Math.max(1024,Math.min(MAX_BYTES_PER_FILE,maxBytesPerFile)));
+    const result=boundedLines(path.join(directory,name),maxBytesPerFile);
     if(result.skipped){skipped_files++;continue;}if(result.partial)partial_files++;
     for(const line of result.lines){
       if(!line.trim())continue;if(Buffer.byteLength(line)>MAX_LINE_BYTES){oversized_lines++;continue;}

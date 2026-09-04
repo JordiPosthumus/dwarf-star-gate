@@ -51,3 +51,9 @@ test('audit rejects symlink roots and skips symlinked metric files',t=>{
   const report=auditAttributionDirectory(dir);assert.equal(report.files_read,0);assert.equal(report.skipped_files,1);assert.equal(report.total_starts,0);
   const rootLink=path.join(other,'root-link');fs.symlinkSync(dir,rootLink);assert.throws(()=>auditAttributionDirectory(rootLink),/real directory/);
 });
+
+test('audit validates exported bounds instead of relying on CLI validation',t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-attribution-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  for(const maxFiles of [0,8,NaN,1.5])assert.throws(()=>auditAttributionDirectory(dir,{maxFiles}),/maxFiles/);
+  for(const maxBytesPerFile of [0,1023,8*1024*1024+1,NaN,2048.5])assert.throws(()=>auditAttributionDirectory(dir,{maxBytesPerFile}),/maxBytesPerFile/);
+});
