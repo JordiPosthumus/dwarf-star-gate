@@ -106,3 +106,17 @@ test('clean checkout: initialize, doctor, UI registration, exact forwarding, CLI
   assert.ok(!fs.existsSync(path.join(elsewhere,'runtime')));assert.ok(!logs.includes(c.api_key));
   execFileSync('git',['add','--all'],{cwd:checkout});const tracked=execFileSync('git',['ls-files'],{cwd:checkout,encoding:'utf8'});assert.ok(!tracked.includes('config.local.json'));assert.ok(!tracked.includes('runtime/'));
 });
+test('doctor exposes durable worker and recovery-route drift without leaking route names or mutating state',async t=>{
+  const dir=temporary(t),stateFile=path.join(dir,'affinity.json'),configFile=path.join(dir,'config.json');
+  const configured={id:'spark',url:'http://127.0.0.1:18001',ssh:'configured-primary',ssh_fallbacks:['configured-fallback'],remote_port:8000};
+  const durable={id:'spark',url:'http://127.0.0.1:18001',ssh:'durable-primary',remote_port:8000};
+  const config={api_key:'fixture-key',model:'fixture-model',context_length:262144,host:'127.0.0.1',port:19000,ui_port:19010,state_file:stateFile,nodes:[configured]};
+  fs.writeFileSync(configFile,JSON.stringify(config));fs.chmodSync(configFile,0o600);
+  fs.writeFileSync(stateFile,JSON.stringify({version:1,sessions:{},workers:[durable]}));
+  const before=fs.readFileSync(stateFile);
+  const result=JSON.parse(execFileSync(process.execPath,[path.join(projectRoot,'scripts/doctor.mjs')],{cwd:projectRoot,env:{...process.env,DWARF_GATE_CONFIG:configFile},encoding:'utf8'}));
+  assert.deepEqual(result.worker_registry,{present:true,configured_workers:1,durable_workers:1,configured_workers_missing:0,recovery_bindings_differ:1});
+  assert.ok(result.warnings.some(warning=>warning.includes('recovery routes differ')));
+  assert.ok(!JSON.stringify(result).includes('configured-primary'));assert.ok(!JSON.stringify(result).includes('configured-fallback'));assert.ok(!JSON.stringify(result).includes('durable-primary'));
+  assert.deepEqual(fs.readFileSync(stateFile),before);
+});

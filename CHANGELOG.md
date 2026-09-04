@@ -1,5 +1,11 @@
 # Changelog
 
+## Read-only worker-registry drift detection
+
+- Doctor now compares workers declared in private config with the authoritative
+  durable registry and reports missing workers or changed endpoint/recovery
+  bindings without printing private route names or changing live state.
+
 ## Visible recovery identity drift
 
 - Recovery status now reports a changed enrolled service identity/profile even

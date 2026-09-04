@@ -27,7 +27,10 @@ Setup uses a random inference key and exclusive mode-0600 file creation: an
 existing config is an error, not permission to regenerate it. No servers start.
 
 `npm run doctor` checks local config, ports, paths, worker/recovery definitions,
-existing durable registry and optional encoder files. It does not contact workers,
+existing durable registry and optional encoder files. If a durable worker endpoint
+or recovery route differs from a worker declared in private config, it reports the
+count without exposing route names. The durable registry remains authoritative and
+must be reconciled explicitly with the worker controls. Doctor does not contact workers,
 perform inference, create runtime state or repair anything. Passing doctor is not
 a claim that DS4 is ready: registration and gateway health probes check the actual
 model/context; inference and cache behavior require separate validation.

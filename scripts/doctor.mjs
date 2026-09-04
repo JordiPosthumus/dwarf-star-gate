@@ -15,12 +15,24 @@ try {
   if(c.host!==undefined&&c.host!=='localhost'&&!net.isIP(c.host))throw new Error('Gateway host must be an IP address or localhost');
   if(typeof c.api_key!=='string'||!c.api_key||c.api_key==='REPLACE_WITH_YOUR_KEY')throw new Error('Set a private inference API key');
   if(typeof c.model!=='string'||!c.model||!Number.isSafeInteger(c.context_length)||c.context_length<1)throw new Error('Set the served model and positive pool context limit');
-  let nodes=workerConfigs(c.nodes);recoveryConfig(c.recovery);
+  const configuredNodes=workerConfigs(c.nodes);let nodes=configuredNodes;recoveryConfig(c.recovery);
   const warnings=[];
+  const registry={present:false,configured_workers:configuredNodes.length,durable_workers:null,configured_workers_missing:0,recovery_bindings_differ:0};
   if(fs.existsSync(c.state_file)){
     const state=JSON.parse(fs.readFileSync(c.state_file,'utf8'));
     if(state.version!==1||!state.sessions||typeof state.sessions!=='object')throw new Error('Existing affinity state is invalid; do not reset it');
-    if(state.workers!==undefined)nodes=workerConfigs(state.workers);
+    if(state.workers!==undefined){
+      nodes=workerConfigs(state.workers);registry.present=true;registry.durable_workers=nodes.length;
+      const durableById=new Map(nodes.map(worker=>[worker.id,worker]));
+      const binding=worker=>JSON.stringify({url:worker.url,ssh:worker.ssh??null,ssh_fallbacks:worker.ssh_fallbacks??[],remote_port:worker.remote_port??8000,telemetry_service:worker.telemetry_service??null});
+      for(const worker of configuredNodes){
+        const durable=durableById.get(worker.id);
+        if(!durable)registry.configured_workers_missing++;
+        else if(binding(worker)!==binding(durable))registry.recovery_bindings_differ++;
+      }
+      if(registry.configured_workers_missing)warnings.push('Some workers declared in private config are absent from the durable registry; live routing follows the durable registry. Reconcile with the worker controls; doctor changed nothing.');
+      if(registry.recovery_bindings_differ)warnings.push('Some durable worker endpoints or recovery routes differ from private config; live routing and recovery follow the durable registry. Review with ./workers.sh list and reconcile explicitly; doctor changed nothing.');
+    }
   }
   if(!nodes.length)warnings.push('No workers registered yet; inference is unavailable until you add and enable a compatible DS4 endpoint.');
   if(nodes.some(n=>[c.port,core,ui].includes(Number(new URL(n.url).port))))throw new Error('Worker tunnel/listener port collides with DSG');
@@ -41,5 +53,5 @@ try {
     const p=JSON.parse(fs.readFileSync(c.predictor.profiles));if(p.schema!==1||!p.workers)throw new Error('Predictor requires a versioned private worker inventory');
     warnings.push('Predictor configuration is present; doctor does not certify fitted models or routing evidence. Inspect Analytics → Predictor lifecycle.');
   }
-  console.log(JSON.stringify({ok:true,read_only:true,config:filename,workers:nodes.length,gateway_port:c.port,gateway_core_port:core,continuity_door:continuityEnabled(c),dashboard_port:ui,context_length:c.context_length,warnings},null,2));
+  console.log(JSON.stringify({ok:true,read_only:true,config:filename,workers:nodes.length,worker_registry:registry,gateway_port:c.port,gateway_core_port:core,continuity_door:continuityEnabled(c),dashboard_port:ui,context_length:c.context_length,warnings},null,2));
 }catch(error){console.error(error.message);process.exitCode=1;}
