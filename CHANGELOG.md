@@ -1,5 +1,12 @@
 # Changelog
 
+## Preserve early occupancy progress evidence
+
+- Retain all observed causal points in the separate offline occupancy replay,
+  with an explicit 100,000-point rejection budget instead of tail truncation.
+  Regression covers long requests beyond the live rolling history window.
+  Production feature contracts and history bounds remain unchanged.
+
 ## Train occupancy challengers offline
 
 - Add explicit occupancy preparation and trainer opt-in, separate output filename

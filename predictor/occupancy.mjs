@@ -2,7 +2,7 @@
 import {PredictionHistory,FEATURE_NAMES,CATEGORICAL,GROUPS} from '../ds4-gateway/prediction-features-v4.mjs';
 import {profileFor} from '../ds4-gateway/prediction-features.mjs';
 export function replayOccupancy(events,inventory) {
-  const history=new PredictionHistory(inventory),rows=[],seen=new Map();let invalid=0;
+  const history=new PredictionHistory(inventory),rows=[],seen=new Map(),points=new Map();let invalid=0,totalPoints=0;
   const finishes=new Map();
   for(const event of events)if(event?.kind==='finish'){
     const key=event.run_id+':'+event.request_id,variants=finishes.get(key)??new Set();
@@ -23,7 +23,7 @@ export function replayOccupancy(events,inventory) {
       ['stop','tool_calls','function_call','length'].includes(event.finish_reason)&&
       typeof event.service_ms==='number'&&Number.isFinite(event.service_ms)&&event.service_ms>0&&
       profileFor(inventory,job.decision.candidates?.find(c=>c.node===event.node))) {
-      for(const point of job.points)if(point.at<=at){
+      for(const point of points.get(event.run_id+':'+event.request_id)??[])if(point.at<=at){
         const elapsed=point.kind==='remaining'?point.features.elapsed_s:0;
         if(typeof elapsed!=='number'||!Number.isFinite(elapsed)||elapsed<0||elapsed>event.service_ms/1000)continue;
         rows.push({...point,request_id:event.request_id,run_id:event.run_id,group:job.decision.session??'unknown-session',
@@ -32,7 +32,13 @@ export function replayOccupancy(events,inventory) {
       }
     }
     // In particular, a length finish does NOT enter natural-completion priors.
-    history.observe(event);
+    const observed=history.observe(event),key=event.run_id+':'+event.request_id;
+    if(observed.points.length){
+      const retained=points.get(key)??[];retained.push(...observed.points);points.set(key,retained);
+      totalPoints+=observed.points.length;
+      if(totalPoints>100000)throw new Error('Occupancy snapshot exceeds 100000 forecast points; no silent truncation');
+    }
+    if(!history.getJob(event))points.delete(key);
   }
   return {schema:'dsg-occupancy-v1',feature_schema:'dsg-latency-v4',feature_names:FEATURE_NAMES,categorical:CATEGORICAL,
     groups:GROUPS,rows,invalid,routing_enabled:false,

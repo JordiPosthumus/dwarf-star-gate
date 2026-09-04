@@ -10,6 +10,10 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Recovered early long-job progress for offline occupancy.** Replay no longer
+  inherits the live rolling history's tail-only retention. Earlier hour-plus
+  targets stay visible, with request-balanced evaluation and unchanged live limits.
+
 - **Added explicit offline occupancy training.** The reviewed forward-time XGB
   search can now fit the separate target, with capped/normal holdout diagnostics.
   Preparation fingerprints its contract; production loading is explicitly rejected.

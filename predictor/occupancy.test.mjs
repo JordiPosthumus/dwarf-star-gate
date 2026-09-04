@@ -26,6 +26,13 @@ test('normal occupancy preserves existing feature snapshots and target values',(
   const actual=replayOccupancy(events,inventory).rows.map(({terminal_class,target_contract,...r})=>r);
   assert.deepEqual(actual,replay(events,inventory).rows);
 });
+test('offline occupancy keeps early long-duration progress beyond the live rolling window',()=>{
+  const events=fixture();events.splice(3,1,...Array.from({length:100},(_,i)=>row('progress',30001+i*30000,{active_elapsed_ms:30000+i*30000})));
+  const rows=replayOccupancy(events,inventory).rows,progress=rows.filter(r=>r.kind==='remaining');
+  assert.equal(progress.length,100);assert.equal(progress[0].target_s,7170);
+  assert.equal(progress.at(-1).target_s,4200);
+  assert.ok(rows.some(r=>r.stage==='admission'));assert.ok(rows.some(r=>r.stage==='upload'));
+});
 test('cancellations, unknown endings, relocations, mismatched profiles and ambiguous finishes abstain',()=>{
   for(const change of [e=>e.at(-1).outcome='client_cancelled',e=>e.at(-1).finish_reason=null,e=>e[0].candidates[0].profile='other',e=>e.splice(2,0,row('queue_relocation',1)),e=>e.push({...e.at(-1),event_id:'conflict',service_ms:1})]){
     const events=fixture();change(events);assert.equal(replayOccupancy(events,inventory).rows.length,0);

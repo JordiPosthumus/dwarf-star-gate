@@ -31,6 +31,13 @@ locked predictor environment. Without `--occupancy`, the trainer rejects this
 target. The output is `occupancy-candidate.json`; the production runtime rejects
 its distinct schema. No existing model or activation pointer is replaced.
 
+Offline occupancy replay preserves all observed causal forecast points rather
+than inheriting the live normal-completion history's rolling 68-point window.
+It fails explicitly above 100,000 observed points instead of silently dropping
+the early, longest remaining-time targets. Repeated points remain request-weighted
+in training/evaluation; they are not independent jobs. The production history
+window is unchanged.
+
 ## Current lifecycle
 
 Implemented, opt-in. Ordinary routing remains the default. A fitted model is
