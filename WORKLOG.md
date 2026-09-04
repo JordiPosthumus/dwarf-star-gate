@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Fixed a reproduced Door cancellation race.** A client closing its own request
+  could make healthy core connectivity look broken. Cleanup now records the
+  cancellation first, while genuine upstream failures retain their safeguards.
+  Source/test completion is separate from a safe stable-endpoint reload.
+
 - **Checked what safe KV transfer would require.** Pinned upstream source confirms
   disk-cache discovery and restore building blocks, but cache files also contain
   prompt text. Recorded identity, privacy, integrity and isolated continuation

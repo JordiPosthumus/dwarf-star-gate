@@ -26,6 +26,17 @@ components named when the Door is holding. Requests that have not yet left a Pi,
 Hermes or other client remain outside DSG's observation boundary. Gate Genie
 receives the same sanitized facts.
 
+The Door's `failed` count describes proxy transport failures, not every non-200
+model response. Client cancellation must settle before socket destruction so it
+does not count as a core failure or hold unrelated arrivals. Late error events
+from an already-settled proxy must not change admission state. Tests cover both
+cancellation timings and genuine upstream disconnects. A lifetime counter alone
+does not identify the cause of a particular historical failure.
+
+Door code changes are separate from core changes: a core-only cutover does not
+reload this stable endpoint. Update the Door in its own idle maintenance window;
+restarting it over active proxied streams would defeat its continuity guarantee.
+
 ## Guarantees and boundaries
 
 - Existing proxied streams are not interrupted by a coordinated core restart.

@@ -25,14 +25,20 @@ export function createDoor(config,{now=Date.now}={}){
     if(req.destroyed||res.destroyed)return;
     let settled=false,upstreamResponse;
     state.active++;
-    const finish=failed=>{if(settled)return;settled=true;state.active--;if(failed)state.failed++;req.off('aborted',cancel);req.off('error',cancel);res.off('close',cancel);};
-    const cancel=()=>{upstreamResponse?.destroy();upstream.destroy();finish(false);};
+    const finish=failed=>{if(settled)return;settled=true;state.active--;if(failed)state.failed++;req.off('aborted',cancel);req.off('error',cancel);res.off('close',clientClosed);};
+    // Settle before destroying either leg: destruction can emit an aborted/error
+    // event synchronously. A client cancellation is not a failed core or a reason
+    // to hold unrelated arrivals.
+    const cancel=()=>{if(settled)return;finish(false);upstreamResponse?.destroy();upstream.destroy();};
+    const clientClosed=()=>{if(!res.writableFinished)cancel();};
+    const responseFailed=()=>{if(settled)return;finish(true);res.destroy();};
     const upstream=http.request({host:'127.0.0.1',port:corePort,path:req.url,method:req.method,headers:headers(req.headers),agent:false},up=>{
+      if(settled){up.destroy();return;}
       upstreamResponse=up;state.forwarded++;
-      res.writeHead(up.statusCode,headers(up.headers));up.on('error',()=>{res.destroy();finish(true);});up.on('aborted',()=>{res.destroy();finish(true);});up.on('end',()=>finish(false));up.pipe(res);
+      res.writeHead(up.statusCode,headers(up.headers));up.on('error',responseFailed);up.on('aborted',responseFailed);up.on('end',()=>finish(false));up.pipe(res);
     });
-    upstream.on('error',error=>{automaticHold('core_connection_failed');if(!res.headersSent)report(res,503,'continuity_core_unavailable','Continuity door could not reach the DSG core. The request was dispatched only to the local core connection and was not replayed; retry after DSG reports ready.');else res.destroy();finish(true);});
-    req.on('aborted',cancel);req.on('error',cancel);res.on('close',()=>{if(!res.writableFinished)cancel();});req.pipe(upstream);
+    upstream.on('error',()=>{if(settled)return;finish(true);automaticHold('core_connection_failed');if(!res.headersSent)report(res,503,'continuity_core_unavailable','Continuity door could not reach the DSG core. The request was dispatched only to the local core connection and was not replayed; retry after DSG reports ready.');else res.destroy();});
+    req.on('aborted',cancel);req.on('error',cancel);res.on('close',clientClosed);req.pipe(upstream);
   }
   const release=()=>{state.holding=false;state.hold_kind=null;state.reason=null;state.since=null;state.last_transition={action:'release',at:new Date(now()).toISOString()};for(const item of [...held]){remove(item);proxy(item.req,item.res);}};
   const hold=(reason,kind='manual')=>{if(state.holding&&state.hold_kind==='manual'&&kind==='automatic')return;state.holding=true;state.hold_kind=kind;state.reason=typeof reason==='string'&&reason.length<=160?reason:'planned_core_change';state.since??=new Date(now()).toISOString();state.last_transition={action:'hold',kind,at:new Date(now()).toISOString(),reason:state.reason};};

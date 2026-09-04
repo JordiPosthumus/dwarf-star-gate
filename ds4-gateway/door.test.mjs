@@ -10,6 +10,38 @@ import {doorControl} from './door-client.mjs';
 
 const listen=server=>new Promise(resolve=>server.listen(0,'127.0.0.1',()=>resolve(server.address().port)));
 const request=(port,body)=>new Promise((resolve,reject)=>{const req=http.request({host:'127.0.0.1',port,path:'/v1/chat/completions',method:'POST',headers:{authorization:'Bearer test','content-type':'application/json'}},res=>{const chunks=[];res.on('data',c=>chunks.push(c));res.on('end',()=>resolve({status:res.statusCode,body:Buffer.concat(chunks).toString(),headers:res.headers}));});req.on('error',reject);req.end(body);});
+test('active client cancellation never marks a healthy core failed or starts an automatic hold',{timeout:5000},async t=>{
+  for(const streaming of [false,true])await t.test(streaming?'after response headers':'before response headers',async t=>{
+    const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-door-cancel-'));let calls=0;
+    const core=http.createServer((req,res)=>{req.resume();if(req.url==='/health')return res.end('ok');calls++;if(calls>1)return res.end('next request');if(streaming){res.writeHead(200,{'content-type':'text/event-stream'});res.write('data: partial\n\n');}});
+    const corePort=await listen(core),door=createDoor({host:'127.0.0.1',port:0,api_key:'test',continuity_door:{enabled:true,core_port:corePort,control_socket:path.join(dir,'door.sock'),health_interval_ms:60000}});
+    await door.start();t.after(async()=>{await door.close();core.closeAllConnections();await new Promise(r=>core.close(r));fs.rmSync(dir,{recursive:true,force:true});});
+    const client=http.request({host:'127.0.0.1',port:door.server.address().port,path:'/v1/chat/completions',method:'POST'},res=>{res.on('error',()=>{});res.resume();});client.on('error',()=>{});client.end('{}');
+    while(calls!==1||streaming&&door.status().forwarded!==1)await new Promise(r=>setImmediate(r));
+    client.destroy();while(door.status().active!==0)await new Promise(r=>setImmediate(r));
+    await new Promise(r=>setTimeout(r,30));
+    assert.equal(door.status().failed,0,'client cancellation is not an upstream failure');
+    assert.equal(door.status().holding,false,'client cancellation cannot fence unrelated requests');
+    assert.equal(door.status().core_ready,true);
+    assert.equal((await request(door.server.address().port,'{}')).body,'next request');assert.equal(calls,2);
+  });
+});
+test('genuine core connection failures and partial responses are still counted once',{timeout:5000},async t=>{
+  for(const streaming of [false,true])await t.test(streaming?'broken response':'broken connection',async t=>{
+    const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-door-fault-'));let calls=0;
+    const core=http.createServer((req,res)=>{req.resume();if(req.url==='/health')return res.end('ok');calls++;
+      if(!streaming)return res.destroy();res.writeHead(200,{'content-type':'text/event-stream'});res.write('data: partial\n\n');setTimeout(()=>res.destroy(),20);
+    }),corePort=await listen(core);
+    const door=createDoor({host:'127.0.0.1',port:0,api_key:'test',continuity_door:{enabled:true,core_port:corePort,control_socket:path.join(dir,'door.sock'),health_interval_ms:60000}});
+    await door.start();t.after(async()=>{await door.close();core.closeAllConnections();await new Promise(r=>core.close(r));fs.rmSync(dir,{recursive:true,force:true});});
+    const port=door.server.address().port;
+    if(!streaming){const r=await request(port,'{}');assert.equal(r.status,503);assert.equal(door.status().holding,true);assert.equal(door.status().reason,'core_connection_failed');}
+    else await new Promise((resolve,reject)=>{const req=http.request({host:'127.0.0.1',port,path:'/v1/chat/completions',method:'POST'},res=>{
+      res.resume();res.on('error',()=>{});res.on('aborted',resolve);res.on('end',()=>reject(new Error('Broken response became a clean completion')));
+    });req.on('error',reject);req.end('{}');});
+    await new Promise(r=>setTimeout(r,30));assert.equal(door.status().failed,1);assert.equal(door.status().active,0);assert.equal(calls,1,'ambiguous dispatched work is never replayed');
+  });
+});
 test('continuity door holds unread bodies, then forwards exact bytes once',async t=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-door-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
   const records=[],core=http.createServer((req,res)=>{if(req.url==='/health')return res.end('ok');const chunks=[];req.on('data',c=>chunks.push(c));req.on('end',()=>{records.push(Buffer.concat(chunks));res.end('ok');});}),corePort=await listen(core);t.after(()=>core.close());

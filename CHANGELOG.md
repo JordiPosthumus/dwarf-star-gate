@@ -1,5 +1,16 @@
 # Changelog
 
+## Keep client cancellation from fencing the Continuity Door
+
+- Reproduced two cleanup races: cancellation before response headers could start
+  an automatic core-failure hold, and cancellation during a response could count
+  as an upstream failure. Settle client cancellation before destroying sockets
+  and ignore late events from settled proxies; detach the actual close listener.
+- Regression tests preserve genuine connection-failure holds, count broken
+  upstream responses once, allow unrelated requests after cancellation and
+  prohibit replay. Activating this requires a safe **Door** restart, not merely a
+  core cutover; do not restart the stable endpoint over active client streams.
+
 ## Audit applied handover outcomes
 
 - Extend the read-only numerical evidence audit with actor/source/destination
