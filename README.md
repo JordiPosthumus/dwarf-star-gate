@@ -382,6 +382,10 @@ timezone (the nearest year is inferred at New Year). Initial replay is limited t
 the last 256 KiB and 15 minutes; reads are at most 256 KiB per two-second poll,
 partial lines are capped at 64 KiB, and older/oversized/unrecognized lines are
 skipped. Rename rotation and copy-truncation are detected; a missing file is retried.
+On startup, a separate bounded scan of only the latest 8 MiB may find the most
+recent stock DS4 listen marker and derive a one-way, worker-bound process epoch.
+This is explicitly weaker than systemd invocation identity; no marker means the
+epoch remains unknown. The raw marker, endpoint and file path are never exported.
 Unread data removed by rotation can be lost: this is bounded observation, not a
 lossless logging service. Stable sample IDs permit replay deduplication. A prompt
 start outside the observed tail remains unknown until the next one, even if decode

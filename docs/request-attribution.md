@@ -38,11 +38,11 @@ events in the same worker and observed process epoch. A row is:
   overlapped request reports the same tuple.
 
 With a strong systemd epoch, `corroborated` means **high-confidence candidate**,
-not protocol proof; the boot/PID fallback remains explicitly bounded. DS4 does
-not currently echo the gateway request ID into its timing record. Invisible direct
-clients and unknown clock error cannot be ruled out merely by a time-and-usage
-match. Therefore these rows do not train XGB, accuse a route of a cache miss, move
-work, or authorize recovery.
+not protocol proof. The boot/PID fallback and local-log listen-marker epoch remain
+explicitly bounded. DS4 does not currently echo the gateway request ID into its
+timing record. Invisible direct clients and unknown clock error cannot be ruled
+out merely by a time-and-usage match. Therefore these rows do not train XGB,
+accuse a route of a cache miss, move work, or authorize recovery.
 
 The correlator retains 15 minutes of completed history, but preserves an open
 attribution span for up to seven days so long-context xhigh generations are not

@@ -45,9 +45,10 @@ Remote workers can also carry a bounded ordered set of verified OpenSSH aliases;
 the tunnel and guarded recovery adapter share it. This improves route resilience
 without granting arbitrary SSH arguments, commands or host-reboot authority.
 This does not fix the CUDA defect or implement launchd/container recovery. The
-backend-process-epoch foundation is now implemented for systemd journal telemetry:
-restart boundaries invalidate learned telemetry spans without changing DS4. The
-bounded [request-to-engine correlator](request-attribution.md) is also now
+backend-process-epoch foundation is now implemented for strong systemd journal
+telemetry and bounded same-host stock DS4 listen markers: observed restart
+boundaries invalidate telemetry spans without changing DS4. The bounded
+[request-to-engine correlator](request-attribution.md) is also now
 implemented in shadow: it corroborates a candidate only when the process epoch,
 unique gateway window and returned usage agree, and abstains on direct or
 ambiguous evidence. Measuring its ordinary-traffic coverage and conflict rate is
@@ -76,7 +77,7 @@ are implemented separately.
 | --- | --- | --- |
 | Immediate | [Client continuity](client-continuity.md): distinguish undispatched waits from interrupted generation, scope home ownership correctly, and avoid abandoning Pi turns | Patient waiting, receipts, Continuity Door, conversation-scoped admission reassignment and opt-in Pi transport implemented; real Pi agent/tool-loop fixture covers native waiting and certified retries. Arbitrary post-dispatch recovery remains separate work |
 | 0 | Promote protocol/quarantine maintenance fixes through a controlled cutover | Regression suites pass; versioned backup; real API-format smoke checks; unchanged fleet/context; explicit source-versus-running release record |
-| 1 (shadow attribution implemented) | Diagnose the Spark CUDA/OOM incidents and correlate requests within backend process epochs | Privacy-safe systemd epochs and a fail-closed request/log candidate correlator are implemented; next evidence is real candidate coverage/conflict measurement, service/kernel/memory diagnosis, real cold/warm checks and representative sustained work; no unapproved context/cache reductions |
+| 1 (shadow attribution implemented) | Diagnose the Spark CUDA/OOM incidents and correlate requests within backend process epochs | Privacy-safe strong systemd and bounded local-log epochs plus a fail-closed request/log candidate correlator are implemented; next evidence is real candidate coverage/conflict measurement, service/kernel/memory diagnosis, real cold/warm checks and representative sustained work; no unapproved context/cache reductions |
 | 2 | Explain idle capacity and design cache-aware overflow scheduling | UI identifies session-home waits; replay/shadow comparisons of wait-at-home versus cold execution elsewhere; prove no overlapping ownership/replay; operator-approved policy before activation |
 | 3 (collector implemented) | Validate local embeddings/progress on ordinary workload | Pinned CPU encoder, bounded extraction and visible status; collect joined future labels across hardware; exact cache/engine attribution still separate |
 | 4 (V2/V3 lifecycle implemented) | Collect future validation evidence for versioned forecasts | Fixed forward-time tree/feature selection, separate unseen-session placement gate, per-worker future evidence and parallel V2/V3 evaluation; no experimental model controls routing |

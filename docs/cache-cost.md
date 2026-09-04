@@ -40,10 +40,12 @@ Restarting the dashboard rebuilds observations from its available log tail.
 - A scenario does **not** establish that its cache exists, is resident, is
   compatible, or belongs to that request. Similar text is not KV identity.
 - Systemd journal timing events now carry a privacy-safe backend process epoch.
-  A proven epoch change clears component samples, so those observations do not
-  mix process lifetimes. Local-file telemetry and missing service metadata remain
-  unverified. Timing events still lack a verified gateway request ID, so they
-  remain component observations rather than request-attributed training labels.
+  A local stock DS4 log may carry a weaker, bounded epoch when its timestamped
+  listen marker is present in the latest bounded startup scan. A proven epoch
+  change clears component samples, so those observations do not mix process
+  lifetimes. Missing service/marker evidence remains unknown. Timing events still
+  lack a protocol request ID; the separate correlator can only produce bounded
+  candidates, so these remain component observations rather than cache-hit labels.
 - Missing, sparse or stale measurements produce **unknown**, never a zero cost.
   A disconnected feed, unhealthy server or stale gateway snapshot rejects the
   calculation. Scenarios cannot exceed a known worker context capacity.
