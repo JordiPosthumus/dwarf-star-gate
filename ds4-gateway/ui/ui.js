@@ -298,7 +298,8 @@ function device(d, w, now, stale, index = 1, scales={}, controls=false) {
   };
   const prompt = d.prompt ? `Last prompt: ${fmt(d.prompt.prompt)} tokens · ${fmt(d.prompt.cached)} reused · ${esc(d.prompt.cache)}` : 'No prompt start observed yet';
   const f=w?.predictions?.remaining??w?.predictions?.updated??w?.predictions?.admission;
-  const forecast=f?`<span class="remaining-estimate${stale||now-f.at>60000?' stale':''}" title="${esc(`${f.experimental?'Experimental':'Validated'} ${f.stage==='remaining'?'remaining':'total server-time'} estimate · ${fmt(f.seconds)} seconds · ${age(f.at,now)}`)}">ETA ${fmtWhole(f.seconds)}s</span>`:'';
+  const duration=!stale&&w?.load&&Number.isFinite(w.active_seconds)?`<span class="remaining-estimate" title="Elapsed time of the active DSG request; not an estimate">${fmtWhole(Math.floor(w.active_seconds/60))}m active</span>`:'';
+  const forecast=duration+(f?`<span class="remaining-estimate${stale||now-f.at>60000?' stale':''}" title="${esc(`${f.experimental?'Experimental':'Validated'} ${f.stage==='remaining'?'remaining':'total server-time'} estimate · ${fmt(f.seconds)} seconds · ${age(f.at,now)}`)}">ETA ${fmtWhole(f.seconds)}s</span>`:'');
   const backlog=w?.queued?`${fmt(w.queued)} waiting${Number.isFinite(w.oldest_queue_seconds)?` · oldest ${fmt(w.oldest_queue_seconds)}s`:''}`:'No requests waiting';
   const phaseRedundant=['unavailable','paused'].includes(state);
   const evidenceSummary=`${fmt(d.cache.reused)} prefix reuse · ${fmt(w?.assigned_sessions)} sessions${w?.queued?` · ${fmt(w.queued)} waiting`:''}`;
@@ -331,6 +332,12 @@ function deterministicHealthAlerts(snapshot) {
       continue;
     }
     const overdue=(worker?.maintenance_locks??[]).filter(lock=>Number.isFinite(lock.review_at)&&lock.review_at<=Date.now());
+    if(worker?.load>0&&Number.isFinite(worker.active_seconds)&&worker.active_seconds>=1800&&worker.queued>0){
+      const d=snapshot.devices?.find(device=>device.id===worker.id),decode=d?.decode,now=snapshot.time??Date.now();
+      const fresh=d?.connected&&Number.isFinite(decode?.time)&&now-decode.time>=0&&now-decode.time<=15000&&Number.isSafeInteger(decode.generated)&&decode.generated>=0;
+      const progress=fresh?` Latest engine sample: ${fmt(decode.generated)} generated tokens${decode.thinking?' (thinking phase)':''}; ${fmtWhole(decode.tps)} t/s.`:' Fresh engine generation progress is unavailable.';
+      alerts.push({severity:'warning',text:`${name}: one DSG request has held its slot for ${fmtWhole(Math.floor(worker.active_seconds/60))}m; ${fmt(worker.queued)} waiting.${progress} Recommendation: Review the long-running client request. Elapsed time alone does not prove a hang or authorize cancellation.`});
+    }
     if(overdue.length)alerts.push({severity:'warning',text:`${name} remains protected by overdue maintenance lock${overdue.length===1?'':'s'} ${overdue.map(lock=>lock.name).join(', ')}. Recommendation: Confirm the external work is finished, then release the exact lock; DSG will keep routing paused until a separate checked Resume.`});
     // Operator pauses, maintenance locks and scoped agent holds are intentional capacity choices,
     // not faults. They stay explicit on the worker card without becoming alarms.

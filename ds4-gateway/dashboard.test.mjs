@@ -484,6 +484,19 @@ test('health wire cannot hide live quarantine or wasted-capacity evidence behind
   assert.equal(ready.level,'critical');assert.match(ready.label,/DSG safety alert \+ Genie assessment/);assert.equal(ready.items.length,2);
   assert.match(ready.items[1].text,/A separate Genie observation.*Recommendation: Keep watching/);
 });
+test('long occupied slots explain queue pressure without treating stale engine totals as progress',()=>{
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const context=vm.createContext({});vm.runInContext(source,context);
+  const snapshot={time:100000,gateway:{workers:[{id:'spark1',load:1,active_seconds:7200,queued:6,is_healthy:true}]},devices:[{id:'spark1',connected:true,decode:{time:99000,generated:118000,tps:14.4,thinking:true}}]};
+  const alerts=()=>JSON.parse(vm.runInContext(`JSON.stringify(deterministicHealthAlerts(${JSON.stringify(snapshot)}))`,context));
+  assert.match(alerts()[0].text,/120m; 6 waiting.*118,000 generated tokens.*thinking phase/);
+  assert.match(alerts()[0].text,/does not prove a hang or authorize cancellation/);
+  snapshot.devices[0].decode.time=1;
+  assert.match(alerts()[0].text,/Fresh engine generation progress is unavailable/);
+  assert.doesNotMatch(alerts()[0].text,/118,000/);
+  snapshot.gateway.workers[0].queued=0;assert.equal(alerts().length,0);
+  snapshot.gateway.workers[0].queued=6;snapshot.gateway.workers[0].load=0;assert.equal(alerts().length,0);
+});
 test('Agent Watch warns only when a live client reports waiting but no request reached DSG',()=>{
   const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);

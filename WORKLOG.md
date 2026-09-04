@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Made long slot occupancy visible.** Active request age now sits on each server
+  card. Long requests with waiting work raise a capacity advisory, including fresh
+  engine token progress where available. This explains missing completions without
+  cancelling work or treating long reasoning as a proven hang.
+
 - **Made attribution upgrades measurable on fresh traffic.** The audit accepts a
   UTC start-time cutoff while retaining older collision and ownership evidence.
   Operators can compare post-upgrade samples without mixing in legacy telemetry

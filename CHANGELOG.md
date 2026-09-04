@@ -1,5 +1,13 @@
 # Changelog
 
+## Long-running request visibility
+
+- Show active request age on server cards and a deterministic capacity warning
+  when a request runs for at least 30 minutes with work queued behind it.
+- Include fresh engine token counts and speed when available. Genie receives the
+  same progress fields and instructions to distinguish ongoing generation from
+  useful reasoning, and engine totals from proven request attribution.
+
 ## Fresh-traffic attribution audits
 
 - Added `--since` UTC cohort selection to recorded and later-evidence attribution
