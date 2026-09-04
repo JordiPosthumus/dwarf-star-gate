@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Defined the cache-continuity decision without activating it.** A tested pure
+  shadow now compares waiting for a hot cache, restoring locally, acquiring a
+  remote snapshot or prefilling cold. Missing evidence blocks a winner, remote
+  overlap must be proven, and no cache or routing state can be touched.
+
 - **Started the privacy-safe cache-continuity auditor.** DSG can opt into bounded
   same-host or read-only-mounted cache inventory using only stock DS4 header
   metadata. Prompt bytes, paths and raw prompt-derived names stay private; no

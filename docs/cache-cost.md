@@ -107,5 +107,7 @@ Configure only a directory already readable on the dashboard host:
 Scans run no more than once per minute and examine at most 4,096 cache-shaped
 files. Missing, symlinked, unreadable, oversized or invalid inputs abstain. The
 scanner performs no inference and no writes to the DS4 directory. The next stage
-is an explicitly enrolled remote helper plus a four-path shadow comparator; no
-remote command, copy protocol or automatic routing is claimed yet.
+now has a pure [four-path shadow comparator](cache-continuity-shadow.md). It
+compares wait-hot, local-restore, remote-acquisition and cold-prefill critical
+paths while preserving unknown evidence. It is not yet fed from live requests;
+no remote command, copy protocol or automatic routing is claimed.

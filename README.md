@@ -138,7 +138,10 @@ Its estimates are explicitly unvalidated; no live XGB routing is implied.
 Separately opt in to [local embedding/progress collection](docs/embeddings.md)
 for optional updated workload forecasts. Analytics also includes a read-only
 [cache-cost calculator](docs/cache-cost.md) using measured disk-load/prefill
-components. Unknown cache costs and unverified cache existence stay explicit.
+components. A separate pure [four-path cache-continuity shadow](docs/cache-continuity-shadow.md)
+defines how to compare waiting hot, restoring locally, acquiring remotely and
+prefilling cold. Unknown cache costs and unverified cache existence stay explicit;
+the comparator has no live routing or cache-movement authority.
 
 ## The engine is Antirez's. Start there.
 
@@ -384,6 +387,9 @@ non-symlink files, replaces the prompt-derived SHA-1 filename with an
 installation-keyed HMAC, and exports only aggregate cohort/count/size evidence.
 It never loads, copies, deletes or rewrites a cache. See
 [cache acquisition evidence](docs/cache-cost.md#privacy-safe-snapshot-inventory).
+The private inventory can support the fail-closed presence gate in the
+[four-path shadow](docs/cache-continuity-shadow.md), but DSG cannot yet derive an
+exact live snapshot identity or transfer a cache between arbitrary servers.
 
 Timing comes from a read-only SSH journal follower on Linux. The default remote user unit
 is `ds4-vision-q2.service`; set `telemetry_service` per worker if yours differs.

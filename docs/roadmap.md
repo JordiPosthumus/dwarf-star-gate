@@ -33,6 +33,10 @@ forecasting. Optional [local embedding/progress collection](embeddings.md) and t
 [measured cache-cost calculator](cache-cost.md) are now implemented. Privacy-safe
 backend epochs and conservative request/engine candidates are implemented below;
 exact protocol attribution and proving learned prediction accuracy remain work.
+The pure [four-path cache-continuity comparator](cache-continuity-shadow.md) is
+also implemented with fail-closed presence/compatibility gates and no scheduler
+authority. Live rendered-prefix identity, a validated remote transfer/import
+protocol and future component validation remain prerequisites for live shadows.
 
 **Recovery update:** order 6's first slice is now implemented in
 [bounded DS4 service recovery](worker-recovery.md): systemd-user enrollment, GG and
@@ -81,7 +85,7 @@ are implemented separately.
 | Immediate | [Client continuity](client-continuity.md): distinguish undispatched waits from interrupted generation, scope home ownership correctly, and avoid abandoning Pi turns | Patient waiting, receipts, Continuity Door, conversation-scoped admission reassignment and opt-in Pi transport implemented; real Pi agent/tool-loop fixture covers native waiting and certified retries. Arbitrary post-dispatch recovery remains separate work |
 | 0 | Promote protocol/quarantine maintenance fixes through a controlled cutover | Regression suites pass; versioned backup; real API-format smoke checks; unchanged fleet/context; explicit source-versus-running release record |
 | 1 (shadow attribution + audit implemented) | Diagnose the Spark CUDA/OOM incidents and correlate requests within backend process epochs | Privacy-safe strong systemd and bounded local-log epochs plus a fail-closed request/log candidate correlator and yield audit are implemented; next evidence is repeated coverage/conflict review across real process epochs, service/kernel/memory diagnosis, real cold/warm checks and representative sustained work; no unapproved context/cache reductions |
-| 2 | Explain idle capacity and design cache-aware overflow scheduling | UI identifies session-home waits; replay/shadow comparisons of wait-at-home versus cold execution elsewhere; prove no overlapping ownership/replay; operator-approved policy before activation |
+| 2 (pure comparator implemented) | Explain idle capacity and design cache-aware overflow scheduling | UI identifies session-home waits; the offline wait-hot/local-restore/remote-acquisition/cold-prefill contract is tested and abstains on unknowns; next prove live identity, remote protocol, realized forecast accuracy and no overlapping ownership/replay before any operator-approved activation |
 | 3 (collector implemented) | Validate local embeddings/progress on ordinary workload | Pinned CPU encoder, bounded extraction and visible status; collect joined future labels across hardware; exact cache/engine attribution still separate |
 | 4 (V2/V3 lifecycle implemented) | Collect future validation evidence for versioned forecasts | Fixed forward-time tree/feature selection, separate unseen-session placement gate, per-worker future evidence and parallel V2/V3 evaluation; no experimental model controls routing |
 | 5 (notebook first slice implemented) | Persistent Genie/operator activity and endpoint settings UI | Private notebook storage, revisioned notes and bounded historical retrieval tested; generated hypotheses, full chat persistence and endpoint test/save/rollback remain planned |

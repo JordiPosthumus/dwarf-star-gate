@@ -1,5 +1,18 @@
 # Changelog
 
+## Four-path cache-continuity shadow contract
+
+- A pure comparator now ranks wait-hot, local-restore, remote-acquisition and
+  cold-prefill critical paths from explicitly labelled numerical evidence. It
+  uses `max(wait, transfer)` only when staging overlap is independently verified;
+  otherwise remote acquisition is serial.
+- Unknown evidence blocks a preferred path. Proven absence, incompatibility or
+  protocol unavailability can exclude one. Snapshot absence requires a fresh,
+  uncapped inventory with no rejected cache-shaped files.
+- Inputs reject fields outside a fixed allowlist, outputs omit snapshot
+  references, and the module has no routing, model, filesystem or cache-movement
+  authority. Live request identity and remote transfer remain future gates.
+
 ## Privacy-safe cache inventory foundation
 
 - An opt-in local/mounted-directory scanner now inventories stock DS4 disk-KV
