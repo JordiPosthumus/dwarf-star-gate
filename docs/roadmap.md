@@ -85,6 +85,14 @@ job. Explicitly enrolled bootstrap of an OS-removed job remains separate work;
 a removed transient registration is not a stopped-job restart. Preserve operator
 stop intent and validate a real removed-job canary before enabling that broader
 recovery. The
+enrollment UX still needs a per-worker guided checklist: identify a supported
+installation, inspect without mutation, review exact authority, apply private
+configuration, separately confirm a disruptive canary, then show verified status
+and specific blockers. The current UI controls already enrolled services, not
+adapter installation. The [enrollment entry point](worker-recovery.md#enrollment-start-here)
+now distinguishes these steps. Before widening removed-job authority, the helpers
+now reject independently occupied ports even when their service is inactive;
+positive job-absence and stop-intent evidence remain prerequisites. The
 backend-process-epoch foundation is now implemented for strong systemd journal
 telemetry and bounded same-host stock DS4 listen markers: observed restart
 boundaries invalidate telemetry spans without changing DS4. The bounded

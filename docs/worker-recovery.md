@@ -5,6 +5,36 @@ worker; a deterministic watcher uses the same runner for confirmed fatal faults
 without waiting for an LLM review. The runner, adapter, UI and tests are in this
 repository. No Pi or Hermes installation is required.
 
+## Enrollment: start here
+
+**Connecting a server for inference does not enroll it for recovery.** The UI's
+automatic-recovery switch controls already enrolled services; it does not install
+an adapter or grant service permissions. There is not yet a browser enrollment
+wizard. A `manual recovery required` row can mean the worker lacks a matching
+private enrollment, not that its inference endpoint is unusable.
+
+1. Identify the existing install: [Linux systemd user service](#install-on-another-systemd-user-deployment),
+   [Mac user LaunchAgent](#install-on-an-explicitly-enrolled-macos-launchagent), or
+   unsupported/manual. For a Mac running DSG itself, also follow
+   [same-host transport](#same-host-mac-transport-explicit-enrollment).
+2. Keep automatic recovery off while installing the fixed helper and private
+   configuration. Use the applicable section below; do not replace your working
+   launcher or copy another owner's machine paths/fingerprints.
+3. Run **read-only inspection**, then record the verified service identity in
+   `recovery.workers` inside ignored `config.local.json`. This is separate from
+   the ordinary inference-worker list. Choose restart-only or separately opt into
+   loaded-but-stopped start. Removed Mac jobs are not recoverable yet.
+4. Apply the configuration at an agreed DSG reload, then reserve an idle worker
+   for the **operator canary**. This test really restarts/starts the enrolled
+   service and leaves routing paused; it is not a harmless connection test.
+5. Check the completed receipt, unchanged effective settings and both cold/warm
+   results before explicitly resuming routing and enabling automatic recovery.
+
+Endpoint connected, identity enrolled, and recovery verified are three different
+milestones. The current UI does not provide a per-worker setup checklist or certify
+all of them with a single green badge. Use the
+[validation checklist](recovery-validation.md) and retain its receipts privately.
+
 ## What it does—and does not do
 
 The production-canary adapter is **Linux systemd user services**, tested with a
@@ -62,6 +92,15 @@ apply. A missing unit, changed file, open listener, active process or unknown in
 never started. Endpoint registration alone grants no such authority. The 2026-09-03
 [reachability incident](incidents/2026-09-03-worker-reachability.md) is the acceptance-test
 basis; it does not authorize a reboot or turn a network outage into service evidence.
+
+Both helpers check port availability even when the enrolled service has no PID.
+They briefly bind, without reuse, connecting or listening, to IPv4 and supported
+IPv6 loopback addresses. A wildcard listener or bound non-listening socket also
+blocks start; socket-inspection errors are not treated as an empty port. For an
+inactive service, the protocol's `listener:true` is conservatively an occupied-port
+veto, not proof that the enrolled DS4 process owns it. All probe sockets close
+before returning. This is a sampled guard, not an atomic port reservation through
+service launch; exclusive ownership and maintenance coordination still matter.
 
 Readiness requires unchanged advertised context/model and configuration, exact
 synthetic answers, then **two conversations cold-to-warm**, with numerical cached

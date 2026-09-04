@@ -10,6 +10,13 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Fixed a reproduced stopped-service recovery collision.** Both helpers used
+  to report no listener whenever the enrolled process was absent. Real unrelated
+  IPv4/IPv6 listeners now veto start, with regressions for wildcard and bound
+  sockets, unknown errors and cleanup. No live service was restarted for this fix.
+  Added a short enrollment entry point distinguishing connection, identity setup
+  and the disruptive verification canary; a browser setup wizard remains work.
+
 - **Added an opt-in same-host Mac recovery transport.** An enrolled interpreter
   and private helper config can now use literal arguments and JSON stdin without
   SSH or shell execution. Existing recovery guards remain; automatic enrollment

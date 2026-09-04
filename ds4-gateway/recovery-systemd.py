@@ -5,11 +5,13 @@ Install beside a private JSON config. The SSH account is trusted; this helper
 does not claim to sandbox other software running as that account.
 """
 import fcntl
+import errno
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import socket
 import subprocess
 import sys
 import time
@@ -42,6 +44,37 @@ def fault_evidence(lines, invocation):
         if re.search(r"ds4-server: chat ctx=.*decoding chunk=", message):
             progress = max(progress, at)
     return fault if fault and progress <= fault["at"] else None
+
+
+def port_occupied(port):
+    """Conservative stopped-service check, without connecting or listening.
+
+    A non-reusing bind detects wildcard/loopback listeners and bound sockets
+    regardless of process ownership. Unknown socket errors fail inspection.
+    This is sampled evidence, not an atomic reservation through service launch.
+    """
+    probes = []
+    try:
+        for family, address in ((socket.AF_INET, "127.0.0.1"), (socket.AF_INET6, "::1")):
+            try:
+                probe = socket.socket(family, socket.SOCK_STREAM)
+            except OSError as error:
+                if family == socket.AF_INET6 and error.errno == errno.EAFNOSUPPORT:
+                    continue
+                raise
+            probes.append(probe)
+            if family == socket.AF_INET6:
+                probe.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+            try:
+                probe.bind((address, port))
+            except OSError as error:
+                if error.errno == errno.EADDRINUSE:
+                    return True
+                raise
+        return False
+    finally:
+        for probe in probes:
+            probe.close()
 
 
 def owns_listener(pid, port):
@@ -125,7 +158,7 @@ def inspect(config):
         "listener": False,
     }
     if pid < 2 or not re.fullmatch(r"[a-f0-9]{32}", invocation):
-        return base
+        return {**base, "listener": port_occupied(config["port"])}
     if str(Path(f"/proc/{pid}/exe").resolve()) != str(Path(config["binary"]).resolve()):
         raise ValueError("service_executable_mismatch")
     argv = Path(f"/proc/{pid}/cmdline").read_bytes()

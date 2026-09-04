@@ -1,5 +1,18 @@
 # Changelog
 
+## Reject occupied ports before stopped-service recovery
+
+- Fix both systemd and launchd helpers returning `listener:false` solely because
+  their enrolled service lacks a running process. Non-reusing loopback bind
+  checks now veto IPv4/IPv6 and wildcard collisions without connecting, listening
+  or displacing another process; unknown inspection errors remain failures.
+- Reproduce the previous bug through real unrelated listeners and real helper
+  inspection. Cover start rejection before intent/issuance, bound non-listening
+  sockets, closed probes and unsupported IPv6. Live identity/profile recipes and
+  service commands are unchanged. Helper installation is separate from repo sync.
+- Add a concise recovery enrollment checklist and document the current UI's
+  missing guided setup. No UI layout or model-server configuration changes.
+
 ## Explicit same-host transport for enrolled Mac recovery
 
 - Add opt-in `transport: local` for launchd workers with an enrolled absolute
