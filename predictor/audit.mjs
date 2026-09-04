@@ -10,6 +10,44 @@ const finite=x=>typeof x==='number'&&Number.isFinite(x);
 const identifier=x=>typeof x==='string'&&/^[\w-]{1,64}$/.test(x);
 const tally=(map,key)=>{map[key]=(map[key]??0)+1;};
 const key=r=>r.run_id+':'+r.request_id;
+const nonnegative=x=>finite(x)&&x>=0;
+function relocationOutcomes(jobs) {
+  const report={scope:'applied_receipts_only',requests:0,joined:0,unresolved:0,abstentions:Object.create(null),groups:[],counterfactual_wait_saved_seconds:null};
+  const groups=new Map(),metric=()=>({requests:0,total:0});
+  for(const j of jobs.values()){
+    if(!j.relocations.length)continue;report.requests++;
+    const reject=reason=>tally(report.abstentions,reason);
+    if(j.relocations.length!==1||j.decision.length!==1||j.dispatch.length>1||j.finish.length>1||j.terminal.length>1||j.finish.length&&j.terminal.length){reject('ambiguous_join');continue;}
+    const d=j.decision[0],m=j.relocations[0],s=j.dispatch[0],f=j.finish[0];
+    if(m.relocation_schema!==1||m.source!==d.node||!identifier(m.destination)||m.source===m.destination||m.node!==m.destination||
+      !['operator','scheduler','genie'].includes(m.actor)||m.dispatch_state!=='not_dispatched'||m.body_replayed!==false||m.deadline_preserved!==true||
+      m.cache_locality!=='unknown'||!nonnegative(m.waiting_ms)){reject('invalid_move_receipt');continue;}
+    if(Date.parse(d.time)>Date.parse(m.time)){reject('noncausal_join');continue;}
+    if(!f){report.unresolved++;continue;}
+    if(!s){reject('missing_dispatch');continue;}
+    if([s,f,...j.features,...j.embeddings].some(r=>r.node!==m.destination)){reject('worker_join_conflict');continue;}
+    if(Date.parse(m.time)>Date.parse(s.time)||Date.parse(s.time)>Date.parse(f.time)){reject('noncausal_join');continue;}
+    report.joined++;
+    const identity=JSON.stringify([m.actor,m.source,m.destination]);let group=groups.get(identity);
+    if(!group){group={actor:m.actor,source:m.source,destination:m.destination,requests:0,outcomes:Object.create(null),
+      queue_seconds:metric(),post_move_queue_seconds:metric(),service_seconds:metric(),reported_reuse:{requests:0,prompt_tokens:0,cached_tokens:0}};groups.set(identity,group);}
+    group.requests++;
+    tally(group.outcomes,f.outcome!=='complete'?(['client_cancelled','upstream_error','upstream_stream_error','upstream_aborted','upstream_http_error','upstream_engine_error','incomplete_sse','sse_observation_limited','connection_closed','timeout'].includes(f.outcome)?'failed_or_cancelled':'unknown_outcome'):f.finish_reason==='length'?'output_limited':
+      ['stop','tool_calls','function_call'].includes(f.finish_reason)?'normal_terminal':'unverified_terminal');
+    for(const [name,value] of [['queue_seconds',s.queue_ms],['post_move_queue_seconds',nonnegative(s.queue_ms)&&s.queue_ms>=m.waiting_ms?s.queue_ms-m.waiting_ms:null],['service_seconds',f.service_ms]]){
+      if(nonnegative(value)){group[name].requests++;group[name].total+=value/1000;}
+    }
+    const p=f.usage?.prompt_tokens,c=f.usage?.cached_tokens;
+    if(f.outcome==='complete'&&Number.isSafeInteger(p)&&p>0&&Number.isSafeInteger(c)&&c>=0&&c<=p){
+      group.reported_reuse.requests++;group.reported_reuse.prompt_tokens+=p;group.reported_reuse.cached_tokens+=c;
+    }
+  }
+  report.groups=[...groups.values()].map(g=>{
+    for(const name of ['queue_seconds','post_move_queue_seconds','service_seconds']){const m=g[name];g[name]={requests:m.requests,mean:m.requests?m.total/m.requests:null};}
+    g.reported_reuse.fraction=g.reported_reuse.prompt_tokens?g.reported_reuse.cached_tokens/g.reported_reuse.prompt_tokens:null;return g;
+  }).sort((a,b)=>JSON.stringify([a.actor,a.source,a.destination]).localeCompare(JSON.stringify([b.actor,b.source,b.destination])));
+  return report;
+}
 export function readEvidence(directory,{maxBytes=128*1024**2}={}) {
   const events=[];let bytes=0,incompleteTails=0;
   const files=fs.readdirSync(directory).filter(f=>/^routing-\d{4}-\d{2}-\d{2}\.jsonl$/.test(f)).sort();
@@ -84,8 +122,8 @@ export function auditEvidence(input,inventory=null,{maxEvents=200000,maxRequests
       if(f.embedding_present===1)s.embedding_present++;if(finite(f.similarity_previous_user))s.user_similarity++;if(finite(f.similarity_previous_conversation))s.recent_similarity++;}
     for(const s of Object.values(training.stages)){s.requests=s.requests.size;s.workers=s.workers.size;}
   }
-  return {schema:1,events:rows.length,runs:runs.size,duplicates,invalid,counts,totals,workers,feature_status:featureStatus,embedding_status:embeddingStatus,missing_usage_outcomes:missingOutcomes,missing_usage_feature_status:missingFeatureStatus,missing_usage_response_format:missingFormats,duration_evidence:durationEvidence,training,
-    limitations:['Unresolved requests may be in flight or interrupted; missing terminal records are not invented failures.','Historical response format/usage-request flags were not recorded; missing usage cannot be attributed conclusively to a protocol.','Repeated progress rows are not independent requests. Training weights them per request.','Embedding truncation is bounded encoder input, never truncation of the DS4 request.','Worker names and counts are private operational data; do not publish this report.']};
+  return {schema:1,events:rows.length,runs:runs.size,duplicates,invalid,counts,totals,workers,feature_status:featureStatus,embedding_status:embeddingStatus,missing_usage_outcomes:missingOutcomes,missing_usage_feature_status:missingFeatureStatus,missing_usage_response_format:missingFormats,duration_evidence:durationEvidence,relocation_outcomes:relocationOutcomes(jobs),training,
+    limitations:['Unresolved requests may be in flight or interrupted; missing terminal records are not invented failures.','Historical response format/usage-request flags were not recorded; missing usage cannot be attributed conclusively to a protocol.','Repeated progress rows are not independent requests. Training weights them per request.','Embedding truncation is bounded encoder input, never truncation of the DS4 request.','Relocation outcomes cover recorded applied moves, not all proposed offers. Queue/service means describe observed work, not causal time savings; reported reuse does not prove a cache transfer.','Worker names and counts are private operational data; do not publish this report.']};
 }
 if(isMain(import.meta.url))try{
   const args=process.argv.slice(2),get=k=>{const i=args.indexOf(k);if(i<0)return null;const v=args[i+1];if(!v||v.startsWith('--'))throw new Error('Missing '+k);args.splice(i,2);return v;};

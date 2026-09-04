@@ -1,5 +1,13 @@
 # Changelog
 
+## Audit applied handover outcomes
+
+- Extend the read-only numerical evidence audit with actor/source/destination
+  groups, separate terminal classes, per-metric coverage and reported token reuse.
+  Require unique, chronological, worker-consistent pre-dispatch receipts; leave
+  missing terminal records unresolved and no-move savings unknown. No routing,
+  collection, request, server or model settings change.
+
 ## Verify core hardware evidence integration
 
 - Exercise real gateway decision, request-feature and initial progress callbacks

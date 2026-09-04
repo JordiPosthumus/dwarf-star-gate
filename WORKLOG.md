@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Made applied handovers measurable.** The private data audit now joins moves
+  to their observed queue, service, reported reuse and terminal outcomes. It
+  abstains on ambiguous evidence and never presents the unobserved no-move
+  alternative as measured time saved.
+
 - **Verified hardware ingestion through the real core callbacks.** Fake-backend
   integration tests cover decision, after-upload and progress records, worker
   identity, privacy filtering, stale/malformed samples and disabled collection.

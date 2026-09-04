@@ -124,6 +124,29 @@ unchanged request bytes/affinity, reassessment and exclusion from XGB labels.
 
 ## Next evidence gates
 
+### Applied-handover outcome audit
+
+Run `npm run data:audit -- --data runtime/training` from the checkout that owns
+the private dataset. Its `relocation_outcomes` section joins applied receipts to
+dispatch and terminal records by run/request identity. Groups separate actor and
+source/destination, normal terminals, output-limited completions, failures and
+unknown outcomes. Missing terminal evidence remains unresolved, not a failure.
+Duplicate joins, changed workers, broken pre-dispatch guarantees and reversed
+chronology abstain.
+
+Queue and service means include their own observed-request counts. Post-move
+queue time is the original monotonic dispatch wait minus the receipt's elapsed
+wait: it measures entry into DSG's dispatch path, **not time to first token**.
+Reported cached/prompt-token fractions use only completed responses with valid
+usage. They do not prove a cache transfer, physical cache residency or a cold
+start. The report contains no request/session IDs, text or vectors; worker names
+and operational counts are still private.
+
+This covers recorded **applied** moves, not every proposed offer. The no-move
+alternative was not observed, so `counterfactual_wait_saved_seconds` stays null.
+Do not call observed post-move dispatch speed a causal routing improvement or
+use it to bypass the existing forecast and ownership gates.
+
 The former UI, process-epoch, bounded-embedding, progress-feature and versioned
 XGB increments now ship. They remain separate evidence layers: their presence is
 not proof that a cache survived, a candidate prediction is calibrated, or a move
@@ -132,9 +155,9 @@ saved time.
 1. Measure request-to-engine candidate coverage, conflicts and abstentions on
    ordinary traffic, segmented by backend process epoch. Ambiguous correlation
    must remain unknown.
-2. Join each proposed and applied pre-dispatch handover to its eventual queue,
-   cache-reuse and completion outcome. Preserve the no-move counterfactual as an
-   estimate, not an invented label.
+2. The applied-receipt outcome audit above now joins eventual queue, reported
+   reuse and completion evidence. Recording all proposed offers and validating
+   their frozen no-move estimates remain work; never invent counterfactual labels.
 3. Compare the deployed remaining/service forecasts with measured local restore
    and cold-prefill components. Do not double-count acquisition costs already
    present in a total-service forecast.

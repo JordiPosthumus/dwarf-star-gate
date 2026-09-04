@@ -6,6 +6,50 @@ import path from 'node:path';
 import {auditEvidence,readEvidence} from './audit.mjs';
 let sequence=0;
 const row=(kind,at=0,extra={})=>({schema:1,run_id:'run-a',event_id:'event-'+sequence++,request_id:'request-a',node:'worker-a',time:new Date(100000+at).toISOString(),kind,...extra});
+const moved=()=>[
+  row('decision',0,{session:'PRIVATE_SESSION'}),
+  row('queue_relocation',2000,{node:'worker-b',relocation_schema:1,source:'worker-a',destination:'worker-b',actor:'scheduler',dispatch_state:'not_dispatched',body_replayed:false,deadline_preserved:true,cache_locality:'unknown',waiting_ms:2000}),
+  row('dispatch',3000,{node:'worker-b',queue_ms:3000}),
+  row('finish',7000,{node:'worker-b',outcome:'complete',finish_reason:'stop',service_ms:4000,usage:{prompt_tokens:100,cached_tokens:80,completion_tokens:10}})
+];
+test('applied handovers join observed outcomes without inventing counterfactual savings or cache transfer',()=>{
+  const input=moved(),a=auditEvidence([...input,input[1]]),r=a.relocation_outcomes;
+  assert.equal(a.duplicates,1);assert.equal(r.requests,1);assert.equal(r.joined,1);assert.equal(r.unresolved,0);
+  assert.equal(r.counterfactual_wait_saved_seconds,null);assert.equal(r.scope,'applied_receipts_only');
+  const g=r.groups[0];assert.equal(g.source,'worker-a');assert.equal(g.destination,'worker-b');assert.equal(g.actor,'scheduler');
+  assert.deepEqual(g.queue_seconds,{requests:1,mean:3});assert.deepEqual(g.post_move_queue_seconds,{requests:1,mean:1});
+  assert.deepEqual(g.service_seconds,{requests:1,mean:4});assert.equal(g.reported_reuse.fraction,.8);assert.equal(g.outcomes.normal_terminal,1);
+  const text=JSON.stringify(r);for(const secret of ['PRIVATE_SESSION','request-a','event-','run-a'])assert.ok(!text.includes(secret));
+});
+test('handover evidence abstains on duplicate joins, changed workers, invalid guarantees and chronology',()=>{
+  const cases=[
+    ['ambiguous_join',r=>r.push({...r[3],event_id:'other'})],
+    ['ambiguous_join',r=>r.push({...r[1],event_id:'other'})],
+    ['ambiguous_join',r=>r.push(row('queued_cancel',6000,{node:'worker-b'}))],
+    ['invalid_move_receipt',r=>r[1].body_replayed=true],
+    ['invalid_move_receipt',r=>r[1].deadline_preserved=false],
+    ['invalid_move_receipt',r=>r[1].waiting_ms=-1],
+    ['worker_join_conflict',r=>r[3].node='worker-a'],
+    ['noncausal_join',r=>r[1].time=new Date(99000).toISOString()],
+    ['noncausal_join',r=>r[2].time=new Date(101000).toISOString()],
+    ['noncausal_join',r=>r[3].time=new Date(102500).toISOString()],
+    ['missing_dispatch',r=>r.splice(2,1)],
+  ];
+  for(const [reason,mutate] of cases){const rows=moved();mutate(rows);const r=auditEvidence(rows).relocation_outcomes;assert.equal(r.joined,0,reason);assert.equal(r.abstentions[reason],1,reason);assert.equal(r.groups.length,0);}
+  const pending=auditEvidence(moved().slice(0,3)).relocation_outcomes;assert.equal(pending.unresolved,1);assert.equal(pending.joined,0);
+});
+test('handover summaries separate capped, failed and unknown outcomes with per-metric coverage',()=>{
+  const rows=[];
+  for(const [i,outcome,finish_reason] of [[0,'complete','length'],[1,'client_cancelled',null],[2,undefined,null]]){
+    const r=moved();for(const e of r)e.request_id=`move-${i}`;
+    Object.assign(r[3],{outcome,finish_reason,service_ms:null,usage:{prompt_tokens:10,cached_tokens:11}});
+    r[2].queue_ms=i===0?1000:null;rows.push(...r);
+  }
+  const r=auditEvidence(rows).relocation_outcomes,g=r.groups[0];assert.equal(r.joined,3);
+  assert.deepEqual({...g.outcomes},{output_limited:1,failed_or_cancelled:1,unknown_outcome:1});
+  assert.deepEqual(g.queue_seconds,{requests:1,mean:1});assert.deepEqual(g.post_move_queue_seconds,{requests:0,mean:null});
+  assert.deepEqual(g.service_seconds,{requests:0,mean:null});assert.equal(g.reported_reuse.requests,0);assert.equal(g.reported_reuse.fraction,null);
+});
 test('duration audit separates output-limited occupancy from normal terminal labels',()=>{
   const rows=[['stop',299999],['length',3600000],['tool_calls',300000],[null,4000000]].map(([finish_reason,service_ms],i)=>row('finish',i,{request_id:`duration-${i}`,outcome:'complete',finish_reason,service_ms}));
   rows.push(row('finish',5,{request_id:'failed',outcome:'client_cancelled',service_ms:3600000}));
