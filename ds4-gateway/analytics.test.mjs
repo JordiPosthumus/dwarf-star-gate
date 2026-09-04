@@ -134,6 +134,12 @@ test('collection and cache UI distinguish missing metadata, sparse evidence and 
   assert.match(call('embeddingInfo({embedding_collection:{enabled:true}})'),/unknown revision/);
   assert.match(call('cacheCostText({disk_load:{estimated_ms:null,status:"insufficient_evidence",samples:2},prefill:{estimated_ms:null}})'),/2\/3 required matching samples/);
   assert.match(call('cacheCostText({})'),/not total acquisition/);
+  const evidence=call(`cacheEvidenceText({devices:[
+    {telemetry_configured:true,backend_epoch:"${'a'.repeat(64)}"},{telemetry_configured:true,backend_epoch:null},{telemetry_configured:false,backend_epoch:"${'b'.repeat(64)}"}],
+    attribution:{counts:{corroborated:3,candidate:2,abstained:4},recent:[{status:"abstained",reason:"backend_epoch_unavailable"},{status:"abstained",reason:"backend_epoch_unavailable"},{status:"abstained",reason:"usage_conflict"}]}})`);
+  assert.match(evidence,/1 \/ 2 telemetry-enabled servers/);assert.match(evidence,/3 corroborated, 2 pending candidates, 4 abstained/);
+  assert.match(evidence,/2 backend epoch unavailable/);assert.match(evidence,/not protocol proof or a cache-hit verdict/);
+  assert.match(call('cacheEvidenceText({},true)'),/unavailable/);
 });
 test('UI polling preserves expansion and selected filter; stale results and tiny samples are explicit',()=>{
   const {ctx,get,call}=ui();get('analytics').open=false;get('analytics-metric').value='queue';
