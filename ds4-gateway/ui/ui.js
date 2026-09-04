@@ -257,6 +257,7 @@ function updateRoutingNode(current,fresh) {
   if(current.innerHTML!==fresh.innerHTML){const focused=current.contains(document.activeElement);current.innerHTML=fresh.innerHTML;if(focused)current.querySelector('button:not(:disabled)')?.focus({preventScroll:true});}
 }
 function renderDevices(devices,workers,now,stale,scales,controls) {
+  const viewport={x:window.scrollX,y:window.scrollY};
   const container=$('devices'),existing=new Map([...container.querySelectorAll('.device')].map(el=>[el.dataset.workerId,el]));
   if(!devices.length){container.innerHTML=`<article class="device onboarding"><h2>Add your first DS4 server</h2><p>Register an already-running local endpoint or an endpoint reached through your existing SSH login. DSG checks model and context, then leaves routing paused until you enable it.</p>${controls?'<button type="button" class="button" data-add-first>Open server setup</button>':'<p class="muted">Enable local server controls in private DSG configuration to register from this dashboard.</p>'}</article>`;return;}
   if(!existing.size)container.replaceChildren();
@@ -273,6 +274,10 @@ function renderDevices(devices,workers,now,stale,scales,controls) {
     existing.delete(d.id);
   });
   for(const el of existing.values())el.remove();
+  // WebKit can move the viewport when replacing its anchor inside a card.
+  // This synchronous refresh must not move the reader; no user input can occur
+  // between this snapshot and restoration. User-initiated tab scrolling is separate.
+  if(window.scrollX!==viewport.x||window.scrollY!==viewport.y)window.scrollTo(viewport.x,viewport.y);
 }
 function refreshRoutingControls() {
   for(const el of $('devices').querySelectorAll('.device')){

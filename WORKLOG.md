@@ -10,6 +10,10 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Fixed Safari refresh scroll jumps.** Updating machine-card content now keeps
+  the reader's viewport in place. A live WebKit reproduction moved 1,000px → 398px
+  before the fix and stayed at 1,000px after it; a synthetic browser check covers polling.
+
 - **Exercised real Pi continuity and its replay boundary.** Installed-agent
   fixtures passed patient waiting, certified retries beyond three attempts and
   a truncated post-tool stream. Tools execute once; ambiguous dispatched output

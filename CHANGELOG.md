@@ -1,5 +1,12 @@
 # Changelog
 
+## Preserve viewport during machine-card refresh
+
+- Preserve the viewport across synchronous card updates, preventing WebKit's
+  scroll-anchor replacement from moving the reader up the page. Explicit user
+  navigation remains separate. Add `node scripts/check-dashboard-scroll.mjs`
+  for optional Chrome/WebKit regression checks with synthetic workers.
+
 ## Verify real Pi partial-stream replay boundary
 
 - Add an opt-in installed-Pi agent/tool-loop regression for a truncated answer
