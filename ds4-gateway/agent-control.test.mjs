@@ -54,6 +54,53 @@ test('operator pause added during hold wins, and operator enable/remove cannot s
   r.store.save({...r.store.data,...r.api.manualUpdate(['worker-a'],true)});
   await r.release(d.result.hold_id);assert.equal(r.nodes[0].drained,true);assert.equal(r.probes(),0);
 });
+test('named maintenance lock is a durable hard veto and exact release leaves routing paused',async()=>{
+  const r=rig(),request_id=randomUUID();
+  const input={worker_id:'worker-a',name:'spark speed test',reason:'Another agent is validating a patched DS4 build',review_after_hours:2,request_id};
+  const locked=r.api.maintenanceLock(input,'dashboard');
+  assert.equal(locked.result.state,'maintenance_locked');assert.equal(r.nodes[0].drained,true);assert.equal(r.pauseCalls(),1);
+  const status=r.api.pauseStatus('worker-a',{includeReason:true});
+  assert.equal(status.operator_paused,false);assert.equal(status.maintenance_locks[0].name,input.name);assert.equal(status.maintenance_locks[0].reason,input.reason);
+  assert.equal(status.maintenance_locks[0].review_at-status.maintenance_locks[0].created_at,2*3600000);
+  assert.throws(()=>r.api.manualUpdate(['worker-a'],false),{code:'maintenance_lock_present'});
+  assert.throws(()=>r.api.forgetWorker('worker-a'),{code:'maintenance_lock_present'});
+  assert.deepEqual(r.api.maintenanceLock(input,'workers_cli'),locked,'idempotency is keyed to the immutable action, not the caller path');
+  assert.throws(()=>r.api.maintenanceLock({...input,name:'changed'},'dashboard'),{code:'request_id_conflict'});
+  const restored=new AgentControl(r.options);assert.deepEqual(restored.maintenanceReceipt({request_id}),locked);
+  const releaseInput={lock_id:locked.result.lock_id,reason:'Patched build validation complete',request_id:randomUUID()};
+  const released=restored.maintenanceRelease(releaseInput,'dashboard');
+  assert.equal(released.result.state,'maintenance_released_paused');assert.equal(released.result.routing_resumed,false);
+  assert.equal(r.nodes[0].drained,true);assert.equal(restored.manualPaused('worker-a'),true);assert.equal(restored.maintenanceLocks('worker-a').length,0);
+  assert.deepEqual(restored.maintenanceRelease(releaseInput,'workers_cli'),released);
+  assert.throws(()=>restored.maintenanceRelease({...releaseInput,reason:'different'},'dashboard'),{code:'request_id_conflict'});
+  assert.throws(()=>restored.maintenanceRelease({...releaseInput,request_id:randomUUID()},'dashboard'),{code:'unknown_lock'});
+  assert.deepEqual(restored.manualUpdate(['worker-a'],false).drained['worker-a'],false,'checked Resume is separately available after release');
+});
+test('maintenance review time is advisory and never expires or resumes routing',()=>{
+  let now=1000;const r=rig(false,{now:()=>now});
+  const locked=r.api.maintenanceLock({worker_id:'worker-a',name:'overnight maintenance',reason:'Keep out of routing until inspected',review_after_hours:1,request_id:randomUUID()},'workers_cli');
+  now+=2*3600000;
+  const restored=new AgentControl(r.options),lock=restored.maintenanceLocks('worker-a')[0];
+  assert.ok(now>lock.review_at);assert.equal(lock.id,locked.result.lock_id);assert.equal(r.nodes[0].drained,true);
+  assert.throws(()=>restored.manualUpdate(['worker-a'],false),{code:'maintenance_lock_present'});
+});
+test('legacy schema-one ownership loads without locks and persists the extension on first use',()=>{
+  const r=rig();delete r.store.data.agent_control.maintenance_locks;delete r.store.data.agent_control.maintenance_operations;
+  const restored=new AgentControl(r.options);assert.deepEqual(restored.maintenanceLocks('worker-a'),[]);
+  restored.maintenanceLock({worker_id:'worker-a',name:'migration-test',reason:'exercise legacy state',review_after_hours:null,request_id:randomUUID()},'workers_cli');
+  assert.ok(Array.isArray(r.store.data.agent_control.maintenance_locks));assert.ok(Array.isArray(r.store.data.agent_control.maintenance_operations));
+});
+test('failed maintenance save leaves lock ownership and live routing unchanged',()=>{
+  const r=rig(),before=JSON.stringify(r.store.data);r.store.save=()=>{throw new Error('disk full');};
+  assert.throws(()=>r.api.maintenanceLock({worker_id:'worker-a',name:'test',reason:'must not partially apply',review_after_hours:null,request_id:randomUUID()},'dashboard'),/disk full/);
+  assert.equal(JSON.stringify(r.store.data),before);assert.equal(r.nodes[0].drained,false);assert.equal(r.pauseCalls(),0);
+});
+test('agent release cannot route through an operator maintenance lock',async()=>{
+  const r=rig(),hold=await r.drain();
+  r.api.maintenanceLock({worker_id:'worker-a',name:'operator test',reason:'Independent maintenance still owns this server',review_after_hours:null,request_id:randomUUID()},'dashboard');
+  const released=await r.release(hold.result.hold_id);
+  assert.equal(released.result.routing_resumed,false);assert.equal(released.result.maintenance_locks.length,1);assert.equal(r.nodes[0].drained,true);assert.equal(r.probes(),0);
+});
 test('revocation retains holds; operator escape clears ownership but keeps a manual pause',async()=>{
   const r=rig(),d=await r.drain();r.api.revoke({agent_id:'test-a'});
   assert.equal(r.api.authenticate(`Bearer ${r.a.token}`),null);
@@ -97,6 +144,11 @@ test('invalid action schemas cannot add authority or mutate state',async()=>{
   const r=rig(),before=JSON.stringify(r.store.data);
   for(const body of [{worker_id:'worker-a',reason:'x'}, {worker_id:'worker-a',reason:'x',request_id:randomUUID(),force:true}, {worker_id:'worker-a',reason:'x\ny',request_id:randomUUID()}, {worker_id:'worker-a',reason:'',request_id:randomUUID()}])await assert.rejects(r.api.act('test-a','drain',body));
   assert.equal(JSON.stringify(r.store.data),before);
+});
+test('invalid maintenance actions fail closed without changing routing',()=>{
+  const r=rig(),before=JSON.stringify(r.store.data),valid={worker_id:'worker-a',name:'test',reason:'reason',review_after_hours:null,request_id:randomUUID()};
+  for(const input of [{...valid,force:true},{...valid,name:'x\ny'},{...valid,reason:''},{...valid,review_after_hours:0},{...valid,worker_id:'missing'}])assert.throws(()=>r.api.maintenanceLock(input,'dashboard'));
+  assert.equal(JSON.stringify(r.store.data),before);assert.equal(r.nodes[0].drained,false);
 });
 test('invalid saved ownership fails closed; removed worker loses grants',async()=>{
   const r=rig(),d=await r.drain();r.nodes[0].drained=false;

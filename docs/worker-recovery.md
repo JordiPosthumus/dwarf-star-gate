@@ -132,14 +132,14 @@ There are two deliberately different control paths:
   invocation after quarantine. The fixed executor then verifies model/context,
   generation and two cold-to-warm conversations before readmission.
 
-An operator pause or another agent hold vetoes both paths. Gate Genie cannot erase
-either one, and elapsed idle time never turns a reservation into permission. The
+An operator pause, named maintenance lock or another agent hold vetoes both paths.
+Gate Genie cannot erase any of them, and elapsed idle time never turns a reservation into permission. The
 full operator `workers.sh resume WORKER_ID` command can deliberately clear an
 operator pause; it is operator authority, not a Genie action. Processes sharing
 the same unrestricted OS user are not individually authenticated on that channel,
-so maintenance agents should use scoped holds. A named durable maintenance
-lock/lease that also blocks broad resume is planned as a stronger coordination
-boundary.
+so maintenance agents should use scoped holds. The stronger
+[named durable maintenance lock](maintenance-locks.md) also blocks broad Resume,
+survives restart and requires exact release; a review deadline only warns.
 
 **Verified profile hand-back** handles a legitimate upgrade that changed the
 enrolled runtime fingerprint. Its separate sub-policy defaults on, but it is
@@ -163,11 +163,12 @@ carry the old value forward. Live verification/restart may still complete, but a
 later start-from-stopped remains disabled until that static identity is explicitly
 re-enrolled. Unknown evidence never becomes inherited authority.
 
-An operator pause or scoped agent hold blocks hand-back. This is how another
-agent can reserve a Spark for optimization without racing automatic recovery:
-hold it before work and release it only when ready for DSG verification. A future
-lease/explicit-completion extension may make forgotten holds reviewable, but this
-version never steals another actor's live reservation.
+An operator pause, named maintenance lock or scoped agent hold blocks hand-back.
+An agent with a scoped credential can reserve a Spark for optimization before
+work and release it only when ready for DSG verification. An external test can
+instead use a maintenance lock with an advisory review time; overdue locks remain
+held until exact operator release. This version never steals another actor's live
+reservation.
 
 Pause/removal wins over final reinstatement. Turning automatic mode off stops new
 automatic actions and cancels a proposal before issuance when possible; an issued

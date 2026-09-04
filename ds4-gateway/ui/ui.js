@@ -193,22 +193,23 @@ function timeline(d,now) {
 }
 function routingInfo(w,{stale=false,recovering=false}={}) {
   if(stale||!w)return {level:'unknown',label:'STATUS UNKNOWN',detail:'Live gateway status is unavailable. Routing controls are disabled until it returns.',action:null};
-  const busy=!!w.load||w.queued>0,held=!!w.holds?.length;
+  const busy=!!w.load||w.queued>0,held=!!w.holds?.length,locked=!!w.maintenance_locks?.length;
   const reasons=[];
   if(w.quarantine)reasons.push(({repeated_inference_failures:'DSG isolated this server after repeated inference failures.',fatal_accelerator_error:'DSG isolated this server after a fatal accelerator error.',accelerator_checkpoint_failure:'DSG isolated this server after an accelerator checkpoint failure.'})[w.quarantine.reason]||'DSG isolated this server after a generation fault.');
   if(w.operator_paused)reasons.push('An operator paused gateway routing.');
   if(w.last_operator_action){const action=w.last_operator_action,source=action.control_channel.replaceAll('_',' ');reasons.push(`Last local operator control: ${action.action} via ${source} at ${new Date(action.time).toLocaleString()}. The source label identifies the client path, not a human identity.`);}
   if(held)reasons.push(`Reserved by ${w.holds.map(h=>h.owner_id).join(', ')}. The owning agent must release its hold; Resume cannot override it.`);
+  if(locked)reasons.push(`Maintenance lock${w.maintenance_locks.length===1?'':'s'}: ${w.maintenance_locks.map(lock=>lock.name).join(', ')}. Release each exact lock in Settings; routing remains paused until a separate checked Resume.`);
   if(recovering)reasons.push('Service recovery is in progress. Wait for its verification receipt.');
   if(!w.is_healthy&&!w.quarantine&&!recovering&&reasons.length)reasons.push('The last readiness check was also unavailable; resuming will recheck it.');
   const excluded=w.drained||!!w.quarantine||!w.is_healthy||recovering;
-  const label=w.quarantine?'QUARANTINED · NOT ROUTING':held?'RESERVED · NOT ROUTING':w.drained?(busy?'PAUSING · ADMITTED WORK FINISHING':'PAUSED · NOT ROUTING'):recovering?'RECOVERING · NOT ROUTING':!w.is_healthy?'UNAVAILABLE · NOT ROUTING':'ROUTING ENABLED';
+  const label=w.quarantine?'QUARANTINED · NOT ROUTING':locked?'MAINTENANCE LOCK · NOT ROUTING':held?'RESERVED · NOT ROUTING':w.drained?(busy?'PAUSING · ADMITTED WORK FINISHING':'PAUSED · NOT ROUTING'):recovering?'RECOVERING · NOT ROUTING':!w.is_healthy?'UNAVAILABLE · NOT ROUTING':'ROUTING ENABLED';
   if(!reasons.length)reasons.push(w.drained?'Gateway routing is paused.':!w.is_healthy?managementDetail(w):'New requests may use this server. Pause stops new admission; admitted requests finish.');
   if(w.quarantine)reasons.push('Verify & readmit checks model/context and generates a small test response. It does not restart DS4; failed checks keep it isolated.');
   return {level:w.quarantine||!w.is_healthy?'bad':excluded?'paused':'ok',label,detail:reasons.join(' '),excluded,
     action:excluded?'resume':'drain',button:w.quarantine?'Verify & readmit':excluded?'Resume routing':'Pause routing',
-    blocked:held||recovering||!!w.quarantine&&busy,
-    title:held?'Release agent holds first.':recovering?'Wait for service recovery.':w.quarantine&&busy?'Wait for admitted work to settle before verification.':excluded?'Check readiness and return to routing. Does not start or restart DS4.':'Stop new gateway admission. Existing admitted work, model process and caches stay intact.'};
+    blocked:held||locked||recovering||!!w.quarantine&&busy,
+    title:locked?'Release the exact named maintenance lock in Settings first; review times never auto-release it.':held?'Release agent holds first.':recovering?'Wait for service recovery.':w.quarantine&&busy?'Wait for admitted work to settle before verification.':excluded?'Check readiness and return to routing. Does not start or restart DS4.':'Stop new gateway admission. Existing admitted work, model process and caches stay intact.'};
 }
 function managementDetail(w) {
   const m=w?.management_path,reason=m?.reason;
@@ -276,6 +277,7 @@ function refreshRoutingControls() {
 function serverVerdict(d,w,now,stale=false) {
   if(stale||!w)return {level:'unknown',label:'Status stale',detail:'Live gateway status is unavailable; values are historical.'};
   if(w.quarantine)return {level:'bad',label:'Quarantined',detail:'DSG isolated this server after a generation fault. Use the recovery/readmission controls only after reviewing the evidence.'};
+  if(w.maintenance_locks?.length)return {level:'paused',label:'Maintenance',detail:`Named lock${w.maintenance_locks.length===1?'':'s'} ${w.maintenance_locks.map(lock=>lock.name).join(', ')} prevent all routing and automatic recovery. Review deadlines only warn; they never auto-release.`};
   if(!w.is_healthy)return {level:'bad',label:'Unavailable',detail:managementDetail(w)};
   if(w.drained)return {level:'paused',label:w.load?'Pausing':'Paused',detail:w.load?'No new work is admitted; an already admitted request is still finishing.':'No new gateway requests are admitted to this server.'};
   const waiting=Number.isSafeInteger(w.queued)?w.queued:0,oldest=Number.isFinite(w.oldest_queue_seconds)?w.oldest_queue_seconds:null;
@@ -327,7 +329,9 @@ function deterministicHealthAlerts(snapshot) {
       alerts.push({severity:'critical',text:`${name} is quarantined after ${String(worker.quarantine.reason||'a generation fault').replaceAll('_',' ')}; ${fleet}.${waiting} Recommendation: ${recommendation}`});
       continue;
     }
-    // Operator pauses and scoped agent holds are intentional capacity choices,
+    const overdue=(worker?.maintenance_locks??[]).filter(lock=>Number.isFinite(lock.review_at)&&lock.review_at<=Date.now());
+    if(overdue.length)alerts.push({severity:'warning',text:`${name} remains protected by overdue maintenance lock${overdue.length===1?'':'s'} ${overdue.map(lock=>lock.name).join(', ')}. Recommendation: Confirm the external work is finished, then release the exact lock; DSG will keep routing paused until a separate checked Resume.`});
+    // Operator pauses, maintenance locks and scoped agent holds are intentional capacity choices,
     // not faults. They stay explicit on the worker card without becoming alarms.
     if(worker?.drained||held)continue;
     if(worker?.is_healthy===false) {
@@ -449,13 +453,14 @@ function workerMessage(text, error = false) {
 function workerRows(workers) {
   return workers.map(w=>{
     const busy=!!w.load || w.queued>0;
-    const holds=w.holds??[],held=holds.length>0;
+    const holds=w.holds??[],held=holds.length>0,locks=w.maintenance_locks??[],locked=locks.length>0;
     const info=routingInfo(w,{recovering:recoveryState?.workers?.some(r=>r.worker_id===w.id&&r.state==='recovering')});
     const routing=info.label;
     const id=esc(w.id);
-    const ownership=`${w.operator_paused?'<br><small>Operator pause</small>':''}${holds.map(h=>`<br><small>Held by ${esc(h.owner_id)}${h.reason?`: ${esc(h.reason)}`:''}</small>`).join('')}`;
+    const ownership=`${w.operator_paused?'<br><small>Operator pause</small>':''}${holds.map(h=>`<br><small>Held by ${esc(h.owner_id)}${h.reason?`: ${esc(h.reason)}`:''}</small>`).join('')}${locks.map(lock=>`<br><small class="maintenance-lock${Number.isFinite(lock.review_at)&&lock.review_at<=Date.now()?' overdue':''}">Maintenance: ${esc(lock.name)}${lock.reason?` · ${esc(lock.reason)}`:''}${Number.isFinite(lock.review_at)?` · review ${lock.review_at<=Date.now()?'overdue':`in ${remaining(lock.review_at,Date.now())}`}`:' · no automatic expiry'}</small>`).join('')}`;
     const routes=w.ssh?`<button class="button" title="Edit only the host-key-verified SSH fallback aliases. The current inference stream and primary route are not interrupted; the new list applies on the next reconnect." data-action="fallbacks" data-id="${id}" ${workerBusy?'disabled':''}>Routes ${fmt(1+(w.ssh_fallbacks?.length??0))}</button>`:'';
-    return `<tr><td>${id}</td><td>${fmt(w.context_length)}</td><td title="${esc(info.detail)}">${routing}${ownership}</td><td>${fmt(w.load)} / ${fmt(w.queued)}</td><td class="worker-actions"><button class="button" title="${esc(info.title)}" data-action="${info.action}" data-id="${id}" ${workerBusy||info.blocked?'disabled':''}>${info.button}</button>${held&&!w.operator_paused?`<button class="button" title="Keep an operator pause even after all agents release their holds." data-action="drain" data-id="${id}" ${workerBusy?'disabled':''}>Keep paused</button>`:''}${routes}<button class="button" title="Remove registration only after draining and releasing all agent holds. Does not stop DS4." data-action="remove" data-id="${id}" ${workerBusy||!w.drained||busy||held?'disabled':''}>Remove</button></td></tr>`;
+    const lockActions=locks.map(lock=>`<button class="button" title="Release only ${esc(lock.name)}. The server stays paused until a separate checked Resume." data-action="unlock" data-id="${id}" data-lock-id="${esc(lock.id)}" ${workerBusy?'disabled':''}>Release ${esc(lock.name)}</button>`).join('');
+    return `<tr><td>${id}</td><td>${fmt(w.context_length)}</td><td title="${esc(info.detail)}">${routing}${ownership}</td><td>${fmt(w.load)} / ${fmt(w.queued)}</td><td class="worker-actions"><button class="button" title="${esc(info.title)}" data-action="${info.action}" data-id="${id}" ${workerBusy||info.blocked?'disabled':''}>${info.button}</button><button class="button" title="Create a named durable maintenance lock. It immediately stops new admission and never auto-expires." data-action="lock" data-id="${id}" ${workerBusy?'disabled':''}>Maintenance lock</button>${lockActions}${held&&!w.operator_paused?`<button class="button" title="Keep an operator pause even after all agents release their holds." data-action="drain" data-id="${id}" ${workerBusy?'disabled':''}>Keep paused</button>`:''}${routes}<button class="button" title="Remove registration only after draining and releasing all holds and maintenance locks. Does not stop DS4." data-action="remove" data-id="${id}" ${workerBusy||!w.drained||busy||held||locked?'disabled':''}>Remove</button></td></tr>`;
   }).join('') || '<tr><td colspan="5">No workers registered.</td></tr>';
 }
 async function loadWorkers() {
@@ -515,7 +520,7 @@ async function workerAction(action, input) {
   try {
     const r=await fetch(`/api/workers/${action}`,{method:'POST',headers:{'content-type':'application/json','x-dsg-csrf':csrfToken},body:JSON.stringify(input),signal:AbortSignal.timeout(35000)});
     const data=await r.json();if(!r.ok)throw new Error(data.error||'Worker control failed');
-    workerMessage(action==='recover'?`Recovery accepted: ${data.id}. See executor receipts below.`:action==='recovery-policy'?`Automatic recovery ${data.automatic?'enabled':'disabled'}.`:action==='recovery-handback-policy'?`Verified profile hand-back ${data.profile_handback_automatic?'enabled':'disabled'}. Automatic recovery remains ${data.automatic?'on':'off'}.`:action==='protection'?`Image compatibility protection ${data.vision_jpeg?.enabled?'enabled':'disabled'}. Existing requests and DS4 settings are unchanged.`:action==='context'?`Pool limit saved: ${fmt(data.minimum_context)} tokens. Applied now; model servers and Pi unchanged.`:action==='fallbacks'?`Management fallbacks saved. Active inference was not interrupted; the list applies on the next SSH reconnect.`:action==='add'?'Registered paused. Enable routing when ready.':action==='drain'?'Draining. Admitted requests will finish before removal.':action==='remove'?'Removed from this gateway. Model server left running.':action==='relocate'?`${data.source} → ${data.destination}: undispatched request handed over with its original client and deadline.`:'Routing enabled.');
+    workerMessage(action==='lock'?`${data.result.worker_id}: durable maintenance lock created. Automatic recovery and routing are vetoed until its exact release.`:action==='unlock'?`${data.result.worker_id}: maintenance lock released; routing remains paused until a separate checked Resume.`:action==='recover'?`Recovery accepted: ${data.id}. See executor receipts below.`:action==='recovery-policy'?`Automatic recovery ${data.automatic?'enabled':'disabled'}.`:action==='recovery-handback-policy'?`Verified profile hand-back ${data.profile_handback_automatic?'enabled':'disabled'}. Automatic recovery remains ${data.automatic?'on':'off'}.`:action==='protection'?`Image compatibility protection ${data.vision_jpeg?.enabled?'enabled':'disabled'}. Existing requests and DS4 settings are unchanged.`:action==='context'?`Pool limit saved: ${fmt(data.minimum_context)} tokens. Applied now; model servers and Pi unchanged.`:action==='fallbacks'?`Management fallbacks saved. Active inference was not interrupted; the list applies on the next reconnect.`:action==='add'?'Registered paused. Enable routing when ready.':action==='drain'?'Draining. Admitted requests will finish before removal.':action==='remove'?'Removed from this gateway. Model server left running.':action==='relocate'?`${data.source} → ${data.destination}: undispatched request handed over with its original client and deadline.`:'Routing enabled.');
     if(action==='context'){contextDirty=false;contextExpected=data.minimum_context;}
     if(action==='queue-timeout'){queueDirty=false;queueExpected=data.queue_timeout_ms;workerMessage(`Queue allowance saved: ${fmt(data.queue_timeout_ms/3600000)} hours for new requests. Existing waits and model servers unchanged.`);}
     if(action==='add')$('worker-form').reset();
@@ -560,6 +565,18 @@ function wireWorkerControls() {
   const handleWorkerClick=e=>{
     const button=e.target.closest('button[data-action]');if(!button||button.disabled)return;
     const {action,id}=button.dataset;
+    if(action==='lock'){
+      const name=window.prompt(`Name this maintenance lock for ${id}. It will survive DSG restarts and never auto-expire.`,`maintenance-${id}`);if(name===null)return;
+      const reason=window.prompt(`Why must ${id} stay out of DSG routing? Do not include secrets or conversation text.`,'External DS4 testing in progress');if(reason===null)return;
+      const review=window.prompt('Review reminder in whole hours (optional). This only warns; it never releases the lock.','24');if(review===null)return;
+      const review_after_hours=review.trim()===''?null:Number(review);
+      if((review_after_hours!==null)&&(!Number.isSafeInteger(review_after_hours)||review_after_hours<1||review_after_hours>8760)){workerMessage('Review reminder must be blank or 1–8760 whole hours.',true);return;}
+      void workerAction('lock',{worker_id:id,name:name.trim(),reason:reason.trim(),review_after_hours,request_id:crypto.randomUUID()});return;
+    }
+    if(action==='unlock'){
+      const reason=window.prompt(`Release this exact maintenance lock on ${id}? The server will remain paused until a separate checked Resume.`,'External maintenance completed and verified');if(reason===null)return;
+      void workerAction('unlock',{lock_id:button.dataset.lockId,reason:reason.trim(),request_id:crypto.randomUUID()});return;
+    }
     if(action==='fallbacks'){
       const worker=visibleWorkers.find(candidate=>candidate.id===id),before=worker?.ssh_fallbacks??[];
       const answer=window.prompt(`Fallback SSH aliases for ${id}, comma-separated. Primary route ${worker?.ssh} is unchanged. Leave empty to clear.`,before.join(', '));

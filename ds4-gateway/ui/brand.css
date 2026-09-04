@@ -13,6 +13,7 @@ html,body{overflow-x:clip}.visually-hidden{position:absolute!important;width:1px
 .fleet-summary{margin:9px 4px 0;color:var(--muted);font-size:10px}.fleet-summary:not(:empty):first-letter{color:var(--text)}
 .protected{color:#c4d6e8}
 button.button{color:var(--text);font-family:inherit;cursor:pointer}.worker-actions{display:flex;gap:7px}.worker-actions .button{padding:6px 9px}
+.maintenance-lock{color:#d8c59a}.maintenance-lock.overdue{color:#efaa91;font-weight:700}
 button:disabled{opacity:.4;cursor:default}input:focus-visible,select:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 .worker-message{min-height:20px;white-space:pre-wrap;margin:12px 0;color:var(--accent)}.worker-message.error{color:var(--error)}
 .requested-thinking{display:flex;align-items:baseline;flex-wrap:wrap;gap:8px 12px;margin-top:18px;padding:12px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}

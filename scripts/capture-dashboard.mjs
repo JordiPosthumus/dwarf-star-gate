@@ -102,7 +102,19 @@ try {
   assert.match(await page.locator('#relocation-controls').innerText(),/Safe queued handovers.*configured first-refusal window.*gateway core may move/s);
   assert.equal(await page.locator('#relocation-offers button').count(),1);
   assert.match(await page.locator('#relocation-offers button').getAttribute('title'),/warm cache/);
+  const maintenanceRow=page.locator('#worker-rows tr').filter({hasText:'mac-ultra'}),answers=['spark-speed-test','External DS4 benchmark in progress','4'];
+  const answerDialogs=dialog=>dialog.accept(answers.shift());page.on('dialog',answerDialogs);
+  await maintenanceRow.getByRole('button',{name:'Maintenance lock',exact:true}).click();
+  await page.waitForFunction(()=>document.getElementById('worker-rows').textContent.includes('Maintenance: spark-speed-test'));
+  page.off('dialog',answerDialogs);assert.equal(answers.length,0);
+  assert.equal(await maintenanceRow.locator('[data-action="resume"]').isDisabled(),true);
+  assert.match(await maintenanceRow.innerText(),/MAINTENANCE LOCK · NOT ROUTING/);
   await page.locator('#worker-management').screenshot({path:path.join(output,'worker-management.png'),animations:'disabled'});
+  page.once('dialog',dialog=>dialog.accept('Benchmark complete and endpoint checked'));
+  await maintenanceRow.getByRole('button',{name:'Release spark-speed-test',exact:true}).click();
+  await page.waitForFunction(()=>!document.getElementById('worker-rows').textContent.includes('Maintenance: spark-speed-test')&&document.getElementById('worker-rows').textContent.includes('Operator pause'));
+  await maintenanceRow.getByRole('button',{name:'Resume routing',exact:true}).click();
+  await maintenanceRow.getByText('ROUTING ENABLED',{exact:true}).waitFor();
   await page.locator('#tab-fleet').click();
   await page.waitForFunction(()=>document.querySelectorAll('.device').length===3&&document.querySelectorAll('#analytics-chart circle').length>0);
   await page.evaluate(()=>window.scrollTo(0,0));
@@ -195,7 +207,7 @@ try {
   const holdPoll=await page.locator('#updated').innerText();await page.waitForFunction(previous=>document.getElementById('updated').textContent!==previous,holdPoll,{timeout:10000});
   assert.match(await held.innerText(),/Held by test-agent/);assert.match(await held.innerText(),/Operator pause/);
   assert.deepEqual(errors,[]);
-  console.log('Saved six synthetic dashboard screenshots; verified tab navigation, polling, analytics, compact hardware telemetry, mobile, reset/milestones, escaped agent holds and Keep paused UX.');
+  console.log('Saved six synthetic dashboard screenshots; verified tab navigation, polling, analytics, compact hardware telemetry, named maintenance locks, mobile, reset/milestones, escaped agent holds and Keep paused UX.');
 } finally {
   await browser?.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));
   if(learningServer){learningServer.closeAllConnections();await new Promise(resolve=>learningServer.close(resolve));}

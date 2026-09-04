@@ -1,5 +1,18 @@
 # Changelog
 
+## Named durable maintenance locks
+
+- Added an operator-only, idempotent maintenance-lock contract for deliberately
+  excluded DS4 servers. Names, bounded reasons, advisory review times and exact
+  release receipts survive gateway restarts.
+- Made every broad Resume, scoped-agent release, automatic recovery and verified
+  profile hand-back respect the same hard veto. Review deadlines never
+  auto-expire; exact release deliberately leaves routing paused for a separate
+  fresh checked Resume.
+- Added obvious Fleet and Settings states, explicit per-lock release controls,
+  an overdue health-wire warning, portable CLI commands and private management
+  routes. Free-text reasons remain outside public dashboard snapshots.
+
 ## Opt-in hardware telemetry lane
 
 - Added a low-rate numerical hardware schema with a fixed DGX Spark/NVIDIA Linux

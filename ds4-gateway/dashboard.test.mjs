@@ -138,6 +138,16 @@ test('worker controls show escaped hold ownership and block ordinary Enable/Remo
   assert.ok(!row({...w,operator_paused:true}).includes('>Keep paused<'));assert.match(row({...w,operator_paused:true}),/Operator pause/);
   const free=row({...w,holds:[]});assert.ok(!/data-action="resume"[^>]*disabled/.test(free));assert.ok(!/data-action="remove"[^>]*disabled/.test(free));
 });
+test('named maintenance locks are obvious, escaped and require exact release before Resume',()=>{
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const context=vm.createContext({});vm.runInContext(source,context);
+  const lock={id:'7d71fa8b-46ef-43e1-a212-1ea26c5ba901',name:'speed <test>',reason:'external benchmark',created_at:1,review_at:2,control_channel:'dashboard'};
+  const worker={id:'worker-a',is_healthy:true,drained:true,load:0,queued:0,operator_paused:false,holds:[],maintenance_locks:[lock]};
+  const row=vm.runInContext(`workerRows(${JSON.stringify([worker])})`,context),info=vm.runInContext(`routingInfo(${JSON.stringify(worker)})`,context);
+  assert.match(row,/MAINTENANCE LOCK · NOT ROUTING/);assert.match(row,/Maintenance: speed &lt;test&gt;/);assert.doesNotMatch(row,/<test>/);
+  assert.match(row,/data-action="resume"[^>]*disabled/);assert.match(row,/data-action="remove"[^>]*disabled/);assert.match(row,/data-action="unlock"/);assert.match(row,/data-lock-id="7d71fa8b/);
+  assert.match(row,/>Maintenance lock</);assert.match(row,/>Release speed &lt;test&gt;</);assert.equal(info.blocked,true);assert.match(info.title,/never auto-release/);
+});
 
 test('recovery recheck UI covers uncertain start and restart actions',()=>{
   const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
@@ -151,7 +161,7 @@ test('recovery recheck UI covers uncertain start and restart actions',()=>{
 test('verified profile hand-back is a visible independent default-on recovery policy',()=>{
   const html=fs.readFileSync(new URL('./ui/index.html',import.meta.url),'utf8'),js=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8');
   assert.match(html,/id="recovery-handback-toggle"/);assert.match(html,/Verified profile hand-back starts enabled/);
-  assert.match(html,/A pause or agent hold always blocks it/);assert.match(js,/profile_handback_automatic/);
+  assert.match(html,/A pause, named maintenance lock or agent hold always blocks it/);assert.match(js,/profile_handback_automatic/);
   assert.match(js,/workerAction\('recovery-handback-policy'/);assert.match(js,/verified hand-back eligible/);
 });
 
@@ -176,6 +186,7 @@ test('excluded routing states are explicit; quarantine offers checked readmissio
   assert.match(markup(q),/QUARANTINED · NOT ROUTING/);assert.match(markup(q),/repeated inference failures/);assert.match(markup(q),/recorded by DSG/);
   assert.ok(!/data-action="resume"[^>]*disabled/.test(markup(q)),'original UI offered Drain or disabled Enable forever');
   for(const w of [{...q,load:1},{...q,queued:1},{...q,holds:[{owner_id:'test-agent'}]}])assert.ok(state(w).blocked);
+  assert.ok(state({...q,quarantine:null,drained:true,maintenance_locks:[{name:'DS4 test'}]}).blocked);
   assert.ok(state(q,{recovering:true}).blocked);
   assert.equal(state({...q,quarantine:null,drained:true,operator_paused:true}).button,'Resume routing');
   assert.equal(state({...q,quarantine:null,drained:true,operator_paused:true}).blocked,false,'fresh probe may restore a previously unavailable paused server');
@@ -482,6 +493,8 @@ test('enabled unavailable capacity is deterministic, while deliberate pauses and
   for(const worker of [{id:'worker-a',is_healthy:false,drained:true,operator_paused:true},{id:'worker-a',is_healthy:false,drained:false,holds:[{id:'hold'}]}]) {
     const deliberate=news({available:1,total:2,workers:[worker]});assert.equal(deliberate.level,'unknown');assert.match(deliberate.items[0].text,/Gate Genie is off/);
   }
+  const overdue=news({available:1,total:2,workers:[{id:'worker-a',is_healthy:true,drained:true,maintenance_locks:[{name:'speed-test',review_at:1}]}]});
+  assert.equal(overdue.level,'warn');assert.match(overdue.items[0].text,/overdue maintenance lock speed-test/);assert.match(overdue.items[0].text,/separate checked Resume/);
 });
 test('health wire is a compact keyboard-pausable ticker with no redundant controls or explainer',()=>{
   const html=fs.readFileSync(new URL('./ui/index.html',import.meta.url),'utf8'),css=fs.readFileSync(new URL('./ui/brand.css',import.meta.url),'utf8');
@@ -669,8 +682,8 @@ test('opt-in worker controls require same origin, JSON and a CSRF token; diagnos
   assert.equal(calls.length,0);
   assert.equal((await post('/api/workers/context','{}',{'content-type':'application/json'})).status,403);
   assert.equal((await post('/api/workers/queue-timeout','{}',{'content-type':'application/json'})).status,403);
-  for(const action of ['add','drain','resume','remove','fallbacks','context','queue-timeout','protection','relocate']) assert.equal((await post('/api/workers/'+action,JSON.stringify({id:'fake'}),valid)).status,200);
-  assert.deepEqual(calls.map(x=>x.action),['add','drain','resume','remove','fallbacks','context','queue-timeout','protection','relocate']);
+  for(const action of ['add','drain','resume','lock','unlock','remove','fallbacks','context','queue-timeout','protection','relocate']) assert.equal((await post('/api/workers/'+action,JSON.stringify({id:'fake'}),valid)).status,200);
+  assert.deepEqual(calls.map(x=>x.action),['add','drain','resume','lock','unlock','remove','fallbacks','context','queue-timeout','protection','relocate']);
   assert.ok(!(await(await fetch(url+'/api/diagnostics')).text()).includes(init.csrf_token));
   const plain=await fixture(t);assert.deepEqual(await(await fetch(plain.url+'/api/workers')).json(),{enabled:false});
 });

@@ -45,8 +45,8 @@ request exactly once. It never spools prompts or replays dispatched work. This
 protects coordinated DSG restarts; it is not transparent recovery from an
 arbitrary mid-generation engine crash. See the [exact contract](docs/continuity-door.md).
 
-Each server card shows whether it is routing, paused, reserved by an agent, or
-quarantined—and why. **Pause / Resume routing** is directly on the card; a
+Each server card shows whether it is routing, paused, protected by a named
+maintenance lock, reserved by an agent, or quarantined—and why. **Pause / Resume routing** is directly on the card; a
 quarantined server offers **Verify & readmit**, which checks actual generation
 before returning it to the pool. No hidden exclusion toggle or blind fault reset.
 
@@ -146,14 +146,15 @@ the same enrolled machine/service is patched or upgraded, its old fingerprint no
 longer matches, and it is left quarantined. DSG requires the identical changed
 profile across separated inspections, no admitted work, and either a proven new
 invocation or current fatal evidence; it then adopts the private fingerprint and
-runs the full recovery verification before readmission. Operator pauses and agent
-holds always block it. Genie may request the evidence offer, but cannot supply a
-profile or command.
+runs the full recovery verification before readmission. Operator pauses, scoped
+agent holds and [named maintenance locks](docs/maintenance-locks.md) always block
+it. Genie may request the evidence offer, but cannot supply a profile or command.
 
 The dashboard's compact **health wire** always puts deterministic live quarantine
 and enabled-but-unavailable capacity alarms first, even if Gate Genie's model is
-off, failed or still thinking. Planned operator pauses and scoped agent holds do
-not produce false fault alarms. Fresh Genie-written observations and concise
+off, failed or still thinking. Planned operator pauses, current maintenance locks
+and scoped agent holds do not produce false fault alarms; an overdue lock does
+raise a review reminder without releasing it. Fresh Genie-written observations and concise
 recommendations follow the safety facts; stale or health-invalidated advice is
 withheld. An independently revalidated executor receipt is the only proof that an
 action happened. Hover or keyboard focus pauses the wire for reading; reduced
@@ -636,6 +637,10 @@ The same controls are available from the CLI:
 ./workers.sh add laptop --url http://127.0.0.1:38103 --ssh worker-c --remote-port 8000
 ./workers.sh resume studio
 ./workers.sh drain studio
+./workers.sh lock studio --name benchmark --reason "External DS4 test" --review-after-hours 4
+# Later: release the exact returned lock ID; the server intentionally stays paused.
+./workers.sh unlock LOCK_ID --reason "Test completed and endpoint checked"
+./workers.sh resume studio
 ./workers.sh remove studio
 ```
 
@@ -656,9 +661,11 @@ Each manual pause/resume now retains a bounded timestamped control-channel recei
 in that server's routing tooltip. This identifies how the request reached the
 private operator socket, not which human or same-user process initiated it. A
 scoped agent and Gate Genie cannot clear an operator pause; the unrestricted local
-operator CLI deliberately can. Use scoped holds for maintenance agents. A named
-maintenance lock/lease that would also require an explicit matching release or
-audited override on the broad operator path is [planned](docs/roadmap.md).
+operator CLI deliberately can. Use scoped holds for maintenance agents. For an
+external test or stronger cross-agent veto, a [named durable maintenance lock](docs/maintenance-locks.md)
+survives restart, blocks broad Resume and every recovery path, and never
+auto-expires. Its optional review time only warns. Releasing the exact lock leaves
+the worker paused until a separate checked Resume.
 SIGUSR1/SIGUSR2 globally pause/resume admission; SIGTERM requests graceful gateway
 shutdown. Service-manager deadlines can still interrupt long streams. Do not kill
 or restart a live gateway casually; there is no blind restart script.

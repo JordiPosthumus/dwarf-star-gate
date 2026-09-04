@@ -31,9 +31,10 @@ in scope. Do not expose this socket or a raw control proxy on the LAN.
 The unrestricted operator CLI is intentionally stronger than an agent grant: it
 can clear a manual pause. Current receipts identify its ingress as `workers_cli`,
 not which same-user process or person invoked it. Do not give maintenance agents
-that channel. A planned named maintenance lock/lease will make an approved
-reservation visible and require an explicit matching release or audited override
-before the broad resume path can clear it.
+that channel. An implemented [named maintenance lock](maintenance-locks.md) makes
+an approved external reservation visible and requires its exact, audited release
+before the broad Resume path is even eligible. Release still leaves the worker
+paused for a separate checked Resume.
 
 ## Operator setup
 
@@ -89,7 +90,8 @@ without `DSG_AGENT_CREDENTIALS`; this keeps the two channels unambiguous.
 
 `status` returns all registered worker IDs and current gateway observations:
 health, active count (`load`), `queued`, context, quarantine/recovery flags,
-`drained`, `gateway_drained`, `operator_paused`, holds and their owners/reasons.
+`drained`, `gateway_drained`, `operator_paused`, named maintenance locks, and
+holds with their owners/reasons.
 `can_manage` identifies the grant's permitted workers. It excludes backend URLs,
 SSH details, keys and conversation contents. The reply has `observed_at`; it is
 a snapshot, not a promise that the machine will remain idle.
@@ -99,8 +101,9 @@ a snapshot, not a promise that the machine will remain idle.
   cancel, stop DS4, evict caches, change model settings, or move admitted requests.
 - **Fully drained** means `drained:true`, no active gateway request and no queued
   gateway requests. Direct clients bypassing DSG are outside that observation.
-- **Resume HOLD_ID** releases this agent's hold only. If another hold or an
-  operator pause remains, the release succeeds with `routing_resumed:false`.
+- **Resume HOLD_ID** releases this agent's hold only. If another hold, a named
+  maintenance lock or an operator pause remains, the release succeeds with
+  `routing_resumed:false`.
 - Releasing the final hold when no operator pause remains normally requires a
   fresh compatible model/context probe. A failed probe, ongoing recovery or
   gateway shutdown retains the hold. A model-list probe is not proof of
@@ -128,6 +131,8 @@ exist. **Keep paused** adds an operator pause that survives all agent releases.
 Reasons are untrusted text, rendered as text, and should contain only a brief
 operational explanation—not private prompts or secrets. Genie sees ownership
 IDs, not these free-text reasons, and must not treat reservations as failures.
+Named maintenance locks compose with agent holds; releasing one cannot clear the
+other.
 
 ## JSON API contract
 

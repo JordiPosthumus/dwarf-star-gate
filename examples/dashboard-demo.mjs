@@ -123,12 +123,22 @@ return createDashboard(()=>({...snapshot,time:Date.now(),gateway_at:Date.now(),
       const w=workerConfig(input.worker,{registration:true});assertUniqueWorker(workers,w);
       workers.push({...w,is_healthy:true,drained:true,load:0,queued:0,context_length:300000,completed:0,failed:0,assigned_sessions:0});
     } else if(action==='remove') {
-      const w=workers.find(w=>w.id===input.id);if(!w||!w.drained||w.load||w.queued||w.holds?.length)throw new Error('Drain and release holds before removal');
+      const w=workers.find(w=>w.id===input.id);if(!w||!w.drained||w.load||w.queued||w.holds?.length||w.maintenance_locks?.length)throw new Error('Drain and release holds and maintenance locks before removal');
       workers.splice(workers.indexOf(w),1);
+    } else if(action==='lock') {
+      const w=workers.find(w=>w.id===input.worker_id);if(!w)throw new Error('Unknown demo worker');
+      w.maintenance_locks=[...(w.maintenance_locks??[]),{id:input.request_id,name:input.name,reason:input.reason,created_at:Date.now(),review_at:input.review_after_hours===null?null:Date.now()+input.review_after_hours*3600000,control_channel:'dashboard'}];
+      w.drained=true;w.operator_paused=false;
+      return {result:{lock_id:w.maintenance_locks.at(-1).id,worker_id:w.id,routing_resumed:false,state:'maintenance_locked'}};
+    } else if(action==='unlock') {
+      const w=workers.find(candidate=>candidate.maintenance_locks?.some(lock=>lock.id===input.lock_id));if(!w)throw new Error('Unknown demo maintenance lock');
+      w.maintenance_locks=w.maintenance_locks.filter(lock=>lock.id!==input.lock_id);w.drained=true;w.operator_paused=true;
+      return {result:{lock_id:input.lock_id,worker_id:w.id,routing_resumed:false,state:'maintenance_released_paused'}};
     } else if(['drain','resume'].includes(action)) {
       for(const id of input.workers) {
         const w=workers.find(w=>w.id===id);if(!w)throw new Error('Unknown demo worker');
         if(action==='resume'&&w.holds?.length)throw new Error('Release agent holds first');
+        if(action==='resume'&&w.maintenance_locks?.length)throw new Error('Release maintenance locks first');
         // Synthetic verification succeeds; never calls a real model endpoint.
         if(action==='resume'&&w.quarantine){w.quarantine=null;w.is_healthy=true;}
         w.operator_paused=action==='drain';

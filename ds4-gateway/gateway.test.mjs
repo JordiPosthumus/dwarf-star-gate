@@ -294,6 +294,35 @@ test('agent cannot override operator pause, incompatible readiness or accelerato
   const q=await drain();await assert.rejects(release(q),{code:'recovery_required'});
   assert.ok(r.gateway.stats().workers[0].quarantine);assert.equal(r.backends[0].records.length,1);
 });
+test('named maintenance lock survives restart and vetoes every broad resume path',async t=>{
+  const r=await rig(t,1,{control_socket:true}),ctl=(route,body,channel='workers_cli')=>workerControl(r.config.control_socket,route,body,{channel});
+  const grant=await ctl('/grant-agent',{agent_id:'tester',workers:['spark1']}),credential={control_socket:r.config.control_socket,token:grant.token};
+  const hold=await agentRequest(credential,'drain',{worker_id:'spark1',reason:'agent test',request_id:randomUUID()});
+  const request_id=randomUUID(),input={worker_id:'spark1',name:'patched-build-test',reason:'External agent is benchmarking DS4',review_after_hours:2,request_id};
+  const locked=await ctl('/maintenance-lock',input,'dashboard');
+  assert.equal(locked.result.state,'maintenance_locked');assert.equal(r.gateway.stats().workers[0].maintenance_locks[0].name,'patched-build-test');
+  assert.equal(r.gateway.stats().workers[0].drained,true);assert.equal(r.gateway.stats().maintenance_lock_version,1);
+  assert.equal((await agentRequest(credential,'resume',{hold_id:hold.result.hold_id,request_id:randomUUID()})).result.routing_resumed,false);
+  await assert.rejects(ctl('/resume-workers',{workers:['spark1']}),/maintenance lock/);
+  await r.restart();
+  assert.equal(r.gateway.stats().workers[0].maintenance_locks[0].id,locked.result.lock_id);assert.equal(r.gateway.stats().workers[0].drained,true);
+  assert.deepEqual(await ctl('/maintenance-lock',input),locked);
+  assert.deepEqual(await ctl('/maintenance-receipt',{request_id}),locked);
+  const releaseInput={lock_id:locked.result.lock_id,reason:'Benchmark complete',request_id:randomUUID()};
+  const released=await ctl('/release-maintenance-lock',releaseInput,'dashboard');
+  assert.equal(released.result.routing_resumed,false);assert.equal(r.gateway.stats().workers[0].drained,true);assert.equal(r.gateway.stats().workers[0].operator_paused,true);
+  assert.deepEqual(await ctl('/release-maintenance-lock',releaseInput),released);
+  await ctl('/resume-workers',{workers:['spark1']});assert.equal(r.gateway.stats().available,1);
+});
+test('operator CLI creates, reconciles and releases exact maintenance locks',async t=>{
+  const r=await rig(t,1,{control_socket:true}),dir=path.dirname(r.config.state_file),config=path.join(dir,'config.json');fs.writeFileSync(config,JSON.stringify(r.config));
+  const script=fileURLToPath(new URL('./workers.mjs',import.meta.url)),cli=(...args)=>promisify(execFile)(process.execPath,[script,...args]);
+  const request_id=randomUUID(),created=await cli('lock','spark1','--name','speed-test','--reason','patched DS4 benchmark','--review-after-hours','2','--request-id',request_id,'--config',config);
+  assert.equal(JSON.parse(created.stderr).request_id,request_id);const lock=JSON.parse(created.stdout);assert.equal(lock.result.state,'maintenance_locked');
+  assert.deepEqual(JSON.parse((await cli('maintenance-receipt',request_id,'--config',config)).stdout),lock);
+  const released=JSON.parse((await cli('unlock',lock.result.lock_id,'--reason','benchmark complete','--config',config)).stdout);
+  assert.equal(released.result.state,'maintenance_released_paused');assert.equal(r.gateway.stats().workers[0].drained,true);
+});
 test('operator CLI creates private scoped credential; agent CLI needs no full gateway config',async t=>{
   const r=await rig(t,1,{control_socket:true}),dir=path.dirname(r.config.state_file),config=path.join(dir,'config.json'),file=path.join(dir,'agent.json');
   fs.writeFileSync(config,JSON.stringify(r.config));
@@ -914,17 +943,19 @@ test('hot removal requires paused and fully idle; existing conversation reassign
   assert.equal((await r.request('{}',null,{path:'/remove-worker'})).status,404);
 });
 
-test('real dashboard polling exposes agent ownership and calibration, without private hold reasons',async t=>{
+test('real dashboard polling exposes maintenance ownership and calibration, without private reasons',async t=>{
   const r=await rig(t,1,{control_socket:true,ui_worker_management:true});
   const granted=await workerControl(r.config.control_socket,'/grant-agent',{agent_id:'tester',workers:['spark1']});
   await agentRequest({control_socket:r.config.control_socket,token:granted.token},'drain',{worker_id:'spark1',reason:'PRIVATE_OPERATOR_REASON',request_id:randomUUID()});
+  await workerControl(r.config.control_socket,'/maintenance-lock',{worker_id:'spark1',name:'speed-test',reason:'PRIVATE_MAINTENANCE_REASON',review_after_hours:24,request_id:randomUUID()},{channel:'dashboard'});
   const blocked=r.request('{}','blocked');await until(()=>r.gateway.stats().continuity.waiting===1);
   const configPath=path.join(path.dirname(r.config.state_file),'dashboard-config.json');fs.writeFileSync(configPath,JSON.stringify({...r.config,port:r.address.port}));
   const dashboard=await runDashboard(configPath,0);t.after(()=>dashboard.close());
-  const s=dashboard.snapshot();assert.equal(s.gateway.agent_api_version,1);assert.deepEqual(s.gateway.calibration,r.gateway.stats().calibration);
+  const s=dashboard.snapshot();assert.equal(s.gateway.agent_api_version,1);assert.equal(s.gateway.maintenance_lock_version,1);assert.deepEqual(s.gateway.calibration,r.gateway.stats().calibration);
   assert.equal(s.gateway.continuity.waiting,1);assert.equal(s.gateway.queued,1);assert.equal(s.gateway.continuity.waiting_reasons.no_ready_worker,1);
   assert.equal(s.gateway.workers[0].holds[0].owner_id,'tester');assert.equal(s.gateway.workers[0].gateway_drained,true);assert.equal(s.gateway.workers[0].operator_paused,false);
-  assert.ok(!JSON.stringify(s).includes('PRIVATE_OPERATOR_REASON'));assert.ok(!JSON.stringify(s).includes(granted.token));
+  assert.equal(s.gateway.workers[0].maintenance_locks[0].name,'speed-test');
+  assert.ok(!JSON.stringify(s).includes('PRIVATE_OPERATOR_REASON'));assert.ok(!JSON.stringify(s).includes('PRIVATE_MAINTENANCE_REASON'));assert.ok(!JSON.stringify(s).includes(granted.token));
   await r.gateway.close();assert.equal((await blocked).status,503);
 });
 

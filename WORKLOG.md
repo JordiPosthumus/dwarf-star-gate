@@ -10,6 +10,13 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Stopped automation from stealing hardware under maintenance.** Named durable
+  locks now explain why a server is deliberately out of service and hard-veto
+  operator Resume, agent cleanup, Genie recovery and verified profile hand-back.
+  Review deadlines warn rather than auto-expire; exact release leaves the worker
+  paused until a separate checked Resume. UI, CLI and receipts all use the same
+  private serialized executor.
+
 - **Gave the fleet pulse honest hardware senses.** Opt-in, ten-second adapters
   now turn measured Spark compute-module or external whole-system power into the
   kWh/efficiency footer, while compact server-card strips show RAM, accelerator

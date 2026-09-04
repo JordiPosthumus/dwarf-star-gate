@@ -21,8 +21,8 @@ can still proceed. Waiting requests for the same conversation cannot overtake on
 another or split active ownership.
 
 DSG rechecks waiting eligibility every second and after work settles. Healthy
-readiness alone cannot clear quarantine, recovery ownership, an agent hold, or an
-operator pause. Parked uploads do not block the existing guarded generation/cache
+readiness alone cannot clear quarantine, recovery ownership, a named maintenance
+lock, an agent hold, or an operator pause. Parked uploads do not block the existing guarded generation/cache
 verification. Removing a worker with parked requests is rejected: readmit the
 worker or cancel those requests first. No model service, inference setting or
 client configuration is changed by this feature.

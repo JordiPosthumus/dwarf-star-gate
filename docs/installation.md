@@ -171,7 +171,7 @@ continue to use the foreground commands under your chosen supervisor.
 Starting DSG also starts its **already-configured** SSH tunnels and optional
 collector/encoder/predictor components through the ordinary gateway. The script
 does not provision SSH trust, install Python environments, download models, start
-remote DS4 services, clear quarantines, release agent holds, resume workers or
+remote DS4 services, clear quarantines, release maintenance locks or agent holds, resume workers or
 alter model/context/output/thinking/cache/concurrency settings. Missing setup is
 reported; it is never replaced with a guessed fallback.
 
