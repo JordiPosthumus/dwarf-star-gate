@@ -76,6 +76,13 @@ npm run attribution:audit
 # or: node ds4-gateway/attribution-audit.mjs --directory /absolute/private/dashboard --files 7
 ```
 
+Add `--since 2026-09-04T00:00:00Z` to select engine starts at or after a UTC
+timestamp, for example when validating a collector upgrade. This works with
+both the recorded audit and `--gateway-log` reconciliation. It filters the
+reported cohort, not the evidence read: earlier request owners and competing
+engine starts still veto unsafe matches. Later revisions of selected starts
+remain included. Source bounds and incomplete-source warnings still apply.
+
 The audit reads at most 8 MiB per file and 65,536 attribution records. It rejects
 symlink roots, skips symlinked/non-regular metric files, bounds individual lines,
 and reports malformed/partial/truncated input instead of implying complete

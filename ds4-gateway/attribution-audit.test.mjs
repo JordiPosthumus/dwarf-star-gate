@@ -78,6 +78,20 @@ test('later exact usage safely reconciles an overlap without rewriting the recor
   assert.ok(!JSON.stringify(result).includes(requestB));
 });
 
+test('fresh-start cohorts retain earlier ownership and competing-start evidence',()=>{
+  const original=overlap(),old=overlap(11,{engine_started_at:base-1,request_id:requestB,status:'corroborated',reason:'usage_match',confidence:'high_candidate'});
+  const options={complete:true,sinceMs:base};
+  const clear=reconcileAttributionRows([original],[earlyEngine(),engine()],gateway(),options);
+  assert.equal(clear.reconciled_overlaps,1);assert.equal(clear.summary.total_starts,1);
+  const owned=reconcileAttributionRows([old,original],[earlyEngine(),engine()],gateway(),options);
+  assert.equal(owned.reconciled_overlaps,0);assert.equal(owned.summary.total_starts,1);
+  assert.equal(owned.reconciliation_block_reasons.request_collision,1);
+  const competing=reconcileAttributionRows([original],[earlyEngine(),engine(),{...engine(12),time:base-1}],gateway(),options);
+  assert.equal(competing.reconciled_overlaps,0);assert.equal(competing.reconciliation_block_reasons.competing_engine_start,1);
+  assert.equal(reconcileAttributionRows([old],[],gateway(),options).summary.total_starts,0);
+  for(const sinceMs of [NaN,-1,1.5,'today'])assert.throws(()=>reconcileAttributionRows([],[],[],{sinceMs}),/sinceMs/);
+});
+
 test('incomplete evidence, missing coverage, missing usage and request collisions keep overlap abstention',()=>{
   const original=overlap();
   assert.equal(reconcileAttributionRows([original],[engine()],gateway(),{complete:false}).reconciled_overlaps,0);

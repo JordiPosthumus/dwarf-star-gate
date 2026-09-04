@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Made attribution upgrades measurable on fresh traffic.** The audit accepts a
+  UTC start-time cutoff while retaining older collision and ownership evidence.
+  Operators can compare post-upgrade samples without mixing in legacy telemetry
+  or manufacturing matches by discarding surrounding history.
+
 - **Bounded Agent Watch during gateway holds.** One outstanding heartbeat per
   reporter prevents telemetry from accumulating in the Continuity Door. Session
   changes cancel obsolete calls; regression coverage checks 100 overlapping

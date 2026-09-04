@@ -14,6 +14,10 @@ const STATUSES=new Set(['candidate','corroborated','abstained']);
 const REASONS=new Set(['backend_epoch_unavailable','no_gateway_request_window','overlapping_gateway_windows','overlapping_usage_matches','usage_conflict','request_open','usage_unavailable','multiple_engine_starts','usage_match','usage_disambiguated_overlap','completed_without_usage','censored_or_failed']);
 const CONFIDENCE=new Set(['none','heuristic','bounded_candidate','high_candidate']);
 const SKEW_MS=5000,MAX_DISPATCH_LEAD_MS=10*60000;
+function cohortFilter(sinceMs){
+  if(sinceMs!==null&&(!Number.isSafeInteger(sinceMs)||sinceMs<0||sinceMs>8.64e15))throw new Error('sinceMs must be a nonnegative integer timestamp in the Date range');
+  return row=>sinceMs===null||Number.isFinite(row.engine_started_at)&&row.engine_started_at>=sinceMs;
+}
 
 function boundedLines(file,maxBytes=MAX_BYTES_PER_FILE) {
   let fd;
@@ -28,7 +32,8 @@ function boundedLines(file,maxBytes=MAX_BYTES_PER_FILE) {
   }finally{fs.closeSync(fd);}
 }
 
-export function auditAttributionDirectory(directory,{maxFiles=MAX_FILES,maxBytesPerFile=MAX_BYTES_PER_FILE}={}) {
+export function auditAttributionDirectory(directory,{maxFiles=MAX_FILES,maxBytesPerFile=MAX_BYTES_PER_FILE,sinceMs=null}={}) {
+  const inCohort=cohortFilter(sinceMs);
   if(typeof directory!=='string'||!path.isAbsolute(directory))throw new Error('Attribution audit directory must be an absolute path');
   if(!Number.isSafeInteger(maxFiles)||maxFiles<1||maxFiles>MAX_FILES)throw new Error(`maxFiles must be an integer from 1 to ${MAX_FILES}`);
   if(!Number.isSafeInteger(maxBytesPerFile)||maxBytesPerFile<1024||maxBytesPerFile>MAX_BYTES_PER_FILE)throw new Error(`maxBytesPerFile must be an integer from 1024 to ${MAX_BYTES_PER_FILE}`);
@@ -45,7 +50,7 @@ export function auditAttributionDirectory(directory,{maxFiles=MAX_FILES,maxBytes
     }
   }
   return {schema:1,mode:'read_only_shadow_audit',files_read:files.length-skipped_files,partial_files,skipped_files,
-    malformed_lines,oversized_lines,truncated_records,...summarizeAttribution(rows),
+    malformed_lines,oversized_lines,truncated_records,...summarizeAttribution(rows.filter(inCohort)),cohort_since:sinceMs===null?null:new Date(sinceMs).toISOString(),
     privacy:'Counts, bounded reason codes and configured server IDs only. No prompts, responses, request IDs, sample IDs, paths or credentials are returned.'};
 }
 
@@ -80,10 +85,13 @@ function latestRows(rows) {
 // Re-evaluate only historical clock-overlap abstentions after all candidate
 // requests have exact prompt/cache usage. The original rows stay immutable.
 // A request collision, incomplete source or missing coverage keeps abstention.
-export function reconcileAttributionRows(attributionRows=[],engineRows=[],gatewayRows=[],{complete=false,metricCoverageStart=-Infinity}={}) {
+export function reconcileAttributionRows(attributionRows=[],engineRows=[],gatewayRows=[],{complete=false,metricCoverageStart=-Infinity,sinceMs=null}={}) {
+  const inCohort=cohortFilter(sinceMs);
   const latest=latestRows(attributionRows),original=[...latest.values()];
-  const overlapCount=original.filter(row=>row.reason==='overlapping_gateway_windows').length;
-  const unchanged=()=>({summary:summarizeAttribution(original),reconciled_overlaps:0,remaining_overlap_abstentions:overlapCount,reconciliation_block_reasons:overlapCount?{source_incomplete:overlapCount}:{}});
+  // Select only the report cohort. Older ownership and competing starts remain
+  // in every reconciliation check; dropping them could manufacture certainty.
+  const overlapCount=original.filter(row=>inCohort(row)&&row.reason==='overlapping_gateway_windows').length;
+  const unchanged=()=>({summary:summarizeAttribution(original.filter(inCohort)),reconciled_overlaps:0,remaining_overlap_abstentions:overlapCount,reconciliation_block_reasons:overlapCount?{source_incomplete:overlapCount}:{}});
   const invalid=attributionRows.some(raw=>raw?.event==='engine_attribution'&&!safeAttribution(raw))||engineRows.some(raw=>raw?.kind==='start'&&!safeCollisionStart(raw))||gatewayRows.some(raw=>['request_dispatched','request_finished'].includes(raw?.event)&&(!safeGatewayEvent(raw)||!UUID.test(raw.request_id??'')||!ID.test(raw.node??'')));
   if(!complete||invalid)return unchanged();
   const starts=new Map();
@@ -101,8 +109,10 @@ export function reconcileAttributionRows(attributionRows=[],engineRows=[],gatewa
   }
   const requests=[...lifecycle.values()].filter(request=>!request.conflict&&Number.isFinite(request.dispatched_at));
   const proposals=new Map(),blocks={};
-  const block=reason=>{blocks[reason]=(blocks[reason]??0)+1;};
+  let currentRow;
+  const block=reason=>{if(inCohort(currentRow))blocks[reason]=(blocks[reason]??0)+1;};
   for(const row of original){
+    currentRow=row;
     if(row.reason!=='overlapping_gateway_windows')continue;
     const start=starts.get(`${row.node}:${row.sample_id}`);if(!start){block('engine_start_unavailable');continue;}if(metricCoverageStart>start.time-MAX_DISPATCH_LEAD_MS){block('metric_coverage_incomplete');continue;}if(coverageStart>start.time-MAX_DISPATCH_LEAD_MS){block('gateway_coverage_incomplete');continue;}
     const candidates=requests.filter(request=>request.node===start.node&&request.dispatched_at<=start.time+SKEW_MS&&start.time-request.dispatched_at<=MAX_DISPATCH_LEAD_MS&&(request.finished_at===null||request.finished_at>=start.time-SKEW_MS));
@@ -120,20 +130,22 @@ export function reconcileAttributionRows(attributionRows=[],engineRows=[],gatewa
   for(const [sampleKey,proposal] of proposals)add(proposal.request_id,sampleKey);
   let reconciled_overlaps=0;
   const revised=original.map(row=>{
+    currentRow=row;
     const key=`${row.node}:${row.sample_id}`,proposal=proposals.get(key);
     if(!proposal)return row;
     if(owners.get(proposal.request_id)?.size!==1){block('request_collision');return row;}
     const request=lifecycle.get(proposal.request_id);
     const competingStart=collisionStarts.some(start=>!(start.sample_id===row.sample_id&&start.node===row.node)&&start.node===request?.node&&request.dispatched_at<=start.time+SKEW_MS&&start.time-request.dispatched_at<=MAX_DISPATCH_LEAD_MS&&(request.finished_at===null||request.finished_at>=start.time-SKEW_MS));
     if(competingStart){block('competing_engine_start');return row;}
-    reconciled_overlaps++;
+    if(inCohort(row))reconciled_overlaps++;
     return {...row,request_id:proposal.request_id,status:'corroborated',reason:'usage_disambiguated_overlap',
       confidence:row.backend_epoch_confidence==='strong'?'high_candidate':'bounded_candidate',dispatch_delta_ms:proposal.dispatch_delta_ms};
   });
-  return {summary:summarizeAttribution(revised),reconciled_overlaps,remaining_overlap_abstentions:revised.filter(row=>row.reason==='overlapping_gateway_windows').length,reconciliation_block_reasons:Object.fromEntries(Object.entries(blocks).sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0])))};
+  return {summary:summarizeAttribution(revised.filter(inCohort)),reconciled_overlaps,remaining_overlap_abstentions:revised.filter(row=>inCohort(row)&&row.reason==='overlapping_gateway_windows').length,reconciliation_block_reasons:Object.fromEntries(Object.entries(blocks).sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0])))};
 }
 
-export function auditAttributionReconciliation(directory,gatewayLog,{maxFiles=MAX_FILES,maxBytesPerFile=MAX_RECONCILE_BYTES_PER_FILE,maxGatewayBytes=MAX_GATEWAY_BYTES}={}) {
+export function auditAttributionReconciliation(directory,gatewayLog,{maxFiles=MAX_FILES,maxBytesPerFile=MAX_RECONCILE_BYTES_PER_FILE,maxGatewayBytes=MAX_GATEWAY_BYTES,sinceMs=null}={}) {
+  const inCohort=cohortFilter(sinceMs);
   if(typeof directory!=='string'||!path.isAbsolute(directory))throw new Error('Attribution audit directory must be an absolute path');
   if(typeof gatewayLog!=='string'||!path.isAbsolute(gatewayLog))throw new Error('Gateway log must be an absolute path');
   if(!Number.isSafeInteger(maxFiles)||maxFiles<1||maxFiles>MAX_FILES)throw new Error(`maxFiles must be an integer from 1 to ${MAX_FILES}`);
@@ -159,31 +171,33 @@ export function auditAttributionReconciliation(directory,gatewayLog,{maxFiles=MA
   }
   const complete=partial_files===0&&skipped_files===0&&truncated_records===0&&malformed_lines===0&&oversized_lines===0&&invalid_metric_records===0&&!gateway.partial&&gateway_malformed_lines===0&&gateway_oversized_lines===0&&gateway_invalid_records===0&&gateway_truncated_records===0;
   const metricCoverageStart=Math.min(...engineRows.map(row=>safeCollisionStart(row)?.time??Infinity));
-  const recorded=summarizeAttribution(attributionRows),later=reconcileAttributionRows(attributionRows,engineRows,gatewayRows,{complete,metricCoverageStart});
+  const recorded=summarizeAttribution(attributionRows.filter(inCohort)),later=reconcileAttributionRows(attributionRows,engineRows,gatewayRows,{complete,metricCoverageStart,sinceMs});
   return {schema:1,mode:'read_only_later_evidence_reconciliation',source_complete:complete,files_read:files.length-skipped_files,metric_files_omitted,partial_files,skipped_files,malformed_lines,oversized_lines,invalid_metric_records,anonymous_metric_starts,truncated_records,
     gateway_partial:gateway.partial,gateway_malformed_lines,gateway_oversized_lines,gateway_invalid_records,gateway_truncated_records,recorded,with_later_gateway_evidence:later.summary,
-    reconciled_overlaps:later.reconciled_overlaps,remaining_overlap_abstentions:later.remaining_overlap_abstentions,reconciliation_block_reasons:later.reconciliation_block_reasons,
+    cohort_since:sinceMs===null?null:new Date(sinceMs).toISOString(),reconciled_overlaps:later.reconciled_overlaps,remaining_overlap_abstentions:later.remaining_overlap_abstentions,reconciliation_block_reasons:later.reconciliation_block_reasons,
     privacy:'Counts, bounded reason codes and configured server IDs only. Original telemetry is not rewritten; no prompts, responses, request IDs, sample IDs, paths or credentials are returned.'};
 }
 
 function args(argv) {
-  let directory=path.resolve('runtime/dashboard'),maxFiles=3,gatewayLog=null;
+  let directory=path.resolve('runtime/dashboard'),maxFiles=3,gatewayLog=null,sinceMs=null;
   for(let i=0;i<argv.length;i++){
     if(argv[i]==='--directory'&&argv[i+1])directory=path.resolve(argv[++i]);
     else if(argv[i]==='--files'&&argv[i+1])maxFiles=Number(argv[++i]);
     else if(argv[i]==='--gateway-log'&&argv[i+1])gatewayLog=path.resolve(argv[++i]);
+    else if(argv[i]==='--since'&&argv[i+1]){const value=argv[++i];if(!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value)||!Number.isFinite(Date.parse(value)))throw new Error('--since requires a UTC ISO timestamp');sinceMs=Date.parse(value);}
     else if(argv[i]==='--help')return {help:true};
     else throw new Error(`Unknown or incomplete argument: ${argv[i]}`);
   }
   if(!Number.isInteger(maxFiles)||maxFiles<1||maxFiles>MAX_FILES)throw new Error(`--files must be an integer from 1 to ${MAX_FILES}`);
-  return {directory,maxFiles,gatewayLog};
+  return {directory,maxFiles,gatewayLog,sinceMs};
 }
 
 if(import.meta.url===pathToFileURL(process.argv[1]??'').href){
   try{
     const input=args(process.argv.slice(2));
-    if(input.help){console.log('Usage: node ds4-gateway/attribution-audit.mjs [--directory PATH] [--files 1..7] [--gateway-log PATH]');process.exit(0);}
-    const report=input.gatewayLog?auditAttributionReconciliation(input.directory,input.gatewayLog,{maxFiles:input.maxFiles}):auditAttributionDirectory(input.directory,{maxFiles:input.maxFiles});
+    if(input.help){console.log('Usage: node ds4-gateway/attribution-audit.mjs [--directory PATH] [--files 1..7] [--gateway-log PATH] [--since UTC_ISO_TIMESTAMP]');process.exit(0);}
+    const options={maxFiles:input.maxFiles,sinceMs:input.sinceMs};
+    const report=input.gatewayLog?auditAttributionReconciliation(input.directory,input.gatewayLog,options):auditAttributionDirectory(input.directory,options);
     console.log(JSON.stringify(report,null,2));
   }catch(error){console.error(`DSG attribution audit: ${error.message}`);process.exit(1);}
 }

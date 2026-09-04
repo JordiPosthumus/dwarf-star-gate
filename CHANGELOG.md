@@ -1,5 +1,11 @@
 # Changelog
 
+## Fresh-traffic attribution audits
+
+- Added `--since` UTC cohort selection to recorded and later-evidence attribution
+  audits. Full loaded history still participates in collision checks; selected
+  starts retain their later revisions. Original data and routing are unchanged.
+
 ## Bound client heartbeat traffic during continuity holds
 
 - Coalesce Agent Watch ticks behind one outstanding heartbeat and expire disposable
