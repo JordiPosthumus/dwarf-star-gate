@@ -29,6 +29,11 @@ try {
   await page.waitForFunction(()=>document.getElementById('routing-message').classList.contains('error'));
   await page.waitForFunction(()=>document.getElementById('routing-message').textContent===''&&!document.getElementById('routing-message').classList.contains('error'));
   await page.waitForFunction(()=>document.querySelectorAll('.device').length===3&&document.querySelectorAll('#genie-reports details').length===1&&document.querySelectorAll('#analytics-chart circle').length>0);
+  assert.equal(await page.locator('#genie-hardening').isVisible(),true);
+  assert.match(await page.locator('#genie-hardening-status').innerText(),/1 suggestion.*1 durable.*newest first/);
+  await page.locator('#genie-hardening summary').click();
+  assert.match(await page.locator('#genie-hardening-items').innerText(),/Exercise incomplete-stream continuation.*Developer suggestion|Exercise incomplete-stream continuation/s);
+  await page.locator('#genie-hardening summary').click();
   assert.equal(await page.locator('#routing-message').innerText(),'','A successful control read must clear a stale error banner');
   assert.equal(await page.locator('h1').innerText(),'Dwarf Star Gate');
   assert.match(await page.locator('#connection').innerText(),/Demo/);

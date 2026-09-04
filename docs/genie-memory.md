@@ -1,6 +1,7 @@
 # Gate Genie memory — first release and remaining plan
 
-Status: **first release implemented, opt-in and off by default**. A small, private, DSG-owned operational
+Status: **bounded operational memory and developer hardening suggestions implemented,
+opt-in and off by default**. A small, private, DSG-owned operational
 notebook, not a replacement for the collector, predictor or permission checks.
 It survives dashboard restarts and changing Genie's model or device. It needs
 neither Pi/Hermes nor a permanently warm DS4 session.
@@ -23,6 +24,13 @@ The first release records:
   Incident and recovery rows are not automatically declared causally related.
 - Explicit operator notes, with create/edit/archive controls, revision checks and
   save receipts. Archive excludes a note from retrieval without erasing history.
+- Gate Genie developer suggestions for exact, code-selected failure envelopes.
+  Candidate fields are only failure class, fleet/worker scope, allowlisted reason,
+  evidence time, continuity outcome and allowed evidence references. Prompts,
+  answers, images, session keys, arbitrary logs and long-generation guesses are
+  excluded. The model supplies only a bounded title and suggested experiment.
+  Code reattaches the authoritative candidate facts, deduplicates by class/scope/
+  reason and writes a revision only when the evidence time or suggestion changes.
 
 The private journal is `runtime/genie/memory/notebook.jsonl` beside the configured
 gateway state. Files are mode 0600 inside a mode-0700 directory. It survives model,
@@ -35,8 +43,8 @@ conflicting writers and failed fsyncs stop memory writes; there is no automatic
 repair or deletion. Inspect/back up the journal before manual repair. A storage
 fault can prevent persisting a subsequent disable; verify the setting after repair.
 
-Retrieval is at most **12 records / 16 KiB**, with operator notes first and other
-records newest first, limited to current worker IDs plus fleet notes. Each worker
+Retrieval is at most **12 records / 16 KiB**, with operator notes first, developer
+suggestions next and other records newest first, limited to current worker IDs plus fleet notes. Each worker
 observation can include its seven prior transitions; older revisions remain on
 disk. This is bounded retrieval, **not a complete notebook browser**. Removed
 workers' history stays on disk. Reusing an ID does not prove the same process:
@@ -58,10 +66,11 @@ escaping and mobile layout against synthetic workers and disposable storage only
 
 ![Synthetic operational notebook, not live fleet data](images/genie-memory.png)
 
-**Not yet implemented:** model-authored durable hypotheses, text search, scoped
-permanent deletion, performance/experiment rollups, full chat/report persistence,
-or measured operational benefit. The design below remains the roadmap for these
-extensions; it is not a claim that all of them are running.
+**Not yet implemented:** free-form model-authored hypotheses outside the bounded
+candidate contract, text search, scoped permanent deletion, performance/experiment
+rollups, full chat/report persistence, or measured operational benefit. The design
+below remains the roadmap for these extensions; it is not a claim that all of them
+are running.
 
 ## Remaining design and guiding rules
 
@@ -192,8 +201,11 @@ milestones remain separate. Public examples use synthetic identities/data only.
 2. Durable notebook: schema, serialized writer, idempotent revisions, bounded
    retrieval/recovery. Import existing receipts only where linkage is exact;
    do not invent old Genie reports.
-3. Opt-in, observation-only review/UI integration and hypothesis save receipts.
-   No extra recovery, migration, server-mutation or deployment authority.
+3. **Implemented for bounded failure candidates:** opt-in review/UI integration,
+   deduplicated hypothesis revisions and save receipts. The compact top-of-page
+   panel is newest-first; with memory off, a completed report's suggestion is
+   explicitly page-local. No extra recovery, migration, server-mutation or
+   deployment authority.
 4. Evaluate recurrence recall, fewer repeated unsupported suggestions, correct
    worker/epoch attribution and bounded review overhead in actual use. Do not
    label anecdotes as measured routing gains.

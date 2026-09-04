@@ -1,5 +1,18 @@
 # Changelog
 
+## Gate Genie hardening suggestions
+
+- Genie can now turn a deterministic, privacy-bounded failure envelope into a
+  developer-facing hardening hypothesis. Code—not the model—selects the candidate
+  class, fleet/worker scope, allowlisted reason, evidence time and continuity
+  outcome. Prompts, responses, images, sessions and arbitrary log prose are absent.
+- The parser accepts at most three notes and only for exact offered candidate IDs.
+  The private opt-in notebook deduplicates by failure signature, records revisions
+  and grants no routing, shell, restart, server-edit or self-modification authority.
+  A notebook failure does not block Genie reviews, routing or inference.
+- A dense expandable panel above fleet status presents suggestions newest-first.
+  With memory disabled, report-local suggestions are clearly marked ephemeral.
+
 ## Proof-gated, agent-driven visual continuation
 
 - After DS4 proves a Chat Completions request exceeds its 16-image limit, DSG now

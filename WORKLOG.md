@@ -38,8 +38,10 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
   now allow long-context local reasoning while showing real progress in the UI.
 
 - **Gave Genie useful memory without hidden authority.** An opt-in private notebook
-  keeps revisioned operator notes and evidence-linked incidents across dashboard
-  restarts. Remembering a fact does not grant an action.
+  keeps revisioned operator notes, evidence-linked incidents and bounded developer
+  hardening suggestions across dashboard restarts. Suggestions can reference only
+  code-selected failure envelopes; no prompt, answer, image or arbitrary log text
+  is collected. Remembering a fact does not grant an action.
 
 - **Added narrowly enrolled DS4 service recovery.** For supported systemd-user
   installations, DSG can restart a proven fatal instance—or start a specifically

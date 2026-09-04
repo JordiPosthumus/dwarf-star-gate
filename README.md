@@ -104,8 +104,13 @@ challenger contract; V2 incumbents remain byte-compatible and V3 still has no
 routing authority unless it passes the independent holdout and future-traffic
 gates. [Calibration preflight](docs/calibration.md) skips without a proven
 cache-preserving path. An opt-in [persistent Genie notebook](docs/genie-memory.md)
-records worker-state changes, incident/recovery references and explicit operator
-notes. It survives dashboard restarts, stays private and grants no new powers.
+records worker-state changes, incident/recovery references, explicit operator
+notes and evidence-gated developer hardening suggestions. A compact panel at the
+top of the control room lists the newest suggestion first. Genie may describe a
+test or design improvement only for a deterministic, privacy-bounded failure
+candidate selected by DSG code; the suggestion is a hypothesis, cannot modify the
+gateway or servers and never includes inference content. It survives dashboard
+restarts, stays private and grants no new powers.
 The main status row includes a compact [hourly fleet-throughput tile](docs/fleet-throughput.md):
 reported output tokens with peak rolling hour, completed requests and prompt-token
 reuse on one line. Evidence coverage and completion-time accounting stay available

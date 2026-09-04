@@ -4,7 +4,8 @@ Refreshed 2026-09-04 from the checked-in synthetic demo and current UI assets.
 These are actual browser captures of fictional data, not edited production
 screenshots, benchmark results, a live incident report or a promoted model.
 
-- `dashboard-overview.png`: branding, the compact unified fleet panel, mixed-server
+- `dashboard-overview.png`: branding, the compact Gate Genie hardening-suggestion
+  disclosure, the unified fleet panel, mixed-server
   activity, aligned rounded speeds, requested thinking, hourly fleet throughput
   and the ready Continuity Door contract. Detailed cache/session evidence is
   folded into each server card.

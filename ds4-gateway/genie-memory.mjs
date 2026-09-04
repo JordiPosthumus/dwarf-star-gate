@@ -9,8 +9,13 @@ const workerId=x=>typeof x==='string'&&/^[a-zA-Z0-9][\w-]{0,63}$/.test(x);
 const bool=x=>typeof x==='boolean'?x:null;
 const uuid=x=>!!validCallId(x);
 const recoveryStates=new Set(['queued','reconciling','starting','restarting','verifying','recovered','verified_paused','failed','reconciliation_needed']);
+const hardeningContinuity=new Set(['unknown','not_dispatched','guidance_turn_completed']);
 const recoveryRecord=op=>workerId(op?.worker_id)&&uuid(op.id)&&recoveryStates.has(op.state)&&Number.isSafeInteger(op.updated_at)?{worker:op.worker_id,operation_id:op.id,state:op.state,recorded_at:op.updated_at}:null;
 const incidentRecord=(worker,q)=>workerId(worker)&&uuid(q?.request_id)&&safeQuarantine(q)?.reason&&Number.isFinite(Date.parse(q.at))?{worker,request_id:q.request_id,reason:safeQuarantine(q).reason,recorded_at:Date.parse(q.at)}:null;
+function hardeningRecord(data){
+  if(!data||!/^[a-f0-9]{24}$/.test(data.candidate_id)||(data.worker!==null&&!workerId(data.worker))||!/^[a-z0-9_:-]{1,128}$/.test(data.failure_class)||!/^[a-z0-9_:-]{1,128}$/.test(data.reason)||!Number.isSafeInteger(data.observed_at)||data.observed_at<0||!hardeningContinuity.has(data.continuity)||typeof data.title!=='string'||!data.title.trim()||data.title.length>120||Buffer.byteLength(data.title)>240||typeof data.suggestion!=='string'||!data.suggestion.trim()||data.suggestion.length>500||Buffer.byteLength(data.suggestion)>1000||data.state!=='open')return null;
+  return {candidate_id:data.candidate_id,worker:data.worker,failure_class:data.failure_class,reason:data.reason,observed_at:data.observed_at,continuity:data.continuity,title:data.title.trim(),suggestion:data.suggestion.trim(),state:'open'};
+}
 export const MEMORY_LIMIT=16*1024*1024;
 export function workerObservation(worker){
   if(!workerId(worker?.id))return null;
@@ -26,11 +31,13 @@ function validate(event,notes){
     if(Object.keys(event).sort().join(',')!=='at,enabled,kind,schema'||typeof event.enabled!=='boolean')throw new Error();
     return;
   }
-  if(!['observation','recovery','incident','operator_note'].includes(event.kind)||Object.keys(event).sort().join(',')!=='at,data,id,kind,revision,schema,source_digest')throw new Error();
+  if(!['observation','recovery','incident','operator_note','hardening_note'].includes(event.kind)||Object.keys(event).sort().join(',')!=='at,data,id,kind,revision,schema,source_digest')throw new Error();
   const d=event.data;let canonical,expectedId;
   if(event.kind==='operator_note'){
     if((d?.worker!==null&&!workerId(d?.worker))||typeof d.text!=='string'||!d.text.trim()||d.text.length>1000||Buffer.byteLength(d.text)>2000||!['active','archived'].includes(d.state)||!/^[a-f0-9]{24}$/.test(event.id))throw new Error('Note must contain 1–1000 characters within 2000 UTF-8 bytes');
     canonical={worker:d.worker,text:d.text.trim(),state:d.state};expectedId=event.id;
+  }else if(event.kind==='hardening_note'){
+    canonical=hardeningRecord(d);expectedId=hash(['hardening-note',d?.candidate_id]).slice(0,24);
   }else if(event.kind==='recovery'){
     canonical=recoveryRecord({worker_id:d?.worker,id:d?.operation_id,state:d?.state,updated_at:d?.recorded_at});expectedId=hash(['recovery',d?.worker,d?.operation_id]).slice(0,24);
   }else if(event.kind==='incident'){
@@ -126,13 +133,34 @@ export class GenieMemory {
     const id=old?.id??hash(randomUUID()).slice(0,24);
     return this.append({schema:1,kind:'operator_note',at:this.now(),id,revision:(old?.revision??0)+1,data,source_digest:hash(data)});
   }
+  saveHardeningNotes(notes,candidates){
+    if(!Array.isArray(notes)||!Array.isArray(candidates))throw new Error('Invalid hardening notes');
+    if(!this.enabled)return notes.map(note=>({candidate_id:note.candidate_id,state:'ephemeral',reason:'memory_disabled'}));
+    const offered=new Map(candidates.map(candidate=>[candidate.id,candidate])),receipts=[];
+    for(const note of notes.slice(0,3)){
+      const candidate=offered.get(note?.candidate_id),observedAt=Date.parse(candidate?.observed_at);
+      if(!candidate||!Number.isFinite(observedAt))throw new Error('Hardening candidate changed');
+      const data=hardeningRecord({candidate_id:candidate.id,worker:candidate.scope==='fleet'?null:candidate.scope,failure_class:candidate.failure_class,reason:candidate.reason,observed_at:observedAt,continuity:candidate.continuity,title:note.title,suggestion:note.suggestion,state:'open'});
+      if(!data)throw new Error('Invalid hardening note');
+      const id=hash(['hardening-note',data.candidate_id]).slice(0,24),old=this.notes.get(id),source_digest=hash(data);
+      if(old?.source_digest===source_digest){receipts.push({candidate_id:data.candidate_id,id,revision:old.revision,state:'unchanged'});continue;}
+      const saved=this.append({schema:1,kind:'hardening_note',at:this.now(),id,revision:(old?.revision??0)+1,data,source_digest});
+      receipts.push({candidate_id:data.candidate_id,...saved,state:'saved'});
+    }
+    return receipts;
+  }
   retrieve(snapshot,{limit=12,maxBytes=16384}={}){
     const notes=[];let bytes=0;const workers=new Set((snapshot.gateway?.workers??[]).map(w=>w.id));
     if(!this.enabled||this.error)return {notes,truncated:false};
-    const all=[...this.notes.values()].filter(n=>(n.data.worker===null||workers.has(n.data.worker))&&n.data.state!=='archived').sort((a,b)=>Number(b.kind==='operator_note')-Number(a.kind==='operator_note')||b.at-a.at||a.id.localeCompare(b.id));
-    for(const n of all){const note={...n,provenance:n.kind==='operator_note'?'explicit_operator_note':n.kind==='recovery'?'executor_receipt':'deterministic_gateway_snapshot',verification:n.kind==='operator_note'?'operator_intent_not_authority':'historical_observation',review_due:this.now()-n.at>7*86400000,continuity:'unknown',...(n.kind==='observation'?{recent_transitions:(this.history.get(n.id)??[]).map(e=>({at:e.at,revision:e.revision,data:e.data,source_digest:e.source_digest}))}:{})};
+    const all=[...this.notes.values()].filter(n=>(n.data.worker===null||workers.has(n.data.worker))&&n.data.state!=='archived').sort((a,b)=>Number(b.kind==='operator_note')-Number(a.kind==='operator_note')||Number(b.kind==='hardening_note')-Number(a.kind==='hardening_note')||b.at-a.at||a.id.localeCompare(b.id));
+    for(const n of all){const note={...n,provenance:n.kind==='operator_note'?'explicit_operator_note':n.kind==='recovery'?'executor_receipt':n.kind==='hardening_note'?'genie_hypothesis':'deterministic_gateway_snapshot',verification:n.kind==='operator_note'?'operator_intent_not_authority':n.kind==='hardening_note'?'developer_suggestion_not_fact':'historical_observation',review_due:this.now()-n.at>7*86400000,continuity:'unknown',...(n.kind==='observation'?{recent_transitions:(this.history.get(n.id)??[]).map(e=>({at:e.at,revision:e.revision,data:e.data,source_digest:e.source_digest}))}:{})};
       const size=Buffer.byteLength(JSON.stringify(note));if(notes.length>=Math.min(12,limit)||bytes+size>Math.min(16384,maxBytes))break;notes.push(note);bytes+=size;}
     return {notes,truncated:all.length>notes.length};
   }
-  status(){return {available:this.loaded&&!this.error,enabled:this.enabled,error:this.error,note_count:this.notes.size,bytes:this.bytes,max_bytes:this.maxBytes,last_write:this.lastWrite,scope:'worker history, incident/recovery references and explicit operator notes; no new action authority'};}
+  hardening(snapshot,{limit=24}={}){
+    if(!this.enabled||this.error)return [];
+    const workers=new Set((snapshot.gateway?.workers??[]).map(worker=>worker.id));
+    return [...this.notes.values()].filter(note=>note.kind==='hardening_note'&&(note.data.worker===null||workers.has(note.data.worker))).sort((a,b)=>b.at-a.at||a.id.localeCompare(b.id)).slice(0,Math.min(24,limit));
+  }
+  status(){return {available:this.loaded&&!this.error,enabled:this.enabled,error:this.error,note_count:this.notes.size,hardening_count:[...this.notes.values()].filter(note=>note.kind==='hardening_note').length,bytes:this.bytes,max_bytes:this.maxBytes,last_write:this.lastWrite,scope:'worker history, incident/recovery references, developer hardening suggestions and explicit operator notes; no new action authority'};}
 }

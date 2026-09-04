@@ -570,9 +570,26 @@ void loadAnalytics();setInterval(()=>{if(!document.hidden)void loadAnalytics();}
 $('health-wire').addEventListener('mouseleave',()=>{if(wireSnapshot)renderHealthWire(wireSnapshot);});
 $('health-wire').addEventListener('focusout',()=>queueMicrotask(()=>{if(wireSnapshot)renderHealthWire(wireSnapshot);}));
 let genieToken=null,genieState=null,memoryEditing=null,memoryBusy=false;
+let hardeningSignature=null;
+function renderHardeningNotes(notes=[],memory={}){
+  const panel=$('genie-hardening'),items=$('genie-hardening-items');panel.hidden=!genieState?.configured;
+  const durable=notes.filter(note=>note.durable).length;
+  $('genie-hardening-status').textContent=notes.length?`${fmt(notes.length)} suggestion${notes.length===1?'':'s'} · ${durable} durable · newest first`:`No evidence-backed suggestions yet${memory.enabled?'':' · memory is off'}`;
+  const signature=JSON.stringify(notes);
+  if(signature===hardeningSignature)return;hardeningSignature=signature;
+  items.replaceChildren(...notes.map(note=>{
+    const article=document.createElement('article');article.className='genie-hardening-item';
+    const title=document.createElement('strong');title.textContent=note.title;
+    const meta=document.createElement('p');meta.className='genie-hardening-meta';meta.textContent=`${note.scope??'fleet'} · ${String(note.failure_class??'failure').replaceAll('_',' ')} · evidence ${clock(note.observed_at)} · continuity ${String(note.continuity??'unknown').replaceAll('_',' ')}${note.durable?` · private notebook r${note.revision}`:' · page-local until memory is enabled'}`;
+    const evidence=document.createElement('p');evidence.className='genie-hardening-meta';evidence.textContent=`Observed class: ${String(note.reason??'unknown').replaceAll('_',' ')}`;
+    const suggestion=document.createElement('p');suggestion.textContent=note.suggestion;
+    article.append(title,meta,evidence,suggestion);return article;
+  }));
+}
 function memoryText(note){
   const d=note.data,yes=v=>v===true?'yes':v===false?'no':'unknown';
   if(note.kind==='operator_note')return d.text;
+  if(note.kind==='hardening_note')return `${d.title}\n${d.suggestion}\nObserved ${d.failure_class.replaceAll('_',' ')} / ${d.reason.replaceAll('_',' ')} at ${clock(d.observed_at)}. Developer suggestion only; no action or diagnosis is implied.`;
   if(note.kind==='incident')return `Recorded ${d.reason.replaceAll('_',' ')} at ${clock(d.recorded_at)}.\nRequest: ${d.request_id}\nHistorical incident; check current evidence before acting.`;
   if(note.kind==='recovery')return `Executor recorded: ${d.state.replaceAll('_',' ')} at ${clock(d.recorded_at)}.\nReceipt: ${d.operation_id}\nThis records a past action, not current health or a cure for the underlying fault.`;
   return `Gateway healthy: ${yes(d.gateway_healthy)} · paused: ${yes(d.paused)}\nContext: ${fmt(d.context_length)} tokens · agent holds: ${fmt(d.agent_hold_count)}\n${d.quarantine?'Recorded quarantine: '+d.quarantine.replaceAll('_',' ')+'\n':''}Process/cache continuity: unknown. Generation success is not inferred.\n`+(note.recent_transitions??[]).map(p=>`${clock(p.at)}: healthy ${yes(p.data.gateway_healthy)}, paused ${yes(p.data.paused)}, quarantine ${p.data.quarantine??'none observed'}`).join('\n');
@@ -617,6 +634,7 @@ async function loadGenie() {
     $('genie-toggle').disabled=!s.configured;$('genie-toggle').textContent=s.enabled?'Turn off':'Enable';
     $('genie-source').disabled=!s.fallback_available||s.busy;$('genie-source').value=s.source||'primary';
     $('genie-review').disabled=$('genie-send').disabled=!s.enabled||q?.state==='queued'||q?.state==='answering';
+    renderHardeningNotes(s.hardening_notes||[],s.memory||{});
     renderGenieReports(s.reports || []);
     renderMemory(s.memory);
   } catch{$('genie-status').textContent='Genie status unavailable';wireState={state:'unavailable'};if(wireSnapshot)renderHealthWire(wireSnapshot);}

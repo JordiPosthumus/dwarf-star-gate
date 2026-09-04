@@ -17,6 +17,28 @@ test('memory is opt-in, durable, idempotent, private and separate from generatio
   reload.observe(sample(1000,{drained:true,operator_paused:true}));n=reload.retrieve(sample()).notes[0];assert.equal(n.revision,2);assert.equal(n.data.paused,true);assert.equal(n.data.quarantine,null);
   reload.setEnabled(false);assert.deepEqual(reload.retrieve(sample()).notes,[]);assert.equal(new GenieMemory(dir).status().note_count,1);assert.equal(new GenieMemory(dir).enabled,false);
 });
+test('model-written hardening suggestions are evidence-gated, deduplicated and never action authority',t=>{
+  let now=1000;const m=new GenieMemory(fixture(t),{now:()=>now}),s=sample();m.setEnabled(true);
+  const candidate={id:'a'.repeat(24),failure_class:'request_failure',scope:'worker-a',reason:'incomplete_sse',observed_at:new Date(900).toISOString(),continuity:'unknown',evidence_refs:['worker:worker-a'],prompt:'PRIVATE'};
+  const note={candidate_id:candidate.id,title:'Keep incomplete streams observable',suggestion:'Add a deterministic client-continuation regression test before changing retry policy.',command:'PRIVATE'};
+  let receipt=m.saveHardeningNotes([note],[candidate])[0];assert.equal(receipt.state,'saved');assert.equal(receipt.revision,1);const bytes=m.bytes;
+  receipt=m.saveHardeningNotes([note],[candidate])[0];assert.equal(receipt.state,'unchanged');assert.equal(m.bytes,bytes);
+  let stored=m.retrieve(s).notes.find(row=>row.kind==='hardening_note');assert.equal(stored.provenance,'genie_hypothesis');assert.equal(stored.verification,'developer_suggestion_not_fact');assert.equal(stored.data.worker,'worker-a');assert.equal(stored.data.state,'open');
+  now=2000;candidate.observed_at=new Date(1900).toISOString();receipt=m.saveHardeningNotes([note],[candidate])[0];assert.equal(receipt.revision,2);stored=m.retrieve(s).notes.find(row=>row.kind==='hardening_note');assert.equal(stored.data.observed_at,1900);
+  assert.ok(!fs.readFileSync(m.file,'utf8').includes('PRIVATE'));assert.equal(m.status().hardening_count,1);
+  m.setEnabled(false);assert.equal(m.saveHardeningNotes([note],[candidate])[0].state,'ephemeral');
+  assert.throws(()=>{m.setEnabled(true);m.saveHardeningNotes([{...note,candidate_id:'b'.repeat(24)}],[candidate]);},/changed/);
+});
+test('a Genie review publishes and privately saves an exact hardening candidate without blocking on storage',async t=>{
+  const at='2026-09-04T12:00:00Z',s=sample(Date.parse(at));s.events=[{event:'request_finished',time:at,node:'worker-a',outcome:'incomplete_sse',prompt:'PRIVATE'}];
+  const memory=new GenieMemory(fixture(t),{now:()=>Date.parse(at)+1});memory.setEnabled(true);let sent;
+  const genie=new Genie({url:'http://127.0.0.1:9001/v1'},()=>s,{memory,fetchImpl:async(_url,options)=>{
+    sent=JSON.parse(options.body);const candidate=JSON.parse(sent.messages[1].content).evidence.hardening_candidates[0];
+    return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify({assessment:'One bounded stream failure is available for developer review.',ticker:[{severity:'warning',text:'An incomplete stream was observed.',recommendation:'Review the client-continuation regression.',evidence_refs:['worker:worker-a']}],hardening_notes:[{candidate_id:candidate.id,title:'Exercise incomplete-stream continuation',suggestion:'Add a deterministic same-socket continuation test before changing routing.'}]})}}]});
+  }});
+  await genie.ask();const status=genie.status();assert.equal(status.hardening_notes.length,1);assert.equal(status.hardening_notes[0].durable,true);assert.equal(status.reports[0].hardening_receipts[0].state,'saved');
+  assert.ok(!JSON.stringify(status).includes('PRIVATE'));assert.ok(!fs.readFileSync(memory.file,'utf8').includes('PRIVATE'));assert.deepEqual(status.reports[0].actions_taken,[]);genie.close();
+});
 test('stale snapshots, missing workers, unknown epochs and observation gaps never invent continuity',t=>{
   const m=new GenieMemory(fixture(t),{now:()=>20000});m.setEnabled(true);m.observe(sample(1000));assert.equal(m.notes.size,0);
   m.observe({...sample(20000),gateway_error:'lost'});assert.equal(m.notes.size,0);m.observe(sample(20000));const size=m.bytes;

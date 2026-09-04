@@ -292,9 +292,11 @@ pre-reset snapshots cannot immediately restore the rejected model. See the
 [lifecycle controls](predictor-lifecycle.md#controls-gg-and-rollback).
 
 **Gate Genie memory:** [a small operational notebook](genie-memory.md) now records
-worker transitions, incident/recovery references and explicit operator intent.
-Numerical telemetry and predictor artifacts remain authoritative; memory grants
-no powers. Experiment lessons, generated hypotheses and search remain planned. Also track
+worker transitions, incident/recovery references, explicit operator intent and
+bounded developer suggestions for exact code-selected failure envelopes. The
+newest suggestions are visible in a compact top-of-page panel and remain labelled
+hypotheses. Numerical telemetry and predictor artifacts remain authoritative;
+memory grants no powers. Broader experiment lessons and search remain planned. Also track
 [mutually beneficial upstream PR opportunities](ds4-integration.md#upstream-contributions)
 without changing DS4 or creating a private-fork dependency.
 

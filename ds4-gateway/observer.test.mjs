@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import {Dataset,evidence} from './dataset.mjs';
-import {Genie,briefing,parseGenieReview,tickerStatus} from './genie.mjs';
+import {Genie,briefing,hardeningCandidates,parseGenieReview,tickerStatus} from './genie.mjs';
 import {safeQuarantine} from './generation-health.mjs';
 
 test('Genie receives an allowlisted quarantine fact, not raw backend text or credentials',()=>{
@@ -34,6 +34,32 @@ test('Genie sees bounded visual-continuation outcomes without media or task auth
   const b=briefing(s),v=b.protections.visual_compatibility;
   assert.deepEqual(v,{configured:true,enabled:true,converter_available:true,rescued:4,guided:1,failed:2,last:{time:'2026-09-04T12:00:00Z',kind:'rescued',formats:['gif'],images:1,node:'spark1',reason:'gif_recovery_rejected'}});
   assert.match(b.semantics.join(' '),/agent, not DSG, chooses the task remedy/);assert.ok(!JSON.stringify(b).includes('PRIVATE'));
+});
+test('hardening candidates are bounded failure envelopes, not work content or long-request accusations',()=>{
+  const s=snapshot(),at='2026-09-04T12:00:00Z';
+  s.gateway.workers=[{id:'spark1',active_seconds:7200,quarantine:{reason:'accelerator_checkpoint_failure',at,request_id:'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',raw:'PRIVATE'}}];
+  s.gateway.continuity={recent_rejections:[{time:at,node:'spark1',code:'home_unavailable',reason:'worker_unhealthy',dispatch_state:'not_dispatched',request_id:'PRIVATE',session:'PRIVATE'}]};
+  s.gateway.protections={vision_jpeg:{enabled:true,available:true,guided:1,last:{time:at,kind:'guided',node:'spark1',reason:'gif_recovery_rejected',prompt:'PRIVATE'}}};
+  s.gateway.recovery={operations:[{worker_id:'spark1',state:'failed',updated_at:Date.parse(at),error:'generation_check_failed',command:'PRIVATE'}]};
+  s.events=[{event:'request_finished',time:at,node:'spark1',outcome:'incomplete_sse',prompt:'PRIVATE'},{event:'request_finished',time:at,node:'spark1',outcome:'complete'},{event:'request_finished',time:at,node:'spark1',outcome:'vision_guidance'},{event:'request_finished',time:at,node:'spark1',outcome:'sse_observation_limited'}];
+  const candidates=hardeningCandidates(s);assert.equal(candidates.length,5);assert.ok(candidates.every(candidate=>/^[a-f0-9]{24}$/.test(candidate.id)));
+  assert.deepEqual(new Set(candidates.map(candidate=>candidate.failure_class)),new Set(['worker_quarantine','pre_dispatch_rejection','request_failure','visual_compatibility','recovery_failure']));
+  assert.ok(!JSON.stringify(candidates).includes('PRIVATE'));assert.ok(!JSON.stringify(candidates).includes('request_id'));assert.ok(!candidates.some(candidate=>candidate.reason.includes('active')));
+});
+test('unavailable control layers become generic candidates without leaking transport errors',()=>{
+  const s=snapshot(),at='2026-09-04T12:00:00Z';s.time=Date.parse(at);s.gateway_at=s.time;s.gateway_error='PRIVATE gateway transport text';s.continuity_door_error='PRIVATE door transport text';
+  s.gateway.workers=[{id:'spark1',is_healthy:false,last_probe:at,probe_error:'EHOSTUNREACH',management_path:{reason:'ssh_timeout',route:'PRIVATE'}}];
+  const candidates=hardeningCandidates(s);assert.deepEqual(new Set(candidates.map(candidate=>candidate.failure_class)),new Set(['worker_unavailable','gateway_status_unavailable','continuity_door_unavailable']));
+  assert.equal(candidates.find(candidate=>candidate.failure_class==='worker_unavailable').reason,'EHOSTUNREACH'.toLowerCase(),'fixture should use an allowlisted lowercase reason');
+  assert.ok(!JSON.stringify(candidates).includes('PRIVATE'));
+});
+test('Genie accepts hardening prose only for exact code-selected candidates',()=>{
+  const s=snapshot(),at='2026-09-04T12:00:00Z';s.events=[{event:'request_finished',time:at,node:'spark1',outcome:'incomplete_sse'}];
+  const evidence=briefing(s),candidate=evidence.hardening_candidates[0],answer={...authoredReview(),hardening_notes:[{candidate_id:candidate.id,title:'Preserve incomplete stream evidence',suggestion:'Add a deterministic regression fixture before changing retry policy.'}]};
+  const parsed=parseGenieReview(JSON.stringify(answer),evidence);assert.equal(parsed.hardening_notes.length,1);assert.equal(parsed.hardening_notes[0].candidate_id,candidate.id);
+  for(const note of [{...answer.hardening_notes[0],candidate_id:'f'.repeat(24)},{...answer.hardening_notes[0],suggestion:'x'.repeat(501)},{...answer.hardening_notes[0],action:'restart'}]){
+    const rejected=parseGenieReview(JSON.stringify({...answer,hardening_notes:[note]}),evidence);assert.deepEqual(rejected.hardening_notes,[]);assert.equal(rejected.ticker_error,'invalid_structured_review');
+  }
 });
 test('Genie queue briefing preserves measured age versus allowance and grants no timeout power',()=>{
   const s=snapshot();s.gateway.queue_timeout_ms=72000000000;s.gateway.request_timeout_ms=360000000;s.gateway.workers=[{id:'one',oldest_queue_seconds:125,oldest_queue_remaining_seconds:71999875}];

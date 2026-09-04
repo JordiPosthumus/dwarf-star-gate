@@ -482,6 +482,8 @@ test('fleet overview and server cards are dense, aligned and controlled by one s
   assert.match(html,/id="worker-management"[\s\S]*id="spark-profile"/);
   assert.match(js,/fmtWhole\(m\?\.tps\)/);assert.match(js,/class="remaining-estimate/);assert.match(js,/class="device-evidence"/);
   assert.match(css,/\.metric-block\{display:grid;grid-template-rows:/);assert.match(css,/\.worker-management-drawer:not\(\[open\]\)\{display:none\}/);
+  assert.match(html,/id="warning"[\s\S]*id="genie-hardening"[\s\S]*class="status-deck"/);assert.match(html,/Private developer hypotheses distilled from bounded DSG failure evidence/);
+  assert.match(js,/function renderHardeningNotes/);assert.match(js,/suggestion\.textContent=note\.suggestion/);assert.match(css,/\.genie-hardening\{/);
 });
 test('cache evidence health exposes epoch coverage and abstention without claiming a cache hit',async t=>{
   const {url}=await fixture(t),html=await (await fetch(url)).text(),js=await (await fetch(url+'/ui.js')).text();
