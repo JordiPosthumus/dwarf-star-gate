@@ -1,6 +1,7 @@
 import { capacity, phase } from './activity.js';
 const $ = id => document.getElementById(id);
 const fmt = n => Number.isFinite(n) ? n.toLocaleString(undefined, { maximumFractionDigits: 1 }) : '—';
+const fmtWhole = n => Number.isFinite(n) ? Math.round(n).toLocaleString() : '—';
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const age = (time, now) => !time ? 'no sample yet' : now - time < 5000 ? 'just now' : now - time < 60000 ? `${Math.floor((now-time)/1000)}s ago` : `${Math.floor((now-time)/60000)}m ago`;
 const remaining = (time, now) => !time ? 'unknown' : time <= now ? 'expired' : time-now < 60000 ? `${Math.ceil((time-now)/1000)}s` : time-now < 3600000 ? `${Math.ceil((time-now)/60000)}m` : `${(Math.ceil((time-now)/360000)/10).toFixed(1).replace(/\.0$/,'')}h`;
@@ -30,10 +31,13 @@ function thinkingIndicator(w, stale, now) {
   return `<div class="requested-thinking"><span class="label">REQUESTED THINKING</span><strong title="${esc(info.detail)}">${esc(info.label)}</strong><span class="thinking-scope">${esc(scope)}</span></div>`;
 }
 function chart(series, kind, now, ceiling) {
-  const values = series.filter(s => s.kind === kind && now - s.time < 900000);
+  const values = series.filter(s => s.kind === kind && now - s.time < 900000).sort((a,b)=>a.time-b.time);
   const max = ceiling || Math.max(1, ...values.map(s => s.tps));
-  const points = values.map(s => `${((s.time - (now - 900000)) / 900000 * 300).toFixed(1)},${(48 - s.tps / max * 40).toFixed(1)}`).join(' ');
-  return `<svg class="chart ${kind}" viewBox="0 0 300 55" preserveAspectRatio="none" role="img" aria-label="${kind} last 15 minutes, scale zero to ${Math.ceil(max)} tokens per second"><line x1="0" y1="48" x2="300" y2="48"/><polyline points="${points}"/></svg>`;
+  const point=s=>`${((s.time-(now-900000))/900000*300).toFixed(1)},${(52-s.tps/max*44).toFixed(1)}`;
+  const groups=[];for(const sample of values){const current=groups.at(-1);if(!current||sample.time-current.at(-1).time>90000)groups.push([sample]);else current.push(sample);}
+  const traces=groups.map(group=>group.length===1?`<circle class="chart-point" cx="${point(group[0]).split(',')[0]}" cy="${point(group[0]).split(',')[1]}" r="2.5"/>`:`<polyline points="${group.map(point).join(' ')}"/>`).join('');
+  const last=values.at(-1),lastDot=last?`<circle class="chart-last" cx="${point(last).split(',')[0]}" cy="${point(last).split(',')[1]}" r="3.2"/>`:'';
+  return `<svg class="chart ${kind}" viewBox="0 0 300 60" preserveAspectRatio="none" role="img" aria-label="${kind} last 15 minutes, shared scale zero to ${Math.ceil(max)} tokens per second"><line class="chart-grid" x1="0" y1="8" x2="300" y2="8"/><line class="chart-grid" x1="0" y1="30" x2="300" y2="30"/><line class="chart-baseline" x1="0" y1="52" x2="300" y2="52"/>${traces}${lastDot}</svg>`;
 }
 function telemetryStatus(d) {
   if (d.telemetry_configured === false) return 'Engine timings not configured';
@@ -223,7 +227,8 @@ function renderDevices(devices,workers,now,stale,scales,controls) {
     const fresh=template.content.firstElementChild;let current=existing.get(d.id);
     if(!current)current=fresh;
     else{
-      for(const selector of ['.device-name','.server-verdict','.badge','.device-readings']){const before=current.querySelector(selector),after=fresh.querySelector(selector);if(before.innerHTML!==after.innerHTML)before.innerHTML=after.innerHTML;if(before.className!==after.className)before.className=after.className;for(const name of ['data-level','title','hidden']){const value=after.getAttribute(name);if(value===null)before.removeAttribute(name);else before.setAttribute(name,value);}}
+      const evidenceOpen=current.querySelector('.device-evidence')?.open;
+      for(const selector of ['.device-identity','.server-verdict','.badge','.device-readings']){const before=current.querySelector(selector),after=fresh.querySelector(selector);if(before.innerHTML!==after.innerHTML)before.innerHTML=after.innerHTML;if(selector==='.device-readings'&&evidenceOpen)before.querySelector('.device-evidence')?.setAttribute('open','');if(before.className!==after.className)before.className=after.className;for(const name of ['data-level','title','hidden']){const value=after.getAttribute(name);if(value===null)before.removeAttribute(name);else before.setAttribute(name,value);}}
       updateRoutingNode(current.querySelector('.worker-routing'),fresh.querySelector('.worker-routing'));
     }
     if(container.children[i]!==current)container.insertBefore(current,container.children[i]||null);
@@ -257,14 +262,15 @@ function device(d, w, now, stale, index = 1, scales={}, controls=false) {
   const metric = (kind, title) => {
     const m = d[kind];
     const staleMetric=!Number.isFinite(m?.time)||now-m.time>60000;
-    return `<div class="metric-block ${staleMetric?'metric-stale':''}"><span class="label">${title} · ${kind==='decode'?'ANSWERING':'READING PROMPT'}</span><div class="rate ${kind}">${fmt(m?.tps)}<em>t/s</em></div><div class="metric-note">avg ${fmt(m?.average)} · ${staleMetric?'last measured ':''}${age(m?.time, now)}</div>${chart(d.series, kind, now,scales[kind])}<div class="chart-caption">15m · 0–${fmt(scales[kind])} t/s · shared ${kind} scale</div></div>`;
+    return `<div class="metric-block ${staleMetric?'metric-stale':''}"><span class="label">${title} · ${kind==='decode'?'ANSWERING':'READING PROMPT'}</span><div class="rate ${kind}">${fmtWhole(m?.tps)}<em>t/s</em></div><div class="metric-note">avg ${fmtWhole(m?.average)} · ${staleMetric?'last measured ':''}${age(m?.time, now)}</div>${chart(d.series, kind, now,scales[kind])}<div class="chart-caption">15m · shared 0–${fmtWhole(scales[kind])} t/s</div></div>`;
   };
   const prompt = d.prompt ? `Last prompt: ${fmt(d.prompt.prompt)} tokens · ${fmt(d.prompt.cached)} reused · ${esc(d.prompt.cache)}` : 'No prompt start observed yet';
   const f=w?.predictions?.remaining??w?.predictions?.updated??w?.predictions?.admission;
-  const forecast=f?`<p class="muted">${f.experimental?'Experimental':'Validated'} ${f.stage==='remaining'?'remaining':'total server-time'} estimate: ${fmt(f.seconds)}s · ${age(f.at,now)}${stale||now-f.at>60000?' · stale':''}</p>`:'';
+  const forecast=f?`<span class="remaining-estimate${stale||now-f.at>60000?' stale':''}" title="${esc(`${f.experimental?'Experimental':'Validated'} ${f.stage==='remaining'?'remaining':'total server-time'} estimate · ${fmt(f.seconds)} seconds · ${age(f.at,now)}`)}">ETA ${fmtWhole(f.seconds)}s</span>`:'';
   const backlog=w?.queued?`${fmt(w.queued)} waiting${Number.isFinite(w.oldest_queue_seconds)?` · oldest ${fmt(w.oldest_queue_seconds)}s`:''}`:'No requests waiting';
   const phaseRedundant=['unavailable','paused'].includes(state);
-  return `<article class="device" data-worker-id="${esc(d.id)}"><div class="device-top"><div class="device-name"><span class="device-number">${String(index).padStart(2,'0')}</span>${esc(d.id.replace(/^spark/, 'Spark '))}</div><div class="device-status"><span class="server-verdict" data-level="${verdict.level}" title="${esc(verdict.detail)}">${esc(verdict.label)}</span><span class="badge ${bad ? 'bad' : w?.load ? 'busy' : ''}" title="Current generation phase" ${phaseRedundant?'hidden':''}>${esc(!stale&&w?.quarantine?'quarantined':state==='decode'?'answering':state)}</span>${routingMarkup(w,{stale,controls,recovering:recoveryState?.workers?.some(r=>r.worker_id===w?.id&&r.state==='recovering')})}</div></div><div class="device-readings">${timeline(d,now)}${thinkingIndicator(w,stale,now)}${forecast}<div class="metrics">${metric('decode','DECODE')}${metric('prefill','PREFILL')}</div><p class="prompt-note">${prompt}</p><div class="cache"><div><strong>${fmt(d.cache.reused)}</strong><span>Prefix reused</span></div><div><strong>${fmt(d.cache.cold)}</strong><span>Cold starts</span></div><div><strong>${fmt(d.cache.resident_misses)}</strong><span>Resident misses</span></div><div><strong>${fmt(d.cache.disk_restores)}</strong><span>Disk restores</span></div></div><p class="cache-note">Observed since ${d.cache_observed_since ? clock(d.cache_observed_since) : d.observed_since ? clock(d.observed_since) : 'connecting'} · RAM misses ≠ cold starts</p><div class="device-foot"><span>${backlog} · ${fmt(w?.assigned_sessions)} assigned sessions</span><span>${telemetryStatus(d)} · ${w?.load ? `${fmt(w.active_seconds)}s active` : 'last sample '+age(d.last_event,now)}</span></div></div></article>`;
+  const evidenceSummary=`${fmt(d.cache.reused)} prefix reuse · ${fmt(w?.assigned_sessions)} sessions${w?.queued?` · ${fmt(w.queued)} waiting`:''}`;
+  return `<article class="device" data-worker-id="${esc(d.id)}"><div class="device-top"><div class="device-identity"><div class="device-name"><span class="device-number">${String(index).padStart(2,'0')}</span>${esc(d.id.replace(/^spark/, 'Spark '))}</div>${forecast}</div><div class="device-status"><span class="server-verdict" data-level="${verdict.level}" title="${esc(verdict.detail)}">${esc(verdict.label)}</span><span class="badge ${bad ? 'bad' : w?.load ? 'busy' : ''}" title="Current generation phase" ${phaseRedundant?'hidden':''}>${esc(!stale&&w?.quarantine?'quarantined':state==='decode'?'answering':state)}</span>${routingMarkup(w,{stale,controls,recovering:recoveryState?.workers?.some(r=>r.worker_id===w?.id&&r.state==='recovering')})}</div></div><div class="device-readings">${timeline(d,now)}${thinkingIndicator(w,stale,now)}<div class="metrics">${metric('decode','DECODE')}${metric('prefill','PREFILL')}</div><details class="device-evidence"><summary><span>Cache + session evidence</span><span>${evidenceSummary}</span></summary><p class="prompt-note">${prompt}</p><div class="cache"><div><strong>${fmt(d.cache.reused)}</strong><span>Prefix reused</span></div><div><strong>${fmt(d.cache.cold)}</strong><span>Cold starts</span></div><div><strong>${fmt(d.cache.resident_misses)}</strong><span>Resident misses</span></div><div><strong>${fmt(d.cache.disk_restores)}</strong><span>Disk restores</span></div></div><p class="cache-note">Observed since ${d.cache_observed_since ? clock(d.cache_observed_since) : d.observed_since ? clock(d.observed_since) : 'connecting'} · RAM misses ≠ cold starts</p><div class="device-foot"><span>${backlog} · ${fmt(w?.assigned_sessions)} assigned sessions</span><span>${telemetryStatus(d)} · ${w?.load ? `${fmt(w.active_seconds)}s active` : 'last sample '+age(d.last_event,now)}</span></div></details></div></article>`;
 }
 const headlineSeverity=value=>['good','info','warning','critical'].includes(value)?value:'info';
 function healthHeadlines(snapshot, ticker) {
@@ -284,7 +290,7 @@ function healthHeadlines(snapshot, ticker) {
     unavailable:'Genie status is unavailable. Waiting for a fresh assessment.'};
   return {level:'unknown',label:'Genie status',items:[{severity:'info',text:message[ticker?.state] || 'Connecting to Gate Genie…'}]};
 }
-let wirePaused=false,wireSnapshot=null,wireSignature=null,wireState=null,requestFilter='all';
+let wireSnapshot=null,wireSignature=null,wireState=null,requestFilter='all';
 function renderRequests(events) {
   const recent=events.filter(e=>e.event==='request_finished').reverse();
   const rows=recent.filter(e=>requestFilter==='problems'?!['complete','vision_guidance'].includes(e.outcome):requestFilter==='slow'?e.elapsed_ms>=300000||e.queue_ms>=60000:true).slice(0,12);
@@ -293,9 +299,8 @@ function renderRequests(events) {
 function renderHealthWire(snapshot) {
   wireSnapshot=snapshot;
   const wire=$('health-wire');
-  if(wirePaused || wire.matches(':hover, :focus-within'))return;
+  if(wire.matches(':hover, :focus-within'))return;
   const news=healthHeadlines(snapshot,wireState),signature=JSON.stringify(news);
-  $('health-wire-asof').textContent=news.label || 'Status unavailable';
   if(signature===wireSignature)return;
   wireSignature=signature;wire.dataset.level=news.level;
   for(const id of ['health-wire-text','health-wire-copy']) {
@@ -305,9 +310,9 @@ function renderHealthWire(snapshot) {
       const text=document.createElement('span');text.textContent=entry.text;item.append(label,text);return item;
     }));
   }
-  // Measure one complete group, including the deliberate gaps, at 42px/s.
+  // Measure one complete group, including the deliberate gaps, at 52px/s.
   // Polling preserves the animated track rather than restarting its animation.
-  $('health-wire-track').style.animationDuration=`${Math.max(15,$('health-wire-text').getBoundingClientRect().width/42)}s`;
+  $('health-wire-track').style.animationDuration=`${Math.max(12,$('health-wire-text').getBoundingClientRect().width/52)}s`;
 }
 function render(s) {
   const g = s.gateway, now = s.time, stale = !!s.gateway_error;
@@ -346,8 +351,12 @@ function render(s) {
   $('dataset-status').textContent=stale?'Collector status stale':!ds?.enabled?'Collector not enabled':ds.error||'Collecting routing evidence';
   $('dataset-detail').textContent=ds?`${fmt(ds.written)} events saved this gateway run · ${fmt(ds.bytes/1048576)} MiB stored · ${fmt(ds.pending)} pending · ${fmt(ds.dropped)} dropped · ${fmt(ds.finished)} finishes (${fmt(ds.missing_usage)} missing usage, ${fmt(ds.truncated)} output-limited, ${fmt(ds.failed_or_cancelled)} failed/cancelled) · last write ${age(ds.last_write,now)}`:'Existing engine metrics are separate from the new request dataset.';
   $('worker-management').hidden = !s.worker_management;
-  $('control-mode').textContent = s.worker_management ? '[ server controls ]' : '[ read only ]';
-  $('control-note').textContent = 'Model settings unchanged.';
+  $('server-settings').hidden=!s.worker_management;
+  $('server-settings').closest('.read-only')?.classList.toggle('controls-available',!!s.worker_management);
+  $('control-mode').hidden=!!s.worker_management;
+  $('control-mode').textContent='[ read only ]';
+  $('control-note').hidden=!!s.worker_management;
+  $('control-note').textContent = 'No model controls.';
   if(s.worker_management) { wireWorkerControls(); void loadWorkers(); }
   renderRequests(s.events);
   $('updated').textContent = `Gateway checked ${s.gateway_at ? clock(s.gateway_at) : '—'} · dashboard started ${clock(s.started)}`;
@@ -535,7 +544,10 @@ function renderGenieReports(reports = []) {
 }
 poll();
 $('request-filter').addEventListener('change',()=>{requestFilter=$('request-filter').value;renderRequests(wireSnapshot?.events??[]);});
-$('devices').addEventListener('click',event=>{if(!event.target.closest('[data-add-first]'))return;const panel=$('worker-management');panel.open=true;panel.scrollIntoView({behavior:'smooth',block:'start'});panel.querySelector('input[name="id"]')?.focus({preventScroll:true});});
+function openServerSettings({focus=false}={}){const panel=$('worker-management');panel.open=true;$('server-settings').setAttribute('aria-expanded','true');panel.scrollIntoView({behavior:'smooth',block:'start'});if(focus)panel.querySelector('input[name="id"]')?.focus({preventScroll:true});}
+$('server-settings').addEventListener('click',()=>{const panel=$('worker-management');if(panel.open){panel.open=false;$('server-settings').setAttribute('aria-expanded','false');}else openServerSettings();});
+$('worker-management').addEventListener('toggle',()=>{$('server-settings').setAttribute('aria-expanded',String($('worker-management').open));});
+$('devices').addEventListener('click',event=>{if(!event.target.closest('[data-add-first]'))return;openServerSettings({focus:true});});
 $('analytics-metric').addEventListener('change',renderAnalytics);
 $('analytics-worker').addEventListener('change',renderAnalytics);
 $('analytics-version').addEventListener('change',renderAnalytics);
@@ -549,12 +561,6 @@ $('cache-cost-form').addEventListener('submit',async event=>{
   finally{button.disabled=false;cacheCostBusy=false;}
 });
 void loadAnalytics();setInterval(()=>{if(!document.hidden)void loadAnalytics();},10000);
-$('health-wire-pause').addEventListener('click',()=>{
-  wirePaused=!wirePaused;$('health-wire').dataset.paused=String(wirePaused);
-  $('health-wire-pause').textContent=wirePaused?'Resume ticker':'Pause ticker';
-  $('health-wire-pause').setAttribute('aria-pressed',String(wirePaused));
-  if(!wirePaused && wireSnapshot)renderHealthWire(wireSnapshot);
-});
 $('health-wire').addEventListener('mouseleave',()=>{if(wireSnapshot)renderHealthWire(wireSnapshot);});
 $('health-wire').addEventListener('focusout',()=>queueMicrotask(()=>{if(wireSnapshot)renderHealthWire(wireSnapshot);}));
 let genieToken=null,genieState=null,memoryEditing=null,memoryBusy=false;

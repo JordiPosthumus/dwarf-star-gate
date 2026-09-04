@@ -406,14 +406,14 @@ test('health wire shows Genie-authored findings and recommendations, withholding
   assert.match(news(s,{state:'stale'}).items[0].text,/10 minutes/);
   assert.match(news(s,{state:'changed'}).items[0].text,/changed since/);
 });
-test('health wire markup offers pause and keyboard access, with a nonduplicated reduced-motion view',()=>{
+test('health wire is a compact keyboard-pausable ticker with no redundant controls or explainer',()=>{
   const html=fs.readFileSync(new URL('./ui/index.html',import.meta.url),'utf8'),css=fs.readFileSync(new URL('./ui/brand.css',import.meta.url),'utf8');
-  assert.match(html,/id="health-wire-pause"[^>]*aria-pressed="false"/);assert.match(html,/class="health-wire-window" tabindex="0"/);
-  assert.match(html,/id="health-wire-copy"[^>]*aria-hidden="true"/);assert.match(html,/Genie-written observations/);
+  assert.doesNotMatch(html,/health-wire-pause|Gate Genie <span>health wire|Genie-written observations and recommendations/);assert.match(html,/class="health-wire-window" tabindex="0"/);
+  assert.match(html,/id="health-wire-copy"[^>]*aria-hidden="true"/);assert.match(html,/aria-label="Gate Genie fleet health headlines"/);
   assert.match(css,/prefers-reduced-motion:reduce/);assert.match(css,/animation-play-state:paused/);assert.match(css,/aria-hidden="true"\]\{display:none\}/);
-  assert.match(css,/gap:8rem;padding-right:8rem/);
+  assert.match(css,/gap:6rem;padding-right:6rem/);
   const js=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8');
-  assert.match(js,/getBoundingClientRect\(\)\.width\/42/);assert.match(js,/text\.textContent=entry\.text/);
+  assert.match(js,/getBoundingClientRect\(\)\.width\/52/);assert.match(js,/text\.textContent=entry\.text/);
 });
 test('each headline keeps its own severity, inert text and label in both copies without disturbing reading',()=>{
   class Element {
@@ -438,9 +438,8 @@ test('each headline keeps its own severity, inert text and label in both copies 
   }
   const first=get('health-wire-text').children[0];render();assert.equal(get('health-wire-text').children[0],first);
   get('health-wire').hovered=true;ctx.tick.entries=[{severity:'invented css-class',text:'New report'}];render();assert.equal(get('health-wire-text').children[0],first);
-  get('health-wire').hovered=false;vm.runInContext('wirePaused=true',ctx);render();assert.equal(get('health-wire-text').children[0],first);
-  vm.runInContext('wirePaused=false',ctx);render();assert.equal(get('health-wire-text').children[0].dataset.severity,'info');
-  assert.equal(get('health-wire-track').style.animationDuration,'40s');
+  get('health-wire').hovered=false;render();assert.equal(get('health-wire-text').children[0].dataset.severity,'info');
+  assert.ok(Math.abs(parseFloat(get('health-wire-track').style.animationDuration)-1680/52)<.001);
 });
 test('headline shades retain readable contrast and are not overridden by aggregate wire severity',()=>{
   const css=fs.readFileSync(new URL('./ui/brand.css',import.meta.url),'utf8');
@@ -471,6 +470,16 @@ test('dashboard names DS4 servers and explains gateway-only concurrency and avai
   assert.match(html,/Warm cache slots retain sessions/);
   assert.match(js,/one active gateway request per DS4 server/);
   assert.doesNotMatch(html+js,/AVAILABLE SPARKS|AVAILABLE WORKERS|active generation per Spark|active gateway request per worker/);
+});
+test('fleet overview and server cards are dense, aligned and controlled by one settings gear',()=>{
+  const html=fs.readFileSync(new URL('./ui/index.html',import.meta.url),'utf8'),js=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8'),css=fs.readFileSync(new URL('./ui/brand.css',import.meta.url),'utf8');
+  assert.match(html,/<section class="status-deck"/);assert.match(html,/id="health-wire"[\s\S]*class="capacity-panel"[\s\S]*class="overview"/);
+  assert.doesNotMatch(html,/Gateway request slots, not GPU utilization\. Warm cache slots are separate\./);
+  assert.match(html,/id="server-settings"[^>]*aria-controls="worker-management"[^>]*aria-expanded="false"/);
+  assert.doesNotMatch(html,/\[ server controls \]/);assert.match(js,/openServerSettings/);
+  assert.match(html,/id="worker-management"[\s\S]*id="spark-profile"/);
+  assert.match(js,/fmtWhole\(m\?\.tps\)/);assert.match(js,/class="remaining-estimate/);assert.match(js,/class="device-evidence"/);
+  assert.match(css,/\.metric-block\{display:grid;grid-template-rows:/);assert.match(css,/\.worker-management-drawer:not\(\[open\]\)\{display:none\}/);
 });
 test('cache evidence health exposes epoch coverage and abstention without claiming a cache hit',async t=>{
   const {url}=await fixture(t),html=await (await fetch(url)).text(),js=await (await fetch(url+'/ui.js')).text();

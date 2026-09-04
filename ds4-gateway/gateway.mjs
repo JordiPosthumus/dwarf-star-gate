@@ -664,25 +664,34 @@ export function createGateway(config,{visionTranscode}={}) {
           else sendBuffered(up,rejected);
           return;
         }
-        const kind=job.visionNormalized?.kind??(rejection==='gif_candidate'?'gif':'jpeg');
+        if(rejection==='gif_candidate'){
+          const original=await bodyReady;
+          if(job.cancelled){finish('client_cancelled','CLIENT_CLOSED');return;}
+          try{
+            const inspected=visionProtection.inspectGif(original,req.url);
+            sendGuidance('gif_not_supported',inspected.stream,'gif');
+          }catch{
+            // A generic JSON response is not enough evidence. Preserve it
+            // exactly unless the submitted Chat Completions body proves that a
+            // valid typed GIF caused the pre-generation rejection.
+            sendBuffered(up,rejected);
+          }
+          return;
+        }
+        const kind=job.visionNormalized?.kind??'jpeg';
         if(retry){sendGuidance('normalized_image_rejected',job.visionNormalized?.stream??job.requestStream===true,kind);return;}
         const original=await bodyReady;
         if(job.cancelled){finish('client_cancelled','CLIENT_CLOSED');return;}
         try{
-          const normalized=await visionProtection.normalize(original,req.url,rejection==='gif_candidate'?{requiredKind:'gif'}:{});
+          const normalized=await visionProtection.normalize(original,req.url);
           if(job.cancelled){finish('client_cancelled','CLIENT_CLOSED');return;}
-          job.visionNormalized={images:normalized.converted,formats:normalized.formats,totalImages:normalized.totalImages,kind:rejection==='gif_candidate'?'gif':'jpeg',stream:normalized.stream};firstBodyByte=null;
+          job.visionNormalized={images:normalized.converted,formats:normalized.formats,totalImages:normalized.totalImages,kind:'jpeg',stream:normalized.stream};firstBodyByte=null;
           issue(normalized.body,true);
         }catch(error){
-          // A generic DS4 JSON error is never sufficient by itself. If DSG
-          // cannot prove that a valid typed GIF caused it, preserve the exact
-          // upstream status, headers and body instead of masking a client bug.
-          if(rejection==='gif_candidate'&&['request_capture_unavailable','request_json_invalid','typed_image_not_found','typed_gif_not_found','gif_payload_invalid','jpeg_payload_invalid'].includes(error.message)){
-            sendBuffered(up,rejected);return;
-          }
           let stream=job.requestStream===true;
           if(Buffer.isBuffer(original))try{stream=JSON.parse(original.toString('utf8'))?.stream===true;}catch{}
-          sendGuidance(/^[a-z_]{1,64}$/.test(error.message)?error.message:'normalization_failed',stream,kind);
+          const guidanceKind=error.message==='gif_not_supported'?'gif':kind;
+          sendGuidance(/^[a-z_]{1,64}$/.test(error.message)?error.message:'normalization_failed',stream,guidanceKind);
         }
       })());
     };

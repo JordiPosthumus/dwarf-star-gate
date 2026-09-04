@@ -117,12 +117,12 @@ can distinguish a network problem from an engine fault without exposing private
 hosts or granting a restart. Unsupported installs remain manual. No Pi or Hermes
 dependency.
 
-The dashboard's **Genie health wire** shows model-written observations and concise
-recommendations from the same fleet review as the detailed assessment. Evidence
-time is explicit; stale or health-invalidated advice is withheld. The headline is
-commentary; an independently revalidated executor receipt is the only proof that
-an action happened. Hover/focus or pause to read; reduced motion shows static text.
-Expanded assessments stay open across refreshes.
+The dashboard's compact **Gate Genie ticker** shows model-written observations and
+concise recommendations from the same fleet review as the detailed assessment.
+Evidence time is explicit; stale or health-invalidated advice is withheld. The
+headline is commentary; an independently revalidated executor receipt is the only
+proof that an action happened. Hover or keyboard focus pauses it for reading;
+reduced motion shows static text. Expanded assessments stay open across refreshes.
 
 Optional [queued-work shadow collection](docs/routing-shadow.md) records idle and
 session-recency clocks and compares a historical baseline without moving work.
@@ -225,9 +225,10 @@ a physical machine. Each server may have its own native context and cache settin
 - Transparent request/stream passthrough: no reasoning, output-limit, sampling or
   tool-call rewriting. The optional, narrowly scoped [image compatibility
   protection](docs/vision-protection.md) handles DS4's proven pre-generation JPEG
-  and GIF rejections. It converts JPEGs—or the first frame of a GIF—to PNG and
-  retries once on the same server, or completes the turn with practical resend
-  guidance. DS4's exact 16-image rejection also becomes a completed guidance turn
+  and GIF rejections. It converts JPEGs to PNG and retries once on the same
+  server. A proven GIF rejection becomes a completed turn asking for selected
+  frames from the GIF as PNGs; DSG never silently drops or converts a GIF. DS4's exact
+  16-image rejection also becomes a completed guidance turn
   only when DSG proves the valid request really contains more than 16 typed images.
   Generic JSON errors are never intercepted unless the captured request
   independently proves a valid typed GIF caused that exact DS4 response.

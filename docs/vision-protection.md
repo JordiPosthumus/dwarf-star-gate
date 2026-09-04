@@ -14,17 +14,18 @@ engine failure succeeded.
    request as valid JSON, find a typed OpenAI Chat Completions `image_url` GIF
    data URI, strictly decode its base64 and verify GIF87a/GIF89a file magic.
    Otherwise the original status, headers and bytes pass through unchanged.
-3. Eligible images are decoded under fixed byte limits. JPEGs and the **first
-   frame** of GIFs are converted to PNG and retried once on the **same** DS4
-   server. Reasoning, output limits, tools, message order and every unrelated
-   field are retained. DSG does not claim to understand GIF animation.
-4. If conversion cannot be completed safely, or DS4 rejects the converted image,
+3. Eligible JPEGs are decoded under fixed byte limits, converted to PNG and
+   retried once on the **same** DS4 server. Reasoning, output limits, tools,
+   message order and every unrelated field are retained.
+4. A proven GIF rejection is not converted or retried. DSG returns a fixed,
+   successful assistant turn asking the user to send selected frames from the
+   GIF as PNGs. The GIF is never silently omitted from a model request.
+5. If JPEG conversion cannot be completed safely, or DS4 rejects the converted image,
    DSG returns HTTP 200 with a valid assistant turn explaining that the user should
-   resend PNG/WebP, a standard RGB JPEG, or representative GIF frames/contact
-   sheet. Streaming callers receive a complete
+   resend PNG/WebP or a standard RGB JPEG. Streaming callers receive a complete
    SSE turn and `[DONE]`; non-streaming callers receive a normal Chat Completions
    object with `finish_reason: "stop"`. Pi therefore remains alive.
-5. DS4's exact `too many images; at most 16 are allowed` response is handled only
+6. DS4's exact `too many images; at most 16 are allowed` response is handled only
    when the captured request independently parses as valid Chat Completions JSON
    with more than 16 typed `image_url` blocks. DSG does not discard images. It
    completes the turn with advice to choose representative frames, build a contact
@@ -40,8 +41,8 @@ compatibility turn—not model completion and not model failure.
 
 - First release: `POST /v1/chat/completions` only. DSG does not synthesize a
   response in a protocol it cannot represent faithfully.
-- One conversion and one same-server retry. There is no loop and no cross-server
-  replay.
+- JPEG: one conversion and one same-server retry. GIF: no conversion and no
+  retry. There is no loop and no cross-server replay.
 - The request is captured only while the protection is enabled, is not compressed,
   and stays within configured bounds. It is held in memory for that request and is
   never written to DSG logs, diagnostics, state or training data.
@@ -70,9 +71,10 @@ compatibility turn—not model completion and not model failure.
 
 `auto` currently discovers stock macOS `sips`. Set `transcoder` explicitly to
 `sips`, `magick`, `convert` or `none` when appropriate. With no converter, the
-protection remains useful in **guidance-only** mode: it does not attempt repair,
-but it still turns a proven pre-generation JPEG/GIF rejection into a normal resend
-instruction so the client chat stays alive. The local **Manage DS4 servers** panel
+protection remains useful in **guidance-only** mode: it does not attempt JPEG
+repair, but still turns a proven pre-generation JPEG rejection into a normal
+resend instruction so the client chat stays alive. GIF guidance never requires a
+converter. The local **Manage DS4 servers** panel
 shows converter availability, repaired/guidance/failure counts and a durable
 Enable/Disable control. The toggle is stored in DSG's private state file and does
 not restart or reconfigure DS4.
@@ -83,16 +85,17 @@ Optional bounds are `max_request_bytes`, `max_image_bytes`,
 them can turn more rejected images into the safe resend-guidance path.
 
 The persisted toggle and operator-control ID remain `vision_jpeg` for backward
-compatibility with existing DSG installations; the control now covers the
-documented JPEG and GIF-first-frame cases.
+compatibility with existing DSG installations; the control covers documented
+JPEG repair and deterministic GIF guidance.
 
 ## Validation
 
 The automated suite proves exact-error matching, byte-for-byte passthrough for
-other errors, typed-field-only rewriting, preservation of thinking/tools/output
-settings, same-server one-shot retry, streaming and non-streaming guidance,
-bounded metadata, invalid-transcoder handling, toggle persistence and no retry
-when disabled. A deployment should additionally send one representative rejected
-JPEG and GIF and confirm either a successful PNG rescue or the complete guidance
-turn. For GIF, also confirm that unrelated `invalid JSON request` responses remain
+other errors, typed-field-only JPEG rewriting, preservation of
+thinking/tools/output settings, same-server one-shot JPEG retry, streaming and
+non-streaming guidance, bounded metadata, invalid-transcoder handling, toggle
+persistence and no retry when disabled. A deployment should additionally send
+one representative rejected JPEG and GIF and confirm a successful PNG rescue (or
+JPEG guidance) and the fixed GIF guidance turn. For GIF, also confirm there was
+no normalized retry and that unrelated `invalid JSON request` responses remain
 untouched.

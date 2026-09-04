@@ -1009,15 +1009,14 @@ test('exact DS4 JPEG rejection is normalized once on the same server before Pi s
   assert.equal(retry.note,uri);assert.equal(retry.reasoning_effort,'xhigh');assert.equal(retry.max_tokens,153600);assert.deepEqual(retry.tools,original.tools);
   assert.equal(r.gateway.stats().protections.vision_jpeg.rescued,1);assert.equal(r.gateway.stats().workers[0].completed,1);assert.equal(r.gateway.stats().workers[0].failed,0);
 });
-test('DS4 generic GIF rejection is proven from the captured request and rescued once on the same server',async t=>{
-  const gif=Buffer.from('R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==','base64'),png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB','base64'),seen=[];
-  const r=await rig(t,1,{vision_compatibility:{enabled:true},visionTranscode:async(value,kind)=>{seen.push({value,kind});return png;}});r.backends[0].rejectGif=true;
+test('DS4 generic GIF rejection is proven, never converted, and becomes fixed guidance',async t=>{
+  const gif=Buffer.from('R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==','base64'),seen=[];
+  const r=await rig(t,1,{vision_compatibility:{enabled:true},visionTranscode:async(value,kind)=>{seen.push({value,kind});throw new Error('must_not_convert_gif');}});r.backends[0].rejectGif=true;
   const uri=`data:image/gif;base64,${gif.toString('base64')}`,body=JSON.stringify({model:'deepseek-v4-flash',stream:true,thinking:{type:'enabled'},reasoning_effort:'xhigh',max_tokens:153600,note:uri,tools:[{type:'function',function:{name:'keep_me'}}],messages:[{role:'user',content:[{type:'image_url',image_url:{url:uri}}]}]});
   const result=await r.request(body,'gif-rescue');
-  assert.equal(result.status,200);assert.match(result.body,/data: \[DONE\]/);assert.equal(r.backends[0].records.length,2);assert.equal(r.backends[0].gifRejections,1);
-  assert.deepEqual(seen,[{value:gif,kind:'gif'}]);assert.match(r.backends[0].records[1].payload.messages[0].content[0].image_url.url,/^data:image\/png;base64,/);
-  assert.equal(r.backends[0].records[1].payload.note,uri);assert.equal(r.backends[0].records[1].payload.reasoning_effort,'xhigh');assert.equal(r.backends[0].records[1].payload.max_tokens,153600);assert.deepEqual(r.backends[0].records[1].payload.tools,r.backends[0].records[0].payload.tools);
-  assert.equal(r.gateway.stats().protections.vision_jpeg.rescued,1);assert.deepEqual(r.gateway.stats().protections.vision_jpeg.last.formats,['gif']);
+  assert.equal(result.status,200);assert.equal(result.headers['x-dsg-protection'],'vision-gif-guidance');assert.match(result.body,/send selected frames from the GIF as PNGs/);assert.match(result.body,/data: \[DONE\]/);
+  assert.equal(r.backends[0].records.length,1);assert.equal(r.backends[0].gifRejections,1);assert.deepEqual(seen,[]);
+  assert.equal(r.gateway.stats().protections.vision_jpeg.rescued,0);assert.equal(r.gateway.stats().protections.vision_jpeg.guided,1);assert.deepEqual(r.gateway.stats().protections.vision_jpeg.last.formats,['gif']);
 });
 test('generic invalid JSON response without a proven real GIF passes through byte-for-byte',async t=>{
   const r=await rig(t,1,{vision_compatibility:{enabled:true},visionTranscode:async()=>{throw new Error('must_not_run');}});
@@ -1028,11 +1027,11 @@ test('generic invalid JSON response without a proven real GIF passes through byt
   assert.equal(fake.status,400);assert.match(fake.body,/invalid JSON request/);
   assert.equal(r.gateway.stats().protections.vision_jpeg.guided,0);
 });
-test('unrepairable GIF rejection becomes a complete guidance turn so Pi stays alive',async t=>{
+test('GIF guidance does not depend on a converter and keeps Pi alive',async t=>{
   const gif=Buffer.from('R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==','base64');
   const r=await rig(t,1,{vision_compatibility:{enabled:true},visionTranscode:async()=>{throw new Error('transcoder_failed');}});r.backends[0].rejectGif=true;
   const result=await r.request(JSON.stringify({stream:true,messages:[{role:'user',content:[{type:'image_url',image_url:{url:`data:image/gif;base64,${gif.toString('base64')}`}}]}]}),'gif-guidance');
-  assert.equal(result.status,200);assert.equal(result.headers['x-dsg-protection'],'vision-gif-guidance');assert.match(result.body,/contact sheet or several frames/);assert.match(result.body,/data: \[DONE\]/);
+  assert.equal(result.status,200);assert.equal(result.headers['x-dsg-protection'],'vision-gif-guidance');assert.match(result.body,/send selected frames from the GIF as PNGs/);assert.match(result.body,/data: \[DONE\]/);
   assert.equal(r.backends[0].records.length,1);assert.equal(r.gateway.stats().protections.vision_jpeg.guided,1);assert.deepEqual(r.gateway.stats().protections.vision_jpeg.last.formats,['gif']);
 });
 test('proven DS4 image-count rejection becomes a complete gateway guidance turn instead of crashing Pi',async t=>{

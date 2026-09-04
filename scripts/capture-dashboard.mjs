@@ -49,7 +49,7 @@ try {
   assert.match(await page.locator('#fleet-summary').innerText(),/mac-ultra is free; sparkA's next queued session keeps its warm home for up to 4m more; then the DSG core may hand it over automatically/);
   assert.ok(await page.locator('.gate-art').evaluate(img=>img.complete&&img.naturalWidth>0));
   const output=path.join(projectRoot,'docs/images');await fs.mkdir(output,{recursive:true});
-  await page.locator('#worker-management summary').click();
+  await page.locator('#server-settings').click();
   await page.locator('#queue-timeout-form').waitFor();
   assert.equal(await page.locator('#queue-timeout-input').inputValue(),'20000');
   await page.locator('#queue-timeout-input').fill('21000');
@@ -61,13 +61,13 @@ try {
   await page.locator('#queue-timeout-input').fill('20000');page.once('dialog',dialog=>dialog.accept());
   await page.getByRole('button',{name:'Save queue allowance',exact:true}).click();
   await page.waitForFunction(()=>document.getElementById('queue-timeout-current').textContent.includes('20,000'));
-  await page.reload();await page.locator('#worker-management summary').click();await page.locator('#queue-timeout-form').waitFor();
+  await page.reload();await page.locator('#server-settings').click();await page.locator('#queue-timeout-form').waitFor();
   assert.equal(await page.locator('#queue-timeout-input').inputValue(),'20000');
   assert.match(await page.locator('#relocation-controls').innerText(),/Safe queued handovers.*configured first-refusal window.*gateway core may move/s);
   assert.equal(await page.locator('#relocation-offers button').count(),1);
   assert.match(await page.locator('#relocation-offers button').getAttribute('title'),/warm cache/);
   await page.locator('#worker-management').screenshot({path:path.join(output,'worker-management.png'),animations:'disabled'});
-  await page.locator('#worker-management summary').click();
+  await page.locator('#server-settings').click();
   await page.waitForFunction(()=>document.querySelectorAll('.device').length===3&&document.querySelectorAll('#analytics-chart circle').length>0);
   await page.evaluate(()=>window.scrollTo(0,0));
   const devices=await page.locator('#devices').boundingBox();
@@ -86,7 +86,7 @@ try {
   const analytics=await page.locator('#analytics').boundingBox();
   const requests=await page.locator('#requests').boundingBox();
   await page.screenshot({path:path.join(output,'dashboard-cache-and-requests.png'),fullPage:true,clip:{x:0,y:Math.floor(analytics.y-16),width:1440,height:Math.ceil(requests.y+requests.height-analytics.y+40)},animations:'disabled'});
-  for(const [file,minHeight] of [['dashboard-overview.png',1200],['dashboard-genie.png',250],['dashboard-cache-and-requests.png',700]]) {
+  for(const [file,minHeight] of [['dashboard-overview.png',950],['dashboard-genie.png',250],['dashboard-cache-and-requests.png',700]]) {
     const png=await fs.readFile(path.join(output,file));
     assert.ok(png.readUInt32BE(20)>=minHeight,`${file}: screenshot was clipped`);
   }
@@ -102,7 +102,16 @@ try {
   assert.deepEqual((await trainRequest).postDataJSON(),{action:'train',recipe_id:'interactions-v1'});
   assert.equal((await trainResponse).ok(),false,'The demo must refuse real training');
   await page.setViewportSize({width:390,height:844});
-  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),'Mobile page must not overflow horizontally');
+  const mobileLayout=await page.evaluate(()=>({
+    width:window.innerWidth,
+    scrollWidth:document.documentElement.scrollWidth,
+    overflow:[...document.querySelectorAll('body *')].map(element=>{
+      const rect=element.getBoundingClientRect();
+      const parent=element.parentElement;const parentRect=parent?.getBoundingClientRect();
+      return {tag:element.tagName,id:element.id,className:String(element.className||''),left:rect.left,right:rect.right,width:rect.width,parent:parent?`${parent.tagName}#${parent.id}.${parent.className}`:null,parentWidth:parentRect?.width,parentOverflow:parent?getComputedStyle(parent).overflow:null};
+    }).filter(item=>item.right>window.innerWidth+1||item.left<-1).slice(0,50)
+  }));
+  assert.ok(mobileLayout.scrollWidth<=mobileLayout.width,`Mobile page must not overflow horizontally: ${JSON.stringify(mobileLayout)}`);
   await page.locator('.overview').screenshot({path:path.join(output,'overview-mobile.png'),animations:'disabled'});
   // Separate synthetic scenario: exercise persistent notice UX and safe reset.
   // No live configuration, telemetry or model server is read by either demo.
@@ -133,7 +142,7 @@ try {
   holdServer=createDemoServer({agentHold:true});await new Promise(resolve=>holdServer.listen(0,'127.0.0.1',resolve));
   const holdOrigin=`http://127.0.0.1:${holdServer.address().port}`;allowedOrigins.add(holdOrigin);
   await page.setViewportSize({width:1440,height:1100});await page.goto(holdOrigin);
-  await page.locator('#worker-management summary').click();
+  await page.locator('#server-settings').click();
   const held=page.locator('#worker-rows tr').filter({hasText:'mac-ultra'});
   await held.waitFor();assert.match(await held.innerText(),/Held by test-agent: <DS4 compatibility test>/);
   assert.equal(await held.locator('[data-action="resume"]').isDisabled(),true);

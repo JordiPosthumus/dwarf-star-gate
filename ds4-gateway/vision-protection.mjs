@@ -12,7 +12,7 @@ const DEFAULT_MAX_IMAGE=48*1024*1024;
 const DEFAULT_MAX_NORMALIZED=192*1024*1024;
 export const JPEG_REJECTION_INSPECTION_BYTES=64*1024;
 export const JPEG_GUIDANCE='DSG: DS4 could not use this JPEG file. Please resend it as PNG or WebP, or export it again as a standard RGB JPEG. Nothing was generated from the rejected file, and your session remains active. (This is a message from the DSG gateway.)';
-export const GIF_GUIDANCE='DSG: DS4 could not safely use this GIF. Please resend a representative frame as PNG or WebP; if motion matters, send a contact sheet or several frames. Nothing was generated from the rejected file, and your session remains active. (This is a message from the DSG gateway.)';
+export const GIF_GUIDANCE='DSG: GIF files are not supported by this gateway. Please send selected frames from the GIF as PNGs. Nothing was generated from the GIF, and your session remains active. (This is a message from the DSG gateway.)';
 export const IMAGE_LIMIT_GUIDANCE="DSG: This request contains more than DS4's limit of 16 images across the submitted conversation. Send 16 or fewer images—choose representative frames, combine them into a contact sheet, or compact/start a fresh visual turn—and try again. Nothing was generated, and your session remains active. (This is a message from the DSG gateway.)";
 
 function boundedInteger(value,fallback,min,max,name){
@@ -140,7 +140,7 @@ export class VisionProtection{
   // available: the exact pre-generation rejection still becomes a normal,
   // actionable assistant turn instead of killing the client session.
   get enabled(){return (this.store.data.protections?.vision_jpeg??this.config.enabled)===true;}
-  status(){return {schema:1,vision_jpeg:{available:this.available,enabled:this.enabled,transcoder:this.command?.kind??null,formats:['jpeg','gif-first-frame'],max_request_bytes:this.maxRequest,max_image_bytes:this.maxImage,max_normalized_bytes:this.maxNormalized,rescued:this.rescued,guided:this.guided,failed:this.failed,last:this.last}};}
+  status(){return {schema:1,vision_jpeg:{available:this.available,enabled:this.enabled,transcoder:this.command?.kind??null,formats:['jpeg','gif-guidance'],max_request_bytes:this.maxRequest,max_image_bytes:this.maxImage,max_normalized_bytes:this.maxNormalized,rescued:this.rescued,guided:this.guided,failed:this.failed,last:this.last}};}
   set(input){
     if(!input||Array.isArray(input)||Object.keys(input).sort().join(',')!=='enabled,id'||input.id!=='vision_jpeg'||typeof input.enabled!=='boolean')throw new Error('Specify protection id vision_jpeg and enabled true or false');
     const protections={...this.store.data.protections,vision_jpeg:input.enabled};
@@ -156,9 +156,23 @@ export class VisionProtection{
     const images=typedImageCount(payload,route);if(images<=16)throw new Error('image_limit_not_proven');
     return {images,stream:payload.stream===true};
   }
-  async transcode(encoded,kind='jpeg'){
+  inspectGif(body,route){
+    if(!this.enabled)throw new Error('protection_disabled');
+    if(!Buffer.isBuffer(body)||body.length===0||body.length>this.maxRequest)throw new Error('request_capture_unavailable');
+    let payload;try{payload=JSON.parse(body.toString('utf8'));}catch{throw new Error('request_json_invalid');}
+    if(!payload||typeof payload!=='object'||Array.isArray(payload))throw new Error('request_json_invalid');
+    const refs=imageRefs(payload,route).filter(ref=>ref.kind==='gif');
+    if(!refs.length)throw new Error('typed_gif_not_found');
+    for(const ref of refs){
+      const encoded=strictBase64(ref.get());
+      const valid=encoded?.length>=6&&(encoded.subarray(0,6).equals(GIF87_MAGIC)||encoded.subarray(0,6).equals(GIF89_MAGIC));
+      if(!encoded||encoded.length>this.maxImage||!valid)throw new Error('gif_payload_invalid');
+    }
+    return {images:refs.length,stream:payload.stream===true};
+  }
+  async transcode(encoded){
     if(this.transcodeOverride){
-      const result=await this.transcodeOverride(encoded,kind);
+      const result=await this.transcodeOverride(encoded);
       if(!Buffer.isBuffer(result)||result.length<PNG_MAGIC.length||!result.subarray(0,PNG_MAGIC.length).equals(PNG_MAGIC))throw new Error('transcoder_output_invalid');
       return result;
     }
@@ -166,11 +180,10 @@ export class VisionProtection{
     const root=path.join(this.runtime,'vision-compat');
     await fs.promises.mkdir(root,{recursive:true,mode:0o700});await fs.promises.chmod(root,0o700);
     const directory=await fs.promises.mkdtemp(path.join(root,'attempt-'));await fs.promises.chmod(directory,0o700);
-    const input=path.join(directory,kind==='gif'?'input.gif':'input.jpg'),output=path.join(directory,'output.png');
+    const input=path.join(directory,'input.jpg'),output=path.join(directory,'output.png');
     try{
       await fs.promises.writeFile(input,encoded,{mode:0o600,flag:'wx'});
-      const source=kind==='gif'?`${input}[0]`:input;
-      const args=this.command.kind==='sips'?['-s','format','png',input,'--out',output]:[source,'-auto-orient','-strip',`PNG24:${output}`];
+      const args=this.command.kind==='sips'?['-s','format','png',input,'--out',output]:[input,'-auto-orient','-strip',`PNG24:${output}`];
       await run(this.command.executable,args,this.timeoutMs,directory);
       const stat=await fs.promises.stat(output);if(!stat.isFile()||stat.size>this.maxNormalized)throw new Error('transcoder_output_too_large');
       const result=await fs.promises.readFile(output);
@@ -178,24 +191,23 @@ export class VisionProtection{
       return result;
     }finally{await fs.promises.rm(directory,{recursive:true,force:true});}
   }
-  async normalize(body,route,{requiredKind=null}={}){
+  async normalize(body,route){
     if(!this.enabled)throw new Error('protection_disabled');
     if(!Buffer.isBuffer(body)||body.length===0||body.length>this.maxRequest)throw new Error('request_capture_unavailable');
     let payload;try{payload=JSON.parse(body.toString('utf8'));}catch{throw new Error('request_json_invalid');}
     if(!payload||typeof payload!=='object'||Array.isArray(payload))throw new Error('request_json_invalid');
     const refs=imageRefs(payload,route);if(!refs.length)throw new Error('typed_image_not_found');
+    if(refs.some(ref=>ref.kind==='gif'))throw new Error('gif_not_supported');
     const decodedRefs=[];
     for(const ref of refs){
       const encoded=strictBase64(ref.get());
       const jpeg=ref.kind==='jpeg'&&encoded?.[0]===0xff&&encoded?.[1]===0xd8;
-      const gif=ref.kind==='gif'&&encoded?.length>=6&&(encoded.subarray(0,6).equals(GIF87_MAGIC)||encoded.subarray(0,6).equals(GIF89_MAGIC));
-      if(!encoded||encoded.length>this.maxImage||(!jpeg&&!gif))throw new Error(`${ref.kind}_payload_invalid`);
+      if(!encoded||encoded.length>this.maxImage||!jpeg)throw new Error(`${ref.kind}_payload_invalid`);
       decodedRefs.push({ref,encoded});
     }
-    if(requiredKind&&!decodedRefs.some(({ref})=>ref.kind===requiredKind))throw new Error(`typed_${requiredKind}_not_found`);
     let converted=0;
     for(const {ref,encoded} of decodedRefs){
-      const png=await this.transcode(encoded,ref.kind);if(png.length>this.maxNormalized)throw new Error('transcoder_output_too_large');
+      const png=await this.transcode(encoded);if(png.length>this.maxNormalized)throw new Error('transcoder_output_too_large');
       ref.set(png.toString('base64'));converted++;
     }
     const normalized=Buffer.from(JSON.stringify(payload));if(normalized.length>this.maxNormalized)throw new Error('normalized_request_too_large');

@@ -4,13 +4,15 @@ Refreshed 2026-09-04 from the checked-in synthetic demo and current UI assets.
 These are actual browser captures of fictional data, not edited production
 screenshots, benchmark results, a live incident report or a promoted model.
 
-- `dashboard-overview.png`: branding, Genie wire, slot capacity, mixed-server
-  activity, speeds, requested thinking, hourly fleet throughput, cache counters
-  and the ready Continuity Door contract.
+- `dashboard-overview.png`: branding, the compact unified fleet panel, mixed-server
+  activity, aligned rounded speeds, requested thinking, hourly fleet throughput
+  and the ready Continuity Door contract. Detailed cache/session evidence is
+  folded into each server card.
 - `overview-mobile.png`: the compact status row at 390px, including hourly output,
   peak, completed requests and prompt reuse.
-- `worker-management.png`: private fleet controls, the 20,000-hour queue allowance
-  and one synthetic exact queued-handover offer with its cache-locality warning.
+- `worker-management.png`: the gear-opened private fleet controls, recommended
+  Spark profile, 20,000-hour queue allowance and one synthetic exact
+  queued-handover offer with its cache-locality warning.
 - `dashboard-genie.png`: local collection/embedding status and an open assessment.
 - `dashboard-cache-and-requests.png`: stage-specific XGB chart, candidate lifecycle,
   recipe selector, calibration skip status, cache calculator, notebook/continuity

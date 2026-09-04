@@ -1,15 +1,27 @@
 # Changelog
 
-## Proven GIF compatibility protection
+## Compact control room
+
+- Fleet capacity, availability, queue depth, hourly output and the Gate Genie
+  ticker now share one dense overview instead of three stacked headline panels.
+- An explicit gear opens server management; the recommended DGX Spark profile is
+  kept with those controls rather than occupying the live fleet view.
+- Server cards use whole-token rates, aligned fixed-height charts, a compact ETA
+  badge and folded cache/session evidence. The detailed evidence remains one click
+  away and stays open across dashboard polls.
+- The ticker keeps Genie-authored evidence and recommendations while removing its
+  redundant visible heading, status label, pause button and explanatory copy.
+
+## Deterministic GIF guidance
 
 - DS4's misleading `invalid JSON request` response is intercepted only when DSG
   independently parses a valid Chat Completions request and verifies a typed
-  GIF87a/GIF89a data URI. The first frame is converted to PNG and retried once
-  on the same DS4 server, preserving tools, thinking, output limits and all
-  unrelated fields.
-- Unrelated generic JSON errors remain byte-for-byte upstream errors. If a
-  verified GIF cannot be converted or the normalized request is rejected, DSG
-  emits a complete streaming or non-streaming guidance turn so Pi stays alive.
+  GIF87a/GIF89a data URI. DSG does not convert, omit or retry the GIF. It returns
+  a completed assistant turn asking for selected frames from the GIF as PNGs, so
+  Pi remains alive and the user chooses which animation evidence matters.
+- Unrelated generic JSON errors remain byte-for-byte upstream errors. The fixed
+  GIF response works in streaming and non-streaming Chat Completions and does not
+  depend on an image converter.
 - DS4's exact 16-image rejection receives the same graceful treatment only after
   DSG proves the captured request contains more than 16 typed images. DSG never
   silently drops images; the guidance explains representative frames, contact

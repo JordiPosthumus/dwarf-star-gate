@@ -60,12 +60,12 @@ from engine failures. This observation limit does not truncate forwarded output.
 
 ## Genie
 
-The **Gate Genie health wire** above the capacity panel contains **Genie-written**
+The compact **Gate Genie ticker** in the fleet overview contains **Genie-written**
 observations and, when warranted, a short recommendation. The same model call
 produces the detailed assessment and one to four ticker entries; no second
 summarizer or extra periodic inference call is added. The prompt asks for serious,
 concise advice, not jokes. Enable Genie to receive these headlines; with Genie off,
-the wire says so rather than substituting template diagnoses.
+the ticker says so rather than substituting template diagnoses.
 
 Each review returns JSON with `assessment` and `ticker`. Entries contain
 `severity` (`good`, `info`, `warning` or `critical`), `text`, nullable `recommendation`, and
