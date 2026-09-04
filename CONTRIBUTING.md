@@ -13,6 +13,9 @@ Engine changes should follow [its own contribution guide](https://github.com/ant
    `npm test`, `npm run privacy-check`, and `npm run privacy:test`.
 4. Add a regression test for changed behavior; use fixture workers, not live GPUs.
 5. Update the README when commands, guarantees or limitations change.
+6. For a meaningful user-facing capability or reliability milestone, add one
+   plain-language bullet to [WORKLOG.md](WORKLOG.md). Keep detailed technical
+   history in [CHANGELOG.md](CHANGELOG.md); do not turn the work log into a commit dump.
 
 The privacy check examines tracked/staged files and working copies. Stage newly
 added files before running it so they are included. Review the complete staged

@@ -30,6 +30,9 @@ gateway.** Its [scoped API and CLI](docs/agent-api.md) let authorized agents
 inspect the fleet, temporarily take a server out of routing, and return it when
 their work is done—without overriding your pauses or another agent's reservation.
 
+**Follow the project:** [recent work in plain English](WORKLOG.md) ·
+[detailed changelog](CHANGELOG.md) · [next priorities](docs/roadmap.md).
+
 Conversations stay with their assigned server to encourage cache reuse; new
 conversations are placed according to load. Add, pause, resume or remove servers
 through the local UI or CLI. DS4 handles inference and its caches; DSG handles

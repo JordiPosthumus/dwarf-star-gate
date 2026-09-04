@@ -1,5 +1,21 @@
 # Changelog
 
+## Attribution evidence yield
+
+- A bounded read-only audit now deduplicates final request-to-engine attribution
+  revisions across recent metric files and reports corroboration, pending starts
+  and fixed abstention causes per configured server. Output contains no request or
+  sample IDs, prompts, responses, paths or credentials.
+- The dashboard reports the same resolved-start denominator, and Gate Genie sees
+  only a sanitized per-server summary. Corroboration remains shadow evidence—not
+  protocol identity, a cache-hit verdict or routing authority.
+
+## Curated public work log
+
+- [WORKLOG.md](WORKLOG.md) now summarizes meaningful capability and reliability
+  milestones in plain English. The changelog remains the detailed technical
+  record; Git history remains exact; the roadmap remains forward-looking.
+
 ## Compact control room
 
 - Fleet capacity, availability, queue depth, hourly output and the Gate Genie
