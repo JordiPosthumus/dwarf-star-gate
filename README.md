@@ -96,8 +96,11 @@ matched future evidence. Verified promotions create persistent, dismissible
 learning milestones; Genie can add commentary, not invent the result.
 The UI and Genie can choose among [three reviewed XGB recipes](docs/predictor-lifecycle.md#reviewed-training-recipes)
 without changing the validation gates. [Early client hints](docs/client-metadata.md)
-are collection-only for now; [calibration preflight](docs/calibration.md) skips
-without a proven cache-preserving path. An opt-in [persistent Genie notebook](docs/genie-memory.md)
+and bounded request-shape evidence now enter the separately versioned V3
+challenger contract; V2 incumbents remain byte-compatible and V3 still has no
+routing authority unless it passes the independent holdout and future-traffic
+gates. [Calibration preflight](docs/calibration.md) skips without a proven
+cache-preserving path. An opt-in [persistent Genie notebook](docs/genie-memory.md)
 records worker-state changes, incident/recovery references and explicit operator
 notes. It survives dashboard restarts, stays private and grants no new powers.
 The main status row includes a compact [hourly fleet-throughput tile](docs/fleet-throughput.md):

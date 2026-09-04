@@ -283,9 +283,11 @@ trained models and collected evidence are preserved.
 
 ## Next learning work and current boundaries
 
-- [Early client hint collection](client-metadata.md) is implemented. Per-request
-  client instrumentation and a compatible predictor feature-contract rollout
-  remain next; hints do not yet influence forecasting or placement.
+- [Early client hint collection](client-metadata.md) is implemented. The V3
+  contract now exposes those counters plus bounded request-shape and
+  admission/cache clocks to separately cross-validated challengers. Clients that
+  do not send the header remain valid with explicit missing values. No V3
+  challenger influences placement until its own holdout and future-live gates pass.
 - Reviewed training-window selection remains future work. Recipe choices do not
   silently shorten retained history. Independent evidence, baseline and
   compute/privacy limits stay outside GG's control.

@@ -37,9 +37,10 @@ and later body/usage evidence must remain separate.
 ## What remains
 
 No client adapter is automatically installed and no Pi config is edited. Clients
-without the header produce `missing`, not invented counters. Next add a reviewed
-per-request harness hook using actual client state; test retries, subagents and
-compactions. Do not put changing per-request hints in static provider headers.
+without the header produce `missing`, not invented counters. A future reviewed
+per-request harness hook may supply actual client state; it must test retries,
+subagents and compactions. Do not put changing per-request hints in static
+provider headers or claim the gateway can infer counters it never received.
 
 The v2 feature builder stays byte-for-byte unchanged so existing model artifacts
 and evidence remain compatible. V3 exposes these fields to XGB as a separately

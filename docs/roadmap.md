@@ -24,8 +24,10 @@ already stopped Pi turn. All DSG-owned API errors identify themselves.
 **Analytics implemented:** the compact [prediction-accuracy panel](analytics.md)
 joins existing admission-time shadow forecasts to observed queue/server durations,
 with per-server filters, missing-prediction coverage and error. This is an
-unvalidated historical baseline. Separate [v2 live XGB forecasts](predictor-lifecycle.md)
-and lifecycle controls are now implemented, off by default. The model plan prioritizes total
+unvalidated historical baseline. Separate [versioned V2/V3 live XGB forecasts](predictor-lifecycle.md)
+and lifecycle controls are now implemented, off by default. V2 incumbents remain
+byte-compatible while V3 challengers add causal admission/cache clocks, early
+client counters and bounded request shape under independent validation. The model plan prioritizes total
 service time and remaining busy time; queue wait is derived, not idle-demand
 forecasting. Optional [local embedding/progress collection](embeddings.md) and the
 [measured cache-cost calculator](cache-cost.md) are now implemented. Privacy-safe
@@ -77,7 +79,7 @@ are implemented separately.
 | 1 (shadow attribution implemented) | Diagnose the Spark CUDA/OOM incidents and correlate requests within backend process epochs | Privacy-safe systemd epochs and a fail-closed request/log candidate correlator are implemented; next evidence is real candidate coverage/conflict measurement, service/kernel/memory diagnosis, real cold/warm checks and representative sustained work; no unapproved context/cache reductions |
 | 2 | Explain idle capacity and design cache-aware overflow scheduling | UI identifies session-home waits; replay/shadow comparisons of wait-at-home versus cold execution elsewhere; prove no overlapping ownership/replay; operator-approved policy before activation |
 | 3 (collector implemented) | Validate local embeddings/progress on ordinary workload | Pinned CPU encoder, bounded extraction and visible status; collect joined future labels across hardware; exact cache/engine attribution still separate |
-| 4 (lifecycle implemented) | Collect future validation evidence for v2 forecasts | Fixed forward-time tree/feature selection, separate unseen-session placement gate, per-worker future evidence; no experimental model controls routing |
+| 4 (V2/V3 lifecycle implemented) | Collect future validation evidence for versioned forecasts | Fixed forward-time tree/feature selection, separate unseen-session placement gate, per-worker future evidence and parallel V2/V3 evaluation; no experimental model controls routing |
 | 5 (notebook first slice implemented) | Persistent Genie/operator activity and endpoint settings UI | Private notebook storage, revisioned notes and bounded historical retrieval tested; generated hypotheses, full chat persistence and endpoint test/save/rollback remain planned |
 | 6 (bounded runner implemented) | Opt-in deterministic recovery runner and Genie access | Systemd-user only; exact fatal-instance restart plus separately enrolled stopped-service start; see recovery guide for deployment gates and required live canaries |
 
@@ -290,8 +292,9 @@ without changing DS4 or creating a private-fork dependency.
 **Implemented foundations:** [pre-assignment hint collection](client-metadata.md),
 [three XGB recipe choices](predictor-lifecycle.md#reviewed-training-recipes), and
 [read-only calibration preflight](calibration.md). Existing V2 artifacts remain
-compatible while V3 collects per-request client, cache/load and bounded
-request-shape features under a separate release contract. Next: reviewed training
+compatible while V3 collects and cross-validates per-request client, cache/load
+and bounded request-shape feature blocks under a separate release contract. A V3
+candidate runs in parallel and cannot inherit V2 validation. Next: reviewed training
 windows and a proven non-displacing calibration adapter. No generation
 runner/hourly toggle yet; preflight skips.
 Ordinary training never invokes DS4.
