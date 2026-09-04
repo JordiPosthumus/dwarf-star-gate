@@ -392,16 +392,17 @@ are still required before automatic recovery is enabled.
 A frozen Pi adapter is a later packaging option. The first observer is a small
 OpenAI-compatible client, not an embedded Pi/Hermes bot with shell access.
 
-### Planned: Agent Watch for pre-gateway stalls
+### Implemented first slice: Agent Watch for pre-gateway stalls
 
-DSG cannot currently distinguish an agent legitimately running a local tool from
-one frozen between that tool result and its next provider request. Both are silent
-at the gateway. An opt-in Pi/Hermes heartbeat may expose only a hashed run/session
+DSG could not distinguish an agent legitimately running a local tool from one
+silent between that tool result and its next provider request. The opt-in Pi
+heartbeat now exposes only a hashed run/session
 reference, coarse state (`local_tool`, `waiting_for_model`, `idle`, `done`), last
 activity, process liveness and the latest DSG request receipt. It must not include
 the task, prompt, tool arguments or output. Correlating that heartbeat with DSG's
 own queue evidence lets Genie say “client-side wait” or “no request reached DSG”
-without blaming a DS4 server. The first slice is advisory. A later revive/nudge
+without blaming a DS4 server. The first slice is advisory and implemented; a
+generic packaged Hermes adapter is not yet claimed. A later revive/nudge
 operation requires an explicitly enrolled client adapter, one idempotent action,
 current stale evidence and an action-ledger receipt; silence alone grants no power.
 

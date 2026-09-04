@@ -1,5 +1,15 @@
 # Changelog
 
+## Privacy-safe Agent Watch
+
+- Added an opt-in Pi lifecycle heartbeat that reports only a random run identity,
+  coarse local-tool/model-wait/idle/done state and process liveness. DSG correlates
+  it with its own request lifecycle and exposes only a per-process pseudonym.
+- Added a compact Gate Genie view and deterministic warning for the specific case
+  where a live client says it is waiting for a model but no matching request has
+  reached DSG. Silence remains unknown; this first slice cannot nudge or revive a
+  client and never stores prompts, tool names, arguments or output.
+
 ## Named durable maintenance locks
 
 - Added an operator-only, idempotent maintenance-lock contract for deliberately

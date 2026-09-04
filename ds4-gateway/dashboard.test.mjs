@@ -484,6 +484,17 @@ test('health wire cannot hide live quarantine or wasted-capacity evidence behind
   assert.equal(ready.level,'critical');assert.match(ready.label,/DSG safety alert \+ Genie assessment/);assert.equal(ready.items.length,2);
   assert.match(ready.items[1].text,/A separate Genie observation.*Recommendation: Keep watching/);
 });
+test('Agent Watch warns only when a live client reports waiting but no request reached DSG',()=>{
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const context=vm.createContext({});vm.runInContext(source,context);
+  const news=run=>vm.runInContext(`healthHeadlines(${JSON.stringify({gateway:{available:1,total:1,workers:[],client_watch:{schema:1,mode:'advisory',runs:[run]}}})},${JSON.stringify({state:'off'})})`,context);
+  const base={watch_ref:'abc123def456',client:'pi',state:'waiting_for_model',process_alive:true,fresh:true,last_seen_at:new Date().toISOString(),last_seen_seconds:1,state_seconds:25,request:null};
+  const missing=news({...base,diagnosis:'no_request_reached_dsg'});assert.equal(missing.level,'warn');assert.match(missing.items[0].text,/no matching request reached DSG/);assert.match(missing.items[0].text,/no DS4 fault or frozen process is proven/);
+  for(const diagnosis of ['waiting_inside_dsg','model_response_active','heartbeat_stale_unknown','local_tool_active']){
+    const quiet=news({...base,diagnosis,fresh:diagnosis!=='heartbeat_stale_unknown'});assert.equal(quiet.level,'unknown');assert.doesNotMatch(quiet.items[0].text,/no matching request/);
+  }
+  const html=fs.readFileSync(new URL('./ui/index.html',import.meta.url),'utf8'),css=fs.readFileSync(new URL('./ui/brand.css',import.meta.url),'utf8');assert.match(html,/id="agent-watch"/);assert.match(html,/No prompts, task text, tool names, arguments or output/);assert.match(css,/\.agent-watch/);
+});
 test('enabled unavailable capacity is deterministic, while deliberate pauses and holds are not faults',()=>{
   const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);

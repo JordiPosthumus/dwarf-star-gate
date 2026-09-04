@@ -310,6 +310,7 @@ function deterministicHealthAlerts(snapshot) {
   const recoveryByWorker=new Map(recovery.map(worker=>[worker.worker_id,worker]));
   const fleet=`${fmt(gateway?.available)} of ${fmt(gateway?.total)} DS4 servers are available`;
   const alerts=[];
+  for(const run of gateway?.client_watch?.runs??[])if(run.fresh&&run.process_alive&&run.diagnosis==='no_request_reached_dsg')alerts.push({severity:'warning',text:`${run.client} run ${run.watch_ref} reports waiting for a model, but no matching request reached DSG after ${fmt(run.state_seconds)}s. Recommendation: Inspect that client's provider transport; no DS4 fault or frozen process is proven.`});
   for(const worker of workers) {
     const name=String(worker?.id??'Unknown server').replace(/^spark/i,'Spark '),held=Array.isArray(worker?.holds)&&worker.holds.length>0;
     if(worker?.quarantine) {
@@ -340,6 +341,14 @@ function deterministicHealthAlerts(snapshot) {
     }
   }
   return alerts;
+}
+function renderAgentWatch(watch){
+  const panel=$('agent-watch'),runs=watch?.runs??[];panel.hidden=!watch;
+  if(!watch)return;
+  const fresh=runs.filter(run=>run.fresh).length,attention=runs.filter(run=>run.diagnosis==='no_request_reached_dsg').length;
+  $('agent-watch-status').textContent=runs.length?`${fmt(runs.length)} enrolled · ${fmt(fresh)} fresh${attention?` · ${fmt(attention)} check`:''}`:'No enrolled clients reporting';
+  const labels={local_tool_active:'local tool active',waiting_inside_dsg:'waiting inside DSG',model_response_active:'model response active',no_request_reached_dsg:'no request reached DSG',waiting_to_reach_dsg:'waiting to reach DSG',client_processing_after_dsg:'client processing after DSG',heartbeat_stale_unknown:'heartbeat stale · state unknown',idle:'idle',done:'done',unknown:'state unknown'};
+  $('agent-watch-items').innerHTML=runs.length?runs.slice(0,24).map(run=>`<li data-level="${run.diagnosis==='no_request_reached_dsg'?'attention':run.fresh?'current':'unknown'}"><time>${esc(age(Date.parse(run.last_seen_at),Date.now()))}</time><strong>${esc(run.client)} · ${esc(run.watch_ref)}</strong><span>${esc(labels[run.diagnosis]??'state unknown')}${run.request?` · DSG ${esc(run.request.state.replaceAll('_',' '))}`:''}</span></li>`).join(''):'<li class="muted">No enrolled clients reporting.</li>';
 }
 function healthHeadlines(snapshot, ticker) {
   if(!snapshot?.gateway || snapshot.gateway_error)return {level:'unknown',items:[{severity:'info',text:'Gateway status unavailable; recommendations withheld until fresh evidence returns.'}]};
@@ -390,6 +399,7 @@ function render(s) {
   renderPredictor(g?.predictor,stale||!s.worker_management);
   $('calibration-status').textContent=stale?'Calibration safety status unavailable; no job is authorized.':g?.calibration?.execution_available===false?'Synthetic calibration skipped: no verified cache-preserving execution path. Idle does not prove warm caches are safe. Ordinary traffic collection and CPU training continue.':'Synthetic calibration is not configured; no job is authorized.';
   renderHealthWire(s);
+  renderAgentWatch(g?.client_watch);
   const rejected=g?.continuity?.recent_rejections??[];
   $('patient-wait-status').hidden=stale||!g?.continuity?.waiting;
   $('patient-wait-status').textContent=`DSG is holding ${fmt(g?.continuity?.waiting)} undispatched requests for recovery/readiness · oldest wait ${fmt(g?.continuity?.oldest_wait_seconds)}s · ${Object.entries(g?.continuity?.waiting_reasons??{}).map(([reason,n])=>`${fmt(n)} ${reason.replaceAll('_',' ')}`).join(' · ')}. They resume automatically when eligible; pauses remain respected.`;

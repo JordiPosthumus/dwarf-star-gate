@@ -46,6 +46,11 @@ try {
   assert.equal(new URL(page.url()).hash,'');
   await page.locator('#tab-genie').click();
   assert.equal(await page.locator('#genie-hardening').isVisible(),true);
+  assert.equal(await page.locator('#agent-watch').isVisible(),true);
+  assert.match(await page.locator('#agent-watch-status').innerText(),/2 enrolled.*2 fresh/);
+  await page.locator('#agent-watch summary').click();
+  assert.match(await page.locator('#agent-watch-items').innerText(),/waiting inside DSG.*local tool active/s);
+  assert.doesNotMatch(await page.locator('#agent-watch').innerText(),/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i);
   assert.match(await page.locator('#genie-hardening-status').innerText(),/1 suggestion.*1 durable.*newest first/);
   await page.locator('#genie-hardening summary').click();
   assert.match(await page.locator('#genie-hardening-items').innerText(),/Exercise incomplete-stream continuation.*Developer suggestion|Exercise incomplete-stream continuation/s);

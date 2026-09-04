@@ -4,5 +4,5 @@
 import {streamSimple} from '@earendil-works/pi-ai/api/openai-completions';
 import {registerPiContinuity} from '../ds4-gateway/continuity-client.mjs';
 export default function(pi){
-  registerPiContinuity(pi,{provider:process.env.DSG_PI_PROVIDER,baseUrl:process.env.DSG_PI_BASE_URL,streamSimple});
+  registerPiContinuity(pi,{provider:process.env.DSG_PI_PROVIDER,baseUrl:process.env.DSG_PI_BASE_URL,streamSimple,agentWatch:process.env.DSG_AGENT_WATCH==='1'});
 }

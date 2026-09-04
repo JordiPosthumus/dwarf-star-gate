@@ -21,6 +21,7 @@ import {deadlineTimer,queueTimeout,queueTimeoutMessage} from './deadline.mjs';
 import {CALL_ID_HEADER,DISPATCH_HEADER,validCallId,unavailableReason,sessionWork,rejectionReceipt} from './continuity.mjs';
 import {JsonUsageObserver} from './json-usage.mjs';
 import {dsgReport,invalidHttp} from './report.mjs';
+import {ClientWatch,CLIENT_WATCH_HEADER,CLIENT_WATCH_ROUTE,validClientWatchId} from './client-watch.mjs';
 import {JPEG_REJECTION_INSPECTION_BYTES,VisionProtection,visionGuidance,visionRejectionKind} from './vision-protection.mjs';
 import {compareFallbackTieBreak,selectFallbackTieBreak} from './fallback-tiebreak.mjs';
 import net from 'node:net';
@@ -235,10 +236,12 @@ export function createGateway(config,{visionTranscode}={}) {
   const automaticRelocationScope=automaticAffinityWait===null?'first_dsg_request_or_unaffined':'first_unaffined_or_affinity_wait_expired';
   const parkedFor=n=>waiting.filter(j=>j.fixedHome===n);
   const rejections=[];
+  const clientWatch=new ClientWatch();
   function reject(req,res,status,code,message,{id=randomUUID(),callId=validCallId(req.headers[CALL_ID_HEADER]),key=null,node=null,reason}={}){
     const receipt=rejectionReceipt({request_id:id,call_id:callId,session:key,node:node?.id??null,code,reason});
     const recorded={time:new Date().toISOString(),...receipt};
     rejections.unshift(recorded);rejections.length=Math.min(rejections.length,32);
+    clientWatch.observeRequest(req.headers[CLIENT_WATCH_HEADER],id,'rejected');
     log('request_rejected',receipt);dataset.record('rejection',receipt);
     if(!res.headersSent&&!res.destroyed){res.setHeader(DISPATCH_HEADER,'not_dispatched');res.setHeader('x-request-id',id);res.setHeader('retry-after','5');}
     json(res,status,{error:{type:'gateway_error',code,message:dsgReport(message),request_id:id,continuity:receipt}});
@@ -269,7 +272,7 @@ export function createGateway(config,{visionTranscode}={}) {
   const accepted = new Set(['POST /v1/chat/completions', 'POST /v1/completions', 'POST /v1/responses', 'POST /v1/messages', 'GET /v1/models']);
   const auth = Buffer.from(`Bearer ${config.api_key}`);
   const lastOperatorAction=id=>[...(store.data.operator_actions??[])].reverse().find(action=>action.workers.includes(id))??null;
-  const stats = () => ({ version: 1, agent_api_version:1, maintenance_lock_version:1, model: config.model, context_length: contextLimit(), queue_timeout_ms:queueTimeoutMs(), request_timeout_ms:config.request_timeout_ms??360000000, draining,startup:{...startup}, dataset:{...dataset.snapshot(),embedding_collection:embeddings.snapshot()}, routing_shadow:shadow.snapshot(),fallback_tiebreak_shadow:{...fallbackTieBreak},recovery:recovery.status(),predictor:predictor.status(),protections:visionProtection.status(),
+  const stats = () => ({ version: 1, agent_api_version:1, maintenance_lock_version:1,client_watch_version:1,client_watch:clientWatch.snapshot(), model: config.model, context_length: contextLimit(), queue_timeout_ms:queueTimeoutMs(), request_timeout_ms:config.request_timeout_ms??360000000, draining,startup:{...startup}, dataset:{...dataset.snapshot(),embedding_collection:embeddings.snapshot()}, routing_shadow:shadow.snapshot(),fallback_tiebreak_shadow:{...fallbackTieBreak},recovery:recovery.status(),predictor:predictor.status(),protections:visionProtection.status(),
     calibration:calibrationPreflight(nodes,{draining}),continuity:{schema:1,recent_rejections:rejections.slice(0,20),safe_retry_contract:true,queued_relocation:true,automatic_relocation:true,automatic_relocation_scope:automaticRelocationScope,automatic_affinity_rebalance_min_wait_ms:automaticAffinityWait,patient_wait:true,
       relocation:{completed:relocation.completed,rejected:relocation.rejected,offers:relocationOffers().length,genie_enabled:config.genie_load_balancing!==false,genie_offers:genieRelocationOffers(),diagnostics:relocationDiagnostics(),last:relocation.last},
       waiting:waiting.length,oldest_wait_seconds:waiting.length?Math.max(0,(performance.now()-waiting[0].createdMono)/1000):null,
@@ -459,6 +462,7 @@ export function createGateway(config,{visionTranscode}={}) {
     job.node=null;job.waitReason=reason;
     if(shuttingDown){reject(job.req,job.res,503,'draining','Gateway is stopping; the recovery-waiting request was not dispatched.',{...job,node:job.fixedHome,reason:'gateway_draining'});job.cleanup();return;}
     waiting.push(job);waiting.sort((a,b)=>a.sequence-b.sequence);
+    clientWatch.observeRequest(job.watchId,job.id,'queued');
     heartbeat(job);
     log('request_waiting',{request_id:job.id,node:job.fixedHome?.id??null,reason,dispatch_state:'not_dispatched'});
     dataset.record('waiting',{request_id:job.id,node:job.fixedHome?.id??null,reason,total_ms:performance.now()-job.createdMono});
@@ -481,6 +485,7 @@ export function createGateway(config,{visionTranscode}={}) {
     if(job.waitReason)log('request_wait_resumed',{request_id:job.id,node:node.id,wait_ms:performance.now()-job.createdMono});
     job.waitReason=null;
     node.queue.push(job);node.queue.sort((a,b)=>a.sequence-b.sequence);
+    clientWatch.observeRequest(job.watchId,job.id,'queued');
     evaluateShadow(node,job,wasAdmitted?'worker_free':'admission');schedule(node);
   }
   function pumpWaiting() {
@@ -536,6 +541,7 @@ export function createGateway(config,{visionTranscode}={}) {
     const { req, res } = job;
     job.dispatched = Date.now();
     job.dispatchedMono=performance.now();
+    clientWatch.observeRequest(job.watchId,job.id,'dispatched');
     observe(()=>shadow.started(node.id,job.key));
     let requestBytes=0, firstBodyByte=null;
     const captureLimit=visionProtection.captureLimit(req.url,req.headers['content-encoding']);
@@ -550,6 +556,7 @@ export function createGateway(config,{visionTranscode}={}) {
     delete headers.authorization;
     delete headers[CLIENT_METADATA_HEADER]; // DSG hint only; never a DS4 setting.
     delete headers[CALL_ID_HEADER];
+    delete headers[CLIENT_WATCH_HEADER]; // Ephemeral client liveness hint; never DS4 input.
     headers.host = target.host;
     headers['x-request-id'] = job.id;
     delete headers.expect;
@@ -595,6 +602,7 @@ export function createGateway(config,{visionTranscode}={}) {
       captureChunks=[];finishCapture(null);
       node.lastThinking = job.thinking.result; node.lastFinishedAt = new Date().toISOString();
       if (outcome === 'complete') node.completed++; else if(outcome==='vision_guidance')node.protected++;else if(outcome==='sse_observation_limited')node.observationLimited++;else node.failed++;
+      clientWatch.observeRequest(job.watchId,job.id,['complete','vision_guidance'].includes(outcome)?'complete':outcome==='client_cancelled'?'cancelled':['incomplete_sse','sse_observation_limited'].includes(outcome)?'incomplete':'failed');
       if(job.visionNormalized){
         if(outcome==='complete'){
           visionProtection.record('rescued',{images:job.visionNormalized.images,formats:job.visionNormalized.formats,node:node.id});
@@ -792,11 +800,22 @@ export function createGateway(config,{visionTranscode}={}) {
     const route = `${req.method} ${req.url}`;
     if (route === 'GET /gateway/status' || route === 'GET /workers') return json(res, 200, stats());
     if (route === 'GET /health') {const ready=!draining&&nodes.some(n=>n.healthy&&!n.drained);return json(res,ready?200:503,{...stats(),...(!ready?{error:{type:'gateway_error',code:'not_ready',message:dsgReport('Gateway is draining or no DS4 server is ready.')}}:{})});}
+    if(route===`POST ${CLIENT_WATCH_ROUTE}`){
+      if(!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type']??'')){req.resume();return error(res,415,'client_watch_media_type','Client Watch requires JSON');}
+      const declared=Number(req.headers['content-length']);if(Number.isFinite(declared)&&declared>2048){req.resume();return error(res,413,'client_watch_too_large','Client Watch heartbeat exceeds 2 KiB');}
+      let body='',bytes=0,finished=false;
+      const timer=setTimeout(()=>{if(finished)return;finished=true;error(res,408,'client_watch_timeout','Client Watch heartbeat was incomplete');req.destroy();},5000);timer.unref();
+      req.on('data',chunk=>{if(finished)return;bytes+=chunk.length;if(bytes>2048){finished=true;clearTimeout(timer);error(res,413,'client_watch_too_large','Client Watch heartbeat exceeds 2 KiB');req.resume();return;}body+=chunk;});
+      req.on('error',()=>{finished=true;clearTimeout(timer);});req.on('aborted',()=>{finished=true;clearTimeout(timer);});
+      req.on('end',()=>{if(finished)return;finished=true;clearTimeout(timer);try{return json(res,200,{schema:1,...clientWatch.heartbeat(JSON.parse(body))});}catch{return error(res,400,'invalid_client_watch','Invalid Client Watch heartbeat');}});
+      return;
+    }
     if (!accepted.has(route)) { req.resume(); return error(res, 404, 'unsupported_route', 'Endpoint is not on the inference allowlist'); }
     const admissionMetadata=clientMetadata(req.headers[CLIENT_METADATA_HEADER]);
     const keyValue = req.headers['x-session-affinity'] || req.headers['x-ds4-conversation-id'] || req.headers['x-session-id'] || req.headers.session_id;
     const key = keyValue && req.method === 'POST' ? digest(String(keyValue)) : null;
-    const requestId=randomUUID(),callId=validCallId(req.headers[CALL_ID_HEADER]),trafficClass=req.headers['x-dsg-observer']==='gate-genie'?'genie':'unclassified';
+    const requestId=randomUUID(),callId=validCallId(req.headers[CALL_ID_HEADER]),watchId=validClientWatchId(req.headers[CLIENT_WATCH_HEADER]),trafficClass=req.headers['x-dsg-observer']==='gate-genie'?'genie':'unclassified';
+    if(req.method==='POST')clientWatch.observeRequest(watchId,requestId,'received');
     if(draining)return reject(req,res,503,'draining','Gateway is draining; no new requests admitted',{id:requestId,callId,key,reason:'gateway_draining'});
     const home = key && store.get(key);
     let node = home && nodes.find(n => n.id === home.node);
@@ -846,7 +865,7 @@ export function createGateway(config,{visionTranscode}={}) {
       return;
     }
     if ((node&&node.queue.length+parkedFor(node).length>=queueBound())||(!node&&waiting.length>=waitingBound()))return reject(req,res,429,'queue_full','DSG waiting capacity is full; request was not dispatched. Wait for capacity or use the patient client adapter.',{id:requestId,callId,key,node,reason:'queue_full'});
-    const job = { req, res, key, affinity, id:requestId,callId, sequence:sequence++,admissionMetadata,created: Date.now(), createdMono:performance.now(), cancelled: false,queueTimeoutMs:queueTimeoutMs(),
+    const job = { req, res, key, affinity, id:requestId,callId,watchId, sequence:sequence++,admissionMetadata,created: Date.now(), createdMono:performance.now(), cancelled: false,queueTimeoutMs:queueTimeoutMs(),
       trafficClass };
     const cancel = () => {
       if (res.writableFinished) return;
@@ -862,6 +881,7 @@ export function createGateway(config,{visionTranscode}={}) {
       else {
         detach(job);
         job.queueTimer?.cancel(); job.cleanup();
+        clientWatch.observeRequest(job.watchId,job.id,'cancelled');
         log('queued_request_cancelled', { request_id: job.id, node: job.node?.id??job.fixedHome?.id??null });
         dataset.record('queued_cancel',{request_id:job.id,node:job.node?.id??job.fixedHome?.id??null,total_ms:performance.now()-job.createdMono});
         pumpWaiting();

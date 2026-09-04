@@ -29,6 +29,9 @@ and [service recovery](docs/worker-recovery.md).
 gateway.** Its [scoped API and CLI](docs/agent-api.md) let authorized agents
 inspect the fleet, temporarily take a server out of routing, and return it when
 their work is done—without overriding your pauses or another agent's reservation.
+An optional [Agent Watch](docs/agent-watch.md) heartbeat also lets DSG and Genie
+tell local tool work, waiting inside DSG, and “the client says it is waiting but
+no request reached this gateway” apart—without sending task or conversation text.
 
 **Follow the project:** [recent work in plain English](WORKLOG.md) ·
 [detailed changelog](CHANGELOG.md) · [next priorities](docs/roadmap.md).
@@ -700,7 +703,7 @@ It also covers protocol-specific SSE completion and privacy-safe early-ending
 classification, bounded JPEG/GIF repair/guidance,
 persistent generation quarantine,
 verified reinstatement after remove/re-add, fresh control sockets after restart,
-collector privacy, and bounded Genie/recovery boundaries. `npm run recovery:test`
+collector privacy, privacy-safe Agent Watch correlation, and bounded Genie/recovery boundaries. `npm run recovery:test`
 also tests both optional Python service adapters. Optional predictor tests
 run with `npm run predictor:test` in the locked Python environment. See the
 [dated maintenance review](docs/maintenance-review-2026-09-02.md) for findings and scope.

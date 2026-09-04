@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {randomUUID} from 'node:crypto';
-import {createContinuityFetch,registerPiContinuity} from './continuity-client.mjs';
+import {createClientWatchReporter,createContinuityFetch,registerPiContinuity} from './continuity-client.mjs';
 import {evidence} from './dataset.mjs';
 import {continuityForDisplay,continuityDoorForDisplay,fallbackTieBreakForDisplay} from './continuity.mjs';
 import {dsgReport,invalidHttp} from './report.mjs';
@@ -52,6 +52,32 @@ test('Pi registration preserves model/options and scopes transport to one explic
   registerPiContinuity(pi,{provider:'fixture-dsg',baseUrl,streamSimple:(m,c,o)=>{assert.equal(m,model);assert.equal(c,context);assert.deepEqual({...o,fetch:undefined},{...options,fetch:undefined});return 'stream';}});
   assert.equal(config.models,undefined);assert.equal(config.baseUrl,undefined);assert.equal(config.streamSimple(model,context,options),'stream');
   assert.throws(()=>config.streamSimple({...model,baseUrl:'http://127.0.0.1:1/v1'},context,options),/mismatch/);
+});
+test('opt-in Agent Watch sends coarse heartbeat state and never event or request content',async()=>{
+  const heartbeats=[],scheduled=[];
+  const reporter=createClientWatchReporter({baseUrl,intervalMs:15_000,schedule:fn=>{scheduled.push(fn);return {unref(){}};},unschedule(){},fetchImpl:async(url,init)=>{heartbeats.push({url:String(url),headers:init.headers,body:init.body});return new Response('{}');}});
+  const first=reporter.start(),body=JSON.stringify({messages:[{role:'user',content:'PRIVATE PROMPT'}]});
+  const decorated=reporter.decorate(baseUrl+'/chat/completions',{method:'POST',headers:{authorization:'Bearer fixture'},body});
+  assert.equal(decorated.headers.get('x-dsg-client-watch-id'),first);assert.equal(decorated.body,body);
+  reporter.update('local_tool');reporter.update('waiting_for_model');scheduled[0]();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.ok(heartbeats.length>=4);const payloads=heartbeats.map(item=>JSON.parse(item.body));
+  assert.deepEqual(new Set(payloads.map(item=>item.state)),new Set(['idle','local_tool','waiting_for_model']));
+  assert.ok(payloads.every(item=>item.watch_id===first&&item.client==='pi'&&item.process_alive===true));
+  assert.ok(!JSON.stringify(heartbeats).includes('PRIVATE PROMPT'));
+  const untouched={method:'POST',headers:{authorization:'Bearer fixture'},body};assert.equal(reporter.decorate('http://127.0.0.1:39999/v1/chat/completions',untouched),untouched);
+  assert.equal(await reporter.stop(),true);assert.equal(JSON.parse(heartbeats.at(-1).body).state,'done');assert.equal(JSON.parse(heartbeats.at(-1).body).process_alive,false);
+});
+test('Pi Agent Watch maps lifecycle events without inspecting their payloads',async()=>{
+  const handlers=new Map(),heartbeats=[];let provider;
+  const pi={on(name,fn){handlers.set(name,fn);},registerProvider(_id,value){provider=value;}},model={api:'openai-completions',baseUrl};
+  const registered=registerPiContinuity(pi,{provider:'fixture-dsg',baseUrl,agentWatch:true,watchFetchImpl:async(_url,init)=>{heartbeats.push(JSON.parse(init.body));return new Response('{}');},streamSimple:async(_model,_context,options)=>options.fetch(baseUrl+'/chat/completions',{method:'POST',headers:{authorization:'Bearer fixture'},body:'{"safe":true}'})});
+  for(const event of ['session_start','session_shutdown','agent_start','before_provider_request','tool_execution_start','tool_execution_end','agent_settled'])assert.equal(typeof handlers.get(event),'function');
+  handlers.get('session_start')({prompt:'PRIVATE'},{ui:{setStatus(){}}});
+  handlers.get('agent_start')({prompt:'PRIVATE'});await provider.streamSimple(model,{}, {fetch:async()=>new Response('complete')});
+  handlers.get('tool_execution_start')({toolName:'PRIVATE',args:{secret:'PRIVATE'}});handlers.get('tool_execution_end')({result:'PRIVATE'});await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(registered.agentWatch.state,'waiting_for_model');assert.ok(heartbeats.some(item=>item.state==='local_tool'));assert.ok(!JSON.stringify(heartbeats).includes('PRIVATE'));
+  await registered.agentWatch.stop();
 });
 test('rejection dataset allowlists identifiers and refuses arbitrary reasons/text',()=>{
   const row=evidence('rejection',{request_id:randomUUID(),session:'a'.repeat(64),node:'one',code:'home_unavailable',reason:'same_session_queued',dispatch_state:'not_dispatched',call_id:randomUUID(),prompt:'PRIVATE'});

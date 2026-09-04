@@ -146,6 +146,11 @@ four certified client retries across a global admission drain. In both, the tool
 executes once and answer continuation is automatic. The installed Pi provider composer is also
 checked to preserve model capabilities. No production model or Pi config is touched.
 
+The same example extension can separately opt in to the advisory
+[Agent Watch](agent-watch.md) heartbeat with `DSG_AGENT_WATCH=1`. It reports only
+a random run reference and coarse lifecycle state. It does not extend retry
+authority, inspect prompts or tools, or let DSG revive Pi.
+
 ## Next, in this order
 
 1. Deploy the gateway release and opt-in client adapter as separate, backed-up

@@ -97,6 +97,19 @@ test('DSG ingress credentials never cross the unauthenticated stock-DS4 boundary
   assert.ok(r.backends[0].modelHeaders.every(headers=>headers.authorization===undefined));
 });
 
+test('Agent Watch is an authenticated bounded advisory lane and never reaches DS4',async t=>{
+  const r=await rig(t,1),watch=randomUUID(),heartbeat=sequence=>JSON.stringify({schema:1,watch_id:watch,client:'pi',state:'waiting_for_model',sequence,process_alive:true});
+  const accepted=await r.request(heartbeat(0),null,{path:'/gateway/client-watch'});assert.equal(accepted.status,200);assert.equal(JSON.parse(accepted.body).accepted,true);
+  const unauth=await r.request(heartbeat(1),null,{path:'/gateway/client-watch',headers:{authorization:'Bearer wrong'}});assert.equal(unauth.status,401);
+  const malformed=await r.request(JSON.stringify({...JSON.parse(heartbeat(1)),prompt:'PRIVATE'}),null,{path:'/gateway/client-watch'});assert.equal(malformed.status,400);
+  const large=await r.request(JSON.stringify({...JSON.parse(heartbeat(1)),padding:'x'.repeat(2200)}),null,{path:'/gateway/client-watch'});assert.equal(large.status,413);
+  const result=await r.request('{}','watched',{headers:{'x-dsg-client-watch-id':watch}});assert.equal(result.status,200);
+  assert.equal(r.backends[0].records.at(-1).headers['x-dsg-client-watch-id'],undefined);
+  const status=await r.request('',null,{path:'/gateway/status',method:'GET'}),body=JSON.parse(status.body),run=body.client_watch.runs[0];
+  assert.equal(body.client_watch_version,1);assert.equal(run.client,'pi');assert.equal(run.request.state,'complete');assert.equal(run.diagnosis,'client_processing_after_dsg');
+  assert.ok(!JSON.stringify(body.client_watch).includes(watch));assert.ok(!JSON.stringify(body.client_watch).includes('PRIVATE'));
+});
+
 test('remote workers accept bounded verified SSH alias fallbacks, never options or duplicate routes',()=>{
   const worker=workerConfig({id:'worker-a',url:'http://127.0.0.1:38001',ssh:'worker-a',ssh_fallbacks:['worker-a-lan','worker-a-tailnet','worker-a-lan'],remote_port:8000});
   assert.deepEqual(sshTargets(worker),['worker-a','worker-a-lan','worker-a-tailnet']);

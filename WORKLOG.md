@@ -10,6 +10,12 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Gave Genie privacy-safe sight of the client-side gap.** Opt-in Agent Watch
+  heartbeats distinguish local tool work, DSG queueing, active model responses
+  and a client that reports waiting before any request reaches DSG. The UI keeps
+  quiet/stale clients explicitly unknown; there is no prompt capture, revival
+  power or inference-side behavior change.
+
 - **Stopped automation from stealing hardware under maintenance.** Named durable
   locks now explain why a server is deliberately out of service and hard-veto
   operator Resume, agent cleanup, Genie recovery and verified profile hand-back.
