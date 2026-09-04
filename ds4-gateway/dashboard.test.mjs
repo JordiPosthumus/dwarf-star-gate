@@ -178,6 +178,18 @@ test('verified profile hand-back is a visible independent default-on recovery po
   assert.match(js,/workerAction\('recovery-handback-policy'/);assert.match(js,/verified hand-back eligible/);
 });
 
+test('recovery enrollment links to an agent guide without granting control authority',()=>{
+  const html=fs.readFileSync(new URL('./ui/index.html',import.meta.url),'utf8');
+  const guide=fs.readFileSync(new URL('../docs/agent-recovery-enrollment.md',import.meta.url),'utf8');
+  assert.match(html,/<a id="recovery-enrollment-guide" href="https:\/\/github\.com\/JordiPosthumus\/dwarf-star-gate\/blob\/main\/docs\/agent-recovery-enrollment\.md" target="_blank" rel="noopener noreferrer">Setup guide for your agent/);
+  assert.match(html,/Connecting an endpoint does not grant restart permission/);
+  assert.match(guide,/inspection and a proposed plan only/);
+  assert.match(guide,/Automatic recovery is a fleet-wide policy/);
+  assert.match(guide,/Never repeatedly invoke/);
+  assert.match(guide,/cold-to-warm conversations with numerical cache-reuse evidence/);
+  for(const [,relative] of guide.matchAll(/\]\(([^)#]+)(?:#[^)]+)?\)/g))assert.ok(fs.existsSync(new URL('../docs/'+relative,import.meta.url)),`Missing enrollment reference: ${relative}`);
+});
+
 test('worker enrollment offers bounded SSH fallback aliases without accepting SSH options',()=>{
   const html=fs.readFileSync(new URL('./ui/index.html',import.meta.url),'utf8');
   const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8');

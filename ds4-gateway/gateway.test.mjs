@@ -1123,7 +1123,13 @@ test('model-list timeouts do not contradict fresh inference bytes, without routi
   assert.equal(during.health_state_source,'recent_upstream_progress');
   assert.ok(during.health_probe_deferred>0);
   assert.equal((await active).status,200);
-  await until(()=>r.gateway.stats().workers[0].health_state_source==='model_probe');
+  // A timed-out probe also has source=model_probe. The last probe started
+  // during inference may expire just after its final bytes stop being fresh;
+  // wait for an actual successful subsequent model response, not that label.
+  await until(()=>{
+    const worker=r.gateway.stats().workers[0];
+    return worker.last_probe!==during.last_probe&&worker.health_state_source==='model_probe'&&worker.probe_error===undefined;
+  });
   assert.equal(r.gateway.stats().workers[0].is_healthy,true);
 });
 

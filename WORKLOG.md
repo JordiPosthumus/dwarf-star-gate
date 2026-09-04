@@ -10,6 +10,12 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Made recovery setup an agent handoff.** A linked guide addresses the owner's
+  local agent directly: inspect, propose exact authority, obtain approval, preserve
+  settings, privately enroll, run an approved canary and report measured results.
+  The README and recovery UI link to it. It explicitly separates fleet-wide policy
+  from one worker's setup and does not grant permission just by being copied.
+
 - **Fixed a reproduced stopped-service recovery collision.** Both helpers used
   to report no listener whenever the enrolled process was absent. Real unrelated
   IPv4/IPv6 listeners now veto start, with regressions for wildcard and bound

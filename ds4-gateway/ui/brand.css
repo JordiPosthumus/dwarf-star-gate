@@ -2,6 +2,7 @@
 html,body{overflow-x:clip}.visually-hidden{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important}
 .worker-management{max-width:none;border:1px solid var(--line);border-radius:7px;padding:16px;margin-top:18px}
 .recovery-policy-controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+#recovery-enrollment-guide{color:var(--accent);text-decoration:underline;text-underline-offset:3px}
 .table-wrap{max-width:100%;min-width:0;overflow-x:auto;contain:inline-size}
 .worker-management[hidden],.worker-form[hidden],.worker-form [hidden]{display:none}
 .worker-management summary{font-size:12px}

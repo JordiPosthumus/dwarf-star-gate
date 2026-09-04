@@ -15,7 +15,7 @@ screenshots, benchmark results, a live incident report or a promoted model.
   Spark profile, 20,000-hour queue allowance, one synthetic exact queued-handover
   offer with its cache-locality warning, and a synthetic named maintenance lock
   whose exact release cannot resume routing by itself.
-- `dashboard-genie.png`: an open assessment, recovery controls and the private
+- `dashboard-genie.png`: an open assessment, linked agent enrollment guide, recovery controls and the private
   Gate Genie notebook.
 - `dashboard-analytics.png`: local collection/embedding status, stage-specific XGB
   chart, candidate lifecycle, recipe selector, calibration skip status and cache

@@ -45,6 +45,12 @@ try {
   assert.equal(await page.locator('#tab-fleet').getAttribute('aria-selected'),'true');
   assert.equal(new URL(page.url()).hash,'');
   await page.locator('#tab-genie').click();
+  const enrollmentGuide=page.getByRole('link',{name:'Setup guide for your agent ↗'});
+  assert.equal(await enrollmentGuide.count(),1);
+  assert.equal(await enrollmentGuide.getAttribute('href'),'https://github.com/JordiPosthumus/dwarf-star-gate/blob/main/docs/agent-recovery-enrollment.md');
+  assert.equal(await enrollmentGuide.getAttribute('rel'),'noopener noreferrer');
+  assert.equal(await enrollmentGuide.evaluate(el=>getComputedStyle(el).textDecorationLine),'underline');
+  assert.match(await enrollmentGuide.locator('..').innerText(),/does not grant restart permission/);
   assert.equal(await page.locator('#genie-hardening').isVisible(),true);
   assert.equal(await page.locator('#agent-watch').isVisible(),true);
   assert.match(await page.locator('#agent-watch-status').innerText(),/2 enrolled.*2 fresh/);

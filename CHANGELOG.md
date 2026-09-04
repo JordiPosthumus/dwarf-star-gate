@@ -1,5 +1,18 @@
 # Changelog
 
+## Agent-facing recovery enrollment guide
+
+- Add a standalone setup handoff for the owner's agent, linked from the README,
+  adapter reference and recovery UI. Cover supported install types, explicit
+  approval, private backups/identity, fleet-wide policy, canary receipts, cold/warm
+  evidence, maintenance ownership and revocation without overwriting live state.
+- Keep enrollment procedural rather than implying a browser wizard or automatic
+  certification. Opening the guide performs no control action. Add a browser
+  assertion for the fixed documentation link and permission boundary.
+- Correct a health-probe test's completion wait: `model_probe` also labels failed
+  probes, so the test now waits for a fresh successful response before asserting
+  restored health. Runtime probe policy and freshness deadlines are unchanged.
+
 ## Reject occupied ports before stopped-service recovery
 
 - Fix both systemd and launchd helpers returning `listener:false` solely because

@@ -151,6 +151,12 @@ can distinguish a network problem from an engine fault without exposing private
 hosts or granting a restart. Unsupported installs remain manual. No Pi or Hermes
 dependency.
 
+To give your own local agent the setup task, use
+[Enroll a DS4 server for recovery — agent guide](docs/agent-recovery-enrollment.md).
+It starts with inspection and a proposal; restarts, routing changes and automatic
+recovery require explicit owner approval. Adding an inference endpoint alone does
+not grant recovery permission.
+
 The **Verified profile hand-back** sub-policy starts enabled but is dormant unless
 automatic service recovery is also enabled. It closes a common maintenance trap:
 the same enrolled machine/service is patched or upgraded, its old fingerprint no
