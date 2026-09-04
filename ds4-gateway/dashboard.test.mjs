@@ -112,6 +112,8 @@ test('activity view uses three honest operational colors and folds thinking into
   assert.match(html,/phase-unknown/);assert.doesNotMatch(html,/phase-thinking|phase-unavailable/);
   assert.match(html,/Idle \/ off/);assert.match(html,/Prefill/);assert.match(html,/Decode \/ generation/);
   assert.doesNotMatch(html,/>Thinking<|>Answering<|>Unknown \/ working</);
+  assert.match(html,/aria-label="Observed activity over the last fifteen minutes:/);
+  assert.doesNotMatch(html,/15m activity|sampled every 2s|status badge distinguishes/);
   const css=fs.readFileSync(new URL('./ui/brand.css',import.meta.url),'utf8');
   assert.match(css,/\.phase-prefill\{fill:#78aee8\}/);assert.match(css,/\.phase-decode\{fill:#b9d889\}/);assert.match(css,/\.phase-idle-off\{fill:#c48787\}/);
 });

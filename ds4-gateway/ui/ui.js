@@ -159,7 +159,7 @@ function timeline(d,now) {
   return `<svg class="activity-timeline" viewBox="0 0 100 10" preserveAspectRatio="none" role="img" aria-label="Observed activity over the last fifteen minutes: blue is prefill, green is decode or generation, red is idle or off, and dark gaps are unknown telemetry">${rows.map(r=>{
     const left=Math.max(start,r.start),right=Math.min(now,r.end),width=Math.max(0,(right-left)/9000);
     return `<rect class="phase-${band(r.phase)}" x="${Math.max(0,(left-start)/9000)}" width="${width}" height="10"><title>${esc(r.phase)} · ${Math.round((right-left)/1000)}s</title></rect>`;
-  }).join('')}</svg><div class="phase-legend"><span class="idle-off">Idle / off</span><span class="prefill">Prefill</span><span class="decode">Decode / generation</span></div><div class="chart-caption">15m activity · sampled every 2s · status badge distinguishes healthy idle from unavailable · dark gaps are unknown telemetry</div>`;
+  }).join('')}</svg><div class="phase-legend"><span class="idle-off">Idle / off</span><span class="prefill">Prefill</span><span class="decode">Decode / generation</span></div>`;
 }
 function routingInfo(w,{stale=false,recovering=false}={}) {
   if(stale||!w)return {level:'unknown',label:'STATUS UNKNOWN',detail:'Live gateway status is unavailable. Routing controls are disabled until it returns.',action:null};
