@@ -39,6 +39,28 @@ test('no automatic replay of dispatched, uncertified, malformed or operator-requ
     assert.equal(calls,1);
   }
 });
+
+test('certified retry snapshots URL, method, body and signal before caller mutation',async()=>{
+  const url=new URL(baseUrl+'/chat/completions'),originalUrl=url.href,controller=new AbortController();
+  const init={method:'POST',body:'{"original":true}',headers:{authorization:'Bearer fixture'},signal:controller.signal},sent=[];
+  const f=createContinuityFetch({baseUrl,wait:async()=>{
+    url.hostname='unrelated.example';init.method='DELETE';init.body='{"changed":true}';init.signal=new AbortController().signal;
+  },fetchImpl:async(input,options)=>{
+    sent.push({url:String(input),method:options.method,body:options.body,signal:options.signal});
+    return sent.length===1?refusal(options):new Response('complete');
+  }});
+  assert.equal(await(await f(url,init)).text(),'complete');
+  assert.equal(sent.length,2);
+  for(const request of sent)assert.deepEqual(request,{url:originalUrl,method:'POST',body:'{"original":true}',signal:controller.signal});
+});
+test('replacing caller options cannot detach the original cancellation signal during a wait',async()=>{
+  const controller=new AbortController(),init={method:'POST',body:'{}',signal:controller.signal};let calls=0;
+  const f=createContinuityFetch({baseUrl,wait:async(_ms,signal)=>{
+    assert.equal(signal,controller.signal);init.signal=new AbortController().signal;controller.abort();
+  },fetchImpl:async(_input,options)=>{calls++;return refusal(options);}});
+  await assert.rejects(f(baseUrl+'/chat/completions',init),{name:'AbortError'});
+  assert.equal(calls,1);
+});
 test('cancellation stops waiting without another dispatch; other endpoints and stream bodies are untouched',async()=>{
   const controller=new AbortController();let calls=0;
   const f=createContinuityFetch({baseUrl,fetchImpl:async(_u,i)=>{++calls;return refusal(i);},onWait:()=>controller.abort()});

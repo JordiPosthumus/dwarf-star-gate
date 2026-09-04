@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Fixed mutable-request retries.** A reproduced client-side race could reuse
+  changed URL/options after a certified wait. The transport now pins the original
+  destination, body and cancellation signal, without changing patient deadlines
+  or granting replay authority for dispatched work.
+
 - **Investigated a narrow upstream observability opportunity.** Checked current
   DS4 request parsing and related PRs; recorded bounded request correlation as
   a candidate, with privacy, compatibility and test requirements. No DS4 change

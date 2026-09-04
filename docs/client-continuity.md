@@ -124,7 +124,9 @@ No automatic edits to models.json/settings.json or unrelated providers. Existing
 custom stream overrides require compatibility review before combining extensions.
 
 The retry loop requires the exact DSG header/envelope and matching call/request
-IDs. It resends only immutable JSON text, unchanged, after 5–30 seconds of abortable
+IDs. It snapshots the eligible request's URL, options, headers and original abort
+signal before waiting, so caller mutation cannot redirect a retry or replace its
+payload/cancellation control. It resends only immutable JSON text, unchanged, after 5–30 seconds of abortable
 backoff. Pi displays a waiting status; Escape cancels. There is no three-attempt
 limit in this loop; caller cancellation/deadlines still apply. Request objects,
 streaming uploads, other endpoints, generic 500s, connection failures and partial

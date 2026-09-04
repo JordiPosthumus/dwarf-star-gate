@@ -1,5 +1,13 @@
 # Changelog
 
+## Pin certified client retries to the original request
+
+- Snapshot eligible retry destination, method, text body, headers and abort
+  signal before asynchronous waiting. Caller mutations can no longer redirect
+  a retry or change its payload; replacing options cannot detach cancellation.
+  Unsupported requests remain pass-through and ambiguous dispatched work is
+  still never automatically replayed by this transport.
+
 ## Recheck macOS process start identity
 
 - Recheck process start time during launchd metadata inspection so PID reuse by

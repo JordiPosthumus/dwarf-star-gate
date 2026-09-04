@@ -57,12 +57,16 @@ export function createContinuityFetch({baseUrl,fetchImpl=fetch,onWait=()=>{},wai
     if(input instanceof Request||url.origin!==base.origin||!routes.has(url.pathname)||url.search||url.hash||init.method?.toUpperCase()!=='POST'||typeof init.body!=='string')return fetchImpl(input,init);
     const headers=new Headers(init.headers),callId=validCallId(headers.get(CALL_ID_HEADER))??randomUUID();
     headers.set(CALL_ID_HEADER,callId);
+    // Caller-owned URL/RequestInit objects can change while a certified wait is
+    // pending. Pin the destination and immutable text/options once, otherwise a
+    // retry could send changed content or credentials to a different origin.
+    const requestUrl=url.href,requestInit={...init,headers};
     let attempts=0;
     try{
       while(true){
-        init.signal?.throwIfAborted();
+        requestInit.signal?.throwIfAborted();
         // Connection failures remain ambiguous: no catch-and-replay here.
-        const response=await fetchImpl(input,{...init,headers});
+        const response=await fetchImpl(requestUrl,{...requestInit,headers:new Headers(headers)});
         if(![429,503,504].includes(response.status)||response.headers.get(DISPATCH_HEADER)!=='not_dispatched')return response;
         // Consume only a bounded cloned error envelope; original response stays
         // available if this is not our exact positive retry certificate.
@@ -77,7 +81,7 @@ export function createContinuityFetch({baseUrl,fetchImpl=fetch,onWait=()=>{},wai
           ++attempts;notify({state:'waiting',attempts,call_id:callId,request_id:c.request_id,reason:c.reason,worker:c.node??null});
         }catch{return response;}finally{void reader?.cancel().catch(()=>{});reader?.releaseLock();}
         void response.body?.cancel().catch(()=>{});
-        await wait(Math.min(30000,5000*Math.min(attempts,6)),init.signal);
+        await wait(Math.min(30000,5000*Math.min(attempts,6)),requestInit.signal);
       }
     }finally{if(attempts)notify({state:'finished_waiting',attempts,call_id:callId});}
   };
