@@ -91,6 +91,15 @@ test('healthy long reasoning, queues, operator pause, missing fatal evidence and
   const r=rig();await r.ready();assert.throws(()=>r.recovery.request({...r.input(),evidence_id:'invented'}),/evidence/);
   r.advance(90001);assert.throws(()=>r.recovery.request(r.input()),/inspection/);
 });
+test('recovery status exposes durable identity drift while admitted work is still draining',async()=>{
+  for(const admitted of ['active','queued']) {
+    const r=rig();r.recovery.call=async()=>({...r.sample(),profile:'c'.repeat(64)});await r.ready();
+    if(admitted==='active')r.n.active={thinking:'xhigh'};else r.n.queue.push({id:'waiting'});
+    const status=r.recovery.workerStatus(r.n);
+    assert.equal(status.reason,'service_identity_or_profile_unverified');
+    assert.equal(status.eligible,false);assert.equal(r.restarts,0);
+  }
+});
 test('one fleet recovery; cooldown and same-instance attempt guard prevent restart loops',async()=>{
   const r=rig();await r.ready();r.recovery.request(r.input());assert.throws(()=>r.recovery.request(r.input()),/progress/);await r.recovery.task;
   r.n.quarantine={at:new Date(r.deps.now()).toISOString(),reason:'accelerator_checkpoint_failure',request_id:randomUUID()};

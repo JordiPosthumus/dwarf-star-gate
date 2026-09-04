@@ -97,6 +97,12 @@ The dashboard tooltip and Gate Genie briefing use these distinctions without
 publishing aliases, addresses, usernames or raw SSH output. A transport failure
 never becomes engine-fault evidence and never authorizes a service restart.
 
+Service identity/profile drift is reported even while the worker still has
+admitted work. An active queue is temporary; a changed binary, launcher,
+environment, declared profile file or unit definition requires deliberate
+re-enrollment and a new canary. DSG does not hide that durable gate behind
+`wait_for_admitted_work`, and it never trusts the new fingerprint automatically.
+
 Pause/removal wins over final reinstatement. Turning automatic mode off stops new
 automatic actions and cancels a proposal before issuance when possible; an issued
 restart continues reconciliation/verification. Do not assume a sent SSH command

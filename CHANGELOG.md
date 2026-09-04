@@ -1,5 +1,15 @@
 # Changelog
 
+## Visible recovery identity drift
+
+- Recovery status now reports a changed enrolled service identity/profile even
+  while that worker still has active or queued work. Previously the transient
+  `wait_for_admitted_work` gate could hide the durable re-enrollment requirement
+  until the queue became empty.
+- Execution remains fail-closed: changed binaries, launchers, environments,
+  declared profile files or systemd units still require deliberate enrollment
+  and a new canary. No worker is restarted or trusted automatically.
+
 ## Complete known-backlog headline
 
 - The dashboard's `WAITING` total now includes both requests admitted to the

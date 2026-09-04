@@ -39,11 +39,17 @@ export class Recovery {
     if(this.closed || this.stopping())return 'gateway_stopping';
     if(!Number.isSafeInteger(n.contextLength) || n.contextLength<=0)return 'context_unverified';
     if(!ignoreOwnership && (this.task || this.state.operations.some(o=>!terminal.has(o.state))))return 'fleet_recovery_in_progress';
+    // Identity drift is a durable enrollment problem, whereas admitted work is
+    // transient. Report the durable gate even while a worker is busy so the UI,
+    // operator and Genie do not imply that an empty queue alone restores
+    // recovery authority. The executor still independently rechecks identity.
+    const live=this.valid(s,c),stopped=this.validStopped(s,c);
+    if(!live&&!stopped)return s?.stopped===true&&c?.start_stopped!==true?'stopped_service_start_not_enrolled':'service_identity_or_profile_unverified';
     if(n.active || n.queue.length)return 'wait_for_admitted_work';
     if(canary) {
       if(!n.drained)return 'drain_before_canary';
-      if(this.valid(s,c))return null;
-      if(this.validStopped(s,c)) {
+      if(live)return null;
+      if(stopped) {
         if(n.healthy!==false)return 'worker_health_not_failed';
         const observed=this.stoppedSince.get(n.id);
         return !observed||observed.epoch!==s.stopped_epoch||this.now()-observed.since<15000?'stopped_service_confirmation_pending':null;
@@ -51,7 +57,7 @@ export class Recovery {
       return 'service_identity_or_profile_unverified';
     }
     if(n.drained)return 'operator_paused';
-    if(this.validStopped(s,c)) {
+    if(stopped) {
       if(n.healthy!==false)return 'worker_health_not_failed';
       const observed=this.stoppedSince.get(n.id);
       if(!observed || observed.epoch!==s.stopped_epoch || this.now()-observed.since<15000)return 'stopped_service_confirmation_pending';
@@ -60,7 +66,6 @@ export class Recovery {
       if(previous.some(o=>this.now()-o.created_at<30*60000))return 'recovery_cooldown';
       return null;
     }
-    if(!this.valid(s,c))return s?.stopped===true&&c?.start_stopped!==true?'stopped_service_start_not_enrolled':'service_identity_or_profile_unverified';
     if(!n.quarantine)return 'no_supported_quarantine';
     const failedAt=Date.parse(n.quarantine.at);
     if(!Number.isFinite(failedAt))return 'fault_time_unknown';
