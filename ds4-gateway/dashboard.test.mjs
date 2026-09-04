@@ -35,8 +35,17 @@ test('local stock listen markers provide a bounded private process epoch',t=>{
   reader.poll(logTime);const first=device.backend_epoch;
   assert.match(first,/^[\da-f]{64}$/);assert.equal(device.backend_epoch_source,'local_listen_marker');assert.equal(device.backend_epoch_confidence,'bounded');assert.equal(device.cache.starts,1);
   assert.ok(events.some(e=>e.kind==='process_start'));assert.ok(!JSON.stringify(events).includes('127.0.0.1'));
+  const firstStart=events.find(e=>e.kind==='start');assert.equal(firstStart.backend_epoch,first);assert.equal(firstStart.backend_epoch_source,'local_listen_marker');assert.equal(firstStart.backend_epoch_confidence,'bounded');
   fs.appendFileSync(file,`0902 14:00:04 ds4-server: listening on http://127.0.0.1:8000\n`+`0902 14:00:05 ds4-server: chat ctx=0..20:20 prompt start\n`);
   reader.poll(logTime+5000);assert.notEqual(device.backend_epoch,first);assert.equal(device.backend_epoch_changes,1);assert.equal(device.cache.starts,1);
+  const starts=events.filter(e=>e.kind==='start');assert.equal(starts.length,2);assert.equal(starts[1].backend_epoch,device.backend_epoch);assert.notEqual(starts[1].backend_epoch,first);
+});
+test('local epoch inheritance follows file order and never crosses a marker or rotated file',t=>{
+  const {dir,file,events,reader}=logFixture(t),listen=logLine('listening on http://127.0.0.1:8000');
+  fs.writeFileSync(file,logLine('chat ctx=0..10:10 prompt start')+listen+logLine('chat ctx=0..20:20 prompt start'));reader.poll(logTime);
+  const first=events.filter(e=>e.kind==='start');assert.equal(first.length,2);assert.equal(first[0].backend_epoch,undefined);assert.match(first[1].backend_epoch,/^[\da-f]{64}$/);
+  fs.renameSync(file,path.join(dir,'old.txt'));fs.writeFileSync(file,logLine('chat ctx=0..30:30 prompt start'));reader.poll(logTime);
+  const afterRotation=events.filter(e=>e.kind==='start').at(-1);assert.equal(afterRotation.prompt,30);assert.equal(afterRotation.backend_epoch,undefined);
 });
 test('local log parses prefill/decode and disk reuse once, buffers partial lines, and exports no raw data', t => {
   const {file,device,events,reader}=logFixture(t);

@@ -18,7 +18,10 @@ A journal reconnect with the same service invocation keeps the same epoch. For a
 local stock-DS4 log, DSG can derive a weaker bounded epoch from the most recent
 timestamped `listening on` marker, file identity and byte location. It scans at
 most the latest 8 MiB on reader startup; an older/missing marker stays unknown.
-Only the derived digest is retained—the endpoint and raw line are not. A new
+Parsed timing records after that marker inherit only the derived digest; records
+before it, or in a rotated file without a fresh marker, do not. This preserves
+file order without guessing across process boundaries. Only the digest is
+retained—the endpoint and raw line are not. A new
 epoch clears incomplete timing spans, speed history, cache counters and component
 cost samples in the dashboard observer. It does **not** restart DS4, remove cache
 files, change model settings, change routing or touch Pi. Missing process evidence

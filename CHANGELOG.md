@@ -1,5 +1,14 @@
 # Changelog
 
+## Local-log process-epoch attribution
+
+- Timing records from a same-host stock DS4 log now inherit the bounded digest of
+  the latest preceding `listening on` marker. This makes Mac request attribution
+  usable without retaining the endpoint, raw line, prompt or file identity.
+- Inheritance is ordered by byte position and file identity. A record before the
+  marker or after rotation without a new marker remains epochless and abstains;
+  DSG never carries an old process identity into a new file.
+
 ## Four-path cache-continuity shadow contract
 
 - A pure comparator now ranks wait-hot, local-restore, remote-acquisition and

@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Restored evidence for local Mac attribution.** DSG now carries a privacy-safe
+  stock-log process digest from a proven listen marker to later timing records in
+  strict file order. Missing markers and rotations abstain instead of inheriting
+  stale identity.
+
 - **Defined the cache-continuity decision without activating it.** A tested pure
   shadow now compares waiting for a hot cache, restoring locally, acquiring a
   remote snapshot or prefilling cold. Missing evidence blocks a winner, remote

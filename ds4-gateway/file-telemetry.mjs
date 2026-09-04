@@ -52,10 +52,15 @@ export class FileLogReader {
     telemetryFiles({ [device.id]:file });
     this.device = device; this.file = file; this.save = save;
     this.identity = null; this.offset = 0; this.anchor = Buffer.alloc(0);
+    this.epoch = null; this.epochOffset = null; this.epochIdentity = null;
     this.fragment = Buffer.alloc(0); this.skipping = false; this.seen = new Set();
   }
   accept(event,identity,offset,now) {
     if(!event)return;
+    if(event.kind==='process_start'&&typeof event.backend_epoch==='string'&&/^[\da-f]{64}$/.test(event.backend_epoch)&&event.backend_epoch_source==='local_listen_marker'&&event.backend_epoch_confidence==='bounded'){
+      this.epoch={backend_epoch:event.backend_epoch,backend_epoch_source:event.backend_epoch_source,backend_epoch_confidence:event.backend_epoch_confidence};
+      this.epochOffset=offset;this.epochIdentity=identity;
+    }else if(this.epoch&&this.epochIdentity===identity&&Number.isSafeInteger(this.epochOffset)&&offset>this.epochOffset)event={...event,...this.epoch};
     // Stable restart/replay IDs use only file identity, byte location and
     // allowlisted parsed values, never the path or raw message text.
     const sample=createHash('sha256').update(`${this.device.id}:${identity}:${offset}:${JSON.stringify(event)}`).digest('hex');
@@ -93,6 +98,7 @@ export class FileLogReader {
       // when the file has already grown past our old offset between polls.
       if (reset) {
         this.identity = identity; this.offset = Math.max(0, stat.size - READ_BYTES);
+        this.epoch=null;this.epochOffset=null;this.epochIdentity=identity;
         this.fragment = Buffer.alloc(0); this.skipping = this.offset > 0;
         this.anchor = Buffer.alloc(0);
         // A bounded backward scan recovers the latest stock DS4 listen marker
