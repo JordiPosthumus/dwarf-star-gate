@@ -1,5 +1,12 @@
 # Changelog
 
+## Bound client heartbeat traffic during continuity holds
+
+- Coalesce Agent Watch ticks behind one outstanding heartbeat and expire disposable
+  telemetry after 15 seconds. Cancel obsolete calls when sessions change or end;
+  prevent a stopped reporter from enrolling more requests. Inference and Genie
+  review timeouts remain unchanged.
+
 ## Privacy-safe Agent Watch
 
 - Added an opt-in Pi lifecycle heartbeat that reports only a random run identity,

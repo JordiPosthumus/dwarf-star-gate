@@ -7,34 +7,40 @@ const watchStates=new Set(['local_tool','waiting_for_model','idle','done']);
 export function createClientWatchReporter({baseUrl,fetchImpl=fetch,intervalMs=15_000,schedule=setInterval,unschedule=clearInterval}={}){
   const base=new URL(baseUrl),endpoint=new URL(CLIENT_WATCH_ROUTE,base.origin),routes=new Set(['/v1/chat/completions','/v1/completions','/v1/messages','/v1/responses']);
   if(!['http:','https:'].includes(base.protocol)||base.username||base.password||base.search||base.hash||!['/v1','/v1/'].includes(base.pathname)||!Number.isSafeInteger(intervalMs)||intervalMs<1000||intervalMs>300_000)throw new Error('Invalid Agent Watch endpoint or interval');
-  let id=createClientWatchId(),state='idle',processAlive=true,sequence=0,authorization=null,timer=null,closed=false;
+  let id=createClientWatchId(),state='idle',processAlive=true,sequence=0,authorization=null,timer=null,closed=false,pending=null;
+  const cancelPending=()=>{pending?.abort();pending=null;};
   const transmit=async()=>{
-    if(!authorization)return false;
+    if(!authorization||pending)return false;
+    const controller=new AbortController();pending=controller;
     const body=JSON.stringify({schema:1,watch_id:id,client:'pi',state,sequence:sequence++,process_alive:processAlive});
-    const response=await fetchImpl(endpoint,{method:'POST',headers:{authorization,'content-type':'application/json'},body});
-    if(!response.ok)throw new Error(`Agent Watch heartbeat rejected (${response.status})`);
-    await response.arrayBuffer();return true;
+    try{
+      // Disposable telemetry must never accumulate behind a held Continuity Door.
+      // This deadline belongs only to heartbeats, never inference or Genie calls.
+      const response=await fetchImpl(endpoint,{method:'POST',headers:{authorization,'content-type':'application/json'},body,signal:AbortSignal.any([controller.signal,AbortSignal.timeout(15_000)])});
+      if(!response.ok)throw new Error(`Agent Watch heartbeat rejected (${response.status})`);
+      await response.body?.cancel();return true;
+    }finally{if(pending===controller)pending=null;}
   };
   const safely=()=>{void transmit().catch(()=>{});};
   return {
     get id(){return id;},get state(){return state;},
     start(){
-      if(timer)unschedule(timer);closed=false;id=createClientWatchId();state='idle';processAlive=true;sequence=0;authorization=null;
+      if(timer)unschedule(timer);cancelPending();closed=false;id=createClientWatchId();state='idle';processAlive=true;sequence=0;authorization=null;
       timer=schedule(safely,intervalMs);timer?.unref?.();return id;
     },
     update(next,{alive=true}={}){if(closed||!watchStates.has(next)||typeof alive!=='boolean')return false;state=next;processAlive=alive;safely();return true;},
     decorate(input,init={}){
       let url;try{url=new URL(input instanceof Request?input.url:input);}catch{return init;}
-      if(input instanceof Request||url.origin!==base.origin||!routes.has(url.pathname)||url.search||url.hash||init.method?.toUpperCase()!=='POST'||typeof init.body!=='string')return init;
+      if(closed||input instanceof Request||url.origin!==base.origin||!routes.has(url.pathname)||url.search||url.hash||init.method?.toUpperCase()!=='POST'||typeof init.body!=='string')return init;
       const headers=new Headers(init.headers),credential=headers.get('authorization');
       if(credential){authorization=credential;headers.set(CLIENT_WATCH_HEADER,id);safely();return {...init,headers};}
       return init;
     },
     async stop(){
       if(closed)return false;if(timer){unschedule(timer);timer=null;}state='done';processAlive=false;closed=true;
-      const credential=authorization,payload=JSON.stringify({schema:1,watch_id:id,client:'pi',state,sequence:sequence++,process_alive:false});authorization=null;
-      if(!credential)return false;
-      try{const response=await fetchImpl(endpoint,{method:'POST',headers:{authorization:credential,'content-type':'application/json'},body:payload});if(!response.ok)return false;await response.arrayBuffer();return true;}catch{return false;}
+      cancelPending();
+      const completion=transmit();authorization=null;
+      try{return await completion;}catch{return false;}
     }
   };
 }

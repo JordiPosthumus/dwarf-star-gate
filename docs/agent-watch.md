@@ -26,6 +26,12 @@ arguments, tool output, model answer, working directory, file path or session
 transcript. The extra header is stripped before stock DS4. The endpoint accepts
 strict JSON up to 2 KiB and has no routing or control operation.
 
+The reporter permits only one outstanding heartbeat. Ticks while it is pending
+are coalesced; the next tick reports the latest state. A heartbeat expires after
+15 seconds, and changing or ending a session cancels its obsolete heartbeat.
+This bounds disposable telemetry during a Continuity Door hold. Inference and
+Genie review deadlines are unaffected. Missing heartbeats remain unknown.
+
 ## Enable it for Pi
 
 Load the supplied, explicitly scoped extension as described in

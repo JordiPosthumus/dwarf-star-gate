@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Bounded Agent Watch during gateway holds.** One outstanding heartbeat per
+  reporter prevents telemetry from accumulating in the Continuity Door. Session
+  changes cancel obsolete calls; regression coverage checks 100 overlapping
+  ticks and protects the new session from old-call cleanup.
+
 - **Gave Genie privacy-safe sight of the client-side gap.** Opt-in Agent Watch
   heartbeats distinguish local tool work, DSG queueing, active model responses
   and a client that reports waiting before any request reaches DSG. The UI keeps

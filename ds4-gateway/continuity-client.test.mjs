@@ -59,7 +59,9 @@ test('opt-in Agent Watch sends coarse heartbeat state and never event or request
   const first=reporter.start(),body=JSON.stringify({messages:[{role:'user',content:'PRIVATE PROMPT'}]});
   const decorated=reporter.decorate(baseUrl+'/chat/completions',{method:'POST',headers:{authorization:'Bearer fixture'},body});
   assert.equal(decorated.headers.get('x-dsg-client-watch-id'),first);assert.equal(decorated.body,body);
-  reporter.update('local_tool');reporter.update('waiting_for_model');scheduled[0]();
+  await new Promise(resolve=>setImmediate(resolve));
+  reporter.update('local_tool');await new Promise(resolve=>setImmediate(resolve));
+  reporter.update('waiting_for_model');await new Promise(resolve=>setImmediate(resolve));scheduled[0]();
   await new Promise(resolve=>setImmediate(resolve));
   assert.ok(heartbeats.length>=4);const payloads=heartbeats.map(item=>JSON.parse(item.body));
   assert.deepEqual(new Set(payloads.map(item=>item.state)),new Set(['idle','local_tool','waiting_for_model']));
@@ -75,9 +77,29 @@ test('Pi Agent Watch maps lifecycle events without inspecting their payloads',as
   for(const event of ['session_start','session_shutdown','agent_start','before_provider_request','tool_execution_start','tool_execution_end','agent_settled'])assert.equal(typeof handlers.get(event),'function');
   handlers.get('session_start')({prompt:'PRIVATE'},{ui:{setStatus(){}}});
   handlers.get('agent_start')({prompt:'PRIVATE'});await provider.streamSimple(model,{}, {fetch:async()=>new Response('complete')});
-  handlers.get('tool_execution_start')({toolName:'PRIVATE',args:{secret:'PRIVATE'}});handlers.get('tool_execution_end')({result:'PRIVATE'});await new Promise(resolve=>setImmediate(resolve));
+  await new Promise(resolve=>setImmediate(resolve));
+  handlers.get('tool_execution_start')({toolName:'PRIVATE',args:{secret:'PRIVATE'}});await new Promise(resolve=>setImmediate(resolve));handlers.get('tool_execution_end')({result:'PRIVATE'});await new Promise(resolve=>setImmediate(resolve));
   assert.equal(registered.agentWatch.state,'waiting_for_model');assert.ok(heartbeats.some(item=>item.state==='local_tool'));assert.ok(!JSON.stringify(heartbeats).includes('PRIVATE'));
   await registered.agentWatch.stop();
+});
+test('a held heartbeat cannot accumulate more calls and session changes cancel obsolete telemetry',async()=>{
+  const calls=[],ticks=[];
+  const reporter=createClientWatchReporter({baseUrl,schedule:fn=>{ticks.push(fn);return {unref(){}};},unschedule(){},fetchImpl:(_url,init)=>new Promise((resolve,reject)=>{
+    calls.push({init,resolve});init.signal.addEventListener('abort',()=>reject(init.signal.reason),{once:true});
+  })});
+  const init={method:'POST',headers:{authorization:'Bearer fixture'},body:'{}'};
+  reporter.start();reporter.decorate(baseUrl+'/chat/completions',init);
+  for(let i=0;i<100;i++){ticks[0]();reporter.update('waiting_for_model');}
+  assert.equal(calls.length,1);
+  reporter.start();assert.equal(calls[0].init.signal.aborted,true);
+  reporter.decorate(baseUrl+'/chat/completions',init);
+  await new Promise(resolve=>setImmediate(resolve));ticks[1]();
+  assert.equal(calls.length,2,'old request cleanup cannot clear the new request guard');
+  const stopped=reporter.stop();assert.equal(calls[1].init.signal.aborted,true);
+  assert.equal(calls.length,3);assert.equal(JSON.parse(calls[2].init.body).state,'done');
+  assert.equal(reporter.decorate(baseUrl+'/chat/completions',init),init);
+  ticks[1]();assert.equal(calls.length,3);
+  calls[2].resolve(new Response('{}'));assert.equal(await stopped,true);
 });
 test('rejection dataset allowlists identifiers and refuses arbitrary reasons/text',()=>{
   const row=evidence('rejection',{request_id:randomUUID(),session:'a'.repeat(64),node:'one',code:'home_unavailable',reason:'same_session_queued',dispatch_state:'not_dispatched',call_id:randomUUID(),prompt:'PRIVATE'});
