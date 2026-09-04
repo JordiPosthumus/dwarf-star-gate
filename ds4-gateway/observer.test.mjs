@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import {Dataset,evidence} from './dataset.mjs';
-import {Genie,briefing,hardeningCandidates,parseGenieReview,tickerStatus} from './genie.mjs';
+import {Genie,briefing,genieLoopbackFetch,hardeningCandidates,parseGenieReview,tickerStatus} from './genie.mjs';
 import {safeQuarantine} from './generation-health.mjs';
 import {safeGatewayEvent} from './telemetry.mjs';
 
@@ -266,6 +266,16 @@ test('a bounded dedicated timeout aborts that attempt and borrows the pool',asyn
   await g.ask();assert.equal(calls.length,2);assert.equal(g.status().last_served_by,'pool_fallback');assert.equal(g.status().error,null);
   assert.deepEqual(g.status().provider_attempts.map(x=>[x.provider,x.outcome,x.reason]),[['pool_fallback','complete',null],['dedicated','failed','timeout']]);g.close();
 });
+test('Genie loopback transport waits for delayed headers until its explicit signal and streams the response',async t=>{
+  const server=http.createServer((req,res)=>{setTimeout(()=>{res.writeHead(200,{'content-type':'application/json'});res.end('{"ok":true}');},40);});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>server.close());
+  const response=await genieLoopbackFetch(`http://127.0.0.1:${server.address().port}/v1/chat/completions`,{body:'{}',signal:AbortSignal.timeout(1000)});
+  assert.equal(response.ok,true);let body='';for await(const chunk of response.body)body+=chunk;assert.equal(body,'{"ok":true}');
+});
+test('Genie loopback transport obeys the explicit provider abort while awaiting headers',async t=>{
+  const server=http.createServer(()=>{});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>server.closeAllConnections());t.after(()=>server.close());
+  await assert.rejects(genieLoopbackFetch(`http://127.0.0.1:${server.address().port}/v1/chat/completions`,{body:'{}',signal:AbortSignal.timeout(25)}),error=>error?.name==='AbortError');
+});
 test('slow scheduled reviews wait a full cadence after completion instead of looping continuously',async()=>{
   let calls=0;const g=new Genie({url:'http://127.0.0.1:9001/v1'},snapshot,{fetchImpl:async()=>{calls++;g.attempt=Date.now()-10*60000;return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(authoredReview())}}]});}});
   g.attempt=Date.now()-10*60000;g.tick();while(g.busy)await new Promise(r=>setImmediate(r));
@@ -281,7 +291,9 @@ test('Genie endpoint deadlines are bounded, default to two hours and expose live
 test('Genie reports failure only after both dedicated and pool providers fail',async()=>{
   let calls=0;const g=new Genie({url:'http://127.0.0.1:9001/v1',fallback:{url:'http://127.0.0.1:9002/v1'}},snapshot,{fetchImpl:async()=>{calls++;throw new Error('private details');}});
   g.setEnabled(true);await g.ask();assert.equal(calls,2);assert.equal(g.status().error,'Observation failed; gateway unaffected');assert.equal(g.status().consecutive_failures,1);
-  assert.deepEqual(g.status().provider_attempts.map(x=>[x.provider,x.outcome,x.reason]),[['pool_fallback','failed','transport_error'],['dedicated','failed','transport_error']]);g.close();
+  assert.deepEqual(g.status().provider_attempts.map(x=>[x.provider,x.outcome,x.reason]),[['pool_fallback','failed','transport_error'],['dedicated','failed','transport_error']]);
+  g.fetch=async()=>Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(authoredReview())}}]});await g.ask();
+  assert.deepEqual(g.status().provider_attempts.map(x=>[x.provider,x.outcome,x.reason]),[['dedicated','complete',null]]);assert.equal(g.status().error,null);g.close();
 });
 test('legacy gateway absence is explicit; LLM output-limited reviews are not accepted',async()=>{
   assert.equal(briefing(snapshot()).dataset.enabled,false);

@@ -1,12 +1,40 @@
 // Fleet observer with one bounded, evidence-gated recovery request capability.
 // No model-supplied commands, endpoints, service names, or configuration writes.
 import { createHash, randomUUID } from 'node:crypto';
+import http from 'node:http';
 import { StringDecoder } from 'node:string_decoder';
 import { safeQuarantine } from './generation-health.mjs';
 
 export const DEFAULT_GENIE_TIMEOUT_MS=2*60*60*1000;
 export const DEFAULT_POOL_TIMEOUT_MS=2*60*60*1000;
 export const MAX_GENIE_TIMEOUT_MS=24*60*60*1000;
+
+// Node's built-in fetch has a separate five-minute response-header deadline.
+// Long DS4 prefills can legitimately exceed that even when the operator has
+// configured a much larger Genie deadline. Use the native HTTP client for the
+// already-validated loopback endpoint so the explicit AbortSignal remains the
+// one authoritative deadline. The response stays streamed and bounded by
+// modelAnswer; no request or response content is persisted here.
+export function genieLoopbackFetch(url,{method='POST',headers={},body='',signal}={}) {
+  return new Promise((resolve,reject)=>{
+    let target;
+    try {target=new URL(url);} catch(error){reject(error);return;}
+    if(target.protocol!=='http:'||target.hostname!=='127.0.0.1'||target.username||target.password){reject(new Error('Genie transport requires a loopback HTTP endpoint'));return;}
+    const payload=typeof body==='string'||Buffer.isBuffer(body)?body:String(body??'');
+    let response=null,settled=false;
+    const abortError=()=>new DOMException('Aborted','AbortError');
+    const request=http.request(target,{method,agent:false,headers:{...headers,'content-length':Buffer.byteLength(payload)}},incoming=>{
+      response=incoming;settled=true;
+      resolve({ok:incoming.statusCode>=200&&incoming.statusCode<300,status:incoming.statusCode,body:incoming});
+    });
+    const abort=()=>{const error=abortError();response?.destroy(error);request.destroy(error);};
+    if(signal?.aborted){abort();return;}
+    signal?.addEventListener('abort',abort,{once:true});
+    request.on('error',error=>{if(!settled)reject(error);});
+    request.on('close',()=>signal?.removeEventListener('abort',abort));
+    request.end(payload);
+  });
+}
 
 function providerFailure(error,{timedOut=false}={}) {
   if(timedOut)return 'timeout';
@@ -235,7 +263,7 @@ Recommendations are advice, not actions you performed. Request recovery only for
 Use only supplied evidence; label hypotheses as hypotheses. Do not infer a stall from long thinking, a cold start from a resident miss, or ignored xhigh from unavailable thinking metadata. Check the supplied semantics carefully, especially milliseconds versus seconds and historical waits versus current ETAs. Similarity and counterfactual speed are not measured. If there is no evidenced issue, use one good item only when positive health or improvement is demonstrated; otherwise use one info item explaining that no action is indicated by this snapshot. Each item must cite relevant allowed evidence_refs. Do not turn missing evidence into an all-clear.`;
 
 export class Genie {
-  constructor(config, snapshot, {fetchImpl=fetch,recover=null,predict=null,rebalance=null,memory=null}={}) {
+  constructor(config, snapshot, {fetchImpl=genieLoopbackFetch,recover=null,predict=null,rebalance=null,memory=null}={}) {
     // A configured Genie is a core observer and starts on. Recovery, predictor
     // mutation and other powers remain separately authorized by their own gates.
     this.config=config;this.getSnapshot=snapshot;this.fetch=fetchImpl;this.enabled=!!config&&config.enabled!==false;this.busy=false;this.source=config?.default_source==='pool'?'pool':'primary';
@@ -329,7 +357,7 @@ export class Genie {
     if(this.busy)throw new Error('Gate Genie is already reviewing');
     if(typeof question!=='string' || question.length>2000)throw new Error('Question must be at most 2000 characters');
     if(!['manual','scheduled','action'].includes(kind))throw new Error('Unknown Genie review kind');
-    this.busy=true;this.busyKind=kind;this.preempted=false;this.error=null;this.abort=new AbortController();this.attempt=Date.now();
+    this.busy=true;this.busyKind=kind;this.preempted=false;this.error=null;this.providerAttempts=[];this.abort=new AbortController();this.attempt=Date.now();
     try {
       const snapshot=this.getSnapshot(),data=briefing(snapshot),health_key=healthKey(snapshot);
       const history=this.memory?.retrieve(snapshot)??{notes:[],truncated:false};

@@ -423,6 +423,8 @@ test('health wire shows Genie-authored findings and recommendations, withholding
   assert.match(news(s,{state:'off'}).items[0].text,/Enable him/);
   assert.match(news(s,{state:'stale'}).items[0].text,/10 minutes/);
   assert.match(news(s,{state:'changed'}).items[0].text,/changed since/);
+  const failed=news(s,{state:'error',provider_attempts:[{provider:'pool_fallback',outcome:'failed',reason:'transport_error'},{provider:'dedicated',outcome:'failed',reason:'transport_error'}]});
+  assert.match(failed.items[0].text,/both the dedicated provider and DSG pool fallback were tried/);assert.match(failed.items[0].text,/gateway is unaffected/);
 });
 test('health wire cannot hide live quarantine or wasted-capacity evidence behind a stalled Genie',()=>{
   const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];

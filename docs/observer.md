@@ -133,6 +133,11 @@ two hours so long local reasoning is not mistaken for failure. Set an endpoint's
 needs a different budget. The UI separately shows elapsed time and actual remaining
 allowance; it does not format a future deadline as an elapsed timestamp. A timeout
 counts as an explicit attempt failure and permits the single configured fallback.
+Genie inference uses a loopback-only streaming HTTP transport whose sole deadline
+is that configured allowance. It does not inherit Node's shorter built-in Fetch
+response-header deadline, so a legitimate long DS4 queue or prefill cannot defeat
+the two-hour policy at five minutes. Connection, HTTP and response-validation
+failures remain explicit and still permit only the one configured fallback.
 A dashboard question preempts an ordinary periodic assessment so chat does not sit
 behind replaceable health commentary; it never shortens the provider allowance and
 still waits for an evidence-gated action review, which is not safe to interrupt
@@ -178,7 +183,7 @@ question, then run next. Its in-memory receipt remains visibly `queued`,
 in status, diagnostics or the training dataset. Turning Genie off cancels a
 queued question. A dashboard restart cannot preserve unsent question text.
 
-Status includes at most eight sanitized provider-attempt receipts: dedicated,
+Status includes the sanitized attempts for the current or latest review: dedicated,
 pool or pool fallback; start/finish times; `complete`, `failed` or `cancelled`;
 and a fixed reason category. It never includes endpoint details, credentials,
 prompts, raw responses or raw transport errors. This makes a slow provider,
