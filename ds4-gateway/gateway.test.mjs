@@ -1208,6 +1208,39 @@ test('core rebalances a mature affinity queue without Genie or dashboard',async 
   assert.equal(r.gateway.stats().continuity.automatic_affinity_rebalance_min_wait_ms,25);
   assert.equal(r.gateway.stats().continuity.relocation.last.actor,'scheduler');
 });
+test('maintenance lock revokes a relocation offer and blocks mature automatic handover until explicit resume',async t=>{
+  const r=await rig(t,2,{control_socket:true,genie_rebalance_min_wait_ms:0});
+  const ctl=(route,body)=>workerControl(r.config.control_socket,route,body,{channel:'dashboard'});
+  await r.request('{}','a');await r.request('{}','b');await r.request('{}','c');
+  const active=r.request('{"delay":5000,"active":"c"}','c');await until(()=>r.gateway.nodes[0].active);
+  const body='{"queued":"maintenance-boundary","reasoning_effort":"xhigh"}',queued=r.request(body,'a');
+  await until(()=>r.gateway.nodes[0].queue.length===1);
+  const offer=(await ctl('/workers')).queued_relocation.offers[0];
+  assert.equal(offer.destination,'spark2');
+  assert.equal(r.gateway.stats().continuity.relocation.genie_offers.length,1);
+  const locked=await ctl('/maintenance-lock',{worker_id:'spark2',name:'research',reason:'Reserved for research',review_after_hours:2,request_id:randomUUID()});
+  const exact=Object.fromEntries(['request_id','source','destination','evidence_id'].map(key=>[key,offer[key]]));
+  await assert.rejects(ctl('/relocate-queued',exact),/state changed/);
+  await assert.rejects(ctl('/genie-relocate-queued',exact),/evidence or policy changed/);
+  // Age only this synthetic queued job past the production threshold. Real
+  // scheduler sweeps must still respect the newly acquired maintenance lock.
+  r.gateway.nodes[0].queue[0].createdMono-=300001;
+  await delay(1100);
+  assert.equal(r.gateway.stats().continuity.relocation.diagnostics.sources[0].reason,'no_idle_destination');
+  assert.equal(r.backends[1].records.filter(x=>x.payload.queued).length,0);
+  const released=await ctl('/release-maintenance-lock',{lock_id:locked.result.lock_id,reason:'Research finished',request_id:randomUUID()});
+  assert.equal(released.result.routing_resumed,false);
+  await delay(1100);
+  assert.equal(r.gateway.nodes[1].drained,true);
+  assert.equal(r.backends[1].records.filter(x=>x.payload.queued).length,0);
+  await ctl('/resume-workers',{workers:['spark2']});
+  const result=await queued;await active;
+  assert.equal(result.headers['x-ds4-node'],'spark2');
+  assert.equal(result.headers['x-ds4-affinity'],'rebalanced');
+  assert.equal(r.backends[1].records.filter(x=>x.payload.queued).length,1);
+  assert.equal(r.backends[1].records.at(-1).body.toString(),body);
+  assert.equal(r.backends[0].records.filter(x=>x.payload.queued).length,0);
+});
 test('strict-affinity opt-out never auto-moves an established session',async t=>{
   const r=await rig(t,2,{automatic_affinity_rebalance_min_wait_ms:false});
   await r.request('{"seed":"a"}','a');await r.request('{"seed":"b"}','b');await r.request('{"seed":"c"}','c');

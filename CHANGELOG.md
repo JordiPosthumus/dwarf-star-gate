@@ -1,5 +1,12 @@
 # Changelog
 
+## Verify maintenance isolation during rebalancing
+
+- Add an integrated mock-server regression: a new maintenance lock revokes old
+  operator/Genie relocation offers and prevents mature scheduler handovers.
+  Releasing the lock remains paused; explicit resume permits one unchanged-body
+  dispatch. No production policy or worker configuration changes.
+
 ## Expose long-target training support
 
 - Report target-duration coverage for training, holdout and every forward-time

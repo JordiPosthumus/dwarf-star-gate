@@ -6,6 +6,29 @@ The engine performs inference and manages KV state; DSG observes and routes.
 The [DS4 integration contract](ds4-integration.md) is explicit: learn the engine's
 existing interfaces deeply; do not edit DS4 or require a custom server build.
 
+## Delivery principles
+
+Our guiding light is **a low-effort DS4 fleet that keeps agents working.
+Intelligence should make that dependable foundation better—not become another
+dependency that can stall it.**
+
+- Core scheduling, maintenance isolation and certified retry safeguards must not
+  depend on a successful Genie review. Respect reservations and session ownership.
+- Prove deterministic balancing first. Keep learning and shadow comparisons;
+  predictors earn routing authority through the existing validation gates and
+  measured operational benefit, not prediction accuracy alone.
+- Client continuity is a client–gateway contract. Friendly guidance alone does
+  not guarantee another agent turn; ambiguous dispatched work must not be replayed.
+- Judge progress by waiting time, useful completions, avoidable idle capacity,
+  recovery time and sessions requiring human rescue. Idle maintenance or protected
+  work is not automatically wasted capacity.
+- Deliver staged, reviewable milestones. Distinguish implemented, tested, live
+  and demonstrably helpful. Genie uses enrolled recovery procedures and proposes
+  development improvements; outages do not authorize improvised infrastructure edits.
+
+These principles set priorities; they do not claim all guarantees are implemented,
+disable existing validated capabilities, or relax activation and maintenance gates.
+
 ## Prioritized delivery order — reviewed 2026-09-03
 
 This table is the current order; the sections below retain the detailed design.

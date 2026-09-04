@@ -13,6 +13,14 @@ helping you manage a home inference fleet with less manual effort and make bette
 use of your hardware. See which devices are busy or idle, where requests are
 waiting, and how much time is spent processing prompts and generating responses.
 
+> Our guiding light: a low-effort DS4 fleet that keeps agents working.
+> Intelligence should make that dependable foundation better—not become another
+> dependency that can stall it.
+
+Reliable scheduling and client continuity come first. Genie supervises and
+explains; predictive models earn authority through measured improvements, with
+deterministic fallbacks. See the [delivery principles](docs/roadmap.md#delivery-principles).
+
 **Gate Genie is DSG's local fleet assistant, enabled by default once configured.**
 Point him at a dedicated
 OpenAI-compatible DS4 server—an excellent role for older or slower hardware that

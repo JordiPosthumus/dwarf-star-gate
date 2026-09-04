@@ -10,6 +10,14 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Established the guiding light.** Dependable scheduling and agent continuity
+  come first; Genie and predictors improve that foundation without becoming a
+  dependency that can stall it. The roadmap records how milestones earn trust.
+
+- **Verified maintenance isolation during balancing.** A mock-server regression
+  proves stale operator/Genie offers cannot reclaim a newly reserved worker.
+  Automatic balancing waits for lock release plus explicit routing resume.
+
 - **Made long-job validation coverage explicit.** Training, holdout and each
   forward-time fold now report duration-band points, requests and sessions.
   Repeated progress cannot masquerade as independent long-job evidence; this
