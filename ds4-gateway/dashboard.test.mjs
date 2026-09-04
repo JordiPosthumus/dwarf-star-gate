@@ -418,6 +418,35 @@ test('health wire shows Genie-authored findings and recommendations, withholding
   assert.match(news(s,{state:'stale'}).items[0].text,/10 minutes/);
   assert.match(news(s,{state:'changed'}).items[0].text,/changed since/);
 });
+test('health wire cannot hide live quarantine or wasted-capacity evidence behind a stalled Genie',()=>{
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const context=vm.createContext({});vm.runInContext(source,context);
+  const news=(s,t)=>vm.runInContext(`healthHeadlines(${JSON.stringify(s)},${JSON.stringify(t)})`,context);
+  const quarantine={reason:'accelerator_checkpoint_failure',at:'2026-09-04T13:10:59Z',request_id:'PRIVATE-REQUEST-ID'};
+  const gateway={available:2,total:3,workers:[
+    {id:'spark2',is_healthy:false,drained:false,recovery_waiting:2,quarantine},
+    {id:'m3-studio',is_healthy:false,drained:true,operator_paused:true,holds:[{owner:'agent'}],quarantine:null}],
+    recovery:{workers:[{worker_id:'spark2',state:'quarantined',eligible:false,reason:'service_identity_or_profile_unverified'}]}};
+  const stalled=news({gateway},{state:'reviewing'});
+  assert.equal(stalled.level,'critical');assert.match(stalled.label,/DSG safety alert · live gateway evidence/);
+  assert.equal(stalled.items.length,1);assert.match(stalled.items[0].text,/Spark 2 is quarantined after accelerator checkpoint failure/);
+  assert.match(stalled.items[0].text,/2 of 3 DS4 servers are available/);assert.match(stalled.items[0].text,/2 requests are being held/);
+  assert.match(stalled.items[0].text,/deliberately re-enroll the changed DS4 service profile/);
+  assert.doesNotMatch(JSON.stringify(stalled),/PRIVATE-REQUEST-ID|m3-studio/,'private evidence and intentional holds stay out of the alert');
+  const ready=news({gateway},{state:'ready',evidence_at:1000,entries:[{severity:'info',text:'A separate Genie observation.',recommendation:'Keep watching.'}]});
+  assert.equal(ready.level,'critical');assert.match(ready.label,/DSG safety alert \+ Genie assessment/);assert.equal(ready.items.length,2);
+  assert.match(ready.items[1].text,/A separate Genie observation.*Recommendation: Keep watching/);
+});
+test('enabled unavailable capacity is deterministic, while deliberate pauses and holds are not faults',()=>{
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const context=vm.createContext({});vm.runInContext(source,context);
+  const news=gateway=>vm.runInContext(`healthHeadlines(${JSON.stringify({gateway})},${JSON.stringify({state:'off'})})`,context);
+  const unavailable=news({available:1,total:2,workers:[{id:'worker-a',is_healthy:false,drained:false,recovery_waiting:0,quarantine:null}]});
+  assert.equal(unavailable.level,'warn');assert.match(unavailable.items[0].text,/enabled but unavailable/);
+  for(const worker of [{id:'worker-a',is_healthy:false,drained:true,operator_paused:true},{id:'worker-a',is_healthy:false,drained:false,holds:[{id:'hold'}]}]) {
+    const deliberate=news({available:1,total:2,workers:[worker]});assert.equal(deliberate.level,'unknown');assert.match(deliberate.items[0].text,/Gate Genie is off/);
+  }
+});
 test('health wire is a compact keyboard-pausable ticker with no redundant controls or explainer',()=>{
   const html=fs.readFileSync(new URL('./ui/index.html',import.meta.url),'utf8'),css=fs.readFileSync(new URL('./ui/brand.css',import.meta.url),'utf8');
   assert.doesNotMatch(html,/health-wire-pause|Gate Genie <span>health wire|Genie-written observations and recommendations/);assert.match(html,/class="health-wire-window" tabindex="0"/);

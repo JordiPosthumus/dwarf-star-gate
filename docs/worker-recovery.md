@@ -110,6 +110,23 @@ environment, declared profile file or unit definition requires deliberate
 re-enrollment and a new canary. DSG does not hide that durable gate behind
 `wait_for_admitted_work`, and it never trusts the new fingerprint automatically.
 
+The dashboard health wire does not depend on a successful Genie inference to
+surface this state. A quarantined worker or an enabled worker failing readiness
+produces a deterministic live alert with fleet availability and held-request
+counts; fresh Genie commentary may add context but cannot suppress the alarm.
+Intentional operator pauses and scoped agent maintenance holds are not faults.
+
+An authorized **maintenance hand-back** is the planned way to let Genie help after
+a legitimate upgrade. It is not implemented yet. The contract will require an
+exclusive, expiring agent maintenance ticket created before the change; an
+independent adapter inspection of the same machine and exact service; bounded
+component-level drift evidence; and unchanged expected model/context plus fresh
+generation and cold-to-warm cache verification. Only then may a separately
+enabled policy let Genie request adoption of the new inspected profile followed
+by guarded recovery/readmission. The agent or Genie will not be allowed to submit
+a replacement fingerprint or shell command. A changed profile without that
+provenance remains quarantined for operator review.
+
 Pause/removal wins over final reinstatement. Turning automatic mode off stops new
 automatic actions and cancels a proposal before issuance when possible; an issued
 restart continues reconciliation/verification. Do not assume a sent SSH command

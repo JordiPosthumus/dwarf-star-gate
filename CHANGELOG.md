@@ -1,5 +1,16 @@
 # Changelog
 
+## Deterministic quarantine and capacity alarms
+
+- The compact health wire now derives quarantine and enabled-but-unavailable
+  alarms directly from fresh gateway state. A stalled, disabled or failed Genie
+  review can no longer hide lost capacity or requests held behind a quarantined
+  DS4 server.
+- Deliberate operator pauses and scoped agent holds remain visible on their server
+  cards but do not become false fault alarms. Private request IDs and recovery
+  fingerprints never enter the headline. Genie commentary is appended when fresh;
+  it is no longer the safety signal's only source.
+
 ## Stock disk-KV filename compatibility
 
 - Fixed the read-only cache inventory to recognize stock DS4 snapshot names in

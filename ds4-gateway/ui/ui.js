@@ -279,13 +279,42 @@ function device(d, w, now, stale, index = 1, scales={}, controls=false) {
   return `<article class="device" data-worker-id="${esc(d.id)}"><div class="device-top"><div class="device-identity"><div class="device-name"><span class="device-number">${String(index).padStart(2,'0')}</span>${esc(d.id.replace(/^spark/, 'Spark '))}</div>${forecast}</div><div class="device-status"><span class="server-verdict" data-level="${verdict.level}" title="${esc(verdict.detail)}">${esc(verdict.label)}</span><span class="badge ${bad ? 'bad' : w?.load ? 'busy' : ''}" title="Current generation phase" ${phaseRedundant?'hidden':''}>${esc(!stale&&w?.quarantine?'quarantined':state==='decode'?'answering':state)}</span>${routingMarkup(w,{stale,controls,recovering:recoveryState?.workers?.some(r=>r.worker_id===w?.id&&r.state==='recovering')})}</div></div><div class="device-readings">${timeline(d,now)}${thinkingIndicator(w,stale,now)}<div class="metrics">${metric('decode','DECODE')}${metric('prefill','PREFILL')}</div><details class="device-evidence"><summary><span>Cache + session evidence</span><span>${evidenceSummary}</span></summary><p class="prompt-note">${prompt}</p><div class="cache"><div><strong>${fmt(d.cache.reused)}</strong><span>Prefix reused</span></div><div><strong>${fmt(d.cache.cold)}</strong><span>Cold starts</span></div><div><strong>${fmt(d.cache.resident_misses)}</strong><span>Resident misses</span></div><div><strong>${fmt(d.cache.disk_restores)}</strong><span>Disk restores</span></div></div><p class="cache-note">Observed since ${d.cache_observed_since ? clock(d.cache_observed_since) : d.observed_since ? clock(d.observed_since) : 'connecting'} · RAM misses ≠ cold starts</p><div class="device-foot"><span>${backlog} · ${fmt(w?.assigned_sessions)} assigned sessions</span><span>${telemetryStatus(d)} · ${w?.load ? `${fmt(w.active_seconds)}s active` : 'last sample '+age(d.last_event,now)}</span></div></details></div></article>`;
 }
 const headlineSeverity=value=>['good','info','warning','critical'].includes(value)?value:'info';
+function deterministicHealthAlerts(snapshot) {
+  const gateway=snapshot?.gateway,workers=Array.isArray(gateway?.workers)?gateway.workers:[],recovery=Array.isArray(gateway?.recovery?.workers)?gateway.recovery.workers:[];
+  const recoveryByWorker=new Map(recovery.map(worker=>[worker.worker_id,worker]));
+  const fleet=`${fmt(gateway?.available)} of ${fmt(gateway?.total)} DS4 servers are available`;
+  const alerts=[];
+  for(const worker of workers) {
+    const name=String(worker?.id??'Unknown server').replace(/^spark/i,'Spark '),held=Array.isArray(worker?.holds)&&worker.holds.length>0;
+    if(worker?.quarantine) {
+      const waiting=Number.isSafeInteger(worker.recovery_waiting)&&worker.recovery_waiting>0?` ${fmt(worker.recovery_waiting)} request${worker.recovery_waiting===1?' is':'s are'} being held for this server.`:' ';
+      const recoveryState=recoveryByWorker.get(worker.id),reason=recoveryState?.reason;
+      const recommendation=reason==='service_identity_or_profile_unverified'
+        ?'Review and deliberately re-enroll the changed DS4 service profile before recovery; simply enabling routing would bypass the safety boundary.'
+        :recoveryState?.eligible
+          ?'Use the verified recovery control; DSG will restart only the enrolled service and test it before readmission.'
+          :'Inspect the recovery blocker before readmission; do not simply enable routing.';
+      alerts.push({severity:'critical',text:`${name} is quarantined after ${String(worker.quarantine.reason||'a generation fault').replaceAll('_',' ')}; ${fleet}.${waiting} Recommendation: ${recommendation}`});
+      continue;
+    }
+    // Operator pauses and scoped agent holds are intentional capacity choices,
+    // not faults. They stay explicit on the worker card without becoming alarms.
+    if(worker?.drained||held)continue;
+    if(worker?.is_healthy===false) {
+      const waiting=Number.isSafeInteger(worker.recovery_waiting)&&worker.recovery_waiting>0?worker.recovery_waiting:0;
+      alerts.push({severity:waiting>0?'critical':'warning',text:`${name} is enabled but unavailable; ${fleet}.${waiting?` ${fmt(waiting)} request${waiting===1?' is':'s are'} waiting for it.`:''} Recommendation: Inspect its readiness and verified management path before readmission.`});
+    }
+  }
+  return alerts;
+}
 function healthHeadlines(snapshot, ticker) {
   if(!snapshot?.gateway || snapshot.gateway_error)return {level:'unknown',items:[{severity:'info',text:'Gateway status unavailable; recommendations withheld until fresh evidence returns.'}]};
-  if(ticker?.state==='ready' && ticker.entries?.length)return {
-    level:ticker.entries.some(e=>e.severity==='critical')?'critical':ticker.entries.some(e=>e.severity==='warning')?'warn':ticker.entries.some(e=>e.severity==='good')?'ok':'info',evidence_at:ticker.evidence_at,
-    label:`Genie assessment · evidence ${clock(ticker.evidence_at)}${ticker.refreshing?' · updating':ticker.review_error?' · latest refresh failed':''}`,
-    items:ticker.entries.map(e=>({severity:headlineSeverity(e.severity),text:`${e.text}${e.recommendation?` Recommendation: ${e.recommendation}`:''}`})),
-  };
+  const safety=deterministicHealthAlerts(snapshot),genie=ticker?.state==='ready'&&ticker.entries?.length?ticker.entries.map(e=>({severity:headlineSeverity(e.severity),text:`${e.text}${e.recommendation?` Recommendation: ${e.recommendation}`:''}`})):[];
+  if(safety.length||genie.length) {
+    const items=[...safety,...genie],prefix=safety.length?'DSG safety alert'+(genie.length?' + Genie assessment':' · live gateway evidence'):'Genie assessment';
+    return {level:items.some(e=>e.severity==='critical')?'critical':items.some(e=>e.severity==='warning')?'warn':items.some(e=>e.severity==='good')?'ok':'info',evidence_at:ticker?.evidence_at,
+      label:`${prefix}${genie.length?` · evidence ${clock(ticker.evidence_at)}${ticker.refreshing?' · updating':ticker.review_error?' · latest refresh failed':''}`:''}`,items};
+  }
   const message={off:'Gate Genie is off. Enable him below for generated health observations.',
     reviewing:'Gate Genie is reviewing fleet evidence. His observations and recommendations will appear here.',
     pending:'Waiting for a Genie assessment from the selected server.',

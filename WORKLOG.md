@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Made lost capacity impossible for a sleeping Genie to hide.** Quarantine and
+  enabled-but-unavailable headlines now come directly from current DSG evidence,
+  ahead of any model commentary. Planned pauses and agent reservations do not
+  raise false alarms, and no private fault identifier enters the wire.
+
 - **Fixed stock DS4 snapshot discovery before trusting cache decisions.** A
   source-and-log audit proved that DS4 writes `<40-hex>.kv`, while DSG's new
   inventory prototype looked only for a bare 40-hex name. The scanner now uses

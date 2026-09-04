@@ -53,7 +53,10 @@ authority or exposing private transport details.
 Remote workers can also carry a bounded ordered set of verified OpenSSH aliases;
 the tunnel and guarded recovery adapter share it. This improves route resilience
 without granting arbitrary SSH arguments, commands or host-reboot authority.
-This does not fix the CUDA defect or implement launchd/container recovery. The
+This does not fix the CUDA defect or implement container recovery. The separately
+enrolled launchd adapter is source-complete and synthetically tested, but remains
+ineligible on each Mac until that installation passes its own private drained
+canary. The
 backend-process-epoch foundation is now implemented for strong systemd journal
 telemetry and bounded same-host stock DS4 listen markers: observed restart
 boundaries invalidate telemetry spans without changing DS4. The bounded
@@ -94,7 +97,8 @@ are implemented separately.
 | 3 (collector implemented) | Validate local embeddings/progress on ordinary workload | Pinned CPU encoder, bounded extraction and visible status; collect joined future labels across hardware; exact cache/engine attribution still separate |
 | 4 (V2/V3 lifecycle implemented) | Collect future validation evidence for versioned forecasts | Fixed forward-time tree/feature selection, separate unseen-session placement gate, per-worker future evidence and parallel V2/V3 evaluation; no experimental model controls routing |
 | 5 (notebook first slice implemented) | Persistent Genie/operator activity and endpoint settings UI | Private notebook storage, revisioned notes and bounded historical retrieval tested; generated hypotheses, full chat persistence and endpoint test/save/rollback remain planned |
-| 6 (bounded runner implemented) | Opt-in deterministic recovery runner and Genie access | Systemd-user only; exact fatal-instance restart plus separately enrolled stopped-service start; see recovery guide for deployment gates and required live canaries |
+| 6 (bounded runner implemented) | Opt-in deterministic recovery runner and Genie access | Systemd-user canary complete; a separately enrolled launchd adapter is synthetically tested and still requires a private per-Mac canary. Exact fatal-instance restart plus separately enrolled stopped-service start; see recovery guide for deployment gates |
+| 6a (designed, not implemented) | Authorized maintenance hand-back and changed-profile adoption | A scoped maintenance ticket identifies the worker and expected change; the fixed adapter independently proves the same machine/service and reports bounded drift; model/context, generation and cold-to-warm reuse pass before a deliberately adopted profile can be recovered/readmitted. No arbitrary command, submitted fingerprint or silent trust update |
 
 Orders 2 and 3 can be built alongside reliability diagnosis, without changing live
 routing. Do not wait for an LLM or trained predictor merely to explain why a queue

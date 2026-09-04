@@ -130,12 +130,14 @@ can distinguish a network problem from an engine fault without exposing private
 hosts or granting a restart. Unsupported installs remain manual. No Pi or Hermes
 dependency.
 
-The dashboard's compact **Gate Genie ticker** shows model-written observations and
-concise recommendations from the same fleet review as the detailed assessment.
-Evidence time is explicit; stale or health-invalidated advice is withheld. The
-headline is commentary; an independently revalidated executor receipt is the only
-proof that an action happened. Hover or keyboard focus pauses it for reading;
-reduced motion shows static text. Expanded assessments stay open across refreshes.
+The dashboard's compact **health wire** always puts deterministic live quarantine
+and enabled-but-unavailable capacity alarms first, even if Gate Genie's model is
+off, failed or still thinking. Planned operator pauses and scoped agent holds do
+not produce false fault alarms. Fresh Genie-written observations and concise
+recommendations follow the safety facts; stale or health-invalidated advice is
+withheld. An independently revalidated executor receipt is the only proof that an
+action happened. Hover or keyboard focus pauses the wire for reading; reduced
+motion shows static text. Expanded assessments stay open across refreshes.
 
 Optional [queued-work shadow collection](docs/routing-shadow.md) records idle and
 session-recency clocks and compares a historical baseline without moving work.
