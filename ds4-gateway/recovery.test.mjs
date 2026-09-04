@@ -32,9 +32,13 @@ function rig(options={}) {
 }
 test('recovery defaults off; registered endpoints alone convey no recovery authority',()=>{
   const r=rig();assert.equal(r.recovery.status().automatic,false);assert.throws(()=>r.recovery.request(r.input(),'genie'),/off/);
-  for(const patch of [{adapter:'launchd'},{helper:'/tmp/x;evil'},{machine:'unknown'},{shell:'reboot'}])assert.throws(()=>recoveryConfig({workers:[{...config,...patch}]}));
+  for(const patch of [{adapter:'unknown'},{helper:'/tmp/x;evil'},{machine:'unknown'},{shell:'reboot'}])assert.throws(()=>recoveryConfig({workers:[{...config,...patch}]}));
   for(const patch of [{start_stopped:true},{start_stopped:'yes',service_profile:'c'.repeat(64)},{service_profile:'c'.repeat(64)}])assert.throws(()=>recoveryConfig({workers:[{...config,...patch}]}));
   assert.throws(()=>recoveryConfig({workers:[config,{...config,id:'two',url:'http://127.0.0.1:39002'}]}),/physical/);
+  const launchd={...config,id:'mac',url:'http://127.0.0.1:39002',adapter:'launchd',machine:'c'.repeat(64)};
+  assert.equal(recoveryConfig({workers:[launchd]}).get('mac').adapter,'launchd');
+  const mixed=new Recovery({workers:[config,launchd]},{...r.deps,nodes:[r.n,{...r.n,...launchd,id:'mac'}]});
+  assert.equal(mixed.status().adapter,'mixed');assert.equal(mixed.workerStatus(mixed.nodes[1]).adapter,'launchd');mixed.close();
 });
 test('SSH management failures become bounded reason classes without exposing transport text',()=>{
   const cases=[

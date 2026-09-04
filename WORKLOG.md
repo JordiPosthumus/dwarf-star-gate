@@ -10,6 +10,12 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Added the missing macOS recovery boundary.** An explicitly enrolled launchd
+  helper now offers the same exact-service, durable-intent and verified-readmission
+  contract as systemd without accepting arbitrary commands. It is source-complete
+  and synthetically tested; no Mac was touched, and each deployment still needs a
+  private drained canary before automatic recovery is eligible.
+
 - **Made predictor validation blockers explainable.** The current remaining-time
   candidate reached 30 future requests across 6 sessions but correctly remained
   pending because only one of three required fresh long jobs had arrived. DSG now

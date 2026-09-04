@@ -1,11 +1,12 @@
 # Gate Genie powers: recovery, model stewardship and operator controls
 
-Status: **bounded systemd recovery and predictor stewardship implemented; broader powers below remain a design**.
+Status: **bounded systemd recovery, an opt-in launchd adapter, and predictor stewardship implemented; broader powers below remain a design**.
 The authoritative shipped scope, setup, controls and limits are in
-[bounded worker recovery](worker-recovery.md): systemd-user only, private enrollment,
-one guarded runner shared by GG and a fatal-fault detector, durable receipts and
-verified reinstatement. Launchd/container adapters, editable Genie endpoints,
-persistent chat remain future work. Predictor training/rollback, fixed promotion
+[bounded worker recovery](worker-recovery.md): private systemd-user or launchd
+enrollment, one guarded runner shared by GG and a fatal-fault detector, durable
+receipts and verified reinstatement. Systemd has a real deployment canary; launchd
+requires a per-installation canary before activation. Container adapters, editable
+Genie endpoints, persistent chat remain future work. Predictor training/rollback, fixed promotion
 gates and operator switches are specified in [the shipped lifecycle](predictor-lifecycle.md).
 The sections below
 retain the original broader plan; they are not a claim that every item shipped.
@@ -131,10 +132,9 @@ manual-recovery mode. Differences in context, quantization and hot/disk cache
 settings are valid: preserve each installation's own verified profile, not a
 universal Spark preset.
 
-The typed `systemd-user` adapter now supports exact fatal-instance restart and a
-separately opt-in exact stopped-service start, using configured SSH aliases and
-an exact unit. A `launchd` adapter can target a configured Mac service;
-a container adapter can target an exact existing container service. They need the
+The typed `systemd-user` and `launchd` adapters support exact fatal-instance
+restart and a separately opt-in exact stopped-service start, using configured SSH
+aliases and one enrolled service identity. A container adapter could target an exact existing container service. It would need the
 same bounded operations: inspect instance/config identity, obtain fault evidence,
 restart that instance's service, and inspect readiness. The common runner performs
 DS4 generation/cache verification and routing reinstatement. Do not claim platform

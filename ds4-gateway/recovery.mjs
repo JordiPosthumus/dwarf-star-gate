@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { recoveryConfig, systemdCall } from './recovery-transport.mjs';
+import { recoveryConfig, recoveryCall } from './recovery-transport.mjs';
 import { verifyRecovery } from './recovery-verify.mjs';
 
 const hash=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
@@ -11,7 +11,7 @@ const publicOperation=op=>Object.fromEntries(['id','worker_id','actor','service_
 // Lives in the gateway, not the dashboard or LLM process. Intent and outcomes
 // share the gateway's atomic/fsynced metadata store. No inference text is saved.
 export class Recovery {
-  constructor(raw,{store,nodes,model,stopping,reinstate,log=()=>{},call=systemdCall,verify=verifyRecovery,now=Date.now}) {
+  constructor(raw,{store,nodes,model,stopping,reinstate,log=()=>{},call=recoveryCall,verify=verifyRecovery,now=Date.now}) {
     this.configs=recoveryConfig(raw);this.store=store;this.nodes=nodes;this.model=model;this.stopping=stopping;this.reinstate=reinstate;this.log=log;this.call=call;this.verify=verify;this.now=now;
     this.observations=new Map();this.stoppedSince=new Map();this.busy=false;this.closed=false;this.task=null;this.abort=new AbortController();
     const saved=store.data.recovery;
@@ -89,11 +89,11 @@ export class Recovery {
     // Current worker state is not the last action's historical outcome. In
     // particular, a successful paused canary may since have been resumed.
     const state=n.recovering?'recovering':!configured?'manual':n.drained?'paused':n.quarantine?'quarantined':n.healthy===false?'unavailable':'monitoring';
-    return {worker_id:n.id,configured,reason:configured?reason:'manual_recovery_required',eligible:configured&&!reason,
+    return {worker_id:n.id,configured,adapter:configured?this.configs.get(n.id).adapter:null,reason:configured?reason:'manual_recovery_required',eligible:configured&&!reason,
       evidence_id:configured&&!reason?this.evidence(n,s):null,inspected_at:observed?.at??null,
       state,last_action:last?publicOperation(last):null};
   }
-  status(){return {configured:!!this.configs.size,automatic:this.state.automatic,adapter:'systemd-user',workers:this.nodes.map(n=>this.workerStatus(n)),operations:this.state.operations.slice(-20).reverse().map(publicOperation)};}
+  status(){const adapters=[...new Set([...this.configs.values()].map(c=>c.adapter))];return {configured:!!this.configs.size,automatic:this.state.automatic,adapter:adapters.length===1?adapters[0]:adapters.length?'mixed':null,workers:this.nodes.map(n=>this.workerStatus(n)),operations:this.state.operations.slice(-20).reverse().map(publicOperation)};}
   async inspect(id) {
     const c=this.configs.get(id);
     try {

@@ -99,11 +99,12 @@ state editing is needed, and re-registration is not a recovery bypass.
 ## Self-healing boundary
 
 See [bounded worker recovery](worker-recovery.md) for the implemented systemd-user
-adapter, opt-in policy, exact-service enrollment, fresh-instance/stopped-epoch evidence guards,
+and launchd adapters, opt-in policy, exact-service enrollment, fresh-instance/stopped-epoch evidence guards,
 UI controls, tests and canary procedure. GG and the deterministic fatal-fault
 watcher share that runner. Failure to verify leaves the worker isolated; a slow
 healthy response is never sufficient evidence. Stream replay, kernel repair and
-launchd/container recovery are not implemented. The [broader powers plan](genie-powers-plan.md)
+container recovery are not implemented. Launchd requires a real per-Mac canary
+before activation. The [broader powers plan](genie-powers-plan.md)
 remains a roadmap for additional capabilities.
 
 ## Failure patterns to diagnose

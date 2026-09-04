@@ -13,7 +13,7 @@
     "attribution:audit": "node ds4-gateway/attribution-audit.mjs --directory runtime/dashboard",
     "attribution:reconcile-audit": "node ds4-gateway/attribution-audit.mjs --directory runtime/dashboard --gateway-log runtime/gateway.log",
     "memory:test": "node --test ds4-gateway/genie-memory.test.mjs",
-    "recovery:test": "python3 -m unittest discover -s ds4-gateway -p 'recovery_systemd_test.py' -v",
+    "recovery:test": "python3 -m unittest discover -s ds4-gateway -p 'recovery_*_test.py' -v",
     "check": "node scripts/check.mjs",
     "privacy-check": "node scripts/privacy-check.mjs",
     "privacy:test": "node --test scripts/privacy.test.mjs",

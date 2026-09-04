@@ -31,7 +31,7 @@ export function recoveryConfig(raw={}) {
   for(const entry of raw.workers??[]) {
     if(Object.keys(entry).some(k=>!['id','url','ssh','ssh_fallbacks','remote_port','adapter','helper','config','machine','profile','service_profile','start_stopped','exclusive'].includes(k)))throw new Error('Unsupported recovery configuration field');
     const worker=workerConfig(Object.fromEntries(['id','url','ssh','ssh_fallbacks','remote_port'].filter(k=>entry[k]!==undefined).map(k=>[k,entry[k]])));
-    if(entry.adapter!=='systemd-user' || !worker.ssh)throw new Error('Recovery requires the systemd-user SSH adapter');
+    if(!['systemd-user','launchd'].includes(entry.adapter) || !worker.ssh)throw new Error('Recovery requires an enrolled systemd-user or launchd SSH adapter');
     if(entry.exclusive!==true)throw new Error('Recovery requires explicit exclusive DSG ownership of the endpoint');
     for(const field of ['helper','config'])if(typeof entry[field]!=='string' || !/^\/[A-Za-z0-9_./-]+$/.test(entry[field]) || entry[field].includes('/../'))throw new Error('Recovery paths must be absolute shell-safe paths');
     for(const field of ['machine','profile'])if(!/^[a-f0-9]{64}$/.test(entry[field]))throw new Error('Enroll the recovery machine and profile first');
@@ -45,8 +45,9 @@ export function recoveryConfig(raw={}) {
 }
 
 // Operator-owned paths/host only, strict host-key checking; no shell strings
-// derived from requests, model text, unit names, or telemetry. JSON uses stdin.
-function systemdAttempt(config,request,target,{spawnFn=spawn,timeoutMs=45000}={}) {
+// derived from requests, model text, service names, or telemetry. The selected
+// helper is enrolled in private config; both helpers share this JSON protocol.
+function recoveryAttempt(config,request,target,{spawnFn=spawn,timeoutMs=45000}={}) {
   return new Promise((resolve,reject)=>{
     const child=spawnFn('/usr/bin/ssh',['-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','ConnectTimeout=8',target,
       `python3 ${config.helper} ${config.config}`],{stdio:['pipe','pipe','pipe']});
@@ -62,11 +63,14 @@ function systemdAttempt(config,request,target,{spawnFn=spawn,timeoutMs=45000}={}
   });
 }
 
-export async function systemdCall(config,request,options={}) {
+export async function recoveryCall(config,request,options={}) {
   let failure;
   for(const target of sshTargets(config)){
-    try{return await systemdAttempt(config,request,target,options);}
+    try{return await recoveryAttempt(config,request,target,options);}
     catch(error){failure=error;}
   }
   throw failure??new Error('adapter_unreachable');
 }
+// Backward-compatible name for existing integrations and tests. The transport
+// never inferred systemd behavior; that boundary lives in the enrolled helper.
+export const systemdCall=recoveryCall;

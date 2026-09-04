@@ -1,5 +1,19 @@
 # Changelog
 
+## Explicitly enrolled macOS launchd recovery adapter
+
+- Added a separate mode-0600, no-follow macOS helper that can inspect, start or
+  restart only one enrolled user LaunchAgent. It fingerprints the physical Mac,
+  plist, DS4 binary, declared launch files, runtime command and exact loopback
+  listener; optional current-process fault evidence comes from a bounded stock
+  engine-log tail.
+- Launchd shares DSG's existing pause, exclusive-ownership, cooldown, durable
+  intent, lost-ack reconciliation, generation and two-conversation cold-to-warm
+  verification gates. Synthetic tests cover exact `launchctl kickstart`, stopped
+  start, identity drift, forged requests and no-repeat behavior. No Mac has been
+  enrolled or restarted by this source milestone; a private real-Mac canary is
+  still mandatory before activation.
+
 ## Predictor gate diagnostics
 
 - Predictor status now identifies the exact fixed promotion subgate that still

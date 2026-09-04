@@ -117,9 +117,12 @@ reuse on one line. Evidence coverage and completion-time accounting stay availab
 on hover or keyboard focus.
 Workers with recognized engine faults or repeated inference failures are
 [quarantined persistently](docs/generation-health.md); recovery requires a real
-generation check. Opt-in recovery can restart an enrolled systemd-user DS4 service
-after current-instance fatal evidence, then verify generation and cold-to-warm
-reuse. DSG separately reports sanitized management-path evidence—such as DNS,
+generation check. Opt-in recovery can restart an explicitly enrolled systemd-user
+service or macOS LaunchAgent after current-instance fatal evidence, then verify
+generation and cold-to-warm reuse. The systemd adapter has a real DGX Spark canary;
+the launchd adapter is synthetically tested and remains ineligible until each Mac
+completes its own private enrollment and operator canary. DSG separately reports
+sanitized management-path evidence—such as DNS,
 SSH authentication/identity, timeout or DS4 readiness—so the operator and Genie
 can distinguish a network problem from an engine fault without exposing private
 hosts or granting a restart. Unsupported installs remain manual. No Pi or Hermes
@@ -641,7 +644,7 @@ It also covers protocol-specific SSE completion, bounded JPEG/GIF repair/guidanc
 persistent generation quarantine,
 verified reinstatement after remove/re-add, fresh control sockets after restart,
 collector privacy, and bounded Genie/recovery boundaries. `npm run recovery:test`
-also tests the optional Python adapter. Optional predictor tests
+also tests both optional Python service adapters. Optional predictor tests
 run with `npm run predictor:test` in the locked Python environment. See the
 [dated maintenance review](docs/maintenance-review-2026-09-02.md) for findings and scope.
 Default dashboards remain read-only.

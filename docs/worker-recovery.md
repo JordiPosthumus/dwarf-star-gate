@@ -7,19 +7,25 @@ repository. No Pi or Hermes installation is required.
 
 ## What it does—and does not do
 
-The first adapter is **Linux systemd user services**, tested with a native DS4
-service on DGX Spark. This is an install-type boundary, not a hardware check.
-Macs remain ordinary supported inference workers; automatic **launchd recovery
-is not implemented**. Manually launched processes and containers require manual
-service recovery until a tested adapter exists. Adding an endpoint in the UI does
-not grant permission to start or restart it.
+The production-canary adapter is **Linux systemd user services**, tested with a
+native DS4 service on DGX Spark. A separate **macOS launchd LaunchAgent adapter**
+implements the same private protocol and has synthetic identity, fault, exact-job,
+idempotency and no-repeat tests. It is not automatically enrolled and has not yet
+completed a public-repository real-Mac canary. Each Mac must pass its own private
+inspection and operator canary before automatic recovery is enabled. These are
+install-type boundaries, not hardware checks. Manually launched processes,
+LaunchDaemons/system jobs and containers remain manual. Adding an endpoint in the
+UI does not grant permission to start or restart it.
 
 Running-process restart recovery requires all of the following:
 
 - An operator-enrolled worker/service, verified SSH host key, matching physical
   machine fingerprint, exact service-owned loopback listener, executable and
   runtime/configuration fingerprint. The profile includes binary, launcher,
-  declared configuration files, effective systemd unit, argv and DS4 environment.
+  declared configuration files, effective service definition and runtime command.
+  The systemd profile also includes DS4 environment; launchd hashes the enrolled
+  plist and declared files because macOS does not expose another process's full
+  environment through this helper.
 - Exclusive use of that endpoint through DSG, explicitly acknowledged in private
   configuration. DSG cannot see or safely arbitrate unrelated direct clients.
 - A persisted fatal/checkpoint quarantine, no admitted active/queued work, and
@@ -30,7 +36,8 @@ Running-process restart recovery requires all of the following:
   stopped epoch, and
   a minimum 30-minute per-worker cooldown. Recurrence is an alert, not a loop.
 
-It restarts exactly one configured `systemctl --user` service. It never reboots,
+It restarts exactly one configured `systemctl --user` service or one configured
+`launchctl kickstart` LaunchAgent. It never reboots,
 resets the GPU, deletes caches, replaces models, rewrites launch settings, lowers
 context/output/thinking/concurrency, or cancels a merely slow xhigh response.
 **A restart necessarily loses RAM-resident cache state.** Disk caches are not
@@ -236,6 +243,75 @@ Do this per worker, initially with automatic mode **off**.
    an external Pi/Hermes bot. The gateway independently refreshes evidence before
    executing, so a stale review or forged pair cannot bypass policy.
 
+## Install on an explicitly enrolled macOS LaunchAgent
+
+The launchd helper is deliberately **not** a generic process launcher. It supports
+only a user LaunchAgent already loaded in `gui/$UID/<label>` for the SSH account.
+It does not load plists, target LaunchDaemons, accept commands, edit settings or
+discover a service from an HTTP endpoint. The LaunchAgent's reported PID must be
+the configured DS4 binary and must own the configured loopback listener.
+
+1. Keep automatic recovery off. Verify that every inference client uses DSG,
+   back up the LaunchAgent/plist/launcher configuration, and choose a maintenance
+   window for a later canary. Do not use a Mac reserved for another test.
+2. Install `ds4-gateway/recovery-launchd.py` on the Mac. Beside it, create an
+   operator-owned mode-0600 JSON configuration. Include every file that determines
+   the model-server launch. `log_file` is optional, but without a timestamped stock
+   DS4 engine log the adapter cannot prove a current fatal accelerator fault and
+   therefore cannot automatically restart a still-running process.
+
+   ```json
+   {
+     "label": "com.example.ds4",
+     "plist": "/absolute/path/to/Library/LaunchAgents/com.example.ds4.plist",
+     "port": 8001,
+     "binary": "/absolute/path/to/ds4/ds4-server",
+     "profile_files": [
+       "/absolute/path/to/ds4/start-ds4.sh",
+       "/absolute/path/to/ds4/settings.env"
+     ],
+     "log_file": "/absolute/path/to/ds4/runtime/engine.log"
+   }
+   ```
+
+3. Over the same host-key-verified SSH alias used by the worker, send only
+   `{"action":"inspect"}` to the helper. Require `active:true`, `listener:true`,
+   the expected label/binary/port identity and no fault. Record the returned
+   `machine`, `profile` and `service_profile` digests only in ignored private DSG
+   config. Never publish them with paths or SSH details.
+4. Add a private worker enrollment using the same registered ID, tunnel URL, SSH
+   aliases and port. The paths below are illustrative, not defaults:
+
+   ```json
+   {
+     "id": "mac-worker",
+     "url": "http://127.0.0.1:38003",
+     "ssh": "my-mac-ds4",
+     "remote_port": 8001,
+     "adapter": "launchd",
+     "exclusive": true,
+     "helper": "/absolute/path/to/dsg/recovery-launchd.py",
+     "config": "/absolute/path/to/dsg/recovery.json",
+     "machine": "REPLACE_WITH_INSPECTED_SHA256",
+     "profile": "REPLACE_WITH_INSPECTED_SHA256"
+   }
+   ```
+
+   Stopped-service start remains separately opt-in with `start_stopped:true` and
+   the exact inspected `service_profile`, just like systemd. A loaded-but-stopped
+   state must remain stable for 15 seconds before one start can be offered.
+5. At an agreed window, reload DSG source/config, drain the Mac, and run the
+   operator-only canary. The helper durably records intent before invoking exactly
+   `launchctl kickstart -k gui/$UID/<label>`. DSG then requires unchanged model and
+   context plus real generation and two cold-to-warm conversations before recording
+   success. The canary leaves routing paused; inspect the receipt and explicitly
+   resume only after the native launch settings are independently confirmed.
+6. Only after that private canary should the operator consider automatic mode.
+   A timeout or lost SSH acknowledgement is reconciled by process-instance identity;
+   DSG never blindly repeats `kickstart`. Keep the enrollment disabled on any Mac
+   whose GUI domain, binary ownership, listener, log timestamps or profile is not
+   proven.
+
 ## Security and operational limits
 
 The SSH account and gateway OS user are trusted operator principals. The helper
@@ -264,13 +340,16 @@ an old whole affinity file over live session changes as a routine rollback.
 cooldown, idempotency, lost acknowledgment, crash-resume without a duplicate start or
 restart, verification failures, real local
 HTTP orchestration and CSRF/no-public-action boundaries. `npm run recovery:test`
-tests the Python helper's exact-service issuance, original live-profile compatibility,
-intent-before-effect behavior, current-invocation fatal signature matching, exact stopped
-epoch/static identity and no-repeat guards.
+tests both Python helpers' exact-service issuance, profile compatibility,
+intent-before-effect behavior, current-instance fatal signature matching, exact
+stopped epoch/static identity and no-repeat guards. The launchd tests also cover
+private no-follow config/history/log handling and exact `gui/$UID/<label>` commands.
 
 These tests use synthetic services. A live canary checks actual service restart,
 unchanged profile/context and real generation/cache reuse; it does **not** inject
 a CUDA fault or establish that the underlying accelerator defect is fixed.
+The systemd deployment has such a canary; launchd still requires a private real-Mac
+canary before it may be described as validated for that installation.
 
 Use the [recovery validation procedure](recovery-validation.md) to check your
 enrollment, cold/warm reuse, preserved settings and policy persistence. Keep the
