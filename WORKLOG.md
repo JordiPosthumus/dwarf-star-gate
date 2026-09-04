@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Validated the Spark hardware adapter against real drivers.** Read-only probes
+  returned RAM, GPU activity and clock samples. Documented the important missing-
+  module-power case: a narrower GPU power reading must not become a fictional
+  whole-device energy estimate. Predictor ingestion remains unfinished.
+
 - **Fixed frozen live forecasts.** Progress predictions were recorded but usually
   failed to replace the first live estimate. Regression tests now cover refresh,
   out-of-order evidence, experimental candidates and incumbent support limits.

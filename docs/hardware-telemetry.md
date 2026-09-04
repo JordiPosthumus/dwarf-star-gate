@@ -57,6 +57,16 @@ Unsupported fields stay unknown. The observer uses a bounded line buffer, a
 no-sample watchdog and reconnect delay. It does not invoke DS4 or touch its
 service.
 
+### Missing power despite working GPU and RAM readings
+
+A supported query name does not guarantee a measurement: a driver can return
+`[N/A]` for both module power fields while reporting utilization and clocks.
+The narrower `power.draw` GPU reading is not interchangeable with module or
+wall power. The current adapter leaves power unknown in this case, so RAM/GPU/
+clock charts can work while energy remains unavailable. Check the exact query
+result before treating a blank power chart as a stopped collector. Do not use a
+configured power limit or TDP as if it were a measured draw.
+
 ## Generic local JSONL adapter
 
 For a Mac, external wall-power meter, or another platform-specific collector,
