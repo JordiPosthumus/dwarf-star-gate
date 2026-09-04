@@ -10,6 +10,13 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Made fleet value visible without vanity arithmetic.** The old completion-
+  bucket headline is replaced by compact 1h/12h/24h decode and prefill gauges
+  based on cumulative DS4 timing deltas and real active seconds. A thin arc shows
+  observed activity coverage; the footer adds generated tokens and is ready to
+  show measured-power-derived kWh and tokens/kWh once every device has sufficient
+  coverage. Missing power remains unknown, never an invented TDP estimate.
+
 - **Made the Genie's value auditable at a glance.** A compact newest-first ledger
   now merges proven pool commandeering, Genie recovery and predictor receipts,
   and bounded queue moves with useful filters. Exact borrowed servers appear only

@@ -6,6 +6,7 @@ import { isMain } from '../ds4-gateway/config.mjs';
 import {TRAINING_RECIPES,DEFAULT_RECIPE} from '../ds4-gateway/training-recipes.mjs';
 import {calibrationPreflight} from '../ds4-gateway/calibration.mjs';
 import {FleetThroughput} from '../ds4-gateway/throughput.mjs';
+import {FleetSpeed} from '../ds4-gateway/fleet-speed.mjs';
 // Optional memory is supplied only by the isolated browser-test fixture. The
 // ordinary demo has no persistent storage and reads no installation config.
 export function createDemoServer({learningMilestone=false,agentHold=false,quarantinedWorker=false,memory=null}={}) {
@@ -62,6 +63,22 @@ const events = Array.from({length:8},(_,i)=>({
   usage:{prompt_tokens:28500+i*3800,cached_tokens:27000+i*3800,completion_tokens:160+i*23},
 }));
 const throughput=new FleetThroughput();
+const fleetSpeed=new FleetSpeed();let speedEvent=1;
+const speedRow=(node,time,kind,extra={})=>({sample_id:(speedEvent++).toString(16).padStart(64,'0'),node,time,kind,backend_epoch:'d'.repeat(64),...extra});
+for(let worker=0;worker<workers.length;worker++){
+  for(let hour=0;hour<24;hour++){
+    const start=now-(24-hour)*3600000+120000,decodeRate=[14,15,31][worker],prefillRate=[820,790,430][worker];
+    fleetSpeed.accept(speedRow(workers[worker].id,start,'start'));
+    fleetSpeed.accept(speedRow(workers[worker].id,start+6000,'prefill',{processed:Math.round(prefillRate*6),seconds:6,tps:prefillRate}));
+    fleetSpeed.accept(speedRow(workers[worker].id,start+12000,'prefill_done',{new_tokens:Math.round(prefillRate*12),seconds:12}));
+    fleetSpeed.accept(speedRow(workers[worker].id,start+42000,'decode',{generated:Math.round(decodeRate*30),seconds:30,tps:decodeRate}));
+    fleetSpeed.accept(speedRow(workers[worker].id,start+43000,'finish',{generated:Math.round(decodeRate*30)}));
+  }
+  // The future hardware lane samples at 10-15s in production. The synthetic
+  // fixture uses 30s so the energy estimator can prove continuous coverage
+  // without ever bridging a collector outage into invented consumption.
+  for(let second=0;second<=86400;second+=30)fleetSpeed.accept(speedRow(workers[worker].id,now-86400000+second*1000,'hardware',{power_watts:[92,98,71][worker]}));
+}
 // Fictional completions, independent of the 12-row request-log illustration.
 for(let i=0;i<30;i++)throughput.accept({schema:1,kind:'finish',run_id:'demo',request_id:`demo-usage-${i}`,node:workers[i%3].id,
   time:new Date(now-(i<12?i*250000:7200000+(i-12)*180000)).toISOString(),outcome:'complete',
@@ -120,7 +137,7 @@ return createDashboard(()=>({...snapshot,time:Date.now(),gateway_at:Date.now(),
     } else throw new Error('This screenshot demo does not run recovery or training. No real services are connected.');
     return registry();
   },
-},genie,()=>({enabled:true,status:'ready',demo:true,window_limit:500,not_dispatched:1,throughput:throughput.snapshot(),
+},genie,()=>({enabled:true,status:'ready',demo:true,window_limit:500,not_dispatched:1,throughput:throughput.snapshot(),fleet_speed:{...fleetSpeed.snapshot(Date.now(),workers.map(worker=>worker.id)),status:'ready',partial_history:false},
   model_series:['admission','upload','embedded','remaining'].map((stage,j)=>({id:modelIds[j===0?0:j===3?2:1],stage,
     rows:Array.from({length:24},(_,i)=>({node:workers[i%workers.length]?.id,at:now-i*30000,experimental:true,
       service_ms:8000+i*2600+(i%3)*3200,predicted_service_ms:i%7?10000+i*2450:null,service_state:'complete'}))})),

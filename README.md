@@ -117,10 +117,11 @@ test or design improvement only for a deterministic, privacy-bounded failure
 candidate selected by DSG code; the suggestion is a hypothesis, cannot modify the
 gateway or servers and never includes inference content. It survives dashboard
 restarts, stays private and grants no new powers.
-The main status row includes a compact [hourly fleet-throughput tile](docs/fleet-throughput.md):
-reported output tokens with peak rolling hour, completed requests and prompt-token
-reuse on one line. Evidence coverage and completion-time accounting stay available
-on hover or keyboard focus.
+The main status row includes a compact [fleet speed and energy pulse](docs/fleet-throughput.md):
+duration-weighted decode and prefill gauges with a browser-local 1h/12h/24h
+window, a restrained activity-coverage arc, observed generated tokens, and—once
+every device supplies dense measured power—estimated kWh and tokens/kWh. Missing
+power stays visibly unknown; DSG never turns a TDP into pretend energy telemetry.
 Workers with recognized engine faults or repeated inference failures are
 [quarantined persistently](docs/generation-health.md); recovery requires a real
 generation check. Opt-in recovery can restart an explicitly enrolled systemd-user

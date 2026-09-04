@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import vm from 'node:vm';
 import {FleetThroughput} from './throughput.mjs';
 import {AnalyticsReader} from './analytics.mjs';
 const HOUR=3600000,now=48*HOUR;
@@ -43,11 +42,4 @@ test('reader rebuilds counters after file replacement and survives a dashboard-r
   const again=new AnalyticsReader(dir,{enabled:true});again.poll(now);assert.equal(again.snapshot(now).throughput.output_tokens_1h,100);
   fs.renameSync(file,path.join(dir,'old'));write(finish('b',now,{completion_tokens:200,prompt_tokens:300,cached_tokens:200}));reader.poll(now);assert.equal(reader.status,'rescanning');reader.poll(now);assert.equal(reader.snapshot(now).throughput.output_tokens_1h,200);
   assert.equal(new AnalyticsReader(dir).snapshot(now).status,'disabled');
-});
-test('display exposes coverage and partial history; unavailable/disabled readers do not show misleading zeroes',()=>{
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
-  const nodes=new Map(),get=id=>{if(!nodes.has(id))nodes.set(id,{});return nodes.get(id);},context=vm.createContext({document:{getElementById:get}});vm.runInContext(source,context);
-  const f=new FleetThroughput();f.accept(finish('a',now));f.accept(finish('b',now,null));context.sample={status:'ready',partial_history:true,throughput:f.snapshot(now)};
-  vm.runInContext('renderThroughput(sample)',context);assert.equal(get('throughput-output').textContent,'100');assert.equal(get('throughput-peak').textContent,'100');assert.equal(get('throughput-requests').textContent,'2');assert.equal(get('throughput-cache-rate').textContent,'80%');assert.match(get('throughput-summary').title,/1 \/ 2/);assert.match(get('throughput-summary').title,/undercount/);
-  for(const status of ['disabled','unavailable','catching_up','rescanning']){context.sample.status=status;vm.runInContext('renderThroughput(sample)',context);assert.equal(get('throughput-output').textContent,'—');}
 });

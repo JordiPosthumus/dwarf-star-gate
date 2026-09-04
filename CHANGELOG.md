@@ -1,5 +1,19 @@
 # Changelog
 
+## Calibrated fleet speed and energy pulse
+
+- Replaced the top-row hourly-output vanity tile with compact decode and prefill
+  gauges. The default 12-hour view and browser-local 1h/12h/24h selector use
+  cumulative DS4 token/time deltas and duration-weighted active means; a thin
+  outer arc shows conservative activity coverage.
+- Added a bounded, rotation-aware reader for allowlisted DS4 engine timing rows.
+  Gauge calibration uses a padded 24-hour p95, while missing or malformed evidence
+  remains unknown rather than zero.
+- Added the measured-power contract for estimated kWh and tokens/kWh. Full-period
+  energy is shown only when every current device has at least 80% dense measured
+  coverage, with no TDP fallback. Platform telemetry adapters remain roadmap work,
+  so real deployments explicitly wait for power data until they are configured.
+
 ## Gate Genie action ledger
 
 - Added a compact, reverse-chronological ledger to the Gate Genie view with

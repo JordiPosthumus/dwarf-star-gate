@@ -14,6 +14,7 @@ import {GenieMemory} from './genie-memory.mjs';
 import { genieTunnel } from './genie-tunnel.mjs';
 import { safeQuarantine } from './generation-health.mjs';
 import { AnalyticsReader } from './analytics.mjs';
+import {FleetSpeedReader} from './fleet-speed.mjs';
 import { estimateCacheCost } from './cache-cost.mjs';
 import {CacheInventoryReader,cacheInventoryDirectories,loadCacheInventoryKey} from './cache-inventory.mjs';
 import { loadConfig, dashboardPort, isMain, continuityEnabled } from './config.mjs';
@@ -148,6 +149,7 @@ export async function runDashboard(configPath, port) {
   const runtime = path.join(path.dirname(config.state_file), 'dashboard');
   const analytics=new AnalyticsReader(path.join(path.dirname(config.state_file),'training'),{enabled:config.dataset_enabled===true});
   fs.mkdirSync(runtime, { recursive: true, mode: 0o700 });
+  const fleetSpeed=new FleetSpeedReader(runtime);
   let cacheInventoryKey=null,cacheInventoryError=null;
   if(cacheSources.size)try{cacheInventoryKey=loadCacheInventoryKey(runtime);}catch{cacheInventoryError='Cache inventory key unavailable';}
   let closed = false, gateway = null, gatewayAt = null, gatewayError = 'Waiting for gateway', writeError = null;
@@ -262,7 +264,7 @@ export async function runDashboard(configPath, port) {
   }
   async function poll() {
     if (polling) return;
-    polling = true; readEvents();analytics.poll();
+    polling = true; readEvents();analytics.poll();fleetSpeed.poll();
     if(continuityEnabled(config))try{
       const response=await fetch(`http://127.0.0.1:${config.port}/continuity/status`,{headers:{authorization:`Bearer ${config.api_key}`},signal:AbortSignal.timeout(3000)});
       if(!response.ok)throw new Error();continuityDoor=continuityDoorForDisplay(await response.json());continuityDoorError=continuityDoor?null:'Unsupported continuity door';
@@ -302,7 +304,7 @@ export async function runDashboard(configPath, port) {
   const server = createDashboard(snapshot, path.join(here,'ui'), managementEnabled ? {
     read:()=>workerControl(config.control_socket,'/workers',undefined,{channel:'dashboard'}),
     act:(action,input)=>workerControl(config.control_socket,({add:'/add-worker',remove:'/remove-worker',drain:'/drain-workers',resume:'/resume-workers',fallbacks:'/set-ssh-fallbacks',context:'/set-context-limit','queue-timeout':'/set-queue-timeout',protection:'/set-protection',relocate:'/relocate-queued',recover:'/recover-worker','recovery-policy':'/recovery-policy','recovery-handback-policy':'/recovery-handback-policy','recovery-recheck':'/recovery-recheck',predictor:'/predictor'})[action],input,{channel:'dashboard'}),
-  } : null,genie,()=>analytics.snapshot());
+  } : null,genie,()=>({...analytics.snapshot(),fleet_speed:fleetSpeed.snapshot(Date.now(),gateway?.workers?.map(worker=>worker.id)??[])}));
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
   await poll(); const interval = setInterval(poll, 2000), genieTimer=setInterval(()=>genie.tick(),10000);
   const close = () => { closed = true; clearInterval(interval);clearInterval(genieTimer);genie.close();stopGenieTunnel(); for (const t of timers) clearTimeout(t); for (const child of children) child.kill(); server.closeAllConnections(); server.close(); process.removeListener('SIGTERM', close); process.removeListener('SIGINT', close); };

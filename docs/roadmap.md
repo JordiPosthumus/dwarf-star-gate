@@ -549,6 +549,12 @@ policy improves an operator-defined objective before it gains routing authority.
 Add an optional low-rate hardware lane after maintenance hand-back recovery is
 complete. It must not slow the routing/control loop or require changes to DS4.
 
+The aggregate fleet-speed tile now defines and tests the downstream power
+contract: adjacent measured watt samples may produce kWh and tokens/kWh only
+when every current device has dense coverage. It intentionally remains in
+**energy awaiting power data** state until the adapters below exist; no TDP or
+speed-derived placeholder is allowed.
+
 - Keep availability, queues, quarantine and recovery state responsive through a
   small fast/event-driven lane, but refresh decode/prefill and hardware charts
   every **10 seconds**. Do not make a critical alarm wait on the chart timer.

@@ -62,22 +62,30 @@ function predictionChart(pairs) {
   return `<svg viewBox="0 0 266 246" role="img" aria-label="Predicted versus actual duration in ${label}; identical axes; dots above the diagonal took longer than predicted"><title>${pairs.length} paired requests; frozen forecasts at the selected stage</title><text x="48" y="12">Actual (${label})</text>${[0,.5,1].map(f=>`<line class="analytics-grid" x1="48" x2="228" y1="${y(f*max)}" y2="${y(f*max)}"/><text x="41" y="${y(f*max)+4}" text-anchor="end">${fmt(f*max/unit)}</text><text x="${x(f*max)}" y="219" text-anchor="middle">${fmt(f*max/unit)}</text>`).join('')}<line class="analytics-equal" x1="48" y1="202" x2="228" y2="22"/>${pairs.map(p=>`<circle class="${p.actual>p.predicted?'underestimated':'estimated'}" cx="${x(p.predicted).toFixed(2)}" cy="${y(p.actual).toFixed(2)}" r="3"><title>${esc(p.node)}: predicted ${fmt(p.predicted/1000)}s, actual ${fmt(p.actual/1000)}s</title></circle>`).join('')}<text x="138" y="240" text-anchor="middle">Predicted (${label})</text></svg>`;
 }
 let analyticsState=null,analyticsLoading=false,analyticsWorkerSignature='',analyticsChartSignature='',genieState=null;
-function renderThroughput(a){
-  const t=a?.throughput,ready=a?.status==='ready'&&t?.schema===1;
-  const compact=n=>!Number.isFinite(n)?'—':n>=1000000?fmt(n/1000000)+'M':n>=10000?fmt(n/1000)+'k':fmt(n);
-  const partial=!!(a?.partial_history||a?.malformed_lines||t?.evicted_records||t?.rejected_records);
-  $('throughput-output').textContent=ready?compact(t.output_tokens_1h):'—';
-  $('throughput-peak').textContent=ready?compact(t.peak_output_tokens_1h):'—';
-  $('throughput-requests').textContent=ready?compact(t.completed_1h):'—';
-  $('throughput-cache-rate').textContent=ready&&t.cache_reuse_pct_1h!==null?fmt(t.cache_reuse_pct_1h)+'%':'—';
-  const state=({disabled:'collection off',catching_up:'loading usage',rescanning:'rebuilding usage',waiting:'no saved usage',unavailable:'usage unavailable'})[a?.status]||'waiting for usage';
-  $('throughput-detail').title=ready?'Peak rolling hour · completed requests · token-weighted prompt reuse':state;
-  $('throughput-summary').title=ready?`DSG completed output, last 60m: ${fmt(t.output_tokens_1h)} tokens (${fmt(t.output_known_1h)} / ${fmt(t.completed_1h)} completions reported usage). Peak rolling hour observed in the last 24h: ${fmt(t.peak_output_tokens_1h)} (${fmt(t.output_known_24h)} / ${fmt(t.completed_24h)} reported usage). Successful requests completed in the last 60m: ${fmt(t.completed_1h)}; ${fmt(t.excluded_terminal_1h)} failed/cancelled excluded. Prompt tokens reused: ${fmt(t.cached_tokens_1h)} (${t.cache_reuse_pct_1h===null?'percentage unknown':fmt(t.cache_reuse_pct_1h)+'% of reported prompt tokens'}; ${fmt(t.cache_known_1h)} / ${fmt(t.completed_1h)} reports). Counts arrive when requests finish; this is not live GPU throughput.${partial?' Partial history or evidence gaps can undercount.':''}`:state;
-  $('throughput-summary').setAttribute?.('aria-label',ready?`Output last hour ${fmt(t.output_tokens_1h)} tokens; peak rolling hour ${fmt(t.peak_output_tokens_1h)}; ${fmt(t.completed_1h)} completed requests; ${t.cache_reuse_pct_1h===null?'prompt reuse unknown':fmt(t.cache_reuse_pct_1h)+' percent prompt reuse'}.`:state);
+const fleetSpeedWindows=new Set(['1h','12h','24h']);let fleetSpeedWindow='12h';
+try{const saved=globalThis.localStorage?.getItem('dsg-fleet-speed-window-v1');if(fleetSpeedWindows.has(saved))fleetSpeedWindow=saved;}catch{/* Browser privacy settings may deny storage; 12h remains the safe default. */}
+function compactValue(n){return !Number.isFinite(n)?'—':n>=1000000?fmt(n/1000000)+'M':n>=1000?fmt(n/1000)+'k':fmtWhole(n);}
+function renderFleetSpeed(a){
+  const speed=a?.fleet_speed,ready=speed?.status==='ready'&&speed?.schema===1,window=ready?speed.windows?.[fleetSpeedWindow]:null;
+  if($('fleet-speed-window').value!==fleetSpeedWindow)$('fleet-speed-window').value=fleetSpeedWindow;
+  const setGauge=kind=>{
+    const phase=window?.[kind],max=speed?.calibration?.[kind]?.max_tps,value=phase?.mean_tps,valid=Number.isFinite(value)&&Number.isFinite(max)&&max>0;
+    const gauge=$(`fleet-speed-${kind}`),fill=valid?Math.min(100,100*value/max):0,activity=Number.isFinite(phase?.activity_lower_bound_pct)?Math.min(100,phase.activity_lower_bound_pct):0;
+    gauge.style.setProperty('--speed-fill',String(fill));gauge.style.setProperty('--activity-fill',String(activity));$(`fleet-${kind}-speed`).textContent=valid?fmtWhole(value):'—';
+    const label=valid?`${kind} active-phase mean ${fmtWhole(value)} tokens per second over ${fleetSpeedWindow}; gauge calibrated zero to ${fmtWhole(max)}; at least ${fmt(activity)} percent of current configured fleet-hours observed in this phase; ${fmt(phase.samples)} timing intervals across ${fmt(phase.observed_workers)} workers`:`${kind} speed unavailable for ${fleetSpeedWindow}`;
+    gauge.setAttribute('aria-label',label);
+  };
+  setGauge('decode');setGauge('prefill');
+  const tokens=window?.decode?.tokens_observed,energy=window?.energy,estimated=energy?.estimated_kwh,efficiency=Number.isFinite(tokens)&&Number.isFinite(estimated)&&estimated>0?tokens/estimated:null;
+  $('fleet-speed-value').textContent=ready?`${Number.isFinite(tokens)?compactValue(tokens)+' tok':'No generation evidence'} · ${Number.isFinite(estimated)?`≈${fmt(estimated)} kWh${Number.isFinite(efficiency)?` · ${compactValue(efficiency)} tok/kWh`:''}`:'energy awaiting power data'}`:'Timing evidence unavailable';
+  const state=({catching_up:'Loading saved engine timings.',rescanning:'Rebuilding saved engine timings.',waiting:'No saved engine timings yet.',unavailable:'Engine timing history unavailable.'})[speed?.status]||'Engine timing history unavailable.';
+  const partial=!!(speed?.partial_history||speed?.malformed_lines||speed?.rejected_records||speed?.evicted_intervals),power=energy?.status==='estimated_from_measured_power'?`Energy extrapolates ${fmt(energy.measured_kwh)} measured kWh per worker only after at least 80% measured-power coverage; aggregate coverage ${fmt(energy.coverage_pct)}%.`:energy?.status==='insufficient_power_coverage'?`Power coverage is ${fmt(energy.coverage_pct)}%; no fleet-energy estimate is shown until every current worker reaches 80%.`:'No measured power samples are available, so DSG does not invent an energy estimate.';
+  const detail=ready?`Selected window: ${fleetSpeedWindow}. Each speed is a duration-weighted active mean: total observed token deltas divided by total observed active-phase seconds; repeated cumulative DS4 log lines are differenced first. Gauge ceilings are the padded, rounded 95th percentile of valid 24-hour engine intervals. The thin outer arcs are lower bounds on phase activity across the current configured fleet; missing telemetry and other phases are not called idle. ${power}${partial?' Evidence gaps or bounded-history limits are present.':''}`:state;
+  $('fleet-speed-summary').title=detail;$('fleet-speed-summary').setAttribute?.('aria-label',ready?`Fleet speed over ${fleetSpeedWindow}. Decode ${fmtWhole(window?.decode?.mean_tps)} tokens per second. Prefill ${fmtWhole(window?.prefill?.mean_tps)} tokens per second. ${Number.isFinite(estimated)?`Estimated energy ${fmt(estimated)} kilowatt hours.`:'Energy unavailable.'}`:state);
 }
 function renderAnalytics() {
   const a=analyticsState,worker=$('analytics-worker'),metric=$('analytics-metric').value;
-  renderThroughput(a);
+  renderFleetSpeed(a);
   const ids=[...new Set((a?.rows||[]).map(r=>r.node))].sort(),signature=JSON.stringify(ids);
   if(signature!==analyticsWorkerSignature) {
     analyticsWorkerSignature=signature;const previous=worker.value;
@@ -667,6 +675,7 @@ $('devices').addEventListener('click',event=>{if(!event.target.closest('[data-ad
 $('analytics-metric').addEventListener('change',renderAnalytics);
 $('analytics-worker').addEventListener('change',renderAnalytics);
 $('analytics-version').addEventListener('change',renderAnalytics);
+$('fleet-speed-window').addEventListener('change',()=>{const value=$('fleet-speed-window').value;if(!fleetSpeedWindows.has(value))return;fleetSpeedWindow=value;try{globalThis.localStorage?.setItem('dsg-fleet-speed-window-v1',value);}catch{/* Selection still works for this page. */}renderFleetSpeed(analyticsState);});
 let cacheCostBusy=false;
 $('cache-cost-form').addEventListener('submit',async event=>{
   event.preventDefault();if(cacheCostBusy)return;cacheCostBusy=true;
