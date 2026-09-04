@@ -579,9 +579,26 @@ No TDP or speed-derived placeholder is allowed.
 
 Implemented evidence covers mixed-adapter fixtures, missing/unsupported metrics,
 stale data, timeout/reconnect, bounded history, fixed SSH arguments and no private
-host/path/command leakage. Remaining acceptance work is a real opt-in Spark
-canary and measured dashboard CPU/network overhead. The UI stays unchanged when
-hardware telemetry is not configured.
+host/path/command leakage. Read-only Spark canaries have now returned RAM, GPU
+activity, clock and explicitly GPU-only power measurements. Persistent activation
+and measured dashboard CPU/network overhead still need validation; the UI stays
+unchanged when hardware telemetry is not configured.
+
+The private dashboard-to-core snapshot bridge and explicit V4 XGB contract now
+cover admission, upload, embedding completion and progress stages. Synthetic
+training proves hardware inputs can reach selected/exported tree splits, not
+that they improve this fleet. Remaining acceptance work is:
+
+- activate the dashboard collector and core ingestion without unapproved request
+  interruption, then verify fresh saved evidence and coverage by worker/stage;
+- provide a deliberately enrolled Mac measurement source;
+- train V4 on real collected traffic, compare hardware/no-hardware alternatives,
+  and retain the incumbent unless holdout and fresh-live gates pass;
+- measure collection/serialization/browser overhead and preserve a clear
+  distinction between GPU-only power and whole-device energy coverage.
+
+V3 remains the default training contract pending those checks. No live model is
+claimed to use hardware solely because the collector or V4 implementation exists.
 
 ## How this roadmap grows
 
