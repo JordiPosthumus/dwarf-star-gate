@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Made long-job validation coverage explicit.** Training, holdout and each
+  forward-time fold now report duration-band points, requests and sessions.
+  Repeated progress cannot masquerade as independent long-job evidence; this
+  diagnostic leaves model selection and production gates unchanged.
+
 - **Recovered early long-job progress for offline occupancy.** Replay no longer
   inherits the live rolling history's tail-only retention. Earlier hour-plus
   targets stay visible, with request-balanced evaluation and unchanged live limits.

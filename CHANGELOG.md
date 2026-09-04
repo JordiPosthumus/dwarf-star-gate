@@ -1,5 +1,11 @@
 # Changelog
 
+## Expose long-target training support
+
+- Report target-duration coverage for training, holdout and every forward-time
+  fold, with distinct point/request/session counts. Test duration boundaries,
+  repeated progress, empty bands and trainer integration. No routing changes.
+
 ## Preserve early occupancy progress evidence
 
 - Retain all observed causal points in the separate offline occupancy replay,

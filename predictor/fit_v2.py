@@ -150,6 +150,19 @@ def predict(model, enc, factor, rows, transform):
     return y
 
 
+DURATION_BANDS = (('under_5m', 0, 300), ('5m_to_1h', 300, 3600), ('1h_plus', 3600, float('inf')))
+
+
+def target_coverage(rows):
+    """Label support, not accuracy or independent evidence per progress point."""
+    result = {}
+    for name, lower, upper in DURATION_BANDS:
+        selected = [r for r in rows if lower <= r['target_s'] < upper]
+        result[name] = {'requests': unique(selected), 'points': len(selected),
+                        'sessions': len({r['group'] for r in selected})}
+    return result
+
+
 def metrics(rows, predicted):
     y = np.asarray([r['target_s'] for r in rows]); p = np.asarray(predicted); w = weights(rows)
     err = np.abs(y-p)
@@ -157,7 +170,7 @@ def metrics(rows, predicted):
     bands = {}
     # Diagnostic slices only: never choose a model using holdout subgroups.
     # Rebalance within each slice so repeated progress points cannot dominate it.
-    for name, lower, upper in (('under_5m', 0, 300), ('5m_to_1h', 300, 3600), ('1h_plus', 3600, float('inf'))):
+    for name, lower, upper in DURATION_BANDS:
         mask = (y >= lower) & (y < upper)
         selected = [r for r, flag in zip(rows, mask) if flag]
         sw = weights(selected)
@@ -261,7 +274,9 @@ def train(prepared, recipe_id=DEFAULT_RECIPE, *, occupancy=False):
         times=sorted({r['decision_time'] for r in subset})
         if count<50 or len(times)<20:continue
         cutoff=times[int(len(times)*.8)]; tr,te=split(subset,cutoff); cv=folds(tr)
-        report.update(training_requests=unique(tr),holdout_requests=unique(te),folds=len(cv))
+        report.update(training_requests=unique(tr),holdout_requests=unique(te),folds=len(cv),
+                      target_coverage={'training':target_coverage(tr),'holdout':target_coverage(te),
+                          'folds':[{'training':target_coverage(a),'validation':target_coverage(b)} for a,b in cv]})
         if unique(tr)<25 or unique(te)<10 or len(cv)<2:continue
         candidates=[]
         for family in feature_families(data,kind):

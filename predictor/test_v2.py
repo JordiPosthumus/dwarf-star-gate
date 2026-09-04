@@ -23,6 +23,10 @@ class PredictorV2Tests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'Unsupported'):v.train(prepared)
             result=v.train(prepared,occupancy=True)
             self.assertEqual(result['feature_schema'],'dsg-occupancy-v1');self.assertFalse(result['routing_enabled'])
+            coverage=result['reports']['admission']['target_coverage']
+            self.assertEqual(coverage['training']['1h_plus']['requests'],0)
+            self.assertGreater(coverage['holdout']['under_5m']['requests'],0)
+            self.assertEqual(len(coverage['folds']),result['reports']['admission']['folds'])
             self.assertGreater(result['reports']['admission']['terminal_classes']['output_limited']['holdout']['requests'],0)
             data['rows'][0]['features']['terminal_class']='output_limited';prepared.write_text(json.dumps(data))
             with self.assertRaisesRegex(ValueError,'target contract'):v.train(prepared,occupancy=True)
@@ -63,6 +67,16 @@ class PredictorV2Tests(unittest.TestCase):
             self.assertEqual(new[:-2],old)
             self.assertTrue(all('hardware' in f for f in new[-2:]))
             self.assertLessEqual(len(new),9)
+
+    def test_target_coverage_distinguishes_points_requests_sessions_and_boundaries(self):
+        rows=self.rows(5)
+        for row,target in zip(rows,(299,300,3599,3600,7200)):row['target_s']=target
+        rows[4]['group']=rows[3]['group']
+        coverage=v.target_coverage(rows+[rows[4]]*9)
+        self.assertEqual(coverage['under_5m'],{'requests':1,'points':1,'sessions':1})
+        self.assertEqual(coverage['5m_to_1h'],{'requests':2,'points':2,'sessions':2})
+        self.assertEqual(coverage['1h_plus'],{'requests':2,'points':11,'sessions':1})
+        self.assertEqual(v.target_coverage([])['1h_plus'],{'requests':0,'points':0,'sessions':0})
 
     def test_duration_bands_expose_hour_long_misses_and_boundaries(self):
         rows=self.rows(5)

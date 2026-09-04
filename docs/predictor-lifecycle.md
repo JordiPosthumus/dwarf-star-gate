@@ -38,6 +38,15 @@ the early, longest remaining-time targets. Repeated points remain request-weight
 in training/evaluation; they are not independent jobs. The production history
 window is unchanged.
 
+Trainer reports include `target_coverage` for training, outer holdout and each
+forward-time fold, separating points, requests and sessions by target-duration
+band. For remaining-time models these bands describe time still remaining, not
+total job duration; a request can appear in several bands. Hundreds of points
+from one long session are not hundreds of independent long jobs. Check these
+counts alongside error metrics: an aggregate improvement does not establish
+long-job accuracy when training contains no long examples. These diagnostics do
+not tune on the holdout, change promotion gates or authorize occupancy deployment.
+
 ## Current lifecycle
 
 Implemented, opt-in. Ordinary routing remains the default. A fitted model is
