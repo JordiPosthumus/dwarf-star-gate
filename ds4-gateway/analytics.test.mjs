@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 import {once} from 'node:events';
-import {AnalyticsReader,PredictionEvidence} from './analytics.mjs';
+import {AnalyticsReader,HandoverEvidence,PredictionEvidence} from './analytics.mjs';
 import {createDashboard} from './dashboard.mjs';
 
 let seq=0;
@@ -22,10 +22,26 @@ function fixture(t,options={}) {
 const serialize=rows=>rows.map(r=>JSON.stringify(r)+'\n').join('');
 test('versioned embedding and progress streams are ignored, not reported as broken analytics joins',()=>{
   const e=new PredictionEvidence();for(const r of lifecycle())e.accept(r);
-  for(const kind of ['embedding','request_features','progress','waiting'])e.accept(row(kind));
+  for(const kind of ['embedding','request_features','progress','waiting','queue_relocation'])e.accept(row(kind));
   e.accept(row('queued_cancel',{node:null,request_id:'never-admitted'}));
   assert.equal(e.snapshot().rows.length,1);assert.equal(e.snapshot().rejected_events,0);
   e.accept(row('unknown'));assert.equal(e.snapshot().rejected_events,1);
+});
+test('applied handovers join only observed destination outcomes and never create a no-move label',()=>{
+  const h=new HandoverEvidence(),move=row('queue_relocation',{node:'worker-b',source:'worker-a',destination:'worker-b',actor:'scheduler',relocation_schema:1,waiting_ms:4000,dispatch_state:'not_dispatched',body_replayed:false,deadline_preserved:true,cache_locality:'unknown'});
+  h.accept(move);h.accept(move);h.accept(row('dispatch',{node:'worker-b',queue_ms:5500}));h.accept(row('finish',{node:'worker-b',outcome:'complete',finish_reason:'tool_calls',service_ms:9000,usage:{prompt_tokens:100,cached_tokens:80}}));
+  const s=h.snapshot(),r=s.rows[0];assert.equal(s.total,1);assert.equal(s.completed,1);assert.equal(s.counterfactual,'unknown');assert.equal(s.rejected_events,0);
+  assert.deepEqual({...r,at:undefined},{source:'worker-a',destination:'worker-b',actor:'scheduler',at:undefined,waiting_before_move_ms:4000,post_move_wait_ms:1500,service_ms:9000,service_state:'complete',cached_fraction:.8});
+  assert.ok(!JSON.stringify(s).includes('req-a'));
+  const genie=new HandoverEvidence();genie.accept({...move,event_id:'genie-move',request_id:'genie-request',actor:'genie'});assert.equal(genie.snapshot().rows[0].actor,'genie');
+  const rounded=new HandoverEvidence();rounded.accept({...move,event_id:'rounded-move',request_id:'rounded-request',waiting_ms:962.029});rounded.accept(row('dispatch',{request_id:'rounded-request',node:'worker-b',queue_ms:962}));assert.equal(rounded.snapshot().rows[0].post_move_wait_ms,0);
+});
+test('handover joins fail closed on wrong destinations, invalid order and incomplete results',()=>{
+  const move=extra=>row('queue_relocation',{node:'worker-b',source:'worker-a',destination:'worker-b',actor:'operator',relocation_schema:1,waiting_ms:100,dispatch_state:'not_dispatched',body_replayed:false,deadline_preserved:true,cache_locality:'unknown',...extra});
+  const wrong=new HandoverEvidence();wrong.accept(move());wrong.accept(row('dispatch',{node:'worker-c',queue_ms:200}));assert.equal(wrong.snapshot().total,0);assert.equal(wrong.snapshot().rejected_events,1);
+  const early=new HandoverEvidence();early.accept(move({request_id:'early'}));early.accept(row('finish',{request_id:'early',node:'worker-b',outcome:'complete',finish_reason:'stop',service_ms:1}));assert.equal(early.snapshot().total,0);assert.equal(early.snapshot().rejected_events,1);
+  const pending=new HandoverEvidence();pending.accept(move({request_id:'pending'}));pending.accept(row('dispatch',{request_id:'pending',node:'worker-b',queue_ms:200}));assert.equal(pending.snapshot().pending,1);
+  const failed=new HandoverEvidence();failed.accept(move({request_id:'failed'}));failed.accept(row('dispatch',{request_id:'failed',node:'worker-b',queue_ms:200}));failed.accept(row('finish',{request_id:'failed',node:'worker-b',outcome:'upstream_error',service_ms:300}));assert.equal(failed.snapshot().excluded,1);
 });
 test('admission forecasts join by run/request and actual worker; future revisions and alternatives are not labels',()=>{
   const e=new PredictionEvidence();e.accept(row('decision'));e.accept(forecast());
@@ -121,10 +137,11 @@ test('collection and cache UI distinguish missing metadata, sparse evidence and 
 });
 test('UI polling preserves expansion and selected filter; stale results and tiny samples are explicit',()=>{
   const {ctx,get,call}=ui();get('analytics').open=false;get('analytics-metric').value='queue';
-  ctx.sample={status:'ready',rows:[{node:'worker-a',queue_ms:2000,predicted_queue_ms:1000}]};
+  ctx.sample={status:'ready',rows:[{node:'worker-a',queue_ms:2000,predicted_queue_ms:1000}],handovers:{total:2,completed:1,pending:1,excluded:0,rejected_events:0}};
   call('analyticsState=sample;renderAnalytics()');get('analytics-worker').value='worker-a';call('renderAnalytics()');
   assert.equal(get('analytics-worker').value,'worker-a');assert.equal(get('analytics').open,false);
   assert.match(get('analytics-status').textContent,/unvalidated/);assert.match(get('analytics-stats').innerHTML,/1,000s|1s/);
+  assert.match(get('analytics-detail').textContent,/Applied handovers: 2 observed.*no invented no-move result/);
   ctx.sample.status='unavailable';call('renderAnalytics()');assert.match(get('analytics-status').textContent,/historical/);
 });
 test('model plots default to the latest real forecast while historical versions remain selectable',()=>{

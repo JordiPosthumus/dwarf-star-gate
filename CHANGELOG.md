@@ -1,5 +1,15 @@
 # Changelog
 
+## Observed handover outcomes
+
+- Analytics now joins an applied pre-dispatch handover to its actual destination
+  dispatch and finish. It reports wait already paid, additional destination wait,
+  successful service time and reported cache reuse without inventing the
+  unobserved no-move outcome.
+- Relocated requests remain excluded from ordinary decision-node predictor labels.
+  Operator, scheduler and Gate Genie actors are all preserved by the bounded
+  evidence allowlist; previously Genie-initiated handovers were omitted.
+
 ## Predictor artifact rejection diagnostics
 
 - Predictor status now reports bounded rejection categories instead of only an

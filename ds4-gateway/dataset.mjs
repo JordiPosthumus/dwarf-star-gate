@@ -18,7 +18,7 @@ export function evidence(kind, raw) {
   if(kind==='waiting'){if(!rejectionReasons.has(raw.reason))return null;row.reason=raw.reason;row.dispatch_state='not_dispatched';}
   if(kind==='queue_relocation'){
     row.relocation_schema=1;row.source=id(raw.source);row.destination=id(raw.destination);
-    row.actor=['operator','scheduler'].includes(raw.actor)?raw.actor:null;row.dispatch_state=raw.dispatch_state==='not_dispatched'?'not_dispatched':null;
+    row.actor=['operator','scheduler','genie'].includes(raw.actor)?raw.actor:null;row.dispatch_state=raw.dispatch_state==='not_dispatched'?'not_dispatched':null;
     row.body_replayed=raw.body_replayed===false?false:null;row.deadline_preserved=raw.deadline_preserved===true;row.cache_locality='unknown';row.waiting_ms=number(raw.waiting_ms);
     if(!row.source||!row.destination||!row.actor||!row.dispatch_state||row.body_replayed!==false||!row.deadline_preserved||row.waiting_ms===null)return null;
   }

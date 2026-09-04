@@ -17,7 +17,7 @@ export class PredictionEvidence {
   }
   accept(row) {
     // Other versioned collector streams are not missing analytics joins.
-    if(row?.schema===1 && ['request_features','embedding','progress','rejection','waiting'].includes(row.kind))return;
+    if(row?.schema===1 && ['request_features','embedding','progress','rejection','waiting','queue_relocation'].includes(row.kind))return;
     if(row?.schema===1&&row.node===null&&['queued_cancel','queue_timeout'].includes(row.kind))return; // No worker admission/forecast existed.
     if(row?.schema!==1 || !kinds.has(row.kind) || !validId(row.run_id) || !validId(row.request_id) || !validId(row.event_id)) {this.rejected++;return;}
     const eventKey=`${row.run_id}:${row.event_id}`;
@@ -89,9 +89,53 @@ export class PredictionEvidence {
   }
 }
 
+// Applied handovers change the selected worker, so they must not be folded into
+// the ordinary decision-node prediction join. This separate observer reports
+// only the route that actually ran; it never invents the no-move outcome.
+export class HandoverEvidence {
+  constructor({maxRecords=512,maxEvents=4096,maxResults=100}={}) {
+    Object.assign(this,{maxRecords,maxEvents,maxResults});this.records=new Map();this.seen=new Set();this.rejected=0;this.evicted=0;
+  }
+  accept(row) {
+    if(row?.schema!==1||!['queue_relocation','dispatch','finish'].includes(row.kind))return;
+    if(!validId(row.run_id)||!validId(row.request_id)||!validId(row.event_id)){this.rejected++;return;}
+    const eventKey=`${row.run_id}:${row.event_id}`;if(this.seen.has(eventKey))return;
+    this.seen.add(eventKey);if(this.seen.size>this.maxEvents)this.seen.delete(this.seen.keys().next().value);
+    const time=Date.parse(row.time),key=`${row.run_id}:${row.request_id}`;if(!Number.isFinite(time)){this.rejected++;return;}
+    if(row.kind==='queue_relocation') {
+      if(this.records.has(key)||row.relocation_schema!==1||!validId(row.source)||!validId(row.destination)||row.source===row.destination||row.node!==row.destination||
+        !['operator','scheduler','genie'].includes(row.actor)||row.dispatch_state!=='not_dispatched'||row.body_replayed!==false||row.deadline_preserved!==true||row.cache_locality!=='unknown'||number(row.waiting_ms)===null){this.rejected++;return;}
+      this.records.set(key,{source:row.source,destination:row.destination,actor:row.actor,at:time,waiting_ms:row.waiting_ms,dispatch:null,finish:null});
+      if(this.records.size>this.maxRecords){this.records.delete(this.records.keys().next().value);this.evicted++;}return;
+    }
+    const r=this.records.get(key);if(!r)return;
+    if(row.node!==r.destination){this.records.delete(key);this.rejected++;return;}
+    if(row.kind==='dispatch') {
+      // Gateway queue_ms is wall-clock integer milliseconds while relocation
+      // waiting_ms is monotonic and fractional. Permit only their tiny rounding
+      // skew; a materially earlier dispatch still invalidates the join.
+      if(r.dispatch||r.finish||time<r.at||number(row.queue_ms)===null||row.queue_ms+10<r.waiting_ms){this.records.delete(key);this.rejected++;return;}
+      r.dispatch={at:time,total_queue_ms:row.queue_ms,post_move_wait_ms:Math.max(0,row.queue_ms-r.waiting_ms)};return;
+    }
+    if(!r.dispatch||r.finish||time<r.dispatch.at){this.records.delete(key);this.rejected++;return;}
+    const eligible=row.outcome==='complete'&&['stop','tool_calls','function_call'].includes(row.finish_reason)&&number(row.service_ms)>0;
+    const prompt=number(row.usage?.prompt_tokens),cached=number(row.usage?.cached_tokens);
+    r.finish={eligible,service_ms:eligible?row.service_ms:null,outcome:typeof row.outcome==='string'?row.outcome:'unknown',
+      cached_fraction:eligible&&prompt!==null&&prompt>0&&cached!==null&&cached<=prompt?cached/prompt:null};
+  }
+  snapshot() {
+    const records=[...this.records.values()].sort((a,b)=>a.at-b.at),completed=records.filter(r=>r.finish?.eligible),excluded=records.filter(r=>r.finish&&!r.finish.eligible);
+    return {source:'observed_applied_relocations',counterfactual:'unknown',total:records.length,dispatched:records.filter(r=>r.dispatch).length,completed:completed.length,excluded:excluded.length,pending:records.filter(r=>!r.finish).length,
+      rows:records.slice(-this.maxResults).map(r=>({source:r.source,destination:r.destination,actor:r.actor,at:r.at,waiting_before_move_ms:r.waiting_ms,
+        post_move_wait_ms:r.dispatch?.post_move_wait_ms??null,service_ms:r.finish?.service_ms??null,service_state:!r.finish?'pending':r.finish.eligible?'complete':'excluded',cached_fraction:r.finish?.cached_fraction??null})),
+      rejected_events:this.rejected,evicted_records:this.evicted,
+      note:'Observed destination outcomes only. The unobserved no-move outcome remains unknown; these rows do not train or validate the ordinary placement predictor.'};
+  }
+}
+
 export class AnalyticsReader {
   constructor(directory,{enabled=false,readBytes=READ_BYTES,tailBytes=TAIL_BYTES}={}) {
-    Object.assign(this,{directory,enabled,readBytes,tailBytes});this.cursors=new Map();this.evidence=new PredictionEvidence();this.throughput=new FleetThroughput();
+    Object.assign(this,{directory,enabled,readBytes,tailBytes});this.cursors=new Map();this.evidence=new PredictionEvidence();this.handovers=new HandoverEvidence();this.throughput=new FleetThroughput();
     this.status='waiting';this.lastRead=null;this.partialHistory=false;this.malformed=0;this.rescans=0;
   }
   poll(now=Date.now()) {
@@ -100,7 +144,7 @@ export class AnalyticsReader {
       if(!fs.lstatSync(this.directory).isDirectory())throw new Error('Not a directory');
       const files=fs.readdirSync(this.directory).filter(f=>/^routing-\d{4}-\d{2}-\d{2}\.jsonl$/.test(f)).sort().slice(-2);
       if([...this.cursors.keys()].some(file=>!files.includes(file))) {
-        this.cursors.clear();this.evidence=new PredictionEvidence();this.throughput=new FleetThroughput();this.rescans++;this.status='rescanning';return;
+        this.cursors.clear();this.evidence=new PredictionEvidence();this.handovers=new HandoverEvidence();this.throughput=new FleetThroughput();this.rescans++;this.status='rescanning';return;
       }
       let backlog=false;
       for(const file of files) {
@@ -117,7 +161,7 @@ export class AnalyticsReader {
           if(changed) {
             // Rebuild a bounded window after replacement/truncation; do not mix
             // old labels with a new file that happens to reuse request IDs.
-            this.cursors.clear();this.evidence=new PredictionEvidence();this.throughput=new FleetThroughput();this.rescans++;this.status='rescanning';return;
+            this.cursors.clear();this.evidence=new PredictionEvidence();this.handovers=new HandoverEvidence();this.throughput=new FleetThroughput();this.rescans++;this.status='rescanning';return;
           }
           if(!c) {
             const offset=Math.max(0,stat.size-this.tailBytes);this.partialHistory ||= offset>0;
@@ -129,7 +173,7 @@ export class AnalyticsReader {
           let from=0,end;
           while((end=buffer.indexOf(10,from))>=0) {
             if(!c.skipping && end-from<=LINE_BYTES) {
-              try {const row=JSON.parse(buffer.subarray(from,end).toString('utf8'));this.evidence.accept(row);this.throughput.accept(row);} catch {this.malformed++;}
+              try {const row=JSON.parse(buffer.subarray(from,end).toString('utf8'));this.evidence.accept(row);this.handovers.accept(row);this.throughput.accept(row);} catch {this.malformed++;}
             } else if(!c.skipping)this.malformed++;
             c.skipping=false;from=end+1;
           }
@@ -151,6 +195,7 @@ export class AnalyticsReader {
     return {enabled:this.enabled,status:this.enabled?this.status:'disabled',last_read_at:this.lastRead,
       partial_history:this.partialHistory,malformed_lines:this.malformed,rescans:this.rescans,
       throughput:this.throughput.snapshot(now),
+      handovers:this.handovers.snapshot(),
       ...this.evidence.snapshot()};
   }
 }

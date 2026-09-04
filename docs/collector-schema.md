@@ -29,7 +29,7 @@ enable prediction-based placement or constitute a cache-hit auditor.
 | `queued_cancel` | `total_ms` spent admitted before client cancellation |
 | `queue_timeout` | `total_ms` spent admitted before queue expiry |
 | `unavailable_before_dispatch` | `total_ms` spent admitted before rejecting dispatch to an unavailable assigned server |
-| `queue_relocation` | Allowlisted pre-dispatch receipt: source/destination IDs, operator or scheduler actor, waiting time, `dispatch_state:not_dispatched`, `body_replayed:false`, `deadline_preserved:true`, and explicit unknown cache locality |
+| `queue_relocation` | Allowlisted pre-dispatch receipt: source/destination IDs, operator, scheduler or Gate Genie actor, waiting time, `dispatch_state:not_dispatched`, `body_replayed:false`, `deadline_preserved:true`, and explicit unknown cache locality. Analytics joins it to the destination dispatch/finish by gateway run and request ID, but keeps the unobserved no-move result unknown and excludes the moved request from ordinary decision-node predictor labels |
 | `routing_shadow` | Repeatable, non-label assessment: `shadow_schema`, `reason`, `verdict`, `confidence`, `basis`, `source`, `alternative`, `session_busy`, `waiting_ms`, `saving_ms`, `candidates`, truncation flag |
 | `progress` | `progress_schema:1`, `prediction_point:while_active`, `active_elapsed_ms`, `phase`, `semantic_characters`, `semantic_age_ms`, thinking/answer/tool character counts, `requested_thinking` |
 | `request_features` | `feature_schema:2`, `prediction_point:after_upload`, extraction/status, `available_at`, request bytes, bounded role/message/text/image/tool counts, output controls and history-scan flag |

@@ -128,6 +128,7 @@ test('dataset allowlist excludes raw data; unknown timings stay null',()=>{
   assert.deepEqual({...move,request_id:undefined,node:undefined},{kind:'queue_relocation',request_id:undefined,node:undefined,relocation_schema:1,source:'one',destination:'two',actor:'scheduler',dispatch_state:'not_dispatched',body_replayed:false,deadline_preserved:true,cache_locality:'unknown',waiting_ms:42});
   assert.ok(!JSON.stringify(move).includes('SECRET'));
   assert.equal(evidence('queue_relocation',{...move,body_replayed:true}),null);
+  assert.equal(evidence('queue_relocation',{...move,actor:'genie'})?.actor,'genie');
 });
 test('private dataset persists across runs, counts bytes, and never deletes on budget exhaustion',async t=>{
   const dir=await fs.mkdtemp(path.join(os.tmpdir(),'dsg-dataset-'));t.after(()=>fs.rm(dir,{recursive:true,force:true}));

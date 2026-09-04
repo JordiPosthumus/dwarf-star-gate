@@ -50,6 +50,14 @@ Failed, output-limited, incomplete and unfinished responses are not successful
 service-duration labels. Genie traffic is excluded. This success-only service
 score does **not** measure reliability or the cost of failures.
 
+Applied pre-dispatch handovers have a separate bounded outcome join. It reports
+the actual source/destination, wait already paid before the move, additional wait
+at the destination, successful service duration and reported prompt-cache reuse.
+Because the selected worker changed, these requests are not silently folded into
+the original decision-node predictor score or XGB labels. The no-move outcome was
+not observed and remains unknown; the dashboard never calls the destination result
+"time saved" without a separately justified counterfactual.
+
 ## Scope and privacy
 
 This is a bounded recent window, not a warehouse or the offline training dataset:
