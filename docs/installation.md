@@ -44,6 +44,13 @@ trust/authentication yourself. Registration probes compatibility and leaves the
 worker paused until explicitly enabled. The UI never edits its model settings.
 Match the configured pool model/context to the intended fleet before enabling it.
 
+The `api_key` in DSG's configuration authenticates clients to the gateway only.
+Registered workers are stock, unauthenticated DS4 endpoints protected by
+loopback or DSG's host-key-verified SSH tunnel. DSG deliberately strips its
+ingress bearer credential before every worker inference request; model-list and
+health probes are unauthenticated as well. Per-worker API credentials and generic
+authenticated OpenAI backends are not part of this DS4-specific worker contract.
+
 ## One config contract
 
 1. An explicit config argument, on commands that support one.

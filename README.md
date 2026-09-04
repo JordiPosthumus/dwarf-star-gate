@@ -318,6 +318,11 @@ New configurations use the stable Continuity Door at
 `30001`; existing configurations are not silently migrated. Read the client key
 from your private config, never publish it.
 
+That client key terminates at DSG. Workers are stock, unauthenticated DS4
+endpoints kept private by loopback or the SSH tunnel; DSG never forwards its
+bearer secret to them. Authenticated generic OpenAI backends are deliberately
+outside this DS4-specific worker contract.
+
 On macOS, use login services instead of the foreground processes (stop those
 first):
 

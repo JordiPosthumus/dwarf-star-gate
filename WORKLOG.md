@@ -10,6 +10,10 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Closed the worker credential boundary.** DSG's client bearer key now stops at
+  the gateway. Stock DS4 workers remain private behind loopback or authenticated
+  SSH, and receive neither the ingress key during inference nor metadata probes.
+
 - **Made planned gateway maintenance continuity-safe.** The Continuity Door holds
   new request bodies unread while existing streams drain, swaps only the gateway
   core, verifies readiness, and forwards each held request once. It does not spool

@@ -22,9 +22,10 @@ async function until(fn, timeout = 3000) {
   while (!fn()) { if (Date.now() > end) throw new Error('Condition timed out'); await delay(10); }
 }
 async function backend(id) {
-  const b = { id, records: [], active: 0, peak: 0, aborts: 0, health: true, receivedBytes: 0, context_length:153600 };
+  const b = { id, records: [], modelHeaders:[], active: 0, peak: 0, aborts: 0, health: true, receivedBytes: 0, context_length:153600 };
   b.server = http.createServer((req, res) => {
     if (req.url === '/v1/models') {
+      b.modelHeaders.push(req.headers);
       if(b.blockHealthWhileActive&&b.active){res.on('close',()=>{});return;}
       return res.end(JSON.stringify({ data: [{ id: b.health ? 'deepseek-v4-flash' : 'wrong-model', context_length: b.context_length, top_provider:{context_length:b.context_length,max_completion_tokens:b.context_length} }] }));
     }
@@ -84,6 +85,17 @@ async function backend(id) {
   b.close = async () => { b.server.closeAllConnections(); await new Promise(r => b.server.close(r)); };
   return b;
 }
+
+test('DSG ingress credentials never cross the unauthenticated stock-DS4 boundary',async t=>{
+  const r=await rig(t,1);
+  const inference=await r.request(JSON.stringify({messages:[{role:'user',content:'credential boundary'}]}));
+  assert.equal(inference.status,200);
+  assert.equal(r.backends[0].records.at(-1).headers.authorization,undefined);
+  const models=await r.request('',null,{method:'GET',path:'/v1/models'});
+  assert.equal(models.status,200);
+  assert.ok(r.backends[0].modelHeaders.length>=2,'startup probe and proxied model-list request were observed');
+  assert.ok(r.backends[0].modelHeaders.every(headers=>headers.authorization===undefined));
+});
 
 test('remote workers accept bounded verified SSH alias fallbacks, never options or duplicate routes',()=>{
   const worker=workerConfig({id:'worker-a',url:'http://127.0.0.1:38001',ssh:'worker-a',ssh_fallbacks:['worker-a-lan','worker-a-tailnet','worker-a-lan'],remote_port:8000});

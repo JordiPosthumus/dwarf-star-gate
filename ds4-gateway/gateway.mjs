@@ -524,6 +524,10 @@ export function createGateway(config,{visionTranscode}={}) {
     const finishCapture=value=>{if(captureResolved)return;captureResolved=true;resolveCapture(value);};
     const target = new URL(req.url, node.url);
     const headers = forwardHeaders(req.headers);
+    // The bearer credential authenticates callers to DSG. Stock DS4 workers
+    // are intentionally unauthenticated behind loopback or an SSH tunnel, so
+    // the ingress secret must never cross the worker boundary.
+    delete headers.authorization;
     delete headers[CLIENT_METADATA_HEADER]; // DSG hint only; never a DS4 setting.
     delete headers[CALL_ID_HEADER];
     headers.host = target.host;

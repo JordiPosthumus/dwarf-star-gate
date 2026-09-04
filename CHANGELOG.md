@@ -1,5 +1,14 @@
 # Changelog
 
+## Worker credential boundary
+
+- DSG's bearer credential now terminates at the gateway instead of being
+  forwarded with inference requests to stock DS4 workers. Model-list and health
+  traffic already crossed the worker boundary without that credential.
+- The supported contract is now explicit: workers are unauthenticated stock DS4
+  endpoints protected by loopback or host-key-verified SSH. A regression covers
+  startup probes, proxied model metadata and inference requests.
+
 ## Gate Genie hardening suggestions
 
 - Genie can now turn a deterministic, privacy-bounded failure envelope into a
