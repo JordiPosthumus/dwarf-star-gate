@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
 import { workerConfig, sshTargets } from './worker-config.mjs';
 
 const sshFailurePatterns = [
@@ -29,11 +31,16 @@ export function recoveryConfig(raw={}) {
   if(Object.keys(raw).some(k=>!['workers'].includes(k)) || !Array.isArray(raw.workers??[]))throw new Error('Invalid recovery configuration');
   const configs=new Map(), machines=new Set();
   for(const entry of raw.workers??[]) {
-    if(Object.keys(entry).some(k=>!['id','url','ssh','ssh_fallbacks','remote_port','adapter','helper','config','machine','profile','service_profile','start_stopped','exclusive'].includes(k)))throw new Error('Unsupported recovery configuration field');
+    if(Object.keys(entry).some(k=>!['id','url','ssh','ssh_fallbacks','remote_port','adapter','transport','python','helper','config','machine','profile','service_profile','start_stopped','exclusive'].includes(k)))throw new Error('Unsupported recovery configuration field');
     const worker=workerConfig(Object.fromEntries(['id','url','ssh','ssh_fallbacks','remote_port'].filter(k=>entry[k]!==undefined).map(k=>[k,entry[k]])));
-    if(!['systemd-user','launchd'].includes(entry.adapter) || !worker.ssh)throw new Error('Recovery requires an enrolled systemd-user or launchd SSH adapter');
+    const local=entry.transport==='local';
+    if(entry.transport!==undefined&&!['ssh','local'].includes(entry.transport))throw new Error('Recovery transport must be ssh or local');
+    if(!['systemd-user','launchd'].includes(entry.adapter)||(!local&&!worker.ssh)||(local&&(entry.adapter!=='launchd'||worker.ssh)))throw new Error('Recovery requires an enrolled SSH adapter or an explicitly local launchd worker');
+    if(local){
+      if(typeof entry.python!=='string'||!path.isAbsolute(entry.python)||entry.python.includes('\0'))throw new Error('Local recovery requires an absolute enrolled Python interpreter');
+    }else if(entry.python!==undefined)throw new Error('Python interpreter enrollment is only valid for local recovery');
     if(entry.exclusive!==true)throw new Error('Recovery requires explicit exclusive DSG ownership of the endpoint');
-    for(const field of ['helper','config'])if(typeof entry[field]!=='string' || !/^\/[A-Za-z0-9_./-]+$/.test(entry[field]) || entry[field].includes('/../'))throw new Error('Recovery paths must be absolute shell-safe paths');
+    for(const field of ['helper','config'])if(typeof entry[field]!=='string'||!path.isAbsolute(entry[field])||entry[field].includes('\0')||(!local&&(!/^\/[A-Za-z0-9_./-]+$/.test(entry[field])||entry[field].includes('/../'))))throw new Error('Recovery paths must be absolute and shell-safe for SSH');
     for(const field of ['machine','profile'])if(!/^[a-f0-9]{64}$/.test(entry[field]))throw new Error('Enroll the recovery machine and profile first');
     if(entry.start_stopped!==undefined&&typeof entry.start_stopped!=='boolean')throw new Error('start_stopped must be boolean');
     if(entry.start_stopped===true&&!/^[a-f0-9]{64}$/.test(entry.service_profile))throw new Error('Starting a stopped service requires its enrolled static service profile');
@@ -44,26 +51,52 @@ export function recoveryConfig(raw={}) {
   return configs;
 }
 
+// Same-host execution is explicit, macOS-only and never falls back from failed
+// SSH. Private enrollment, not Genie input, selects these files and interpreter.
+function localInvocation(config,{platform=process.platform,uid=process.getuid?.()}={}){
+  if(platform!=='darwin'||!Number.isInteger(uid)||uid===0)throw new Error('adapter_local_unavailable');
+  try{
+    recoveryConfig({workers:[config]});
+    if(config.adapter!=='launchd'||config.transport!=='local'||config.ssh||config.ssh_fallbacks||config.remote_port!==undefined)throw new Error();
+    for(const key of ['python','helper','config']){
+      const file=config[key];
+      if(typeof file!=='string'||!path.isAbsolute(file)||file.includes('\0'))throw new Error();
+      const s=fs.lstatSync(file);
+      if(!s.isFile()||![uid,0].includes(s.uid)||s.mode&0o022)throw new Error();
+      if(key==='config'&&(s.uid!==uid||s.mode&0o077||s.size>65536))throw new Error();
+    }
+    const fd=fs.openSync(config.config,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);
+    let text;try{const buf=Buffer.alloc(65537),size=fs.readSync(fd,buf,0,buf.length,0);if(size>65536)throw new Error();text=buf.subarray(0,size).toString('utf8');}finally{fs.closeSync(fd);}
+    const enrolled=JSON.parse(text),worker=workerConfig({id:config.id,url:config.url});
+    if(enrolled.port!==Number(new URL(worker.url).port))throw new Error();
+    return {file:config.python,args:['-I',config.helper,config.config]};
+  }catch{throw new Error('adapter_local_identity_unverified');}
+}
+
 // Operator-owned paths/host only, strict host-key checking; no shell strings
 // derived from requests, model text, service names, or telemetry. The selected
 // helper is enrolled in private config; both helpers share this JSON protocol.
-function recoveryAttempt(config,request,target,{spawnFn=spawn,timeoutMs=45000}={}) {
+function recoveryAttempt(config,request,target,{spawnFn=spawn,timeoutMs=45000,...localOptions}={}) {
   return new Promise((resolve,reject)=>{
-    const child=spawnFn('/usr/bin/ssh',['-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','ConnectTimeout=8',target,
-      `python3 ${config.helper} ${config.config}`],{stdio:['pipe','pipe','pipe']});
+    const local=config.transport==='local';
+    const invocation=local?localInvocation(config,localOptions):{file:'/usr/bin/ssh',args:['-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','ConnectTimeout=8',target,`python3 ${config.helper} ${config.config}`]};
+    let child;try{child=spawnFn(invocation.file,invocation.args,{stdio:['pipe','pipe','pipe'],shell:false});}catch{return reject(new Error('adapter_spawn_failed'));}
     let output='',stderr='',settled=false;
     const finish=(err,result)=>{if(settled)return;settled=true;clearTimeout(timer);if(err)reject(err);else resolve(result);};
     const timer=setTimeout(()=>{child.kill();finish(new Error('adapter_timeout'));},timeoutMs);
     child.stdout.on('data',chunk=>{output+=chunk;if(output.length>65536){child.kill();finish(new Error('adapter_output_limit'));}});
     child.stderr.on('data',chunk=>{stderr=(stderr+chunk).slice(-4096);});
-    child.on('error',error=>finish(new Error(classifySshFailure(stderr,error.code))));
+    child.on('error',error=>finish(new Error(local?'adapter_spawn_failed':classifySshFailure(stderr,error.code))));
     child.stdin.on('error',()=>{});
-    child.on('exit',code=>{try {const result=JSON.parse(output);if(code!==0 || result.error)throw new Error();finish(null,result);}catch{finish(new Error(classifySshFailure(stderr,null,code)));}});
+    // Process exit can precede the final stdout bytes. Settle only after pipes
+    // close, otherwise a valid inspection can be misclassified as malformed.
+    child.on('close',code=>{try {const result=JSON.parse(output);if(code!==0 || !result || typeof result!=='object' || Array.isArray(result) || result.error)throw new Error();finish(null,result);}catch{finish(new Error(local?'adapter_check_failed':classifySshFailure(stderr,null,code)));}});
     child.stdin.end(JSON.stringify(request));
   });
 }
 
 export async function recoveryCall(config,request,options={}) {
+  if(config.transport==='local')return recoveryAttempt(config,request,null,options);
   let failure;
   for(const target of sshTargets(config)){
     try{return await recoveryAttempt(config,request,target,options);}

@@ -19,7 +19,8 @@ UI does not grant permission to start or restart it.
 
 Running-process restart recovery requires all of the following:
 
-- An operator-enrolled worker/service, verified SSH host key, matching physical
+- An operator-enrolled worker/service, verified SSH host key for remote transport
+  or an explicitly enrolled same-host Mac transport, matching physical
   machine fingerprint, exact service-owned loopback listener, executable and
   runtime/configuration fingerprint. The profile includes binary, launcher,
   declared configuration files, effective service definition and runtime command.
@@ -320,7 +321,7 @@ authority. Restore the established launcher manually and verify it before
 readmission; do not clear quarantine just because the process starts.
 
 Planned support for this case needs separate opt-in enrollment of an exact,
-private, retained service definition; a local transport for same-host workers;
+private, retained service definition;
 verified GUI domain, machine, binary/profile and empty listener; durable one-shot
 bootstrap receipts; and a real removed-job recovery canary with cold/warm reuse.
 Operator pauses, maintenance holds and explicit stop intent must block automatic
@@ -394,6 +395,36 @@ coordination and the per-installation canary remain mandatory.
    DSG never blindly repeats `kickstart`. Keep the enrollment disabled on any Mac
    whose GUI domain, binary ownership, listener, log timestamps or profile is not
    proven.
+
+### Same-host Mac transport (explicit enrollment)
+
+If DSG and DS4 run on the same Mac, an entry may instead use
+`"transport":"local"` with `"adapter":"launchd"` and an absolute `"python"`
+interpreter path. Omit `ssh`, `ssh_fallbacks` and `remote_port`; retain the exact
+registered worker URL, exclusive-ownership assertion, machine/profile digests,
+helper/config paths and separate stopped-service opt-in. The helper configuration's
+port must match the registered local endpoint. Omitting transport retains the
+existing SSH behavior; a failed remote connection never triggers local execution.
+
+Before each local call DSG requires a non-root macOS account, regular non-symlink
+interpreter/helper/config files owned by that account or root, no group/world
+write permission, and an account-owned mode-0600 helper config bounded to 64 KiB.
+Use canonical interpreter paths rather than symlinks. Paths with spaces are
+literal arguments: DSG invokes the enrolled interpreter with Python isolated mode
+(`-I`), helper and config, with no shell; action JSON travels only on stdin.
+Genie cannot select any of these paths. Local diagnostics are bounded reason
+codes, not subprocess stderr or private paths. Helper results are read through
+pipe closure, including bytes delivered after process exit.
+
+`adapter_local_unavailable` means the caller is not a supported non-root macOS
+account. `adapter_local_identity_unverified` means a file, permission, config or
+port check failed before execution; inspect private enrollment locally. Neither
+reason supplies authority to change permissions or substitute an interpreter.
+
+The same identity, pause, ownership, idempotency and cold/warm canary gates still
+apply. This transport does **not** add removed-job bootstrap, enroll an existing
+installation automatically, install a login item or change DS4's launcher. A
+private real-Mac canary is still required before automatic recovery is enabled.
 
 ## Security and operational limits
 

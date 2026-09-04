@@ -79,11 +79,12 @@ without granting arbitrary SSH arguments, commands or host-reboot authority.
 This does not fix the CUDA defect or implement container recovery. The separately
 enrolled launchd adapter is source-complete and synthetically tested, but remains
 ineligible on each Mac until that installation passes its own private drained
-canary. Its current transport requires SSH and its launchd action requires a
-loaded job. Same-host transport and explicitly enrolled bootstrap of an OS-removed
-job remain separate work; a removed transient registration is not a stopped-job
-restart. Preserve operator stop intent and validate a real removed-job canary
-before enabling that broader recovery. The
+canary. An explicitly enrolled same-host transport is now implemented without
+shell access or an SSH requirement; the launchd action still requires a loaded
+job. Explicitly enrolled bootstrap of an OS-removed job remains separate work;
+a removed transient registration is not a stopped-job restart. Preserve operator
+stop intent and validate a real removed-job canary before enabling that broader
+recovery. The
 backend-process-epoch foundation is now implemented for strong systemd journal
 telemetry and bounded same-host stock DS4 listen markers: observed restart
 boundaries invalidate telemetry spans without changing DS4. The bounded

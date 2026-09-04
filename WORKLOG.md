@@ -10,6 +10,12 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Added an opt-in same-host Mac recovery transport.** An enrolled interpreter
+  and private helper config can now use literal arguments and JSON stdin without
+  SSH or shell execution. Existing recovery guards remain; automatic enrollment
+  and removed-job bootstrap are not implied. Also fixed helper-output handling
+  so final bytes arriving after process exit are not lost.
+
 - **Clarified the Mac recovery boundary.** Restarting a loaded service cannot
   recover an OS-removed registration. The plan now explicitly covers same-host
   transport, an enrolled retained definition, stop-intent protection and a real

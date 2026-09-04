@@ -1,5 +1,18 @@
 # Changelog
 
+## Explicit same-host transport for enrolled Mac recovery
+
+- Add opt-in `transport: local` for launchd workers with an enrolled absolute
+  Python interpreter, regular owner-controlled files, private bounded config,
+  exact local port and non-root macOS execution. Use isolated Python, literal
+  arguments and stdin JSON, never a shell or implicit remote-to-local fallback.
+- Preserve worker binding, paused/held ownership, evidence, one-shot actions and
+  generation/cache verification. Return bounded local failure reasons and expose
+  the configured transport. No existing installation is automatically enrolled;
+  removed-job bootstrap and real per-installation canaries remain outstanding.
+- Consume helper output through pipe closure instead of process exit so late
+  stdout cannot turn a valid inspection into a malformed-response failure.
+
 ## Distinguish removed Mac services from stopped jobs
 
 - Document the current launchd helper's loaded-job and SSH-only boundaries.

@@ -49,6 +49,88 @@ test('malformed durable profile adoption state and operations fail closed',()=>{
   r.store.data.recovery.operations=[{id:randomUUID(),worker_id:'one',state:'queued',service_action:'adopt_restart',adopt_profile:'bad'}];
   assert.throws(()=>new Recovery({workers:[config]},r.deps),/Invalid recovery operation/);
 });
+function localEnrollment(t){
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-local-recovery-'));
+  t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const helper=path.join(dir,'private helper.py'),filename=path.join(dir,'private config.json');
+  fs.writeFileSync(helper,'import json,sys\nr=json.load(sys.stdin)\nprint(json.dumps({"version":1,"action":r["action"]}))\n',{mode:0o600});
+  fs.writeFileSync(filename,JSON.stringify({port:39001}),{mode:0o600});
+  const {ssh,...base}=config;
+  return {...base,adapter:'launchd',transport:'local',python:fs.realpathSync('/usr/bin/python3'),helper,config:filename};
+}
+function fakeProcess(){const child=new EventEmitter();child.stdout=new PassThrough();child.stderr=new PassThrough();child.stdin=new PassThrough();child.kill=()=>{};return child;}
+test('local launchd enrollment is explicit, private and disjoint from remote recovery',t=>{
+  const local=localEnrollment(t);
+  assert.equal(recoveryConfig({workers:[local]}).get('one').transport,'local');
+  for(const patch of [{transport:undefined},{transport:'auto'},{adapter:'systemd-user'},{ssh:'remote'},{remote_port:8000},{ssh_fallbacks:[]},{python:undefined},{python:'python3'},{exclusive:false}])assert.throws(()=>recoveryConfig({workers:[{...local,...patch}]}));
+  assert.throws(()=>recoveryConfig({workers:[{...config,python:local.python}]}));
+});
+test('local recovery spawns the enrolled interpreter and literal paths without a shell',async t=>{
+  const local=localEnrollment(t),request={action:'inspect'},calls=[];
+  const result=await systemdCall(local,request,{platform:'darwin',spawnFn:(file,args,opts)=>{
+    calls.push({file,args,opts});const child=fakeProcess();let input='';child.stdin.on('data',c=>input+=c);
+    setImmediate(()=>{assert.deepEqual(JSON.parse(input),request);child.stdout.write('{"version":1}');child.emit('close',0);});return child;
+  }});
+  assert.deepEqual(result,{version:1});assert.equal(calls.length,1);
+  assert.equal(calls[0].file,local.python);assert.deepEqual(calls[0].args,['-I',local.helper,local.config]);assert.equal(calls[0].opts.shell,false);
+});
+test('real local helper receives JSON on stdin and returns a complete bounded result',async t=>{
+  const local=localEnrollment(t);
+  // Synthetic script only: this does not import the real recovery helper or
+  // invoke launchctl. Platform override lets Linux CI exercise the subprocess.
+  assert.deepEqual(await systemdCall(local,{action:'inspect'},{platform:'darwin'}),{version:1,action:'inspect'});
+});
+test('local enrollment preserves worker binding, operator pause and evidence-gated recovery',async t=>{
+  const local=localEnrollment(t),r=rig();delete r.n.ssh;
+  r.recovery.configs=recoveryConfig({workers:[local]});await r.ready();
+  assert.equal(r.recovery.workerStatus(r.n).transport,'local');
+  assert.equal(r.recovery.workerStatus(r.n).eligible,true);
+  r.n.ssh='different-remote';assert.equal(r.recovery.workerStatus(r.n).reason,'manual_recovery_required');delete r.n.ssh;
+  r.n.drained=true;assert.equal(r.recovery.workerStatus(r.n).reason,'operator_paused');r.n.drained=false;
+  assert.throws(()=>r.recovery.request({...r.input(),evidence_id:'invented'}),/evidence/);
+  r.recovery.request(r.input());await r.recovery.task;
+  assert.equal(r.restarts,1);assert.equal(r.proofs,1);assert.equal(r.n.quarantine,null);
+});
+test('local recovery refuses wrong platform, public config, symlinks, unsafe helper and wrong port before spawn',async t=>{
+  const local=localEnrollment(t);let spawned=0;
+  const opts={platform:'darwin',spawnFn:()=>{spawned++;throw new Error('must not spawn');}};
+  await assert.rejects(systemdCall(local,{action:'inspect'},{...opts,platform:'linux'}),/adapter_local_unavailable/);
+  await assert.rejects(systemdCall(local,{action:'inspect'},{...opts,uid:0}),/adapter_local_unavailable/);
+  fs.chmodSync(local.config,0o644);
+  await assert.rejects(systemdCall(local,{action:'inspect'},opts),/adapter_local_identity_unverified/);fs.chmodSync(local.config,0o600);
+  fs.chmodSync(local.helper,0o666);
+  await assert.rejects(systemdCall(local,{action:'inspect'},opts),/adapter_local_identity_unverified/);fs.chmodSync(local.helper,0o600);
+  const symlink=path.join(path.dirname(local.config),'link.json');fs.symlinkSync(local.config,symlink);
+  await assert.rejects(systemdCall({...local,config:symlink},{action:'inspect'},opts),/adapter_local_identity_unverified/);
+  fs.writeFileSync(local.config,'{"port":8001}');
+  await assert.rejects(systemdCall(local,{action:'inspect'},opts),/adapter_local_identity_unverified/);
+  fs.writeFileSync(local.config,'x'.repeat(65537));
+  await assert.rejects(systemdCall(local,{action:'inspect'},opts),/adapter_local_identity_unverified/);
+  assert.equal(spawned,0);
+});
+test('recovery transport waits for trailing stdout after process exit',async()=>{
+  const result=await systemdCall(config,{action:'inspect'},{spawnFn:()=>{
+    const child=fakeProcess();setImmediate(()=>{child.emit('exit',0);setImmediate(()=>{child.stdout.write('{"version":1,"active":true}');child.emit('close',0);});});return child;
+  }});
+  assert.deepEqual(result,{version:1,active:true});
+});
+test('local recovery does not retry ambiguous failures or expose private subprocess diagnostics',async t=>{
+  const local=localEnrollment(t);let spawns=0,kills=0;
+  for(const scenario of ['bad-json','error','overflow','timeout','throw']){
+    const before=spawns;
+    await assert.rejects(systemdCall(local,{action:'start'},{platform:'darwin',timeoutMs:20,spawnFn:()=>{
+      spawns++;if(scenario==='throw')throw new Error('SECRET launcher path');
+      const child=fakeProcess();child.kill=()=>{kills++;};setImmediate(()=>{
+        child.stderr.write('SECRET path: Permission denied');
+        if(scenario==='bad-json'){child.stdout.write('SECRET');child.emit('close',0);}
+        if(scenario==='error')child.emit('error',new Error('SECRET'));
+        if(scenario==='overflow')child.stdout.write('x'.repeat(65537));
+      });return child;
+    }}),error=>/^adapter_(check_failed|spawn_failed|output_limit|timeout)$/.test(error.message));
+    assert.equal(spawns,before+1);
+  }
+  assert.equal(kills,2);
+});
 test('SSH management failures become bounded reason classes without exposing transport text',()=>{
   const cases=[
     ['ssh: Could not resolve hostname worker.example: nodename nor servname provided','adapter_dns_failure'],
@@ -70,8 +152,8 @@ test('recovery inspection tries bounded SSH aliases in order and returns no rout
     const child=new EventEmitter();child.stdout=new PassThrough();child.stderr=new PassThrough();child.stdin=new PassThrough();child.kill=()=>{};
     const target=args.at(-2);calls.push(target);
     setImmediate(()=>{
-      if(target==='primary'){child.stderr.write('Could not resolve hostname private-primary');child.emit('exit',255,null);}
-      else {child.stdout.write(JSON.stringify({version:1,active:true}));child.emit('exit',0,null);}
+      if(target==='primary'){child.stderr.write('Could not resolve hostname private-primary');child.emit('close',255,null);}
+      else {child.stdout.write(JSON.stringify({version:1,active:true}));child.emit('close',0,null);}
     });
     return child;
   };
