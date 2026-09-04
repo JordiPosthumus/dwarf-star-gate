@@ -5,13 +5,13 @@ These are actual browser captures of fictional data, not edited production
 screenshots, benchmark results, a live incident report or a promoted model.
 
 - `dashboard-overview.png`: branding, persistent health wire, compact cross-view
-  hardening notice, focused navigation, the unified fleet panel, mixed-server
+  hardening notice, focused navigation, the single-row desktop fleet band, mixed-server
   activity, aligned rounded speeds, requested thinking, hourly fleet throughput
   and the ready Continuity Door
   contract. Detailed cache/session evidence is folded into each server card.
 - `overview-mobile.png`: the compact status row at 390px, including hourly output,
   peak, completed requests and prompt reuse.
-- `worker-management.png`: the gear-opened private fleet controls, recommended
+- `worker-management.png`: the capability-gated Settings view, recommended
   Spark profile, 20,000-hour queue allowance and one synthetic exact
   queued-handover offer with its cache-locality warning.
 - `dashboard-genie.png`: an open assessment, recovery controls and the private
@@ -53,7 +53,7 @@ test directory. It never reads or modifies the deployed notebook.
 
 The capture uses 1440px width, UTC, en-US and reduced motion so headlines are
 readable. It checks the real logo, exact title, accessible tab and keyboard state,
-populated cards, no activated
+the far-right Settings tab, a fleet band under 150px tall, populated cards, no activated
 predictor, synthetic labels even when selecting XGB, report persistence across
 a real refresh, and a 390px mobile viewport without page-level horizontal overflow.
 Timestamps and platform fonts may differ; this is a content/privacy smoke test,

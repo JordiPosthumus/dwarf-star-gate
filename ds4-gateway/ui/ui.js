@@ -392,13 +392,16 @@ function render(s) {
   $('dataset-status').textContent=stale?'Collector status stale':!ds?.enabled?'Collector not enabled':ds.error||'Collecting routing evidence';
   $('dataset-detail').textContent=ds?`${fmt(ds.written)} events saved this gateway run · ${fmt(ds.bytes/1048576)} MiB stored · ${fmt(ds.pending)} pending · ${fmt(ds.dropped)} dropped · ${fmt(ds.finished)} finishes (${fmt(ds.missing_usage)} missing usage, ${fmt(ds.truncated)} output-limited, ${fmt(ds.failed_or_cancelled)} failed/cancelled) · last write ${age(ds.last_write,now)}`:'Existing engine metrics are separate from the new request dataset.';
   $('worker-management').hidden = !s.worker_management;
-  $('server-settings').hidden=!s.worker_management;
-  $('server-settings').closest('.read-only')?.classList.toggle('controls-available',!!s.worker_management);
+  $('tab-settings').hidden=!s.worker_management;
+  $('control-mode').closest('.read-only').hidden=!!s.worker_management;
   $('control-mode').hidden=!!s.worker_management;
   $('control-mode').textContent='[ read only ]';
   $('control-note').hidden=!!s.worker_management;
   $('control-note').textContent = 'No model controls.';
-  if(s.worker_management) { wireWorkerControls(); void loadWorkers(); }
+  if(s.worker_management) {
+    if(globalThis.location?.hash==='#settings'&&currentWorkspace!=='settings')activateWorkspaceTab('settings');
+    wireWorkerControls(); void loadWorkers();
+  } else if(currentWorkspace==='settings')activateWorkspaceTab('fleet',{updateHash:true});
   renderRequests(s.events);
   $('updated').textContent = `Gateway checked ${s.gateway_at ? clock(s.gateway_at) : '—'} · dashboard started ${clock(s.started)}`;
 }
@@ -583,9 +586,11 @@ function renderGenieReports(reports = []) {
     if (!keep.has(node.dataset.reportId) && !node.open && !node.contains(document.activeElement)) node.remove();
   }
 }
-const workspaceNames=['fleet','genie','analytics','activity'];
+const workspaceNames=['fleet','genie','analytics','activity','settings'];
+let currentWorkspace='fleet';
 function activateWorkspaceTab(requested,{focus=false,updateHash=false}={}) {
   const name=workspaceNames.includes(requested)?requested:'fleet';
+  currentWorkspace=name;
   for(const button of document.querySelectorAll('[data-workspace-tab]')){
     const selected=button.dataset.workspaceTab===name;
     button.setAttribute('aria-selected',String(selected));button.tabIndex=selected?0:-1;
@@ -598,10 +603,11 @@ function activateWorkspaceTab(requested,{focus=false,updateHash=false}={}) {
   return name;
 }
 function setupWorkspaceTabs(){
-  const list=document.querySelector('.workspace-tabs'),buttons=[...list.querySelectorAll('[data-workspace-tab]')];
+  const list=document.querySelector('.workspace-tabs');
   activateWorkspaceTab(globalThis.location?.hash?.slice(1));
   list.addEventListener('click',event=>{const button=event.target.closest('[data-workspace-tab]');if(button)activateWorkspaceTab(button.dataset.workspaceTab,{updateHash:true});});
   list.addEventListener('keydown',event=>{
+    const buttons=[...list.querySelectorAll('[data-workspace-tab]:not([hidden])')];
     const current=buttons.indexOf(event.target.closest('[data-workspace-tab]'));if(current<0)return;
     const next=event.key==='Home'?0:event.key==='End'?buttons.length-1:event.key==='ArrowRight'||event.key==='ArrowDown'?(current+1)%buttons.length:event.key==='ArrowLeft'||event.key==='ArrowUp'?(current+buttons.length-1)%buttons.length:null;
     if(next===null)return;event.preventDefault();activateWorkspaceTab(buttons[next].dataset.workspaceTab,{focus:true,updateHash:true});
@@ -611,9 +617,7 @@ function setupWorkspaceTabs(){
 poll();
 setupWorkspaceTabs();
 $('request-filter').addEventListener('change',()=>{requestFilter=$('request-filter').value;renderRequests(wireSnapshot?.events??[]);});
-function openServerSettings({focus=false}={}){activateWorkspaceTab('fleet',{updateHash:true});const panel=$('worker-management');panel.open=true;$('server-settings').setAttribute('aria-expanded','true');panel.scrollIntoView({behavior:'smooth',block:'start'});if(focus)panel.querySelector('input[name="id"]')?.focus({preventScroll:true});}
-$('server-settings').addEventListener('click',()=>{const panel=$('worker-management'),visible=!$('view-fleet').hidden;if(visible&&panel.open){panel.open=false;$('server-settings').setAttribute('aria-expanded','false');}else openServerSettings();});
-$('worker-management').addEventListener('toggle',()=>{$('server-settings').setAttribute('aria-expanded',String($('worker-management').open));});
+function openServerSettings({focus=false}={}){activateWorkspaceTab('settings',{updateHash:true});const panel=$('worker-management');panel.scrollIntoView({behavior:'smooth',block:'start'});if(focus)panel.querySelector('input[name="id"]')?.focus({preventScroll:true});}
 $('devices').addEventListener('click',event=>{if(!event.target.closest('[data-add-first]'))return;openServerSettings({focus:true});});
 $('analytics-metric').addEventListener('change',renderAnalytics);
 $('analytics-worker').addEventListener('change',renderAnalytics);

@@ -1,5 +1,18 @@
 # Changelog
 
+## Denser fleet summary and dedicated Settings view
+
+- Collapsed serving capacity, server availability, active/waiting work and recent
+  output into one desktop status band with one bounded evidence line. The same
+  live values and honest DSG-only queue scope remain; this is a layout change.
+- Moved server enrollment, queue/context controls, image protection, queued
+  handovers and the pinned Spark reference profile out of Fleet into a far-right
+  Settings tab. The tab appears only when the dashboard has local management
+  authority; read-only dashboards keep their explicit read-only label.
+- Added Settings to keyboard navigation and stable URL hashes, while preserving
+  unsaved control edits across polling and leaving routing, recovery permissions,
+  model servers and DS4 settings unchanged.
+
 ## Responsive server-card headers and incomplete-stream evidence
 
 - Server-card headers now use a card-width-aware two-tier layout at ordinary
@@ -18,14 +31,14 @@
 
 ## Focused dashboard views
 
-- Replaced the increasingly long single dashboard flow with four persistent,
-  accessible views: Fleet, Gate Genie, Analytics and Activity. Fleet remains the
+- Replaced the increasingly long single dashboard flow with persistent,
+  accessible Fleet, Gate Genie, Analytics and Activity views. Fleet remains the
   default; the compact health wire, hardening notices and dismissible learning
   milestones remain global so changing views cannot hide urgent evidence.
 - Added roving keyboard focus, Arrow/Home/End navigation and stable URL hashes.
   Hidden views continue receiving the same polling data, so switching views does
-  not reset reports, selected predictors or request evidence. The settings gear
-  always returns to Fleet before opening server controls.
+  not reset reports, selected predictors or request evidence. Server controls
+  have since moved from the original settings gear into their own fifth view.
 - Split the public synthetic browser captures by view and extended the browser
   check across tab state, polling, settings, desktop and mobile layouts. This is
   presentation-only; gateway routing, recovery permissions and DS4 settings are

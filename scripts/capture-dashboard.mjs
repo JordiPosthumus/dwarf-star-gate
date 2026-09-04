@@ -71,8 +71,11 @@ try {
   assert.match(await page.locator('#continuity-door-status').innerText(),/Continuity Door ready.*2 active proxied streams.*no request-body spooling or replay/);
   assert.match(await page.locator('#fleet-summary').innerText(),/mac-ultra is free; sparkA's next queued session keeps its warm home for up to 4m more; then the DSG core may hand it over automatically/);
   assert.ok(await page.locator('.gate-art').evaluate(img=>img.complete&&img.naturalWidth>0));
+  const statusBand=await page.locator('.status-deck').boundingBox(),activityTab=await page.locator('#tab-activity').boundingBox(),settingsTab=await page.locator('#tab-settings').boundingBox();
+  assert.ok(statusBand&&statusBand.height<150,`Fleet status band is too tall: ${statusBand?.height}px`);
+  assert.ok(activityTab&&settingsTab&&settingsTab.x>activityTab.x+activityTab.width,'Settings must be the far-right workspace tab');
   const output=path.join(projectRoot,'docs/images');await fs.mkdir(output,{recursive:true});
-  await page.locator('#server-settings').click();
+  await page.locator('#tab-settings').click();
   await page.locator('#queue-timeout-form').waitFor();
   assert.equal(await page.locator('#queue-timeout-input').inputValue(),'20000');
   await page.locator('#queue-timeout-input').fill('21000');
@@ -84,13 +87,13 @@ try {
   await page.locator('#queue-timeout-input').fill('20000');page.once('dialog',dialog=>dialog.accept());
   await page.getByRole('button',{name:'Save queue allowance',exact:true}).click();
   await page.waitForFunction(()=>document.getElementById('queue-timeout-current').textContent.includes('20,000'));
-  await page.reload();await page.locator('#server-settings').click();await page.locator('#queue-timeout-form').waitFor();
+  await page.reload();await page.locator('#queue-timeout-form').waitFor();
   assert.equal(await page.locator('#queue-timeout-input').inputValue(),'20000');
   assert.match(await page.locator('#relocation-controls').innerText(),/Safe queued handovers.*configured first-refusal window.*gateway core may move/s);
   assert.equal(await page.locator('#relocation-offers button').count(),1);
   assert.match(await page.locator('#relocation-offers button').getAttribute('title'),/warm cache/);
   await page.locator('#worker-management').screenshot({path:path.join(output,'worker-management.png'),animations:'disabled'});
-  await page.locator('#server-settings').click();
+  await page.locator('#tab-fleet').click();
   await page.waitForFunction(()=>document.querySelectorAll('.device').length===3&&document.querySelectorAll('#analytics-chart circle').length>0);
   await page.evaluate(()=>window.scrollTo(0,0));
   const devices=await page.locator('#devices').boundingBox();
@@ -171,7 +174,7 @@ try {
   holdServer=createDemoServer({agentHold:true});await new Promise(resolve=>holdServer.listen(0,'127.0.0.1',resolve));
   const holdOrigin=`http://127.0.0.1:${holdServer.address().port}`;allowedOrigins.add(holdOrigin);
   await page.setViewportSize({width:1440,height:1100});await page.goto(holdOrigin);
-  await page.locator('#server-settings').click();
+  await page.locator('#tab-settings').click();
   const held=page.locator('#worker-rows tr').filter({hasText:'mac-ultra'});
   await held.waitFor();assert.match(await held.innerText(),/Held by test-agent: <DS4 compatibility test>/);
   assert.equal(await held.locator('[data-action="resume"]').isDisabled(),true);

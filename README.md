@@ -205,10 +205,12 @@ the encoder runs only when explicitly configured, without cloud inference.
 ## Dashboard
 
 Terminal-inspired presentation, per-worker measurements, and a replaceable logo.
-Four focused views keep the control room compact: **Fleet** for live capacity and
+Five focused views keep the control room compact: **Fleet** for live capacity and
 server cards, **Gate Genie** for reports and recovery, **Analytics** for evidence
-and predictors, and **Activity** for continuity and request history. The health
-wire remains visible above every view so a focused page does not hide an incident.
+and predictors, **Activity** for continuity and request history, and a far-right
+**Settings** tab for server enrollment and gateway controls. Settings appears only
+when this dashboard has the local management capability. The health wire remains
+visible above every view so a focused page does not hide an incident.
 These captures show the current interface with **synthetic demo data**, not live
 sessions, measured benchmarks or proof of model accuracy. The example fleet mixes
 Sparks and a Mac; all displayed servers, reports and predictions are fictional.

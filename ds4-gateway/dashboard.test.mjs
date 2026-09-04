@@ -518,15 +518,15 @@ test('dashboard names DS4 servers and explains gateway-only concurrency and avai
   assert.match(js,/one active gateway request per DS4 server/);
   assert.doesNotMatch(html+js,/AVAILABLE SPARKS|AVAILABLE WORKERS|active generation per Spark|active gateway request per worker/);
 });
-test('fleet overview and server cards are dense, aligned and controlled by one settings gear',()=>{
+test('fleet overview is a dense status band and controls live in one settings tab',()=>{
   const html=fs.readFileSync(new URL('./ui/index.html',import.meta.url),'utf8'),js=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8'),css=fs.readFileSync(new URL('./ui/brand.css',import.meta.url),'utf8');
   assert.match(html,/<section class="status-deck"/);assert.match(html,/id="health-wire"[\s\S]*class="workspace-tabs"[\s\S]*class="status-deck"[\s\S]*class="capacity-panel"[\s\S]*class="overview"/);
   assert.doesNotMatch(html,/Gateway request slots, not GPU utilization\. Warm cache slots are separate\./);
-  assert.match(html,/id="server-settings"[^>]*aria-controls="worker-management"[^>]*aria-expanded="false"/);
-  assert.doesNotMatch(html,/\[ server controls \]/);assert.match(js,/openServerSettings/);
-  assert.match(html,/id="worker-management"[\s\S]*id="spark-profile"/);
+  assert.doesNotMatch(html,/id="server-settings"|\[ server controls \]/);assert.match(js,/openServerSettings/);
+  assert.match(html,/id="tab-settings"[^>]*aria-controls="view-settings"[^>]*data-workspace-tab="settings"/);
+  assert.match(html,/id="view-settings"[^>]*>[\s\S]*id="worker-management"[\s\S]*id="spark-profile"/);
   assert.match(js,/fmtWhole\(m\?\.tps\)/);assert.match(js,/class="remaining-estimate/);assert.match(js,/class="device-evidence"/);
-  assert.match(css,/\.metric-block\{display:grid;grid-template-rows:/);assert.match(css,/\.worker-management-drawer:not\(\[open\]\)\{display:none\}/);
+  assert.match(css,/\.metric-block\{display:grid;grid-template-rows:/);assert.match(css,/\.status-deck\{display:grid;grid-template-columns:/);assert.match(css,/\.workspace-tabs \.settings-tab\{display:inline-flex;[^}]*margin-left:auto/);
   assert.match(html,/id="health-wire"[\s\S]*id="genie-hardening"[\s\S]*class="workspace-tabs"/);assert.match(html,/Private developer hypotheses distilled from bounded DSG failure evidence/);
   assert.match(js,/function renderHardeningNotes/);assert.match(js,/suggestion\.textContent=note\.suggestion/);assert.match(css,/\.genie-hardening\{/);
 });
@@ -537,11 +537,14 @@ test('dashboard uses accessible persistent views instead of one overwhelming ver
     assert.match(html,new RegExp(`id="tab-${name}"[^>]*role="tab"[^>]*aria-controls="view-${name}"[^>]*data-workspace-tab="${name}"[^>]*>${label}<`));
     assert.match(html,new RegExp(`id="view-${name}"[^>]*role="tabpanel"[^>]*aria-labelledby="tab-${name}"[^>]*data-workspace-view="${name}"`));
   }
+  assert.match(html,/id="tab-settings"[^>]*role="tab"[^>]*aria-controls="view-settings"[^>]*data-workspace-tab="settings"[^>]*>[\s\S]*<span>Settings<\/span>/);
+  assert.match(html,/id="view-settings"[^>]*role="tabpanel"[^>]*aria-labelledby="tab-settings"[^>]*data-workspace-view="settings"/);
   assert.match(html,/id="view-fleet"[^>]*>[\s\S]*id="devices"[\s\S]*<\/section>\s*<section id="view-genie"/);
   assert.match(html,/id="view-genie"[^>]*hidden>[\s\S]*id="genie-reports"[\s\S]*id="recovery-actions"[\s\S]*id="genie-memory"/);
   assert.match(html,/id="view-analytics"[^>]*hidden>[\s\S]*id="dataset-status"[\s\S]*id="analytics"/);
   assert.match(html,/id="view-activity"[^>]*hidden>[\s\S]*id="continuity-rejections"[\s\S]*id="requests"/);
-  assert.match(js,/function activateWorkspaceTab/);assert.match(js,/ArrowRight/);assert.match(js,/history\?\.replaceState/);assert.match(js,/activateWorkspaceTab\('fleet',\{updateHash:true\}\)/);
+  assert.match(html,/id="view-settings"[^>]*hidden>[\s\S]*id="worker-management"[\s\S]*id="worker-form"/);
+  assert.match(js,/function activateWorkspaceTab/);assert.match(js,/ArrowRight/);assert.match(js,/history\?\.replaceState/);assert.match(js,/activateWorkspaceTab\('settings',\{updateHash:true\}\)/);
   assert.match(css,/\.workspace-tabs\{/);assert.match(css,/\.workspace-view\[hidden\]\{display:none\}/);assert.match(css,/\.workspace-tabs button\[aria-selected="true"\]/);
 });
 test('cache evidence health exposes epoch coverage and abstention without claiming a cache hit',async t=>{
@@ -688,7 +691,7 @@ test('request log filters problems and slow work while treating compatibility gu
 });
 test('fresh empty fleets get an explicit first-server setup path',async t=>{
   const {url}=await fixture(t),html=await(await fetch(url)).text(),js=await(await fetch(url+'/ui.js')).text();
-  assert.match(html,/Manage DS4 servers/);assert.match(js,/Add your first DS4 server/);assert.match(js,/data-add-first/);assert.match(js,/panel\.open=true/);
+  assert.match(html,/Manage DS4 servers/);assert.match(js,/Add your first DS4 server/);assert.match(js,/data-add-first/);assert.match(js,/function openServerSettings/);assert.match(js,/activateWorkspaceTab\('settings',\{updateHash:true\}\)/);
 });
 test('dashboard follows live membership and marks machines without engine logs explicitly', async t => {
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-membership-ui-'));
