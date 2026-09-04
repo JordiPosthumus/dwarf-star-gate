@@ -15,6 +15,14 @@ retain the output-limit/cancellation cause, use causally known request limits an
 validate long-duration holdout coverage separately. No existing feature contract,
 training eligibility or routing threshold changes with this audit.
 
+`predictor/occupancy.mjs` now implements a separate offline `dsg-occupancy-v1`
+dataset contract. It reuses V4 causal snapshots, labels verified normal and
+output-limited terminal service time, and excludes cancellation, relocation,
+unmatched profiles and ambiguous finishes. Terminal class is label metadata,
+never a feature. Existing natural-completion histories stay unchanged. This
+contract is **not yet a fitted or production-loadable model**; an independent
+trainer, long-duration future validation and activation review remain necessary.
+
 ## Current lifecycle
 
 Implemented, opt-in. Ordinary routing remains the default. A fitted model is

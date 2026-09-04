@@ -10,6 +10,10 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Built separate occupancy training labels.** An offline contract now includes
+  verified capped terminal durations without contaminating natural-completion
+  priors or leaking terminal outcomes into features. No production model changed.
+
 - **Explained the long-job training gap.** The data audit now separates normal,
   output-limited, unverified and failed/cancelled durations. Long capped runs stay
   recorded without masquerading as natural completions; occupancy modeling is

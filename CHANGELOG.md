@@ -1,5 +1,12 @@
 # Changelog
 
+## Separate observed occupancy target contract
+
+- Add offline V4-feature occupancy replay for normal and output-limited completed
+  requests, retaining causal output-limit availability. Exclude cancelled,
+  relocated, unverified-profile and ambiguous-finish work. Test normal-feature
+  parity and no outcome-feature leakage. No production loading or routing authority.
+
 ## Expose censored long-job evidence
 
 - Add privacy-safe duration-band counts and service seconds by terminal class
