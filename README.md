@@ -79,13 +79,16 @@ adds live shadow forecasts, causal next-turn history, embedding-aware updates,
 remaining-time models, fixed cross-validation and future-traffic promotion gates.
 Prediction-assisted **new-session** placement is separately opt-in and requires
 unseen-session evidence. Independently of that predictor, DSG now performs a
-[cache-neutral queued handover](docs/queued-handover.md) when a first/unaffined
-request is still undispatched and another server becomes free. Existing sessions
-move only through an exact continuity-safe offer. After the configured wait
-threshold, Gate Genie may request one such move to an immediately free server.
-The deterministic executor revalidates the offer and preserves the original
-client stream and deadline. Destination cache locality remains explicitly
-unknown. A fitted model alone does not qualify broader automatic movement. The
+[safe queued handover](docs/queued-handover.md) when a first/unaffined request is
+still undispatched and another server becomes free. An established session gets
+a five-minute warm-home first-refusal window by default; after that, the gateway
+core may move its oldest safe, still-undispatched queue head to a completely idle
+server even if the dashboard or Genie is unavailable. The private setting
+`automatic_affinity_rebalance_min_wait_ms` changes that window; `false` preserves
+strict affinity. Gate Genie or the operator may request an exact continuity-safe
+offer sooner. The deterministic executor revalidates every move and preserves
+the original client stream and deadline. Destination cache locality remains
+explicitly unknown. A fitted model alone does not qualify broader automatic movement. The
 [v1 offline experiment](predictor/README.md) remains reproducible.
 **Reset to baseline** restores the measured-history recipe without switching
 learning off. A challenger must beat both that baseline and any incumbent on
@@ -204,8 +207,10 @@ CLI commands also call it a **worker**; these mean the same thing, not necessari
 a physical machine. Each server may have its own native context and cache settings.
 
 - Durable session affinity: later turns return to the same worker to improve the
-  chance of KV reuse. Busy established conversations queue at home unless an
-  operator accepts one exact [pre-dispatch handover](docs/queued-handover.md).
+  chance of KV reuse. Busy established conversations queue at home for a
+  configurable first-refusal window, then an eligible queue head may take a
+  completely idle server under the exact [pre-dispatch handover](docs/queued-handover.md)
+  safety contract.
 - Load-aware placement of **new** conversations; at most one active upstream request
   through DSG per registered DS4 server. Extra requests wait in bounded FIFO queues.
   If a first DSG request was queued behind work and another server becomes free,
@@ -235,8 +240,9 @@ not prove a worker has no direct clients; verify those before stopping it.
 and decode, for both streaming and non-streaming responses. Three healthy, enabled
 servers can handle up to three active gateway requests, one each; established
 session affinity may still queue requests at a busy home while another server is
-idle unless an exact handover is approved. First/unaffined requests can take a
-newly free server automatically before dispatch. Available
+idle during its warm-home first-refusal window. First/unaffined requests can take
+a newly free server immediately; established sessions become eligible after the
+configured automatic wait. Available
 means healthy and enabled, not idle. Direct clients bypass these gateway counts and
 limits. Warm/hot KV slots retain sessions and do not add simultaneous generation
 slots. DSG does not alter the native server's own concurrency configuration.

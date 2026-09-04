@@ -70,10 +70,11 @@ test('dashboard continuity projection is bounded and excludes private extra fiel
   assert.equal(s.recent_rejections.length,1);assert.equal(s.waiting,2);assert.deepEqual(s.waiting_reasons,{worker_unhealthy:2});assert.ok(!JSON.stringify(s).includes('SECRET'));
 });
 test('relocation diagnostics projection retains allowlisted reasons and drops private fields',()=>{
-  const request_id=randomUUID(),s=continuityForDisplay({schema:1,relocation:{diagnostics:{schema:1,gateway_reason:null,idle_destinations:['two','BAD ID'],sources:[
+  const request_id=randomUUID(),s=continuityForDisplay({schema:1,automatic_relocation:true,automatic_relocation_scope:'first_unaffined_or_affinity_wait_expired',automatic_affinity_rebalance_min_wait_ms:300000,relocation:{diagnostics:{schema:1,gateway_reason:null,idle_destinations:['two','BAD ID'],sources:[
     {source:'one',request_id,affinity:'existing',waiting_seconds:12,reason:'same_session_active',destination:null,conflicting_worker:'one',automatic_reason:'same_session_active',genie_reason:'same_session_active',session:'PRIVATE',body:'PRIVATE'},
     {source:'one',request_id:randomUUID(),affinity:'existing',waiting_seconds:12,reason:'PRIVATE'}],secret:'PRIVATE'}}});
   assert.deepEqual(s.relocation.diagnostics.idle_destinations,['two']);assert.equal(s.relocation.diagnostics.sources.length,1);
+  assert.equal(s.automatic_relocation_scope,'first_unaffined_or_affinity_wait_expired');assert.equal(s.automatic_affinity_rebalance_min_wait_ms,300000);
   assert.equal(s.relocation.diagnostics.sources[0].reason,'same_session_active');assert.ok(!JSON.stringify(s).includes('PRIVATE'));
 });
 test('fallback tie-break projection is bounded shadow evidence, never routing authority',()=>{

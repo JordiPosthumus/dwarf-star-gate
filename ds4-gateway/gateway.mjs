@@ -203,6 +203,12 @@ export function createGateway(config,{visionTranscode}={}) {
   const fallbackTieBreak={schema:1,mode:'shadow',policy:'validated_remaining_tiebreak',evaluations:0,comparable:0,would_change:0,insufficient_evidence:0,errors:0,last:null};
   const queueBound=()=>config.max_queued_per_node??128;
   const waitingBound=()=>Math.max(1,nodes.length)*queueBound();
+  // Long affinity-bound waits must not depend on the dashboard/Genie process.
+  // The warm home gets first refusal, then the core may trade unknown cache
+  // locality for a truly empty compatible server. `false` keeps strict affinity.
+  const automaticAffinityWait=config.automatic_affinity_rebalance_min_wait_ms===false?null:(config.automatic_affinity_rebalance_min_wait_ms??300000);
+  if(automaticAffinityWait!==null&&(!Number.isSafeInteger(automaticAffinityWait)||automaticAffinityWait<0))throw new Error('automatic_affinity_rebalance_min_wait_ms must be false or a non-negative whole millisecond count');
+  const automaticRelocationScope=automaticAffinityWait===null?'first_dsg_request_or_unaffined':'first_unaffined_or_affinity_wait_expired';
   const parkedFor=n=>waiting.filter(j=>j.fixedHome===n);
   const rejections=[];
   function reject(req,res,status,code,message,{id=randomUUID(),callId=validCallId(req.headers[CALL_ID_HEADER]),key=null,node=null,reason}={}){
@@ -239,7 +245,7 @@ export function createGateway(config,{visionTranscode}={}) {
   const accepted = new Set(['POST /v1/chat/completions', 'POST /v1/completions', 'POST /v1/responses', 'POST /v1/messages', 'GET /v1/models']);
   const auth = Buffer.from(`Bearer ${config.api_key}`);
   const stats = () => ({ version: 1, agent_api_version:1, model: config.model, context_length: contextLimit(), queue_timeout_ms:queueTimeoutMs(), request_timeout_ms:config.request_timeout_ms??360000000, draining,startup:{...startup}, dataset:{...dataset.snapshot(),embedding_collection:embeddings.snapshot()}, routing_shadow:shadow.snapshot(),fallback_tiebreak_shadow:{...fallbackTieBreak},recovery:recovery.status(),predictor:predictor.status(),protections:visionProtection.status(),
-    calibration:calibrationPreflight(nodes,{draining}),continuity:{schema:1,recent_rejections:rejections.slice(0,20),safe_retry_contract:true,queued_relocation:true,automatic_relocation:true,automatic_relocation_scope:'first_dsg_request_or_unaffined',patient_wait:true,
+    calibration:calibrationPreflight(nodes,{draining}),continuity:{schema:1,recent_rejections:rejections.slice(0,20),safe_retry_contract:true,queued_relocation:true,automatic_relocation:true,automatic_relocation_scope:automaticRelocationScope,automatic_affinity_rebalance_min_wait_ms:automaticAffinityWait,patient_wait:true,
       relocation:{completed:relocation.completed,rejected:relocation.rejected,offers:relocationOffers().length,genie_enabled:config.genie_load_balancing!==false,genie_offers:genieRelocationOffers(),diagnostics:relocationDiagnostics(),last:relocation.last},
       waiting:waiting.length,oldest_wait_seconds:waiting.length?Math.max(0,(performance.now()-waiting[0].createdMono)/1000):null,
       waiting_reasons:Object.fromEntries([...new Set(waiting.map(j=>j.waitReason))].map(reason=>[reason,waiting.filter(j=>j.waitReason===reason).length]))},
@@ -317,7 +323,7 @@ export function createGateway(config,{visionTranscode}={}) {
     for(const source of nodes){
       const decision=relocationDecision(source,idle);if(!decision)continue;
       const {job,destination,reason,conflict}=decision,waiting_seconds=Math.max(0,(performance.now()-job.createdMono)/1000);
-      const automatic_reason=gateway_reason??(reason!=='offer_ready'?reason:['new','none'].includes(job.affinity)?'automatic_ready':'affinity_requires_exact_offer');
+      const automatic_reason=gateway_reason??(reason!=='offer_ready'?reason:['new','none'].includes(job.affinity)?'automatic_ready':automaticAffinityWait===null?'affinity_automatic_disabled':waiting_seconds<automaticAffinityWait/1000?'automatic_wait_threshold':'automatic_ready');
       const minimum=(config.genie_rebalance_min_wait_ms??60000)/1000;
       const genie_reason=gateway_reason??(reason!=='offer_ready'?reason:config.genie_load_balancing===false?'genie_disabled':waiting_seconds<minimum?'genie_wait_threshold':'genie_offer_ready');
       sources.push({source:source.id,request_id:job.id,affinity:job.affinity,waiting_seconds,reason:gateway_reason??reason,
@@ -373,11 +379,11 @@ export function createGateway(config,{visionTranscode}={}) {
     schedule(destination);evaluateWaiting();
     return {state:'relocated',...receipt};
   }
-  function rebalanceCacheNeutral() {
-    const offer=relocationOffers().find(candidate=>{
+  function rebalanceUndispatched() {
+    const offer=relocationOffers().filter(candidate=>{
       const job=nodes.find(node=>node.id===candidate.source)?.queue[0];
-      return job&&['new','none'].includes(job.affinity);
-    });
+      return job&&(['new','none'].includes(job.affinity)||(automaticAffinityWait!==null&&candidate.waiting_seconds*1000>=automaticAffinityWait));
+    }).sort((a,b)=>b.waiting_seconds-a.waiting_seconds||a.source.localeCompare(b.source))[0];
     if(!offer)return;
     try {relocateQueued({request_id:offer.request_id,source:offer.source,destination:offer.destination,evidence_id:offer.evidence_id},'scheduler');}
     catch{/* Exact-offer revalidation failed; the untouched request remains queued. */}
@@ -470,7 +476,7 @@ export function createGateway(config,{visionTranscode}={}) {
       if(node.queue.length>=queueBound()){job.waitReason='queue_full';continue;}
       admit(job,node);
     }
-    rebalanceCacheNeutral();
+    rebalanceUndispatched();
   }
   function heartbeat(job) {
     // A standard informational response, NOT final 200/SSE headers. This lets
@@ -849,7 +855,7 @@ export function createGateway(config,{visionTranscode}={}) {
   const registry = () => ({ model: config.model, minimum_context: contextLimit(), context_limit_control:true,
     context_limit_source:store.data.pool_context_length === undefined ? 'config' : 'saved',
     queue_timeout_ms:queueTimeoutMs(),queue_timeout_control:true,queue_timeout_source:store.data.queue_timeout_ms!==undefined?'saved':config.queue_timeout_ms!==undefined?'config':'default',
-    recovery:recovery.status(),protections:visionProtection.status(),queued_relocation:{schema:1,automatic:true,automatic_scope:'first_dsg_request_or_unaffined',offers:relocationOffers(),diagnostics:relocationDiagnostics(),completed:relocation.completed,rejected:relocation.rejected},
+    recovery:recovery.status(),protections:visionProtection.status(),queued_relocation:{schema:1,automatic:true,automatic_scope:automaticRelocationScope,automatic_affinity_rebalance_min_wait_ms:automaticAffinityWait,offers:relocationOffers(),diagnostics:relocationDiagnostics(),completed:relocation.completed,rejected:relocation.rejected},
     workers: nodes.map(n => ({ ...definition(n), ...stats().workers.find(w => w.id === n.id),...agents.pauseStatus(n.id,{includeReason:true}) })) });
   async function freshProbe(node) {
     while (node.probing) await delay(10);

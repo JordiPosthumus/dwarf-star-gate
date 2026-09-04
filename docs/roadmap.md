@@ -90,8 +90,10 @@ not an unbounded restart loop.
 **Current scheduling boundary:** [safe queued handover](queued-handover.md) is now
 implemented. A first DSG request or unaffined queue head automatically takes a
 newly free healthy server while it is still undispatched. Existing session homes
-remain sticky until one exact offer matures because the destination's cache
-locality is unknown. The operator or Gate Genie can request that exact offer; a
+receive a conservative five-minute first-refusal window; afterward the core can
+move the oldest safe queue head to a completely idle server even if the dashboard
+or Genie is absent. Before that boundary, the operator or Gate Genie can request
+one exact offer; a
 deterministic executor rechecks current ownership, destination availability and
 evidence before moving the still-undispatched client stream. Waiting counts remain
 per-worker queues, not a globally stealable queue. Broader automatic overflow must

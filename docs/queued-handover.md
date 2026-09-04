@@ -4,9 +4,9 @@ DSG can change the owner of a request only while that request is **still queued
 and has never been dispatched to DS4**. This is queued ownership/affinity
 balancing, not running-generation migration, cache copying or response replay.
 
-## Automatic, cache-neutral scope
+## Automatic core scope
 
-DSG automatically moves a queue-head request when all of these are true:
+DSG immediately moves a queue-head request when all of these are true:
 
 - it is the conversation's first request through DSG, or it has no affinity;
 - the source is busy and the destination is healthy, enabled and completely idle;
@@ -17,6 +17,18 @@ DSG automatically moves a queue-head request when all of these are true:
 This narrow scope has no previous DSG home cache to abandon. It does not claim
 that a direct client has never used a similar prompt or that caches are portable.
 
+An established session gets a conservative **five-minute first-refusal window**
+at its warm home. After that measured queue wait, the gateway core may move the
+same still-undispatched queue head to a completely idle compatible server. This
+fallback is core-owned: a stopped dashboard or unavailable Genie cannot leave an
+obviously free server unused forever. It moves at most one request into a free
+slot, chooses the oldest eligible head, persists the new home first and applies
+the same session-overlap and at-most-once checks below. Cache locality is honestly
+recorded as unknown. Set private config
+`"automatic_affinity_rebalance_min_wait_ms": false` for strict affinity forever,
+or a non-negative whole millisecond value to change the window. Gateway status
+reports the effective value and current policy reason.
+
 ## Established sessions: exact evidence-bound offer
 
 For an affinity-bound session, DSG may expose a short-lived offer under **Manage
@@ -25,10 +37,11 @@ source, destination and evidence digest. After a configured wait threshold, Gate
 Genie may instead request one exact offer from his current bounded briefing. DSG
 then revalidates every condition; model prose never becomes a routing command.
 The destination's cache locality is unknown, so this can trade cold prefill for a
-shorter queue. DSG does not make that trade automatically until the wait-versus-
-cache-acquisition estimator has passed its independent promotion gates. Genie
-does not bypass that broader boundary: his present action is one offered,
-still-undispatched move, not general migration authority.
+shorter queue. Before the core's conservative escape threshold, Genie can make
+that trade only through the exact evidence-bound offer. This is distinct from the
+planned learned wait-versus-cache-acquisition policy: no experimental estimate
+silently shortens the fixed window, and Genie does not gain general migration
+authority.
 
 Offers disappear as soon as their evidence changes. Same-session work anywhere
 in the gateway blocks an offer. No active request is eligible.
@@ -38,8 +51,8 @@ in the gateway blocks an offer. No active request is eligible.
 The local status and control surfaces expose bounded `diagnostics` for each live
 queue head. They report the exact safety or policy reason that currently prevents
 a handover, such as `same_session_active`, `no_idle_destination`,
-`durable_home_mismatch`, `affinity_requires_exact_offer`, or
-`genie_wait_threshold`. The record contains worker IDs, a request ID, affinity
+`durable_home_mismatch`, `automatic_wait_threshold`, or `genie_wait_threshold`.
+The record contains worker IDs, a request ID, affinity
 class, waiting age and reason codes; it never contains the raw session key or
 request body. Gate Genie receives the same sanitized evidence.
 

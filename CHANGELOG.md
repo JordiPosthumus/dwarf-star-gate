@@ -1,5 +1,15 @@
 # Changelog
 
+## Core-owned affinity wait escape
+
+- A healthy, completely idle server no longer depends on the dashboard/Genie to
+  receive mature pre-dispatch overflow. Established sessions retain a five-minute
+  warm-home first-refusal window by default; the core then moves the oldest safe
+  queue head with the original socket/deadline and a durable ownership commit.
+- Same-session overlap, dispatch, pause, quarantine, shutdown and persistence
+  checks remain fail-closed. Strict-affinity installations can disable the escape
+  explicitly, and status reports the effective threshold and reason.
+
 ## Exact stopped-service recovery (opt-in)
 
 - The existing systemd-user recovery adapter can now optionally start an exact

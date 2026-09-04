@@ -72,7 +72,7 @@ test('Genie briefing distinguishes an empty waiting queue from genuinely free ca
   }
   s.gateway.workers=[worker];s.gateway.draining=true;assert.equal(briefing(s).workers[0].immediately_free,false);
   assert.match(briefing(s).semantics.join(' '),/queued=0.*NOT idle/);
-  assert.match(briefing(s).semantics.join(' '),/still-undispatched.*exact offer.*Genie-authorized executor/);
+  assert.match(briefing(s).semantics.join(' '),/still-undispatched.*affinity-wait escape threshold.*Genie-authorized executor/);
 });
 test('Genie parses bounded model-written ticker entries and rejects unknown evidence references',()=>{
   const evidence=briefing(snapshot()),data=authoredReview();

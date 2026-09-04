@@ -1038,6 +1038,32 @@ test('busy home queues FIFO, never spills to idle Spark', async t => {
   assert.deepEqual(r.backends[0].records.map(v => v.payload.tag), [1, 2]);
   assert.equal(r.backends[0].peak, 1); assert.equal(r.backends[1].records.length, 0);
 });
+test('core rebalances a mature affinity queue without Genie or dashboard',async t=>{
+  const r=await rig(t,2,{automatic_affinity_rebalance_min_wait_ms:25});
+  await r.request('{"seed":"a"}','a');await r.request('{"seed":"b"}','b');await r.request('{"seed":"c"}','c');
+  // The production sweep runs once per second. Keep the home occupied long
+  // enough to prove the core-owned sweep, rather than winning a timing race
+  // with the ordinary FIFO completion path.
+  const active=r.request('{"delay":1500,"active":"c"}','c');await until(()=>r.gateway.nodes[0].active);
+  const body='{"queued":"a","reasoning_effort":"xhigh"}',queued=r.request(body,'a');
+  await until(()=>r.gateway.nodes[0].queue.length===1);
+  assert.equal(r.gateway.stats().continuity.relocation.diagnostics.sources[0].automatic_reason,'automatic_wait_threshold');
+  const result=await queued;await active;
+  assert.equal(result.headers['x-ds4-node'],'spark2');assert.equal(result.headers['x-ds4-affinity'],'rebalanced');
+  assert.equal(r.backends[1].records.at(-1).body.toString(),body);
+  assert.equal(r.gateway.stats().continuity.automatic_relocation_scope,'first_unaffined_or_affinity_wait_expired');
+  assert.equal(r.gateway.stats().continuity.automatic_affinity_rebalance_min_wait_ms,25);
+  assert.equal(r.gateway.stats().continuity.relocation.last.actor,'scheduler');
+});
+test('strict-affinity opt-out never auto-moves an established session',async t=>{
+  const r=await rig(t,2,{automatic_affinity_rebalance_min_wait_ms:false});
+  await r.request('{"seed":"a"}','a');await r.request('{"seed":"b"}','b');await r.request('{"seed":"c"}','c');
+  const active=r.request('{"delay":100,"active":"c"}','c');await until(()=>r.gateway.nodes[0].active);
+  const queued=r.request('{"queued":"a"}','a');await until(()=>r.gateway.nodes[0].queue.length===1);
+  assert.equal(r.gateway.stats().continuity.relocation.diagnostics.sources[0].automatic_reason,'affinity_automatic_disabled');
+  await Promise.all([active,queued]);assert.equal(r.backends[1].records.filter(x=>x.payload.queued).length,0);
+  assert.equal(r.gateway.stats().continuity.automatic_affinity_rebalance_min_wait_ms,null);
+});
 test('operator-confirmed pre-dispatch handover preserves body, client, deadline and durable ownership',async t=>{
   const r=await rig(t,2,{control_socket:true,dataset_enabled:true});
   await r.request('{"seed":"a"}','a');await r.request('{"seed":"b"}','b');await r.request('{"seed":"c"}','c');
@@ -1047,8 +1073,8 @@ test('operator-confirmed pre-dispatch handover preserves body, client, deadline 
   const registry=await workerControl(r.config.control_socket,'/workers'),offer=registry.queued_relocation.offers[0];
   assert.deepEqual({source:offer.source,destination:offer.destination,affinity:offer.affinity},{source:'spark1',destination:'spark2',affinity:'existing'});
   const diagnostic=registry.queued_relocation.diagnostics.sources[0];
-  assert.deepEqual({source:diagnostic.source,destination:diagnostic.destination,reason:diagnostic.reason,automatic_reason:diagnostic.automatic_reason},{source:'spark1',destination:'spark2',reason:'offer_ready',automatic_reason:'affinity_requires_exact_offer'});
-  assert.equal(registry.queued_relocation.automatic,true);assert.equal(registry.queued_relocation.automatic_scope,'first_dsg_request_or_unaffined');
+  assert.deepEqual({source:diagnostic.source,destination:diagnostic.destination,reason:diagnostic.reason,automatic_reason:diagnostic.automatic_reason},{source:'spark1',destination:'spark2',reason:'offer_ready',automatic_reason:'automatic_wait_threshold'});
+  assert.equal(registry.queued_relocation.automatic,true);assert.equal(registry.queued_relocation.automatic_scope,'first_unaffined_or_affinity_wait_expired');
   assert.equal(r.gateway.stats().continuity.automatic_relocation,true);
   const receipt=await workerControl(r.config.control_socket,'/relocate-queued',{request_id:offer.request_id,source:offer.source,destination:offer.destination,evidence_id:offer.evidence_id});
   assert.equal(receipt.state,'relocated');assert.equal(receipt.dispatch_state,'not_dispatched');assert.equal(receipt.body_replayed,false);assert.equal(receipt.deadline_preserved,true);
