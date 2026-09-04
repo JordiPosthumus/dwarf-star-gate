@@ -119,7 +119,11 @@ test('future-only scoring, successful activation, restart persistence and rollba
   r.p.state.evaluations={};const job={decision:{time:new Date(origin-2000).toISOString(),session:'s'}};r.p.scoreFinished({run_id:'r',request_id:'past',time:new Date(origin).toISOString(),node:'a',service_ms:10000},job,[{model:b.models.admission,point:{profile:'p',features:{}},seconds:10,baseline:20}]);assert.deepEqual(r.p.state.evaluations,{});
 });
 test('malformed candidates are rejected without removing a valid active model',t=>{
-  const r=rig(t);install(r,'candidate-good',bundle());r.p.state.active.admission='candidate-good';install(r,'candidate-bad',{schema:999});assert.equal(r.p.candidateRejections,1);assert.ok(r.p.model('admission',{active:true}));
+  const r=rig(t);install(r,'candidate-good',bundle());r.p.state.active.admission='candidate-good';install(r,'candidate-bad',{schema:999});assert.equal(r.p.candidateRejections,1);assert.deepEqual(r.p.status().candidate_rejection_summary,{invalid_artifact:1});assert.ok(r.p.model('admission',{active:true}));
+});
+test('candidate rejection diagnostics are bounded reason codes rather than private parser output',t=>{
+  const r=rig(t),directory=path.join(r.dir,'candidates','candidate-json');fs.mkdirSync(directory);fs.writeFileSync(path.join(directory,'candidate.json'),'{not json');fs.writeFileSync(path.join(directory,'report.json'),JSON.stringify({candidate_sha256:createHash('sha256').update('{not json').digest('hex')}));
+  r.p.loadCandidates();assert.equal(r.p.bundles.has('candidate-json'),false);assert.equal(r.p.candidateRejectionReasons.get('candidate-json'),'invalid_json');assert.deepEqual(r.p.status().candidate_rejection_summary,{invalid_json:1});
 });
 test('a perfect baseline tie is not a victory; NaN cannot bypass the gate',()=>{
   assert.equal(promotionEligible(model(),goodRows().map(r=>({...r,error:0,baseline_error:0}))),false);

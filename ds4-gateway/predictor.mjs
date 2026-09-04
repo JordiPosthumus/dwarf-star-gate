@@ -12,6 +12,17 @@ const root=fileURLToPath(new URL('../',import.meta.url));
 const hash=b=>createHash('sha256').update(b).digest('hex');
 const finite=x=>typeof x==='number'&&Number.isFinite(x)&&x>=0;
 const id=x=>typeof x==='string'&&/^[a-zA-Z0-9][\w-]{0,95}$/.test(x);
+const candidateRejectionCode=error=>{
+  const message=error instanceof Error?error.message:'';
+  if(/checksum/i.test(message))return 'checksum_mismatch';
+  if(/feature builder/i.test(message))return 'feature_builder_mismatch';
+  if(/training request/i.test(message))return 'invalid_training_request';
+  if(/recipe/i.test(message))return 'recipe_mismatch';
+  if(/parity|disagreement/i.test(message))return 'runtime_parity_mismatch';
+  if(/candidate file|model width|tree|feature contract|categorical|predictor bundle|unsupported model|nonfinite|leaf|edge/i.test(message))return 'invalid_artifact';
+  if(error instanceof SyntaxError)return 'invalid_json';
+  return 'unclassified_rejection';
+};
 export const DEFAULT_BASELINE=Object.freeze({id:'causal-history-v1',name:'Measured history baseline',recipe:'Fixed causal history/hardware recipe; observations continue to update. Unknown without evidence.'});
 export const PREDICTION_POLICY=Object.freeze({version:2,min_future_requests:30,min_future_sessions:5,required_mae_gain:.10,max_mean_bias:.30,rollback_ratio:1.25,rollback_window:20,training_interval_ms:6*3600000,min_new_requests:50,training_timeout_ms:120000});
 export function score(rows) {
@@ -63,7 +74,7 @@ export class Predictor {
   loadCandidates() {
     const directory=path.join(this.directory,'candidates');
     const names=[...new Set([...fs.readdirSync(directory).filter(id).sort().slice(-32),...Object.values(this.state.active),...Object.values(this.state.previous).filter(id)])];
-    this.bundles.clear();this.candidateRejections=0;
+    this.bundles.clear();this.candidateRejections=0;this.candidateRejectionReasons=new Map();
     for(const name of names.filter(id)){try{
       const file=path.join(directory,name,'candidate.json'),reportFile=path.join(directory,name,'report.json');if(!fs.existsSync(file)||!fs.existsSync(reportFile))continue;
       if(!fs.lstatSync(file).isFile()||fs.statSync(file).size>8*1024**2)throw new Error('Invalid candidate file');const bytes=fs.readFileSync(file),report=JSON.parse(fs.readFileSync(reportFile));if(hash(bytes)!==report.candidate_sha256)throw new Error('Candidate checksum mismatch');
@@ -75,7 +86,7 @@ export class Predictor {
         if(requested.recipe_id!==bundle.training_recipe?.id||requested.recipe_policy_sha256!==bundle.training_recipe?.policy_sha256)throw new Error('Produced recipe differs from requested recipe');
       }
       this.bundles.set(name,{...bundle,directory_id:name});
-    }catch{this.candidateRejections++;}}
+    }catch(error){this.candidateRejections++;this.candidateRejectionReasons.set(name,candidateRejectionCode(error));}}
     this.shadow=[...this.bundles.values()].filter(b=>Object.keys(b.models).length).sort((a,b)=>Date.parse(b.created_at)-Date.parse(a.created_at))[0]??null;
     for(const [kind,name] of Object.entries(this.state.active))if(!this.bundles.get(name)?.models[kind]){delete this.state.active[kind];this.error='An active model is unavailable; deterministic fallback remains in use';}
   }
@@ -255,7 +266,7 @@ export class Predictor {
       if(this.closed)throw new Error('Gateway stopped; training interrupted');fs.writeFileSync(path.join(destination,'trainer.log'),output,{flag:'wx',mode:0o600});
       const produced=JSON.parse(fs.readFileSync(path.join(destination,'candidate.json')));
       if(produced.training_recipe?.id!==recipeId||produced.training_recipe?.policy_sha256!==RECIPE_POLICY_SHA256)throw new Error('Training recipe changed or mismatched; candidate is not accepted');
-      this.loadCandidates();if(!this.bundles.has(name))throw new Error('Produced candidate did not pass artifact validation');
+      this.loadCandidates();if(!this.bundles.has(name))throw new Error(`Produced candidate rejected: ${this.candidateRejectionReasons.get(name)??'unclassified_rejection'}`);
       this.state.new_requests=Math.max(0,this.state.new_requests-(this.state.training?.new_requests??0));
       this.receipt(actor,'train','completed','Candidate evaluated; no model bypasses future-shadow validation',{candidate_id:name,recipe_id:recipeId});this.error=null;
     }catch(e){this.error='Predictor training failed; last working model retained';try{if(fs.existsSync(destination))fs.writeFileSync(path.join(destination,'failure.log'),String(e.privateOutput??e.message).slice(0,1024*1024),{flag:'wx',mode:0o600});}catch{}if(!this.closed)try{this.receipt(actor,'train','failed',this.error,{candidate_id:name,recipe_id:recipeId});}catch{}}
@@ -287,7 +298,8 @@ export class Predictor {
   status() {
     const candidate=this.shadow,offers=this.state.automatic_training&&this.trainingOffer()?TRAINING_RECIPES.map(r=>({action:'train',evidence_id:this.trainingOffer(),recipe_id:r.id})):[];
     if(this.rollbackOffer())offers.push({action:'rollback',evidence_id:this.rollbackOffer()});
-    return {configured:this.configured,error:this.error,candidate_rejections:this.candidateRejections??0,mode:this.state.placement?'validated-new-session-placement':'forecasts-only',automatic_training:this.state.automatic_training,automatic_promotion:this.state.automatic_promotion,placement:this.state.placement,busy:this.busy,training:this.state.training??null,training_recipes:TRAINING_RECIPES,default_recipe:DEFAULT_RECIPE,candidate_recipe:candidate?.training_recipe?.id??null,new_requests:this.state.new_requests,history_partial:!!this.partialHistory,policy:PREDICTION_POLICY,offers,baseline:DEFAULT_BASELINE,reset_at:this.state.reset_at||null,milestones:this.state.milestones,
+    const candidate_rejection_summary={};for(const reason of this.candidateRejectionReasons?.values()??[])candidate_rejection_summary[reason]=(candidate_rejection_summary[reason]??0)+1;
+    return {configured:this.configured,error:this.error,candidate_artifacts_loaded:this.bundles.size,candidate_rejections:this.candidateRejections??0,candidate_rejection_summary,mode:this.state.placement?'validated-new-session-placement':'forecasts-only',automatic_training:this.state.automatic_training,automatic_promotion:this.state.automatic_promotion,placement:this.state.placement,busy:this.busy,training:this.state.training??null,training_recipes:TRAINING_RECIPES,default_recipe:DEFAULT_RECIPE,candidate_recipe:candidate?.training_recipe?.id??null,new_requests:this.state.new_requests,history_partial:!!this.partialHistory,policy:PREDICTION_POLICY,offers,baseline:DEFAULT_BASELINE,reset_at:this.state.reset_at||null,milestones:this.state.milestones,
       models:['admission','updated','remaining'].map(kind=>{const m=candidate?.models[kind],active=this.model(kind,{active:true}),report=candidate?.reports[kind];return {kind,active_model_id:active?.id??null,candidate_model_id:m?.id??null,active_feature_schema:this.bundleFor(active)?.feature_schema??null,candidate_feature_schema:candidate?.feature_schema??null,status:report?.status??'not_trained',selected:report?.selected?{family:report.selected.family,rounds:report.selected.rounds,transform:report.selected.transform}:null,feature_coverage:report?.feature_coverage??null,split_usage:report?.split_usage?Object.fromEntries(Object.entries(report.split_usage).slice(0,12)):null,
         default_model_id:DEFAULT_BASELINE.id,effective_model_id:active?.id??DEFAULT_BASELINE.id,promotion:m?this.promotionEvidence(candidate,kind):null,holdout:candidate?.reports[kind]?.holdout??null,baselines:candidate?.reports[kind]?.baselines??null,future:m?score(this.state.evaluations[m.id]??[]):null};}),actions:this.state.receipts.slice(0,10)};
   }

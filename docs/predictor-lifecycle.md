@@ -291,6 +291,12 @@ trained models and collected evidence are preserved.
 - Reviewed training-window selection remains future work. Recipe choices do not
   silently shorten retained history. Independent evidence, baseline and
   compute/privacy limits stay outside GG's control.
+- Rejected artifacts remain inert. Status exposes bounded rejection categories
+  (for example checksum, feature-builder, recipe, parity or invalid-artifact
+  mismatch), never trainer output or private paths. A newly produced artifact
+  writes that category into its private failure record so an operator can
+  distinguish a validator mismatch from a trainer crash without weakening the
+  validator.
 - Add manual and optional hourly development calibration **only after** proving
   it cannot displace warm production caches or compete with admitted work.
   Automatic calibration skips on uncertainty. Idle alone does not prove a free

@@ -448,7 +448,7 @@ test('dashboard names DS4 servers and explains gateway-only concurrency and avai
   const { url } = await fixture(t);
   const html = await (await fetch(url)).text();
   const js = await (await fetch(url+'/ui.js')).text();
-  assert.match(html,/AVAILABLE DS4 SERVERS/);assert.match(html,/ACTIVE REQUESTS/);assert.match(html,/WAITING IN DSG/);assert.match(html,/Queues still inside Pi, Hermes or another client/);
+  assert.match(html,/AVAILABLE DS4 SERVERS/);assert.match(html,/ACTIVE REQUESTS/);assert.match(html,/WAITING IN DSG/);assert.match(html,/Queues still inside Pi, Hermes or another client/);assert.match(js,/incompatible artifact/);
   assert.match(html,/Manage DS4 servers/);assert.match(html,/not necessarily one physical machine/);
   assert.match(html,/Direct clients are outside this limit/);
   assert.match(html,/Available means healthy and enabled, including busy servers/);

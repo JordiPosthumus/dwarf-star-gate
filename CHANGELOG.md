@@ -1,5 +1,11 @@
 # Changelog
 
+## Predictor artifact rejection diagnostics
+
+- Predictor status now reports bounded rejection categories instead of only an
+  unexplained count. Newly trained artifacts retain the exact category in their
+  private failure record while the last working predictor remains unchanged.
+
 ## Explicit queue-visibility boundary
 
 - The headline now says `WAITING IN DSG`, and its visible summaries repeat that
