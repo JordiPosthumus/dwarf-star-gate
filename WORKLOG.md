@@ -10,6 +10,10 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Fixed frozen live forecasts.** Progress predictions were recorded but usually
+  failed to replace the first live estimate. Regression tests now cover refresh,
+  out-of-order evidence, experimental candidates and incumbent support limits.
+
 - **Stopped stale predictions masquerading as live ETAs.** Server cards now name
   stale or exceeded forecasts explicitly and distinguish total service time from
   time remaining. Genie receives the same interpretation rules.

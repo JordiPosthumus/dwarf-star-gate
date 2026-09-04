@@ -10,6 +10,17 @@ The feature is off until it is explicitly configured in the ignored private
 setting power. Activating or changing it needs only a dashboard reload; the
 gateway core and DS4 servers do not need a restart.
 
+## Predictor integration status
+
+Dynamic RAM usage, GPU activity, power and clock samples currently feed dashboard
+telemetry, **not XGBoost features**. Static hardware family and RAM capacity in
+the worker inventory are separate existing predictor inputs. Remaining work is
+to capture timestamped hardware evidence at each forecast point, enforce freshness
+and measurement scope, and evaluate an additive challenger against the incumbent.
+Missing measurements must remain unknown. Post-dispatch readings must never enter
+an admission forecast retrospectively. Enrollment and actual sample coverage must
+be verified on each deployment; demo charts are synthetic, not proof of collection.
+
 ## DGX Spark / NVIDIA Linux
 
 An enrolled worker with an existing, host-key-verified `ssh` alias can use the

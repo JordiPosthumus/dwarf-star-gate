@@ -150,7 +150,8 @@ export class Predictor {
           const current=this.live.get(row.request_id)??{},forecast={seconds,at:point.at,experimental,stage:point.stage,model_id:model.id};
           // A challenger may use a newer feature schema, but never hide the
           // independently validated deployed forecast used by routing.
-          if(!current[point.kind]||current[point.kind].experimental&&!experimental)current[point.kind]=forecast;
+          const previous=current[point.kind];
+          if(!previous||forecast.at>=previous.at&&(previous.experimental||!experimental))current[point.kind]=forecast;
           this.live.set(row.request_id,current);if(this.live.size>4096)this.live.delete(this.live.keys().next().value);
         }
       }

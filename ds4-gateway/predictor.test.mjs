@@ -33,6 +33,35 @@ function rig(t){const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-predictor-')
 function install(r,name,b){const d=path.join(r.dir,'candidates',name);fs.mkdirSync(d);const text=JSON.stringify(b);fs.writeFileSync(path.join(d,'candidate.json'),text);fs.writeFileSync(path.join(d,'report.json'),JSON.stringify({candidate_sha256:createHash('sha256').update(text).digest('hex')}));r.p.loadCandidates();}
 const goodRows=(node='a',profile='p')=>Array.from({length:30},(_,i)=>({key:'r'+i,session:'s'+i%5,node,profile,at:origin+i*1000,error:1,baseline_error:10,prediction:100,actual:100,long:false}));
 
+test('live remaining forecasts advance with progress without replacing validated evidence with a challenger',t=>{
+  const r=rig(t),active=model({kind:'remaining',id:'c'.repeat(64)});
+  active.support.a.max_elapsed_s=120;
+  install(r,'candidate-active',bundle(active));
+  r.p.state.active.remaining='candidate-active';
+  r.p.state.evaluations[active.id]=goodRows();
+  r.p.observe(decision('live',0));r.p.observe(row('dispatch','live',1));
+  const progress=ms=>r.p.observe(row('progress','live',ms+1,{active_elapsed_ms:ms,phase:'thinking',semantic_characters:ms/100}));
+  progress(30000);
+  assert.equal(r.p.forecasts('live').remaining.at,origin+30001);
+  assert.equal(r.p.forecasts('live').remaining.experimental,false);
+  const challenger=model({kind:'remaining',id:'d'.repeat(64)});challenger.support.a.max_elapsed_s=240;
+  install(r,'candidate-new',{...bundle(challenger),created_at:new Date(origin+1).toISOString()});
+  progress(60000);
+  assert.equal(r.p.forecasts('live').remaining.at,origin+60001);
+  assert.equal(r.p.forecasts('live').remaining.model_id,active.id);
+  progress(150000); // Outside incumbent support: challenger must not look validated.
+  assert.equal(r.p.forecasts('live').remaining.at,origin+60001);
+  assert.ok(r.events.some(e=>e.model_id===challenger.id&&e.available_at===origin+150001));
+});
+
+test('experimental live forecasts also refresh and older evidence cannot rewind them',t=>{
+  const r=rig(t),m=model({kind:'remaining'});m.support.a.max_elapsed_s=240;install(r,'candidate-only',bundle(m));
+  r.p.observe(decision('live',0));r.p.observe(row('dispatch','live',1));
+  for(const ms of [30000,60000,45000])r.p.observe(row('progress','live',ms+1,{active_elapsed_ms:ms,phase:'thinking'}));
+  assert.equal(r.p.forecasts('live').remaining.at,origin+60001);
+  assert.equal(r.p.forecasts('live').remaining.experimental,true);
+});
+
 test('first request keeps previous-turn data missing; peer and fleet priors are measured, not invented',()=>{
   const h=new PredictionHistory(inventory),first=h.observe(decision('first',0)).points[0];
   assert.equal(first.features.history_count,0);assert.equal(first.features.prior_service_s,null);assert.equal(first.features.worker_service_median,null);

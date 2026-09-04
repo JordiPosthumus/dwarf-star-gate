@@ -1,5 +1,12 @@
 # Changelog
 
+## Refresh live progress forecasts
+
+- Fix live forecast status retaining the first estimate indefinitely despite
+  recording newer progress predictions. Newer supported forecasts now replace
+  older ones; experimental challengers cannot replace validated incumbents and
+  out-of-order observations cannot rewind the displayed forecast.
+
 ## Honest live forecast labels
 
 - Replace stale numeric ETAs with “Forecast stale”; show “Estimate exceeded”
