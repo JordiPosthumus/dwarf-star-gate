@@ -5,9 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {JPEG_GUIDANCE,JPEG_REJECTION_INSPECTION_BYTES,VisionProtection,isRejectedJpeg,visionGuidance} from './vision-protection.mjs';
+import {GIF_GUIDANCE,IMAGE_LIMIT_GUIDANCE,JPEG_GUIDANCE,JPEG_REJECTION_INSPECTION_BYTES,VisionProtection,isRejectedJpeg,visionGuidance,visionRejectionKind} from './vision-protection.mjs';
 
 const JPEG=Buffer.from('/9j/2Q==','base64');
+const GIF=Buffer.from('R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==','base64');
 const PNG=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB','base64');
 function fixture(t,config={}){
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-vision-protection-'));t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
@@ -16,6 +17,7 @@ function fixture(t,config={}){
   return {protection,store,seen,directory};
 }
 const uri=`data:image/jpeg;base64,${JPEG.toString('base64')}`;
+const gifUri=`data:image/gif;base64,${GIF.toString('base64')}`;
 
 test('only the exact bounded DS4 JPEG validation rejection is rescue-eligible',()=>{
   assert.equal(isRejectedJpeg(400,Buffer.from('{"message":"invalid or unsupported JPEG image","type":"invalid_request_error"}')),true);
@@ -24,6 +26,9 @@ test('only the exact bounded DS4 JPEG validation rejection is rescue-eligible',(
   assert.equal(isRejectedJpeg(400,Buffer.from('{"message":"some other validation error"}')),false);
   assert.equal(isRejectedJpeg(400,Buffer.alloc(JPEG_REJECTION_INSPECTION_BYTES+1)),false);
   assert.equal(isRejectedJpeg(400,Buffer.from('not json')),false);
+  assert.equal(visionRejectionKind(400,Buffer.from('{"error":{"message":"invalid JSON request","type":"invalid_request_error"}}')),'gif_candidate');
+  assert.equal(visionRejectionKind(400,Buffer.from('{"message":"too many images; at most 16 are allowed","type":"invalid_request_error"}')),'image_limit');
+  assert.equal(visionRejectionKind(400,Buffer.from('{"error":{"message":"invalid JSON request","type":"other"}}')),null);
 });
 
 test('operator toggle persists and normalization touches only typed Chat Completions image fields',async t=>{
@@ -37,13 +42,33 @@ test('operator toggle persists and normalization touches only typed Chat Complet
   assert.match(parsed.messages[0].content[1].image_url.url,/^data:image\/png;base64,/);
   assert.equal(parsed.reasoning_effort,'xhigh');assert.deepEqual(parsed.tools,[{type:'function',function:{name:'x'}}]);
   assert.deepEqual(store.data.protections,{vision_jpeg:true});
+  assert.deepEqual(protection.status().vision_jpeg.formats,['jpeg','gif-first-frame']);
+});
+
+test('a valid typed GIF is normalized to a first-frame PNG without changing unrelated request fields',async t=>{
+  const {protection,seen}=fixture(t,{enabled:true});
+  const body=Buffer.from(JSON.stringify({stream:true,reasoning_effort:'xhigh',max_tokens:153600,note:gifUri,messages:[{role:'user',content:[{type:'image_url',image_url:{url:gifUri}}]}]}));
+  const result=await protection.normalize(body,'/v1/chat/completions',{requiredKind:'gif'}),parsed=JSON.parse(result.body);
+  assert.equal(result.converted,1);assert.deepEqual(result.formats,['gif']);assert.equal(result.stream,true);assert.deepEqual(seen,[GIF]);
+  assert.match(parsed.messages[0].content[0].image_url.url,/^data:image\/png;base64,/);assert.equal(parsed.note,gifUri);
+  assert.equal(parsed.reasoning_effort,'xhigh');assert.equal(parsed.max_tokens,153600);
+});
+
+test('image-limit proof requires valid Chat Completions JSON with more than sixteen typed images',t=>{
+  const {protection}=fixture(t,{enabled:true}),block={type:'image_url',image_url:{url:'data:image/png;base64,aQ=='}};
+  const proven=protection.inspectImageLimit(Buffer.from(JSON.stringify({stream:true,messages:[{role:'user',content:Array.from({length:17},()=>block)}]})),'/v1/chat/completions');
+  assert.deepEqual(proven,{images:17,stream:true});
+  assert.throws(()=>protection.inspectImageLimit(Buffer.from(JSON.stringify({messages:[{content:Array.from({length:16},()=>block)}]})),'/v1/chat/completions'),/image_limit_not_proven/);
+  assert.throws(()=>protection.inspectImageLimit(Buffer.from('{'),'/v1/chat/completions'),/request_json_invalid/);
+  assert.throws(()=>protection.inspectImageLimit(Buffer.from(JSON.stringify({messages:[{content:Array.from({length:17},()=>block)}]})),'/v1/responses'),/image_limit_not_proven/);
 });
 
 test('unsupported routes, malformed payloads and bounds fail closed without retaining image data',async t=>{
   const {protection}=fixture(t,{enabled:true,max_request_bytes:1024,max_image_bytes:1024,max_normalized_bytes:4096});
-  await assert.rejects(protection.normalize(Buffer.from(JSON.stringify({input:[{content:[{type:'input_image',image_url:uri}]}]})),'/v1/responses'),/typed_jpeg_not_found/);
+  await assert.rejects(protection.normalize(Buffer.from(JSON.stringify({input:[{content:[{type:'input_image',image_url:uri}]}]})),'/v1/responses'),/typed_image_not_found/);
   await assert.rejects(protection.normalize(Buffer.from(JSON.stringify({messages:[{content:[{type:'image_url',image_url:{url:'data:image/jpeg;base64,%%%%'}}]}]})),'/v1/chat/completions'),/jpeg_payload_invalid/);
-  await assert.rejects(protection.normalize(Buffer.from(JSON.stringify({messages:[{content:'none'}]})),'/v1/chat/completions'),/typed_jpeg_not_found/);
+  await assert.rejects(protection.normalize(Buffer.from(JSON.stringify({messages:[{content:'none'}]})),'/v1/chat/completions'),/typed_image_not_found/);
+  await assert.rejects(protection.normalize(Buffer.from(JSON.stringify({messages:[{content:[{type:'image_url',image_url:{url:'data:image/gif;base64,RkFLRQ=='}}]}]})),'/v1/chat/completions',{requiredKind:'gif'}),/gif_payload_invalid/);
   await assert.rejects(protection.normalize(Buffer.alloc(1025),'/v1/chat/completions'),/request_capture_unavailable/);
   protection.record('failed',{reason:'/private/path and raw tool stderr',image:uri});
   assert.equal(JSON.stringify(protection.status()).includes(uri),false);assert.equal(protection.status().vision_jpeg.last.reason,undefined);
@@ -57,6 +82,10 @@ test('streaming and non-streaming guidance are valid successful Chat Completions
   assert.equal(chunks[0].choices[0].delta.role,'assistant');assert.equal(chunks.at(-1).choices[0].finish_reason,'stop');
   const plain=visionGuidance({stream:false,model:'deepseek-v4-flash',requestId:'two',now:1000}),body=JSON.parse(plain.body);
   assert.equal(plain.format,'json');assert.equal(body.choices[0].message.content,JPEG_GUIDANCE);assert.equal(body.choices[0].finish_reason,'stop');assert.equal(body.usage,undefined);
+  const gif=visionGuidance({stream:false,model:'deepseek-v4-flash',requestId:'gif',kind:'gif',now:1000});
+  assert.equal(JSON.parse(gif.body).choices[0].message.content,GIF_GUIDANCE);
+  const limit=visionGuidance({stream:false,model:'deepseek-v4-flash',requestId:'limit',kind:'image_limit',now:1000});
+  assert.equal(JSON.parse(limit.body).choices[0].message.content,IMAGE_LIMIT_GUIDANCE);assert.match(IMAGE_LIMIT_GUIDANCE,/\(This is a message from the DSG gateway\.\)$/);
 });
 
 test('transcoder output must be a bounded PNG and status exposes only allowlisted metadata',async t=>{
@@ -84,5 +113,13 @@ test('stock macOS sips performs a real JPEG-to-PNG compatibility conversion',{sk
   assert.equal(protection.available,true);assert.equal(protection.status().vision_jpeg.transcoder,'sips');
   const body=Buffer.from(JSON.stringify({messages:[{role:'user',content:[{type:'image_url',image_url:{url:`data:image/jpeg;base64,${encoded.toString('base64')}`}}]}]}));
   const normalized=await protection.normalize(body,'/v1/chat/completions'),url=JSON.parse(normalized.body).messages[0].content[0].image_url.url;
+  assert.match(url,/^data:image\/png;base64,/);assert.equal(Buffer.from(url.split(',')[1],'base64').subarray(0,8).equals(PNG.subarray(0,8)),true);
+});
+
+test('stock macOS sips extracts a valid first-frame PNG from GIF',{skip:process.platform!=='darwin'},async t=>{
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-vision-gif-sips-'));t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
+  const store={data:{},save(next){this.data=next;}},protection=new VisionProtection({enabled:true,transcoder:'sips'},store,directory);
+  const body=Buffer.from(JSON.stringify({messages:[{role:'user',content:[{type:'image_url',image_url:{url:gifUri}}]}]}));
+  const normalized=await protection.normalize(body,'/v1/chat/completions',{requiredKind:'gif'}),url=JSON.parse(normalized.body).messages[0].content[0].image_url.url;
   assert.match(url,/^data:image\/png;base64,/);assert.equal(Buffer.from(url.split(',')[1],'base64').subarray(0,8).equals(PNG.subarray(0,8)),true);
 });

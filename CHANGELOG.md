@@ -1,5 +1,20 @@
 # Changelog
 
+## Proven GIF compatibility protection
+
+- DS4's misleading `invalid JSON request` response is intercepted only when DSG
+  independently parses a valid Chat Completions request and verifies a typed
+  GIF87a/GIF89a data URI. The first frame is converted to PNG and retried once
+  on the same DS4 server, preserving tools, thinking, output limits and all
+  unrelated fields.
+- Unrelated generic JSON errors remain byte-for-byte upstream errors. If a
+  verified GIF cannot be converted or the normalized request is rejected, DSG
+  emits a complete streaming or non-streaming guidance turn so Pi stays alive.
+- DS4's exact 16-image rejection receives the same graceful treatment only after
+  DSG proves the captured request contains more than 16 typed images. DSG never
+  silently drops images; the guidance explains representative frames, contact
+  sheets and conversation compaction, and identifies itself as gateway-authored.
+
 ## Gate Genie review lifecycle receipts
 
 - The five-minute automatic review cadence now begins when the prior review

@@ -21,7 +21,7 @@ import {deadlineTimer,queueTimeout,queueTimeoutMessage} from './deadline.mjs';
 import {CALL_ID_HEADER,DISPATCH_HEADER,validCallId,unavailableReason,sessionWork,rejectionReceipt} from './continuity.mjs';
 import {JsonUsageObserver} from './json-usage.mjs';
 import {dsgReport,invalidHttp} from './report.mjs';
-import {JPEG_REJECTION_INSPECTION_BYTES,VisionProtection,isRejectedJpeg,visionGuidance} from './vision-protection.mjs';
+import {JPEG_REJECTION_INSPECTION_BYTES,VisionProtection,visionGuidance,visionRejectionKind} from './vision-protection.mjs';
 import {compareFallbackTieBreak,selectFallbackTieBreak} from './fallback-tiebreak.mjs';
 import net from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -571,7 +571,10 @@ export function createGateway(config,{visionTranscode}={}) {
       node.lastThinking = job.thinking.result; node.lastFinishedAt = new Date().toISOString();
       if (outcome === 'complete') node.completed++; else if(outcome==='vision_guidance')node.protected++;else if(outcome==='sse_observation_limited')node.observationLimited++;else node.failed++;
       if(job.visionNormalized){
-        if(outcome==='complete'){visionProtection.record('rescued',{images:job.visionNormalized.images,node:node.id});log('vision_jpeg_rescued',{request_id:job.id,node:node.id,images:job.visionNormalized.images});}
+        if(outcome==='complete'){
+          visionProtection.record('rescued',{images:job.visionNormalized.images,formats:job.visionNormalized.formats,node:node.id});
+          log('vision_image_rescued',{request_id:job.id,node:node.id,images:job.visionNormalized.images,formats:job.visionNormalized.formats});
+        }
         else if(outcome!=='vision_guidance')visionProtection.record('failed',{reason:'normalized_retry_failed',node:node.id});
       }
       log('request_finished', { request_id: job.id, node: node.id, session: job.key?.slice(0, 12), outcome,
@@ -620,13 +623,14 @@ export function createGateway(config,{visionTranscode}={}) {
       res.writeHead(up.statusCode,responseHeaders(up));res.end(body);
       finish(up.statusCode>=400?'upstream_http_error':isSSE&&observer.failed?'upstream_engine_error':isSSE&&!observer.done?observer.limited?'sse_observation_limited':'incomplete_sse':'complete',up.statusCode);
     };
-    const sendGuidance=(reason,stream)=>{
-      const guide=visionGuidance({stream,model:config.model,requestId:job.id});
+    const sendGuidance=(reason,stream,kind='jpeg')=>{
+      const guide=visionGuidance({stream,model:config.model,requestId:job.id,kind});
       response=undefined;clientStatus=200;responseFormat=guide.format;observer.done=true;observer.finish_reason='stop';
-      const outHeaders={'content-type':guide.contentType,'content-length':guide.body.length,'cache-control':'no-store','x-ds4-node':node.id,'x-request-id':job.id,'x-ds4-affinity':job.affinity,[DISPATCH_HEADER]:'dispatched','x-accel-buffering':'no','x-dsg-protection':'vision-jpeg-guidance'};
+      const protectionKind=kind==='gif'?'vision-gif-guidance':kind==='image_limit'?'vision-image-limit-guidance':'vision-jpeg-guidance';
+      const outHeaders={'content-type':guide.contentType,'content-length':guide.body.length,'cache-control':'no-store','x-ds4-node':node.id,'x-request-id':job.id,'x-ds4-affinity':job.affinity,[DISPATCH_HEADER]:'dispatched','x-accel-buffering':'no','x-dsg-protection':protectionKind};
       firstBodyByte=performance.now()-job.dispatchedMono;
       res.writeHead(200,outHeaders);res.end(guide.body);
-      visionProtection.record('guided',{reason,node:node.id});log('vision_jpeg_guidance',{request_id:job.id,node:node.id,reason});
+      visionProtection.record('guided',{reason,formats:[kind],node:node.id});log('vision_image_guidance',{request_id:job.id,node:node.id,format:kind,reason});
       finish('vision_guidance',reason);
     };
     const bufferCandidate=(up,retry)=>{
@@ -644,19 +648,41 @@ export function createGateway(config,{visionTranscode}={}) {
       up.on('end',()=>void (async()=>{
         if(passthrough){res.end();finish('upstream_http_error',up.statusCode);return;}
         const rejected=Buffer.concat(chunks,bytes);
-        if(!isRejectedJpeg(up.statusCode,rejected)){sendBuffered(up,rejected);return;}
-        if(retry){sendGuidance('normalized_image_rejected',job.visionNormalized?.stream??job.requestStream===true);return;}
+        const rejection=visionRejectionKind(up.statusCode,rejected);
+        if(!rejection){sendBuffered(up,rejected);return;}
+        if(rejection==='image_limit'&&!retry){
+          const original=await bodyReady;
+          if(job.cancelled){finish('client_cancelled','CLIENT_CLOSED');return;}
+          try{
+            const inspected=visionProtection.inspectImageLimit(original,req.url);
+            sendGuidance('image_limit_exceeded',inspected.stream,'image_limit');
+          }catch{sendBuffered(up,rejected);}
+          return;
+        }
+        if(rejection==='image_limit'&&retry){
+          if(job.visionNormalized?.totalImages>16)sendGuidance('image_limit_exceeded',job.visionNormalized.stream,'image_limit');
+          else sendBuffered(up,rejected);
+          return;
+        }
+        const kind=job.visionNormalized?.kind??(rejection==='gif_candidate'?'gif':'jpeg');
+        if(retry){sendGuidance('normalized_image_rejected',job.visionNormalized?.stream??job.requestStream===true,kind);return;}
         const original=await bodyReady;
         if(job.cancelled){finish('client_cancelled','CLIENT_CLOSED');return;}
         try{
-          const normalized=await visionProtection.normalize(original,req.url);
+          const normalized=await visionProtection.normalize(original,req.url,rejection==='gif_candidate'?{requiredKind:'gif'}:{});
           if(job.cancelled){finish('client_cancelled','CLIENT_CLOSED');return;}
-          job.visionNormalized={images:normalized.converted,stream:normalized.stream};firstBodyByte=null;
+          job.visionNormalized={images:normalized.converted,formats:normalized.formats,totalImages:normalized.totalImages,kind:rejection==='gif_candidate'?'gif':'jpeg',stream:normalized.stream};firstBodyByte=null;
           issue(normalized.body,true);
         }catch(error){
+          // A generic DS4 JSON error is never sufficient by itself. If DSG
+          // cannot prove that a valid typed GIF caused it, preserve the exact
+          // upstream status, headers and body instead of masking a client bug.
+          if(rejection==='gif_candidate'&&['request_capture_unavailable','request_json_invalid','typed_image_not_found','typed_gif_not_found','gif_payload_invalid','jpeg_payload_invalid'].includes(error.message)){
+            sendBuffered(up,rejected);return;
+          }
           let stream=job.requestStream===true;
           if(Buffer.isBuffer(original))try{stream=JSON.parse(original.toString('utf8'))?.stream===true;}catch{}
-          sendGuidance(/^[a-z_]{1,64}$/.test(error.message)?error.message:'normalization_failed',stream);
+          sendGuidance(/^[a-z_]{1,64}$/.test(error.message)?error.message:'normalization_failed',stream,kind);
         }
       })());
     };

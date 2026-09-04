@@ -223,10 +223,14 @@ a physical machine. Each server may have its own native context and cache settin
   the separate active-request default remains 100 hours. Explicit private-config
   overrides take precedence. Queued HTTP connections do not survive a gateway restart.
 - Transparent request/stream passthrough: no reasoning, output-limit, sampling or
-  tool-call rewriting. The optional, narrowly scoped [JPEG compatibility
-  protection](docs/vision-protection.md) acts only after DS4 returns its exact
-  pre-generation JPEG rejection: it converts the typed image to PNG and retries
-  once on the same server, or completes the turn with practical resend guidance.
+  tool-call rewriting. The optional, narrowly scoped [image compatibility
+  protection](docs/vision-protection.md) handles DS4's proven pre-generation JPEG
+  and GIF rejections. It converts JPEGs—or the first frame of a GIF—to PNG and
+  retries once on the same server, or completes the turn with practical resend
+  guidance. DS4's exact 16-image rejection also becomes a completed guidance turn
+  only when DSG proves the valid request really contains more than 16 typed images.
+  Generic JSON errors are never intercepted unless the captured request
+  independently proves a valid typed GIF caused that exact DS4 response.
 - No automatic replay after an ambiguous upstream failure.
 - [Patient outage waiting](docs/client-continuity.md): undispatched calls wait for
   readiness/recovery under the same queue allowance, without exhausting the
@@ -596,7 +600,7 @@ six-worker monitoring, complete UI asset bundles, hot registration/removal,
 larger-context workers, empty-roster persistence, bounded health probes and the
 opt-in same-origin/CSRF management boundary, local-log timing/cache parsing,
 partial/oversized lines, rotation, truncation, missing-file recovery and redaction.
-It also covers protocol-specific SSE completion, bounded JPEG repair/guidance,
+It also covers protocol-specific SSE completion, bounded JPEG/GIF repair/guidance,
 persistent generation quarantine,
 verified reinstatement after remove/re-add, fresh control sockets after restart,
 collector privacy, and bounded Genie/recovery boundaries. `npm run recovery:test`

@@ -46,7 +46,10 @@ async function backend(id) {
       }
       if(p.fatal_sse) {ended=true;res.writeHead(200,{'content-type':'text/event-stream'});res.end('event: error\ndata: {"error":{"message":"cuda resumed prefill failed while extending checkpoint","type":"server_error"}}\n\ndata: [DONE]\n\n');return;}
       const typedImageUrls=(Array.isArray(p.messages)?p.messages:[]).flatMap(message=>Array.isArray(message?.content)?message.content:[]).filter(block=>block?.type==='image_url').map(block=>typeof block.image_url==='string'?block.image_url:block.image_url?.url).filter(value=>typeof value==='string');
+      if((b.rejectTooManyImages&&typedImageUrls.length>16)||p.too_many_images_error){ended=true;res.writeHead(400,{'content-type':'application/json','x-backend-proof':'image-limit'});res.end(JSON.stringify({message:'too many images; at most 16 are allowed',type:'invalid_request_error'}));return;}
+      if(b.rejectGif&&typedImageUrls.some(value=>value.startsWith('data:image/gif;base64,'))){b.gifRejections=(b.gifRejections??0)+1;ended=true;res.writeHead(400,{'content-type':'application/json'});res.end(JSON.stringify({error:{message:'invalid JSON request',type:'invalid_request_error'}}));return;}
       if((b.rejectJpeg&&typedImageUrls.some(value=>value.startsWith('data:image/jpeg;base64,')||value.startsWith('data:image/jpg;base64,')))||(b.rejectNormalized&&typedImageUrls.some(value=>value.startsWith('data:image/png;base64,')))){b.jpegRejections=(b.jpegRejections??0)+1;ended=true;res.writeHead(400,{'content-type':'application/json'});res.end(JSON.stringify({message:'invalid or unsupported JPEG image',type:'invalid_request_error'}));return;}
+      if(p.generic_json_error){ended=true;res.writeHead(400,{'content-type':'application/json','x-backend-proof':'unchanged'});res.end(JSON.stringify({error:{message:'invalid JSON request',type:'invalid_request_error'}}));return;}
       if(p.client_error) {ended=true;res.writeHead(400,{'content-type':'text/plain'});res.end(typeof p.client_error==='string'?p.client_error:'invalid request');return;}
       if(typeof p.fixture_sse==='string') {ended=true;res.writeHead(200,{'content-type':'text/event-stream'});res.end(p.fixture_sse);return;}
       if(typeof p.fixture_json==='string') {ended=true;res.writeHead(200,{'content-type':'application/json'});res.end(p.fixture_json);return;}
@@ -1005,6 +1008,44 @@ test('exact DS4 JPEG rejection is normalized once on the same server before Pi s
   assert.equal(original.messages[0].content[0].image_url.url,uri);assert.match(retry.messages[0].content[0].image_url.url,/^data:image\/png;base64,/);
   assert.equal(retry.note,uri);assert.equal(retry.reasoning_effort,'xhigh');assert.equal(retry.max_tokens,153600);assert.deepEqual(retry.tools,original.tools);
   assert.equal(r.gateway.stats().protections.vision_jpeg.rescued,1);assert.equal(r.gateway.stats().workers[0].completed,1);assert.equal(r.gateway.stats().workers[0].failed,0);
+});
+test('DS4 generic GIF rejection is proven from the captured request and rescued once on the same server',async t=>{
+  const gif=Buffer.from('R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==','base64'),png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB','base64'),seen=[];
+  const r=await rig(t,1,{vision_compatibility:{enabled:true},visionTranscode:async(value,kind)=>{seen.push({value,kind});return png;}});r.backends[0].rejectGif=true;
+  const uri=`data:image/gif;base64,${gif.toString('base64')}`,body=JSON.stringify({model:'deepseek-v4-flash',stream:true,thinking:{type:'enabled'},reasoning_effort:'xhigh',max_tokens:153600,note:uri,tools:[{type:'function',function:{name:'keep_me'}}],messages:[{role:'user',content:[{type:'image_url',image_url:{url:uri}}]}]});
+  const result=await r.request(body,'gif-rescue');
+  assert.equal(result.status,200);assert.match(result.body,/data: \[DONE\]/);assert.equal(r.backends[0].records.length,2);assert.equal(r.backends[0].gifRejections,1);
+  assert.deepEqual(seen,[{value:gif,kind:'gif'}]);assert.match(r.backends[0].records[1].payload.messages[0].content[0].image_url.url,/^data:image\/png;base64,/);
+  assert.equal(r.backends[0].records[1].payload.note,uri);assert.equal(r.backends[0].records[1].payload.reasoning_effort,'xhigh');assert.equal(r.backends[0].records[1].payload.max_tokens,153600);assert.deepEqual(r.backends[0].records[1].payload.tools,r.backends[0].records[0].payload.tools);
+  assert.equal(r.gateway.stats().protections.vision_jpeg.rescued,1);assert.deepEqual(r.gateway.stats().protections.vision_jpeg.last.formats,['gif']);
+});
+test('generic invalid JSON response without a proven real GIF passes through byte-for-byte',async t=>{
+  const r=await rig(t,1,{vision_compatibility:{enabled:true},visionTranscode:async()=>{throw new Error('must_not_run');}});
+  const result=await r.request(JSON.stringify({generic_json_error:true,messages:[{role:'user',content:'ordinary text'}]}),'generic-json');
+  assert.equal(result.status,400);assert.equal(result.headers['x-backend-proof'],'unchanged');assert.equal(result.body,JSON.stringify({error:{message:'invalid JSON request',type:'invalid_request_error'}}));
+  r.backends[0].rejectGif=true;
+  const fake=await r.request(JSON.stringify({messages:[{role:'user',content:[{type:'image_url',image_url:{url:'data:image/gif;base64,RkFLRQ=='}}]}]}),'fake-gif');
+  assert.equal(fake.status,400);assert.match(fake.body,/invalid JSON request/);
+  assert.equal(r.gateway.stats().protections.vision_jpeg.guided,0);
+});
+test('unrepairable GIF rejection becomes a complete guidance turn so Pi stays alive',async t=>{
+  const gif=Buffer.from('R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==','base64');
+  const r=await rig(t,1,{vision_compatibility:{enabled:true},visionTranscode:async()=>{throw new Error('transcoder_failed');}});r.backends[0].rejectGif=true;
+  const result=await r.request(JSON.stringify({stream:true,messages:[{role:'user',content:[{type:'image_url',image_url:{url:`data:image/gif;base64,${gif.toString('base64')}`}}]}]}),'gif-guidance');
+  assert.equal(result.status,200);assert.equal(result.headers['x-dsg-protection'],'vision-gif-guidance');assert.match(result.body,/contact sheet or several frames/);assert.match(result.body,/data: \[DONE\]/);
+  assert.equal(r.backends[0].records.length,1);assert.equal(r.gateway.stats().protections.vision_jpeg.guided,1);assert.deepEqual(r.gateway.stats().protections.vision_jpeg.last.formats,['gif']);
+});
+test('proven DS4 image-count rejection becomes a complete gateway guidance turn instead of crashing Pi',async t=>{
+  const r=await rig(t,1,{vision_compatibility:{enabled:true}});r.backends[0].rejectTooManyImages=true;
+  const images=Array.from({length:17},(_,index)=>({type:'image_url',image_url:{url:`data:image/png;base64,${Buffer.from(String(index)).toString('base64')}`}}));
+  const result=await r.request(JSON.stringify({stream:true,reasoning_effort:'xhigh',messages:[{role:'user',content:images}]}),'too-many-images');
+  assert.equal(result.status,200);assert.equal(result.headers['x-dsg-protection'],'vision-image-limit-guidance');assert.match(result.body,/limit of 16 images/);assert.match(result.body,/This is a message from the DSG gateway/);assert.match(result.body,/data: \[DONE\]/);
+  assert.equal(r.backends[0].records.length,1);assert.equal(r.gateway.stats().workers[0].protected,1);assert.equal(r.gateway.stats().workers[0].failed,0);
+});
+test('an image-limit error without more than sixteen proven typed images remains the original upstream 400',async t=>{
+  const r=await rig(t,1,{vision_compatibility:{enabled:true}});
+  const result=await r.request(JSON.stringify({too_many_images_error:true,stream:false,messages:[{role:'user',content:[{type:'image_url',image_url:{url:'data:image/png;base64,aQ=='}}]}]}),'false-image-limit');
+  assert.equal(result.status,400);assert.equal(result.headers['x-backend-proof'],'image-limit');assert.match(result.body,/too many images/);assert.equal(r.gateway.stats().protections.vision_jpeg.guided,0);
 });
 test('an unrepairable rejected JPEG becomes a valid in-session guidance turn, not a Pi error',async t=>{
   const r=await rig(t,1,{vision_compatibility:{enabled:true},visionTranscode:async()=>{throw new Error('transcoder_failed');}});r.backends[0].rejectJpeg=true;
