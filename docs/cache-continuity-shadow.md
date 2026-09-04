@@ -49,6 +49,12 @@ fresh compatible header match. Absence requires a complete, uncapped scan with
 zero rejected cache-shaped files. A stale, capped or partially unreadable scan,
 or a legacy zero weights fingerprint, abstains.
 
+Multiple entries with the same keyed snapshot reference are ambiguous, even if
+the first header matches: entry ordering must not determine compatibility.
+Absence also requires an explicit `capped: false`, not a missing or malformed
+completeness flag. An unambiguous compatible match can still establish bounded
+presence within an otherwise capped scan.
+
 Inventory traversal is bounded to 16,384 directory entries and 4,096 cache
 headers per scan. Unrelated files count toward the traversal budget. Hitting
 either cap makes absence inconclusive; no cache files are changed or removed.

@@ -46,3 +46,21 @@ test('fresh complete inventory proves bounded presence/absence; stale, capped an
   assert.equal(snapshotPresence(base,ref,{...profile,weights_fp24:4},{now:2000}).status,'incompatible');assert.equal(snapshotPresence(base,ref,{...profile,weights_fp24:0},{now:2000}).status,'unknown');
   assert.ok(!JSON.stringify(snapshotPresence(base,ref,profile,{now:2000})).includes(ref));
 });
+
+test('ambiguous snapshot references and unspecified completeness cannot establish presence or absence',()=>{
+  const ref='a'.repeat(64),profile={model_id:2,weights_fp24:3,quant_bits:2,ctx_size:262144};
+  const entry={snapshot_ref:ref,tokens:1000,file_bytes:2000,compatibility:profile};
+  const base={schema:1,source:'stock_ds4_kvstore_headers',privacy:'installation_keyed_hmac',status:'ready',observed_at:1000,capped:false,rejected:0,entries:[entry]};
+  const conflicting={...entry,compatibility:{...profile,weights_fp24:4}};
+  for(const entries of [[entry,conflicting],[conflicting,entry],[entry,entry]]){
+    const result=snapshotPresence({...base,entries},ref,profile,{now:2000});
+    assert.deepEqual(result,{status:'unknown',reason:'ambiguous_snapshot_reference'});
+    assert.ok(!JSON.stringify(result).includes(ref));
+  }
+  for(const capped of [undefined,null,0,'false']){
+    assert.equal(snapshotPresence({...base,capped,entries:[]},ref,profile,{now:2000}).status,'unknown');
+  }
+  assert.equal(snapshotPresence({...base,entries:[]},ref,profile,{now:2000}).status,'absent');
+  // An incomplete scan may still provide one unambiguous compatible match.
+  assert.equal(snapshotPresence({...base,capped:true},ref,profile,{now:2000}).status,'observed');
+});

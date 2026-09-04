@@ -89,9 +89,12 @@ export function compareCachePaths(raw={}){
 export function snapshotPresence(inventory,snapshot_ref,target_profile,{now=Date.now(),max_age_ms=120000,reject_different_quant=false}={}){
   if(typeof snapshot_ref!=='string'||!/^[\da-f]{64}$/.test(snapshot_ref)||!Number.isFinite(now)||!Number.isSafeInteger(max_age_ms)||max_age_ms<1000||max_age_ms>3600000)return {status:'unknown',reason:'invalid_inventory_query'};
   if(inventory?.schema!==1||inventory?.source!=='stock_ds4_kvstore_headers'||inventory?.privacy!=='installation_keyed_hmac'||inventory?.status!=='ready'||!Array.isArray(inventory.entries)||!Number.isFinite(inventory.observed_at)||inventory.observed_at>now||now-inventory.observed_at>max_age_ms)return {status:'unknown',reason:'inventory_unavailable_or_stale'};
-  const entry=inventory.entries.find(candidate=>candidate?.snapshot_ref===snapshot_ref);
+  const matches=inventory.entries.filter(candidate=>candidate?.snapshot_ref===snapshot_ref);
+  if(matches.length>1)return {status:'unknown',reason:'ambiguous_snapshot_reference'};
+  const entry=matches[0];
   if(!entry){
     if(inventory.capped)return {status:'unknown',reason:'inventory_capped'};
+    if(inventory.capped!==false)return {status:'unknown',reason:'inventory_completeness_unverified'};
     if(!Number.isSafeInteger(inventory.rejected)||inventory.rejected!==0)return {status:'unknown',reason:'inventory_incomplete'};
     return {status:'absent',reason:'complete_scan_no_match',observed_at:inventory.observed_at};
   }

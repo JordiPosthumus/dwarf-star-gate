@@ -88,5 +88,5 @@ actual terminal-event implementations; they do not certify every client/version.
   A busy live gateway can remain on the preceding tested release during review;
   call that pending activation, never silently call it current.
 
-The [roadmap priority table](roadmap.md#prioritized-delivery-order--reviewed-2026-09-02)
+The [roadmap priority table](roadmap.md#prioritized-delivery-order--reviewed-2026-09-03)
 is the canonical next-step order. Detailed future designs are not deployment claims.

@@ -10,6 +10,10 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Removed false confidence from cache shadow evidence.** Conflicting snapshot
+  entries and unspecified scan completeness now abstain rather than claim a
+  usable cache or proven absence. No live cache or routing behavior changed.
+
 - **Established the guiding light.** Dependable scheduling and agent continuity
   come first; Genie and predictors improve that foundation without becoming a
   dependency that can stall it. The roadmap records how milestones earn trust.

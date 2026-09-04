@@ -1,5 +1,12 @@
 # Changelog
 
+## Reject ambiguous cache-shadow evidence
+
+- Duplicate snapshot references no longer use the first matching header to claim
+  presence. Missing/malformed scan-completeness flags cannot prove absence.
+  Regression tests cover conflicting entry order and explicit completeness;
+  this offline helper still has no cache or routing authority.
+
 ## Verify maintenance isolation during rebalancing
 
 - Add an integrated mock-server regression: a new maintenance lock revokes old
