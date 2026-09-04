@@ -1,5 +1,15 @@
 # Changelog
 
+## Gate Genie review lifecycle receipts
+
+- The five-minute automatic review cadence now begins when the prior review
+  finishes. A slow local reasoning pass can no longer trigger an immediate
+  back-to-back review loop and leave Genie permanently busy.
+- Status retains eight sanitized dedicated/pool attempt receipts and a bounded
+  consecutive-failure count. The UI can distinguish completion, cancellation,
+  timeout, transport/HTTP failure, invalid output and budget exhaustion without
+  exposing endpoints, credentials, prompts, responses or raw errors.
+
 ## Visible cache-evidence health
 
 - The compact cache-cost section now reports process-epoch coverage and recent

@@ -224,7 +224,13 @@ test('a bounded dedicated timeout aborts that attempt and borrows the pool',asyn
     calls.push(url);if(calls.length===1)await new Promise((resolve,reject)=>options.signal.addEventListener('abort',()=>reject(new DOMException('Aborted','AbortError')),{once:true}));
     return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(authoredReview())}}]});
   }});
-  await g.ask();assert.equal(calls.length,2);assert.equal(g.status().last_served_by,'pool_fallback');assert.equal(g.status().error,null);g.close();
+  await g.ask();assert.equal(calls.length,2);assert.equal(g.status().last_served_by,'pool_fallback');assert.equal(g.status().error,null);
+  assert.deepEqual(g.status().provider_attempts.map(x=>[x.provider,x.outcome,x.reason]),[['pool_fallback','complete',null],['dedicated','failed','timeout']]);g.close();
+});
+test('slow scheduled reviews wait a full cadence after completion instead of looping continuously',async()=>{
+  let calls=0;const g=new Genie({url:'http://127.0.0.1:9001/v1'},snapshot,{fetchImpl:async()=>{calls++;g.attempt=Date.now()-10*60000;return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(authoredReview())}}]});}});
+  g.attempt=Date.now()-10*60000;g.tick();while(g.busy)await new Promise(r=>setImmediate(r));
+  assert.equal(calls,1);assert.ok(Date.now()-g.status().review_finished_at<1000);g.tick();await new Promise(r=>setImmediate(r));assert.equal(calls,1);g.close();
 });
 test('Genie endpoint deadlines are bounded, default to two hours and expose live progress without endpoint details',()=>{
   assert.throws(()=>new Genie({url:'http://127.0.0.1:9001/v1',timeout_ms:999},snapshot),/timeout_ms/);
@@ -235,7 +241,8 @@ test('Genie endpoint deadlines are bounded, default to two hours and expose live
 });
 test('Genie reports failure only after both dedicated and pool providers fail',async()=>{
   let calls=0;const g=new Genie({url:'http://127.0.0.1:9001/v1',fallback:{url:'http://127.0.0.1:9002/v1'}},snapshot,{fetchImpl:async()=>{calls++;throw new Error('private details');}});
-  g.setEnabled(true);await g.ask();assert.equal(calls,2);assert.equal(g.status().error,'Observation failed; gateway unaffected');g.close();
+  g.setEnabled(true);await g.ask();assert.equal(calls,2);assert.equal(g.status().error,'Observation failed; gateway unaffected');assert.equal(g.status().consecutive_failures,1);
+  assert.deepEqual(g.status().provider_attempts.map(x=>[x.provider,x.outcome,x.reason]),[['pool_fallback','failed','transport_error'],['dedicated','failed','transport_error']]);g.close();
 });
 test('legacy gateway absence is explicit; LLM output-limited reviews are not accepted',async()=>{
   assert.equal(briefing(snapshot()).dataset.enabled,false);

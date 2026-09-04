@@ -169,7 +169,8 @@ review starts within ten seconds. **Turn off** pauses him for the rest of that
 dashboard run; private config may set `"enabled": false` for an installation that
 should start off. Recovery and predictor mutation remain separately gated;
 enabling observation does not grant those powers. Subsequent automatic reviews
-start no more often than every five minutes. Manual
+start no more often than every five minutes **after the prior review finishes**;
+a slow review therefore cannot create a permanent back-to-back review loop. Manual
 questions have a 2,000-character limit and one review can run at a time. A manual
 question submitted during a scheduled review is held as the single pending
 question, then run next. Its in-memory receipt remains visibly `queued`,
@@ -177,8 +178,16 @@ question, then run next. Its in-memory receipt remains visibly `queued`,
 in status, diagnostics or the training dataset. Turning Genie off cancels a
 queued question. A dashboard restart cannot preserve unsent question text.
 
+Status includes at most eight sanitized provider-attempt receipts: dedicated,
+pool or pool fallback; start/finish times; `complete`, `failed` or `cancelled`;
+and a fixed reason category. It never includes endpoint details, credentials,
+prompts, raw responses or raw transport errors. This makes a slow provider,
+explicit fallback and failed review distinguishable without granting new powers.
+
 The experimental observer uses low-effort, maximum-8,192-output-token review
-requests with a ten-minute deadline, to keep diagnostics bounded. These are its
+requests with a configurable bounded provider deadline. The current default is
+two hours because local long-context DS4 reasoning may be slow; the live deadline
+and elapsed time are visible while a review runs. These are its
 own requests, **not production server defaults or limits on user requests**. A
 budget-exhausted answer is reported incomplete, never presented as a finished
 assessment. Existing server context, output settings and caches are unchanged.

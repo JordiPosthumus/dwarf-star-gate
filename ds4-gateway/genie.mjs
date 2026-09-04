@@ -8,6 +8,17 @@ export const DEFAULT_GENIE_TIMEOUT_MS=2*60*60*1000;
 export const DEFAULT_POOL_TIMEOUT_MS=2*60*60*1000;
 export const MAX_GENIE_TIMEOUT_MS=24*60*60*1000;
 
+function providerFailure(error,{timedOut=false}={}) {
+  if(timedOut)return 'timeout';
+  if(error?.name==='AbortError')return 'cancelled';
+  const message=String(error?.message??'');
+  if(/^Model HTTP \d+$/.test(message))return 'http_error';
+  if(message==='Observation reached its token budget; no complete report')return 'output_limit';
+  if(message==='Model response exceeded observation budget')return 'response_budget';
+  if(message==='Model returned no answer'||error instanceof SyntaxError)return 'invalid_response';
+  return 'transport_error';
+}
+
 function attributionForBriefing(raw) {
   const count=value=>Number.isSafeInteger(value)&&value>=0?value:0;
   const safe={schema:1,mode:'shadow',request_identity:'heuristic_not_protocol_proof',counts:{corroborated:0,candidate:0,abstained:0},recent:[]};
@@ -142,7 +153,7 @@ export class Genie {
     // A configured Genie is a core observer and starts on. Recovery, predictor
     // mutation and other powers remain separately authorized by their own gates.
     this.config=config;this.getSnapshot=snapshot;this.fetch=fetchImpl;this.enabled=!!config&&config.enabled!==false;this.busy=false;this.source=config?.default_source==='pool'?'pool':'primary';
-    this.last=null;this.reports=[];this.error=null;this.abort=null;this.closed=false;this.queuedQuestion=null;this.questionReceipt=null;this.actionOfferKey=null;this.actionOfferAt=0;this.busyKind=null;this.preempted=false;this.activeProvider=null;this.providerStartedAt=null;this.providerDeadlineAt=null;
+    this.last=null;this.reports=[];this.error=null;this.abort=null;this.closed=false;this.queuedQuestion=null;this.questionReceipt=null;this.actionOfferKey=null;this.actionOfferAt=0;this.busyKind=null;this.preempted=false;this.activeProvider=null;this.providerStartedAt=null;this.providerDeadlineAt=null;this.reviewFinishedAt=null;this.consecutiveFailures=0;this.providerAttempts=[];
     this.recover=recover;this.predict=predict;this.rebalance=rebalance;this.memory=memory;
     for(const endpoint of [config,config?.fallback].filter(Boolean)) {
       const u=new URL(endpoint.url);
@@ -151,7 +162,7 @@ export class Genie {
     }
   }
   publicQuestion(){return this.questionReceipt&&Object.fromEntries(['id','state','submitted_at','started_at','finished_at','report_id','error'].filter(k=>this.questionReceipt[k]!==undefined).map(k=>[k,this.questionReceipt[k]]));}
-  status(){const snapshot=this.getSnapshot(),actionSupervision=!!this.rebalance||!!this.predict||!!this.recover&&!!snapshot.gateway?.recovery?.automatic;return {configured:!!this.config,enabled:this.enabled,busy:this.busy,review_kind:this.busyKind,predictor_supervision:!!this.predict&&!!snapshot.gateway?.predictor?.configured,action_supervision:actionSupervision,mode:actionSupervision?'evidence-gated-actions':'observation-only',source:this.source,fallback_available:!!this.config?.fallback,last_served_by:this.reports[0]?.served_by??null,primary_timeout_ms:this.config?(this.config.timeout_ms??DEFAULT_GENIE_TIMEOUT_MS):null,fallback_timeout_ms:this.config?.fallback?(this.config.fallback.timeout_ms??DEFAULT_POOL_TIMEOUT_MS):null,active_provider:this.busy?this.activeProvider:null,provider_started_at:this.busy?this.providerStartedAt:null,provider_deadline_at:this.busy?this.providerDeadlineAt:null,last_check:this.last,error:this.error,question:this.publicQuestion(),reports:this.reports,
+  status(){const snapshot=this.getSnapshot(),actionSupervision=!!this.rebalance||!!this.predict||!!this.recover&&!!snapshot.gateway?.recovery?.automatic;return {configured:!!this.config,enabled:this.enabled,busy:this.busy,review_kind:this.busyKind,predictor_supervision:!!this.predict&&!!snapshot.gateway?.predictor?.configured,action_supervision:actionSupervision,mode:actionSupervision?'evidence-gated-actions':'observation-only',source:this.source,fallback_available:!!this.config?.fallback,last_served_by:this.reports[0]?.served_by??null,primary_timeout_ms:this.config?(this.config.timeout_ms??DEFAULT_GENIE_TIMEOUT_MS):null,fallback_timeout_ms:this.config?.fallback?(this.config.fallback.timeout_ms??DEFAULT_POOL_TIMEOUT_MS):null,active_provider:this.busy?this.activeProvider:null,provider_started_at:this.busy?this.providerStartedAt:null,provider_deadline_at:this.busy?this.providerDeadlineAt:null,review_finished_at:this.reviewFinishedAt,consecutive_failures:this.consecutiveFailures,provider_attempts:this.providerAttempts,last_check:this.last,error:this.error,question:this.publicQuestion(),reports:this.reports,
     ticker:tickerStatus(this.reports[0],this.getSnapshot(),this),memory:this.memory?{...this.memory.status(),...this.memory.retrieve(this.getSnapshot())}:{available:false,enabled:false,error:null}};}
   setSource(source) {
     if(this.busy)throw new Error('Wait for the current review to finish');
@@ -209,8 +220,13 @@ export class Genie {
       const result=JSON.parse(text),choice=result.choices?.[0];
       if(choice?.finish_reason==='length')throw new Error('Observation reached its token budget; no complete report');
       const answer=choice?.message?.content;if(typeof answer!=='string'||!answer.trim())throw new Error('Model returned no answer');
+      this.providerAttempts.unshift({provider:servedBy,started_at:this.providerStartedAt,finished_at:Date.now(),outcome:'complete',reason:null});this.providerAttempts=this.providerAttempts.slice(0,8);
       return {answer,served_by:servedBy};
-    } catch(error) {if(timedOut)throw new Error('Model attempt timed out');throw error;}
+    } catch(error) {
+      const reason=providerFailure(error,{timedOut});
+      this.providerAttempts.unshift({provider:servedBy,started_at:this.providerStartedAt,finished_at:Date.now(),outcome:reason==='cancelled'?'cancelled':'failed',reason});this.providerAttempts=this.providerAttempts.slice(0,8);
+      if(timedOut)throw new Error('Model attempt timed out');throw error;
+    }
     finally {clearTimeout(timer);this.abort.signal.removeEventListener('abort',cancelled);}
   }
   async ask(question='Review the current fleet. Flag only evidence-backed issues; distinguish unknowns.',{kind='manual'}={}) {
@@ -250,9 +266,9 @@ export class Genie {
       }
       this.last=Date.now();this.reports.unshift({id:randomUUID(),time:this.last,evidence_at:data.gateway_at,health_key,
         ...parsed,source:this.source,served_by:completion.served_by,actions_taken:actions,memory_used:completion.served_by==='dedicated'?history.notes.map(n=>({id:n.id,revision:n.revision})):[]});
-      this.reports=this.reports.slice(0,12);
-    } catch(e) {this.error=this.enabled&&!this.preempted ? (/timed out/.test(e.message)||e.name==='AbortError'?'Observation timed out after its bounded provider attempt(s)':/^Model HTTP \d+$/.test(e.message)?e.message:'Observation failed; gateway unaffected') : null;}
-    finally {this.busy=false;this.busyKind=null;this.preempted=false;this.abort=null;this.activeProvider=null;this.providerStartedAt=null;this.providerDeadlineAt=null;if(this.queuedQuestion)queueMicrotask(()=>this.runSubmitted());}
+      this.reports=this.reports.slice(0,12);this.consecutiveFailures=0;
+    } catch(e) {this.error=this.enabled&&!this.preempted ? (/timed out/.test(e.message)||e.name==='AbortError'?'Observation timed out after its bounded provider attempt(s)':/^Model HTTP \d+$/.test(e.message)?e.message:'Observation failed; gateway unaffected') : null;if(this.error)this.consecutiveFailures++;}
+    finally {this.reviewFinishedAt=Date.now();this.attempt=this.reviewFinishedAt;this.busy=false;this.busyKind=null;this.preempted=false;this.abort=null;this.activeProvider=null;this.providerStartedAt=null;this.providerDeadlineAt=null;if(this.queuedQuestion)queueMicrotask(()=>this.runSubmitted());}
     return this.status();
   }
   tick(){
