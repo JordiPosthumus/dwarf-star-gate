@@ -1,4 +1,5 @@
 import http from 'node:http';
+import {HardwareSnapshot} from './hardware-snapshot.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
@@ -211,6 +212,7 @@ export function createGateway(config,{visionTranscode}={}) {
   catch (e) { store.close(); throw e; }
   const nodes = definitions.map(makeNode);
   const dataset = new Dataset(path.join(path.dirname(config.state_file),'training'),{enabled:config.dataset_enabled===true});
+  const hardwareSnapshot=config.hardware_telemetry?.enabled===true?new HardwareSnapshot(path.join(path.dirname(config.state_file),'dashboard','hardware-current.json')):null;
   const predictor=new Predictor(dataset.enabled?config.predictor:null,{directory:path.join(path.dirname(config.state_file),'predictor'),dataDirectory:dataset.directory,record:(kind,row)=>dataset.record(kind,row)});
   dataset.onRecord=row=>predictor.observe(row);
   const shadow = new RoutingShadow({enabled:config.routing_shadow_enabled===true && config.dataset_enabled===true});
@@ -298,7 +300,7 @@ export function createGateway(config,{visionTranscode}={}) {
   const briefJob = j => ({key:j.key,route:j.req.url,trafficClass:j.trafficClass});
   function candidate(n,key) {
     return {node:n.id,healthy:n.healthy,paused:n.drained,active:Number(!!n.active),queued:n.queue.length,
-      assigned_sessions:store.count(n.id),context_length:n.contextLength,
+      assigned_sessions:store.count(n.id),context_length:n.contextLength,hardware:hardwareSnapshot?.get(n.id)??null,
       profile:digest(JSON.stringify({id:n.id,url:n.url,model:config.model,context:n.contextLength})),
       ...(observe(()=>({...shadow.timing(n.id,key,n.active),active_request_id:n.active?.id??null}))??{})};
   }
@@ -581,7 +583,7 @@ export function createGateway(config,{visionTranscode}={}) {
     const bodyAborted=()=>{captureChunks=[];finishCapture(null);};
     let settled = false, response, faults,jsonUsage,responseFormat='no_response',clientStatus=null;
     const progress=()=>{if(dataset.enabled && !settled && job.trafficClass!=='genie')dataset.record('progress',{request_id:job.id,node:node.id,
-      active_elapsed_ms:performance.now()-job.dispatchedMono,phase:observer.phase,semantic_characters:observer.semanticCharacters,
+      active_elapsed_ms:performance.now()-job.dispatchedMono,hardware:hardwareSnapshot?.get(node.id)??null,phase:observer.phase,semantic_characters:observer.semanticCharacters,
       thinking_characters:observer.thinkingCharacters,answer_characters:observer.answerCharacters,tool_characters:observer.toolCharacters,
       semantic_age_ms:observer.lastSemanticAt===null?null:performance.now()-observer.lastSemanticAt,requested_thinking:job.thinking.result});};
     const progressTimer=dataset.enabled?setInterval(progress,30000):null;progressTimer?.unref();

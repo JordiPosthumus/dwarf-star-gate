@@ -6,6 +6,7 @@ import { safeRequestedThinking } from './requested-thinking.mjs';
 import { safeClientMetadata } from './client-metadata.mjs';
 import { ENCODER_MODEL, ENCODER_REVISION, EXTRACTION } from './embeddings.mjs';
 import {validCallId,rejectionReasons} from './continuity.mjs';
+import {safeHardwareSnapshot} from './hardware-snapshot.mjs';
 
 const number = x => Number.isFinite(x) && x >= 0 ? x : null;
 const id = x => typeof x === 'string' && /^[\w-]{1,64}$/.test(x) ? x : null;
@@ -76,6 +77,7 @@ export function evidence(kind, raw) {
     }
   }
   if(kind==='progress') {
+    row.hardware=safeHardwareSnapshot(raw.hardware,row.node);
     row.progress_schema=1;row.prediction_point='while_active';
     for(const key of ['active_elapsed_ms','semantic_characters','semantic_age_ms','thinking_characters','answer_characters','tool_characters'])row[key]=number(raw[key]);
     row.phase=['awaiting_content','thinking','answering','tool_output'].includes(raw.phase)?raw.phase:'unknown';
@@ -100,7 +102,7 @@ export function evidence(kind, raw) {
   if (kind!=='routing_tiebreak_shadow'&&Array.isArray(raw.candidates)) {
     row.candidates=raw.candidates.slice(0,128).map(w=>({node:id(w.node), healthy:w.healthy===true, paused:w.paused===true,
       active:number(w.active), queued:number(w.queued), assigned_sessions:number(w.assigned_sessions), context_length:number(w.context_length),
-      profile:/^[a-f0-9]{64}$/.test(w.profile)?w.profile:null,
+      profile:/^[a-f0-9]{64}$/.test(w.profile)?w.profile:null,hardware:safeHardwareSnapshot(w.hardware,w.node),
       ...('worker_idle_ms' in w?Object.fromEntries(timingKeys.map(k=>[k,number(w[k])])):{}),
       ...('worker_idle_ms' in w?{cache_residence:'unknown',backend_epoch:null,
         active_request_id:/^[a-f0-9-]{36}$/.test(w.active_request_id)?w.active_request_id:null}:{}),

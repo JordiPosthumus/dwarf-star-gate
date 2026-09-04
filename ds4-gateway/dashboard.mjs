@@ -16,6 +16,7 @@ import { safeQuarantine } from './generation-health.mjs';
 import { AnalyticsReader } from './analytics.mjs';
 import {FleetSpeedReader} from './fleet-speed.mjs';
 import {HardwareTelemetry} from './hardware-telemetry.mjs';
+import {HardwareSnapshot} from './hardware-snapshot.mjs';
 import { estimateCacheCost } from './cache-cost.mjs';
 import {CacheInventoryReader,cacheInventoryDirectories,loadCacheInventoryKey} from './cache-inventory.mjs';
 import { loadConfig, dashboardPort, isMain, continuityEnabled } from './config.mjs';
@@ -162,7 +163,8 @@ export async function runDashboard(configPath, port) {
     try { fs.appendFileSync(path.join(runtime, `metrics-${new Date().toISOString().slice(0, 10)}.jsonl`), JSON.stringify(entry) + '\n', { mode: 0o600 }); }
     catch { writeError = 'Telemetry file could not be written; live monitoring continues'; }
   };
-  const hardware=new HardwareTelemetry(config.hardware_telemetry,appendMetric);
+  const hardwareSnapshot=new HardwareSnapshot(path.join(runtime,'hardware-current.json'));
+  const hardware=new HardwareTelemetry(config.hardware_telemetry,row=>{appendMetric(row);hardwareSnapshot.write(row);});
   const attribution=new EngineAttribution(appendMetric);
   const save = entry => {appendMetric(entry);attribution.acceptEngine(entry);};
   function follow(node, device, reader, resetCursor = false) {

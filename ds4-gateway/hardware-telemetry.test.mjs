@@ -6,6 +6,23 @@ import path from 'node:path';
 import {EventEmitter} from 'node:events';
 import {PassThrough} from 'node:stream';
 import {HardwareTelemetry,hardwareTelemetryConfig,nvidiaLinuxCommand,parseNvidiaLinux} from './hardware-telemetry.mjs';
+import {HardwareSnapshot} from './hardware-snapshot.mjs';
+import {evidence} from './dataset.mjs';
+
+test('private hardware bridge feeds allowlisted evidence and rejects stale, malformed or linked input',t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-hardware-bridge-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const file=path.join(dir,'hardware.json');let at=Date.now();
+  const writer=new HardwareSnapshot(file,{now:()=>at}),reader=new HardwareSnapshot(file,{now:()=>at});
+  const raw={node:'spark',time:at,observed_at:at,power_watts:26,power_scope:'gpu_only',private_text:'do not retain'};
+  writer.write(raw);assert.equal(writer.error,null);assert.equal(fs.statSync(file).mode&0o777,0o600);
+  assert.ok(!fs.readFileSync(file,'utf8').includes('private_text'));
+  const sample=reader.get('spark');assert.equal(sample.power_watts,26);
+  assert.equal(evidence('progress',{request_id:'r',node:'spark',hardware:{...sample,private_text:'secret'}}).hardware.power_scope,'gpu_only');
+  assert.ok(!JSON.stringify(evidence('decision',{request_id:'r',node:'spark',candidates:[{node:'spark',hardware:raw}]})).includes('do not retain'));
+  assert.equal(reader.get('other'),null);at+=60001;assert.equal(reader.get('spark'),null);
+  fs.writeFileSync(file,'bad json');at+=1001;assert.equal(reader.get('spark'),null);assert.equal(reader.error,'hardware_snapshot_unavailable');
+  fs.unlinkSync(file);const target=path.join(dir,'target');fs.writeFileSync(target,JSON.stringify({schema:1,samples:[{...raw,time:at,observed_at:at}]}));fs.symlinkSync(target,file);at+=1001;assert.equal(reader.get('spark'),null);
+});
 
 const now=Date.UTC(2026,8,4,12),valid='DSG_HW_V1|131072,32768|88.5,42,1200';
 

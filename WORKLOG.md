@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Connected hardware measurements to forecast evidence.** A private bounded
+  snapshot now links dashboard collection to admission/progress records, with
+  freshness, identity and privacy checks. Deployment and validated V4 training
+  are still required before claiming production prediction benefit.
+
 - **Prepared causal hardware features for XGB.** An explicit V4 challenger can
   compare fresh, already-observed hardware readings against no-hardware models.
   Tests guard identity, timing, missing values and replay parity. Live ingestion

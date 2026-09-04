@@ -1,5 +1,13 @@
 # Changelog
 
+## Hardware evidence ingestion
+
+- Bridge allowlisted dashboard hardware samples to admission and progress records
+  through a bounded private atomic snapshot. Readers reject stale, future,
+  wrong-machine, malformed and symlinked input; missing evidence remains unknown.
+- Keep V3 as the default until V4 coverage, training and validation are complete.
+  Activation requires dashboard and gateway reloads; no DS4 restart is needed.
+
 ## Causal hardware challenger contract
 
 - Add explicit V4 hardware features with worker identity, observed-time and
