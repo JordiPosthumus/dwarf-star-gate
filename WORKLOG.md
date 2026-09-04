@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Clarified the Mac recovery boundary.** Restarting a loaded service cannot
+  recover an OS-removed registration. The plan now explicitly covers same-host
+  transport, an enrolled retained definition, stop-intent protection and a real
+  removed-job canary before granting Genie bootstrap authority.
+
 - **Separated provable non-delivery from ambiguous failures.** A fresh TCP
   connection refused before establishment can now tell a compatible patient
   client to retry its unchanged request. Connected resets and image-repair

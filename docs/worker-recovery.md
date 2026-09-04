@@ -311,6 +311,23 @@ It does not load plists, target LaunchDaemons, accept commands, edit settings or
 discover a service from an HTTP endpoint. The LaunchAgent's reported PID must be
 the configured DS4 binary and must own the configured loopback listener.
 
+**Loaded-and-stopped is not removed.** If macOS removes the LaunchAgent job,
+`kickstart` cannot restore it. A launcher that registers a temporary plist and
+then deletes that plist is outside this adapter's removed-job recovery boundary.
+This can occur after a graceful OS-directed termination, not only after a model
+fault. An idle GPU or successful prior canary does not supply missing bootstrap
+authority. Restore the established launcher manually and verify it before
+readmission; do not clear quarantine just because the process starts.
+
+Planned support for this case needs separate opt-in enrollment of an exact,
+private, retained service definition; a local transport for same-host workers;
+verified GUI domain, machine, binary/profile and empty listener; durable one-shot
+bootstrap receipts; and a real removed-job recovery canary with cold/warm reuse.
+Operator pauses, maintenance holds and explicit stop intent must block automatic
+bootstrap. Missing or changed definitions must remain ineligible. Do not substitute
+an arbitrary launcher command, create a login item or move to a LaunchDaemon as
+an implicit fallback. These capabilities are **not implemented by this adapter**.
+
 Process metadata checks the kernel executable path before and after reading the
 command, and rechecks the reported process start time. A changed start time is
 rejected even if a reused PID runs the same binary. These are sampled identity

@@ -1,5 +1,13 @@
 # Changelog
 
+## Distinguish removed Mac services from stopped jobs
+
+- Document the current launchd helper's loaded-job and SSH-only boundaries.
+  Same-host execution and separately enrolled restoration of a removed service
+  remain planned, with retained-definition identity, operator-stop protection,
+  one-shot receipts and an installation-specific cold/warm canary. No new
+  automatic service authority or model-server configuration change is implied.
+
 ## Certify original requests refused before TCP connection
 
 - Distinguish witnessed fresh-socket `ECONNREFUSED` from ambiguous upstream loss.
