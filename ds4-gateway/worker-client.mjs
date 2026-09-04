@@ -1,11 +1,12 @@
 import http from 'node:http';
 const paths = new Set(['/workers', '/add-worker', '/remove-worker', '/drain-workers', '/resume-workers', '/set-ssh-fallbacks','/set-context-limit','/set-queue-timeout','/set-protection','/relocate-queued','/genie-relocate-queued','/recovery-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/predictor','/genie-predictor','/agents','/grant-agent','/revoke-agent','/release-agent-hold']);
-export function workerControl(socketPath, route, body) {
+export function workerControl(socketPath, route, body, {channel}={}) {
   if (!socketPath || !paths.has(route)) return Promise.reject(new Error('Worker control socket not configured'));
+  if(channel!==undefined&&(typeof channel!=='string'||!/^[a-z][a-z0-9_]{0,31}$/.test(channel)))return Promise.reject(new Error('Invalid worker-control channel'));
   return new Promise((resolve, reject) => {
     // Controls are infrequent. A fresh socket avoids reusing a half-closed
     // keep-alive connection after the gateway restarts; never replay mutations.
-    const req = http.request({ socketPath, path: route, agent:false, method: ['/workers','/agents'].includes(route) ? 'GET' : 'POST', headers:{'content-type':'application/json'} }, res => {
+    const req = http.request({ socketPath, path: route, agent:false, method: ['/workers','/agents'].includes(route) ? 'GET' : 'POST', headers:{'content-type':'application/json',...(channel?{'x-dsg-control-channel':channel}:{})} }, res => {
       let data = '';
       res.on('data', chunk => { data += chunk; if (data.length > 1048576) req.destroy(new Error('Control response too large')); });
       res.on('error', reject);

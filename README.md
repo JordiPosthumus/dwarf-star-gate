@@ -558,6 +558,10 @@ node ds4-gateway/control.mjs resume-worker spark1
 Drain stops new admission to the named worker; existing queued/active requests
 finish. State persists across gateway restarts. Six workers can drain four and
 continue with two. The controller cannot stop model servers or creative jobs.
+Each manual pause/resume now retains a bounded timestamped control-channel receipt
+(`dashboard`, `workers_cli`, or another local path) and exposes the latest receipt
+in that server's routing tooltip. This identifies how the request reached the
+private operator socket, not which human or same-user process initiated it.
 SIGUSR1/SIGUSR2 globally pause/resume admission; SIGTERM requests graceful gateway
 shutdown. Service-manager deadlines can still interrupt long streams. Do not kill
 or restart a live gateway casually; there is no blind restart script.

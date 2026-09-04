@@ -69,6 +69,7 @@ export class AffinityStore {
       if(data.queue_timeout_ms!==undefined){if(typeof data.queue_timeout_ms!=='number')throw new Error('Invalid saved queue allowance');queueTimeout(data.queue_timeout_ms);}
       if(data.quarantined!==undefined && (!data.quarantined || typeof data.quarantined!=='object' || Array.isArray(data.quarantined)))throw new Error('Invalid saved quarantine state');
       if(data.protections!==undefined&&(!data.protections||typeof data.protections!=='object'||Array.isArray(data.protections)||Object.keys(data.protections).some(k=>k!=='vision_jpeg')||(data.protections.vision_jpeg!==undefined&&typeof data.protections.vision_jpeg!=='boolean')))throw new Error('Invalid saved protection state');
+      if(data.operator_actions!==undefined&&(!Array.isArray(data.operator_actions)||data.operator_actions.length>256||data.operator_actions.some(action=>!action||typeof action!=='object'||!/^[a-f0-9-]{36}$/.test(action.id)||!['pause','resume'].includes(action.action)||!Array.isArray(action.workers)||!action.workers.length||action.workers.length>128||action.workers.some(id=>typeof id!=='string'||!/^[a-zA-Z0-9][\w-]{0,63}$/.test(id))||typeof action.control_channel!=='string'||!/^[a-z][a-z0-9_]{0,31}$/.test(action.control_channel)||typeof action.time!=='string'||!Number.isFinite(Date.parse(action.time)))))throw new Error('Invalid saved operator action history');
       for(const entry of Object.values(data.quarantined??{}))if(!entry || !['fatal_accelerator_error','accelerator_checkpoint_failure','repeated_inference_failures'].includes(entry.reason) || typeof entry.request_id!=='string' || !Number.isFinite(Date.parse(entry.at)))throw new Error('Invalid saved quarantine entry');
       for (const [key, item] of Object.entries(data.sessions)) {
         if (!/^[a-f0-9]{64}$/.test(key) || typeof item.node !== 'string') throw new Error('Invalid affinity entry');
@@ -247,6 +248,7 @@ export function createGateway(config,{visionTranscode}={}) {
   const agent = new http.Agent({ keepAlive: true, maxSockets: 16 });
   const accepted = new Set(['POST /v1/chat/completions', 'POST /v1/completions', 'POST /v1/responses', 'POST /v1/messages', 'GET /v1/models']);
   const auth = Buffer.from(`Bearer ${config.api_key}`);
+  const lastOperatorAction=id=>[...(store.data.operator_actions??[])].reverse().find(action=>action.workers.includes(id))??null;
   const stats = () => ({ version: 1, agent_api_version:1, model: config.model, context_length: contextLimit(), queue_timeout_ms:queueTimeoutMs(), request_timeout_ms:config.request_timeout_ms??360000000, draining,startup:{...startup}, dataset:{...dataset.snapshot(),embedding_collection:embeddings.snapshot()}, routing_shadow:shadow.snapshot(),fallback_tiebreak_shadow:{...fallbackTieBreak},recovery:recovery.status(),predictor:predictor.status(),protections:visionProtection.status(),
     calibration:calibrationPreflight(nodes,{draining}),continuity:{schema:1,recent_rejections:rejections.slice(0,20),safe_retry_contract:true,queued_relocation:true,automatic_relocation:true,automatic_relocation_scope:automaticRelocationScope,automatic_affinity_rebalance_min_wait_ms:automaticAffinityWait,patient_wait:true,
       relocation:{completed:relocation.completed,rejected:relocation.rejected,offers:relocationOffers().length,genie_enabled:config.genie_load_balancing!==false,genie_offers:genieRelocationOffers(),diagnostics:relocationDiagnostics(),last:relocation.last},
@@ -255,7 +257,7 @@ export function createGateway(config,{visionTranscode}={}) {
     total: nodes.length, healthy: nodes.filter(n => n.healthy).length, available: nodes.filter(n => n.healthy && !n.drained).length,
     active: nodes.filter(n => n.active).length, queued: waiting.length+nodes.reduce((s, n) => s + n.queue.length, 0),
     workers: nodes.map(n => ({ id: n.id, url: n.url, is_healthy: n.healthy, drained: n.drained, quarantine:n.quarantine, inference_failures:n.inferenceFailures,
-      ...agents.pauseStatus(n.id),
+      ...agents.pauseStatus(n.id),last_operator_action:lastOperatorAction(n.id),
       gateway_drained: n.drained && !n.active && !n.queue.length, load: Number(!!n.active),
       queued: n.queue.length, recovery_waiting:parkedFor(n).length, assigned_sessions: store.count(n.id), completed: n.completed, failed: n.failed, protected:n.protected, observation_limited:n.observationLimited,
       oldest_queue_seconds:n.queue.length?Math.max(0,(performance.now()-n.queue[0].createdMono)/1000):null,
@@ -968,12 +970,17 @@ export function createGateway(config,{visionTranscode}={}) {
     log('worker_removed', { node: id });
     return registry();
   }
-  function drainNodes(ids, drained) {
+  function operatorAction(ids,drained,controlChannel='in_process'){
+    const channel=typeof controlChannel==='string'&&/^[a-z][a-z0-9_]{0,31}$/.test(controlChannel)?controlChannel:'unidentified_local_client';
+    return {id:randomUUID(),time:new Date().toISOString(),action:drained?'pause':'resume',workers:[...ids],control_channel:channel};
+  }
+  function drainNodes(ids, drained, controlChannel='in_process') {
     if (!Array.isArray(ids) || !ids.length || ids.some(id => !nodes.some(n => n.id === id))) throw new Error('Specify known worker IDs');
-    store.save({...store.data,...agents.manualUpdate(ids,drained)});
+    const action=operatorAction(ids,drained,controlChannel);
+    store.save({...store.data,...agents.manualUpdate(ids,drained),operator_actions:[...(store.data.operator_actions??[]),action].slice(-256)});
     if(drained)recovery.operatorPause(ids);
     for (const n of nodes) if (ids.includes(n.id)) n.drained = drained;
-    log('workers_drain_changed', { ids, drained });
+    log('workers_drain_changed', { ids, drained, operator_action_id:action.id, control_channel:action.control_channel });
     return stats();
   }
   // Operator-only Unix socket: never expose lifecycle mutation on the LAN.
@@ -1034,13 +1041,14 @@ export function createGateway(config,{visionTranscode}={}) {
             for(const {node} of recovered)delete quarantined[node.id];
             // Commit a multi-worker resume once, after every requested check
             // passes. Partial verification must not partially enable a fleet.
-            store.save({...store.data,quarantined,...agents.manualUpdate(input.workers,false)});
+            const action=operatorAction(input.workers,false,req.headers['x-dsg-control-channel']??'unidentified_local_client');
+            store.save({...store.data,quarantined,...agents.manualUpdate(input.workers,false),operator_actions:[...(store.data.operator_actions??[]),action].slice(-256)});
             for(const {node,proof} of recovered){node.quarantine=null;node.inferenceFailures=0;node.healthy=true;log('worker_recovery_verified',{node:node.id,...proof});}
             for(const n of selected)n.drained=false;
-            log('workers_drain_changed',{ids:input.workers,drained:false});
+            log('workers_drain_changed',{ids:input.workers,drained:false,operator_action_id:action.id,control_channel:action.control_channel});
             return json(res,200,stats());
           }
-          json(res, 200, drainNodes(input.workers, req.url === '/drain-workers'));
+          json(res, 200, drainNodes(input.workers, req.url === '/drain-workers',req.headers['x-dsg-control-channel']??'unidentified_local_client'));
         } catch (e) { error(res, e.status??400, e.code??'invalid_control_request', e.message); }
       });
     });

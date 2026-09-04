@@ -445,6 +445,18 @@ test('worker control uses fresh connections across immediate gateway restarts',a
   }
 });
 
+test('manual routing changes retain a bounded client-channel receipt without claiming human identity',async t=>{
+  const r=await rig(t,1,{control_socket:true});
+  await workerControl(r.config.control_socket,'/drain-workers',{workers:['spark1']},{channel:'dashboard'});
+  let action=r.gateway.stats().workers[0].last_operator_action;
+  assert.equal(action.action,'pause');assert.equal(action.control_channel,'dashboard');assert.deepEqual(action.workers,['spark1']);assert.ok(Number.isFinite(Date.parse(action.time)));
+  await workerControl(r.config.control_socket,'/resume-workers',{workers:['spark1']},{channel:'workers_cli'});
+  action=r.gateway.stats().workers[0].last_operator_action;
+  assert.equal(action.action,'resume');assert.equal(action.control_channel,'workers_cli');
+  await assert.rejects(workerControl(r.config.control_socket,'/drain-workers',{workers:['spark1']},{channel:'PRIVATE HUMAN NAME'}),/Invalid worker-control channel/);
+  assert.equal(r.gateway.store.data.operator_actions.length,2);assert.ok(!JSON.stringify(r.gateway.store.data.operator_actions).includes('PRIVATE HUMAN NAME'));
+});
+
 test('legacy recovery CLI waits beyond its former five-second timeout',async t=>{
   const r=await rig(t,1,{control_socket:true});await r.request('{"fatal_error":true}','a');
   r.backends[0].recoveryDelay=5200;

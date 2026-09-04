@@ -255,6 +255,7 @@ export async function runDashboard(configPath, port) {
         continuity:continuityForDisplay(s.continuity),
         workers: s.workers.map(w => ({ id: w.id, is_healthy: w.is_healthy, drained: w.drained, quarantine:safeQuarantine(w.quarantine), load: w.load, queued: w.queued, active_seconds: w.active_seconds, completed: w.completed, failed: w.failed, assigned_sessions: w.assigned_sessions,
           gateway_drained:w.gateway_drained,recovery_waiting:Number.isSafeInteger(w.recovery_waiting)?w.recovery_waiting:0,operator_paused:w.operator_paused,holds:Array.isArray(w.holds)?w.holds.slice(0,1024).map(h=>({id:h.id,owner_id:h.owner_id,created_at:h.created_at})):[],
+          last_operator_action:w.last_operator_action&&['pause','resume'].includes(w.last_operator_action.action)&&typeof w.last_operator_action.time==='string'&&Number.isFinite(Date.parse(w.last_operator_action.time))&&typeof w.last_operator_action.control_channel==='string'&&/^[a-z][a-z0-9_]{0,31}$/.test(w.last_operator_action.control_channel)?{action:w.last_operator_action.action,time:w.last_operator_action.time,control_channel:w.last_operator_action.control_channel}:null,
           oldest_queue_seconds:w.oldest_queue_seconds??null,oldest_queue_remaining_seconds:w.oldest_queue_remaining_seconds??null,
           context_length:Number.isSafeInteger(w.context_length)?w.context_length:null, requested_thinking: safeRequestedThinking(w.requested_thinking), last_requested_thinking: safeRequestedThinking(w.last_requested_thinking),predictions:w.predictions,
           health_probe_deferred:Number.isSafeInteger(w.health_probe_deferred)?w.health_probe_deferred:0,
@@ -275,11 +276,11 @@ export async function runDashboard(configPath, port) {
     devices: [...devices.values()].map(d => ({...d.snapshot(),activity:activity.get(d.id)})), events, attribution:attribution.snapshot(), notes: 'Rates are DS4 engine measurements. Cache counts cover observed prompt starts, not lifetime requests. Raw prompts and responses are excluded.' });
   const memory=new GenieMemory(path.join(path.dirname(config.state_file),'genie','memory'));
   const runtimeGenie=genieRuntimeConfig(config);
-  const genie=new Genie(runtimeGenie,snapshot,{memory,recover:managementEnabled?input=>workerControl(config.control_socket,'/genie-recover-worker',input):null,predict:managementEnabled?input=>workerControl(config.control_socket,'/genie-predictor',input):null,rebalance:managementEnabled?input=>workerControl(config.control_socket,'/genie-relocate-queued',input):null});
+  const genie=new Genie(runtimeGenie,snapshot,{memory,recover:managementEnabled?input=>workerControl(config.control_socket,'/genie-recover-worker',input,{channel:'gate_genie'}):null,predict:managementEnabled?input=>workerControl(config.control_socket,'/genie-predictor',input,{channel:'gate_genie'}):null,rebalance:managementEnabled?input=>workerControl(config.control_socket,'/genie-relocate-queued',input,{channel:'gate_genie'}):null});
   const stopGenieTunnel=genieTunnel(config.genie);
   const server = createDashboard(snapshot, path.join(here,'ui'), managementEnabled ? {
-    read:()=>workerControl(config.control_socket,'/workers'),
-    act:(action,input)=>workerControl(config.control_socket,({add:'/add-worker',remove:'/remove-worker',drain:'/drain-workers',resume:'/resume-workers',fallbacks:'/set-ssh-fallbacks',context:'/set-context-limit','queue-timeout':'/set-queue-timeout',protection:'/set-protection',relocate:'/relocate-queued',recover:'/recover-worker','recovery-policy':'/recovery-policy','recovery-recheck':'/recovery-recheck',predictor:'/predictor'})[action],input),
+    read:()=>workerControl(config.control_socket,'/workers',undefined,{channel:'dashboard'}),
+    act:(action,input)=>workerControl(config.control_socket,({add:'/add-worker',remove:'/remove-worker',drain:'/drain-workers',resume:'/resume-workers',fallbacks:'/set-ssh-fallbacks',context:'/set-context-limit','queue-timeout':'/set-queue-timeout',protection:'/set-protection',relocate:'/relocate-queued',recover:'/recover-worker','recovery-policy':'/recovery-policy','recovery-recheck':'/recovery-recheck',predictor:'/predictor'})[action],input,{channel:'dashboard'}),
   } : null,genie,()=>analytics.snapshot());
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
   await poll(); const interval = setInterval(poll, 2000), genieTimer=setInterval(()=>genie.tick(),10000);

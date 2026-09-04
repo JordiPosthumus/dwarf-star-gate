@@ -1,5 +1,11 @@
 # Changelog
 
+## Traceable manual routing controls
+
+- Manual pause/resume now retains a bounded timestamped control-channel receipt
+  and shows the latest source path in the server routing tooltip. The label is
+  explicitly a same-user client path, not a claim about human identity.
+
 ## Read-only worker-registry drift detection
 
 - Doctor now compares workers declared in private config with the authoritative

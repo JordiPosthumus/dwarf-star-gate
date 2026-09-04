@@ -20,7 +20,7 @@ try {
       if(!id||!workers||!out||!path.isAbsolute(out))throw new Error('grant AGENT --workers ID,ID --out ABSOLUTE_PRIVATE_FILE');
       // Reserve a new private file first. Never overwrite another agent's key.
       const fd=fs.openSync(out,'wx',0o600);let saved=false,issued=false;
-      try {const grant=await workerControl(config.control_socket,'/grant-agent',{agent_id:id,workers:workers.split(',')});
+      try {const grant=await workerControl(config.control_socket,'/grant-agent',{agent_id:id,workers:workers.split(',')},{channel:'agents_cli'});
         issued=true;
         fs.writeFileSync(fd,JSON.stringify({schema:1,agent_id:id,control_socket:config.control_socket,token:grant.token})+'\n');fs.fsyncSync(fd);saved=true;
         result={agent_id:id,workers:grant.workers,credential_file:out};
@@ -28,7 +28,7 @@ try {
       finally{fs.closeSync(fd);if(!saved)fs.unlinkSync(out);}
     }else {
       if(workers||out||((command==='list')?id:!id))throw new Error('Unexpected or missing operator arguments');
-      result=await workerControl(config.control_socket,command==='list'?'/agents':command==='revoke'?'/revoke-agent':'/release-agent-hold',command==='list'?undefined:command==='revoke'?{agent_id:id}:{hold_id:id});
+      result=await workerControl(config.control_socket,command==='list'?'/agents':command==='revoke'?'/revoke-agent':'/release-agent-hold',command==='list'?undefined:command==='revoke'?{agent_id:id}:{hold_id:id},{channel:'agents_cli'});
     }
   }else {
     if(configFile||workers||out)throw new Error('Scoped agent commands use a credential file, not operator configuration');

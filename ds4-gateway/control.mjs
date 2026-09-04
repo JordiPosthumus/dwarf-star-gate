@@ -11,7 +11,7 @@ try {
   } else if (command === 'drain-worker' || command === 'resume-worker') {
     if (!config.control_socket) throw new Error('No operator control socket configured');
     const workers = process.argv.slice(3); if (!workers.length) throw new Error('Specify worker IDs');
-    const body = await workerControl(path.resolve(config.control_socket),command === 'drain-worker' ? '/drain-workers' : '/resume-workers',{workers});
+    const body = await workerControl(path.resolve(config.control_socket),command === 'drain-worker' ? '/drain-workers' : '/resume-workers',{workers},{channel:'control_cli'});
     console.log(JSON.stringify(body));
   } else throw new Error('Usage: control.mjs status|drain-worker ID...|resume-worker ID...');
 } catch (e) { console.error(e.message); process.exitCode = 1; }

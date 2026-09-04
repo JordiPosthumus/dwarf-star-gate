@@ -152,6 +152,7 @@ function routingInfo(w,{stale=false,recovering=false}={}) {
   const reasons=[];
   if(w.quarantine)reasons.push(({repeated_inference_failures:'DSG isolated this server after repeated inference failures.',fatal_accelerator_error:'DSG isolated this server after a fatal accelerator error.',accelerator_checkpoint_failure:'DSG isolated this server after an accelerator checkpoint failure.'})[w.quarantine.reason]||'DSG isolated this server after a generation fault.');
   if(w.operator_paused)reasons.push('An operator paused gateway routing.');
+  if(w.last_operator_action){const action=w.last_operator_action,source=action.control_channel.replaceAll('_',' ');reasons.push(`Last local operator control: ${action.action} via ${source} at ${new Date(action.time).toLocaleString()}. The source label identifies the client path, not a human identity.`);}
   if(held)reasons.push(`Reserved by ${w.holds.map(h=>h.owner_id).join(', ')}. The owning agent must release its hold; Resume cannot override it.`);
   if(recovering)reasons.push('Service recovery is in progress. Wait for its verification receipt.');
   if(!w.is_healthy&&!w.quarantine&&!recovering&&reasons.length)reasons.push('The last readiness check was also unavailable; resuming will recheck it.');

@@ -155,6 +155,8 @@ test('excluded routing states are explicit; quarantine offers checked readmissio
   assert.match(compact,/data-tooltip="ROUTING ENABLED[^\"]*New requests may use this server[^\"]*admitted requests finish/);
   assert.match(compact,/aria-label="ROUTING ENABLED/);assert.doesNotMatch(compact,/<p(?:\s|>)|<strong|Pause routing<\/button>/);
   const paused=markup({...ready,drained:true,operator_paused:true});assert.match(paused,/data-action="resume"/);assert.match(paused,/operator paused gateway routing/);
+  const attributed=markup({...ready,drained:true,operator_paused:true,last_operator_action:{action:'pause',control_channel:'dashboard',time:'2026-09-04T03:12:44Z'}});
+  assert.match(attributed,/Last local operator control: pause via dashboard/);assert.match(attributed,/source label identifies the client path, not a human identity/);
   assert.equal(state(ready,{stale:true}).action,null);assert.ok(!markup(ready,{controls:false}).includes('<button'));
   assert.ok(!markup({...q,holds:[{owner_id:'<script>evil</script>'}]}).includes('<script>'));
   assert.match(markup({...q,holds:[{owner_id:'<script>evil</script>'}]}),/&lt;script&gt;/);

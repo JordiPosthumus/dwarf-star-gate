@@ -4,7 +4,7 @@ import {randomUUID} from 'node:crypto';
 import {workerControl} from './worker-client.mjs';
 try {
   const {config}=loadConfig();
-  const [command='status',argument]=process.argv.slice(2),control=(route,body)=>workerControl(config.control_socket,route,body);
+  const [command='status',argument]=process.argv.slice(2),control=(route,body)=>workerControl(config.control_socket,route,body,{channel:'recovery_cli'});
   const registry=await control('/workers');let result;
   if(command==='status')result=registry.recovery;
   else if(command==='auto' && ['on','off'].includes(argument))result=await control('/recovery-policy',{enabled:argument==='on'});
