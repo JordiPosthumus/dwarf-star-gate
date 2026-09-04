@@ -1,5 +1,12 @@
 # Changelog
 
+## Forecast duration-band diagnostics
+
+- Report request-balanced error, bias and coverage in under-five-minute,
+  five-minute-to-hour and hour-plus target bands for model and baseline metrics.
+- Cover exact boundaries, empty evidence and repeated progress samples with
+  regression tests. No routing, production limits or activation gates changed.
+
 ## Correct hot-cache shadow cost
 
 - Include new-suffix prefill in the hot-cache completion estimate. Missing suffix

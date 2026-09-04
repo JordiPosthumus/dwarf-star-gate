@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Exposed multi-hour prediction failures.** Candidate and baseline reports now
+  separate hour-plus targets from shorter work, including bias and coverage.
+  Repeated progress samples cannot outweigh other requests within a band, and
+  missing examples are explicitly unknown. Existing promotion gates stay intact.
+
 - **Corrected the hot-cache comparison.** A warm prefix still needs its new suffix
   processed. The shadow comparator now counts that cost explicitly, with a
   regression demonstrating how it can change which path is fastest.

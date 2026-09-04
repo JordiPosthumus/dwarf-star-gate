@@ -13,6 +13,28 @@ ROOT=Path(__file__).resolve().parent.parent
 
 
 class PredictorV2Tests(unittest.TestCase):
+    def test_duration_bands_expose_hour_long_misses_and_boundaries(self):
+        rows=self.rows(5)
+        for r, target in zip(rows, (299, 300, 3599, 3600, 7200)):
+            r['target_s']=target
+        result=v.metrics(rows, [50]*5)
+        bands=result['target_duration_bands']
+        self.assertEqual([b['requests'] for b in bands.values()], [1, 2, 2])
+        self.assertEqual(bands['1h_plus']['mae_s'], 5350)
+        self.assertEqual(bands['1h_plus']['bias_s'], -5350)
+        self.assertEqual(bands['1h_plus']['mean_actual_s'], 5400)
+        self.assertEqual(bands['1h_plus']['mean_predicted_s'], 50)
+
+    def test_duration_bands_balance_progress_and_do_not_invent_empty_accuracy(self):
+        rows=self.rows(2)
+        rows[0]['target_s']=7200; rows[1]['target_s']=3600
+        result=v.metrics([rows[0]]*10+[rows[1]], [0]*11)
+        bands=result['target_duration_bands']
+        self.assertEqual(bands['1h_plus']['requests'], 2)
+        self.assertAlmostEqual(bands['1h_plus']['mae_s'], 5400)
+        self.assertIsNone(bands['under_5m']['mae_s'])
+        self.assertEqual(bands['under_5m']['requests'], 0)
+
     def rows(self,n=100):
         return [{'run_id':'r','request_id':str(i),'group':f's{i%7}','decision_time':i*100,'finish_time':i*100+10,'kind':'admission','node':'a','profile':'p','target_s':float(20+i%10),'features':{'history_count':i%5,'server_id':'a','worker_service_median':25,'stage':'admission'}} for i in range(n)]
 
@@ -56,6 +78,9 @@ class PredictorV2Tests(unittest.TestCase):
             prepared=Path(directory)/'prepared.json';prepared.write_text(json.dumps(data))
             first=v.train(prepared);second=v.train(prepared,'regularized-v1');third=v.train(prepared,'interactions-v1')
         report=first['reports']['admission']
+        self.assertIn('target_duration_bands', report['holdout'])
+        self.assertTrue(all('target_duration_bands' in m for m in report['baselines'].values()))
+        self.assertTrue(all('target_duration_bands' in m for m in report['selected']['fold_metrics']))
         self.assertGreaterEqual(report['folds'],2)
         self.assertIn(report['selected']['rounds'],v.ROUNDS)
         self.assertEqual({c['rounds'] for c in report['ablations']},set(v.ROUNDS))

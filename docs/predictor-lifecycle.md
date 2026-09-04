@@ -48,6 +48,16 @@ an arithmetic expectation. No model is called better merely because it fitted,
 reloaded or produced an attractive chart. Sparse data can legitimately block
 promotion; collecting more evidence must not mean relaxing the tests.
 
+New training reports split target duration into under five minutes, five minutes
+to under one hour, and one hour or longer, for candidates and every baseline.
+Each band shows unique requests, forecast points, MAE, signed bias and mean
+actual/predicted seconds. Progress points are request-balanced within each band;
+empty bands report null accuracy, not zero error. For remaining forecasts these
+are **remaining target seconds**, not total request age; a request can contribute
+to more than one band as it progresses. These are diagnostic slices, not new
+selection or activation gates. Unfinished requests have no final label and are
+not included: live long-occupancy warnings remain essential.
+
 ## Three forecast contracts, one lifecycle
 
 | Contract | Available evidence | Target |

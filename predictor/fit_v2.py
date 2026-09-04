@@ -151,11 +151,24 @@ def metrics(rows, predicted):
     y = np.asarray([r['target_s'] for r in rows]); p = np.asarray(predicted); w = weights(rows)
     err = np.abs(y-p)
     long = y >= 300
+    bands = {}
+    # Diagnostic slices only: never choose a model using holdout subgroups.
+    # Rebalance within each slice so repeated progress points cannot dominate it.
+    for name, lower, upper in (('under_5m', 0, 300), ('5m_to_1h', 300, 3600), ('1h_plus', 3600, float('inf'))):
+        mask = (y >= lower) & (y < upper)
+        selected = [r for r, flag in zip(rows, mask) if flag]
+        sw = weights(selected)
+        bands[name] = {'requests': unique(selected), 'points': len(selected),
+                       'mae_s': float(np.average(err[mask], weights=sw)) if selected else None,
+                       'bias_s': float(np.average(p[mask]-y[mask], weights=sw)) if selected else None,
+                       'mean_actual_s': float(np.average(y[mask], weights=sw)) if selected else None,
+                       'mean_predicted_s': float(np.average(p[mask], weights=sw)) if selected else None}
     return {'requests': unique(rows), 'sessions': len({r['group'] for r in rows}),
             'mae_s': float(np.average(err, weights=w)), 'rmse_s': float(np.sqrt(np.average((y-p)**2, weights=w))),
             'bias_s': float(np.average(p-y, weights=w)), 'mean_ratio': float(np.average(p, weights=w)/max(.001,np.average(y, weights=w))),
             'long_requests': unique([r for r, flag in zip(rows, long) if flag]),
-            'long_mae_s': float(np.average(err[long], weights=w[long])) if long.any() else None}
+            'long_mae_s': float(np.average(err[long], weights=w[long])) if long.any() else None,
+            'target_duration_bands': bands}
 
 
 def baseline(tr, va):
