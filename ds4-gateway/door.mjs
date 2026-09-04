@@ -17,7 +17,8 @@ export function createDoor(config,{now=Date.now}={}){
   const corePort=gatewayPort(config),socketPath=doorSocket(config),limit=config.continuity_door.max_held_requests??Math.max(128,(config.nodes?.length??1)*(config.max_queued_per_node??128));
   if(!Number.isSafeInteger(limit)||limit<1||limit>65536)throw new Error('continuity_door.max_held_requests must be 1–65536');
   const auth=Buffer.from(`Bearer ${config.api_key}`),held=[],state={holding:false,hold_kind:null,reason:null,since:null,last_transition:null,forwarded:0,failed:0,active:0,core_ready:false,core_failures:0};
-  let closing=false,monitor;
+  let closing=false,monitor,probe=null,probeGeneration=0;
+  const invalidateProbe=()=>{probeGeneration++;const previous=probe;probe=null;previous?.cancel();};
   const authorized=req=>{const value=Buffer.from(req.headers.authorization??'');return value.length===auth.length&&timingSafeEqual(value,auth);};
   const status=()=>({service:'dwarf-star-gate-continuity-door',version:1,holding:state.holding,hold_kind:state.hold_kind,reason:state.reason,since:state.since,last_transition:state.last_transition,held:held.length,active:state.active,forwarded:state.forwarded,failed:state.failed,core_ready:state.core_ready,core_failures:state.core_failures,body_spooling:false,replay:false,core_port:corePort});
   const remove=item=>{const index=held.indexOf(item);if(index>=0)held.splice(index,1);clearInterval(item.heartbeat);item.req.off('aborted',item.cancel);item.req.off('error',item.cancel);item.res.off('close',item.cancel);};
@@ -40,13 +41,43 @@ export function createDoor(config,{now=Date.now}={}){
     upstream.on('error',()=>{if(settled)return;finish(true);automaticHold('core_connection_failed');if(!res.headersSent)report(res,503,'continuity_core_unavailable','Continuity door could not reach the DSG core. The request was dispatched only to the local core connection and was not replayed; retry after DSG reports ready.');else res.destroy();});
     req.on('aborted',cancel);req.on('error',cancel);res.on('close',clientClosed);req.pipe(upstream);
   }
-  const release=()=>{state.holding=false;state.hold_kind=null;state.reason=null;state.since=null;state.last_transition={action:'release',at:new Date(now()).toISOString()};for(const item of [...held]){remove(item);proxy(item.req,item.res);}};
-  const hold=(reason,kind='manual')=>{if(state.holding&&state.hold_kind==='manual'&&kind==='automatic')return;state.holding=true;state.hold_kind=kind;state.reason=typeof reason==='string'&&reason.length<=160?reason:'planned_core_change';state.since??=new Date(now()).toISOString();state.last_transition={action:'hold',kind,at:new Date(now()).toISOString(),reason:state.reason};};
-  const automaticHold=reason=>hold(reason,'automatic');
-  const checkCore=()=>new Promise(resolve=>{
-    const req=http.get({host:'127.0.0.1',port:corePort,path:'/health',headers:{authorization:`Bearer ${config.api_key}`},agent:false},res=>{res.resume();res.once('end',()=>resolve(res.statusCode===200));});
-    const done=()=>resolve(false);req.setTimeout(config.continuity_door.health_timeout_ms??1500,()=>req.destroy());req.once('error',done);
-  }).then(ok=>{state.core_ready=ok;if(ok){state.core_failures=0;if(state.holding&&state.hold_kind==='automatic')release();}else if(++state.core_failures>=(config.continuity_door.health_failures??2))automaticHold('core_not_ready');return ok;});
+  const release=()=>{invalidateProbe();state.holding=false;state.hold_kind=null;state.reason=null;state.since=null;state.last_transition={action:'release',at:new Date(now()).toISOString()};for(const item of [...held]){remove(item);proxy(item.req,item.res);}};
+  const hold=(reason,kind='manual')=>{invalidateProbe();if(state.holding&&state.hold_kind==='manual'&&kind==='automatic')return;state.holding=true;state.hold_kind=kind;state.reason=typeof reason==='string'&&reason.length<=160?reason:'planned_core_change';state.since??=new Date(now()).toISOString();state.last_transition={action:'hold',kind,at:new Date(now()).toISOString(),reason:state.reason};};
+  const automaticHold=reason=>{state.core_ready=false;hold(reason,'automatic');};
+  const checkCore=()=>{
+    if(closing)return Promise.resolve(false);
+    if(probe)return probe.promise;
+    let resolve,request,response,timer,settled=false;
+    const current={generation:probeGeneration,promise:new Promise(r=>resolve=r),cancel:()=>finish(false,false)};
+    probe=current;
+    const finish=(ok,apply=true)=>{
+      if(settled)return;settled=true;clearTimeout(timer);
+      if(probe===current)probe=null;
+      // Settle before destroying either half. Abort/error/close can race, and
+      // a cancelled or pre-transition observation must not affect readiness.
+      if(!ok){response?.destroy();request?.destroy();}
+      const fresh=apply&&!closing&&current.generation===probeGeneration;
+      if(fresh){
+        state.core_ready=ok;
+        if(ok){state.core_failures=0;if(state.holding&&state.hold_kind==='automatic')release();}
+        else if(++state.core_failures>=(config.continuity_door.health_failures??2))automaticHold('core_not_ready');
+      }
+      resolve(fresh&&ok);
+    };
+    // This deadline is only for the small readiness probe, never inference.
+    // A partial/dripping health body must not keep startup or release pending.
+    timer=setTimeout(()=>finish(false),config.continuity_door.health_timeout_ms??1500);timer.unref?.();
+    try{
+      request=http.get({host:'127.0.0.1',port:corePort,path:'/health',headers:{authorization:`Bearer ${config.api_key}`},agent:false},res=>{
+        response=res;if(settled){res.destroy();return;}
+        res.once('error',()=>finish(false));res.once('aborted',()=>finish(false));
+        res.once('end',()=>finish(res.statusCode===200&&res.complete));
+        res.once('close',()=>{if(!res.complete)finish(false);});res.resume();
+      });
+      request.once('error',()=>finish(false));request.once('close',()=>{if(!response||!response.complete)finish(false);});
+    }catch{finish(false);}
+    return current.promise;
+  };
   const server=http.createServer((req,res)=>{
     if(req.url==='/continuity/status'&&req.method==='GET'){req.resume();return authorized(req)?json(res,200,status()):report(res,401,'unauthorized','Bearer API key required');}
     if(closing){req.resume();return report(res,503,'continuity_stopping','Continuity door is stopping; request was not forwarded.');}
@@ -82,7 +113,7 @@ export function createDoor(config,{now=Date.now}={}){
     try{await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(config.port,config.host,resolve);});}catch(error){await new Promise(resolve=>control.close(resolve));if(fs.existsSync(socketPath))fs.unlinkSync(socketPath);throw error;}
     await checkCore();const interval=config.continuity_door.health_interval_ms??1000;if(!Number.isSafeInteger(interval)||interval<250||interval>60000)throw new Error('continuity_door.health_interval_ms must be 250–60000');monitor=setInterval(()=>void checkCore(),interval);monitor.unref?.();
     return server.address();
-  },async close(){if(closing)return;closing=true;clearInterval(monitor);for(const item of [...held]){remove(item);report(item.res,503,'continuity_stopping','Continuity door stopped before this held request was forwarded.');item.req.resume();}await new Promise(resolve=>server.close(resolve));await new Promise(resolve=>control.close(resolve));if(fs.existsSync(socketPath))fs.unlinkSync(socketPath);}};
+  },async close(){if(closing)return;closing=true;clearInterval(monitor);invalidateProbe();for(const item of [...held]){remove(item);report(item.res,503,'continuity_stopping','Continuity door stopped before this held request was forwarded.');item.req.resume();}await new Promise(resolve=>server.close(resolve));await new Promise(resolve=>control.close(resolve));if(fs.existsSync(socketPath))fs.unlinkSync(socketPath);}};
 }
 
 if(isMain(import.meta.url)){

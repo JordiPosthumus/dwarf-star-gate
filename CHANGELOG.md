@@ -1,5 +1,18 @@
 # Changelog
 
+## Harden Continuity Door readiness probes
+
+- Fix two reproduced health-check bugs: a truncated response could leave a probe
+  unresolved, and a delayed pre-failure healthy reply could release a newer hold.
+- Coalesce concurrent checks; invalidate pending observations on hold, release
+  and shutdown; preserve newer manual reservations. Settle each probe once across
+  response abort/error/close and the existing health-check deadline.
+- Bound the entire small health response rather than allowing an incomplete body
+  to drip forever. No inference timeout, model setting or replay policy changes.
+- Add real loopback regressions for truncation, stale success, shared probes,
+  competing manual release, dripping responses and shutdown. Door activation
+  remains a separate safe restart from a gateway-core cutover.
+
 ## Explicit post-collector occupancy experiments
 
 - Add opt-in `--cohort-since` preparation for offline occupancy experiments. Replay

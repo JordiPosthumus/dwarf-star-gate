@@ -10,6 +10,13 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Fixed readiness races at the Continuity Door.** Isolated HTTP reproductions
+  proved an unresolved truncated health response and a stale successful probe
+  releasing a newer automatic hold. Health checks now settle once, coalesce,
+  expire at their configured deadline and become invalid across hold transitions.
+  Tests preserve manual reservations and cancellation accounting. No model work
+  is replayed or given a shorter deadline; live activation needs a safe Door window.
+
 - **Made post-collector model experiments reproducible.** The normal all-history
   split left new hardware measurements exclusively in the holdout. Added an
   explicit offline admission-time cohort with full raw snapshots, retained older

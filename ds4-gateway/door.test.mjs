@@ -10,6 +10,58 @@ import {doorControl} from './door-client.mjs';
 
 const listen=server=>new Promise(resolve=>server.listen(0,'127.0.0.1',()=>resolve(server.address().port)));
 const request=(port,body)=>new Promise((resolve,reject)=>{const req=http.request({host:'127.0.0.1',port,path:'/v1/chat/completions',method:'POST',headers:{authorization:'Bearer test','content-type':'application/json'}},res=>{const chunks=[];res.on('data',c=>chunks.push(c));res.on('end',()=>resolve({status:res.statusCode,body:Buffer.concat(chunks).toString(),headers:res.headers}));});req.on('error',reject);req.end(body);});
+test('core health probe settles false after response headers are truncated',{timeout:5000},async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-door-probe-'));let broken=false;
+  const core=http.createServer((req,res)=>{req.resume();if(!broken)return res.end('ok');res.writeHead(200,{'content-length':'20'});res.write('partial');setTimeout(()=>res.destroy(),20);});
+  const corePort=await listen(core),door=createDoor({host:'127.0.0.1',port:0,api_key:'test',continuity_door:{enabled:true,core_port:corePort,control_socket:path.join(dir,'door.sock'),health_interval_ms:60000,health_timeout_ms:100}});
+  await door.start();t.after(async()=>{core.closeAllConnections();await door.close();await new Promise(r=>core.close(r));fs.rmSync(dir,{recursive:true,force:true});});
+  broken=true;let timer;
+  const result=await Promise.race([door.checkCore(),new Promise(resolve=>{timer=setTimeout(()=>resolve('unsettled'),500);})]);clearTimeout(timer);
+  assert.equal(result,false,'a broken probe must not leave startup/release waiting forever');
+  assert.equal(door.status().core_ready,false);assert.equal(door.status().core_failures,1);
+});
+test('core health probe started before a connection failure cannot release its newer hold',{timeout:5000},async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-door-stale-probe-'));let delayed=false,pending;
+  const core=http.createServer((req,res)=>{req.resume();if(req.url==='/health'){if(delayed){pending=res;return;}return res.end('ok');}res.destroy();});
+  const corePort=await listen(core),door=createDoor({host:'127.0.0.1',port:0,api_key:'test',continuity_door:{enabled:true,core_port:corePort,control_socket:path.join(dir,'door.sock'),health_interval_ms:60000,health_timeout_ms:2000}});
+  await door.start();t.after(async()=>{core.closeAllConnections();await door.close();await new Promise(r=>core.close(r));fs.rmSync(dir,{recursive:true,force:true});});
+  delayed=true;const old=door.checkCore();while(!pending)await new Promise(r=>setImmediate(r));
+  assert.equal((await request(door.server.address().port,'{}')).status,503);assert.equal(door.status().holding,true);
+  pending.end('old healthy observation');await old;
+  assert.equal(door.status().holding,true,'pre-failure probe cannot release a newer automatic hold');
+  assert.equal(door.status().reason,'core_connection_failed');
+  delayed=false;assert.equal(await door.checkCore(),true);assert.equal(door.status().holding,false);
+});
+test('core health probes coalesce and manual holds invalidate pending observations',{timeout:5000},async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-door-coalesce-'));let delayed=false,pending,calls=0;
+  const core=http.createServer((req,res)=>{req.resume();calls++;if(delayed){pending=res;return;}res.end('ok');});
+  const corePort=await listen(core),config={host:'127.0.0.1',port:0,api_key:'test',continuity_door:{enabled:true,core_port:corePort,control_socket:path.join(dir,'door.sock'),health_interval_ms:60000}};
+  const door=createDoor(config);await door.start();t.after(async()=>{core.closeAllConnections();await door.close();await new Promise(r=>core.close(r));fs.rmSync(dir,{recursive:true,force:true});});
+  delayed=true;const first=door.checkCore();for(let i=0;i<20;i++)assert.equal(door.checkCore(),first);
+  while(!pending)await new Promise(r=>setImmediate(r));assert.equal(calls,2,'one startup probe and one shared in-flight probe');
+  door.hold('operator research');assert.equal(await first,false);pending.end('obsolete');
+  assert.equal(door.status().core_failures,0,'invalidated observation is not a failed probe');
+  pending=null;
+  const release=doorControl(config.continuity_door.control_socket,'/release');
+  const rejected=assert.rejects(release,/remains holding/);
+  while(!pending)await new Promise(r=>setImmediate(r));
+  door.hold('new operator reservation');pending.end('obsolete release check');await rejected;
+  assert.equal(door.status().reason,'new operator reservation');assert.equal(door.status().hold_kind,'manual');
+  delayed=false;assert.equal(await door.checkCore(),true);assert.equal(door.status().holding,true,'health alone never releases a manual hold');
+});
+test('core health deadline bounds a dripping body and shutdown settles pending probes',{timeout:5000},async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-door-deadline-'));let mode='healthy',pending=false;
+  const core=http.createServer((req,res)=>{req.resume();if(mode==='healthy')return res.end('ok');if(mode==='pending'){pending=true;return;}
+    res.writeHead(200);res.write('x');const ticker=setInterval(()=>res.write('x'),10);res.on('close',()=>clearInterval(ticker));});
+  const corePort=await listen(core),door=createDoor({host:'127.0.0.1',port:0,api_key:'test',continuity_door:{enabled:true,core_port:corePort,control_socket:path.join(dir,'door.sock'),health_interval_ms:60000,health_timeout_ms:300}});
+  await door.start();t.after(async()=>{core.closeAllConnections();await door.close();await new Promise(r=>core.close(r));fs.rmSync(dir,{recursive:true,force:true});});
+  mode='drip';let timer;
+  const result=await Promise.race([door.checkCore(),new Promise(resolve=>{timer=setTimeout(()=>resolve('unsettled'),1500);})]);clearTimeout(timer);
+  assert.equal(result,false);assert.equal(door.status().core_failures,1);assert.equal(door.status().core_ready,false);
+  mode='pending';const probe=door.checkCore();while(!pending)await new Promise(r=>setImmediate(r));
+  const closing=door.close();assert.equal(await probe,false);await closing;
+  assert.equal(door.status().core_failures,1,'shutdown is not another health failure');assert.equal(await door.checkCore(),false);
+});
 test('active client cancellation never marks a healthy core failed or starts an automatic hold',{timeout:5000},async t=>{
   for(const streaming of [false,true])await t.test(streaming?'after response headers':'before response headers',async t=>{
     const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-door-cancel-'));let calls=0;

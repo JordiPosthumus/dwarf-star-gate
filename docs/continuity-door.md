@@ -33,6 +33,21 @@ from an already-settled proxy must not change admission state. Tests cover both
 cancellation timings and genuine upstream disconnects. A lifetime counter alone
 does not identify the cause of a particular historical failure.
 
+Readiness checks have their own lifecycle: concurrent callers share one in-flight
+probe, and hold/release transitions invalidate earlier observations. A healthy
+reply from before a connection failure cannot release the resulting newer hold.
+Likewise, a pending release check cannot override a newer operator reservation.
+Only a fresh successful check may release an automatic hold; healthy probes never
+release manual holds by themselves.
+
+Truncated responses, aborts and errors settle the health probe as failed rather
+than leaving readiness pending forever. `health_timeout_ms` (default 1,500 ms)
+bounds the whole small health probe, including a dripping/incomplete response,
+not just socket inactivity. Overlapping checks count one result, not multiple
+failures. Shutdown cancels pending probes without recording another failure.
+This deadline is **not an inference, queue or Genie timeout** and does not cancel
+or replay model requests.
+
 Door code changes are separate from core changes: a core-only cutover does not
 reload this stable endpoint. Update the Door in its own idle maintenance window;
 restarting it over active proxied streams would defeat its continuity guarantee.
