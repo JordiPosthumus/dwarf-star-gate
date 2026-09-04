@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Made prediction evidence audits relocation-aware.** Valid queued handovers
+  and tie-break shadows no longer look corrupt; the audit distinguishes proven
+  moves from unexplained worker joins, and moved work cannot label the source
+  forecast or linger in predictor memory.
+
 - **Recovered safe later attribution evidence without revising history.** A
   bounded read-only join can revisit old clock overlaps once exact returned usage
   exists, while collisions, incomplete files and missing usage still abstain.

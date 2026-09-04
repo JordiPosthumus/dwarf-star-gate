@@ -17,6 +17,10 @@ complete JSON lines fail visibly. An incomplete final line is counted and ignore
 not repaired. Reads are bounded to 128 MiB/200,000 events/20,000 requests and fail
 instead of silently sampling. A live snapshot can contain an unfinished write or
 in-flight request; absent terminal evidence is not automatically a failed job.
+The audit shares its event-kind allowlist with the collector so new bounded
+receipts cannot silently appear as corrupt evidence. A valid pre-dispatch
+relocation is reported separately from an unexplained worker-identity mismatch;
+the moved request remains excluded from ordinary decision-node training labels.
 
 ## What matters
 

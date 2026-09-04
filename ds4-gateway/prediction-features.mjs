@@ -69,7 +69,14 @@ export class PredictionHistory {
       if(row.traffic_class==='genie'||!row.candidates?.length||row.candidates_truncated)return {points:[],rows:[]};
       const point=this.snapshot(job,'admission',at);job.points.push(point);return {points:[point],rows:[]};
     }
-    const job=this.jobs.get(key);if(!job||job.decision.traffic_class==='genie'||row.node!==job.decision.node)return {points:[],rows:[]};
+    const job=this.jobs.get(key);if(!job||job.decision.traffic_class==='genie')return {points:[],rows:[]};
+    // The admission point belongs to the originally selected worker. A
+    // pre-dispatch relocation has no observed no-move counterfactual and its
+    // destination request shape/finish cannot label that source-worker point.
+    // Retire the job explicitly instead of retaining an inert entry until the
+    // bounded job map eventually evicts it.
+    if(row.kind==='queue_relocation'){this.jobs.delete(key);return {points:[],rows:[]};}
+    if(row.node!==job.decision.node)return {points:[],rows:[]};
     let point;
     if(at<Date.parse(job.decision.time))return {points:[],rows:[]};
     if(row.kind==='dispatch'){if(job.dispatch)job.invalid=true;else job.dispatch=row;}

@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {replay} from '../ds4-gateway/prediction-features.mjs';
 import {isMain} from '../ds4-gateway/config.mjs';
-const kinds=new Set(['decision','dispatch','finish','queued_cancel','queue_timeout','unavailable_before_dispatch','routing_shadow','request_features','embedding','progress','model_prediction','rejection','waiting']);
+import {EVIDENCE_KINDS} from '../ds4-gateway/dataset.mjs';
+const kinds=new Set(EVIDENCE_KINDS);
 const finite=x=>typeof x==='number'&&Number.isFinite(x);
 const identifier=x=>typeof x==='string'&&/^[\w-]{1,64}$/.test(x);
 const tally=(map,key)=>{map[key]=(map[key]??0)+1;};
@@ -32,19 +33,27 @@ export function auditEvidence(input,inventory=null,{maxEvents=200000,maxRequests
   rows.sort((a,b)=>Date.parse(a.time)-Date.parse(b.time));
   const jobs=new Map(),counts=Object.create(null),workers=Object.create(null),embeddingStatus=Object.create(null),featureStatus=Object.create(null),runs=new Set();
   for(const r of rows){tally(counts,r.kind);runs.add(r.run_id);if(['rejection','waiting'].includes(r.kind)||r.node===null)continue;const k=key(r);let job=jobs.get(k);
-    if(!job){if(jobs.size>=maxRequests)throw new Error('Audit request budget exceeded');job={decision:[],dispatch:[],finish:[],terminal:[],features:[],embeddings:[]};jobs.set(k,job);}
+    if(!job){if(jobs.size>=maxRequests)throw new Error('Audit request budget exceeded');job={decision:[],dispatch:[],finish:[],terminal:[],features:[],embeddings:[],relocations:[]};jobs.set(k,job);}
     if(['decision','dispatch','finish'].includes(r.kind))job[r.kind].push(r);
     if(['queued_cancel','queue_timeout','unavailable_before_dispatch'].includes(r.kind))job.terminal.push(r);
+    if(r.kind==='queue_relocation')job.relocations.push(r);
     if(r.kind==='request_features'){job.features.push(r);tally(featureStatus,['ready','unsupported_route','unsupported_body','no_recent_user_text','capture_limit','invalid_json','incomplete_body','encoded_body'].includes(r.status)?r.status:'other');}
     if(r.kind==='embedding'){job.embeddings.push(r);tally(embeddingStatus,r.status==='ready'?'ready':'not_ready');}
   }
-  const totals={requests:jobs.size,decisions:0,finishes:0,missing_usage:0,complete_missing_usage:0,no_terminal_observed:0,orphan_events:0,ambiguous_joins:0,noncausal_joins:0,wrong_worker_joins:0,ready_feature_requests:0,ready_embedding_requests:0,embedding_before_finish:0,embedding_after_finish:0,ready_features_without_embedding:0,observer_requests:0,latest_embedding_truncated:0,recent_embedding_truncated:0,early_metadata_present:0};
+  const totals={requests:jobs.size,decisions:0,finishes:0,missing_usage:0,complete_missing_usage:0,no_terminal_observed:0,orphan_events:0,ambiguous_joins:0,noncausal_joins:0,relocated_requests:0,known_relocated_joins:0,wrong_worker_joins:0,ready_feature_requests:0,ready_embedding_requests:0,embedding_before_finish:0,embedding_after_finish:0,ready_features_without_embedding:0,observer_requests:0,latest_embedding_truncated:0,recent_embedding_truncated:0,early_metadata_present:0};
   const missingOutcomes={},missingFeatureStatus={},missingFormats={};
   for(const j of jobs.values()){
     const d=j.decision[0],s=j.dispatch[0],f=j.finish[0],features=j.features.find(x=>x.status==='ready'),e=j.embeddings.find(x=>x.status==='ready');
     if(!d)totals.orphan_events++;else {totals.decisions++;if(d.traffic_class==='genie')totals.observer_requests++;if(d.client_metadata?.status==='ready')totals.early_metadata_present++;}
-    if(j.decision.length>1||j.dispatch.length>1||j.finish.length>1||j.terminal.length>1||j.finish.length&&j.terminal.length)totals.ambiguous_joins++;
-    if(d&&[...j.dispatch,...j.finish,...j.features,...j.embeddings].some(r=>r.node!==d.node))totals.wrong_worker_joins++;
+    if(j.decision.length>1||j.dispatch.length>1||j.finish.length>1||j.terminal.length>1||j.relocations.length>1||j.finish.length&&j.terminal.length)totals.ambiguous_joins++;
+    const joined=[...j.dispatch,...j.finish,...j.features,...j.embeddings],moved=d&&joined.some(r=>r.node!==d.node);
+    if(j.relocations.length)totals.relocated_requests++;
+    if(moved){
+      const move=j.relocations.length===1?j.relocations[0]:null,destination=move?.destination;
+      const known=move&&move.relocation_schema===1&&move.source===d.node&&move.node===destination&&move.dispatch_state==='not_dispatched'&&move.body_replayed===false&&move.deadline_preserved===true&&move.cache_locality==='unknown'&&
+        ['operator','scheduler','genie'].includes(move.actor)&&identifier(destination)&&joined.every(r=>r.node===destination)&&s&&s.node===destination&&Date.parse(d.time)<=Date.parse(move.time)&&Date.parse(move.time)<=Date.parse(s.time);
+      if(known)totals.known_relocated_joins++;else totals.wrong_worker_joins++;
+    }
     if(d&&s&&Date.parse(s.time)<Date.parse(d.time)||s&&f&&Date.parse(f.time)<Date.parse(s.time))totals.noncausal_joins++;
     if(d&&!f&&!j.terminal.length)totals.no_terminal_observed++;
     if(features)totals.ready_feature_requests++;

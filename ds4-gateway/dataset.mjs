@@ -9,7 +9,8 @@ import {validCallId,rejectionReasons} from './continuity.mjs';
 
 const number = x => Number.isFinite(x) && x >= 0 ? x : null;
 const id = x => typeof x === 'string' && /^[\w-]{1,64}$/.test(x) ? x : null;
-const kinds = new Set(['decision','dispatch','finish','queued_cancel','queue_timeout','unavailable_before_dispatch','queue_relocation','routing_shadow','routing_tiebreak_shadow','request_features','embedding','progress','model_prediction','rejection','waiting']);
+export const EVIDENCE_KINDS=Object.freeze(['decision','dispatch','finish','queued_cancel','queue_timeout','unavailable_before_dispatch','queue_relocation','routing_shadow','routing_tiebreak_shadow','request_features','embedding','progress','model_prediction','rejection','waiting']);
+const kinds = new Set(EVIDENCE_KINDS);
 const timingKeys=['worker_idle_ms','active_elapsed_ms','upstream_byte_age_ms','session_last_used_ms','session_last_finished_ms','intervening_requests','prior_prompt_tokens','prior_cached_tokens','observation_epoch'];
 export function evidence(kind, raw) {
   if (!kinds.has(kind)) return null;

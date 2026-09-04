@@ -25,6 +25,15 @@ test('patient waiting and pre-admission cancellation are evidence, not corrupt o
   const a=auditEvidence([row('waiting',0,{node:null}),row('queued_cancel',1,{node:null}),row('waiting',2,{request_id:'other'}),row('decision',3,{request_id:'other'}),row('dispatch',4,{request_id:'other'}),row('finish',5,{request_id:'other',outcome:'complete',usage:{prompt_tokens:1,completion_tokens:1}})]);
   assert.equal(a.invalid,0);assert.equal(a.counts.waiting,2);assert.equal(a.totals.requests,1);assert.equal(a.totals.orphan_events,0);
 });
+test('known pre-dispatch relocation is valid evidence, not a wrong-worker join or training label',()=>{
+  const profileA='a'.repeat(64),profileB='b'.repeat(64),inventory={schema:1,workers:{'worker-a':{matching_profiles:[profileA],hardware_family:'synthetic',accelerator_family:'cpu',ram_gib:16},'worker-b':{matching_profiles:[profileB],hardware_family:'synthetic',accelerator_family:'cpu',ram_gib:16}}};
+  const rows=[row('decision',0,{session:'a'.repeat(64),candidates:[{node:'worker-a',profile:profileA,context_length:1000,queued:1,active:1},{node:'worker-b',profile:profileB,context_length:1000,queued:0,active:0}]}),
+    row('routing_tiebreak_shadow',1,{shadow_schema:1,mode:'active_with_abstention',policy:'validated_remaining_tiebreak',verdict:'would_change',selected:'worker-a',alternative:'worker-b'}),
+    row('queue_relocation',2,{node:'worker-b',relocation_schema:1,source:'worker-a',destination:'worker-b',actor:'scheduler',dispatch_state:'not_dispatched',body_replayed:false,deadline_preserved:true,cache_locality:'unknown',waiting_ms:2}),
+    row('dispatch',3,{node:'worker-b'}),row('request_features',4,{node:'worker-b',status:'ready'}),row('finish',5,{node:'worker-b',outcome:'complete',finish_reason:'stop',service_ms:2,usage:{prompt_tokens:1,completion_tokens:1}})];
+  const a=auditEvidence(rows,inventory);assert.equal(a.invalid,0);assert.equal(a.counts.routing_tiebreak_shadow,1);assert.equal(a.counts.queue_relocation,1);
+  assert.equal(a.totals.relocated_requests,1);assert.equal(a.totals.known_relocated_joins,1);assert.equal(a.totals.wrong_worker_joins,0);assert.equal(a.training.rows,0);
+});
 test('duplicate and conflicting IDs, wrong-worker and noncausal joins are explicit',()=>{
   const d=row('decision',10),s=row('dispatch',5),f=row('finish',4,{node:'worker-b',outcome:'complete'});
   const a=auditEvidence([d,d,s,f]);assert.equal(a.duplicates,1);assert.equal(a.totals.wrong_worker_joins,1);assert.equal(a.totals.noncausal_joins,1);

@@ -1,5 +1,14 @@
 # Changelog
 
+## Relocation-aware predictor evidence audit
+
+- The private data-quality audit now shares the collector's event-kind contract,
+  so queue-relocation and validated tie-break shadow receipts are counted instead
+  of being falsely labelled invalid.
+- Proven pre-dispatch destination changes are separated from unexplained worker
+  mismatches. Relocated requests still produce no ordinary decision-node training
+  label, and the live/offline feature builder now retires their stale job state.
+
 ## Later-evidence attribution reconciliation
 
 - A separate read-only audit can now revisit historical clock-overlap

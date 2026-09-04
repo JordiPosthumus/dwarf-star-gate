@@ -91,6 +91,12 @@ test('duplicate dispatch, unverified profiles, Genie and cancelled jobs do not p
   h.observe(decision('gg',20000,'g',{traffic_class:'genie'}));h.observe(row('dispatch','gg',20001));assert.equal(h.observe(row('finish','gg',30001,{outcome:'complete',finish_reason:'stop',service_ms:10000})).rows.length,0);
   const unknown=new PredictionHistory({});assert.equal(complete(unknown,'x',0).rows.length,0);
 });
+test('pre-dispatch relocation retires the source forecast job and cannot become a destination label',()=>{
+  const h=new PredictionHistory(inventory);h.observe(decision('move',0));assert.ok(h.getJob({run_id:'run',request_id:'move'}));
+  h.observe(row('queue_relocation','move',1,{node:'b',source:'a',destination:'b'}));assert.equal(h.getJob({run_id:'run',request_id:'move'}),undefined);
+  h.observe(row('dispatch','move',2,{node:'b'}));const result=h.observe(row('finish','move',100,{node:'b',outcome:'complete',finish_reason:'stop',service_ms:98}));
+  assert.equal(result.rows.length,0);assert.equal(h.completed,0);
+});
 test('native evaluator validates shape, missing branches, float32 and Python parity',()=>{
   const m=model();assert.equal(validateCandidate(bundle(m)).models.admission,m);assert.equal(predictTreeModel(m,{}),10);
   assert.ok(Number.isNaN(encode({},m.encoding)[0]));assert.throws(()=>validateCandidate(bundle(model({parity:[{features:{},seconds:999}]}))),/disagreement/);
