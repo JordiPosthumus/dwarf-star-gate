@@ -1,5 +1,16 @@
 # Changelog
 
+## Certify original requests refused before TCP connection
+
+- Distinguish witnessed fresh-socket `ECONNREFUSED` from ambiguous upstream loss.
+  Eligible original POSTs receive an identified 503 and a call-bound
+  `worker_connect_refused` receipt. The existing opt-in patient transport can
+  retry immutable bytes; the core never replays or spools the body.
+- Keep connected/reused-socket resets and image-repair follow-up failures
+  uncertified. Preserve failure/quarantine accounting and collect the bounded
+  refusal evidence without recording request text. Activation requires a core
+  cutover; existing clients still need the continuity adapter for patient retry.
+
 ## Keep client cancellation from fencing the Continuity Door
 
 - Reproduced two cleanup races: cancellation before response headers could start

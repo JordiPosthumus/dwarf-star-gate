@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Separated provable non-delivery from ambiguous failures.** A fresh TCP
+  connection refused before establishment can now tell a compatible patient
+  client to retry its unchanged request. Connected resets and image-repair
+  follow-ups cannot receive that certificate; the gateway never replays them.
+
 - **Fixed a reproduced Door cancellation race.** A client closing its own request
   could make healthy core connectivity look broken. Cleanup now records the
   cancellation first, while genuine upstream failures retain their safeguards.

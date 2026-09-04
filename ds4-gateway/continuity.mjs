@@ -47,7 +47,7 @@ function relocationDiagnosticsForDisplay(value){
         automatic_reason:relocationPolicyReasons.has(row.automatic_reason)?row.automatic_reason:null,genie_reason:relocationPolicyReasons.has(row.genie_reason)?row.genie_reason:null}];
     }),truncated:value.truncated===true};
 }
-export const rejectionReasons=new Set(['gateway_draining','same_session_active','same_session_queued','worker_quarantined','worker_paused','worker_unhealthy','no_ready_worker','queue_full','queue_deadline','affinity_write_failed']);
+export const rejectionReasons=new Set(['gateway_draining','same_session_active','same_session_queued','worker_quarantined','worker_paused','worker_unhealthy','worker_connect_refused','no_ready_worker','queue_full','queue_deadline','affinity_write_failed']);
 export function unavailableReason(node){return node.quarantine?'worker_quarantined':node.drained?'worker_paused':'worker_unhealthy';}
 export function sessionWork(nodes,key){
   if(!key)return null;

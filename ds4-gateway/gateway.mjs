@@ -760,7 +760,7 @@ export function createGateway(config,{visionTranscode}={}) {
       up.pipe(res);
     };
     const issue=(replacement,retry=false)=>{
-      let gotResponse=false;
+      let gotResponse=false,freshConnectingSocket=false,connected=false;
       const attemptHeaders={...headers};
       if(replacement){delete attemptHeaders['transfer-encoding'];attemptHeaders['content-length']=replacement.length;}
       const upstream=http.request(target,{method:req.method,headers:attemptHeaders,agent},up=>{
@@ -770,11 +770,21 @@ export function createGateway(config,{visionTranscode}={}) {
       });
       job.upstream=upstream;
       upstream.on('socket',socket=>{
-        if(!socket.connecting)return;
+        if(!socket.connecting){connected=true;return;}
+        freshConnectingSocket=true;
         const timer=setTimeout(()=>upstream.destroy(Object.assign(new Error('Connect timeout'),{code:'CONNECT_TIMEOUT'})),config.connect_timeout_ms??10000);
-        socket.once('connect',()=>clearTimeout(timer));socket.once('close',()=>clearTimeout(timer));
+        socket.once('connect',()=>{connected=true;clearTimeout(timer);});socket.once('close',()=>clearTimeout(timer));
       });
       upstream.on('error',errorValue=>{
+        // Only the original POST on a witnessed fresh, never-connected socket
+        // can prove that no worker received it. Resets, timeouts, reused sockets
+        // and normalized follow-up attempts remain ambiguous. Never replay here.
+        if(!settled&&!job.cancelled&&!res.destroyed&&!res.headersSent&&req.method==='POST'&&!retry&&!replacement&&
+          !gotResponse&&freshConnectingSocket&&!connected&&upstream.reusedSocket===false&&errorValue.code==='ECONNREFUSED'){
+          req.unpipe(upstream);clientStatus=503;
+          finish('upstream_error',errorValue.code);
+          return reject(req,res,503,'home_unavailable','The DS4 connection was refused before it connected; this request did not reach the server. A compatible patient client can wait and retry the unchanged request.',{id:job.id,callId:job.callId,key:job.key,node,reason:'worker_connect_refused'});
+        }
         const retryMessage=job.visionNormalized?.kind==='image_limit'?'Image-limit recovery turn could not reach DS4. Execution may have started; DSG did not retry again.':job.visionNormalized?.kind==='gif'?'GIF recovery turn could not reach DS4. Execution may have started; DSG did not retry again.':'Normalized image retry could not reach DS4. Execution may have started; DSG did not retry again.';
         if(!res.headersSent)error(res,502,'upstream_error',retry?retryMessage:'Upstream connection failed. Execution may have started; gateway did not retry.');
         else res.destroy();

@@ -16,6 +16,7 @@ import {randomUUID,createHash} from 'node:crypto';
 import { runDashboard } from './dashboard.mjs';
 import { GenerationFaultObserver } from './generation-health.mjs';
 import {workerConfig,sshTargets,assertUniqueWorker,replaceSshFallbacks} from './worker-config.mjs';
+import {createContinuityFetch} from './continuity-client.mjs';
 
 async function until(fn, timeout = 3000) {
   const end = Date.now() + timeout;
@@ -155,6 +156,75 @@ async function rig(t, count = 2, overrides = {}) {
   t.after(async () => { await r.gateway.close(); await Promise.all(backends.map(b => b.close())); });
   return r;
 }
+
+test('fresh TCP refusal certifies no worker dispatch and patient transport retries the identical request',async t=>{
+  const r=await rig(t,1,{dataset_enabled:true});
+  const b=r.backends[0],port=b.server.address().port,callId=randomUUID();
+  await b.close(); // Startup was healthy; inference now needs a fresh refused connection.
+  const body=JSON.stringify({messages:[{role:'user',content:'original immutable request'}],reasoning_effort:'xhigh',max_tokens:12000});
+  const refused=await r.request(body,'refused-session',{headers:{'x-dsg-call-id':callId}});
+  assert.equal(refused.status,503);
+  assert.equal(refused.headers['x-dsg-dispatch-state'],'not_dispatched');
+  const receipt=JSON.parse(refused.body).error.continuity;
+  assert.equal(receipt.reason,'worker_connect_refused');assert.equal(receipt.call_id,callId);
+  assert.equal(receipt.request_id,refused.headers['x-request-id']);
+  assert.equal(receipt.retry_class,'wait_then_retry');assert.equal(b.records.length,0);
+  assert.equal(r.gateway.stats().active,0);
+  let waits=0,attempts=0;
+  const baseUrl=`http://127.0.0.1:${r.address.port}/v1`;
+  const patient=createContinuityFetch({baseUrl,fetchImpl:async(...args)=>{attempts++;return fetch(...args);},wait:async()=>{
+    waits++;assert.equal(b.records.length,0);
+    await new Promise(resolve=>b.server.listen(port,'127.0.0.1',resolve));
+  }});
+  const response=await patient(`${baseUrl}/chat/completions`,{method:'POST',headers:{authorization:'Bearer none','content-type':'application/json','x-session-affinity':'refused-session'},body});
+  assert.equal(response.status,200);await response.text();
+  assert.equal(waits,1);assert.equal(attempts,2);assert.equal(b.records.length,1);
+  assert.equal(b.records[0].body.toString(),body);
+  await until(()=>r.gateway.stats().dataset.finished===3);
+  const dir=path.join(path.dirname(r.config.state_file),'training');
+  const rows=fs.readdirSync(dir).flatMap(f=>fs.readFileSync(path.join(dir,f),'utf8').trim().split('\n').map(JSON.parse));
+  const rejection=rows.find(row=>row.kind==='rejection'&&row.request_id===receipt.request_id);
+  assert.equal(rejection.reason,'worker_connect_refused');assert.equal(rejection.dispatch_state,'not_dispatched');
+  const finished=rows.find(row=>row.kind==='finish'&&row.request_id===receipt.request_id);
+  assert.equal(finished.outcome,'upstream_error');assert.equal(finished.http_status,503);
+  assert.ok(!JSON.stringify(rows).includes('original immutable request'));
+});
+
+test('accepted TCP connection then reset is ambiguous, even before response headers',async t=>{
+  const r=await rig(t,1);
+  const response=await r.request(JSON.stringify({disconnect:true}),'accepted-reset',{headers:{'x-dsg-call-id':randomUUID()}});
+  assert.equal(response.status,502);
+  assert.notEqual(response.headers['x-dsg-dispatch-state'],'not_dispatched');
+  assert.equal(JSON.parse(response.body).error.continuity,undefined);
+  assert.equal(r.backends[0].records.length,1);
+});
+
+test('reused keepalive connection reset never receives a non-dispatch certificate',async t=>{
+  const r=await rig(t,1),sockets=[];
+  r.backends[0].server.on('request',req=>{if(req.url!=='/v1/models')sockets.push(req.socket);});
+  assert.equal((await r.request('{}','reuse-reset')).status,200);
+  const response=await r.request('{"disconnect":true}','reuse-reset');
+  assert.equal(sockets.length,2);assert.equal(sockets[0],sockets[1]);
+  assert.equal(response.status,502);assert.notEqual(response.headers['x-dsg-dispatch-state'],'not_dispatched');
+  assert.equal(JSON.parse(response.body).error.continuity,undefined);
+});
+
+test('refused normalized image follow-up cannot certify the original request undispatched',async t=>{
+  const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB','base64');let r;
+  const events=[],write=process.stdout.write;
+  t.mock.method(process.stdout,'write',function(chunk,...args){
+    try{events.push(JSON.parse(String(chunk)));}catch{}
+    return write.call(this,chunk,...args);
+  });
+  r=await rig(t,1,{vision_compatibility:{enabled:true},visionTranscode:async()=>{await r.backends[0].close();await delay(20);return png;}});
+  r.backends[0].rejectJpeg=true;
+  const response=await r.request(JSON.stringify({messages:[{role:'user',content:[{type:'image_url',image_url:{url:'data:image/jpeg;base64,/9j/2Q=='}}]}]}),'normalized-refusal');
+  assert.equal(response.status,502);assert.notEqual(response.headers['x-dsg-dispatch-state'],'not_dispatched');
+  assert.equal(JSON.parse(response.body).error.continuity,undefined);
+  assert.equal(r.backends[0].records.length,1);assert.equal(r.backends[0].jpegRejections,1);
+  assert.match(JSON.parse(response.body).error.message,/Normalized image retry/);
+  assert.equal(events.find(e=>e.event==='request_finished')?.detail,'ECONNREFUSED');
+});
 
 test('all workers unavailable: one client request waits, then dispatches once with identical body and full settings',async t=>{
   const r=await rig(t,2,{health_interval_ms:25,health_failures:1,dataset_enabled:true});

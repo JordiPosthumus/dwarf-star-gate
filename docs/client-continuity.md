@@ -71,6 +71,18 @@ DSG does not put its name on an engine error or certify it as undispatched.
 
 ## Distinct failure paths
 
+- `home_unavailable` with `worker_connect_refused`: the original inference POST
+  encountered `ECONNREFUSED` on a witnessed fresh socket before TCP connected.
+  DSG certifies that this request did not reach the worker. The opt-in patient
+  transport can retry its unchanged request; DSG does not buffer or replay it.
+  A connected SSH tunnel subsequently losing its remote endpoint does **not**
+  satisfy this proof. Resets, timeouts, reused sockets, actual upstream responses
+  and normalized-image follow-ups remain uncertified. Existing failure accounting
+  and quarantine rules remain in force. A client without the adapter still owns
+  its retry policy; an HTTP receipt alone cannot keep every harness running.
+  The dataset's earlier `dispatch` event records the connection attempt; the
+  joined rejection receipt proves it never became a worker dispatch. Its finish
+  remains a failed transport attempt, not a successful service-time label.
 - `queue_timeout`: a request expired before dispatch. No inference was started
   for that request. Client retry policy determines whether the turn continues.
 - Historical `home_unavailable` / `no_healthy_workers` on inference POSTs:
