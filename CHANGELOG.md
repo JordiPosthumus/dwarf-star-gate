@@ -1,5 +1,18 @@
 # Changelog
 
+## Opt-in hardware telemetry lane
+
+- Added a low-rate numerical hardware schema with a fixed DGX Spark/NVIDIA Linux
+  observer and a bounded local JSONL adapter for Macs, external meters and other
+  explicitly enrolled producers. Paths, SSH aliases, fixed commands and source
+  rows never enter status or metrics.
+- Added compact per-server RAM, accelerator-activity and measured-power
+  sparklines, with clock speed as secondary context. Unified host memory is not
+  labelled GPU RAM; missing fields remain unknown.
+- Connected only measured compute-module or whole-system power to the fleet kWh
+  estimator. Collection is opt-in, runs every 10–60 seconds, grants no control
+  authority, and requires only a dashboard reload—not a gateway or DS4 restart.
+
 ## Calibrated fleet speed and energy pulse
 
 - Replaced the top-row hourly-output vanity tile with compact decode and prefill
@@ -11,8 +24,8 @@
   remains unknown rather than zero.
 - Added the measured-power contract for estimated kWh and tokens/kWh. Full-period
   energy is shown only when every current device has at least 80% dense measured
-  coverage, with no TDP fallback. Platform telemetry adapters remain roadmap work,
-  so real deployments explicitly wait for power data until they are configured.
+  coverage, with no TDP fallback. The later opt-in hardware adapters supply this
+  contract; incomplete deployments explicitly wait for power data.
 
 ## Gate Genie action ledger
 

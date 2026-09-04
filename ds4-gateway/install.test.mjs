@@ -37,7 +37,7 @@ async function until(fn,ms=8000){const end=Date.now()+ms;while(Date.now()<end){t
 async function port(){const s=http.createServer();s.listen(0,'127.0.0.1');await once(s,'listening');const p=s.address().port;await new Promise(r=>s.close(r));return p;}
 test('configuration precedence and relative local paths are independent of caller cwd; remote paths unchanged',t=>{
   const root=temporary(t),file=path.join(root,'custom.json');
-  const raw={state_file:'runtime/affinity.json',control_socket:'runtime/control.sock',telemetry_files:{worker:'engine.log'},cache_directories:{worker:'cache'},predictor:{enabled:true,python:'predictor/bin/python',profiles:'runtime/profiles.json'},embeddings:{enabled:true,python:'encoder/bin/python',model_dir:'models/encoder'},recovery:{workers:[{helper:'/remote/helper.py',config:'/remote/policy.json'}]},context_length:262144,request_timeout_ms:360000000};
+  const raw={state_file:'runtime/affinity.json',control_socket:'runtime/control.sock',telemetry_files:{worker:'engine.log'},cache_directories:{worker:'cache'},hardware_telemetry:{enabled:true,workers:{worker:{adapter:'jsonl-file',path:'hardware.jsonl'},spark:{adapter:'nvidia-linux'}}},predictor:{enabled:true,python:'predictor/bin/python',profiles:'runtime/profiles.json'},embeddings:{enabled:true,python:'encoder/bin/python',model_dir:'models/encoder'},recovery:{workers:[{helper:'/remote/helper.py',config:'/remote/policy.json'}]},context_length:262144,request_timeout_ms:360000000};
   fs.writeFileSync(file,JSON.stringify(raw));
   assert.equal(configPath(null,{env:{},cwd:'/unrelated',root}),path.join(root,'config.local.json'));
   assert.equal(configPath('custom.json',{env:{DWARF_GATE_CONFIG:'other'},cwd:root}),file);
@@ -46,6 +46,7 @@ test('configuration precedence and relative local paths are independent of calle
   assert.equal(config.predictor.python,path.join(root,'predictor/bin/python'));assert.equal(config.predictor.profiles,path.join(root,'runtime/profiles.json'));
   assert.equal(config.telemetry_files.worker,path.join(root,'engine.log'));assert.deepEqual(config.recovery,raw.recovery);assert.equal(config.context_length,262144);assert.equal(config.request_timeout_ms,360000000);
   assert.equal(config.cache_directories.worker,path.join(root,'cache'));
+  assert.equal(config.hardware_telemetry.workers.worker.path,path.join(root,'hardware.jsonl'));assert.deepEqual(config.hardware_telemetry.workers.spark,{adapter:'nvidia-linux'});
   assert.equal(gatewayHost({host:'0.0.0.0'}),'0.0.0.0');
   assert.equal(gatewayHost({host:'0.0.0.0',continuity_door:{enabled:true}}),'127.0.0.1');
   assert.equal(dashboardPort({ui_port:31000},{}),31000);assert.equal(dashboardPort({ui_port:31000},{GATEWAY_UI_PORT:'32000'}),32000);assert.throws(()=>dashboardPort({}, {GATEWAY_UI_PORT:'0'}));

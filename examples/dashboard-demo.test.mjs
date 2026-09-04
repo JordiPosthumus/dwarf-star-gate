@@ -16,6 +16,8 @@ test('public demo has synthetic mixed servers, current panels and no promoted mo
   assert.equal(s.demo,true);assert.equal(s.gateway.total,3);assert.equal(s.gateway.active,2);
   assert.deepEqual(s.gateway.workers.map(w=>w.id),['sparkA','sparkB','mac-ultra']);
   assert.ok(s.devices.every(d=>d.activity.length>0));
+  assert.ok(s.devices.every(d=>d.hardware?.state==='connected'&&d.hardware.series.length===90));
+  assert.deepEqual(s.devices.map(d=>d.hardware.power_scope??d.hardware.current.power_scope),['compute_module','compute_module','system']);
   assert.equal(s.gateway.dataset.embedding_collection.dimensions,384);
   assert.ok(s.gateway.predictor.models.every(m=>m.active_model_id===null));
   assert.equal(s.gateway.predictor.placement,false);

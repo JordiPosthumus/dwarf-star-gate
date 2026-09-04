@@ -336,6 +336,13 @@ test('thinking UI distinguishes requested controls, omitted/unknown, current/las
   assert.match(vm.runInContext(`thinkingIndicator(${JSON.stringify(worker)},true,1788310000000)`,context),/Historical snapshot/);
   assert.match(source,/thinkingIndicator\(w,stale,now\)/);
 });
+test('hardware cards stay compact, label unified memory honestly and preserve missing values',()=>{
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0],context=vm.createContext({});vm.runInContext(source,context);
+  const hardware={schema:1,configured:true,state:'connected',last_sample_at:100000,current:{time:100000,memory_used_bytes:75,memory_total_bytes:100,memory_scope:'host_unified',accelerator_activity_pct:42,accelerator_scope:'gpu_kernel_time',power_watts:88.5,power_scope:'compute_module',clock_mhz:1200,clock_scope:'sm'},series:[]};
+  const html=vm.runInContext(`hardwareMarkup(${JSON.stringify(hardware)},100001)`,context);assert.match(html,/RAM/);assert.match(html,/75%/);assert.match(html,/GPU/);assert.match(html,/42%/);assert.match(html,/89 W/);assert.match(html,/1,200 MHz SM/);assert.match(html,/Unified host memory used; not dedicated GPU RAM/);assert.match(html,/Measured compute-module power/);
+  hardware.current={time:100000,memory_used_bytes:75,memory_total_bytes:100,memory_scope:'host_unified'};const partial=vm.runInContext(`hardwareMarkup(${JSON.stringify(hardware)},100001)`,context);assert.match(partial,/class="hardware-reading accelerator[^"]*"[^>]*>[\s\S]*?<strong>—<\/strong>/);assert.match(partial,/Power unavailable; no TDP estimate is substituted/);
+  assert.equal(vm.runInContext('hardwareMarkup({configured:false},100001)',context),'');
+});
 async function fixture(t, management = null) {
   const server = createDashboard(() => ({ version:1, read_only:true, devices:[] }), undefined, management);
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
@@ -749,6 +756,14 @@ test('dashboard ingests a local engine log without inference calls or exporting 
   const persisted=fs.readdirSync(path.join(dir,'dashboard')).map(f=>fs.readFileSync(path.join(dir,'dashboard',f),'utf8')).join('');
   for(const text of [exported,persisted]) {assert.ok(!text.includes(file));assert.ok(!text.includes('NEVER_EXPORT'));assert.ok(!text.includes('ds4-server:'));}
   assert.deepEqual(calls,['/gateway/status']);
+});
+test('dashboard ingests opt-in hardware numbers without exporting the source path or raw fields',async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-hardware-ui-')),file=path.join(dir,'private-meter.jsonl'),calls=[];t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  fs.writeFileSync(file,JSON.stringify({time:Date.now(),memory_used_bytes:75,memory_total_bytes:100,memory_scope:'host_unified',power_watts:64,power_scope:'system',private_label:'NEVER_EXPORT'})+'\n');
+  const backend=http.createServer((req,res)=>{calls.push(req.url);res.end(JSON.stringify({version:1,model:'ds4',workers:[{id:'studio',is_healthy:true,load:0}]}));});backend.listen(0,'127.0.0.1');await once(backend,'listening');t.after(()=>{backend.closeAllConnections();backend.close();});
+  const config=path.join(dir,'config.json');fs.writeFileSync(config,JSON.stringify({port:backend.address().port,api_key:'test',state_file:path.join(dir,'state.json'),nodes:[{id:'studio',telemetry_service:null}],hardware_telemetry:{enabled:true,workers:{studio:{adapter:'jsonl-file',path:file}}}}));
+  const app=await runDashboard(config,0);t.after(app.close);const hardware=app.snapshot().devices[0].hardware;assert.equal(hardware.state,'connected');assert.equal(hardware.current.power_watts,64);assert.equal(hardware.current.power_scope,'system');
+  const exported=JSON.stringify(app.snapshot()),persisted=fs.readdirSync(path.join(dir,'dashboard')).map(name=>fs.readFileSync(path.join(dir,'dashboard',name),'utf8')).join('');for(const text of [exported,persisted]){assert.ok(!text.includes(file));assert.ok(!text.includes('NEVER_EXPORT'));assert.ok(!text.includes('private_label'));}assert.deepEqual(calls,['/gateway/status']);
 });
 test('opt-in local cache inventory exports header aggregates without reading or exposing prompt bytes and paths',async t=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-cache-ui-')),cache=path.join(dir,'cache');fs.mkdirSync(cache);t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));

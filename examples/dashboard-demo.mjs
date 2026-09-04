@@ -24,6 +24,7 @@ const devices = workers.map((w,i) => ({
   prompt:{ prompt:i ? 42600:55300, cached:i ? 42402:53248, cache:i ? 'prefix reuse':'disk restore' },
   cache:{ starts:i ? 30:34, reused:i ? 28:31, cold:i ? 2:3, resident_misses:i ? 4:6, disk_restores:i ? 3:5 },
   series:Array.from({length:70},(_,j)=>[{time:now-900000+j*11000,kind:'decode',tps:(i===2?27:13.8)+Math.sin(j*.8)*.35+j*.008}, {time:now-900000+j*10000,kind:'prefill',tps:(i===2?440:790)+Math.sin(j*.65+i)*60}]).flat(),
+  hardware:{schema:1,configured:true,adapter:i===2?'jsonl-file':'nvidia-linux',state:'connected',reason:null,last_sample_at:now-1000,current:{time:now-1000,memory_used_bytes:[91,98,112][i]*2**30,memory_total_bytes:[128,128,192][i]*2**30,memory_scope:'host_unified',accelerator_activity_pct:[82,68,4][i],accelerator_scope:i===2?'accelerator':'gpu_kernel_time',power_watts:[92,98,71][i],power_scope:i===2?'system':'compute_module',clock_mhz:[1500,1440,350][i],clock_scope:i===2?'accelerator':'sm'},series:Array.from({length:90},(_,j)=>({time:now-900000+j*10000,memory_used_bytes:([91,98,112][i]+Math.sin(j/12)*2)*2**30,memory_total_bytes:[128,128,192][i]*2**30,memory_scope:'host_unified',accelerator_activity_pct:Math.max(0,Math.min(100,[82,68,4][i]+Math.sin(j/8)*12)),accelerator_scope:i===2?'accelerator':'gpu_kernel_time',power_watts:[92,98,71][i]+Math.sin(j/9)*8,power_scope:i===2?'system':'compute_module',clock_mhz:[1500,1440,350][i]+Math.sin(j/10)*90,clock_scope:i===2?'accelerator':'sm'})),rejected:0},
   activity:['idle','prefill','thinking','decode','prefill',i===2?'idle':i?'decode':'thinking'].map((phase,j)=>({start:now-900000+j*150000,end:now-750000+j*150000,phase})),
   recent:[],
 }));
@@ -77,7 +78,7 @@ for(let worker=0;worker<workers.length;worker++){
   // The future hardware lane samples at 10-15s in production. The synthetic
   // fixture uses 30s so the energy estimator can prove continuous coverage
   // without ever bridging a collector outage into invented consumption.
-  for(let second=0;second<=86400;second+=30)fleetSpeed.accept(speedRow(workers[worker].id,now-86400000+second*1000,'hardware',{power_watts:[92,98,71][worker]}));
+  for(let second=0;second<=86400;second+=30)fleetSpeed.accept(speedRow(workers[worker].id,now-86400000+second*1000,'hardware',{power_watts:[92,98,71][worker],power_scope:'system'}));
 }
 // Fictional completions, independent of the 12-row request-log illustration.
 for(let i=0;i<30;i++)throughput.accept({schema:1,kind:'finish',run_id:'demo',request_id:`demo-usage-${i}`,node:workers[i%3].id,

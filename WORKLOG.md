@@ -10,6 +10,12 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Gave the fleet pulse honest hardware senses.** Opt-in, ten-second adapters
+  now turn measured Spark compute-module or external whole-system power into the
+  kWh/efficiency footer, while compact server-card strips show RAM, accelerator
+  activity and power with clock as context. Unsupported fields stay unknown;
+  nothing edits DS4 or grants the observer a control lever.
+
 - **Made fleet value visible without vanity arithmetic.** The old completion-
   bucket headline is replaced by compact 1h/12h/24h decode and prefill gauges
   based on cumulative DS4 timing deltas and real active seconds. A thin arc shows

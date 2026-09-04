@@ -6,6 +6,7 @@ import {loadConfig,dashboardPort,gatewayPort,continuityEnabled,doorSocket} from 
 import {workerConfigs} from '../ds4-gateway/worker-config.mjs';
 import {recoveryConfig} from '../ds4-gateway/recovery-transport.mjs';
 import {cacheInventoryDirectories} from '../ds4-gateway/cache-inventory.mjs';
+import {hardwareTelemetryConfig} from '../ds4-gateway/hardware-telemetry.mjs';
 try {
   if(process.argv.length>2)throw new Error('Usage: npm run doctor (select config with DWARF_GATE_CONFIG)');
   const version=process.versions.node.split('.').map(Number);
@@ -18,6 +19,7 @@ try {
   if(typeof c.model!=='string'||!c.model||!Number.isSafeInteger(c.context_length)||c.context_length<1)throw new Error('Set the served model and positive pool context limit');
   const configuredNodes=workerConfigs(c.nodes);let nodes=configuredNodes;recoveryConfig(c.recovery);
   const cacheDirectories=cacheInventoryDirectories(c.cache_directories);
+  const hardware=hardwareTelemetryConfig(c.hardware_telemetry);
   const warnings=[];
   const registry={present:false,configured_workers:configuredNodes.length,durable_workers:null,configured_workers_missing:0,recovery_bindings_differ:0};
   if(fs.existsSync(c.state_file)){
@@ -52,6 +54,12 @@ try {
     if(!nodes.some(node=>node.id===worker))warnings.push('A cache inventory directory names a worker absent from the current registry; it will not be scanned.');
     try{const stat=fs.lstatSync(directory);if(!stat.isDirectory()||stat.isSymbolicLink())throw new Error();fs.accessSync(directory,fs.constants.R_OK);}
     catch{warnings.push('A configured cache inventory directory is missing, unreadable or not a regular directory; cache evidence will remain unavailable.');}
+  }
+  for(const [worker,source] of hardware.workers){
+    const node=nodes.find(node=>node.id===worker);
+    if(!node)warnings.push('A hardware telemetry adapter names a worker absent from the current registry; it will stay idle.');
+    if(source.adapter==='nvidia-linux'&&!node?.ssh)warnings.push('An NVIDIA Linux hardware adapter has no enrolled SSH transport; its metrics will remain unavailable.');
+    if(source.adapter==='jsonl-file')try{const stat=fs.lstatSync(source.path);if(!stat.isFile()||stat.isSymbolicLink())throw new Error();fs.accessSync(source.path,fs.constants.R_OK);}catch{warnings.push('A configured hardware telemetry file is missing, unreadable or not a regular file; its metrics will remain unavailable.');}
   }
   if(c.embeddings?.enabled===true){fs.accessSync(c.embeddings.python,fs.constants.X_OK);fs.accessSync(path.join(c.embeddings.model_dir,'manifest.json'),fs.constants.R_OK);}
   if(c.predictor?.enabled===true){

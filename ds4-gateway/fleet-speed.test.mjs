@@ -61,7 +61,7 @@ test('reader incrementally rebuilds two regular daily files and survives partial
 
 test('energy is estimated only when every current worker has dense measured power coverage',()=>{
   const speed=new FleetSpeed(),start=now-HOUR;
-  for(let i=0;i<=60;i++)speed.accept(row(100+i,'one',start+i*60000,'hardware',{power_watts:100}));
+  for(let i=0;i<=60;i++)speed.accept(row(100+i,'one',start+i*60000,'hardware',{power_watts:100,power_scope:'compute_module'}));
   let energy=speed.snapshot(now,['one']).windows['1h'].energy;
   assert.equal(energy.status,'estimated_from_measured_power');assert.ok(Math.abs(energy.estimated_kwh-.1)<1e-9);assert.equal(energy.coverage_pct,100);
   energy=speed.snapshot(now,['one','two']).windows['1h'].energy;
@@ -70,11 +70,16 @@ test('energy is estimated only when every current worker has dense measured powe
 
 test('power integration never bridges gaps or rolls its cursor backward',()=>{
   const speed=new FleetSpeed(),start=now-100000;
-  speed.accept(row(200,'one',start,'hardware',{power_watts:100}));
-  speed.accept(row(201,'one',start+61000,'hardware',{power_watts:100}));
-  speed.accept(row(202,'one',start+30000,'hardware',{power_watts:500}));
-  speed.accept(row(203,'one',start+91000,'hardware',{power_watts:100}));
+  speed.accept(row(200,'one',start,'hardware',{power_watts:100,power_scope:'system'}));
+  speed.accept(row(201,'one',start+61000,'hardware',{power_watts:100,power_scope:'system'}));
+  speed.accept(row(202,'one',start+30000,'hardware',{power_watts:500,power_scope:'system'}));
+  speed.accept(row(203,'one',start+91000,'hardware',{power_watts:100,power_scope:'system'}));
   const snapshot=speed.snapshot(now,['one']);
   assert.equal(snapshot.power_intervals,1,'only the final 30-second adjacent interval is integrated');
   assert.ok(snapshot.rejected_records>=1);assert.equal(snapshot.windows['1h'].energy.estimated_kwh,null);
+});
+
+test('power without an honest whole-device scope is never integrated',()=>{
+  const speed=new FleetSpeed();speed.accept(row(300,'one',now-10000,'hardware',{power_watts:100}));speed.accept(row(301,'one',now,'hardware',{power_watts:100,power_scope:'gpu_only'}));
+  const snapshot=speed.snapshot(now,['one']);assert.equal(snapshot.power_intervals,0);assert.equal(snapshot.rejected_records,2);
 });

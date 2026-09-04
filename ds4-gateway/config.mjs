@@ -25,6 +25,8 @@ export function loadConfig(explicit,options) {
     config.telemetry_files=Object.fromEntries(Object.entries(config.telemetry_files).map(([id,file])=>[id,local(file,'telemetry_files')]));
   if(config.cache_directories && typeof config.cache_directories==='object'&&!Array.isArray(config.cache_directories))
     config.cache_directories=Object.fromEntries(Object.entries(config.cache_directories).map(([id,directory])=>[id,local(directory,'cache_directories')]));
+  if(config.hardware_telemetry?.workers&&typeof config.hardware_telemetry.workers==='object'&&!Array.isArray(config.hardware_telemetry.workers))
+    config.hardware_telemetry.workers=Object.fromEntries(Object.entries(config.hardware_telemetry.workers).map(([id,worker])=>[id,worker?.adapter==='jsonl-file'?{...worker,path:local(worker.path,`hardware_telemetry.workers.${id}.path`)}:worker]));
   if(config.embeddings?.enabled===true)for(const key of ['python','model_dir'])config.embeddings[key]=local(config.embeddings[key],`embeddings.${key}`);
   if(config.predictor?.enabled===true)for(const key of ['python','profiles'])config.predictor[key]=local(config.predictor[key],`predictor.${key}`);
   // Recovery helper/config paths are REMOTE paths; deliberately untouched.

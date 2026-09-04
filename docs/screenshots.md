@@ -6,8 +6,8 @@ screenshots, benchmark results, a live incident report or a promoted model.
 
 - `dashboard-overview.png`: branding, persistent health wire, compact cross-view
   hardening notice, focused navigation, the single-row desktop fleet band, mixed-server
-  activity, aligned rounded speeds, requested thinking, the 12-hour fleet-speed
-  and measured-energy pulse, and the ready Continuity Door
+  activity, aligned rounded speeds, requested thinking, compact synthetic RAM /
+  GPU / POWER strips, the 12-hour fleet-speed and measured-energy pulse, and the ready Continuity Door
   contract. Detailed cache/session evidence is folded into each server card.
 - `overview-mobile.png`: the compact status row at 390px, including both calibrated
   speed gauges and their dense value/energy footer.

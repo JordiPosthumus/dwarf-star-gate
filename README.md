@@ -122,6 +122,11 @@ duration-weighted decode and prefill gauges with a browser-local 1h/12h/24h
 window, a restrained activity-coverage arc, observed generated tokens, and—once
 every device supplies dense measured power—estimated kWh and tokens/kWh. Missing
 power stays visibly unknown; DSG never turns a TDP into pretend energy telemetry.
+An optional [10-second hardware telemetry lane](docs/hardware-telemetry.md) now
+provides compact per-server RAM, accelerator, power and clock evidence. DGX Spark
+uses a fixed read-only SSH/NVIDIA adapter; Macs and external meters can use an
+explicit local numerical JSONL source. Both are opt-in, bounded, and grant no
+control power.
 Workers with recognized engine faults or repeated inference failures are
 [quarantined persistently](docs/generation-health.md); recovery requires a real
 generation check. Opt-in recovery can restart an explicitly enrolled systemd-user

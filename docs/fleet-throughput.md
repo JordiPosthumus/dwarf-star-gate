@@ -37,9 +37,10 @@ more work, more energy, and the efficiency relating the two. DSG integrates
 adjacent measured watt samples and refuses to bridge gaps longer than one minute.
 It estimates a full-period total only when every current device has at least 80%
 measured coverage; the tooltip discloses coverage and measured energy. Until
-those platform adapters exist and meet that threshold, the UI says **energy
-awaiting power data**. It does not substitute a device TDP, infer power from token
-speed, or present missing devices as zero watts.
+the optional [hardware adapters](hardware-telemetry.md) are configured and meet
+that threshold, the UI says **energy awaiting power data**. It does not
+substitute a device TDP, infer power from token speed, or present missing devices
+as zero watts.
 
 The token total covers observed decode intervals from DS4 engine timing evidence.
 It is distinct from the older completion-time usage counters: unfinished but
@@ -69,4 +70,5 @@ real selector, polling persistence, reload persistence, gauge labels, tooltip an
 energy footer with synthetic data. Public screenshots are not live fleet
 evidence.
 
-Activation needs only a dashboard reload, not a gateway or DS4 restart.
+Activation needs only a dashboard reload, not a gateway or DS4 restart. The
+fleet pulse itself remains available when hardware collection is off.

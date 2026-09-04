@@ -15,6 +15,7 @@ import { genieTunnel } from './genie-tunnel.mjs';
 import { safeQuarantine } from './generation-health.mjs';
 import { AnalyticsReader } from './analytics.mjs';
 import {FleetSpeedReader} from './fleet-speed.mjs';
+import {HardwareTelemetry} from './hardware-telemetry.mjs';
 import { estimateCacheCost } from './cache-cost.mjs';
 import {CacheInventoryReader,cacheInventoryDirectories,loadCacheInventoryKey} from './cache-inventory.mjs';
 import { loadConfig, dashboardPort, isMain, continuityEnabled } from './config.mjs';
@@ -160,6 +161,7 @@ export async function runDashboard(configPath, port) {
     try { fs.appendFileSync(path.join(runtime, `metrics-${new Date().toISOString().slice(0, 10)}.jsonl`), JSON.stringify(entry) + '\n', { mode: 0o600 }); }
     catch { writeError = 'Telemetry file could not be written; live monitoring continues'; }
   };
+  const hardware=new HardwareTelemetry(config.hardware_telemetry,appendMetric);
   const attribution=new EngineAttribution(appendMetric);
   const save = entry => {appendMetric(entry);attribution.acceptEngine(entry);};
   function follow(node, device, reader, resetCursor = false) {
@@ -203,6 +205,7 @@ export async function runDashboard(configPath, port) {
     try { definitions = JSON.parse(fs.readFileSync(config.state_file,'utf8')).workers ?? definitions; }
     catch { /* Keep initial journal configuration; gateway status owns membership. */ }
     const ids = new Set(workers.map(w=>w.id));
+    hardware.sync(definitions,workers);
     const signature = id => JSON.stringify({node:definitions.find(n=>n.id===id),file:fileSources.get(id)});
     for (const [id,entry] of readers) if (!ids.has(id) || signature(id)!==entry.signature) {
       readers.delete(id);
@@ -289,6 +292,7 @@ export async function runDashboard(configPath, port) {
           last_request_finished_at: typeof w.last_request_finished_at === 'string' && Number.isFinite(Date.parse(w.last_request_finished_at)) ? w.last_request_finished_at : null })) };
       gatewayAt = Date.now(); gatewayError = null;
       syncDevices(s.workers);
+      hardware.poll();
     } catch { gatewayError = 'Gateway status unavailable; last snapshot is stale'; }
     finally { activity.update([...devices.values()],gateway?.workers||[],Date.now(),!!gatewayError);try{memory.observe(snapshot());}catch{/* A notebook fault cannot stop fleet polling. */}polling = false; }
   }
@@ -296,7 +300,7 @@ export async function runDashboard(configPath, port) {
   const managementEnabled = config.ui_worker_management === true && !!config.control_socket;
   const snapshot = () => ({ service:'dwarf-star-gate-dashboard', version: 1, time: Date.now(), started, read_only: !managementEnabled, worker_management:managementEnabled, gateway, gateway_at: gatewayAt, gateway_error: gatewayError, telemetry_error: writeError,
     continuity_door:continuityDoor,continuity_door_error:continuityDoorError,
-    devices: [...devices.values()].map(d => ({...d.snapshot(),activity:activity.get(d.id)})), events, attribution:attribution.snapshot(), notes: 'Rates are DS4 engine measurements. Cache counts cover observed prompt starts, not lifetime requests. Raw prompts and responses are excluded.' });
+    devices: [...devices.values()].map(d => ({...d.snapshot(),activity:activity.get(d.id),hardware:hardware.snapshot(d.id)})), events, attribution:attribution.snapshot(), notes: 'Rates are DS4 engine measurements. Cache counts cover observed prompt starts, not lifetime requests. Raw prompts and responses are excluded.' });
   const memory=new GenieMemory(path.join(path.dirname(config.state_file),'genie','memory'));
   const runtimeGenie=genieRuntimeConfig(config);
   const genie=new Genie(runtimeGenie,snapshot,{memory,recover:managementEnabled?input=>workerControl(config.control_socket,'/genie-recover-worker',input,{channel:'gate_genie'}):null,predict:managementEnabled?input=>workerControl(config.control_socket,'/genie-predictor',input,{channel:'gate_genie'}):null,rebalance:managementEnabled?input=>workerControl(config.control_socket,'/genie-relocate-queued',input,{channel:'gate_genie'}):null});
@@ -307,7 +311,7 @@ export async function runDashboard(configPath, port) {
   } : null,genie,()=>({...analytics.snapshot(),fleet_speed:fleetSpeed.snapshot(Date.now(),gateway?.workers?.map(worker=>worker.id)??[])}));
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
   await poll(); const interval = setInterval(poll, 2000), genieTimer=setInterval(()=>genie.tick(),10000);
-  const close = () => { closed = true; clearInterval(interval);clearInterval(genieTimer);genie.close();stopGenieTunnel(); for (const t of timers) clearTimeout(t); for (const child of children) child.kill(); server.closeAllConnections(); server.close(); process.removeListener('SIGTERM', close); process.removeListener('SIGINT', close); };
+  const close = () => { closed = true; clearInterval(interval);clearInterval(genieTimer);genie.close();hardware.close();stopGenieTunnel(); for (const t of timers) clearTimeout(t); for (const child of children) child.kill(); server.closeAllConnections(); server.close(); process.removeListener('SIGTERM', close); process.removeListener('SIGINT', close); };
   process.once('SIGTERM', close); process.once('SIGINT', close);
   console.log(`Dwarf Star Gate: http://127.0.0.1:${server.address().port} (${managementEnabled ? 'local worker controls' : 'read-only'})`);
   return { server, snapshot, close };

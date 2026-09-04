@@ -544,29 +544,31 @@ starvation/adversarial-prompt resistance, same-session/cache invariants, decisio
 receipts, deterministic fallback and a shadow-only evaluation showing that the
 policy improves an operator-defined objective before it gains routing authority.
 
-## End-of-sprint item: lightweight hardware telemetry
+## Lightweight hardware telemetry — first adapters implemented
 
 Add an optional low-rate hardware lane after maintenance hand-back recovery is
 complete. It must not slow the routing/control loop or require changes to DS4.
 
 The aggregate fleet-speed tile now defines and tests the downstream power
 contract: adjacent measured watt samples may produce kWh and tokens/kWh only
-when every current device has dense coverage. It intentionally remains in
-**energy awaiting power data** state until the adapters below exist; no TDP or
-speed-derived placeholder is allowed.
+when every current device has dense coverage. Fixed DGX Spark/NVIDIA Linux and
+generic local numerical-file adapters now supply that schema when explicitly
+configured; otherwise it intentionally remains in **energy awaiting power data**.
+No TDP or speed-derived placeholder is allowed.
 
 - Keep availability, queues, quarantine and recovery state responsive through a
   small fast/event-driven lane, but refresh decode/prefill and hardware charts
   every **10 seconds**. Do not make a critical alarm wait on the chart timer.
   Measure payload and browser work after the split rather than slowing every
   safety signal indiscriminately.
-- Add three compact 15-minute sparklines per server: memory used/pressure,
-  accelerator activity and power draw. Show current clock speed as secondary
-  context or a fourth chart only where the platform reports it reliably.
-- Use one allowlisted numerical schema behind platform-specific, opt-in adapters.
-  A Spark/Linux adapter may use supported NVIDIA/system counters; a macOS adapter
-  must report only available non-sensitive counters and must not pretend that a
-  missing privileged power/GPU metric is zero.
+- Three compact 15-minute sparklines per server now show memory used,
+  accelerator activity and power draw; current clock is secondary context.
+  Platform-specific pressure evidence remains future work.
+- One allowlisted numerical schema now sits behind platform-specific, opt-in
+  adapters. Spark/Linux uses supported NVIDIA/system counters; macOS and external
+  meters have an explicit local JSONL boundary so a missing privileged power/GPU
+  metric remains unknown rather than zero. A packaged unprivileged Mac collector
+  is not claimed.
 - The adapter may be reached through an already enrolled management transport,
   but it accepts no caller-supplied command. Bound execution time, output, sample
   history and cardinality. Hardware telemetry grants no restart or routing power.
@@ -574,10 +576,11 @@ speed-derived placeholder is allowed.
   host memory pressure from accelerator allocation when the platform exposes both;
   never call a proxy “GPU RAM” without proof.
 
-Acceptance: mixed-platform fixtures, missing/unsupported metrics, adapter timeout,
-stale data, reconnect, bounded history, low dashboard CPU/network overhead and no
-private host/path/command leakage. The UI must remain useful when only decode and
-prefill telemetry exist.
+Implemented evidence covers mixed-adapter fixtures, missing/unsupported metrics,
+stale data, timeout/reconnect, bounded history, fixed SSH arguments and no private
+host/path/command leakage. Remaining acceptance work is a real opt-in Spark
+canary and measured dashboard CPU/network overhead. The UI stays unchanged when
+hardware telemetry is not configured.
 
 ## How this roadmap grows
 

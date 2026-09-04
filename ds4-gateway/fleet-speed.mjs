@@ -60,7 +60,7 @@ export class FleetSpeed {
     if(this.seen.size>400000)this.seen.delete(this.seen.values().next().value);
     const epoch=EPOCH.test(row.backend_epoch??'')?row.backend_epoch:null,state=this.states.get(row.node);
     if(row.kind==='hardware'){
-      const watts=Number(row.power_watts);if(!Number.isFinite(watts)||watts<0||watts>5000){this.rejected++;return;}
+      const watts=Number(row.power_watts);if(!['compute_module','system'].includes(row.power_scope)||!Number.isFinite(watts)||watts<0||watts>5000){this.rejected++;return;}
       this.addPower(row.node,row.time,watts,epoch);return;
     }
     if(state?.epoch&&epoch&&state.epoch!==epoch)this.resetNode(row.node,epoch,row.time);

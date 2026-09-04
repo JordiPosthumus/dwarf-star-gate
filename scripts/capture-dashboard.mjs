@@ -67,6 +67,10 @@ try {
   assert.match(await page.locator('#fleet-speed-value').innerText(),/tok · ≈.* kWh · .* tok\/kWh/);
   assert.match(await page.locator('#fleet-speed-summary').getAttribute('title'),/duration-weighted active mean/i);
   assert.match(await page.locator('#fleet-speed-summary').getAttribute('title'),/measured.?power/i);
+  assert.equal(await page.locator('.hardware-strip').count(),3);
+  assert.equal(await page.locator('.hardware-reading').count(),9);
+  assert.match(await page.locator('.hardware-reading.memory').first().getAttribute('title'),/not dedicated GPU RAM/);
+  assert.match(await page.locator('.hardware-reading.power').first().getAttribute('title'),/energy integration/);
   await page.locator('#fleet-speed-window').selectOption('1h');
   const speedPoll=await page.locator('#updated').innerText();
   await page.waitForFunction(previous=>document.getElementById('updated').textContent!==previous,speedPoll,{timeout:10000});
@@ -191,7 +195,7 @@ try {
   const holdPoll=await page.locator('#updated').innerText();await page.waitForFunction(previous=>document.getElementById('updated').textContent!==previous,holdPoll,{timeout:10000});
   assert.match(await held.innerText(),/Held by test-agent/);assert.match(await held.innerText(),/Operator pause/);
   assert.deepEqual(errors,[]);
-  console.log('Saved six synthetic dashboard screenshots; verified tab navigation, polling, analytics, mobile, reset/milestones, escaped agent holds and Keep paused UX.');
+  console.log('Saved six synthetic dashboard screenshots; verified tab navigation, polling, analytics, compact hardware telemetry, mobile, reset/milestones, escaped agent holds and Keep paused UX.');
 } finally {
   await browser?.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));
   if(learningServer){learningServer.closeAllConnections();await new Promise(resolve=>learningServer.close(resolve));}
