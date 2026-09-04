@@ -10,6 +10,10 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Added explicit offline occupancy training.** The reviewed forward-time XGB
+  search can now fit the separate target, with capped/normal holdout diagnostics.
+  Preparation fingerprints its contract; production loading is explicitly rejected.
+
 - **Built separate occupancy training labels.** An offline contract now includes
   verified capped terminal durations without contaminating natural-completion
   priors or leaking terminal outcomes into features. No production model changed.

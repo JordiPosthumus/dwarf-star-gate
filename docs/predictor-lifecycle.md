@@ -20,8 +20,16 @@ dataset contract. It reuses V4 causal snapshots, labels verified normal and
 output-limited terminal service time, and excludes cancellation, relocation,
 unmatched profiles and ambiguous finishes. Terminal class is label metadata,
 never a feature. Existing natural-completion histories stay unchanged. This
-contract is **not yet a fitted or production-loadable model**; an independent
-trainer, long-duration future validation and activation review remain necessary.
+contract is **not production-loadable**. An explicit offline trainer reuses the
+reviewed forward-time feature/tree search and adds capped/normal holdout reports.
+Long-duration future validation and activation review remain necessary.
+
+Prepare a new private directory with `predictor/prepare.mjs --schema dsg-occupancy-v1`
+and its usual `--data`, `--profiles`, `--output` arguments. Then use
+`predictor/fit_v2.py --occupancy --prepared /private/output/prepared.json` in the
+locked predictor environment. Without `--occupancy`, the trainer rejects this
+target. The output is `occupancy-candidate.json`; the production runtime rejects
+its distinct schema. No existing model or activation pointer is replaced.
 
 ## Current lifecycle
 

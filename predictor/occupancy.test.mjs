@@ -2,8 +2,12 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {replayOccupancy} from './occupancy.mjs';
 import {replay} from '../ds4-gateway/prediction-features-v4.mjs';
+import {validateCandidate} from '../ds4-gateway/xgb-runtime.mjs';
 const inventory={schema:1,workers:{a:{matching_profiles:['p'],hardware_family:'spark',accelerator_family:'cuda',ram_gib:128}}};
 const origin=100000;
+test('occupancy artifacts cannot be loaded as production completion models',()=>{
+  assert.throws(()=>validateCandidate({schema:2,created_at:'2026-09-04T00:00:00Z',feature_schema:'dsg-occupancy-v1',models:{}}),/feature schema/i);
+});
 const row=(kind,t,extra={})=>({schema:1,run_id:'run',request_id:'request',event_id:kind+t,kind,node:'a',time:new Date(origin+t).toISOString(),...extra});
 const fixture=()=>[row('decision',0,{session:'session',candidates:[{node:'a',profile:'p',context_length:262144,active:0,queued:0}]}),
   row('dispatch',1),row('request_features',2,{status:'ready',available_at:origin+2,max_output_tokens:30000}),

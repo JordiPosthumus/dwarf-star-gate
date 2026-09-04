@@ -1,5 +1,12 @@
 # Changelog
 
+## Train occupancy challengers offline
+
+- Add explicit occupancy preparation and trainer opt-in, separate output filename
+  and capped/normal holdout metrics. Preserve the existing tree/feature search,
+  ordinary trainer default and routing gates. Regression tests verify target
+  separation, outcome-feature rejection and production-loader rejection.
+
 ## Separate observed occupancy target contract
 
 - Add offline V4-feature occupancy replay for normal and output-limited completed

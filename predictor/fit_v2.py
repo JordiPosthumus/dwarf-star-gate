@@ -71,7 +71,7 @@ def folds(rows):
 def feature_families(data, kind):
     """Reviewed, bounded feature-block search. V2 stays exactly compatible;
     V3 exposes every collected signal without forcing noisy blocks into base."""
-    if data['schema'] == 'dsg-latency-v4':
+    if data['schema'] in ('dsg-latency-v4','dsg-occupancy-v1'):
         families=feature_families({**data,'schema':'dsg-latency-v3'},kind)
         return families+[families[0]+['hardware'],families[-1]+['hardware']]
     if data['schema'] == SCHEMA:
@@ -240,13 +240,17 @@ def exported_prediction(model, features):
     return max(0, raw*model['factor'])
 
 
-def train(prepared, recipe_id=DEFAULT_RECIPE):
+def train(prepared, recipe_id=DEFAULT_RECIPE, *, occupancy=False):
     parameters=recipe(recipe_id)  # Reject before reading data or fitting anything.
     if xgb.__version__!='3.4.1' or np.__version__!='2.5.2':
         raise ValueError('Use the locked predictor environment; dependency version mismatch')
     data=json.loads(Path(prepared).read_text()); rows=data['rows']
-    if data['schema'] not in SCHEMAS or len(rows)>100000:
+    if (data['schema'] not in ({'dsg-occupancy-v1'} if occupancy else SCHEMAS)) or len(rows)>100000:
         raise ValueError('Unsupported prepared data')
+    if occupancy and (data.get('feature_schema')!='dsg-latency-v4' or any(
+            r.get('target_contract')!='observed_terminal_occupancy' or r.get('terminal_class') not in ('normal','output_limited')
+            or 'terminal_class' in r['features'] or 'target_contract' in r['features'] for r in rows)):
+        raise ValueError('Invalid occupancy target contract')
     result={'schema':2,'feature_schema':data['schema'],'created_at':dt.datetime.now(dt.timezone.utc).isoformat(),
             'snapshot':data['snapshot'],'dependencies':{'xgboost':xgb.__version__,'numpy':np.__version__},'models':{},'reports':{},'routing_enabled':False,
             'training_recipe':{'id':recipe_id,'policy_sha256':RECIPE_HASH,'parameters':parameters,'rounds':list(ROUNDS)}}
@@ -273,6 +277,10 @@ def train(prepared, recipe_id=DEFAULT_RECIPE):
         winner=min(candidates,key=lambda c:(c['mae_s'],len(c['names']),c['rounds']))
         model,enc,factor=fit(tr,winner['names'],data['categorical'],winner['rounds'],winner['transform'],recipe_id)
         predictions=predict(model,enc,factor,te,winner['transform']); measured=metrics(te,predictions)
+        if occupancy:
+            report['terminal_classes']={label:{'training_requests':unique([r for r in tr if r['terminal_class']==label]),
+                'holdout':metrics([r for r in te if r['terminal_class']==label],[float(p) for r,p in zip(te,predictions) if r['terminal_class']==label])
+                if any(r['terminal_class']==label for r in te) else None} for label in ('normal','output_limited')}
         baselines,_,_=baseline(tr,te)
         by_worker={node:metrics([r for r in te if r['node']==node],[float(p) for r,p in zip(te,predictions) if r['node']==node]) for node in {r['node'] for r in te}}
         # Gate is deliberately immutable code, not a parameter the Genie supplies.
@@ -308,10 +316,10 @@ def train(prepared, recipe_id=DEFAULT_RECIPE):
 
 
 def main():
-    os.umask(0o077);parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--prepared',required=True);parser.add_argument('--recipe',default=DEFAULT_RECIPE,choices=[r['id'] for r in RECIPE_POLICY['recipes']]);args=parser.parse_args()
-    directory=Path(args.prepared).parent;target=directory/'candidate.json'
+    os.umask(0o077);parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--prepared',required=True);parser.add_argument('--occupancy',action='store_true',help='Offline occupancy target only; not production-loadable');parser.add_argument('--recipe',default=DEFAULT_RECIPE,choices=[r['id'] for r in RECIPE_POLICY['recipes']]);args=parser.parse_args()
+    directory=Path(args.prepared).parent;target=directory/('occupancy-candidate.json' if args.occupancy else 'candidate.json')
     if target.exists():raise ValueError('Candidate already exists')
-    candidate=train(args.prepared,args.recipe)
+    candidate=train(args.prepared,args.recipe,occupancy=args.occupancy)
     candidate['trainer_sha256']=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     with target.open('x') as f:json.dump(candidate,f,allow_nan=False,separators=(',',':'));f.write('\n')
     report={'schema':2,'created_at':candidate['created_at'],'reports':candidate['reports'],'training_recipe':candidate['training_recipe'],'candidate_sha256':hashlib.sha256(target.read_bytes()).hexdigest(),'models':{k:v['id'] for k,v in candidate['models'].items()}}

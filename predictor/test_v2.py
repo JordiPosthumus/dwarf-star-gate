@@ -13,6 +13,20 @@ ROOT=Path(__file__).resolve().parent.parent
 
 
 class PredictorV2Tests(unittest.TestCase):
+    def test_occupancy_training_requires_explicit_separate_contract(self):
+        rows=self.rows(100)
+        for i,row in enumerate(rows):row.update(terminal_class='output_limited' if i%5==0 else 'normal',target_contract='observed_terminal_occupancy')
+        groups={k:[] for k in ('base','admission_state','client','history','ratios','semantic','request','progress','hardware')};groups['base']=['server_id']
+        data={'schema':'dsg-occupancy-v1','feature_schema':'dsg-latency-v4','rows':rows,'snapshot':{'hashes':{}},'groups':groups,'categorical':['server_id']}
+        with tempfile.TemporaryDirectory() as directory:
+            prepared=Path(directory)/'prepared.json';prepared.write_text(json.dumps(data))
+            with self.assertRaisesRegex(ValueError,'Unsupported'):v.train(prepared)
+            result=v.train(prepared,occupancy=True)
+            self.assertEqual(result['feature_schema'],'dsg-occupancy-v1');self.assertFalse(result['routing_enabled'])
+            self.assertGreater(result['reports']['admission']['terminal_classes']['output_limited']['holdout']['requests'],0)
+            data['rows'][0]['features']['terminal_class']='output_limited';prepared.write_text(json.dumps(data))
+            with self.assertRaisesRegex(ValueError,'target contract'):v.train(prepared,occupancy=True)
+
     def test_hardware_challenger_trains_and_exports_real_hardware_splits(self):
         rows=self.rows(100)
         for i,r in enumerate(rows):
