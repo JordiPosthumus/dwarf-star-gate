@@ -161,6 +161,7 @@ export function briefing(snapshot) {
       oldest_queue_seconds:w.oldest_queue_seconds??null,oldest_queue_remaining_seconds:w.oldest_queue_remaining_seconds??null,
       immediately_free:!!w.is_healthy && !w.drained && !w.quarantine && !g.draining && w.load===0 && w.queued===0,
       context_length:w.context_length,requested_thinking:w.requested_thinking,predictions:w.predictions,
+      prediction_semantics:'Predictions are historical snapshots at their at timestamp. Anything older than 60 seconds is stale, not a current ETA. Only stage remaining predicts time left at that timestamp; subtract elapsed wall time, and if exceeded report unknown rather than zero. Other stages predict total service time, not time left. Validation does not prove accuracy for this request or for durations outside the observed data.',
       management_path:w.management_path??null,
       recovery_evidence:(()=>{const r=recoveryByWorker.get(w.id);return r?{configured:!!r.configured,state:r.state,reason:r.reason??null,inspected_at:r.inspected_at??null}:null;})(),
       health_evidence:{source:w.health_state_source??null,last_probe:w.last_probe??null,probe_error:w.probe_error??null,deferred_probes:w.health_probe_deferred??0},

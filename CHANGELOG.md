@@ -1,5 +1,12 @@
 # Changelog
 
+## Honest live forecast labels
+
+- Replace stale numeric ETAs with “Forecast stale”; show “Estimate exceeded”
+  rather than a zero countdown when a remaining forecast is exhausted.
+- Distinguish total-service predictions from remaining-time predictions and
+  give Genie explicit timestamp and interpretation rules. Routing is unchanged.
+
 ## Forecast duration-band diagnostics
 
 - Report request-balanced error, bias and coverage in under-five-minute,

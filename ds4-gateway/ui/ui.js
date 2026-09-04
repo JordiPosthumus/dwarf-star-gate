@@ -6,6 +6,13 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const age = (time, now) => !time ? 'no sample yet' : now - time < 5000 ? 'just now' : now - time < 60000 ? `${Math.floor((now-time)/1000)}s ago` : `${Math.floor((now-time)/60000)}m ago`;
 const remaining = (time, now) => !time ? 'unknown' : time <= now ? 'expired' : time-now < 60000 ? `${Math.ceil((time-now)/1000)}s` : time-now < 3600000 ? `${Math.ceil((time-now)/60000)}m` : `${(Math.ceil((time-now)/360000)/10).toFixed(1).replace(/\.0$/,'')}h`;
 const clock = t => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+function forecastLabel(f, now, stale=false) {
+  if (!f || !Number.isFinite(f.at) || !Number.isFinite(f.seconds) || f.seconds<0 || f.at>now) return 'ETA unknown';
+  if (stale || now-f.at>60000) return 'Forecast stale';
+  if (f.stage!=='remaining') return `Total est. ${fmtWhole(f.seconds)}s`;
+  const left=f.seconds-(now-f.at)/1000;
+  return left<=0?'Estimate exceeded':`ETA ~${fmtWhole(left)}s`;
+}
 function knownWaiting(gateway,door) {
   const core=Number.isSafeInteger(gateway?.queued)&&gateway.queued>=0?gateway.queued:0;
   const held=door?.holding&&Number.isSafeInteger(door.held)&&door.held>=0?door.held:0;
@@ -299,7 +306,7 @@ function device(d, w, now, stale, index = 1, scales={}, controls=false) {
   const prompt = d.prompt ? `Last prompt: ${fmt(d.prompt.prompt)} tokens · ${fmt(d.prompt.cached)} reused · ${esc(d.prompt.cache)}` : 'No prompt start observed yet';
   const f=w?.predictions?.remaining??w?.predictions?.updated??w?.predictions?.admission;
   const duration=!stale&&w?.load&&Number.isFinite(w.active_seconds)?`<span class="remaining-estimate" title="Elapsed time of the active DSG request; not an estimate">${fmtWhole(Math.floor(w.active_seconds/60))}m active</span>`:'';
-  const forecast=duration+(f?`<span class="remaining-estimate${stale||now-f.at>60000?' stale':''}" title="${esc(`${f.experimental?'Experimental':'Validated'} ${f.stage==='remaining'?'remaining':'total server-time'} estimate · ${fmt(f.seconds)} seconds · ${age(f.at,now)}`)}">ETA ${fmtWhole(f.seconds)}s</span>`:'');
+  const forecast=duration+(f?`<span class="remaining-estimate${stale||now-f.at>60000?' stale':''}" title="${esc(`${f.experimental?'Experimental':'Validated'} historical ${f.stage==='remaining'?'remaining':'total server-time'} estimate · ${fmt(f.seconds)} seconds · ${age(f.at,now)}. Stale or exceeded estimates are not current ETAs.`)}">${forecastLabel(f,now,stale)}</span>`:'');
   const backlog=w?.queued?`${fmt(w.queued)} waiting${Number.isFinite(w.oldest_queue_seconds)?` · oldest ${fmt(w.oldest_queue_seconds)}s`:''}`:'No requests waiting';
   const phaseRedundant=['unavailable','paused'].includes(state);
   const evidenceSummary=`${fmt(d.cache.reused)} prefix reuse · ${fmt(w?.assigned_sessions)} sessions${w?.queued?` · ${fmt(w.queued)} waiting`:''}`;

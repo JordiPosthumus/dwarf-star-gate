@@ -10,6 +10,10 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Stopped stale predictions masquerading as live ETAs.** Server cards now name
+  stale or exceeded forecasts explicitly and distinguish total service time from
+  time remaining. Genie receives the same interpretation rules.
+
 - **Exposed multi-hour prediction failures.** Candidate and baseline reports now
   separate hour-plus targets from shorter work, including bias and coverage.
   Repeated progress samples cannot outweigh other requests within a band, and

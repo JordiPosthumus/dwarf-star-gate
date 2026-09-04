@@ -13,6 +13,19 @@ import { FileLogReader, parseLocalProcessStart, parseLocalTiming, telemetryFiles
 import {cacheInventoryDirectories} from './cache-inventory.mjs';
 const parse = (s, t = 1000) => parseTiming(`0902 14:00:00 ds4-server: ${s}`, t);
 
+test('forecast labels never present stale snapshots or total service time as a live ETA',()=>{
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const context=vm.createContext({});vm.runInContext(source,context);
+  const label=(f,now=100000,stale=false)=>vm.runInContext(`forecastLabel(${JSON.stringify(f)},${now},${stale})`,context);
+  assert.equal(label({at:90000,seconds:50,stage:'remaining'}),'ETA ~40s');
+  assert.equal(label({at:0,seconds:50,stage:'remaining'}),'Forecast stale');
+  assert.equal(label({at:90000,seconds:10,stage:'remaining'}),'Estimate exceeded');
+  assert.equal(label({at:90000,seconds:50,stage:'upload'}),'Total est. 50s');
+  assert.equal(label({at:90000,seconds:50,stage:'remaining'},100000,true),'Forecast stale');
+  assert.equal(label({at:100001,seconds:50,stage:'remaining'}),'ETA unknown');
+  assert.equal(label({at:90000,seconds:null,stage:'remaining'}),'ETA unknown');
+});
+
 const logTime = +new Date(2026,8,2,14,0,5);
 const logLine = message => `0902 14:00:00 ds4-server: ${message}\n`;
 function logFixture(t) {
