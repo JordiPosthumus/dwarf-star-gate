@@ -79,7 +79,12 @@ DSG does not put its name on an engine error or certify it as undispatched.
   not a broken engine, and unrelated work does not block safe initial reassignment.
 - Incomplete stream / missing `finish_reason`: the client did not receive a
   complete protocol response. Check terminal framing and interrupted connections;
-  do not attribute it to the queue timer without matching request evidence.
+  do not attribute it to the queue timer without matching request evidence. DSG
+  records only an allowlisted ending shape: `clean_eof_no_terminal` for EOF at a
+  complete SSE event boundary, `partial_sse_event` for a cut-off event,
+  `engine_error` for an in-band engine failure, `observation_limited` when bounded
+  inspection cannot decide, or `terminal` for a valid terminal event. It retains
+  no event text and does not alter or replay the response.
 
 ## Implemented contract
 
@@ -124,7 +129,11 @@ backoff. Pi displays a waiting status; Escape cancels. There is no three-attempt
 limit in this loop; caller cancellation/deadlines still apply. Request objects,
 streaming uploads, other endpoints, generic 500s, connection failures and partial
 streams are not automatically replayed by this adapter. Existing Pi/SDK retry
-policies outside this transport remain separate; this is not an exactly-once
+policies outside this transport remain separate. Stock Pi currently retries a
+premature stream through its generic bounded retry loop (three retries by default),
+then reports `Stream ended without finish_reason`; DSG's ending-shape evidence
+explains which protocol failure occurred but does not extend that retry budget.
+This is not an exactly-once
 guarantee across client/gateway crashes. It does not extend a client's own HTTP
 deadline, resume an already stopped turn, or move queued work.
 

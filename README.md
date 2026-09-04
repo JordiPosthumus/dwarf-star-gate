@@ -275,6 +275,12 @@ a physical machine. Each server may have its own native context and cache settin
   Generic JSON errors are never intercepted unless the captured request
   independently proves a valid typed GIF caused that exact DS4 response.
 - No automatic replay after an ambiguous upstream failure.
+- Privacy-safe post-dispatch stream evidence distinguishes a real terminal event,
+  an in-band engine error, a clean early EOF, a cut-off SSE event and an
+  observation-limit abstention. Gate Genie can turn the exact bounded failure
+  shape into a developer hardening suggestion, but DSG does not retain stream
+  text, fabricate completion or replay the request. See
+  [client continuity](docs/client-continuity.md).
 - [Patient outage waiting](docs/client-continuity.md): undispatched calls wait for
   readiness/recovery under the same queue allowance, without exhausting the
   client's short retry loop. Pauses and quarantine remain authoritative. DSG's
@@ -640,7 +646,11 @@ continue with two. The controller cannot stop model servers or creative jobs.
 Each manual pause/resume now retains a bounded timestamped control-channel receipt
 (`dashboard`, `workers_cli`, or another local path) and exposes the latest receipt
 in that server's routing tooltip. This identifies how the request reached the
-private operator socket, not which human or same-user process initiated it.
+private operator socket, not which human or same-user process initiated it. A
+scoped agent and Gate Genie cannot clear an operator pause; the unrestricted local
+operator CLI deliberately can. Use scoped holds for maintenance agents. A named
+maintenance lock/lease that would also require an explicit matching release or
+audited override on the broad operator path is [planned](docs/roadmap.md).
 SIGUSR1/SIGUSR2 globally pause/resume admission; SIGTERM requests graceful gateway
 shutdown. Service-manager deadlines can still interrupt long streams. Do not kill
 or restart a live gateway casually; there is no blind restart script.
@@ -671,7 +681,8 @@ six-worker monitoring, complete UI asset bundles, hot registration/removal,
 larger-context workers, empty-roster persistence, bounded health probes and the
 opt-in same-origin/CSRF management boundary, local-log timing/cache parsing,
 partial/oversized lines, rotation, truncation, missing-file recovery and redaction.
-It also covers protocol-specific SSE completion, bounded JPEG/GIF repair/guidance,
+It also covers protocol-specific SSE completion and privacy-safe early-ending
+classification, bounded JPEG/GIF repair/guidance,
 persistent generation quarantine,
 verified reinstatement after remove/re-add, fresh control sockets after restart,
 collector privacy, and bounded Genie/recovery boundaries. `npm run recovery:test`

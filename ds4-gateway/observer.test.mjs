@@ -7,6 +7,7 @@ import http from 'node:http';
 import {Dataset,evidence} from './dataset.mjs';
 import {Genie,briefing,hardeningCandidates,parseGenieReview,tickerStatus} from './genie.mjs';
 import {safeQuarantine} from './generation-health.mjs';
+import {safeGatewayEvent} from './telemetry.mjs';
 
 test('Genie receives an allowlisted quarantine fact, not raw backend text or credentials',()=>{
   const bad={reason:'fatal_accelerator_error',at:'2026-09-02T00:00:00Z',request_id:'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',raw:'PRIVATE'};
@@ -29,6 +30,11 @@ test('Genie sees bounded attribution evidence without mistaking a candidate for 
   const b=briefing(s);assert.equal(b.attribution.counts.corroborated,1);assert.equal(b.attribution.quality.corroboration_rate_pct,33.3);assert.equal(b.attribution.quality.by_worker[0].resolved,3);assert.match(b.semantics.join(' '),/at best a high-confidence candidate/);
   assert.ok(!JSON.stringify(b).includes('PRIVATE'));
 });
+test('gateway event keeps only the bounded incomplete-stream classification',()=>{
+  const event=safeGatewayEvent({event:'request_finished',time:'2026-09-04T12:00:00Z',node:'spark1',outcome:'incomplete_sse',stream_end:'partial_sse_event',detail:'PRIVATE',prompt:'PRIVATE'});
+  assert.equal(event.stream_end,'partial_sse_event');assert.ok(!JSON.stringify(event).includes('PRIVATE'));
+  assert.equal(safeGatewayEvent({event:'request_finished',stream_end:'invented'}).stream_end,undefined);
+});
 test('Genie sees bounded visual-continuation outcomes without media or task authority',()=>{
   const s=snapshot();s.gateway.protections={vision_jpeg:{enabled:true,available:true,rescued:4,guided:1,failed:2,secret:'PRIVATE',last:{time:'2026-09-04T12:00:00Z',kind:'rescued',formats:['gif','PRIVATE'],images:1,node:'spark1',reason:'gif_recovery_rejected',prompt:'PRIVATE'}}};
   const b=briefing(s),v=b.protections.visual_compatibility;
@@ -41,9 +47,10 @@ test('hardening candidates are bounded failure envelopes, not work content or lo
   s.gateway.continuity={recent_rejections:[{time:at,node:'spark1',code:'home_unavailable',reason:'worker_unhealthy',dispatch_state:'not_dispatched',request_id:'PRIVATE',session:'PRIVATE'}]};
   s.gateway.protections={vision_jpeg:{enabled:true,available:true,guided:1,last:{time:at,kind:'guided',node:'spark1',reason:'gif_recovery_rejected',prompt:'PRIVATE'}}};
   s.gateway.recovery={operations:[{worker_id:'spark1',state:'failed',updated_at:Date.parse(at),error:'generation_check_failed',command:'PRIVATE'}]};
-  s.events=[{event:'request_finished',time:at,node:'spark1',outcome:'incomplete_sse',prompt:'PRIVATE'},{event:'request_finished',time:at,node:'spark1',outcome:'complete'},{event:'request_finished',time:at,node:'spark1',outcome:'vision_guidance'},{event:'request_finished',time:at,node:'spark1',outcome:'sse_observation_limited'}];
+  s.events=[{event:'request_finished',time:at,node:'spark1',outcome:'incomplete_sse',stream_end:'partial_sse_event',prompt:'PRIVATE'},{event:'request_finished',time:at,node:'spark1',outcome:'complete'},{event:'request_finished',time:at,node:'spark1',outcome:'vision_guidance'},{event:'request_finished',time:at,node:'spark1',outcome:'sse_observation_limited'}];
   const candidates=hardeningCandidates(s);assert.equal(candidates.length,5);assert.ok(candidates.every(candidate=>/^[a-f0-9]{24}$/.test(candidate.id)));
   assert.deepEqual(new Set(candidates.map(candidate=>candidate.failure_class)),new Set(['worker_quarantine','pre_dispatch_rejection','request_failure','visual_compatibility','recovery_failure']));
+  assert.equal(candidates.find(candidate=>candidate.failure_class==='request_failure').reason,'incomplete_sse:partial_sse_event');
   assert.ok(!JSON.stringify(candidates).includes('PRIVATE'));assert.ok(!JSON.stringify(candidates).includes('request_id'));assert.ok(!candidates.some(candidate=>candidate.reason.includes('active')));
 });
 test('unavailable control layers become generic candidates without leaking transport errors',()=>{

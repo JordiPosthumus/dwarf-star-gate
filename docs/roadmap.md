@@ -99,6 +99,7 @@ are implemented separately.
 | 5 (notebook first slice implemented) | Persistent Genie/operator activity and endpoint settings UI | Private notebook storage, revisioned notes and bounded historical retrieval tested; generated hypotheses, full chat persistence and endpoint test/save/rollback remain planned |
 | 6 (bounded runner implemented) | Opt-in deterministic recovery runner and Genie access | Systemd-user canary complete; a separately enrolled launchd adapter is synthetically tested and still requires a private per-Mac canary. Exact fatal-instance restart plus separately enrolled stopped-service start; see recovery guide for deployment gates |
 | 6a (implemented in source) | Verified changed-profile hand-back | Default-on sub-policy under opt-in automatic recovery; separated identical inspections, same enrolled machine/service, no admitted work, fatal-or-new-invocation proof, private durable adoption, model/context + generation + two cold-to-warm verification. Pauses/agent holds win; no arbitrary command or submitted fingerprint |
+| 6b (planned) | Named durable maintenance locks/leases | Visible owner/reason/expiry policy, explicit release or audited operator override, and a hard veto on broad resume while held; same-user operator CLI attribution remains a documented boundary until this exists |
 
 Orders 2 and 3 can be built alongside reliability diagnosis, without changing live
 routing. Do not wait for an LLM or trained predictor merely to explain why a queue

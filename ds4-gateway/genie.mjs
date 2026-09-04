@@ -95,7 +95,8 @@ export function hardeningCandidates(snapshot) {
   }
   for(const row of (snapshot.events??[]).filter(event=>event?.event==='request_finished').slice(-12)){
     const outcome=boundedCode(row.outcome),scope=boundedWorker(row.node)??'fleet',observed_at=boundedTime(row.time);
-    if(requestFailureOutcomes.has(outcome)&&observed_at)add({failure_class:'request_failure',scope,reason:outcome,observed_at,continuity:'unknown',evidence_refs:[scope==='fleet'?'fleet':`worker:${scope}`]});
+    const streamEnd=boundedCode(row.stream_end),reason=outcome==='incomplete_sse'&&streamEnd?`${outcome}:${streamEnd}`:outcome;
+    if(requestFailureOutcomes.has(outcome)&&observed_at)add({failure_class:'request_failure',scope,reason,observed_at,continuity:'unknown',evidence_refs:[scope==='fleet'?'fleet':`worker:${scope}`]});
   }
   const visual=visualProtectionForBriefing(g?.protections),last=visual.last;
   if(last&&['guided','failed'].includes(last.kind))add({failure_class:'visual_compatibility',scope:last.node??'fleet',reason:last.reason??`visual_${last.kind}`,observed_at:last.time,

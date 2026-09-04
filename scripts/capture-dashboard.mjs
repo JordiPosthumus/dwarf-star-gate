@@ -29,6 +29,12 @@ try {
   await page.waitForFunction(()=>document.getElementById('routing-message').classList.contains('error'));
   await page.waitForFunction(()=>document.getElementById('routing-message').textContent===''&&!document.getElementById('routing-message').classList.contains('error'));
   await page.waitForFunction(()=>document.querySelectorAll('.device').length===3&&document.querySelectorAll('#genie-reports details').length===1&&document.querySelectorAll('#analytics-chart circle').length>0);
+  await page.setViewportSize({width:951,height:900});
+  assert.equal(await page.locator('.device').evaluateAll(cards=>cards.every(card=>{
+    const box=card.getBoundingClientRect(),header=card.querySelector('.device-top');
+    return header.scrollWidth<=header.clientWidth&&[...header.querySelectorAll('.remaining-estimate,.server-verdict,.badge,.routing-toggle')].every(el=>el.getBoundingClientRect().right<=box.right+.5);
+  })),true,'Narrow server-card headers must keep ETA, backlog, phase and routing controls inside the card');
+  await page.setViewportSize({width:1440,height:1100});
   assert.equal(await page.locator('#tab-fleet').getAttribute('aria-selected'),'true');
   assert.equal(await page.locator('#view-fleet').isVisible(),true);
   assert.equal(await page.locator('#view-genie').isHidden(),true);

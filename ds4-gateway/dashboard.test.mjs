@@ -194,7 +194,7 @@ test('excluded routing states are explicit; quarantine offers checked readmissio
   assert.match(source,/\$\('devices'\)\.addEventListener\('click',handleWorkerClick\)/);
   assert.match(source,/Verify and readmit.*small test response/);
   const css=fs.readFileSync(new URL('./ui/brand.css',import.meta.url),'utf8');
-  assert.match(css,/\.device-status\{display:flex/);assert.match(css,/\.routing-toggle\{[^}]*width:29px;height:29px/);
+  assert.match(css,/\.device\{container:device-card \/ inline-size\}/);assert.match(css,/\.device-status\{display:flex/);assert.match(css,/@container device-card \(min-width:780px\)/);assert.match(css,/\.routing-toggle\{[^}]*width:29px;height:29px/);
   assert.match(css,/content:attr\(data-tooltip\)/);assert.doesNotMatch(css,/\.worker-routing\{margin:/);
 });
 
@@ -677,6 +677,7 @@ test('unavailable server verdicts explain the observed management layer and avoi
   assert.match(verdict.detail,/cannot resolve/);assert.match(verdict.detail,/cycling through 3 enrolled SSH routes/);assert.ok(!verdict.detail.includes('worker.example'));
   const html=vm.runInContext(`device({id:'spark1',cache:{},series:[]},${JSON.stringify(worker)},100000,false,1,{decode:1,prefill:1},true)`,context);
   assert.match(html,/server-verdict[^>]*>Unavailable</);assert.match(html,/class="badge bad"[^>]*hidden>unavailable</);
+  assert.match(html,/class="device-name-text">Spark 1<\/span>/);
   const auth={...worker,management_path:{transport:'ssh_tunnel',state:'ssh_error',reason:'adapter_auth_failure'}};
   assert.match(vm.runInContext(`serverVerdict({},${JSON.stringify(auth)},100000,false).detail`,context),/authentication failed/);
 });

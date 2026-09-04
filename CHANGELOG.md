@@ -1,5 +1,21 @@
 # Changelog
 
+## Responsive server-card headers and incomplete-stream evidence
+
+- Server-card headers now use a card-width-aware two-tier layout at ordinary
+  widths. Long machine names truncate on one line, while ETA, backlog, phase and
+  routing controls remain inside the card. The isolated browser check exercises
+  the reported narrow width before generating refreshed public screenshots.
+- DSG now distinguishes a terminal SSE response, an engine-declared stream error,
+  a clean event boundary without a terminal event, a cut-off partial SSE event and
+  an observation-budget limit. The allowlisted `stream_end` code reaches private
+  training evidence and Gate Genie hardening candidates; response bytes, prompt
+  text and generated text do not.
+- Stream classification is diagnosis, not replay. DSG still forwards the original
+  response exactly once and never fabricates a terminal event after dispatch.
+  Synthetic tests prove clean and partial early endings, no backend replay, no
+  retained stream content and unchanged non-SSE JSON handling.
+
 ## Focused dashboard views
 
 - Replaced the increasingly long single dashboard flow with four persistent,

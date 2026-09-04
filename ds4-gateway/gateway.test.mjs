@@ -339,6 +339,34 @@ test('usage observer skips an entire oversized SSE line, including a DONE-shaped
   assert.equal(o.done,true);assert.equal(o.usage.prompt_tokens,12);assert.equal(o.finish_reason,'stop');
 });
 
+test('usage observer distinguishes terminal, clean early EOF and truncated SSE events without retaining content',()=>{
+  const terminal=new UsageObserver();terminal.accept(Buffer.from('data: {"choices":[{"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'));
+  assert.equal(terminal.finishState(),'terminal');assert.equal(terminal.finishState(),'terminal');
+  const clean=new UsageObserver();clean.accept(Buffer.from('data: {"choices":[{"delta":{"content":"PRIVATE"}}]}\n\n'));
+  assert.equal(clean.finishState(),'clean_eof_no_terminal');assert.ok(!JSON.stringify(clean).includes('PRIVATE'));
+  const oneNewline=new UsageObserver();oneNewline.accept(Buffer.from('data: {"choices":[{"delta":{"content":"x"}}]}\n'));
+  assert.equal(oneNewline.finishState(),'partial_sse_event');
+  const partial=new UsageObserver();partial.accept(Buffer.from('data: {"choices":[{"delta":{"content":"x"}}]'));
+  assert.equal(partial.finishState(),'partial_sse_event');
+  const failed=new UsageObserver();failed.accept(Buffer.from('data: {"type":"error","error":{"message":"PRIVATE"}}\n\n'));
+  assert.equal(failed.finishState(),'engine_error');assert.ok(!JSON.stringify(failed).includes('PRIVATE'));
+});
+
+test('gateway records bounded incomplete-stream shape without changing response bytes or replaying',async t=>{
+  const r=await rig(t,1,{dataset_enabled:true});
+  const clean='data: {"choices":[{"delta":{"content":"PRIVATE_STREAM_ALPHA"}}]}\n\n';
+  const partial='data: {"choices":[{"delta":{"content":"PRIVATE_STREAM_BETA"}}]';
+  const a=await r.request(JSON.stringify({fixture_sse:clean,stream:true}),'clean-eof');
+  const b=await r.request(JSON.stringify({fixture_sse:partial,stream:true}),'partial-eof');
+  assert.equal(a.body,clean);assert.equal(b.body,partial);assert.equal(r.backends[0].records.length,2);
+  await until(()=>r.gateway.stats().dataset.finished===2);
+  await r.gateway.close();
+  const dir=path.join(path.dirname(r.config.state_file),'training'),rows=fs.readdirSync(dir).flatMap(f=>fs.readFileSync(path.join(dir,f),'utf8').trim().split('\n').map(JSON.parse));
+  const finishes=rows.filter(row=>row.kind==='finish');assert.deepEqual(finishes.map(row=>row.outcome),['incomplete_sse','incomplete_sse']);
+  assert.deepEqual(finishes.map(row=>row.stream_end),['clean_eof_no_terminal','partial_sse_event']);
+  assert.ok(!JSON.stringify(rows).includes('PRIVATE_STREAM_ALPHA'));assert.ok(!JSON.stringify(rows).includes('PRIVATE_STREAM_BETA'));
+});
+
 test('unavailable embedding encoder cannot change inference bytes, thinking, model limits or success',async t=>{
   const r=await rig(t,1,{dataset_enabled:true,embeddings:{enabled:true,python:'/does-not-exist/dsg-python',model_dir:'/does-not-exist/encoder'}});
   const body=JSON.stringify({model:'deepseek-v4-flash',messages:[{role:'user',content:'PRIVATE_EMBED_TEST'}],reasoning_effort:'xhigh',max_tokens:131072,stream:true});

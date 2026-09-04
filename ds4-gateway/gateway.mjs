@@ -109,14 +109,20 @@ export class UsageObserver {
   thinkingCharacters=0;answerCharacters=0;toolCharacters=0;firstSemanticAt=null;
   pending = ''; usage = undefined; done = false; finish_reason = null;
   skipping = false; limited = false; failed = false; decoder = new StringDecoder('utf8');
+  eventBoundary = true; closed = false;
   constructor(route='/v1/chat/completions'){this.route=route;}
   accept(chunk) {
+    if(this.closed)return;
     // Bound transient decoding even if accept receives one enormous chunk.
     // After overflow, discard through the actual newline, not just this chunk.
     for(let i=0;i<chunk.length;i+=4096) {
       const text=this.decoder.write(chunk.subarray(i,i+4096));
       for(const [j,part] of text.split('\n').entries()) {
-        if(j) {if(!this.skipping)this.line();this.pending='';this.skipping=false;}
+        if(j) {
+          if(!this.skipping){const blank=this.pending.trim().length===0;this.line();this.eventBoundary=blank;}
+          else this.eventBoundary=false;
+          this.pending='';this.skipping=false;
+        }
         if(!this.skipping) {
           if(this.pending.length+part.length>1048576){this.pending='';this.skipping=true;this.limited=true;}
           else this.pending+=part;
@@ -172,6 +178,20 @@ export class UsageObserver {
       if(['stop','length','tool_calls','function_call','content_filter'].includes(reason))this.finish_reason=reason;
       if(u)this.usage={prompt_tokens:count(u.prompt_tokens),completion_tokens:count(u.completion_tokens),cached_tokens:count(u.prompt_tokens_details?.cached_tokens)};
     } catch { /* A telemetry failure must not affect inference. */ }
+  }
+  finishState() {
+    if(!this.closed){
+      const tail=this.decoder.end();this.closed=true;
+      if(tail&&!this.skipping){
+        if(this.pending.length+tail.length>1048576){this.pending='';this.skipping=true;this.limited=true;}
+        else this.pending+=tail;
+      }
+    }
+    if(this.failed)return 'engine_error';
+    if(this.done)return 'terminal';
+    if(this.limited)return 'observation_limited';
+    if(this.skipping||this.pending.length>0||!this.eventBoundary)return 'partial_sse_event';
+    return 'clean_eof_no_terminal';
   }
 }
 
@@ -558,8 +578,9 @@ export function createGateway(config,{visionTranscode}={}) {
       thinking_characters:observer.thinkingCharacters,answer_characters:observer.answerCharacters,tool_characters:observer.toolCharacters,
       semantic_age_ms:observer.lastSemanticAt===null?null:performance.now()-observer.lastSemanticAt,requested_thinking:job.thinking.result});};
     const progressTimer=dataset.enabled?setInterval(progress,30000):null;progressTimer?.unref();
-    const finish = (outcome, detail) => {
+    const finish = (outcome, detail, observedStreamEnd=null) => {
       if (settled) return; settled = true;
+      const streamEnd=responseFormat==='sse'?(observedStreamEnd??observer.finishState()):null;
       const jsonMetadata=jsonUsage?.finish();
       if(jsonMetadata){observer.usage=jsonMetadata.usage??undefined;observer.finish_reason=jsonMetadata.finish_reason??null;}
       const usageObservation=jsonMetadata?.status??(responseFormat!=='sse'?'unsupported_format':!observer.usage?'not_reported':observer.usage.prompt_tokens!=null&&observer.usage.completion_tokens!=null?'observed':'partial');
@@ -583,11 +604,11 @@ export function createGateway(config,{visionTranscode}={}) {
       }
       log('request_finished', { request_id: job.id, node: node.id, session: job.key?.slice(0, 12), outcome,
         queue_ms: job.dispatched - job.created, elapsed_ms: Date.now() - job.dispatched,
-        usage: observer.usage, sse_done: observer.done, requested_thinking: job.thinking.result, detail });
+        usage: observer.usage, sse_done: observer.done, stream_end:streamEnd, requested_thinking: job.thinking.result, detail });
       dataset.record('finish',{request_id:job.id,node:node.id,outcome,queue_ms:job.dispatchedMono-job.createdMono,
         route:req.url,response_format:responseFormat,http_status:clientStatus??response?.statusCode,usage_observation:usageObservation,request_stream:job.requestStream,requested_usage:job.requestedUsage,traffic_class:job.trafficClass,
         service_ms:performance.now()-job.dispatchedMono,total_ms:performance.now()-job.createdMono,first_body_byte_ms:firstBodyByte,
-        request_bytes:requestBytes,usage:observer.usage,finish_reason:observer.finish_reason,requested_thinking:job.thinking.result,
+        request_bytes:requestBytes,usage:observer.usage,finish_reason:observer.finish_reason,stream_end:streamEnd,requested_thinking:job.thinking.result,
         generation:jsonMetadata?.generation??(responseFormat==='sse'?{thinking_characters:observer.thinkingCharacters,answer_characters:observer.answerCharacters,tool_characters:observer.toolCharacters,first_semantic_ms:observer.firstSemanticAt===null?null:observer.firstSemanticAt-job.dispatchedMono}:null)});
       observe(()=>shadow.finished(node.id,job.key,{outcome,finish_reason:observer.finish_reason,
         service_ms:performance.now()-job.dispatchedMono,usage:observer.usage,route:req.url,traffic_class:job.trafficClass}));
@@ -632,7 +653,8 @@ export function createGateway(config,{visionTranscode}={}) {
       const isSSE=String(up.headers['content-type']).includes('text/event-stream');
       observeResponse(up,isSSE);if(body.length)acceptResponseChunk(up,body,isSSE);
       res.writeHead(up.statusCode,responseHeaders(up));res.end(body);
-      finish(up.statusCode>=400?'upstream_http_error':isSSE&&observer.failed?'upstream_engine_error':isSSE&&!observer.done?observer.limited?'sse_observation_limited':'incomplete_sse':'complete',up.statusCode);
+      const streamEnd=isSSE?observer.finishState():null;
+      finish(up.statusCode>=400?'upstream_http_error':!isSSE?'complete':streamEnd==='engine_error'?'upstream_engine_error':streamEnd==='terminal'?'complete':streamEnd==='observation_limited'?'sse_observation_limited':'incomplete_sse',up.statusCode,streamEnd);
     };
     const sendGuidance=(reason,stream,kind='jpeg')=>{
       const guide=visionGuidance({stream,model:config.model,requestId:job.id,kind});
@@ -724,7 +746,7 @@ export function createGateway(config,{visionTranscode}={}) {
       up.on('data',chunk=>acceptResponseChunk(up,chunk,isSSE));
       up.on('error',e=>{res.destroy();finish(job.cancelled?'client_cancelled':'upstream_stream_error',e.code);});
       up.on('aborted',()=>{res.destroy();finish(job.cancelled?'client_cancelled':'upstream_aborted');});
-      up.on('end',()=>finish(up.statusCode>=400?'upstream_http_error':isSSE&&observer.failed?'upstream_engine_error':isSSE&&!observer.done?observer.limited?'sse_observation_limited':'incomplete_sse':'complete',up.statusCode));
+      up.on('end',()=>{const streamEnd=isSSE?observer.finishState():null;finish(up.statusCode>=400?'upstream_http_error':!isSSE?'complete':streamEnd==='engine_error'?'upstream_engine_error':streamEnd==='terminal'?'complete':streamEnd==='observation_limited'?'sse_observation_limited':'incomplete_sse',up.statusCode,streamEnd);});
       up.pipe(res);
     };
     const issue=(replacement,retry=false)=>{

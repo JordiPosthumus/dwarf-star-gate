@@ -28,6 +28,13 @@ possession of that grant, not the identity of a particular model or human. Use
 separate OS identities/restricted tool access if hostile same-user processes are
 in scope. Do not expose this socket or a raw control proxy on the LAN.
 
+The unrestricted operator CLI is intentionally stronger than an agent grant: it
+can clear a manual pause. Current receipts identify its ingress as `workers_cli`,
+not which same-user process or person invoked it. Do not give maintenance agents
+that channel. A planned named maintenance lock/lease will make an approved
+reservation visible and require an explicit matching release or audited override
+before the broad resume path can clear it.
+
 ## Operator setup
 
 From the repository root, after activating this release:

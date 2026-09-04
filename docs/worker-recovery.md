@@ -116,6 +116,31 @@ produces a deterministic live alert with fleet availability and held-request
 counts; fresh Genie commentary may add context but cannot suppress the alarm.
 Intentional operator pauses and scoped agent maintenance holds are not faults.
 
+### Handing back a worker after maintenance
+
+An idle-looking worker is not sufficient evidence for automatic readmission.
+There are two deliberately different control paths:
+
+- A scoped maintenance agent releases only its own hold. If that was the final
+  hold, no operator pause remains and the worker is not quarantined, DSG performs
+  a fresh compatible model/context probe before routing can resume.
+- A quarantined, legitimately changed service can enter verified profile hand-back
+  only when automatic recovery and the hand-back sub-policy are enabled. DSG must
+  independently see the same enrolled machine and service binding, an active exact
+  listener, the same changed profile and instance in two inspections at least ten
+  seconds apart, no admitted work, and either current fatal evidence or a new
+  invocation after quarantine. The fixed executor then verifies model/context,
+  generation and two cold-to-warm conversations before readmission.
+
+An operator pause or another agent hold vetoes both paths. Gate Genie cannot erase
+either one, and elapsed idle time never turns a reservation into permission. The
+full operator `workers.sh resume WORKER_ID` command can deliberately clear an
+operator pause; it is operator authority, not a Genie action. Processes sharing
+the same unrestricted OS user are not individually authenticated on that channel,
+so maintenance agents should use scoped holds. A named durable maintenance
+lock/lease that also blocks broad resume is planned as a stronger coordination
+boundary.
+
 **Verified profile hand-back** handles a legitimate upgrade that changed the
 enrolled runtime fingerprint. Its separate sub-policy defaults on, but it is
 dormant unless automatic recovery itself is enabled. The adapter must report the

@@ -10,6 +10,17 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Made interrupted streams explainable without pretending to recover them.**
+  DSG now records whether an SSE response ended cleanly between events, was cut
+  off inside an event, declared an engine error, exceeded the observation bound or
+  reached a real terminal event. Genie can propose a test for the exact shape;
+  response bytes are unchanged, no request is replayed and no text is retained.
+
+- **Fixed crowded server-card headers.** Identity and ETA now stay together while
+  backlog, phase and routing controls occupy a clean responsive row on ordinary
+  card widths. A narrow-viewport browser assertion prevents controls escaping the
+  card, and the public synthetic screenshots were refreshed.
+
 - **Split the growing control room into four focused views.** Fleet remains the
   default; Gate Genie, Analytics and Activity each get a stable tab while the
   health wire and important notices stay visible everywhere. Keyboard navigation,
