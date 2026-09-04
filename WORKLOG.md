@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Checked what safe KV transfer would require.** Pinned upstream source confirms
+  disk-cache discovery and restore building blocks, but cache files also contain
+  prompt text. Recorded identity, privacy, integrity and isolated continuation
+  canaries before any transfer authority; no live cache files were moved.
+
 - **Made applied handovers measurable.** The private data audit now joins moves
   to their observed queue, service, reported reuse and terminal outcomes. It
   abstains on ambiguous evidence and never presents the unobserved no-move

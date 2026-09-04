@@ -64,6 +64,10 @@ filesystem problem from becoming a routing claim.
 
 ## Why it is not live yet
 
+The [stock-cache feasibility note](cache-transfer-feasibility.md) records the
+existing loading path, sensitive-data boundary and proposed isolated canary.
+It does not enable copying or claim cross-backend compatibility.
+
 Three inputs are still missing:
 
 - Stock DS4 does not currently expose an exact privacy-safe rendered-prefix
