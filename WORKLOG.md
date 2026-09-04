@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Added a frozen occupancy future audit.** Bind the challenger and training
+  artifacts before new traffic, then evaluate only new, completed jobs with the
+  same feature/profile contract. Report errors and fixed baselines without
+  retraining, promotion authority or claims of live routing benefit.
+
 - **Verified full-size attribution audits.** The supported 250,000-record input
   no longer overflows JavaScript's function-argument limit. The minimum-time
   calculation avoids an extra timestamp array; attribution rules are unchanged.

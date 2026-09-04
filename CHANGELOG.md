@@ -1,5 +1,12 @@
 # Changelog
 
+## Audit frozen occupancy models on future traffic
+
+- Add explicit private freeze receipts and a read-only future evaluator for the
+  separate occupancy target. Enforce artifact hashes, chronological boundaries,
+  unseen-job filtering and unchanged feature/profile contracts. Preserve fixed
+  training baselines and request-balanced diagnostics; no production authority.
+
 ## Keep attribution audits within runtime limits
 
 - Replace a timestamp argument spread that overflows at the supported 250,000

@@ -47,6 +47,39 @@ counts alongside error metrics: an aggregate improvement does not establish
 long-job accuracy when training contains no long examples. These diagnostics do
 not tune on the holdout, change promotion gates or authorize occupancy deployment.
 
+### Frozen occupancy future audit
+
+`predictor/occupancy_future.py` provides a separate offline check on genuinely
+later traffic. First freeze the completed candidate and its original prepared
+training file; then prepare another occupancy snapshot after new jobs finish:
+
+```sh
+python predictor/occupancy_future.py freeze \
+  --candidate /private/audit/occupancy-candidate.json \
+  --training /private/audit/prepared.json \
+  --receipt /private/audit/future-freeze.json
+python predictor/occupancy_future.py evaluate \
+  --candidate /private/audit/occupancy-candidate.json \
+  --training /private/audit/prepared.json \
+  --receipt /private/audit/future-freeze.json \
+  --prepared /private/later/prepared.json
+```
+
+Use the locked predictor environment. The private, exclusively created receipt
+records freeze time and both artifact hashes. Changed artifacts, feature-builder
+identity or worker inventory are rejected. A request must first appear after the
+freeze, must not already occur in the prepared training set, and must finish by
+the later snapshot. Later progress on an earlier-admitted job is not independent
+future traffic. No available future labels means no accuracy score, not success.
+
+Reports retain request-balanced errors, duration coverage, capped/normal slices
+and fixed baseline rules: original-training worker means plus causal history. This is
+**frozen-model replay**, not a record of predictions served live, a causal routing
+experiment or promotion approval. It does not retrain, replace active artifacts,
+change natural-completion models or relax their existing gates. Keep input files,
+receipts and reports private; hashes bind local artifacts, not adversarially
+tamper-proof publication certificates.
+
 ## Current lifecycle
 
 Implemented, opt-in. Ordinary routing remains the default. A fitted model is
