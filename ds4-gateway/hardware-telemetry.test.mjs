@@ -8,6 +8,28 @@ import {PassThrough} from 'node:stream';
 import {HardwareTelemetry,hardwareTelemetryConfig,nvidiaLinuxCommand,parseNvidiaLinux} from './hardware-telemetry.mjs';
 import {HardwareSnapshot} from './hardware-snapshot.mjs';
 import {evidence} from './dataset.mjs';
+import {parseMacActivity,sampleMacHardware} from './macos-hardware.mjs';
+import {MacSource} from './hardware-telemetry.mjs';
+
+test('unprivileged Mac samples expose occupied RAM and one driver activity reading, never guessed power',async()=>{
+  const text='"PerformanceStatistics" = {"Device Utilization %"=99}';
+  assert.equal(parseMacActivity(text),99);assert.equal(parseMacActivity(text+'\n'+text),null);assert.equal(parseMacActivity(text.replace('99','199')),null);
+  const sample=await sampleMacHardware({platform:'darwin',totalmem:()=>128,freemem:()=>32,now:()=>1000,exec:async(file,args,options)=>{assert.equal(file,'/usr/sbin/ioreg');assert.equal(options.timeout,4000);return {stdout:text};}});
+  assert.equal(sample.memory_used_bytes,96);assert.equal(sample.accelerator_activity_pct,99);assert.equal(sample.power_watts,undefined);
+  const partial=await sampleMacHardware({platform:'darwin',totalmem:()=>128,freemem:()=>32,exec:async()=>{throw new Error();}});assert.equal(partial.memory_used_bytes,96);assert.equal(partial.accelerator_activity_pct,undefined);
+  await assert.rejects(sampleMacHardware({platform:'linux'}),/macos_local_unavailable/);
+});
+
+test('Mac sampling coalesces polls and drops a late result after close',async()=>{
+  let resolve,calls=0,accepted=0,signal;const source=new MacSource(()=>accepted++,()=>{},{sample:options=>{calls++;signal=options.signal;return new Promise(r=>resolve=r);}});
+  source.poll();source.poll();await Promise.resolve();assert.equal(calls,1);source.close();assert.equal(signal.aborted,true);resolve({time:1000});await new Promise(r=>setImmediate(r));assert.equal(accepted,0);
+});
+
+test('Mac adapter cannot attribute local metrics to an SSH-backed worker',()=>{
+  const h=new HardwareTelemetry({enabled:true,workers:{remote:{adapter:'macos-local'}}});
+  h.sync([{id:'remote',ssh:'remote-alias'}],[{id:'remote'}]);
+  assert.equal(h.snapshot('remote').reason,'local_adapter_remote_worker');assert.equal(h.sources.size,0);h.close();
+});
 
 test('private hardware bridge feeds allowlisted evidence and rejects stale, malformed or linked input',t=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-hardware-bridge-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));

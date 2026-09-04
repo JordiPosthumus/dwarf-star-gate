@@ -1,5 +1,12 @@
 # Changelog
 
+## Unprivileged local Mac telemetry
+
+- Add explicit `macos-local` enrollment for host RAM occupancy and AGX driver
+  activity. No sudo, power estimates, DS4 changes or overlapping probes.
+- Preserve partial readings and reject ambiguous accelerator output; bound and
+  cancel driver queries. RAM includes reclaimable caches, not memory pressure.
+
 ## Hardware coverage across forecast stages
 
 - Attach fresh hardware snapshots to upload and embedding-completion evidence,

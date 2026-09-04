@@ -84,6 +84,21 @@ configured power limit or TDP as if it were a measured draw.
 
 ## Generic local JSONL adapter
 
+### Built-in unprivileged Mac adapter
+
+For a DS4 worker running on the **same Mac as the dashboard**, explicitly enroll
+`"m3-studio": { "adapter": "macos-local" }` in the workers map. It reads host
+occupied RAM (`total memory − free memory`, including reclaimable caches) and
+the single AGX driver's reported device-utilization percentage. RAM occupancy is
+not memory pressure, and GPU activity is not request attribution. Missing or
+ambiguous driver readings remain unknown. It does not estimate power or clocks,
+invoke sudo/powermetrics, or modify DS4. SSH-backed workers are rejected rather
+than mistakenly assigned the dashboard host's readings. Queries are asynchronous,
+bounded to four seconds/4 MiB, and never overlap. Closing the observer cancels its
+pending query. Unsupported platforms remain explicitly unavailable.
+
+### Existing numerical-file producer
+
 For a Mac, external wall-power meter, or another platform-specific collector,
 DSG can tail an already-existing local JSONL file:
 

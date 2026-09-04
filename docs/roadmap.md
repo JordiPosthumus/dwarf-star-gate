@@ -568,8 +568,9 @@ No TDP or speed-derived placeholder is allowed.
 - One allowlisted numerical schema now sits behind platform-specific, opt-in
   adapters. Spark/Linux uses supported NVIDIA/system counters; macOS and external
   meters have an explicit local JSONL boundary so a missing privileged power/GPU
-  metric remains unknown rather than zero. A packaged unprivileged Mac collector
-  is not claimed.
+  metric remains unknown rather than zero. An explicit local-only Mac adapter
+  now reads occupied host RAM and single-driver GPU activity without privilege;
+  power and clocks remain unknown and live enrollment still needs validation.
 - The adapter may be reached through an already enrolled management transport,
   but it accepts no caller-supplied command. Bound execution time, output, sample
   history and cardinality. Hardware telemetry grants no restart or routing power.

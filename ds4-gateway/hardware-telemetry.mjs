@@ -5,10 +5,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {spawn} from 'node:child_process';
+import {sampleMacHardware} from './macos-hardware.mjs';
 
 const ID=/^[a-zA-Z0-9][\w-]{0,63}$/,SSH=/^[a-zA-Z0-9][\w.@-]{0,252}$/;
 const MAX_LINE=4096,MAX_READ=256*1024,HISTORY_MS=15*60000,MAX_SAMPLES=180;
-const ADAPTERS=new Set(['nvidia-linux','jsonl-file']);
+const ADAPTERS=new Set(['nvidia-linux','jsonl-file','macos-local']);
 const MEMORY_SCOPES=new Set(['host','host_unified']);
 const ACTIVITY_SCOPES=new Set(['gpu_kernel_time','accelerator']);
 const POWER_SCOPES=new Set(['compute_module','system','gpu_only']);
@@ -76,6 +77,14 @@ export function hardwareTelemetryConfig(raw={}){
   return {enabled:true,interval_ms:interval,workers};
 }
 
+export class MacSource{
+  constructor(accept,status,{sample=sampleMacHardware}={}){Object.assign(this,{accept,status,sample});this.pending=null;this.closed=false;}
+  poll(){if(this.closed||this.pending)return;const controller=new AbortController();this.pending=controller;
+    Promise.resolve().then(()=>this.sample({signal:controller.signal})).then(row=>{if(!this.closed){this.accept(row);this.status('connected',null);}},()=>{if(!this.closed)this.status('disconnected','macos_local_unavailable');}).finally(()=>{if(this.pending===controller)this.pending=null;});
+  }
+  close(){this.closed=true;this.pending?.abort();}
+}
+
 class FileSource{
   constructor(file,accept){this.file=file;this.accept=accept;this.identity=null;this.offset=0;this.fragment='';this.skipping=false;}
   poll(now){let fd;
@@ -120,17 +129,21 @@ export class HardwareTelemetry{
     value.current=safe;value.last_sample_at=safe.time;value.series.push(safe);value.series=value.series.filter(item=>safe.time-item.time<HISTORY_MS).slice(-MAX_SAMPLES);value.state='connected';value.reason=null;this.save(row);
   }
   sync(definitions=[],workers=[]){if(!this.config.enabled)return;const active=new Set(workers.map(worker=>worker.id)),nodes=new Map(definitions.map(node=>[node.id,node]));
-    for(const [id,config] of this.config.workers){const signature=config.adapter==='nvidia-linux'?`${config.adapter}:${nodes.get(id)?.ssh??''}`:`${config.adapter}:${config.path}`;const existing=this.sources.get(id);
+    for(const [id,config] of this.config.workers){const signature=['nvidia-linux','macos-local'].includes(config.adapter)?`${config.adapter}:${nodes.get(id)?.ssh??''}`:`${config.adapter}:${config.path}`;const existing=this.sources.get(id);
       if(!active.has(id)){existing?.source.close();this.sources.delete(id);this.status(id,'waiting','worker_not_registered');continue;}
       if(existing?.signature===signature)continue;existing?.source.close();this.sources.delete(id);
       if(config.adapter==='nvidia-linux'){
         const ssh=nodes.get(id)?.ssh;if(!SSH.test(ssh??'')||ssh.startsWith('-')){this.status(id,'disconnected','management_transport_unavailable');continue;}
         const source=new NvidiaSource(ssh,this.config.interval_ms,sample=>this.accept(id,sample),(state,reason)=>this.status(id,state,reason),this.options);this.sources.set(id,{signature,source,adapter:config.adapter});source.start();
-      }else this.sources.set(id,{signature,source:new FileSource(config.path,sample=>this.accept(id,sample)),adapter:config.adapter});
+      }else if(config.adapter==='macos-local'){
+        if(nodes.get(id)?.ssh){this.status(id,'disconnected','local_adapter_remote_worker');continue;}
+        this.sources.set(id,{signature,source:new MacSource(sample=>this.accept(id,sample),(state,reason)=>this.status(id,state,reason)),adapter:config.adapter});
+      }
+      else this.sources.set(id,{signature,source:new FileSource(config.path,sample=>this.accept(id,sample)),adapter:config.adapter});
     }
   }
   poll(now=this.options.now?.()??Date.now()){if(!this.config.enabled||now<this.nextPoll)return;this.nextPoll=now+this.config.interval_ms;
-    for(const [id,{source,adapter}] of this.sources)if(adapter==='jsonl-file'){const result=source.poll(now);if(result.state!=='connected')this.status(id,result.state,result.reason);}
+    for(const [id,{source,adapter}] of this.sources)if(adapter==='macos-local')source.poll();else if(adapter==='jsonl-file'){const result=source.poll(now);if(result.state!=='connected')this.status(id,result.state,result.reason);}
   }
   snapshot(id,now=this.options.now?.()??Date.now()){
     const value=this.states.get(id);if(!value)return {schema:1,configured:false,state:'not_configured',reason:null,last_sample_at:null,current:null,series:[]};
