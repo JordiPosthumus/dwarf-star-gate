@@ -1,5 +1,18 @@
 # Changelog
 
+## Align Mac enrollment guides with implemented recovery gates
+
+- Replace stale claims that all removed Mac jobs are unsupported with the actual
+  separate bootstrap prerequisites: retained original definition, explicit caller
+  policy, matching prior identity and acknowledged per-installation canary.
+- Distinguish deleted/unretained launch definitions from merely absent jobs. Do not
+  reconstruct launchers, reuse restart-only certification or claim deployment
+  readiness from source tests.
+- Preserve an existing fleet-wide recovery policy during new-worker enrollment;
+  require an approved operator pause instead of silently disabling other workers'
+  protection. Link the complete removed-job validation from the agent/checklist
+  entry points. No recovery authority or runtime configuration changed.
+
 ## Audit all frozen-model feature groups and later traffic
 
 - Expand offline `input_support` from hardware-only detail to all feature groups

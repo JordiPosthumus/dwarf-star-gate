@@ -10,6 +10,13 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Clarified Mac recovery enrollment boundaries.** The agent-facing guide now
+  distinguishes loaded restart, stopped-service start, certified removed-job
+  bootstrap and missing-original-definition manual recovery. Corrected stale
+  blanket “unsupported” wording without claiming any live Mac is certified.
+  Enrollment instructions preserve automatic protection of existing workers and
+  require an approved pause for the new worker, not a silent fleet-wide disable.
+
 - **Checked what the frozen XGB models actually use.** A larger future replay now
   has 116 completions. Remaining-time error improves overall, but admission and
   updated service forecasts still lose to simple history; session diversity is

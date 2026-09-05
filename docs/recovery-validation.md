@@ -10,12 +10,22 @@ claim that recovery is enabled on a particular installation. Follow
    Record exact model, executable, configuration and service identities privately.
 2. Confirm exclusive DSG ownership of the endpoint. Direct clients are not visible
    to the gateway and must not be interrupted by an uncoordinated restart.
-3. Leave automatic recovery off initially. Drain the selected worker and wait for
-   both its active request and queue to empty. Keep other workers available.
+3. On a new deployment, leave automatic recovery off initially. If it already
+   protects other enrolled workers, preserve that policy and obtain an explicit
+   operator pause for the test worker before loading untested enrollment. Drain
+   that worker and wait for both its active request and queue to empty. Keep other
+   workers available, and do not override agent holds or maintenance locks.
 4. Confirm the enrolled helper reports the expected machine/profile and that the
    service PID owns the loopback listener. Unknown identities stop the test.
 
 ## Run the operator-only canary
+
+The checks below cover loaded-job restart or separately enrolled stopped-service
+start. Removed-job restoration requires the additional
+[bootstrap enrollment and controlled installation validation](macos-retained-definition.md#controlled-installation-validation).
+It deliberately removes the exact job, uses retained original launch bytes and
+requires a distinct acknowledged bootstrap certificate; an ordinary restart
+canary cannot substitute for it.
 
 ```sh
 node ds4-gateway/recovery-control.mjs status

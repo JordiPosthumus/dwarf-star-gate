@@ -22,13 +22,18 @@ private enrollment, not that its inference endpoint is unusable.
    [Mac user LaunchAgent](#install-on-an-explicitly-enrolled-macos-launchagent), or
    unsupported/manual. For a Mac running DSG itself, also follow
    [same-host transport](#same-host-mac-transport-explicit-enrollment).
-2. Keep automatic recovery off while installing the fixed helper and private
-   configuration. Use the applicable section below; do not replace your working
+2. On a new deployment, keep automatic recovery off while installing the fixed
+   helper and private configuration. If it already protects other workers, do not
+   disable it silently: obtain an operator pause for the new worker before loading
+   its enrollment. Use the applicable section below; do not replace your working
    launcher or copy another owner's machine paths/fingerprints.
 3. Run **read-only inspection**, then record the verified service identity in
    `recovery.workers` inside ignored `config.local.json`. This is separate from
    the ordinary inference-worker list. Choose restart-only or separately opt into
-   loaded-but-stopped start. Removed Mac jobs are not recoverable yet.
+   loaded-but-stopped start. Removed Mac jobs require the separately opted-in
+   [retained-definition/bootstrap path](macos-retained-definition.md), exact
+   original bytes, approved native evidence and their own acknowledged canary;
+   missing launch bytes cannot be reconstructed or bypassed.
 4. Apply the configuration at an agreed DSG reload, then reserve an idle worker
    for the **operator canary**. This test really restarts/starts the enrolled
    service and leaves routing paused; it is not a harmless connection test.
