@@ -31,6 +31,9 @@ The first release records:
   excluded. The model supplies only a bounded title and suggested experiment.
   Code reattaches the authoritative candidate facts, deduplicates by class/scope/
   reason and writes a revision only when the evidence time or suggestion changes.
+  Repeated signatures keep their newest occurrence within the bounded review
+  input, not the oldest duplicate. This is not an all-history incident count;
+  distinct workers, failure classes and reasons remain separate envelopes.
 
 The private journal is `runtime/genie/memory/notebook.jsonl` beside the configured
 gateway state. Files are mode 0600 inside a mode-0700 directory. It survives model,

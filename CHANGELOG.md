@@ -1,5 +1,12 @@
 # Changelog
 
+## Retain newest Genie hardening evidence
+
+- Keep the newest bounded occurrence when deduplicating a failure signature;
+  do not overwrite it with the oldest duplicate after sorting.
+- Cover input permutations, distinct workers/reasons and private-field exclusion.
+  This does not add incident-history counting, diagnosis or retry authority.
+
 ## Show actionable cache checks in machine cards
 
 - Project bounded per-worker continuity findings with pair coverage, timestamps

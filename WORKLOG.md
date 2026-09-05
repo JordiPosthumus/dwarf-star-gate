@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Kept recurring Genie failure evidence current.** Fixed duplicate selection
+  that retained the oldest occurrence after newest-first sorting. Preserve
+  separate workers/reasons and test shuffled input without exposing raw events
+  or giving suggestions any additional action authority.
+
 - **Made machine-card cache checks actionable.** Replace session counters with
   low-reuse findings, coverage, recency and next checks. Separate observed disk
   restores/load spans from unproved lost reuse and unknown lost time. Reuse the

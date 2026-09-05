@@ -15,6 +15,24 @@ test('marker-only compatibility reaches Genie as a hypothesis, not recovery auth
   assert.ok(!JSON.stringify(candidates).includes('PRIVATE'));assert.deepEqual(briefing(s).recovery.offers,[]);
   s.events[0].outcome='client_cancelled';assert.deepEqual(hardeningCandidates(s),[]);
 });
+test('hardening signatures retain their newest bounded occurrence regardless of input order',()=>{
+  const events=[1,2,3].map(second=>({event:'request_finished',time:`2026-01-01T00:00:0${second}Z`,node:'worker-a',outcome:'incomplete_sse',stream_end:'clean_eof_no_terminal',prompt:'PRIVATE_CONTENT',request_id:'PRIVATE_ID'}));
+  const orders=[[0,1,2],[0,2,1],[1,0,2],[1,2,0],[2,0,1],[2,1,0]];
+  const results=orders.map(order=>hardeningCandidates({...sample(),events:order.map(i=>events[i])}));
+  for(const result of results){
+    assert.equal(result.length,1);assert.equal(result[0].observed_at,'2026-01-01T00:00:03.000Z');
+    assert.equal(result[0].continuity,'unknown');assert.deepEqual(result,results[0]);
+    assert.ok(!JSON.stringify(result).includes('PRIVATE'));
+  }
+  const distinct=[...events,{...events[1],node:'worker-b'},{...events[0],stream_end:'connection_reset'}];
+  const result=hardeningCandidates({...sample(),events:distinct});
+  assert.equal(result.length,3);assert.equal(new Set(result.map(c=>c.id)).size,3);
+  assert.deepEqual(result.map(c=>[c.scope,c.reason,c.observed_at]),[
+    ['worker-a','incomplete_sse:clean_eof_no_terminal','2026-01-01T00:00:03.000Z'],
+    ['worker-b','incomplete_sse:clean_eof_no_terminal','2026-01-01T00:00:02.000Z'],
+    ['worker-a','incomplete_sse:connection_reset','2026-01-01T00:00:01.000Z']
+  ]);
+});
 function fixture(t){const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'dsg-memory-')));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));return path.join(root,'memory');}
 test('memory is opt-in, durable, idempotent, private and separate from generation proof',t=>{
   const dir=fixture(t),m=new GenieMemory(dir,{now:()=>1000});m.observe(sample());assert.equal(fs.existsSync(dir),false);

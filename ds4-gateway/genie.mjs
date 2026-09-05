@@ -140,7 +140,12 @@ export function hardeningCandidates(snapshot) {
   if(snapshot.gateway_error&&snapshotAt)add({failure_class:'gateway_status_unavailable',reason:'gateway_status_unavailable',observed_at:snapshotAt,continuity:'unknown',evidence_refs:['fleet']});
   if(snapshot.continuity_door_error&&snapshotAt)add({failure_class:'continuity_door_unavailable',reason:'continuity_door_status_unavailable',observed_at:snapshotAt,continuity:'unknown',evidence_refs:['fleet']});
   candidates.sort((a,b)=>Date.parse(b.observed_at)-Date.parse(a.observed_at)||a.id.localeCompare(b.id));
-  return [...new Map(candidates.map(candidate=>[candidate.id,candidate])).values()].slice(0,16);
+  // Keep the first (newest) envelope for each signature. Constructing a Map
+  // from all rows here keeps its position but overwrites its value with the
+  // oldest occurrence, making recurring incidents look stale.
+  const latest=new Map();
+  for(const candidate of candidates)if(!latest.has(candidate.id))latest.set(candidate.id,candidate);
+  return [...latest.values()].slice(0,16);
 }
 
 export function briefing(snapshot) {
