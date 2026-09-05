@@ -110,6 +110,26 @@ override and can discard in-memory hold intent or abandon client connections.
   inference calls. The one connection whose outcome is already ambiguous gets an
   identified `DSG Report:` 503 and is **not** replayed.
 
+If that connection fails before response headers, the Door now explicitly says
+**backend execution is unknown**: the core may already have forwarded the request.
+It advises checking task state before deciding whether to retry, not simply
+resubmitting once readiness returns. The response keeps its 503/error code and
+adds `X-DSG-Dispatch-State: unknown` plus an `error.continuity` envelope:
+`schema: 1`, `source: continuity_door`, `dispatch_state: unknown`,
+`retry_class: inspect_before_retry`, and `reason: core_connection_failed`.
+Its new `request_id` matches `X-Request-Id` and identifies this **Door response**,
+not a proven core/backend execution. Only a valid caller `X-DSG-Call-Id` is echoed
+as `call_id`; otherwise it is null. This is never a non-dispatch certificate.
+After response headers, transport failure still aborts the stream; the Door does
+not append guidance, a finish marker or a fabricated successful completion.
+
+**The Door's no-replay promise does not control a harness's own retry loop.** An
+isolated real Pi 0.84.4 test confirms that native retries can resubmit the same
+model context after this 503 despite the explicit unknown-execution receipt.
+With native retries disabled only in the disposable fixture, it stops instead.
+Neither case is seamless post-dispatch recovery. DSG does not change installed
+Pi retry settings; a client-aware execution/retry contract remains necessary.
+
 This is not a durable message queue and not transparent mid-stream failover. It
 cannot reconstruct an answer already emitted, prove that an arbitrarily crashed
 DS4 engine did no work, or revive a client that has already closed its socket.

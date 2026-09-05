@@ -134,6 +134,16 @@ capability contract other harnesses can implement; keep Pi event mapping in its
 adapter. Unsupported versions remain advisory. Do not extend the strict current
 heartbeat payload with commands without negotiation and compatibility tests.
 
+Native retry ownership also needs an explicit contract. The optional
+`pi-door-failure.test.mjs` fixture pins Pi 0.84.4 and demonstrates that its native
+retry loop can resubmit identical model context after a Door 503 marked
+`dispatch_state: unknown` / `retry_class: inspect_before_retry`. DSG's transport
+does not perform that retry. A new call ID on the new client attempt is not
+exactly-once task execution. Future Pi/upstream integration should preserve typed
+execution uncertainty through provider errors and negotiate retry authority,
+with tool-state and durable receipt tests. Do not globally disable native retries
+or reinterpret an unknown outcome as safe without explicit operator approval.
+
 - [x] Document the current boundary: coarse Agent Watch and scoped transport
   fixtures; no installed session control or snippet-reading capability.
 - [ ] Verify supported Pi lifecycle/follow-up APIs and pin the tested contract,

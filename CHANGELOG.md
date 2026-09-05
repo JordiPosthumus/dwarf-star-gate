@@ -1,5 +1,16 @@
 # Changelog
 
+## Label unknown execution after a lost core connection
+
+- Replace the Door's blanket resubmission advice with explicit unknown backend
+  execution and inspect-before-retry guidance. Keep HTTP status/error code and
+  add a versioned uncertainty envelope, response ID and validated caller ID.
+- Confirm DSG's certified-retry transport does not replay this outcome; partial
+  responses still abort without appended guidance or fabricated completion.
+- Add a pinned, optional real Pi fixture proving native retries remain separate:
+  the same model context can be resubmitted after this 503. Preserve provider
+  capabilities and installed settings. Safe post-dispatch recovery remains open.
+
 ## Share an offline attribution audit's metric allowance explicitly
 
 - Add reconciliation-only `--shared-metric-budget`: complete selected metric

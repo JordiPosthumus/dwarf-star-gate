@@ -135,6 +135,11 @@ These are retained goals, not forgotten wishlist items. The
 [first-class optional Pi integration plan](pi-integration-plan.md) connects their
 delivery while keeping permissions and ordinary gateway operation independent.
 
+- **Post-dispatch client continuity:** the Door now labels lost-core replies as
+  unknown execution, not retry permission. Real Pi fixtures show native retries
+  can still resubmit independently of DSG's transport. Preserve typed uncertainty
+  through a negotiated client/provider contract and prove tool-state/idempotency
+  behavior before claiming safe resumption. No installed retry settings change.
 - **[Priority Lens](roadmap.md#future-opt-in-priority-lens):** persistent consent
   to bounded request snippets, explainable prioritization and user feedback.
   Protect privacy/fairness; core scheduling must survive Genie unavailability.

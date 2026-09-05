@@ -7,11 +7,23 @@ import path from 'node:path';
 import {timingSafeEqual,randomUUID} from 'node:crypto';
 import {loadConfig,isMain,continuityEnabled,gatewayPort,doorSocket} from './config.mjs';
 import {dsgReport,invalidHttp} from './report.mjs';
+import {CALL_ID_HEADER,DISPATCH_HEADER,validCallId} from './continuity.mjs';
 
 const hopHeaders=new Set(['connection','keep-alive','proxy-authenticate','proxy-authorization','te','trailer','transfer-encoding','upgrade']);
 function headers(input){const excluded=new Set([...hopHeaders,...String(input.connection??'').toLowerCase().split(',').map(x=>x.trim())]);return Object.fromEntries(Object.entries(input).filter(([key])=>!excluded.has(key.toLowerCase())));}
 function json(res,status,value){if(res.destroyed||res.headersSent)return;res.writeHead(status,{'content-type':'application/json','cache-control':'no-store'});res.end(JSON.stringify(value));}
 function report(res,status,code,message){json(res,status,{error:{type:'gateway_error',code,message:dsgReport(message)}});}
+function reportUnknownCoreExecution(req,res){
+  if(res.destroyed||res.headersSent)return;
+  // This identifies the Door's error response, not a backend execution. Even a
+  // lost response before headers may follow acceptance/dispatch by the core.
+  const request_id=randomUUID();
+  res.setHeader('x-request-id',request_id);res.setHeader(DISPATCH_HEADER,'unknown');
+  json(res,503,{error:{type:'gateway_error',code:'continuity_core_unavailable',
+    message:dsgReport('Connection to the DSG core failed. Backend execution is unknown: the core may already have forwarded this request. DSG did not replay it. Check the task state before deciding whether to retry.'),
+    continuity:{schema:1,source:'continuity_door',request_id,call_id:validCallId(req.headers[CALL_ID_HEADER]),
+      dispatch_state:'unknown',retry_class:'inspect_before_retry',reason:'core_connection_failed'}}});
+}
 
 async function listenControlSocket(control,socketPath){
   const stat=()=>{try{return fs.lstatSync(socketPath,{bigint:true});}catch(error){if(error.code==='ENOENT')return null;throw error;}};
@@ -88,7 +100,7 @@ export function createDoor(config,{now=Date.now}={}){
       upstreamResponse=up;state.forwarded++;
       res.writeHead(up.statusCode,headers(up.headers));up.on('error',responseFailed);up.on('aborted',responseFailed);up.on('end',()=>finish(false));up.pipe(res);
     });
-    upstream.on('error',()=>{if(settled)return;finish(true);automaticHold('core_connection_failed');if(!res.headersSent)report(res,503,'continuity_core_unavailable','Continuity door could not reach the DSG core. The request was dispatched only to the local core connection and was not replayed; retry after DSG reports ready.');else res.destroy();});
+    upstream.on('error',()=>{if(settled)return;finish(true);automaticHold('core_connection_failed');if(!res.headersSent)reportUnknownCoreExecution(req,res);else res.destroy();});
     req.on('aborted',cancel);req.on('error',cancel);res.on('close',clientClosed);req.pipe(upstream);
   }
   const release=()=>{invalidateProbe();state.holding=false;state.hold_id=null;state.hold_kind=null;state.reason=null;state.since=null;state.last_transition={action:'release',at:new Date(now()).toISOString()};for(const item of [...held]){remove(item);proxy(item.req,item.res);}};

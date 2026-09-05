@@ -71,6 +71,12 @@ DSG does not put its name on an engine error or certify it as undispatched.
 
 ## Distinct failure paths
 
+- `continuity_core_unavailable` from the Door: a failed core connection does not
+  prove that the core never dispatched work, even before response headers.
+  The [Door's unknown-execution response](continuity-door.md) tells the caller
+  to inspect task state; its `dispatch_state: unknown` is not a retry certificate.
+  DSG's certified-retry transport returns it unchanged. Native harness retries
+  remain separate and may still resubmit; this is not automatic safe recovery.
 - `home_unavailable` with `worker_connect_refused`: the original inference POST
   encountered `ECONNREFUSED` on a witnessed fresh socket before TCP connected.
   DSG certifies that this request did not reach the worker. The opt-in patient

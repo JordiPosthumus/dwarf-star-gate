@@ -10,6 +10,12 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Made lost-core replies honest about execution uncertainty.** The Door now
+  labels unknown dispatch and advises inspecting task state before retrying.
+  A real Pi fixture shows why this is not enough for exactly-once behavior:
+  native client retries can still resubmit independently. No retry setting,
+  live session or model capability is changed.
+
 - **Kept fresh attribution audits usable as daily telemetry grows.** An explicit
   offline option shares the existing combined metric allowance across complete
   files; overflow still fails rather than silently shortening history. Short

@@ -9,6 +9,7 @@ import {once,EventEmitter} from 'node:events';
 import {spawn} from 'node:child_process';
 import {createDoor} from './door.mjs';
 import {doorControl} from './door-client.mjs';
+import {createContinuityFetch} from './continuity-client.mjs';
 import {coordinatedCoreRestart,releaseParkedCore,PARK_REASON} from './service-control.mjs';
 
 test('lifecycle release cannot clear a newer hold, even with an identical reason',{timeout:5000},async t=>{
@@ -33,6 +34,30 @@ const request=(port,body)=>new Promise((resolve,reject)=>{const req=http.request
 const get=(port,route)=>new Promise((resolve,reject)=>{http.get({host:'127.0.0.1',port,path:route,agent:false,headers:{authorization:'Bearer test'}},res=>{
   const chunks=[];res.on('data',c=>chunks.push(c));res.on('error',reject);res.on('end',()=>resolve({status:res.statusCode,body:Buffer.concat(chunks).toString()}));
 }).on('error',reject);});
+test('lost core replies report unknown execution, not permission to resubmit',{timeout:5000},async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-door-unknown-'));let executions=0,fetches=0;
+  const core=http.createServer((req,res)=>{
+    if(req.url==='/health'){req.resume();return res.end('ok');}
+    req.resume();req.on('end',()=>{executions++;res.destroy();});
+  }),corePort=await listen(core);
+  const door=createDoor({host:'127.0.0.1',port:0,api_key:'test',continuity_door:{enabled:true,core_port:corePort,control_socket:path.join(dir,'door.sock'),health_interval_ms:60000}});
+  await door.start();t.after(async()=>{await door.close();core.closeAllConnections();await new Promise(r=>core.close(r));fs.rmSync(dir,{recursive:true,force:true});});
+  const baseUrl=`http://127.0.0.1:${door.server.address().port}/v1`,callId='11111111-1111-4111-8111-111111111111';
+  const transport=createContinuityFetch({baseUrl,fetchImpl:(...args)=>{fetches++;return fetch(...args);},wait:async()=>{throw new Error('Unknown dispatch must not trigger a certified retry');}});
+  const response=await transport(baseUrl+'/chat/completions',{method:'POST',headers:{'x-dsg-call-id':callId},body:'{"private":"PRIVATE_BODY"}'});
+  const body=await response.json(),c=body.error.continuity;
+  assert.equal(response.status,503);assert.equal(response.headers.get('x-dsg-dispatch-state'),'unknown');
+  assert.equal(c.schema,1);assert.equal(c.source,'continuity_door');assert.equal(c.dispatch_state,'unknown');
+  assert.equal(c.retry_class,'inspect_before_retry');assert.equal(c.reason,'core_connection_failed');assert.equal(c.call_id,callId);
+  assert.equal(c.request_id,response.headers.get('x-request-id'));assert.match(c.request_id,/^[a-f0-9-]{36}$/);
+  assert.match(body.error.message,/Backend execution is unknown/);assert.doesNotMatch(body.error.message,/retry after DSG reports ready/);
+  assert.equal(fetches,1);assert.equal(executions,1);assert.equal(response.headers.get('retry-after'),null);
+  assert.ok(!JSON.stringify(body).includes('PRIVATE_BODY'));
+  door.release();
+  const invalid=await fetch(baseUrl+'/chat/completions',{method:'POST',headers:{'x-dsg-call-id':'PRIVATE_CALL'},body:'{}'});
+  const invalidBody=await invalid.json();assert.equal(invalidBody.error.continuity.call_id,null);assert.ok(!JSON.stringify(invalidBody).includes('PRIVATE_CALL'));
+  assert.equal(executions,2);
+});
 test('duplicate Door startup preserves the running control socket and maintenance hold',{timeout:5000},async t=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-door-duplicate-'));
   const received=[];
