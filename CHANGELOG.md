@@ -1,5 +1,21 @@
 # Changelog
 
+## Match future forecast checkpoints before comparing stage accuracy
+
+- Add an offline updated-model `paired_stages` report: compare exactly one upload
+  and post-embedding checkpoint for the same request and terminal target.
+- Report missing, duplicate and inconsistent pairs separately without discarding
+  their existing marginal evidence. Count requests, changed forecasts and better/
+  worse/tied errors; empty matched cohorts report null accuracy.
+- Regress misleading marginal averages, cross-run identity, target consistency,
+  duplicate checkpoints, input immutability and empty evaluation paths.
+- Replay two unchanged frozen candidates on a newly captured 35-completion cohort.
+  Post-embedding accuracy improved modestly within the semantic candidate, but
+  combined updated accuracy still lost to recent history. Two sessions and three
+  long completions do not establish generalization; no fitting or promotion.
+- Verify all previous audit scores remain exactly unchanged. No production
+  models, routing, collector settings, retained data or dashboard assets change.
+
 ## Add opt-in Pi admission metadata without changing inference
 
 - `DSG_CLIENT_METADATA=1` uses the existing versioned metadata header for exact

@@ -10,6 +10,13 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Compared frozen forecasts on genuinely later traffic.** A 35-completion,
+  two-session cohort gave the history-plus-semantics candidate a small
+  post-embedding improvement, but its updated forecast still lost to simple
+  history overall. Added a matched-request checkpoint diagnostic so missing
+  checkpoints cannot masquerade as improvement between stage averages. Duplicate
+  or inconsistent pairs abstain; existing scores and activation gates are unchanged.
+
 - **Connected optional Pi state to early prediction evidence.** The continuity
   extension can now send recorded compaction counts, known fresh-session call
   indices and requested effort. Real Pi retries preserve the index, SDK compaction

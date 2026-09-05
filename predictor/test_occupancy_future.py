@@ -9,6 +9,70 @@ import occupancy_future as audit
 
 
 class OccupancyFutureTests(unittest.TestCase):
+    def updated(self,identifier,stage,**changes):
+        return {**self.row(identifier,1000,2000,'updated'),'stage':stage,**changes}
+
+    def test_paired_stages_do_not_confuse_missing_checkpoints_with_improvement(self):
+        rows=[self.updated('paired','upload'),self.updated('paired','embedded'),self.updated('upload-only','upload')]
+        predictions=[20,30,1010]
+        # Marginal upload MAE is 505s versus embedded 20s: looks much better,
+        # but the one matched request actually worsened from 10s to 20s.
+        before=copy.deepcopy((rows,predictions))
+        result=audit.updated_stage_pairs(rows,predictions)
+        self.assertEqual(result['requests'],2);self.assertEqual(result['paired_requests'],1)
+        self.assertEqual(result['upload_mae_s'],10);self.assertEqual(result['embedded_mae_s'],20)
+        self.assertEqual(result['mean_absolute_error_change_s'],10)
+        self.assertEqual(result['worsened_requests'],1);self.assertEqual(result['improved_requests'],0)
+        self.assertEqual(result['excluded_requests']['missing_embedded'],1)
+        self.assertEqual((rows,predictions),before)
+        encoded=json.dumps(result)
+        for private in ('paired\"','upload-only','request_id','run_id','target_s'):
+            self.assertNotIn(private,encoded)
+
+    def test_paired_stages_count_changes_ties_and_improvements_once_per_job(self):
+        rows=[self.updated(name,stage) for name in ('better','tie','same') for stage in ('upload','embedded')]
+        result=audit.updated_stage_pairs(rows,[30,15,0,20,10,10])
+        self.assertEqual(result['paired_requests'],3)
+        self.assertEqual(result['prediction_changed_requests'],2)
+        self.assertEqual(result['improved_requests'],1);self.assertEqual(result['unchanged_error_requests'],2)
+        self.assertEqual(result['worsened_requests'],0)
+        self.assertEqual(result['mean_absolute_error_change_s'],-5)
+        self.assertEqual(audit.updated_stage_pairs(list(reversed(rows)),[10,10,20,0,15,30]),result)
+
+    def test_paired_stages_abstain_on_ambiguous_missing_or_different_targets(self):
+        rows=[self.updated('duplicate','upload'),self.updated('duplicate','upload'),self.updated('duplicate','embedded'),
+              self.updated('missing','embedded'),self.updated('run-local','upload'),self.updated('run-local','embedded',run_id='other')]
+        keys={'target_s':11,'node':'other','decision_time':1001,'finish_time':2001,
+              'terminal_class':'output_limited','target_contract':'other'}
+        for key,value in keys.items():
+            rows += [self.updated(key,'upload'),self.updated(key,'embedded',**{key:value})]
+        result=audit.updated_stage_pairs(rows,[10]*len(rows))
+        self.assertEqual(result['paired_requests'],0)
+        self.assertEqual(result['excluded_requests'],{'ambiguous_checkpoint':1,'missing_upload':2,'missing_embedded':1,'different_target':6})
+        self.assertEqual(sum(result['excluded_requests'].values()),result['requests'])
+        self.assertIsNone(result['upload_mae_s']);self.assertIsNone(result['mean_absolute_error_change_s'])
+        empty=audit.updated_stage_pairs([],[])
+        self.assertEqual(empty['requests'],0);self.assertIsNone(empty['embedded_mae_s'])
+        with self.assertRaises(ValueError):audit.updated_stage_pairs(rows,[])
+        with self.assertRaises(ValueError):audit.updated_stage_pairs([self.updated('x','unsupported')],[10])
+        for invalid in (float('nan'),float('inf'),True):
+            with self.assertRaises(ValueError):audit.updated_stage_pairs([self.updated('x','upload')],[invalid])
+
+    def test_evaluate_attaches_paired_stages_only_to_updated_including_empty(self):
+        self.training['rows'].append(self.updated('training','upload',decision_time=100,finish_time=200))
+        self.candidate['models']['updated']=copy.deepcopy(self.candidate['models']['admission'])
+        self.candidate['reports']['updated']={'cutoff':500}
+        self.write('training',self.training);self.write('candidate',self.candidate)
+        receipt=audit.freeze(self.root/'candidate',self.root/'training',self.root/'paired-receipt')
+        cut=audit.timestamp(receipt['frozen_at'])
+        self.future['snapshot']['created_at']=dt.datetime.fromtimestamp((cut+10000)/1000,dt.timezone.utc).isoformat()
+        for rows,count in (([],0),([self.updated('future',stage,decision_time=cut+1,finish_time=cut+1000) for stage in ('upload','embedded')],1)):
+            self.future['rows']=rows;self.write('future',self.future)
+            result=audit.evaluate(self.root/'candidate',self.root/'training',self.root/'paired-receipt',self.root/'future')
+            self.assertEqual(result['reports']['updated']['paired_stages']['paired_requests'],count)
+            self.assertNotIn('paired_stages',result['reports']['admission'])
+            self.assertNotIn('paired_stages',result['reports']['remaining'])
+
     def test_group_support_distinguishes_collected_embeddings_from_selected_inputs(self):
         model=copy.deepcopy(self.candidate['models']['admission'])
         model['encoding']['names']=['elapsed_s']

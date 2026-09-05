@@ -68,6 +68,46 @@ def input_support(model, training_rows, future_rows, hardware_names, groups=None
             'note':'Split counts are structural use, not importance or causal benefit. Coverage is per forecast point; no future-data fitting.'}
 
 
+def updated_stage_pairs(rows, predictions):
+    """Compare like-for-like checkpoints, not different marginal populations.
+
+    Exactly one upload and embedded point with the same terminal target are
+    required. Ambiguous evidence stays in the other audit counts, not this
+    paired comparison. This is a forecast diagnostic, not feature attribution.
+    """
+    jobs=collections.defaultdict(lambda: collections.defaultdict(list))
+    for row,prediction in zip(rows,predictions,strict=True):
+        if row.get('kind')!='updated' or row.get('stage') not in ('upload','embedded'):
+            raise ValueError('Unsupported updated checkpoint')
+        if type(prediction) not in (int,float) or not math.isfinite(prediction):
+            raise ValueError('Invalid paired prediction')
+        jobs[(row['run_id'],row['request_id'])][row['stage']].append((row,prediction))
+    excluded={reason:0 for reason in ('missing_upload','missing_embedded','ambiguous_checkpoint','different_target')}
+    pairs=[]
+    for stages in jobs.values():
+        if any(len(points)!=1 for points in stages.values()):
+            excluded['ambiguous_checkpoint']+=1;continue
+        missing=next((stage for stage in ('upload','embedded') if not stages.get(stage)),None)
+        if missing:
+            excluded['missing_'+missing]+=1;continue
+        upload,embedded=stages['upload'][0],stages['embedded'][0]
+        keys=('node','decision_time','finish_time','target_s','target_contract','terminal_class')
+        if any(key not in upload[0] or key not in embedded[0] or upload[0][key]!=embedded[0][key] for key in keys):
+            excluded['different_target']+=1;continue
+        pairs.append((upload,embedded))
+    upload_errors=[abs(u[1]-u[0]['target_s']) for u,e in pairs]
+    embedded_errors=[abs(e[1]-e[0]['target_s']) for u,e in pairs]
+    deltas=[e-u for u,e in zip(upload_errors,embedded_errors,strict=True)]
+    mean=lambda values:math.fsum(values)/len(values) if values else None
+    return {'requests':len(jobs),'paired_requests':len(pairs),'excluded_requests':excluded,
+            'prediction_changed_requests':sum(u[1]!=e[1] for u,e in pairs),
+            'upload_mae_s':mean(upload_errors),'embedded_mae_s':mean(embedded_errors),
+            'mean_absolute_error_change_s':mean(deltas),
+            'improved_requests':sum(d<0 for d in deltas),'worsened_requests':sum(d>0 for d in deltas),
+            'unchanged_error_requests':sum(d==0 for d in deltas),
+            'note':'One vote per matched request; negative error change is better after embeddings. Predictions may differ because of any changed input, not necessarily semantic features. No confidence, promotion or routing authority; excluded points remain in marginal reports.'}
+
+
 def elapsed_slices(training_rows, rows, predictions):
     """Fixed diagnostic horizons, not outcome-selected cohorts or tuning gates.
 
@@ -199,6 +239,7 @@ def evaluate(candidate_path,training_path,receipt_path,prepared_path):
         report={'status':'no_future_labels','target_coverage':target_coverage(rows),
                 'input_support':input_support(model,tr,rows,training.get('groups',{}).get('hardware',[]),training.get('groups',{}))};result['reports'][kind]=report
         report['future_strata']=future_strata(tr,[],[])
+        if kind=='updated':report['paired_stages']=updated_stage_pairs([],[])
         if kind=='remaining':report['age_support']=remaining_age_support(tr,rows)
         if not rows:
             if kind=='remaining':report['by_elapsed']=elapsed_slices(tr,[],[])
@@ -206,6 +247,7 @@ def evaluate(candidate_path,training_path,receipt_path,prepared_path):
         if not tr:raise ValueError('Frozen training partition is empty')
         predictions=[exported_prediction(model,r['features']) for r in rows]
         if any(not math.isfinite(p) for p in predictions):raise ValueError('Non-finite prediction')
+        if kind=='updated':report['paired_stages']=updated_stage_pairs(rows,predictions)
         report['future_strata']=future_strata(tr,rows,predictions)
         report.update(status='observed_not_promoted',metrics=metrics(rows,predictions),baselines=baseline(tr,rows)[0],
             terminal_classes={label:metrics([r for r in rows if r['terminal_class']==label],[p for r,p in zip(rows,predictions) if r['terminal_class']==label])

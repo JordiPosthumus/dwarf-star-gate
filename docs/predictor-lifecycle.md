@@ -703,6 +703,42 @@ model changed. The 50% updated-row embedding coverage is expected in this traini
 cohort: all 327 embedded rows have all 12 components; the 327 earlier upload rows
 have none. Missing pre-embedding inputs are not filled with later evidence.
 
+#### Matched future checkpoint comparison
+
+The future audit's `paired_stages` diagnostic compares upload and post-embedding
+forecasts **on the same requests**. Separate `by_stage` averages can describe
+different populations when a checkpoint is missing. A pair needs exactly one
+checkpoint of each kind and the same worker, admission time, terminal time,
+target and terminal contract/class. Missing, duplicate or inconsistent pairs are
+counted as exclusions; their points remain in the existing marginal reports.
+Each matched request has one vote. Negative mean absolute-error change means
+the later forecast was better; no pairs means null errors, not zero error.
+Prediction changes are not automatically attributable to semantics: any changed
+input can affect them. These diagnostics confer no new promotion authority.
+
+An initial future-only comparison after the new bundle's separate freeze covered
+**36 client admissions: 35 labeled completions and one without terminal evidence**;
+one Genie admission was excluded. All 35 completed jobs had both checkpoints.
+There were only **two identified sessions**, two represented workers and three
+completed jobs lasting at least five minutes. This is a small completed-job
+cohort, not evidence of fleet-wide generalization or robust tail prediction.
+
+The history-plus-semantics candidate changed all 35 paired predictions: 27 became
+more accurate and eight less accurate. Matched upload/post-embedding MAE was
+**81.02s / 79.12s**; the history-only candidate stayed at **80.54s** at both stages.
+Despite the later-stage improvement, the new candidate's combined updated MAE
+was **80.07s**, still worse than the **78.02s** recent-history baseline. Unchanged
+admission and remaining models scored **75.11s / 42.11s**, against best aggregate
+baselines of **78.02s / 62.49s**; each still lost to a history baseline on one of
+the represented workers. Existing per-worker and session reports remain essential.
+
+Both frozen candidates used the exact same newly captured cohort; neither was
+refit, selected or promoted using these outcomes. A repeated replay preserved all
+earlier audit fields exactly when the new paired diagnostic was removed. This is
+limited evidence that the later checkpoint helps this candidate, **not a claim
+that embeddings have beaten the baseline or sped up routing**. Original models,
+data, fallbacks and activation gates remain unchanged.
+
 ### Later traffic and session-identity evidence
 
 A later frozen replay contained 49 admitted requests: 48 labeled completions and
