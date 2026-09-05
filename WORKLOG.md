@@ -10,6 +10,13 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Closed a model-discovery gap in planned core restarts.** A disposable fixture
+  reproduced discovery escaping the Door's hold and returning a 503. Discovery
+  now waits and forwards once after release. Bounded transport-failure evidence
+  distinguishes status polls from inference without claiming backend execution
+  or replay safety. Genie receives those distinctions. Door activation requires
+  its own idle window; a core-only restart does not load this fix.
+
 - **Made the forecast-data denominator explicit.** A read-only, hash-verified
   snapshot census distinguishes scored completions, label exclusions, unsuccessful
   terminals and unresolved admissions. The first paired future snapshot had

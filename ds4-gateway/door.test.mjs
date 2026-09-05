@@ -10,6 +10,40 @@ import {doorControl} from './door-client.mjs';
 
 const listen=server=>new Promise(resolve=>server.listen(0,'127.0.0.1',()=>resolve(server.address().port)));
 const request=(port,body)=>new Promise((resolve,reject)=>{const req=http.request({host:'127.0.0.1',port,path:'/v1/chat/completions',method:'POST',headers:{authorization:'Bearer test','content-type':'application/json'}},res=>{const chunks=[];res.on('data',c=>chunks.push(c));res.on('end',()=>resolve({status:res.statusCode,body:Buffer.concat(chunks).toString(),headers:res.headers}));});req.on('error',reject);req.end(body);});
+const get=(port,route)=>new Promise((resolve,reject)=>{http.get({host:'127.0.0.1',port,path:route,agent:false,headers:{authorization:'Bearer test'}},res=>{
+  const chunks=[];res.on('data',c=>chunks.push(c));res.on('error',reject);res.on('end',()=>resolve({status:res.statusCode,body:Buffer.concat(chunks).toString()}));
+}).on('error',reject);});
+test('model discovery waits through planned core downtime while status reads remain available',{timeout:5000},async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-door-discovery-')),calls=[];
+  const body='{"data":[{"id":"fixture-model"}]}';
+  const core=http.createServer((req,res)=>{req.resume();if(req.url==='/health')return res.end('ok');calls.push({url:req.url,auth:req.headers.authorization});res.setHeader('content-type','application/json');res.end(body);});
+  const corePort=await listen(core),config={host:'127.0.0.1',port:0,api_key:'test',continuity_door:{enabled:true,core_port:corePort,control_socket:path.join(dir,'door.sock'),health_interval_ms:60000}};
+  const door=createDoor(config);await door.start();
+  t.after(async()=>{core.closeAllConnections();await door.close();await new Promise(r=>core.close(r));fs.rmSync(dir,{recursive:true,force:true});});
+  door.hold('planned_gateway_core_restart');await new Promise(r=>core.close(r));
+  let resolved=false;const pending=get(door.server.address().port,'/v1/models?fixture=kept').then(r=>{resolved=true;return r;});
+  await new Promise(r=>setTimeout(r,40));assert.equal(resolved,false,'discovery must not escape a planned hold and return a transient 503');
+  assert.equal(door.status().held,1);assert.equal(calls.length,0);assert.equal(door.status().model_discovery_hold,true);
+  assert.equal((await get(door.server.address().port,'/gateway/status')).status,503);
+  assert.equal(door.status().held,1,'a failed status poll does not discard held discovery');
+  await new Promise(r=>core.listen(corePort,'127.0.0.1',r));
+  await doorControl(config.continuity_door.control_socket,'/release');
+  assert.deepEqual(await pending,{status:200,body});assert.deepEqual(calls,[{url:'/v1/models?fixture=kept',auth:'Bearer test'}]);
+  assert.equal(door.status().held,0);assert.equal(door.status().replay,false);
+});
+test('model discovery waits behind an automatic hold until a fresh healthy probe releases it',{timeout:5000},async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-door-discovery-auto-'));let ready=true,calls=0;
+  const core=http.createServer((req,res)=>{req.resume();if(req.url==='/health'){res.statusCode=ready?200:503;return res.end('health');}calls++;res.end('models');});
+  const corePort=await listen(core),door=createDoor({host:'127.0.0.1',port:0,api_key:'test',continuity_door:{enabled:true,core_port:corePort,control_socket:path.join(dir,'door.sock'),health_interval_ms:60000,health_failures:1}});
+  await door.start();t.after(async()=>{core.closeAllConnections();await door.close();await new Promise(r=>core.close(r));fs.rmSync(dir,{recursive:true,force:true});});
+  ready=false;assert.equal(await door.checkCore(),false);assert.equal(door.status().hold_kind,'automatic');
+  let resolved=false;const pending=get(door.server.address().port,'/v1/models').then(r=>{resolved=true;return r;});
+  await new Promise(r=>setTimeout(r,30));assert.equal(resolved,false);assert.equal(door.status().held,1);assert.equal(calls,0);
+  assert.equal((await get(door.server.address().port,'/continuity/status')).status,200,'local Door status remains available while core is not ready');
+  assert.equal(await door.checkCore(),false);assert.equal(door.status().held,1);
+  ready=true;assert.equal(await door.checkCore(),true);assert.deepEqual(await pending,{status:200,body:'models'});
+  assert.equal(calls,1);assert.equal(door.status().held,0);assert.equal(door.status().failed,0);
+});
 test('core health probe settles false after response headers are truncated',{timeout:5000},async t=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-door-probe-'));let broken=false;
   const core=http.createServer((req,res)=>{req.resume();if(!broken)return res.end('ok');res.writeHead(200,{'content-length':'20'});res.write('partial');setTimeout(()=>res.destroy(),20);});
@@ -73,6 +107,7 @@ test('active client cancellation never marks a healthy core failed or starts an 
     client.destroy();while(door.status().active!==0)await new Promise(r=>setImmediate(r));
     await new Promise(r=>setTimeout(r,30));
     assert.equal(door.status().failed,0,'client cancellation is not an upstream failure');
+    assert.deepEqual(door.status().failure_evidence.recent,[]);
     assert.equal(door.status().holding,false,'client cancellation cannot fence unrelated requests');
     assert.equal(door.status().core_ready,true);
     assert.equal((await request(door.server.address().port,'{}')).body,'next request');assert.equal(calls,2);
@@ -92,7 +127,51 @@ test('genuine core connection failures and partial responses are still counted o
       res.resume();res.on('error',()=>{});res.on('aborted',resolve);res.on('end',()=>reject(new Error('Broken response became a clean completion')));
     });req.on('error',reject);req.end('{}');});
     await new Promise(r=>setTimeout(r,30));assert.equal(door.status().failed,1);assert.equal(door.status().active,0);assert.equal(calls,1,'ambiguous dispatched work is never replayed');
+    const evidence=door.status().failure_evidence;
+    assert.equal(evidence.by_request_class.inference,1);assert.equal(evidence.recent.length,1);
+    assert.equal(evidence.recent[0].phase,streaming?'after_response_headers':'before_response_headers');
+    assert.equal(evidence.recent[0].backend_dispatch,'unknown');
   });
+});
+test('failure evidence separates request types, stays bounded and exposes no paths or payloads',{timeout:5000},async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-door-evidence-'));let mode='http_error',clock=1000;
+  const core=http.createServer((req,res)=>{req.resume();if(req.url==='/health')return res.end('ok');
+    if(mode==='http_error'){res.statusCode=400;return res.end('private backend message');}res.destroy();});
+  const corePort=await listen(core),door=createDoor({host:'127.0.0.1',port:0,api_key:'test',continuity_door:{enabled:true,core_port:corePort,control_socket:path.join(dir,'door.sock'),health_interval_ms:60000}},{now:()=>clock++});
+  await door.start();t.after(async()=>{core.closeAllConnections();await door.close();await new Promise(r=>core.close(r));fs.rmSync(dir,{recursive:true,force:true});});
+  const port=door.server.address().port;
+  assert.equal((await get(port,'/private?secret=yes')).status,400);
+  assert.equal(door.status().failed,0,'HTTP rejection is not a proxy transport failure');
+  mode='connection';
+  assert.equal((await get(port,'/private?secret=yes')).status,503);door.release();
+  assert.equal((await get(port,'/v1/models?secret=yes')).status,503);door.release();
+  assert.equal((await request(port,'{"secret":"private body"}')).status,503);
+  door.hold('private maintenance reason');
+  assert.equal((await get(port,'/gateway/status?secret=yes')).status,503);
+  let evidence=door.status().failure_evidence;
+  assert.equal(evidence.scope,'door_process');assert.deepEqual(evidence.by_request_class,{inference:1,model_discovery:1,status:1,other:1});
+  assert.equal(evidence.recent[0].holding,true);assert.equal(evidence.recent[0].hold_kind,'manual');
+  for(let i=0;i<32;i++)assert.equal((await get(port,'/gateway/status')).status,503);
+  evidence=door.status().failure_evidence;
+  assert.equal(door.status().failed,36);assert.equal(evidence.by_request_class.status,33);assert.equal(evidence.recent.length,30);
+  assert.equal(evidence.recent[0].sequence,36);assert.equal(evidence.recent.at(-1).sequence,7);
+  assert.ok(evidence.recent.every(r=>r.backend_dispatch==='unknown'));
+  for(const text of ['secret','private','/gateway','Bearer','body'])assert.equal(JSON.stringify(evidence).includes(text),false);
+  evidence.by_request_class.status=999;evidence.recent[0].request_class='mutated';evidence.recent.length=0;
+  assert.equal(door.status().failure_evidence.by_request_class.status,33);assert.equal(door.status().failure_evidence.recent[0].request_class,'status');
+});
+test('held model discovery shares capacity and cancellation cleanup without being forwarded',{timeout:5000},async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-door-discovery-cancel-'));let calls=0;
+  const core=http.createServer((req,res)=>{req.resume();if(req.url==='/health')return res.end('ok');calls++;res.end('models');});
+  const corePort=await listen(core),door=createDoor({host:'127.0.0.1',port:0,api_key:'test',continuity_door:{enabled:true,core_port:corePort,control_socket:path.join(dir,'door.sock'),health_interval_ms:60000,max_held_requests:1}});
+  await door.start();t.after(async()=>{core.closeAllConnections();await door.close();await new Promise(r=>core.close(r));fs.rmSync(dir,{recursive:true,force:true});});
+  door.hold('planned');const port=door.server.address().port;
+  const client=http.get({host:'127.0.0.1',port,path:'/v1/models',agent:false},res=>res.resume());client.on('error',()=>{});
+  while(door.status().held!==1)await new Promise(r=>setImmediate(r));
+  assert.equal((await request(port,'{}')).status,429);assert.equal(calls,0);
+  client.destroy();while(door.status().held)await new Promise(r=>setImmediate(r));
+  assert.equal(door.status().failed,0);assert.deepEqual(door.status().failure_evidence.recent,[]);
+  door.release();assert.equal((await get(port,'/v1/models')).body,'models');assert.equal(calls,1);
 });
 test('continuity door holds unread bodies, then forwards exact bytes once',async t=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-door-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));

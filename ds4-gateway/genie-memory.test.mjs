@@ -49,7 +49,10 @@ test('a Genie review publishes and privately saves an exact hardening candidate 
   const instructions=sent.messages[0].content;
   assert.match(instructions,/one specific discriminating test/);assert.match(instructions,/Do not conflate ECONNREFUSED with ECONNRESET/);
   assert.match(instructions,/Never propose blanket retry\/backoff for incomplete SSE/);assert.match(instructions,/respect pauses, reservations and admitted work/);
-  assert.match(instructions,/Do not repeat a notebook suggestion merely to refresh its timestamp/);genie.close();
+  assert.match(instructions,/Do not repeat a notebook suggestion merely to refresh its timestamp/);
+  const semantics=JSON.parse(sent.messages[1].content).evidence.semantics.join('\n');
+  assert.match(semantics,/model_discovery_hold=true/);assert.match(semantics,/Missing evidence cannot classify an older failed total/);
+  assert.match(semantics,/A status transport failure is not a lost inference session/);assert.match(semantics,/neither grants replay permission/);genie.close();
 });
 test('pool action history keeps 30 small receipts independently of review text',()=>{
   const genie=new Genie(null,()=>sample());

@@ -155,4 +155,20 @@ test('dashboard continuity-door projection exposes state but not ports or arbitr
   const s=continuityDoorForDisplay({service:'dwarf-star-gate-continuity-door',version:1,holding:true,hold_kind:'manual',reason:'PRIVATE',since:new Date().toISOString(),held:2,active:3,core_ready:false,core_failures:4,body_spooling:false,replay:false,core_port:30001,secret:'PRIVATE'});
   assert.equal(s.held,2);assert.equal(s.active,3);assert.equal(s.reason,null);assert.equal(s.body_spooling,false);assert.equal(s.replay,false);assert.ok(!JSON.stringify(s).includes('PRIVATE'));assert.equal(s.core_port,undefined);
   assert.equal(continuityDoorForDisplay({service:'other',version:1}),null);
+  assert.equal(s.failed,null);assert.equal(s.failure_evidence,null);assert.equal(s.model_discovery_hold,null,'old Door is not credited with new protection');
+});
+test('Door failure projection preserves fixed diagnostics without payloads or invented replay authority',()=>{
+  const base={service:'dwarf-star-gate-continuity-door',version:1,failed:40,model_discovery_hold:true};
+  const row={sequence:40,at:'2026-09-05T00:00:00Z',request_class:'status',phase:'before_response_headers',holding:true,hold_kind:'manual',backend_dispatch:'unknown',url:'/PRIVATE',error:'PRIVATE'};
+  const failure_evidence={schema:1,scope:'door_process',by_request_class:{inference:1,model_discovery:1,status:37,other:1,PRIVATE:5},recent:Array.from({length:40},()=>({...row}))};
+  const s=continuityDoorForDisplay({...base,failure_evidence});
+  assert.equal(s.failed,40);assert.equal(s.model_discovery_hold,true);assert.equal(s.failure_evidence.recent.length,30);
+  assert.equal(s.failure_evidence.by_request_class.status,37);assert.equal(s.failure_evidence.recent[0].backend_dispatch,'unknown');
+  assert.equal(s.failure_evidence.recent[0].at,'2026-09-05T00:00:00.000Z');assert.ok(!JSON.stringify(s).includes('PRIVATE'));
+  for(const invalid of [null,{...row,request_class:'PRIVATE'},{...row,phase:'PRIVATE'},{...row,at:'PRIVATE'},{...row,backend_dispatch:'not_dispatched'},{...row,sequence:-1}]){
+    assert.deepEqual(continuityDoorForDisplay({...base,failure_evidence:{...failure_evidence,recent:[invalid]}}).failure_evidence.recent,[]);
+  }
+  for(const invalid of [{...failure_evidence,schema:2},{...failure_evidence,scope:'PRIVATE'},{...failure_evidence,by_request_class:{status:-1}}]){
+    assert.equal(continuityDoorForDisplay({...base,failure_evidence:invalid}).failure_evidence,null);
+  }
 });

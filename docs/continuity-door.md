@@ -7,7 +7,8 @@ different loopback-only port (normally `30001`).
 
 Its narrow purpose is to make a **planned gateway-core restart** uneventful:
 
-1. The lifecycle controller tells the door to hold new inference requests.
+1. The lifecycle controller tells the door to hold new inference requests and
+   `GET /v1/models` discovery requests, including those with query parameters.
 2. Their body streams remain paused and unread. DSG does not parse, buffer in
    application memory, or spool the prompt to disk.
 3. Existing proxied responses keep streaming while the old core drains.
@@ -26,12 +27,31 @@ components named when the Door is holding. Requests that have not yet left a Pi,
 Hermes or other client remain outside DSG's observation boundary. Gate Genie
 receives the same sanitized facts.
 
+Discovery shares the existing bounded hold capacity and cancellation cleanup;
+it is forwarded once, unchanged, after release. Health and gateway status reads
+still pass through and can return a 503 during core downtime. Authenticated
+`GET /continuity/status` is served by the Door itself, even while the core is off.
+Only a running Door reporting `model_discovery_hold: true` has this protection;
+syncing source or restarting only the core does not activate it.
+
 The Door's `failed` count describes proxy transport failures, not every non-200
 model response. Client cancellation must settle before socket destruction so it
 does not count as a core failure or hold unrelated arrivals. Late error events
 from an already-settled proxy must not change admission state. Tests cover both
 cancellation timings and genuine upstream disconnects. A lifetime counter alone
-does not identify the cause of a particular historical failure.
+does not identify the cause of a particular historical failure. New Doors also
+expose `failure_evidence`: process-lifetime counters for inference, model discovery,
+status and other requests, plus the latest 30 failure receipts, newest first.
+Each contains a sequence, timestamp, fixed request class, before/after-response-
+headers phase, and hold state at failure. No paths, queries, request bodies,
+credentials or backend error text are retained in these receipts. The dashboard
+and Genie receive a bounded, allowlisted projection; older missing evidence is
+unknown, not zero failures. This evidence resets when the Door restarts.
+
+A status-poll failure is not an inference-session loss. Neither response phase
+establishes whether a backend executed the request: every receipt explicitly says
+`backend_dispatch: unknown` and grants no replay permission. Failures already
+counted by an older Door cannot be classified retrospectively.
 
 Readiness checks have their own lifecycle: concurrent callers share one in-flight
 probe, and hold/release transitions invalidate earlier observations. A healthy
@@ -55,7 +75,8 @@ restarting it over active proxied streams would defeat its continuity guarantee.
 ## Guarantees and boundaries
 
 - Existing proxied streams are not interrupted by a coordinated core restart.
-- New held requests receive periodic HTTP 102 informational frames while waiting.
+- New held inference and discovery requests receive periodic HTTP 102
+  informational frames while waiting.
 - Request bodies are not persisted, logged, parsed or replayed.
 - The door will not release a manual hold until the replacement core passes a
   fresh health check and reports a clean startup barrier.

@@ -12,21 +12,41 @@ function headers(input){const excluded=new Set([...hopHeaders,...String(input.co
 function json(res,status,value){if(res.destroyed||res.headersSent)return;res.writeHead(status,{'content-type':'application/json','cache-control':'no-store'});res.end(JSON.stringify(value));}
 function report(res,status,code,message){json(res,status,{error:{type:'gateway_error',code,message:dsgReport(message)}});}
 
+// Fixed classes only: never retain caller paths, queries, bodies or headers.
+function requestClass(req){
+  const route=(req.url??'').split('?',1)[0];
+  if(req.method==='GET'&&route==='/v1/models')return 'model_discovery';
+  if(req.method==='POST'&&['/v1/chat/completions','/v1/completions','/v1/responses','/v1/messages'].includes(route))return 'inference';
+  if(req.method==='GET'&&['/health','/gateway/status'].includes(route))return 'status';
+  return 'other';
+}
+
 export function createDoor(config,{now=Date.now}={}){
   if(!continuityEnabled(config))throw new Error('continuity_door.enabled must be true');
   const corePort=gatewayPort(config),socketPath=doorSocket(config),limit=config.continuity_door.max_held_requests??Math.max(128,(config.nodes?.length??1)*(config.max_queued_per_node??128));
   if(!Number.isSafeInteger(limit)||limit<1||limit>65536)throw new Error('continuity_door.max_held_requests must be 1–65536');
   const auth=Buffer.from(`Bearer ${config.api_key}`),held=[],state={holding:false,hold_kind:null,reason:null,since:null,last_transition:null,forwarded:0,failed:0,active:0,core_ready:false,core_failures:0};
+  const failureCounts={inference:0,model_discovery:0,status:0,other:0},failures=[];
   let closing=false,monitor,probe=null,probeGeneration=0;
   const invalidateProbe=()=>{probeGeneration++;const previous=probe;probe=null;previous?.cancel();};
   const authorized=req=>{const value=Buffer.from(req.headers.authorization??'');return value.length===auth.length&&timingSafeEqual(value,auth);};
-  const status=()=>({service:'dwarf-star-gate-continuity-door',version:1,holding:state.holding,hold_kind:state.hold_kind,reason:state.reason,since:state.since,last_transition:state.last_transition,held:held.length,active:state.active,forwarded:state.forwarded,failed:state.failed,core_ready:state.core_ready,core_failures:state.core_failures,body_spooling:false,replay:false,core_port:corePort});
+  const status=()=>({service:'dwarf-star-gate-continuity-door',version:1,holding:state.holding,hold_kind:state.hold_kind,reason:state.reason,since:state.since,last_transition:state.last_transition,held:held.length,active:state.active,forwarded:state.forwarded,failed:state.failed,core_ready:state.core_ready,core_failures:state.core_failures,body_spooling:false,replay:false,core_port:corePort,
+    model_discovery_hold:true,failure_evidence:{schema:1,scope:'door_process',by_request_class:{...failureCounts},recent:failures.map(row=>({...row}))}});
   const remove=item=>{const index=held.indexOf(item);if(index>=0)held.splice(index,1);clearInterval(item.heartbeat);item.req.off('aborted',item.cancel);item.req.off('error',item.cancel);item.res.off('close',item.cancel);};
   function proxy(req,res){
     if(req.destroyed||res.destroyed)return;
     let settled=false,upstreamResponse;
     state.active++;
-    const finish=failed=>{if(settled)return;settled=true;state.active--;if(failed)state.failed++;req.off('aborted',cancel);req.off('error',cancel);res.off('close',clientClosed);};
+    const finish=failed=>{
+      if(settled)return;settled=true;state.active--;
+      if(failed){
+        state.failed++;const request_class=requestClass(req);failureCounts[request_class]++;
+        failures.unshift({sequence:state.failed,at:new Date(now()).toISOString(),request_class,
+          phase:upstreamResponse?'after_response_headers':'before_response_headers',holding:state.holding,hold_kind:state.hold_kind,backend_dispatch:'unknown'});
+        if(failures.length>30)failures.pop();
+      }
+      req.off('aborted',cancel);req.off('error',cancel);res.off('close',clientClosed);
+    };
     // Settle before destroying either leg: destruction can emit an aborted/error
     // event synchronously. A client cancellation is not a failed core or a reason
     // to hold unrelated arrivals.
@@ -81,7 +101,7 @@ export function createDoor(config,{now=Date.now}={}){
   const server=http.createServer((req,res)=>{
     if(req.url==='/continuity/status'&&req.method==='GET'){req.resume();return authorized(req)?json(res,200,status()):report(res,401,'unauthorized','Bearer API key required');}
     if(closing){req.resume();return report(res,503,'continuity_stopping','Continuity door is stopping; request was not forwarded.');}
-    if(!state.holding||!['POST','PUT','PATCH'].includes(req.method))return proxy(req,res);
+    if(!state.holding||(!['POST','PUT','PATCH'].includes(req.method)&&requestClass(req)!=='model_discovery'))return proxy(req,res);
     if(held.length>=limit){req.resume();return report(res,429,'continuity_hold_full','Continuity door hold capacity is full; request was not forwarded.');}
     const item={req,res};item.cancel=()=>{remove(item);};
     req.pause();req.on('aborted',item.cancel);req.on('error',item.cancel);res.on('close',item.cancel);

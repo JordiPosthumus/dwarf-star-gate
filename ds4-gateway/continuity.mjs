@@ -2,13 +2,27 @@
 export const CALL_ID_HEADER='x-dsg-call-id';
 export const DISPATCH_HEADER='x-dsg-dispatch-state';
 export const validCallId=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value)?value.toLowerCase():null;
+function doorFailuresForDisplay(value){
+  const classes=['inference','model_discovery','status','other'];
+  const count=n=>Number.isSafeInteger(n)&&n>=0;
+  if(value?.schema!==1||value.scope!=='door_process'||!classes.every(key=>count(value.by_request_class?.[key])))return null;
+  return {schema:1,scope:'door_process',by_request_class:Object.fromEntries(classes.map(key=>[key,value.by_request_class[key]])),
+    recent:(Array.isArray(value.recent)?value.recent:[]).slice(0,30).flatMap(row=>{
+      if(!row||!count(row.sequence)||!classes.includes(row.request_class)||!['before_response_headers','after_response_headers'].includes(row.phase)||
+        typeof row.at!=='string'||!Number.isFinite(Date.parse(row.at))||row.backend_dispatch!=='unknown')return [];
+      return [{sequence:row.sequence,at:new Date(row.at).toISOString(),request_class:row.request_class,phase:row.phase,
+        holding:row.holding===true,hold_kind:['manual','automatic'].includes(row.hold_kind)?row.hold_kind:null,backend_dispatch:'unknown'}];
+    })};
+}
 export function continuityDoorForDisplay(value){
   if(value?.service!=='dwarf-star-gate-continuity-door'||value.version!==1)return null;
   const count=n=>Number.isSafeInteger(n)&&n>=0?n:0;
   const reason=['planned_gateway_core_restart','core_connection_failed','core_not_ready'].includes(value.reason)?value.reason:null;
   return {schema:1,holding:value.holding===true,hold_kind:['manual','automatic'].includes(value.hold_kind)?value.hold_kind:null,reason,
     since:typeof value.since==='string'&&Number.isFinite(Date.parse(value.since))?value.since:null,held:count(value.held),active:count(value.active),
-    core_ready:value.core_ready===true,core_failures:count(value.core_failures),body_spooling:value.body_spooling===false?false:null,replay:value.replay===false?false:null};
+    core_ready:value.core_ready===true,core_failures:count(value.core_failures),body_spooling:value.body_spooling===false?false:null,replay:value.replay===false?false:null,
+    model_discovery_hold:value.model_discovery_hold===true?true:null,
+    failed:Number.isSafeInteger(value.failed)&&value.failed>=0?value.failed:null,failure_evidence:doorFailuresForDisplay(value.failure_evidence)};
 }
 export function fallbackTieBreakForDisplay(value){
   if(value?.schema!==1||!['shadow','active_with_abstention'].includes(value.mode)||value.policy!=='validated_remaining_tiebreak')return null;

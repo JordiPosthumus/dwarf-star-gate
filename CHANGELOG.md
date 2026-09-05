@@ -1,5 +1,19 @@
 # Changelog
 
+## Hold model discovery through core replacement and classify Door failures
+
+- Include GET `/v1/models` in manual and automatic Door holds, preserving query
+  bytes, shared capacity, cancellation, backpressure and once-only forwarding.
+- Keep status reads available; distinguish their transport failures from model
+  traffic with process-local counters and 30 bounded, payload-free receipts.
+  Response phase is not backend-dispatch proof and never grants replay authority.
+- Expose sanitized evidence and an explicit discovery-hold capability to the
+  dashboard/Genie. Missing older evidence remains unknown. Teach Genie not to
+  interpret a failed status poll as a lost inference or DS4 engine fault.
+- Regress planned downtime/release, cancellation/capacity, normal HTTP rejection,
+  partial responses, exactly-once failure accounting and privacy projection.
+  No model-server settings change; activate Door code only in its own idle window.
+
 ## Audit occupancy label coverage against all captured cohort admissions
 
 - Add a bounded, aggregate-only offline census of an existing prepared snapshot.
