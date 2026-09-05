@@ -84,9 +84,18 @@ function safeLifecycle(raw) {
   return event&&UUID.test(event.request_id??'')&&ID.test(event.node??'')&&Number.isFinite(at)&&at>0?event:null;
 }
 function latestRows(rows) {
-  const latest=new Map();
-  for(const raw of rows){const row=safeAttribution(raw);if(!row)continue;const key=`${row.node}:${row.sample_id}`,prior=latest.get(key);if(!prior||row.observed_at>=prior.observed_at)latest.set(key,row);}
-  return latest;
+  const latest=new Map(),conflicts=new Set(),claims=new Map();
+  for(const raw of rows){
+    const row=safeAttribution(raw);if(!row)continue;
+    const key=`${row.node}:${row.sample_id}`,prior=latest.get(key);
+    if(!prior||row.observed_at>prior.observed_at){latest.set(key,row);conflicts.delete(key);claims.set(key,new Set([row.request_id]));}
+    else if(row.observed_at===prior.observed_at){
+      if(JSON.stringify(row)!==JSON.stringify(prior))conflicts.add(key);
+      claims.get(key).add(row.request_id);
+      latest.set(key,row); // Preserve the recorded view, but never infer ownership from a tie.
+    }
+  }
+  return {latest,conflicts,claims};
 }
 
 // Re-evaluate only historical clock-overlap abstentions after all candidate
@@ -94,7 +103,7 @@ function latestRows(rows) {
 // A request collision, incomplete source or missing coverage keeps abstention.
 export function reconcileAttributionRows(attributionRows=[],engineRows=[],gatewayRows=[],{complete=false,metricCoverageStart=-Infinity,sinceMs=null}={}) {
   const inCohort=cohortFilter(sinceMs);
-  const latest=latestRows(attributionRows),original=[...latest.values()];
+  const {latest,conflicts,claims}=latestRows(attributionRows),original=[...latest.values()];
   // Select only the report cohort. Older ownership and competing starts remain
   // in every reconciliation check; dropping them could manufacture certainty.
   const overlapCount=original.filter(row=>inCohort(row)&&row.reason==='overlapping_gateway_windows').length;
@@ -132,6 +141,7 @@ export function reconcileAttributionRows(attributionRows=[],engineRows=[],gatewa
     currentRow=row;
     if(row.reason!=='overlapping_gateway_windows')continue;
     const startKey=`${row.node}:${row.sample_id}`,start=starts.get(startKey);
+    if(conflicts.has(startKey)){block('attribution_evidence_conflict');continue;}
     if(!start){block('engine_start_unavailable');continue;}
     if(conflictingStarts.has(startKey)||start.time!==row.engine_started_at||!start.backend_epoch||!['strong','bounded'].includes(start.backend_epoch_confidence)||start.backend_epoch!==row.backend_epoch||
       start.backend_epoch_confidence!==row.backend_epoch_confidence||start.prompt!==row.prompt_tokens||start.cached!==row.cached_tokens||start.new_tokens!==row.new_tokens){block('engine_start_conflict');continue;}
@@ -147,13 +157,15 @@ export function reconcileAttributionRows(attributionRows=[],engineRows=[],gatewa
   // engine starts. Existing and newly proposed owners participate equally.
   const owners=new Map();
   const add=(requestId,sampleKey)=>{if(!UUID.test(requestId??''))return;const set=owners.get(requestId)??new Set();set.add(sampleKey);owners.set(requestId,set);};
-  for(const row of original)add(row.request_id,`${row.node}:${row.sample_id}`);
+  // Retain every possible latest owner, including conflicting revisions outside
+  // the report cohort. Dropping a tied claim could manufacture request uniqueness.
+  for(const [sampleKey,requestIds] of claims)for(const requestId of requestIds)add(requestId,sampleKey);
   for(const [sampleKey,proposal] of proposals)add(proposal.request_id,sampleKey);
   // Only ORIGINAL corroboration can establish an independent owner. Never use
   // a proposal from this pass: mutually ambiguous starts cannot prove each other.
   const independentlyOwned=(start,proposal,target)=>{
     const owner=latest.get(`${start.node}:${start.sample_id}`),request=lifecycle.get(owner?.request_id);
-    return !!(start.sample_id&&!conflictingStarts.has(`${start.node}:${start.sample_id}`)&&owner?.status==='corroborated'&&['high_candidate','bounded_candidate'].includes(owner.confidence)&&['usage_match','usage_disambiguated_overlap'].includes(owner.reason)&&
+    return !!(start.sample_id&&!conflicts.has(`${start.node}:${start.sample_id}`)&&!conflictingStarts.has(`${start.node}:${start.sample_id}`)&&owner?.status==='corroborated'&&['high_candidate','bounded_candidate'].includes(owner.confidence)&&['usage_match','usage_disambiguated_overlap'].includes(owner.reason)&&
       owner.request_id!==proposal.request_id&&owners.get(owner.request_id)?.size===1&&request&&!request.conflict&&request.outcome==='complete'&&
       request.node===start.node&&Number.isFinite(request.dispatched_at)&&Number.isFinite(request.finished_at)&&request.finished_at>=request.dispatched_at&&
       start.time>=request.dispatched_at-SKEW_MS&&start.time<=request.finished_at+SKEW_MS&&start.time-request.dispatched_at<=MAX_DISPATCH_LEAD_MS&&

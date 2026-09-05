@@ -172,6 +172,42 @@ test('independently corroborated other ownership can resolve an overlap without 
   assert.equal(run({...owner,status:'abstained',reason:'overlapping_gateway_windows',request_id:null}).reconciled_overlaps,0,'proposals may not corroborate one another');
 });
 
+test('contradictory latest attribution revisions cannot establish ownership by input order',()=>{
+  const other={...engine(11),time:base-500,prompt:800,cached:700};
+  const owner=overlap(11,{observed_at:base+3000,engine_started_at:other.time,request_id:requestA,status:'corroborated',reason:'usage_match',confidence:'high_candidate',prompt_tokens:800,cached_tokens:700});
+  const conflict={...owner,request_id:null,status:'abstained',reason:'usage_conflict',confidence:'none'};
+  const run=revisions=>reconcileAttributionRows([overlap(),...revisions],[earlyEngine(),engine(),other],gateway(),{complete:true});
+  for(const revisions of [[owner,conflict],[conflict,owner],[owner,conflict,owner]]){
+    const before=structuredClone(revisions),result=run(revisions);
+    assert.equal(result.reconciled_overlaps,0);
+    assert.equal(result.reconciliation_block_reasons.competing_engine_start,1);
+    assert.deepEqual(revisions,before);
+    assert.ok(!JSON.stringify(result).includes(requestA));
+  }
+  assert.equal(run([owner,{...owner}]).reconciled_overlaps,1,'identical duplicate receipts remain usable');
+  const later={...owner,observed_at:owner.observed_at+1};
+  for(const revisions of [[owner,conflict,later],[later,conflict,owner],[conflict,later,owner]]){
+    assert.equal(run(revisions).reconciled_overlaps,1,'a unique strictly later revision supersedes an older tie');
+  }
+});
+
+test('tied revisions block their target and every possible owner without suppressing unrelated matches',()=>{
+  const target=overlap(),conflict={...target,confidence:'heuristic'};
+  const run=revisions=>reconcileAttributionRows(revisions,[earlyEngine(),engine()],gateway(),{complete:true});
+  for(const revisions of [[target,conflict],[conflict,target]]){
+    assert.equal(run(revisions).reconciliation_block_reasons.attribution_evidence_conflict,1);
+  }
+  const unrelated=overlap(12,{node:'other-worker',engine_started_at:base-1000000,request_id:null,status:'abstained',reason:'usage_conflict'});
+  assert.equal(run([target,unrelated,{...unrelated,confidence:'heuristic'}]).reconciled_overlaps,1);
+  const claiming={...unrelated,request_id:requestB};
+  for(const revisions of [[unrelated,claiming],[claiming,unrelated]]){
+    const result=run([target,...revisions]);
+    assert.equal(result.reconciled_overlaps,0);
+    assert.equal(result.reconciliation_block_reasons.request_collision,1,'all tied owner claims remain vetoes even outside the cohort/window');
+  }
+  assert.equal(run([target,claiming,unrelated,{...unrelated,observed_at:unrelated.observed_at+1}]).reconciled_overlaps,1);
+});
+
 test('incomplete evidence, missing coverage, missing usage and request collisions keep overlap abstention',()=>{
   const original=overlap();
   assert.equal(reconcileAttributionRows([original],[engine()],gateway(),{complete:false}).reconciled_overlaps,0);

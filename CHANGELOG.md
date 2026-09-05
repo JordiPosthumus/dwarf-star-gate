@@ -1,5 +1,12 @@
 # Changelog
 
+## Reject contradictory latest attribution revisions
+
+- Prevent same-timestamp conflicting ownership records from enabling an overlap
+  match solely because one record was read last.
+- Add order, duplicate, superseding-revision and immutable-input regressions;
+  preserve the recorded view and existing live telemetry/routing behavior.
+
 ## Audit frozen completion forecasts on later traffic
 
 - Add explicit completion mode to the offline future auditor, preserving default

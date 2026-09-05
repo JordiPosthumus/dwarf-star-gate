@@ -114,6 +114,16 @@ A reused sample ID with conflicting normalized start records yields
 `engine_start_conflict`; identical duplicates are harmless. Conflicting samples
 also cannot establish independent ownership for a competing start.
 
+Contradictory attribution revisions tied at the latest observation timestamp
+yield `attribution_evidence_conflict` when used as the target and cannot establish
+independent ownership for competing starts. Every possible tied request claim
+still participates in collision checks; unrelated supported matches remain usable.
+File order cannot decide which tied ownership claim is true. Identical normalized
+duplicates remain usable, and a unique strictly later revision supersedes an
+older tie. This also applies to potential owners outside the selected cohort;
+filtering them away could manufacture a match. The original recorded view stays
+visible and is not repaired by the audit.
+
 Contradictory dispatch/finish records, including a finish before its own dispatch,
 yield `gateway_evidence_conflict` and leave
 the entire selected cohort's recorded view unchanged. The auditor must not discard

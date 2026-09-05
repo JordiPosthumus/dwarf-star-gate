@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Stopped file order from deciding ambiguous ownership.** A reproduced audit
+  bug let contradictory same-time revisions establish an apparent independent
+  owner. Reconciliation now preserves abstention on a tied latest revision;
+  identical duplicates and unambiguous later revisions still work normally.
+
 - **Extended frozen future checks to completion forecasts.** Admission, updated
   and remaining-time candidates can now use the same read-only artifact binding
   and genuinely later-request checks as occupancy experiments. Explicit target
