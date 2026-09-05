@@ -413,6 +413,11 @@ write cannot seed later removal evidence. Historical identity alone never create
 a recovery offer or authorizes a start. Matching it to exact OS removal provenance,
 explicit stop-intent vetoes and retained-definition bootstrap remains unfinished.
 
+The [native removal auditor](macos-removal-provenance.md) now checks archived
+launchd records by exact structured subsystem, PID, boot and time window. It
+distinguishes a caller observation from unknown intent and rejects incomplete
+captures. It is an offline diagnostic, not an automatic recovery offer.
+
 Planned support for this case needs separate opt-in enrollment of an exact,
 private, retained service definition;
 verified GUI domain, machine, binary/profile and empty listener; durable one-shot

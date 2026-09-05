@@ -10,6 +10,12 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Found the missing native removal evidence.** launchd stores the exact job/PID
+  in its structured subsystem, so message-only searches missed the caller record.
+  Added a bounded offline auditor for exact identity/boot/time matching, incomplete
+  captures and conflicting callers. It exposes no raw log text and grants no
+  recovery authority; an OS caller does not prove the stop was accidental.
+
 - **Made Mac recovery respect native disable instructions.** The launchd adapter
   now checks macOS's explicit service-disable override and rechecks before issuing
   a command. Unknown evidence blocks action; Genie and alerts explain the native

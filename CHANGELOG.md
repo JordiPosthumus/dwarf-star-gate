@@ -1,5 +1,17 @@
 # Changelog
 
+## Audit exact native Mac removal records
+
+- Add a read-only archive auditor and exact-subsystem capture predicate for
+  launchd removal evidence, with PID/boot/window/native-sender checks.
+- Require bounded regular inputs and a complete count-checked NDJSON capture;
+  reject partial/malformed evidence, invalid identities and query injection.
+  Return bounded caller classes and timestamps, never raw logs or private identity.
+- Test wrong process/domain/PID/boot, conflicting callers, source gaps, file
+  safety and privacy. Include the auditor in the cross-platform recovery suite.
+- Document that an archived caller observation is not trusted live provenance,
+  intent attribution or permission for removed-job bootstrap. No live activation.
+
 ## Honor native macOS recovery stop intent
 
 - Read the enrolled launchd service's native disable override, with exact-label

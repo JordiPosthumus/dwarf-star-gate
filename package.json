@@ -14,7 +14,7 @@
     "cache-continuity:audit": "node ds4-gateway/cache-continuity-audit.mjs --data runtime/training",
     "attribution:reconcile-audit": "node ds4-gateway/attribution-audit.mjs --directory runtime/dashboard --gateway-log runtime/gateway.log",
     "memory:test": "node --test ds4-gateway/genie-memory.test.mjs",
-    "recovery:test": "python3 -m unittest discover -s ds4-gateway -p 'recovery_*_test.py' -v",
+    "recovery:test": "python3 -m unittest discover -s ds4-gateway -p 'recovery_*_test.py' -v && node --test ds4-gateway/launchd-removal-audit.test.mjs",
     "check": "node scripts/check.mjs",
     "privacy-check": "node scripts/privacy-check.mjs",
     "privacy:test": "node --test scripts/privacy.test.mjs",
