@@ -143,8 +143,11 @@ try {
   await page.waitForFunction(()=>document.querySelectorAll('#analytics-chart circle').length===20);
   assert.match(await page.locator('#analytics-status').innerText(),/Synthetic demo/);
   assert.equal(await page.locator('#analytics-version-label').isVisible(),true);
+  assert.match(await page.locator('#predictor-models').innerText(),/3 known sessions · 2 requests without identity/);
   await page.evaluate(()=>window.scrollTo(0,0));
-  await page.locator('#view-analytics').screenshot({path:path.join(output,'dashboard-analytics.png'),animations:'disabled'});
+  // Element screenshots scroll tall panels under the sticky tab bar, obscuring
+  // the first heading. Capture document coordinates without that auto-scroll.
+  await page.screenshot({path:path.join(output,'dashboard-analytics.png'),fullPage:true,clip:await page.locator('#view-analytics').boundingBox(),animations:'disabled'});
   await page.locator('#tab-activity').click();
   await page.locator('#view-activity').screenshot({path:path.join(output,'dashboard-activity.png'),animations:'disabled'});
   for(const [file,minHeight] of [['dashboard-overview.png',950],['dashboard-genie.png',250],['dashboard-analytics.png',700],['dashboard-activity.png',150]]) {

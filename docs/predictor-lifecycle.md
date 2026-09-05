@@ -674,6 +674,39 @@ establish a routing improvement or independent future validation, and the gain
 cannot be attributed to recipe selection alone because the training data grew.
 Freeze the exact chosen bundle before collecting a new future evaluation cohort.
 
+### Later traffic and session-identity evidence
+
+A later frozen replay contained 49 admitted requests: 48 labeled completions and
+one with no terminal evidence. Of the completed jobs, one was already scored in
+the first snapshot; 47 gained labels later. There were only **two identified
+sessions**, plus two requests with unknown session identity—not three proven
+sessions. No identified unseen session was represented relative to the fitted
+training partition. These counts are dataset evidence, not a live fleet status.
+
+Admission / updated / remaining MAE was about **69 / 68 / 42 seconds**. The best
+aggregate baseline for each was about **54 / 55 / 50 seconds**. Remaining improved
+overall, but on one worker it still lost to that worker's mean baseline; another
+worker contributed only one completion. This is not broad generalization,
+calibrated placement or a measured routing speedup. No candidate was promoted.
+
+The offline `future_strata` report now separates per-worker error and baselines
+from familiar, unseen and unknown-session traffic. Familiar means present in the
+actual fitted partition, not merely the larger input snapshot or its holdout.
+Each slice reweights progress per request. Empty slices report null accuracy;
+session/request identities are not emitted, and worker IDs stay in private audits.
+The existing aggregate `sessions` field remains an accounting-group count for
+compatibility; consult `session_evidence` for identified-session support.
+
+The review reproduced a related eligibility bug: an `unknown-session` placeholder
+could help satisfy a session-diversity gate. Training CV, backtest/unseen-session
+qualification and future promotion now require **identified** sessions at the
+same existing thresholds. Unidentified rows remain in numerical fitting and
+error accounting; they are not deleted or treated as new-session validation.
+The live score adds `known_sessions` and `unknown_identity_requests`; the UI and
+Genie distinguish them from legacy recorded groups. Existing model artifacts,
+prediction math, numeric thresholds and regression-watchdog accounting are
+unchanged. The core fix requires deployment; historical receipts are not rewritten.
+
 ## Next learning work and current boundaries
 
 - [Early client hint collection](client-metadata.md) is implemented. The V3

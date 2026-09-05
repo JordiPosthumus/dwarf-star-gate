@@ -1,5 +1,23 @@
 # Changelog
 
+## Require identified-session evidence for predictor qualification
+
+- Reproduce false future promotion with four identified sessions plus an unknown
+  placeholder. Exclude missing/blank/sentinel identities from the existing
+  five-session gate and candidate evidence-wait check without changing thresholds,
+  deployed artifacts, numerical scores or regression-watchdog accounting.
+- Require identified training/CV/holdout session diversity and exclude unknown
+  identity from unseen-session qualification. Keep those rows for ordinary
+  fitting/error accounting; report explicit known/unknown support.
+- Add fixed per-worker and familiar/unseen/unknown slices to frozen future audits,
+  relative to the fitted partition. Reweight progress by request and report null
+  for empty slices; preserve existing aggregate predictions and errors.
+- Show known-session counts in the dashboard and Genie briefing, label older
+  receipts as recorded groups, and refresh the synthetic analytics screenshot.
+- Verify 48 later completions without refitting: remaining beats the strongest
+  aggregate baseline, but not every worker baseline; admission/updated still lose
+  to simple history. There is no identified unseen-session evidence or promotion.
+
 ## Report settled client failures without granting replay authority
 
 - Fix Agent Watch's `before_provider_request` hook returning a boolean that Pi

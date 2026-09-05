@@ -66,6 +66,14 @@ abstains on relocation, compaction, profile/epoch change, stale or censored work
 It separates strongly guarded suspicion from unconfirmed low reuse and has no
 cache or routing authority.
 
+**Fresh forecast validation:** frozen future reports now separate worker results
+and identified familiar/unseen-session support. Missing session identity cannot
+qualify a candidate through CV, backtest or future diversity checks; numeric
+thresholds are unchanged. A 48-completion later replay improved remaining error
+overall but not every worker baseline, while admission/updated lost to simple
+history. No model was promoted; independent unseen-session and long-job evidence
+remain prerequisites, not claims inferred from an aggregate score.
+
 **Recovery update:** order 6's first slice is now implemented in
 [bounded DS4 service recovery](worker-recovery.md): systemd-user enrollment, GG and
 detector requests, independent guards, durable receipts and cold/warm verification.

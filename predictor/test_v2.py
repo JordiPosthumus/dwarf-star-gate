@@ -13,6 +13,47 @@ ROOT=Path(__file__).resolve().parent.parent
 
 
 class PredictorV2Tests(unittest.TestCase):
+    def test_missing_identity_is_not_independent_session_evidence(self):
+        rows=self.rows(8)
+        for row,group in zip(rows,['a','b','unknown-session',None,'','  ',42,'a']):row['group']=group
+        self.assertEqual(v.session_evidence(rows),{'known_sessions':2,'unknown_identity_requests':5})
+        self.assertEqual(v.session_evidence(rows+[rows[2]]*20),{'known_sessions':2,'unknown_identity_requests':5})
+        measured={'requests':30,'sessions':3,'mae_s':1,'mean_ratio':1}
+        baselines={'example':{'mae_s':10}}
+        validation=self.rows(30)
+        for i,row in enumerate(validation):row['group']=('a','b','unknown-session')[i%3]
+        self.assertFalse(v.validated_holdout(validation,measured,baselines))
+        for row in validation:
+            if row['group']=='unknown-session':row['group']='c'
+        self.assertTrue(v.validated_holdout(validation,measured,baselines))
+        self.assertFalse(v.validated_holdout(validation[:19],measured,baselines))
+        self.assertEqual(v.session_evidence([]),{'known_sessions':0,'unknown_identity_requests':0})
+
+    def test_unknown_identity_does_not_make_a_training_cv_fold_diverse(self):
+        rows=self.rows(120)
+        for i,row in enumerate(rows):row['group']='known' if i%2 else 'unknown-session'
+        self.assertEqual(v.folds(rows),[])
+        for i,row in enumerate(rows):row['group']='known' if i%2 else 'second-known'
+        self.assertGreaterEqual(len(v.folds(rows)),2)
+
+    def test_training_does_not_certify_unknown_as_a_third_unseen_session(self):
+        rows=self.rows(120)
+        for i,row in enumerate(rows):
+            row['target_s']=20
+            row['group']=('train-a','train-b')[i%2] if i<96 else ('new-a','new-b','unknown-session')[i%3]
+        data={'schema':v.SCHEMA,'rows':rows,'snapshot':{'hashes':{}},'groups':{'base':['server_id']},'categorical':['server_id']}
+        with tempfile.TemporaryDirectory() as directory,patch.object(v,'ROUNDS',(1,)),patch.object(v,'feature_families',return_value=[['base']]):
+            prepared=Path(directory)/'prepared.json';prepared.write_text(json.dumps(data))
+            result=v.train(prepared)
+        report=result['reports']['admission']
+        self.assertEqual(report['holdout']['sessions'],3,'Legacy metrics preserve their accounting groups')
+        self.assertEqual(report['session_evidence']['holdout'],{'known_sessions':2,'unknown_identity_requests':8})
+        self.assertEqual(report['unseen_session']['requests'],16)
+        self.assertEqual(report['session_evidence']['unseen'],{'known_sessions':2,'unknown_identity_requests':0})
+        self.assertFalse(report['holdout_passed']);self.assertFalse(report['unseen_session_passed'])
+        self.assertFalse(result['models']['admission']['holdout_passed'])
+        self.assertFalse(result['models']['admission']['new_session_validated'])
+
     def test_delivery_aware_rates_are_optional_inputs_not_the_reference_anchor(self):
         f={'history_delivery_estimate_s':.001,'prior_stream_delivery_tps':1000000,'prior_ttft_s':75,
            'recent_service_mean':80,'same_prior_server':1,'worker_service_median':90,'stage':'admission'}

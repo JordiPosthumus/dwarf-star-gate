@@ -15,7 +15,7 @@ import {PredictionHistory,replay,FEATURE_SCHEMA} from './prediction-features.mjs
 import {PredictionHistory as PredictionHistoryV3,replay as replayV3,FEATURE_SCHEMA as FEATURE_SCHEMA_V3} from './prediction-features-v3.mjs';
 import {featureBuilderHash} from './prediction-feature-registry.mjs';
 import {predictTreeModel,validateCandidate,reference,encode} from './xgb-runtime.mjs';
-import {Predictor,promotionEligible,promotionGate,DEFAULT_BASELINE} from './predictor.mjs';
+import {Predictor,promotionEligible,promotionGate,score,DEFAULT_BASELINE} from './predictor.mjs';
 import {PredictionEvidence} from './analytics.mjs';
 import {parseGenieReview,Genie,briefing} from './genie.mjs';
 import {TRAINING_RECIPES,DEFAULT_RECIPE,RECIPE_POLICY_SHA256} from './training-recipes.mjs';
@@ -172,6 +172,19 @@ test('native evaluator rounds XGBoost split thresholds to float32 before branchi
   // incorrectly take the left branch.
   assert.equal(predictTreeModel(boundary,{elapsed_s:42.43634796142578}),2);
 });
+test('missing session identity cannot satisfy the future promotion diversity gate',()=>{
+  const candidate={holdout_passed:true,holdout:{long_requests:0}};
+  const rows=Array.from({length:36},(_,i)=>({session:['a','b','c','d','unknown-session',undefined][i%6],node:'a',error:1,baseline_error:10,prediction:10,actual:10}));
+  for(const missing of ['unknown-session',undefined,null,'','   ',42]){
+    const samples=rows.map((r,i)=>({...r,session:i%6<4?r.session:missing}));
+    assert.equal(score(samples).known_sessions,4);assert.equal(score(samples).unknown_identity_requests,12);
+    assert.deepEqual(promotionGate(candidate,samples),{eligible:false,reason:'future_sessions_pending',observed:4,required:5});
+  }
+  assert.equal(promotionGate(candidate,rows.map((r,i)=>({...r,session:i%6>=4?'e':r.session}))).eligible,true);
+  assert.equal(score(rows).sessions,6,'Legacy grouping and watchdog accounting remain unchanged');
+  assert.equal(score([]).known_sessions,0);assert.equal(score([]).unknown_identity_requests,0);
+});
+
 test('holdout and future gates require multiple sessions, genuine gain, calibration and per-worker coverage',()=>{
   const m=model(),rows=goodRows();assert.ok(promotionEligible(m,rows));assert.ok(!promotionEligible({...m,holdout_passed:false},rows));assert.ok(!promotionEligible(m,rows.slice(0,29)));
   assert.ok(!promotionEligible(m,rows.map(r=>({...r,session:'same'}))));assert.ok(!promotionEligible(m,rows.map(r=>({...r,prediction:200}))));assert.ok(!promotionEligible(m,[...rows,{...rows[0],node:'new'}]));

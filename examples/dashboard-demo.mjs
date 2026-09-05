@@ -36,7 +36,7 @@ const modelIds=['a'.repeat(64),'b'.repeat(64),'c'.repeat(64)];
 const predictor={configured:true,automatic_training:true,automatic_promotion:true,placement:false,busy:false,new_requests:24,baseline:{id:'causal-history-v1',name:'Measured history baseline'},milestones:[],
   training_recipes:TRAINING_RECIPES,default_recipe:DEFAULT_RECIPE,
   models:['admission','updated','remaining'].map((kind,i)=>({kind,active_model_id:null,candidate_model_id:modelIds[i],status:i===2?'awaiting_future':'holdout_failed',
-    holdout:{mae_s:[64,48,26][i]},future:{mae_s:[58,44,25][i],baseline_mae_s:[51,42,31][i],requests:24,sessions:4},
+    holdout:{mae_s:[64,48,26][i]},future:{mae_s:[58,44,25][i],baseline_mae_s:[51,42,31][i],requests:24,sessions:4,known_sessions:3,unknown_identity_requests:2},
     selected:{family:i===2?['base','progress']:['base','history'],rounds:i===1?16:128,transform:'log'}})),
   actions:[{time:now-120000,actor:'genie',action:'train',status:'completed',reason:'Synthetic example: candidate evaluated; no routing model activated.'}]};
 if(learningMilestone){

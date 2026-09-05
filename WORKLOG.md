@@ -10,6 +10,14 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Stopped missing session identity from qualifying a predictor.** Fresh replay
+  exposed two known sessions plus unknown-identity work, not three independent
+  sessions. Training and promotion keep their existing thresholds but no longer
+  count the unknown placeholder toward diversity. The UI distinguishes known
+  sessions from legacy groups; frozen-model audits now split worker and session
+  familiarity. On 48 later completions, remaining improved overall while
+  admission/updated still lost to simple history. No model was promoted.
+
 - **Distinguished a failed Pi turn from healthy idle.** Agent Watch now reports
   a scoped terminal error only when Pi's session has fully settled, not while
   retry/compaction may continue. The UI and Genie distinguish client failure from

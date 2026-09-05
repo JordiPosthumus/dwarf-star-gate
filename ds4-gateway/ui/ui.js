@@ -6,6 +6,10 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const age = (time, now) => !time ? 'no sample yet' : now - time < 5000 ? 'just now' : now - time < 60000 ? `${Math.floor((now-time)/1000)}s ago` : `${Math.floor((now-time)/60000)}m ago`;
 const remaining = (time, now) => !time ? 'unknown' : time <= now ? 'expired' : time-now < 60000 ? `${Math.ceil((time-now)/1000)}s` : time-now < 3600000 ? `${Math.ceil((time-now)/60000)}m` : `${(Math.ceil((time-now)/360000)/10).toFixed(1).replace(/\.0$/,'')}h`;
 const clock = t => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+function predictionSessionLabel(evidence){
+  if(!Number.isSafeInteger(evidence?.known_sessions)||evidence.known_sessions<0)return `${fmt(evidence?.sessions??0)} recorded groups`;
+  return `${fmt(evidence.known_sessions)} known sessions${evidence.unknown_identity_requests>0?` · ${fmt(evidence.unknown_identity_requests)} requests without identity`:''}`;
+}
 function forecastLabel(f, now, stale=false) {
   if (!f || !Number.isFinite(f.at) || !Number.isFinite(f.seconds) || f.seconds<0 || f.at>now) return 'ETA unknown';
   if (stale || now-f.at>60000) return 'Forecast stale';
@@ -886,7 +890,7 @@ function renderMilestones(milestones,unavailable){
       const title=document.createElement('strong');title.textContent=`${m.kind}: a challenger earned its place.`;
       const facts=document.createElement('p'),s=m.evidence.baseline,c=m.evidence.champion;
       const gain=s.baseline_mae_s>0?100*(1-s.mae_s/s.baseline_mae_s):null;
-      facts.textContent=`Verified at ${clock(m.time)} · model ${m.model_id.slice(0,8)} · ${fmt(gain)}% lower mean absolute prediction error than ${m.baseline_id}: ${fmt(s.mae_s)}s vs ${fmt(s.baseline_mae_s)}s over ${s.requests} requests / ${s.sessions} sessions (${(m.evidence.workers||[]).join(', ')}).${c?` Matched incumbent ${m.comparator_id.slice(0,8)}: ${fmt(c.mae_s)}s vs ${fmt(c.baseline_mae_s)}s over ${c.requests} requests; ${c.fallback_points}/${c.forecast_points} incumbent forecast points used its baseline fallback.`:''} This is prediction accuracy, not a measured routing speedup.`;
+      facts.textContent=`Verified at ${clock(m.time)} · model ${m.model_id.slice(0,8)} · ${fmt(gain)}% lower mean absolute prediction error than ${m.baseline_id}: ${fmt(s.mae_s)}s vs ${fmt(s.baseline_mae_s)}s over ${s.requests} requests / ${predictionSessionLabel(s)} (${(m.evidence.workers||[]).join(', ')}).${c?` Matched incumbent ${m.comparator_id.slice(0,8)}: ${fmt(c.mae_s)}s vs ${fmt(c.baseline_mae_s)}s over ${c.requests} requests; ${c.fallback_points}/${c.forecast_points} incumbent forecast points used its baseline fallback.`:''} This is prediction accuracy, not a measured routing speedup.`;
       article.append(title,facts);
       if(m.commentary){const comment=document.createElement('p');comment.textContent=`Genie commentary: ${m.commentary.text}`;article.append(comment);}
       const button=document.createElement('button');button.type='button';button.className='button';button.dataset.milestone=m.id;button.textContent='Dismiss announcement';article.append(button);
@@ -917,7 +921,7 @@ function renderPredictor(state,unavailable=false){
     b.disabled=unavailable||!state?.configured||predictorControlBusy||(action==='train'&&state.busy)||(action==='rollback'&&!active);
     if(['automatic_training','automatic_promotion','placement'].includes(action)){const label={automatic_training:'Auto training',automatic_promotion:'Auto validation',placement:'New-session placement'}[action];b.textContent=`${label}: ${state?.[action]?'on':'off'}`;b.setAttribute('aria-pressed',String(!!state?.[action]));}
   }
-  $('predictor-models').innerHTML=`<table><thead><tr><th>Forecast</th><th>Candidate</th><th>Backtest MAE</th><th>Future MAE / baseline</th><th>Future evidence</th><th>Selection</th></tr></thead><tbody>${(state?.models||[]).map(m=>`<tr><td>${esc(m.kind)}${m.active_model_id?' · active '+esc(m.active_model_id.slice(0,8)):''}</td><td>${esc(m.status.replaceAll('_',' '))}${m.candidate_model_id?' · '+esc(m.candidate_model_id.slice(0,8)):''}</td><td>${fmt(m.holdout?.mae_s)}s</td><td>${fmt(m.future?.mae_s)}s / ${fmt(m.future?.baseline_mae_s)}s</td><td>${fmt(m.future?.requests||0)} requests · ${fmt(m.future?.sessions||0)} sessions</td><td>${m.selected?esc(`${m.selected.rounds} trees · ${m.selected.transform} · ${m.selected.family.join(' + ')}`):'Not enough evidence'}</td></tr>`).join('')}</tbody></table>`;
+  $('predictor-models').innerHTML=`<table><thead><tr><th>Forecast</th><th>Candidate</th><th>Backtest MAE</th><th>Future MAE / baseline</th><th>Future evidence</th><th>Selection</th></tr></thead><tbody>${(state?.models||[]).map(m=>`<tr><td>${esc(m.kind)}${m.active_model_id?' · active '+esc(m.active_model_id.slice(0,8)):''}</td><td>${esc(m.status.replaceAll('_',' '))}${m.candidate_model_id?' · '+esc(m.candidate_model_id.slice(0,8)):''}</td><td>${fmt(m.holdout?.mae_s)}s</td><td>${fmt(m.future?.mae_s)}s / ${fmt(m.future?.baseline_mae_s)}s</td><td>${fmt(m.future?.requests||0)} requests · ${esc(predictionSessionLabel(m.future))}</td><td>${m.selected?esc(`${m.selected.rounds} trees · ${m.selected.transform} · ${m.selected.family.join(' + ')}`):'Not enough evidence'}</td></tr>`).join('')}</tbody></table>`;
   $('predictor-actions').replaceChildren(...(state?.actions||[]).slice(0,5).map(a=>{const p=document.createElement('p');p.textContent=`${clock(a.time)} · ${a.actor} · ${a.action} · ${a.status}${a.recipe_id?' · '+a.recipe_id:''}: ${a.reason}`;return p;}));
 }
 $('predictor-controls').addEventListener('click',async event=>{

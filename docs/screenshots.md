@@ -1,6 +1,8 @@
 # Public dashboard screenshots
 
 Refreshed 2026-09-04 from the checked-in synthetic demo and current UI assets.
+Analytics refreshed 2026-09-05 to distinguish known sessions from requests with
+missing identity; the values remain fictional.
 These are actual browser captures of fictional data, not edited production
 screenshots, benchmark results, a live incident report or a promoted model.
 

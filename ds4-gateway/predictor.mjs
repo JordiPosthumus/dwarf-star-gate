@@ -25,17 +25,25 @@ const candidateRejectionCode=error=>{
 };
 export const DEFAULT_BASELINE=Object.freeze({id:'causal-history-v1',name:'Measured history baseline',recipe:'Fixed causal history/hardware recipe; observations continue to update. Unknown without evidence.'});
 export const PREDICTION_POLICY=Object.freeze({version:2,min_future_requests:30,min_future_sessions:5,required_mae_gain:.10,max_mean_bias:.30,rollback_ratio:1.25,rollback_window:20,training_interval_ms:6*3600000,min_new_requests:50,training_timeout_ms:120000});
+function sessionEvidence(rows){
+  const known=rows.filter(r=>typeof r.session==='string'&&r.session.trim()&&r.session!=='unknown-session');
+  return {known_sessions:new Set(known.map(r=>r.session)).size,unknown_identity_requests:rows.length-known.length};
+}
 export function score(rows) {
-  if(!rows.length)return {requests:0,sessions:0,mae_s:null,baseline_mae_s:null,mean_ratio:null};
+  const identity=sessionEvidence(rows);
+  if(!rows.length)return {requests:0,sessions:0,...identity,mae_s:null,baseline_mae_s:null,mean_ratio:null};
   const mean=k=>rows.reduce((s,r)=>s+r[k],0)/rows.length;
-  return {requests:rows.length,sessions:new Set(rows.map(r=>r.session)).size,mae_s:mean('error'),baseline_mae_s:mean('baseline_error'),mean_ratio:mean('prediction')/Math.max(.001,mean('actual')),
+  return {requests:rows.length,sessions:new Set(rows.map(r=>r.session)).size,...identity,mae_s:mean('error'),baseline_mae_s:mean('baseline_error'),mean_ratio:mean('prediction')/Math.max(.001,mean('actual')),
     long_requests:rows.filter(r=>r.long).length,long_mae_s:rows.some(r=>r.long)?rows.filter(r=>r.long).reduce((s,r)=>s+r.error,0)/rows.filter(r=>r.long).length:null};
 }
 export function promotionGate(model,rows) {
   const s=score(rows),p=PREDICTION_POLICY;
+  // Unknown identity is an accounting bucket, never a fifth distinct session.
+  // Leave score/rollback accounting and every numeric threshold unchanged.
+  const knownSessions=s.known_sessions;
   if(!model.holdout_passed)return {eligible:false,reason:'historical_holdout_failed'};
   if(s.requests<p.min_future_requests)return {eligible:false,reason:'future_requests_pending',observed:s.requests,required:p.min_future_requests};
-  if(s.sessions<p.min_future_sessions)return {eligible:false,reason:'future_sessions_pending',observed:s.sessions,required:p.min_future_sessions};
+  if(knownSessions<p.min_future_sessions)return {eligible:false,reason:'future_sessions_pending',observed:knownSessions,required:p.min_future_sessions};
   if(!finite(s.mae_s)||!finite(s.baseline_mae_s)||s.baseline_mae_s<=0||!Number.isFinite(s.mean_ratio))return {eligible:false,reason:'future_metrics_invalid'};
   if(s.mae_s>s.baseline_mae_s*(1-p.required_mae_gain))return {eligible:false,reason:'future_gain_pending',observed_mae_s:s.mae_s,baseline_mae_s:s.baseline_mae_s,required_gain:p.required_mae_gain};
   if(Math.abs(s.mean_ratio-1)>p.max_mean_bias)return {eligible:false,reason:'future_bias_out_of_bounds',mean_ratio:s.mean_ratio,max_mean_bias:p.max_mean_bias};
@@ -111,7 +119,7 @@ export class Predictor {
     // Give an offline-qualified shadow candidate time to collect its release
     // evidence instead of replacing it on every busy burst. Manual training
     // remains explicit; automatic/Genie retraining waits at most six hours.
-    if(this.shadow&&this.now()-Date.parse(this.shadow.created_at)<PREDICTION_POLICY.training_interval_ms&&Object.values(this.shadow.models).some(m=>m.holdout_passed&&((this.state.evaluations[m.id]?.length??0)<30||score(this.state.evaluations[m.id]??[]).sessions<5)))return null;
+    if(this.shadow&&this.now()-Date.parse(this.shadow.created_at)<PREDICTION_POLICY.training_interval_ms&&Object.values(this.shadow.models).some(m=>m.holdout_passed&&((this.state.evaluations[m.id]?.length??0)<30||score(this.state.evaluations[m.id]??[]).known_sessions<5)))return null;
     return hash(`${RECIPE_POLICY_SHA256}:${this.state.last_train_at}:${this.state.new_requests}:${this.shadow?.created_at??'first'}`).slice(0,24);
   }
   baseline(point) {

@@ -446,6 +446,16 @@ test('Genie report bodies remain inert text and an empty refresh does not close 
   render([]);assert.equal(container.children[0],node);assert.ok(node.open);
   node.open=false;render([]);assert.equal(container.children.length,0);
 });
+test('predictor session labels distinguish known identities from legacy grouping',()=>{
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'');
+  const context=vm.createContext({});vm.runInContext(source.split('\npoll();')[0],context);
+  assert.equal(vm.runInContext('predictionSessionLabel({sessions:3,known_sessions:2,unknown_identity_requests:2})',context),'2 known sessions · 2 requests without identity');
+  assert.equal(vm.runInContext('predictionSessionLabel({sessions:3})',context),'3 recorded groups');
+  assert.equal(vm.runInContext('predictionSessionLabel({known_sessions:0,unknown_identity_requests:0})',context),'0 known sessions');
+  assert.equal(vm.runInContext('predictionSessionLabel({known_sessions:"<img>",sessions:3})',context),'3 recorded groups');
+  assert.match(source,/predictionSessionLabel\(s\)/);assert.match(source,/esc\(predictionSessionLabel\(m.future\)\)/);
+});
+
 test('Genie action ledger is concise, newest-first and includes proven pool commandeering',()=>{
   const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);

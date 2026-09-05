@@ -1,6 +1,7 @@
 """Frozen-model future audit. Offline only; never promotes or changes routing."""
 import argparse
 import bisect
+import collections
 import datetime as dt
 import hashlib
 import json
@@ -8,7 +9,7 @@ import math
 import os
 import stat
 
-from fit_v2 import OCCUPANCY_SCHEMAS, baseline, exported_prediction, feature_coverage, metrics, split, split_usage, target_coverage
+from fit_v2 import OCCUPANCY_SCHEMAS, baseline, exported_prediction, feature_coverage, known_session, metrics, session_evidence, split, split_usage, target_coverage
 
 
 def read_json(path):
@@ -76,6 +77,31 @@ def elapsed_slices(training_rows, rows, predictions):
                       'metrics':metrics(selected,estimates) if selected else None,
                       'baselines':baseline(training_rows,selected)[0] if selected else None}
     return result
+
+
+def future_strata(training_rows, rows, predictions):
+    """Describe transfer evidence, not a new release gate or model selector.
+
+    Familiarity uses only the fitted partition, not every session in the frozen
+    input snapshot. Missing session identity is neither familiar nor unseen.
+    Reweight each slice by request so verbose progress cannot dominate it.
+    """
+    known={r['group'] for r in training_rows if known_session(r.get('group'))}
+    workers=collections.defaultdict(list)
+    sessions={name:[] for name in ('seen_in_training','unseen_in_training','unknown')}
+    for row,prediction in zip(rows,predictions,strict=True):
+        workers[row['node']].append((row,prediction))
+        group=row.get('group')
+        bucket='unknown' if not known_session(group) else 'seen_in_training' if group in known else 'unseen_in_training'
+        sessions[bucket].append((row,prediction))
+    def summarize(pairs):
+        points=[row for row,_ in pairs];estimates=[p for _,p in pairs]
+        return {'points':len(points),'metrics':metrics(points,estimates) if points else None,
+                'baselines':baseline(training_rows,points)[0] if points else None}
+    return {'by_worker':{node:summarize(pairs) for node,pairs in sorted(workers.items())},
+            'session_evidence':session_evidence(rows),
+            'by_session_familiarity':{name:summarize(pairs) for name,pairs in sessions.items()},
+            'note':'Fixed descriptive slices, not tuning or promotion gates. Familiarity is relative to fitted training sessions, not proof of independent traffic or matching profile eras. Worker IDs remain private audit data; request/session IDs are not emitted.'}
 
 
 def remaining_age_support(training_rows, rows):
@@ -161,6 +187,7 @@ def evaluate(candidate_path,training_path,receipt_path,prepared_path):
         tr,_=split([r for r in training['rows'] if r['kind']==kind],candidate['reports'][kind]['cutoff'])
         report={'status':'no_future_labels','target_coverage':target_coverage(rows),
                 'input_support':input_support(model,tr,rows,training.get('groups',{}).get('hardware',[]))};result['reports'][kind]=report
+        report['future_strata']=future_strata(tr,[],[])
         if kind=='remaining':report['age_support']=remaining_age_support(tr,rows)
         if not rows:
             if kind=='remaining':report['by_elapsed']=elapsed_slices(tr,[],[])
@@ -168,6 +195,7 @@ def evaluate(candidate_path,training_path,receipt_path,prepared_path):
         if not tr:raise ValueError('Frozen training partition is empty')
         predictions=[exported_prediction(model,r['features']) for r in rows]
         if any(not math.isfinite(p) for p in predictions):raise ValueError('Non-finite prediction')
+        report['future_strata']=future_strata(tr,rows,predictions)
         report.update(status='observed_not_promoted',metrics=metrics(rows,predictions),baselines=baseline(tr,rows)[0],
             terminal_classes={label:metrics([r for r in rows if r['terminal_class']==label],[p for r,p in zip(rows,predictions) if r['terminal_class']==label])
                 if any(r['terminal_class']==label for r in rows) else None for label in ('normal','output_limited')})

@@ -42,6 +42,20 @@ def unique(rows):
     return len({(r['run_id'], r['request_id']) for r in rows})
 
 
+def known_session(group):
+    return isinstance(group,str) and bool(group.strip()) and group!='unknown-session'
+
+
+def session_evidence(rows):
+    return {'known_sessions':len({r['group'] for r in rows if known_session(r.get('group'))}),
+            'unknown_identity_requests':unique([r for r in rows if not known_session(r.get('group'))])}
+
+
+def validated_holdout(rows, measured, baselines):
+    # Preserve thresholds; missing identity is not an independent session.
+    return unique(rows)>=20 and session_evidence(rows)['known_sessions']>=3 and measured['mae_s']<=min(x['mae_s'] for x in baselines.values())*.9 and .7<=measured['mean_ratio']<=1.3
+
+
 def weights(rows):
     counts = collections.Counter((r['run_id'], r['request_id']) for r in rows)
     return np.asarray([1 / counts[(r['run_id'], r['request_id'])] for r in rows])
@@ -64,7 +78,7 @@ def folds(rows):
         index = int(len(times)*(fraction+.2))
         end = times[index] if index < len(times) else float('inf')
         tr, va = split(rows, start, end)
-        if unique(tr) >= 15 and unique(va) >= 5 and len({r['group'] for r in tr}) >= 2:
+        if unique(tr) >= 15 and unique(va) >= 5 and session_evidence(tr)['known_sessions'] >= 2:
             result.append((tr, va))
     return result
 
@@ -303,13 +317,15 @@ def train(prepared, recipe_id=DEFAULT_RECIPE, *, occupancy=False):
         by_worker={node:metrics([r for r in te if r['node']==node],[float(p) for r,p in zip(te,predictions) if r['node']==node]) for node in {r['node'] for r in te}}
         # Gate is deliberately immutable code, not a parameter the Genie supplies.
         best_baseline=min(x['mae_s'] for x in baselines.values())
-        passed=unique(te)>=20 and measured['sessions']>=3 and measured['mae_s']<=best_baseline*.9 and .7<=measured['mean_ratio']<=1.3
-        unseen=[r for r in te if r['group'] not in {x['group'] for x in tr}]
+        passed=validated_holdout(te,measured,baselines)
+        trained_groups={r['group'] for r in tr if known_session(r.get('group'))}
+        unseen=[r for r in te if known_session(r.get('group')) and r['group'] not in trained_groups]
         unseen_metrics=metrics(unseen,predict(model,enc,factor,unseen,winner['transform'])) if unseen else None
         unseen_baselines=baseline(tr,unseen)[0] if unseen else None
-        unseen_passed=bool(unseen_metrics and unseen_metrics['requests']>=20 and unseen_metrics['sessions']>=3 and unseen_metrics['mae_s']<=min(m['mae_s'] for m in unseen_baselines.values())*.9 and .7<=unseen_metrics['mean_ratio']<=1.3)
+        unseen_passed=bool(unseen_metrics and validated_holdout(unseen,unseen_metrics,unseen_baselines))
         report.update(status='holdout_passed' if passed else 'holdout_failed',selected={k:v for k,v in winner.items() if k!='names'},ablations=[{k:v for k,v in c.items() if k not in ('names','fold_metrics')} for c in candidates],holdout=measured,baselines=baselines,by_worker=by_worker,cutoff=cutoff,unseen_session=unseen_metrics,unseen_session_passed=unseen_passed,
                       training_groups=sorted({r['group'] for r in tr}),holdout_groups=sorted({r['group'] for r in te}),holdout_passed=passed,
+                      session_evidence={'training':session_evidence(tr),'holdout':session_evidence(te),'unseen':session_evidence(unseen)},
                       feature_availability='shared chronological replay; strictly earlier completed history',tree_selection='forward-time folds inside training; unfinished labels purged; recurring sessions allowed; separate unseen-session placement gate')
         # Export the EXACT evaluated model. No unevaluated all-data refit is
         # silently substituted for the artifact that earned these measurements.

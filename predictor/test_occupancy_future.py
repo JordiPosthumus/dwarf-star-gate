@@ -9,6 +9,56 @@ import occupancy_future as audit
 
 
 class OccupancyFutureTests(unittest.TestCase):
+    def test_future_strata_expose_worker_failure_and_unseen_sessions_without_names(self):
+        tr=[self.row('train',100,200)]
+        tr[0]['group']='private-familiar-session'
+        rows=[self.row('a',1000,2000),self.row('b',1000,2000),self.row('c',1000,2000)]
+        rows[0]['group']='private-familiar-session'
+        rows[1]['group']='private-unseen-session';rows[1]['node']='b'
+        rows[2]['group']='unknown-session';rows[2]['node']='b'
+        original=copy.deepcopy((tr,rows))
+        result=audit.future_strata(tr,rows,[10,110,10])
+        self.assertEqual(result['by_worker']['a']['metrics']['mae_s'],0)
+        self.assertEqual(result['by_worker']['b']['metrics']['mae_s'],50)
+        self.assertEqual(result['by_session_familiarity']['seen_in_training']['metrics']['mae_s'],0)
+        self.assertEqual(result['by_session_familiarity']['unseen_in_training']['metrics']['mae_s'],100)
+        unknown=result['by_session_familiarity']['unknown']
+        self.assertEqual(unknown['metrics']['requests'],1)
+        self.assertEqual(unknown['baselines']['worker_mean']['mae_s'],0)
+        self.assertEqual((tr,rows),original)
+        encoded=json.dumps(result)
+        self.assertNotIn('private-familiar-session',encoded)
+        self.assertNotIn('private-unseen-session',encoded)
+        self.assertNotIn('request_id',encoded)
+
+    def test_future_strata_rebalance_progress_within_worker_and_keep_empty_unknown(self):
+        tr=[self.row('train',100,200)]
+        rows=[self.row('a',1000,2000,'remaining') for _ in range(40)]+[self.row('b',1000,2000,'remaining')]
+        result=audit.future_strata(tr,rows,[10]*40+[110])
+        self.assertEqual(result['by_worker']['a']['points'],41)
+        self.assertEqual(result['by_worker']['a']['metrics']['requests'],2)
+        self.assertAlmostEqual(result['by_worker']['a']['metrics']['mae_s'],50)
+        empty=result['by_session_familiarity']['unseen_in_training']
+        self.assertEqual(empty,{'points':0,'metrics':None,'baselines':None})
+        self.assertEqual(audit.future_strata(tr,[],[])['by_worker'],{})
+        with self.assertRaises(ValueError):audit.future_strata(tr,rows,[10])
+
+    def test_evaluation_familiarity_uses_actual_fitted_partition_not_entire_snapshot(self):
+        self.training['rows'].append({**self.row('holdout',600,700),'group':'only-in-holdout'})
+        self.training['rows'].append({**self.row('unfinished-at-cut',100,900),'group':'purged-training'})
+        self.write('training',self.training)
+        self.receipt=audit.freeze(self.root/'candidate',self.root/'training',self.root/'strata-receipt')
+        cut=audit.timestamp(self.receipt['frozen_at'])
+        self.future['snapshot']['created_at']=dt.datetime.fromtimestamp((cut+10000)/1000,dt.timezone.utc).isoformat()
+        self.future['rows']=[{**self.row(str(i),cut+1,cut+1000),'group':group}
+                             for i,group in enumerate(('session','only-in-holdout','purged-training'))]
+        self.write('future',self.future)
+        result=audit.evaluate(self.root/'candidate',self.root/'training',self.root/'strata-receipt',self.root/'future')
+        r=result['reports']['admission']['future_strata']
+        self.assertEqual(r['by_session_familiarity']['seen_in_training']['metrics']['requests'],1)
+        self.assertEqual(r['by_session_familiarity']['unseen_in_training']['metrics']['requests'],2)
+        self.assertEqual(result['reports']['remaining']['future_strata']['by_worker'],{})
+
     def test_remaining_age_support_counts_jobs_not_repeated_progress_and_excludes_future_labels(self):
         tr=[self.row('a',100,200,'remaining') for _ in range(50)]+[self.row('b',100,200,'remaining')]
         for row in tr:row['features']['elapsed_s']=900
