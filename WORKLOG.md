@@ -13,7 +13,9 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 - **Planned opt-in Session Rescue.** Genie could review quiet Pi sessions and
   propose or request a guarded resume when warranted. The roadmap separates
   observation from control, protects legitimate waiting and requires proof of
-  safe continuation. No session-control capability is enabled by this plan.
+  safe continuation. Routine “should I keep going?” check-ins on authorized work
+  can receive a continuation; real decisions and new permissions stay with the
+  human. No session-control capability is enabled by this plan.
 
 - **Made sensor-era model experiments reproducible.** An explicit offline V4
   cohort can start at a declared collection boundary while retaining all older

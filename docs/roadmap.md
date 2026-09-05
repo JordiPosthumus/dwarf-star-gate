@@ -539,17 +539,29 @@ the gateway do the user's work or assume that every quiet session is broken.
   separate automatic-resume toggle, scoped to an explicitly enrolled client and
   its sessions. Observation alone grants no control. Provide per-session exclusion,
   immediate revocation and a manual “review / resume” path. Protect intentional
-  pauses, user aborts, completed tasks and sessions awaiting human input.
+  pauses, user aborts, completed tasks and sessions requiring genuine human input.
 - **Diagnose before suggesting action:** correlate fresh client lifecycle and
   monotonic progress with DSG queue, dispatch and terminal receipts. Distinguish
   waiting for a slot, active reasoning/streaming, a long local tool, local retries
-  or compaction, a settled recoverable failure and unknown client state. Neither
+  or compaction, a settled recoverable failure, an unnecessary continuation
+  check-in and unknown client state. Neither
   elapsed time, idle GPU telemetry nor a stale heartbeat proves a stalled agent.
 - **Privacy-bounded study:** use structured lifecycle/error classes first, with
   bounded retention. Reading transcript, tool-output or user-request snippets
   requires separate explicit content permission, with scope and retention shown
   before enabling it. Never collect secrets or full transcripts by default;
   treat inspected content as untrusted evidence, not control instructions.
+- **Judge what the agent is waiting for:** with separately authorized bounded
+  task/last-turn context, Genie distinguishes “we got this far; should I keep
+  going?” on an unfinished, already authorized task from a real decision for the
+  human. In the routine-check-in case, the intended response is “Yes, continue
+  the already authorized task.” A normal successful turn ending in that question
+  can qualify; rescue is not restricted to error-ended turns. A preference or
+  factual input the user must supply, broader scope, spending, destructive action,
+  credentials, new access or an explicit instruction to wait must go to the human.
+  Do not answer those questions by guessing, impersonate the user, or treat a
+  question mark alone as authorization. Without enough trusted task/permission
+  context to distinguish these cases, show “needs human review” and the reason.
 - **Least-powerful recovery:** prefer Pi's supported, authenticated client-owned
   resume/control interface and reuse existing optional integration where suitable;
   verify actual Pi support before choosing a mechanism. No terminal keystroke
@@ -559,13 +571,15 @@ the gateway do the user's work or assume that every quiet session is broken.
   Pi to schedule another turn.
 - **Independent execution guard:** immediately recheck session identity, generation,
   ownership, permissions and lifecycle at the client. A settled recoverable turn
+  or routine continuation check-in
   must have no outstanding tool, request, queued continuation, retry or compaction.
   An active/ambiguous prior execution requires positive reconciliation or human
   review, not blind replay. Use one durable idempotency receipt per failure/turn
   generation, bounded attempts and cooldown; recovered progress or user activity
   invalidates stale proposals. Fail closed on client restart or lost receipt state.
 - **Visible outcome:** put the reason, evidence freshness, target pseudonym,
-  decision, action receipt and result in the existing newest-first Genie ledger.
+  decision (including “routine continuation” versus “needs human feedback”),
+  action receipt and result in the existing newest-first Genie ledger.
   Distinguish suggested, blocked, resume accepted, progress confirmed and failed;
   command acceptance alone is not recovery. Repeated failure becomes a concise
   operator alert and hardening note, not an endless “proceed” loop.
@@ -573,7 +587,9 @@ the gateway do the user's work or assume that every quiet session is broken.
 Delivery: observation-only stalled-session review first; then operator-approved
 single-session resume; finally separately opted-in automatic rescue after real
 Pi integration tests. Acceptance must cover a settled recoverable failure resuming
-without duplicate tool execution, stale-review races, concurrent controllers,
+without duplicate tool execution, routine “should I keep going?” continuation,
+real approval questions and superficially similar risky requests, stale-review
+races, concurrent controllers,
 client restart, permission revocation, user stops, healthy quiet work, DSG queue
 waits, missing heartbeat and unresolved post-dispatch failures. No active work may
 be interrupted just to test this feature. Track confirmed recovery and false

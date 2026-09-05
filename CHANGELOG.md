@@ -4,6 +4,8 @@
 
 - Specify staged Pi stall review and client-owned resume, with separate consent,
   privacy bounds, independent lifecycle guards and concise ledger outcomes.
+- Distinguish routine continuation check-ins from real human decisions; cover
+  normal question-ended turns as well as settled recoverable errors.
 - Keep Agent Watch advisory today; this roadmap change installs no integration,
   reads no session content and grants no automatic control.
 
