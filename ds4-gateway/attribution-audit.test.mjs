@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import {spawnSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
 import { summarizeAttribution } from './attribution-summary.mjs';
 import { auditAttributionDirectory, auditAttributionReconciliation, reconcileAttributionRows } from './attribution-audit.mjs';
 import { timeWindows } from './time-window-index.mjs';
@@ -21,6 +23,59 @@ const gateway=()=>[
   {event:'request_finished',request_id:requestA,node:'spark-a',time:iso(base+1000),outcome:'complete',usage:{prompt_tokens:800,cached_tokens:700}},
   {event:'request_finished',request_id:requestB,node:'spark-a',time:iso(base+2000),outcome:'complete',usage:{prompt_tokens:1000,cached_tokens:900}}
 ];
+
+function sharedBudgetFixture(t){
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-shared-attribution-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const metrics=path.join(dir,'metrics-2026-09-04.jsonl'),second=path.join(dir,'metrics-2026-09-05.jsonl'),gatewayLog=path.join(dir,'gateway.log');
+  const rows=[earlyEngine(),engine(),overlap()].map(r=>JSON.stringify(r)+'\n').join('');
+  fs.writeFileSync(metrics,rows+'\n'.repeat(5120-Buffer.byteLength(rows)));fs.writeFileSync(second,'');
+  fs.writeFileSync(gatewayLog,gateway().map(r=>JSON.stringify(r)+'\n').join(''));
+  return {dir,metrics,second,gatewayLog};
+}
+test('explicit shared metric allowance reads complete files without increasing combined bytes',t=>{
+  const {dir,gatewayLog}=sharedBudgetFixture(t),options={maxFiles:2,maxBytesPerFile:4096};
+  const original=auditAttributionReconciliation(dir,gatewayLog,options);assert.equal(original.source_complete,false);assert.equal(original.partial_files,1);
+  const shared=auditAttributionReconciliation(dir,gatewayLog,{...options,sharedMetricBudget:true});
+  assert.equal(shared.source_complete,true);assert.equal(shared.reconciled_overlaps,1);
+  assert.deepEqual(shared.metric_budget,{mode:'shared_complete_files',limit_bytes:8192,read_bytes:5120});
+  const {metric_budget,...same}=shared;
+  assert.deepEqual(same,auditAttributionReconciliation(dir,gatewayLog,{maxFiles:2,maxBytesPerFile:8192}));
+});
+test('shared metric allowance refuses aggregate overflow, including growth at open',t=>{
+  const {dir,metrics,second,gatewayLog}=sharedBudgetFixture(t),options={maxFiles:2,maxBytesPerFile:4096,sharedMetricBudget:true};
+  fs.writeFileSync(second,'\n'.repeat(3072));const exact=auditAttributionReconciliation(dir,gatewayLog,options);
+  assert.equal(exact.source_complete,true);assert.equal(exact.metric_budget.read_bytes,8192);
+  fs.writeFileSync(second,'\n'.repeat(3073));assert.throws(()=>auditAttributionReconciliation(dir,gatewayLog,options),/Shared metric read budget exceeded/);
+  fs.writeFileSync(second,'');const open=fs.openSync;
+  t.mock.method(fs,'openSync',function(file,...args){
+    if(file===second){const fd=open.call(fs,second,'r+');try{fs.ftruncateSync(fd,3073);}finally{fs.closeSync(fd);}}
+    return open.call(fs,file,...args);
+  });
+  assert.throws(()=>auditAttributionReconciliation(dir,gatewayLog,options),/Shared metric read budget exceeded/);
+  assert.equal(fs.statSync(metrics).size,5120);
+});
+test('short filesystem reads are completed instead of silently parsing a zero-filled suffix',t=>{
+  const {dir,gatewayLog}=sharedBudgetFixture(t),options={maxFiles:2,maxBytesPerFile:8192};
+  const expected=auditAttributionReconciliation(dir,gatewayLog,options),read=fs.readSync;
+  const tailOptions={maxFiles:2,maxBytesPerFile:4096},tail=auditAttributionReconciliation(dir,gatewayLog,tailOptions);
+  t.mock.method(fs,'readSync',function(fd,buffer,offset,length,position){return read.call(fs,fd,buffer,offset,Math.min(length,17),position);});
+  assert.deepEqual(auditAttributionReconciliation(dir,gatewayLog,options),expected);
+  assert.deepEqual(auditAttributionReconciliation(dir,gatewayLog,tailOptions),tail);
+});
+test('shrinking evidence fails explicitly and invalid shared-mode values cannot change reader policy',t=>{
+  const {dir,gatewayLog}=sharedBudgetFixture(t);
+  for(const value of ['true',1,null])assert.throws(()=>auditAttributionReconciliation(dir,gatewayLog,{sharedMetricBudget:value}),/must be boolean/);
+  t.mock.method(fs,'readSync',()=>0);
+  assert.throws(()=>auditAttributionReconciliation(dir,gatewayLog,{sharedMetricBudget:true}),/shrank during read/);
+});
+test('shared-budget CLI is explicit, reconciliation-only and rejects duplicate flags',t=>{
+  const {dir,gatewayLog}=sharedBudgetFixture(t),cli=fileURLToPath(new URL('./attribution-audit.mjs',import.meta.url));
+  const run=args=>spawnSync(process.execPath,[cli,...args],{encoding:'utf8',timeout:5000});
+  const args=['--directory',dir,'--gateway-log',gatewayLog,'--files','2','--shared-metric-budget'];
+  const result=run(args);assert.equal(result.status,0,result.stderr);assert.equal(JSON.parse(result.stdout).metric_budget.mode,'shared_complete_files');
+  assert.equal(run(['--directory',dir,'--shared-metric-budget']).status,1);
+  assert.equal(run([...args,'--shared-metric-budget']).status,1);
+});
 
 test('attribution quality uses final revisions and resolved starts as its honest denominator',()=>{
   const summary=summarizeAttribution([

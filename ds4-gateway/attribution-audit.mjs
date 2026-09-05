@@ -20,16 +20,19 @@ function cohortFilter(sinceMs){
   return row=>sinceMs===null||Number.isFinite(row.engine_started_at)&&row.engine_started_at>=sinceMs;
 }
 
-function boundedLines(file,maxBytes=MAX_BYTES_PER_FILE) {
+function boundedLines(file,maxBytes=MAX_BYTES_PER_FILE,requireComplete=false) {
   let fd;
   try{fd=fs.openSync(file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK);}
   catch(error){if(['ELOOP','ENOENT','ENOTDIR'].includes(error.code))return {lines:[],skipped:'not_regular'};throw error;}
   try{
     const stat=fs.fstatSync(fd);if(!stat.isFile())return {lines:[],skipped:'not_regular'};
+    if(!Number.isSafeInteger(stat.size)||stat.size<0)throw new Error('Invalid attribution evidence size');
+    if(requireComplete&&stat.size>maxBytes)throw new Error('Shared metric read budget exceeded; no files silently omitted');
     const length=Math.min(stat.size,maxBytes),offset=stat.size-length,buffer=Buffer.alloc(length);
-    if(length)fs.readSync(fd,buffer,0,length,offset);
+    let read=0;
+    while(read<length){const n=fs.readSync(fd,buffer,read,length-read,offset+read);if(!n)throw new Error('Attribution evidence shrank during read');read+=n;}
     const text=buffer.toString('utf8'),lines=text.split('\n');if(offset>0)lines.shift();
-    return {lines,partial:offset>0};
+    return {lines,partial:offset>0,bytes:length};
   }finally{fs.closeSync(fd);}
 }
 
@@ -215,18 +218,21 @@ export function reconcileAttributionRows(attributionRows=[],engineRows=[],gatewa
   return {summary:summarizeAttribution(revised.filter(inCohort)),reconciled_overlaps,competing_start_details,remaining_overlap_abstentions:revised.filter(row=>inCohort(row)&&row.reason==='overlapping_gateway_windows').length,reconciliation_block_reasons:Object.fromEntries(Object.entries(blocks).sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0]))),reconciliation_by_worker:workerReport()};
 }
 
-export function auditAttributionReconciliation(directory,gatewayLog,{maxFiles=MAX_FILES,maxBytesPerFile=MAX_RECONCILE_BYTES_PER_FILE,maxGatewayBytes=MAX_GATEWAY_BYTES,sinceMs=null}={}) {
+export function auditAttributionReconciliation(directory,gatewayLog,{maxFiles=MAX_FILES,maxBytesPerFile=MAX_RECONCILE_BYTES_PER_FILE,maxGatewayBytes=MAX_GATEWAY_BYTES,sinceMs=null,sharedMetricBudget=false}={}) {
   const inCohort=cohortFilter(sinceMs);
   if(typeof directory!=='string'||!path.isAbsolute(directory))throw new Error('Attribution audit directory must be an absolute path');
   if(typeof gatewayLog!=='string'||!path.isAbsolute(gatewayLog))throw new Error('Gateway log must be an absolute path');
   if(!Number.isSafeInteger(maxFiles)||maxFiles<1||maxFiles>MAX_FILES)throw new Error(`maxFiles must be an integer from 1 to ${MAX_FILES}`);
   if(!Number.isSafeInteger(maxBytesPerFile)||maxBytesPerFile<1024||maxBytesPerFile>MAX_RECONCILE_BYTES_PER_FILE)throw new Error('maxBytesPerFile is outside reconciliation bounds');
   if(!Number.isSafeInteger(maxGatewayBytes)||maxGatewayBytes<1024||maxGatewayBytes>MAX_GATEWAY_BYTES)throw new Error('maxGatewayBytes is outside reconciliation bounds');
+  if(typeof sharedMetricBudget!=='boolean')throw new Error('sharedMetricBudget must be boolean');
   const root=fs.lstatSync(directory);if(!root.isDirectory()||root.isSymbolicLink())throw new Error('Attribution audit directory must be a real directory');
   const availableFiles=fs.readdirSync(directory).filter(name=>FILE.test(name)).sort(),files=availableFiles.slice(-maxFiles),metric_files_omitted=availableFiles.length-files.length;
+  const metricBudget=maxFiles*maxBytesPerFile;let metricBytes=0;
   const attributionRows=[],engineRows=[];let malformed_lines=0,oversized_lines=0,invalid_metric_records=0,anonymous_metric_starts=0,partial_files=0,skipped_files=0,truncated_records=0;
   for(const name of files){
-    const result=boundedLines(path.join(directory,name),maxBytesPerFile);if(result.skipped){skipped_files++;continue;}if(result.partial)partial_files++;
+    const result=boundedLines(path.join(directory,name),sharedMetricBudget?metricBudget-metricBytes:maxBytesPerFile,sharedMetricBudget);
+    if(result.skipped){skipped_files++;continue;}metricBytes+=result.bytes;if(result.partial)partial_files++;
     for(const line of result.lines){
       if(!line.trim())continue;if(Buffer.byteLength(line)>MAX_LINE_BYTES){oversized_lines++;continue;}
       try{const row=JSON.parse(line);if(row?.event==='engine_attribution'||row?.kind==='start'){if(attributionRows.length+engineRows.length>=MAX_SOURCE_RECORDS){truncated_records++;continue;}if(row.event==='engine_attribution'){if(safeAttribution(row))attributionRows.push(row);else invalid_metric_records++;}else{if(safeCollisionStart(row)){engineRows.push(row);if(!safeStart(row))anonymous_metric_starts++;}else invalid_metric_records++;}}}
@@ -247,30 +253,33 @@ export function auditAttributionReconciliation(directory,gatewayLog,{maxFiles=MA
   for(const row of engineRows)metricCoverageStart=Math.min(metricCoverageStart,safeCollisionStart(row)?.time??Infinity);
   const recorded=summarizeAttribution(attributionRows.filter(inCohort)),later=reconcileAttributionRows(attributionRows,engineRows,gatewayRows,{complete,metricCoverageStart,sinceMs});
   return {schema:1,mode:'read_only_later_evidence_reconciliation',source_complete:complete,files_read:files.length-skipped_files,metric_files_omitted,partial_files,skipped_files,malformed_lines,oversized_lines,invalid_metric_records,anonymous_metric_starts,truncated_records,
+    ...(sharedMetricBudget?{metric_budget:{mode:'shared_complete_files',limit_bytes:metricBudget,read_bytes:metricBytes}}:{}),
     gateway_partial:gateway.partial,gateway_malformed_lines,gateway_oversized_lines,gateway_invalid_records,gateway_truncated_records,recorded,with_later_gateway_evidence:later.summary,
     cohort_since:sinceMs===null?null:new Date(sinceMs).toISOString(),reconciled_overlaps:later.reconciled_overlaps,remaining_overlap_abstentions:later.remaining_overlap_abstentions,reconciliation_block_reasons:later.reconciliation_block_reasons,competing_start_details:later.competing_start_details??{},reconciliation_by_worker:later.reconciliation_by_worker,
     privacy:'Counts, bounded reason codes and configured server IDs only. Original telemetry is not rewritten; no prompts, responses, request IDs, sample IDs, paths or credentials are returned.'};
 }
 
 function args(argv) {
-  let directory=path.resolve('runtime/dashboard'),maxFiles=3,gatewayLog=null,sinceMs=null;
+  let directory=path.resolve('runtime/dashboard'),maxFiles=3,gatewayLog=null,sinceMs=null,sharedMetricBudget=false;
   for(let i=0;i<argv.length;i++){
     if(argv[i]==='--directory'&&argv[i+1])directory=path.resolve(argv[++i]);
     else if(argv[i]==='--files'&&argv[i+1])maxFiles=Number(argv[++i]);
     else if(argv[i]==='--gateway-log'&&argv[i+1])gatewayLog=path.resolve(argv[++i]);
+    else if(argv[i]==='--shared-metric-budget'){if(sharedMetricBudget)throw new Error('Duplicate --shared-metric-budget');sharedMetricBudget=true;}
     else if(argv[i]==='--since'&&argv[i+1]){const value=argv[++i];if(!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value)||!Number.isFinite(Date.parse(value)))throw new Error('--since requires a UTC ISO timestamp');sinceMs=Date.parse(value);}
     else if(argv[i]==='--help')return {help:true};
     else throw new Error(`Unknown or incomplete argument: ${argv[i]}`);
   }
   if(!Number.isInteger(maxFiles)||maxFiles<1||maxFiles>MAX_FILES)throw new Error(`--files must be an integer from 1 to ${MAX_FILES}`);
-  return {directory,maxFiles,gatewayLog,sinceMs};
+  if(sharedMetricBudget&&!gatewayLog)throw new Error('--shared-metric-budget requires --gateway-log');
+  return {directory,maxFiles,gatewayLog,sinceMs,sharedMetricBudget};
 }
 
 if(import.meta.url===pathToFileURL(process.argv[1]??'').href){
   try{
     const input=args(process.argv.slice(2));
-    if(input.help){console.log('Usage: node ds4-gateway/attribution-audit.mjs [--directory PATH] [--files 1..7] [--gateway-log PATH] [--since UTC_ISO_TIMESTAMP]');process.exit(0);}
-    const options={maxFiles:input.maxFiles,sinceMs:input.sinceMs};
+    if(input.help){console.log('Usage: node ds4-gateway/attribution-audit.mjs [--directory PATH] [--files 1..7] [--gateway-log PATH] [--since UTC_ISO_TIMESTAMP] [--shared-metric-budget]');process.exit(0);}
+    const options={maxFiles:input.maxFiles,sinceMs:input.sinceMs,sharedMetricBudget:input.sharedMetricBudget};
     const report=input.gatewayLog?auditAttributionReconciliation(input.directory,input.gatewayLog,options):auditAttributionDirectory(input.directory,options);
     console.log(JSON.stringify(report,null,2));
   }catch(error){console.error(`DSG attribution audit: ${error.message}`);process.exit(1);}

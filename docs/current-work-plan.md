@@ -41,6 +41,9 @@ is implied by this fix.
 1. **Finish the hardening and efficiency pass.** Continue focused, measured
    milestones. The attribution-audit index now has boundary/order/parity tests;
    retain ambiguous-overlap and tied-revision abstentions.
+   An explicit shared metric allowance now supports complete uneven daily files
+   inside the existing aggregate audit budget. Keep source-completeness guards
+   and original matching rules; fresh audits must retain competing-owner abstentions.
    Cache-continuity comparisons now also fence tied session admission clocks;
    conflicting session/admission revisions stop the cache audit instead of
    letting a first-record choice hide intervening work. No input-order choice

@@ -1,5 +1,16 @@
 # Changelog
 
+## Share an offline attribution audit's metric allowance explicitly
+
+- Add reconciliation-only `--shared-metric-budget`: complete selected metric
+  files may share the unchanged aggregate allowance. Report limit/read bytes;
+  fail on aggregate overflow or growth instead of silently omitting history.
+- Preserve default per-file behavior, gateway/record/line limits and all matching
+  predicates. Finish short filesystem reads; fail explicitly on premature EOF.
+- Regress uneven file sizes, exact report parity with complete input, aggregate
+  overflow, growth-on-open, short reads, shrinking files and strict CLI opt-in.
+  No live collection, inference, attribution writes or service changes.
+
 ## Reject contradictory and malformed cache-shadow evidence
 
 - Keep same-worker remote acquisition unknown and out of rankings rather than

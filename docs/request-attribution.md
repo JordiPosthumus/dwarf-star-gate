@@ -134,6 +134,28 @@ abstention. The report presents the recorded view beside the later-evidence view
 it never rewrites telemetry or hides the original decision. Private request and
 sample IDs are used only inside the bounded join and never returned.
 
+When one metric day outgrows its share but the selected files collectively fit,
+an explicit offline option can read them completely:
+
+```sh
+npm run attribution:reconcile-audit -- --shared-metric-budget
+```
+
+This shares the **same combined metric allowance** (`--files` × 32 MiB; three
+files/96 MiB by default). It does not raise the gateway-log allowance, file-count,
+line or record limits. Every selected regular metric file must fit in full;
+aggregate overflow—including growth detected on open—fails explicitly, never
+silently drops an older file or reads only a tail. `metric_budget` reports the
+mode, limit and bytes read. Individual read buffers can be larger than in the
+per-file mode; this remains an operator-run offline audit, not live collection.
+The default per-file behavior remains unchanged. The flag requires reconciliation
+with `--gateway-log`; the npm command above already supplies that argument.
+
+Both reader modes complete short filesystem reads and fail if the source shrinks
+before its pinned byte range has been read. For reproducibility, audit private
+frozen copies and record their hashes; reading running files is not an atomic
+cross-process snapshot. Source completeness does not prove protocol identity.
+
 The later-evidence report also provides `reconciliation_by_worker`, sorted by
 configured server ID. Each entry accounts for the selected engine starts that
 were originally abstained as `overlapping_gateway_windows`:

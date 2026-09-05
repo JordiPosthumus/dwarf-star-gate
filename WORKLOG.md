@@ -10,6 +10,12 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Kept fresh attribution audits usable as daily telemetry grows.** An explicit
+  offline option shares the existing combined metric allowance across complete
+  files; overflow still fails rather than silently shortening history. Short
+  filesystem reads are completed. Fresh frozen evidence was checked without
+  changing matching rules, live telemetry or active work.
+
 - **Closed false-evidence edges in cache-path shadows.** A self-transfer cannot
   masquerade as a fast remote path; malformed token/byte metadata and negative
   inventory clocks cannot establish cache presence or freshness. Valid arithmetic
