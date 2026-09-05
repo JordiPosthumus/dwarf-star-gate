@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Kept attribution guards through metadata enrichment.** Learning an engine
+  epoch or changing its reported confidence no longer erases remembered possible
+  owners after history expires. Preserve overflow guards and still allow real
+  later usage evidence to resolve an overlap. No routing authority is added.
+
 - **Removed a deadline-test observation race.** Verify that recovery waiting
   retains the original request timer and admission clock after timeout, instead
   of polling a fleeting intermediate state. Keep exact deadline-timer tests and

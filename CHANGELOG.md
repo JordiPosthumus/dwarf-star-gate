@@ -1,5 +1,14 @@
 # Changelog
 
+## Preserve attribution ambiguity during metadata updates
+
+- Update normalized engine fields without replacing the sample's private overlap
+  and overflow guards. An epoch/confidence revision cannot manufacture a unique
+  surviving owner after history pruning or conflicting lifecycle evidence.
+- Keep legitimate epoch discovery and later usage disambiguation working;
+  repeated identical updates emit no extra revision and private guards never leak.
+- No history rewrite, broader matching bounds, retention or routing changes.
+
 ## Stabilize recovery-wait deadline regression evidence
 
 - Inspect the retained request after its real HTTP timeout: recovery-wait reason,

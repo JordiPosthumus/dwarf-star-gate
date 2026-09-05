@@ -134,3 +134,53 @@ test('replay preservation does not suppress changed normalized process evidence'
   a.acceptEngine(start());assert.equal(a.snapshot().recent[0].reason,'request_open');
   a.acceptGateway(finish());assert.equal(a.snapshot().recent[0].reason,'usage_match');
 });
+
+test('normalized engine updates preserve remembered overlap after a peer ages out',()=>{
+  const saved=[],a=new EngineAttribution(row=>saved.push(row));
+  const initial=start(sample,'spark1',12000,{backend_epoch_confidence:'bounded'});
+  a.acceptGateway(dispatch());a.acceptGateway(dispatch(other,'spark1',11000));a.acceptEngine(initial);
+  a.acceptGateway(finish(request,'spark1',13000));a.acceptGateway(finish(other,'spark1',2*3600000));
+  a.acceptGateway(dispatch('33333333-3333-4333-8333-333333333333','spark2',2*3600000+1));
+  assert.equal(a.requests.has(request),false);assert.equal(a.requests.has(other),true);
+  const candidates=new Set(a.starts.get(sample).overlap_candidates);
+  const variants=[start(),{...start(),backend_epoch:'c'.repeat(64)},
+    {...start(),backend_epoch:null,backend_epoch_confidence:'unavailable'},start(),
+    {...start(),prompt:1100,cached:900,new_tokens:200},start()];
+  for(const update of variants){
+    const raw={...update,overlap_candidates:[],overlap_overflow:false,message:'PRIVATE_UPDATE'};
+    const before=structuredClone(raw);a.acceptEngine(raw);assert.deepEqual(raw,before);
+    const row=a.snapshot().recent[0];assert.equal(row.status,'abstained');assert.equal(row.request_id,null);
+    assert.deepEqual(a.starts.get(sample).overlap_candidates,candidates);
+    assert.equal(row.reason,update.backend_epoch===null?'backend_epoch_unavailable':'overlapping_gateway_windows');
+    assert.equal(row.backend_epoch,update.backend_epoch);assert.equal(row.backend_epoch_confidence,update.backend_epoch_confidence);
+    const writes=saved.length;a.acceptEngine(raw);assert.equal(saved.length,writes,'identical updates add no revision');
+  }
+  const encoded=JSON.stringify({snapshot:a.snapshot(),saved});
+  for(const field of ['PRIVATE_UPDATE','overlap_candidates','overlap_overflow','overlap_settled'])assert.ok(!encoded.includes(field));
+});
+
+test('epoch discovery retains unresolved peers and still permits later unique usage',()=>{
+  const a=new EngineAttribution();a.acceptGateway(dispatch());a.acceptGateway(dispatch(other,'spark1',11000));
+  a.acceptEngine(start(sample,'spark1',12000,{backend_epoch:null,backend_epoch_confidence:'unavailable'}));
+  const peers=new Set(a.starts.get(sample).overlap_candidates);
+  a.acceptGateway(finish(request,'spark1',13000));a.acceptEngine(start());
+  assert.deepEqual(a.starts.get(sample).overlap_candidates,peers);
+  assert.equal(a.snapshot().recent[0].reason,'overlapping_gateway_windows');
+  a.acceptGateway(finish(other,'spark1',2*3600000,{prompt_tokens:700,cached_tokens:600}));
+  const row=a.snapshot().recent[0];assert.equal(row.status,'corroborated');assert.equal(row.request_id,request);
+  assert.equal(row.reason,'usage_disambiguated_overlap');
+});
+
+test('engine metadata cannot clear an overflow guard with raw private-field overrides',()=>{
+  const a=new EngineAttribution(),ids=Array.from({length:65},(_,i)=>i.toString(16).padStart(8,'0')+'-0000-4000-8000-'+i.toString(16).padStart(12,'0'));
+  for(const id of ids)a.acceptGateway(dispatch(id,'spark1',10000));
+  a.acceptEngine(start());const peers=new Set(a.starts.get(sample).overlap_candidates);
+  assert.equal(a.starts.get(sample).overlap_overflow,true);assert.equal(peers.size,64);
+  // Contradictory later lifecycle records remove candidate windows, not the
+  // evidence that more than 64 possible owners were originally observed.
+  for(const id of ids.slice(0,64))a.acceptGateway(finish(id,'spark2',13000));
+  a.acceptGateway(finish(ids.at(-1),'spark1',14000));
+  a.acceptEngine({...start(),backend_epoch_confidence:'bounded',overlap_overflow:false,overlap_candidates:[]});
+  assert.deepEqual(a.starts.get(sample).overlap_candidates,peers);
+  assert.equal(a.starts.get(sample).overlap_overflow,true);assert.equal(a.snapshot().recent[0].reason,'overlapping_gateway_windows');
+});

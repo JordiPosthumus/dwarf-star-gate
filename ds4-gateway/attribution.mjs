@@ -88,10 +88,11 @@ export class EngineAttribution {
     const e=safeEngine(raw);if(!e)return null;
     this.latest=Math.max(this.latest,e.time);
     const previous=this.starts.get(e.sample_id);
-    // Identical telemetry replay is not new evidence. Preserve the remembered
-    // overlap/overflow guards after request history has been pruned; replacing
-    // this object could manufacture a unique owner from the surviving window.
-    if(!previous||Object.keys(e).some(key=>previous[key]!==e[key]))this.starts.set(e.sample_id,e);
+    // Replays and normalized metadata updates are not new ownership evidence.
+    // Keep private overlap/overflow guards on the same sample while accepting
+    // new allowlisted fields; replacing it could manufacture a unique owner
+    // after a remembered request has aged out. Raw fields cannot overwrite guards.
+    if(previous)Object.assign(previous,e);else this.starts.set(e.sample_id,e);
     this.reconcile();return e;
   }
   captureOverlaps() {

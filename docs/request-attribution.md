@@ -55,8 +55,11 @@ candidate has a terminal event. The set is capped at 64 candidates per start and
 512 lifecycle records overall. Under capacity pressure, a missing remembered
 candidate preserves the overlap abstention; forgetting evidence can never create
 a unique owner. Settled evidence returns to the ordinary history bound.
-Identical normalized engine-start replays preserve the remembered overlap and
-overflow guards, even after a completed candidate has aged out. Replaying a log
+Identical normalized engine-start replays and later normalized field updates
+preserve the remembered overlap and overflow guards, even after a completed
+candidate has aged out. Epoch/confidence enrichment still updates the displayed
+metadata; it does not erase possible owners. Raw input cannot replace the private
+guards, and they are not emitted into telemetry or status. Replaying a log
 line is not new ownership evidence and cannot manufacture a unique surviving
 request. Pending starts still accept genuinely later completion evidence.
 
