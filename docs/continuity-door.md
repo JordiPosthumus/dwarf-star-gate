@@ -142,6 +142,14 @@ and dashboard. A normal `npm run service -- restart gateway` keeps the door aliv
 drains the old core, checks the replacement, and releases held work. `--interrupt`
 still means exactly that and is not continuity-safe.
 
+A second Door launcher must not take over an existing control socket. Startup
+refuses any connected owner, even one that does not speak HTTP. A crash leftover
+may be removed only after connection refusal and a matching file-identity check;
+changed paths, symlinks, permission errors and unknown ownership are preserved.
+The startup-only ownership check sends no request bytes and waits at most one
+second before refusing uncertain ownership. It is not an inference timeout.
+Failed startup cleans up its own listeners, not another Door's maintenance path.
+
 For a deliberate longer core outage, run `./park-dsg.sh`. It keeps the Door and
 dashboard running while it drains and stops only the core. A later ordinary
 `./start-dsg.sh` starts and verifies the core, then releases only the exact park

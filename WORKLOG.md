@@ -10,6 +10,13 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Stopped duplicate Door launches from breaking maintenance control.** An
+  isolated reproduction showed a failed second launcher unlinking the first
+  Door's live control socket. Startup now preserves any connected owner and only
+  reclaims a refused, unchanged stale socket. Tests retain a manual hold and its
+  exact unread request, cover competing starts and crash leftovers, and refuse
+  uncertain ownership. No model request, cache or server setting is changed.
+
 - **Aligned the roadmap with implemented capabilities and remaining proof.**
   Corrected stale planned labels for Pi Agent Watch, bounded Genie suggestions,
   launchd recovery adapters and pause/resume receipts. Added explicit remaining

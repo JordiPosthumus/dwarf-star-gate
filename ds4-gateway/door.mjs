@@ -1,6 +1,7 @@
 // Stable byte-transparent front door for planned DSG core replacement.
 // It never parses or persists inference bodies and never retries dispatched work.
 import http from 'node:http';
+import net from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
 import {timingSafeEqual,randomUUID} from 'node:crypto';
@@ -11,6 +12,34 @@ const hopHeaders=new Set(['connection','keep-alive','proxy-authenticate','proxy-
 function headers(input){const excluded=new Set([...hopHeaders,...String(input.connection??'').toLowerCase().split(',').map(x=>x.trim())]);return Object.fromEntries(Object.entries(input).filter(([key])=>!excluded.has(key.toLowerCase())));}
 function json(res,status,value){if(res.destroyed||res.headersSent)return;res.writeHead(status,{'content-type':'application/json','cache-control':'no-store'});res.end(JSON.stringify(value));}
 function report(res,status,code,message){json(res,status,{error:{type:'gateway_error',code,message:dsgReport(message)}});}
+
+async function listenControlSocket(control,socketPath){
+  const stat=()=>{try{return fs.lstatSync(socketPath,{bigint:true});}catch(error){if(error.code==='ENOENT')return null;throw error;}};
+  const before=stat();if(!before)return listen(control,socketPath);
+  if(!before.isSocket())throw new Error('Continuity control path is not a socket');
+  // A successful connection proves ownership even if the peer is not HTTP.
+  // Timeout/permission errors are uncertainty, never permission to unlink.
+  const outcome=await new Promise((resolve,reject)=>{
+    const peer=net.createConnection(socketPath);let settled=false;
+    const finish=(error,code)=>{if(settled)return;settled=true;clearTimeout(timer);peer.destroy();error?reject(error):resolve(code);};
+    const timer=setTimeout(()=>finish(new Error('Continuity control socket ownership is unknown; existing path preserved')),1000);
+    peer.once('connect',()=>finish(new Error('Continuity control socket is already in use; existing Door preserved')));
+    peer.once('error',error=>finish(['ECONNREFUSED','ENOENT'].includes(error.code)?null:error,error.code));
+  });
+  const current=stat();if(!current)return listen(control,socketPath);
+  if(outcome!=='ECONNREFUSED')throw Object.assign(new Error('Continuity control socket reappeared during startup; existing path preserved'),{code:outcome});
+  if(!current.isSocket()||current.dev!==before.dev||current.ino!==before.ino||current.ctimeNs!==before.ctimeNs)throw new Error('Continuity control socket changed during startup; existing path preserved');
+  // No asynchronous gap between the identity check, unlink and subsequent bind.
+  fs.unlinkSync(socketPath);
+  return listen(control,socketPath);
+}
+function listen(server,...args){
+  return new Promise((resolve,reject)=>{
+    const failed=error=>{server.off('listening',ready);reject(error);};
+    const ready=()=>{server.off('error',failed);resolve();};
+    server.once('error',failed);server.once('listening',ready);server.listen(...args);
+  });
+}
 
 // Fixed classes only: never retain caller paths, queries, bodies or headers.
 function requestClass(req){
@@ -25,9 +54,10 @@ export function createDoor(config,{now=Date.now}={}){
   if(!continuityEnabled(config))throw new Error('continuity_door.enabled must be true');
   const corePort=gatewayPort(config),socketPath=doorSocket(config),limit=config.continuity_door.max_held_requests??Math.max(128,(config.nodes?.length??1)*(config.max_queued_per_node??128));
   if(!Number.isSafeInteger(limit)||limit<1||limit>65536)throw new Error('continuity_door.max_held_requests must be 1–65536');
+  const interval=config.continuity_door.health_interval_ms??1000;if(!Number.isSafeInteger(interval)||interval<250||interval>60000)throw new Error('continuity_door.health_interval_ms must be 250–60000');
   const auth=Buffer.from(`Bearer ${config.api_key}`),held=[],state={holding:false,hold_id:null,hold_kind:null,reason:null,since:null,last_transition:null,forwarded:0,failed:0,active:0,core_ready:false,core_failures:0};
   const failureCounts={inference:0,model_discovery:0,status:0,other:0},failures=[];
-  let closing=false,monitor,probe=null,probeGeneration=0;
+  let closing=false,starting=false,monitor,probe=null,probeGeneration=0;
   const invalidateProbe=()=>{probeGeneration++;const previous=probe;probe=null;previous?.cancel();};
   const authorized=req=>{const value=Buffer.from(req.headers.authorization??'');return value.length===auth.length&&timingSafeEqual(value,auth);};
   const status=()=>({service:'dwarf-star-gate-continuity-door',version:1,holding:state.holding,hold_kind:state.hold_kind,reason:state.reason,since:state.since,last_transition:state.last_transition,held:held.length,active:state.active,forwarded:state.forwarded,failed:state.failed,core_ready:state.core_ready,core_failures:state.core_failures,body_spooling:false,replay:false,core_port:corePort,
@@ -138,13 +168,27 @@ export function createDoor(config,{now=Date.now}={}){
   });
   control.on('clientError',invalidHttp);
   return {server,control,status,hold,release,checkCore,async start(){
-    fs.mkdirSync(path.dirname(socketPath),{recursive:true,mode:0o700});
-    if(fs.existsSync(socketPath)){if(!fs.lstatSync(socketPath).isSocket())throw new Error('Continuity control path is not a socket');fs.unlinkSync(socketPath);}
-    await new Promise((resolve,reject)=>{control.once('error',reject);control.listen(socketPath,resolve);});fs.chmodSync(socketPath,0o600);
-    try{await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(config.port,config.host,resolve);});}catch(error){await new Promise(resolve=>control.close(resolve));if(fs.existsSync(socketPath))fs.unlinkSync(socketPath);throw error;}
-    await checkCore();const interval=config.continuity_door.health_interval_ms??1000;if(!Number.isSafeInteger(interval)||interval<250||interval>60000)throw new Error('continuity_door.health_interval_ms must be 250–60000');monitor=setInterval(()=>void checkCore(),interval);monitor.unref?.();
-    return server.address();
-  },async close(){if(closing)return;closing=true;clearInterval(monitor);invalidateProbe();for(const item of [...held]){remove(item);report(item.res,503,'continuity_stopping','Continuity door stopped before this held request was forwarded.');item.req.resume();}await new Promise(resolve=>server.close(resolve));await new Promise(resolve=>control.close(resolve));if(fs.existsSync(socketPath))fs.unlinkSync(socketPath);}};
+    if(starting||closing||server.listening||control.listening)throw new Error('Continuity Door already started, starting or closing');
+    starting=true;
+    try{
+      fs.mkdirSync(path.dirname(socketPath),{recursive:true,mode:0o700});
+      // Claim only an unused control socket. A duplicate launcher must not
+      // sever the running Door's maintenance path on its way to EADDRINUSE.
+      await listenControlSocket(control,socketPath);
+      if(closing)throw new Error('Continuity Door is closing during startup');
+      fs.chmodSync(socketPath,0o600);
+      await listen(server,config.port,config.host);
+      if(closing)throw new Error('Continuity Door is closing during startup');
+      await checkCore();
+      if(closing)throw new Error('Continuity Door is closing during startup');
+      monitor=setInterval(()=>void checkCore(),interval);monitor.unref?.();
+      return server.address();
+    }catch(error){
+      await new Promise(resolve=>control.close(resolve));
+      await new Promise(resolve=>server.close(resolve));
+      throw error;
+    }finally{starting=false;}
+  },async close(){if(closing)return;closing=true;clearInterval(monitor);invalidateProbe();for(const item of [...held]){remove(item);report(item.res,503,'continuity_stopping','Continuity door stopped before this held request was forwarded.');item.req.resume();}await new Promise(resolve=>server.close(resolve));await new Promise(resolve=>control.close(resolve));}};
 }
 
 if(isMain(import.meta.url)){

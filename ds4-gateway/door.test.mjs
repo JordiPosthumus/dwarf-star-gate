@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import net from 'node:net';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {once} from 'node:events';
+import {once,EventEmitter} from 'node:events';
+import {spawn} from 'node:child_process';
 import {createDoor} from './door.mjs';
 import {doorControl} from './door-client.mjs';
 import {coordinatedCoreRestart,releaseParkedCore,PARK_REASON} from './service-control.mjs';
@@ -31,6 +33,132 @@ const request=(port,body)=>new Promise((resolve,reject)=>{const req=http.request
 const get=(port,route)=>new Promise((resolve,reject)=>{http.get({host:'127.0.0.1',port,path:route,agent:false,headers:{authorization:'Bearer test'}},res=>{
   const chunks=[];res.on('data',c=>chunks.push(c));res.on('error',reject);res.on('end',()=>resolve({status:res.statusCode,body:Buffer.concat(chunks).toString()}));
 }).on('error',reject);});
+test('duplicate Door startup preserves the running control socket and maintenance hold',{timeout:5000},async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-door-duplicate-'));
+  const received=[];
+  const core=http.createServer((req,res)=>{if(req.url==='/health'){req.resume();return res.end('ok');}let body='';req.on('data',c=>body+=c);req.on('end',()=>{received.push(body);res.end('ok');});}),corePort=await listen(core);
+  const config={host:'127.0.0.1',port:0,api_key:'test',continuity_door:{enabled:true,core_port:corePort,control_socket:path.join(dir,'door.sock'),health_interval_ms:60000}};
+  const door=createDoor(config);await door.start();
+  t.after(async()=>{await door.close();core.closeAllConnections();await new Promise(r=>core.close(r));fs.rmSync(dir,{recursive:true,force:true});});
+  const receipt=await doorControl(config.continuity_door.control_socket,'/hold',{reason:'operator maintenance'});
+  const original=' {"unchanged":"held fixture"}\n',work=request(door.server.address().port,original);
+  while(door.status().held!==1)await new Promise(r=>setImmediate(r));
+  const before=fs.lstatSync(config.continuity_door.control_socket);
+  const duplicate=createDoor({...config,port:door.server.address().port});
+  await assert.rejects(duplicate.start());
+  const after=fs.lstatSync(config.continuity_door.control_socket);
+  assert.equal(after.ino,before.ino);assert.equal(after.dev,before.dev);
+  const status=await doorControl(config.continuity_door.control_socket,'/status');
+  assert.equal(status.hold_id,receipt.hold_id);assert.equal(status.reason,'operator maintenance');
+  assert.equal(status.held,1);assert.deepEqual(received,[]);
+  assert.equal((await get(door.server.address().port,'/continuity/status')).status,200);
+  await doorControl(config.continuity_door.control_socket,'/release',{if_hold_id:receipt.hold_id});
+  assert.equal((await work).body,'ok');assert.deepEqual(received,[original]);
+});
+async function staleSocket(socketPath,t){
+  const child=spawn(process.execPath,['--input-type=module','-e',"import net from 'node:net';net.createServer().listen(process.argv[1],()=>process.send('ready'));",socketPath],{stdio:['ignore','ignore','inherit','ipc']});
+  t.after(()=>{if(child.exitCode===null&&child.signalCode===null)child.kill('SIGKILL');});
+  await once(child,'message');const exited=once(child,'exit');child.kill('SIGKILL');await exited;
+  assert(fs.lstatSync(socketPath).isSocket(),'crash fixture must leave a real socket');
+}
+test('different public ports cannot steal one live control socket',{timeout:5000},async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-door-socket-live-'));
+  const core=http.createServer((req,res)=>res.end('ok')),corePort=await listen(core);
+  const config={host:'127.0.0.1',port:0,api_key:'test',continuity_door:{enabled:true,core_port:corePort,control_socket:path.join(dir,'door.sock'),health_interval_ms:60000}};
+  const door=createDoor(config);await door.start();
+  t.after(async()=>{await door.close();await new Promise(r=>core.close(r));fs.rmSync(dir,{recursive:true,force:true});});
+  const duplicate=createDoor(config);await assert.rejects(duplicate.start(),/already in use/);
+  assert.equal(duplicate.server.listening,false);assert.equal(duplicate.control.listening,false);
+  assert.equal((await doorControl(config.continuity_door.control_socket,'/status')).service,'dwarf-star-gate-continuity-door');
+});
+test('repeated start on the same Door instance cannot close its listeners',{timeout:5000},async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-door-repeat-start-')),socketPath=path.join(dir,'door.sock');
+  const core=http.createServer((req,res)=>res.end('ok')),corePort=await listen(core);
+  const door=createDoor({host:'127.0.0.1',port:0,api_key:'test',continuity_door:{enabled:true,core_port:corePort,control_socket:socketPath,health_interval_ms:60000}});
+  t.after(async()=>{await door.close();await new Promise(r=>core.close(r));fs.rmSync(dir,{recursive:true,force:true});});
+  const results=await Promise.allSettled([door.start(),door.start()]);assert.equal(results[0].status,'fulfilled');assert.equal(results[1].status,'rejected');
+  const receipt=await doorControl(socketPath,'/hold',{reason:'preserve me'});
+  await assert.rejects(door.start(),/already started/);
+  assert.equal((await doorControl(socketPath,'/status')).hold_id,receipt.hold_id);
+  assert.equal((await get(door.server.address().port,'/continuity/status')).status,200);
+});
+test('shutdown during startup does not recreate listeners or a health monitor',{timeout:5000},async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-door-start-close-')),socketPath=path.join(dir,'door.sock');let healthCalls=0;
+  const core=http.createServer(()=>healthCalls++),corePort=await listen(core);
+  const door=createDoor({host:'127.0.0.1',port:0,api_key:'test',continuity_door:{enabled:true,core_port:corePort,control_socket:socketPath,health_interval_ms:250}});
+  t.after(async()=>{await door.close();core.closeAllConnections();await new Promise(r=>core.close(r));fs.rmSync(dir,{recursive:true,force:true});});
+  const started=assert.rejects(door.start(),/closing during startup/);
+  while(!healthCalls)await new Promise(r=>setImmediate(r));
+  await door.close();await started;
+  assert.equal(door.server.listening,false);assert.equal(door.control.listening,false);assert.equal(fs.existsSync(socketPath),false);
+  await new Promise(r=>setTimeout(r,300));assert.equal(healthCalls,1);
+  await assert.rejects(door.start(),/closing/);
+});
+test('a non-HTTP socket owner is preserved without sending a probe request',{timeout:5000},async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-door-socket-peer-')),socketPath=path.join(dir,'door.sock');let bytes=0;
+  const peer=net.createServer(socket=>socket.on('data',chunk=>bytes+=chunk.length));
+  await new Promise(r=>peer.listen(socketPath,r));
+  t.after(async()=>{await new Promise(r=>peer.close(r));fs.rmSync(dir,{recursive:true,force:true});});
+  const before=fs.lstatSync(socketPath),door=createDoor({host:'127.0.0.1',port:0,api_key:'test',continuity_door:{enabled:true,core_port:1,control_socket:socketPath}});
+  await assert.rejects(door.start(),/already in use/);
+  assert.equal(fs.lstatSync(socketPath).ino,before.ino);assert.equal(bytes,0);assert.equal(door.server.listening,false);
+});
+test('concurrent Door starts have one owner for both fresh and crashed sockets',{timeout:10000},async t=>{
+  for(const stale of [false,true]){
+    const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-door-socket-race-')),socketPath=path.join(dir,'door.sock');
+    const core=http.createServer((req,res)=>res.end('ok')),corePort=await listen(core);
+    if(stale)await staleSocket(socketPath,t);
+    const config={host:'127.0.0.1',port:0,api_key:'test',continuity_door:{enabled:true,core_port:corePort,control_socket:socketPath,health_interval_ms:60000}};
+    const doors=[createDoor(config),createDoor(config)];
+    t.after(async()=>{for(const door of doors)await door.close();await new Promise(r=>core.close(r));fs.rmSync(dir,{recursive:true,force:true});});
+    const results=await Promise.allSettled(doors.map(door=>door.start()));
+    assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
+    const owner=doors[results.findIndex(r=>r.status==='fulfilled')];
+    assert.equal((fs.statSync(socketPath).mode&0o777),0o600);
+    assert.equal((await doorControl(socketPath,'/status')).core_ready,true);
+    assert.equal((await get(owner.server.address().port,'/v1/models')).body,'ok');
+  }
+});
+test('a changed stale socket and non-socket paths are never removed',{timeout:5000},async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-door-socket-changed-')),socketPath=path.join(dir,'door.sock');
+  t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  await staleSocket(socketPath,t);
+  const stat=fs.lstatSync;let reads=0;
+  const mock=t.mock.method(fs,'lstatSync',(filename,...args)=>{
+    if(filename===socketPath&&++reads===2){fs.unlinkSync(socketPath);fs.writeFileSync(socketPath,'replacement must survive');}
+    return stat(filename,...args);
+  });
+  const config={host:'127.0.0.1',port:0,api_key:'test',continuity_door:{enabled:true,core_port:1,control_socket:socketPath}};
+  await assert.rejects(createDoor(config).start(),/changed during startup/);mock.mock.restore();
+  assert.equal(fs.readFileSync(socketPath,'utf8'),'replacement must survive');
+  await assert.rejects(createDoor(config).start(),/not a socket/);
+  const link=path.join(dir,'link.sock');fs.symlinkSync(socketPath,link);
+  await assert.rejects(createDoor({...config,continuity_door:{...config.continuity_door,control_socket:link}}).start(),/not a socket/);
+  assert(fs.lstatSync(link).isSymbolicLink());assert.equal(fs.readFileSync(socketPath,'utf8'),'replacement must survive');
+});
+test('public bind failure cleans up only its own socket and permits a later start',{timeout:5000},async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-door-bind-fail-')),socketPath=path.join(dir,'door.sock');
+  const core=http.createServer((req,res)=>res.end('ok')),corePort=await listen(core);
+  const config={host:'127.0.0.1',port:corePort,api_key:'test',continuity_door:{enabled:true,core_port:1,control_socket:socketPath,health_interval_ms:60000}};
+  const failed=createDoor(config);
+  t.after(async()=>{await failed.close();core.closeAllConnections();await new Promise(r=>core.close(r));fs.rmSync(dir,{recursive:true,force:true});});
+  await assert.rejects(failed.start(),{code:'EADDRINUSE'});
+  assert.equal(fs.existsSync(socketPath),false);assert.equal(failed.control.listening,false);
+  const next=createDoor({...config,port:0,continuity_door:{...config.continuity_door,core_port:corePort}});await next.start();
+  assert.equal((await doorControl(socketPath,'/status')).core_ready,true);await next.close();
+});
+test('uncertain socket probes preserve the path and invalid intervals never bind',{timeout:5000},async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-door-socket-unknown-')),socketPath=path.join(dir,'door.sock');
+  t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));await staleSocket(socketPath,t);
+  const before=fs.lstatSync(socketPath),config={host:'127.0.0.1',port:0,api_key:'test',continuity_door:{enabled:true,core_port:1,control_socket:socketPath}};
+  for(const code of ['EACCES','ECONNRESET','ENOENT',null]){
+    const mock=t.mock.method(net,'createConnection',()=>{const peer=new EventEmitter();peer.destroy=()=>{};if(code)queueMicrotask(()=>peer.emit('error',Object.assign(new Error(code),{code})));return peer;});
+    await assert.rejects(createDoor(config).start(),code?{code}:/ownership is unknown/);mock.mock.restore();
+    assert.equal(fs.lstatSync(socketPath).ino,before.ino);
+  }
+  for(const health_interval_ms of [0,249,60001,NaN])assert.throws(()=>createDoor({...config,continuity_door:{...config.continuity_door,health_interval_ms}}),/health_interval_ms/);
+  assert.equal(fs.lstatSync(socketPath).ino,before.ino);
+});
 test('hold receipts fence before and during readiness, keeping held bytes undispatched',{timeout:5000},async t=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-hold-cas-'));let delayed=false,pending,healthCalls=0;const bodies=[];
   const core=http.createServer((req,res)=>{

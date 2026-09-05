@@ -1,5 +1,23 @@
 # Changelog
 
+## Preserve Continuity Door control ownership during startup
+
+- Reproduce a duplicate launch deleting the running Door's control socket before
+  failing to bind the occupied public port. Preserve the existing Door, its hold
+  receipt and held request; the original request forwards exactly once on release.
+- Refuse any socket with a connected owner, including non-HTTP peers. Reclaim
+  crash leftovers only after a refused connection and an unchanged socket
+  identity check immediately before unlink/bind. Permission, reset, timeout,
+  reappearing-path, replacement-file and symlink evidence never authorizes removal.
+- Cover simultaneous starts on fresh and crashed paths, failed public binds,
+  private socket permissions and restart after cleanup. Validate the health
+  interval before binding and let the owned listener perform its own cleanup;
+  never unconditionally unlink a path after closing it.
+- Repeated starts on one instance cannot tear down its own running listeners;
+  shutdown during startup cannot recreate listeners or a health monitor.
+- The one-second stale-socket ownership probe is startup-only, sends no HTTP
+  request, and does not change inference, queue, Genie or server timeouts.
+
 ## Align roadmap status with implemented safeguards and outstanding validation
 
 - Correct obsolete planned-only labels for Pi advisory heartbeats and bounded
