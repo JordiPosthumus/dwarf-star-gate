@@ -237,7 +237,7 @@ export class Recovery {
     const reason=observed.error||this.reason(n,s,{ignorePause});if(reason)throw new Error(reason);
     return {worker_id:n.id,evidence_id:this.evidence(n,s)};
   }
-  status(){const adapters=[...new Set([...this.configs.values()].map(c=>c.adapter))];return {configured:!!this.configs.size,automatic:this.state.automatic,profile_handback_automatic:this.state.profile_handback_automatic,adapter:adapters.length===1?adapters[0]:adapters.length?'mixed':null,workers:this.nodes.map(n=>this.workerStatus(n)),operations:this.state.operations.slice(-20).reverse().map(publicOperation)};}
+  status(){const adapters=[...new Set([...this.configs.values()].map(c=>c.adapter))];return {configured:!!this.configs.size,automatic:this.state.automatic,profile_handback_automatic:this.state.profile_handback_automatic,adapter:adapters.length===1?adapters[0]:adapters.length?'mixed':null,workers:this.nodes.map(n=>this.workerStatus(n)),operations:this.state.operations.slice(-30).reverse().map(publicOperation)};}
   async inspect(id,{freshRemoval=false}={}) {
     const c=this.config(id);
     try {

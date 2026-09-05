@@ -670,7 +670,7 @@ function renderGenieReports(reports = []) {
 function genieActionRows(snapshot,genie,analytics) {
   const clean=value=>String(value??'').replaceAll('_',' ').replace(/\s+/g,' ').trim().slice(0,240);
   const rows=[];
-  for(const report of genie?.reports??[])if(report.served_by==='pool_fallback'&&Number.isFinite(report.time))rows.push({
+  for(const report of genie?.provider_actions??genie?.reports??[])if(report.served_by==='pool_fallback'&&Number.isFinite(report.time))rows.push({
     id:`provider:${report.id}`,kind:'provider',at:report.time,level:'good',
     title:`Pool commandeered${report.served_on?` · ${clean(report.served_on)}`:''}`,
     detail:`Dedicated provider unavailable · review completed${report.served_on?' on the named DSG server':' on an unpinned DSG slot; exact server unproven'}`
@@ -696,9 +696,9 @@ let genieLedgerSignature='';
 function renderGenieActionLedger() {
   const rows=genieActionRows(wireSnapshot,genieState,analyticsState),filter=$('genie-action-filter')?.value??'all';
   const visible=rows.filter(row=>filter==='all'?true:filter==='attention'?row.level==='attention':row.kind===filter),attention=rows.filter(row=>row.level==='attention').length;
-  $('genie-action-summary').textContent=rows.length?`${rows.length} evidenced · ${attention?`${attention} need attention`:'all settled or in progress'}`:'No evidenced Genie actions yet';
+  $('genie-action-summary').textContent=rows.length?`${visible.length} shown · latest ${rows.length} available / 30 · newest first${attention?` · ${attention} need attention`:''}`:'No evidenced Genie actions yet';
   const signature=JSON.stringify([filter,visible]);if(signature===genieLedgerSignature)return;genieLedgerSignature=signature;
-  const items=visible.slice(0,20).map(row=>{
+  const items=visible.map(row=>{
     const item=document.createElement('li');item.dataset.level=row.level;
     const time=document.createElement('time');time.dateTime=new Date(row.at).toISOString();time.textContent=clock(row.at);
     const title=document.createElement('strong');title.textContent=row.title;
@@ -706,7 +706,9 @@ function renderGenieActionLedger() {
     item.append(time,title,detail);return item;
   });
   if(!items.length){const empty=document.createElement('li');empty.className='muted';empty.textContent=rows.length?'No actions match this filter.':'Waiting for action evidence.';items.push(empty);}
-  $('genie-action-items').replaceChildren(...items);
+  const list=$('genie-action-items'),scrollTop=list.scrollTop;
+  list.replaceChildren(...items);
+  list.scrollTop=scrollTop;
 }
 const workspaceNames=['fleet','genie','analytics','activity','settings'];
 let currentWorkspace='fleet';

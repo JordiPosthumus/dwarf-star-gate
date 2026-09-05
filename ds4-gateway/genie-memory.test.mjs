@@ -45,7 +45,20 @@ test('a Genie review publishes and privately saves an exact hardening candidate 
     return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify({assessment:'One bounded stream failure is available for developer review.',ticker:[{severity:'warning',text:'An incomplete stream was observed.',recommendation:'Review the client-continuation regression.',evidence_refs:['worker:worker-a']}],hardening_notes:[{candidate_id:candidate.id,title:'Exercise incomplete-stream continuation',suggestion:'Add a deterministic same-socket continuation test before changing routing.'}]})}}]});
   }});
   await genie.ask();const status=genie.status();assert.equal(status.hardening_notes.length,1);assert.equal(status.hardening_notes[0].durable,true);assert.equal(status.reports[0].hardening_receipts[0].state,'saved');
-  assert.ok(!JSON.stringify(status).includes('PRIVATE'));assert.ok(!fs.readFileSync(memory.file,'utf8').includes('PRIVATE'));assert.deepEqual(status.reports[0].actions_taken,[]);genie.close();
+  assert.ok(!JSON.stringify(status).includes('PRIVATE'));assert.ok(!fs.readFileSync(memory.file,'utf8').includes('PRIVATE'));assert.deepEqual(status.reports[0].actions_taken,[]);
+  const instructions=sent.messages[0].content;
+  assert.match(instructions,/one specific discriminating test/);assert.match(instructions,/Do not conflate ECONNREFUSED with ECONNRESET/);
+  assert.match(instructions,/Never propose blanket retry\/backoff for incomplete SSE/);assert.match(instructions,/respect pauses, reservations and admitted work/);
+  assert.match(instructions,/Do not repeat a notebook suggestion merely to refresh its timestamp/);genie.close();
+});
+test('pool action history keeps 30 small receipts independently of review text',()=>{
+  const genie=new Genie(null,()=>sample());
+  for(let i=0;i<40;i++)genie.recordProviderAction({id:String(i),time:i,served_by:'pool_fallback',served_on:'worker-a',text:'PRIVATE REVIEW'});
+  genie.recordProviderAction({id:'dedicated',time:50,served_by:'dedicated'});
+  const status=genie.status();assert.equal(status.provider_actions.length,30);
+  assert.equal(status.provider_actions[0].id,'39');assert.equal(status.provider_actions.at(-1).id,'10');
+  assert.equal(status.reports.length,0);assert.ok(!JSON.stringify(status.provider_actions).includes('PRIVATE'));
+  assert.deepEqual(Object.keys(status.provider_actions[0]).sort(),['id','served_by','served_on','time']);genie.close();
 });
 test('stale snapshots, missing workers, unknown epochs and observation gaps never invent continuity',t=>{
   const m=new GenieMemory(fixture(t),{now:()=>20000});m.setEnabled(true);m.observe(sample(1000));assert.equal(m.notes.size,0);

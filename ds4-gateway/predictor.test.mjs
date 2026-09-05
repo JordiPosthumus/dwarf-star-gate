@@ -49,6 +49,10 @@ test('hardware features require same-worker, fresh measurements already observed
 });
 
 const origin=1700000000000;
+test('predictor status exposes all 30 retained action receipts',t=>{
+  const {p}=rig(t);p.state.receipts=Array.from({length:30},(_,i)=>({id:String(i),actor:'genie',time:origin-i,action:'train',status:'verified'}));
+  const rows=p.status().actions;assert.equal(rows.length,30);assert.equal(rows[0].id,'0');assert.equal(rows.at(-1).id,'29');
+});
 const inventory={schema:1,workers:{a:{matching_profiles:['p'],hardware_family:'spark',accelerator_family:'cuda',ram_gib:128},b:{matching_profiles:['q'],hardware_family:'spark',accelerator_family:'cuda',ram_gib:128}}};
 let sequence=0;
 function row(kind,id,at,extra={}){return {schema:1,event_id:'e'+(++sequence),run_id:'run',request_id:id,node:'a',time:new Date(origin+at).toISOString(),kind,...extra};}

@@ -200,6 +200,30 @@ dashboard run. Operator actions are excluded. No prompt, answer, request/session
 identifier, endpoint, credential or raw error enters the ledger, and no row is a
 claim that model prose directly performed an action.
 
+The scrollable, keyboard-focusable ledger renders the latest 30 available actions
+across these feeds, newest first, with filters over that window. Its count is
+explicitly available history, not a lifetime total. Recovery/predictor status
+exposes up to 30 recent receipts per feed; other actors can occupy those source
+windows before the ledger filters them out. The dashboard separately keeps 30
+small completed pool-fallback receipts so rotating full review text does not
+erase that run's recent fallback history. Dashboard restart still resets provider
+history; this view is not a substitute for a durable consolidated audit archive.
+
+Developer suggestions are hypotheses, not executor receipts. Review instructions
+ask for a specific test and the outcomes it would distinguish, avoid conflating
+transport refusal/reset with identity failure, and forbid blanket replay advice
+for interrupted streams. Passive evidence comes before permitted synthetic tests;
+pauses, reservations and warm-cache preservation still apply. Instructions also
+discourage repeating existing advice without a materially new test or observation.
+These are model-output quality rules, not deterministic proof of note quality;
+older notes are retained rather than silently rewritten.
+
+![Synthetic 30-action ledger with a bounded scrolling region](images/genie-action-ledger.png)
+
+Illustration only, not live fleet evidence. To reproduce and test the ledger in
+Chromium and WebKit with optional Playwright installed, run
+`DSG_LEDGER_SCREENSHOT=docs/images/genie-action-ledger.png node scripts/check-genie-ledger.mjs`.
+
 The experimental observer uses low-effort, maximum-8,192-output-token review
 requests with a configurable bounded provider deadline. The current default is
 two hours because local long-context DS4 reasoning may be slow; the live deadline

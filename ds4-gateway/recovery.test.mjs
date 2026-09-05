@@ -18,6 +18,11 @@ import {EventEmitter} from 'node:events';
 import {PassThrough} from 'node:stream';
 
 const config={id:'one',url:'http://127.0.0.1:39001',ssh:'test-host',adapter:'systemd-user',helper:'/opt/dsg/adapter.py',config:'/opt/dsg/private.json',machine:'a'.repeat(64),profile:'b'.repeat(64),exclusive:true};
+test('recovery status exposes the newest 30 public receipts without deleting history',async()=>{
+  const r=rig();r.store.data.recovery={...r.recovery.state,operations:Array.from({length:35},(_,i)=>({id:String(i),actor:'genie',worker_id:'one',state:'failed',created_at:i,updated_at:i,private_prior:'PRIVATE'}))};
+  const rows=r.recovery.status().operations;assert.equal(rows.length,30);assert.equal(rows[0].id,'34');assert.equal(rows.at(-1).id,'5');
+  assert.equal(r.recovery.state.operations.length,35);assert.ok(!JSON.stringify(rows).includes('PRIVATE'));await r.recovery.close();
+});
 function rig(options={}) {
   let time=1788390000000,instance='1'.repeat(32),restarts=0,proofs=0;
   const n={...config,healthy:false,drained:false,active:null,queue:[],contextLength:262144,quarantine:{at:new Date(time-1000).toISOString(),reason:'accelerator_checkpoint_failure',request_id:randomUUID()}};

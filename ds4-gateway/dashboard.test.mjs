@@ -467,6 +467,27 @@ test('Genie action ledger is concise, newest-first and includes proven pool comm
   assert.match(html,/id="genie-action-ledger"/);assert.match(html,/Pool commandeering/);assert.match(html,/Newest first|title="Proven executor receipts/);
   assert.match(css,/\.genie-action-items li\{display:grid/);assert.match(source,/textContent=row\.detail/);assert.doesNotMatch(source,/innerHTML=.*genieActionRows/);
 });
+test('Genie ledger renders all 30 available receipts, filters and preserves scroll on refresh',()=>{
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const make=()=>({dataset:{},children:[],scrollTop:0,append(...items){this.children.push(...items);},replaceChildren(...items){this.children=items;this.scrollTop=0;}});
+  const nodes={'genie-action-filter':{value:'all'},'genie-action-summary':make(),'genie-action-items':make()};
+  const context=vm.createContext({document:{getElementById:id=>nodes[id],createElement:make}});vm.runInContext(source,context);
+  context.receipts=Array.from({length:35},(_,i)=>({id:String(i),time:1000+i,served_by:'pool_fallback',served_on:'worker-a'}));
+  vm.runInContext('wireSnapshot={};analyticsState={};genieState={provider_actions:receipts};renderGenieActionLedger()',context);
+  const list=nodes['genie-action-items'];assert.equal(list.children.length,30);
+  assert.equal(list.children[0].children[0].dateTime,new Date(1034).toISOString());
+  assert.equal(list.children.at(-1).children[0].dateTime,new Date(1005).toISOString());
+  assert.match(nodes['genie-action-summary'].textContent,/30 shown.*newest first/);
+  list.scrollTop=180;const children=list.children;vm.runInContext('renderGenieActionLedger()',context);
+  assert.equal(list.children,children);assert.equal(list.scrollTop,180);
+  vm.runInContext("genieState.provider_actions.unshift({id:'new',time:2000,served_by:'pool_fallback'});renderGenieActionLedger()",context);
+  assert.equal(list.children.length,30);assert.equal(list.scrollTop,180);
+  nodes['genie-action-filter'].value='attention';vm.runInContext('renderGenieActionLedger()',context);
+  assert.equal(list.children.length,1);assert.equal(list.children[0].textContent,'No actions match this filter.');
+  const css=fs.readFileSync(new URL('./ui/brand.css',import.meta.url),'utf8'),html=fs.readFileSync(new URL('./ui/index.html',import.meta.url),'utf8');
+  assert.match(css,/\.genie-action-items\{[^}]*max-height:320px;overflow-y:auto/);
+  assert.match(html,/id="genie-action-items"[^>]*tabindex="0"[^>]*aria-label="Latest 30/);
+});
 test('health wire shows Genie-authored findings and recommendations, withholding stale or unavailable advice',()=>{
   const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);

@@ -10,6 +10,13 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Made Genie's work easier to inspect.** The filtered action ledger now renders
+  the latest 30 available receipts in a keyboard-scrollable list; recovery and
+  predictor feeds expose 30, and small pool-fallback receipts survive review-text
+  rotation within the dashboard run. Sharper review instructions ask for specific
+  diagnostic tests, distinguish transport errors, and reject blanket replay advice
+  or repetitive notebook updates. These prompt rules are not verified diagnoses.
+
 - **Connected removed-Mac-job recovery to the independent controller.** Matching
   enrollment and an acknowledged removed-job cold/warm canary gate ordinary
   offers. Durable maintenance holds, admitted work and native policy are rechecked;

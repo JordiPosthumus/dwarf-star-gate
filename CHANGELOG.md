@@ -1,5 +1,18 @@
 # Changelog
 
+## Expand Genie action visibility and sharpen developer suggestions
+
+- Render all 30 available newest-first ledger rows, keep filters, preserve the
+  scroll offset on refresh and support keyboard scrolling in a bounded panel.
+- Expose up to 30 recovery/predictor receipts and retain 30 compact successful
+  pool-fallback receipts independently of the 12 full review reports. Provider
+  history remains dashboard-run-local, not a durable or complete audit archive.
+- Ask Genie for discriminating tests with clear evidence limits, passive checks
+  before permitted probes, no blanket incomplete-stream replay and no duplicate
+  advice merely to refresh a note. Existing historical notes remain unchanged.
+- Cover 30-row rendering, filtering, polling, bounded provider history and the
+  outgoing review instructions. No new recovery, probe or inference authority.
+
 ## Integrate certified removed-job recovery with the controller
 
 - Add separate launchd-only gateway bootstrap enrollment, matching helper pin and
