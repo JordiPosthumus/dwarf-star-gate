@@ -10,7 +10,7 @@ export function safeQuarantine(raw) {
 // Inspect error envelopes only, never quoted text in a normal model answer.
 // Retain only a bounded transient line/body, and persist only an enum reason.
 export class GenerationFaultObserver {
-  constructor(sse = false) { this.sse=sse;this.pending='';this.decoder=new StringDecoder('utf8');this.overflow=false;this.fault=null; }
+  constructor(sse = false) { this.sse=sse;this.pending='';this.decoder=new StringDecoder('utf8');this.overflow=false;this.fault=null;this.afterCR=false; }
   inspect(text) {
     try {
       const data=JSON.parse(text), message=data?.error?.message ??
@@ -24,9 +24,13 @@ export class GenerationFaultObserver {
   accept(chunk) {
     // Split before accumulating: one enormous upstream chunk cannot grow state.
     for(let i=0;i<chunk.length;i+=4096) {
-      const text=this.decoder.write(chunk.subarray(i,i+4096));
+      let text=this.decoder.write(chunk.subarray(i,i+4096));
       if(!this.sse) {if(!this.overflow){this.pending+=text;if(this.pending.length>65536){this.pending='';this.overflow=true;}}continue;}
-      for(const [j,part] of text.split('\n').entries()) {
+      if(!text.length)continue;
+      // Match SSE CR/LF/CRLF framing without treating a split CRLF as two lines.
+      if(this.afterCR&&text.startsWith('\n'))text=text.slice(1);
+      this.afterCR=text.endsWith('\r');
+      for(const [j,part] of text.split(/\r\n|[\r\n]/).entries()) {
         if(j){this.line();this.pending='';this.overflow=false;}
         if(!this.overflow){this.pending+=part;if(this.pending.length>65536){this.pending='';this.overflow=true;}}
       }

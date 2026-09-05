@@ -1,5 +1,16 @@
 # Changelog
 
+## Recognize SSE line endings without false worker failures
+
+- Observe CR, LF and CRLF consistently, even across byte/chunk boundaries, in
+  bounded usage/completion and accelerator-fault inspection. Do not count a
+  Pi-accepted CR stream as an interrupted response or miss its numeric usage.
+- Keep split CRLF from inventing blank events; retain partial, ambiguous and
+  oversized-event safeguards. Quoted model text remains non-fault evidence.
+- Exercise the installed Pi tool loop against isolated CR-framed workers with
+  and without `[DONE]`. Preserve exact forwarded bytes, one dispatch per request,
+  no ambiguous retries, and existing quarantine/readmission policy.
+
 ## Preserve attribution ambiguity during metadata updates
 
 - Update normalized engine fields without replacing the sample's private overlap

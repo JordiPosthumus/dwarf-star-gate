@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Stopped valid stream line endings from looking like server failures.**
+  Recognize CR, LF and split CRLF in completion/usage and fault observers. Prove
+  real Pi accepts tool-and-answer turns without duplicate execution; preserve
+  response bytes, genuine fault classification and existing no-replay boundaries.
+
 - **Kept attribution guards through metadata enrichment.** Learning an engine
   epoch or changing its reported confidence no longer erases remembered possible
   owners after history expires. Preserve overflow guards and still allow real

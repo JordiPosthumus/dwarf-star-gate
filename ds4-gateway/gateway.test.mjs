@@ -519,6 +519,56 @@ test('clean reason-only EOF requires an unambiguous bounded single-choice finish
   const failed=new UsageObserver();failed.accept(Buffer.from(terminal+event({error:{message:'PRIVATE_ERROR'}})));assert.equal(failed.finishState(),'engine_error');
   for(const route of ['/v1/messages','/v1/responses']){const o=new UsageObserver(route);o.accept(Buffer.from(terminal));assert.equal(o.finishState(),'clean_eof_no_terminal');}
 });
+test('SSE line endings preserve bounded usage and completion across every chunk boundary',()=>{
+  const event=value=>'data: '+JSON.stringify(value)+'\n\n';
+  const chat=event({choices:[{index:0,delta:{content:'PRIVATE_\u03b1_\ud83c\udf0d'},finish_reason:'stop'}],usage:{prompt_tokens:10,completion_tokens:2}});
+  const fixtures=[
+    ['/v1/chat/completions',chat+'data: [DONE]\n\n','terminal'],
+    ['/v1/chat/completions',chat,'terminal_without_done'],
+    ['/v1/completions',event({choices:[{index:0,text:'PRIVATE',finish_reason:'stop'}]}),'terminal_without_done'],
+    ['/v1/messages',event({type:'message_delta',delta:{stop_reason:'end_turn'}})+event({type:'message_stop'}),'terminal'],
+    ['/v1/responses',event({type:'response.completed',response:{status:'completed',usage:{input_tokens:10,output_tokens:2}}}),'terminal'],
+  ];
+  const snapshot=o=>({state:o.finishState(),reason:o.finish_reason,usage:o.usage,characters:o.semanticCharacters});
+  for(const [route,body,state] of fixtures){
+    const reference=new UsageObserver(route);reference.accept(Buffer.from(body));const expected=snapshot(reference);assert.equal(expected.state,state);
+    for(const ending of ['\n','\r','\r\n']){
+      const bytes=Buffer.from(body.replaceAll('\n',ending));
+      for(let split=0;split<=bytes.length;split++){
+        const o=new UsageObserver(route);o.accept(bytes.subarray(0,split));o.accept(bytes.subarray(split));assert.deepEqual(snapshot(o),expected);
+      }
+      const o=new UsageObserver(route);for(const byte of bytes)o.accept(Buffer.from([byte]));assert.deepEqual(snapshot(o),expected);
+    }
+  }
+});
+test('CR framing preserves partial events, ambiguity and overflow rather than inventing completion',()=>{
+  const terminal='data: {"choices":[{"index":0,"finish_reason":"stop"}]}';
+  for(const ending of ['\r','\r\n']){
+    for(const [body,state] of [
+      [terminal+ending,'partial_sse_event'],
+      [terminal+ending+'data: {"choices":[],"usage":{}}'+ending+ending,'clean_eof_no_terminal'],
+      ['data: invalid'+ending+ending+terminal+ending+ending,'clean_eof_no_terminal'],
+      [terminal+ending+ending+'data: {','partial_sse_event'],
+    ]){
+      const o=new UsageObserver();for(const byte of Buffer.from(body))o.accept(Buffer.from([byte]));assert.equal(o.finishState(),state);
+    }
+    const limited=new UsageObserver();limited.accept(Buffer.from('data: '+'x'.repeat(1048577)+ending+ending+terminal+ending+ending));
+    assert.equal(limited.finishState(),'observation_limited');assert.equal(limited.pending,'');
+    const aborted=new UsageObserver();aborted.accept(Buffer.from(terminal+ending+ending));assert.equal(aborted.finishState({cleanEOF:false}),'clean_eof_no_terminal');
+  }
+});
+test('carriage-return streams preserve response bytes and cannot falsely quarantine a working worker',async t=>{
+  const r=await rig(t,1,{dataset_enabled:true});
+  const body='data: {"choices":[{"index":0,"delta":{"content":"PRIVATE_CR"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":2}}\r\rdata: [DONE]\r\r';
+  for(let i=0;i<3;i++)assert.equal((await r.request(JSON.stringify({fixture_sse:body,stream:true}),'cr-stream')).body,body);
+  const worker=r.gateway.stats().workers[0];assert.equal(worker.inference_failures,0);assert.equal(worker.quarantine,null);assert.equal(worker.completed,3);
+  assert.equal(r.backends[0].records.length,3,'one upstream dispatch per original request');
+  await until(()=>r.gateway.stats().dataset.finished===3);await r.gateway.close();
+  const dir=path.join(path.dirname(r.config.state_file),'training'),rows=fs.readdirSync(dir).flatMap(f=>fs.readFileSync(path.join(dir,f),'utf8').trim().split('\n').map(JSON.parse));
+  const finishes=rows.filter(row=>row.kind==='finish');assert.equal(finishes.length,3);
+  assert.ok(finishes.every(row=>row.outcome==='complete'&&row.stream_end==='terminal'&&row.usage?.prompt_tokens===10&&row.usage?.completion_tokens===2));
+  assert.ok(!JSON.stringify(rows).includes('PRIVATE_CR'));
+});
 test('explicit clean reason-only completions preserve bytes and do not quarantine a working worker',async t=>{
   const r=await rig(t,1,{dataset_enabled:true});
   const body='data: {"choices":[{"index":0,"delta":{"content":"PRIVATE_REASON_ONLY"},"finish_reason":"stop"}]}\n\n';
@@ -803,6 +853,29 @@ test('fault observer recognizes split error envelopes but never quoted answers o
   assert.equal(response.finish(),'accelerator_checkpoint_failure');
 });
 
+test('fault evidence has the same meaning with CR, LF and split CRLF framing',()=>{
+  const event=value=>'data: '+JSON.stringify(value)+'\n\n';
+  const error=event({error:{message:'cuda prefill state reset failed'}})+'data: [DONE]\n\n';
+  const quoted=event({choices:[{delta:{content:'cuda prefill state reset failed'}}]});
+  for(const ending of ['\n','\r','\r\n']){
+    const bytes=Buffer.from(error.replaceAll('\n',ending));
+    for(let split=0;split<=bytes.length;split++){
+      const o=new GenerationFaultObserver(true);o.accept(bytes.subarray(0,split));o.accept(bytes.subarray(split));assert.equal(o.finish(),'accelerator_checkpoint_failure');
+    }
+    const o=new GenerationFaultObserver(true);for(const byte of bytes)o.accept(Buffer.from([byte]));assert.equal(o.finish(),'accelerator_checkpoint_failure');
+    const answer=new GenerationFaultObserver(true);answer.accept(Buffer.from(quoted.replaceAll('\n',ending)));assert.equal(answer.finish(),null);
+    const big=new GenerationFaultObserver(true);big.accept(Buffer.from('data: '+'x'.repeat(65537)+ending+ending));assert.equal(big.pending,'');
+    big.accept(bytes);assert.equal(big.finish(),'accelerator_checkpoint_failure');
+  }
+});
+test('carriage-return accelerator errors retain fault classification without replay or rewritten bytes',async t=>{
+  const r=await rig(t,1,{dataset_enabled:true});
+  const body='data: {"error":{"message":"cuda prefill state reset failed"}}\r\rdata: [DONE]\r\r';
+  const result=await r.request(JSON.stringify({fixture_sse:body,stream:true}),'cr-fault');
+  assert.equal(result.body,body);assert.equal(result.status,200);assert.equal(result.headers['x-dsg-dispatch-state'],'dispatched');
+  assert.equal(r.backends[0].records.length,1);assert.equal(r.gateway.stats().workers[0].quarantine?.reason,'accelerator_checkpoint_failure');
+  await until(()=>r.gateway.stats().dataset.finished===1);assert.equal(r.gateway.stats().dataset.failed_or_cancelled,1);
+});
 test('fatal HTTP failure quarantines persistently despite good model probes and reassigns only next request',async t=>{
   const r=await rig(t,2,{health_interval_ms:20,control_socket:true});
   const failed=await r.request('{"fatal_error":true}','failed-session');

@@ -111,7 +111,7 @@ export class UsageObserver {
   thinkingCharacters=0;answerCharacters=0;toolCharacters=0;firstSemanticAt=null;
   pending = ''; usage = undefined; done = false; finish_reason = null;
   skipping = false; limited = false; failed = false; decoder = new StringDecoder('utf8');
-  eventBoundary = true; closed = false;
+  eventBoundary = true; closed = false; afterCR = false;
   singleChoiceFinish=false; reasonEofAmbiguous=false; reasonEventDataLines=0;
   constructor(route='/v1/chat/completions'){this.route=route;}
   accept(chunk) {
@@ -119,8 +119,14 @@ export class UsageObserver {
     // Bound transient decoding even if accept receives one enormous chunk.
     // After overflow, discard through the actual newline, not just this chunk.
     for(let i=0;i<chunk.length;i+=4096) {
-      const text=this.decoder.write(chunk.subarray(i,i+4096));
-      for(const [j,part] of text.split('\n').entries()) {
+      let text=this.decoder.write(chunk.subarray(i,i+4096));
+      if(!text.length)continue;
+      // SSE accepts CR, LF and CRLF. A CR already ended the previous line;
+      // swallow its optional LF even across input/decoder chunk boundaries.
+      // Otherwise a split CRLF would invent a blank event boundary.
+      if(this.afterCR&&text.startsWith('\n'))text=text.slice(1);
+      this.afterCR=text.endsWith('\r');
+      for(const [j,part] of text.split(/\r\n|[\r\n]/).entries()) {
         if(j) {
           if(!this.skipping){const blank=this.pending.trim().length===0;this.line();this.eventBoundary=blank;}
           else this.eventBoundary=false;

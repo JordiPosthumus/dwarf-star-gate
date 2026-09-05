@@ -214,6 +214,15 @@ of interrupted generation, nor proof that every client accepts markerless stream
 Existing quarantine records are not automatically cleared or historical failures
 rewritten. Only newly observed qualifying clean completions use this distinction.
 
+Both completion/usage and accelerator-fault observers recognize LF, CR and CRLF
+line endings, including a CRLF split across received chunks. This matters because
+Pi accepts CR-framed turns too: misreading them as interrupted streams could count
+successful work as failures and trigger quarantine. Isolated real-Pi fixtures
+verify a tool executes once and the answer continues, with and without `[DONE]`.
+Gateway tests preserve exact forwarded bytes, numeric usage, error classification,
+partial-event/overflow safeguards and the no-ambiguous-replay boundary. This is
+stream-accounting compatibility, not a new retry or automatic readmission policy.
+
 The same example extension can separately opt in to the advisory
 [Agent Watch](agent-watch.md) heartbeat with `DSG_AGENT_WATCH=1`. It reports only
 a random run reference and coarse lifecycle state, including a failed turn only
