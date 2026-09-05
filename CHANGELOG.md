@@ -1,5 +1,13 @@
 # Changelog
 
+## Clarify prospective early-ETA experiment comparisons
+
+- Document matched future checkpoints, frozen feature/profile contracts and
+  separate baseline fitting partitions for early-specialist experiments.
+- Distinguish signed bias, tail error and unseen-session performance; retain
+  negative evidence and forbid presenting an inspected cohort as a fresh test
+  for a subsequently tuned model. No runtime or model artifact change.
+
 ## Preserve classified failure evidence for Genie
 
 - Retain allowlisted transport codes and valid HTTP statuses in sanitized request

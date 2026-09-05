@@ -63,6 +63,9 @@ Private deployment receipts and measurements stay out of this public plan.
    A first-progress diagnostic now separates early ETA quality from each job's
    all-progress average. Compare any early-specialist experiment on training-only
    CV and genuinely later matched observations; do not promote from inspected data.
+   Keep early-specialist future comparisons matched across forests and disclose
+   each baseline's fitted partition. Bias/tail improvements cannot substitute
+   for consistent overall and unseen-session accuracy; retain negative results.
    Retain all original validation gates and deterministic fallbacks; report
    actual routing benefit separately. No experimental promotion is implied.
 5. **Settle the gateway-only image-continuity contract.** The Pi image companion

@@ -302,6 +302,24 @@ proof that a missing early point was never produced. Long jobs can lose early
 points from bounded prepared histories. No selected points means null accuracy.
 Use the separate per-age and duration reports to judge later progress and tails.
 
+An **early-specialist training experiment** is a different model, not merely
+this display filter. Freeze its forest, training input, selector, recipe and
+protocol before examining later outcomes. Evaluate only new requests admitted
+after that freeze, using the same observed early checkpoints for the specialist,
+the prior frozen forest and each fixed reference rule. Keep the full captured
+history for causal feature replay; do not trim old input to manufacture a cohort.
+Match the feature-builder and inventory contract, and disclose its scope rather
+than assuming every live machine profile remained unchanged.
+
+Changing training-point weights can also change a baseline's fitted worker mean.
+Report the specialist's training-partition baselines and the prior model's
+training-partition baselines separately; do not choose whichever comparison
+makes a candidate look best. Lower signed bias or better long-job error alone
+does not establish better overall accuracy or unseen-session performance. Keep
+negative future results, missing/censored coverage and small worker slices visible.
+An inspected future cohort is not a fresh independent test for the next tuned
+candidate. None of these offline studies grants promotion or routing authority.
+
 The same report now includes `feature_groups` for every group in the frozen
 training manifest, including semantics, request shape, client metadata and
 progress. `future_by_stage` separates their coverage at admission, upload,

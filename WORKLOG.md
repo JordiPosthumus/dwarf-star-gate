@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Checked early-ETA specialization against later traffic.** Compare frozen
+  forests and fixed references on identical first-observed checkpoints. Preserve
+  negative results and distinguish bias/tail tradeoffs from overall and unseen-
+  session accuracy. No production model or activation gate was changed.
+
 - **Gave Genie distinct failure evidence.** Preserve fixed transport codes and
   HTTP statuses instead of collapsing them into a generic upstream error. Keep
   pre-dispatch rejection codes through the dashboard projection. No raw exception
