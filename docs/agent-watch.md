@@ -100,3 +100,8 @@ implementation is advisory only: it cannot submit input, interrupt, nudge, retry
 revive or control Pi/Hermes. Any future revival adapter is a separate opt-in
 capability requiring current evidence, an idempotent action and a visible receipt;
 silence alone will never grant authority.
+
+The proposed [Session Rescue roadmap](roadmap.md#planned-opt-in-session-rescue)
+specifies separate observation and automatic-resume permissions, client-side
+execution guards and visible outcomes. It is future work; enabling Agent Watch
+today does not enable session control or transcript inspection.

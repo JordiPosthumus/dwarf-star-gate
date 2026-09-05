@@ -197,7 +197,7 @@ local deployment and model-evaluation receipts stay private.
 | Order | Work | Exit evidence |
 | --- | --- | --- |
 | Immediate | [Client continuity](client-continuity.md): distinguish undispatched waits from interrupted generation, scope home ownership correctly, and avoid abandoning Pi turns | Patient waiting, receipts, Continuity Door, conversation-scoped admission reassignment and opt-in Pi transport implemented; real Pi agent/tool-loop fixture covers native waiting and certified retries. Arbitrary post-dispatch recovery remains separate work |
-| Immediate follow-up (Pi advisory slice implemented) | Opt-in [Agent Watch](agent-watch.md) for runs silent before their next DSG request | Pi heartbeats distinguish reported local tool work, client-side wait, DSG request state and settled client failure. Stale heartbeat means unknown, not a proven hang. Real Pi fixtures cover retries and tool-loop settlement; a packaged Hermes adapter and enrolled nudge/revive capability remain future work |
+| Immediate follow-up (Pi advisory slice implemented) | Opt-in [Agent Watch](agent-watch.md) and proposed [Session Rescue](#planned-opt-in-session-rescue) | Pi heartbeats distinguish reported local tool work, client-side wait, DSG request state and settled client failure. Stale heartbeat means unknown, not a proven hang. Real Pi fixtures cover retries and tool-loop settlement; enrolled nudge/revive capability and a packaged Hermes adapter remain future work |
 | 0 | Promote protocol/quarantine maintenance fixes through a controlled cutover | Regression suites pass; versioned backup; real API-format smoke checks; unchanged fleet/context; explicit source-versus-running release record |
 | 1 (shadow attribution + audits implemented) | Diagnose the Spark CUDA/OOM incidents and correlate requests within backend process epochs | Privacy-safe strong systemd epochs and file-ordered bounded local-log epochs plus a fail-closed request/log candidate correlator, long-overlap candidate retention, immutable recorded audit and complete-source later-evidence view are implemented; next evidence is fresh post-fix Mac traffic, review of the remaining true overlaps across real process epochs, service/kernel/memory diagnosis, real cold/warm checks and representative sustained work; no unapproved context/cache reductions |
 | 2 (pure comparator implemented) | Explain idle capacity and design cache-aware overflow scheduling | UI identifies session-home waits; the offline wait-hot/local-restore/remote-acquisition/cold-prefill contract is tested and abstains on unknowns; next prove live identity, remote protocol, realized forecast accuracy and no overlapping ownership/replay before any operator-approved activation |
@@ -527,6 +527,57 @@ without blaming a DS4 server. The first slice is advisory and implemented; a
 generic packaged Hermes adapter is not yet claimed. A later revive/nudge
 operation requires an explicitly enrolled client adapter, one idempotent action,
 current stale evidence and an action-ledger receipt; silence alone grants no power.
+
+### Planned opt-in: Session Rescue
+
+**User-requested, not implemented or enabled.** Let Genie study apparently stalled
+Pi sessions and, when independently safe and explicitly authorized, help the
+owning agent resume its existing task. This extends Agent Watch; it does not make
+the gateway do the user's work or assume that every quiet session is broken.
+
+- **Two permissions, off by default:** persistent observation enrollment and a
+  separate automatic-resume toggle, scoped to an explicitly enrolled client and
+  its sessions. Observation alone grants no control. Provide per-session exclusion,
+  immediate revocation and a manual “review / resume” path. Protect intentional
+  pauses, user aborts, completed tasks and sessions awaiting human input.
+- **Diagnose before suggesting action:** correlate fresh client lifecycle and
+  monotonic progress with DSG queue, dispatch and terminal receipts. Distinguish
+  waiting for a slot, active reasoning/streaming, a long local tool, local retries
+  or compaction, a settled recoverable failure and unknown client state. Neither
+  elapsed time, idle GPU telemetry nor a stale heartbeat proves a stalled agent.
+- **Privacy-bounded study:** use structured lifecycle/error classes first, with
+  bounded retention. Reading transcript, tool-output or user-request snippets
+  requires separate explicit content permission, with scope and retention shown
+  before enabling it. Never collect secrets or full transcripts by default;
+  treat inspected content as untrusted evidence, not control instructions.
+- **Least-powerful recovery:** prefer Pi's supported, authenticated client-owned
+  resume/control interface and reuse existing optional integration where suitable;
+  verify actual Pi support before choosing a mechanism. No terminal keystroke
+  injection, broad shell access, new mandatory companion or process restart.
+  Genie proposes a concise diagnosis and continuation cue; the owning agent
+  decides how to solve the task. A friendly gateway answer alone cannot cause
+  Pi to schedule another turn.
+- **Independent execution guard:** immediately recheck session identity, generation,
+  ownership, permissions and lifecycle at the client. A settled recoverable turn
+  must have no outstanding tool, request, queued continuation, retry or compaction.
+  An active/ambiguous prior execution requires positive reconciliation or human
+  review, not blind replay. Use one durable idempotency receipt per failure/turn
+  generation, bounded attempts and cooldown; recovered progress or user activity
+  invalidates stale proposals. Fail closed on client restart or lost receipt state.
+- **Visible outcome:** put the reason, evidence freshness, target pseudonym,
+  decision, action receipt and result in the existing newest-first Genie ledger.
+  Distinguish suggested, blocked, resume accepted, progress confirmed and failed;
+  command acceptance alone is not recovery. Repeated failure becomes a concise
+  operator alert and hardening note, not an endless “proceed” loop.
+
+Delivery: observation-only stalled-session review first; then operator-approved
+single-session resume; finally separately opted-in automatic rescue after real
+Pi integration tests. Acceptance must cover a settled recoverable failure resuming
+without duplicate tool execution, stale-review races, concurrent controllers,
+client restart, permission revocation, user stops, healthy quiet work, DSG queue
+waits, missing heartbeat and unresolved post-dispatch failures. No active work may
+be interrupted just to test this feature. Track confirmed recovery and false
+intervention rates, not merely the number of nudges issued.
 
 ## Adding or removing devices
 

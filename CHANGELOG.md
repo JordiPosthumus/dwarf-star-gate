@@ -1,5 +1,12 @@
 # Changelog
 
+## Plan opt-in Genie Session Rescue
+
+- Specify staged Pi stall review and client-owned resume, with separate consent,
+  privacy bounds, independent lifecycle guards and concise ledger outcomes.
+- Keep Agent Watch advisory today; this roadmap change installs no integration,
+  reads no session content and grants no automatic control.
+
 ## Enable declared offline sensor-era experiments
 
 - Extend admission-time cohort preparation to the explicit V4 hardware schema;

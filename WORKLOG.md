@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Planned opt-in Session Rescue.** Genie could review quiet Pi sessions and
+  propose or request a guarded resume when warranted. The roadmap separates
+  observation from control, protects legitimate waiting and requires proof of
+  safe continuation. No session-control capability is enabled by this plan.
+
 - **Made sensor-era model experiments reproducible.** An explicit offline V4
   cohort can start at a declared collection boundary while retaining all older
   evidence as history. Missing sensors are not filtered away, and no live model
