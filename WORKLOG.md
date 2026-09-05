@@ -10,6 +10,10 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Made speed traces easier to follow.** Small red dots and subtle connectors
+  replace broken lines between rate measurements, without changing timestamps,
+  recorded speeds or mistaking missing measurements for idle hardware.
+
 - **Named our promise: Seamless Continuity.** Made it DSG's tagline across the
   README, dashboard and project metadata, grounded in the existing delivery
   principles and explicit recovery boundaries.

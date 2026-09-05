@@ -26,6 +26,27 @@ test('dashboard folds connection and diagnostics into its single identity header
   assert.doesNotMatch(header,/control room|class="brand"/);
 });
 
+test('rate charts bridge measurement pauses with red-dot markers without inventing observations',()=>{
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const context=vm.createContext({});vm.runInContext(source,context);
+  const render=(series,now=500000)=>vm.runInContext(`chart(${JSON.stringify(series)},'decode',${now},40)`,context);
+  const series=[{kind:'decode',time:410000,tps:20},{kind:'decode',time:200000,tps:10},{kind:'decode',time:210000,tps:12},{kind:'decode',time:400000,tps:18}];
+  const before=JSON.stringify(series),svg=render(series);
+  assert.equal((svg.match(/class="chart-bridge"/g)||[]).length,1);
+  assert.equal((svg.match(/class="chart-pause-dot"/g)||[]).length,1);
+  assert.equal((svg.match(/<polyline/g)||[]).length,2,'measured runs remain distinct from the visual connector');
+  assert.match(svg,/190s between rate measurements/);assert.match(svg,/not a measured rate or proof of idle/);
+  assert.match(svg,/tabindex="0" role="img"/);assert.equal(JSON.stringify(series),before);
+  assert.doesNotMatch(svg,/chart-last chart-pause-dot/,'exactly 90 seconds does not mark a trailing pause');
+  const stopped=render(series,500001);assert.match(stopped,/chart-last chart-pause-dot/);
+  assert.match(stopped,/line ends at the last observation/);assert.doesNotMatch(stopped,/d="M300.0 /,'do not extend a stale rate to now');
+  assert.doesNotMatch(render([{kind:'decode',time:400000,tps:10},{kind:'decode',time:490000,tps:11}]),/class="chart-bridge"/);
+  assert.doesNotMatch(render([]),/<circle|<polyline|class="chart-bridge"/);
+  const bad=[{kind:'decode',time:500001,tps:20},{kind:'decode',time:100000,tps:-1},{kind:'decode',time:null,tps:20},{kind:'prefill',time:400000,tps:100}];
+  assert.doesNotMatch(render(bad),/<circle|<polyline/);
+  assert.doesNotMatch(vm.runInContext("chart([{kind:'decode',time:400000,tps:NaN},{kind:'decode',time:Infinity,tps:20}], 'decode', 500000, Infinity)",context),/NaN|Infinity/);
+});
+
 test('forecast labels never present stale snapshots or total service time as a live ETA',()=>{
   const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);

@@ -42,13 +42,23 @@ function thinkingIndicator(w, stale, now) {
   return `<div class="requested-thinking"><span class="label">REQUESTED THINKING</span><strong title="${esc(info.detail)}">${esc(info.label)}</strong><span class="thinking-scope">${esc(scope)}</span></div>`;
 }
 function chart(series, kind, now, ceiling) {
-  const values = series.filter(s => s.kind === kind && now - s.time < 900000).sort((a,b)=>a.time-b.time);
-  const max = ceiling || Math.max(1, ...values.map(s => s.tps));
+  const values = (series??[]).filter(s => s?.kind === kind && Number.isFinite(s.time) && Number.isFinite(s.tps) && s.tps>=0 && s.time<=now && now - s.time < 900000).sort((a,b)=>a.time-b.time);
+  const max = Number.isFinite(ceiling)&&ceiling>0?ceiling:Math.max(1, ...values.map(s => s.tps));
   const point=s=>`${((s.time-(now-900000))/900000*300).toFixed(1)},${(52-s.tps/max*44).toFixed(1)}`;
   const groups=[];for(const sample of values){const current=groups.at(-1);if(!current||sample.time-current.at(-1).time>90000)groups.push([sample]);else current.push(sample);}
+  // Preserve wall-clock spacing and measured segments. The subdued connector
+  // is presentation only: absent rate samples do not prove hardware idleness.
+  const pauses=groups.slice(1).map((group,index)=>{
+    const before=groups[index].at(-1),after=group[0],a=point(before).split(','),b=point(after).split(',');
+    const mid=point({time:(before.time+after.time)/2,tps:(before.tps+after.tps)/2}).split(',');
+    const label=`${Math.round((after.time-before.time)/1000)}s between rate measurements. Connector is not a measured rate or proof of idle.`;
+    return `<g class="chart-pause" tabindex="0" role="img" aria-label="${label}"><title>${label}</title><line class="chart-bridge" x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}"/><path class="chart-pause-dot" d="M${mid[0]} ${mid[1]}h0"/></g>`;
+  }).join('');
   const traces=groups.map(group=>group.length===1?`<circle class="chart-point" cx="${point(group[0]).split(',')[0]}" cy="${point(group[0]).split(',')[1]}" r="2.5"/>`:`<polyline points="${group.map(point).join(' ')}"/>`).join('');
-  const last=values.at(-1),lastDot=last?`<circle class="chart-last" cx="${point(last).split(',')[0]}" cy="${point(last).split(',')[1]}" r="3.2"/>`:'';
-  return `<svg class="chart ${kind}" viewBox="0 0 300 60" preserveAspectRatio="none" role="img" aria-label="${kind} last 15 minutes, shared scale zero to ${Math.ceil(max)} tokens per second"><line class="chart-grid" x1="0" y1="8" x2="300" y2="8"/><line class="chart-grid" x1="0" y1="30" x2="300" y2="30"/><line class="chart-baseline" x1="0" y1="52" x2="300" y2="52"/>${traces}${lastDot}</svg>`;
+  const last=values.at(-1),stopped=last&&now-last.time>90000;
+  const lastLabel=stopped?`No new rate measurement for ${Math.round((now-last.time)/1000)}s. The line ends at the last observation; this does not prove idle.`:'';
+  const lastDot=!last?'':stopped?`<path class="chart-last chart-pause-dot" d="M${point(last).replace(',',' ')}h0" tabindex="0" role="img" aria-label="${lastLabel}"><title>${lastLabel}</title></path>`:`<circle class="chart-last" cx="${point(last).split(',')[0]}" cy="${point(last).split(',')[1]}" r="3.2"/>`;
+  return `<svg class="chart ${kind}" viewBox="0 0 300 60" preserveAspectRatio="none" role="img" aria-label="${kind} last 15 minutes, shared scale zero to ${Math.ceil(max)} tokens per second; red dots mark pauses in measurements, not confirmed idle"><line class="chart-grid" x1="0" y1="8" x2="300" y2="8"/><line class="chart-grid" x1="0" y1="30" x2="300" y2="30"/><line class="chart-baseline" x1="0" y1="52" x2="300" y2="52"/>${pauses}${traces}${lastDot}</svg>`;
 }
 function hardwareMiniChart(series,value,ceiling,label){
   const rows=(series??[]).map(sample=>({time:sample.time,value:value(sample)})).filter(sample=>Number.isFinite(sample.time)&&Number.isFinite(sample.value)).sort((a,b)=>a.time-b.time),max=Math.max(1,ceiling??0,...rows.map(row=>row.value));

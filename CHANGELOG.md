@@ -1,5 +1,14 @@
 # Changelog
 
+## Mark rate-chart pauses without broken traces
+
+- Join decode/prefill measurement gaps with subdued solid connectors and small
+  red dots. Tooltips distinguish an unmeasured interval from proven idle time.
+- Keep the shared scale and 15-minute wall-clock axis; do not extend old rates
+  beyond their last observation. Mark an ongoing measurement pause at that point.
+- Add chart boundary, keyboard-access and browser rendering checks; refresh the
+  synthetic demo with visible measurement pauses.
+
 ## Adopt the Seamless Continuity tagline
 
 - Add the tagline to the README, compact dashboard header, browser title and

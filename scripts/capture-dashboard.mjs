@@ -43,6 +43,11 @@ try {
   }
   assert.equal(await page.locator('header').count(),1,'No separate empty branding strip');
   assert.ok((await page.locator('.dashboard-header').boundingBox()).height<180,'Desktop header stays compact');
+  assert.ok(await page.locator('#devices .chart-bridge').count()>=4,'Demo includes measured pauses for both rate charts');
+  const pause=page.locator('#devices .chart-pause').first();
+  assert.match(await pause.getAttribute('aria-label'),/not a measured rate or proof of idle/);
+  assert.equal(await pause.locator('.chart-pause-dot').evaluate(el=>getComputedStyle(el).stroke),'rgb(239, 119, 119)');
+  await pause.focus();assert.equal(await pause.evaluate(el=>el===document.activeElement),true);
   assert.equal(await page.locator('#tab-fleet').getAttribute('aria-selected'),'true');
   assert.equal(await page.locator('#view-fleet').isVisible(),true);
   assert.equal(await page.locator('#view-genie').isHidden(),true);
