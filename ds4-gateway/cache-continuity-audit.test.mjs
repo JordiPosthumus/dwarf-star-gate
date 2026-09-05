@@ -33,6 +33,45 @@ test('missing client metadata makes low reuse unconfirmed, never a proved miss',
   assert.match(result.evidence_boundary,/not prompt-prefix or engine-protocol proof/);
 });
 
+test('finish-before-admission evidence cannot claim reuse or strongly guarded cache loss',()=>{
+  for(const bad of ['previous','current'])for(const cached of [0,900]){
+    const first=request({id:'first',at:10000,affinity:'new',turn:1,compaction:0});
+    const second=request({id:'second',at:20000,cached,turn:2,compaction:0});
+    const target=bad==='previous'?first:second;
+    target[1].time=new Date(Date.parse(target[0].time)-1).toISOString();
+    const rows=[...first,...second],before=JSON.stringify(rows);
+    const report=auditCacheContinuity(rows);
+    assert.equal(report.assessed_pairs,0,bad);assert.equal(report.strong_guard_pairs,0);
+    assert.equal(report.abstention_reasons.noncausal_request_evidence,1);
+    assert.deepEqual(report.classifications,{});assert.equal(JSON.stringify(rows),before);
+    assert.deepEqual(auditCacheContinuity([...rows].reverse()),report,'Input order must not hide contradictory time evidence');
+  }
+});
+
+test('cache audit rejects invalid event-budget overrides rather than removing its bound',()=>{
+  for(const maxEvents of [NaN,Infinity,-1,0,1.5,'200000',null,200001])
+    assert.throws(()=>auditCacheContinuity([],{maxEvents}),/event budget/);
+  assert.equal(auditCacheContinuity([],{maxEvents:1}).source_quality.relevant_events,0);
+  const rows=request({id:'bounded',at:10000});
+  assert.throws(()=>auditCacheContinuity(rows,{maxEvents:1}),/event budget/);
+});
+
+test('a contradictory middle request is not skipped to invent a consecutive pair',()=>{
+  const first=request({id:'first',at:10000,affinity:'new',turn:1,compaction:0});
+  const middle=request({id:'middle',at:20000,turn:2,compaction:0});
+  middle[1].time=new Date(19999).toISOString();
+  const third=request({id:'third',at:30000,turn:3,compaction:0});
+  const fourth=request({id:'fourth',at:40000,turn:4,compaction:0});
+  const result=auditCacheContinuity([...first,...middle,...third,...fourth]);
+  assert.equal(result.candidate_pairs,3);assert.equal(result.assessed_pairs,1);
+  assert.equal(result.abstention_reasons.noncausal_request_evidence,2);
+  assert.equal(result.classifications.reuse_observed,1);
+  // Millisecond timestamps cannot distinguish a zero-duration boundary. Do not
+  // label equality contradictory or silently invent sub-millisecond precision.
+  third[1].time=third[0].time;fourth[1].time=fourth[0].time;
+  assert.equal(auditCacheContinuity([...third,...fourth]).assessed_pairs,1);
+});
+
 test('compaction, profile and epoch changes, relocation and failed evidence abstain',()=>{
   const changedProfile=request({id:'p2',at:20000,turn:2,compaction:0});changedProfile[0].candidates[0].profile='c'.repeat(64);
   const cases=[

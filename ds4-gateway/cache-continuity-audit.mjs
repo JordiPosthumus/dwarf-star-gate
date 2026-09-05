@@ -42,6 +42,7 @@ function jobGate(previous,current,maxAgeMs) {
   const fail=reason=>({reason});
   if(previous.ambiguous||current.ambiguous)return fail('ambiguous_request_evidence');
   if(!previous.finish||!current.finish)return fail('terminal_evidence_missing');
+  if(previous.finish_at<previous.decision_at||current.finish_at<current.decision_at)return fail('noncausal_request_evidence');
   if(previous.relocated||current.relocated)return fail('queued_relocation_observed');
   if(previous.finish.node!==previous.decision.node||current.finish.node!==current.decision.node)return fail('worker_join_conflict');
   if(previous.finish.outcome!=='complete'||current.finish.outcome!=='complete')return fail('incomplete_or_failed_request');
@@ -75,6 +76,7 @@ function jobGate(previous,current,maxAgeMs) {
 }
 
 export function auditCacheContinuity(input,{maxAgeMs=DEFAULT_MAX_AGE_MS,maxEvents=MAX_EVENTS,maxRequests=MAX_REQUESTS}={}) {
+  if(!Number.isSafeInteger(maxEvents)||maxEvents<1||maxEvents>MAX_EVENTS)throw new Error('Invalid cache-continuity event budget');
   if(!Array.isArray(input)||input.length>maxEvents)throw new Error('Cache-continuity audit event budget exceeded');
   if(!Number.isSafeInteger(maxAgeMs)||maxAgeMs<60000||maxAgeMs>7*24*60*60*1000)throw new Error('maxAgeMs must be one minute through seven days');
   if(!Number.isSafeInteger(maxRequests)||maxRequests<1||maxRequests>MAX_REQUESTS)throw new Error('Invalid cache-continuity request budget');

@@ -23,6 +23,8 @@ filenames or snapshot pseudonyms.
 For one immediately consecutive session pair, the auditor requires:
 
 - one unambiguous decision and at most one completion for each request;
+- a finish timestamp at or after that request's own admission; contradictory
+  chronology yields `noncausal_request_evidence`, never a reuse/loss assessment;
 - no queued relocation in either request;
 - a completed, uncensored supported route on the same worker;
 - the current decision marked `existing` affinity;
@@ -48,6 +50,14 @@ count, together with the same observed worker epoch. Otherwise it is
 `unconfirmed_low_reuse`. A compaction, changed worker/profile/epoch, route change,
 failed or missing terminal, stale pair, prompt shrink, relocation or overlap
 abstains with an explicit reason instead of entering the ratio.
+An invalid middle request is not skipped to manufacture a consecutive pair from
+its neighbors. Input ordering cannot repair contradictory recorded timestamps;
+equal millisecond timestamps alone are not treated as contradictory.
+
+The API permits only positive integer event budgets up to 200,000 events and
+request budgets up to 50,000. Invalid overrides or exceeded budgets fail explicitly
+instead of disabling the bound or silently truncating retained evidence. This
+limits the audit, not data collection or inference.
 
 ## Evidence boundary
 
@@ -69,6 +79,9 @@ validate the counterfactual completion time of an unchosen path.
 Unit tests cover observed, partial, strongly guarded and unconfirmed low reuse;
 compaction, epoch/profile changes, relocation, failure, staleness, prompt shrink,
 route changes, run boundaries, duplicate/conflicting evidence and report privacy.
+They also cover impossible request chronology, reversed input order, preservation
+of valid neighbors and bounded configuration. A frozen-data comparison kept all
+previous valid classifications identical after this chronology hardening.
 The first deployment smoke audit must keep its exact counts private.
 
 The next safe improvements are earlier real client turn/compaction metadata,

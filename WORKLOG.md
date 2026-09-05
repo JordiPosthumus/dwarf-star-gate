@@ -10,6 +10,12 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Stopped contradictory evidence from becoming a cache-loss finding.** The
+  read-only auditor now abstains when a request supposedly finishes before its
+  admission, and rejects invalid event-budget overrides. Regression tests cover
+  both affected neighbors without skipping malformed history. An existing frozen
+  dataset produced an identical report after the fix; no caches or routing changed.
+
 - **Tested why embeddings were not helping the selected forecast.** Added one
   missing controlled history-plus-semantics comparison to the offline updated
   occupancy search. It now uses semantic splits, but the negligible CV gain came

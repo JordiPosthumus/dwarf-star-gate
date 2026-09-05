@@ -1,5 +1,18 @@
 # Changelog
 
+## Guard cache-continuity findings against contradictory chronology
+
+- Reproduce impossible finish-before-admission pairs being assessed as reuse or
+  strongly guarded low reuse. Return `noncausal_request_evidence` instead.
+- Keep invalid middle requests in the consecutive-pair boundary; neither input
+  reordering nor dropping the middle may manufacture a valid pair. Equal
+  millisecond timestamps remain allowed without invented sub-millisecond precision.
+- Reject noninteger, nonpositive, nonfinite or over-cap event-budget overrides.
+  Evidence is never silently truncated, edited or deleted.
+- Regress timing, input immutability and budget bounds; compare the entire report
+  on retained frozen data and verify existing valid findings remain identical.
+  This is offline reporting hardening, not a cache/routing/retention policy change.
+
 ## Add a controlled offline history-plus-semantics ablation
 
 - Occupancy V2 updated-time search gains exactly one feature family without
