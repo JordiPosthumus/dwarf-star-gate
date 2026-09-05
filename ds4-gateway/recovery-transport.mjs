@@ -31,7 +31,7 @@ export function recoveryConfig(raw={}) {
   if(Object.keys(raw).some(k=>!['workers'].includes(k)) || !Array.isArray(raw.workers??[]))throw new Error('Invalid recovery configuration');
   const configs=new Map(), machines=new Set();
   for(const entry of raw.workers??[]) {
-    if(Object.keys(entry).some(k=>!['id','url','ssh','ssh_fallbacks','remote_port','adapter','transport','python','helper','config','machine','profile','service_profile','start_stopped','exclusive'].includes(k)))throw new Error('Unsupported recovery configuration field');
+    if(Object.keys(entry).some(k=>!['id','url','ssh','ssh_fallbacks','remote_port','adapter','transport','python','helper','config','machine','profile','service_profile','start_stopped','exclusive','bootstrap_removed','bootstrap_callers','retained_definition_sha256'].includes(k)))throw new Error('Unsupported recovery configuration field');
     const worker=workerConfig(Object.fromEntries(['id','url','ssh','ssh_fallbacks','remote_port'].filter(k=>entry[k]!==undefined).map(k=>[k,entry[k]])));
     const local=entry.transport==='local';
     if(entry.transport!==undefined&&!['ssh','local'].includes(entry.transport))throw new Error('Recovery transport must be ssh or local');
@@ -44,7 +44,13 @@ export function recoveryConfig(raw={}) {
     for(const field of ['machine','profile'])if(!/^[a-f0-9]{64}$/.test(entry[field]))throw new Error('Enroll the recovery machine and profile first');
     if(entry.start_stopped!==undefined&&typeof entry.start_stopped!=='boolean')throw new Error('start_stopped must be boolean');
     if(entry.start_stopped===true&&!/^[a-f0-9]{64}$/.test(entry.service_profile))throw new Error('Starting a stopped service requires its enrolled static service profile');
-    if(entry.start_stopped!==true&&entry.service_profile!==undefined)throw new Error('service_profile is valid only with start_stopped enabled');
+    if(entry.bootstrap_removed!==undefined&&typeof entry.bootstrap_removed!=='boolean')throw new Error('bootstrap_removed must be boolean');
+    if(entry.bootstrap_removed===true){
+      if(entry.adapter!=='launchd'||!/^[a-f0-9]{64}$/.test(entry.service_profile)||!/^[a-f0-9]{64}$/.test(entry.retained_definition_sha256)||
+        !Array.isArray(entry.bootstrap_callers)||entry.bootstrap_callers.some(c=>!['loginwindow','runningboardd'].includes(c))||new Set(entry.bootstrap_callers).size!==entry.bootstrap_callers.length)
+        throw new Error('Bootstrap requires explicit launchd static identity, retained pin and caller policy');
+    }else if(entry.bootstrap_callers!==undefined||entry.retained_definition_sha256!==undefined)throw new Error('Bootstrap fields require explicit bootstrap enrollment');
+    if(entry.start_stopped!==true&&entry.bootstrap_removed!==true&&entry.service_profile!==undefined)throw new Error('service_profile requires enrolled start or bootstrap authority');
     if(configs.has(worker.id) || machines.has(entry.machine))throw new Error('Only one registered recovery service per physical machine in v1');
     configs.set(worker.id,{...entry,...worker});machines.add(entry.machine);
   }

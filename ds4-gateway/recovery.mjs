@@ -2,12 +2,13 @@ import { createHash, randomUUID } from 'node:crypto';
 import { recoveryConfig, recoveryCall } from './recovery-transport.mjs';
 import { verifyRecovery } from './recovery-verify.mjs';
 import {safeNativeRemoval,unavailableNativeRemoval} from './launchd-removal-evidence.mjs';
+import {bootstrapEnrollmentMatches,bootstrapProofValid} from './recovery-bootstrap.mjs';
 
 const hash=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const terminal=new Set(['recovered','verified_paused','failed','reconciliation_needed']);
 const faultReasons=new Set(['fatal_accelerator_error','accelerator_checkpoint_failure']);
 const adapterReasons=new Set(['adapter_timeout','adapter_output_limit','adapter_spawn_failed','adapter_dns_failure','adapter_host_key_failure','adapter_auth_failure','adapter_connect_timeout','adapter_connection_refused','adapter_route_unreachable','adapter_connection_reset','adapter_unreachable','adapter_check_failed','adapter_local_unavailable','adapter_local_identity_unverified']);
-const publicOperation=op=>Object.fromEntries(['id','worker_id','actor','service_action','state','created_at','updated_at','error','proof','service_action_issued','restart_issued','operator_override','profile_adopted'].filter(k=>op[k]!==undefined).map(k=>[k,op[k]]));
+const publicOperation=op=>Object.fromEntries(['id','worker_id','actor','service_action','state','created_at','updated_at','error','proof','service_action_issued','restart_issued','operator_override','profile_adopted','bootstrap_acknowledged'].filter(k=>op[k]!==undefined).map(k=>[k,op[k]]));
 const digest=value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
 const nativePolicyReason=(s,c)=>c?.adapter==='launchd'&&s?.native_disabled!==false?(s?.native_disabled===true?'launchd_native_disabled':'launchd_disable_state_unverified'):null;
 function requireNativePolicy(s,c){const reason=nativePolicyReason(s,c);if(reason)throw new Error(reason);}
@@ -18,6 +19,15 @@ const validIdentityRecord=value=>value&&typeof value==='object'&&!Array.isArray(
   Number.isSafeInteger(value.pid)&&value.pid>=2&&value.pid<=2147483647&&Number.isSafeInteger(value.started_at)&&value.started_at>=0&&
   Number.isSafeInteger(value.observed_at)&&value.observed_at>=value.started_at;
 const blankState=()=>({version:1,automatic:false,profile_handback_automatic:true,adopted_profiles:{},operations:[]});
+const bootstrapOperationValid=op=>{
+  if(op.service_action!=='bootstrap')return !Object.keys(op).some(k=>k.startsWith('bootstrap_'));
+  const p=op.bootstrap_prior;if(!p||!bootUUID(p.boot_uuid))return false;
+  const {boot_uuid,...record}=p;
+  return validIdentityRecord(record)&&digest(op.bootstrap_enrollment)&&record.enrollment===op.bootstrap_enrollment&&
+    digest(op.bootstrap_definition_sha256)&&op.instance===p.instance&&op.machine===p.machine&&op.profile===p.profile&&op.service_profile===p.service_profile&&
+    typeof op.canary==='boolean'&&(!op.canary||op.actor==='operator')&&typeof op.was_paused==='boolean'&&
+    Number.isSafeInteger(op.context_length)&&op.context_length>0&&(op.bootstrap_acknowledged===undefined||typeof op.bootstrap_acknowledged==='boolean');
+};
 const adoptionOperationValid=op=>{
   const adoption=['adopt_profile','adopt_service_profile','configured_profile'].some(k=>Object.hasOwn(op,k))||String(op.service_action).startsWith('adopt_');
   if(!adoption)return true;
@@ -40,7 +50,7 @@ export class Recovery {
     if(saved && (saved.version!==1 || typeof saved.automatic!=='boolean' || (saved.profile_handback_automatic!==undefined&&typeof saved.profile_handback_automatic!=='boolean') || !Array.isArray(saved.operations) || (saved.adopted_profiles!==undefined&&(!saved.adopted_profiles||typeof saved.adopted_profiles!=='object'||Array.isArray(saved.adopted_profiles)))))throw new Error('Invalid recovery journal; inspect manually');
     for(const [worker,profile] of Object.entries(saved?.adopted_profiles??{}))if(!/^[a-zA-Z0-9][\w-]{0,63}$/.test(worker)||!profile||!digest(profile.config_profile)||!digest(profile.machine)||!digest(profile.profile)||(profile.service_profile!==null&&!digest(profile.service_profile))||!Number.isFinite(profile.adopted_at)||!/^[a-f0-9-]{36}$/.test(profile.operation_id))throw new Error('Invalid adopted recovery profile');
     for(const op of this.state.operations) {
-      if(!/^[a-f0-9-]{36}$/.test(op.id) || typeof op.worker_id!=='string' || typeof op.state!=='string'||!adoptionOperationValid(op))throw new Error('Invalid recovery operation');
+      if(!/^[a-f0-9-]{36}$/.test(op.id) || typeof op.worker_id!=='string' || typeof op.state!=='string'||!adoptionOperationValid(op)||!bootstrapOperationValid(op))throw new Error('Invalid recovery operation');
       if(!terminal.has(op.state)) {
         // Resume observation/verification only. Never resend an uncertain command.
         const node=this.node(op.worker_id);if(node){node.recovering=true;node.healthy=false;}
@@ -89,9 +99,51 @@ export class Recovery {
   binding(n,c){return !!n && !!c && n.url===c.url && n.ssh===c.ssh && JSON.stringify(n.ssh_fallbacks??[])===JSON.stringify(c.ssh_fallbacks??[]) && (n.remote_port??8000)===(c.remote_port??8000);}
   valid(s,c){return s?.version===1 && s.machine===c.machine && s.profile===c.profile && s.active===true && s.listener===true && /^[a-f0-9]{32}$/.test(s.instance) && Number.isFinite(s.started_at);}
   validStopped(s,c){return c?.start_stopped===true && s?.version===1 && s.machine===c.machine && s.service_profile===c.service_profile && s.loaded===true && s.stopped===true && s.active===false && s.listener===false && /^[a-f0-9]{64}$/.test(s.stopped_epoch);}
+  bootstrapCertified(n,c){return this.state.operations.some(op=>op.worker_id===n.id&&op.service_action==='bootstrap'&&bootstrapOperationValid(op)&&
+    op.canary===true&&op.actor==='operator'&&op.state==='verified_paused'&&op.was_paused===true&&op.service_action_issued===true&&op.bootstrap_acknowledged===true&&!op.operator_override&&
+    op.bootstrap_enrollment===hash(c)&&op.bootstrap_definition_sha256===c.retained_definition_sha256&&op.context_length===n.contextLength&&
+    op.machine===c.machine&&op.profile===c.profile&&op.service_profile===c.service_profile&&
+    /^[a-f0-9]{32}$/.test(op.new_instance)&&op.new_instance!==op.instance&&bootstrapProofValid(op.proof,n.contextLength)&&
+    Date.parse(op.proof.verified_at)>=op.created_at&&Date.parse(op.proof.verified_at)<=op.updated_at+10000);}
+  bootstrapHoldReason(n){
+    const state=this.store.data.agent_control;if(state===undefined)return null;
+    if(!state||!Array.isArray(state.holds)||!Array.isArray(state.maintenance_locks??[])||
+      [...state.holds,...(state.maintenance_locks??[])].some(h=>!h||typeof h.worker_id!=='string'))return 'maintenance_state_unverified';
+    return [...state.holds,...(state.maintenance_locks??[])].some(h=>h?.worker_id===n.id)?'maintenance_hold_active':null;
+  }
+  bootstrapReason(n,s,{canary=false,operationId=null}={}){
+    const c=this.config(n.id),p=this.priorIdentity(n.id),r=this.removals.get(n.id)?.result;
+    if(!bootstrapEnrollmentMatches(s,c))return 'launchd_bootstrap_enrollment_unverified';
+    if(!p?.boot_uuid||s.version!==1||s.machine!==c.machine||p.boot_uuid!==s.boot_uuid||p.profile!==c.profile||p.service_profile!==c.service_profile||s.service_profile!==c.service_profile||
+      s.loaded!==false||s.registration!=='absent'||s.active!==false||s.stopped!==false||s.listener!==false||s.pid!==0||s.instance!=='')return 'launchd_bootstrap_identity_unverified';
+    if(nativePolicyReason(s,c))return nativePolicyReason(s,c);
+    if(this.bootstrapHoldReason(n))return this.bootstrapHoldReason(n);
+    if(n.active||n.queue.length)return 'wait_for_admitted_work';
+    if(canary&&!n.drained)return 'drain_before_canary';
+    if(!canary&&n.drained)return 'operator_paused';
+    if(n.healthy!==false)return 'worker_health_not_failed';
+    if(!r||this.now()-r.checked_at>60000||r.checked_at>this.now()+10000||r.status!=='exact_removal_observed'||!r.source_complete||
+      r.observations_omitted!==0||r.observations.length!==1)return 'launchd_bootstrap_removal_unverified';
+    const observation=r.observations[0];
+    if(observation.at<p.observed_at||!((canary&&observation.caller==='launchctl')||c.bootstrap_callers.includes(observation.caller)))return 'launchd_bootstrap_caller_not_enrolled';
+    const previous=this.state.operations.filter(op=>op.worker_id===n.id&&op.id!==operationId);
+    if(previous.some(op=>op.service_action==='bootstrap'&&op.instance===p.instance))return 'removed_instance_already_attempted';
+    if(!canary&&!this.bootstrapCertified(n,c))return 'launchd_bootstrap_canary_required';
+    if(!canary&&previous.some(op=>this.now()-op.created_at<30*60000))return 'recovery_cooldown';
+    return null;
+  }
+  bootstrapExecutionVeto(n,op){
+    if(n.removed||this.node(n.id)!==n||this.stopping()||this.closed)throw new Error('controller_stopping');
+    if(hash(this.config(n.id))!==op.bootstrap_enrollment)throw new Error('bootstrap_enrollment_changed');
+    if(n.contextLength!==op.context_length)throw new Error('recovery_context_changed');
+    const held=this.bootstrapHoldReason(n);if(held)throw new Error(held);
+    if(n.active||n.queue.length)throw new Error('worker_has_admitted_work');
+    if(this.current(op).operator_override||(n.drained&&!op.was_paused)||(op.actor!=='operator'&&!this.state.automatic))throw new Error('operator_cancelled_before_bootstrap');
+  }
+  validBootstrapLive(s,c,op){return this.valid(s,c)&&bootstrapEnrollmentMatches(s,c)&&s.boot_uuid===op.bootstrap_prior.boot_uuid&&s.service_profile===op.service_profile;}
   profileCandidate(s,c){return !!c&&s?.version===1&&s.machine===c.machine&&digest(s.profile)&&s.profile!==c.profile&&s.active===true&&s.listener===true&&/^[a-f0-9]{32}$/.test(s.instance)&&Number.isFinite(s.started_at)?{profile:s.profile,service_profile:digest(s.service_profile)?s.service_profile:null,instance:s.instance}:null;}
   candidateStable(id,candidate){const seen=this.handbackSeen.get(id);return !!seen&&seen.profile===candidate.profile&&seen.service_profile===candidate.service_profile&&seen.instance===candidate.instance&&seen.count>=2&&seen.last_at-seen.first_at>=10000;}
-  evidence(n,s){const c=this.config(n.id),candidate=this.profileCandidate(s,c);return candidate?hash([n.id,n.quarantine,'adopt',candidate.instance,s.machine,c.profile,candidate.profile,candidate.service_profile]):this.valid(s,c)?hash([n.id,n.quarantine,'restart',s.instance,s.machine,s.profile]):hash([n.id,n.quarantine,'start',s.stopped_epoch,s.machine,s.service_profile]);}
+  evidence(n,s){const c=this.config(n.id),candidate=this.profileCandidate(s,c);return c?.bootstrap_removed===true&&s?.registration==='absent'?hash([n.id,'bootstrap',this.priorIdentity(n.id),hash(c),this.removals.get(n.id)?.result]):candidate?hash([n.id,n.quarantine,'adopt',candidate.instance,s.machine,c.profile,candidate.profile,candidate.service_profile]):this.valid(s,c)?hash([n.id,n.quarantine,'restart',s.instance,s.machine,s.profile]):hash([n.id,n.quarantine,'start',s.stopped_epoch,s.machine,s.service_profile]);}
   reason(n,s,{canary=false,ignoreOwnership=false,ignorePause=false}={}) {
     const c=this.config(n?.id);
     if(!this.binding(n,c))return 'manual_recovery_required';
@@ -103,11 +155,11 @@ export class Recovery {
     // operator and Genie do not imply that an empty queue alone restores
     // recovery authority. The executor still independently rechecks identity.
     const live=this.valid(s,c),stopped=this.validStopped(s,c),candidate=this.profileCandidate(s,c);
-    // Missing launchd registration and unreadable domains are different
-    // diagnostic blocks. Neither creates a recovery offer or start authority.
+    // Missing registration is distinct from an unreadable domain. Only separate
+    // bootstrap enrollment and its independent gates can turn absence into an offer.
     if(c.adapter==='launchd'&&s?.version===1&&s.machine===c.machine&&s.active===false&&s.stopped===false&&s.pid===0&&s.instance===''&&
       (!c.service_profile||s.service_profile===c.service_profile)){
-      if(s.loaded===false&&s.registration==='absent')return 'launchd_registration_absent';
+      if(s.loaded===false&&s.registration==='absent')return c.bootstrap_removed===true?this.bootstrapReason(n,s,{canary}):'launchd_registration_absent';
       if(s.loaded===null&&s.registration==='gui_domain_unavailable')return 'launchd_gui_domain_unavailable';
       if(s.loaded===null&&s.registration==='unverified')return 'launchd_state_unverified';
     }
@@ -174,6 +226,7 @@ export class Recovery {
     return {worker_id:n.id,configured,adapter:configured?this.configs.get(n.id).adapter:null,transport:configured?(this.configs.get(n.id).transport??'ssh'):null,reason:configured?reason:'manual_recovery_required',eligible:configured&&!reason,
       evidence_id:configured&&!reason?this.evidence(n,s):null,inspected_at:observed?.at??null,
       removal:this.removals.get(n.id)?.result??null,
+      ...(effective?.bootstrap_removed===true?{bootstrap:{enrolled:true,certified:this.bootstrapCertified(n,effective)}}:{}),
       state,profile_handback:candidate?{candidate:true,stable:this.candidateStable(n.id,candidate),automatic:this.state.profile_handback_automatic}:adopted?{candidate:false,stable:true,automatic:this.state.profile_handback_automatic,adopted:true}:null,last_action:last?publicOperation(last):null};
   }
   profileHandbackOffer(n,{ignorePause=false}={}) {
@@ -185,12 +238,12 @@ export class Recovery {
     return {worker_id:n.id,evidence_id:this.evidence(n,s)};
   }
   status(){const adapters=[...new Set([...this.configs.values()].map(c=>c.adapter))];return {configured:!!this.configs.size,automatic:this.state.automatic,profile_handback_automatic:this.state.profile_handback_automatic,adapter:adapters.length===1?adapters[0]:adapters.length?'mixed':null,workers:this.nodes.map(n=>this.workerStatus(n)),operations:this.state.operations.slice(-20).reverse().map(publicOperation)};}
-  async inspect(id) {
+  async inspect(id,{freshRemoval=false}={}) {
     const c=this.config(id);
     try {
       const value=await this.call(c,{action:'inspect'}),at=this.now();this.observations.set(id,{at,value});
       this.rememberIdentity(id,value,at);
-      await this.inspectRemoval(id,value,at);
+      await this.inspectRemoval(id,value,at,{force:freshRemoval});
       if(this.observations.get(id)?.value!==value)return value;
       const candidate=this.profileCandidate(value,c),prior=this.handbackSeen.get(id);
       if(candidate)this.handbackSeen.set(id,prior&&prior.profile===candidate.profile&&prior.service_profile===candidate.service_profile&&prior.instance===candidate.instance?{...prior,last_at:at,count:prior.last_at===at?prior.count:prior.count+1}:{...candidate,first_at:at,last_at:at,count:1});
@@ -202,12 +255,12 @@ export class Recovery {
     }
     catch(e) {this.stoppedSince.delete(id);this.observations.set(id,{at:this.now(),error:adapterReasons.has(e?.message)?e.message:'adapter_check_failed'});return null;}
   }
-  async inspectRemoval(id,value,at){
+  async inspectRemoval(id,value,at,{force=false}={}){
     const c=this.config(id),prior=this.priorIdentity(id);
     if(c?.adapter!=='launchd'||value?.removal_capture_version!==1||value.registration!=='absent'||value.loaded!==false||value.active!==false||
       value.machine!==c.machine||!prior?.boot_uuid||value.service_profile!==prior.service_profile){this.removals.delete(id);return;}
     const key=hash([prior,value.boot_uuid,value.service_profile]),cached=this.removals.get(id);
-    if(cached?.key===key&&at-cached.at<5*60000)return;
+    if(!force&&cached?.key===key&&at-cached.at<(c.bootstrap_removed===true?60000:5*60000))return;
     const pending={key,at,result:null};this.removals.set(id,pending);
     const {enrollment,...identity}=prior;
     let result;
@@ -230,11 +283,14 @@ export class Recovery {
     if(!canary && input.evidence_id!==this.evidence(n,s))throw new Error('Stale or invented recovery evidence');
     if(this.state.operations.length>=10000)throw new Error('Recovery journal full; review required');
     const c=this.config(n.id),candidate=this.profileCandidate(s,c),failedAt=Date.parse(n.quarantine?.at),replacement=!!candidate&&Number.isFinite(failedAt)&&s.started_at>failedAt+1000;
-    const serviceAction=candidate?(replacement?'adopt_verify':'adopt_restart'):this.validStopped(s,c)?'start':'restart';
+    const bootstrapping=c.bootstrap_removed===true&&s.registration==='absent',prior=bootstrapping?this.priorIdentity(n.id):null;
+    const serviceAction=bootstrapping?'bootstrap':candidate?(replacement?'adopt_verify':'adopt_restart'):this.validStopped(s,c)?'start':'restart';
     const op={id,worker_id:n.id,actor,evidence_id:input.evidence_id??null,service_action:serviceAction,state:'queued',created_at:this.now(),updated_at:this.now(),instance:s.instance,
       stopped_epoch:serviceAction==='start'?s.stopped_epoch:null,service_profile:serviceAction==='start'?s.service_profile:null,
       machine:s.machine,profile:serviceAction==='start'?c.profile:s.profile,context_length:n.contextLength,canary,was_paused:n.drained,quarantine:n.quarantine?{...n.quarantine}:null,
       ...(candidate?{adopt_profile:candidate.profile,adopt_service_profile:candidate.service_profile,configured_profile:this.configs.get(n.id).profile}:{}),
+      ...(bootstrapping?{instance:prior.instance,profile:prior.profile,service_profile:prior.service_profile,bootstrap_prior:prior,
+        bootstrap_enrollment:hash(c),bootstrap_definition_sha256:c.retained_definition_sha256}:{}),
       binding:hash([n.url,n.ssh,n.ssh_fallbacks??[],n.remote_port??8000]),operator_override:false};
     this.commit({...this.state,operations:[...this.state.operations,op]});
     n.recovering=true;n.healthy=false;
@@ -254,21 +310,35 @@ export class Recovery {
     let op={...initial};const enrolled=this.configs.get(op.worker_id),effective=this.config(op.worker_id),adopting=digest(op.adopt_profile),c=adopting?{...effective,profile:op.adopt_profile,...(digest(op.adopt_service_profile)?{service_profile:op.adopt_service_profile}:{})}:effective,n=this.node(op.worker_id);
     try {
       if(!n || !this.binding(n,enrolled) || hash([n.url,n.ssh,n.ssh_fallbacks??[],n.remote_port??8000])!==op.binding || c.profile!==op.profile || c.machine!==op.machine || (adopting&&op.configured_profile!==enrolled.profile))throw new Error('recovery_binding_changed');
-      const before=await this.inspect(n.id),starting=op.service_action==='start',adoptVerify=op.service_action==='adopt_verify';
-      const activeBefore=this.valid(before,c),stoppedBefore=this.validStopped(before,c)&&before.stopped_epoch===op.stopped_epoch;
-      if(!reconcile && !activeBefore && !(starting&&stoppedBefore))throw new Error('service_identity_or_profile_unverified');
+      const bootstrapping=op.service_action==='bootstrap';
+      if(bootstrapping&&(!bootstrapOperationValid(op)||hash(c)!==op.bootstrap_enrollment))throw new Error('bootstrap_enrollment_changed');
+      const before=await this.inspect(n.id,{freshRemoval:bootstrapping}),starting=op.service_action==='start',adoptVerify=op.service_action==='adopt_verify';
+      const activeBefore=bootstrapping?this.validBootstrapLive(before,c,op):this.valid(before,c),stoppedBefore=this.validStopped(before,c)&&before.stopped_epoch===op.stopped_epoch;
+      if(!reconcile && !activeBefore && !(starting&&stoppedBefore)&&!bootstrapping)throw new Error('service_identity_or_profile_unverified');
       if(activeBefore||stoppedBefore)requireNativePolicy(before,c);
+      if(bootstrapping)this.bootstrapExecutionVeto(n,op);
       if(n.active || n.queue.length)throw new Error('worker_has_admitted_work');
       if(this.closed)throw new Error('controller_stopping');
       const failedAt=Date.parse(op.quarantine?.at);
       const replacement=activeBefore && (starting || adoptVerify || before.instance!==op.instance || (!op.canary && before.started_at>failedAt+1000));
       if(!reconcile && !replacement) {
-        if(starting) {
+        if(bootstrapping){
+          if(hash(this.priorIdentity(n.id))!==hash(op.bootstrap_prior))throw new Error('bootstrap_prior_identity_changed');
+          const reason=this.bootstrapReason(n,before,{canary:op.canary,operationId:op.id});if(reason)throw new Error(reason);
+        }else if(starting) {
           if(!stoppedBefore || before.service_profile!==op.service_profile)throw new Error('stopped_service_identity_changed');
         } else if(before.instance!==op.instance || (!op.canary && (!before.fault || before.fault.at<failedAt-120000)))throw new Error('current_fatal_evidence_required');
         if(this.current(op).operator_override || (op.actor!=='operator'&&!this.state.automatic))throw new Error(starting?'operator_cancelled_before_start':'operator_cancelled_before_restart');
-        this.update(op,{state:starting?'starting':'restarting',service_action_issued:true,...(starting?{}:{restart_issued:true})}); // durable BEFORE command
-        try {await this.call(c,starting?{action:'start',action_id:op.id,stopped_epoch:before.stopped_epoch,machine:c.machine,service_profile:c.service_profile}:{action:'restart',action_id:op.id,instance:before.instance,machine:c.machine,profile:c.profile,canary:op.canary,fault_after:op.canary?0:failedAt-120000});}
+        this.update(op,{state:bootstrapping?'bootstrapping':starting?'starting':'restarting',service_action_issued:true,...(starting||bootstrapping?{}:{restart_issued:true})}); // durable BEFORE command
+        if(bootstrapping)this.bootstrapExecutionVeto(n,op);
+        try {
+          if(bootstrapping){
+            const {enrollment,...prior}=op.bootstrap_prior;
+            const receipt=await this.call(c,{action:'bootstrap',action_id:op.id,prior,definition_sha256:op.bootstrap_definition_sha256,canary:op.canary});
+            const acknowledged=receipt?.state==='issued'&&receipt.operation==='bootstrap'&&receipt.instance===op.instance&&receipt.definition_sha256===op.bootstrap_definition_sha256;
+            this.update(op,{bootstrap_acknowledged:acknowledged});
+          }else await this.call(c,starting?{action:'start',action_id:op.id,stopped_epoch:before.stopped_epoch,machine:c.machine,service_profile:c.service_profile}:{action:'restart',action_id:op.id,instance:before.instance,machine:c.machine,profile:c.profile,canary:op.canary,fault_after:op.canary?0:failedAt-120000});
+        }
         catch {this.update(op,{state:'reconciling'});} // Never replay after lost acknowledgement.
       } else if(reconcile && !replacement) {
         this.update(op,{state:'reconciling'});
@@ -277,18 +347,23 @@ export class Recovery {
       let after=before;
       while(!this.closed) {
         after=await this.inspect(n.id);
-        if(this.valid(after,c) && (starting || after.instance!==op.instance || replacement))break;
-        if(this.now()>=deadline)throw new Error(starting?'start_not_verified':'restart_not_verified');
+        if((bootstrapping?this.validBootstrapLive(after,c,op):this.valid(after,c)) && (starting || after.instance!==op.instance || replacement))break;
+        if(this.now()>=deadline)throw new Error(bootstrapping?'bootstrap_not_verified':starting?'start_not_verified':'restart_not_verified');
         await new Promise(resolve=>{this.wake=resolve;this.waitTimer=setTimeout(resolve,3000);});this.wake=null;
       }
       if(this.closed)throw new Error('controller_stopping');
       if(!this.valid(after,c) || after.fault)throw new Error('replacement_identity_or_health_failed');
       requireNativePolicy(after,c);
+      if(bootstrapping)this.bootstrapExecutionVeto(n,op);
       this.update(op,{state:'verifying',new_instance:after.instance});
       const proof=await this.verify(n.url,this.model,op.context_length,{signal:this.abort.signal});
       const final=await this.inspect(n.id);
       if(!this.valid(final,c) || final.instance!==after.instance || final.fault)throw new Error('identity_changed_during_verification');
       requireNativePolicy(final,c);
+      if(bootstrapping){
+        if(!this.validBootstrapLive(final,c,op)||!bootstrapProofValid(proof,op.context_length))throw new Error('bootstrap_generation_or_identity_unverified');
+        this.bootstrapExecutionVeto(n,op);
+      }
       op={...this.current(op)};
       const held=op.operator_override || op.was_paused || n.removed || this.node(n.id)!==n || n.drained || this.stopping();
       const adoption=adopting?{config_profile:enrolled.profile,machine:enrolled.machine,profile:op.adopt_profile,service_profile:digest(op.adopt_service_profile)?op.adopt_service_profile:null,adopted_at:this.now(),operation_id:op.id}:null;

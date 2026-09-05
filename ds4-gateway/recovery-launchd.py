@@ -630,6 +630,8 @@ def inspect(config):
         "native_disabled": native_disabled(config),
         "boot_uuid": boot_identity(),
         "removal_capture_version": 1,
+        **({"bootstrap": {"version": 1, "definition_sha256": config["retained_definition_sha256"],
+                          "callers": config.get("bootstrap_callers", [])}} if config.get("bootstrap_removed") is True else {}),
     }
     if not state["active"]:
         if state["loaded"] is None:

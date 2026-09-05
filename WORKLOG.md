@@ -10,6 +10,13 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Connected removed-Mac-job recovery to the independent controller.** Matching
+  enrollment and an acknowledged removed-job cold/warm canary gate ordinary
+  offers. Durable maintenance holds, admitted work and native policy are rechecked;
+  restart reconciliation never resends bootstrap. Genie uses the existing exact
+  offer API, not new command or canary authority. Live installation validation is
+  still required, and uncertain issuance is labelled honestly in receipts.
+
 - **Built the one-shot removed-Mac-job helper action.** Separate opt-in authority
   permits only exact pinned launch bytes and approved native removal callers.
   Fixtures verify private byte-preserving staging, native disable/port/identity

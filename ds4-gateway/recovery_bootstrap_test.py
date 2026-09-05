@@ -103,6 +103,17 @@ class BootstrapTests(unittest.TestCase):
                 command.assert_not_called()
                 self.assertFalse(state.exists())
 
+    def test_inspection_reports_exact_private_bootstrap_enrollment_without_issuing(self):
+        with tempfile.TemporaryDirectory() as temp:
+            config, request, state, _ = self.fixture(temp)
+            absent = {"loaded": False, "active": False, "stopped": False, "pid": 0, "registration": "absent"}
+            with self.native(config, request), patch.object(adapter, "launch_state", return_value=absent), patch.object(adapter, "run") as command:
+                value = adapter.inspect(config)
+                self.assertEqual(value["bootstrap"], {"version": 1, "definition_sha256": config["retained_definition_sha256"], "callers": ["loginwindow"]})
+                self.assertNotIn("bootstrap", adapter.inspect({**config, "bootstrap_removed": False}))
+                command.assert_not_called()
+                self.assertFalse(state.exists())
+
     def test_caller_policy_and_operator_canary_are_separate(self):
         for caller, allowed, canary, succeeds in [
             ("loginwindow", ["loginwindow"], False, True), ("runningboardd", ["runningboardd"], False, True),

@@ -170,6 +170,12 @@ test('recovery recheck UI covers uncertain start and restart actions',()=>{
   assert.equal(check({state:'failed',service_action_issued:true,service_action:'start'}),true);
   assert.equal(check({state:'failed',service_action:'start'}),false);
   assert.equal(check({state:'recovered',service_action_issued:true,service_action:'start'}),false);
+  assert.equal(check({state:'reconciliation_needed',service_action_issued:true,service_action:'bootstrap'}),true);
+  const text=action=>vm.runInContext(`recoveryIssuanceText(${JSON.stringify(action)})`,context);
+  assert.equal(text({service_action:'bootstrap'}),'');
+  assert.match(text({service_action:'bootstrap',service_action_issued:true}),/acknowledgement unknown/);
+  assert.equal(text({service_action:'bootstrap',service_action_issued:true,bootstrap_acknowledged:true}),' · bootstrap acknowledged');
+  assert.equal(text({service_action:'start',service_action_issued:true}),' · start issued');
 });
 test('verified profile hand-back is a visible independent default-on recovery policy',()=>{
   const html=fs.readFileSync(new URL('./ui/index.html',import.meta.url),'utf8'),js=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8');

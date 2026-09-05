@@ -1,5 +1,21 @@
 # Changelog
 
+## Integrate certified removed-job recovery with the controller
+
+- Add separate launchd-only gateway bootstrap enrollment, matching helper pin and
+  caller policy, exact retained prior/boot joins and fresh pre-issuance capture.
+  Do not implicitly enable stopped starts or grant authority from native diagnostics.
+- Derive certification from an acknowledged operator-only removed-job canary,
+  unchanged enrollment/context and two-conversation cold/warm proof. Keep canaries
+  paused; ordinary recovery retains cooldown and per-instance attempt guards.
+- Enforce durable agent holds/named maintenance locks, pauses, admitted work,
+  native policy and identities around issuance/verification. Persist bootstrap
+  operations strictly and reconcile by observation only, never command replay.
+- Show bounded capability facts to Genie, preserve the exact recovery-offer API,
+  and distinguish unknown bootstrap acknowledgement in UI receipts. Add controller,
+  enrollment, race, privacy, proof and reconciliation regression coverage; require
+  a real installation canary separately from source tests and process activation.
+
 ## Add a separately enrolled one-shot Mac bootstrap helper
 
 - Add default-off `bootstrap_removed` with exact retained-definition pin and

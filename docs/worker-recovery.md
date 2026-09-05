@@ -353,8 +353,9 @@ Do this per worker, initially with automatic mode **off**.
 The launchd helper is deliberately **not** a generic process launcher. It supports
 only an enrolled user LaunchAgent in `gui/$UID/<label>` for the helper account.
 Normal controller recovery requires a loaded job; a separately opted-in
-[removed-job helper action](macos-retained-definition.md#separate-removed-job-helper-action--not-yet-automatic-recovery)
-is implemented but is not yet offered by the controller. Neither path targets
+[removed-job recovery enrollment](macos-retained-definition.md#separate-removed-job-recovery-enrollment)
+requires a matching acknowledged removed-job canary before an ordinary controller
+offer becomes possible. Neither path targets
 LaunchDaemons, accepts commands, edits settings or discovers a service from an
 HTTP endpoint. The LaunchAgent's reported PID must be
 the configured DS4 binary and must own the configured loopback listener.
@@ -425,7 +426,8 @@ write cannot seed later removal evidence. Historical identity alone never create
 a recovery offer or authorizes a start. Direct native removal diagnostics are now
 joined to retained PID/boot evidence. The helper's separately opted-in one-shot
 bootstrap now checks caller policy, pinned bytes and command-time native vetoes;
-automatic controller integration and the real removed-job canary remain unfinished.
+the controller now enforces maintenance/admission gates and per-enrollment canary
+certification. Every installation still needs its own real removed-job validation.
 
 The [native removal auditor](macos-removal-provenance.md) now checks archived
 launchd records by exact structured subsystem, PID, boot and time window. It
@@ -441,10 +443,11 @@ authority. It does not prove that a guessed plist matches an existing launch.
 
 The helper action stages exact reviewed bytes privately, rechecks GUI domain,
 machine/boot/static profile, native disable and an empty port, and durably records
-one-shot issuance. It cannot read DSG maintenance holds by itself and is not yet
-called by the gateway. Planned controller integration must enforce operator pauses,
-maintenance holds and admitted-work checks, certify a real removed-job canary with
-cold/warm reuse, and verify generation before readmission. Missing/changed
+one-shot issuance. It cannot read DSG maintenance holds by itself; the integrated
+controller enforces operator pauses, durable agent holds/named locks and admitted
+work, requires an acknowledged real removed-job canary with cold/warm reuse, and
+verifies generation before readmission. Reconciliation never reissues bootstrap.
+Missing/changed
 definitions remain ineligible. Do not substitute an arbitrary launcher command,
 create a login item or move to a LaunchDaemon as an implicit fallback.
 
