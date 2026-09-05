@@ -136,6 +136,11 @@ delivery while keeping permissions and ordinary gateway operation independent.
   Start with settled routine continuation check-ins, not process restarts or
   ambiguous failed requests. Deliver review → approved single-session follow-up
   → separately opted-in automatic rescue, with real Pi race/idempotency tests.
+  A disposable Pi 0.84.4 SDK fixture now proves custom-message continuation and
+  exposes its limits: duplicate delivery is not idempotent, and deferred custom
+  context is absent from the ordinary pending count. Client-owned atomic
+  acceptance/queue visibility and interactive attribution remain prerequisites;
+  no Session Rescue controller or extension is installed by the fixture.
 - **[Four cache-source alternatives](cache-continuity-shadow.md):** comparison
   logic exists, but live use needs exact rendered-prefix identity, compatible
   inventory, an approved transfer/import protocol and measured components.

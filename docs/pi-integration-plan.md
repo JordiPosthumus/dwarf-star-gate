@@ -73,6 +73,37 @@ supported Pi submission mechanism and attribution display against the installed
 version before implementing it. Do not forge a user message, inject terminal
 keystrokes, patch provider/model settings or add a general shell endpoint.
 
+### Verified Pi API primitive — not rescue authority
+
+The optional `pi-rescue-contract.test.mjs` fixture was exercised against Pi
+**0.84.4** using its real SDK, an in-memory session, isolated settings and a
+scripted localhost backend. It preserves the fixture provider's context/output,
+thinking and tool capabilities; it never loads an owner's sessions or contacts a
+model server. It establishes a submission primitive, not a safe rescue protocol.
+
+| Observed behavior | Design consequence |
+| --- | --- |
+| `AgentSession.sendCustomMessage(..., {triggerTurn:true})` continues a settled session; earlier history and completed tool results remain intact | A labelled custom cue is possible without adding a human message to Pi's stored transcript |
+| Custom content converts to **user-role context on the model wire**, even though Pi stores a custom message with `display:true` | Include the Gate Genie author and narrow scope in the content; this is not a system instruction or new human authorization. Interactive visual rendering still needs separate validation |
+| Extension `pi.sendMessage` returns `undefined`; asynchronous errors use the extension error channel | Its return is not an accepted-action or completion receipt |
+| Sending an identical custom message/details again starts another turn | Proposal IDs in custom details are not idempotency keys; a client-owned durable receipt/acceptance gate is still required |
+| A custom `deliverAs:'nextTurn'` message can wait while `isIdle` is true and `pendingMessageCount` is zero | Idle/heartbeat/queue count alone cannot prove the client has no queued work or deferred context; do not build automatic rescue on that inference |
+
+The fixture also observes `agent_settled`, `waitForIdle()` and non-idle tool
+execution. Existing `pi-watch.test.mjs` covers retry/settled behavior. These
+observations do not prove an atomic check-and-submit operation, global visibility
+of other extensions' pending messages, persisted exactly-once acceptance, or
+crash recovery. Do not inspect/mutate private Pi fields to manufacture those
+capabilities. A reviewed client contract must expose/own the relevant queues and
+atomically fence consent, session epoch/generation, user stops and duplicate
+delivery before automatic rescue is proposed.
+
+Run this optional contract fixture by setting `DSG_PI_ROOT` to an installed Pi
+package root and running `npm run continuity:test`. It deliberately requires the
+reviewed version; a different version needs reinspection, not a silently broadened
+claim. Without `DSG_PI_ROOT`, the test is skipped and normal DSG operation does not
+depend on Pi. Nothing in this test installs an extension or enrolls a real session.
+
 The newest-first ledger distinguishes **proposed → blocked / accepted → progress
 confirmed / failed / unknown**, with reason, freshness, pseudonymous target and
 receipt. Acceptance alone is not recovery; progress is not task completion.
@@ -106,7 +137,9 @@ heartbeat payload with commands without negotiation and compatibility tests.
 - [x] Document the current boundary: coarse Agent Watch and scoped transport
   fixtures; no installed session control or snippet-reading capability.
 - [ ] Verify supported Pi lifecycle/follow-up APIs and pin the tested contract,
-  using disposable SDK sessions. Document capability/version negotiation.
+  using disposable SDK sessions. The 0.84.4 custom-message primitive and its
+  queue/idempotency limitations are now exercised above; atomic client acceptance,
+  interactive attribution and capability/version negotiation remain unproven.
 - [ ] Design scoped local enrollment and separate control credentials. An
   inference key or watch UUID alone must not authorize session control. No new
   unauthenticated remote listener; make revocation prompt and explicit.

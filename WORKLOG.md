@@ -10,6 +10,12 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Tested Pi's continuation primitive before granting rescue authority.** A
+  disposable real-SDK fixture preserves prior history/tool results and labels a
+  custom cue, while proving repeated delivery starts another turn and deferred
+  custom context can be invisible to ordinary idle/pending signals. The plan now
+  names the client-side acceptance/queue gaps; no session control was installed.
+
 - **Aligned recovery actions with inspection freshness.** Clock rollback or an
   invalid observation time can no longer leave an action offer available while
   its checklist says stale. Status, hand-back and new action admission now share

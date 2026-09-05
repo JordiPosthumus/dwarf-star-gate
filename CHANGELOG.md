@@ -1,5 +1,17 @@
 # Changelog
 
+## Exercise the Pi custom-continuation contract without enabling rescue
+
+- Add an optional, version-pinned real Pi SDK fixture using disposable settings,
+  in-memory history and a scripted local backend. Confirm unchanged provider
+  capabilities, retained tool results and attributed custom-message history.
+- Record limits: custom content becomes user-role model context; the extension
+  sender is fire-and-forget; duplicate cues start another turn; deferred custom
+  messages are not reflected in the ordinary pending count.
+- Keep atomic client acceptance, consent, queue visibility, durable idempotency
+  and UI attribution validation open. No extension, rescue controller or snippet
+  access is installed; DSG without Pi remains independent of the optional test.
+
 ## Keep recovery inspection freshness consistent across clock changes
 
 - Use one finite, nonnegative, at-most-90-second inspection-age rule in the
