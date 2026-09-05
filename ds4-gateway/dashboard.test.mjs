@@ -26,7 +26,7 @@ test('dashboard folds connection and diagnostics into its single identity header
   assert.doesNotMatch(header,/control room|class="brand"/);
 });
 
-test('rate charts compress missing intervals to blue separators without joining measured runs',()=>{
+test('rate charts compress missing intervals to idle-coloured separators without joining measured runs',()=>{
   const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);
   const render=(series,now=500000)=>vm.runInContext(`chart(${JSON.stringify(series)},'decode',${now},40)`,context);
@@ -173,7 +173,8 @@ test('activity view uses three honest operational colors and folds thinking into
   assert.match(html,/phase-idle-off/);assert.match(html,/phase-prefill/);
   assert.equal((html.match(/phase-decode/g)||[]).length,2,'thinking and answering share the generation band');
   assert.match(html,/phase-unknown/);assert.doesNotMatch(html,/phase-thinking|phase-unavailable/);
-  assert.match(html,/Idle \/ off/);assert.match(html,/Prefill/);assert.match(html,/Decode \/ generation/);
+  assert.doesNotMatch(html,/phase-legend|Idle \/ off|Decode \/ generation/);
+  assert.match(html,/aria-label="Observed activity.*blue is prefill, green is decode/);
   assert.doesNotMatch(html,/>Thinking<|>Answering<|>Unknown \/ working</);
   assert.match(html,/aria-label="Observed activity over the last fifteen minutes:/);
   assert.doesNotMatch(html,/15m activity|sampled every 2s|status badge distinguishes/);

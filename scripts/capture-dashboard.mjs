@@ -47,7 +47,14 @@ try {
   assert.equal(await page.locator('#devices .chart-bridge,#devices .chart-pause-dot').count(),0);
   const pause=page.locator('#devices .chart-gap').first();
   assert.match(await pause.getAttribute('aria-label'),/no interpolated speed/);
-  assert.equal(await pause.locator('.chart-gap-line').evaluate(el=>getComputedStyle(el).stroke),'rgb(125, 159, 189)');
+  assert.equal(await pause.locator('.chart-gap-line').evaluate(el=>getComputedStyle(el).stroke),'rgb(196, 135, 135)');
+  assert.equal(await page.locator('.phase-legend').count(),0,'No repeated legend text beneath the activity bars');
+  for(const [kind,color] of [['prefill','rgb(120, 174, 232)'],['decode','rgb(185, 216, 137)']]){
+    assert.equal(await page.locator(`.activity-timeline .phase-${kind}`).first().evaluate(el=>getComputedStyle(el).fill),color);
+    assert.equal(await page.locator(`.rate.${kind}`).first().evaluate(el=>getComputedStyle(el).color),color);
+    assert.equal(await page.locator(`.chart.${kind} polyline`).first().evaluate(el=>getComputedStyle(el).stroke),color);
+    assert.equal(await page.locator(`.chart.${kind} circle`).first().evaluate(el=>getComputedStyle(el).fill),color);
+  }
   await pause.focus();assert.equal(await pause.evaluate(el=>el===document.activeElement),true);
   const thinking=page.locator('#devices .requested-thinking').first();
   assert.match(await thinking.innerText(),/^Thinking\s+/);

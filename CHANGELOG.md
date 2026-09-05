@@ -1,5 +1,12 @@
 # Changelog
 
+## Simplify machine-card colours
+
+- Match prefill bars, speed numbers, traces and points in blue; match decode in
+  green. Use the idle colour for compressed-gap separators.
+- Remove the repeated activity legend while keeping accessible descriptions and
+  segment tooltips. Refresh synthetic screenshots and computed-colour checks.
+
 ## Compress speed gaps to blue separators
 
 - Replace red dots and interpolated-looking bridges with narrow muted-blue

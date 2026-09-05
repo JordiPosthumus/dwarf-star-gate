@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Unified the machine-card palette.** Prefill bars, numbers and traces share
+  blue; decode shares green. Compressed gaps use the idle colour without claiming
+  that missing telemetry proves idle. Removed the repeated activity legend;
+  accessible descriptions and per-segment tooltips remain.
+
 - **Compressed speed-chart gaps into quiet blue separators.** Removed diagonal
   bridges and red dots. Missing intervals take one narrow divider; tooltips keep
   their duration, and the caption marks the horizontal axis as compressed.
