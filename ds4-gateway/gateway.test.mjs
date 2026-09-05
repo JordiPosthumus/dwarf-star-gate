@@ -17,6 +17,8 @@ import { runDashboard } from './dashboard.mjs';
 import { GenerationFaultObserver } from './generation-health.mjs';
 import {workerConfig,sshTargets,assertUniqueWorker,replaceSshFallbacks} from './worker-config.mjs';
 import {createContinuityFetch} from './continuity-client.mjs';
+import {safeGatewayEvent} from './telemetry.mjs';
+import {evidence} from './dataset.mjs';
 
 async function until(fn, timeout = 3000) {
   const end = Date.now() + timeout;
@@ -477,6 +479,38 @@ test('gateway records bounded incomplete-stream shape without changing response 
   const finishes=rows.filter(row=>row.kind==='finish');assert.deepEqual(finishes.map(row=>row.outcome),['incomplete_sse','incomplete_sse']);
   assert.deepEqual(finishes.map(row=>row.stream_end),['clean_eof_no_terminal','partial_sse_event']);
   assert.ok(!JSON.stringify(rows).includes('PRIVATE_STREAM_ALPHA'));assert.ok(!JSON.stringify(rows).includes('PRIVATE_STREAM_BETA'));
+});
+test('DONE distinguishes a missing recognized finish reason from an observer limit',()=>{
+  for(const route of ['/v1/chat/completions','/v1/completions']){
+    const marker=new UsageObserver(route);marker.accept(Buffer.from('data: {"choices":[{"finish_reason":null}]}\n\ndata: [DONE]\n\n'));
+    assert.equal(marker.finishState(),'terminal_without_finish_reason');assert.equal(marker.finish_reason,null);
+    const unsupported=new UsageObserver(route);unsupported.accept(Buffer.from('data: {"choices":[{"finish_reason":"PRIVATE_UNSUPPORTED_VALUE"}]}\n\ndata: [DONE]\n\n'));
+    assert.equal(unsupported.finishState(),'terminal_without_finish_reason');assert.ok(!JSON.stringify(unsupported).includes('PRIVATE_UNSUPPORTED_VALUE'));
+    const limited=new UsageObserver(route);limited.accept(Buffer.from('data: '+JSON.stringify({choices:[{delta:{content:'x'.repeat(1048577)},finish_reason:'stop'}]})+'\n\ndata: [DONE]\n\n'));
+    assert.equal(limited.finishState(),'terminal_reason_unobserved');assert.equal(limited.finish_reason,null);
+    const known=new UsageObserver(route);known.accept(Buffer.from('data: '+ 'x'.repeat(1048577)+'\n\ndata: {"choices":[{"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'));
+    assert.equal(known.finishState(),'terminal');
+  }
+  for(const stream_end of ['terminal_without_finish_reason','terminal_reason_unobserved','PRIVATE_UNKNOWN_REASON']){
+    const raw={event:'request_finished',request_id:randomUUID(),stream_end,prompt:'PRIVATE_BODY'};
+    const logged=safeGatewayEvent(raw),recorded=evidence('finish',raw);
+    if(stream_end.startsWith('terminal')){assert.equal(logged.stream_end,stream_end);assert.equal(recorded.stream_end,stream_end);}
+    else {assert.equal(logged.stream_end,undefined);assert.equal(recorded.stream_end,null);}
+    assert.ok(!JSON.stringify([logged,recorded]).includes('PRIVATE'));
+  }
+});
+test('marker-only diagnostics preserve bytes and do not quarantine permissive-protocol workers',async t=>{
+  const r=await rig(t,1,{dataset_enabled:true});
+  const body='data: {"choices":[{"delta":{"content":"PRIVATE_MARKER_ONLY"},"finish_reason":null}]}\n\ndata: [DONE]\n\n';
+  for(let i=0;i<3;i++)assert.equal((await r.request(JSON.stringify({fixture_sse:body,stream:true}),'marker-only')).body,body);
+  const worker=r.gateway.stats().workers[0];assert.equal(worker.inference_failures,0);assert.equal(worker.quarantine,null);
+  assert.equal(worker.completed,3,'transport outcome accounting is unchanged; this is not proof of harness acceptance');
+  assert.equal(r.backends[0].records.length,3,'no synthetic continuation or replay');
+  await until(()=>r.gateway.stats().dataset.finished===3);await r.gateway.close();
+  const dir=path.join(path.dirname(r.config.state_file),'training'),rows=fs.readdirSync(dir).flatMap(f=>fs.readFileSync(path.join(dir,f),'utf8').trim().split('\n').map(JSON.parse));
+  const finishes=rows.filter(row=>row.kind==='finish');assert.equal(finishes.length,3);
+  assert.ok(finishes.every(row=>row.outcome==='complete'&&row.stream_end==='terminal_without_finish_reason'&&row.finish_reason===null));
+  assert.ok(!JSON.stringify(rows).includes('PRIVATE_MARKER_ONLY'));
 });
 
 test('unavailable embedding encoder cannot change inference bytes, thinking, model limits or success',async t=>{

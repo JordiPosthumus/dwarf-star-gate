@@ -42,7 +42,7 @@ export function evidence(kind, raw) {
     row.http_status=Number.isInteger(raw.http_status)&&raw.http_status>=100&&raw.http_status<=599?raw.http_status:null;
     row.usage_observation=['observed','partial','not_reported','json_capture_limit','unsupported_format','invalid_json','unsupported_route'].includes(raw.usage_observation)?raw.usage_observation:null;
     for(const k of ['request_stream','requested_usage'])row[k]=typeof raw[k]==='boolean'?raw[k]:null;
-    row.stream_end=['terminal','engine_error','clean_eof_no_terminal','partial_sse_event','observation_limited'].includes(raw.stream_end)?raw.stream_end:null;
+    row.stream_end=['terminal','terminal_without_finish_reason','terminal_reason_unobserved','engine_error','clean_eof_no_terminal','partial_sse_event','observation_limited'].includes(raw.stream_end)?raw.stream_end:null;
   }
   if(kind==='finish'&&raw.generation)row.generation=Object.fromEntries(['thinking_characters','answer_characters','tool_characters','first_semantic_ms'].map(k=>[k,number(raw.generation[k])]));
   if (raw.requested_thinking) row.requested_thinking=safeRequestedThinking(raw.requested_thinking);

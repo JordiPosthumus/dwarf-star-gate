@@ -4,9 +4,17 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {GenieMemory} from './genie-memory.mjs';
-import {Genie} from './genie.mjs';
+import {Genie,briefing,hardeningCandidates} from './genie.mjs';
 import {createDashboard} from './dashboard.mjs';
 const sample=(at=1000,change={})=>({time:at,gateway_at:at,gateway:{workers:[{id:'worker-a',is_healthy:true,drained:false,operator_paused:false,holds:[],context_length:262144,...change}]},devices:[],events:[]});
+test('marker-only compatibility reaches Genie as a hypothesis, not recovery authority',()=>{
+  const at='2026-09-04T12:00:00Z',s=sample(Date.parse(at));
+  s.events=['terminal_without_finish_reason','terminal_reason_unobserved','terminal','PRIVATE_REASON'].map(stream_end=>({event:'request_finished',time:at,node:'worker-a',outcome:'complete',stream_end,prompt:'PRIVATE_CONTENT',request_id:'PRIVATE_ID'}));
+  const candidates=hardeningCandidates(s);assert.equal(candidates.length,1);
+  assert.equal(candidates[0].failure_class,'client_compatibility');assert.equal(candidates[0].reason,'terminal_without_finish_reason');assert.equal(candidates[0].continuity,'unknown');
+  assert.ok(!JSON.stringify(candidates).includes('PRIVATE'));assert.deepEqual(briefing(s).recovery.offers,[]);
+  s.events[0].outcome='client_cancelled';assert.deepEqual(hardeningCandidates(s),[]);
+});
 function fixture(t){const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'dsg-memory-')));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));return path.join(root,'memory');}
 test('memory is opt-in, durable, idempotent, private and separate from generation proof',t=>{
   const dir=fixture(t),m=new GenieMemory(dir,{now:()=>1000});m.observe(sample());assert.equal(fs.existsSync(dir),false);

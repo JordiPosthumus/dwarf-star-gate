@@ -10,6 +10,13 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Separated a stream ending from Pi accepting it.** A real installed Pi fixture
+  rejects `[DONE]` without a recognized finish reason. DSG records that bounded
+  compatibility fact, separately from observer gaps, and gives Genie a developer
+  hypothesis without restart authority. Response bytes, transport counters and
+  replay/quarantine policies remain unchanged. This diagnoses a stopping condition;
+  it does not claim to resume an already dispatched failed turn.
+
 - **Fixed readiness races at the Continuity Door.** Isolated HTTP reproductions
   proved an unresolved truncated health response and a stale successful probe
   releasing a newer automatic hold. Health checks now settle once, coalesce,

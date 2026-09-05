@@ -190,7 +190,13 @@ export class UsageObserver {
       }
     }
     if(this.failed)return 'engine_error';
-    if(this.done)return 'terminal';
+    if(this.done){
+      // [DONE] proves the marker arrived, not that a strict harness accepted
+      // the turn. Keep observation gaps distinct from a known absent reason.
+      if(['/v1/chat/completions','/v1/completions'].includes(this.route)&&!this.finish_reason)
+        return this.limited?'terminal_reason_unobserved':'terminal_without_finish_reason';
+      return 'terminal';
+    }
     if(this.limited)return 'observation_limited';
     if(this.skipping||this.pending.length>0||!this.eventBoundary)return 'partial_sse_event';
     return 'clean_eof_no_terminal';
@@ -664,7 +670,7 @@ export function createGateway(config,{visionTranscode}={}) {
       observeResponse(up,isSSE);if(body.length)acceptResponseChunk(up,body,isSSE);
       res.writeHead(up.statusCode,responseHeaders(up));res.end(body);
       const streamEnd=isSSE?observer.finishState():null;
-      finish(up.statusCode>=400?'upstream_http_error':!isSSE?'complete':streamEnd==='engine_error'?'upstream_engine_error':streamEnd==='terminal'?'complete':streamEnd==='observation_limited'?'sse_observation_limited':'incomplete_sse',up.statusCode,streamEnd);
+      finish(up.statusCode>=400?'upstream_http_error':!isSSE?'complete':streamEnd==='engine_error'?'upstream_engine_error':['terminal','terminal_without_finish_reason','terminal_reason_unobserved'].includes(streamEnd)?'complete':streamEnd==='observation_limited'?'sse_observation_limited':'incomplete_sse',up.statusCode,streamEnd);
     };
     const sendGuidance=(reason,stream,kind='jpeg')=>{
       const guide=visionGuidance({stream,model:config.model,requestId:job.id,kind});
@@ -756,7 +762,7 @@ export function createGateway(config,{visionTranscode}={}) {
       up.on('data',chunk=>acceptResponseChunk(up,chunk,isSSE));
       up.on('error',e=>{res.destroy();finish(job.cancelled?'client_cancelled':'upstream_stream_error',e.code);});
       up.on('aborted',()=>{res.destroy();finish(job.cancelled?'client_cancelled':'upstream_aborted');});
-      up.on('end',()=>{const streamEnd=isSSE?observer.finishState():null;finish(up.statusCode>=400?'upstream_http_error':!isSSE?'complete':streamEnd==='engine_error'?'upstream_engine_error':streamEnd==='terminal'?'complete':streamEnd==='observation_limited'?'sse_observation_limited':'incomplete_sse',up.statusCode,streamEnd);});
+      up.on('end',()=>{const streamEnd=isSSE?observer.finishState():null;finish(up.statusCode>=400?'upstream_http_error':!isSSE?'complete':streamEnd==='engine_error'?'upstream_engine_error':['terminal','terminal_without_finish_reason','terminal_reason_unobserved'].includes(streamEnd)?'complete':streamEnd==='observation_limited'?'sse_observation_limited':'incomplete_sse',up.statusCode,streamEnd);});
       up.pipe(res);
     };
     const issue=(replacement,retry=false)=>{

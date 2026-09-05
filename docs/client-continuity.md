@@ -167,6 +167,19 @@ one, the two expected inference calls stay two, and the agent records the missin
 separate generic retry policy. It is a verified safety boundary, **not** successful
 post-dispatch recovery; suppressing that error alone would not make the agent resume.
 
+A fourth real-agent fixture sends `[DONE]` but no `finish_reason`. Strict Pi still
+rejects the answer, and the DSG transport does not replay it. DSG now records
+`terminal_without_finish_reason` when no recognized reason was observed, or
+`terminal_reason_unobserved` when its bounded observer may have skipped that
+reason. Neither diagnostic stores arbitrary reason strings or response content.
+Transport accounting remains `complete` for these marker-ended streams, matching
+existing permissive-client behavior; that counter is **not proof of harness
+acceptance**. DSG does not synthesize a reason, change client compatibility settings
+or quarantine a worker on this evidence alone. The first diagnostic is available
+to Genie's developer hypotheses as `client_compatibility`, not recovery authority;
+an observer limit alone does not create a hardening suggestion. Collector changes
+require a core cutover and Genie changes a dashboard reload before live use.
+
 The same example extension can separately opt in to the advisory
 [Agent Watch](agent-watch.md) heartbeat with `DSG_AGENT_WATCH=1`. It reports only
 a random run reference and coarse lifecycle state. It does not extend retry

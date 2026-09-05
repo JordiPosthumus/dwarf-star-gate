@@ -50,7 +50,7 @@ export function safeGatewayEvent(raw) {
   else if (raw.outcome) e.outcome = 'other';
   for (const key of ['queue_ms', 'elapsed_ms']) if (Number.isFinite(raw[key]) && raw[key] >= 0) e[key] = raw[key];
   if (typeof raw.sse_done === 'boolean') e.sse_done = raw.sse_done;
-  if (['terminal','engine_error','clean_eof_no_terminal','partial_sse_event','observation_limited'].includes(raw.stream_end)) e.stream_end = raw.stream_end;
+  if (['terminal','terminal_without_finish_reason','terminal_reason_unobserved','engine_error','clean_eof_no_terminal','partial_sse_event','observation_limited'].includes(raw.stream_end)) e.stream_end = raw.stream_end;
   if (raw.requested_thinking) e.requested_thinking = safeRequestedThinking(raw.requested_thinking);
   if (Number.isInteger(raw.detail)) e.http_status = raw.detail;
   if (raw.usage) {

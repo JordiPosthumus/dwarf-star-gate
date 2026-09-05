@@ -1,5 +1,17 @@
 # Changelog
 
+## Distinguish terminal markers from client acceptance
+
+- Record `terminal_without_finish_reason` for OpenAI completion streams whose
+  ending marker lacks an observed recognized reason. Use `terminal_reason_unobserved`
+  when the bounded observer could have missed it. Preserve response bytes and
+  existing transport outcome counters; no synthetic reason, replay or quarantine.
+- Expose the known compatibility diagnostic to Genie's evidence-gated developer
+  hypotheses, not service recovery offers. Unknown observer gaps grant no action.
+- Add strict real-Pi marker-only rejection, exact-byte/no-replay/no-quarantine,
+  observer-limit and privacy regressions. Safe core/dashboard activation remains
+  separate; this is not a claim of post-dispatch session recovery.
+
 ## Harden Continuity Door readiness probes
 
 - Fix two reproduced health-check bugs: a truncated response could leave a probe

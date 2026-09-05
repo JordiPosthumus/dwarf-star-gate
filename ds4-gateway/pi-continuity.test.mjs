@@ -10,7 +10,7 @@ import {createContinuityFetch,registerPiContinuity} from './continuity-client.mj
 
 // Exercise the real installed Pi serializer AND agent/tool loop, isolated from
 // operator settings, sessions and real DS4 devices. Set DSG_PI_ROOT explicitly.
-for(const mode of ['gateway-wait','certified-retries','partial-stream'])test(`real Pi agent ${mode==='partial-stream'?'does not replay':'survives'} ${mode} between tool execution and continuation`,{skip:!process.env.DSG_PI_ROOT},async t=>{
+for(const mode of ['gateway-wait','certified-retries','partial-stream','terminal-without-reason'])test(`real Pi agent ${['partial-stream','terminal-without-reason'].includes(mode)?'does not replay':'survives'} ${mode} between tool execution and continuation`,{skip:!process.env.DSG_PI_ROOT},async t=>{
   const root=process.env.DSG_PI_ROOT;
   const {streamSimple}=await import(pathToFileURL(path.join(root,'node_modules/@earendil-works/pi-ai/dist/api/openai-completions.js')));
   const {Agent}=await import(pathToFileURL(path.join(root,'node_modules/@earendil-works/pi-agent-core/dist/agent.js')));
@@ -23,6 +23,7 @@ for(const mode of ['gateway-wait','certified-retries','partial-stream'])test(`re
       assert.equal(req.headers['x-dsg-call-id'],undefined);
       res.writeHead(200,{'content-type':'text/event-stream'});
       if(mode==='partial-stream'&&requests===2)return res.end(`data: ${JSON.stringify({id:'test',choices:[{index:0,delta:{content:'Unfinished answer'},finish_reason:null}]})}\n\n`);
+      if(mode==='terminal-without-reason'&&requests===2)return res.end(`data: ${JSON.stringify({id:'test',choices:[{index:0,delta:{content:'Marker is not a finish reason'},finish_reason:null}]})}\n\ndata: [DONE]\n\n`);
       const delta=requests===1?{tool_calls:[{index:0,id:'tool_1',type:'function',function:{name:'count_once',arguments:'{}'}}]}:{content:'DONE'};
       res.end(`data: ${JSON.stringify({id:'test',choices:[{index:0,delta,finish_reason:requests===1?'tool_calls':'stop'}],usage:{prompt_tokens:10,completion_tokens:2}})}\n\ndata: [DONE]\n\n`);
     });
@@ -45,7 +46,7 @@ for(const mode of ['gateway-wait','certified-retries','partial-stream'])test(`re
   }}]},sessionId:'fixture-session',getApiKey:()=> 'fixture',streamFn:(m,c,o)=>streamSimple(m,c,{...o,...(mode!=='gateway-wait'?{fetch:transport}:{})})});
   await agent.prompt('Call count_once, then answer DONE.');
   assert.equal(waits,mode==='certified-retries'?4:0);assert.equal(requests,2);assert.equal(tools,1);
-  if(mode==='partial-stream'){
+  if(['partial-stream','terminal-without-reason'].includes(mode)){
     const last=agent.state.messages.at(-1);
     assert.equal(last.stopReason,'error');assert.match(last.errorMessage,/finish_reason/);
     return;
