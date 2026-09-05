@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Aligned recovery actions with inspection freshness.** Clock rollback or an
+  invalid observation time can no longer leave an action offer available while
+  its checklist says stale. Status, hand-back and new action admission now share
+  the existing age rule; refreshing evidence does not replay issued work.
+
 - **Made enrollment evidence inspectable without taking action.** A read-only
   per-worker checklist separates service binding, enrolled powers, inspection
   freshness/native disable and historical canary evidence. It tells an installer's

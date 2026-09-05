@@ -10,6 +10,10 @@ const faultReasons=new Set(['fatal_accelerator_error','accelerator_checkpoint_fa
 const adapterReasons=new Set(['adapter_timeout','adapter_output_limit','adapter_spawn_failed','adapter_dns_failure','adapter_host_key_failure','adapter_auth_failure','adapter_connect_timeout','adapter_connection_refused','adapter_route_unreachable','adapter_connection_reset','adapter_unreachable','adapter_check_failed','adapter_local_unavailable','adapter_local_identity_unverified']);
 const publicOperation=op=>Object.fromEntries(['id','worker_id','actor','service_action','state','created_at','updated_at','error','proof','service_action_issued','restart_issued','operator_override','profile_adopted','bootstrap_acknowledged'].filter(k=>op[k]!==undefined).map(k=>[k,op[k]]));
 const digest=value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
+// Wall-clock correction must not make an old observation eligible indefinitely.
+// Use the same bounded age rule for diagnostics, offers and action admission.
+const inspectionAge=(observed,now)=>Number.isFinite(now)&&Number.isFinite(observed?.at)&&observed.at>=0&&observed.at<=now?now-observed.at:null;
+const freshInspection=(observed,now)=>{const age=inspectionAge(observed,now);return age!==null&&age<=90000;};
 const nativePolicyReason=(s,c)=>c?.adapter==='launchd'&&s?.native_disabled!==false?(s?.native_disabled===true?'launchd_native_disabled':'launchd_disable_state_unverified'):null;
 function requireNativePolicy(s,c){const reason=nativePolicyReason(s,c);if(reason)throw new Error(reason);}
 const identityFields=['enrollment','instance','machine','observed_at','pid','profile','service_profile','started_at'];
@@ -218,8 +222,8 @@ export class Recovery {
   }
   enrollmentChecklist(n) {
     const c=this.config(n.id),observed=this.observations.get(n.id),s=observed?.value,now=this.now();
-    const bound=!!c&&this.binding(n,c),age=Number.isFinite(observed?.at)?now-observed.at:null;
-    const fresh=age!==null&&age>=0&&age<=90000,usable=fresh&&!observed?.error;
+    const bound=!!c&&this.binding(n,c),age=inspectionAge(observed,now);
+    const fresh=freshInspection(observed,now),usable=fresh&&!observed?.error;
     const inspection=!observed?'not_observed':!fresh?'stale':observed.error?'failed':'observed';
     const identity=!usable||!bound?'unknown':this.valid(s,c)?'running_match':this.validStopped(s,c)?'stopped_match':this.profileCandidate(s,c)?'changed_profile':'unverified';
     const native=c?.adapter!=='launchd'?'not_applicable':!usable?'unknown':s?.native_disabled===false?'enabled':s?.native_disabled===true?'disabled':'unknown';
@@ -257,7 +261,7 @@ export class Recovery {
   }
   workerStatus(n) {
     const observed=this.observations.get(n.id),s=observed?.value;
-    const reason=!observed || this.now()-observed.at>90000?'service_inspection_pending':observed.error||this.reason(n,s);
+    const reason=!freshInspection(observed,this.now())?'service_inspection_pending':observed.error||this.reason(n,s);
     const configured=this.configs.has(n.id),last=this.state.operations.filter(o=>o.worker_id===n.id).at(-1);
     // Current worker state is not the last action's historical outcome. In
     // particular, a successful paused canary may since have been resumed.
@@ -272,7 +276,7 @@ export class Recovery {
   profileHandbackOffer(n,{ignorePause=false}={}) {
     if(!this.state.automatic)throw new Error('automatic_recovery_off');
     const observed=this.observations.get(n?.id),s=observed?.value,c=this.config(n?.id);
-    if(!n||!observed||this.now()-observed.at>90000)throw new Error('service_inspection_pending');
+    if(!n||!freshInspection(observed,this.now()))throw new Error('service_inspection_pending');
     if(!this.profileCandidate(s,c))throw new Error('no_profile_handback_candidate');
     const reason=observed.error||this.reason(n,s,{ignorePause});if(reason)throw new Error(reason);
     return {worker_id:n.id,evidence_id:this.evidence(n,s)};
@@ -318,7 +322,7 @@ export class Recovery {
     if(actor!=='operator' && !this.state.automatic)throw new Error('Automatic recovery is off');
     if(canary && actor!=='operator')throw new Error('Canary is operator-only');
     const n=this.node(input.worker_id),observed=this.observations.get(input.worker_id),s=observed?.value;
-    if(!n || !observed || this.now()-observed.at>90000)throw new Error('Refresh service inspection first');
+    if(!n || !freshInspection(observed,this.now()))throw new Error('Refresh service inspection first');
     const reason=this.reason(n,s,{canary});if(reason)throw new Error(reason);
     if(!canary && input.evidence_id!==this.evidence(n,s))throw new Error('Stale or invented recovery evidence');
     if(this.state.operations.length>=10000)throw new Error('Recovery journal full; review required');

@@ -1,5 +1,14 @@
 # Changelog
 
+## Keep recovery inspection freshness consistent across clock changes
+
+- Use one finite, nonnegative, at-most-90-second inspection-age rule in the
+  enrollment checklist, recovery status, profile hand-back offers and new action
+  admission. Future and invalid timestamps require refreshed evidence.
+- Regress clock rollback for operator, Genie, detector and canary requests;
+  retain the exact age boundary and idempotent access to issued action receipts.
+  No recovery policy, model setting, production clock or service is changed.
+
 ## Add a read-only recovery enrollment checklist
 
 - Add per-worker checklist evidence to recovery status and

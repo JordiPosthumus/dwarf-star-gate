@@ -101,6 +101,9 @@ is implied by this fix.
    `recovery-control.mjs check [ID]` now separates loaded binding, independently
    enrolled powers, inspection and historical canary evidence, with next steps.
    It neither probes nor grants action authority; old cores report unavailable.
+   Inspection freshness now agrees across the checklist, offers and action
+   admission, including clock rollback and invalid timestamps; the existing
+   age limit and issued-action idempotency are preserved.
    Complete private enrollment, the separately approved disruptive canary and
    certification/blockers. Generic launchd/retained-job
    source is not a certified Mac installation. Operator pauses, named maintenance

@@ -12,6 +12,15 @@ Giving this task to your local coding agent? Start with
 It separates inspection, explicit permission, private setup and verification.
 This document is the detailed adapter/configuration reference.
 
+Recovery status, enrollment checklists, profile hand-back offers and new recovery
+or canary requests share the same inspection-age rule: a finite nonnegative age
+of at most 90 seconds. A future or invalid timestamp is not fresh evidence. If
+the local wall clock moves backward, obtain a new read-only inspection instead
+of treating the previous observation as indefinitely valid. This does not change
+the age budget, recovery policy, service settings or existing action receipts.
+An idempotent query for an already issued action still returns its receipt; it
+does not repeat the action to work around stale evidence.
+
 **Connecting a server for inference does not enroll it for recovery.** The UI's
 automatic-recovery switch controls already enrolled services; it does not install
 an adapter or grant service permissions. There is not yet a browser enrollment

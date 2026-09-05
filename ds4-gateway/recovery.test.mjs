@@ -406,6 +406,44 @@ test('recovery status exposes durable identity drift while admitted work is stil
     assert.equal(status.eligible,false);assert.equal(r.restarts,0);
   }
 });
+
+test('clock rollback withdraws recovery evidence until a fresh inspection, without issuing an action',async()=>{
+  const r=rig();await r.ready();const input=r.input();r.recovery.setAutomatic(true);
+  r.advance(-1);let status=r.recovery.workerStatus(r.n);
+  assert.equal(status.enrollment.inspection.state,'stale');assert.equal(status.reason,'service_inspection_pending');assert.equal(status.eligible,false);assert.equal(status.evidence_id,null);
+  const before=structuredClone(r.store.data);let calls=0;r.recovery.call=async()=>{calls++;return r.sample();};
+  for(const actor of ['operator','genie','detector'])assert.throws(()=>r.recovery.request(input,actor),/Refresh service inspection first/);
+  r.n.drained=true;assert.throws(()=>r.recovery.request(input,'operator',{canary:true}),/Refresh service inspection first/);
+  assert.equal(calls,0);assert.deepEqual(r.store.data,before);assert.equal(r.recovery.task,null);assert.equal(r.restarts,0);assert.equal(r.proofs,0);
+  r.n.drained=false;await r.recovery.inspect('one');status=r.recovery.workerStatus(r.n);
+  assert.equal(status.enrollment.inspection.state,'observed');assert.equal(status.eligible,true);assert.equal(calls,1);assert.equal(r.recovery.state.operations.length,0);
+  await r.recovery.close();
+});
+
+test('recovery inspection freshness rejects invalid clocks and keeps the exact existing age boundary',async()=>{
+  for(const at of [undefined,null,NaN,Infinity,-Infinity,'1788390000000']){
+    const r=rig();await r.ready();const input=r.input();r.recovery.observations.get('one').at=at;
+    assert.equal(r.recovery.workerStatus(r.n).eligible,false);assert.throws(()=>r.recovery.request(input),/Refresh service inspection first/);
+    assert.equal(r.restarts,0);await r.recovery.close();
+  }
+  const r=rig();await r.ready();r.advance(90000);assert.equal(r.recovery.workerStatus(r.n).eligible,true);
+  r.advance(1);assert.equal(r.recovery.workerStatus(r.n).eligible,false);assert.equal(r.recovery.workerStatus(r.n).enrollment.inspection.state,'stale');await r.recovery.close();
+});
+
+test('profile hand-back offers reject future observations even when pause is explicitly ignored',async()=>{
+  const r=rig();r.recovery.call=async()=>({...r.sample(),profile:'c'.repeat(64)});
+  await r.ready();r.advance(11000);await r.ready();r.recovery.setAutomatic(true);r.n.drained=true;
+  assert.ok(r.recovery.profileHandbackOffer(r.n,{ignorePause:true}).evidence_id);
+  r.advance(-1);assert.throws(()=>r.recovery.profileHandbackOffer(r.n,{ignorePause:true}),/service_inspection_pending/);
+  assert.equal(r.restarts,0);assert.equal(r.recovery.state.operations.length,0);await r.recovery.close();
+});
+
+test('clock rollback does not replay or lose a previously issued action receipt',async()=>{
+  const r=rig();await r.ready();const input=r.input(),receipt=r.recovery.request(input);await r.recovery.task;
+  const before=structuredClone(r.store.data);r.advance(-10000);
+  assert.equal(r.recovery.request(input).id,receipt.id);assert.deepEqual(r.store.data,before);
+  assert.equal(r.restarts,1);assert.equal(r.proofs,1);await r.recovery.close();
+});
 test('verified profile hand-back adopts a stable same-machine DS4 profile, restarts a fatal instance and survives controller restart',async()=>{
   const r=rig(),changed='c'.repeat(64);let instance='1'.repeat(32),fault=true,restarts=0;
   const observed=()=>({...r.sample(),profile:changed,instance,started_at:r.deps.now()-100000,fault:fault?{reason:'fatal_accelerator_error',at:r.deps.now()-1000}:null});
