@@ -89,6 +89,10 @@ export function auditCacheContinuity(input,{maxAgeMs=DEFAULT_MAX_AGE_MS,maxEvent
     if(seen.has(identity)){if(seen.get(identity)!==serialized)throw new Error('Conflicting cache-continuity evidence ID');duplicates++;continue;}
     seen.set(identity,serialized);events.push(raw);
   }
+  // Dropping a malformed decision/finish/relocation can erase a competing
+  // request or move. Its clock/identity may be unusable, so even scoping the
+  // damage to one session would be a guess. Do not certify any pair from it.
+  if(invalid_relevant_events)throw new Error('Invalid cache-continuity evidence; consecutive requests cannot be established');
   events.sort((a,b)=>at(a.time)-at(b.time));
   const jobs=new Map();
   for(const event of events){

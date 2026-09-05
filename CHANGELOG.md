@@ -1,5 +1,12 @@
 # Changelog
 
+## Reject broken cache-continuity evidence chains
+
+- Stop the read-only cache audit on malformed decision, finish or relocation
+  envelopes instead of skipping them and potentially inventing consecutive pairs.
+- Add malformed-clock/identity/schema and input-order regression cases; preserve
+  existing inference, data collection, routing and cache behavior.
+
 ## Withdraw the optional Pi image companion
 
 - Remove the unactivated image-selection extension, its integration switch,

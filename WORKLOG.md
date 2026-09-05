@@ -10,6 +10,10 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Hardened cache-audit evidence chains.** A reproduced malformed middle record
+  could disappear from pairing and support a false continuity claim. The audit
+  now stops with a privacy-safe diagnostic instead; ordinary collection continues.
+
 - **Withdrew the optional Pi image companion.** Removed the unactivated extension
   and enrollment path; ordinary image continuity should be handled inside DSG.
   The proposed gateway image-window policy is not active yet.

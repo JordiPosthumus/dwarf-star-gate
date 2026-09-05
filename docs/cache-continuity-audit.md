@@ -54,6 +54,12 @@ An invalid middle request is not skipped to manufacture a consecutive pair from
 its neighbors. Input ordering cannot repair contradictory recorded timestamps;
 equal millisecond timestamps alone are not treated as contradictory.
 
+Malformed decision, finish or relocation envelopes stop the audit with a fixed
+diagnostic, without printing the record. Silently discarding one could erase an
+intervening request or move; an invalid clock/identity cannot safely identify the
+affected interval. Inspect and repair the evidence separately rather than treating
+the remaining rows as complete. Unrelated event kinds remain outside this audit.
+
 The API permits only positive integer event budgets up to 200,000 events and
 request budgets up to 50,000. Invalid overrides or exceeded budgets fail explicitly
 instead of disabling the bound or silently truncating retained evidence. This

@@ -33,6 +33,25 @@ test('missing client metadata makes low reuse unconfirmed, never a proved miss',
   assert.match(result.evidence_boundary,/not prompt-prefix or engine-protocol proof/);
 });
 
+test('malformed relevant evidence cannot erase an intervening request or move',()=>{
+  for(const kind of ['decision','finish','queue_relocation'])for(const field of ['time','run_id','event_id','request_id','schema']){
+    const first=request({id:'first',at:10000,turn:1,compaction:0});
+    const middle=request({id:'middle',at:20000,relocated:kind==='queue_relocation'});
+    const third=request({id:'third',at:30000,cached:0,turn:2,compaction:0});
+    const broken=middle.find(row=>row.kind===kind);broken[field]=field==='schema'?2:'private invalid value';
+    const rows=[...first,...middle,...third],before=JSON.stringify(rows);
+    for(const input of [rows,[...rows].reverse()])assert.throws(()=>auditCacheContinuity(input),{
+      message:'Invalid cache-continuity evidence; consecutive requests cannot be established',
+    },`${kind}.${field}`);
+    assert.equal(JSON.stringify(rows),before,'Audit must not rewrite the evidence');
+  }
+});
+
+test('malformed unrelated records remain outside the cache-continuity evidence contract',()=>{
+  const rows=[...request({id:'a',at:10000}),...request({id:'b',at:20000})];
+  assert.deepEqual(auditCacheContinuity([...rows,{kind:'embedding',time:'invalid'}]),auditCacheContinuity(rows));
+});
+
 test('finish-before-admission evidence cannot claim reuse or strongly guarded cache loss',()=>{
   for(const bad of ['previous','current'])for(const cached of [0,900]){
     const first=request({id:'first',at:10000,affinity:'new',turn:1,compaction:0});
