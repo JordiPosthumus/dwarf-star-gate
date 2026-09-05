@@ -1,5 +1,17 @@
 # Changelog
 
+## Give Pi a concrete visual-history hand-back
+
+- Add explicitly enrolled `dsg_visual_context` selection, scoped to an existing
+  DSG provider. The agent chooses the outgoing images; saved messages/files and
+  model capabilities remain intact. New screenshots are included, not silently
+  suppressed by an earlier selection.
+- Explain the full-history image count and one-PNG contact-sheet rule; give one
+  visible reminder after a premature final, with defer/cancellation boundaries.
+- Exercise the real Pi serializer/tool loop with scripted DS4 fixtures, including
+  recovery followed by actual PNG delivery. Model visual-quality evaluation and
+  enrollment of existing sessions remain separate from these automated checks.
+
 ## Compact the dashboard identity header
 
 - Remove the standalone `[dsg] / control room` strip and divider; fold live

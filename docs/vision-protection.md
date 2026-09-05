@@ -8,6 +8,13 @@ engine failure succeeded.
 
 ## What happens
 
+These steps describe the **gateway-only fallback**, not proof that the agent
+completed its visual task. For history-aware preparation and a concrete image
+selection tool, explicitly enroll the [Pi visual continuity companion](client-continuity.md#image-history-continuity-for-pi-explicit-enrollment).
+The limit counts image blocks in the whole submitted conversation. A PNG contact
+sheet is one image, not one image per tile. Merely reading fewer new screenshots
+does not remove images still being resent from older turns.
+
 1. DSG sends the original request to its assigned DS4 server unchanged.
 2. A JPEG is eligible only after HTTP 400 with DS4's exact JPEG message. The
    generic GIF response is only a candidate: DSG must also parse the captured

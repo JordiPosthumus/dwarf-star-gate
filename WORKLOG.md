@@ -10,6 +10,12 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Made visual recovery actionable for Pi.** Added an optional agent-controlled
+  image-selection tool that repairs outgoing visual history without deleting the
+  saved chat. Full-history and contact-sheet instructions replace ambiguous
+  “withheld” explanations; real Pi tool-loop fixtures continue to valid image
+  requests, including after a premature limitations-only answer.
+
 - **Removed the redundant dashboard masthead.** Connection status and debug
   download now share the existing title area, bringing fleet content higher up
   without removing diagnostics or changing runtime behavior.

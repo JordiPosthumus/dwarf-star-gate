@@ -300,6 +300,12 @@ a physical machine. Each server may have its own native context and cache settin
   For a proven GIF rejection, only the unsupported GIF is withheld and the model
   is told to consider selected PNG frames. The client's stored conversation stays
   untouched. A second rejection becomes a completed guidance turn; there is no loop.
+  For actual history-aware hand-back, the optional [Pi visual continuity
+  companion](docs/client-continuity.md#image-history-continuity-for-pi-explicit-enrollment)
+  gives the agent a tool to select images for the next request without deleting
+  saved history. It also gives one visible continuation reminder if the agent
+  stops at a limitations report. Gateway guidance alone does not guarantee that
+  an arbitrary harness will repair and resubmit its visual context.
   Generic JSON errors are never intercepted unless the captured request
   independently proves a valid typed GIF caused that exact DS4 response.
 - No automatic replay after an ambiguous upstream failure.

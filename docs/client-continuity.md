@@ -144,6 +144,61 @@ list, authentication, context/output limits, reasoning and Pi serialization.
 No automatic edits to models.json/settings.json or unrelated providers. Existing
 custom stream overrides require compatibility review before combining extensions.
 
+### Image-history continuity for Pi (explicit enrollment)
+
+Reading one screenshot at a time can still submit more than 16 images: Pi also
+serializes images in older user/tool-result messages. One contact-sheet PNG is
+one image block regardless of its tiles. The chat lifetime is not capped at 16.
+
+For Pi 0.84.4, the standalone companion leaves existing provider wrappers alone:
+
+```sh
+DSG_PI_PROVIDER=local-ds4 DSG_PI_BASE_URL=http://127.0.0.1:30000/v1 \
+  pi -e /path/to/DSG/examples/pi-dsg-visual-continuity.ts
+```
+
+Use your **existing** provider name and exact DSG URL. Alternatively, set
+`DSG_VISUAL_CONTINUITY=1` when loading `pi-dsg-continuity.ts` above. Choose one
+enrollment method, not both. No settings, provider files or running sessions are
+automatically edited. Already-running sessions need deliberate extension
+enrollment/reload; a gateway restart alone cannot install a harness tool.
+
+The companion registers `dsg_visual_context`, with `list`, `select` and `defer`:
+
+- An over-limit history or GIF triggers a transient text-only **preparation**
+  request. Its inventory lists image IDs/positions, not filenames or image data.
+- The agent explicitly selects up to 16 image blocks and gives a reason. Only the
+  outgoing model view changes; saved history and files are untouched. Other image
+  blocks receive explicit placeholders rather than disappearing silently.
+- The next native Pi tool-loop request carries the selected original images.
+  Newly read images are included automatically; another overfull request asks
+  for another selection. Older images can be selected again.
+- Selecting `[]` is an explicit text-only preparation step, useful before the
+  agent extracts GIF frames or builds/reads a contact sheet. DSG does neither.
+- If the agent merely ends with a limitations report while recovery is pending,
+  one visible follow-up asks it to complete the hand-back. There is no unbounded
+  re-prompt loop. `defer` permits a genuine question for the user. Errors, aborts,
+  and ambiguous partial streams do not trigger this follow-up or replay.
+
+Selection is session-local and resets on reload, compaction, session/branch or model changes.
+No image bytes/hashes are written to DSG telemetry, training or notebooks; normal
+Pi history still records its original images and the agent's tool calls. Other
+providers, inactive recovery tools and under-limit unselected requests are left
+alone. Prompt/tool/reasoning/output settings are unchanged. Changing selected
+visual context can reduce prefix-cache reuse; preserving the archived conversation
+does not promise preservation of the backend KV prefix.
+
+This is a Pi integration, not universal automatic recovery for arbitrary harnesses.
+The gateway-only diagnostic fallback still applies to non-enrolled clients. A
+real model must choose a useful subset or request missing input; DSG cannot
+guarantee visual reasoning quality or make every interrupted stream resumable.
+
+`DSG_PI_ROOT=... npm run continuity:test` exercises the installed Pi serializer
+and agent loop against scripted local DS4 fixtures: 18-image selection, GIF-frame
+preparation, a premature final followed by automatic continuation, and delivery
+of original/new PNG bytes without pruning saved messages. This is a protocol/tool-
+loop test, **not** a claim that a real DS4 model visually evaluated those fixtures.
+
 Scoped inference requests do **not follow HTTP redirects**, even within the same
 origin. Fetch's automatic 307/308 handling would otherwise resend the POST before
 the adapter could check a dispatch receipt. The default and explicit `follow`
