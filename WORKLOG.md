@@ -10,6 +10,10 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Withdrew the optional Pi image companion.** Removed the unactivated extension
+  and enrollment path; ordinary image continuity should be handled inside DSG.
+  The proposed gateway image-window policy is not active yet.
+
 - **Removed the repeated fleet-summary footer.** The overview numbers and server
   cards carry the counts; capacity tooltips retain the safe-handover explanation.
 
@@ -25,7 +29,7 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
   README, dashboard and project metadata, grounded in the existing delivery
   principles and explicit recovery boundaries.
 
-- **Made visual recovery actionable for Pi.** Added an optional agent-controlled
+- **Prototyped visual recovery for Pi (subsequently withdrawn).** Added an optional agent-controlled
   image-selection tool that repairs outgoing visual history without deleting the
   saved chat. Full-history and contact-sheet instructions replace ambiguous
   “withheld” explanations; real Pi tool-loop fixtures continue to valid image

@@ -13,6 +13,14 @@ test('DSG error labeling is idempotent and malformed HTTP receives an identified
   assert.match(wire,/^HTTP\/1.1 431/);assert.match(JSON.parse(wire.split('\r\n\r\n')[1]).error.message,/^DSG Report: /);
 });
 const baseUrl='http://127.0.0.1:30000/v1';
+test('Pi transport leaves visual history intact and registers no image tools or follow-ups',()=>{
+  const hooks=[],context={messages:[{role:'user',content:Array.from({length:18},()=>({type:'image',data:'fixture',mimeType:'image/png'}))}]};
+  let adapter;
+  const pi={on:name=>hooks.push(name),registerProvider:(name,value)=>{assert.equal(name,'fixture-dsg');adapter=value;},registerTool:()=>assert.fail('transport must not install image tools')};
+  registerPiContinuity(pi,{provider:'fixture-dsg',baseUrl,streamSimple:(model,actual)=>{assert.equal(actual,context);assert.equal(actual.messages[0].content.length,18);return 'original stream';}});
+  assert.equal(adapter.streamSimple({api:'openai-completions',baseUrl},context),'original stream');
+  assert.ok(!hooks.includes('turn_end'));assert.ok(!hooks.includes('context'));
+});
 test('native fetch cannot redirect scoped inference or Agent Watch outside its exact endpoint',async t=>{
   const arrivals=[];
   const target=createServer((req,res)=>{let body='';req.on('data',chunk=>body+=chunk);req.on('end',()=>{arrivals.push({url:req.url,body});res.end('unexpected redirect');});});

@@ -1,5 +1,13 @@
 # Changelog
 
+## Withdraw the optional Pi image companion
+
+- Remove the unactivated image-selection extension, its integration switch,
+  setup instructions and extension-specific tests. Keep the existing transport,
+  client metadata and Agent Watch integrations unchanged.
+- Remove references to its unavailable tool from gateway guidance. A bounded
+  gateway-native image window remains proposed, not implemented in this change.
+
 ## Remove the repeated fleet-summary footer
 
 - Remove the prose row that repeats the overview counts and per-server backlog.
@@ -26,7 +34,7 @@
 - Add the tagline to the README, compact dashboard header, browser title and
   project metadata; keep recovery limits explicit in the delivery principles.
 
-## Give Pi a concrete visual-history hand-back
+## Give Pi a concrete visual-history hand-back (subsequently withdrawn)
 
 - Add explicitly enrolled `dsg_visual_context` selection, scoped to an existing
   DSG provider. The agent chooses the outgoing images; saved messages/files and

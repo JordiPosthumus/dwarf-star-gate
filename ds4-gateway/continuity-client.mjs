@@ -3,7 +3,6 @@ import {setTimeout as sleep} from 'node:timers/promises';
 import {CALL_ID_HEADER,DISPATCH_HEADER,validCallId} from './continuity.mjs';
 import {CLIENT_WATCH_HEADER,CLIENT_WATCH_ROUTE,createClientWatchId} from './client-watch.mjs';
 import {createPiClientMetadata} from './pi-client-metadata.mjs';
-import {registerPiVisualContinuity} from './pi-visual-continuity.mjs';
 
 const watchStates=new Set(['local_tool','waiting_for_model','idle','done','needs_attention']);
 export function createClientWatchReporter({baseUrl,fetchImpl=fetch,intervalMs=15_000,schedule=setInterval,unschedule=clearInterval}={}){
@@ -100,12 +99,10 @@ export function createContinuityFetch({baseUrl,fetchImpl=fetch,onWait=()=>{},wai
 // The Pi adapter changes the transport for one explicitly named provider only.
 // All model capabilities, provider auth, context, reasoning and output options
 // are supplied unchanged to Pi's own OpenAI serializer/stream consumer.
-export function registerPiContinuity(pi,{provider,baseUrl,streamSimple,agentWatch=false,watchFetchImpl=fetch,watchIntervalMs=15_000,clientMetadata=false,visualContinuity=false}){
+export function registerPiContinuity(pi,{provider,baseUrl,streamSimple,agentWatch=false,watchFetchImpl=fetch,watchIntervalMs=15_000,clientMetadata=false}){
   if(typeof provider!=='string'||!provider.trim()||typeof streamSimple!=='function')throw new Error('Explicit DSG provider and compatible Pi stream adapter required');
   if(typeof agentWatch!=='boolean')throw new Error('agentWatch must be boolean');
   if(typeof clientMetadata!=='boolean')throw new Error('clientMetadata must be boolean');
-  if(typeof visualContinuity!=='boolean')throw new Error('visualContinuity must be boolean');
-  const visual=visualContinuity?registerPiVisualContinuity(pi,{provider,baseUrl}):null;
   const metadata=clientMetadata?createPiClientMetadata({provider,baseUrl}):null;
   let ui=null,watchAttempted=false,terminalFailed=false;const watch=agentWatch?createClientWatchReporter({baseUrl,fetchImpl:watchFetchImpl,intervalMs:watchIntervalMs}):null;
   const status=info=>ui?.setStatus('dsg-continuity',info.state==='waiting'?`DSG waiting: ${info.reason} · attempt ${info.attempts} · Esc to cancel`:undefined);
@@ -134,10 +131,10 @@ export function registerPiContinuity(pi,{provider,baseUrl,streamSimple,agentWatc
     if(watch)watchAttempted=true;
     const continuity=createContinuityFetch({baseUrl,fetchImpl:options.fetch??fetch,onWait:status});
     const hints=metadata?.snapshot(model,options);
-    return streamSimple(model,visual?visual.prepare(model,context):context,{...options,fetch:watch||metadata?(input,init={})=>{
+    return streamSimple(model,context,{...options,fetch:watch||metadata?(input,init={})=>{
       const decorated=metadata?metadata.decorate(input,init,hints):init;
       return continuity(input,watch?watch.decorate(input,decorated):decorated);
     }:continuity});
   }});
-  return {agentWatch:watch,visualContinuity:visual};
+  return {agentWatch:watch};
 }

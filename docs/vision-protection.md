@@ -9,8 +9,8 @@ engine failure succeeded.
 ## What happens
 
 These steps describe the **gateway-only fallback**, not proof that the agent
-completed its visual task. For history-aware preparation and a concrete image
-selection tool, explicitly enroll the [Pi visual continuity companion](client-continuity.md#image-history-continuity-for-pi-explicit-enrollment).
+completed its visual task. The optional Pi image companion was withdrawn; a
+gateway-native bounded image window is proposed, not implemented here yet.
 The limit counts image blocks in the whole submitted conversation. A PNG contact
 sheet is one image, not one image per tile. Merely reading fewer new screenshots
 does not remove images still being resent from older turns.
