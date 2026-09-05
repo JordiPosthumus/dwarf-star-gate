@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { summarizeAttribution } from './attribution-summary.mjs';
 import { auditAttributionDirectory, auditAttributionReconciliation, reconcileAttributionRows } from './attribution-audit.mjs';
+import { timeWindows } from './time-window-index.mjs';
 
 const sample=n=>n.toString(16).padStart(64,'0');
 const row=(n,extra={})=>({event:'engine_attribution',sample_id:sample(n),node:'spark-a',status:'candidate',reason:'request_open',confidence:'heuristic',observed_at:n,...extra});
@@ -76,6 +77,57 @@ test('later exact usage safely reconciles an overlap without rewriting the recor
   assert.deepEqual(result.summary.counts,{corroborated:1,candidate:0,abstained:0});
   assert.equal(original.status,'abstained');assert.equal(original.reason,'overlapping_gateway_windows');
   assert.ok(!JSON.stringify(result).includes(requestB));
+});
+test('time-window index agrees with a linear scan including ties, infinities and shuffled nodes',()=>{
+  let seed=713;const random=()=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;return seed;};
+  const rows=Array.from({length:500},(_,id)=>Object.freeze({id,node:['a','b','c'][random()%3],at:random()%100}));
+  Object.freeze(rows);const before=structuredClone(rows),query=timeWindows(rows,'at');
+  for(let i=0;i<1000;i++){
+    const node=['a','b','c','absent'][random()%4],from=i%10===0?-Infinity:random()%120-10,to=i%11===0?Infinity:random()%120-10;
+    const expected=rows.filter(r=>r.node===node&&r.at>=from&&r.at<=to).sort((a,b)=>a.at-b.at);
+    assert.deepEqual(query(node,from,to),expected);
+  }
+  assert.deepEqual(query('a',0,0),rows.filter(r=>r.node==='a'&&r.at===0));
+  assert.deepEqual(rows,before);assert.deepEqual(timeWindows([],'at')('a',-Infinity,Infinity),[]);
+});
+test('indexed request candidates preserve inclusive skew, lead and finish edges',()=>{
+  const cases=[
+    {dispatch:-600001,finish:10000,reason:'candidate_window_changed'},
+    {dispatch:-600000,finish:10000},
+    {dispatch:5000,finish:10000},
+    {dispatch:5001,finish:10000,reason:'candidate_window_changed'},
+    {dispatch:-10000,finish:-5000},
+    {dispatch:-10000,finish:-5001,reason:'candidate_window_changed'},
+    {dispatch:-10000,finish:null,reason:'candidate_usage_incomplete'},
+    {dispatch:-1000,finish:10000} // Equal dispatch timestamps retain both owners.
+  ];
+  for(const c of cases)for(const reverse of [false,true]){
+    const log=gateway().filter(r=>r.request_id!==requestA);
+    log.push({event:'request_dispatched',request_id:requestA,node:'spark-a',time:iso(base+c.dispatch)});
+    if(c.finish!==null)log.push({event:'request_finished',request_id:requestA,node:'spark-a',time:iso(base+c.finish),outcome:'complete',usage:{prompt_tokens:800,cached_tokens:700}});
+    log.push({event:'request_dispatched',request_id:'33333333-3333-4333-8333-333333333333',node:'other-worker',time:iso(base)});
+    if(reverse)log.reverse();const before=structuredClone(log);
+    const result=reconcileAttributionRows([overlap()],[engine()],log,{complete:true});
+    assert.equal(result.reconciled_overlaps,c.reason?0:1,JSON.stringify(c));
+    if(c.reason)assert.equal(result.reconciliation_block_reasons[c.reason],1);
+    assert.deepEqual(log,before);
+  }
+});
+test('indexed competing starts preserve both timing edges and anonymous collision vetoes',()=>{
+  const cases=[
+    {offset:-6001,blocked:false},{offset:-6000,blocked:true},
+    {offset:7000,blocked:true},{offset:7001,blocked:false},
+    {offset:599000,long:true,blocked:true},{offset:599001,long:true,blocked:false}
+  ];
+  for(const c of cases)for(const anonymous of [false,true])for(const reverse of [false,true]){
+    const log=gateway();if(c.long)log.at(-1).time=iso(base+700000);
+    const rival={...engine(12),time:base+c.offset,...(anonymous?{sample_id:undefined}:{})};
+    const starts=[engine(),rival,{...rival},{...engine(13),node:'other-worker'}];if(reverse)starts.reverse();
+    const before=structuredClone(starts),result=reconcileAttributionRows([overlap()],starts,log,{complete:true});
+    assert.equal(result.reconciled_overlaps,c.blocked?0:1,JSON.stringify({c,anonymous}));
+    if(c.blocked){assert.equal(result.reconciliation_block_reasons.competing_engine_start,1);assert.equal(result.competing_start_details[anonymous?'anonymous_start':'identified_start'],1);}
+    assert.deepEqual(starts,before);
+  }
 });
 test('reconciliation requires exact engine-start identity and rejects conflicting duplicate samples',()=>{
   const original=overlap(),start=engine();

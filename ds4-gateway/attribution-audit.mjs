@@ -4,6 +4,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { summarizeAttribution } from './attribution-summary.mjs';
 import { safeGatewayEvent } from './telemetry.mjs';
+import { timeWindows } from './time-window-index.mjs';
 
 const FILE=/^metrics-\d{4}-\d{2}-\d{2}\.jsonl$/;
 const MAX_FILES=7,MAX_BYTES_PER_FILE=8*1024*1024,MAX_LINE_BYTES=64*1024,MAX_RECORDS=65536;
@@ -134,6 +135,7 @@ export function reconcileAttributionRows(attributionRows=[],engineRows=[],gatewa
   // and manufacture uniqueness. Keep the recorded view, not a revised match.
   if([...lifecycle.values()].some(request=>request.conflict||Number.isFinite(request.dispatched_at)&&Number.isFinite(request.finished_at)&&request.finished_at<request.dispatched_at))return unchanged('gateway_evidence_conflict');
   const requests=[...lifecycle.values()].filter(request=>Number.isFinite(request.dispatched_at));
+  const requestWindows=timeWindows(requests,'dispatched_at'),startWindows=timeWindows(collisionStarts,'time');
   const proposals=new Map(),blocks={};
   let currentRow;
   const block=reason=>{if(inCohort(currentRow))blocks[reason]=(blocks[reason]??0)+1;};
@@ -146,7 +148,9 @@ export function reconcileAttributionRows(attributionRows=[],engineRows=[],gatewa
     if(conflictingStarts.has(startKey)||start.time!==row.engine_started_at||!start.backend_epoch||!['strong','bounded'].includes(start.backend_epoch_confidence)||start.backend_epoch!==row.backend_epoch||
       start.backend_epoch_confidence!==row.backend_epoch_confidence||start.prompt!==row.prompt_tokens||start.cached!==row.cached_tokens||start.new_tokens!==row.new_tokens){block('engine_start_conflict');continue;}
     if(metricCoverageStart>start.time-MAX_DISPATCH_LEAD_MS){block('metric_coverage_incomplete');continue;}if(coverageStart>start.time-MAX_DISPATCH_LEAD_MS){block('gateway_coverage_incomplete');continue;}
-    const candidates=requests.filter(request=>request.node===start.node&&request.dispatched_at<=start.time+SKEW_MS&&start.time-request.dispatched_at<=MAX_DISPATCH_LEAD_MS&&(request.finished_at===null||request.finished_at>=start.time-SKEW_MS));
+    // The index only narrows the scan. Padded bounds retain the original exact
+    // predicates below, including clock-tolerance edges and unfinished owners.
+    const candidates=requestWindows(start.node,start.time-MAX_DISPATCH_LEAD_MS-SKEW_MS,start.time+2*SKEW_MS).filter(request=>request.node===start.node&&request.dispatched_at<=start.time+SKEW_MS&&start.time-request.dispatched_at<=MAX_DISPATCH_LEAD_MS&&(request.finished_at===null||request.finished_at>=start.time-SKEW_MS));
     if(candidates.length<2){block('candidate_window_changed');continue;}
     if(!candidates.every(request=>Number.isFinite(request.finished_at)&&request.usage?.prompt_tokens!==null&&request.usage?.cached_tokens!==null)){block('candidate_usage_incomplete');continue;}
     const matching=candidates.filter(request=>request.usage.prompt_tokens===start.prompt&&request.usage.cached_tokens===start.cached);
@@ -180,7 +184,7 @@ export function reconcileAttributionRows(attributionRows=[],engineRows=[],gatewa
     if(!proposal)return row;
     if(owners.get(proposal.request_id)?.size!==1){block('request_collision');return row;}
     const request=lifecycle.get(proposal.request_id);
-    const competing=collisionStarts.filter(start=>!(start.sample_id===row.sample_id&&start.node===row.node)&&start.node===request?.node&&request.dispatched_at<=start.time+SKEW_MS&&start.time-request.dispatched_at<=MAX_DISPATCH_LEAD_MS&&(request.finished_at===null||request.finished_at>=start.time-SKEW_MS));
+    const competing=startWindows(request.node,request.dispatched_at-2*SKEW_MS,Math.min(request.dispatched_at+MAX_DISPATCH_LEAD_MS+SKEW_MS,request.finished_at===null?Infinity:request.finished_at+2*SKEW_MS)).filter(start=>!(start.sample_id===row.sample_id&&start.node===row.node)&&start.node===request.node&&request.dispatched_at<=start.time+SKEW_MS&&start.time-request.dispatched_at<=MAX_DISPATCH_LEAD_MS&&(request.finished_at===null||request.finished_at>=start.time-SKEW_MS));
     const unresolved=competing.filter(start=>!independentlyOwned(start,proposal,row));
     if(unresolved.length){
       if(inCohort(row)){

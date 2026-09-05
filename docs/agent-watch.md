@@ -105,3 +105,8 @@ The proposed [Session Rescue roadmap](roadmap.md#planned-opt-in-session-rescue)
 specifies separate observation and automatic-resume permissions, client-side
 execution guards and visible outcomes. It is future work; enabling Agent Watch
 today does not enable session control or transcript inspection.
+
+The [Pi integration plan](pi-integration-plan.md) makes this a first-class,
+optional harness relationship: independent status, content-review, rescue and
+Priority Lens permissions. It extends this advisory foundation without making
+Pi or an extra companion mandatory for ordinary DSG inference.

@@ -47,6 +47,10 @@ An optional [Agent Watch](docs/agent-watch.md) heartbeat also lets DSG and Genie
 tell local tool work, waiting inside DSG, and “the client says it is waiting but
 no request reached this gateway” apart—without sending task or conversation text.
 
+Planned next: a [first-class optional Pi integration](docs/pi-integration-plan.md)
+for guarded Session Rescue and separately opted-in Priority Lens. Neither session
+control nor request-content review is enabled by today's Agent Watch.
+
 **Follow the project:** [recent work in plain English](WORKLOG.md) ·
 [detailed changelog](CHANGELOG.md) · [current work plan](docs/current-work-plan.md) ·
 [detailed roadmap](docs/roadmap.md).

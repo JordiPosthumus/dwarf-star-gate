@@ -10,6 +10,18 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Designed a first-class, optional Pi relationship.** Retained Priority Lens
+  and Session Rescue as explicit feature tracks with a shared versioned contract
+  but separate permissions. Start rescue with settled routine check-ins, not
+  process restarts; the client owns guarded follow-up and exactly-once receipts.
+  No content reading or session control is enabled by this plan.
+
+- **Made the offline attribution audit cheaper without changing its answers.**
+  Worker/time indexes narrow candidate scans; exact ownership and collision
+  guards remain. Boundary, shuffled-order and linear-scan tests preserve missing
+  and anonymous competitors. Frozen-data comparison retains the full report,
+  not merely the total number of matches. This does not change inference routing.
+
 - **Made prediction analytics understandable and stable.** Separate question,
   method, checkpoint and pinned version; keep study dots fixed until an explicit
   refresh. Explain missing pairs and bounded reader selection without suggesting

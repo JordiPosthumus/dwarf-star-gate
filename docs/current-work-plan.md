@@ -23,9 +23,9 @@ Private deployment receipts and measurements stay out of this public plan.
 
 ## Next, in order
 
-1. **Finish the hardening and efficiency pass.** Complete the outstanding
-   attribution-audit indexing optimization with boundary/order/parity tests.
-   Retain ambiguous-overlap and tied-revision abstentions. Check fresh ordinary
+1. **Finish the hardening and efficiency pass.** Continue focused, measured
+   milestones. The attribution-audit index now has boundary/order/parity tests;
+   retain ambiguous-overlap and tied-revision abstentions. Check fresh ordinary
    traffic across process epochs; synthetic speed gains alone are not live proof.
    Continue focused lifecycle/privacy/retention checks rather than broad rewrites.
 2. **Make cache misses actionable.** Replace the vague machine-card cache summary
@@ -70,7 +70,11 @@ Private deployment receipts and measurements stay out of this public plan.
    and queued requests, with uncertainty and coverage; it cannot predict future
    agent turns or the duration of an entire project.
 
-## Later opt-ins, not implicit permission
+## Explicit feature tracks: design now, activate only after proof
+
+These are retained goals, not forgotten wishlist items. The
+[first-class optional Pi integration plan](pi-integration-plan.md) connects their
+delivery while keeping permissions and ordinary gateway operation independent.
 
 - **[Priority Lens](roadmap.md#future-opt-in-priority-lens):** persistent consent
   to bounded request snippets, explainable prioritization and user feedback.
@@ -80,6 +84,9 @@ Private deployment receipts and measurements stay out of this public plan.
   I continue the authorized work?” may qualify; missing human decisions, new
   authority, active tools and unknown execution state do not. Agent Watch already
   observes; automatic session control and a packaged Hermes adapter remain work.
+  Start with settled routine continuation check-ins, not process restarts or
+  ambiguous failed requests. Deliver review → approved single-session follow-up
+  → separately opted-in automatic rescue, with real Pi race/idempotency tests.
 - **[Four cache-source alternatives](cache-continuity-shadow.md):** comparison
   logic exists, but live use needs exact rendered-prefix identity, compatible
   inventory, an approved transfer/import protocol and measured components.

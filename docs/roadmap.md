@@ -546,6 +546,10 @@ current stale evidence and an action-ledger receipt; silence alone grants no pow
 
 ### Planned opt-in: Session Rescue
 
+Delivery is linked to the [optional Pi integration contract](pi-integration-plan.md),
+with separate capabilities and real-client acceptance tests. Start with an easy
+settled continuation check-in, not process restart or unknown dispatched failure.
+
 **User-requested, not implemented or enabled.** Let Genie study apparently stalled
 Pi sessions and, when independently safe and explicitly authorized, help the
 owning agent resume its existing task. This extends Agent Watch; it does not make
@@ -712,6 +716,10 @@ not a disguised cache transfer. The Genie could propose a move; an independently
 validated deterministic mechanism would enforce the handover.
 
 ## Future opt-in: Priority Lens
+
+The [Pi integration plan](pi-integration-plan.md) explains how optional bounded
+intent can arrive before body reading without becoming a dependency for other
+harnesses. Session Rescue and Priority Lens remain separate permissions.
 
 **Priority Lens** is the proposed UI name for intent-aware dispatch. When the
 operator explicitly enables its persistent setting, DSG may give Gate Genie a

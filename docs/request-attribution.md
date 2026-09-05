@@ -148,6 +148,15 @@ never establish that independent ownership, so circular inference remains blocke
 Anonymous starts, conflicting lifecycle records, missing usage and inconsistent
 epochs continue to abstain. This changes only the offline later-evidence view.
 
+The offline join indexes validated dispatches and engine starts by worker/time
+before applying those same exact predicates. Inclusive, padded candidate ranges
+reduce repeated full scans; they do not drop source records, relax clock bounds,
+change ownership or alter the online correlator. Regression tests cover both
+skew/lead endpoints, finish bounds, ties, shuffled workers, unfinished requests,
+anonymous starts and immutable inputs. Performance comparisons must also preserve
+the complete report, including abstention reasons; a faster audit is not a claim
+of faster inference or more certain attribution.
+
 This measures evidence yield on ordinary traffic; it does not validate a cache
 hit or upgrade a candidate into protocol identity. Exact attribution would still
 require a stock DS4 protocol signal, such as safely propagating an opaque request

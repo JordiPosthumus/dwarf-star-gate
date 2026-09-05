@@ -1,5 +1,15 @@
 # Changelog
 
+## Plan optional Pi capabilities and index offline attribution
+
+- Specify first-class Pi integration with independent status, bounded context
+  review, Session Rescue and Priority Lens consent. Document staged real-client
+  validation, client-owned idempotency and ordinary-gateway independence.
+- Index offline request/engine candidate windows by worker and time while
+  retaining exact matching predicates, anonymous starts and collision vetoes.
+- Cover inclusive clock edges, completed/unfinished windows, shuffled nodes,
+  duplicate times and unchanged inputs; preserve full-report parity.
+
 ## Clarify prediction evidence and current work
 
 - Separate timing questions, methods, checkpoints and pinned model versions;
