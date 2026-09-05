@@ -1,5 +1,17 @@
 # Changelog
 
+## Separate future remaining-time accuracy by elapsed service age
+
+- Add fixed offline diagnostic slices before 30 seconds, from 30 seconds to
+  five minutes, and after at least five minutes. Keep missing ages unknown,
+  empty scores null, and model/baseline errors request-balanced within each slice.
+- Regress boundary membership, elapsed versus remaining-target semantics,
+  repeated progress weighting, unavailable ages and empty future evidence.
+  Preserve aggregate scores, feature builders, candidate hashes and live gates.
+- Record a matched frozen replay on 20 later requests: corrected delivery timing
+  did not establish an overall accuracy gain. Long-job support remains sparse;
+  no candidate was promoted and no production setting or service changed.
+
 ## Keep contradictory attribution evidence from manufacturing matches
 
 - Require exact engine-start timestamp, process epoch/confidence and token-tuple

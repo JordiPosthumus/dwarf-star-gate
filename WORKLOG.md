@@ -10,6 +10,13 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Checked both frozen occupancy models on genuinely later traffic.** A shared
+  snapshot of 20 new completed requests found no meaningful overall gain from
+  corrected delivery semantics; both models still underestimated the two longer
+  jobs at admission. Added offline remaining-error slices by elapsed service age
+  so early forecasts cannot be confused with forecasts made minutes into a job.
+  Original scores and artifact hashes reproduce unchanged. No model was promoted.
+
 - **Hardened later-evidence attribution against contradictions.** Reproduced two
   false-match cases in the offline auditor: mismatched engine-start identity and
   a conflicting request being discarded from the candidate set. Both now abstain.

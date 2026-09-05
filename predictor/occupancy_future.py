@@ -55,6 +55,28 @@ def input_support(model, training_rows, future_rows, hardware_names):
             'note':'Split counts are structural use, not importance or causal benefit. Coverage is per forecast point; no future-data fitting.'}
 
 
+def elapsed_slices(training_rows, rows, predictions):
+    """Fixed diagnostic horizons, not outcome-selected cohorts or tuning gates.
+
+    Remaining target duration is not how long a request has already occupied a
+    worker. Keep those axes separate; rebalance jobs within each age slice, and
+    retain unavailable ages as unknown instead of making them fresh dispatches.
+    """
+    bands={name:[] for name in ('under_30s','30s_to_5m','5m_plus','unknown')}
+    for row,prediction in zip(rows,predictions,strict=True):
+        age=row['features'].get('elapsed_s')
+        valid=type(age) in (int,float) and math.isfinite(age) and age>=0
+        name='unknown' if not valid else 'under_30s' if age<30 else '30s_to_5m' if age<300 else '5m_plus'
+        bands[name].append((row,prediction))
+    result={}
+    for name,pairs in bands.items():
+        selected=[row for row,_ in pairs];estimates=[p for _,p in pairs]
+        result[name]={'points':len(selected),
+                      'metrics':metrics(selected,estimates) if selected else None,
+                      'baselines':baseline(training_rows,selected)[0] if selected else None}
+    return result
+
+
 def freeze(candidate_path,training_path,receipt_path):
     candidate,ch=read_json(candidate_path);training,th=read_json(training_path)
     contracts(candidate,training)
@@ -103,13 +125,16 @@ def evaluate(candidate_path,training_path,receipt_path,prepared_path):
         tr,_=split([r for r in training['rows'] if r['kind']==kind],candidate['reports'][kind]['cutoff'])
         report={'status':'no_future_labels','target_coverage':target_coverage(rows),
                 'input_support':input_support(model,tr,rows,training.get('groups',{}).get('hardware',[]))};result['reports'][kind]=report
-        if not rows:continue
+        if not rows:
+            if kind=='remaining':report['by_elapsed']=elapsed_slices(tr,[],[])
+            continue
         if not tr:raise ValueError('Frozen training partition is empty')
         predictions=[exported_prediction(model,r['features']) for r in rows]
         if any(not math.isfinite(p) for p in predictions):raise ValueError('Non-finite prediction')
         report.update(status='observed_not_promoted',metrics=metrics(rows,predictions),baselines=baseline(tr,rows)[0],
             terminal_classes={label:metrics([r for r in rows if r['terminal_class']==label],[p for r,p in zip(rows,predictions) if r['terminal_class']==label])
                 if any(r['terminal_class']==label for r in rows) else None for label in ('normal','output_limited')})
+        if kind=='remaining':report['by_elapsed']=elapsed_slices(tr,rows,predictions)
         # The updated model is called both after upload and after embeddings.
         # Keep those causal stages visible rather than hiding one behind an average.
         report['by_stage']={}

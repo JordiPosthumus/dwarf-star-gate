@@ -88,6 +88,29 @@ placement gate failed; there were no hour-plus holdout labels. Both artifacts
 were frozen separately, not deployed. This is mixed preliminary evidence, not
 a routing-speed improvement or a reason to retire deterministic fallbacks.
 
+The first paired **future** check used 20 newly admitted, completed requests
+across seven sessions, all admitted after both artifacts were frozen. Both
+versions used one shared raw snapshot, identical labels/forecast points and
+unchanged artifact hashes. Earlier evidence still supplied causal history; it
+was not scored as new traffic. Request-balanced mean absolute error was:
+
+| Forecast | Original occupancy V1 | Delivery-aware occupancy V2 |
+| --- | ---: | ---: |
+| Admission total service | 82.3 s | 82.3 s |
+| Updated total service | 71.3 s | 73.1 s |
+| Remaining service | 40.3 s | 40.1 s |
+
+This did **not** establish an overall improvement. The two five-minute-plus jobs
+were substantially underestimated at admission: mean absolute error was 330.8 s
+versus 291.4 s, still poor for either version. There were no hour-plus jobs.
+After those two jobs had already run for five minutes, remaining-time error was
+42.2 s versus 43.2 s, over only 11 forecast points from those same two jobs.
+That is a different age/target slice, not evidence that 11 independent long jobs
+were handled well. All existing holdout and unseen-session gates still apply;
+neither artifact was promoted. These are frozen offline replays, not logged live
+forecasts or measured routing benefits. The inspected future cohort is now
+research evidence, not an unseen test for any successor tuned using it.
+
 ### Frozen occupancy future audit
 
 #### Experiments after a collector change
@@ -176,6 +199,19 @@ inputs that change when embeddings arrive. Stage counts can contain the same job
 they must not be added and called independent requests. Use these diagnostics to
 design the next training experiment, never to retune the frozen model on its
 already-examined future cohort or bypass the activation gates.
+
+For remaining forecasts, `by_elapsed` separately reports points made **before
+30 seconds**, **from 30 seconds to five minutes**, and **after at least five
+minutes** of service. These fixed diagnostic boundaries use the causal
+`elapsed_s` feature, not the remaining target or eventual total duration.
+Missing/unusable ages stay in `unknown`; empty slices have null scores, not zero
+error. Each slice reports its point count and request-balanced model/baseline
+errors, with unique request/session counts. The same job can enter several age
+slices, so do not add their request counts. Changing populations and shorter
+remaining targets also mean a lower error in an older slice is not by itself
+proof that the model learned to recognize long work. This offline report includes
+all retained progress points; it is not the UI's single first-at-or-after-30s plot.
+It does not change feature builders, frozen artifacts, tuning or promotion gates.
 
 ## Current lifecycle
 

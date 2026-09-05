@@ -153,3 +153,44 @@ class OccupancyFutureTests(unittest.TestCase):
             else:self.future['snapshot']['created_at']='2020-01-01T00:00:00Z'
             with self.assertRaises(ValueError):self.evaluate()
             self.future=previous
+
+    def test_remaining_age_slices_use_elapsed_not_remaining_target(self):
+        self.future['snapshot']['created_at']=dt.datetime.fromtimestamp((self.cut+7200000)/1000,dt.timezone.utc).isoformat()
+        self.future['rows']=[{**self.row('new',self.cut+1,self.cut+3600000,'remaining'),
+            'features':{'x':1,'elapsed_s':age},'target_s':target}
+            for age,target in [(0,100),(29.999,100),(30,10),(299.999,10),(300,10)]]
+        original=copy.deepcopy(self.future)
+        report=self.evaluate()['reports']['remaining'];bands=report['by_elapsed']
+        self.assertEqual(set(bands),{'under_30s','30s_to_5m','5m_plus','unknown'})
+        for name,points,error in [('under_30s',2,90),('30s_to_5m',2,0),('5m_plus',1,0)]:
+            self.assertEqual(bands[name]['points'],points)
+            self.assertEqual(bands[name]['metrics']['requests'],1)
+            self.assertEqual(bands[name]['metrics']['mae_s'],error)
+            self.assertEqual(bands[name]['baselines']['worker_mean']['mae_s'],error)
+        self.assertEqual(bands['unknown']['points'],0)
+        self.assertIsNone(bands['unknown']['metrics']);self.assertIsNone(bands['unknown']['baselines'])
+        self.assertEqual(report['metrics']['requests'],1)
+        self.assertEqual(self.future,original)
+        self.assertNotIn('request_id',json.dumps(bands))
+        self.assertNotIn('by_elapsed',self.evaluate()['reports']['admission'])
+
+    def test_elapsed_slices_balance_jobs_and_keep_missing_age_unknown(self):
+        rows=[{**self.row('a',1,100,'remaining'),'target_s':30,'features':{'elapsed_s':30+i}} for i in range(20)]
+        rows.append({**self.row('b',1,100,'remaining'),'features':{'elapsed_s':100}})
+        tr=[self.row('train',1,100,'remaining')]
+        bands=audit.elapsed_slices(tr,rows,[10]*len(rows))
+        self.assertEqual(bands['30s_to_5m']['points'],21)
+        self.assertEqual(bands['30s_to_5m']['metrics']['requests'],2)
+        self.assertAlmostEqual(bands['30s_to_5m']['metrics']['mae_s'],10)
+        self.assertAlmostEqual(bands['30s_to_5m']['baselines']['worker_mean']['mae_s'],10)
+        unknown=[{**self.row(str(i),1,100,'remaining'),'features':{'elapsed_s':value}}
+                 for i,value in enumerate([None,'30',True,-1,float('nan'),float('inf')])]
+        unknown.append(self.row('missing',1,100,'remaining'))
+        bands=audit.elapsed_slices(tr,unknown,[10]*len(unknown))
+        self.assertEqual(bands['unknown']['points'],7)
+        self.assertEqual(bands['unknown']['metrics']['requests'],7)
+        self.assertEqual(bands['under_30s']['points'],0)
+        self.future['rows']=[]
+        empty=self.evaluate()['reports']['remaining']
+        self.assertEqual(empty['status'],'no_future_labels')
+        self.assertTrue(all(v['points']==0 and v['metrics'] is None for v in empty['by_elapsed'].values()))
