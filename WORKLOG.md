@@ -10,6 +10,12 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Made training-input limits visible and cheap to check.** A read-only size
+  audit reports the aggregate budget and overage. Preparation rejects oversized
+  input before payload reads, while rechecking opened files for growth and
+  replacement. No records are removed, no training window is chosen and no
+  model or routing gate is changed.
+
 - **Tested Pi's continuation primitive before granting rescue authority.** A
   disposable real-SDK fixture preserves prior history/tool results and labels a
   custom cue, while proving repeated delivery starts another turn and deferred

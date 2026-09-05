@@ -1,5 +1,17 @@
 # Changelog
 
+## Preflight training-input size without reading private payloads
+
+- Add `training-input:audit -- --data DIRECTORY` with sorted daily-file byte
+  counts, the existing aggregate limit, exact overage and explicit exit status.
+  Metadata readiness is not JSON, row-budget or model-quality validation.
+- Reject over-budget preparation before payload allocation/parsing and snapshot
+  creation; retain actual opened-size checks, including growth after preflight.
+  Reject nonregular descriptor replacements without waiting on FIFO writers.
+- Test the exact size boundary, empty input, payload-free rejection, growth,
+  symlink/FIFO replacement, unchanged snapshots and the real CLI. Preserve
+  source history, trainer budgets, cohort selection and activation policies.
+
 ## Exercise the Pi custom-continuation contract without enabling rescue
 
 - Add an optional, version-pinned real Pi SDK fixture using disposable settings,

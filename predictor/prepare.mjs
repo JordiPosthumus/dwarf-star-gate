@@ -7,6 +7,7 @@ import {featureContract,featureBuilderHash,CURRENT_FEATURE_SCHEMA} from '../ds4-
 import {isMain} from '../ds4-gateway/config.mjs';
 import {replayOccupancy} from './occupancy.mjs';
 import {replayDeliveryOccupancy} from './occupancy-delivery.mjs';
+import {trainingInputAudit,TRAINING_INPUT_LIMIT,TRAINING_INPUT_LIMIT_ERROR} from './training-input.mjs';
 const occupancySchemas=new Set(['dsg-occupancy-v1','dsg-occupancy-v2']);
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 export function occupancyFeatureHash(schema){
@@ -44,9 +45,26 @@ export const selectOccupancyCohort=selectAdmissionCohort;
 export function prepare(data,profiles,output,schema=CURRENT_FEATURE_SCHEMA,{cohortSince=null}={}) {
   cohortTime(cohortSince,schema);
   if(fs.existsSync(output))throw new Error('Candidate directory already exists');
-  const files=fs.readdirSync(data).filter(f=>/^routing-\d{4}-\d{2}-\d{2}\.jsonl$/.test(f)).sort(),events=[],blobs=[];let bytes=0;
-  for(const name of files){const full=path.join(data,name);if(!fs.lstatSync(full).isFile())throw new Error('Evidence must be a regular file');const fd=fs.openSync(full,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);try{const size=fs.fstatSync(fd).size;bytes+=size;if(bytes>128*1024**2)throw new Error('Training snapshot exceeds 128 MiB; no input silently discarded');const b=Buffer.alloc(size);let n=0;while(n<size){const r=fs.readSync(fd,b,n,size-n,n);if(!r)throw new Error('Evidence shrank during snapshot');n+=r;}blobs.push({name,bytes:b});const text=b.toString('utf8'),end=text.lastIndexOf('\n');for(const line of text.slice(0,end<0?0:end).split('\n').filter(Boolean))events.push(JSON.parse(line));}finally{fs.closeSync(fd);}}
-  if(!files.length)throw new Error('No evidence files');
+  const audit=trainingInputAudit(data),events=[],blobs=[];let bytes=0;
+  if(audit.state==='empty')throw new Error('No evidence files');
+  if(audit.state==='over_budget')throw new Error(TRAINING_INPUT_LIMIT_ERROR);
+  for(const {name} of audit.files){
+    // Metadata can race an append/replacement. Validate the opened descriptor
+    // and actual aggregate again before allocating; a replaced FIFO must not wait.
+    const fd=fs.openSync(path.join(data,name),fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK);
+    try{
+      const stat=fs.fstatSync(fd);
+      if(!stat.isFile())throw new Error('Evidence must be a regular file');
+      const size=stat.size;
+      if(!Number.isSafeInteger(size)||size<0)throw new Error('Invalid evidence size');
+      bytes+=size;if(bytes>TRAINING_INPUT_LIMIT)throw new Error(TRAINING_INPUT_LIMIT_ERROR);
+      const b=Buffer.alloc(size);let n=0;
+      while(n<size){const r=fs.readSync(fd,b,n,size-n,n);if(!r)throw new Error('Evidence shrank during snapshot');n+=r;}
+      blobs.push({name,bytes:b});
+      const text=b.toString('utf8'),end=text.lastIndexOf('\n');
+      for(const line of text.slice(0,end<0?0:end).split('\n').filter(Boolean))events.push(JSON.parse(line));
+    }finally{fs.closeSync(fd);}
+  }
   if(!fs.lstatSync(profiles).isFile())throw new Error('Inventory must be a regular file');const inventoryBytes=fs.readFileSync(profiles),inventory=JSON.parse(inventoryBytes);
   if(inventory.schema!==1||!inventory.workers)throw new Error('Versioned worker inventory required');
   const occupancy=occupancySchemas.has(schema);

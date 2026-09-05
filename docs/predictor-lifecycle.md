@@ -743,6 +743,29 @@ retain their deterministic placement fallback gate. Status exposes a separate
 it when no runtime fault takes precedence. Training warnings clear on successful
 training or process restart; the last 30 action receipts remain durable.
 
+Check input growth without reading request evidence or launching training:
+
+```sh
+npm run training-input:audit -- --data runtime/training
+```
+
+This metadata-only command lists matching daily filenames and byte counts,
+the unchanged 128 MiB aggregate limit and exact overage. Exit code 0 means only
+`within_budget`; exit code 1 accompanies `empty`, `over_budget` or an error.
+It does **not** validate JSON, count prepared rows, certify model quality or
+guarantee a later fit will succeed. Treat the report as private operational data.
+Preparation uses the same metadata preflight to reject an oversized collection
+before reading/parsing payloads or creating its snapshot. Opened files are still
+checked for type and aggregate size in case they changed after that preflight;
+replaced symlinks are not followed and a replaced FIFO cannot block the reader.
+The existing pinned-size snapshot and incomplete-trailing-line behavior remain.
+The audit is not an atomic snapshot of a growing directory.
+
+An over-budget report requires a reviewed scalable training-input policy, not
+deleting source history to get a green status. The offline `--cohort-since`
+selector operates **after full replay**, so it does not reduce raw input bytes.
+No rolling window, sampling, retention change or larger budget is selected here.
+
 Starting training is transactional: if the initial state/receipt cannot be
 persisted, no subprocess launches, the pending run and cooldown return to their
 previous values, and the busy flag is released. A later request can try again

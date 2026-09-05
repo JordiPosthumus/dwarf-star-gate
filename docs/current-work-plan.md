@@ -27,6 +27,8 @@ Completed hardening slice: optional training warnings are separate from runtime
 faults, including real snapshot-limit regression coverage and private diagnostics
 before snapshot creation. Failed startup writes also release the false busy
 lock and restore prior pending/cooldown state before any process launches.
+A metadata-only input audit and preparation preflight now expose aggregate
+size limits before payload parsing, with opened-file race checks retained.
 Growing training evidence still needs an explicitly
 reviewed input-window policy; no retention, preparation-budget or cadence change
 is implied by this fix.
