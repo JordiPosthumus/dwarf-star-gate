@@ -743,6 +743,11 @@ retain their deterministic placement fallback gate. Status exposes a separate
 it when no runtime fault takes precedence. Training warnings clear on successful
 training or process restart; the last 30 action receipts remain durable.
 
+Starting training is transactional: if the initial state/receipt cannot be
+persisted, no subprocess launches, the pending run and cooldown return to their
+previous values, and the busy flag is released. A later request can try again
+after storage recovers; a rejected start is not a running or completed fit.
+
 Failures save at most 1 MiB of private process diagnostics in the candidate's
 `failure.log`, including when preparation failed before creating its snapshot.
 The directory/file use private permissions; existing logs are not overwritten

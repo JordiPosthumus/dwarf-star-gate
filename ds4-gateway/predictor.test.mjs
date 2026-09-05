@@ -318,6 +318,19 @@ test('operator recipe default is unchanged and unknown recipes cannot launch a p
   p.control({action:'train'});assert.equal(selected,DEFAULT_RECIPE);
 });
 
+test('failed training-start persistence releases busy state and preserves the prior durable state',t=>{
+  const {p,dir}=rig(t);p.persist();const before=structuredClone(p.state),disk=fs.readFileSync(path.join(dir,'state.json'),'utf8');
+  let launches=0;p.runTraining=async()=>{launches++;};
+  const persist=p.persist.bind(p);p.persist=()=>{throw new Error('synthetic storage failure');};
+  assert.throws(()=>p.control({action:'train'}),/synthetic storage failure/);
+  assert.equal(launches,0);assert.equal(p.busy,false);assert.deepEqual(p.state,before);
+  assert.equal(fs.readFileSync(path.join(dir,'state.json'),'utf8'),disk);assert.equal(fs.existsSync(path.join(dir,'actions.jsonl')),false);
+  p.persist=persist;
+  const started=p.control({action:'train'});assert.equal(started.state,'running');assert.equal(launches,1);assert.equal(p.busy,true);
+  assert.equal(p.state.receipts.length,1);assert.equal(p.state.receipts[0].status,'running');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir,'state.json'),'utf8')).training.id,started.id);
+});
+
 test('training checks the emitted recipe before loading or declaring a candidate completed',async t=>{
   const {p,dir}=rig(t),destination=path.join(dir,'candidates','candidate-wrong');
   fs.mkdirSync(destination);fs.writeFileSync(path.join(destination,'candidate.json'),JSON.stringify({training_recipe:{id:'standard-v1',policy_sha256:RECIPE_POLICY_SHA256}}));

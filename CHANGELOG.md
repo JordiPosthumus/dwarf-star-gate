@@ -1,5 +1,14 @@
 # Changelog
 
+## Release training startup state after a failed write
+
+- Roll back pending training, cooldown and receipt state when the initial
+  persistence fails, and release the busy flag before propagating the error.
+  No subprocess launches for a rejected start; a later request can retry after
+  storage recovers. Existing successful-start cooldown and validation remain.
+- Regression verifies unchanged durable state, absence of a false action
+  journal entry and a successful subsequent start.
+
 ## Isolate optional training failures from runtime safety gates
 
 - Failed retraining no longer sidelines an otherwise validated placement model;

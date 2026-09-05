@@ -25,7 +25,9 @@ Private deployment receipts and measurements stay out of this public plan.
 
 Completed hardening slice: optional training warnings are separate from runtime
 faults, including real snapshot-limit regression coverage and private diagnostics
-before snapshot creation. Growing training evidence still needs an explicitly
+before snapshot creation. Failed startup writes also release the false busy
+lock and restore prior pending/cooldown state before any process launches.
+Growing training evidence still needs an explicitly
 reviewed input-window policy; no retention, preparation-budget or cadence change
 is implied by this fix.
 

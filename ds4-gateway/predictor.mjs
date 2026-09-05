@@ -266,7 +266,11 @@ export class Predictor {
     if(this.busy||this.closed||!this.configured)throw new Error('Predictor trainer is unavailable or busy');
     if(this.now()-this.state.last_train_at<60000)throw new Error('Training cooldown; no duplicate job started');
     const name='candidate-'+this.now()+'-'+randomUUID().slice(0,8),destination=path.join(this.directory,'candidates',name);
-    this.busy=true;this.state.last_train_at=this.now();this.state.training={id:name,actor,recipe_id:recipeId,recipe_policy_sha256:RECIPE_POLICY_SHA256,started_at:this.now(),new_requests:this.state.new_requests};this.receipt(actor,'train','running','Frozen data, reviewed recipe, cross-validated tree count and two CPU threads',{candidate_id:name,recipe_id:recipeId});
+    this.busy=true;
+    try{this.transition(()=>{
+      this.state.last_train_at=this.now();this.state.training={id:name,actor,recipe_id:recipeId,recipe_policy_sha256:RECIPE_POLICY_SHA256,started_at:this.now(),new_requests:this.state.new_requests};
+      this.receipt(actor,'train','running','Frozen data, reviewed recipe, cross-validated tree count and two CPU threads',{candidate_id:name,recipe_id:recipeId});
+    });}catch(error){this.busy=false;throw error;}
     const initial={id:name,actor,state:'running',recipe_id:recipeId,started_at:this.state.training.started_at};void this.runTraining(destination,name,actor,recipeId);return initial;
   }
   async runProcess(executable,args,timeout) {

@@ -10,6 +10,10 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Released a false “trainer busy” lock.** A failed initial state write could
+  leave training permanently busy without launching a process. Rejected starts
+  now restore the previous state so storage recovery permits a later attempt.
+
 - **Kept optional training failures independent of serving.** A failed fit must
   not disable a validated predictor, and a successful fit must not erase an
   unrelated runtime fault. Early snapshot failures now leave private diagnostics
