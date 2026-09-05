@@ -290,10 +290,16 @@ test('patient calls retain same-session ordering across quarantine and cannot di
 test('moving an undispatched call into recovery waiting does not reset its original deadline',async t=>{
   const r=await rig(t,1,{queue_timeout_ms:400});
   const failed=r.request('{"fatal_error":true,"delay":250}','a');await until(()=>r.gateway.stats().active===1);
-  const start=performance.now(),next=r.request('{}','a');await until(()=>r.gateway.stats().queued===1);await failed;
-  await until(()=>r.gateway.stats().continuity.waiting===1);
+  const next=r.request('{}','a');await until(()=>r.gateway.nodes[0].queue.length===1);
+  const job=r.gateway.nodes[0].queue[0],timer=job.queueTimer,admitted=job.createdMono;
+  await failed;
   const response=await next,error=JSON.parse(response.body).error;
-  assert.equal(response.status,504);assert.ok(performance.now()-start<590,'parking must not start a second 400ms allowance');
+  // Parking can last less than one polling interval under CI load. Inspect the
+  // retained job after timeout, not a transient waiting count or wall-clock SLA.
+  assert.equal(job.waitReason,'worker_quarantined','the request passed through recovery waiting');
+  assert.equal(job.queueTimer,timer,'parking must retain the original deadline timer');
+  assert.equal(job.createdMono,admitted,'parking must retain the original admission clock');
+  assert.equal(job.queueTimeoutMs,400);assert.equal(response.status,504);
   assert.match(error.message,/^DSG Report: .*400 milliseconds/);assert.match(error.message,/configurable in DSG/);
   assert.equal(error.continuity.dispatch_state,'not_dispatched');assert.equal(r.backends[0].records.length,1);
 });

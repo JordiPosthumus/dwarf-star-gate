@@ -1,5 +1,13 @@
 # Changelog
 
+## Stabilize recovery-wait deadline regression evidence
+
+- Inspect the retained request after its real HTTP timeout: recovery-wait reason,
+  original timer identity, admission clock and configured allowance must persist.
+- Remove reliance on polling a short-lived waiting count or an event-loop latency
+  upper bound. The monotonic timer's exact boundary tests remain unchanged.
+- Production gateway code, timeouts and request behavior are untouched.
+
 ## Audit first-progress remaining-time estimates
 
 - Add an offline first-observed-progress comparison before 30 seconds, aligned

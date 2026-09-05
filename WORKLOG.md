@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Removed a deadline-test observation race.** Verify that recovery waiting
+  retains the original request timer and admission clock after timeout, instead
+  of polling a fleeting intermediate state. Keep exact deadline-timer tests and
+  real HTTP rejection checks; no production timeout or gateway behavior changed.
+
 - **Separated early ETA quality from all-progress averages.** Audit the first
   actual update before 30 seconds with one vote per request and explicit missing
   or conflicting-evidence counts. Distinguish admission from observation clocks;
