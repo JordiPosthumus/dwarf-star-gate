@@ -110,6 +110,37 @@ test('conflicting gateway candidates cannot disappear and manufacture a unique o
   assert.equal(negative.reconciliation_block_reasons.gateway_evidence_conflict,1);
 });
 
+test('malformed lifecycle timestamps cannot erase a possible competing request',()=>{
+  const requestC='33333333-3333-4333-8333-333333333333';
+  for(const time of [undefined,null,'not-a-time',0,'1970-01-01T00:00:00.000Z']){
+    const log=[...gateway(),
+      {event:'request_dispatched',node:'spark-a',request_id:requestC,time},
+      {event:'request_finished',node:'spark-a',request_id:requestC,time:iso(base+2500),outcome:'complete',usage:{prompt_tokens:1000,cached_tokens:900}}];
+    const before=structuredClone(log),original=overlap();
+    const report=reconcileAttributionRows([original],[engine()],log,{complete:true});
+    assert.equal(report.reconciled_overlaps,0,`invalid dispatch ${String(time)} cannot remove a competing window`);
+    assert.equal(report.reconciliation_block_reasons.source_incomplete,1);
+    assert.deepEqual(report.summary.counts,{corroborated:0,candidate:0,abstained:1});
+    assert.deepEqual(log,before);assert.equal(original.status,'abstained');
+    assert.ok(!JSON.stringify(report).includes(requestC));
+  }
+  const noFinishTime=gateway();delete noFinishTime.at(-1).time;
+  assert.equal(reconcileAttributionRows([overlap()],[engine()],noFinishTime,{complete:true}).reconciliation_block_reasons.source_incomplete,1);
+});
+
+test('file reconciliation counts invalid lifecycle timestamps as incomplete evidence',t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-attribution-time-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const metricFile=path.join(dir,'metrics-2026-09-04.jsonl'),gatewayLog=path.join(dir,'gateway.log');
+  fs.writeFileSync(metricFile,[earlyEngine(),engine(),overlap()].map(JSON.stringify).join('\n')+'\n');
+  const log=[...gateway(),{event:'request_dispatched',node:'spark-a',request_id:'33333333-3333-4333-8333-333333333333',time:'invalid'}];
+  fs.writeFileSync(gatewayLog,log.map(JSON.stringify).join('\n')+'\n');
+  const report=auditAttributionReconciliation(dir,gatewayLog);
+  assert.equal(report.source_complete,false);assert.equal(report.gateway_invalid_records,1);
+  assert.equal(report.reconciled_overlaps,0);assert.equal(report.reconciliation_block_reasons.source_incomplete,1);
+  assert.deepEqual(report.with_later_gateway_evidence,report.recorded);
+  assert.equal(fs.readFileSync(gatewayLog,'utf8'),log.map(JSON.stringify).join('\n')+'\n');
+});
+
 test('fresh-start cohorts retain earlier ownership and competing-start evidence',()=>{
   const original=overlap(),old=overlap(11,{engine_started_at:base-1,request_id:requestB,status:'corroborated',reason:'usage_match',confidence:'high_candidate'});
   const options={complete:true,sinceMs:base};

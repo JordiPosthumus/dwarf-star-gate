@@ -122,6 +122,14 @@ consistency checks in addition to `source_complete`, which describes bounded fil
 read/parse coverage, not a guarantee that all records agree. Original historical
 corroborations and abstentions are never rewritten by this offline audit.
 
+Every dispatch/finish used by reconciliation also needs a valid positive clock,
+not just a recognized event name and request ID. Missing or invalid lifecycle
+timestamps make the file view `source_complete:false` and increment
+`gateway_invalid_records`; the direct row API likewise preserves the recorded
+view. Silently skipping an undated dispatch could remove a possible competitor
+and manufacture a unique owner. The general telemetry sanitizer remains unchanged;
+this stricter requirement belongs to the offline ownership-evidence join.
+
 A competing start can be excluded only when its **original recorded** attribution
 already corroborates a different, uniquely owned, successfully completed request:
 its engine timestamp, process epoch, prompt/cache tuple and gateway lifetime must

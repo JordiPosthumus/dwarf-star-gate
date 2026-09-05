@@ -10,6 +10,14 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Kept missing lifecycle clocks from manufacturing request ownership.** A
+  reproduced audit bug silently skipped an undated competing dispatch and could
+  turn an overlap into a unique match. Both file and direct-row reconciliation
+  now retain abstention on malformed clock evidence. Fresh ordinary-traffic review
+  independently recovered 27 historical overlaps, including 19 on the Mac;
+  the complete frozen report stays identical after this validation fix. Remaining
+  competing starts stay unknown, not training labels or replay permission.
+
 - **Rejected impossible cache compatibility profiles.** Reproduced matching
   negative/oversized header fields being accepted as compatible. Both sides now
   require valid encoded ranges; invalid evidence stays unknown even when the

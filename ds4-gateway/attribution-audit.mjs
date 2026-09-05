@@ -76,6 +76,13 @@ function safeCollisionStart(raw) {
     backend_epoch_confidence:['strong','bounded'].includes(raw.backend_epoch_confidence)?raw.backend_epoch_confidence:'unavailable'};
 }
 function safeStart(raw) {const row=safeCollisionStart(raw);return row?.sample_id?row:null;}
+function safeLifecycle(raw) {
+  const event=safeGatewayEvent(raw),at=Date.parse(event?.time??'');
+  // safeGatewayEvent is a permissive telemetry sanitizer. A lifecycle join
+  // additionally needs its identity AND clock; silently dropping a malformed
+  // dispatch could erase a competing owner and manufacture a unique match.
+  return event&&UUID.test(event.request_id??'')&&ID.test(event.node??'')&&Number.isFinite(at)&&at>0?event:null;
+}
 function latestRows(rows) {
   const latest=new Map();
   for(const raw of rows){const row=safeAttribution(raw);if(!row)continue;const key=`${row.node}:${row.sample_id}`,prior=latest.get(key);if(!prior||row.observed_at>=prior.observed_at)latest.set(key,row);}
@@ -92,7 +99,7 @@ export function reconcileAttributionRows(attributionRows=[],engineRows=[],gatewa
   // in every reconciliation check; dropping them could manufacture certainty.
   const overlapCount=original.filter(row=>inCohort(row)&&row.reason==='overlapping_gateway_windows').length;
   const unchanged=(reason='source_incomplete')=>({summary:summarizeAttribution(original.filter(inCohort)),reconciled_overlaps:0,remaining_overlap_abstentions:overlapCount,reconciliation_block_reasons:overlapCount?{[reason]:overlapCount}:{}});
-  const invalid=attributionRows.some(raw=>raw?.event==='engine_attribution'&&!safeAttribution(raw))||engineRows.some(raw=>raw?.kind==='start'&&!safeCollisionStart(raw))||gatewayRows.some(raw=>['request_dispatched','request_finished'].includes(raw?.event)&&(!safeGatewayEvent(raw)||!UUID.test(raw.request_id??'')||!ID.test(raw.node??'')));
+  const invalid=attributionRows.some(raw=>raw?.event==='engine_attribution'&&!safeAttribution(raw))||engineRows.some(raw=>raw?.kind==='start'&&!safeCollisionStart(raw))||gatewayRows.some(raw=>['request_dispatched','request_finished'].includes(raw?.event)&&!safeLifecycle(raw));
   if(!complete||invalid)return unchanged();
   const starts=new Map(),conflictingStarts=new Set();
   for(const raw of engineRows){
@@ -104,7 +111,7 @@ export function reconcileAttributionRows(attributionRows=[],engineRows=[],gatewa
   const collisionStarts=engineRows.map(safeCollisionStart).filter(Boolean);
   const lifecycle=new Map();let coverageStart=Infinity;
   for(const raw of gatewayRows){
-    const event=safeGatewayEvent(raw);if(!event||!UUID.test(event.request_id??'')||!ID.test(event.node??'')||!Number.isFinite(Date.parse(event.time??'')))continue;
+    const event=safeLifecycle(raw);if(!event)continue;
     const at=Date.parse(event.time);coverageStart=Math.min(coverageStart,at);
     const request=lifecycle.get(event.request_id)??{request_id:event.request_id,node:event.node,dispatched_at:null,finished_at:null,usage:null,conflict:false};
     if(request.node!==event.node)request.conflict=true;
@@ -201,7 +208,7 @@ export function auditAttributionReconciliation(directory,gatewayLog,{maxFiles=MA
   const gatewayRows=[];let gateway_malformed_lines=0,gateway_oversized_lines=0,gateway_invalid_records=0,gateway_truncated_records=0;
   for(const line of gateway.lines){
     if(!line.trim())continue;if(Buffer.byteLength(line)>MAX_LINE_BYTES){gateway_oversized_lines++;continue;}
-    try{const row=JSON.parse(line);if(['request_dispatched','request_finished'].includes(row?.event)){const safe=safeGatewayEvent(row);if(!safe||!UUID.test(row.request_id??'')||!ID.test(row.node??''))gateway_invalid_records++;else if(gatewayRows.length>=MAX_SOURCE_RECORDS)gateway_truncated_records++;else gatewayRows.push(row);}}
+    try{const row=JSON.parse(line);if(['request_dispatched','request_finished'].includes(row?.event)){if(!safeLifecycle(row))gateway_invalid_records++;else if(gatewayRows.length>=MAX_SOURCE_RECORDS)gateway_truncated_records++;else gatewayRows.push(row);}}
     catch{gateway_malformed_lines++;}
   }
   const complete=partial_files===0&&skipped_files===0&&truncated_records===0&&malformed_lines===0&&oversized_lines===0&&invalid_metric_records===0&&!gateway.partial&&gateway_malformed_lines===0&&gateway_oversized_lines===0&&gateway_invalid_records===0&&gateway_truncated_records===0;

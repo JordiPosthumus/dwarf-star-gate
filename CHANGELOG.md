@@ -1,5 +1,19 @@
 # Changelog
 
+## Preserve attribution ambiguity when lifecycle timestamps are invalid
+
+- Reproduce an undated dispatch disappearing from the later-evidence join,
+  allowing another request to look like the unique owner of an engine start.
+- Require valid positive lifecycle clocks alongside worker/request identity in
+  both the direct reconciliation API and file loader. Invalid records make the
+  evidence incomplete; neither telemetry nor the original view is rewritten.
+- Regress missing, malformed, numeric and zero timestamps, unchanged inputs,
+  invalid-record accounting and retention of the recorded abstention.
+- Reconcile fresh ordinary traffic and verify the entire frozen report remains
+  byte-identical after the fix. Existing later-evidence matches remain shadow
+  candidates, not protocol identity, cache-loss verdicts or XGB training labels.
+- No live collector, gateway, model, server, cache or routing setting changes.
+
 ## Reject impossible profiles in cache-continuity evidence
 
 - Reproduce negative and over-width matching header fields being classified as
