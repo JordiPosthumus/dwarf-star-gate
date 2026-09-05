@@ -10,6 +10,12 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Made enrollment evidence inspectable without taking action.** A read-only
+  per-worker checklist separates service binding, enrolled powers, inspection
+  freshness/native disable and historical canary evidence. It tells an installer's
+  agent what to check next without issuing probes, restarting services or claiming
+  an old receipt certifies a changed installation.
+
 - **Stopped contradictory lifecycle records from manufacturing ownership.**
   The online correlator retains bounded conflict evidence instead of choosing
   whichever dispatch or completion arrived first/last. A contradictory peer

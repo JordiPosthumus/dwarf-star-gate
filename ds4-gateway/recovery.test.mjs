@@ -16,6 +16,8 @@ import {workerControl} from './worker-client.mjs';
 import {createDashboard} from './dashboard.mjs';
 import {EventEmitter} from 'node:events';
 import {PassThrough} from 'node:stream';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
 
 const config={id:'one',url:'http://127.0.0.1:39001',ssh:'test-host',adapter:'systemd-user',helper:'/opt/dsg/adapter.py',config:'/opt/dsg/private.json',machine:'a'.repeat(64),profile:'b'.repeat(64),exclusive:true};
 test('recovery status exposes the newest 30 public receipts without deleting history',async()=>{
@@ -46,6 +48,69 @@ test('recovery defaults off; registered endpoints alone convey no recovery autho
   assert.equal(recoveryConfig({workers:[launchd]}).get('mac').adapter,'launchd');
   const mixed=new Recovery({workers:[config,launchd]},{...r.deps,nodes:[r.n,{...r.n,...launchd,id:'mac'}]});
   assert.equal(mixed.status().adapter,'mixed');assert.equal(mixed.workerStatus(mixed.nodes[1]).adapter,'launchd');mixed.close();
+});
+
+test('enrollment checklist separates permissions, inspection and proof without side effects',async()=>{
+  const r=rig();let calls=0,saves=0;r.recovery.call=async()=>{calls++;return r.sample();};r.store.save=()=>{saves++;};
+  const before=structuredClone(r.n),initial=r.recovery.workerStatus(r.n).enrollment;
+  assert.equal(initial.authority,'none');assert.equal(initial.binding,'matched');assert.equal(initial.inspection.state,'not_observed');
+  assert.deepEqual(initial.permissions,{restart_enrolled:true,start_stopped_enrolled:false,removed_job_bootstrap_enrolled:false,exclusive_endpoint:'operator_asserted',automatic_policy:false,profile_handback_policy:true});
+  assert.equal(initial.historical_canary,null);assert.ok(initial.next_steps.includes('request_separate_canary_window'));
+  for(let i=0;i<3;i++)assert.deepEqual(r.recovery.workerStatus(r.n).enrollment,initial);
+  assert.equal(calls,0);assert.equal(saves,0);assert.deepEqual(r.n,before);assert.equal(r.recovery.state.operations.length,0);
+  await r.recovery.inspect('one');let check=r.recovery.workerStatus(r.n).enrollment;
+  assert.equal(check.inspection.state,'observed');assert.equal(check.inspection.identity,'running_match');assert.equal(check.historical_canary,null);
+  r.advance(90001);check=r.recovery.workerStatus(r.n).enrollment;assert.equal(check.inspection.state,'stale');assert.equal(check.inspection.identity,'unknown');
+  r.recovery.observations.set('one',{at:r.deps.now()+1,value:r.sample()});assert.equal(r.recovery.workerStatus(r.n).enrollment.inspection.state,'stale');
+  r.n.url='http://127.0.0.1:39002';assert.equal(r.recovery.workerStatus(r.n).enrollment.binding,'mismatch');
+  r.recovery.configs.clear();check=r.recovery.workerStatus(r.n).enrollment;assert.equal(check.binding,'not_enrolled');assert.equal(check.permissions.restart_enrolled,false);
+  assert.deepEqual(check.next_steps,['inspect_and_propose_enrollment']);assert.equal(calls,1);assert.equal(saves,0);await r.recovery.close();
+});
+
+test('launchd enrollment checklist reports explicit native policy and independent powers',async()=>{
+  const r=rig(),c={...config,adapter:'launchd',start_stopped:true,service_profile:'c'.repeat(64)};r.recovery.configs.set('one',c);
+  for(const disabled of [undefined,true,false]){
+    r.recovery.observations.set('one',{at:r.deps.now(),value:{...r.sample(),native_disabled:disabled}});
+    const check=r.recovery.workerStatus(r.n).enrollment;
+    assert.equal(check.inspection.native_disable,disabled===undefined?'unknown':disabled?'disabled':'enabled');
+    assert.equal(check.permissions.start_stopped_enrolled,true);assert.equal(check.permissions.removed_job_bootstrap_enrolled,false);assert.equal(check.bootstrap_certified,null);
+    if(disabled===true)assert.ok(check.next_steps.includes('respect_native_disable'));
+    if(disabled===undefined)assert.ok(check.next_steps.includes('verify_native_disable_state'));
+    for(const privateValue of [c.machine,c.profile,c.service_profile,c.helper,c.config,c.ssh])assert.ok(!JSON.stringify(check).includes(privateValue));
+  }
+  r.recovery.observations.set('one',{at:r.deps.now(),error:'adapter_check_failed'});assert.equal(r.recovery.workerStatus(r.n).enrollment.inspection.state,'failed');
+  await r.recovery.close();
+});
+
+test('a historical canary never certifies the current enrollment or hides incomplete proof',async()=>{
+  const r=rig();r.n.drained=true;await r.ready();r.recovery.request(r.input(),'operator',{canary:true});await r.recovery.task;
+  let check=r.recovery.workerStatus(r.n).enrollment;
+  assert.equal(check.historical_canary.state,'verified_paused');assert.equal(check.historical_canary.cold_warm_proof_valid,false,'test stub returns no real cold/warm evidence');
+  assert.equal(check.historical_canary.enrolled_identity_fields_match,true);assert.ok(check.next_steps.includes('review_canary_receipt'));
+  const op=r.recovery.state.operations.at(-1);
+  op.proof={check:'two_conversations_cold_to_warm',context_length:262144,verified_at:new Date(r.deps.now()).toISOString(),samples:['cold-A','cold-B','warm-A','warm-B'].map((label,i)=>({label,prompt_tokens:2200,cached_tokens:i<2?0:2100,elapsed_ms:10}))};
+  check=r.recovery.workerStatus(r.n).enrollment;assert.equal(check.historical_canary.cold_warm_proof_valid,false,'insufficient warm reuse is not evidence');
+  op.proof.samples[2].cached_tokens=2200;op.proof.samples[3].cached_tokens=2200;
+  check=r.recovery.workerStatus(r.n).enrollment;assert.equal(check.historical_canary.cold_warm_proof_valid,true);
+  assert.equal(check.authority,'none');assert.match(check.note,/not permission.*certification/);
+  r.recovery.configs.set('one',{...config,profile:'c'.repeat(64)});
+  check=r.recovery.workerStatus(r.n).enrollment;assert.equal(check.historical_canary.enrolled_identity_fields_match,false);assert.ok(check.next_steps.includes('review_canary_receipt'));
+  assert.equal(check.historical_canary.id,undefined);assert.ok(!JSON.stringify(check).includes(op.id));await r.recovery.close();
+});
+
+test('enrollment CLI check only reads the registry and tolerates an older running core',async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-enrollment-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const socket=path.join(dir,'core.sock'),file=path.join(dir,'config.json'),seen=[];
+  fs.writeFileSync(file,JSON.stringify({control_socket:socket,state_file:path.join(dir,'state.json')}),{mode:0o600});
+  let registry={recovery:{workers:[{worker_id:'one'}]}};
+  const server=http.createServer((req,res)=>{seen.push([req.method,req.url]);res.setHeader('content-type','application/json');res.end(JSON.stringify(registry));});
+  await new Promise(resolve=>server.listen(socket,resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const run=argument=>promisify(execFile)(process.execPath,[path.resolve('ds4-gateway/recovery-control.mjs'),'check',...argument],{env:{...process.env,DWARF_GATE_CONFIG:file}});
+  let report=JSON.parse((await run([])).stdout);assert.equal(report.mode,'read_only_enrollment_check');assert.equal(report.workers[0].reason,'checklist_not_available_in_running_core');
+  const r=rig();registry={recovery:{workers:[r.recovery.workerStatus(r.n)]}};
+  report=JSON.parse((await run(['one'])).stdout);assert.equal(report.workers[0].checklist.authority,'none');
+  await assert.rejects(run(['missing']),/Unknown recovery worker/);
+  assert.deepEqual(seen,[['GET','/workers'],['GET','/workers'],['GET','/workers']]);assert.equal(r.restarts,0);assert.equal(r.proofs,0);await r.recovery.close();
 });
 test('malformed durable profile adoption state and operations fail closed',()=>{
   const r=rig();r.recovery.setAutomatic(true);

@@ -216,6 +216,45 @@ export class Recovery {
     if(previous.some(o=>this.now()-o.created_at<30*60000))return 'recovery_cooldown';
     return null;
   }
+  enrollmentChecklist(n) {
+    const c=this.config(n.id),observed=this.observations.get(n.id),s=observed?.value,now=this.now();
+    const bound=!!c&&this.binding(n,c),age=Number.isFinite(observed?.at)?now-observed.at:null;
+    const fresh=age!==null&&age>=0&&age<=90000,usable=fresh&&!observed?.error;
+    const inspection=!observed?'not_observed':!fresh?'stale':observed.error?'failed':'observed';
+    const identity=!usable||!bound?'unknown':this.valid(s,c)?'running_match':this.validStopped(s,c)?'stopped_match':this.profileCandidate(s,c)?'changed_profile':'unverified';
+    const native=c?.adapter!=='launchd'?'not_applicable':!usable?'unknown':s?.native_disabled===false?'enabled':s?.native_disabled===true?'disabled':'unknown';
+    const last=this.state.operations.filter(op=>op.worker_id===n.id&&op.canary===true&&op.actor==='operator').at(-1);
+    // A retained receipt is historical evidence, not certification of today's
+    // helper/configuration or effective settings. Do not create action authority.
+    const canary=last?{
+      state:['queued','starting','restarting','bootstrapping','reconciling','verifying',...terminal].includes(last.state)?last.state:'unknown',
+      action:['restart','start','bootstrap','adopt_verify','adopt_restart'].includes(last.service_action)?last.service_action:'unknown',
+      recorded_at:Number.isFinite(last.updated_at)?last.updated_at:null,
+      cold_warm_proof_valid:bootstrapProofValid(last.proof,n.contextLength),
+      enrolled_identity_fields_match:bound&&last.machine===c.machine&&last.profile===c.profile&&last.context_length===n.contextLength&&last.binding===hash([n.url,n.ssh,n.ssh_fallbacks??[],n.remote_port??8000]),
+      observed_instance_matches:usable&&typeof last.new_instance==='string'&&last.new_instance===s?.instance
+    }:null;
+    const bootstrapCertified=c?.bootstrap_removed===true?this.bootstrapCertified(n,c):null,steps=[];
+    if(!c)steps.push('inspect_and_propose_enrollment');
+    else if(!bound)steps.push('reconcile_worker_binding');
+    else {
+      if(!usable)steps.push('await_current_read_only_inspection');
+      else if(!['running_match','stopped_match'].includes(identity))steps.push('inspect_service_identity_and_profile');
+      if(native==='disabled')steps.push('respect_native_disable');
+      else if(native==='unknown')steps.push('verify_native_disable_state');
+      if(n.active||n.queue.length)steps.push('wait_for_admitted_work');
+      if(!canary)steps.push('request_separate_canary_window');
+      else if(!['verified_paused','recovered'].includes(canary.state)||!canary.cold_warm_proof_valid||!canary.enrolled_identity_fields_match||!canary.observed_instance_matches)steps.push('review_canary_receipt');
+      if(bootstrapCertified===false)steps.push('review_removed_job_certification');
+      steps.push('review_effective_settings_and_routing');
+    }
+    return {schema:1,authority:'none',configured:!!c,binding:!c?'not_enrolled':bound?'matched':'mismatch',
+      permissions:{restart_enrolled:!!c,start_stopped_enrolled:c?.start_stopped===true,removed_job_bootstrap_enrolled:c?.bootstrap_removed===true,
+        exclusive_endpoint:c?.exclusive===true?'operator_asserted':'not_enrolled',automatic_policy:this.state.automatic,profile_handback_policy:this.state.profile_handback_automatic},
+      inspection:{state:inspection,age_ms:age!==null&&age>=0?age:null,identity,native_disable:native},
+      historical_canary:canary,bootstrap_certified:bootstrapCertified,
+      next_steps:steps,note:'Read-only enrollment evidence, not permission to act or certification of current settings. A canary requires a separately approved idle window and leaves routing paused.'};
+  }
   workerStatus(n) {
     const observed=this.observations.get(n.id),s=observed?.value;
     const reason=!observed || this.now()-observed.at>90000?'service_inspection_pending':observed.error||this.reason(n,s);
@@ -226,7 +265,7 @@ export class Recovery {
     const effective=this.config(n.id),candidate=this.profileCandidate(s,effective),adopted=!!this.state.adopted_profiles[n.id]&&effective?.profile===this.state.adopted_profiles[n.id].profile;
     return {worker_id:n.id,configured,adapter:configured?this.configs.get(n.id).adapter:null,transport:configured?(this.configs.get(n.id).transport??'ssh'):null,reason:configured?reason:'manual_recovery_required',eligible:configured&&!reason,
       evidence_id:configured&&!reason?this.evidence(n,s):null,inspected_at:observed?.at??null,
-      removal:this.removals.get(n.id)?.result??null,
+      removal:this.removals.get(n.id)?.result??null,enrollment:this.enrollmentChecklist(n),
       ...(effective?.bootstrap_removed===true?{bootstrap:{enrolled:true,certified:this.bootstrapCertified(n,effective)}}:{}),
       state,profile_handback:candidate?{candidate:true,stable:this.candidateStable(n.id,candidate),automatic:this.state.profile_handback_automatic}:adopted?{candidate:false,stable:true,automatic:this.state.profile_handback_automatic,adopted:true}:null,last_action:last?publicOperation(last):null};
   }

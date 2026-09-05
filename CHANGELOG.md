@@ -1,5 +1,17 @@
 # Changelog
 
+## Add a read-only recovery enrollment checklist
+
+- Add per-worker checklist evidence to recovery status and
+  `recovery-control.mjs check [ID]`. Report loaded binding, independent powers,
+  inspection freshness/native policy and historical operator canary evidence.
+- Keep current eligibility and historical proof separate. Fixed next-step hints
+  grant no authority; the command reads existing evidence and issues no probe,
+  policy mutation, pause, service action or model request.
+- Cover missing/stale/failed evidence, changed bindings, native disable, incomplete
+  proof, privacy and a real CLI against a disposable control socket. Older cores
+  report unavailable rather than inventing enrollment evidence.
+
 ## Preserve contradictory gateway lifecycle evidence
 
 - Reject first-dispatch/last-completion attribution when one request has

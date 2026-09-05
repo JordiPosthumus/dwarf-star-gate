@@ -97,9 +97,12 @@ is implied by this fix.
    not just an HTTP 200. The backend's 16-image check is confirmed; why that number
    is necessary remains an upstream research/possible PR question. Do not raise
    it or roll out trimming without the agreed cache/continuity tradeoff.
-6. **Finish portable recovery enrollment and proof.** Add a per-worker guided
-   checklist for inspection, exact authority, private enrollment, separate
-   disruptive canary and certification/blockers. Generic launchd/retained-job
+6. **Finish portable recovery enrollment and proof.** A read-only per-worker
+   `recovery-control.mjs check [ID]` now separates loaded binding, independently
+   enrolled powers, inspection and historical canary evidence, with next steps.
+   It neither probes nor grants action authority; old cores report unavailable.
+   Complete private enrollment, the separately approved disruptive canary and
+   certification/blockers. Generic launchd/retained-job
    source is not a certified Mac installation. Operator pauses, named maintenance
    and other agents' holds always win, including patched-but-idle workers.
    A real cold/warm recovery canary requires an exclusively drained, approved

@@ -55,6 +55,44 @@ restart or stopped-start enrollment. Start with the
 [retained-definition preflight](macos-retained-definition.md); a verified file
 alone does not certify automatic recovery.
 
+### Read the enrollment checklist before proposing an action
+
+From the DSG checkout:
+
+```sh
+node ds4-gateway/recovery-control.mjs check
+node ds4-gateway/recovery-control.mjs check WORKER_ID
+```
+
+This reads the running core's existing evidence only. It does **not** run an
+inspection, contact a model, change configuration, pause work or issue a canary.
+It is safe to use while planning; a later action still needs its own permission.
+
+The per-worker checklist separates:
+
+- **Binding:** whether loaded recovery enrollment matches the registered worker.
+  A configured endpoint alone is not service enrollment.
+- **Permissions:** restart, stopped-start and removed-job bootstrap are separate;
+  exclusivity is the owner's assertion, not detected absence of direct clients.
+  Fleet automatic and profile hand-back policy flags do not by themselves make
+  this worker eligible now.
+- **Inspection:** current, missing, stale or failed; running/stopped identity match,
+  changed profile, and the separate native launchd disable state. Unknown is not
+  permission. Reading the report does not refresh an inspection.
+- **Historical canary:** latest operator canary state and cold/warm proof shape,
+  whether enrolled identity fields and the observed process still match. Even
+  matching fields do not certify today's helper, configuration, full production
+  settings or post-test routing. Inspect the detailed receipt and preservation
+  evidence. Removed-job certification retains its separate existing predicate.
+- **Next steps:** fixed guidance such as reconciling a binding, waiting for
+  inspection/admitted work, respecting native disable, or requesting a separate
+  canary window. These are suggestions for the agent, never executor commands.
+
+An older running core reports `checklist_not_available_in_running_core` rather
+than inventing a passing checklist. Updating the checkout does not update the
+running core; arrange any needed reload separately. No browser enrollment wizard
+or one-click certification is implied.
+
 ## 2. Present the exact proposal
 
 Tell the owner which worker and exact service you identified, supported actions,
