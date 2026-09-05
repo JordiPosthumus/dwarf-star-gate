@@ -54,6 +54,14 @@ An invalid middle request is not skipped to manufacture a consecutive pair from
 its neighbors. Input ordering cannot repair contradictory recorded timestamps;
 equal millisecond timestamps alone are not treated as contradictory.
 
+Two different requests with the same admission timestamp in the same session
+and gateway run have **unknown relative order**. Every member of that tied group
+is a comparison barrier, as is the next comparison leaving it, with reason
+`ambiguous_session_order`. Input order, request-ID sorting and client turn hints
+cannot choose a predecessor. Later unambiguous neighbors are still assessed.
+This differs from an ordinary request whose finish equals its own admission:
+that zero-duration clock reading alone is not a chronology contradiction.
+
 Malformed decision, finish or relocation envelopes stop the audit with a fixed
 diagnostic, without printing the record. Silently discarding one could erase an
 intervening request or move; an invalid clock/identity cannot safely identify the
@@ -86,7 +94,7 @@ Unit tests cover observed, partial, strongly guarded and unconfirmed low reuse;
 compaction, epoch/profile changes, relocation, failure, staleness, prompt shrink,
 route changes, run boundaries, duplicate/conflicting evidence and report privacy.
 They also cover impossible request chronology, reversed input order, preservation
-of valid neighbors and bounded configuration. A frozen-data comparison kept all
+of valid neighbors, tied admission groups, shuffled input and bounded configuration. A frozen-data comparison kept all
 previous valid classifications identical after this chronology hardening.
 The first deployment smoke audit must keep its exact counts private.
 

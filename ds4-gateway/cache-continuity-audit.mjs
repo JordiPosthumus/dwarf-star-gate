@@ -40,6 +40,7 @@ function metadata(decision) {
 
 function jobGate(previous,current,maxAgeMs) {
   const fail=reason=>({reason});
+  if(previous.order_ambiguous||current.order_ambiguous)return fail('ambiguous_session_order');
   if(previous.ambiguous||current.ambiguous)return fail('ambiguous_request_evidence');
   if(!previous.finish||!current.finish)return fail('terminal_evidence_missing');
   if(previous.finish_at<previous.decision_at||current.finish_at<current.decision_at)return fail('noncausal_request_evidence');
@@ -107,7 +108,18 @@ export function auditCacheContinuity(input,{maxAgeMs=DEFAULT_MAX_AGE_MS,maxEvent
     ordered.push({decision,finish,decision_at:at(decision.time),finish_at:finish?at(finish.time):null,run_id:decision.run_id,session:decision.session,
       ambiguous:job.decisions.length!==1||job.finishes.length>1||job.relocations.length>1,relocated:job.relocations.length>0});
   }
-  ordered.sort((a,b)=>a.decision_at-b.decision_at);
+  // A stable sort alone would let input order choose a predecessor when the
+  // collector's millisecond clock ties. Mark every member of that session/run
+  // tick as a barrier, including the first request after it. Neither client turn
+  // hints nor arbitrary request IDs establish actual ordering inside the tick.
+  const ticks=new Map();
+  for(const job of ordered){
+    const key=`${job.run_id}:${job.session}:${job.decision_at}`;
+    const first=ticks.get(key);
+    if(first){first.order_ambiguous=true;job.order_ambiguous=true;}
+    else ticks.set(key,job);
+  }
+  ordered.sort((a,b)=>a.decision_at-b.decision_at||a.run_id.localeCompare(b.run_id)||a.decision.request_id.localeCompare(b.decision.request_id));
   const previousBySession=new Map(),reasons={},classifications={},workers=Object.create(null),ratios=[],strongRatios=[];
   let candidate_pairs=0,assessed_pairs=0,strong_guard_pairs=0;
   for(const current of ordered){

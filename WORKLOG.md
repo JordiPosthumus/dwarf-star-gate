@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Stopped tied timestamps from inventing cache-loss suspicion.** The private
+  cache-continuity auditor now abstains around tied session admission groups,
+  retains later usable neighbors and gives the same result under shuffled input.
+  No inference or cache policy changes; ambiguous evidence stays diagnostic.
+
 - **Strengthened publication guardrails.** Check commit identity as well as exact
   staged content; flag more credential patterns and hidden screenshot metadata.
   Keep operational receipts private and preserve reusable diagnostic guidance.

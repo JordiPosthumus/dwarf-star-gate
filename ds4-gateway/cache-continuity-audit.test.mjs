@@ -27,6 +27,52 @@ test('measured continuity stays separate from strongly guarded low reuse',()=>{
   assert.ok(!JSON.stringify(result).includes(session));assert.ok(!JSON.stringify(result).includes('r1'));assert.ok(!JSON.stringify(result).includes(profile));
 });
 
+test('tied admission clocks cannot select a predecessor or diagnose cache loss',()=>{
+  const before=request({id:'before',at:1000,turn:0,compaction:0});
+  const first=request({id:'first',at:10000,turn:1,compaction:0});
+  const tied=request({id:'tied',at:10000,turn:2,compaction:0,cached:0});
+  // Even zero-duration requests cannot establish ordering within this clock tick.
+  first[1].time=first[0].time;tied[1].time=tied[0].time;
+  const after=request({id:'after',at:20000,turn:3,compaction:0});
+  const healthy=request({id:'healthy',at:30000,turn:4,compaction:0});
+  const rows=[...before,...first,...tied,...after,...healthy],original=JSON.stringify(rows);
+  const report=auditCacheContinuity(rows);
+  assert.equal(report.assessed_pairs,1);
+  assert.equal(report.classifications.reuse_observed,1);
+  assert.equal(report.classifications.high_suspicion_low_reuse,undefined);
+  assert.equal(report.abstention_reasons.ambiguous_session_order,3);
+  assert.deepEqual(auditCacheContinuity([...rows].reverse()),report);
+  assert.deepEqual(auditCacheContinuity([...tied,...before,...healthy,...first,...after]),report);
+  assert.equal(JSON.stringify(rows),original);
+});
+
+test('ties are scoped to session, and explicit different admission times remain usable',()=>{
+  const a=request({id:'a',at:10000,turn:1,compaction:0});
+  const b=request({id:'b',at:10000,turn:1,compaction:0});b[0].session='c'.repeat(64);
+  const a2=request({id:'a2',at:20000,turn:2,compaction:0});
+  const b2=request({id:'b2',at:20000,turn:2,compaction:0});b2[0].session='c'.repeat(64);
+  const report=auditCacheContinuity([...a,...b,...a2,...b2]);
+  assert.equal(report.assessed_pairs,2);
+  assert.equal(report.abstention_reasons.ambiguous_session_order,undefined);
+});
+
+test('all members of a tied group fence neighboring comparisons across input permutations',()=>{
+  const rows=[];
+  for(let i=0;i<8;i++){
+    const pair=request({id:`t${i}`,at:i<5?10000:10000+(i-4)*10000,turn:i,compaction:0,cached:i%2?0:900});
+    pair[1].time=pair[0].time;rows.push(...pair);
+  }
+  const expected=auditCacheContinuity(rows);
+  assert.equal(expected.assessed_pairs,2);
+  assert.equal(expected.abstention_reasons.ambiguous_session_order,5);
+  let seed=73;
+  for(let trial=0;trial<100;trial++){
+    const shuffled=[...rows];
+    for(let i=shuffled.length-1;i>0;i--){seed=(Math.imul(seed,1664525)+1013904223)>>>0;const j=seed%(i+1);[shuffled[i],shuffled[j]]=[shuffled[j],shuffled[i]];}
+    assert.deepEqual(auditCacheContinuity(shuffled),expected);
+  }
+});
+
 test('missing client metadata makes low reuse unconfirmed, never a proved miss',()=>{
   const result=auditCacheContinuity([...request({id:'a',at:10000,affinity:'new',cached:0}),...request({id:'b',at:20000,prompt:1100,cached:0})]);
   assert.equal(result.classifications.unconfirmed_low_reuse,1);assert.equal(result.strong_guard_pairs,0);

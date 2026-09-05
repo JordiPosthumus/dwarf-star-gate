@@ -1,5 +1,13 @@
 # Changelog
 
+## Keep cache-continuity findings independent of file order
+
+- Fence tied admission timestamps within a session/run rather than selecting an
+  arbitrary predecessor and manufacturing apparent reuse or lost-reuse evidence.
+- Preserve later unambiguous pairs and existing zero-duration clock semantics.
+- Exercise two-member and larger tie groups, reversed/shuffled input, unrelated
+  sessions and privacy-preserving frozen-report comparison.
+
 ## Strengthen publication privacy guardrails
 
 - Check effective commit identities before committing, with noreply defaults
