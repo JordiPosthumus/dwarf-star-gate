@@ -9,6 +9,100 @@ const dispatch=(id=request,node='spark1',at=10000)=>({event:'request_dispatched'
 const finish=(id=request,node='spark1',at=30000,usage={prompt_tokens:1000,cached_tokens:900})=>({event:'request_finished',request_id:id,node,time:iso(at),outcome:'complete',usage});
 const start=(id=sample,node='spark1',at=12000,extra={})=>({kind:'start',sample_id:id,node,time:at,prompt:1000,cached:900,new_tokens:100,backend_epoch:epoch,backend_epoch_confidence:'strong',...extra});
 
+test('contradictory lifecycle records abstain in either arrival order',()=>{
+  const pairs=[
+    [dispatch(),dispatch(request,'spark1',100000)],
+    [finish(),finish(request,'spark1',31000)],
+    [finish(),finish(request,'spark1',30000,{prompt_tokens:999,cached_tokens:899})],
+    [finish(),{...finish(),outcome:'upstream_error'}],
+    [finish(),{...finish(),usage:undefined}],
+    [dispatch(),dispatch(request,'spark2')]
+  ];
+  for(const pair of pairs)for(const events of [pair,[...pair].reverse()]){
+    const a=new EngineAttribution();if(pair[0].event==='request_finished')a.acceptGateway(dispatch());a.acceptEngine(start());
+    for(const event of events)a.acceptGateway(event);
+    a.acceptGateway(finish());
+    const row=a.snapshot().recent[0];
+    assert.equal(row.status,'abstained');assert.equal(row.reason,'gateway_evidence_conflict');
+    assert.equal(row.request_id,null);assert.equal(row.confidence,'none');
+    assert.equal(a.snapshot().quality.reason_counts.gateway_evidence_conflict,1);
+  }
+});
+
+test('a conflict received before the engine start cannot hide a competing request',()=>{
+  for(const events of [[dispatch(other),dispatch(other,'spark2')],[dispatch(other,'spark2'),dispatch(other)]]){
+    const a=new EngineAttribution();for(const event of events)a.acceptGateway(event);
+    a.acceptGateway(dispatch());a.acceptGateway(finish());a.acceptEngine(start());
+    assert.equal(a.snapshot().recent[0].reason,'gateway_evidence_conflict');
+    assert.equal(a.snapshot().recent[0].request_id,null);
+  }
+});
+
+test('terminal-before-dispatch clocks are conflicting, but reverse arrival is valid',()=>{
+  for(const events of [[dispatch(request,'spark1',14000),finish(request,'spark1',13000)],
+    [finish(request,'spark1',13000),dispatch(request,'spark1',14000)]]){
+    const a=new EngineAttribution();for(const event of events)a.acceptGateway(event);a.acceptEngine(start());
+    assert.equal(a.snapshot().recent[0].reason,'gateway_evidence_conflict');
+  }
+  const a=new EngineAttribution();a.acceptGateway(finish());a.acceptEngine(start());a.acceptGateway(dispatch());
+  assert.equal(a.snapshot().recent[0].reason,'usage_match');
+});
+
+test('identical normalized lifecycle duplicates are idempotent and contain no private guards',()=>{
+  const saved=[],a=new EngineAttribution(row=>saved.push(row));
+  a.acceptGateway(dispatch());a.acceptEngine(start());a.acceptGateway(finish());
+  const before=a.snapshot(),writes=saved.length;
+  a.acceptGateway({...dispatch(),time:10000,private_field:'PRIVATE_GUARD'});
+  a.acceptGateway({...finish(),time:30000,usage:{cached_tokens:900,prompt_tokens:1000,output:'PRIVATE_GUARD'}});
+  assert.deepEqual(a.snapshot(),before);assert.equal(saved.length,writes);
+  assert.ok(!JSON.stringify({saved,snapshot:a.snapshot()}).includes('PRIVATE_GUARD'));
+});
+
+test('lifecycle conflict windows do not contaminate unrelated workers or distant starts',()=>{
+  const a=new EngineAttribution();a.acceptGateway(dispatch(other));a.acceptGateway(dispatch(other,'spark1',11000));
+  a.acceptGateway(finish(other,'spark1',13000));
+  a.acceptGateway(dispatch(request,'spark2'));a.acceptGateway(finish(request,'spark2'));a.acceptEngine(start(sample,'spark2'));
+  assert.equal(a.snapshot().recent[0].reason,'usage_match');
+  const distant='33333333-3333-4333-8333-333333333333';
+  a.acceptGateway(dispatch(distant,'spark1',700000));a.acceptGateway(finish(distant,'spark1',730000));
+  a.acceptEngine(start('c'.repeat(64),'spark1',712000));
+  assert.equal(a.snapshot().recent[0].reason,'usage_match');
+});
+
+test('conflicting clock ranges retain inclusive skew and lead edges without first-record bias',()=>{
+  const cases=[[-5000,true],[-5001,false],[600000,true],[600001,false]];
+  for(const [delta,affected] of cases)for(const reversed of [false,true]){
+    const at=1000000,edge=at-delta;
+    // The second revision is farther from this start: the nearest observed
+    // dispatch determines the inclusive boundary, regardless of input order.
+    const times=delta<0?[edge,edge+1]:[edge-1,edge];if(reversed)times.reverse();
+    const a=new EngineAttribution();for(const time of times)a.acceptGateway(dispatch(other,'spark1',time));
+    a.acceptGateway(dispatch(request,'spark1',at));a.acceptGateway(finish(request,'spark1',at+10000));
+    a.acceptEngine(start(sample,'spark1',at));
+    assert.equal(a.snapshot().recent[0].reason,affected?'gateway_evidence_conflict':'usage_match');
+  }
+});
+
+test('node-identity overflow stays bounded and cannot hide an unrecorded competing worker',()=>{
+  const a=new EngineAttribution();for(let i=0;i<70;i++)a.acceptGateway(dispatch(other,`worker-${i}`));
+  const requestRow=a.requests.get(other);assert.equal(requestRow.lifecycle_nodes.size,64);assert.equal(requestRow.lifecycle_node_overflow,true);
+  a.acceptGateway(dispatch(request,'worker-69'));a.acceptGateway(finish(request,'worker-69'));a.acceptEngine(start(sample,'worker-69'));
+  assert.equal(a.snapshot().recent[0].reason,'gateway_evidence_conflict');
+  assert.ok(!JSON.stringify(a.snapshot()).includes('lifecycle_nodes'));
+});
+
+test('observed conflict cannot disappear when a lifecycle row ages out or metadata is enriched',()=>{
+  const a=new EngineAttribution();a.acceptGateway(dispatch());a.acceptGateway(dispatch(other));
+  a.acceptGateway(finish(other,'spark1',13000));
+  a.acceptGateway(finish(other,'spark1',14000));a.acceptEngine(start());
+  a.acceptGateway(dispatch('33333333-3333-4333-8333-333333333333','spark2',2*3600000));
+  assert.equal(a.requests.has(other),false);
+  a.acceptEngine(start(sample,'spark1',12000,{backend_epoch_confidence:'bounded',lifecycle_conflict:false}));a.acceptGateway(finish(request,'spark1',2*3600000+1));
+  const row=a.snapshot().recent.find(row=>row.sample_id===sample);
+  assert.equal(row.reason,'gateway_evidence_conflict');assert.equal(row.request_id,null);
+  for(const field of ['lifecycle_conflict','lifecycle_nodes','dispatch_latest','finish_latest'])assert.ok(!JSON.stringify(row).includes(field));
+});
+
 test('one epoch-bound request window becomes a corroborated candidate only after matching usage',()=>{
   const saved=[],a=new EngineAttribution(row=>saved.push(row));
   a.acceptGateway(dispatch());a.acceptEngine(start());
@@ -176,11 +270,11 @@ test('engine metadata cannot clear an overflow guard with raw private-field over
   for(const id of ids)a.acceptGateway(dispatch(id,'spark1',10000));
   a.acceptEngine(start());const peers=new Set(a.starts.get(sample).overlap_candidates);
   assert.equal(a.starts.get(sample).overlap_overflow,true);assert.equal(peers.size,64);
-  // Contradictory later lifecycle records remove candidate windows, not the
-  // evidence that more than 64 possible owners were originally observed.
+  // Contradictory later lifecycle records add a conflict reason without erasing
+  // the evidence that more than 64 possible owners were originally observed.
   for(const id of ids.slice(0,64))a.acceptGateway(finish(id,'spark2',13000));
   a.acceptGateway(finish(ids.at(-1),'spark1',14000));
   a.acceptEngine({...start(),backend_epoch_confidence:'bounded',overlap_overflow:false,overlap_candidates:[]});
   assert.deepEqual(a.starts.get(sample).overlap_candidates,peers);
-  assert.equal(a.starts.get(sample).overlap_overflow,true);assert.equal(a.snapshot().recent[0].reason,'overlapping_gateway_windows');
+  assert.equal(a.starts.get(sample).overlap_overflow,true);assert.equal(a.snapshot().recent[0].reason,'gateway_evidence_conflict');
 });

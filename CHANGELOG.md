@@ -1,5 +1,16 @@
 # Changelog
 
+## Preserve contradictory gateway lifecycle evidence
+
+- Reject first-dispatch/last-completion attribution when one request has
+  conflicting clocks, worker identities, terminal outcomes or usage. Keep
+  contradictory peers visible as bounded uncertainty, not false uniqueness.
+- Preserve the fixed conflict reason through metadata updates, lifecycle aging,
+  attribution audits and Genie briefings without exporting private guards.
+- Cover replay idempotency, reverse arrival, clock boundaries, unrelated workers,
+  bounded identity overflow and recorded-traffic parity. Routing and server/cache
+  settings are unchanged; source availability is separate from daemon activation.
+
 ## Stage optional upstream cache observations before inspection
 
 - Refresh pinned DS4 source and related PR references. Distinguish gateway jobs,

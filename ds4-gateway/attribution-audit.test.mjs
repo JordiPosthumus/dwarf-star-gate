@@ -40,6 +40,15 @@ test('attribution quality uses final revisions and resolved starts as its honest
   assert.ok(!JSON.stringify(summary).includes('private-is-ignored'));
 });
 
+test('online lifecycle-conflict abstentions survive audit and cannot be later upgraded',()=>{
+  const original=overlap(10,{reason:'gateway_evidence_conflict'});
+  const report=reconcileAttributionRows([original],[engine()],gateway(),{complete:true});
+  assert.equal(report.reconciled_overlaps,0);assert.equal(report.summary.invalid_records,0);
+  assert.equal(report.summary.counts.abstained,1);
+  assert.deepEqual(report.summary.reason_counts,{gateway_evidence_conflict:1});
+  assert.ok(!JSON.stringify(report).includes(requestB));
+});
+
 test('read-only audit is bounded, deduplicated and returns no paths or event identifiers',t=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-attribution-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
   const file=path.join(dir,'metrics-2026-09-04.jsonl');

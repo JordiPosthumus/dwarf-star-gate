@@ -12,7 +12,7 @@ const MAX_RECONCILE_BYTES_PER_FILE=32*1024*1024,MAX_GATEWAY_BYTES=32*1024*1024,M
 const ID=/^[a-zA-Z0-9][\w-]{0,63}$/,UUID=/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/;
 const SAMPLE=/^[\da-f]{64}$/,EPOCH=/^[\da-f]{64}$/;
 const STATUSES=new Set(['candidate','corroborated','abstained']);
-const REASONS=new Set(['backend_epoch_unavailable','no_gateway_request_window','overlapping_gateway_windows','overlapping_usage_matches','usage_conflict','request_open','usage_unavailable','multiple_engine_starts','usage_match','usage_disambiguated_overlap','completed_without_usage','censored_or_failed']);
+const REASONS=new Set(['backend_epoch_unavailable','no_gateway_request_window','overlapping_gateway_windows','overlapping_usage_matches','usage_conflict','request_open','usage_unavailable','multiple_engine_starts','usage_match','usage_disambiguated_overlap','completed_without_usage','censored_or_failed','gateway_evidence_conflict']);
 const CONFIDENCE=new Set(['none','heuristic','bounded_candidate','high_candidate']);
 const SKEW_MS=5000,MAX_DISPATCH_LEAD_MS=10*60000;
 function cohortFilter(sinceMs){

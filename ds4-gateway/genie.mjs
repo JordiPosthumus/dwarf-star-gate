@@ -58,14 +58,14 @@ function attributionForBriefing(raw) {
   if(Array.isArray(raw.recent))safe.recent=raw.recent.slice(0,16).flatMap(row=>{
     if(!row||!['candidate','corroborated','abstained'].includes(row.status)||typeof row.node!=='string'||!/^\w[\w-]{0,63}$/.test(row.node))return [];
     const clean={node:row.node,status:row.status};
-    if(['request_open','usage_match','backend_epoch_unavailable','no_gateway_request_window','overlapping_gateway_windows','multiple_engine_starts','completed_without_usage','censored_or_failed','usage_conflict'].includes(row.reason))clean.reason=row.reason;
+    if(['request_open','usage_match','backend_epoch_unavailable','no_gateway_request_window','overlapping_gateway_windows','multiple_engine_starts','completed_without_usage','censored_or_failed','usage_conflict','gateway_evidence_conflict'].includes(row.reason))clean.reason=row.reason;
     for(const key of ['engine_started_at','dispatch_delta_ms','prompt_tokens','cached_tokens','new_tokens'])if(Number.isSafeInteger(row[key])&&row[key]>=0)clean[key]=row[key];
     return [clean];
   });
   const q=raw.quality;
   if(q?.schema===1){
     const rate=value=>Number.isFinite(value)&&value>=0&&value<=100?Math.round(value*10)/10:null;
-    const reasons=['backend_epoch_unavailable','no_gateway_request_window','overlapping_gateway_windows','overlapping_usage_matches','usage_conflict','multiple_engine_starts','completed_without_usage','censored_or_failed'];
+    const reasons=['backend_epoch_unavailable','no_gateway_request_window','overlapping_gateway_windows','overlapping_usage_matches','usage_conflict','multiple_engine_starts','completed_without_usage','censored_or_failed','gateway_evidence_conflict'];
     const reason_counts=Object.fromEntries(reasons.flatMap(reason=>Number.isSafeInteger(q.reason_counts?.[reason])&&q.reason_counts[reason]>=0?[[reason,q.reason_counts[reason]]]:[]));
     const by_worker=Array.isArray(q.by_worker)?q.by_worker.slice(0,32).flatMap(worker=>{
       if(!worker||typeof worker.node!=='string'||!/^\w[\w-]{0,63}$/.test(worker.node))return [];

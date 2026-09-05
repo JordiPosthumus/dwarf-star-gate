@@ -10,6 +10,12 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Stopped contradictory lifecycle records from manufacturing ownership.**
+  The online correlator retains bounded conflict evidence instead of choosing
+  whichever dispatch or completion arrived first/last. A contradictory peer
+  cannot disappear into a false unique match; unrelated windows remain usable.
+  This is shadow evidence only, not a routing or recovery change.
+
 - **Pinned the next cache-observability boundary.** Refreshed upstream research
   separates passive job/attempt/execution evidence from later prefix inspection
   and import. Restore routines can mutate state, so they are not safe probes.

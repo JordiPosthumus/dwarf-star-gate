@@ -74,6 +74,14 @@ test('gateway event keeps only the bounded incomplete-stream classification',()=
   assert.equal(event.stream_end,'partial_sse_event');assert.ok(!JSON.stringify(event).includes('PRIVATE'));
   assert.equal(safeGatewayEvent({event:'request_finished',stream_end:'invented'}).stream_end,undefined);
 });
+test('Genie retains the fixed lifecycle-conflict reason without private identities',()=>{
+  const s=snapshot();s.attribution={schema:1,mode:'shadow',counts:{corroborated:0,candidate:0,abstained:1},
+    quality:{schema:1,reason_counts:{gateway_evidence_conflict:1,PRIVATE:9}},
+    recent:[{node:'spark1',status:'abstained',reason:'gateway_evidence_conflict',request_id:'PRIVATE',lifecycle_nodes:['PRIVATE']}]};
+  const b=briefing(s);assert.equal(b.attribution.recent[0].reason,'gateway_evidence_conflict');
+  assert.deepEqual(b.attribution.quality.reason_counts,{gateway_evidence_conflict:1});
+  assert.ok(!JSON.stringify(b).includes('PRIVATE'));assert.ok(!JSON.stringify(b).includes('lifecycle_nodes'));
+});
 test('Genie sees bounded visual-continuation outcomes without media or task authority',()=>{
   const s=snapshot();s.gateway.protections={vision_jpeg:{enabled:true,available:true,rescued:4,guided:1,failed:2,secret:'PRIVATE',last:{time:'2026-09-04T12:00:00Z',kind:'rescued',formats:['gif','PRIVATE'],images:1,node:'spark1',reason:'gif_recovery_rejected',prompt:'PRIVATE'}}};
   const b=briefing(s),v=b.protections.visual_compatibility;

@@ -11,12 +11,23 @@ const EPOCH=/^[\da-f]{64}$/;
 const SAMPLE=/^[\da-f]{64}$/;
 const OUTCOMES=new Set(['complete','client_cancelled','upstream_error','upstream_stream_error','upstream_aborted','upstream_http_error','upstream_engine_error','incomplete_sse','sse_observation_limited','connection_closed','timeout','other']);
 const WINDOW_MS=15*60000, MAX_OPEN_SPAN_MS=7*24*3600000, SKEW_MS=5000, MAX_DISPATCH_LEAD_MS=10*60000, MAX_RECORDS=512, MAX_OVERLAP_CANDIDATES=64;
+const MAX_LIFECYCLE_NODES=64;
 const time=value=>typeof value==='number'?value:typeof value==='string'?Date.parse(value):NaN;
 const tokens=value=>Number.isSafeInteger(value)&&value>=0?value:null;
 
 function candidateWindows(start,requests){
   return requests.filter(request=>request.node===start.node&&request.dispatched_at<=start.time+SKEW_MS&&
     start.time-request.dispatched_at<=MAX_DISPATCH_LEAD_MS&&(request.finished_at===null||request.finished_at>=start.time-SKEW_MS));
+}
+
+// A contradictory row is still possible competing evidence. Use bounded ranges
+// of its observed clocks, not a first/last-record choice, and never assign it.
+// Ranges may over-cover a gap between revisions; that is uncertainty, not reuse.
+function conflictMayOverlap(start,request){
+  if(!request.conflict||!(request.lifecycle_node_overflow||request.node===start.node||request.lifecycle_nodes?.has(start.node)))return false;
+  if(Number.isFinite(request.dispatched_at)&&
+    (request.dispatched_at>start.time+SKEW_MS||request.dispatch_latest<start.time-MAX_DISPATCH_LEAD_MS))return false;
+  return request.inverted_clocks||request.finished_at===null||request.finish_latest>=start.time-SKEW_MS;
 }
 
 function safeGateway(raw) {
@@ -45,6 +56,7 @@ function result(start,requests) {
     status:'abstained',reason:null,confidence:'none',basis:'stock_ds4_timing_shadow',dispatch_delta_ms:null,
     prompt_tokens:start.prompt,cached_tokens:start.cached,new_tokens:start.new_tokens};
   if(!start.backend_epoch)return {...base,reason:'backend_epoch_unavailable'};
+  if(start.lifecycle_conflict)return {...base,reason:'gateway_evidence_conflict'};
   const candidates=candidateWindows(start,requests),candidateIds=new Set(candidates.map(request=>request.request_id));
   // Once an engine start has overlapped multiple gateway windows, pruning or a
   // conflicting later lifecycle record must never manufacture a unique owner.
@@ -76,12 +88,26 @@ export class EngineAttribution {
   acceptGateway(raw) {
     const e=safeGateway(raw);if(!e)return null;
     this.latest=Math.max(this.latest,e.time);
-    const request=this.requests.get(e.request_id)??{request_id:e.request_id,node:e.node,dispatched_at:null,finished_at:null,outcome:null,usage:null};
+    const request=this.requests.get(e.request_id)??{request_id:e.request_id,node:e.node,dispatched_at:null,dispatch_latest:null,finished_at:null,finish_latest:null,outcome:null,usage:null};
     // Conflicting lifecycle identities are retained as an ambiguity, never
     // rewritten into a clean interval.
-    if(request.node!==e.node)request.conflict=true;
-    if(e.event==='request_dispatched')request.dispatched_at??=e.time;
-    else {request.finished_at=e.time;request.outcome=e.outcome;request.usage=e.usage??null;}
+    if(request.node!==e.node){
+      request.conflict=true;request.lifecycle_nodes??=new Set([request.node]);
+      if(request.lifecycle_nodes.size<MAX_LIFECYCLE_NODES)request.lifecycle_nodes.add(e.node);
+      else if(!request.lifecycle_nodes.has(e.node))request.lifecycle_node_overflow=true;
+    }
+    if(e.event==='request_dispatched'){
+      if(request.dispatched_at!==null&&request.dispatched_at!==e.time)request.conflict=true;
+      request.dispatched_at=Math.min(request.dispatched_at??e.time,e.time);
+      request.dispatch_latest=Math.max(request.dispatch_latest??e.time,e.time);
+    }else{
+      const usage={prompt_tokens:e.usage?.prompt_tokens??null,cached_tokens:e.usage?.cached_tokens??null};
+      if(request.finished_at===null){request.outcome=e.outcome;request.usage=usage;}
+      else if(request.finished_at!==e.time||request.outcome!==e.outcome||request.usage.prompt_tokens!==usage.prompt_tokens||request.usage.cached_tokens!==usage.cached_tokens)request.conflict=true;
+      request.finished_at=Math.min(request.finished_at??e.time,e.time);
+      request.finish_latest=Math.max(request.finish_latest??e.time,e.time);
+    }
+    if(request.finished_at!==null&&request.dispatch_latest!==null&&request.finished_at<request.dispatch_latest){request.conflict=true;request.inverted_clocks=true;}
     this.requests.set(e.request_id,request);this.reconcile();return e;
   }
   acceptEngine(raw) {
@@ -96,8 +122,12 @@ export class EngineAttribution {
     this.reconcile();return e;
   }
   captureOverlaps() {
+    const conflicts=[...this.requests.values()].filter(row=>row.conflict);
     const requests=[...this.requests.values()].filter(row=>Number.isFinite(row.dispatched_at)&&!row.conflict);
     for(const start of this.starts.values()){
+      // Capture before pruning and preserve on the engine sample: later aging
+      // or normalized metadata enrichment cannot erase a contradictory owner.
+      if(!start.lifecycle_conflict&&conflicts.some(request=>conflictMayOverlap(start,request)))start.lifecycle_conflict=true;
       const candidates=candidateWindows(start,requests);if(candidates.length<2)continue;
       start.overlap_candidates??=new Set();
       for(const request of candidates){
@@ -143,9 +173,9 @@ export class EngineAttribution {
     const floor=this.latest-WINDOW_MS;
     const protectedIds=new Set();
     for(const start of this.starts.values())if(!start.overlap_settled&&start.time>=this.latest-MAX_OPEN_SPAN_MS)for(const id of start.overlap_candidates??[])protectedIds.add(id);
-    for(const [id,row] of this.requests)if(!protectedIds.has(id)&&(row.finished_at!==null?row.finished_at<floor:row.dispatched_at<this.latest-MAX_OPEN_SPAN_MS))this.requests.delete(id);
+    for(const [id,row] of this.requests)if(!protectedIds.has(id)&&(row.finished_at!==null?row.finish_latest<floor:row.dispatch_latest<this.latest-MAX_OPEN_SPAN_MS))this.requests.delete(id);
     const retained=[...this.requests.values()].filter(row=>Number.isFinite(row.dispatched_at));
-    for(const [id,start] of this.starts)if(start.time<this.latest-MAX_OPEN_SPAN_MS||start.time<floor&&!candidateWindows(start,retained).length)this.starts.delete(id);
+    for(const [id,start] of this.starts)if(start.time<this.latest-MAX_OPEN_SPAN_MS||start.time<floor&&!candidateWindows(start,retained).length&&!retained.some(request=>conflictMayOverlap(start,request)))this.starts.delete(id);
     for(const id of this.emitted.keys())if(!this.starts.has(id))this.emitted.delete(id);
     while(this.requests.size>MAX_RECORDS){const evict=[...this.requests.keys()].find(id=>!protectedIds.has(id))??this.requests.keys().next().value;this.requests.delete(evict);}
     while(this.starts.size>MAX_RECORDS)this.starts.delete(this.starts.keys().next().value);

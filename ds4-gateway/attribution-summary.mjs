@@ -7,7 +7,7 @@ const REASONS=new Set([
   'backend_epoch_unavailable','no_gateway_request_window','overlapping_gateway_windows',
   'overlapping_usage_matches','usage_conflict','request_open','usage_unavailable',
   'multiple_engine_starts','usage_match','usage_disambiguated_overlap',
-  'completed_without_usage','censored_or_failed'
+  'completed_without_usage','censored_or_failed','gateway_evidence_conflict'
 ]);
 const CONFIDENCE=new Set(['none','heuristic','bounded_candidate','high_candidate']);
 

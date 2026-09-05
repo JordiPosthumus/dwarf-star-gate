@@ -63,6 +63,25 @@ guards, and they are not emitted into telemetry or status. Replaying a log
 line is not new ownership evidence and cannot manufacture a unique surviving
 request. Pending starts still accept genuinely later completion evidence.
 
+Contradictory lifecycle records are not a choice between the first dispatch and
+the last completion. Different dispatch/finish clocks, terminal outcomes, usage
+tuples or worker identities for the same request—and a finish clock before its
+dispatch—produce `gateway_evidence_conflict` for potentially affected starts.
+An identical normalized replay is harmless; receiving a valid finish before its
+dispatch record is also supported. Arrival order is not timestamp order.
+
+The correlator keeps bounded observed clock ranges and, only for contradictory
+worker identities, up to 64 private worker IDs per lifecycle row. A range may
+over-cover the gap between contradictory revisions; it cannot establish a match.
+If the worker set overflows, the time-bounded conflict is conservatively applicable
+to any worker. Otherwise unrelated workers and out-of-window starts retain their
+ordinary matching behavior. The existing 512-record/seven-day bounds still apply.
+A conflict seen by a retained engine sample remains a guard after lifecycle
+pruning and metadata enrichment; removing a contradictory peer cannot manufacture
+a unique owner. The guard and worker set are never exported. The audit and Genie
+receive only the fixed reason/category, not a new recovery or routing authority.
+Missing evidence outside the bounded observation history remains unknowable.
+
 It uses a five-second clock tolerance and a ten-minute maximum
 dispatch-to-prompt-start lead. Stable sample and revision digests allow later
 readers to deduplicate dashboard replay. Only allowlisted IDs, times, token counts,

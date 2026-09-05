@@ -39,7 +39,9 @@ is implied by this fix.
    letting a first-record choice hide intervening work. No input-order choice
    may become a suspected cache-loss alert. Identical
    engine-start replays and metadata updates preserve remembered attribution
-   ambiguity. Check fresh ordinary
+   ambiguity. Contradictory gateway lifecycle revisions now also fence affected
+   starts rather than selecting a first dispatch, last finish or surviving peer;
+   identical replays and unrelated windows retain their behavior. Check fresh ordinary
    traffic across process epochs; synthetic speed gains alone are not live proof.
    Later-evidence attribution now explains overlap outcomes by worker, with
    recorded/reconciled/remaining counts and blocker totals matching the fleet
