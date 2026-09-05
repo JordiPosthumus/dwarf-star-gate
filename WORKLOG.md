@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Stopped repeat Genie reviews from manufacturing suggestion recency.** An
+  unchanged saved suggestion keeps its save time. Delayed reviews cannot replace
+  newer incident evidence; genuine revisions remain visible, with unsaved advice
+  labelled non-durable. Existing notebook history stays intact.
+
 - **Made lost-core replies honest about execution uncertainty.** The Door now
   labels unknown dispatch and advises inspecting task state before retrying.
   A real Pi fixture shows why this is not enough for exactly-once behavior:

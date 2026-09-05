@@ -92,6 +92,15 @@ current failure candidates, so they cannot compare their proposals with withheld
 historical prose. Deduplication of stored signatures is not proof that a model
 avoided repeating a hypothesis. HTML in notes is displayed as text.
 
+Repeating an identical durable suggestion does not refresh its displayed save
+time or create a new journal revision. A delayed review using an older occurrence
+of the same failure signature receives an `older_candidate` / `stale` receipt;
+it cannot replace newer stored evidence or hide that evidence in the suggestions
+view. Changed hypotheses at the same evidence time and genuinely newer
+occurrences can still create revisions. Unsaved revisions remain visibly
+non-durable. This is recency protection, not semantic grouping or proof that an
+incident is resolved; existing history is not rewritten or deleted.
+
 Tests cover real dashboard HTTP controls/CSRF, durable reload, corruption, write
 failure, stale samples, bounds, privacy and lack of additional action authority.
 `npm run memory:test` runs these tests. The optional browser fixture,

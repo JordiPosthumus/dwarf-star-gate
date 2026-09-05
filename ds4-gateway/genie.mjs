@@ -318,7 +318,11 @@ export class Genie {
     for(const note of this.memory?.hardening?.(snapshot)??[])byCandidate.set(note.data.candidate_id,{id:note.id,candidate_id:note.data.candidate_id,title:note.data.title,suggestion:note.data.suggestion,failure_class:note.data.failure_class,scope:note.data.worker??'fleet',reason:note.data.reason,observed_at:new Date(note.data.observed_at).toISOString(),continuity:note.data.continuity,at:note.at,revision:note.revision,durable:true});
     for(const report of this.reports)for(const note of report.hardening_notes??[]){
       const current=byCandidate.get(note.candidate_id),same=current&&['title','suggestion','failure_class','scope','reason','observed_at','continuity'].every(key=>current[key]===note[key]);
-      if(same)current.at=Math.max(current.at,report.time);else if(!current||report.time>current.at)byCandidate.set(note.candidate_id,{...note,at:report.time,durable:false});
+      // Review time is not evidence time. Repeating a saved hypothesis must
+      // not refresh it, and a delayed review must not hide newer evidence.
+      if(current&&Date.parse(note.observed_at)<Date.parse(current.observed_at))continue;
+      if(same){if(!current.durable)current.at=Math.max(current.at,report.time);}
+      else if(!current||report.time>current.at)byCandidate.set(note.candidate_id,{...note,at:report.time,durable:false});
     }
     const hardening=[...byCandidate.values()];
     hardening.sort((a,b)=>b.at-a.at||a.candidate_id.localeCompare(b.candidate_id));

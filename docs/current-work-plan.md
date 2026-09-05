@@ -84,6 +84,9 @@ is implied by this fix.
    Request transport/HTTP categories and pre-dispatch rejection codes now survive
    the dashboard evidence projection; unknown historical details remain unknown.
    Semantic quality, incident grouping, safeguard verification and lifecycle remain work.
+   Identical durable suggestions no longer gain recency from repeat reviews;
+   older candidate occurrences cannot overwrite newer notebook evidence. This
+   does not automatically resolve, merge or delete historical hypotheses.
 4. **Improve forecast evidence before expanding authority.** Separate engine
    throughput from client-delivery timing; examine long/censored jobs, causal
    early features and sensor/semantic coverage. Score frozen future cohorts by

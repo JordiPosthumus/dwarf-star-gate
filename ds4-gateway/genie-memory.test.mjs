@@ -35,6 +35,33 @@ test('hardening signatures retain their newest bounded occurrence regardless of 
   ]);
 });
 function fixture(t){const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'dsg-memory-')));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));return path.join(root,'memory');}
+test('older candidate reviews cannot replace newer durable evidence or promote stale advice',t=>{
+  let now=2000;const s=sample(),m=new GenieMemory(fixture(t),{now:()=>now});m.setEnabled(true);
+  s.events=[{event:'request_finished',time:new Date(1900).toISOString(),node:'worker-a',outcome:'incomplete_sse'}];
+  const [candidate]=hardeningCandidates(s),note={candidate_id:candidate.id,title:'Current evidence',suggestion:'Test the current stream boundary.'};
+  m.saveHardeningNotes([note],[candidate]);const bytes=m.bytes,before=m.hardening(s)[0];
+  const older={...candidate,observed_at:new Date(900).toISOString()},stale={...note,title:'Older advice'};
+  now=3000;const receipt=m.saveHardeningNotes([stale],[older])[0];
+  assert.equal(receipt.state,'stale');assert.equal(receipt.revision,1);assert.equal(m.bytes,bytes);
+  assert.deepEqual(new GenieMemory(m.directory).hardening(s)[0],before);
+  const genie=new Genie(null,()=>s,{memory:m});t.after(()=>genie.close());
+  genie.reports=[{time:now,hardening_notes:[{...older,...stale}]}];
+  const shown=genie.status().hardening_notes[0];assert.equal(shown.title,note.title);assert.equal(shown.durable,true);assert.equal(shown.at,2000);
+});
+test('repeated durable suggestions keep their save time while genuine unsaved revisions remain visible',t=>{
+  let now=1000;const s=sample(),m=new GenieMemory(fixture(t),{now:()=>now});m.setEnabled(true);
+  s.events=[{event:'request_finished',time:new Date(900).toISOString(),node:'worker-a',outcome:'incomplete_sse'}];
+  const [candidate]=hardeningCandidates(s),note={candidate_id:candidate.id,title:'Stream boundary',suggestion:'Test the existing guard.'};
+  m.saveHardeningNotes([note],[candidate]);const bytes=m.bytes;
+  now=3000;assert.equal(m.saveHardeningNotes([note],[candidate])[0].state,'unchanged');assert.equal(m.bytes,bytes);
+  const genie=new Genie(null,()=>s,{memory:m});t.after(()=>genie.close());
+  genie.reports=[{time:3000,hardening_notes:[{...candidate,...note}]}];
+  let shown=genie.status().hardening_notes[0];assert.equal(shown.at,1000);assert.equal(shown.durable,true);
+  genie.reports.unshift({time:4000,hardening_notes:[{...candidate,...note,suggestion:'A different falsifiable experiment.'}]});
+  shown=genie.status().hardening_notes[0];assert.equal(shown.at,4000);assert.equal(shown.durable,false);assert.equal(shown.suggestion,'A different falsifiable experiment.');
+  now=5000;m.saveHardeningNotes([{...note,suggestion:shown.suggestion}],[candidate]);
+  shown=genie.status().hardening_notes[0];assert.equal(shown.at,5000);assert.equal(shown.revision,2);assert.equal(shown.durable,true);
+});
 test('specific failure evidence preserves older generic notebook hypotheses without invented resolution',t=>{
   const s=sample(),m=new GenieMemory(fixture(t),{now:()=>1000});m.setEnabled(true);
   const raw={event:'request_finished',time:new Date(900).toISOString(),node:'worker-a',outcome:'upstream_error',message:'PRIVATE_ERROR'};

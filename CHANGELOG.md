@@ -1,5 +1,15 @@
 # Changelog
 
+## Preserve Genie suggestion recency
+
+- Keep an unchanged durable suggestion's save time instead of refreshing its
+  position whenever a review repeats it.
+- Reject older occurrences of the same candidate with a stale receipt, preserving
+  newer stored evidence and its displayed suggestion. Do not rewrite history or
+  infer resolution; genuine revisions and non-durable changes remain supported.
+- Add regressions for stale persistence, reload, repeated display and subsequent
+  genuine edits. No provider, inference or recovery policy changes.
+
 ## Label unknown execution after a lost core connection
 
 - Replace the Door's blanket resubmission advice with explicit unknown backend

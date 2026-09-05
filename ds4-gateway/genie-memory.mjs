@@ -143,6 +143,9 @@ export class GenieMemory {
       const data=hardeningRecord({candidate_id:candidate.id,worker:candidate.scope==='fleet'?null:candidate.scope,failure_class:candidate.failure_class,reason:candidate.reason,observed_at:observedAt,continuity:candidate.continuity,title:note.title,suggestion:note.suggestion,state:'open'});
       if(!data)throw new Error('Invalid hardening note');
       const id=hash(['hardening-note',data.candidate_id]).slice(0,24),old=this.notes.get(id),source_digest=hash(data);
+      // A delayed review can carry an older occurrence of the same signature.
+      // Preserve newer evidence; this receipt is not a resolution or deletion.
+      if(old&&data.observed_at<old.data.observed_at){receipts.push({candidate_id:data.candidate_id,id,revision:old.revision,state:'stale',reason:'older_candidate'});continue;}
       if(old?.source_digest===source_digest){receipts.push({candidate_id:data.candidate_id,id,revision:old.revision,state:'unchanged'});continue;}
       const saved=this.append({schema:1,kind:'hardening_note',at:this.now(),id,revision:(old?.revision??0)+1,data,source_digest});
       receipts.push({candidate_id:data.candidate_id,...saved,state:'saved'});
