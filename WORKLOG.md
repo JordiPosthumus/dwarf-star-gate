@@ -8,7 +8,13 @@ For implementation detail, see the [changelog](CHANGELOG.md). For exact history,
 see [Git commits](https://github.com/JordiPosthumus/dwarf-star-gate/commits/main/).
 For unfinished work, see the [roadmap](docs/roadmap.md).
 
-## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
+## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
+
+- **Stopped counting accepted reason-only streams as worker failures.** A real
+  Pi fixture completed its tool and answer while DSG incorrectly logged two
+  failures because `[DONE]` was absent. Explicit, unambiguous finishes at clean
+  EOF now have their own diagnostic; interrupted transports remain failures.
+  No content is fabricated or replayed, and no existing quarantine is cleared.
 
 - **Separated delivery bursts from assumed decode speed.** An offline challenger
   retains socket-timing evidence under accurate names, adds prior service/window

@@ -112,6 +112,7 @@ export class UsageObserver {
   pending = ''; usage = undefined; done = false; finish_reason = null;
   skipping = false; limited = false; failed = false; decoder = new StringDecoder('utf8');
   eventBoundary = true; closed = false;
+  singleChoiceFinish=false; reasonEofAmbiguous=false; reasonEventDataLines=0;
   constructor(route='/v1/chat/completions'){this.route=route;}
   accept(chunk) {
     if(this.closed)return;
@@ -134,7 +135,13 @@ export class UsageObserver {
   }
   line() {
     const line=this.pending.trim();
+    if(!line){
+      if(!/^\r?$/.test(this.pending))this.reasonEofAmbiguous=true;
+      this.reasonEventDataLines=0;
+    }
     if(!line.startsWith('data:'))return;
+    if(!this.pending.startsWith('data:'))this.reasonEofAmbiguous=true;
+    if(++this.reasonEventDataLines>1)this.reasonEofAmbiguous=true;
     const payload=line.slice(5).trim();
     if(payload==='[DONE]'){
       if(['/v1/chat/completions','/v1/completions'].includes(this.route))this.done=true;
@@ -142,6 +149,16 @@ export class UsageObserver {
     }
     try {
       const parsed=JSON.parse(payload),u=parsed.usage,reason=parsed.choices?.[0]?.finish_reason;
+      if(['/v1/chat/completions','/v1/completions'].includes(this.route)){
+        const choices=parsed.choices;
+        // A clean EOF after an explicit single-choice finish is accepted by Pi.
+        // Retain [DONE] separately. Never infer completion from partial events,
+        // multiple choices, malformed data, or more output after the finish.
+        if(Array.isArray(choices)&&choices.length===0&&u&&typeof u==='object'){}
+        else if(!Array.isArray(choices)||choices.length!==1||choices[0]?.index!==0||this.singleChoiceFinish)this.reasonEofAmbiguous=true;
+        else if(['stop','length','tool_calls','function_call','content_filter'].includes(reason))this.singleChoiceFinish=true;
+        else if(reason!=null)this.reasonEofAmbiguous=true;
+      }
       const delta=parsed.choices?.[0]?.delta;
       const progress=(text,phase)=>{if(typeof text==='string'&&text.length){this.semanticCharacters+=text.length;this.lastSemanticAt=performance.now();this.firstSemanticAt??=this.lastSemanticAt;this.phase=phase;if(phase==='thinking')this.thinkingCharacters+=text.length;else if(phase==='answering')this.answerCharacters+=text.length;else if(phase==='tool_output')this.toolCharacters+=text.length;}};
       if(delta) {
@@ -179,9 +196,9 @@ export class UsageObserver {
       }
       if(['stop','length','tool_calls','function_call','content_filter'].includes(reason))this.finish_reason=reason;
       if(u)this.usage={prompt_tokens:count(u.prompt_tokens),completion_tokens:count(u.completion_tokens),cached_tokens:count(u.prompt_tokens_details?.cached_tokens)};
-    } catch { /* A telemetry failure must not affect inference. */ }
+    } catch { this.reasonEofAmbiguous=true; /* A telemetry failure must not affect inference. */ }
   }
-  finishState() {
+  finishState({cleanEOF=true}={}) {
     if(!this.closed){
       const tail=this.decoder.end();this.closed=true;
       if(tail&&!this.skipping){
@@ -199,6 +216,7 @@ export class UsageObserver {
     }
     if(this.limited)return 'observation_limited';
     if(this.skipping||this.pending.length>0||!this.eventBoundary)return 'partial_sse_event';
+    if(cleanEOF&&this.singleChoiceFinish&&!this.reasonEofAmbiguous)return 'terminal_without_done';
     return 'clean_eof_no_terminal';
   }
 }
@@ -595,7 +613,7 @@ export function createGateway(config,{visionTranscode}={}) {
     const progressTimer=dataset.enabled?setInterval(progress,30000):null;progressTimer?.unref();
     const finish = (outcome, detail, observedStreamEnd=null) => {
       if (settled) return; settled = true;
-      const streamEnd=responseFormat==='sse'?(observedStreamEnd??observer.finishState()):null;
+      const streamEnd=responseFormat==='sse'?(observedStreamEnd??observer.finishState({cleanEOF:false})):null;
       const jsonMetadata=jsonUsage?.finish();
       if(jsonMetadata){observer.usage=jsonMetadata.usage??undefined;observer.finish_reason=jsonMetadata.finish_reason??null;}
       const usageObservation=jsonMetadata?.status??(responseFormat!=='sse'?'unsupported_format':!observer.usage?'not_reported':observer.usage.prompt_tokens!=null&&observer.usage.completion_tokens!=null?'observed':'partial');
@@ -670,7 +688,7 @@ export function createGateway(config,{visionTranscode}={}) {
       observeResponse(up,isSSE);if(body.length)acceptResponseChunk(up,body,isSSE);
       res.writeHead(up.statusCode,responseHeaders(up));res.end(body);
       const streamEnd=isSSE?observer.finishState():null;
-      finish(up.statusCode>=400?'upstream_http_error':!isSSE?'complete':streamEnd==='engine_error'?'upstream_engine_error':['terminal','terminal_without_finish_reason','terminal_reason_unobserved'].includes(streamEnd)?'complete':streamEnd==='observation_limited'?'sse_observation_limited':'incomplete_sse',up.statusCode,streamEnd);
+      finish(up.statusCode>=400?'upstream_http_error':!isSSE?'complete':streamEnd==='engine_error'?'upstream_engine_error':['terminal','terminal_without_done','terminal_without_finish_reason','terminal_reason_unobserved'].includes(streamEnd)?'complete':streamEnd==='observation_limited'?'sse_observation_limited':'incomplete_sse',up.statusCode,streamEnd);
     };
     const sendGuidance=(reason,stream,kind='jpeg')=>{
       const guide=visionGuidance({stream,model:config.model,requestId:job.id,kind});
@@ -762,7 +780,7 @@ export function createGateway(config,{visionTranscode}={}) {
       up.on('data',chunk=>acceptResponseChunk(up,chunk,isSSE));
       up.on('error',e=>{res.destroy();finish(job.cancelled?'client_cancelled':'upstream_stream_error',e.code);});
       up.on('aborted',()=>{res.destroy();finish(job.cancelled?'client_cancelled':'upstream_aborted');});
-      up.on('end',()=>{const streamEnd=isSSE?observer.finishState():null;finish(up.statusCode>=400?'upstream_http_error':!isSSE?'complete':streamEnd==='engine_error'?'upstream_engine_error':['terminal','terminal_without_finish_reason','terminal_reason_unobserved'].includes(streamEnd)?'complete':streamEnd==='observation_limited'?'sse_observation_limited':'incomplete_sse',up.statusCode,streamEnd);});
+      up.on('end',()=>{const streamEnd=isSSE?observer.finishState():null;finish(up.statusCode>=400?'upstream_http_error':!isSSE?'complete':streamEnd==='engine_error'?'upstream_engine_error':['terminal','terminal_without_done','terminal_without_finish_reason','terminal_reason_unobserved'].includes(streamEnd)?'complete':streamEnd==='observation_limited'?'sse_observation_limited':'incomplete_sse',up.statusCode,streamEnd);});
       up.pipe(res);
     };
     const issue=(replacement,retry=false)=>{

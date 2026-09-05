@@ -55,7 +55,11 @@ async function backend(id) {
       if((b.rejectJpeg&&typedImageUrls.some(value=>value.startsWith('data:image/jpeg;base64,')||value.startsWith('data:image/jpg;base64,')))||(b.rejectNormalized&&typedImageUrls.some(value=>value.startsWith('data:image/png;base64,')))){b.jpegRejections=(b.jpegRejections??0)+1;ended=true;res.writeHead(400,{'content-type':'application/json'});res.end(JSON.stringify({message:'invalid or unsupported JPEG image',type:'invalid_request_error'}));return;}
       if(p.generic_json_error){ended=true;res.writeHead(400,{'content-type':'application/json','x-backend-proof':'unchanged'});res.end(JSON.stringify({error:{message:'invalid JSON request',type:'invalid_request_error'}}));return;}
       if(p.client_error) {ended=true;res.writeHead(400,{'content-type':'text/plain'});res.end(typeof p.client_error==='string'?p.client_error:'invalid request');return;}
-      if(typeof p.fixture_sse==='string') {ended=true;res.writeHead(200,{'content-type':'text/event-stream'});res.end(p.fixture_sse);return;}
+      if(typeof p.fixture_sse==='string') {
+        res.writeHead(200,{'content-type':'text/event-stream'});
+        if(p.fixture_abort){res.write(p.fixture_sse);const timer=setTimeout(()=>res.destroy(),30);res.once('close',()=>clearTimeout(timer));}
+        else {ended=true;res.end(p.fixture_sse);}return;
+      }
       if(typeof p.fixture_json==='string') {ended=true;res.writeHead(200,{'content-type':'application/json'});res.end(p.fixture_json);return;}
       if (p.http_error) { ended = true; res.writeHead(503); res.end('backend-error'); return; }
       if (p.disconnect) { res.destroy(); return; }
@@ -480,6 +484,56 @@ test('gateway records bounded incomplete-stream shape without changing response 
   assert.deepEqual(finishes.map(row=>row.stream_end),['clean_eof_no_terminal','partial_sse_event']);
   assert.ok(!JSON.stringify(rows).includes('PRIVATE_STREAM_ALPHA'));assert.ok(!JSON.stringify(rows).includes('PRIVATE_STREAM_BETA'));
 });
+test('clean reason-only EOF requires an unambiguous bounded single-choice finish',()=>{
+  const event=value=>'data: '+JSON.stringify(value)+'\n\n';
+  const terminal=event({choices:[{index:0,delta:{content:'PRIVATE_REASON_ONLY'},finish_reason:'stop'}]});
+  for(const route of ['/v1/chat/completions','/v1/completions'])for(const reason of ['stop','length','tool_calls','function_call','content_filter']){
+    const o=new UsageObserver(route),bytes=Buffer.from(event({choices:[{index:0,finish_reason:reason}]}));
+    for(const byte of bytes)o.accept(Buffer.from([byte]));
+    o.accept(Buffer.from(event({choices:[],usage:{prompt_tokens:10,completion_tokens:2}})));
+    assert.equal(o.finishState(),'terminal_without_done');assert.equal(o.done,false);assert.equal(o.finish_reason,reason);
+    assert.equal(o.finishState(),'terminal_without_done');
+  }
+  const ambiguous=[
+    event({choices:[{finish_reason:'stop'}]}),event({choices:[{index:1,finish_reason:'stop'}]}),
+    event({choices:[{index:0,finish_reason:'stop'},{index:1,finish_reason:null}]}),
+    terminal+event({choices:[{index:0,delta:{content:'later'},finish_reason:null}]}),
+    event({choices:[{index:0,finish_reason:'UNKNOWN'}]})+terminal,
+    'data: invalid JSON\n\n'+terminal,terminal+event({choices:[]}),
+    event({choices:[{index:0,delta:{content:'first'}}]}).slice(0,-1)+terminal,
+    terminal.replace('\n\n','\n \n'),
+    ' '+terminal,
+  ];
+  for(const body of ambiguous){const o=new UsageObserver();o.accept(Buffer.from(body));assert.equal(o.finishState(),'clean_eof_no_terminal');}
+  for(const suffix of ['data: {','data: {}\n']){const o=new UsageObserver();o.accept(Buffer.from(terminal+suffix));assert.equal(o.finishState(),'partial_sse_event');}
+  const limited=new UsageObserver();limited.accept(Buffer.from('data: '+'x'.repeat(1048577)+'\n\n'+terminal));assert.equal(limited.finishState(),'observation_limited');
+  const failed=new UsageObserver();failed.accept(Buffer.from(terminal+event({error:{message:'PRIVATE_ERROR'}})));assert.equal(failed.finishState(),'engine_error');
+  for(const route of ['/v1/messages','/v1/responses']){const o=new UsageObserver(route);o.accept(Buffer.from(terminal));assert.equal(o.finishState(),'clean_eof_no_terminal');}
+});
+test('explicit clean reason-only completions preserve bytes and do not quarantine a working worker',async t=>{
+  const r=await rig(t,1,{dataset_enabled:true});
+  const body='data: {"choices":[{"index":0,"delta":{"content":"PRIVATE_REASON_ONLY"},"finish_reason":"stop"}]}\n\n';
+  for(let i=0;i<3;i++)assert.equal((await r.request(JSON.stringify({fixture_sse:body,stream:true}),'reason-only')).body,body);
+  const worker=r.gateway.stats().workers[0];assert.equal(worker.inference_failures,0);assert.equal(worker.quarantine,null);assert.equal(worker.completed,3);
+  assert.equal(r.backends[0].records.length,3,'no synthetic continuation or replay');
+  await until(()=>r.gateway.stats().dataset.finished===3);await r.gateway.close();
+  const dir=path.join(path.dirname(r.config.state_file),'training'),rows=fs.readdirSync(dir).flatMap(f=>fs.readFileSync(path.join(dir,f),'utf8').trim().split('\n').map(JSON.parse));
+  assert.ok(rows.filter(r=>r.kind==='finish').every(r=>r.outcome==='complete'&&r.stream_end==='terminal_without_done'&&r.finish_reason==='stop'));
+  assert.ok(!JSON.stringify(rows).includes('PRIVATE_REASON_ONLY'));
+});
+test('reason-only content cannot turn an aborted upstream transport into success or replay permission',async t=>{
+  const r=await rig(t,1,{dataset_enabled:true});
+  const body='data: {"choices":[{"index":0,"delta":{"content":"PRIVATE_ABORT"},"finish_reason":"stop"}]}\n\n';
+  await assert.rejects(r.request(JSON.stringify({fixture_sse:body,fixture_abort:true,stream:true}),'reason-abort'));
+  await until(()=>r.gateway.stats().dataset.finished===1);
+  assert.equal(r.gateway.stats().workers[0].inference_failures,1);assert.equal(r.gateway.stats().workers[0].completed,0);
+  assert.equal(r.backends[0].records.length,1);
+  await r.gateway.close();
+  const dir=path.join(path.dirname(r.config.state_file),'training'),rows=fs.readdirSync(dir).flatMap(f=>fs.readFileSync(path.join(dir,f),'utf8').trim().split('\n').map(JSON.parse));
+  const finish=rows.find(r=>r.kind==='finish');assert.ok(['upstream_aborted','upstream_stream_error'].includes(finish.outcome));
+  assert.notEqual(finish.stream_end,'terminal_without_done','aborted transport never receives a clean-EOF diagnostic');
+  assert.equal(rows.filter(r=>r.kind==='rejection').length,0);assert.ok(!JSON.stringify(rows).includes('PRIVATE_ABORT'));
+});
 test('DONE distinguishes a missing recognized finish reason from an observer limit',()=>{
   for(const route of ['/v1/chat/completions','/v1/completions']){
     const marker=new UsageObserver(route);marker.accept(Buffer.from('data: {"choices":[{"finish_reason":null}]}\n\ndata: [DONE]\n\n'));
@@ -491,7 +545,7 @@ test('DONE distinguishes a missing recognized finish reason from an observer lim
     const known=new UsageObserver(route);known.accept(Buffer.from('data: '+ 'x'.repeat(1048577)+'\n\ndata: {"choices":[{"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'));
     assert.equal(known.finishState(),'terminal');
   }
-  for(const stream_end of ['terminal_without_finish_reason','terminal_reason_unobserved','PRIVATE_UNKNOWN_REASON']){
+  for(const stream_end of ['terminal_without_done','terminal_without_finish_reason','terminal_reason_unobserved','PRIVATE_UNKNOWN_REASON']){
     const raw={event:'request_finished',request_id:randomUUID(),stream_end,prompt:'PRIVATE_BODY'};
     const logged=safeGatewayEvent(raw),recorded=evidence('finish',raw);
     if(stream_end.startsWith('terminal')){assert.equal(logged.stream_end,stream_end);assert.equal(recorded.stream_end,stream_end);}

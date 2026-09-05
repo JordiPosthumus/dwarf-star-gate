@@ -97,6 +97,15 @@ DSG does not put its name on an engine error or certify it as undispatched.
   `engine_error` for an in-band engine failure, `observation_limited` when bounded
   inspection cannot decide, or `terminal` for a valid terminal event. It retains
   no event text and does not alter or replay the response.
+- `terminal_without_done`: on clean HTTP EOF, a fully observed, event-complete
+  OpenAI-style stream supplied one observed choice at index zero and an explicit
+  recognized finish reason, but no separate `[DONE]` marker. Pi accepts this shape.
+  DSG counts it as complete instead of accumulating false inference failures and
+  eventually quarantining a serving worker. `sse_done` stays false: no marker is
+  invented. Multiple/unknown choice indexes, malformed or observation-limited
+  data, partial events and further choice output after the finish do not qualify.
+  An optional trailing usage-only event is allowed. An actual upstream abort or
+  error remains failed, regardless of earlier semantic completion evidence.
 
 ## Implemented contract
 
@@ -179,6 +188,18 @@ or quarantine a worker on this evidence alone. The first diagnostic is available
 to Genie's developer hypotheses as `client_compatibility`, not recovery authority;
 an observer limit alone does not create a hardening suggestion. Collector changes
 require a core cutover and Genie changes a dashboard reload before live use.
+
+A fifth real-agent fixture omits `[DONE]` but includes explicit `tool_calls` and
+`stop` reasons at complete SSE boundaries. Pi executes the tool exactly once and
+continues to its answer with two total inference calls. Previously DSG counted
+both successful turns as failures; the reason-only EOF diagnostic corrects that
+accounting without editing response bytes or generating any continuation itself.
+Gateway regressions also prove three such completions cannot trigger the repeated
+failure quarantine, while a socket abort after the reason remains a failure and
+never receives an undispatched retry certificate. This is not arbitrary recovery
+of interrupted generation, nor proof that every client accepts markerless streams.
+Existing quarantine records are not automatically cleared or historical failures
+rewritten. Only newly observed qualifying clean completions use this distinction.
 
 The same example extension can separately opt in to the advisory
 [Agent Watch](agent-watch.md) heartbeat with `DSG_AGENT_WATCH=1`. It reports only

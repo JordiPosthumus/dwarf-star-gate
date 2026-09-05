@@ -10,7 +10,7 @@ import {createContinuityFetch,registerPiContinuity} from './continuity-client.mj
 
 // Exercise the real installed Pi serializer AND agent/tool loop, isolated from
 // operator settings, sessions and real DS4 devices. Set DSG_PI_ROOT explicitly.
-for(const mode of ['gateway-wait','certified-retries','partial-stream','terminal-without-reason'])test(`real Pi agent ${['partial-stream','terminal-without-reason'].includes(mode)?'does not replay':'survives'} ${mode} between tool execution and continuation`,{skip:!process.env.DSG_PI_ROOT},async t=>{
+for(const mode of ['gateway-wait','certified-retries','partial-stream','terminal-without-reason','reason-without-marker'])test(`real Pi agent ${['partial-stream','terminal-without-reason'].includes(mode)?'does not replay':'survives'} ${mode} between tool execution and continuation`,{skip:!process.env.DSG_PI_ROOT},async t=>{
   const root=process.env.DSG_PI_ROOT;
   const {streamSimple}=await import(pathToFileURL(path.join(root,'node_modules/@earendil-works/pi-ai/dist/api/openai-completions.js')));
   const {Agent}=await import(pathToFileURL(path.join(root,'node_modules/@earendil-works/pi-agent-core/dist/agent.js')));
@@ -25,7 +25,7 @@ for(const mode of ['gateway-wait','certified-retries','partial-stream','terminal
       if(mode==='partial-stream'&&requests===2)return res.end(`data: ${JSON.stringify({id:'test',choices:[{index:0,delta:{content:'Unfinished answer'},finish_reason:null}]})}\n\n`);
       if(mode==='terminal-without-reason'&&requests===2)return res.end(`data: ${JSON.stringify({id:'test',choices:[{index:0,delta:{content:'Marker is not a finish reason'},finish_reason:null}]})}\n\ndata: [DONE]\n\n`);
       const delta=requests===1?{tool_calls:[{index:0,id:'tool_1',type:'function',function:{name:'count_once',arguments:'{}'}}]}:{content:'DONE'};
-      res.end(`data: ${JSON.stringify({id:'test',choices:[{index:0,delta,finish_reason:requests===1?'tool_calls':'stop'}],usage:{prompt_tokens:10,completion_tokens:2}})}\n\ndata: [DONE]\n\n`);
+      res.end(`data: ${JSON.stringify({id:'test',choices:[{index:0,delta,finish_reason:requests===1?'tool_calls':'stop'}],usage:{prompt_tokens:10,completion_tokens:2}})}\n\n${mode==='reason-without-marker'?'':'data: [DONE]\n\n'}`);
     });
   });
   await new Promise(r=>backend.listen(0,'127.0.0.1',r));t.after(()=>{backend.closeAllConnections();backend.close();});
@@ -53,4 +53,5 @@ for(const mode of ['gateway-wait','certified-retries','partial-stream','terminal
   }
   assert.equal(agent.state.errorMessage,undefined);
   assert.ok(agent.state.messages.at(-1).content.some(c=>c.type==='text'&&c.text==='DONE'));
+  if(mode==='reason-without-marker')assert.equal(gateway.stats().workers[0].inference_failures,0,'Pi accepted both explicit finishes; do not count them as worker failures');
 });

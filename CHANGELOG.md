@@ -1,5 +1,20 @@
 # Changelog
 
+## Avoid false failures for explicit finishes at clean stream EOF
+
+- Fix a real-Pi regression: its agent/tool loop accepts explicit finish reasons
+  at complete SSE boundaries without `[DONE]`, but DSG previously counted those
+  accepted turns as inference failures and could quarantine a working worker.
+- Record `terminal_without_done` only for bounded, unambiguous single-observed-
+  choice completions at clean EOF. Preserve exact bytes and `sse_done: false`;
+  do not invent a marker, finish reason, continuation or retry certificate.
+- Retain failure behavior for socket aborts, missing reasons, malformed/partial
+  events, observation gaps and ambiguous choice sequences. Teach Genie the
+  distinction; do not retroactively clear quarantines or rewrite evidence.
+- Test the real Pi tool loop, three-response non-quarantine, private evidence
+  serialization, bytewise chunking and an aborted transport after a finish reason.
+  Core/dashboard activation remains a separate staged cutover.
+
 ## Separate response delivery timing from engine-speed assumptions
 
 - Add an offline delivery-aware occupancy challenger with unchanged labels and
