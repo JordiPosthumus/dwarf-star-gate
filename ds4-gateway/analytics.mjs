@@ -13,8 +13,9 @@ export class PredictionEvidence {
   constructor({maxRequests=4096,maxEvents=16384,maxResults=500}={}) {
     Object.assign(this,{maxRequests,maxEvents,maxResults});
     this.requests=new Map();this.seen=new Set();this.sequence=0;
-    this.rejected=0;this.evicted=0;this.lastEvent=null;
+    this.rejected=0;this.evicted=0;this.lastEvent=null;this.rejectionReasons={};
   }
+  reject(reason){this.rejected++;this.rejectionReasons[reason]=(this.rejectionReasons[reason]??0)+1;}
   accept(row) {
     // Other versioned collector streams are not missing analytics joins.
     if(row?.schema===1 && ['request_features','embedding','progress','rejection','waiting','queue_relocation'].includes(row.kind))return;
@@ -36,17 +37,21 @@ export class PredictionEvidence {
       if(this.requests.size>this.maxRequests){this.requests.delete(this.requests.keys().next().value);this.evicted++;}
       return;
     }
-    if(!r || row.node!==r.node) {this.rejected++;return;}
+    if(!r || row.node!==r.node) {this.reject(!r?'missing_admission':'different_worker');return;}
     if(r.invalid)return;
     if(row.kind==='model_prediction'){
       const kind=row.model_kind,stage=row.prediction_stage;
       if(row.predictor_schema!==2||!/^[a-f0-9]{64}$/.test(row.model_id)||!['admission','updated','remaining'].includes(kind)||!['admission','upload','embedded','remaining'].includes(stage)||number(row.seconds)===null||r.terminal||time<r.at||!Number.isFinite(row.available_at)||row.available_at>time){this.rejected++;return;}
-      if((kind==='admission'&&(stage!=='admission'||r.dispatch))||(kind!=='admission'&&!r.dispatch)||(kind==='remaining'&&(stage!=='remaining'||number(row.elapsed_s)===null))){this.rejected++;return;}
+      if(!(kind==='admission'?stage==='admission':kind==='updated'?['upload','embedded'].includes(stage):stage==='remaining')){this.reject('stage_kind_mismatch');return;}
+      if((kind==='admission'&&r.dispatch)||(kind!=='admission'&&!r.dispatch)||(kind==='remaining'&&number(row.elapsed_s)===null)){this.reject('forecast_lifecycle_mismatch');return;}
       if(kind==='remaining'&&row.elapsed_s<30)return;
       const key=row.model_id+':'+stage;
       // Freeze one forecast per model/stage/request; later updates cannot
       // replace an inaccurate earlier forecast in this chart.
-      if(!r.models.has(key)&&r.models.size<16)r.models.set(key,{id:row.model_id,kind,stage,at:time,seconds:row.seconds,elapsed_s:row.elapsed_s??0,experimental:row.experimental});
+      if(!r.models.has(key)){
+        if(r.models.size>=16){this.reject('request_forecast_limit');return;}
+        r.models.set(key,{id:row.model_id,kind,stage,at:time,seconds:row.seconds,baseline_seconds:number(row.baseline_seconds),elapsed_s:row.elapsed_s??0,experimental:row.experimental});
+      }
       return;
     }
     if(row.kind==='routing_shadow') {
@@ -75,11 +80,14 @@ export class PredictionEvidence {
   }
   snapshot() {
     const valid=[...this.requests.values()].filter(r=>!r.invalid && !r.observer);
-    const rows=valid.filter(r=>r.dispatch).sort((a,b)=>b.dispatch.sequence-a.dispatch.sequence).slice(0,this.maxResults).reverse();
-    const series=new Map();for(const r of rows)for(const [key,p] of r.models){if(!series.has(key))series.set(key,{id:p.id,kind:p.kind,stage:p.stage,rows:[]});series.get(key).rows.push({node:r.node,at:p.at,experimental:p.experimental,predicted_service_ms:p.seconds*1000,service_ms:r.finish?.eligible?Math.max(0,r.finish.service_ms-(p.kind==='remaining'?p.elapsed_s*1000:0)):null,service_state:!r.finish?'pending':r.finish.eligible?'complete':'excluded'});}
+    const dispatched=valid.filter(r=>r.dispatch),rows=dispatched.sort((a,b)=>b.dispatch.sequence-a.dispatch.sequence).slice(0,this.maxResults).reverse();
+    const series=new Map();for(const r of rows)for(const [key,p] of r.models){if(!series.has(key))series.set(key,{id:p.id,kind:p.kind,stage:p.stage,rows:[]});series.get(key).rows.push({node:r.node,at:p.at,experimental:p.experimental,predicted_service_ms:p.seconds*1000,reference_service_ms:p.baseline_seconds===null?null:p.baseline_seconds*1000,service_ms:r.finish?.eligible?Math.max(0,r.finish.service_ms-(p.kind==='remaining'?p.elapsed_s*1000:0)):null,service_state:!r.finish?'pending':r.finish.eligible?'complete':'excluded'});}
     for(const [key,s] of series){s.first_forecast_at=Math.min(...s.rows.map(r=>r.at));s.last_forecast_at=Math.max(...s.rows.map(r=>r.at));for(const r of rows){if(r.models.has(key)||r.at<s.first_forecast_at)continue;const eligible=!!r.finish?.eligible&&(s.kind!=='remaining'||r.finish.service_ms>=30000);s.rows.push({node:r.node,at:r.at,predicted_service_ms:null,service_ms:s.kind==='remaining'?null:r.finish?.service_ms??null,forecast_eligible:eligible,service_state:!r.finish?'pending':eligible?'complete':'excluded'});}}
     return {source:'historical_baseline',validation:'unvalidated',prediction_point:'admission',last_event_at:this.lastEvent,
-      model_series:[...series.values()].slice(-32),
+      model_series:[...series.values()].sort((a,b)=>b.last_forecast_at-a.last_forecast_at||a.id.localeCompare(b.id)||a.stage.localeCompare(b.stage)).slice(0,32),
+      series_window:{limit:32,in_view:Math.min(32,series.size),outside_view:Math.max(0,series.size-32),selection:'latest_saved_forecast'},
+      window:{selection:'latest_dispatches',limit:this.maxResults,in_view:rows.length,outside_view:Math.max(0,dispatched.length-rows.length),first_dispatch_at:rows[0]?.dispatch.at??null,last_dispatch_at:rows.at(-1)?.dispatch.at??null,request_index_size:this.requests.size,request_index_evictions:this.evicted,invalid_requests:[...this.requests.values()].filter(r=>r.invalid).length,observer_requests:[...this.requests.values()].filter(r=>r.observer).length},
+      rejection_reasons:{...this.rejectionReasons,other_invalid_events:this.rejected-Object.values(this.rejectionReasons).reduce((sum,n)=>sum+n,0)},
       window_limit:this.maxResults,rows:rows.map(r=>({node:r.node,at:r.dispatch.at,queue_ms:r.dispatch.queue_ms,
         predicted_queue_ms:r.prediction?.wait_ms??null,service_ms:r.finish?.service_ms??null,
         predicted_service_ms:r.prediction?.service_ms??null,service_state:!r.finish?'pending':r.finish.eligible?'complete':'excluded'})),
@@ -136,7 +144,7 @@ export class HandoverEvidence {
 export class AnalyticsReader {
   constructor(directory,{enabled=false,readBytes=READ_BYTES,tailBytes=TAIL_BYTES}={}) {
     Object.assign(this,{directory,enabled,readBytes,tailBytes});this.cursors=new Map();this.evidence=new PredictionEvidence();this.handovers=new HandoverEvidence();this.throughput=new FleetThroughput();
-    this.status='waiting';this.lastRead=null;this.partialHistory=false;this.malformed=0;this.rescans=0;
+    this.status='waiting';this.lastRead=null;this.partialHistory=false;this.malformed=0;this.rescans=0;this.scanReason='initial_read';this.skippedBytes=0;
   }
   poll(now=Date.now()) {
     if(!this.enabled)return;
@@ -144,7 +152,7 @@ export class AnalyticsReader {
       if(!fs.lstatSync(this.directory).isDirectory())throw new Error('Not a directory');
       const files=fs.readdirSync(this.directory).filter(f=>/^routing-\d{4}-\d{2}-\d{2}\.jsonl$/.test(f)).sort().slice(-2);
       if([...this.cursors.keys()].some(file=>!files.includes(file))) {
-        this.cursors.clear();this.evidence=new PredictionEvidence();this.handovers=new HandoverEvidence();this.throughput=new FleetThroughput();this.rescans++;this.status='rescanning';return;
+        this.cursors.clear();this.evidence=new PredictionEvidence();this.handovers=new HandoverEvidence();this.throughput=new FleetThroughput();this.rescans++;this.scanReason='daily_window_changed';this.skippedBytes=0;this.partialHistory=false;this.status='rescanning';return;
       }
       let backlog=false;
       for(const file of files) {
@@ -161,10 +169,10 @@ export class AnalyticsReader {
           if(changed) {
             // Rebuild a bounded window after replacement/truncation; do not mix
             // old labels with a new file that happens to reuse request IDs.
-            this.cursors.clear();this.evidence=new PredictionEvidence();this.handovers=new HandoverEvidence();this.throughput=new FleetThroughput();this.rescans++;this.status='rescanning';return;
+            this.cursors.clear();this.evidence=new PredictionEvidence();this.handovers=new HandoverEvidence();this.throughput=new FleetThroughput();this.rescans++;this.scanReason='file_replaced_or_rewritten';this.skippedBytes=0;this.partialHistory=false;this.status='rescanning';return;
           }
           if(!c) {
-            const offset=Math.max(0,stat.size-this.tailBytes);this.partialHistory ||= offset>0;
+            const offset=Math.max(0,stat.size-this.tailBytes);this.partialHistory ||= offset>0;this.skippedBytes+=offset;
             c={identity,offset,fragment:Buffer.alloc(0),skipping:offset>0,anchor:Buffer.alloc(0)};this.cursors.set(file,c);
           }
           const length=Math.min(this.readBytes,Math.max(0,stat.size-c.offset)),chunk=Buffer.alloc(length);
@@ -189,11 +197,12 @@ export class AnalyticsReader {
       }
       for(const file of this.cursors.keys())if(!files.includes(file))this.cursors.delete(file);
       this.status=!files.length?'waiting':backlog?'catching_up':'ready';this.lastRead=now;
-    } catch {this.status='unavailable';}
+    } catch(error) {this.status=error.code==='ENOENT'&&this.lastRead===null&&!this.cursors.size?'waiting':'unavailable';}
   }
   snapshot(now=Date.now()) {
     return {enabled:this.enabled,status:this.enabled?this.status:'disabled',last_read_at:this.lastRead,
       partial_history:this.partialHistory,malformed_lines:this.malformed,rescans:this.rescans,
+      reader_window:{file_limit:2,files_indexed:this.cursors.size,tail_bytes_per_file:this.tailBytes,skipped_bytes:this.skippedBytes,last_rebuild_reason:this.scanReason,raw_records_modified:false},
       throughput:this.throughput.snapshot(now),
       handovers:this.handovers.snapshot(),
       ...this.evidence.snapshot()};

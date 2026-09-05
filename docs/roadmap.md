@@ -1,6 +1,8 @@
 # Feature roadmap
 
 This is a living roadmap, not a claim that every feature below ships today.
+Start with the [current work plan](current-work-plan.md) for the reconciled active
+checklist and delivery order; this document preserves the detailed designs.
 DSG remains a companion to [antirez's DS4 engine](https://github.com/antirez/ds4).
 The engine performs inference and manages KV state; DSG observes and routes.
 The [DS4 integration contract](ds4-integration.md) is explicit: learn the engine's
@@ -50,7 +52,8 @@ This is a planned UI/diagnostic change, not permission to move or delete KV data
 
 Reviewed 2026-09-05.
 
-This table is the current order; the sections below retain the detailed design.
+The [current work plan](current-work-plan.md) supersedes the historical ordering
+in the table below; the sections retain detailed designs and acceptance gates.
 See the [maintenance review](maintenance-review-2026-09-02.md) for reproduced bugs,
 fixes and remaining uncertainty. A source commit is not a live deployment receipt.
 

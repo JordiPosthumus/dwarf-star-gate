@@ -1,4 +1,10 @@
 /* Small, local, legible. The owner's artwork supplies the character. */
+.analytics-intent{margin:12px 0 8px}.analytics-use{padding:10px 0;margin-bottom:12px;border-block:1px solid var(--line);font-size:11px;line-height:1.7}
+.analytics-snapshot{display:flex;align-items:center;flex-wrap:wrap;gap:8px}.analytics-snapshot p{margin-right:auto}.analytics-snapshot .button{padding:6px 9px}
+.analytics-collection{max-width:none;margin:12px 0}.analytics-collection strong{font-weight:400;margin-left:10px}
+.analytics-evidence,.analytics-explainer,details.predictor-panel{max-width:none;margin-top:16px;padding-top:12px;border-top:1px solid var(--line)}
+#analytics-accounting dl{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:6px 24px}#analytics-accounting dl>div{display:flex;justify-content:space-between;gap:12px}#analytics-accounting dd{margin:0;font-variant-numeric:tabular-nums;color:var(--text)}
+#analytics-counts{font-size:11px;color:var(--text)}#analytics-snapshot-note{font-size:10px}.analytics-controls{align-items:end}.analytics-controls label{flex-wrap:wrap}.analytics-controls [hidden],.analytics-snapshot [hidden]{display:none}
 header.dashboard-header{height:auto;min-height:0;border:0;padding:16px 0;flex-wrap:nowrap}
 .dashboard-header .intro-copy{min-width:0}
 .dashboard-header h1{margin:0 0 4px}

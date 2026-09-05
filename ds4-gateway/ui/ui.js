@@ -106,7 +106,7 @@ function analyticsMetrics(snapshot,metric='queue',worker='') {
   const eligible=rows.filter(r=>metric==='queue'?finite(r.queue_ms)&&r.queue_ms>=1000:r.service_state==='complete'&&(finite(r.service_ms)||r.forecast_eligible===true));
   const pairs=eligible.map(r=>({node:r.node,at:r.at,actual:metric==='queue'?r.queue_ms:r.service_ms,
     predicted:metric==='queue'?r.predicted_queue_ms:r.predicted_service_ms})).filter(r=>finite(r.predicted)&&finite(r.actual));
-  return {pairs,eligible:eligible.length,missing:eligible.length-pairs.length,
+  return {pairs,total:rows.length,eligible:eligible.length,missing:eligible.length-pairs.length,
     immediate:rows.filter(r=>finite(r.queue_ms)&&r.queue_ms<1000).length,
     unfinished:rows.filter(r=>r.service_state==='pending').length,excluded:rows.filter(r=>r.service_state==='excluded').length,
     coverage:eligible.length?pairs.length/eligible.length*100:null,
@@ -118,7 +118,35 @@ function predictionChart(pairs) {
   const x=v=>48+v/max*180,y=v=>202-v/max*180;
   return `<svg viewBox="0 0 266 246" role="img" aria-label="Predicted versus actual duration in ${label}; identical axes; dots above the diagonal took longer than predicted"><title>${pairs.length} paired requests; frozen forecasts at the selected stage</title><text x="48" y="12">Actual (${label})</text>${[0,.5,1].map(f=>`<line class="analytics-grid" x1="48" x2="228" y1="${y(f*max)}" y2="${y(f*max)}"/><text x="41" y="${y(f*max)+4}" text-anchor="end">${fmt(f*max/unit)}</text><text x="${x(f*max)}" y="219" text-anchor="middle">${fmt(f*max/unit)}</text>`).join('')}<line class="analytics-equal" x1="48" y1="202" x2="228" y2="22"/>${pairs.map(p=>`<circle class="${p.actual>p.predicted?'underestimated':'estimated'}" cx="${x(p.predicted).toFixed(2)}" cy="${y(p.actual).toFixed(2)}" r="3"><title>${esc(p.node)}: predicted ${fmt(p.predicted/1000)}s, actual ${fmt(p.actual/1000)}s</title></circle>`).join('')}<text x="138" y="240" text-anchor="middle">Predicted (${label})</text></svg>`;
 }
-let analyticsState=null,analyticsLoading=false,analyticsWorkerSignature='',analyticsChartSignature='',genieState=null;
+let analyticsState=null,analyticsDisplayed=null,analyticsCapturedAt=null,analyticsRefreshRequested=false,analyticsLoading=false,analyticsWorkerSignature='',analyticsChartSignature='',genieState=null;
+const analyticsPins=new Map();
+function receiveAnalytics(value){
+  analyticsState=value;
+  if(value?.status==='ready'&&(!analyticsDisplayed||analyticsRefreshRequested)){
+    analyticsDisplayed=structuredClone(value);analyticsCapturedAt=Date.now();analyticsRefreshRequested=false;
+  }
+}
+function analyticsMetric(){
+  const question=$('analytics-question').value||'service',method=$('analytics-method');
+  $('analytics-history-option').disabled=question==='remaining';
+  if(question==='queue')method.value='history';
+  if(question==='remaining'&&method.value==='history')method.value='xgb';
+  const rule=method.value==='history',paired=method.value==='reference';
+  $('analytics-method-label').hidden=question==='queue';
+  $('analytics-stage-label').hidden=question!=='service'||rule;
+  return question==='queue'?'queue':rule?'service':`${paired?'reference':'xgb'}-${question==='remaining'?'remaining':$('analytics-stage').value||'admission'}`;
+}
+function pinnedAnalyticsVersion(versions,stage){
+  if(!analyticsPins.has(stage)&&versions[0])analyticsPins.set(stage,versions[0].id);
+  return analyticsPins.get(stage)??'';
+}
+function analyticsUse(state,tieBreak,stale=false){
+  if(stale)return 'Current use unavailable; the study snapshot below is historical.';
+  if(!state?.configured)return 'Optional XGB runtime not configured. Ordinary routing works without models; no training setup is required to view this page.';
+  const models=state.models??[],active=kind=>models.find(m=>m.kind===kind)?.active_model_id;
+  const roles=[['admission','Arrival total'],['updated','Updated total'],['remaining','Time left']].map(([kind,label])=>`${label}: ${active(kind)?'validated XGB where supported':models.find(m=>m.kind===kind)?.candidate_model_id?'experiment only':'no learned model'}`);
+  return `${roles.join(' · ')}. New-session placement: ${!state.placement?'off':!active('admission')?'armed, but no qualified admission model':'armed; independent request/worker gates apply'}. ${Number.isSafeInteger(tieBreak?.applied)?`Forecast tie-break: ${tieBreak.applied} applied changes in this gateway run.`:'Applied routing benefit is not established by prediction accuracy.'}`;
+}
 const fleetSpeedWindows=new Set(['1h','12h','24h']);let fleetSpeedWindow='12h';
 try{const saved=globalThis.localStorage?.getItem('dsg-fleet-speed-window-v1');if(fleetSpeedWindows.has(saved))fleetSpeedWindow=saved;}catch{/* Browser privacy settings may deny storage; 12h remains the safe default. */}
 function compactValue(n){return !Number.isFinite(n)?'—':n>=1000000?fmt(n/1000000)+'M':n>=1000?fmt(n/1000)+'k':fmtWhole(n);}
@@ -141,31 +169,48 @@ function renderFleetSpeed(a){
   $('fleet-speed-summary').title=detail;$('fleet-speed-summary').setAttribute?.('aria-label',ready?`Fleet speed over ${fleetSpeedWindow}. Decode ${fmtWhole(window?.decode?.mean_tps)} tokens per second. Prefill ${fmtWhole(window?.prefill?.mean_tps)} tokens per second. ${Number.isFinite(estimated)?`Estimated energy ${fmt(estimated)} kilowatt hours.`:'Energy unavailable.'}`:state);
 }
 function renderAnalytics() {
-  const a=analyticsState,worker=$('analytics-worker'),metric=$('analytics-metric').value;
-  renderFleetSpeed(a);
-  const ids=[...new Set((a?.rows||[]).map(r=>r.node))].sort(),signature=JSON.stringify(ids);
+  const a=analyticsDisplayed??analyticsState,worker=$('analytics-worker'),metric=analyticsMetric();
+  renderFleetSpeed(analyticsState);
+  const ids=[...new Set([...(a?.rows||[]),...(a?.model_series??[]).flatMap(s=>s.rows??[])].map(r=>r.node))].sort();
+  if(worker.value&&!ids.includes(worker.value))ids.push(worker.value);
+  const signature=JSON.stringify(ids);
   if(signature!==analyticsWorkerSignature) {
     analyticsWorkerSignature=signature;const previous=worker.value;
     worker.innerHTML='<option value="">All servers</option>'+ids.map(id=>`<option value="${esc(id)}">${esc(id)}</option>`).join('');
     worker.value=ids.includes(previous)?previous:'';
   }
-  const xgb=metric.startsWith('xgb-'),stage=metric.slice(4),versions=(a?.model_series||[]).filter(m=>m.stage===stage).sort((a,b)=>(b.last_forecast_at??0)-(a.last_forecast_at??0)),version=$('analytics-version');
-  $('analytics-version-label').hidden=!xgb;
-  const latest=versions[0],options=latest?`<option value="">Current / latest · ${esc(latest.id.slice(0,12))}</option>`+versions.slice(1).map(m=>`<option value="${esc(m.id)}">History · ${esc(m.id.slice(0,12))}</option>`).join(''):'';
-  if(version.innerHTML!==options){const old=version.value;version.innerHTML=options;version.value=versions.slice(1).some(m=>m.id===old)?old:'';}
-  const selected=version.value?versions.find(m=>m.id===version.value):latest,m=analyticsMetrics(xgb?{rows:selected?.rows||[]}:a,xgb?'service':metric,worker.value);
-  $('analytics-status').textContent=a?.demo?'Synthetic demo · not measured predictions':({disabled:'Enable evidence collection to see analytics.',waiting:'Waiting for saved evidence.',catching_up:'Reading recent evidence — counts are partial.',rescanning:'Evidence files changed — rebuilding the recent window.',unavailable:'Evidence unavailable — previous values are historical.',ready:'Shadow baseline · unvalidated'})[a?.status]||'Analytics unavailable — previous values are historical.';
-  if(xgb&&a?.status==='ready'&&!a.demo)$('analytics-status').textContent=selected?`XGB ${stage} · model ${selected.id.slice(0,12)} · ${selected.rows.some(r=>r.experimental)?'includes experimental forecasts':'validated forecasts'}`:'No forecasts at this stage yet';
-  $('analytics-contract').textContent=xgb?stage==='remaining'?'One frozen forecast per request: the first at or after 30 seconds. Actual = server time remaining at that moment, not total duration.':stage==='admission'?'Frozen before dispatch/upload. Current prompt embeddings are not available.':'Updated total server-time forecast, frozen separately after upload or embeddings. Not an admission-time forecast.':'Admission-time historical baseline, not XGB. Embeddings do not enter this baseline.';
+  const versioned=metric.includes('-'),reference=metric.startsWith('reference-'),stage=versioned?metric.slice(metric.indexOf('-')+1):'admission';
+  const versions=(a?.model_series||[]).filter(m=>m.stage===stage).sort((a,b)=>(b.last_forecast_at??0)-(a.last_forecast_at??0)||a.id.localeCompare(b.id)),version=$('analytics-version');
+  $('analytics-version-label').hidden=!versioned;$('analytics-latest').hidden=!versioned;
+  const pin=versioned?pinnedAnalyticsVersion(versions,stage):'',selected=versions.find(m=>m.id===pin);
+  const options=versions.map(m=>`<option value="${esc(m.id)}">${esc(m.id.slice(0,12))}${m===versions[0]?' · newest in snapshot':''}</option>`).join('')+(!selected&&pin?`<option value="${esc(pin)}">${esc(pin.slice(0,12))} · outside snapshot</option>`:!versions.length?'<option value="">No saved forecasts</option>':'');
+  if(version.innerHTML!==options)version.innerHTML=options;version.value=pin;
+  $('analytics-latest').disabled=!versions.length||pin===versions[0]?.id;
+  const selectedRows=selected?.rows??[],scoreRows=reference?selectedRows.map(r=>({...r,predicted_service_ms:r.reference_service_ms??null})):selectedRows;
+  const m=analyticsMetrics(versioned?{rows:scoreRows}:a,versioned?'service':metric,worker.value);
+  const liveStatus=analyticsState?.status;
+  $('analytics-status').textContent=a?.demo?'Synthetic demo · not measured predictions':analyticsDisplayed?`Study snapshot · ${reference?'paired reference rule':versioned?'XGB':'recent-history rule · unvalidated'}${pin?' · '+pin.slice(0,12):''}`:({disabled:'Evidence collection is off. Routing does not require this panel.',waiting:'No saved evidence yet. Finish requests with collection enabled to populate this view.',catching_up:'Reading recent evidence; the first ready snapshot will be held.',rescanning:'Evidence files changed; rebuilding the recent window.',unavailable:'Evidence unavailable — previous values are historical.',ready:'Recent-history rule · unvalidated'})[a?.status]||'Analytics unavailable — previous values are historical.';
+  const newer=analyticsDisplayed&&JSON.stringify([analyticsState?.rows,analyticsState?.model_series,analyticsState?.rescans])!==JSON.stringify([analyticsDisplayed.rows,analyticsDisplayed.model_series,analyticsDisplayed.rescans]);
+  $('analytics-snapshot-note').textContent=`${analyticsCapturedAt?'Held at '+clock(analyticsCapturedAt)+'. ':''}${liveStatus==='unavailable'?'Source unavailable; held evidence is historical.':liveStatus==='disabled'?'Collection is off; held evidence is historical.':liveStatus==='waiting'?'Waiting for saved evidence.':liveStatus==='catching_up'||liveStatus==='rescanning'?'Source is rebuilding; held evidence stays unchanged.':newer?'Newer evidence is available. Refresh to include it.':'Refresh explicitly to include later results.'} Fleet telemetry is independent; changing filters only changes this view. Page reload starts a new snapshot.`;
+  $('analytics-refresh').disabled=analyticsLoading;
+  const contract=versioned?stage==='remaining'?'Time left: first saved progress forecast at/after 30s, compared with time remaining from that checkpoint.':stage==='admission'?'Total server time: forecast at arrival, before the body/embeddings are available. Queue wait is excluded.':'Total server time: updated after '+(stage==='upload'?'upload':'embeddings')+'. This information arrives after the original placement decision.':'Recent-history rule: previous prompt-size bucket median; queue estimates add active residual work and jobs ahead. This is not XGB’s paired reference rule.';
+  $('analytics-contract').textContent=contract+(reference?' Reference values were saved beside this exact model version and checkpoint.':versioned?' '+(selectedRows.some(r=>r.experimental)?'Includes experimental forecasts; plotted does not mean used for routing.':'Forecast use is separate from chart eligibility.'):'');
   const chartSignature=JSON.stringify(m.pairs);
   if(chartSignature!==analyticsChartSignature){analyticsChartSignature=chartSignature;$('analytics-chart').innerHTML=predictionChart(m.pairs);}
-  $('analytics-stats').innerHTML=`<div><span class="label">PAIRED REQUESTS</span><strong>${fmt(m.pairs.length)}</strong></div><div><span class="label">PREDICTION COVERAGE</span><strong>${m.coverage===null?'—':fmt(m.coverage)+'%'}</strong></div><div><span class="label">MEAN ABSOLUTE ERROR</span><strong>${m.mae===null?'—':fmt(m.mae/1000)+'s'}</strong></div>`;
+  $('analytics-stats').innerHTML=`<div><span class="label">REQUESTS PLOTTED</span><strong>${fmt(m.pairs.length)}</strong></div><div><span class="label">COVERAGE</span><strong>${m.coverage===null?'—':fmt(m.coverage)+'%'}</strong></div><div><span class="label">AVERAGE MISS</span><strong>${m.mae===null?'—':fmt(m.mae/1000)+'s'}</strong></div>`;
+  $('analytics-stats').title='Average miss is mean absolute error: average distance between the saved forecast and actual duration. Coverage is plotted divided by eligible requests in this selection, not all-time model coverage.';
+  $('analytics-counts').textContent=`${m.eligible} eligible = ${m.pairs.length} plotted + ${m.missing} missing ${reference?'reference values':'forecasts'}.${!m.pairs.length?' No scored pairs in this selection—not proof that no predictions were made.':''}`;
   const h=a?.handovers,handover=h?.total?` Applied handovers: ${fmt(h.total)} observed · ${fmt(h.completed)} completed · ${fmt(h.pending)} pending · ${fmt(h.excluded)} excluded; destination outcome only, no invented no-move result.`:'';
   $('analytics-detail').textContent=`Recent window: up to ${fmt(a?.window_limit||500)} dispatched non-Genie requests from the latest two daily evidence files. ${fmt(m.missing)} missing estimates; ${metric==='queue'?`${fmt(m.immediate)} waits under 1s excluded from this graph`:`${fmt(m.unfinished)} unfinished and ${fmt(m.excluded)} failed/output-limited or otherwise incomplete responses excluded`}. ${fmt(a?.not_dispatched||0)} observed requests ended before dispatch (all servers; not zero waits).${handover}${a?.partial_history?' Older file content was skipped by the bounded reader.':''}${a?.rejected_events||a?.malformed_lines||h?.rejected_events?` Evidence gaps: ${fmt(a.rejected_events)} rejected/unjoined prediction events, ${fmt(h?.rejected_events||0)} rejected handover events, ${fmt(a.malformed_lines)} malformed/oversized lines.`:''}`;
+  const w=a?.window,reader=a?.reader_window,range=w?.first_dispatch_at&&w?.last_dispatch_at?`${new Date(w.first_dispatch_at).toLocaleString()} – ${new Date(w.last_dispatch_at).toLocaleString()}`:'No dispatch time range available';
+  $('analytics-window-summary').textContent=`${m.total} selected rows · snapshot, not lifetime totals`;
+  const accounting=[['Selected rows',m.total],['Eligible to score',m.eligible],['Plotted',m.pairs.length],['Missing forecast/reference',m.missing],...(metric==='queue'?[['Wait below 1 second',m.immediate]]:[['Unfinished',m.unfinished],['Failed / limited / ineligible',m.excluded]]),['Outside selected model/stage coverage',versioned?Math.max(0,analyticsMetrics(a,'service',worker.value).total-m.total):0],['Outside latest-dispatch plot limit (all servers)',w?.outside_view??0],['Request-index evictions (not file deletion)',w?.request_index_evictions??a?.evicted_requests??0],['Reader rebuilds',a?.rescans??0],['Skipped older bytes',reader?.skipped_bytes??(a?.partial_history?'unknown':0)],...Object.entries(a?.rejection_reasons??{}).filter(([,count])=>count>0).map(([reason,count])=>['Unjoined/invalid events: '+reason.replaceAll('_',' '),count])];
+  $('analytics-accounting').innerHTML=`<p>${esc(range)}. Rebuild reason: ${esc(reader?.last_rebuild_reason?.replaceAll('_',' ')??'not reported')}.</p><dl>${accounting.map(([label,count])=>`<div><dt>${esc(label)}</dt><dd>${esc(count)}</dd></div>`).join('')}</dl><p>Rows and events are different units; global reader diagnostics are not additional subtractions from the selected-row count. Coverage is specific to this model, checkpoint and server filter.</p>`;
+  if(a?.series_window)$('analytics-accounting').innerHTML+=`<p>Saved version/checkpoint groups: ${esc(a.series_window.in_view)} shown, ${esc(a.series_window.outside_view)} outside the ${esc(a.series_window.limit)}-group limit. Newest saved forecast first; a pinned version never silently switches.</p>`;
 }
 async function loadAnalytics() {
   if(analyticsLoading)return;analyticsLoading=true;
-  try {const r=await fetch('/api/analytics',{cache:'no-store',signal:AbortSignal.timeout(5000)});if(!r.ok)throw new Error();analyticsState=await r.json();}
+  try {const r=await fetch('/api/analytics',{cache:'no-store',signal:AbortSignal.timeout(5000)});if(!r.ok)throw new Error();receiveAnalytics(await r.json());}
   catch {analyticsState={...analyticsState,status:'unavailable'};}
   finally {analyticsLoading=false;renderAnalytics();}
 }
@@ -315,7 +360,8 @@ function renderDevices(devices,workers,now,stale,scales,controls) {
   if(window.scrollX!==viewport.x||window.scrollY!==viewport.y)window.scrollTo(viewport.x,viewport.y);
 }
 function refreshRoutingControls() {
-  for(const el of $('devices').querySelectorAll('.device')){
+  // The fresh-install onboarding tile is not a worker and has no routing node.
+  for(const el of $('devices').querySelectorAll('.device[data-worker-id]')){
     const w=visibleWorkers.find(w=>w.id===el.dataset.workerId),template=document.createElement('template');
     template.innerHTML=routingMarkup(w,{stale:workerUiStale,controls:workerControlsVisible,recovering:recoveryState?.workers?.some(r=>r.worker_id===w?.id&&r.state==='recovering')});
     updateRoutingNode(el.querySelector('.worker-routing'),template.content.firstElementChild);
@@ -462,6 +508,7 @@ function renderHealthWire(snapshot) {
 function render(s) {
   const g = s.gateway, now = s.time, stale = !!s.gateway_error;
   renderPredictor(g?.predictor,stale||!s.worker_management);
+  $('analytics-use').textContent=analyticsUse(g?.predictor,g?.fallback_tiebreak_shadow,stale);
   $('calibration-status').textContent=stale?'Calibration safety status unavailable; no job is authorized.':g?.calibration?.execution_available===false?'Synthetic calibration skipped: no verified cache-preserving execution path. Idle does not prove warm caches are safe. Ordinary traffic collection and CPU training continue.':'Synthetic calibration is not configured; no job is authorized.';
   renderHealthWire(s);
   renderAgentWatch(g?.client_watch);
@@ -784,9 +831,11 @@ setupWorkspaceTabs();
 $('request-filter').addEventListener('change',()=>{requestFilter=$('request-filter').value;renderRequests(wireSnapshot?.events??[]);});
 function openServerSettings({focus=false}={}){activateWorkspaceTab('settings',{updateHash:true});const panel=$('worker-management');panel.scrollIntoView({behavior:'smooth',block:'start'});if(focus)panel.querySelector('input[name="id"]')?.focus({preventScroll:true});}
 $('devices').addEventListener('click',event=>{if(!event.target.closest('[data-add-first]'))return;openServerSettings({focus:true});});
-$('analytics-metric').addEventListener('change',renderAnalytics);
+for(const id of ['analytics-question','analytics-method','analytics-stage'])$(id).addEventListener('change',renderAnalytics);
 $('analytics-worker').addEventListener('change',renderAnalytics);
-$('analytics-version').addEventListener('change',renderAnalytics);
+$('analytics-version').addEventListener('change',()=>{const metric=analyticsMetric();analyticsPins.set(metric.slice(metric.indexOf('-')+1),$('analytics-version').value);renderAnalytics();});
+$('analytics-refresh').addEventListener('click',()=>{analyticsRefreshRequested=true;void loadAnalytics();});
+$('analytics-latest').addEventListener('click',()=>{const metric=analyticsMetric();analyticsPins.delete(metric.slice(metric.indexOf('-')+1));renderAnalytics();});
 $('fleet-speed-window').addEventListener('change',()=>{const value=$('fleet-speed-window').value;if(!fleetSpeedWindows.has(value))return;fleetSpeedWindow=value;try{globalThis.localStorage?.setItem('dsg-fleet-speed-window-v1',value);}catch{/* Selection still works for this page. */}renderFleetSpeed(analyticsState);});
 let cacheCostBusy=false;
 $('cache-cost-form').addEventListener('submit',async event=>{

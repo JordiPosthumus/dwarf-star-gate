@@ -1,5 +1,18 @@
 # Changelog
 
+## Clarify prediction evidence and current work
+
+- Separate timing questions, methods, checkpoints and pinned model versions;
+  hold the study snapshot through polling, source rebuilds and newer forecasts.
+- Expose saved paired reference values, count accounting, named join failures,
+  source rebuild reasons and bounded request/version window omissions.
+- Reject mismatched model-kind/checkpoint records, retain unknown references,
+  and handle empty optional analytics installations without model dependencies.
+- Fix a first-install onboarding exception: worker-control refresh no longer
+  treats the “Add your first server” tile as an enrolled worker card.
+- Collapse training/technical detail, explain current use versus measured benefit,
+  and reconcile the active work plan. Forecast and routing policies are unchanged.
+
 ## Preserve historical fleet chart scales
 
 - Share exact all-recorded chunk-speed maxima across machine plots, separately

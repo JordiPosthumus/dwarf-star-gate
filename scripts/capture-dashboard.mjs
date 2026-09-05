@@ -96,11 +96,14 @@ try {
   assert.equal(await page.locator('h1').innerText(),'Dwarf Star Gate');
   assert.match(await page.locator('#connection').innerText(),/Demo/);
   await page.locator('#tab-analytics').click();
+  await page.locator('details.predictor-panel>summary').click();
   assert.match(await page.locator('#predictor-status').innerText(),/0 validated models/);
   assert.equal(await page.locator('#predictor-recipe option').count(),3);
   assert.equal(await page.locator('#predictor-recipe').inputValue(),'standard-v1');
   assert.match(await page.locator('#calibration-status').innerText(),/skipped.*cache-preserving/);
+  await page.locator('.analytics-collection>summary').click();
   assert.match(await page.locator('#embedding-detail').innerText(),/384 dimensions/);
+  await page.locator('.analytics-collection>summary').click();
   await page.locator('#tab-fleet').click();
   await page.waitForFunction(()=>document.getElementById('fleet-decode-speed').textContent!=='—');
   assert.equal(await page.locator('#fleet-speed-window').inputValue(),'12h');
@@ -171,11 +174,12 @@ try {
   assert.equal(await page.locator('#genie-reports details').getAttribute('open'),'');
   await page.locator('#view-genie').screenshot({path:path.join(output,'dashboard-genie.png'),animations:'disabled'});
   await page.locator('#tab-analytics').click();
-  await page.locator('#analytics-metric').selectOption('xgb-remaining');
+  await page.locator('#analytics-question').selectOption('remaining');
   await page.waitForFunction(()=>document.querySelectorAll('#analytics-chart circle').length===20);
   assert.match(await page.locator('#analytics-status').innerText(),/Synthetic demo/);
   assert.equal(await page.locator('#analytics-version-label').isVisible(),true);
-  assert.match(await page.locator('#predictor-models').innerText(),/3 known sessions · 2 requests without identity/);
+  assert.match(await page.locator('#predictor-models').textContent(),/3 known sessions · 2 requests without identity/);
+  await page.locator('details.predictor-panel').evaluate(el=>{el.open=false;});
   await page.evaluate(()=>window.scrollTo(0,0));
   // Element screenshots scroll tall panels under the sticky tab bar, obscuring
   // the first heading. Capture document coordinates without that auto-scroll.
@@ -186,8 +190,9 @@ try {
     const png=await fs.readFile(path.join(output,file));
     assert.ok(png.readUInt32BE(20)>=minHeight,`${file}: screenshot was clipped`);
   }
-  await page.locator('#tab-analytics').click();await page.locator('#analytics-metric').selectOption('queue');
+  await page.locator('#tab-analytics').click();await page.locator('#analytics-question').selectOption('queue');
   assert.equal(await page.locator('#analytics-version-label').isVisible(),false);
+  await page.locator('details.predictor-panel>summary').click();
   await page.locator('#predictor-recipe').selectOption('interactions-v1');
   const recipePoll=await page.locator('#updated').innerText();
   await page.waitForFunction(previous=>document.getElementById('updated').textContent!==previous,recipePoll,{timeout:10000});
@@ -228,6 +233,7 @@ try {
   assert.equal(await page.locator('[data-milestone]').evaluate(el=>el===document.activeElement),true);
   await page.reload();await page.locator('[data-milestone]').waitFor();
   await page.locator('#tab-analytics').click();
+  await page.locator('details.predictor-panel>summary').click();
   page.once('dialog',dialog=>dialog.accept());await page.locator('[data-predictor="reset_baseline"]').click();
   await page.waitForFunction(()=>document.getElementById('predictor-status').textContent.includes('0 validated models'));
   assert.match(await page.locator('[data-predictor="automatic_training"]').innerText(),/on/);
@@ -252,6 +258,41 @@ try {
   assert.equal(await held.getByRole('button',{name:'Keep paused',exact:true}).count(),0);
   const holdPoll=await page.locator('#updated').innerText();await page.waitForFunction(previous=>document.getElementById('updated').textContent!==previous,holdPoll,{timeout:10000});
   assert.match(await held.innerText(),/Held by test-agent/);assert.match(await held.innerText(),/Operator pause/);
+  // Isolated synthetic response changes prove that polling cannot move study
+  // dots or choose a newer model behind the reader's back.
+  const auditPage=await context.newPage();auditPage.on('pageerror',e=>errors.push(e.message));
+  let auditData=await(await page.request.get(origin+'/api/analytics')).json();
+  await auditPage.route('**/api/analytics',route=>route.fulfill({json:auditData}));
+  await auditPage.goto(origin+'/#analytics');
+  await auditPage.waitForFunction(()=>document.querySelectorAll('#analytics-chart circle').length>0);
+  const studyCount=await auditPage.locator('#analytics-chart circle').count(),studyPin=await auditPage.locator('#analytics-version').inputValue();
+  const studyModel=auditData.model_series.find(m=>m.id===studyPin&&m.stage==='admission');
+  studyModel.rows.push({...studyModel.rows[1],at:Date.now(),service_ms:99000});
+  auditData.model_series.push({...structuredClone(studyModel),id:'f'.repeat(64),last_forecast_at:Date.now()});
+  await auditPage.waitForFunction(()=>document.getElementById('analytics-snapshot-note').textContent.includes('Newer evidence'),null,{timeout:20000});
+  assert.equal(await auditPage.locator('#analytics-chart circle').count(),studyCount);
+  assert.equal(await auditPage.locator('#analytics-version').inputValue(),studyPin);
+  assert.match(await auditPage.locator('#analytics-snapshot-note').innerText(),/Newer evidence/);
+  await auditPage.locator('#analytics-refresh').click();
+  await auditPage.waitForFunction(n=>document.querySelectorAll('#analytics-chart circle').length===n,studyCount+1);
+  assert.equal(await auditPage.locator('#analytics-version').inputValue(),studyPin);
+  await auditPage.locator('#analytics-latest').click();assert.equal(await auditPage.locator('#analytics-version').inputValue(),'f'.repeat(64));
+  await auditPage.locator('#analytics-method').selectOption('reference');
+  assert.ok(await auditPage.locator('#analytics-chart circle').count()>0,'Paired reference values are visible separately');
+  await auditPage.locator('.analytics-evidence>summary').click();assert.match(await auditPage.locator('#analytics-accounting').innerText(),/not file deletion/);
+  for(const width of [390,750,1440]){await auditPage.setViewportSize({width,height:1000});assert.ok(await auditPage.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Analytics must fit mobile and desktop');}
+  // No predictor artifacts, Python runtime, encoder or telemetry history is
+  // required to render the optional analytics empty state.
+  const freshStatus=await(await page.request.get(origin+'/api/status')).json();
+  freshStatus.gateway.predictor=null;freshStatus.gateway.dataset={enabled:false};freshStatus.devices=[];
+  await auditPage.route('**/api/status',route=>route.fulfill({json:freshStatus}));
+  for(const status of ['disabled','waiting','unavailable']){
+    auditData={enabled:status!=='disabled',status,rows:[],model_series:[]};await auditPage.reload();
+    await auditPage.waitForFunction(()=>document.getElementById('analytics-counts').textContent.includes('0 eligible'));
+    assert.equal(await auditPage.locator('#analytics-chart circle').count(),0);
+    assert.match(await auditPage.locator('#analytics-use').innerText(),/Ordinary routing works without models/);
+  }
+  await auditPage.close();
   assert.deepEqual(errors,[]);
   console.log('Saved six synthetic dashboard screenshots; verified tab navigation, polling, analytics, compact hardware telemetry, named maintenance locks, mobile, reset/milestones, escaped agent holds and Keep paused UX.');
 } finally {

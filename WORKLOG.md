@@ -10,6 +10,14 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Made prediction analytics understandable and stable.** Separate question,
+  method, checkpoint and pinned version; keep study dots fixed until an explicit
+  refresh. Explain missing pairs and bounded reader selection without suggesting
+  training data was deleted. Show XGB's saved reference separately from the old
+  history rule, and distinguish live use from accuracy. Optional empty-install
+  paths remain independent of inference. Consolidated the unfinished work in a
+  linked current plan; no model or routing authority changed.
+
 - **Anchored machine speed charts to fleet records.** Separate zero-based prefill
   and decode scales retain exact recorded maxima across restarts and history
   rotation, seeded incrementally from retained telemetry. Added an actionable

@@ -48,7 +48,8 @@ tell local tool work, waiting inside DSG, and “the client says it is waiting b
 no request reached this gateway” apart—without sending task or conversation text.
 
 **Follow the project:** [recent work in plain English](WORKLOG.md) ·
-[detailed changelog](CHANGELOG.md) · [next priorities](docs/roadmap.md).
+[detailed changelog](CHANGELOG.md) · [current work plan](docs/current-work-plan.md) ·
+[detailed roadmap](docs/roadmap.md).
 
 Conversations stay with their assigned server to encourage cache reuse; new
 conversations are placed according to load. Add, pause, resume or remove servers

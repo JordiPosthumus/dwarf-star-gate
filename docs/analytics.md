@@ -10,6 +10,27 @@ actual durations can be available while predictions remain missing.
 
 ## Reading the panel
 
+Start with **Question**, then **Method**. These are timing estimates for one model
+request, not predictions of when an entire agent project will finish.
+
+| Question | Method and checkpoint | What it can help with |
+| --- | --- | --- |
+| How long until it starts? | Recent-history rule, at arrival | Understand queue-wait estimates; a passive observer, not the scheduler |
+| How long will it take? | Recent-history rule, or XGB and its paired reference at arrival | Estimate server time after dispatch; a qualified arrival model can inform guarded new-session placement |
+| How long will it take? | XGB and its paired reference after upload or embeddings | Refine total server time using later information; cannot change the original placement decision retroactively |
+| How much time is left? | XGB and its paired reference at the first saved progress checkpoint at/after 30s | Running ETA and independently guarded remaining-time decisions |
+
+Upload and embeddings are two checkpoints of the **same updated-model role**,
+not two unrelated model families. Queue waiting and server time are separate:
+estimated time to finish from arrival is their sum. Do not add another prefill
+estimate to a forecast that already includes it.
+
+**Current use** is read from live predictor status above the chart. It separates
+active learned roles, experiments and armed placement. An enabled placement
+switch alone does not mean an admission model qualified or a route changed.
+Applied tie-break counts, when available, are actions—not proof of time saved.
+The chart below is historical evidence; it is not the live-use switch.
+
 - **Queue wait ≥ 1s:** admission to upstream dispatch. Waits below one second
   are counted separately so immediate dispatches do not dominate the score.
 - **Server time:** dispatch to a successful complete response, including upload,
@@ -24,7 +45,27 @@ actual durations can be available while predictions remain missing.
   Neither is a calibration certificate, and neither measures outcomes on servers
   that were not chosen. Tiny or selectively predictable samples can look good.
 
-The baseline source is explicitly **unvalidated historical baseline, not XGB**.
+### Two rules previously called “baseline”
+
+The **Recent-history rule** is the older unvalidated routing-shadow observer,
+not XGB and not the routing policy. It uses a same-worker median in a broad
+previous-session prompt-size bucket, with at least five matching samples from
+the last hour (up to 128 stored samples per worker). Active residual wait is
+conditioned on historical durations exceeding the elapsed time, when supported;
+queue estimates add this and the jobs ahead. Insufficient evidence means unknown.
+
+The **Paired reference rule** is a different causal-history/hardware recipe in
+the XGB runtime. It tries a generation estimate plus prior time-to-first-token
+when available, then recent same-worker history and worker/hardware/fleet
+medians. Its remaining reference subtracts elapsed time with a one-second floor.
+This simple remaining rule is a benchmark, not a validated survival model. A
+relative-log XGB candidate can learn a correction to this reference. The panel
+uses only the reference saved alongside the exact XGB version/checkpoint;
+missing historical references remain missing, never reconstructed with hindsight.
+Compare XGB and reference on the same version/checkpoint and check their coverage.
+Their scored populations can differ if a saved reference is missing.
+
+The recent-history source is explicitly **unvalidated historical baseline, not XGB**.
 It uses prior-session prompt buckets with mixed cache conditions. Its initial
 admission forecast is frozen; later worker-free re-evaluations do not replace a
 bad forecast or count as extra independent examples. The saved elapsed admission
@@ -41,6 +82,25 @@ requests with no forecast admitted after the version/stage's first saved forecas
 plus its matched requests. Remaining coverage requires at least 30 seconds of
 successful server time. Unsupported/missing forecasts count as missing, not zero
 or successes. This is a bounded observed deployment window, not all gateway history.
+
+### Stable dots and explicit selection
+
+The browser holds the first fully read **study snapshot**. Background polling,
+new completions, daily-file rotation and newer models do not move its dots.
+**Refresh evidence** explicitly takes the latest ready snapshot; **Use newest
+version** explicitly changes the pinned version within that snapshot. Refreshing
+does not change that pin. If its evidence is no longer in the recent reader
+window, the selector says **outside snapshot**, rather than switching models.
+A page reload starts a new snapshot; this is not a durable saved study/export.
+Fleet telemetry and collection continue independently.
+
+**Where did the dots go?** discloses the selected rows, eligible rows, plotted
+pairs, missing forecasts/references, unfinished/failed results, outside-window
+records, reader rebuilds, skipped older bytes and named invalid/unjoined events.
+The main count identity is `eligible = plotted + missing`. Global event counters
+are not extra request subtractions. “Zero pairs” does not mean “zero predictions.”
+**Average miss** means mean absolute error on the plotted pairs. The current
+snapshot's dispatch range is visible, so this is not mistaken for lifetime data.
 
 Joining requires the same gateway run, request and actual worker. Duplicate event
 IDs are ignored; conflicting lifecycle events are rejected. A queue wait is known
@@ -68,6 +128,40 @@ per poll. Large histories may have missing joins. The UI discloses skipped histo
 unjoined/rejected events and malformed records. It preserves partial lines and
 handles observed file rotation/truncation by rebuilding the window. Queued and
 unfinished records can include old interrupted work, not just current jobs.
+At most 16 distinct version/checkpoint forecasts per indexed request and the
+32 groups with the newest saved forecasts are exposed. Group omissions and
+per-request forecast-limit rejections are reported. These are bounded display
+limits, not training-file retention policies; none deletes raw evidence.
+
+## Fresh installation and unavailable components
+
+The analytics reader and UI do not require Python, a model artifact, an encoder,
+hardware sensors or a pre-existing evidence directory. Collection disabled shows
+**off**; an enabled reader with no files shows **waiting**; absent XGB shows
+**not configured**. Unknown values stay unknown. Ordinary routing does not depend
+on analytics being populated. Missing data is not an exception or a request to
+install every optional component. Model training still has its documented
+separate prerequisites.
+
+Regression fixtures cover empty and missing directories, corrupt/oversized
+records, rotation/rewrite, incomplete joins, missing predictor runtime, and
+disabled/waiting/unavailable browser responses. Browser checks also exercise
+fixed snapshots, version pins, explicit refresh and narrow layouts. These checks
+establish those startup paths, not a promise that every host configuration has
+been certified. Follow the normal setup/doctor checks for the actual installation.
+
+### Three separate standards of proof
+
+1. **Can it run safely?** Optional analytics must not stall inference; malformed
+   evidence cannot become a successful label.
+2. **Does it predict well?** Use fixed forward-time CV, a later holdout and frozen
+   genuinely future evidence, including per-worker, session and long-job support.
+3. **Does it improve the fleet?** Measure useful completions, wait/finish times,
+   avoided idle capacity and cache costs under the actual guarded routing policy.
+   A lower error score does not establish the unobserved alternative route.
+
+Training/validation controls are collapsed, but unchanged. This UI refactor does
+not retrain, promote, demote or alter any model, threshold, feature or routing rule.
 
 The reader does not create, delete or edit evidence, follow file symlinks, call
 models, retrain XGB, restart servers or change routing. Its same-origin read-only

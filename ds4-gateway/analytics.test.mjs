@@ -114,11 +114,39 @@ test('a third daily file rebuilds the recent window instead of retaining a retir
   fs.writeFileSync(path.join(dir,'routing-2000-01-03.jsonl'),serialize(lifecycle({request_id:'day-three'})));reader.poll();assert.equal(reader.snapshot().status,'rescanning');
   reader.poll();assert.equal(reader.snapshot().rows.length,2);
   assert.ok(!reader.cursors.has(path.basename(file)));
+  assert.equal(reader.snapshot().reader_window.last_rebuild_reason,'daily_window_changed');
+});
+test('fresh optional analytics needs no files, models or encoder and exposes its selection budget',t=>{
+  const {dir}=fixture(t),reader=new AnalyticsReader(path.join(dir,'not-created-yet'),{enabled:true});reader.poll();
+  const s=reader.snapshot();assert.equal(s.status,'waiting');assert.deepEqual(s.rows,[]);assert.deepEqual(s.model_series,[]);assert.equal(s.window.in_view,0);assert.equal(s.reader_window.raw_records_modified,false);
+});
+test('chart accounting distinguishes plot-window selection from index eviction and source deletion',()=>{
+  const e=new PredictionEvidence({maxRequests:4,maxResults:2});
+  for(let i=0;i<6;i++)for(const r of lifecycle({request_id:`req-${i}`}))e.accept(r);
+  const s=e.snapshot();assert.equal(s.window.in_view,2);assert.equal(s.window.outside_view,2);assert.equal(s.window.request_index_evictions,2);
+  assert.ok(s.window.first_dispatch_at<=s.window.last_dispatch_at);assert.ok(!JSON.stringify(s.window).includes('req-'));
+});
+test('paired reference is frozen with the exact forecast and mismatched checkpoint kinds are rejected',()=>{
+  const e=new PredictionEvidence();e.accept(row('decision'));e.accept(row('dispatch',{queue_ms:1000}));
+  const forecast=extra=>{const r=row('model_prediction',{predictor_schema:2,model_id:'a'.repeat(64),model_kind:'updated',prediction_stage:'upload',seconds:6,baseline_seconds:8,...extra});return {...r,available_at:Date.parse(r.time)};};
+  e.accept(forecast({prediction_stage:'admission'}));e.accept(forecast());e.accept(forecast({seconds:1,baseline_seconds:1}));e.accept(row('finish',{outcome:'complete',finish_reason:'stop',service_ms:7000}));
+  const s=e.snapshot();assert.equal(s.rejection_reasons.stage_kind_mismatch,1);assert.equal(s.model_series.length,1);assert.equal(s.model_series[0].rows[0].predicted_service_ms,6000);assert.equal(s.model_series[0].rows[0].reference_service_ms,8000);
+  const orphan=new PredictionEvidence();orphan.accept(row('dispatch',{queue_ms:0}));assert.equal(orphan.snapshot().rejection_reasons.missing_admission,1);
+});
+test('version limits select the newest saved checkpoints and disclose omitted groups',()=>{
+  const e=new PredictionEvidence();
+  for(let i=1;i<=35;i++){
+    const request_id=`version-${i}`;e.accept(row('decision',{request_id}));
+    const p=row('model_prediction',{request_id,predictor_schema:2,model_id:i.toString(16).padStart(64,'0'),model_kind:'admission',prediction_stage:'admission',seconds:6});
+    e.accept({...p,available_at:Date.parse(p.time)});e.accept(row('dispatch',{request_id,queue_ms:1000}));
+  }
+  const s=e.snapshot();assert.deepEqual(s.series_window,{limit:32,in_view:32,outside_view:3,selection:'latest_saved_forecast'});
+  assert.equal(s.model_series[0].id,(35).toString(16).padStart(64,'0'));assert.equal(s.rows.length,35);
 });
 function ui() {
   const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
   const elements=new Map(),get=id=>{if(!elements.has(id)){const attributes=new Map(),values=new Map();elements.set(id,{value:id==='analytics-metric'?'queue':'',innerHTML:'',textContent:'',style:{setProperty:(name,value)=>values.set(name,value),values},setAttribute:(name,value)=>attributes.set(name,value),attributes});}return elements.get(id);};
-  const ctx=vm.createContext({document:{getElementById:get}});vm.runInContext(source,ctx);return {ctx,get,call:expr=>vm.runInContext(expr,ctx)};
+  const ctx=vm.createContext({document:{getElementById:get},structuredClone});vm.runInContext(source,ctx);return {ctx,get,call:expr=>vm.runInContext(expr,ctx)};
 }
 test('UI accuracy denominator includes missing forecasts, excludes trivial waits, and distinguishes incomplete service',()=>{
   const {ctx,call}=ui();ctx.sample={rows:[{node:'a',queue_ms:2000,predicted_queue_ms:1000,service_state:'complete',service_ms:4000,predicted_service_ms:5000},
@@ -151,7 +179,7 @@ test('fleet pulse defaults to 12h, keeps missing energy unknown and exposes cali
   assert.match(get('fleet-speed-value').textContent,/21.6k tok · ≈3.1 kWh · .* tok\/kWh/);assert.match(get('fleet-speed-summary').attributes.get('aria-label'),/Estimated energy 3.1 kilowatt hours/);
 });
 test('UI polling preserves expansion and selected filter; stale results and tiny samples are explicit',()=>{
-  const {ctx,get,call}=ui();get('analytics').open=false;get('analytics-metric').value='queue';
+  const {ctx,get,call}=ui();get('analytics').open=false;get('analytics-question').value='queue';
   ctx.sample={status:'ready',rows:[{node:'worker-a',queue_ms:2000,predicted_queue_ms:1000}],handovers:{total:2,completed:1,pending:1,excluded:0,rejected_events:0}};
   call('analyticsState=sample;renderAnalytics()');get('analytics-worker').value='worker-a';call('renderAnalytics()');
   assert.equal(get('analytics-worker').value,'worker-a');assert.equal(get('analytics').open,false);
@@ -159,12 +187,32 @@ test('UI polling preserves expansion and selected filter; stale results and tiny
   assert.match(get('analytics-detail').textContent,/Applied handovers: 2 observed.*no invented no-move result/);
   ctx.sample.status='unavailable';call('renderAnalytics()');assert.match(get('analytics-status').textContent,/historical/);
 });
-test('model plots default to the latest real forecast while historical versions remain selectable',()=>{
+test('model plots pin exact versions and never silently switch when versions arrive or leave the window',()=>{
   const {ctx,get,call}=ui(),old='a'.repeat(64),latest='b'.repeat(64),point=(id,at,value)=>({id,stage:'admission',last_forecast_at:at,rows:[{node:'worker-a',at,service_state:'complete',service_ms:value,predicted_service_ms:value-1000}]});
-  get('analytics-metric').value='xgb-admission';ctx.sample={status:'ready',rows:[],model_series:[point(old,1000,5000),point(latest,2000,6000)]};call('analyticsState=sample;renderAnalytics()');
-  assert.equal(get('analytics-version').value,'');assert.match(get('analytics-version').innerHTML,/Current \/ latest · b{12}/);assert.match(get('analytics-status').textContent,/model b{12}/);
-  get('analytics-version').value=old;call('renderAnalytics()');assert.match(get('analytics-status').textContent,/model a{12}/);assert.match(get('analytics-version').innerHTML,/History · a{12}/);
-  const newest='c'.repeat(64);ctx.sample.model_series.push(point(newest,3000,7000));get('analytics-version').value='';call('renderAnalytics()');assert.match(get('analytics-status').textContent,/model c{12}/);
+  get('analytics-question').value='service';get('analytics-method').value='xgb';ctx.sample={status:'ready',rows:[],model_series:[point(old,1000,5000),point(latest,2000,6000)]};call('receiveAnalytics(sample);renderAnalytics()');
+  assert.equal(get('analytics-version').value,latest);assert.match(get('analytics-version').innerHTML,/b{12} · newest in snapshot/);assert.match(get('analytics-status').textContent,/b{12}/);
+  call(`analyticsPins.set('admission','${old}');renderAnalytics()`);assert.match(get('analytics-status').textContent,/a{12}/);
+  const newest='c'.repeat(64);ctx.sample.model_series.push(point(newest,3000,7000));call('receiveAnalytics(sample);renderAnalytics()');assert.doesNotMatch(get('analytics-version').innerHTML,/c{12}/,'held data does not follow polling');
+  call('analyticsRefreshRequested=true;receiveAnalytics(sample);renderAnalytics()');assert.equal(get('analytics-version').value,old,'explicit refresh does not change chosen version');
+  ctx.sample.model_series=ctx.sample.model_series.filter(m=>m.id!==old);call('analyticsRefreshRequested=true;receiveAnalytics(sample);renderAnalytics()');assert.equal(get('analytics-version').value,old);assert.match(get('analytics-version').innerHTML,/outside snapshot/);assert.match(get('analytics-counts').textContent,/No scored pairs/);
+  call("analyticsPins.delete('admission');renderAnalytics()");assert.equal(get('analytics-version').value,newest,'choosing newest is explicit');
+});
+test('study snapshots preserve dot membership through new completions, source rebuilds and outages until explicit refresh',()=>{
+  const {ctx,get,call}=ui();get('analytics-question').value='queue';
+  ctx.sample={status:'ready',rows:[{node:'a',at:1,queue_ms:2000,predicted_queue_ms:1000}]};call('receiveAnalytics(sample);renderAnalytics()');
+  const original=get('analytics-chart').innerHTML;ctx.sample.rows.push({node:'a',at:2,queue_ms:4000,predicted_queue_ms:2000});call('receiveAnalytics(sample);renderAnalytics()');
+  assert.equal(get('analytics-chart').innerHTML,original);assert.match(get('analytics-snapshot-note').textContent,/Newer evidence/);
+  call("receiveAnalytics({status:'rescanning',rows:[]});renderAnalytics()");assert.equal(get('analytics-chart').innerHTML,original);
+  call("receiveAnalytics({status:'unavailable',rows:[]});renderAnalytics()");assert.equal(get('analytics-chart').innerHTML,original);assert.match(get('analytics-snapshot-note').textContent,/Source unavailable/);
+  call('analyticsRefreshRequested=true;receiveAnalytics(sample);renderAnalytics()');assert.notEqual(get('analytics-chart').innerHTML,original);assert.match(get('analytics-counts').textContent,/2 eligible = 2 plotted/);
+});
+test('question/method contracts and fresh-install authority labels stay distinct from placement permission',()=>{
+  const {ctx,get,call}=ui();
+  for(const status of ['disabled','waiting','catching_up','rescanning','unavailable']){ctx.sample={status,rows:[],model_series:[]};call('receiveAnalytics(sample);renderAnalytics()');assert.match(get('analytics-counts').textContent,/0 eligible = 0 plotted/);}
+  assert.match(call('analyticsUse(null,null)'),/Ordinary routing works without models/);
+  assert.match(call("analyticsUse({configured:true,placement:true,models:[]},{applied:0})"),/armed, but no qualified admission model.*0 applied changes/);
+  get('analytics-question').value='remaining';get('analytics-method').value='reference';assert.equal(call('analyticsMetric()'),'reference-remaining');
+  get('analytics-question').value='queue';assert.equal(call('analyticsMetric()'),'queue');assert.equal(get('analytics-method').value,'history');
 });
 test('analytics follows fleet, Genie and recovery controls but precedes the request log',()=>{
   const html=fs.readFileSync(new URL('./ui/index.html',import.meta.url),'utf8');
