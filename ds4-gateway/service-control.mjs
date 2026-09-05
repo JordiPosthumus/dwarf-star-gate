@@ -55,10 +55,18 @@ export async function unloadService(kind,{domain,launch,loaded,interrupt=false,w
     await wait(100);
   }
 }
-export async function coordinatedCoreRestart(config,{hold=body=>doorControl(config.continuity_door.control_socket,'/hold',body),release=()=>doorControl(config.continuity_door.control_socket,'/release'),read=()=>readService('gateway',config),stop,start,wait=delay,now=Date.now,timeoutMs=config.continuity_door?.restart_wait_ms??config.request_timeout_ms??360000000}={}){
+function assertHoldOwnership(door){
+  if(door?.hold_ownership!==1)throw new Error('Running Continuity Door lacks hold ownership fencing. Upgrade the Door at an idle, unheld window before automated core cutover/release; no automatic hold release was attempted.');
+}
+function holdReceipt(door){
+  if(door?.hold_ownership!==1||door.holding!==true||door.hold_kind!=='manual'||typeof door.hold_id!=='string'||!door.hold_id)throw new Error('Continuity Door did not return a verified hold receipt; no automatic release is permitted.');
+  return {if_hold_id:door.hold_id};
+}
+export async function coordinatedCoreRestart(config,{doorStatus=()=>doorControl(config.continuity_door.control_socket,'/status'),hold=body=>doorControl(config.continuity_door.control_socket,'/hold',body),release=body=>doorControl(config.continuity_door.control_socket,'/release',body),read=()=>readService('gateway',config),stop,start,wait=delay,now=Date.now,timeoutMs=config.continuity_door?.restart_wait_ms??config.request_timeout_ms??360000000}={}){
   if(!continuityEnabled(config))throw new Error('Continuity door is not enabled');
   if(!Number.isSafeInteger(timeoutMs)||timeoutMs<1000)throw new Error('Invalid coordinated restart allowance');
-  await hold({reason:'planned_gateway_core_restart',if_unheld:true});
+  assertHoldOwnership(await doorStatus());
+  const receipt=holdReceipt(await hold({reason:'planned_gateway_core_restart',if_unheld:true}));
   const deadline=now()+timeoutMs;
   try{
     let status;
@@ -71,7 +79,7 @@ export async function coordinatedCoreRestart(config,{hold=body=>doorControl(conf
     await stop(status);await start();
     status=await read();
     if(status.active!==0||status.queued!==0||status.startup?.complete!==true)throw new Error('Replacement core is not in a clean ready state; continuity door remains holding');
-    await release();
+    await release(receipt);
     return {coordinated:true,held_new_requests:true,old_core_drained:true,replacement_ready:true};
   }catch(error){error.continuity_door_holding=true;throw error;}
 }
@@ -94,13 +102,14 @@ export async function coordinatedCorePark(config,{doorStatus=()=>readService('do
     return {coordinated:true,held_new_requests:true,old_core_drained:true,core_parked:true,door_holding:true,already_holding:alreadyParked};
   }catch(error){error.continuity_door_holding=true;throw error;}
 }
-export async function releaseParkedCore(config,{doorStatus=()=>readService('door',config),coreStatus=()=>readService('gateway',config),release=()=>doorControl(config.continuity_door.control_socket,'/release')}={}){
+export async function releaseParkedCore(config,{doorStatus=()=>readService('door',config),coreStatus=()=>readService('gateway',config),release=body=>doorControl(config.continuity_door.control_socket,'/release',body)}={}){
   if(!continuityEnabled(config))return null;
   const door=await doorStatus();
   if(!(door.holding===true&&door.hold_kind==='manual'&&door.reason===PARK_REASON))return {released:false,preserved_hold:door.holding===true};
+  assertHoldOwnership(door);const receipt=holdReceipt(door);
   const core=await coreStatus();
   if(core.startup?.complete!==true||core.active!==0||core.queued!==0)throw new Error('Gateway core started without a clean idle startup barrier; continuity door remains holding.');
-  await release();
+  await release(receipt);
   return {released:true,reason:PARK_REASON};
 }
 export async function serviceCommand(command,kinds=['gateway','door','dashboard'],{interrupt=false}={}) {

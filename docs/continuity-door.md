@@ -60,6 +60,24 @@ Likewise, a pending release check cannot override a newer operator reservation.
 Only a fresh successful check may release an automatic hold; healthy probes never
 release manual holds by themselves.
 
+Lifecycle releases also carry `if_hold_id`, the unique receipt returned by the
+hold/status response. The Door checks this receipt **before and after** the health
+probe. Replacing a hold creates a new receipt even when its reason text is the
+same; an older operation gets `continuity_hold_changed` and cannot release the
+replacement. A receipt is not a credential: the private control socket still
+provides authority. An explicit operator release may omit the condition and keeps
+its existing health check. Automation never falls back to unconditional release.
+
+**Upgrade order:** a running Door must advertise `hold_ownership: 1` before the
+updated lifecycle controller can coordinate a core restart or release a parked
+core. Older Doors cannot enforce this condition. Upgrade the Door in an **idle,
+unheld** maintenance window first; do not stop it over active or held client
+requests. The controller refuses an unsupported restart before placing a hold or
+stopping the core. If a core was already parked under an older Door, its normal
+start can start the core but leaves the hold intact: an operator must inspect and
+explicitly release it before arranging the Door upgrade. There is no automatic
+hold override or forced client interruption during version migration.
+
 Truncated responses, aborts and errors settle the health probe as failed rather
 than leaving readiness pending forever. `health_timeout_ms` (default 1,500 ms)
 bounds the whole small health probe, including a dripping/incomplete response,

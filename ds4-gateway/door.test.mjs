@@ -7,12 +7,59 @@ import path from 'node:path';
 import {once} from 'node:events';
 import {createDoor} from './door.mjs';
 import {doorControl} from './door-client.mjs';
+import {coordinatedCoreRestart,releaseParkedCore,PARK_REASON} from './service-control.mjs';
+
+test('lifecycle release cannot clear a newer hold, even with an identical reason',{timeout:5000},async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-hold-owner-'));
+  const core=http.createServer((req,res)=>res.end('ok')),corePort=await listen(core);
+  const config={host:'127.0.0.1',port:0,api_key:'test',continuity_door:{enabled:true,core_port:corePort,control_socket:path.join(dir,'door.sock'),health_interval_ms:60000}};
+  const door=createDoor(config);await door.start();
+  t.after(async()=>{core.closeAllConnections();await door.close();await new Promise(r=>core.close(r));fs.rmSync(dir,{recursive:true,force:true});});
+  const ready=()=>({active:0,queued:0,startup:{complete:true}});
+  for(const reason of ['operator maintenance','planned_gateway_core_restart']){
+    door.release();
+    await assert.rejects(coordinatedCoreRestart(config,{doorStatus:async()=>door.status(),read:async()=>ready(),stop:async()=>{},start:async()=>door.hold(reason)}),/hold.*changed/i);
+    assert.equal(door.status().holding,true);assert.equal(door.status().reason,reason);
+  }
+  door.hold(PARK_REASON);
+  await assert.rejects(releaseParkedCore(config,{doorStatus:async()=>door.status(),coreStatus:async()=>{door.hold(PARK_REASON);return ready();}}),/hold.*changed/i);
+  assert.equal(door.status().holding,true);assert.equal(door.status().reason,PARK_REASON);
+});
 
 const listen=server=>new Promise(resolve=>server.listen(0,'127.0.0.1',()=>resolve(server.address().port)));
 const request=(port,body)=>new Promise((resolve,reject)=>{const req=http.request({host:'127.0.0.1',port,path:'/v1/chat/completions',method:'POST',headers:{authorization:'Bearer test','content-type':'application/json'}},res=>{const chunks=[];res.on('data',c=>chunks.push(c));res.on('end',()=>resolve({status:res.statusCode,body:Buffer.concat(chunks).toString(),headers:res.headers}));});req.on('error',reject);req.end(body);});
 const get=(port,route)=>new Promise((resolve,reject)=>{http.get({host:'127.0.0.1',port,path:route,agent:false,headers:{authorization:'Bearer test'}},res=>{
   const chunks=[];res.on('data',c=>chunks.push(c));res.on('error',reject);res.on('end',()=>resolve({status:res.statusCode,body:Buffer.concat(chunks).toString()}));
 }).on('error',reject);});
+test('hold receipts fence before and during readiness, keeping held bytes undispatched',{timeout:5000},async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-hold-cas-'));let delayed=false,pending,healthCalls=0;const bodies=[];
+  const core=http.createServer((req,res)=>{
+    if(req.url==='/health'){healthCalls++;if(delayed){pending=res;return;}return res.end('ok');}
+    const chunks=[];req.on('data',c=>chunks.push(c));req.on('end',()=>{bodies.push(Buffer.concat(chunks).toString());res.end('done');});
+  });
+  const corePort=await listen(core),config={host:'127.0.0.1',port:0,api_key:'test',continuity_door:{enabled:true,core_port:corePort,control_socket:path.join(dir,'door.sock'),health_interval_ms:60000}};
+  const door=createDoor(config);await door.start();
+  t.after(async()=>{core.closeAllConnections();await door.close();await new Promise(r=>core.close(r));fs.rmSync(dir,{recursive:true,force:true});});
+  const control=(route,body)=>doorControl(config.continuity_door.control_socket,route,body);
+  const first=await control('/hold',{reason:'same reason'});
+  const original=' {"model":"fixture","stream":true,"messages":[]}\n';
+  const work=request(door.server.address().port,original);
+  while(door.status().held!==1)await new Promise(r=>setImmediate(r));
+  const second=await control('/hold',{reason:'same reason'});assert.notEqual(second.hold_id,first.hold_id);
+  const before=healthCalls;
+  await assert.rejects(control('/release',{if_hold_id:first.hold_id}),/hold changed/);
+  assert.equal(healthCalls,before,'stale receipt must fail before probing');
+  for(const invalid of [null,0,'',{}])await assert.rejects(control('/release',{if_hold_id:invalid}),/nonempty hold receipt/);
+  assert.equal(door.status().held,1);assert.deepEqual(bodies,[]);
+  delayed=true;
+  const release=assert.rejects(control('/release',{if_hold_id:second.hold_id}),/hold changed/);
+  while(!pending)await new Promise(r=>setImmediate(r));
+  const third=await control('/hold',{reason:'same reason'});pending.end('obsolete');await release;
+  assert.equal(door.status().hold_id,third.hold_id);assert.equal(door.status().held,1);assert.deepEqual(bodies,[]);
+  delayed=false;const done=await control('/release',{if_hold_id:third.hold_id});
+  assert.equal(done.hold_id,null);assert.equal((await work).body,'done');assert.deepEqual(bodies,[original]);
+  await assert.rejects(control('/release',{if_hold_id:third.hold_id}),/hold changed/);
+});
 test('model discovery waits through planned core downtime while status reads remain available',{timeout:5000},async t=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-door-discovery-')),calls=[];
   const body='{"data":[{"id":"fixture-model"}]}';

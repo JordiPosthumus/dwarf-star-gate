@@ -44,6 +44,12 @@ an opt-in real-library/fake-backend acceptance test. Arbitrary post-dispatch
 gateway/engine loss remains separate work; a green fleet does not resume an
 already stopped Pi turn. All DSG-owned API errors identify themselves.
 
+Door lifecycle hardening now includes unique hold receipts: automated core restart
+and parked-core release cannot clear newer operator holds, including identical
+reason text. Real-socket regressions cover stale release and held-byte preservation.
+Deployment requires a separately upgraded Door advertising `hold_ownership: 1`;
+an older running endpoint must first receive an idle, unheld maintenance window.
+
 **Analytics implemented:** the compact [prediction-accuracy panel](analytics.md)
 joins existing admission-time shadow forecasts to observed queue/server durations,
 with per-server filters, missing-prediction coverage and error. This is an

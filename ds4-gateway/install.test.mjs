@@ -10,6 +10,7 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {configPath,loadConfig,projectRoot,dashboardPort,gatewayHost,isDashboard,isMain} from './config.mjs';
 import {serviceSpec,assertIdle,assertDoorIdle,assertRegistration,unloadService,coordinatedCoreRestart,coordinatedCorePark,releaseParkedCore,PARK_REASON} from './service-control.mjs';
 const exec=promisify(execFile);
+const ownedHold={holding:true,hold_kind:'manual',hold_ownership:1,hold_id:'fixture-hold'};
 test('restart waits for launchd removal; timeout cannot skip into bootstrap',async()=>{
   let now=0;const calls=[];
   await unloadService('gateway',{domain:'gui/test',interrupt:true,launch:(...a)=>calls.push(a),loaded:()=>now<300,now:()=>now,wait:async ms=>{now+=ms;}});
@@ -19,18 +20,24 @@ test('restart waits for launchd removal; timeout cannot skip into bootstrap',asy
 });
 test('coordinated core restart holds first, waits for idle, and releases only after clean readiness',async()=>{
   const config={continuity_door:{enabled:true,control_socket:'/tmp/fixture.sock'},request_timeout_ms:10000};let now=0,index=0;const calls=[],states=[{active:1,queued:2},{active:0,queued:0},{active:0,queued:0,startup:{complete:true}}];
-  const result=await coordinatedCoreRestart(config,{hold:async b=>calls.push(['hold',b.reason]),release:async()=>calls.push(['release']),read:async()=>states[Math.min(index++,states.length-1)],stop:async()=>calls.push(['stop']),start:async()=>calls.push(['start']),wait:async ms=>{now+=ms;},now:()=>now});
+  const result=await coordinatedCoreRestart(config,{doorStatus:async()=>({hold_ownership:1}),hold:async b=>{calls.push(['hold',b.reason]);return ownedHold;},release:async body=>{assert.deepEqual(body,{if_hold_id:'fixture-hold'});calls.push(['release']);},read:async()=>states[Math.min(index++,states.length-1)],stop:async()=>calls.push(['stop']),start:async()=>calls.push(['start']),wait:async ms=>{now+=ms;},now:()=>now});
   assert.equal(result.replacement_ready,true);assert.deepEqual(calls.map(x=>x[0]),['hold','stop','start','release']);
-  await assert.rejects(coordinatedCoreRestart(config,{hold:async()=>{},release:async()=>{throw new Error('must not release');},read:async()=>({active:0,queued:0}),stop:async()=>{},start:async()=>{throw new Error('failed replacement');}}),error=>error.continuity_door_holding===true);
+  await assert.rejects(coordinatedCoreRestart(config,{doorStatus:async()=>({hold_ownership:1}),hold:async()=>ownedHold,release:async()=>{throw new Error('must not release');},read:async()=>({active:0,queued:0}),stop:async()=>{},start:async()=>{throw new Error('failed replacement');}}),error=>error.continuity_door_holding===true);
+});
+test('legacy Door cannot silently ignore ownership fencing during automated restart/release',async()=>{
+  const config={continuity_door:{enabled:true}},calls=[];
+  await assert.rejects(coordinatedCoreRestart(config,{doorStatus:async()=>({holding:false}),hold:async()=>calls.push('hold'),read:async()=>calls.push('read'),stop:async()=>calls.push('stop'),start:async()=>calls.push('start')}),/lacks hold ownership/);
+  await assert.rejects(releaseParkedCore(config,{doorStatus:async()=>({holding:true,hold_kind:'manual',reason:PARK_REASON}),coreStatus:async()=>calls.push('read'),release:async()=>calls.push('release')}),/lacks hold ownership/);
+  assert.deepEqual(calls,[]);
 });
 test('coordinated park drains after holding; start releases only the exact verified park hold',async()=>{
   const config={continuity_door:{enabled:true,control_socket:'/tmp/fixture.sock'},request_timeout_ms:10000};let now=0,index=0;const calls=[],states=[{active:1,queued:1},{active:0,queued:0}];
   const parked=await coordinatedCorePark(config,{doorStatus:async()=>({holding:false}),hold:async body=>calls.push(['hold',body]),read:async()=>states[Math.min(index++,states.length-1)],stop:async()=>calls.push(['stop']),wait:async ms=>{now+=ms;},now:()=>now});
   assert.equal(parked.core_parked,true);assert.deepEqual(calls.map(x=>x[0]),['hold','stop']);assert.equal(calls[0][1].reason,PARK_REASON);assert.equal(calls[0][1].if_unheld,true);
-  const released=[];assert.deepEqual(await releaseParkedCore(config,{doorStatus:async()=>({holding:true,hold_kind:'manual',reason:PARK_REASON}),coreStatus:async()=>({startup:{complete:true},active:0,queued:0}),release:async()=>released.push('release')}),{released:true,reason:PARK_REASON});assert.deepEqual(released,['release']);
+  const released=[];assert.deepEqual(await releaseParkedCore(config,{doorStatus:async()=>({...ownedHold,reason:PARK_REASON}),coreStatus:async()=>({startup:{complete:true},active:0,queued:0}),release:async body=>{assert.deepEqual(body,{if_hold_id:'fixture-hold'});released.push('release');}}),{released:true,reason:PARK_REASON});assert.deepEqual(released,['release']);
   const preserved=await releaseParkedCore(config,{doorStatus:async()=>({holding:true,hold_kind:'manual',reason:'operator maintenance'}),coreStatus:async()=>{throw new Error('must not inspect core');},release:async()=>{throw new Error('must not release');}});assert.deepEqual(preserved,{released:false,preserved_hold:true});
   await assert.rejects(coordinatedCorePark(config,{doorStatus:async()=>({holding:true,hold_kind:'manual',reason:'operator maintenance'})}),/different hold/);
-  for(const core of [{startup:{complete:false},active:0,queued:0},{startup:{complete:true},active:1,queued:0},{startup:{complete:true},active:0,queued:1}])await assert.rejects(releaseParkedCore(config,{doorStatus:async()=>({holding:true,hold_kind:'manual',reason:PARK_REASON}),coreStatus:async()=>core,release:async()=>{throw new Error('must not release');}}),/clean idle startup barrier/);
+  for(const core of [{startup:{complete:false},active:0,queued:0},{startup:{complete:true},active:1,queued:0},{startup:{complete:true},active:0,queued:1}])await assert.rejects(releaseParkedCore(config,{doorStatus:async()=>({...ownedHold,reason:PARK_REASON}),coreStatus:async()=>core,release:async()=>{throw new Error('must not release');}}),/clean idle startup barrier/);
 });
 const temporary=t=>{const dir=fs.mkdtempSync('/tmp/dsg-install-');t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));return dir;};
 async function until(fn,ms=8000){const end=Date.now()+ms;while(Date.now()<end){try{const v=await fn();if(v)return v;}catch{}await delay(30);}throw new Error('Readiness timeout');}

@@ -1,5 +1,21 @@
 # Changelog
 
+## Fence lifecycle releases to the exact Door hold
+
+- Reproduce a coordinated restart releasing an operator hold installed before its
+  final readiness probe. Cover the same race when starting a parked core, including
+  replacement holds with identical reason text.
+- Give each hold a process-independent random receipt; conditional release checks
+  it before and after readiness. A stale receipt returns `continuity_hold_changed`
+  without forwarding held work. Receipts fence transitions, not authentication.
+- Lifecycle automation uses the receipt and requires advertised `hold_ownership: 1`;
+  older Doors cannot silently ignore the new condition. Explicit private-socket
+  operator release remains available with its existing readiness check.
+- Test rejected/malformed receipts, replacement during readiness, no dispatch under
+  stale release, exact-byte single forwarding and legacy capability refusal.
+- Deployment requires a separate idle, unheld Door upgrade before automated core
+  restart/release. No model, timeout, cache, concurrency or worker policy changes.
+
 ## Require identified-session evidence for predictor qualification
 
 - Reproduce false future promotion with four identified sessions plus an unknown

@@ -3,7 +3,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import {timingSafeEqual} from 'node:crypto';
+import {timingSafeEqual,randomUUID} from 'node:crypto';
 import {loadConfig,isMain,continuityEnabled,gatewayPort,doorSocket} from './config.mjs';
 import {dsgReport,invalidHttp} from './report.mjs';
 
@@ -25,13 +25,13 @@ export function createDoor(config,{now=Date.now}={}){
   if(!continuityEnabled(config))throw new Error('continuity_door.enabled must be true');
   const corePort=gatewayPort(config),socketPath=doorSocket(config),limit=config.continuity_door.max_held_requests??Math.max(128,(config.nodes?.length??1)*(config.max_queued_per_node??128));
   if(!Number.isSafeInteger(limit)||limit<1||limit>65536)throw new Error('continuity_door.max_held_requests must be 1–65536');
-  const auth=Buffer.from(`Bearer ${config.api_key}`),held=[],state={holding:false,hold_kind:null,reason:null,since:null,last_transition:null,forwarded:0,failed:0,active:0,core_ready:false,core_failures:0};
+  const auth=Buffer.from(`Bearer ${config.api_key}`),held=[],state={holding:false,hold_id:null,hold_kind:null,reason:null,since:null,last_transition:null,forwarded:0,failed:0,active:0,core_ready:false,core_failures:0};
   const failureCounts={inference:0,model_discovery:0,status:0,other:0},failures=[];
   let closing=false,monitor,probe=null,probeGeneration=0;
   const invalidateProbe=()=>{probeGeneration++;const previous=probe;probe=null;previous?.cancel();};
   const authorized=req=>{const value=Buffer.from(req.headers.authorization??'');return value.length===auth.length&&timingSafeEqual(value,auth);};
   const status=()=>({service:'dwarf-star-gate-continuity-door',version:1,holding:state.holding,hold_kind:state.hold_kind,reason:state.reason,since:state.since,last_transition:state.last_transition,held:held.length,active:state.active,forwarded:state.forwarded,failed:state.failed,core_ready:state.core_ready,core_failures:state.core_failures,body_spooling:false,replay:false,core_port:corePort,
-    model_discovery_hold:true,failure_evidence:{schema:1,scope:'door_process',by_request_class:{...failureCounts},recent:failures.map(row=>({...row}))}});
+    hold_ownership:1,hold_id:state.hold_id,model_discovery_hold:true,failure_evidence:{schema:1,scope:'door_process',by_request_class:{...failureCounts},recent:failures.map(row=>({...row}))}});
   const remove=item=>{const index=held.indexOf(item);if(index>=0)held.splice(index,1);clearInterval(item.heartbeat);item.req.off('aborted',item.cancel);item.req.off('error',item.cancel);item.res.off('close',item.cancel);};
   function proxy(req,res){
     if(req.destroyed||res.destroyed)return;
@@ -61,8 +61,8 @@ export function createDoor(config,{now=Date.now}={}){
     upstream.on('error',()=>{if(settled)return;finish(true);automaticHold('core_connection_failed');if(!res.headersSent)report(res,503,'continuity_core_unavailable','Continuity door could not reach the DSG core. The request was dispatched only to the local core connection and was not replayed; retry after DSG reports ready.');else res.destroy();});
     req.on('aborted',cancel);req.on('error',cancel);res.on('close',clientClosed);req.pipe(upstream);
   }
-  const release=()=>{invalidateProbe();state.holding=false;state.hold_kind=null;state.reason=null;state.since=null;state.last_transition={action:'release',at:new Date(now()).toISOString()};for(const item of [...held]){remove(item);proxy(item.req,item.res);}};
-  const hold=(reason,kind='manual')=>{invalidateProbe();if(state.holding&&state.hold_kind==='manual'&&kind==='automatic')return;state.holding=true;state.hold_kind=kind;state.reason=typeof reason==='string'&&reason.length<=160?reason:'planned_core_change';state.since??=new Date(now()).toISOString();state.last_transition={action:'hold',kind,at:new Date(now()).toISOString(),reason:state.reason};};
+  const release=()=>{invalidateProbe();state.holding=false;state.hold_id=null;state.hold_kind=null;state.reason=null;state.since=null;state.last_transition={action:'release',at:new Date(now()).toISOString()};for(const item of [...held]){remove(item);proxy(item.req,item.res);}};
+  const hold=(reason,kind='manual')=>{invalidateProbe();if(state.holding&&state.hold_kind==='manual'&&kind==='automatic')return;state.holding=true;state.hold_id=randomUUID();state.hold_kind=kind;state.reason=typeof reason==='string'&&reason.length<=160?reason:'planned_core_change';state.since??=new Date(now()).toISOString();state.last_transition={action:'hold',kind,at:new Date(now()).toISOString(),reason:state.reason};};
   const automaticHold=reason=>{state.core_ready=false;hold(reason,'automatic');};
   const checkCore=()=>{
     if(closing)return Promise.resolve(false);
@@ -120,8 +120,19 @@ export function createDoor(config,{now=Date.now}={}){
         if(input.if_unheld===true&&state.holding)return report(res,409,'continuity_already_holding','Continuity Door already has a hold; it was preserved.');
         hold(input.reason);
       }
-      else if(!await checkCore())return report(res,409,'continuity_core_not_ready','Replacement DSG core is not ready; the continuity door remains holding.');
-      else release();
+      else {
+        // A receipt is a transition fence, not authentication. The private
+        // control socket still grants authority. Explicit operator releases
+        // may omit it; lifecycle automation must name its exact observed hold.
+        const conditional=Object.hasOwn(input,'if_hold_id');
+        if(conditional&&(typeof input.if_hold_id!=='string'||!input.if_hold_id))return report(res,400,'invalid_hold_receipt','A nonempty hold receipt is required for conditional release.');
+        const matches=()=>!conditional||(state.holding&&state.hold_id===input.if_hold_id);
+        if(!matches())return report(res,409,'continuity_hold_changed','Continuity Door hold changed; the current hold was preserved.');
+        const ready=await checkCore();
+        if(!matches())return report(res,409,'continuity_hold_changed','Continuity Door hold changed; the current hold was preserved.');
+        if(!ready)return report(res,409,'continuity_core_not_ready','Replacement DSG core is not ready; the continuity door remains holding.');
+        release();
+      }
       json(res,200,status());
     }catch{report(res,400,'invalid_control_request','Invalid continuity control request');}});
   });

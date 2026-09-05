@@ -10,6 +10,13 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Preserved newer operator holds during core cutover.** A real-socket regression
+  reproduced restart automation releasing a replacement hold. Lifecycle releases
+  now name a unique hold receipt, checked before and after readiness; even identical
+  reason text cannot let an older operation clear newer intent. Held requests stay
+  unread and forward once only after the current hold is released. This requires
+  a separately upgraded Door; older running Doors are detected before restart.
+
 - **Stopped missing session identity from qualifying a predictor.** Fresh replay
   exposed two known sessions plus unknown-identity work, not three independent
   sessions. Training and promotion keep their existing thresholds but no longer
