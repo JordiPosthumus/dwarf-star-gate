@@ -10,6 +10,14 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Checked what the frozen XGB models actually use.** A larger future replay now
+  has 116 completions. Remaining-time error improves overall, but admission and
+  updated service forecasts still lose to simple history; session diversity is
+  still insufficient. Embeddings are arriving, but this selected updated forest
+  excludes them. The audit now separates collection, selection and actual tree
+  use for every feature group, with stage-specific availability. No fitting,
+  promotion, routing or production collection changes were made.
+
 - **Preserved newer operator holds during core cutover.** A real-socket regression
   reproduced restart automation releasing a replacement hold. Lifecycle releases
   now name a unique hold receipt, checked before and after readiness; even identical

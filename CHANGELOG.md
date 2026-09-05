@@ -1,5 +1,21 @@
 # Changelog
 
+## Audit all frozen-model feature groups and later traffic
+
+- Expand offline `input_support` from hardware-only detail to all feature groups
+  in the frozen manifest, retaining the existing hardware fields. Separate stage
+  availability so pre-embedding absence is not mistaken for collection loss.
+- Verify 116 post-freeze completed jobs against the unchanged candidate: remaining
+  error is about 42s versus the best aggregate baseline's 56s; admission/updated
+  still lose. Only two identified sessions, 20 unknown-identity jobs and no
+  identified unseen sessions: no promotion or routing-benefit claim.
+- Confirm semantic components exist after embedding, while the selected updated
+  forest excludes them. Identical stage forecasts are not an embedding outage.
+- Regression-test availability versus selection/use, empty stages, missing versus
+  zero values, full audit integration and no feature-value disclosure. Replaying
+  the frozen production-derived snapshot preserves every existing audit field and
+  prediction exactly after removing the two new diagnostic fields.
+
 ## Fence lifecycle releases to the exact Door hold
 
 - Reproduce a coordinated restart releasing an operator hold installed before its

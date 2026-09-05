@@ -9,6 +9,47 @@ import occupancy_future as audit
 
 
 class OccupancyFutureTests(unittest.TestCase):
+    def test_group_support_distinguishes_collected_embeddings_from_selected_inputs(self):
+        model=copy.deepcopy(self.candidate['models']['admission'])
+        model['encoding']['names']=['elapsed_s']
+        model['encoding']['categorical']=[]
+        model['encoding']['vocabulary']={}
+        model['trees']=[]
+        rows=[{'kind':'updated','stage':'upload','features':{'semantic_0':None,'elapsed_s':0}},
+              {'kind':'updated','stage':'embedded','features':{'semantic_0':.25,'elapsed_s':0}}]
+        groups={'semantic':['semantic_0'],'progress':['elapsed_s'],'hardware':['hardware_power_watts']}
+        before=copy.deepcopy((model,rows,groups))
+        result=audit.input_support(model,[],rows,groups['hardware'],groups)
+        semantic=result['feature_groups']['semantic']
+        self.assertEqual(semantic['selected'],[])
+        self.assertEqual(semantic['used_in_splits'],{})
+        self.assertEqual(semantic['future_point_coverage'],{'semantic_0':.5})
+        self.assertIsNone(semantic['training_point_coverage'])
+        self.assertEqual(result['future_by_stage']['upload']['point_coverage']['semantic'],{'semantic_0':0})
+        self.assertEqual(result['future_by_stage']['embedded']['point_coverage']['semantic'],{'semantic_0':1})
+        self.assertEqual(result['future_by_stage']['remaining']['points'],0)
+        self.assertIsNone(result['future_by_stage']['remaining']['point_coverage']['semantic'])
+        self.assertEqual(result['feature_groups']['progress']['selected'],['elapsed_s'])
+        self.assertEqual(result['feature_groups']['progress']['used_in_splits'],{})
+        self.assertEqual(result['feature_groups']['hardware'],result['hardware'])
+        self.assertEqual((model,rows,groups),before)
+
+    def test_evaluate_reports_all_manifest_groups_with_no_feature_values(self):
+        self.training['groups']={'base':['x'],'semantic':['semantic_0']}
+        self.write('training',self.training)
+        receipt=audit.freeze(self.root/'candidate',self.root/'training',self.root/'groups-receipt')
+        cut=audit.timestamp(receipt['frozen_at'])
+        self.future['rows']=[self.row('new',cut+1,cut+1000)]
+        self.future['snapshot']['created_at']=dt.datetime.fromtimestamp((cut+10000)/1000,dt.timezone.utc).isoformat()
+        self.future['rows'][0]['features']['semantic_0']=.123456789
+        self.write('future',self.future)
+        r=audit.evaluate(self.root/'candidate',self.root/'training',self.root/'groups-receipt',self.root/'future')
+        support=r['reports']['admission']['input_support']
+        self.assertEqual(support['feature_groups']['base']['selected'],['x'])
+        self.assertEqual(support['feature_groups']['semantic']['future_point_coverage'],{'semantic_0':1})
+        self.assertEqual(support['future_by_stage']['admission']['points'],1)
+        self.assertNotIn('.123456789',json.dumps(support))
+
     def test_future_strata_expose_worker_failure_and_unseen_sessions_without_names(self):
         tr=[self.row('train',100,200)]
         tr[0]['group']='private-familiar-session'

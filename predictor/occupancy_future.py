@@ -39,7 +39,7 @@ def contracts(candidate,training):
         raise ValueError('Unsupported occupancy model kinds')
 
 
-def input_support(model, training_rows, future_rows, hardware_names):
+def input_support(model, training_rows, future_rows, hardware_names, groups=None):
     """Collection, selection and actual tree use are different facts, not importance.
 
     Use the versioned hardware group, not a name prefix: hardware_family and
@@ -47,13 +47,24 @@ def input_support(model, training_rows, future_rows, hardware_names):
     Fractions describe forecast points, not independent request counts.
     """
     selected=set(model['encoding']['names']);used=split_usage(model)
-    names=sorted(set(hardware_names))
+    def describe(names):
+        names=sorted(set(names))
+        return {'collected_features':len(names),
+                'selected':[name for name in names if name in selected],
+                'used_in_splits':{name:used[name] for name in names if name in used},
+                'training_point_coverage':feature_coverage(training_rows,names) if training_rows else None,
+                'future_point_coverage':feature_coverage(future_rows,names) if future_rows else None}
+    groups=groups or {}
+    by_stage={}
+    for stage in ('admission','upload','embedded','remaining'):
+        points=[r for r in future_rows if r.get('stage',r.get('kind'))==stage]
+        by_stage[stage]={'points':len(points),'point_coverage':{
+            group:feature_coverage(points,sorted(set(names))) if points else None
+            for group,names in sorted(groups.items())}}
     return {'selected_features':len(selected),'split_features':len(used),
-            'hardware':{'collected_features':len(names),
-                        'selected':[name for name in names if name in selected],
-                        'used_in_splits':{name:used[name] for name in names if name in used},
-                        'training_point_coverage':feature_coverage(training_rows,names) if training_rows else None,
-                        'future_point_coverage':feature_coverage(future_rows,names) if future_rows else None},
+            'hardware':describe(hardware_names),
+            'feature_groups':{group:describe(names) for group,names in sorted(groups.items())},
+            'future_by_stage':by_stage,
             'note':'Split counts are structural use, not importance or causal benefit. Coverage is per forecast point; no future-data fitting.'}
 
 
@@ -186,7 +197,7 @@ def evaluate(candidate_path,training_path,receipt_path,prepared_path):
         rows=[r for r in prepared['rows'] if r['kind']==kind and cutoff<r['decision_time']<=r['finish_time']<=end and first[(r['run_id'],r['request_id'])]>cutoff and (r['run_id'],r['request_id']) not in seen]
         tr,_=split([r for r in training['rows'] if r['kind']==kind],candidate['reports'][kind]['cutoff'])
         report={'status':'no_future_labels','target_coverage':target_coverage(rows),
-                'input_support':input_support(model,tr,rows,training.get('groups',{}).get('hardware',[]))};result['reports'][kind]=report
+                'input_support':input_support(model,tr,rows,training.get('groups',{}).get('hardware',[]),training.get('groups',{}))};result['reports'][kind]=report
         report['future_strata']=future_strata(tr,[],[])
         if kind=='remaining':report['age_support']=remaining_age_support(tr,rows)
         if not rows:

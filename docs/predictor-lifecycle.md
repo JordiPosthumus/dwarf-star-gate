@@ -202,6 +202,16 @@ Split counts are not feature importance or a causal benefit measurement. A model
 trained before telemetry existed cannot learn from new samples without a separately
 trained and frozen challenger. More telemetry alone does not validate that challenger.
 
+The same report now includes `feature_groups` for every group in the frozen
+training manifest, including semantics, request shape, client metadata and
+progress. `future_by_stage` separates their coverage at admission, upload,
+embedding and remaining-time checkpoints. For example, embeddings absent at
+upload but present at the embedded checkpoint are expected—not a 50% collector
+failure. A selected feature with no tree splits was available but unused; an
+unselected feature never reached this forest. Coverage reports availability, not
+feature values, predictive importance or independent sample counts. Empty stages
+have zero points and null coverage, not measured zero availability.
+
 `by_stage` also separates after-upload from after-embedding accuracy. The same
 updated model can produce identical predictions at both stages if it selected no
 inputs that change when embeddings arrive. Stage counts can contain the same job;
@@ -688,6 +698,25 @@ aggregate baseline for each was about **54 / 55 / 50 seconds**. Remaining improv
 overall, but on one worker it still lost to that worker's mean baseline; another
 worker contributed only one completion. This is not broad generalization,
 calibrated placement or a measured routing speedup. No candidate was promoted.
+
+A subsequent snapshot extended this same frozen evaluation to **119 admissions**:
+116 labeled completions, one changed-worker completion excluded from the label
+contract, one incomplete stream, and one without terminal evidence. It still
+contained only two identified sessions, now with 20 unknown-identity requests;
+there was no identified unseen-session evidence. The three stage errors were
+about **68 / 71 / 42 seconds**, versus the best aggregate baselines of
+**67 / 67 / 56 seconds**. Remaining improved overall but lost to worker-mean
+baselines on two workers. Six completed jobs lasted at least five minutes; this
+is still weak evidence about long-duration tails, not calibrated confidence.
+
+All 116 after-embedding checkpoints had semantic components, yet the frozen
+updated model selected no semantic features and returned the exact same forecasts
+as at upload. None of these three selected forests used the live hardware group;
+the admission forest selected client metadata but made no splits on it. These
+are verified collection/selection/use distinctions, not proof that those inputs
+are inherently useless. Next experiments must establish their incremental value
+in training-only comparisons and a newly frozen future cohort, not force extra
+features into production or tune against this already-examined traffic.
 
 The offline `future_strata` report now separates per-worker error and baselines
 from familiar, unseen and unknown-session traffic. Familiar means present in the
