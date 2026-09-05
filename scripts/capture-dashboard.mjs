@@ -286,7 +286,7 @@ try {
   const freshStatus=await(await page.request.get(origin+'/api/status')).json();
   freshStatus.gateway.predictor=null;freshStatus.gateway.dataset={enabled:false};freshStatus.devices=[];
   await auditPage.route('**/api/status',route=>route.fulfill({json:freshStatus}));
-  for(const status of ['disabled','waiting','unavailable']){
+  for(const status of ['disabled','waiting','catching_up','rescanning','unavailable']){
     auditData={enabled:status!=='disabled',status,rows:[],model_series:[]};await auditPage.reload();
     await auditPage.waitForFunction(()=>document.getElementById('analytics-counts').textContent.includes('0 eligible'));
     assert.equal(await auditPage.locator('#analytics-chart circle').count(),0);

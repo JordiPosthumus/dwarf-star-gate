@@ -169,7 +169,9 @@ function renderFleetSpeed(a){
   $('fleet-speed-summary').title=detail;$('fleet-speed-summary').setAttribute?.('aria-label',ready?`Fleet speed over ${fleetSpeedWindow}. Decode ${fmtWhole(window?.decode?.mean_tps)} tokens per second. Prefill ${fmtWhole(window?.prefill?.mean_tps)} tokens per second. ${Number.isFinite(estimated)?`Estimated energy ${fmt(estimated)} kilowatt hours.`:'Energy unavailable.'}`:state);
 }
 function renderAnalytics() {
-  const a=analyticsDisplayed??analyticsState,worker=$('analytics-worker'),metric=analyticsMetric();
+  // Never pin a partial backfill's oldest model or animate partial study dots
+  // while the reader is catching up. Live fleet telemetry remains independent.
+  const a=analyticsDisplayed??(analyticsState?.status==='ready'?analyticsState:{...analyticsState,rows:[],model_series:[]}),worker=$('analytics-worker'),metric=analyticsMetric();
   renderFleetSpeed(analyticsState);
   const ids=[...new Set([...(a?.rows||[]),...(a?.model_series??[]).flatMap(s=>s.rows??[])].map(r=>r.node))].sort();
   if(worker.value&&!ids.includes(worker.value))ids.push(worker.value);

@@ -8,7 +8,7 @@ Private deployment receipts and measurements stay out of this public plan.
 > A low-effort DS4 fleet that keeps agents working. Intelligence should make
 > that dependable foundation better—not become another dependency that stalls it.
 
-## Current milestone: analytics people can understand
+## Completed milestone: analytics people can understand
 
 - [x] Separate question, method, checkpoint and exact model version. Explain the
   legacy history rule separately from XGB's saved reference rule.
@@ -18,7 +18,7 @@ Private deployment receipts and measurements stay out of this public plan.
   Keep technical evidence and training controls expandable.
 - [x] Cover no-data/no-model startup, outages, rotations and browser layout with
   isolated fixtures. Keep optional analytics independent of inference.
-- [ ] Complete release validation, refresh synthetic screenshots and record the
+- [x] Complete release validation, refresh synthetic screenshots and record the
   dashboard-only deployment separately from unchanged core/model services.
 
 ## Next, in order

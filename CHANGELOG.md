@@ -4,6 +4,8 @@
 
 - Separate timing questions, methods, checkpoints and pinned model versions;
   hold the study snapshot through polling, source rebuilds and newer forecasts.
+- Wait for the first ready reader snapshot before showing dots or pinning a
+  version; partial startup backfills cannot select a transient older model.
 - Expose saved paired reference values, count accounting, named join failures,
   source rebuild reasons and bounded request/version window omissions.
 - Reject mismatched model-kind/checkpoint records, retain unknown references,

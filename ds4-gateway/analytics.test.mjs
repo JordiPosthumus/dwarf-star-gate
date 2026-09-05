@@ -143,6 +143,13 @@ test('version limits select the newest saved checkpoints and disclose omitted gr
   const s=e.snapshot();assert.deepEqual(s.series_window,{limit:32,in_view:32,outside_view:3,selection:'latest_saved_forecast'});
   assert.equal(s.model_series[0].id,(35).toString(16).padStart(64,'0'));assert.equal(s.rows.length,35);
 });
+test('initial backfill does not expose partial dots or pin a transient model',()=>{
+  const {ctx,get,call}=ui();get('analytics-question').value='service';get('analytics-method').value='xgb';
+  ctx.sample={status:'catching_up',rows:[],model_series:[{id:'a'.repeat(64),stage:'admission',rows:[{node:'a',at:1,service_state:'complete',service_ms:2000,predicted_service_ms:1000}]}]};
+  call('receiveAnalytics(sample);renderAnalytics()');assert.equal(get('analytics-version').value,'');assert.match(get('analytics-counts').textContent,/0 eligible/);assert.match(get('analytics-status').textContent,/first ready snapshot/);
+  ctx.sample.status='ready';ctx.sample.model_series[0].id='b'.repeat(64);call('receiveAnalytics(sample);renderAnalytics()');
+  assert.equal(get('analytics-version').value,'b'.repeat(64));assert.match(get('analytics-counts').textContent,/1 eligible = 1 plotted/);
+});
 function ui() {
   const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
   const elements=new Map(),get=id=>{if(!elements.has(id)){const attributes=new Map(),values=new Map();elements.set(id,{value:id==='analytics-metric'?'queue':'',innerHTML:'',textContent:'',style:{setProperty:(name,value)=>values.set(name,value),values},setAttribute:(name,value)=>attributes.set(name,value),attributes});}return elements.get(id);};
