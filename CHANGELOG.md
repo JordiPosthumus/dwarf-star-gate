@@ -1,5 +1,17 @@
 # Changelog
 
+## Audit forecast-specific evidence projection before choosing a training window
+
+- Add an offline, bounded comparison for latency V2/V3/V4 and occupancy V1/V2:
+  original versus projected canonical bytes, complete replay equality, fixed-kind
+  totals and input/builder/projector fingerprints. Reports contain no raw events.
+- Preserve event order and original JSON conflict distinctions, including
+  differences in fields unused by forecasting. Keep vectors, hardware and
+  required candidate evidence intact; no projected artifact or model is written.
+- Exercise causal priors, duplicate/conflicting evidence, ambiguous finishes,
+  output limits, relocation, missing/late features and file/CLI privacy boundaries.
+  Keep production budgets, data retention, preparation and activation untouched.
+
 ## Preflight training-input size without reading private payloads
 
 - Add `training-input:audit -- --data DIRECTORY` with sorted daily-file byte

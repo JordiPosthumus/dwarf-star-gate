@@ -10,6 +10,12 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Tested smaller forecast evidence without shortening history.** A read-only
+  experiment compares full replay against a forecast-specific representation,
+  including every feature/label and conflict distinction. It reports savings
+  rather than silently dropping records. Raw evidence, production preparation,
+  active models and routing remain unchanged.
+
 - **Made training-input limits visible and cheap to check.** A read-only size
   audit reports the aggregate budget and overage. Preparation rejects oversized
   input before payload reads, while rechecking opened files for growth and

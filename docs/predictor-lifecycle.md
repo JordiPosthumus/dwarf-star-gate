@@ -766,6 +766,51 @@ deleting source history to get a green status. The offline `--cohort-since`
 selector operates **after full replay**, so it does not reduce raw input bytes.
 No rolling window, sampling, retention change or larger budget is selected here.
 
+### Offline forecast-input projection experiment
+
+Before choosing a smaller history window, test whether a forecast-specific
+representation can preserve full replay while omitting fields used only by other
+DSG audits. Run this **only on an existing private snapshot that fits the normal
+input budget**, with its matching worker inventory:
+
+```sh
+npm run training-projection:audit -- \
+  --data /private/candidate/snapshots \
+  --profiles /private/candidate/snapshots/worker-inventory.json \
+  --schema dsg-latency-v4
+```
+
+Supported comparisons are latency V2/V3/V4 and offline occupancy V1/V2. The
+default is the ordinary current latency schema. The audit reads the full bounded
+input, replays it twice with the **same** builder, and compares complete metadata
+and ordered rows—including features, labels and causal history—not merely row
+counts or scores. It reports original/projected canonical bytes by fixed event
+kind, changed-row counts and source/builder/projector hashes. Original file bytes
+and incomplete tails are reported separately. Treat these reports as private.
+
+Every event remains in order; nested vectors, hardware samples and required
+candidate data are retained. A SHA-256 of each original JSON event preserves
+duplicate/conflict distinctions even when only an otherwise-unused field
+differs. This is **not anonymization** or an upstream request-identity proof.
+Unused routing/diagnostic fields remain important to other consumers: original
+records must remain available, not be replaced with this forecast representation.
+
+The command writes no projected events, prepared data or models. It grants no
+training or routing authority and does not bypass the 128 MiB input limit.
+Exit 0 means exact parity for this input and builder version; mismatch or input
+error exits 1. Neither outcome proves compatibility with future feature builders.
+Initial frozen-history checks show a worthwhile representation saving, but that
+is not a solution to indefinitely growing history or proof of faster fitting.
+
+Before production adoption, design a versioned derived-artifact manifest tied to
+immutable raw evidence and inventory; verify conflict, ordering and cross-file
+lifecycle equivalence; bound memory/disk/CPU during generation and replay; and
+integrate preparation/future-audit provenance without invalidating existing
+models. A streaming/checkpoint policy still needs explicit review. Do not select
+recent files, prune embeddings, delete evidence or lift limits as a shortcut.
+
+### Training lifecycle and private diagnostics
+
 Starting training is transactional: if the initial state/receipt cannot be
 persisted, no subprocess launches, the pending run and cooldown return to their
 previous values, and the busy flag is released. A later request can try again
