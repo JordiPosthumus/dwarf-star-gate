@@ -252,6 +252,49 @@ long-job reliability or justifies promotion. Next experiments should test
 elapsed-conditioned remaining distributions and uncertainty, preserve the
 strongest existing baselines, and reserve fresh traffic for independent validation.
 
+#### Offline elapsed-conditioned residual-life experiment
+
+`predictor/residual_life.py` tests a separate, deliberately simple alternative:
+among completed training jobs on the same worker with total occupancy **greater
+than the current elapsed age**, estimate their remaining time. Each job counts
+once, regardless of its number of progress samples. It reports conditional mean,
+median and empirical 10th/90th percentiles. Unknown age, unknown worker or no
+surviving historical jobs produce an abstention, never a zero-time forecast.
+
+```sh
+python predictor/residual_life.py freeze \
+  --candidate /private/audit/occupancy-candidate.json \
+  --training /private/audit/prepared.json \
+  --artifact /private/audit/residual-frozen.json
+python predictor/residual_life.py evaluate \
+  --candidate /private/audit/occupancy-candidate.json \
+  --training /private/audit/prepared.json \
+  --artifact /private/audit/residual-frozen.json \
+  --prepared /private/later/prepared.json
+```
+
+Freeze uses the existing candidate's remaining-model training cutoff, purging
+admissions whose final label was unavailable then. It writes a new private,
+exclusive artifact bound to source, candidate and training hashes; it does not
+refit XGB or replace a deployed model. Validate the prepared raw snapshot with the
+coverage auditor below. Future scoring requires admission after this experiment's
+own freeze, matching feature/profile contracts, and no training-request reuse.
+Omit `--prepared` only for the explicitly labelled exploratory existing holdout.
+
+Scores compare this experiment, frozen XGB and existing baselines on **the same
+covered points**. Abstention counts and partially covered request counts remain
+visible; age slices can share jobs. Empirical quantiles are not calibrated
+confidence intervals: one survivor yields a zero-width interval with no reliability
+guarantee. Completed-only history is not censoring-aware, and worker identity does
+not certify the same engine/profile era. No cross-worker fallback is invented.
+
+The first exploratory holdout was a clear negative result: 169 covered points
+from 50 jobs, six abstentions; mean/median MAE about 225/139 seconds versus frozen
+XGB's 58 seconds on those same points. Elapsed time alone does not make historical
+jobs comparable. Keep this as an auditable experimental baseline, not a production
+replacement; any richer conditional model still needs independent future testing.
+Neither mode grants routing, promotion or recovery authority.
+
 #### Check the denominator, not only the completed scores
 
 Run the separate read-only census against the **same prepared snapshot**:

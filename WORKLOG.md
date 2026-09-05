@@ -10,6 +10,12 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Tested a simple elapsed-conditioned alternative instead of assuming it wins.**
+  A frozen offline residual-life baseline asks what same-worker historical jobs
+  still had left after surviving the current age. It exposes sparse support,
+  abstentions and uncalibrated quantiles. The first matched holdout was worse than
+  XGB, so it stays experimental; no live predictor or release gate changed.
+
 - **Tested the frozen forecasts on a larger later cohort.** On 128 new completed
   admissions, corrected delivery features improved admission error but still lost
   to the strongest simple baseline; updated and remaining improvements were small.

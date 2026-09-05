@@ -1,5 +1,21 @@
 # Changelog
 
+## Freeze and audit an offline residual-life baseline
+
+- Add a same-worker completed-history experiment conditioned on occupancy exceeding
+  the current elapsed age. Deduplicate admissions, purge unavailable labels, and
+  abstain on unknown ages/workers or exhausted duration support.
+- Freeze private artifacts against the source/comparator, training and candidate
+  hashes. Later evaluation requires new admissions after this experiment's own
+  freeze; existing holdout mode is explicitly exploratory, not fresh validation.
+- Compare conditional mean/median with frozen XGB and existing baselines on exact
+  matched points; retain abstention coverage and empirical interval calibration
+  caveats. There is no fleet fallback, production loader or promotion authority.
+- Test strict survival boundaries, deduplication, late-label exclusion, finite
+  arithmetic, sparse intervals, partial coverage, private/exclusive artifacts,
+  tampering and post-freeze cohort membership. Record the negative initial holdout
+  result instead of weakening gates or replacing a better live predictor.
+
 ## Expose distinct-job support for long remaining-time forecasts
 
 - Add aggregate-only `age_support` to offline frozen remaining reports. Count
