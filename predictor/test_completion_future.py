@@ -69,10 +69,10 @@ class CompletionFutureTests(unittest.TestCase):
         self.assertEqual(selection['source_points'],5)
         self.assertEqual(selection['selected_points'],1)
         self.assertEqual(selection['excluded_points'],{'in_training_snapshot':1,
-                         'first_checkpoint_at_or_before_freeze':2,'finishes_after_snapshot':1})
+                         'admission_at_or_before_freeze':2,'finishes_after_snapshot':1})
         self.assertEqual(selection['source_requests'],5)
         self.assertEqual(selection['fully_excluded_requests'],4)
-        self.assertEqual(result['reports']['remaining']['cohort_selection']['excluded_points']['first_checkpoint_at_or_before_freeze'],1)
+        self.assertEqual(result['reports']['remaining']['cohort_selection']['excluded_points']['admission_at_or_before_freeze'],1)
         self.assertEqual((self.training,self.candidate,self.future),before)
         for private in ('request_id','private-session','unfinished'):
             self.assertNotIn(private,json.dumps(result))
@@ -117,6 +117,22 @@ class CompletionFutureTests(unittest.TestCase):
         report=self.evaluate()['reports']['updated']['paired_stages']
         self.assertEqual(report['paired_requests'],0)
         self.assertEqual(report['excluded_requests']['different_target'],1)
+
+    def test_first_progress_uses_observation_time_with_shared_admission(self):
+        for r in self.future['rows']:r['at']=self.cut+1
+        early=next(r for r in self.future['rows'] if r['kind']=='remaining')
+        early['features']['elapsed_s']=0
+        later=copy.deepcopy(early);later['at']=self.cut+2;later['features']['elapsed_s']=1;later['target_s']=100
+        self.future['rows'].insert(0,later)
+        report=self.evaluate()['reports']['remaining']
+        self.assertEqual(report['first_progress']['metrics']['mae_s'],0)
+        self.assertEqual(report['first_progress']['selection']['selected_requests'],1)
+        self.assertEqual(report['metrics']['mae_s'],45)
+        del early['at']
+        report=self.evaluate()['reports']['remaining']
+        self.assertIsNone(report['first_progress']['metrics'])
+        self.assertEqual(report['first_progress']['selection']['excluded_requests']['invalid_checkpoint'],1)
+        self.assertEqual(report['metrics']['mae_s'],45)
 
 
 if __name__=='__main__':unittest.main()

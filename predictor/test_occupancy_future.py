@@ -52,7 +52,7 @@ class OccupancyFutureTests(unittest.TestCase):
         selected,counts=audit.select_future_rows(rows,{('r','private-overlap')},first,1000,2000)
         self.assertEqual(selected,[rows[2],rows[4]])
         self.assertEqual(counts['excluded_points'],{'in_training_snapshot':1,
-                         'first_checkpoint_at_or_before_freeze':1,'finishes_after_snapshot':1})
+                         'admission_at_or_before_freeze':1,'finishes_after_snapshot':1})
         self.assertEqual(counts['source_points'],5);self.assertEqual(counts['source_requests'],4)
         self.assertEqual(counts['selected_requests'],2);self.assertEqual(counts['fully_excluded_requests'],2)
         self.assertEqual(counts['partially_selected_requests'],1)
@@ -324,8 +324,8 @@ class OccupancyFutureTests(unittest.TestCase):
         selection=report['cohort_selection']
         self.assertEqual(selection['source_points'],5);self.assertEqual(selection['selected_points'],1)
         self.assertEqual(selection['excluded_points'],{'in_training_snapshot':1,
-                         'first_checkpoint_at_or_before_freeze':2,'finishes_after_snapshot':1})
-        self.assertEqual(result['reports']['remaining']['cohort_selection']['excluded_points']['first_checkpoint_at_or_before_freeze'],1)
+                         'admission_at_or_before_freeze':2,'finishes_after_snapshot':1})
+        self.assertEqual(result['reports']['remaining']['cohort_selection']['excluded_points']['admission_at_or_before_freeze'],1)
         self.assertEqual(result['authority'],'none');self.assertFalse(result['routing_enabled'])
         self.assertNotIn('request_id',json.dumps(result));self.assertNotIn('new',json.dumps(report))
 

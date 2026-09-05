@@ -1,5 +1,15 @@
 # Changelog
 
+## Audit first-progress remaining-time estimates
+
+- Add an offline first-observed-progress comparison before 30 seconds, aligned
+  to actual forecast timestamps and fixed baseline predictions. Count missing,
+  invalid and contradictory evidence; never interpolate or choose by error.
+- Distinguish request admission `decision_time` from forecast observation `at`.
+  Correct the future-cohort exclusion label to `admission_at_or_before_freeze`
+  without changing which points qualify or any existing score.
+- No production model, weight, feature-builder, retention or routing changes.
+
 ## Explain frozen future-audit selection
 
 - Add per-model prepared-point and distinct-request counts with ordered,

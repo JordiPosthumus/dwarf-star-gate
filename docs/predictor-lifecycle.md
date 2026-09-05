@@ -250,12 +250,14 @@ future traffic. No available future labels means no accuracy score, not success.
 
 Each model's `cohort_selection` explains its denominator: supplied prepared points,
 selected points and mutually exclusive exclusion counts. Reasons are applied in
-order: already in the frozen training snapshot, earliest supplied checkpoint at or
+order: already in the frozen training snapshot, admission decision at or
 before the freeze, then finish after the later snapshot. This includes training
 holdout rows in the first exclusion; they are not independent future traffic.
-The earliest checkpoint is checked across all model kinds, not just the selected
-kind. It is evidence available in the prepared input, not proof that a missing
-earlier admission never existed.
+The earliest supplied `decision_time` is checked across all model kinds for a
+request. This is the admission-decision clock shared by its forecast rows, not
+the observation clock `at`. The diagnostic key is `admission_at_or_before_freeze`
+(correcting the earlier misleading `first_checkpoint_at_or_before_freeze` name);
+the actual selection predicate and counts have not changed.
 
 Selected plus excluded **points** equals supplied points. Selected plus fully
 excluded **requests** equals supplied requests; partially selected requests are
@@ -283,6 +285,22 @@ hardware-history priors do not prove that RAM, power or activity telemetry is us
 Split counts are not feature importance or a causal benefit measurement. A model
 trained before telemetry existed cannot learn from new samples without a separately
 trained and frozen challenger. More telemetry alone does not validate that challenger.
+
+Remaining-time reports also include `first_progress`: the first actually observed
+forecast with elapsed time in **[0, 30) seconds**, selected by its `at` clock. It
+gives each represented request one vote and compares the frozen model with the
+same fixed baselines at that exact observation. The overall request-balanced
+score spreads each job's vote over its updates; it can hide weak early estimates
+even when later updates look good. This diagnostic does not change training
+weights or the existing aggregate/promotion scores.
+
+Missing/invalid clocks or ages, absent early observations, and contradictory
+earliest points are counted as exclusions. Identical duplicates count once;
+unknown evidence is not interpolated or replaced with a later observation.
+This is not a forecast at exactly 30 seconds, a census of all admitted work, or
+proof that a missing early point was never produced. Long jobs can lose early
+points from bounded prepared histories. No selected points means null accuracy.
+Use the separate per-age and duration reports to judge later progress and tails.
 
 The same report now includes `feature_groups` for every group in the frozen
 training manifest, including semantics, request shape, client metadata and

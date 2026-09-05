@@ -9,6 +9,7 @@ import math
 import os
 import stat
 
+from checkpoints import first_progress
 from fit_v2 import OCCUPANCY_SCHEMAS, SCHEMAS, baseline, exported_prediction, feature_coverage, known_session, metrics, session_evidence, split, split_usage, target_coverage
 
 
@@ -132,6 +133,13 @@ def elapsed_slices(training_rows, rows, predictions):
     return result
 
 
+def first_progress_comparison(training_rows, rows, predictions):
+    selected,selection=first_progress(rows)
+    estimates={id(row):prediction for row,prediction in zip(rows,predictions,strict=True)}
+    return {'selection':selection,'metrics':metrics(selected,[estimates[id(row)] for row in selected]) if selected else None,
+            'baselines':baseline(training_rows,selected)[0] if selected else None}
+
+
 def future_strata(training_rows, rows, predictions):
     """Describe transfer evidence, not a new release gate or model selector.
 
@@ -196,15 +204,16 @@ def select_future_rows(rows, seen, first, cutoff, end):
     """Explain the existing validated-row predicate, preserving point order.
 
     Counts describe this model kind's prepared points, not the raw traffic log.
-    first includes every checkpoint kind; seen includes the entire frozen input.
+    first is the earliest supplied admission decision across all model kinds;
+    seen includes the entire frozen input.
     Exclusion precedence makes point totals additive even when reasons overlap.
     """
-    excluded={reason:0 for reason in ('in_training_snapshot','first_checkpoint_at_or_before_freeze','finishes_after_snapshot')}
+    excluded={reason:0 for reason in ('in_training_snapshot','admission_at_or_before_freeze','finishes_after_snapshot')}
     selected=[];source_requests=set();selected_requests=set();excluded_requests=set()
     for row in rows:
         key=(row['run_id'],row['request_id']);source_requests.add(key)
         if key in seen:reason='in_training_snapshot'
-        elif first[key]<=cutoff:reason='first_checkpoint_at_or_before_freeze'
+        elif first[key]<=cutoff:reason='admission_at_or_before_freeze'
         elif row['finish_time']>end:reason='finishes_after_snapshot'
         else:
             selected.append(row);selected_requests.add(key);continue
@@ -271,7 +280,9 @@ def evaluate(candidate_path,training_path,receipt_path,prepared_path,*,completio
         if kind=='updated':report['paired_stages']=updated_stage_pairs([],[],completion=completion)
         if kind=='remaining':report['age_support']=remaining_age_support(tr,rows)
         if not rows:
-            if kind=='remaining':report['by_elapsed']=elapsed_slices(tr,[],[])
+            if kind=='remaining':
+                report['by_elapsed']=elapsed_slices(tr,[],[])
+                report['first_progress']=first_progress_comparison(tr,[],[])
             continue
         if not tr:raise ValueError('Frozen training partition is empty')
         predictions=[exported_prediction(model,r['features']) for r in rows]
@@ -282,7 +293,9 @@ def evaluate(candidate_path,training_path,receipt_path,prepared_path,*,completio
         if not completion:
             report['terminal_classes']={label:metrics([r for r in rows if r['terminal_class']==label],[p for r,p in zip(rows,predictions) if r['terminal_class']==label])
                 if any(r['terminal_class']==label for r in rows) else None for label in ('normal','output_limited')}
-        if kind=='remaining':report['by_elapsed']=elapsed_slices(tr,rows,predictions)
+        if kind=='remaining':
+            report['by_elapsed']=elapsed_slices(tr,rows,predictions)
+            report['first_progress']=first_progress_comparison(tr,rows,predictions)
         # The updated model is called both after upload and after embeddings.
         # Keep those causal stages visible rather than hiding one behind an average.
         report['by_stage']={}

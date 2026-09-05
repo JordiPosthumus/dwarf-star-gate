@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Separated early ETA quality from all-progress averages.** Audit the first
+  actual update before 30 seconds with one vote per request and explicit missing
+  or conflicting-evidence counts. Distinguish admission from observation clocks;
+  leave existing training weights, aggregate scores and activation gates intact.
+
 - **Explained frozen forecast-audit counts.** Account for every supplied prepared
   point as selected or excluded by a stated rule; distinguish points from requests
   and label preparation from raw traffic. Preserve the exact selected cohort and

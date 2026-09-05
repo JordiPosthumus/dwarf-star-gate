@@ -55,6 +55,9 @@ Private deployment receipts and measurements stay out of this public plan.
    durable study/cohort exports if the bounded recent panel is insufficient.
    Frozen future audits now explain prepared-point inclusion/exclusion totals and
    distinct request counts, without changing selection, scores or source retention.
+   A first-progress diagnostic now separates early ETA quality from each job's
+   all-progress average. Compare any early-specialist experiment on training-only
+   CV and genuinely later matched observations; do not promote from inspected data.
    Retain all original validation gates and deterministic fallbacks; report
    actual routing benefit separately. No experimental promotion is implied.
 5. **Settle the gateway-only image-continuity contract.** The Pi image companion
