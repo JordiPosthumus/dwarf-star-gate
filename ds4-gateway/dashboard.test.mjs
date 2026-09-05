@@ -697,6 +697,8 @@ test('dashboard names DS4 servers and explains gateway-only concurrency and avai
 });
 test('fleet overview is a dense status band and controls live in one settings tab',()=>{
   const html=fs.readFileSync(new URL('./ui/index.html',import.meta.url),'utf8'),js=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8'),css=fs.readFileSync(new URL('./ui/brand.css',import.meta.url),'utf8');
+  assert.doesNotMatch(html+js+css,/fleet-summary|Core backlog:/);
+  assert.match(js,/\$\('capacity-note'\)\.title=.*schedulingExplanation/);
   assert.match(html,/<section class="status-deck"/);assert.match(html,/id="health-wire"[\s\S]*class="workspace-tabs"[\s\S]*class="status-deck"[\s\S]*class="capacity-panel"[\s\S]*class="overview"/);
   assert.doesNotMatch(html,/Gateway request slots, not GPU utilization\. Warm cache slots are separate\./);
   assert.doesNotMatch(html,/id="server-settings"|\[ server controls \]/);assert.match(js,/openServerSettings/);

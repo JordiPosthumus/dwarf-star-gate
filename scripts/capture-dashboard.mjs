@@ -109,7 +109,8 @@ try {
   assert.equal(await page.locator('#fleet-speed-window').inputValue(),'1h','Fleet-speed window is a browser-local preference');
   await page.locator('#fleet-speed-window').selectOption('12h');
   assert.match(await page.locator('#continuity-door-status').innerText(),/Continuity Door ready.*2 active proxied streams.*no request-body spooling or replay/);
-  assert.match(await page.locator('#fleet-summary').innerText(),/mac-ultra is free; sparkA's next queued session keeps its warm home for up to 4m more; then the DSG core may hand it over automatically/);
+  assert.equal(await page.locator('#fleet-summary').count(),0);
+  assert.match(await page.locator('#capacity-note').getAttribute('title'),/mac-ultra is free; sparkA's next queued session keeps its warm home for up to 4m more; then the DSG core may hand it over automatically/);
   assert.ok(await page.locator('.gate-art').evaluate(img=>img.complete&&img.naturalWidth>0));
   const statusBand=await page.locator('.status-deck').boundingBox(),activityTab=await page.locator('#tab-activity').boundingBox(),settingsTab=await page.locator('#tab-settings').boundingBox();
   assert.ok(statusBand&&statusBand.height<150,`Fleet status band is too tall: ${statusBand?.height}px`);

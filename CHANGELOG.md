@@ -1,5 +1,10 @@
 # Changelog
 
+## Remove the repeated fleet-summary footer
+
+- Remove the prose row that repeats the overview counts and per-server backlog.
+  Keep safe-handover explanations in the capacity tooltip and refresh screenshots.
+
 ## Reduce server-card label noise
 
 - Shorten labels to Thinking, Decode and Prefill; remove the visible Current

@@ -10,6 +10,9 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Removed the repeated fleet-summary footer.** The overview numbers and server
+  cards carry the counts; capacity tooltips retain the safe-handover explanation.
+
 - **Reduced server-card reading effort.** Short labels and tighter rows put the
   speeds first; repeated explanations move into tooltips while stale/last-request
   distinctions remain visible.
