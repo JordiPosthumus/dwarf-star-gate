@@ -380,6 +380,23 @@ uses observed `launchctl` exit codes and checks domain output conservatively;
 Apple does not promise `print` output as a stable API. Changed formats/codes remain
 unverified and require per-installation validation, not permissive parsing.
 
+**Native macOS disable instructions also win.** The launchd helper reads the exact
+service's override from `launchctl print-disabled gui/$UID`. An explicit disable
+blocks starts, restarts, canaries and automatic readmission; DSG never issues
+`enable` to clear it. Unreadable, malformed or duplicate override evidence is
+unknown, not consent. The executor checks again after saving its intent receipt;
+a changed disable setting prevents command issuance and blind reissue. These are
+sampled checks, not an atomic lock over an operator's concurrent launchctl action.
+
+The bounded status reasons are `launchd_native_disabled` and
+`launchd_disable_state_unverified`; Genie and quarantine alerts explain them.
+Upgrade the **enrolled Mac helper as well as the gateway** before validating this
+capability: older helpers omit the required `native_disabled` evidence and remain
+ineligible. Linux adapters are unaffected. No live helper is installed automatically.
+An absent override means only that this particular native veto was not found;
+it does not prove that a prior bootout/stop was accidental or authorize bootstrap.
+DSG pauses, agent holds, identity checks and all other recovery gates still apply.
+
 The controller now retains one **private last-identity observation per enrolled
 Mac worker** in its existing recovery state. It records the exact PID, instance,
 start time, machine/profile/static identity and an enrollment-binding digest only

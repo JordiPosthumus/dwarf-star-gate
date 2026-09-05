@@ -10,6 +10,12 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Made Mac recovery respect native disable instructions.** The launchd adapter
+  now checks macOS's explicit service-disable override and rechecks before issuing
+  a command. Unknown evidence blocks action; Genie and alerts explain the native
+  stop intent. Regression tests cover canaries, stopped starts and a disable racing
+  the durable receipt. This is a bootstrap prerequisite, not removed-job recovery.
+
 - **Separated a stream ending from Pi accepting it.** A real installed Pi fixture
   rejects `[DONE]` without a recognized finish reason. DSG records that bounded
   compatibility fact, separately from observer gaps, and gives Genie a developer

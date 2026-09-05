@@ -100,6 +100,7 @@ export class Recovery {
       if(s.loaded===null&&s.registration==='unverified')return 'launchd_state_unverified';
     }
     if(!live&&!stopped&&!candidate)return s?.stopped===true&&c?.start_stopped!==true?'stopped_service_start_not_enrolled':'service_identity_or_profile_unverified';
+    if(c.adapter==='launchd'&&s.native_disabled!==false)return s.native_disabled===true?'launchd_native_disabled':'launchd_disable_state_unverified';
     if(candidate&&(n.active||n.queue.length))return 'profile_handback_wait_for_admitted_work';
     if(n.active || n.queue.length)return 'wait_for_admitted_work';
     if(canary) {

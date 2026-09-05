@@ -14,6 +14,42 @@ spec.loader.exec_module(adapter)
 
 
 class LaunchdAdapterTests(unittest.TestCase):
+    def test_native_disable_parser_requires_a_complete_unambiguous_override_table(self):
+        label = "com.example.ds4"
+        self.assertIs(adapter.parse_disabled('disabled services = {\n "com.example.ds4" => disabled\n}', label), True)
+        for body in ('', ' "com.example.ds4" => enabled\n', ' "com.example.ds4.other" => disabled\n'):
+            self.assertIs(adapter.parse_disabled('disabled services = {\n' + body + '}', label), False)
+        for output in ('', '{}', 'disabled services = {', 'disabled services = {\n "com.example.ds4" => unknown\n}',
+                       'disabled services = {\n "com.example.ds4" => enabled\n "com.example.ds4" => disabled\n}',
+                       'disabled services = {\n "com.example.ds4" => disabled\n}\nextra',
+                       'disabled services = {\n not a record\n}'):
+            self.assertIsNone(adapter.parse_disabled(output, label))
+        with patch.object(adapter, "run", return_value=('disabled services = {\n}', 0)) as command:
+            self.assertIs(adapter.native_disabled({"label": label}), False)
+            command.assert_called_once_with(["/bin/launchctl", "print-disabled", f"gui/{os.getuid()}"], check=False)
+        for result in [('', 112), ('PRIVATE_STDOUT', 1)]:
+            with patch.object(adapter, "run", return_value=result):
+                self.assertIsNone(adapter.native_disabled({"label": label}))
+        with patch.object(adapter, "run", side_effect=adapter.subprocess.TimeoutExpired('fixture', 15)):
+            self.assertIsNone(adapter.native_disabled({"label": label}))
+
+    def test_native_disable_veto_covers_start_restart_canary_and_changes_after_journaling(self):
+        current = {"active": True, "listener": True, "instance": "1" * 32, "machine": "a" * 64, "profile": "b" * 64, "fault": {"at": 1000}}
+        restart = {"action": "restart", "action_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "instance": current["instance"], "machine": current["machine"], "profile": current["profile"], "canary": False, "fault_after": 900}
+        stopped = {"active": False, "listener": False, "loaded": True, "stopped": True, "stopped_epoch": "d" * 64, "instance": "", "machine": "a" * 64, "service_profile": "c" * 64}
+        start = {"action": "start", "action_id": restart["action_id"], **{key: stopped[key] for key in ("stopped_epoch", "machine", "service_profile")}}
+        for request, snapshot in [(restart, current), ({**restart, "canary": True}, current), (start, stopped)]:
+            for checks in ([True], [None], [False, True], [False, None]):
+                with self.subTest(action=request["action"], checks=checks), tempfile.TemporaryDirectory() as temp, patch.object(adapter, "inspect", return_value=snapshot), patch.object(adapter, "native_disabled", side_effect=checks), patch.object(adapter, "run") as command:
+                    state = Path(temp) / "actions.json"
+                    with self.assertRaisesRegex(ValueError, 'launchd_native_disabled|launchd_disable_state_unverified'):
+                        adapter.handle({"label": "com.example.ds4"}, request, state)
+                    command.assert_not_called()
+                    self.assertEqual(state.exists(), len(checks) == 2)
+                    if state.exists():
+                        self.assertEqual(adapter.handle({"label": "com.example.ds4"}, request, state)["state"], "intent")
+                        command.assert_not_called()
+
     def test_absent_job_requires_repeated_absence_and_readable_exact_gui_domain(self):
         config = {"label": "com.example.ds4"}
         domain = f"gui/{os.getuid()}"
@@ -156,6 +192,7 @@ class LaunchdAdapterTests(unittest.TestCase):
         self.assertIsNone(adapter.fault_evidence(fatal, now + 10000, now))
         self.assertIsNone(adapter.fault_evidence("0904 10:00:00 ds4-server: cuda prefill state reset failed", started, now))
 
+    @patch.object(adapter, "native_disabled", lambda config: False)
     def test_restart_is_exact_launchd_job_and_durable_idempotent(self):
         current = {"active": True, "listener": True, "instance": "1" * 32, "machine": "a" * 64, "profile": "b" * 64, "fault": {"at": 1000}}
         request = {"action": "restart", "action_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "instance": current["instance"], "machine": current["machine"], "profile": current["profile"], "canary": False, "fault_after": 900}
@@ -186,6 +223,7 @@ class LaunchdAdapterTests(unittest.TestCase):
                     adapter.handle({"label": "com.example.ds4"}, {**request, "fault_after": bad}, Path(temp) / "actions.json")
                 command.assert_not_called()
 
+    @patch.object(adapter, "native_disabled", lambda config: False)
     def test_stopped_start_requires_exact_static_identity_and_issues_no_kill(self):
         current = {"active": False, "listener": False, "loaded": True, "stopped": True, "stopped_epoch": "d" * 64, "instance": "", "machine": "a" * 64, "service_profile": "c" * 64}
         request = {"action": "start", "action_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "stopped_epoch": current["stopped_epoch"], "machine": current["machine"], "service_profile": current["service_profile"]}
@@ -197,6 +235,7 @@ class LaunchdAdapterTests(unittest.TestCase):
             self.assertEqual(adapter.handle({"label": "com.example.ds4"}, request, state)["state"], "issued")
             self.assertEqual(command.call_count, 1)
 
+    @patch.object(adapter, "native_disabled", lambda config: False)
     def test_ambiguous_command_failure_is_persisted_and_never_reissued(self):
         current = {"active": True, "listener": True, "instance": "1" * 32, "machine": "a" * 64, "profile": "b" * 64, "fault": {"at": 1000}}
         request = {"action": "restart", "action_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "instance": current["instance"], "machine": current["machine"], "profile": current["profile"], "canary": False, "fault_after": 900}

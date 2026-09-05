@@ -109,6 +109,29 @@ test('launchd absence diagnostics reach Genie but never authorize recovery or ov
     r.recovery.close();
   }
 });
+test('native Mac disable policy blocks recovery offers, canaries and automatic actions',async()=>{
+  for(const native_disabled of [true,null,undefined,'false']){
+    const r=rig(),local={...config,adapter:'launchd'};r.recovery.configs.set('one',local);
+    const snapshot={...r.sample(),native_disabled};const actions=[];
+    r.recovery.call=async(_config,request)=>{actions.push(request.action);return snapshot;};
+    r.recovery.setAutomatic(true);await r.ready();
+    const reason=native_disabled===true?'launchd_native_disabled':'launchd_disable_state_unverified';
+    assert.equal(r.recovery.workerStatus(r.n).reason,reason);assert.equal(r.recovery.workerStatus(r.n).eligible,false);
+    assert.throws(()=>r.recovery.request(r.input(),'genie'),new RegExp(reason));
+    r.n.drained=true;assert.throws(()=>r.recovery.request(r.input(),'operator',{canary:true}),new RegExp(reason));
+    const data=briefing({devices:[],gateway:{workers:[{id:'one'}],recovery:r.recovery.status()}});
+    assert.equal(data.workers[0].recovery_evidence.reason,reason);assert.deepEqual(data.recovery.offers,[]);
+    assert.ok(actions.every(action=>action==='inspect'));assert.equal(r.store.data.recovery.operations.length,0);
+    r.n.drained=false;assert.equal(r.recovery.reason(r.n,{...snapshot,native_disabled:false}),null,'known non-disabled policy leaves existing eligible behavior intact');
+    r.recovery.configs.set('one',{...local,start_stopped:true,service_profile:'c'.repeat(64)});
+    const stopped={version:1,machine:config.machine,service_profile:'c'.repeat(64),loaded:true,stopped:true,active:false,listener:false,stopped_epoch:'d'.repeat(64),native_disabled};
+    assert.equal(r.recovery.reason(r.n,stopped),reason,'stopped service also respects native policy');
+    assert.equal(r.recovery.reason(r.n,{...snapshot,profile:'e'.repeat(64)}),reason,'changed-profile hand-back cannot override native policy');
+    assert.equal(r.recovery.reason(r.n,{...snapshot,started_at:Date.parse(r.n.quarantine.at)+10000}),reason,'verification-only readmission cannot override native policy');
+    r.recovery.configs.set('one',config);assert.equal(r.recovery.reason(r.n,snapshot),null,'Linux policy is unchanged');
+    r.recovery.close();
+  }
+});
 function localEnrollment(t){
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-local-recovery-'));
   t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
@@ -142,6 +165,7 @@ test('real local helper receives JSON on stdin and returns a complete bounded re
 });
 test('local enrollment preserves worker binding, operator pause and evidence-gated recovery',async t=>{
   const local=localEnrollment(t),r=rig();delete r.n.ssh;
+  const original=r.recovery.call;r.recovery.call=async(c,request)=>({...await original(c,request),...(request.action==='inspect'?{native_disabled:false}:{})});
   r.recovery.configs=recoveryConfig({workers:[local]});await r.ready();
   assert.equal(r.recovery.workerStatus(r.n).transport,'local');
   assert.equal(r.recovery.workerStatus(r.n).eligible,true);

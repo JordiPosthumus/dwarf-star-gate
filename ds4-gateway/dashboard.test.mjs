@@ -504,7 +504,7 @@ test('health wire cannot hide live quarantine or wasted-capacity evidence behind
   assert.equal(stalled.items.length,1);assert.match(stalled.items[0].text,/Spark 2 is quarantined after accelerator checkpoint failure/);
   assert.match(stalled.items[0].text,/2 of 3 DS4 servers are available/);assert.match(stalled.items[0].text,/2 requests are being held/);
   assert.match(stalled.items[0].text,/deliberately re-enroll the changed DS4 service profile/);
-  for(const [reason,expected] of [['launchd_registration_absent',/registration is missing.*no bootstrap authority/],['launchd_gui_domain_unavailable',/GUI service domain is unavailable.*does not prove/],['launchd_state_unverified',/inspection could not establish.*absence is not proven/]]){
+  for(const [reason,expected] of [['launchd_registration_absent',/registration is missing.*no bootstrap authority/],['launchd_gui_domain_unavailable',/GUI service domain is unavailable.*does not prove/],['launchd_state_unverified',/inspection could not establish.*absence is not proven/],['launchd_native_disabled',/macOS explicitly disables.*DSG will not enable/],['launchd_disable_state_unverified',/native disable setting could not be verified.*unknown policy is not permission/]]){
     const specific=news({gateway:{...gateway,recovery:{workers:[{worker_id:'spark2',eligible:false,reason}]}}},{state:'reviewing'});
     assert.equal(specific.level,'critical');assert.match(specific.items[0].text,expected);
     assert.doesNotMatch(specific.items[0].text,/deliberately re-enroll the changed/);

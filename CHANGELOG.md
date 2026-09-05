@@ -1,5 +1,17 @@
 # Changelog
 
+## Honor native macOS recovery stop intent
+
+- Read the enrolled launchd service's native disable override, with exact-label
+  matching and complete-table validation. Malformed, conflicting or unavailable
+  evidence stays unknown; no unrelated service names enter gateway status.
+- Block recovery offers/canaries on disabled or unknown policy. Independently
+  recheck the executor before and after durable intent, preserving no-repeat
+  semantics if policy changes. Never issue a native enable command.
+- Explain both bounded reasons in Genie evidence and deterministic alerts. Tests
+  cover start/restart/canary vetoes, post-journal races and unchanged Linux behavior.
+  Existing Mac enrollment needs the updated helper; deployment is explicit.
+
 ## Distinguish terminal markers from client acceptance
 
 - Record `terminal_without_finish_reason` for OpenAI completion streams whose

@@ -161,6 +161,37 @@ def stopped_epoch(state, config):
     return digest(json.dumps(value, sort_keys=True).encode())
 
 
+def parse_disabled(output, label):
+    """Read only the exact native override; absence is not general start consent."""
+    lines = output.strip().splitlines()
+    if len(lines) < 2 or lines[0].strip() != "disabled services = {" or lines[-1].strip() != "}":
+        return None
+    entries = {}
+    for line in lines[1:-1]:
+        match = re.fullmatch(r'\s*("(?:[^"\\\x00-\x1f]|\\["\\/bfnrt]|\\u[0-9a-fA-F]{4})*") => (enabled|disabled)\s*', line)
+        if not match:
+            return None
+        name = json.loads(match.group(1))
+        if name in entries:
+            return None
+        entries[name] = match.group(2) == "disabled"
+    return entries.get(label, False)
+
+
+def native_disabled(config):
+    try:
+        output, code = run(["/bin/launchctl", "print-disabled", f"gui/{os.getuid()}"], check=False)
+        return parse_disabled(output, config["label"]) if code == 0 else None
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def require_native_enabled(config):
+    disabled = native_disabled(config)
+    if disabled is not False:
+        raise ValueError("launchd_native_disabled" if disabled is True else "launchd_disable_state_unverified")
+
+
 def process_executable(pid):
     # lsof's txt mappings include shared libraries, not just the executable.
     # Ask the kernel directly using libproc's fixed-size proc_pidpath API.
@@ -314,6 +345,7 @@ def inspect(config):
         "pid": state["pid"],
         "active": state["active"],
         "listener": False,
+        "native_disabled": native_disabled(config),
     }
     if not state["active"]:
         if state["loaded"] is None:
@@ -424,6 +456,7 @@ def handle(config, request, state_path):
                 raise ValueError("stopped_service_identity_changed")
             if any(item.get("operation") == "start" and item.get("stopped_epoch") == current["stopped_epoch"] for item in history.values()):
                 raise ValueError("stopped_epoch_already_attempted")
+        require_native_enabled(config)
         receipt = {
             "request_hash": request_hash,
             "operation": action,
@@ -434,6 +467,9 @@ def handle(config, request, state_path):
         }
         history[request["action_id"]] = receipt
         atomic_save(state_path, history)
+        # Recheck after the durable write. A changed native stop instruction
+        # vetoes issuance; the intent receipt still prevents blind reissue.
+        require_native_enabled(config)
         command = ["/bin/launchctl", "kickstart"] + (["-k"] if action == "restart" else []) + [target(config)]
         run(command)
         receipt["state"] = "issued"

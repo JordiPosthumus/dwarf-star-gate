@@ -332,7 +332,9 @@ function deterministicHealthAlerts(snapshot) {
       const launchdAdvice={
         launchd_registration_absent:'The Mac service registration is missing. Ask the operator to inspect the established launcher; kickstart cannot restore a removed job, and DSG has no bootstrap authority.',
         launchd_gui_domain_unavailable:'The Mac GUI service domain is unavailable. Ask the operator to check the login/session state; this does not prove a DS4 or accelerator fault.',
-        launchd_state_unverified:'Mac service inspection could not establish the state. Check local permissions and service-manager output before taking action; absence is not proven.'
+        launchd_state_unverified:'Mac service inspection could not establish the state. Check local permissions and service-manager output before taking action; absence is not proven.',
+        launchd_native_disabled:'macOS explicitly disables this service. Respect that stop instruction; ask the operator before changing native service policy. DSG will not enable it.',
+        launchd_disable_state_unverified:'The Mac native disable setting could not be verified. Check the enrolled helper version and launchctl inspection; unknown policy is not permission to start.'
       }[reason];
       const recommendation=launchdAdvice??(reason==='service_identity_or_profile_unverified'
         ?'Review and deliberately re-enroll the changed DS4 service profile before recovery; simply enabling routing would bypass the safety boundary.'

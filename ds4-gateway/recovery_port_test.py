@@ -83,7 +83,7 @@ class RecoveryPortTests(unittest.TestCase):
                 config = {"port": listener.getsockname()[1], "label": "com.example.ds4", "unit": "ds4.service"}
                 with patch.object(adapter, "service_profile", return_value="b" * 64):
                     if kind == "launchd":
-                        with patch.object(adapter, "machine_identity", return_value="a" * 64), patch.object(adapter, "launch_state", return_value={"loaded": True, "stopped": True, "active": False, "pid": 0}), patch.object(adapter, "run") as command:
+                        with patch.object(adapter, "native_disabled", return_value=False), patch.object(adapter, "machine_identity", return_value="a" * 64), patch.object(adapter, "launch_state", return_value={"loaded": True, "stopped": True, "active": False, "pid": 0}), patch.object(adapter, "run") as command:
                             self.assert_blocked(adapter, config, temp)
                             command.assert_not_called()
                     else:

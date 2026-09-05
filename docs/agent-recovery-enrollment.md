@@ -31,6 +31,9 @@ permission. Explicit maintenance reservations always take precedence.
   settings privately so they can be compared after the test.
 - Read existing routing pauses, maintenance locks, agent holds, quarantine and
   recovery policy. Do not clear them to make enrollment easier.
+- On a Mac, inspect the native launchd disable override too. An explicit disable
+  is owner intent, not an outage to undo. The updated helper must report verified
+  `native_disabled: false`; missing evidence from an older helper is not consent.
 - Confirm whether **all clients of this endpoint use DSG**. Ask the owner if direct
   clients may exist; an empty DSG queue cannot prove there are none.
 - Check the supported-install table below. If the installation is unsupported,
