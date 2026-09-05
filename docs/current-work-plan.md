@@ -35,7 +35,9 @@ is implied by this fix.
    milestones. The attribution-audit index now has boundary/order/parity tests;
    retain ambiguous-overlap and tied-revision abstentions.
    Cache-continuity comparisons now also fence tied session admission clocks;
-   no input-order choice may become a suspected cache-loss alert. Identical
+   conflicting session/admission revisions stop the cache audit instead of
+   letting a first-record choice hide intervening work. No input-order choice
+   may become a suspected cache-loss alert. Identical
    engine-start replays and metadata updates preserve remembered attribution
    ambiguity. Check fresh ordinary
    traffic across process epochs; synthetic speed gains alone are not live proof.

@@ -103,8 +103,13 @@ export function auditCacheContinuity(input,{maxAgeMs=DEFAULT_MAX_AGE_MS,maxEvent
   }
   const ordered=[];
   for(const job of jobs.values()){
+    if(!job.decisions.some(row=>SESSION.test(row.session??'')))continue;
+    // An ambiguous request can be a local comparison barrier only when its
+    // session and admission tick are known. Choosing its first conflicting
+    // revision could erase a predecessor in another session or later interval.
+    const positions=new Set(job.decisions.map(row=>JSON.stringify([row.session??null,at(row.time)])));
+    if(positions.size!==1)throw new Error('Conflicting cache-continuity admission order; consecutive requests cannot be established');
     const decision=job.decisions[0],finish=job.finishes[0];
-    if(!decision||!SESSION.test(decision.session??''))continue;
     ordered.push({decision,finish,decision_at:at(decision.time),finish_at:finish?at(finish.time):null,run_id:decision.run_id,session:decision.session,
       ambiguous:job.decisions.length!==1||job.finishes.length>1||job.relocations.length>1,relocated:job.relocations.length>0});
   }

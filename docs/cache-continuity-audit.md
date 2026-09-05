@@ -62,6 +62,16 @@ cannot choose a predecessor. Later unambiguous neighbors are still assessed.
 This differs from an ordinary request whose finish equals its own admission:
 that zero-duration clock reading alone is not a chronology contradiction.
 
+Different admission records for one request must agree on its session and
+admission instant before it can serve as a comparison barrier. If those positions
+conflict—including an identified session versus a missing/invalid session—the
+audit stops with a fixed diagnostic. Picking the first record could hide an
+intervening request in another session or later interval and manufacture a
+low-reuse finding. Equal instants with different timestamp spellings are the same
+position. Same-position duplicate admissions remain ambiguous local barriers;
+they do not prevent later unambiguous neighbors from being assessed. Requests
+with no identified session are not assigned an invented session.
+
 Malformed decision, finish or relocation envelopes stop the audit with a fixed
 diagnostic, without printing the record. Silently discarding one could erase an
 intervening request or move; an invalid clock/identity cannot safely identify the
@@ -102,6 +112,9 @@ oversized middle lines and unfinished older-file tails withhold findings; file
 replacement/rotation rebuilds the view. Exhausting either projection budget shows
 “Evidence window full” until a rebuild, instead of silently dropping middle
 requests. These limits bound the dashboard view, not collection or retention.
+Conflicting admission positions withhold the cache view as invalid evidence;
+other analytics remain available. A clean source rebuild restores the findings.
+The auditor does not repair or rewrite contradictory source records itself.
 Disabled collection and empty installations show missing evidence without
 requiring any predictor, encoder or model files. Inference remains independent.
 
@@ -124,7 +137,8 @@ Unit tests cover observed, partial, strongly guarded and unconfirmed low reuse;
 compaction, epoch/profile changes, relocation, failure, staleness, prompt shrink,
 route changes, run boundaries, duplicate/conflicting evidence and report privacy.
 They also cover impossible request chronology, reversed input order, preservation
-of valid neighbors, tied admission groups, shuffled input and bounded configuration. A frozen-data comparison kept all
+of valid neighbors, tied admission groups, conflicting admission positions,
+dashboard invalidation/rebuild, shuffled input and bounded configuration. A frozen-data comparison kept all
 previous valid classifications identical after this chronology hardening.
 The first deployment smoke audit must keep its exact counts private.
 

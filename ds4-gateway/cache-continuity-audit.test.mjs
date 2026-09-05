@@ -59,6 +59,48 @@ test('ties are scoped to session, and explicit different admission times remain 
   assert.equal(report.abstention_reasons.ambiguous_session_order,undefined);
 });
 
+test('conflicting admission sessions cannot erase a possible intervening request',()=>{
+  const first=request({id:'first',at:10000,turn:1,compaction:0});
+  const middle=request({id:'middle',at:20000});middle[0].session='c'.repeat(64);
+  const conflict={...middle[0],event_id:`e${++event}`,session};
+  const third=request({id:'third',at:30000,turn:2,compaction:0,cached:0});
+  const rows=[...first,...middle,conflict,...third],before=JSON.stringify(rows);
+  for(const input of [rows,[...rows].reverse()])assert.throws(()=>auditCacheContinuity(input),{
+    message:'Conflicting cache-continuity admission order; consecutive requests cannot be established',
+  });
+  assert.equal(JSON.stringify(rows),before);
+});
+
+test('conflicting admission clocks cannot manufacture a consecutive pair between revisions',()=>{
+  const first=request({id:'first',at:10000});
+  const middle=request({id:'middle',at:20000});
+  const conflict={...first[0],event_id:`e${++event}`,time:new Date(25000).toISOString()};
+  const third=request({id:'third',at:30000,cached:0});
+  for(const input of [[...first,...middle,conflict,...third],[...third,conflict,...middle,...first]])assert.throws(()=>auditCacheContinuity(input),/Conflicting cache-continuity admission order/);
+});
+
+test('identified and unidentified admission revisions conflict regardless of input order',()=>{
+  for(const missing of [undefined,null,'invalid']){
+    const first=request({id:'first',at:10000}),second=request({id:'second',at:20000});
+    const conflict={...second[0],event_id:`e${++event}`,session:missing};
+    const rows=[...first,conflict,...second];
+    assert.throws(()=>auditCacheContinuity(rows),/Conflicting cache-continuity admission order/);
+    assert.throws(()=>auditCacheContinuity([...rows].reverse()),/Conflicting cache-continuity admission order/);
+  }
+});
+
+test('same-position ambiguity remains local and anonymous requests do not acquire an invented session',()=>{
+  const rows=[1,2,3,4,5].flatMap(i=>request({id:`r${i}`,at:i*10000}));
+  const middle=rows.find(row=>row.kind==='decision'&&row.request_id==='r2');
+  // Different spelling of the same instant does not change the admission tick.
+  const duplicate={...middle,event_id:`e${++event}`,time:middle.time.replace('.000Z','Z')};
+  const expected=auditCacheContinuity([...rows,duplicate]);
+  assert.equal(expected.assessed_pairs,2);assert.equal(expected.abstention_reasons.ambiguous_request_evidence,2);
+  assert.deepEqual(auditCacheContinuity([duplicate,...rows].reverse()),expected);
+  const anonymous=request({id:'anonymous',at:15000});delete anonymous[0].session;
+  assert.deepEqual(auditCacheContinuity([...rows,duplicate,...anonymous]).classifications,expected.classifications);
+});
+
 test('all members of a tied group fence neighboring comparisons across input permutations',()=>{
   const rows=[];
   for(let i=0;i<8;i++){

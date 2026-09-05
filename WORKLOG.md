@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Stopped a false cache-loss finding.** Conflicting admission records could
+  make the auditor hide an intervening request based on input order. It now
+  withholds that invalid view while preserving ordinary valid classifications
+  and keeping the rest of analytics available.
+
 - **Released a false “trainer busy” lock.** A failed initial state write could
   leave training permanently busy without launching a process. Rejected starts
   now restore the previous state so storage recovery permits a later attempt.

@@ -55,6 +55,15 @@ test('malformed or skipped source rows withhold cache claims without breaking pr
   assert.equal(f.reader.cacheSnapshot(40000).status,'rescanning');f.reader.poll(50000);
   assert.equal(f.reader.cacheSnapshot(50000).workers['worker-a'].high_suspicion_low_reuse,1);
 });
+test('conflicting request positions withhold cache findings without disabling the analytics reader',t=>{
+  const f=fixture(t),rows=cachePair(),conflict={...rows[0],event_id:'conflicting-position',session:'c'.repeat(64)};
+  fs.writeFileSync(f.file,serialize([...rows,conflict]));f.reader.poll(30000);
+  assert.equal(f.reader.snapshot().status,'ready');
+  const cache=f.reader.cacheSnapshot(30000);assert.equal(cache.status,'invalid_evidence');assert.deepEqual(cache.workers,{});
+  const shown=JSON.stringify(cache);assert.ok(!shown.includes('cache-1'));assert.ok(!shown.includes('c'.repeat(64)));
+  fs.writeFileSync(f.file,serialize(rows));f.reader.poll(40000);f.reader.poll(50000);
+  assert.equal(f.reader.cacheSnapshot(50000).workers['worker-a'].high_suspicion_low_reuse,1,'a clean rebuild restores valid findings');
+});
 test('cache source tail gaps cannot stitch a pair across omitted daily content',t=>{
   const f=fixture(t,{tailBytes:1500}),rows=cachePair();
   fs.writeFileSync(f.file,serialize(rows.slice(0,2)));

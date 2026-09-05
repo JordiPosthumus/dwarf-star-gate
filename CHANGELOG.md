@@ -1,5 +1,16 @@
 # Changelog
 
+## Reject contradictory cache-audit admission positions
+
+- Do not pick the first admission when records for one request disagree on
+  session or time. That choice could hide intervening work and invent a
+  low-reuse finding. Reject the cache audit with a fixed diagnostic instead.
+- Keep same-position ambiguities as local comparison barriers. Withhold an
+  invalid dashboard cache view without disabling other analytics; a clean
+  rebuild restores findings. No routing, cache, data-retention or inference change.
+- Add conflicting-session/time, missing-session revision and dashboard rebuild
+  regressions. Frozen valid-evidence classifications retain exact parity.
+
 ## Release training startup state after a failed write
 
 - Roll back pending training, cooldown and receipt state when the initial
