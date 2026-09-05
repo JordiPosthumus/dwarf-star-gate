@@ -1,5 +1,17 @@
 # Changelog
 
+## Separate response delivery timing from engine-speed assumptions
+
+- Add an offline delivery-aware occupancy challenger with unchanged labels and
+  causal history. Preserve burst-delivery rates under explicit names and stop
+  using them as a hard-coded generation-time anchor; add prior delivery-window
+  and full-service output-rate features without clipping or discarding records.
+- Preserve original V1 and production feature contracts, fixed chronological
+  tuning/holdout rules and routing gates. Require exact versioned future-audit
+  inputs and reject legacy anchor keys in the new contract.
+- Regress burst timing, missing inputs, causal chronology, matched labels,
+  original builder hashes, production rejection and frozen-audit separation.
+
 ## Verify native Mac bootstrap and distinguish stop-request evidence
 
 - Fix a real native smoke-test failure: launchd can emit a bounded, exact-identity

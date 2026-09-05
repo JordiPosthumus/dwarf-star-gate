@@ -4,6 +4,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {replayOccupancy} from './occupancy.mjs';
+import {deliveryFeatures,replayDeliveryOccupancy} from './occupancy-delivery.mjs';
+import {featureBuilderHash} from '../ds4-gateway/prediction-feature-registry.mjs';
+import {createHash} from 'node:crypto';
 import {prepare,prepareArgs,selectOccupancyCohort} from './prepare.mjs';
 import {replay} from '../ds4-gateway/prediction-features-v4.mjs';
 import {validateCandidate} from '../ds4-gateway/xgb-runtime.mjs';
@@ -11,6 +14,29 @@ const inventory={schema:1,workers:{a:{matching_profiles:['p'],hardware_family:'s
 const origin=100000;
 test('occupancy artifacts cannot be loaded as production completion models',()=>{
   assert.throws(()=>validateCandidate({schema:2,created_at:'2026-09-04T00:00:00Z',feature_schema:'dsg-occupancy-v1',models:{}}),/feature schema/i);
+  assert.throws(()=>validateCandidate({schema:2,created_at:'2026-09-04T00:00:00Z',feature_schema:'dsg-occupancy-v2',models:{}}),/feature schema/i);
+});
+test('delivery-aware inputs preserve raw rates without treating them as engine timing',()=>{
+  const original={prior_generation_tps:32900,worker_generation_tps:30,history_generation_estimate_s:2,prior_service_s:75.64,prior_ttft_s:75.61,prior_output_tokens:987};
+  const copy=structuredClone(original),f=deliveryFeatures(original);
+  assert.deepEqual(original,copy);assert.equal(f.prior_stream_delivery_tps,32900);assert.equal(f.worker_stream_delivery_tps,30);assert.equal(f.history_delivery_estimate_s,2);
+  assert.ok(Math.abs(f.prior_stream_window_s-.03)<1e-10);assert.ok(Math.abs(f.prior_service_output_tps-987/75.64)<1e-10);
+  assert.ok(f.prior_stream_window_fraction<.001);
+  for(const name of ['prior_generation_tps','worker_generation_tps','history_generation_estimate_s'])assert.ok(!(name in f));
+  for(const patch of [{prior_service_s:null},{prior_service_s:NaN},{prior_ttft_s:-1},{prior_ttft_s:80}])assert.equal(deliveryFeatures({...original,...patch}).prior_stream_window_s,null);
+  assert.equal(deliveryFeatures({...original,prior_service_s:0,prior_ttft_s:0}).prior_stream_window_fraction,null);
+  assert.equal(deliveryFeatures({...original,prior_output_tokens:-1}).prior_service_output_tps,null);
+});
+test('delivery-aware replay preserves V1 labels and only uses earlier completed history',()=>{
+  const events=fixture();events.at(-1).finish_reason='stop';events.at(-1).usage={completion_tokens:100,prompt_tokens:1000};events.at(-1).generation={first_semantic_ms:7199990};
+  events.push(row('decision',7200100,{request_id:'next',session:'session',candidates:[{node:'a',profile:'p',context_length:262144}]}),
+    row('dispatch',7200101,{request_id:'next'}),row('finish',7201101,{request_id:'next',outcome:'complete',finish_reason:'stop',service_ms:1000}));
+  const original=replayOccupancy(events,inventory),v2=replayDeliveryOccupancy(events,inventory);
+  assert.equal(v2.schema,'dsg-occupancy-v2');assert.equal(v2.feature_schema,'dsg-delivery-aware-v1');assert.equal(v2.routing_enabled,false);
+  assert.deepEqual(v2.rows.map(({features,...row})=>row),original.rows.map(({features,...row})=>row));
+  assert.ok(v2.rows.filter(r=>r.request_id==='request').every(r=>r.features.prior_stream_delivery_tps===null));
+  const next=v2.rows.find(r=>r.request_id==='next');assert.ok(next.features.prior_stream_delivery_tps>9999);assert.equal(next.features.prior_service_output_tps,100/7200);
+  assert.deepEqual(Object.keys(next.features).sort(),[...v2.feature_names].sort());assert.deepEqual(replayOccupancy(events,inventory),original);
 });
 const row=(kind,t,extra={})=>({schema:1,run_id:'run',request_id:'request',event_id:kind+t,kind,node:'a',time:new Date(origin+t).toISOString(),...extra});
 const fixture=()=>[row('decision',0,{session:'session',candidates:[{node:'a',profile:'p',context_length:262144,active:0,queued:0}]}),
@@ -66,6 +92,12 @@ test('declared occupancy cohort preserves raw snapshots and older causal history
   assert.deepEqual(cohort.snapshot.hashes,original.snapshot.hashes);
   assert.equal(fs.readFileSync(path.join(selected,'snapshots',file),'utf8'),raw);
   assert.equal(fs.readFileSync(path.join(source,file),'utf8'),raw);
+  const delivery=path.join(root,'delivery');prepare(source,profiles,delivery,'dsg-occupancy-v2',{cohortSince:since});
+  const newer=JSON.parse(fs.readFileSync(path.join(delivery,'prepared.json')));
+  assert.deepEqual(newer.snapshot.hashes,cohort.snapshot.hashes);assert.equal(newer.rows.length,cohort.rows.length);
+  const legacyHash=createHash('sha256').update(Buffer.concat([Buffer.from(featureBuilderHash('dsg-latency-v4')),fs.readFileSync(new URL('./occupancy.mjs',import.meta.url))])).digest('hex');
+  assert.equal(original.snapshot.feature_builder_sha256,legacyHash);assert.notEqual(newer.snapshot.feature_builder_sha256,legacyHash);
+  assert.ok(newer.rows.every(r=>!Object.hasOwn(r.features,'history_generation_estimate_s')));
   assert.equal(fs.statSync(path.join(selected,'prepared.json')).mode&0o777,0o600);
   assert.throws(()=>prepare(source,profiles,selected,'dsg-occupancy-v1',{cohortSince:since}),/already exists/);
   const empty=path.join(root,'empty');const resultEmpty=prepare(source,profiles,empty,'dsg-occupancy-v1',{cohortSince:'2020-01-01T00:00:00Z'});

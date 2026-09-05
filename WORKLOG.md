@@ -10,6 +10,15 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Separated delivery bursts from assumed decode speed.** An offline challenger
+  retains socket-timing evidence under accurate names, adds prior service/window
+  features and removes the hard-coded decode interpretation. Original models,
+  raw data and live routing stay unchanged; matched comparisons and independently
+  frozen future traffic must establish whether the new contract actually helps.
+  The first matched comparison improved admission forecasts but not updated ones;
+  remaining forecasts barely changed. No candidate was promoted, and a weaker
+  corrected baseline is explicitly not counted as a model improvement.
+
 - **Validated Mac bootstrap against a real disposable LaunchAgent.** The native
   test found a missed `bootout initiated by` event format. DSG now distinguishes
   stop initiation from completed removal, preserves the ordinary-stop veto, and

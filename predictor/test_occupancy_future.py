@@ -75,6 +75,25 @@ class OccupancyFutureTests(unittest.TestCase):
         self.assertEqual(report['status'],'no_future_labels');self.assertNotIn('metrics',report)
         self.assertIsNone(report['input_support']['hardware']['future_point_coverage'])
 
+    def test_delivery_aware_freeze_cannot_mix_legacy_and_new_feature_contracts(self):
+        self.candidate['feature_schema']='dsg-occupancy-v2'
+        self.training.update(schema='dsg-occupancy-v2',feature_schema='dsg-delivery-aware-v1')
+        self.write('candidate',self.candidate);self.write('training',self.training)
+        receipt=audit.freeze(self.root/'candidate',self.root/'training',self.root/'delivery-receipt');cut=audit.timestamp(receipt['frozen_at'])
+        self.future['rows']=[self.row('new',cut+1,cut+1000)]
+        self.future['snapshot']['created_at']=dt.datetime.fromtimestamp((cut+10000)/1000,dt.timezone.utc).isoformat();self.write('future',self.future)
+        with self.assertRaisesRegex(ValueError,'feature builder'):
+            audit.evaluate(self.root/'candidate',self.root/'training',self.root/'delivery-receipt',self.root/'future')
+        self.future.update(schema='dsg-occupancy-v2',feature_schema='dsg-delivery-aware-v1');self.write('future',self.future)
+        result=audit.evaluate(self.root/'candidate',self.root/'training',self.root/'delivery-receipt',self.root/'future')
+        self.assertEqual(result['reports']['admission']['metrics']['requests'],1);self.assertFalse(result['routing_enabled'])
+        for key in ('prior_generation_tps','worker_generation_tps','history_generation_estimate_s'):
+            self.future['rows'][0]['features'][key]=100
+            self.write('future',self.future)
+            with self.assertRaisesRegex(ValueError,'Legacy generation anchor'):
+                audit.evaluate(self.root/'candidate',self.root/'training',self.root/'delivery-receipt',self.root/'future')
+            del self.future['rows'][0]['features'][key]
+
     def test_hardware_collection_is_not_model_selection_or_tree_use(self):
         model=copy.deepcopy(self.candidate['models']['admission'])
         model['encoding']['names']=['hardware_family','hardware_power_watts','hardware_gpu_utilization_pct']

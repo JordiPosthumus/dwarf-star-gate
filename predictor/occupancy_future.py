@@ -7,7 +7,7 @@ import math
 import os
 import stat
 
-from fit_v2 import baseline, exported_prediction, feature_coverage, metrics, split, split_usage, target_coverage
+from fit_v2 import OCCUPANCY_SCHEMAS, baseline, exported_prediction, feature_coverage, metrics, split, split_usage, target_coverage
 
 
 def read_json(path):
@@ -29,9 +29,9 @@ def timestamp(value):
 
 
 def contracts(candidate,training):
-    if candidate.get('schema')!=2 or candidate.get('feature_schema')!='dsg-occupancy-v1' or candidate.get('routing_enabled') is not False:
+    if candidate.get('schema')!=2 or candidate.get('feature_schema') not in OCCUPANCY_SCHEMAS or candidate.get('routing_enabled') is not False:
         raise ValueError('Only offline occupancy candidates are supported')
-    if training.get('schema')!='dsg-occupancy-v1' or training.get('feature_schema')!='dsg-latency-v4' or candidate.get('snapshot')!=training.get('snapshot'):
+    if training.get('schema')!=candidate['feature_schema'] or training.get('feature_schema')!=OCCUPANCY_SCHEMAS[candidate['feature_schema']] or candidate.get('snapshot')!=training.get('snapshot'):
         raise ValueError('Training snapshot does not match the frozen candidate')
     if not candidate.get('models') or any(k not in ('admission','updated','remaining') for k in candidate['models']):
         raise ValueError('Unsupported occupancy model kinds')
@@ -78,12 +78,14 @@ def evaluate(candidate_path,training_path,receipt_path,prepared_path):
     cutoff=timestamp(receipt['frozen_at']);end=timestamp(prepared['snapshot']['created_at'])
     if cutoff<max(timestamp(candidate['created_at']),timestamp(training['snapshot']['created_at'])) or end<cutoff:
         raise ValueError('Audit evidence predates the freeze')
-    if prepared.get('schema')!='dsg-occupancy-v1' or prepared.get('feature_schema')!='dsg-latency-v4' or prepared['snapshot']['feature_builder_sha256']!=training['snapshot']['feature_builder_sha256'] or prepared['snapshot']['hashes']['worker-inventory.json']!=training['snapshot']['hashes']['worker-inventory.json']:
+    if prepared.get('schema')!=training['schema'] or prepared.get('feature_schema')!=training['feature_schema'] or prepared['snapshot']['feature_builder_sha256']!=training['snapshot']['feature_builder_sha256'] or prepared['snapshot']['hashes']['worker-inventory.json']!=training['snapshot']['hashes']['worker-inventory.json']:
         raise ValueError('Future feature builder or worker profiles changed')
     for data in (training,prepared):
         rows=data.get('rows')
         if not isinstance(rows,list) or len(rows)>100000:raise ValueError('Invalid audit row budget')
         for r in rows:
+            if data['schema']=='dsg-occupancy-v2' and any(key in r.get('features',{}) for key in ('prior_generation_tps','worker_generation_tps','history_generation_estimate_s')):
+                raise ValueError('Legacy generation anchor in delivery-aware contract')
             if r.get('target_contract')!='observed_terminal_occupancy' or r.get('terminal_class') not in ('normal','output_limited') or any(not isinstance(r.get(k),(int,float)) or not math.isfinite(r[k]) for k in ('decision_time','finish_time','target_s')) or r['target_s']<0 or r['finish_time']<r['decision_time']:
                 raise ValueError('Invalid occupancy label')
     result={'schema':1,'mode':'offline_frozen_occupancy_future','authority':'none','routing_enabled':False,

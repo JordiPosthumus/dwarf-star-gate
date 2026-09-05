@@ -6,10 +6,17 @@ import {createHash} from 'node:crypto';
 import {featureContract,featureBuilderHash,CURRENT_FEATURE_SCHEMA} from '../ds4-gateway/prediction-feature-registry.mjs';
 import {isMain} from '../ds4-gateway/config.mjs';
 import {replayOccupancy} from './occupancy.mjs';
+import {replayDeliveryOccupancy} from './occupancy-delivery.mjs';
+const occupancySchemas=new Set(['dsg-occupancy-v1','dsg-occupancy-v2']);
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
+export function occupancyFeatureHash(schema){
+  if(!occupancySchemas.has(schema))throw new Error('Unsupported offline occupancy schema');
+  return hash(Buffer.concat([Buffer.from(featureBuilderHash('dsg-latency-v4')),fs.readFileSync(new URL('./occupancy.mjs',import.meta.url)),
+    ...(schema==='dsg-occupancy-v2'?[fs.readFileSync(new URL('./occupancy-delivery.mjs',import.meta.url))]:[])]));
+}
 function cohortTime(value,schema){
   if(value===null)return null;
-  if(schema!=='dsg-occupancy-v1')throw new Error('Cohort selection requires the explicit offline occupancy schema');
+  if(!occupancySchemas.has(schema))throw new Error('Cohort selection requires the explicit offline occupancy schema');
   if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value))throw new Error('Cohort start requires a UTC ISO timestamp');
   const at=Date.parse(value),canonical=value.includes('.')?value:value.replace('Z','.000Z');
   if(!Number.isSafeInteger(at)||at<0||new Date(at).toISOString()!==canonical||at>Date.now())throw new Error('Cohort start must be a valid past UTC timestamp');
@@ -40,13 +47,13 @@ export function prepare(data,profiles,output,schema=CURRENT_FEATURE_SCHEMA,{coho
   if(!files.length)throw new Error('No evidence files');
   if(!fs.lstatSync(profiles).isFile())throw new Error('Inventory must be a regular file');const inventoryBytes=fs.readFileSync(profiles),inventory=JSON.parse(inventoryBytes);
   if(inventory.schema!==1||!inventory.workers)throw new Error('Versioned worker inventory required');
-  const occupancy=schema==='dsg-occupancy-v1';
-  const dataset=occupancy?replayOccupancy(events,inventory):featureContract(schema).replay(events,inventory);if(dataset.rows.length>100000)throw new Error('Prepared data exceeds bounded trainer row budget');
+  const occupancy=occupancySchemas.has(schema);
+  const dataset=schema==='dsg-occupancy-v2'?replayDeliveryOccupancy(events,inventory):occupancy?replayOccupancy(events,inventory):featureContract(schema).replay(events,inventory);if(dataset.rows.length>100000)throw new Error('Prepared data exceeds bounded trainer row budget');
   const cohort=selectOccupancyCohort(dataset,cohortSince);
   fs.mkdirSync(path.join(output,'snapshots'),{recursive:true,mode:0o700});
   for(const b of blobs)fs.writeFileSync(path.join(output,'snapshots',b.name),b.bytes,{flag:'wx',mode:0o600});
   fs.writeFileSync(path.join(output,'snapshots','worker-inventory.json'),inventoryBytes,{flag:'wx',mode:0o600});
-  dataset.snapshot={created_at:new Date().toISOString(),bytes,hashes:Object.fromEntries([...blobs.map(b=>[b.name,hash(b.bytes)]),['worker-inventory.json',hash(inventoryBytes)]]),feature_builder_sha256:occupancy?hash(Buffer.concat([Buffer.from(featureBuilderHash('dsg-latency-v4')),fs.readFileSync(new URL('./occupancy.mjs',import.meta.url))])):featureBuilderHash(schema)};
+  dataset.snapshot={created_at:new Date().toISOString(),bytes,hashes:Object.fromEntries([...blobs.map(b=>[b.name,hash(b.bytes)]),['worker-inventory.json',hash(inventoryBytes)]]),feature_builder_sha256:occupancy?occupancyFeatureHash(schema):featureBuilderHash(schema)};
   if(cohort)dataset.snapshot.cohort=cohort;
   fs.writeFileSync(path.join(output,'prepared.json'),JSON.stringify(dataset)+'\n',{flag:'wx',mode:0o600});return {rows:dataset.rows.length,kinds:Object.fromEntries(['admission','updated','remaining'].map(k=>[k,dataset.rows.filter(r=>r.kind===k).length])),snapshot:dataset.snapshot};
 }

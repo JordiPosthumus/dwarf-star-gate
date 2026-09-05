@@ -13,6 +13,17 @@ ROOT=Path(__file__).resolve().parent.parent
 
 
 class PredictorV2Tests(unittest.TestCase):
+    def test_delivery_aware_rates_are_optional_inputs_not_the_reference_anchor(self):
+        f={'history_delivery_estimate_s':.001,'prior_stream_delivery_tps':1000000,'prior_ttft_s':75,
+           'recent_service_mean':80,'same_prior_server':1,'worker_service_median':90,'stage':'admission'}
+        self.assertEqual(v.reference(f),80)
+        self.assertEqual(v.reference({**f,'stage':'remaining','elapsed_s':30}),50)
+        self.assertEqual(v.reference({**f,'same_prior_server':0}),90)
+        # The legacy transform is intentionally unchanged for frozen V1 models.
+        self.assertEqual(v.reference({**f,'history_generation_estimate_s':.001}),75.001)
+        for kind in ('admission','updated','remaining'):
+            self.assertEqual(v.feature_families({'schema':'dsg-occupancy-v2'},kind),v.feature_families({'schema':'dsg-occupancy-v1'},kind))
+
     def test_occupancy_training_requires_explicit_separate_contract(self):
         rows=self.rows(100)
         for i,row in enumerate(rows):row.update(terminal_class='output_limited' if i%5==0 else 'normal',target_contract='observed_terminal_occupancy')
@@ -28,6 +39,11 @@ class PredictorV2Tests(unittest.TestCase):
             self.assertGreater(coverage['holdout']['under_5m']['requests'],0)
             self.assertEqual(len(coverage['folds']),result['reports']['admission']['folds'])
             self.assertGreater(result['reports']['admission']['terminal_classes']['output_limited']['holdout']['requests'],0)
+            data.update(schema='dsg-occupancy-v2',feature_schema='dsg-delivery-aware-v1');prepared.write_text(json.dumps(data))
+            newer=v.train(prepared,occupancy=True);self.assertEqual(newer['feature_schema'],'dsg-occupancy-v2');self.assertFalse(newer['routing_enabled'])
+            data['rows'][0]['features']['history_generation_estimate_s']=1;prepared.write_text(json.dumps(data))
+            with self.assertRaisesRegex(ValueError,'Legacy generation anchor'):v.train(prepared,occupancy=True)
+            del data['rows'][0]['features']['history_generation_estimate_s']
             data['rows'][0]['features']['terminal_class']='output_limited';prepared.write_text(json.dumps(data))
             with self.assertRaisesRegex(ValueError,'target contract'):v.train(prepared,occupancy=True)
 

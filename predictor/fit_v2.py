@@ -13,6 +13,7 @@ import xgboost as xgb
 
 SCHEMA = 'dsg-latency-v2'  # Backward-compatible fixture/default identifier.
 SCHEMAS = {SCHEMA, 'dsg-latency-v3', 'dsg-latency-v4'}
+OCCUPANCY_SCHEMAS = {'dsg-occupancy-v1':'dsg-latency-v4','dsg-occupancy-v2':'dsg-delivery-aware-v1'}
 RECIPE_BYTES = Path(__file__).with_name('recipes.json').read_bytes()
 RECIPE_POLICY = json.loads(RECIPE_BYTES)
 RECIPE_HASH = hashlib.sha256(RECIPE_BYTES).hexdigest()
@@ -71,7 +72,7 @@ def folds(rows):
 def feature_families(data, kind):
     """Reviewed, bounded feature-block search. V2 stays exactly compatible;
     V3 exposes every collected signal without forcing noisy blocks into base."""
-    if data['schema'] in ('dsg-latency-v4','dsg-occupancy-v1'):
+    if data['schema'] in ('dsg-latency-v4',*OCCUPANCY_SCHEMAS):
         families=feature_families({**data,'schema':'dsg-latency-v3'},kind)
         return families+[families[0]+['hardware'],families[-1]+['hardware']]
     if data['schema'] == SCHEMA:
@@ -258,12 +259,14 @@ def train(prepared, recipe_id=DEFAULT_RECIPE, *, occupancy=False):
     if xgb.__version__!='3.4.1' or np.__version__!='2.5.2':
         raise ValueError('Use the locked predictor environment; dependency version mismatch')
     data=json.loads(Path(prepared).read_text()); rows=data['rows']
-    if (data['schema'] not in ({'dsg-occupancy-v1'} if occupancy else SCHEMAS)) or len(rows)>100000:
+    if (data['schema'] not in (OCCUPANCY_SCHEMAS if occupancy else SCHEMAS)) or len(rows)>100000:
         raise ValueError('Unsupported prepared data')
-    if occupancy and (data.get('feature_schema')!='dsg-latency-v4' or any(
+    if occupancy and (data.get('feature_schema')!=OCCUPANCY_SCHEMAS[data['schema']] or any(
             r.get('target_contract')!='observed_terminal_occupancy' or r.get('terminal_class') not in ('normal','output_limited')
             or 'terminal_class' in r['features'] or 'target_contract' in r['features'] for r in rows)):
         raise ValueError('Invalid occupancy target contract')
+    if data['schema']=='dsg-occupancy-v2' and any(any(key in r['features'] for key in ('prior_generation_tps','worker_generation_tps','history_generation_estimate_s')) for r in rows):
+        raise ValueError('Legacy generation anchor in delivery-aware contract')
     result={'schema':2,'feature_schema':data['schema'],'created_at':dt.datetime.now(dt.timezone.utc).isoformat(),
             'snapshot':data['snapshot'],'dependencies':{'xgboost':xgb.__version__,'numpy':np.__version__},'models':{},'reports':{},'routing_enabled':False,
             'training_recipe':{'id':recipe_id,'policy_sha256':RECIPE_HASH,'parameters':parameters,'rounds':list(ROUNDS)}}

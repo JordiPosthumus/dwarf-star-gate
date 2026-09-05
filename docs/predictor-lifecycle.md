@@ -47,6 +47,47 @@ counts alongside error metrics: an aggregate improvement does not establish
 long-job accuracy when training contains no long examples. These diagnostics do
 not tune on the holdout, change promotion gates or authorize occupancy deployment.
 
+### Delivery timing is not engine speed
+
+An observed response can take substantial service time yet deliver its visible
+content in a very short burst. Dividing all output tokens by the interval from
+first visible content to completion measures **delivery rate**, not necessarily
+DS4 decode speed. Transport buffering, visibility of reasoning and provider
+streaming behavior cannot be distinguished from that timing alone.
+
+The separate offline `dsg-occupancy-v2` contract (`dsg-delivery-aware-v1` features)
+preserves the same occupancy labels and causal history, but names those rates
+`prior_stream_delivery_tps` and `worker_stream_delivery_tps`. It retains the old
+derived estimate as `history_delivery_estimate_s`, an optional learned input,
+not a hard-coded generation-time anchor in the causal baseline. Three additional
+history inputs describe the prior visible delivery window, its fraction of total
+service time, and output tokens per full service second. The latter includes
+prefill and other service time; it is not an engine decode measurement either.
+Missing or inconsistent source times stay unknown. No hardware-speed cap is
+imposed, no raw records are discarded, and no engine-speed measurement is invented.
+
+Use the same preparation/training commands with `--schema dsg-occupancy-v2`.
+It retains the bounded forward-time feature/tree/transform search and activation
+gates. Both occupancy versions remain **offline-only**; original V1 and production
+feature-builder contracts remain unchanged. Frozen future audits require the
+exact matching version, builder and inventory, and reject legacy generation-anchor
+keys in V2 rows. Keep old artifacts: this is a separate challenger, not a silent
+rewrite of their inputs or historical scores. Correct semantics alone do not
+prove better accuracy; compare matched data and freeze before future validation.
+
+Changing the causal baseline also changes the opponent in the ordinary offline
+holdout report. A newly passing gate can therefore reflect a weaker baseline,
+not a better predictor. Compare both versions against the **same strongest
+baseline** as well as their own reports before any activation review. In one
+matched 250-request experiment, admission holdout MAE improved from 121.2 to
+96.3 seconds, updated MAE worsened from 112.5 to 116.2, and remaining MAE barely
+changed (56.3 to 56.0). The new remaining report passed its own offline gate and
+also narrowly cleared the original baseline's 10% threshold (56.21 seconds).
+That narrow margin is not strong evidence of general improvement. Every unseen-session
+placement gate failed; there were no hour-plus holdout labels. Both artifacts
+were frozen separately, not deployed. This is mixed preliminary evidence, not
+a routing-speed improvement or a reason to retire deterministic fallbacks.
+
 ### Frozen occupancy future audit
 
 #### Experiments after a collector change
