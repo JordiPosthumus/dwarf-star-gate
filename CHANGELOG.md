@@ -1,5 +1,21 @@
 # Changelog
 
+## Add opt-in Pi admission metadata without changing inference
+
+- `DSG_CLIENT_METADATA=1` uses the existing versioned metadata header for exact
+  scoped provider/session calls; explicit caller hints take precedence.
+- Read recorded compactions and requested effort; track known fresh-session
+  input indices through transport and SDK retries. Leave inherited/resumed/
+  ambiguous counters unknown rather than reconstructing them from attempt counts.
+- Never read message content or compaction summaries, estimate current input from
+  old usage, edit session/config files or change request bodies/model settings.
+  Bound metadata traversal to 10,000 entries; unsupported evidence is optional.
+- Regression-test scope, missingness, retry snapshots and privacy. Installed-Pi
+  fixtures prove admission collection, header stripping, one tool execution and
+  continued operation after SDK compaction with a synthetic summary.
+- Existing predictor feature contracts/gates and client configuration remain
+  unchanged. This feature requires explicit Pi adoption; old data is not backfilled.
+
 ## Guard cache-continuity findings against contradictory chronology
 
 - Reproduce impossible finish-before-admission pairs being assessed as reuse or

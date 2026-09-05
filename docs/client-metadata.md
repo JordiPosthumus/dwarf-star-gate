@@ -34,13 +34,57 @@ body bytes and actual reasoning/output fields stay unchanged. Hints cannot chang
 auth, compatibility, context guarantees or permissions. Clients can lie; header
 and later body/usage evidence must remain separate.
 
-## What remains
+## Opt-in Pi metadata adapter
 
-No client adapter is automatically installed and no Pi config is edited. Clients
-without the header produce `missing`, not invented counters. A future reviewed
-per-request harness hook may supply actual client state; it must test retries,
-subagents and compactions. Do not put changing per-request hints in static
-provider headers or claim the gateway can infer counters it never received.
+The [continuity extension](client-continuity.md#opt-in-pi-adapter-tested-with-pi-0844)
+can now supply bounded client evidence with `DSG_CLIENT_METADATA=1`:
+
+```sh
+DSG_PI_PROVIDER=local-ds4 DSG_PI_BASE_URL=http://127.0.0.1:30000/v1 \
+DSG_CLIENT_METADATA=1 pi -e /path/to/DSG/examples/pi-dsg-continuity.ts
+```
+
+Use your existing provider and the gateway/Door endpoint, not a direct DS4 worker.
+The flag defaults off and is independent of `DSG_AGENT_WATCH`. No client adapter
+is automatically installed, no Pi config/session file is edited, and existing
+sessions do not acquire the feature merely because DSG is upgraded.
+
+- Requested reasoning effort comes from the actual stream options, not inference
+  about hidden thinking. It remains a hint, not a change to DS4 request settings.
+- Compaction count comes from completed compaction entries in the same non-forked
+  session journal, including earlier branches. It is not guessed from token use.
+- The absolute call index is tracked only for a verified new, unseeded session:
+  Pi's `new` session event (for example `/new`), or fresh in-memory SDK startup.
+  Retries keep the same input index, including Pi's automatic retry after a failed
+  assistant attempt. A new user/tool/successful-assistant input advances it.
+- Resumed, reloaded, forked or ordinary file-backed startup histories do **not**
+  reconstruct an index from assistant-message counts. Branch/model changes or
+  foreign-provider history invalidate the observed index until a new session.
+  Forked histories also leave compaction count unknown because entries may be
+  inherited. Unknown is omitted, never silently reset to zero.
+- Current full-input token count remains unknown: neither previous usage nor
+  `getContextUsage()` is substituted for a current serialized-input estimate.
+
+Hints are snapshotted once per scoped stream call and held constant through its
+transport retries. Exact provider, endpoint, route, immutable JSON body and client
+session checks prevent attaching another subagent's state. Explicit caller-supplied
+metadata takes precedence. No request body, model capability, authentication,
+reasoning/output setting or unrelated provider is changed. Entry IDs are used only
+locally to recognize the same input; the header contains no IDs or text.
+
+The adapter reads entry types and terminal metadata through Pi's read-only session
+API, not message content, summaries or session files. At more than 10,000 entries,
+inconsistent/duplicate IDs, missing APIs or inaccessible state, counters remain
+unknown; this bounds optional telemetry work, **not session length or inference**.
+Unit tests cover fresh/resumed/forked histories, scope, content non-access and
+unknown state. Installed-Pi tests exercise actual retries and SDK compaction with
+a synthetic summary, verify admission-time collection and upstream header stripping,
+and preserve the original provider capabilities and single tool execution.
+
+Clients without the header still produce `missing`. Reliable resumed-session call
+identity and a current full-input token estimator remain future work. Do not put
+changing per-request hints in static provider headers or claim DSG can infer
+counters it never received. Loading this extension does not backfill old data.
 
 The v2 feature builder stays byte-for-byte unchanged so existing model artifacts
 and evidence remain compatible. V3 exposes these fields to XGB as a separately

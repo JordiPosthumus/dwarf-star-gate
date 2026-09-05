@@ -10,6 +10,13 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Connected optional Pi state to early prediction evidence.** The continuity
+  extension can now send recorded compaction counts, known fresh-session call
+  indices and requested effort. Real Pi retries preserve the index, SDK compaction
+  advances its count, and DSG strips the header before DS4. Resumed/forked/ambiguous
+  counters and current prompt-token estimates stay unknown. No existing client
+  was reconfigured and no model was retrained or promoted by this integration.
+
 - **Stopped contradictory evidence from becoming a cache-loss finding.** The
   read-only auditor now abstains when a request supposedly finishes before its
   admission, and rejects invalid event-budget overrides. Regression tests cover

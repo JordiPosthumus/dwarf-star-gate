@@ -20,8 +20,8 @@ for(const recover of [false,true])test(`real Pi settled outcome reports ${recove
   const backend=http.createServer((req,res)=>{
     if(req.url==='/v1/models')return res.end(JSON.stringify({data:[{id:'deepseek-v4-flash',context_length:262144}]}));
     let body='';req.on('data',chunk=>body+=chunk);req.on('end',()=>{
-      const payload=JSON.parse(body);assert.equal(payload.reasoning_effort,'xhigh',JSON.stringify({route:req.url,keys:Object.keys(payload)}));++requests;assert.equal(req.headers['x-dsg-client-watch-id'],undefined);
-      const good=requests===1||recover&&requests===3;
+      const payload=JSON.parse(body);assert.equal(payload.reasoning_effort,'xhigh',JSON.stringify({route:req.url,keys:Object.keys(payload)}));++requests;assert.equal(req.headers['x-dsg-client-watch-id'],undefined);assert.equal(req.headers['x-dsg-client-metadata'],undefined);
+      const good=requests===1||recover&&requests>=3;
       const delta=requests===1?{tool_calls:[{index:0,id:'once',type:'function',function:{name:'count_once',arguments:'{}'}}]}:{content:good?'DONE':'Partial synthetic answer'};
       res.writeHead(200,{'content-type':'text/event-stream'});
       // Marker-complete transport can still fail Pi's stricter finish contract.
@@ -30,15 +30,17 @@ for(const recover of [false,true])test(`real Pi settled outcome reports ${recove
   });
   t.after(async()=>{session?.dispose();await watch?.stop();await gateway?.close();backend.closeAllConnections();await new Promise(resolve=>backend.close(resolve));fs.rmSync(dir,{recursive:true,force:true});});
   await new Promise(resolve=>backend.listen(0,'127.0.0.1',resolve));
-  gateway=createGateway({host:'127.0.0.1',port:0,api_key:'fixture',model:'deepseek-v4-flash',context_length:262144,state_file:path.join(dir,'gateway.json'),nodes:[{id:'fixture',url:`http://127.0.0.1:${backend.address().port}`}],health_interval_ms:100000});
+  gateway=createGateway({host:'127.0.0.1',port:0,api_key:'fixture',model:'deepseek-v4-flash',context_length:262144,state_file:path.join(dir,'gateway.json'),dataset_enabled:true,nodes:[{id:'fixture',url:`http://127.0.0.1:${backend.address().port}`}],health_interval_ms:100000});
   const address=await gateway.start(),baseUrl=`http://127.0.0.1:${address.port}/v1`,provider='fixture-dsg';
   const model={id:'deepseek-v4-flash',name:'Fixture',reasoning:true,thinkingLevelMap:{xhigh:'xhigh'},input:['text','image'],contextWindow:262144,maxTokens:262144,cost:{input:0,output:0,cacheRead:0,cacheWrite:0},compat:{supportsReasoningEffort:true}};
   const modelsPath=path.join(dir,'models.json');fs.writeFileSync(modelsPath,JSON.stringify({providers:{[provider]:{baseUrl,api:'openai-completions',apiKey:'fixture',models:[model]}}}),{mode:0o600});
   const runtime=await ModelRuntime.create({modelsPath,authPath:path.join(dir,'auth.json'),modelsStorePath:path.join(dir,'models-store.json'),allowModelNetwork:false,refreshOnCreate:false});
   const original=structuredClone(runtime.getModel(provider,model.id));
-  const settings=SettingsManager.inMemory({compaction:{enabled:false},retry:{enabled:true,maxRetries:2,baseDelayMs:1}});
+  // Small compaction boundary belongs only to this disposable SDK fixture.
+  const settings=SettingsManager.inMemory({compaction:{enabled:false,keepRecentTokens:1},retry:{enabled:true,maxRetries:2,baseDelayMs:1}});
   const loader=new DefaultResourceLoader({cwd:dir,agentDir:dir,settingsManager:settings,noExtensions:true,noSkills:true,noPromptTemplates:true,noThemes:true,noContextFiles:true,systemPrompt:'Synthetic fixture. Call count_once once, then answer.',extensionFactories:[pi=>{
-    watch=registerPiContinuity(pi,{provider,baseUrl,streamSimple,agentWatch:true,watchIntervalMs:1000,watchFetchImpl:async(url,init)=>{assert.equal(new URL(url).origin,new URL(baseUrl).origin);heartbeats.push(JSON.parse(init.body));return fetch(url,init);}}).agentWatch;
+    watch=registerPiContinuity(pi,{provider,baseUrl,streamSimple,agentWatch:true,clientMetadata:true,watchIntervalMs:1000,watchFetchImpl:async(url,init)=>{assert.equal(new URL(url).origin,new URL(baseUrl).origin);heartbeats.push(JSON.parse(init.body));return fetch(url,init);}}).agentWatch;
+    pi.on('session_before_compact',event=>({compaction:{summary:'PRIVATE_COMPACTION_FIXTURE',firstKeptEntryId:event.preparation.firstKeptEntryId,tokensBefore:event.preparation.tokensBefore}}));
   }]});
   await loader.reload();
   ({session}=await createAgentSession({cwd:dir,agentDir:dir,modelRuntime:runtime,model:runtime.getModel(provider,model.id),thinkingLevel:'xhigh',settingsManager:settings,sessionManager:SessionManager.inMemory(dir),resourceLoader:loader,noTools:'builtin',customTools:[{name:'count_once',label:'Count',description:'Count once',parameters:{type:'object',properties:{}},execute:async()=>{tools++;return {content:[{type:'text',text:'counted'}],details:{}};}}]}));
@@ -52,4 +54,18 @@ for(const recover of [false,true])test(`real Pi settled outcome reports ${recove
   assert.equal(run.request.state,'complete','transport completion must not erase client failure');
   assert.ok(heartbeats.every(row=>Object.keys(row).sort().join(',')==='client,process_alive,schema,sequence,state,watch_id'));
   assert.equal(heartbeats.filter(row=>row.state==='needs_attention').length>0,!recover);
+  const read=()=>fs.readdirSync(path.join(dir,'training')).filter(name=>/^routing-.*\.jsonl$/.test(name)).flatMap(name=>fs.readFileSync(path.join(dir,'training',name),'utf8').trim().split('\n').filter(Boolean).map(JSON.parse));
+  for(let i=0;i<30&&read().filter(row=>row.kind==='decision').length<requests;i++)await delay(100);
+  const decisions=read().filter(row=>row.kind==='decision');assert.equal(decisions.length,requests);
+  assert.deepEqual(decisions.map(row=>row.client_metadata.turn_index),recover?[0,1,1]:[0,1,1,1]);
+  for(const row of decisions){assert.equal(row.client_metadata.status,'ready');assert.equal(row.client_metadata.compaction_count,0);assert.equal(row.client_metadata.reasoning_effort,'xhigh');assert.equal(row.client_metadata.prompt_tokens_estimate,null);}
+  if(recover){
+    await session.compact();await session.prompt('Continue after compaction.');await session.waitForIdle();
+    for(let i=0;i<30&&read().filter(row=>row.kind==='decision').length<requests;i++)await delay(100);
+    const after=read().filter(row=>row.kind==='decision').at(-1);
+    assert.equal(after.client_metadata.compaction_count,1);assert.equal(after.client_metadata.turn_index,2);
+    assert.equal(after.client_metadata.prompt_tokens_estimate,null);assert.equal(tools,1);assert.equal(requests,4);
+    assert.ok(!JSON.stringify(after.client_metadata).includes('PRIVATE_COMPACTION_FIXTURE'));
+    assert.deepEqual(extensionErrors,[]);
+  }
 });

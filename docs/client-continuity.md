@@ -224,6 +224,11 @@ settlement separately from the lower-level agent-loop fixtures above.
 It does not extend retry
 authority, inspect prompts or tools, or let DSG revive Pi.
 
+`DSG_CLIENT_METADATA=1` independently enables [early client hints](client-metadata.md)
+for recorded compactions, known fresh-session call indices and requested effort.
+Unknown resumed-session indices and current prompt-token estimates stay missing.
+It is metadata only, not new retry authority, and must be explicitly loaded by Pi.
+
 ## Next, in this order
 
 1. Deploy the gateway release and opt-in client adapter as separate, backed-up
