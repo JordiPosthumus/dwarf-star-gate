@@ -10,6 +10,12 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Aligned the roadmap with implemented capabilities and remaining proof.**
+  Corrected stale planned labels for Pi Agent Watch, bounded Genie suggestions,
+  launchd recovery adapters and pause/resume receipts. Added explicit remaining
+  deployment, Mac-canary, cache-shadow, forecast and post-dispatch continuity gates.
+  Source availability, synthetic tests and live certification stay distinct.
+
 - **Kept missing lifecycle clocks from manufacturing request ownership.** A
   reproduced audit bug silently skipped an undated competing dispatch and could
   turn an overlap into a unique match. Both file and direct-row reconciliation

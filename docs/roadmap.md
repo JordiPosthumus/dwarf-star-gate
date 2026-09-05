@@ -29,7 +29,9 @@ dependency that can stall it.**
 These principles set priorities; they do not claim all guarantees are implemented,
 disable existing validated capabilities, or relax activation and maintenance gates.
 
-## Prioritized delivery order — reviewed 2026-09-03
+## Prioritized delivery order
+
+Reviewed 2026-09-05.
 
 This table is the current order; the sections below retain the detailed design.
 See the [maintenance review](maintenance-review-2026-09-02.md) for reproduced bugs,
@@ -75,10 +77,16 @@ cache or routing authority.
 **Fresh forecast validation:** frozen future reports now separate worker results
 and identified familiar/unseen-session support. Missing session identity cannot
 qualify a candidate through CV, backtest or future diversity checks; numeric
-thresholds are unchanged. A 48-completion later replay improved remaining error
-overall but not every worker baseline, while admission/updated lost to simple
-history. No model was promoted; independent unseen-session and long-job evidence
-remain prerequisites, not claims inferred from an aggregate score.
+thresholds are unchanged. Later replays improve remaining error overall but not
+every worker baseline. A separately frozen history-plus-semantics experiment
+changes post-embedding forecasts, yet its updated forecast still loses to simple
+history overall. [Matched checkpoint comparisons](predictor-lifecycle.md#matched-future-checkpoint-comparison)
+separate genuine within-request changes from different stage populations. No
+candidate from these experiments was promoted; unseen-session and long-job
+evidence remain prerequisites, not claims inferred from an aggregate score. Optional
+[Pi admission metadata](client-metadata.md) now supplies recorded compactions,
+known fresh-session indices and requested effort; adoption is explicit and
+resumed/ambiguous counters remain unknown.
 
 **Recovery update:** order 6's first slice is now implemented in
 [bounded DS4 service recovery](worker-recovery.md): systemd-user enrollment, GG and
@@ -145,21 +153,50 @@ no extra service, model-server edit or automatic Genie authority is introduced.
 Source is tested independently of deployment; grants require the new gateway
 code to be activated. A thin MCP wrapper and remote agent transport remain future
 work. The [Genie notebook](genie-memory.md) now implements opt-in persistence of
-worker changes, incident/recovery references and explicit operator notes. Full
-chat persistence, generated hypotheses and notebook search remain planned. Bounded
-training recipes, early metadata collection and skip-only calibration preflight
-are implemented separately.
+worker changes, incident/recovery references, explicit operator notes and bounded
+developer suggestions tied to code-selected failure evidence. Full chat/report
+persistence, broader free-form hypotheses and notebook search remain planned.
+Bounded training recipes, early metadata collection and skip-only calibration
+preflight are implemented separately.
+
+### Remaining validation and activation gates
+
+These are still open even when the current regression suites are green. Local
+deployment receipts stay private; source availability is not installation readiness.
+
+- **Lifecycle deployment:** upgrade an older Continuity Door only in a verified
+  idle, unheld window, preserve settings/holds, and verify the running
+  `hold_ownership` capability before coordinated core cutover. See the
+  [Door lifecycle guide](continuity-door.md).
+- **Mac recovery:** retain the exact original launch definition, explicitly
+  enroll the supported installation, then run the separately approved drained
+  canary and verify real generation plus cold/warm reuse. Disposable native
+  LaunchAgent tests do not certify a production DS4 installation; missing launch
+  bytes cannot be reconstructed from a process listing. See
+  [recovery enrollment](worker-recovery.md#enrollment-start-here).
+- **Cache-aware shadows:** prove exact rendered-prefix identity, compatible
+  inventory evidence, an enrolled transfer/import protocol and validated cost
+  components before connecting the [four-path comparator](cache-continuity-shadow.md)
+  to live decisions. Do not copy a real cache as an unapproved experiment.
+- **Forecast qualification:** collect diverse later sessions and long-job
+  evidence; compare components by worker/cache regime under fixed CV and fresh
+  gates. Retain deterministic fallbacks. More collected features or a lower
+  aggregate error is not measured routing benefit.
+- **Post-dispatch continuity:** establish what happened to the old execution and
+  reconcile client output/tool state before any replay or revival. Neither a
+  friendly guidance turn, a timeout nor missing visible output supplies that proof.
+  [Agent Watch](agent-watch.md) diagnoses client state; it does not restart agents.
 
 | Order | Work | Exit evidence |
 | --- | --- | --- |
 | Immediate | [Client continuity](client-continuity.md): distinguish undispatched waits from interrupted generation, scope home ownership correctly, and avoid abandoning Pi turns | Patient waiting, receipts, Continuity Door, conversation-scoped admission reassignment and opt-in Pi transport implemented; real Pi agent/tool-loop fixture covers native waiting and certified retries. Arbitrary post-dispatch recovery remains separate work |
-| Immediate follow-up (planned) | Opt-in **Agent Watch** for Pi/Hermes runs that stall before submitting their next DSG request | Privacy-safe client heartbeat distinguishes local tool work, client-side admission wait and a genuinely stale run; Genie reports the diagnosis first. Any future nudge/revive adapter is separately enrolled, idempotent and receipt-backed; DSG never guesses from silence alone |
+| Immediate follow-up (Pi advisory slice implemented) | Opt-in [Agent Watch](agent-watch.md) for runs silent before their next DSG request | Pi heartbeats distinguish reported local tool work, client-side wait, DSG request state and settled client failure. Stale heartbeat means unknown, not a proven hang. Real Pi fixtures cover retries and tool-loop settlement; a packaged Hermes adapter and enrolled nudge/revive capability remain future work |
 | 0 | Promote protocol/quarantine maintenance fixes through a controlled cutover | Regression suites pass; versioned backup; real API-format smoke checks; unchanged fleet/context; explicit source-versus-running release record |
 | 1 (shadow attribution + audits implemented) | Diagnose the Spark CUDA/OOM incidents and correlate requests within backend process epochs | Privacy-safe strong systemd epochs and file-ordered bounded local-log epochs plus a fail-closed request/log candidate correlator, long-overlap candidate retention, immutable recorded audit and complete-source later-evidence view are implemented; next evidence is fresh post-fix Mac traffic, review of the remaining true overlaps across real process epochs, service/kernel/memory diagnosis, real cold/warm checks and representative sustained work; no unapproved context/cache reductions |
 | 2 (pure comparator implemented) | Explain idle capacity and design cache-aware overflow scheduling | UI identifies session-home waits; the offline wait-hot/local-restore/remote-acquisition/cold-prefill contract is tested and abstains on unknowns; next prove live identity, remote protocol, realized forecast accuracy and no overlapping ownership/replay before any operator-approved activation |
 | 3 (collector implemented) | Validate local embeddings/progress on ordinary workload | Pinned CPU encoder, bounded extraction and visible status; collect joined future labels across hardware; exact cache/engine attribution still separate |
 | 4 (V2/V3 lifecycle implemented) | Collect future validation evidence for versioned forecasts | Fixed forward-time tree/feature selection, separate unseen-session placement gate, per-worker future evidence and parallel V2/V3 evaluation; no experimental model controls routing |
-| 5 (notebook first slice implemented) | Persistent Genie/operator activity and endpoint settings UI | Private notebook storage, revisioned notes and bounded historical retrieval tested; generated hypotheses, full chat persistence and endpoint test/save/rollback remain planned |
+| 5 (notebook and bounded suggestions implemented) | Persistent Genie/operator activity and endpoint settings UI | Private notebook storage, revisioned operator notes, evidence-bound developer suggestions and bounded retrieval tested; broader free-form hypotheses, full chat persistence, search and endpoint test/save/rollback remain planned |
 | 6 (bounded runner implemented) | Opt-in deterministic recovery runner and Genie access | Systemd-user canary complete; a separately enrolled launchd adapter is synthetically tested and still requires a private per-Mac canary. Exact fatal-instance restart plus separately enrolled stopped-service start; see recovery guide for deployment gates |
 | 6a (implemented in source) | Verified changed-profile hand-back | Default-on sub-policy under opt-in automatic recovery; separated identical inspections, same enrolled machine/service, no admitted work, fatal-or-new-invocation proof, private durable adoption, model/context + generation + two cold-to-warm verification. Pauses, maintenance locks and agent holds win; no arbitrary command or submitted fingerprint |
 | 6b (implemented in source) | [Named durable maintenance locks](maintenance-locks.md) | Visible name/reason/advisory review policy, exact idempotent release, persistent receipts, and a hard veto on broad Resume, agent release, recovery and hand-back. Review deadlines warn but never auto-expire; releasing leaves a pause for a separate checked Resume. Same-user operator attribution remains an explicit boundary |
@@ -428,39 +465,45 @@ Because raw text is not retained, old numerical records cannot later acquire
 embeddings. Embedding-enabled collection begins a new, versioned dataset slice.
 Derived vectors are sensitive too and stay in private local storage.
 
-## Later: the Genie can operate tested switches
+## Genie operation: implemented powers and remaining work
 
 The [Genie powers plan](genie-powers-plan.md) specifies the CUDA recovery scenario,
 the separation of Genie/XGB/scheduler/executor, narrow action permissions, UI
-controls, tests and shadow-to-canary deployment. Systemd-user recovery is the
-implemented subset; the broader powers and editable endpoint controls remain
-proposed. Installation-specific enrollment, canary evidence and explicit opt-in
-are still required before automatic recovery is enabled.
+controls, tests and shadow-to-canary deployment. Bounded systemd-user/launchd
+recovery adapters, predictor supervision, safe queued-handover offers and action
+receipts are implemented. Installation-specific enrollment, canary evidence and
+explicit opt-in are still required before automatic recovery is enabled. These
+are not arbitrary shell powers; editable endpoint controls and active-request
+revival remain separate work.
 
-- Quarantine a demonstrably faulty server for **new conversations**, without
-  disrupting admitted work; reinstate after evidence-backed recovery.
+- Quarantine follows deterministic failure evidence. Genie requests only
+  advertised recovery offers; independent executor gates decide readmission.
 - Run bounded XGBoost tuning/evaluation jobs and promote passing models through
   independent gates; show exactly what changed, why and when.
-- Recover confirmed stuck requests while the client continues automatically.
+- Still to build: recover confirmed stuck requests while the client continues automatically.
   Mid-stream replacement needs client cooperation and tool-state reconciliation;
   appending a different answer to an existing stream is not transparent recovery.
 - Keep manual controls authoritative and model inference independent of the Genie.
   His failure must never prevent ordinary routing.
-- Improve operator-control audit records: show when a pause/resume was applied,
-  the authenticated actor/channel where available, and a supplied reason. Current
-  worker-drain events record time and targets, not who requested the change or why.
-  Do not infer intent or blame from a paused flag alone.
+- Pause/resume receipts now record time, targets, a durable action ID and a
+  bounded control channel. That channel identifies the client path, not a verified
+  human. Agent grants and named maintenance locks provide their separate ownership
+  evidence; a plain pause receipt does not establish intent or a supplied reason.
+  Broader actor/reason attribution remains work. Do not infer blame from a flag.
 
-A frozen Pi adapter is a later packaging option. The first observer is a small
-OpenAI-compatible client, not an embedded Pi/Hermes bot with shell access.
+The opt-in Pi source extension already supplies scoped certified retries and
+optional Agent Watch/admission metadata without shell access or provider-setting
+edits. A standalone frozen distribution or generic Hermes package is separate
+packaging work, not a prerequisite for the implemented Pi extension.
 
 ### Implemented first slice: Agent Watch for pre-gateway stalls
 
 DSG could not distinguish an agent legitimately running a local tool from one
 silent between that tool result and its next provider request. The opt-in Pi
 heartbeat now exposes only a hashed run/session
-reference, coarse state (`local_tool`, `waiting_for_model`, `idle`, `done`), last
-activity, process liveness and the latest DSG request receipt. It must not include
+reference, coarse state (`local_tool`, `waiting_for_model`, `idle`, `done`,
+`needs_attention`), receipt freshness, client-reported liveness and the latest
+tagged DSG request state. It must not include
 the task, prompt, tool arguments or output. Correlating that heartbeat with DSG's
 own queue evidence lets Genie say “client-side wait” or “no request reached DSG”
 without blaming a DS4 server. The first slice is advisory and implemented; a

@@ -1,5 +1,17 @@
 # Changelog
 
+## Align roadmap status with implemented safeguards and outstanding validation
+
+- Correct obsolete planned-only labels for Pi advisory heartbeats and bounded
+  developer hypotheses; preserve the separate boundaries for Hermes packaging,
+  autonomous agent revival, free-form memory and full chat persistence.
+- Describe existing launchd source adapters and durable control-channel receipts
+  without treating them as per-installation certification or verified human identity.
+- Replace the old forecast snapshot summary with current qualification boundaries
+  and link matched-stage diagnostics and explicitly adopted Pi admission metadata.
+- State remaining lifecycle, Mac recovery, live cache-shadow, forecast and
+  post-dispatch continuity requirements. No runtime or configuration change.
+
 ## Preserve attribution ambiguity when lifecycle timestamps are invalid
 
 - Reproduce an undated dispatch disappearing from the later-evidence join,
