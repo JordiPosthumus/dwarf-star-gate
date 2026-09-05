@@ -10,6 +10,12 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Measured and rejected a misleading verification optimization.** Sharing one
+  projection across schemas preserved exact outputs and reduced elapsed time,
+  but raised peak memory in alternating comparisons. The prototype was not
+  adopted; shorter object lifetimes and streaming remain the next investigation.
+  Production training, source history and feature-builder fingerprints are unchanged.
+
 - **Made forecast projection experiments reproducible.** A private offline
   artifact now requires exact full-replay parity across five schemas and can be
   verified against original evidence and builder versions. It preserves event

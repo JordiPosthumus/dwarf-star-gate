@@ -36,6 +36,9 @@ now requires five-schema parity and verifies private derived payloads against
 original source bytes and exact builder versions. Production does not accept
 these artifacts; streaming/checkpoint budgets and broader full-history equivalence
 remain adoption gates, rather than silently choosing recent files.
+A shared-projection experiment retained exact outputs but raised peak memory;
+it was not adopted. Profile shorter object lifetimes and bounded streaming next,
+retaining all comparisons and existing feature-builder/model fingerprints.
 Growing training evidence still needs an explicitly
 reviewed input-window policy; no retention, preparation-budget or cadence change
 is implied by this fix.

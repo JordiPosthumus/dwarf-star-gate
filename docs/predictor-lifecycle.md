@@ -840,6 +840,17 @@ manifest are each capped at 1 MiB. This is not a memory/CPU benchmark, a signed
 attestation, anonymization, or proof of compatibility with another code version.
 Keep artifacts private and do not substitute them for raw audit history.
 
+A profiled within-command shared-projection prototype retained exact payloads
+and replay results but increased peak resident memory despite reducing wall time.
+It was not adopted. Keeping a projected object graph alive across all schema
+replays is not automatically cheaper than rebuilding shorter-lived graphs.
+Future efficiency experiments must report both time and peak memory, compare
+alternating old/new runs on identical frozen evidence, retain all replay checks,
+and verify payload equality. Explore shorter object lifetimes or bounded
+streaming/checkpoints next. Existing feature builders and their model
+fingerprints remain unchanged; do not alter a deployed builder just to improve
+an offline audit benchmark.
+
 Before production adoption, verify broader conflict, ordering and cross-file
 lifecycle equivalence; measure memory/disk/CPU during generation and replay; and
 integrate preparation/future-audit provenance without invalidating existing

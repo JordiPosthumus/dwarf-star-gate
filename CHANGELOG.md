@@ -1,5 +1,13 @@
 # Changelog
 
+## Record forecast-verifier resource tradeoffs
+
+- Document an unadopted shared-projection experiment: exact output equality and
+  shorter elapsed time did not offset increased peak resident memory.
+- Retain the existing implementation and all replay checks. Require time/memory
+  measurements and exact-output comparisons for subsequent lifetime/streaming
+  experiments. No runtime or feature-builder changes in this documentation update.
+
 ## Verify private forecast projection artifacts
 
 - Add an offline create/verify command with source, inventory, builder and payload
