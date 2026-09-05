@@ -222,6 +222,36 @@ proof that the model learned to recognize long work. This offline report include
 all retained progress points; it is not the UI's single first-at-or-after-30s plot.
 It does not change feature builders, frozen artifacts, tuning or promotion gates.
 
+Remaining reports also include `age_support`: for each scored point, how many
+**distinct completed training jobs** had observed progress at least that far into
+service? It reports fleet-wide and same-worker counts in fixed bins (none, one,
+two–nine, ten or more, unknown age). Repeated progress from one job counts once;
+run identity distinguishes reused request IDs. The source is only the frozen
+model's training partition, never its holdout or later labels. Support uses
+observed progress ages, not eventual duration reconstructed from future targets.
+
+This is a diagnostic, **not calibrated confidence or an activation rule**. A
+same-worker match does not certify the same hardware/profile era; missing late
+progress can undercount support. A request can cross bins as it runs, so their
+request counts must not be added. Missing age remains unknown and no compatible
+training observation means zero observed support, not a fabricated estimate.
+
+In a later paired replay, the delivery-aware candidate reduced admission MAE
+from 86 to 65 seconds on 128 newly admitted completed requests, but the strongest
+original causal baseline was still better at 57 seconds. Updated MAE stayed near
+74 seconds; remaining MAE changed only from 43 to 42 seconds. These are frozen
+offline occupancy candidates, not measurements of deployed routing benefit.
+
+Five previously admitted requests also acquired labels after the earlier audit;
+they are reported separately from new admissions. One took about 35 minutes,
+while both models repeatedly forecast less than 90 seconds remaining. Beyond
+15 minutes of elapsed service, their training partition had just **one distinct
+completed job**, despite many progress points. The refreshed full cohort and the
+new-admission cohort therefore answer different questions. Neither establishes
+long-job reliability or justifies promotion. Next experiments should test
+elapsed-conditioned remaining distributions and uncertainty, preserve the
+strongest existing baselines, and reserve fresh traffic for independent validation.
+
 #### Check the denominator, not only the completed scores
 
 Run the separate read-only census against the **same prepared snapshot**:

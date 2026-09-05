@@ -10,6 +10,14 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Tested the frozen forecasts on a larger later cohort.** On 128 new completed
+  admissions, corrected delivery features improved admission error but still lost
+  to the strongest simple baseline; updated and remaining improvements were small.
+  Five older admissions gained labels, including a 35-minute job both models
+  badly underestimated. A new age-support diagnostic counts distinct completed
+  training jobs, not repeated progress samples: long-horizon evidence remains
+  sparse. No model was retrained, promoted or substituted in live routing.
+
 - **Closed a model-discovery gap in planned core restarts.** A disposable fixture
   reproduced discovery escaping the Door's hold and returning a 503. Discovery
   now waits and forwards once after release. Bounded transport-failure evidence

@@ -1,5 +1,6 @@
 """Frozen-model future audit. Offline only; never promotes or changes routing."""
 import argparse
+import bisect
 import datetime as dt
 import hashlib
 import json
@@ -77,6 +78,41 @@ def elapsed_slices(training_rows, rows, predictions):
     return result
 
 
+def remaining_age_support(training_rows, rows):
+    """Count distinct completed training jobs observed at least this far along.
+
+    A hundred progress points from one long job are still one job. This is
+    observed horizon support, not effective sample size or prediction confidence.
+    Missing late progress can undercount support; future labels never enter it.
+    """
+    valid=lambda age:type(age) in (int,float) and math.isfinite(age) and age>=0
+    maxima={};workers={}
+    for row in training_rows:
+        age=row['features'].get('elapsed_s')
+        if not valid(age):continue
+        key=(row['run_id'],row['request_id'])
+        maxima[key]=max(maxima.get(key,0),age)
+        local=workers.setdefault(row['node'],{})
+        local[key]=max(local.get(key,0),age)
+    fleet=sorted(maxima.values());local={node:sorted(values.values()) for node,values in workers.items()}
+    scopes={name:{band:[] for band in ('none','one','two_to_nine','ten_plus','unknown')} for name in ('fleet','same_worker')}
+    for row in rows:
+        age=row['features'].get('elapsed_s');key=(row['run_id'],row['request_id'])
+        for name,index in [('fleet',fleet),('same_worker',local.get(row['node'],[]))]:
+            support=len(index)-bisect.bisect_left(index,age) if valid(age) else None
+            band='unknown' if support is None else 'none' if support==0 else 'one' if support==1 else 'two_to_nine' if support<10 else 'ten_plus'
+            scopes[name][band].append((key,support))
+    result={}
+    for name,bands in scopes.items():
+        result[name]={}
+        for band,points in bands.items():
+            counts=[count for _,count in points if count is not None]
+            result[name][band]={'points':len(points),'requests':len({key for key,_ in points}),
+                               'support_min':min(counts) if counts else None,'support_max':max(counts) if counts else None}
+    return {'schema':1,'basis':'completed_training_observed_progress','scopes':result,
+            'note':'Completed training jobs only; missing late progress can undercount support. Same worker is not proof of matching hardware/profile era. Bands can share requests; counts are not confidence, independence, promotion or routing authority.'}
+
+
 def freeze(candidate_path,training_path,receipt_path):
     candidate,ch=read_json(candidate_path);training,th=read_json(training_path)
     contracts(candidate,training)
@@ -125,6 +161,7 @@ def evaluate(candidate_path,training_path,receipt_path,prepared_path):
         tr,_=split([r for r in training['rows'] if r['kind']==kind],candidate['reports'][kind]['cutoff'])
         report={'status':'no_future_labels','target_coverage':target_coverage(rows),
                 'input_support':input_support(model,tr,rows,training.get('groups',{}).get('hardware',[]))};result['reports'][kind]=report
+        if kind=='remaining':report['age_support']=remaining_age_support(tr,rows)
         if not rows:
             if kind=='remaining':report['by_elapsed']=elapsed_slices(tr,[],[])
             continue

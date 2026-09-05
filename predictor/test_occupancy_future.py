@@ -9,6 +9,53 @@ import occupancy_future as audit
 
 
 class OccupancyFutureTests(unittest.TestCase):
+    def test_remaining_age_support_counts_jobs_not_repeated_progress_and_excludes_future_labels(self):
+        tr=[self.row('a',100,200,'remaining') for _ in range(50)]+[self.row('b',100,200,'remaining')]
+        for row in tr:row['features']['elapsed_s']=900
+        tr[-1]['features']['elapsed_s']=300;tr[-1]['node']='b'
+        rows=[self.row('future',1000,2000,'remaining') for _ in range(3)]
+        for row,age in zip(rows,[300,900,901]):row['features']['elapsed_s']=age
+        original=copy.deepcopy((tr,rows))
+        result=audit.remaining_age_support(tr,rows)
+        fleet=result['scopes']['fleet'];local=result['scopes']['same_worker']
+        self.assertEqual(fleet['two_to_nine']['points'],1)
+        self.assertEqual(fleet['one']['points'],1);self.assertEqual(fleet['none']['points'],1)
+        self.assertEqual(local['one']['points'],2);self.assertEqual(local['one']['requests'],1)
+        self.assertEqual(local['none']['points'],1)
+        self.assertEqual((tr,rows),original)
+        self.assertNotIn('future',json.dumps(result));self.assertNotIn('node',json.dumps(result))
+
+    def test_remaining_age_support_keeps_unknown_and_run_identity_and_handles_empty_rows(self):
+        tr=[self.row('a',100,200,'remaining'),self.row('a',100,200,'remaining')]
+        tr[1]['run_id']='other-run'
+        for row in tr:row['features']['elapsed_s']=100
+        rows=[self.row(str(i),1000,2000,'remaining') for i in range(5)]
+        for row,age in zip(rows,[100,None,-1,float('nan'),True]):row['features']['elapsed_s']=age
+        result=audit.remaining_age_support(tr,rows)
+        self.assertEqual(result['scopes']['fleet']['two_to_nine']['points'],1)
+        self.assertEqual(result['scopes']['fleet']['unknown']['points'],4)
+        self.assertEqual(result['scopes']['same_worker']['unknown']['support_min'],None)
+        self.assertTrue(all(row['points']==0 for row in audit.remaining_age_support(tr,[])['scopes']['fleet'].values()))
+        rows[0]['node']='unseen'
+        self.assertEqual(audit.remaining_age_support(tr,rows)['scopes']['same_worker']['none']['points'],1)
+
+    def test_remaining_age_support_thresholds_and_evaluation_integration(self):
+        tr=[self.row(str(i),100,200,'remaining') for i in range(10)]
+        for row in tr:row['features']['elapsed_s']=100
+        rows=[self.row('query',1000,2000,'remaining')];rows[0]['features']['elapsed_s']=100
+        result=audit.remaining_age_support(tr,rows)
+        self.assertEqual(result['scopes']['fleet']['ten_plus']['support_min'],10)
+        self.assertEqual(audit.remaining_age_support(tr[:-1],rows)['scopes']['fleet']['two_to_nine']['support_max'],9)
+        # Evaluation must attach support only to remaining, including empty evidence.
+        result=self.evaluate()
+        self.assertNotIn('age_support',result['reports']['admission'])
+        self.assertEqual(result['reports']['remaining']['age_support']['scopes']['fleet']['none']['points'],0)
+        self.future['rows']=[self.row('new',self.cut+1,self.cut+1000,'remaining')]
+        self.future['rows'][0]['features']['elapsed_s']=900
+        result=self.evaluate()
+        self.assertEqual(result['reports']['remaining']['age_support']['scopes']['fleet']['none']['points'],1,
+                         'the long future point cannot manufacture its own training support')
+
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
         self.root=Path(self.tmp.name)

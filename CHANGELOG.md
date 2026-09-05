@@ -1,5 +1,21 @@
 # Changelog
 
+## Expose distinct-job support for long remaining-time forecasts
+
+- Add aggregate-only `age_support` to offline frozen remaining reports. Count
+  completed training jobs with observed progress at or beyond each forecast age,
+  fleet-wide and on the same worker; never use later labels to manufacture support.
+- Deduplicate progress by run/request identity, retain unknown ages, and expose
+  fixed count bins without presenting them as confidence or changing release gates.
+  Sorted per-job maximum-age indexes avoid a training scan for every forecast.
+- Regress repeated samples, run identity, unseen workers, exact age/count boundaries,
+  invalid ages, empty cohorts and evaluation integration. Existing scores and
+  frozen artifact identities reproduce unchanged after removing the new diagnostic.
+- Document a larger paired future replay, separating 128 new completions from
+  five newly matured older admissions. Admission improved but still lost to the
+  strongest causal baseline; a 35-minute case demonstrates long-horizon weakness.
+  No production model, feature schema, collector, settings or routing changed.
+
 ## Hold model discovery through core replacement and classify Door failures
 
 - Include GET `/v1/models` in manual and automatic Door holds, preserving query
