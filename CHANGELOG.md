@@ -1,5 +1,20 @@
 # Changelog
 
+## Add a separately enrolled one-shot Mac bootstrap helper
+
+- Add default-off `bootstrap_removed` with exact retained-definition pin and
+  explicit OS-caller policy. Require fresh native prior-PID/boot evidence; reject
+  ambiguous/partial captures, unknown callers and ordinary launchctl removals.
+  A privileged operator-canary request may exercise an exact launchctl removal.
+- Exclusively stage unchanged XML/binary bytes privately, fsync intent under the
+  action lock, recheck original/staged bytes and native absence/identity/disable/
+  port conditions, then issue the fixed bootstrap once. Preserve staged files,
+  existing receipts and all launch settings; uncertain acknowledgement never replays.
+- Cover protocol/enrollment, caller policy, native races, staging collisions,
+  journal failures and unknown acknowledgement with synthetic regression tests.
+  Existing start/restart behavior is unchanged. Controller integration, per-install
+  generation/cache canary, automatic certification and live deployment are pending.
+
 ## Join direct native removal diagnostics to Mac recovery evidence
 
 - Retain a private boot companion bound to the complete service identity without

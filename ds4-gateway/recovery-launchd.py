@@ -3,8 +3,9 @@
 
 The gateway supplies only a versioned JSON action on stdin. Every path, label,
 binary and port comes from an operator-owned mode-0600 config on the Mac. This
-helper can inspect, start or restart exactly that enrolled launchd job; it cannot
-accept shell commands, model settings or service names from Gate Genie.
+helper can inspect, start or restart exactly that enrolled launchd job. Separately
+opted-in removed-job bootstrap uses pinned retained bytes and native provenance;
+it cannot accept shell commands, model settings or service names from Gate Genie.
 """
 
 import datetime
@@ -304,6 +305,83 @@ def inspect_definition(config):
         return {"version": 1, "enrolled": True, "verified": False, "authority": "none", "reason": reason}
     return {"version": 1, "enrolled": True, "verified": True, "authority": "none",
             "scope": "pinned_definition_only", "definition_bytes": len(raw)}
+
+
+def bootstrap_definition(config):
+    raw = retained_definition(config)
+    definition = plistlib.loads(raw, dict_type=UniquePlistDict)
+    # A standalone preserved plist must start when registered. Do not rewrite
+    # demand-only/bundle-relative definitions to make them fit this action.
+    if ("BundleProgram" in definition or "RootDirectory" in definition
+            or not (definition.get("RunAtLoad") is True or definition.get("KeepAlive") is True)):
+        raise ValueError("bootstrap_definition_requires_review")
+    return raw
+
+
+def require_bootstrap_identity(config, prior):
+    if (machine_identity() != prior["machine"] or boot_identity() != prior["boot_uuid"]
+            or service_profile(config) != prior["service_profile"]
+            or launch_state(config).get("registration") != "absent"):
+        raise ValueError("removed_service_identity_changed")
+    require_native_enabled(config)
+    if port_occupied(config["port"]):
+        raise ValueError("bootstrap_port_occupied")
+
+
+def stage_bootstrap_definition(state_path, action_id, raw):
+    # Fixed private sibling, never a request-supplied path. Preserve bytes rather
+    # than reserialize. Keep the file after issuance: launchd may retain its path.
+    filename = state_path.parent / f"bootstrap-{action_id}.plist"
+    if not owned_private_directory(filename.parent):
+        raise ValueError("adapter_directory_must_be_private")
+    fd = os.open(filename, os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0), 0o400)
+    with os.fdopen(fd, "wb") as output:
+        output.write(raw)
+        output.flush()
+        os.fsync(output.fileno())
+    fd = os.open(filename.parent, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    return filename
+
+
+def bootstrap_removed(config, request, state_path, history, request_hash):
+    if config.get("bootstrap_removed") is not True:
+        raise ValueError("bootstrap_not_enrolled")
+    if request["definition_sha256"] != config.get("retained_definition_sha256"):
+        raise ValueError("bootstrap_definition_enrollment_changed")
+    prior = request["prior"]
+    # This independently validates the complete prior identity and queries the
+    # native OS. A caller name is evidence, not proof that removal was accidental.
+    removal = inspect_removal(config, prior)
+    observations = removal["observations"]
+    if (removal["status"] != "exact_removal_observed" or removal["source_complete"] is not True
+            or removal["observations_omitted"] != 0 or len(observations) != 1):
+        raise ValueError("bootstrap_exact_removal_required")
+    caller = observations[0]["caller"]
+    allowed = config.get("bootstrap_callers", [])
+    if not (caller in allowed or (request["canary"] is True and caller == "launchctl")):
+        raise ValueError("bootstrap_removal_caller_not_enrolled")
+    if any(item.get("operation") == "bootstrap" and item.get("instance") == prior["instance"] for item in history.values()):
+        raise ValueError("removed_instance_already_attempted")
+    raw = bootstrap_definition(config)
+    require_bootstrap_identity(config, prior)
+    staged = stage_bootstrap_definition(state_path, request["action_id"], raw)
+    receipt = {"request_hash": request_hash, "operation": "bootstrap", "instance": prior["instance"],
+               "definition_sha256": request["definition_sha256"], "issued_at": round(time.time() * 1000), "state": "intent"}
+    history[request["action_id"]] = receipt
+    atomic_save(state_path, history)
+    # Both original and staged bytes are checked again after durable intent.
+    # Unknown acknowledgement or a final veto leaves intent, never blind retry.
+    if bootstrap_definition(config) != raw or retained_definition({**config, "plist": str(staged)}) != raw:
+        raise ValueError("bootstrap_definition_changed_before_issue")
+    require_bootstrap_identity(config, prior)
+    run(["/bin/launchctl", "bootstrap", f"gui/{os.getuid()}", str(staged)])
+    receipt["state"] = "issued"
+    atomic_save(state_path, history)
+    return receipt
 
 
 def parse_launchctl(output):
@@ -625,11 +703,15 @@ def handle(config, request, state_path):
         return inspect_removal(config, request["prior"])
     restart_fields = {"action", "action_id", "instance", "machine", "profile", "canary", "fault_after"}
     start_fields = {"action", "action_id", "stopped_epoch", "machine", "service_profile"}
+    bootstrap_fields = {"action", "action_id", "prior", "definition_sha256", "canary"}
     action = request.get("action")
-    expected = restart_fields if action == "restart" else start_fields if action == "start" else set()
+    expected = restart_fields if action == "restart" else start_fields if action == "start" else bootstrap_fields if action == "bootstrap" else set()
     action_id = request.get("action_id", "")
     if (set(request) != expected
             or not re.fullmatch(r"[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}", action_id)):
+        raise ValueError("invalid_adapter_request")
+    if action == "bootstrap" and (type(request["canary"]) is not bool or not isinstance(request["prior"], dict)
+            or not isinstance(request["definition_sha256"], str) or not re.fullmatch(r"[a-f0-9]{64}", request["definition_sha256"])):
         raise ValueError("invalid_adapter_request")
     if action == "restart" and (type(request["canary"]) is not bool
             or type(request["fault_after"]) not in (int, float)
@@ -652,6 +734,8 @@ def handle(config, request, state_path):
             return previous
         if len(history) >= 10000:
             raise ValueError("adapter_journal_full_review_required")
+        if action == "bootstrap":
+            return bootstrap_removed(config, request, state_path, history, request_hash)
         current = inspect(config)
         if action == "restart":
             if not current["active"] or not current["listener"] or any(current.get(key) != request[key] for key in ("instance", "machine", "profile")):
@@ -689,7 +773,7 @@ def handle(config, request, state_path):
 
 def validate_config(config_path, config):
     required = {"label", "plist", "port", "binary", "profile_files"}
-    if (not isinstance(config, dict) or not required.issubset(config) or set(config) - (required | {"log_file", "retained_definition_sha256"})
+    if (not isinstance(config, dict) or not required.issubset(config) or set(config) - (required | {"log_file", "retained_definition_sha256", "bootstrap_removed", "bootstrap_callers"})
             or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", config.get("label", ""))
             or type(config.get("port")) is not int or not 1 <= config["port"] <= 65535
             or any(not isinstance(config.get(field), str) or not config[field].startswith("/") or "\0" in config[field] for field in ("plist", "binary"))
@@ -699,6 +783,13 @@ def validate_config(config_path, config):
             or ("retained_definition_sha256" in config and (not isinstance(config["retained_definition_sha256"], str) or not re.fullmatch(r"[a-f0-9]{64}", config["retained_definition_sha256"])))
             or (config.get("log_file") is not None and (not isinstance(config["log_file"], str) or not config["log_file"].startswith("/") or "\0" in config["log_file"]))):
         raise ValueError("invalid_adapter_configuration")
+    if ("bootstrap_removed" in config and type(config["bootstrap_removed"]) is not bool
+            or "bootstrap_callers" in config and (not isinstance(config["bootstrap_callers"], list)
+                or any(c not in ("loginwindow", "runningboardd") for c in config["bootstrap_callers"])
+                or len(config["bootstrap_callers"]) != len(set(config["bootstrap_callers"])))
+            or config.get("bootstrap_removed") is True and "retained_definition_sha256" not in config
+            or config.get("bootstrap_callers") and config.get("bootstrap_removed") is not True):
+        raise ValueError("invalid_bootstrap_configuration")
     if not owned_private_directory(config_path.parent) or not owned_private_regular(config_path):
         raise ValueError("adapter_configuration_must_be_private")
 

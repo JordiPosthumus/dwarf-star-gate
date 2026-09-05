@@ -351,14 +351,18 @@ Do this per worker, initially with automatic mode **off**.
 ## Install on an explicitly enrolled macOS LaunchAgent
 
 The launchd helper is deliberately **not** a generic process launcher. It supports
-only a user LaunchAgent already loaded in `gui/$UID/<label>` for the SSH account.
-It does not load plists, target LaunchDaemons, accept commands, edit settings or
-discover a service from an HTTP endpoint. The LaunchAgent's reported PID must be
+only an enrolled user LaunchAgent in `gui/$UID/<label>` for the helper account.
+Normal controller recovery requires a loaded job; a separately opted-in
+[removed-job helper action](macos-retained-definition.md#separate-removed-job-helper-action--not-yet-automatic-recovery)
+is implemented but is not yet offered by the controller. Neither path targets
+LaunchDaemons, accepts commands, edits settings or discovers a service from an
+HTTP endpoint. The LaunchAgent's reported PID must be
 the configured DS4 binary and must own the configured loopback listener.
 
 **Loaded-and-stopped is not removed.** If macOS removes the LaunchAgent job,
 `kickstart` cannot restore it. A launcher that registers a temporary plist and
-then deletes that plist is outside this adapter's removed-job recovery boundary.
+then deletes that plist without retaining its exact bytes is outside the new
+removed-job helper action's recovery boundary.
 This can occur after a graceful OS-directed termination, not only after a model
 fault. An idle GPU or successful prior canary does not supply missing bootstrap
 authority. Restore the established launcher manually and verify it before
@@ -419,8 +423,9 @@ The observation survives controller restart and an absent/failed inspection;
 changed enrollment bindings make it unusable. A missing, malformed or failed
 write cannot seed later removal evidence. Historical identity alone never creates
 a recovery offer or authorizes a start. Direct native removal diagnostics are now
-joined to retained PID/boot evidence; explicit restoration policy, command-time
-stop-intent vetoes and retained-definition bootstrap remain unfinished.
+joined to retained PID/boot evidence. The helper's separately opted-in one-shot
+bootstrap now checks caller policy, pinned bytes and command-time native vetoes;
+automatic controller integration and the real removed-job canary remain unfinished.
 
 The [native removal auditor](macos-removal-provenance.md) now checks archived
 launchd records by exact structured subsystem, PID, boot and time window. It
@@ -434,14 +439,14 @@ an optional private content pin without rewriting the plist or issuing commands.
 It preserves XML/binary bytes and returns bounded diagnostics with no action
 authority. It does not prove that a guessed plist matches an existing launch.
 
-Planned support for this case needs separate opt-in enrollment of an exact,
-private, retained service definition;
-verified GUI domain, machine, binary/profile and empty listener; durable one-shot
-bootstrap receipts; and a real removed-job recovery canary with cold/warm reuse.
-Operator pauses, maintenance holds and explicit stop intent must block automatic
-bootstrap. Missing or changed definitions must remain ineligible. Do not substitute
-an arbitrary launcher command, create a login item or move to a LaunchDaemon as
-an implicit fallback. These capabilities are **not implemented by this adapter**.
+The helper action stages exact reviewed bytes privately, rechecks GUI domain,
+machine/boot/static profile, native disable and an empty port, and durably records
+one-shot issuance. It cannot read DSG maintenance holds by itself and is not yet
+called by the gateway. Planned controller integration must enforce operator pauses,
+maintenance holds and admitted-work checks, certify a real removed-job canary with
+cold/warm reuse, and verify generation before readmission. Missing/changed
+definitions remain ineligible. Do not substitute an arbitrary launcher command,
+create a login item or move to a LaunchDaemon as an implicit fallback.
 
 Process metadata checks the kernel executable path before and after reading the
 command, and rechecks the reported process start time. A changed start time is

@@ -10,6 +10,13 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Built the one-shot removed-Mac-job helper action.** Separate opt-in authority
+  permits only exact pinned launch bytes and approved native removal callers.
+  Fixtures verify private byte-preserving staging, native disable/port/identity
+  vetoes before and after durable intent, and no command replay after an uncertain
+  acknowledgement. Controller integration and a real removed-job canary remain
+  unfinished; no live service or recovery enrollment changed.
+
 - **Connected native Mac removal evidence to Genie.** The enrolled helper can
   query the OS directly for a missing job's retained PID/boot, with bounded pipes
   and checks before/after capture. The controller rate-limits queries and rejects

@@ -80,8 +80,9 @@ This does not fix the CUDA defect or implement container recovery. The separatel
 enrolled launchd adapter is source-complete and synthetically tested, but remains
 ineligible on each Mac until that installation passes its own private drained
 canary. An explicitly enrolled same-host transport is now implemented without
-shell access or an SSH requirement; the launchd action still requires a loaded
-job. Explicitly enrolled bootstrap of an OS-removed job remains separate work;
+shell access or an SSH requirement; the controller's launchd action still requires
+a loaded job. A separately opted-in removed-job helper action is now implemented,
+but automatic controller integration remains separate work;
 a removed transient registration is not a stopped-job restart. Preserve operator
 stop intent and validate a real removed-job canary before enabling that broader
 recovery. The [offline native-removal auditor](macos-removal-provenance.md) now
@@ -90,8 +91,11 @@ it does not grant recovery authority. Direct enrolled-helper native capture now
 joins retained PID/boot evidence, rechecks absence and feeds bounded diagnostics
 to Genie with no action offer. The
 [retained-definition preflight](macos-retained-definition.md) verifies private
-pinned plist bytes without rewriting settings or issuing commands. Explicit
-restoration policy, bootstrap execution and the real removed-job canary remain unfinished. The
+pinned plist bytes without rewriting settings or issuing commands. The separate
+helper bootstrap stages exact bytes, enforces explicit caller policy and native
+vetoes, and retains a durable one-shot receipt. Controller maintenance/admitted-work
+gates, automatic-use certification, reconciliation and the real removed-job canary
+remain unfinished. The
 enrollment UX still needs a per-worker guided checklist: identify a supported
 installation, inspect without mutation, review exact authority, apply private
 configuration, separately confirm a disruptive canary, then show verified status
