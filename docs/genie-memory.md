@@ -39,6 +39,17 @@ The first release records:
   input, not the oldest duplicate. This is not an all-history incident count;
   distinct workers, failure classes and reasons remain separate envelopes.
 
+The dashboard retains fixed request transport codes (for example `ECONNRESET`
+versus `ECONNREFUSED`) and valid HTTP statuses, never arbitrary exception messages.
+Request-failure signatures distinguish these observed details when available;
+older generic evidence stays unknown rather than being retroactively diagnosed.
+Pre-dispatch candidates retain the gateway's allowlisted rejection code through
+the dashboard projection. That display record is not a client retry certificate.
+A request's transport code belongs to that request and time, not the current
+health probe, and cannot establish non-dispatch, engine fault or restart authority.
+More precise evidence does not prove a model-written title or hypothesis correct;
+existing notes are not silently merged, deleted or marked resolved.
+
 New structured experiments use the existing notebook format: their three parts
 become labelled lines in the same 500-character / 1000-byte suggestion field.
 The title retains its existing bound. Older one-paragraph notes and responses
@@ -73,9 +84,13 @@ Reports show the IDs/revisions supplied to the model. They are context, not acti
 offers; executor permissions and current evidence still govern every action.
 
 Notebook contents never enter diagnostic exports or XGB training. Do not save
-secrets, inference content or raw logs in operator notes. A configured Genie may
-receive the bounded notebook history, including notes, at its selected endpoint;
-choose that endpoint accordingly. HTML in notes is displayed as text.
+secrets, inference content or raw logs in operator notes. Dedicated Genie reviews
+may receive bounded notebook history, including operator notes; choose that
+endpoint accordingly. Pool and pool-fallback reviews deliberately omit private
+notebook history and report no notebook records used. They still receive bounded
+current failure candidates, so they cannot compare their proposals with withheld
+historical prose. Deduplication of stored signatures is not proof that a model
+avoided repeating a hypothesis. HTML in notes is displayed as text.
 
 Tests cover real dashboard HTTP controls/CSRF, durable reload, corruption, write
 failure, stale samples, bounds, privacy and lack of additional action authority.

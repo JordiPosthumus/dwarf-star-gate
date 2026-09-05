@@ -8,6 +8,45 @@ import {Dataset,evidence} from './dataset.mjs';
 import {Genie,briefing,genieLoopbackFetch,hardeningCandidates,parseGenieReview,tickerStatus} from './genie.mjs';
 import {safeQuarantine} from './generation-health.mjs';
 import {safeGatewayEvent} from './telemetry.mjs';
+import {continuityForDisplay} from './continuity.mjs';
+
+test('dashboard projections retain classified failures all the way into Genie candidates',()=>{
+  const at='2026-01-01T00:00:01Z',request_id='aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const s=snapshot();s.gateway.continuity=continuityForDisplay({schema:1,recent_rejections:[{time:at,request_id,node:'worker-a',code:'home_unavailable',reason:'worker_unhealthy',dispatch_state:'not_dispatched',session:'PRIVATE_SESSION'}]});
+  s.events=['ECONNRESET','ECONNREFUSED','CONNECT_TIMEOUT'].map(detail=>safeGatewayEvent({event:'request_finished',time:at,node:'worker-a',outcome:'upstream_error',detail,message:'PRIVATE_ERROR'}));
+  const b=briefing(s),candidates=b.hardening_candidates;
+  assert.equal(candidates.length,4);
+  assert.deepEqual(new Set(candidates.map(c=>c.reason)),new Set(['home_unavailable:worker_unhealthy','upstream_error:econnreset','upstream_error:econnrefused','upstream_error:connect_timeout']));
+  assert.ok(candidates.filter(c=>c.failure_class==='request_failure').every(c=>c.continuity==='unknown'),'a transport code alone never proves non-dispatch');
+  assert.equal(candidates.find(c=>c.failure_class==='pre_dispatch_rejection').continuity,'not_dispatched');
+  assert.deepEqual(b.recent_outcomes.map(e=>e.error_code),['ECONNRESET','ECONNREFUSED','CONNECT_TIMEOUT']);
+  assert.ok(!JSON.stringify(b).includes('PRIVATE'));
+});
+test('classified transport diagnostics discard arbitrary error text and invalid HTTP statuses',()=>{
+  for(const detail of ['ECONNRESET','ECONNREFUSED','EHOSTUNREACH','ENETUNREACH','ETIMEDOUT','EPIPE','CONNECT_TIMEOUT','REQUEST_DEADLINE']){
+    const e=safeGatewayEvent({event:'request_finished',outcome:'upstream_error',detail});assert.equal(e.error_code,detail);assert.equal(e.http_status,undefined);
+  }
+  for(const detail of ['PRIVATE_ERROR','ECONNRESET: PRIVATE_HOST','econnreset',{},null,99,600,-1,NaN]){
+    const e=safeGatewayEvent({event:'request_finished',outcome:'upstream_error',detail});assert.equal(e.error_code,undefined);assert.equal(e.http_status,undefined);
+  }
+  for(const detail of [400,429,500,503,504])assert.equal(safeGatewayEvent({event:'request_finished',outcome:'upstream_http_error',detail}).http_status,detail);
+  assert.equal(safeGatewayEvent({event:'request_finished',outcome:'complete',detail:'ECONNRESET'}).error_code,undefined);
+  assert.equal(safeGatewayEvent({event:'request_dispatched',detail:'ECONNRESET'}).error_code,undefined);
+  const s=snapshot();s.events=[{event:'request_finished',time:'2026-01-01T00:00:01Z',node:'worker-a',outcome:'upstream_error',error_code:'PRIVATE_ERROR'}];
+  assert.equal(hardeningCandidates(s)[0].reason,'upstream_error');assert.ok(!JSON.stringify(briefing(s)).includes('PRIVATE'));
+});
+test('failure signatures separate observed codes without relabelling missing historical evidence',()=>{
+  const base={event:'request_finished',time:'2026-01-01T00:00:01Z',node:'worker-a',outcome:'upstream_error'};
+  const events=[{...base,detail:'ECONNRESET'},{...base,detail:'ECONNRESET',time:'2026-01-01T00:00:02Z'},base,
+    {...base,outcome:'upstream_http_error',detail:503},{...base,outcome:'upstream_http_error',detail:504},
+    {...base,outcome:'upstream_http_error',detail:999},{...base,outcome:'client_cancelled',detail:'ECONNRESET'}].map(safeGatewayEvent);
+  const s=snapshot();s.events=events;const candidates=hardeningCandidates(s);
+  assert.equal(candidates.length,5);
+  assert.equal(candidates[0].reason,'upstream_error:econnreset');assert.equal(candidates[0].observed_at,'2026-01-01T00:00:02.000Z');
+  assert.deepEqual(new Set(candidates.map(c=>c.reason)),new Set(['upstream_error:econnreset','upstream_error','upstream_http_error:503','upstream_http_error:504','upstream_http_error']));
+  assert.equal(new Set(candidates.map(c=>c.id)).size,5);assert.ok(candidates.every(c=>c.continuity==='unknown'));
+  assert.ok(!JSON.stringify(briefing(s)).includes('999'));
+});
 
 test('Genie receives an allowlisted quarantine fact, not raw backend text or credentials',()=>{
   const bad={reason:'fatal_accelerator_error',at:'2026-09-02T00:00:00Z',request_id:'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',raw:'PRIVATE'};

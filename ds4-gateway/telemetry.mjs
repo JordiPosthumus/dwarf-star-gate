@@ -38,6 +38,12 @@ export function parseTiming(message, time = Date.now()) {
   return null;
 }
 
+const transportFailureOutcomes=new Set(['upstream_error','upstream_stream_error','upstream_aborted','connection_closed','timeout']);
+const transportFailureCodes=new Set(['ECONNRESET','ECONNREFUSED','EHOSTUNREACH','ENETUNREACH','ETIMEDOUT','EPIPE','CONNECT_TIMEOUT','REQUEST_DEADLINE']);
+// Fixed categories only: never forward an exception message, hostname or path.
+// These codes describe transport evidence, not whether execution was dispatched.
+export function safeTransportErrorCode(outcome,value){return transportFailureOutcomes.has(outcome)&&transportFailureCodes.has(value)?value:null;}
+
 export function safeGatewayEvent(raw) {
   if (!raw || !['request_dispatched', 'request_finished'].includes(raw.event)) return null;
   const e = { event: raw.event };
@@ -52,7 +58,9 @@ export function safeGatewayEvent(raw) {
   if (typeof raw.sse_done === 'boolean') e.sse_done = raw.sse_done;
   if (['terminal','terminal_without_done','terminal_without_finish_reason','terminal_reason_unobserved','engine_error','clean_eof_no_terminal','partial_sse_event','observation_limited'].includes(raw.stream_end)) e.stream_end = raw.stream_end;
   if (raw.requested_thinking) e.requested_thinking = safeRequestedThinking(raw.requested_thinking);
-  if (Number.isInteger(raw.detail)) e.http_status = raw.detail;
+  if (Number.isInteger(raw.detail)&&raw.detail>=100&&raw.detail<=599) e.http_status = raw.detail;
+  const errorCode=raw.event==='request_finished'?safeTransportErrorCode(e.outcome,raw.detail):null;
+  if(errorCode)e.error_code=errorCode;
   if (raw.usage) {
     e.usage = {};
     for (const key of ['prompt_tokens', 'completion_tokens', 'cached_tokens'])

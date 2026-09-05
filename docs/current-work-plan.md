@@ -49,8 +49,10 @@ Private deployment receipts and measurements stay out of this public plan.
    dispatched work merely because the provider went quiet.
    Candidate deduplication now preserves the newest bounded occurrence. New
    suggestions separate change, reproducible test and unverified expected result
-   within the existing note budget; old paragraphs remain compatible. Semantic
-   quality, incident grouping, safeguard verification and lifecycle remain work.
+   within the existing note budget; old paragraphs remain compatible.
+   Request transport/HTTP categories and pre-dispatch rejection codes now survive
+   the dashboard evidence projection; unknown historical details remain unknown.
+   Semantic quality, incident grouping, safeguard verification and lifecycle remain work.
 4. **Improve forecast evidence before expanding authority.** Separate engine
    throughput from client-delivery timing; examine long/censored jobs, causal
    early features and sensor/semantic coverage. Score frozen future cohorts by

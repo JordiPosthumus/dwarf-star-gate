@@ -1,5 +1,16 @@
 # Changelog
 
+## Preserve classified failure evidence for Genie
+
+- Retain allowlisted transport codes and valid HTTP statuses in sanitized request
+  events and Genie briefs. Separate known failure signatures; leave missing
+  historical detail unknown and retain existing generic notes unchanged.
+- Preserve known pre-dispatch rejection codes through dashboard projection so
+  those events remain eligible for developer hypotheses. The display projection
+  is not a retry certificate and cannot authorize execution or recovery.
+- Reject arbitrary error strings, malformed statuses and unsupported categories;
+  keep current evidence bounds, private notebook boundaries and action gates.
+
 ## Recognize SSE line endings without false worker failures
 
 - Observe CR, LF and CRLF consistently, even across byte/chunk boundaries, in

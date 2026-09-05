@@ -223,6 +223,20 @@ test('dashboard continuity projection is bounded and excludes private extra fiel
   const s=continuityForDisplay({schema:1,safe_retry_contract:true,patient_wait:true,waiting:2,oldest_wait_seconds:5,waiting_reasons:{worker_unhealthy:2,SECRET:999},recent_rejections:[{request_id:randomUUID(),time:new Date().toISOString(),reason:'same_session_queued',dispatch_state:'not_dispatched',node:'one',session:'SECRET',body:'SECRET'},{request_id:'INVALID'},{request_id:randomUUID(),time:new Date().toISOString(),reason:'same_session_queued',dispatch_state:'dispatched'}]});
   assert.equal(s.recent_rejections.length,1);assert.equal(s.waiting,2);assert.deepEqual(s.waiting_reasons,{worker_unhealthy:2});assert.ok(!JSON.stringify(s).includes('SECRET'));
 });
+test('dashboard preserves only known rejection codes without manufacturing a retry receipt',()=>{
+  const row={request_id:randomUUID(),time:new Date().toISOString(),node:'one',reason:'worker_unhealthy',dispatch_state:'not_dispatched'};
+  for(const code of ['draining','home_unavailable','no_healthy_workers','queue_full','queue_timeout','state_unavailable']){
+    const raw={...row,code,...(code==='state_unavailable'?{reason:'affinity_write_failed'}:{})};
+    const [projected]=continuityForDisplay({schema:1,recent_rejections:[raw]}).recent_rejections;
+    assert.equal(projected.code,code);assert.equal(projected.retry_class,code==='state_unavailable'?'operator_required':'wait_then_retry');
+    assert.equal(projected.call_id,undefined,'display projection is not a replay certificate');
+  }
+  for(const code of [undefined,null,'PRIVATE_CODE','ECONNRESET',{},503]){
+    const [projected]=continuityForDisplay({schema:1,recent_rejections:[{...row,code}]}).recent_rejections;
+    assert.equal(projected.code,undefined);assert.equal(projected.reason,row.reason);assert.ok(!JSON.stringify(projected).includes('PRIVATE'));
+  }
+  assert.deepEqual(continuityForDisplay({schema:1,recent_rejections:[{...row,code:'home_unavailable',dispatch_state:'dispatched'}]}).recent_rejections,[]);
+});
 test('relocation diagnostics projection retains allowlisted reasons and drops private fields',()=>{
   const request_id=randomUUID(),s=continuityForDisplay({schema:1,automatic_relocation:true,automatic_relocation_scope:'first_unaffined_or_affinity_wait_expired',automatic_affinity_rebalance_min_wait_ms:300000,relocation:{diagnostics:{schema:1,gateway_reason:null,idle_destinations:['two','BAD ID'],sources:[
     {source:'one',request_id,affinity:'existing',waiting_seconds:12,reason:'same_session_active',destination:null,conflicting_worker:'one',automatic_reason:'same_session_active',genie_reason:'same_session_active',session:'PRIVATE',body:'PRIVATE'},

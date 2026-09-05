@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Gave Genie distinct failure evidence.** Preserve fixed transport codes and
+  HTTP statuses instead of collapsing them into a generic upstream error. Keep
+  pre-dispatch rejection codes through the dashboard projection. No raw exception
+  prose, retroactive diagnosis, notebook deletion or additional retry authority.
+
 - **Stopped valid stream line endings from looking like server failures.**
   Recognize CR, LF and split CRLF in completion/usage and fault observers. Prove
   real Pi accepts tool-and-answer turns without duplicate execution; preserve

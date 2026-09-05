@@ -6,6 +6,7 @@ import path from 'node:path';
 import {GenieMemory} from './genie-memory.mjs';
 import {Genie,briefing,hardeningCandidates,parseGenieReview} from './genie.mjs';
 import {createDashboard} from './dashboard.mjs';
+import {safeGatewayEvent} from './telemetry.mjs';
 const sample=(at=1000,change={})=>({time:at,gateway_at:at,gateway:{workers:[{id:'worker-a',is_healthy:true,drained:false,operator_paused:false,holds:[],context_length:262144,...change}]},devices:[],events:[]});
 test('marker-only compatibility reaches Genie as a hypothesis, not recovery authority',()=>{
   const at='2026-09-04T12:00:00Z',s=sample(Date.parse(at));
@@ -34,6 +35,21 @@ test('hardening signatures retain their newest bounded occurrence regardless of 
   ]);
 });
 function fixture(t){const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'dsg-memory-')));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));return path.join(root,'memory');}
+test('specific failure evidence preserves older generic notebook hypotheses without invented resolution',t=>{
+  const s=sample(),m=new GenieMemory(fixture(t),{now:()=>1000});m.setEnabled(true);
+  const raw={event:'request_finished',time:new Date(900).toISOString(),node:'worker-a',outcome:'upstream_error',message:'PRIVATE_ERROR'};
+  s.events=[safeGatewayEvent(raw)];const [generic]=hardeningCandidates(s);
+  const note=candidate=>({candidate_id:candidate.id,title:'Inspect the recorded failure',suggestion:'Compare passive transport evidence; do not replay the request.'});
+  m.saveHardeningNotes([note(generic)],[generic]);const old=m.hardening(s)[0];
+  s.events=[safeGatewayEvent({...raw,detail:'ECONNRESET'})];const [specific]=hardeningCandidates(s);
+  assert.notEqual(generic.id,specific.id);assert.equal(specific.reason,'upstream_error:econnreset');assert.equal(specific.continuity,'unknown');
+  m.saveHardeningNotes([note(specific)],[specific]);
+  const reload=new GenieMemory(m.directory,{now:()=>1000}),notes=reload.hardening(s);
+  assert.equal(notes.length,2);assert.deepEqual(notes.find(n=>n.id===old.id),old);
+  assert.ok(notes.every(n=>n.data.state==='open'&&n.data.continuity==='unknown'));
+  assert.equal(reload.saveHardeningNotes([note(specific)],[specific])[0].state,'unchanged');
+  assert.ok(!fs.readFileSync(m.file,'utf8').includes('PRIVATE'));
+});
 test('structured developer experiments retain bounded legacy storage without execution authority',t=>{
   const s=sample();s.events=[{event:'request_finished',time:new Date(900).toISOString(),node:'worker-a',outcome:'incomplete_sse'}];
   const evidence=briefing(s),candidate=evidence.hardening_candidates[0];

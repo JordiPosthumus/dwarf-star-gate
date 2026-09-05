@@ -5,6 +5,7 @@ import {safeNativeRemoval} from './launchd-removal-evidence.mjs';
 import http from 'node:http';
 import { StringDecoder } from 'node:string_decoder';
 import { safeQuarantine } from './generation-health.mjs';
+import {safeTransportErrorCode} from './telemetry.mjs';
 
 export const DEFAULT_GENIE_TIMEOUT_MS=2*60*60*1000;
 export const DEFAULT_POOL_TIMEOUT_MS=2*60*60*1000;
@@ -97,6 +98,7 @@ const boundedCode=value=>typeof value==='string'&&/^[a-zA-Z0-9_:-]{1,128}$/.test
 const boundedWorker=value=>typeof value==='string'&&/^\w[\w-]{0,63}$/.test(value)?value:null;
 const boundedTime=value=>typeof value==='string'&&Number.isFinite(Date.parse(value))?new Date(value).toISOString():null;
 const requestFailureOutcomes=new Set(['upstream_http_error','upstream_engine_error','incomplete_sse','upstream_stream_error','upstream_aborted','upstream_error','connection_closed']);
+const safeHttpStatus=value=>Number.isInteger(value)&&value>=100&&value<=599?value:null;
 
 // A deterministic, privacy-bounded incident index. These are the only failure
 // envelopes the model may turn into durable developer suggestions. No prompt,
@@ -125,7 +127,8 @@ export function hardeningCandidates(snapshot) {
   }
   for(const row of (snapshot.events??[]).filter(event=>event?.event==='request_finished').slice(-12)){
     const outcome=boundedCode(row.outcome),scope=boundedWorker(row.node)??'fleet',observed_at=boundedTime(row.time);
-    const streamEnd=boundedCode(row.stream_end),reason=outcome==='incomplete_sse'&&streamEnd?`${outcome}:${streamEnd}`:outcome;
+    const streamEnd=boundedCode(row.stream_end),transportCode=safeTransportErrorCode(outcome,row.error_code),httpStatus=safeHttpStatus(row.http_status);
+    const reason=outcome==='incomplete_sse'&&streamEnd?`${outcome}:${streamEnd}`:transportCode?`${outcome}:${transportCode.toLowerCase()}`:outcome==='upstream_http_error'&&httpStatus>=400?`${outcome}:${httpStatus}`:outcome;
     if(requestFailureOutcomes.has(outcome)&&observed_at)add({failure_class:'request_failure',scope,reason,observed_at,continuity:'unknown',evidence_refs:[scope==='fleet'?'fleet':`worker:${scope}`]});
     else if(outcome==='complete'&&streamEnd==='terminal_without_finish_reason'&&observed_at)add({failure_class:'client_compatibility',scope,reason:streamEnd,observed_at,continuity:'unknown',evidence_refs:[scope==='fleet'?'fleet':`worker:${scope}`]});
   }
@@ -176,7 +179,8 @@ export function briefing(snapshot) {
         backend_epoch:d.backend_epoch,backend_epoch_source:d.backend_epoch_source,backend_epoch_confidence:d.backend_epoch_confidence,
         backend_epoch_observed_at:d.backend_epoch_observed_at,backend_epoch_changes:d.backend_epoch_changes,backend_epoch_evidence_gaps:d.backend_epoch_evidence_gaps,
         decode:d.decode?.tps,decode_observed_at:d.decode?.time,engine_generated_tokens:d.decode?.generated,engine_generation_seconds:d.decode?.seconds,engine_thinking:d.decode?.thinking,prefill:d.prefill?.tps,last_prompt:d.prompt,cache:d.cache}:null;})()})),
-    recent_outcomes:(snapshot.events||[]).filter(e=>e.event==='request_finished').slice(-12).map(e=>({time:e.time,node:e.node,outcome:e.outcome,queue_ms:e.queue_ms,elapsed_ms:e.elapsed_ms,usage:e.usage})),
+    recent_outcomes:(snapshot.events||[]).filter(e=>e.event==='request_finished').slice(-12).map(e=>({time:e.time,node:e.node,outcome:e.outcome,queue_ms:e.queue_ms,elapsed_ms:e.elapsed_ms,usage:e.usage,
+      ...(safeTransportErrorCode(e.outcome,e.error_code)?{error_code:e.error_code}:{}),...(safeHttpStatus(e.http_status)!==null?{http_status:e.http_status}:{})})),
     semantics:['queue_ms and elapsed_ms are milliseconds for past requests, not the current queue age or an ETA; 120000 ms = 2 minutes',
       'Recovery reason launchd_registration_absent means an enrolled Mac job was not found in a readable GUI domain; launchd_gui_domain_unavailable means that domain was unavailable, not a proven DS4 crash; launchd_state_unverified means inspection could not establish the state. None authorizes bootstrap, reboot or clearing an operator hold. Explain the distinct block and request operator review of the established launcher/session; do not invent a CUDA fault or claim a restart can restore a removed registration',
       'launchd_native_disabled is a native macOS stop instruction; respect it and ask the operator, never propose clearing it automatically. launchd_disable_state_unverified means the native override could not be read or the enrolled helper lacks that evidence; check helper/version/permissions, not CUDA. Neither is restart, readmission or bootstrap authority',
@@ -197,6 +201,7 @@ export function briefing(snapshot) {
       'protections.visual_compatibility is deterministic gateway evidence. rescued means a proof-gated same-server compatibility recovery reached a normal model completion; guided means the bounded recovery could not continue and DSG returned labelled synthetic guidance. The agent, not DSG, chooses the task remedy. These counters do not grant action authority',
       'active_seconds is time since dispatch, not proof of a stall; last_event is an engine log timestamp, not a heartbeat',
       'healthy and paused/quarantine are separate; a model-list probe is not proof of working generation',
+      'Request failure error_code and HTTP status belong to the recorded request at its time, not the current worker probe. ECONNRESET, ECONNREFUSED, CONNECT_TIMEOUT and REQUEST_DEADLINE are distinct observed categories, not root causes or proof of non-dispatch. Unknown details stay unknown; only an explicit pre-dispatch receipt establishes not_dispatched. Historical generic notes are not resolved or superseded merely because a newer incident has a more specific code',
       'management_path is sanitized transport evidence. verified means a DS4 model probe succeeded through that path; ssh_process_active means only that the local SSH process exists, not that login, forwarding or DS4 is healthy. recovery_evidence reports the independently checked recovery adapter. DNS, authentication, host-key, route and timeout failures require different operator remedies and never authorize a restart by themselves',
       'health_evidence.source=recent_upstream_progress means a model-list timeout overlapped fresh bytes from the active inference stream; it does not prove semantic progress or final success. Active status alone never overrides failed health probes. A network or SSH outage is not a proven engine fault; service restart needs reachable, verified recovery evidence',
       'Operator pauses and agent holds are intentional reservations, not faults. Do not recover or enable a reserved server. Releasing one hold does not release other holds or an operator pause',
