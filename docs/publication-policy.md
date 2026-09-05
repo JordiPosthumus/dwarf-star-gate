@@ -38,6 +38,21 @@ and identifiers. The ordinary check also scans tracked working copies; CI runs
 it against the checked-out commit. Regression tests exercise actual Git commits.
 The installer refuses to replace an existing custom hook setup.
 
+The hook also checks effective **author and committer email**, including Git
+environment overrides. Use the exact noreply address shown in your GitHub email
+settings with `git config --local user.email 'YOUR_VERIFIED_NOREPLY_ADDRESS'`.
+Names and attribution remain unchanged. If you deliberately want an address to
+be public, record that choice locally with
+`git config --local --add dsg.publicEmail 'YOUR_REVIEWED_PUBLIC_ADDRESS'`.
+Synthetic identity tests use the reserved `example.invalid` domain. Identity
+checks do not rewrite existing commits and CI does not enforce your local choice.
+
+The content guard additionally flags custom-domain email, credential-bearing
+URLs, common cloud-token shapes, private temporary paths, and PNG text/EXIF
+metadata or malformed/trailing PNG payloads. It reports categories, not secret
+values. This is not a general binary-file validator: inspect other image formats,
+archives and document metadata manually. PNG pixel contents still need review.
+
 Hooks are not installed automatically in new clones. Run the installation command
 there, or integrate the check into existing hooks. A local user can bypass hooks;
 CI runs only after a push and cannot undo public exposure. These are guardrails,
@@ -52,3 +67,10 @@ If identifying data was already published, generalizing the current tree does
 not remove earlier commits, cached copies, forks or clones. Coordinate any
 history rewrite separately; rotate an exposed secret rather than relying on
 file deletion. Never force-push shared history as an unannounced cleanup step.
+
+For a publication audit, inspect every reachable public branch/tag, historical
+file versions and commit identities/messages—not just the latest checkout.
+Review tracked screenshots against their synthetic capture source. Keep audit
+reports and matched values outside Git. State the scanned ref and coverage;
+unreachable GitHub objects, PR refs, old CI logs, forks and caches need separate
+checks and cannot be cleared by a clean working-tree scan.

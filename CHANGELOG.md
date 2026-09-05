@@ -1,5 +1,14 @@
 # Changelog
 
+## Strengthen publication privacy guardrails
+
+- Check effective commit identities before committing, with noreply defaults
+  and an explicit local option for deliberately public email addresses.
+- Detect additional credential shapes, custom-domain email, private temporary
+  paths and hidden PNG metadata; keep diagnostics free of matched values.
+- Ignore private note directories, document history-audit limits, and retain
+  reusable reachability guidance without operational incident chronology.
+
 ## Plan optional Pi capabilities and index offline attribution
 
 - Specify first-class Pi integration with independent status, bounded context

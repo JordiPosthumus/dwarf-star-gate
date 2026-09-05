@@ -1,4 +1,5 @@
 #!/bin/sh
 set -eu
 # Git runs non-bare pre-commit hooks from the worktree root.
+node scripts/privacy-identity-check.mjs
 exec node scripts/privacy-check.mjs --staged

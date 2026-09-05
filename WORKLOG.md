@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Strengthened publication guardrails.** Check commit identity as well as exact
+  staged content; flag more credential patterns and hidden screenshot metadata.
+  Keep operational receipts private and preserve reusable diagnostic guidance.
+  Working-tree checks do not pretend to erase previously published history.
+
 - **Designed a first-class, optional Pi relationship.** Retained Priority Lens
   and Session Rescue as explicit feature tracks with a shared versioned contract
   but separate permissions. Start rescue with settled routine check-ins, not

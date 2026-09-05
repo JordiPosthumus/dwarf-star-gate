@@ -19,7 +19,7 @@ function fixture(t) {
   const git=(...args)=>{const r=run('git',args);assert.equal(r.status,0,r.stderr);return r.stdout.trim();};
   git('init','-q');git('config','commit.gpgsign','false');
   const write=(file,text)=>{fs.mkdirSync(path.dirname(path.join(dir,file)),{recursive:true});fs.writeFileSync(path.join(dir,file),text);};
-  for(const file of ['scripts/privacy-check.mjs','scripts/privacy-policy.mjs','scripts/install-hooks.mjs','.githooks/pre-commit']) {
+  for(const file of ['scripts/privacy-check.mjs','scripts/privacy-policy.mjs','scripts/privacy-identity-check.mjs','scripts/install-hooks.mjs','.githooks/pre-commit']) {
     fs.mkdirSync(path.dirname(path.join(dir,file)),{recursive:true});fs.copyFileSync(path.join(root,file),path.join(dir,file));
   }
   write('README.md','# Generic gateway guide\n');git('add','.');
@@ -35,6 +35,34 @@ test('deployment narratives and exact operational identifiers are flagged in doc
     assert.ok(findings('docs/example.md',Buffer.from(text)).length,text);
     assert.ok(findings('ui/index.html',Buffer.from(text)).length,text);
   }
+});
+test('extended credential, email and temporary-path checks report labels only',()=>{
+  const values=[['person','company.test'].join('@'),['https://','user:password','@','example.invalid'].join(''),'AK'+'IA'+'A'.repeat(16),'xox'+'b-'+'a'.repeat(24),'ey'+'J'+'a'.repeat(12)+'.'+'b'.repeat(12)+'.'+'c'.repeat(12),['/var','/folders','/private-fixture'].join('')];
+  for(const value of values) {const result=findings('fixture.txt',Buffer.from(value));assert.ok(result.length);assert.ok(!result.join(' ').includes(value));}
+  for(const email of [['reader','example.invalid'].join('@'),['123+reader','users.noreply.github.com'].join('@')])assert.deepEqual(findings('fixture.txt',Buffer.from(email)),[]);
+});
+test('PNG hidden metadata, malformed chunks and trailing data fail closed',()=>{
+  const signature=Buffer.from([137,80,78,71,13,10,26,10]);
+  const chunk=(type,data=Buffer.alloc(0))=>{const b=Buffer.alloc(data.length+12);b.writeUInt32BE(data.length);b.write(type,4,4,'ascii');data.copy(b,8);return b;};
+  const end=chunk('IEND');
+  assert.deepEqual(findings('image.png',Buffer.concat([signature,end])),[]);
+  const pixelBytes=Buffer.from(['random','compressed.test'].join('@'));
+  assert.deepEqual(findings('image.png',Buffer.concat([signature,chunk('IDAT',pixelBytes),end])),[]);
+  for(const type of ['tEXt','iTXt','zTXt','eXIf'])assert.ok(findings('renamed.bin',Buffer.concat([signature,chunk(type,Buffer.from('private fixture')),end])).includes('PNG private-metadata risk'));
+  for(const bytes of [signature,Buffer.concat([signature,end,Buffer.from('trailing')]),Buffer.concat([signature,Buffer.from([255,255,255,255,73,68,65,84,0,0,0,0])])])assert.ok(findings('image.png',bytes).includes('unreviewable PNG structure or trailing data'));
+});
+test('identity guard checks effective author and committer, with explicit local public-email consent',t=>{
+  const f=fixture(t),privateEmail=['operator','company.test'].join('@');
+  assert.equal(f.install().status,0);
+  const commit=(author,committer)=>{
+    const env={...process.env,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null',GIT_AUTHOR_NAME:'Test Operator',GIT_COMMITTER_NAME:'Test Operator',GIT_AUTHOR_EMAIL:author,GIT_COMMITTER_EMAIL:committer};
+    for(const key of ['GIT_DIR','GIT_WORK_TREE','GIT_INDEX_FILE','GIT_COMMON_DIR','GIT_OBJECT_DIRECTORY','GIT_ALTERNATE_OBJECT_DIRECTORIES'])delete env[key];
+    return spawnSync('git',['commit','-qm','Identity fixture'],{cwd:f.dir,encoding:'utf8',env});
+  };
+  const safe=['123+operator','users.noreply.github.com'].join('@');
+  for(const pair of [[privateEmail,safe],[safe,privateEmail]]){const r=commit(...pair);assert.notEqual(r.status,0);assert.match(r.stderr,/Publication blocked:/);assert.ok(!r.stderr.includes(privateEmail));}
+  f.git('config','--local','dsg.publicEmail',privateEmail);
+  assert.equal(commit(privateEmail,safe).status,0);
 });
 test('reusable profiles, public pins and synthetic source fixtures remain publishable',()=>{
   const text='# Recommended profile\nUse --ctx 262144 --batched-session 2.\nSource: https://github.com/antirez/ds4\nSHA-256: '+'a'.repeat(64)+'\nKeep private reports outside the checkout.\n';

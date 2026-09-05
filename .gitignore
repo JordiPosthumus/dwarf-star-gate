@@ -10,6 +10,8 @@
 predictor/artifacts/
 **/worker-profiles.local.json
 **/backups/
+**/private/
+**/local-notes/
 **/node_modules/
 **/.DS_Store
 **/*.log
