@@ -406,11 +406,15 @@ test('thinking UI distinguishes requested controls, omitted/unknown, current/las
   const worker = {load:1,requested_thinking:{status:'specified',fields:{reasoning_effort:'low'}},last_requested_thinking:{status:'specified',fields:{reasoning_effort:'high'}},last_request_finished_at:'2026-09-02T00:00:00Z'};
   const current = vm.runInContext(`thinkingIndicator(${JSON.stringify(worker)},false,1788310000000)`,context);
   assert.match(current,/>LOW</); assert.match(current,/Current request/); assert.doesNotMatch(current,/>HIGH</);
+  assert.match(current,/>Thinking</);assert.doesNotMatch(current,/REQUESTED THINKING|class="thinking-scope"/);
+  assert.doesNotMatch(current.replace(/<[^>]*>/g,''),/Current request/,'current scope belongs in the tooltip, not a redundant visible column');
   worker.load=0;
   const last = vm.runInContext(`thinkingIndicator(${JSON.stringify(worker)},false,1788310000000)`,context);
   assert.match(last,/>HIGH</); assert.match(last,/Last request/);
+  assert.match(last,/>Last</);
   assert.match(vm.runInContext(`thinkingIndicator(${JSON.stringify(worker)},true,1788310000000)`,context),/Historical snapshot/);
   assert.match(source,/thinkingIndicator\(w,stale,now\)/);
+  assert.doesNotMatch(source,/ANSWERING|READING PROMPT|15m · shared/);
 });
 test('hardware cards stay compact, label unified memory honestly and preserve missing values',()=>{
   const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0],context=vm.createContext({});vm.runInContext(source,context);

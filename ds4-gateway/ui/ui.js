@@ -39,7 +39,8 @@ function thinkingInfo(t) {
 function thinkingIndicator(w, stale, now) {
   const info = thinkingInfo(w?.load ? w.requested_thinking : w?.last_requested_thinking);
   const scope = stale ? 'Historical snapshot' : w?.load ? 'Current request' : w?.last_request_finished_at ? `Last request · ${age(Date.parse(w.last_request_finished_at),now)}` : 'No active request';
-  return `<div class="requested-thinking"><span class="label">REQUESTED THINKING</span><strong title="${esc(info.detail)}">${esc(info.label)}</strong><span class="thinking-scope">${esc(scope)}</span></div>`;
+  const qualifier=stale?'Stale':!w?.load&&w?.last_request_finished_at?'Last':'';
+  return `<div class="requested-thinking" title="${esc(scope+'. Requested settings, not proof of effective reasoning. '+info.detail)}"><span class="label">Thinking</span><strong>${esc(info.label)}</strong>${qualifier?`<span class="thinking-scope">${qualifier}</span>`:''}</div>`;
 }
 function chart(series, kind, now, ceiling) {
   const values = (series??[]).filter(s => s?.kind === kind && Number.isFinite(s.time) && Number.isFinite(s.tps) && s.tps>=0 && s.time<=now && now - s.time < 900000).sort((a,b)=>a.time-b.time);
@@ -321,7 +322,9 @@ function device(d, w, now, stale, index = 1, scales={}, controls=false) {
   const metric = (kind, title) => {
     const m = d[kind];
     const staleMetric=!Number.isFinite(m?.time)||now-m.time>60000;
-    return `<div class="metric-block ${staleMetric?'metric-stale':''}"><span class="label">${title} · ${kind==='decode'?'ANSWERING':'READING PROMPT'}</span><div class="rate ${kind}">${fmtWhole(m?.tps)}<em>t/s</em></div><div class="metric-note">avg ${fmtWhole(m?.average)} · ${staleMetric?'last measured ':''}${age(m?.time, now)}</div>${chart(d.series, kind, now,scales[kind])}<div class="chart-caption">15m · shared 0–${fmtWhole(scales[kind])} t/s</div></div>`;
+    const explanation=kind==='decode'?'Generation speed measured by DS4, including thinking and answer tokens.':'Prompt-processing speed measured by DS4.';
+    const measured=`${staleMetric?'Last':'Latest'} measurement: ${age(m?.time,now)}. Values are engine observations, not a promise of current speed.`;
+    return `<div class="metric-block ${staleMetric?'metric-stale':''}"><span class="label" title="${explanation}">${title}</span><div class="rate ${kind}">${fmtWhole(m?.tps)}<em>t/s</em></div><div class="metric-note" title="${esc(measured)}">avg ${fmtWhole(m?.average)} · ${age(m?.time, now)}</div>${chart(d.series, kind, now,scales[kind])}<div class="chart-caption" title="Last 15 minutes; shared ${kind} scale across all server cards">15m · 0–${fmtWhole(scales[kind])} t/s</div></div>`;
   };
   const prompt = d.prompt ? `Last prompt: ${fmt(d.prompt.prompt)} tokens · ${fmt(d.prompt.cached)} reused · ${esc(d.prompt.cache)}` : 'No prompt start observed yet';
   const f=w?.predictions?.remaining??w?.predictions?.updated??w?.predictions?.admission;

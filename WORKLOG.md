@@ -10,6 +10,10 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Reduced server-card reading effort.** Short labels and tighter rows put the
+  speeds first; repeated explanations move into tooltips while stale/last-request
+  distinctions remain visible.
+
 - **Made speed traces easier to follow.** Small red dots and subtle connectors
   replace broken lines between rate measurements, without changing timestamps,
   recorded speeds or mistaking missing measurements for idle hardware.

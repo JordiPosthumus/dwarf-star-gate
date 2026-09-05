@@ -1,5 +1,12 @@
 # Changelog
 
+## Reduce server-card label noise
+
+- Shorten labels to Thinking, Decode and Prefill; remove the visible Current
+  request column. Keep Last/Stale qualifiers so historical settings stay clear.
+- Tighten row spacing and shorten repeated sample/axis prose, retaining measured
+  age, chart alignment and explanations in tooltips.
+
 ## Mark rate-chart pauses without broken traces
 
 - Join decode/prefill measurement gaps with subdued solid connectors and small

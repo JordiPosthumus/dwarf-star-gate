@@ -48,6 +48,12 @@ try {
   assert.match(await pause.getAttribute('aria-label'),/not a measured rate or proof of idle/);
   assert.equal(await pause.locator('.chart-pause-dot').evaluate(el=>getComputedStyle(el).stroke),'rgb(239, 119, 119)');
   await pause.focus();assert.equal(await pause.evaluate(el=>el===document.activeElement),true);
+  const thinking=page.locator('#devices .requested-thinking').first();
+  assert.match(await thinking.innerText(),/^Thinking\s+/);
+  assert.doesNotMatch(await thinking.innerText(),/Current request|REQUESTED THINKING/);
+  assert.ok((await thinking.boundingBox()).height<40,'Thinking settings use a compact single row');
+  assert.equal(await page.locator('#devices .metric-block>.label').first().innerText(),'DECODE');
+  assert.equal(await page.locator('#devices .metric-block>.label').nth(1).innerText(),'PREFILL');
   assert.equal(await page.locator('#tab-fleet').getAttribute('aria-selected'),'true');
   assert.equal(await page.locator('#view-fleet').isVisible(),true);
   assert.equal(await page.locator('#view-genie').isHidden(),true);
