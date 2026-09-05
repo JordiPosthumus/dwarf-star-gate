@@ -10,6 +10,13 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Connected native Mac removal evidence to Genie.** The enrolled helper can
+  query the OS directly for a missing job's retained PID/boot, with bounded pipes
+  and checks before/after capture. The controller rate-limits queries and rejects
+  stale results; Genie receives caller/time diagnostics, not raw logs or a new
+  recovery offer. A real historical incident confirmed the query/parser path.
+  Automatic restoration policy and a real removed-job canary remain unfinished.
+
 - **Added a retained-definition preflight for Mac recovery enrollment.** An owner's
   agent can verify a private hash-pinned plist without rewriting any settings or
   touching services. Tests cover XML/binary byte preservation, drift, duplicate

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { recoveryConfig, recoveryCall } from './recovery-transport.mjs';
 import { verifyRecovery } from './recovery-verify.mjs';
+import {safeNativeRemoval,unavailableNativeRemoval} from './launchd-removal-evidence.mjs';
 
 const hash=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const terminal=new Set(['recovered','verified_paused','failed','reconciliation_needed']);
@@ -11,6 +12,7 @@ const digest=value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
 const nativePolicyReason=(s,c)=>c?.adapter==='launchd'&&s?.native_disabled!==false?(s?.native_disabled===true?'launchd_native_disabled':'launchd_disable_state_unverified'):null;
 function requireNativePolicy(s,c){const reason=nativePolicyReason(s,c);if(reason)throw new Error(reason);}
 const identityFields=['enrollment','instance','machine','observed_at','pid','profile','service_profile','started_at'];
+const bootUUID=value=>typeof value==='string'&&/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(value);
 const validIdentityRecord=value=>value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).sort().join(',')===identityFields.join(',')&&
   ['enrollment','machine','profile','service_profile'].every(key=>digest(value[key]))&&/^[a-f0-9]{32}$/.test(value.instance)&&
   Number.isSafeInteger(value.pid)&&value.pid>=2&&value.pid<=2147483647&&Number.isSafeInteger(value.started_at)&&value.started_at>=0&&
@@ -29,6 +31,7 @@ export class Recovery {
   constructor(raw,{store,nodes,model,stopping,reinstate,log=()=>{},call=recoveryCall,verify=verifyRecovery,now=Date.now}) {
     this.configs=recoveryConfig(raw);this.store=store;this.nodes=nodes;this.model=model;this.stopping=stopping;this.reinstate=reinstate;this.log=log;this.call=call;this.verify=verify;this.now=now;
     this.observations=new Map();this.stoppedSince=new Map();this.handbackSeen=new Map();this.busy=false;this.closed=false;this.task=null;this.abort=new AbortController();
+    this.removals=new Map();
     const saved=store.data.recovery;
     if(saved?.last_identities!==undefined){
       if(!saved.last_identities||typeof saved.last_identities!=='object'||Array.isArray(saved.last_identities))throw new Error('Invalid recovery identity history');
@@ -60,7 +63,9 @@ export class Recovery {
   commit(next){this.store.save({...this.store.data,recovery:next});}
   priorIdentity(id){
     const record=this.state.last_identities?.[id],c=this.config(id);
-    return c?.adapter==='launchd'&&validIdentityRecord(record)&&record.enrollment===hash(c)?record:null;
+    if(c?.adapter!=='launchd'||!validIdentityRecord(record)||record.enrollment!==hash(c))return null;
+    const boot=this.state.last_identity_boots?.[id];
+    return boot&&typeof boot==='object'&&!Array.isArray(boot)&&Object.keys(boot).sort().join(',')==='boot_uuid,identity'&&bootUUID(boot.boot_uuid)&&boot.identity===hash(record)?{...record,boot_uuid:boot.boot_uuid}:record;
   }
   rememberIdentity(id,s,at){
     const c=this.config(id);
@@ -70,8 +75,13 @@ export class Recovery {
     const record={enrollment:hash(c),instance:s.instance,machine:s.machine,observed_at:at,pid:s.pid,profile:s.profile,service_profile:s.service_profile,started_at:s.started_at};
     if(!validIdentityRecord(record))return;
     const previous=this.priorIdentity(id);
-    if(previous&&identityFields.filter(key=>key!=='observed_at').every(key=>previous[key]===record[key]))return;
-    this.commit({...this.state,last_identities:{...this.state.last_identities,[id]:record}});
+    if(previous&&identityFields.filter(key=>key!=='observed_at').every(key=>previous[key]===record[key])&&(!bootUUID(s.boot_uuid)||previous.boot_uuid===s.boot_uuid))return;
+    // Keep the original identity schema readable by older controllers. A boot
+    // companion must match its entire identity digest; stale companions convey nothing.
+    const savedBoots=this.state.last_identity_boots;
+    if(savedBoots!==undefined&&(!savedBoots||typeof savedBoots!=='object'||Array.isArray(savedBoots)))return;
+    const boots={...savedBoots};delete boots[id];if(bootUUID(s.boot_uuid))boots[id]={identity:hash(record),boot_uuid:s.boot_uuid};
+    this.commit({...this.state,last_identities:{...this.state.last_identities,[id]:record},...(savedBoots!==undefined||bootUUID(s.boot_uuid)?{last_identity_boots:boots}:{})});
   }
   update(op,fields){Object.assign(op,this.current(op),fields,{updated_at:this.now()});this.commit({...this.state,operations:this.state.operations.map(x=>x.id===op.id?{...op}:x)});this.log('worker_recovery_action',publicOperation(op));}
   setAutomatic(value){if(typeof value!=='boolean' || !this.configs.size)throw new Error('Recovery is not configured or enabled is invalid');this.commit({...this.state,automatic:value});this.log('worker_recovery_policy',{automatic:value});return this.status();}
@@ -163,6 +173,7 @@ export class Recovery {
     const effective=this.config(n.id),candidate=this.profileCandidate(s,effective),adopted=!!this.state.adopted_profiles[n.id]&&effective?.profile===this.state.adopted_profiles[n.id].profile;
     return {worker_id:n.id,configured,adapter:configured?this.configs.get(n.id).adapter:null,transport:configured?(this.configs.get(n.id).transport??'ssh'):null,reason:configured?reason:'manual_recovery_required',eligible:configured&&!reason,
       evidence_id:configured&&!reason?this.evidence(n,s):null,inspected_at:observed?.at??null,
+      removal:this.removals.get(n.id)?.result??null,
       state,profile_handback:candidate?{candidate:true,stable:this.candidateStable(n.id,candidate),automatic:this.state.profile_handback_automatic}:adopted?{candidate:false,stable:true,automatic:this.state.profile_handback_automatic,adopted:true}:null,last_action:last?publicOperation(last):null};
   }
   profileHandbackOffer(n,{ignorePause=false}={}) {
@@ -179,6 +190,8 @@ export class Recovery {
     try {
       const value=await this.call(c,{action:'inspect'}),at=this.now();this.observations.set(id,{at,value});
       this.rememberIdentity(id,value,at);
+      await this.inspectRemoval(id,value,at);
+      if(this.observations.get(id)?.value!==value)return value;
       const candidate=this.profileCandidate(value,c),prior=this.handbackSeen.get(id);
       if(candidate)this.handbackSeen.set(id,prior&&prior.profile===candidate.profile&&prior.service_profile===candidate.service_profile&&prior.instance===candidate.instance?{...prior,last_at:at,count:prior.last_at===at?prior.count:prior.count+1}:{...candidate,first_at:at,last_at:at,count:1});
       else this.handbackSeen.delete(id);
@@ -188,6 +201,21 @@ export class Recovery {
       return value;
     }
     catch(e) {this.stoppedSince.delete(id);this.observations.set(id,{at:this.now(),error:adapterReasons.has(e?.message)?e.message:'adapter_check_failed'});return null;}
+  }
+  async inspectRemoval(id,value,at){
+    const c=this.config(id),prior=this.priorIdentity(id);
+    if(c?.adapter!=='launchd'||value?.removal_capture_version!==1||value.registration!=='absent'||value.loaded!==false||value.active!==false||
+      value.machine!==c.machine||!prior?.boot_uuid||value.service_profile!==prior.service_profile){this.removals.delete(id);return;}
+    const key=hash([prior,value.boot_uuid,value.service_profile]),cached=this.removals.get(id);
+    if(cached?.key===key&&at-cached.at<5*60000)return;
+    const pending={key,at,result:null};this.removals.set(id,pending);
+    const {enrollment,...identity}=prior;
+    let result;
+    try{result=safeNativeRemoval(await this.call(c,{action:'inspect_removal',prior:identity}),{now:this.now(),after:at});}catch{/* Bounded unavailable evidence, not a recovery failure. */}
+    if(this.removals.get(id)===pending){
+      if(this.closed||hash(this.priorIdentity(id))!==hash(prior))this.removals.delete(id);
+      else pending.result=result??unavailableNativeRemoval(this.now());
+    }
   }
   request(input,actor='operator',{canary=false}={}) {
     if(!input || Object.keys(input).some(k=>!['worker_id','evidence_id','action_id'].includes(k)) || !['operator','genie','detector'].includes(actor))throw new Error('Invalid recovery request');

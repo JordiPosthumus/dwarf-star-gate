@@ -2,6 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {Recovery} from './recovery.mjs';
+import {safeNativeRemoval,unavailableNativeRemoval} from './launchd-removal-evidence.mjs';
 import {AgentControl} from './agent-control.mjs';
 import {classifySshFailure,recoveryConfig,systemdCall} from './recovery-transport.mjs';
 import {verifyRecovery} from './recovery-verify.mjs';
@@ -84,6 +85,58 @@ test('invalid, faulted or unpersisted Mac identity cannot seed removal evidence'
     const malformed=rig();malformed.store.data.recovery={...malformed.recovery.state,last_identities};
     assert.throws(()=>new Recovery({workers:[c]},malformed.deps),/Invalid recovery identity history/);
   }
+});
+test('native removal capture joins private retained boot identity, is rate limited and never offers recovery',async()=>{
+  const r=rig(),local={...config,adapter:'launchd'},boot='12345678-1234-1234-1234-123456789abc';r.recovery.configs.set('one',local);
+  let sample={...r.sample(),fault:null,pid:123,service_profile:'c'.repeat(64),boot_uuid:boot,removal_capture_version:1},captures=0;
+  const native=()=>({...unavailableNativeRemoval(r.deps.now()),status:'exact_removal_observed',source_complete:true,records:1,observations:[{at:r.deps.now()-1000,caller:'loginwindow'}]});
+  r.recovery.call=async(_config,input)=>{
+    if(input.action==='inspect')return sample;
+    assert.equal(input.action,'inspect_removal');assert.equal(input.prior.boot_uuid,boot);assert.equal(input.prior.pid,123);assert.equal(input.prior.enrollment,undefined);
+    captures++;return native();
+  };
+  await r.ready();const first=r.recovery.priorIdentity('one');assert.equal(first.boot_uuid,boot);
+  assert.equal(r.store.data.recovery.last_identities.one.boot_uuid,undefined,'original durable identity schema remains readable by older controllers');
+  r.advance(10000);sample={...sample,boot_uuid:null};await r.ready();assert.deepEqual(r.recovery.priorIdentity('one'),first,'transient unknown boot does not erase historical evidence');
+  sample={version:1,machine:config.machine,service_profile:'c'.repeat(64),boot_uuid:boot,removal_capture_version:1,loaded:false,registration:'absent',stopped:false,active:false,pid:0,instance:'',listener:false};
+  r.n.drained=true;await r.ready();assert.equal(captures,1);
+  let status=r.recovery.workerStatus(r.n);assert.equal(status.reason,'launchd_registration_absent');assert.equal(status.eligible,false);assert.equal(status.evidence_id,null);
+  assert.equal(status.removal.status,'exact_removal_observed');assert.equal(status.removal.authority,'none');
+  assert.ok(r.n.drained);assert.ok(r.n.quarantine);assert.equal(r.recovery.state.operations.length,0);
+  for(const privateValue of [boot,first.enrollment,first.instance,first.service_profile])assert.ok(!JSON.stringify(status).includes(privateValue));
+  await r.ready();r.advance(299999);await r.ready();assert.equal(captures,1);r.advance(1);await r.ready();assert.equal(captures,2);
+  const resumed=new Recovery({workers:[local]},{...r.deps,call:r.recovery.call});await resumed.inspect('one');assert.equal(captures,3);assert.equal(resumed.workerStatus(r.n).removal.status,'exact_removal_observed');
+  await resumed.close();await r.recovery.close();
+});
+test('legacy Mac evidence remains valid but cannot imply a boot or launch a native query',async()=>{
+  const r=rig(),local={...config,adapter:'launchd'};r.recovery.configs.set('one',local);
+  let sample={...r.sample(),fault:null,pid:123,service_profile:'c'.repeat(64)};
+  r.recovery.call=async(_c,input)=>{assert.equal(input.action,'inspect');return sample;};await r.ready();
+  assert.equal(r.recovery.priorIdentity('one').boot_uuid,undefined);
+  sample={version:1,machine:config.machine,service_profile:'c'.repeat(64),removal_capture_version:1,loaded:false,registration:'absent',active:false};
+  await r.ready();assert.equal(r.recovery.workerStatus(r.n).removal,null);
+  const resumed=new Recovery({workers:[local]},r.deps);await resumed.close();
+  r.store.data.recovery.last_identity_boots={one:{boot_uuid:'invalid',identity:'a'.repeat(64)}};
+  assert.equal(r.recovery.priorIdentity('one').boot_uuid,undefined,'malformed diagnostic companion cannot grant native-query scope');
+  const invalidCompanion=new Recovery({workers:[local]},r.deps);await invalidCompanion.close();await r.recovery.close();
+});
+test('a late native capture cannot overwrite a newer live identity observation',async()=>{
+  const r=rig(),local={...config,adapter:'launchd'};r.recovery.configs.set('one',local);
+  const live={...r.sample(),fault:null,pid:123,service_profile:'c'.repeat(64),boot_uuid:'12345678-1234-1234-1234-123456789abc',removal_capture_version:1};
+  let sample=live,finish;
+  r.recovery.call=async(_c,input)=>input.action==='inspect'?sample:new Promise(resolve=>{finish=resolve;});await r.ready();r.advance(10000);
+  sample={...live,loaded:false,registration:'absent',active:false};const pending=r.recovery.inspect('one');await new Promise(resolve=>setImmediate(resolve));assert.equal(typeof finish,'function');
+  sample={...live,instance:'2'.repeat(32),pid:456};await r.recovery.inspect('one');finish(unavailableNativeRemoval(r.deps.now()));await pending;
+  assert.equal(r.recovery.workerStatus(r.n).removal,null);assert.equal(r.recovery.priorIdentity('one').pid,456);await r.recovery.close();
+});
+test('native removal evidence is strictly bounded before reaching Genie and carries no offer',()=>{
+  const now=Date.now(),value={...unavailableNativeRemoval(now),status:'exact_removal_observed',source_complete:true,records:1,observations:[{at:now-1000,caller:'loginwindow'}]};
+  assert.deepEqual(safeNativeRemoval(value,{now}),value);
+  for(const change of [{raw:'PRIVATE_LOG'},{authority:'restart'},{status:'invented'},{checked_at:now+10001},{observations:[{at:now-1000,caller:'PRIVATE_CALLER'}]},
+    {status:'conflicting_callers'},{native_stop_caller_observed:true},{records:0},{source_complete:false},{observations_omitted:-1},{observations:Array(17).fill(value.observations[0])}])assert.equal(safeNativeRemoval({...value,...change},{now}),null);
+  const snapshot={time:new Date(now).toISOString(),devices:[],gateway:{workers:[{id:'one'}],recovery:{automatic:true,workers:[{worker_id:'one',configured:true,reason:'launchd_registration_absent',eligible:false,removal:value}]}}};
+  const brief=briefing(snapshot);assert.deepEqual(brief.workers[0].recovery_evidence.removal,value);assert.deepEqual(brief.recovery.offers,[]);
+  snapshot.gateway.recovery.workers[0].removal={...value,raw:'PRIVATE_LOG'};assert.equal(briefing(snapshot).workers[0].recovery_evidence.removal,null);assert.ok(!JSON.stringify(briefing(snapshot)).includes('PRIVATE_LOG'));
 });
 test('launchd absence diagnostics reach Genie but never authorize recovery or override a pause',async()=>{
   for(const [registration,loaded,reason] of [['absent',false,'launchd_registration_absent'],['gui_domain_unavailable',null,'launchd_gui_domain_unavailable'],['unverified',null,'launchd_state_unverified']]){

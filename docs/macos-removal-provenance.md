@@ -59,8 +59,49 @@ caller name does not explain intent: even loginwindow may be acting on an
 intentional user action. This CLI does not query live services, change routing,
 write an enrollment, invoke launchctl, or feed a recovery offer to Genie.
 
-Before automated bootstrap, native capture needs a trusted live path joined to
-the controller's retained instance evidence, a verified retained service
-definition, current GUI/native-disable/DSG-hold checks, durable one-shot execution,
-and an approved real removed-job cold/warm canary. Those capabilities are still
-separate work. See [worker recovery](worker-recovery.md).
+## Direct native capture through the enrolled helper
+
+The updated Mac helper now supports fixed `inspect_removal` diagnostics. This
+does **not** accept an archive, path, predicate, label or shell command from Genie.
+The gateway supplies only its previously retained private service identity; the
+helper independently checks its machine, boot, static profile and current job
+absence, then queries `/usr/bin/log` itself. It rechecks boot, profile and absence
+after capture. A job appearing during the query suppresses positive evidence.
+
+The query uses the exact configured label, retained PID and current owner UID,
+explicit UTC times, a maximum four-hour lookback, a thirty-second diagnostic
+allowance and a two-MiB combined pipe bound. It checks the native sender, boot,
+event timestamps and count-checked complete footer. Output contains only bounded
+status, counts, timestamps and caller classes; raw records are never sent back
+to the gateway. Stream errors, limits, malformed records and changed identity
+remain unknown evidence. These bounds do not alter inference/provider deadlines.
+
+On an enrolled Mac, normal inspections now retain the observed native boot UUID
+in a private companion record bound to the complete service-identity digest.
+The original identity-record format stays unchanged for older controllers.
+Legacy records without boot evidence, mismatched companions and changed enrollment
+cannot seed native queries. A transient unreadable boot does not erase an earlier
+historical observation or imply that it is fresh.
+
+For a confirmed absent job with matching retained evidence and a capable helper,
+the recovery controller runs this diagnostic at most once per five minutes for
+the same identity. Changed identity/state invalidates it; a late result cannot
+replace newer live-service evidence. Capture failures do not create recovery
+operations or change worker health. The bounded result is exposed as `removal`
+in recovery worker status and included in Genie's evidence with `authority:none`.
+Genie must report its `checked_at` time, distinguish caller from intent, and respect
+all operator reservations. No bootstrap offer is created by this result.
+
+This is a direct query by an explicitly enrolled helper, not cryptographic OS
+attestation. The caller still does not prove an accidental stop; the native record
+identifies a PID/boot, not a full proof against every possible PID-reuse history.
+`no_exact_removal_record` still does not prove that nothing happened, and capture
+completeness still does not guarantee full OS retention. Do not reinterpret these
+diagnostics as automatic start permission.
+
+Before automated bootstrap, DSG still needs separately approved restore policy,
+a [verified retained definition](macos-retained-definition.md), command-time
+GUI/native-disable/DSG-hold and listener checks, durable one-shot execution, and an
+approved real removed-job cold/warm canary. Those capabilities remain separate
+work. Updating the source checkout does not deploy a helper or enroll a real Mac.
+See [worker recovery](worker-recovery.md).

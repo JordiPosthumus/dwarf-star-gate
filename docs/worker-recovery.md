@@ -407,7 +407,9 @@ The controller now retains one **private last-identity observation per enrolled
 Mac worker** in its existing recovery state. It records the exact PID, instance,
 start time, machine/profile/static identity and an enrollment-binding digest only
 after a matching active service-owned listener inspection with no reported fault.
-This is identity evidence, not a generation-health certificate. The timestamp is
+An optional private boot companion is bound to that complete record's digest;
+legacy identity records remain readable without it. This is identity evidence,
+not a generation-health certificate. The timestamp is
 when that identity was first retained, not a continuously refreshed liveness clock.
 Unchanged polls do not rewrite it; a newly observed identity replaces this single
 snapshot. Existing action journals are untouched. No prompts, output, paths or
@@ -416,13 +418,16 @@ identity digests are added to public status or Genie briefs.
 The observation survives controller restart and an absent/failed inspection;
 changed enrollment bindings make it unusable. A missing, malformed or failed
 write cannot seed later removal evidence. Historical identity alone never creates
-a recovery offer or authorizes a start. Matching it to exact OS removal provenance,
-explicit stop-intent vetoes and retained-definition bootstrap remains unfinished.
+a recovery offer or authorizes a start. Direct native removal diagnostics are now
+joined to retained PID/boot evidence; explicit restoration policy, command-time
+stop-intent vetoes and retained-definition bootstrap remain unfinished.
 
 The [native removal auditor](macos-removal-provenance.md) now checks archived
 launchd records by exact structured subsystem, PID, boot and time window. It
 distinguishes a caller observation from unknown intent and rejects incomplete
-captures. It is an offline diagnostic, not an automatic recovery offer.
+captures. The updated enrolled helper can also query macOS directly when a job
+is absent; the controller rate-limits these diagnostics and gives bounded results
+to Genie. Neither an archived result nor a direct capture creates a recovery offer.
 
 The [retained-definition agent preflight](macos-retained-definition.md) now checks
 an optional private content pin without rewriting the plist or issuing commands.

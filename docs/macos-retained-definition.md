@@ -70,7 +70,8 @@ owns its listener. The [native-removal audit](macos-removal-provenance.md) likew
 grants no action authority.
 
 Restoration still needs separately approved bootstrap enrollment, trusted live
-removal provenance tied to the prior process/boot, current native-disable and
+removal provenance tied to the prior process/boot (direct diagnostic capture is
+now implemented, but grants no authority), current native-disable and
 DSG-maintenance vetoes, exact dependencies, safe command-time identity checks,
 durable one-shot issuance, and an approved real removed-job canary proving
 generation and cold-to-warm cache reuse before readmission. These capabilities

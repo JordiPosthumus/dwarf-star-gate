@@ -1,5 +1,19 @@
 # Changelog
 
+## Join direct native removal diagnostics to Mac recovery evidence
+
+- Retain a private boot companion bound to the complete service identity without
+  changing the legacy identity-record schema. Missing/stale boot evidence grants
+  no query scope; transient unknown boot readings do not erase known history.
+- Add a fixed enrolled-helper native query with bounded stdout/stderr, exact
+  PID/boot/sender/time matching and post-capture absence/profile/boot rechecks.
+- Rate-limit same-identity diagnostics to five minutes, discard superseded
+  results, and pass strictly bounded evidence to Genie without creating recovery
+  offers, changing health, or authorizing bootstrap. Preserve operator holds.
+- Add controller/privacy/protocol/native-format/real-pipe regressions and verify
+  the capture/parser against a real historical incident. Helper deployment, actual
+  enrollment, restoration authority and a removed-job canary remain separate.
+
 ## Verify explicitly retained Mac launch definitions
 
 - Add optional private `retained_definition_sha256` and fixed read-only

@@ -18,6 +18,7 @@ import os
 from pathlib import Path
 import plistlib
 import re
+import selectors
 import socket
 import stat
 import struct
@@ -86,6 +87,129 @@ def machine_identity():
     if not match:
         raise ValueError("machine_identity_unavailable")
     return digest(match.group(1).lower().encode())
+
+
+def boot_identity():
+    try:
+        value, code = run(["/usr/sbin/sysctl", "-n", "kern.bootsessionuuid"], check=False)
+        value = value.strip().lower()
+        return value if code == 0 and re.fullmatch(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}", value) else None
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def bounded_capture(command, timeout=30, max_bytes=2 * 1024 * 1024):
+    """Fixed internal commands only; bound pipe bytes before storing them."""
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL)
+    deadline, total, output = time.monotonic() + timeout, 0, []
+    try:
+        with selectors.DefaultSelector() as streams:
+            streams.register(process.stdout, selectors.EVENT_READ)
+            streams.register(process.stderr, selectors.EVENT_READ)
+            while streams.get_map():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise ValueError("capture_timeout")
+                for key, _ in streams.select(remaining):
+                    chunk = os.read(key.fileobj.fileno(), 65536)
+                    if not chunk:
+                        streams.unregister(key.fileobj)
+                        continue
+                    total += len(chunk)
+                    if total > max_bytes:
+                        raise ValueError("capture_output_limit")
+                    if key.fileobj is process.stdout:
+                        output.append(chunk)
+            if process.wait(timeout=max(0.001, deadline - time.monotonic())) != 0:
+                raise ValueError("capture_unavailable")
+        return b"".join(output).decode("utf-8", errors="strict")
+    except subprocess.TimeoutExpired:
+        raise ValueError("capture_timeout") from None
+    finally:
+        if process.poll() is None:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+        try:
+            process.wait(timeout=2)
+        finally:
+            process.stdout.close()
+            process.stderr.close()
+
+
+def removal_timestamp(value):
+    if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:?\d{2})", value):
+        raise ValueError("capture_incomplete")
+    return int(datetime.datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp() * 1000)
+
+
+def audit_native_removal(text, label, pid, boot, since, until):
+    lines = text.splitlines()
+    if not text.endswith("\n") or not 1 <= len(lines) <= 10001 or len(text.encode()) > 2 * 1024 * 1024:
+        raise ValueError("capture_incomplete")
+    rows = [json.loads(line) for line in lines]
+    if (not isinstance(rows[-1], dict) or rows[-1] != {"count": len(rows) - 1, "finished": 1} or set(rows[-1]) != {"count", "finished"}
+            or type(rows[-1]["count"]) is not int or type(rows[-1]["finished"]) is not int):
+        raise ValueError("capture_incomplete")
+    observations = set()
+    for row in rows[:-1]:
+        if not isinstance(row, dict) or row.get("eventType") != "logEvent":
+            raise ValueError("capture_incomplete")
+        at = removal_timestamp(row.get("timestamp"))
+        if (row.get("subsystem") != f"gui/{os.getuid()}/{label} [{pid}]" or type(row.get("processID")) is not int or row.get("processID") != 1
+                or row.get("processImagePath") != "/sbin/launchd" or row.get("senderImagePath") != "/sbin/launchd"
+                or str(row.get("bootUUID", "")).lower() != boot or not since <= at <= until):
+            continue
+        match = re.fullmatch(r"removing job: caller = ([A-Za-z0-9_.-]{1,128})", str(row.get("eventMessage", "")))
+        if match:
+            caller = match[1] if match[1] in {"loginwindow", "launchctl", "runningboardd"} else "other"
+            observations.add((at, caller))
+    callers = {caller for _, caller in observations}
+    return {"status": "conflicting_callers" if len(callers) > 1 else "exact_removal_observed" if observations else "no_exact_removal_record",
+            "source_complete": True, "records": len(rows) - 1,
+            "observations": [{"at": at, "caller": caller} for at, caller in sorted(observations)[-16:]],
+            "observations_omitted": max(0, len(observations) - 16),
+            "native_stop_caller_observed": "launchctl" in callers}
+
+
+def inspect_removal(config, prior):
+    checked = round(time.time() * 1000)
+    result = {"version": 1, "source": "native_launchd", "authority": "none", "checked_at": checked,
+              "status": "prior_identity_unverified", "source_complete": False, "records": 0,
+              "observations": [], "observations_omitted": 0, "native_stop_caller_observed": False}
+    fields = {"instance", "machine", "profile", "service_profile", "pid", "started_at", "observed_at", "boot_uuid"}
+    if (not isinstance(prior, dict) or set(prior) != fields
+            or any(not isinstance(prior[k], str) or not re.fullmatch(r"[a-f0-9]{64}", prior[k]) for k in ("machine", "profile", "service_profile"))
+            or not isinstance(prior["boot_uuid"], str) or not re.fullmatch(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}", prior["boot_uuid"])
+            or type(prior["pid"]) is not int or not 2 <= prior["pid"] <= 2147483647
+            or any(type(prior[k]) is not int for k in ("started_at", "observed_at"))
+            or not 0 <= prior["started_at"] <= prior["observed_at"] <= checked):
+        return result
+    instance = digest(json.dumps({"label": config["label"], "machine": prior["machine"], "pid": prior["pid"], "started_at": prior["started_at"]}, sort_keys=True).encode())[:32]
+    if prior["instance"] != instance:
+        return result
+    try:
+        if machine_identity() != prior["machine"]:
+            return {**result, "status": "machine_changed"}
+        if boot_identity() != prior["boot_uuid"]:
+            return {**result, "status": "boot_unverified_or_changed"}
+        if service_profile(config) != prior["service_profile"]:
+            return {**result, "status": "service_profile_changed"}
+        if launch_state(config).get("registration") != "absent":
+            return {**result, "status": "job_not_absent"}
+        since = max(prior["observed_at"], checked - 4 * 3600000)
+        dates = lambda ms: datetime.datetime.fromtimestamp(ms / 1000, datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S+0000")
+        predicate = f'processID == 1 AND processImagePath == "/sbin/launchd" AND subsystem == "gui/{os.getuid()}/{config["label"]} [{prior["pid"]}]"'
+        text = bounded_capture(["/usr/bin/log", "show", "--style", "ndjson", "--start", dates(since), "--end", dates(checked + 1000), "--predicate", predicate])
+        evidence = audit_native_removal(text, config["label"], prior["pid"], prior["boot_uuid"], since, checked)
+        if (boot_identity() != prior["boot_uuid"] or launch_state(config).get("registration") != "absent"
+                or service_profile(config) != prior["service_profile"]):
+            return {**result, "status": "identity_changed_during_capture"}
+        return {**result, **evidence}
+    except Exception as error:
+        reason = str(error) if str(error) in {"capture_timeout", "capture_output_limit", "capture_unavailable"} else "capture_incomplete"
+        return {**result, "status": reason}
 
 
 def service_profile(config):
@@ -426,6 +550,8 @@ def inspect(config):
         "active": state["active"],
         "listener": False,
         "native_disabled": native_disabled(config),
+        "boot_uuid": boot_identity(),
+        "removal_capture_version": 1,
     }
     if not state["active"]:
         if state["loaded"] is None:
@@ -495,6 +621,8 @@ def handle(config, request, state_path):
         return inspect(config)
     if request == {"action": "inspect_definition"}:
         return inspect_definition(config)
+    if isinstance(request, dict) and set(request) == {"action", "prior"} and request["action"] == "inspect_removal":
+        return inspect_removal(config, request["prior"])
     restart_fields = {"action", "action_id", "instance", "machine", "profile", "canary", "fault_after"}
     start_fields = {"action", "action_id", "stopped_epoch", "machine", "service_profile"}
     action = request.get("action")
