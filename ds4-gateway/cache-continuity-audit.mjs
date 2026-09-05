@@ -123,16 +123,20 @@ export function auditCacheContinuity(input,{maxAgeMs=DEFAULT_MAX_AGE_MS,maxEvent
   const previousBySession=new Map(),reasons={},classifications={},workers=Object.create(null),ratios=[],strongRatios=[];
   let candidate_pairs=0,assessed_pairs=0,strong_guard_pairs=0;
   for(const current of ordered){
+    const node=ID.test(current.decision.node??'')?current.decision.node:'unknown';
+    const worker=workers[node]??={requests:0,candidate_pairs:0,assessed_pairs:0,strong_guard_pairs:0,reuse_observed:0,partial_reuse:0,high_suspicion_low_reuse:0,unconfirmed_low_reuse:0,abstention_reasons:{},first_request_at:current.decision_at,last_request_at:null,last_assessed_at:null,last_low_reuse_at:null,ratios:[]};
+    worker.requests++;worker.last_request_at=current.decision_at;
+    const abstain=reason=>{tally(reasons,reason);tally(worker.abstention_reasons,reason);};
     const previous=previousBySession.get(current.session);previousBySession.set(current.session,current);
-    if(!previous){tally(reasons,'no_prior_session_request');continue;}
-    candidate_pairs++;
-    if(previous.run_id!==current.run_id){tally(reasons,'gateway_run_changed');continue;}
+    if(!previous){abstain('no_prior_session_request');continue;}
+    candidate_pairs++;worker.candidate_pairs++;
+    if(previous.run_id!==current.run_id){abstain('gateway_run_changed');continue;}
     const result=jobGate(previous,current,maxAgeMs);
-    if(result.reason){tally(reasons,result.reason);continue;}
+    if(result.reason){abstain(result.reason);continue;}
     assessed_pairs++;tally(classifications,result.classification);ratios.push(result.ratio);
     if(result.strong_guards){strong_guard_pairs++;strongRatios.push(result.ratio);}
-    const node=ID.test(current.finish.node??'')?current.finish.node:'unknown';
-    const worker=workers[node]??={assessed_pairs:0,strong_guard_pairs:0,reuse_observed:0,partial_reuse:0,high_suspicion_low_reuse:0,unconfirmed_low_reuse:0,ratios:[]};
+    worker.last_assessed_at=Math.max(worker.last_assessed_at??-Infinity,current.finish_at);
+    if(result.classification.endsWith('low_reuse'))worker.last_low_reuse_at=Math.max(worker.last_low_reuse_at??-Infinity,current.finish_at);
     worker.assessed_pairs++;if(result.strong_guards)worker.strong_guard_pairs++;worker[result.classification]++;worker.ratios.push(result.ratio);workers[node]=worker;
   }
   for(const worker of Object.values(workers)){worker.median_reuse_ratio=rounded(median(worker.ratios));delete worker.ratios;}

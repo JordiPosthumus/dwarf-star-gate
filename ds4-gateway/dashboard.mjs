@@ -305,7 +305,7 @@ export async function runDashboard(configPath, port) {
   const started = Date.now();
   const managementEnabled = config.ui_worker_management === true && !!config.control_socket;
   const snapshot = () => ({ service:'dwarf-star-gate-dashboard', version: 1, time: Date.now(), started, read_only: !managementEnabled, worker_management:managementEnabled, gateway, gateway_at: gatewayAt, gateway_error: gatewayError, telemetry_error: writeError,
-    continuity_door:continuityDoor,continuity_door_error:continuityDoorError,rate_peaks:ratePeaks.snapshot(),
+    continuity_door:continuityDoor,continuity_door_error:continuityDoorError,rate_peaks:ratePeaks.snapshot(),cache_continuity:analytics.cacheSnapshot(),
     devices: [...devices.values()].map(d => ({...d.snapshot(),activity:activity.get(d.id),hardware:hardware.snapshot(d.id)})), events, attribution:attribution.snapshot(), notes: 'Rates are DS4 engine measurements. Cache counts cover observed prompt starts, not lifetime requests. Raw prompts and responses are excluded.' });
   const memory=new GenieMemory(path.join(path.dirname(config.state_file),'genie','memory'));
   const providerLedger=new GenieProviderLedger(path.join(path.dirname(config.state_file),'genie','actions'));

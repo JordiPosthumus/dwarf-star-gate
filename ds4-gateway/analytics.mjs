@@ -3,6 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {FleetThroughput} from './throughput.mjs';
+import {CacheContinuityEvidence} from './cache-continuity-evidence.mjs';
 
 const validId = x => typeof x === 'string' && /^[\w-]{1,64}$/.test(x);
 const number = x => Number.isFinite(x) && x >= 0 ? x : null;
@@ -145,6 +146,7 @@ export class AnalyticsReader {
   constructor(directory,{enabled=false,readBytes=READ_BYTES,tailBytes=TAIL_BYTES}={}) {
     Object.assign(this,{directory,enabled,readBytes,tailBytes});this.cursors=new Map();this.evidence=new PredictionEvidence();this.handovers=new HandoverEvidence();this.throughput=new FleetThroughput();
     this.status='waiting';this.lastRead=null;this.partialHistory=false;this.malformed=0;this.rescans=0;this.scanReason='initial_read';this.skippedBytes=0;
+    this.cacheContinuity=new CacheContinuityEvidence();
   }
   poll(now=Date.now()) {
     if(!this.enabled)return;
@@ -152,7 +154,7 @@ export class AnalyticsReader {
       if(!fs.lstatSync(this.directory).isDirectory())throw new Error('Not a directory');
       const files=fs.readdirSync(this.directory).filter(f=>/^routing-\d{4}-\d{2}-\d{2}\.jsonl$/.test(f)).sort().slice(-2);
       if([...this.cursors.keys()].some(file=>!files.includes(file))) {
-        this.cursors.clear();this.evidence=new PredictionEvidence();this.handovers=new HandoverEvidence();this.throughput=new FleetThroughput();this.rescans++;this.scanReason='daily_window_changed';this.skippedBytes=0;this.partialHistory=false;this.status='rescanning';return;
+        this.cursors.clear();this.evidence=new PredictionEvidence();this.handovers=new HandoverEvidence();this.throughput=new FleetThroughput();this.cacheContinuity=new CacheContinuityEvidence();this.rescans++;this.scanReason='daily_window_changed';this.skippedBytes=0;this.partialHistory=false;this.status='rescanning';return;
       }
       let backlog=false;
       for(const file of files) {
@@ -169,10 +171,14 @@ export class AnalyticsReader {
           if(changed) {
             // Rebuild a bounded window after replacement/truncation; do not mix
             // old labels with a new file that happens to reuse request IDs.
-            this.cursors.clear();this.evidence=new PredictionEvidence();this.handovers=new HandoverEvidence();this.throughput=new FleetThroughput();this.rescans++;this.scanReason='file_replaced_or_rewritten';this.skippedBytes=0;this.partialHistory=false;this.status='rescanning';return;
+            this.cursors.clear();this.evidence=new PredictionEvidence();this.handovers=new HandoverEvidence();this.throughput=new FleetThroughput();this.cacheContinuity=new CacheContinuityEvidence();this.rescans++;this.scanReason='file_replaced_or_rewritten';this.skippedBytes=0;this.partialHistory=false;this.status='rescanning';return;
           }
           if(!c) {
             const offset=Math.max(0,stat.size-this.tailBytes);this.partialHistory ||= offset>0;this.skippedBytes+=offset;
+            // Each daily tail can omit a middle interval. Never compare across
+            // that gap: retain only the contiguous suffix for cache continuity.
+            // Forecast analytics keeps its separately documented window.
+            if(offset>0)this.cacheContinuity=new CacheContinuityEvidence();
             c={identity,offset,fragment:Buffer.alloc(0),skipping:offset>0,anchor:Buffer.alloc(0)};this.cursors.set(file,c);
           }
           const length=Math.min(this.readBytes,Math.max(0,stat.size-c.offset)),chunk=Buffer.alloc(length);
@@ -181,12 +187,13 @@ export class AnalyticsReader {
           let from=0,end;
           while((end=buffer.indexOf(10,from))>=0) {
             if(!c.skipping && end-from<=LINE_BYTES) {
-              try {const row=JSON.parse(buffer.subarray(from,end).toString('utf8'));this.evidence.accept(row);this.handovers.accept(row);this.throughput.accept(row);} catch {this.malformed++;}
-            } else if(!c.skipping)this.malformed++;
+              try {const row=JSON.parse(buffer.subarray(from,end).toString('utf8'));this.evidence.accept(row);this.handovers.accept(row);this.throughput.accept(row);this.cacheContinuity.accept(row);} catch {this.malformed++;this.cacheContinuity.invalidate();}
+            } else if(!c.skipping){this.malformed++;this.cacheContinuity.invalidate();}
             c.skipping=false;from=end+1;
           }
           c.fragment=Buffer.from(buffer.subarray(from));
-          if(c.fragment.length>LINE_BYTES || c.skipping){if(!c.skipping)this.malformed++;c.fragment=Buffer.alloc(0);c.skipping=true;}
+          if(c.fragment.length>LINE_BYTES || c.skipping){if(!c.skipping){this.malformed++;this.cacheContinuity.invalidate();}c.fragment=Buffer.alloc(0);c.skipping=true;}
+          if(c.fragment.length&&file!==files.at(-1))this.cacheContinuity.invalidate();
           c.anchor=Buffer.alloc(Math.min(64,c.offset));
           if(c.anchor.length)fs.readSync(fd,c.anchor,0,c.anchor.length,c.offset-c.anchor.length);
           backlog ||= c.offset<stat.size;
@@ -206,5 +213,8 @@ export class AnalyticsReader {
       throughput:this.throughput.snapshot(now),
       handovers:this.handovers.snapshot(),
       ...this.evidence.snapshot()};
+  }
+  cacheSnapshot(now=Date.now()) {
+    return this.cacheContinuity.snapshot(now,{enabled:this.enabled,status:this.status,partialHistory:this.partialHistory});
   }
 }

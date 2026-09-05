@@ -14,6 +14,20 @@ import {cacheInventoryDirectories} from './cache-inventory.mjs';
 import './rate-peaks.test.mjs';
 const parse = (s, t = 1000) => parseTiming(`0902 14:00:00 ds4-server: ${s}`, t);
 
+test('cache cards distinguish low-reuse evidence, disk-load time and unknown loss cost',()=>{
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const context=vm.createContext({});vm.runInContext(source,context);
+  const render=d=>vm.runInContext(`cacheHealthMarkup(${JSON.stringify(d)},100000)`,context);
+  const d={id:'worker',cache:{cold:2,resident_misses:3,disk_restores:2},cache_observed_since:1000,cache_cost:{samples:[{kind:'disk_load',time:90000,ms:1200},{kind:'disk_load',time:95000,ms:300}]},cache_continuity:{status:'ready',checked_at:99000,workers:{worker:{candidate_pairs:5,assessed_pairs:3,high_suspicion_low_reuse:1,unconfirmed_low_reuse:1,last_low_reuse_at:90000,abstention_reasons:{worker_profile_changed:2}}}}};
+  const html=render(d);assert.match(html,/Cache checks/);assert.match(html,/2 low-reuse turns/);assert.match(html,/3 of 5 consecutive pairs/);assert.match(html,/1 possible lost-reuse turn · 1 unconfirmed/);
+  assert.match(html,/1.5s in 2 measured disk-load spans/);assert.match(html,/Extra time caused by lost reuse: unknown/);assert.match(html,/not necessarily a fault/);
+  assert.doesNotMatch(html,/Cache \+ session|assigned sessions|Prefix reused/);
+  d.cache_continuity.status='source_gap';assert.match(render(d),/Evidence gap/);assert.doesNotMatch(render(d),/2 low-reuse turns/);
+  delete d.cache_continuity;assert.match(render(d),/Not enough evidence/);
+  d.cache_continuity={status:'ready',workers:{worker:{assessed_pairs:1,candidate_pairs:1,abstention_reasons:{'<img onerror=bad()>':1}}}};
+  assert.doesNotMatch(render(d),/<img/);assert.match(render(d),/No low reuse in 1 pair/);
+});
+
 test('dashboard folds connection and diagnostics into its single identity header',()=>{
   const html=fs.readFileSync(new URL('./ui/index.html',import.meta.url),'utf8');
   assert.equal((html.match(/<header\b/g)||[]).length,1);

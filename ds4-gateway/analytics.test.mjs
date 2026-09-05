@@ -7,6 +7,7 @@ import vm from 'node:vm';
 import {once} from 'node:events';
 import {AnalyticsReader,HandoverEvidence,PredictionEvidence} from './analytics.mjs';
 import {createDashboard} from './dashboard.mjs';
+import {CacheContinuityEvidence} from './cache-continuity-evidence.mjs';
 
 let seq=0;
 function row(kind,extra={}) {
@@ -20,6 +21,55 @@ function fixture(t,options={}) {
   return {dir,file:path.join(dir,'routing-2000-01-01.jsonl'),reader:new AnalyticsReader(dir,{enabled:true,...options})};
 }
 const serialize=rows=>rows.map(r=>JSON.stringify(r)+'\n').join('');
+function cachePair(){
+  return [1,2].flatMap(i=>[
+    row('decision',{request_id:`cache-${i}`,time:new Date(i*10000).toISOString(),session:'b'.repeat(64),affinity:i===1?'new':'existing',client_metadata:{schema:1,status:'ready',turn_index:i,compaction_count:0},candidates:[{node:'worker-a',profile:'a'.repeat(64),observation_epoch:1}]}),
+    row('finish',{request_id:`cache-${i}`,time:new Date(i*10000+1000).toISOString(),outcome:'complete',finish_reason:'stop',route:'/v1/chat/completions',usage:{prompt_tokens:1000,cached_tokens:0}}),
+  ]);
+}
+test('cache dashboard projection is private, bounded and evaluated at most every 15 seconds',()=>{
+  const evidence=new CacheContinuityEvidence(),rows=cachePair();
+  for(const r of rows)evidence.accept({...r,prompt:'NEVER_EXPORT',vectors:['NEVER_EXPORT']});
+  const first=evidence.snapshot(30000);
+  assert.equal(first.workers['worker-a'].high_suspicion_low_reuse,1);
+  const stored=JSON.stringify(evidence.events);assert.ok(!stored.includes('NEVER_EXPORT'));
+  const shown=JSON.stringify(first);for(const value of ['b'.repeat(64),'a'.repeat(64),'cache-1','event-','NEVER_EXPORT'])assert.ok(!shown.includes(value));
+  evidence.accept(row('finish',{request_id:'other'}));
+  assert.equal(evidence.snapshot(31000).checked_at,30000);
+  assert.equal(evidence.snapshot(45000).checked_at,45000);
+  assert.deepEqual(evidence.snapshot(45000,{status:'catching_up'}).workers,{});
+  assert.deepEqual(evidence.snapshot(45000,{enabled:false}).workers,{});
+  const bounded=new CacheContinuityEvidence({maxEvents:2});rows.forEach(r=>bounded.accept(r));
+  assert.equal(bounded.snapshot(50000).status,'event_limit');assert.equal(bounded.events.length,2);
+  const bytes=new CacheContinuityEvidence({maxBytes:1024});
+  rows.forEach(r=>bytes.accept(r));
+  assert.equal(bytes.snapshot(50000).status,'event_limit');assert.ok(bytes.bytes<=1024);
+  const invalid=new CacheContinuityEvidence();invalid.accept({...rows[0],node:{prompt:'NEVER_EXPORT'}});
+  assert.equal(invalid.snapshot(50000).status,'invalid_evidence');assert.equal(invalid.events.length,0);
+});
+test('malformed or skipped source rows withhold cache claims without breaking prediction analytics',t=>{
+  const f=fixture(t);fs.writeFileSync(f.file,serialize(cachePair())+'not json\n');f.reader.poll(30000);
+  assert.equal(f.reader.snapshot().status,'ready');assert.equal(f.reader.cacheSnapshot(30000).status,'source_gap');
+  assert.deepEqual(f.reader.cacheSnapshot(30000).workers,{});
+  fs.writeFileSync(f.file,serialize(cachePair()));f.reader.poll(40000);
+  assert.equal(f.reader.cacheSnapshot(40000).status,'rescanning');f.reader.poll(50000);
+  assert.equal(f.reader.cacheSnapshot(50000).workers['worker-a'].high_suspicion_low_reuse,1);
+});
+test('cache source tail gaps cannot stitch a pair across omitted daily content',t=>{
+  const f=fixture(t,{tailBytes:1500}),rows=cachePair();
+  fs.writeFileSync(f.file,serialize(rows.slice(0,2)));
+  fs.writeFileSync(path.join(f.dir,'routing-2000-01-02.jsonl'),'x'.repeat(2000)+'\n'+serialize(rows.slice(2)));
+  f.reader.poll(30000);const result=f.reader.cacheSnapshot(30000);
+  assert.equal(result.partial_history,true);assert.equal(result.workers['worker-a'].assessed_pairs,0);
+  assert.equal(result.workers['worker-a'].abstention_reasons.no_prior_session_request,1);
+});
+test('an unfinished older daily line is a cache continuity gap, not an ignorable middle request',t=>{
+  const f=fixture(t),rows=cachePair();
+  fs.writeFileSync(f.file,serialize(rows.slice(0,2))+'{"kind":"decision"');
+  fs.writeFileSync(path.join(f.dir,'routing-2000-01-02.jsonl'),serialize(rows.slice(2)));
+  f.reader.poll(30000);assert.equal(f.reader.cacheSnapshot(30000).status,'source_gap');
+  assert.deepEqual(f.reader.cacheSnapshot(30000).workers,{});
+});
 test('versioned embedding and progress streams are ignored, not reported as broken analytics joins',()=>{
   const e=new PredictionEvidence();for(const r of lifecycle())e.accept(r);
   for(const kind of ['embedding','request_features','progress','waiting','queue_relocation'])e.accept(row(kind));

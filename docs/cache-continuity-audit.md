@@ -75,6 +75,36 @@ limits the audit, not data collection or inference.
 
 ## Evidence boundary
 
+### Machine-card view
+
+Each machine's **Cache checks** row summarizes recent low-reuse turns. Expand it
+for assessed/candidate pair coverage, recency, abstention reasons and a next
+diagnostic check. Possible lost reuse and unconfirmed low reuse stay distinct;
+neither is engine-protocol proof. Engine RAM misses, disk restores and starts
+without reuse are separate observations over the displayed observation epoch.
+A new or edited prompt can legitimately start without reuse.
+
+Disk-load spans are measured components from the last hour (up to 128 retained
+components), not total cache acquisition or time lost to a miss. Extra time
+caused by lost reuse remains unknown. No counterfactual cost is invented.
+
+The dashboard reuses its existing bounded analytics file reader. Its private
+projection retains only continuity fields, at most 16,384 relevant events and
+8 MiB of serialized projected data; JavaScript object overhead is additional.
+It recalculates only after changes and at most once per 15 seconds. Source reads
+remain on the existing schedule. There is no additional inference, model fitting,
+cache access, raw text/vector retention, or dataset write.
+
+This is the latest contiguous retained suffix of the reader's most recent two
+daily files (up to 8 MiB per file), not a lifetime audit. A skipped daily prefix
+starts a new cache view so pairs cannot span the missing interval. Malformed or
+oversized middle lines and unfinished older-file tails withhold findings; file
+replacement/rotation rebuilds the view. Exhausting either projection budget shows
+“Evidence window full” until a rebuild, instead of silently dropping middle
+requests. These limits bound the dashboard view, not collection or retention.
+Disabled collection and empty installations show missing evidence without
+requiring any predictor, encoder or model files. Inference remains independent.
+
 Even the high-suspicion class is not proof of an engine defect. Client metadata
 is an untrusted hint, a gateway observation epoch is not an OS process identity,
 and a user can branch or edit history without changing a session ID. DSG does not

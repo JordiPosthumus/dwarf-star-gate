@@ -30,10 +30,12 @@ Private deployment receipts and measurements stay out of this public plan.
    no input-order choice may become a suspected cache-loss alert. Check fresh ordinary
    traffic across process epochs; synthetic speed gains alone are not live proof.
    Continue focused lifecycle/privacy/retention checks rather than broad rewrites.
-2. **Make cache misses actionable.** Replace the vague machine-card cache summary
-   with expected cold work, RAM misses recovered from disk and evidence-backed
-   lost prefix reuse. Show cost, recency, coverage and justified next checks;
-   unknown cause/cost stays unknown. See the [cache-miss design](roadmap.md#planned-actionable-cache-misses-in-machine-cards).
+2. **Make cache misses actionable.** The machine-card view now separates low-reuse
+   findings, unconfirmed evidence, engine RAM misses/disk restores and starts
+   without reuse. It shows coverage, recency, measured disk-load spans and next
+   checks. Strong backend/prefix attribution and causal lost-time measurement
+   remain work; unknown cause/cost stays unknown. See the
+   [cache audit and card contract](cache-continuity-audit.md#machine-card-view).
 3. **Make Genie suggestions useful to developers.** Reconcile repeated or
    contradictory transport labels, group incidents, identify already implemented
    safeguards, and mark resolved/superseded hypotheses. Require a specific

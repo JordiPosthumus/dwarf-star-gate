@@ -66,6 +66,14 @@ try {
   assert.ok((await thinking.boundingBox()).height<40,'Thinking settings use a compact single row');
   assert.equal(await page.locator('#devices .metric-block>.label').first().innerText(),'DECODE');
   assert.equal(await page.locator('#devices .metric-block>.label').nth(1).innerText(),'PREFILL');
+  const cacheCard=page.locator('#devices .device-evidence').first();
+  assert.match(await cacheCard.locator('summary').innerText(),/Cache checks.*2 low-reuse turns/s);
+  await cacheCard.locator('summary').click();
+  assert.match(await cacheCard.innerText(),/Extra time caused by lost reuse: unknown/);
+  assert.match(await cacheCard.innerText(),/Not proof of a cache defect/);
+  await page.waitForTimeout(16000);
+  assert.equal(await cacheCard.getAttribute('open'),'','Fleet polling must retain expanded cache evidence');
+  await cacheCard.locator('summary').click();
   assert.equal(await page.locator('#tab-fleet').getAttribute('aria-selected'),'true');
   assert.equal(await page.locator('#view-fleet').isVisible(),true);
   assert.equal(await page.locator('#view-genie').isHidden(),true);

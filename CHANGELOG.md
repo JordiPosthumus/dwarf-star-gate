@@ -1,5 +1,16 @@
 # Changelog
 
+## Show actionable cache checks in machine cards
+
+- Project bounded per-worker continuity findings with pair coverage, timestamps
+  and abstention reasons; recompute at most every 15 seconds on changed evidence.
+- Share existing analytics I/O without exporting raw session/request identifiers,
+  text or vectors. Do not bridge omitted daily prefixes or malformed middle rows.
+- Distinguish possible/unconfirmed lost reuse from RAM misses, disk restores and
+  measured disk-load spans; leave causal lost time unknown.
+- Preserve expanded details across polling, retain mobile summaries and update
+  synthetic screenshots. Empty or disabled optional evidence remains nonfatal.
+
 ## Keep cache-continuity findings independent of file order
 
 - Fence tied admission timestamps within a session/run rather than selecting an

@@ -10,6 +10,12 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Made machine-card cache checks actionable.** Replace session counters with
+  low-reuse findings, coverage, recency and next checks. Separate observed disk
+  restores/load spans from unproved lost reuse and unknown lost time. Reuse the
+  bounded reader, preserve gaps and empty-install behavior, and keep all real
+  evidence private. Public screenshots remain synthetic.
+
 - **Stopped tied timestamps from inventing cache-loss suspicion.** The private
   cache-continuity auditor now abstains around tied session admission groups,
   retains later usable neighbors and gives the same result under shuffled input.

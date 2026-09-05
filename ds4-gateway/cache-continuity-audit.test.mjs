@@ -24,6 +24,9 @@ test('measured continuity stays separate from strongly guarded low reuse',()=>{
   assert.equal(result.assessed_pairs,2);assert.equal(result.strong_guard_pairs,2);
   assert.equal(result.classifications.reuse_observed,1);assert.equal(result.classifications.high_suspicion_low_reuse,1);
   assert.equal(result.workers.spark1.high_suspicion_low_reuse,1);assert.equal(result.authority,'none');
+  assert.equal(result.workers.spark1.requests,3);assert.equal(result.workers.spark1.candidate_pairs,2);
+  assert.equal(result.workers.spark1.abstention_reasons.no_prior_session_request,1);
+  assert.equal(result.workers.spark1.last_low_reuse_at,31000);
   assert.ok(!JSON.stringify(result).includes(session));assert.ok(!JSON.stringify(result).includes('r1'));assert.ok(!JSON.stringify(result).includes(profile));
 });
 
