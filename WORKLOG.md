@@ -10,6 +10,14 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Tested why embeddings were not helping the selected forecast.** Added one
+  missing controlled history-plus-semantics comparison to the offline updated
+  occupancy search. It now uses semantic splits, but the negligible CV gain came
+  with worse development holdout error—not a successful accuracy improvement.
+  Kept the production models/gates and original candidate unchanged; separately
+  froze the new challenger for future evidence. Verified that all post-embedding
+  training rows have embeddings; earlier upload rows correctly do not.
+
 - **Closed an implicit client replay path.** Real loopback tests showed automatic
   HTTP redirects bypassing DSG's retry-certificate check. Scoped inference now
   returns redirects without following them; Agent Watch also keeps its metadata

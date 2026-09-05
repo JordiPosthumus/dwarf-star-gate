@@ -684,6 +684,25 @@ establish a routing improvement or independent future validation, and the gain
 cannot be attributed to recipe selection alone because the training data grew.
 Freeze the exact chosen bundle before collecting a new future evaluation cohort.
 
+The offline **occupancy V2 updated-time** search now includes one additional
+controlled family: base + history + ratios + semantics. Earlier families offered
+base + semantics, or semantics bundled with admission/client/request signals,
+but not this direct addition to the selected history model. Existing families,
+earlier schemas, admission/remaining searches, recipes and gates are unchanged.
+Each existing transform and tree count evaluates this family through the same
+training-only folds; embeddings are not forced into a winning model.
+
+A same-snapshot development experiment selected the new family: training CV MAE
+changed from **84.14s to 84.07s**, while the already-inspected holdout worsened from
+**65.91s to 67.97s** (baseline **58.03s**). Six tree splits used a semantic component.
+This is evidence of actual feature use, **not useful accuracy improvement**.
+Admission/remaining forests stayed unchanged; updated still fails its gate and
+all unseen-session gates fail. The original candidate and freeze were retained,
+and the new bundle was separately frozen for future-only evaluation. No production
+model changed. The 50% updated-row embedding coverage is expected in this training
+cohort: all 327 embedded rows have all 12 components; the 327 earlier upload rows
+have none. Missing pre-embedding inputs are not filled with later evidence.
+
 ### Later traffic and session-identity evidence
 
 A later frozen replay contained 49 admitted requests: 48 labeled completions and

@@ -63,7 +63,36 @@ class PredictorV2Tests(unittest.TestCase):
         # The legacy transform is intentionally unchanged for frozen V1 models.
         self.assertEqual(v.reference({**f,'history_generation_estimate_s':.001}),75.001)
         for kind in ('admission','updated','remaining'):
-            self.assertEqual(v.feature_families({'schema':'dsg-occupancy-v2'},kind),v.feature_families({'schema':'dsg-occupancy-v1'},kind))
+            old=v.feature_families({'schema':'dsg-occupancy-v1'},kind)
+            newer=v.feature_families({'schema':'dsg-occupancy-v2'},kind)
+            self.assertEqual(newer,old+([['base','history','ratios','semantic']] if kind=='updated' else []))
+            self.assertEqual(len(newer),len({tuple(family) for family in newer}))
+            self.assertLessEqual(len(newer),10)
+
+    def test_offline_semantic_pair_is_evaluated_without_forcing_unrelated_groups(self):
+        rows=self.rows(160)
+        for i,row in enumerate(rows):
+            h=float(i%7);s=float((i//7)%5)
+            row.update(kind='updated',stage='embedded',target_s=20+10*h+15*s,
+                       terminal_class='normal',target_contract='observed_terminal_occupancy')
+            row['features'].update(prior_output_tokens=h,semantic_0=s)
+        groups={k:[k+'_irrelevant'] for k in ('admission_state','client','request','progress','hardware')}
+        for row in rows:row['features'].update({names[0]:1 for names in groups.values()})
+        groups.update(base=['server_id'],history=['prior_output_tokens'],ratios=[],semantic=['semantic_0'])
+        data={'schema':'dsg-occupancy-v2','feature_schema':'dsg-delivery-aware-v1','rows':rows,
+              'snapshot':{'hashes':{}},'groups':groups,'categorical':['server_id']}
+        with tempfile.TemporaryDirectory() as directory,patch.object(v,'ROUNDS',(64,)):
+            prepared=Path(directory)/'prepared.json';prepared.write_text(json.dumps(data))
+            result=v.train(prepared,occupancy=True)
+        report=result['reports']['updated'];family=['base','history','ratios','semantic']
+        paired=[a for a in report['ablations'] if a['family']==family]
+        without=[a for a in report['ablations'] if a['family']==family[:-1]]
+        self.assertEqual(len(paired),3,'Each existing transform evaluates the paired family')
+        self.assertLess(min(a['mae_s'] for a in paired),min(a['mae_s'] for a in without))
+        self.assertEqual(report['selected']['family'],family)
+        self.assertFalse(result['routing_enabled'])
+        self.assertGreater(report['split_usage'].get('semantic_0',0),0)
+        self.assertGreater(report['split_usage'].get('prior_output_tokens',0),0)
 
     def test_occupancy_training_requires_explicit_separate_contract(self):
         rows=self.rows(100)

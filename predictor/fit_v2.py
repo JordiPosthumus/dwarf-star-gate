@@ -88,7 +88,13 @@ def feature_families(data, kind):
     V3 exposes every collected signal without forcing noisy blocks into base."""
     if data['schema'] in ('dsg-latency-v4',*OCCUPANCY_SCHEMAS):
         families=feature_families({**data,'schema':'dsg-latency-v3'},kind)
-        return families+[families[0]+['hardware'],families[-1]+['hardware']]
+        families=families+[families[0]+['hardware'],families[-1]+['hardware']]
+        # Offline V2 only: compare history with/without semantics without also
+        # forcing admission/client/request blocks into the semantic challenger.
+        # Earlier contracts and all existing candidates remain unchanged.
+        if data['schema']=='dsg-occupancy-v2' and kind=='updated':
+            families.append(['base','history','ratios','semantic'])
+        return families
     if data['schema'] == SCHEMA:
         families=[['base'],['base','history'],['base','history','ratios'],['base','history','ratios','semantic']]
         return [family+(['progress'] if kind=='remaining' else []) for family in families]

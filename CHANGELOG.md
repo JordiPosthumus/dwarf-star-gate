@@ -1,5 +1,18 @@
 # Changelog
 
+## Add a controlled offline history-plus-semantics ablation
+
+- Occupancy V2 updated-time search gains exactly one feature family without
+  forcing admission/client/request blocks alongside history and embeddings.
+  Earlier schemas and every existing candidate family are preserved.
+- Cross-validate existing transforms and 16/64/128 trees; keep all reviewed
+  recipes, chronological partitions, production fallbacks and release gates.
+- Synthetic regression proves both history and semantic signals can be used and
+  selected together without unrelated groups. Same-snapshot private comparison
+  found negligible CV gain and worse development holdout error; no promotion.
+- Retain original artifacts and freeze the new training-selected bundle before
+  a new future cohort. Feature usage is not an accuracy or routing-speedup claim.
+
 ## Prevent implicit redirects in the opt-in continuity client
 
 - Reproduce native Fetch following same- and cross-origin redirects before DSG
