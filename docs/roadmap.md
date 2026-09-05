@@ -88,6 +88,9 @@ The pure [four-path cache-continuity comparator](cache-continuity-shadow.md) is
 also implemented with fail-closed presence/compatibility gates and no scheduler
 authority. Live rendered-prefix identity, a validated remote transfer/import
 protocol and future component validation remain prerequisites for live shadows.
+The [upstream observation proposal](upstream-observability.md) stages passive
+attempt-bound cache events before any separately reviewed inspection interface;
+it does not call existing restore routines as probes or enable an engine patch.
 The first [privacy-safe cache-continuity audit](cache-continuity-audit.md) now
 measures consecutive same-session reuse from existing numerical evidence and
 abstains on relocation, compaction, profile/epoch change, stale or censored work.

@@ -5,6 +5,11 @@ Research checked 2026-09-04 against upstream DS4 revision
 No cache transfer, server change, enrollment or performance claim is implied.
 Today's handover moves an undispatched request, not its KV data.
 
+The [2026-09-05 observability follow-up](upstream-observability.md#a-separate-stage-genuinely-non-mutating-prefix-inspection)
+checks a newer pinned revision and distinguishes passive cache events from an
+inspection/import API. In particular, do not use a session-loading routine as
+a read-only probe. The experiment below remains unexecuted and separately gated.
+
 ## Existing building blocks
 
 - Disk entries contain a KVC header, a text-length field, **rendered prompt text**,

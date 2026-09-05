@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Pinned the next cache-observability boundary.** Refreshed upstream research
+  separates passive job/attempt/execution evidence from later prefix inspection
+  and import. Restore routines can mutate state, so they are not safe probes.
+  Related slot-reuse work stays an upstream proposal, not a deployed DSG fix.
+
 - **Made attribution blockers machine-specific.** The read-only audit now shows
   which overlaps later evidence resolved and what still prevents a match on each
   worker. Fresh-traffic verification preserves existing decisions; it does not

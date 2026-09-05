@@ -1,5 +1,16 @@
 # Changelog
 
+## Stage optional upstream cache observations before inspection
+
+- Refresh pinned DS4 source and related PR references. Distinguish gateway jobs,
+  transport attempts, backend executions, worker-local slot choice and realized
+  cache reuse; passive diagnostics do not establish future prefix identity.
+- Document why existing restore routines are not read-only probes and why
+  text-only disk state cannot stand in for live vision identity. Specify
+  privacy, fallback, lifecycle and isolated acceptance gates for a future hook.
+- Research/design only: no DS4 patch, PR submission, probe, transfer, deployment
+  or new mandatory capability.
+
 ## Explain attribution reconciliation by worker
 
 - Add a read-only per-worker ledger of recorded, reconciled and remaining

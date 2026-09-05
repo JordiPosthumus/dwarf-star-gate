@@ -86,6 +86,13 @@ Three inputs are still missing:
 - Queue, restore, transfer, suffix-prefill and generation components still need
   matched future validation by hardware, context and cache regime.
 
+The [staged upstream observation proposal](upstream-observability.md#first-useful-stage-passive-attempt-bound-cache-observations)
+starts with passive attempt-bound realized cache events, then treats any
+non-mutating prefix inspection as a separate capability. Neither is implemented.
+An ordinary restore is not an inspection API, and a worker-local slot score is
+not proof of actual reused KV. Passive observations can label chosen-path costs;
+they cannot supply missing identities or outcomes for unchosen alternatives.
+
 Until those gates are satisfied, this module is a testable decision contract—not
 an automatic cache mover. The next safe step is to produce bounded live shadow
 records only where all required identities and components can be proven, then

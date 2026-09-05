@@ -54,6 +54,11 @@ is implied by this fix.
    checks. Strong backend/prefix attribution and causal lost-time measurement
    remain work; unknown cause/cost stays unknown. See the
    [cache audit and card contract](cache-continuity-audit.md#machine-card-view).
+   The [upstream observation proposal](upstream-observability.md) now separates
+   passive attempt-bound realized events, later non-mutating prefix inspection
+   and eventual enrolled import. Existing restore routines are not probes;
+   worker-local slot choice must not be confused with gateway routing. No hook,
+   patch, probe or transfer is enabled by this design.
 3. **Make Genie suggestions useful to developers.** Reconcile repeated or
    contradictory transport labels, group incidents, identify already implemented
    safeguards, and mark resolved/superseded hypotheses. Require a specific
