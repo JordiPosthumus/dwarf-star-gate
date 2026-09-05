@@ -10,6 +10,12 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Anchored machine speed charts to fleet records.** Separate zero-based prefill
+  and decode scales retain exact recorded maxima across restarts and history
+  rotation, seeded incrementally from retained telemetry. Added an actionable
+  cache-miss machine-card view to the roadmap; diagnosis must distinguish cold
+  prompts, disk restores and evidence-backed lost reuse.
+
 - **Unified the machine-card palette.** Prefill bars, numbers and traces share
   blue; decode shares green. Compressed gaps use the idle colour without claiming
   that missing telemetry proves idle. Removed the repeated activity legend;

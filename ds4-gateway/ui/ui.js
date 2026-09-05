@@ -42,6 +42,16 @@ function thinkingIndicator(w, stale, now) {
   const qualifier=stale?'Stale':!w?.load&&w?.last_request_finished_at?'Last':'';
   return `<div class="requested-thinking" title="${esc(scope+'. Requested settings, not proof of effective reasoning. '+info.detail)}"><span class="label">Thinking</span><strong>${esc(info.label)}</strong>${qualifier?`<span class="thinking-scope">${qualifier}</span>`:''}</div>`;
 }
+function rateScales(devices,peaks,now){
+  const scales=Object.fromEntries(['prefill','decode'].map(kind=>{
+    const recorded=peaks?.[kind],values=[];
+    if(Number.isFinite(recorded?.tps)&&recorded.tps>0&&Number.isFinite(recorded.time)&&recorded.time<=now)values.push(recorded.tps);
+    for(const d of devices??[])for(const p of d.series??[])if(p.kind===kind&&Number.isFinite(p.tps)&&p.tps>0&&Number.isFinite(p.time)&&p.time<=now)values.push(p.tps);
+    return [kind,values.length?values.reduce((max,value)=>Math.max(max,value),0):1];
+  }));
+  scales.detail=`Fleet record scale, seeded from retained DS4 chunk-speed telemetry and preserved across dashboard restarts; deleted history before tracking cannot be reconstructed. Historical scan: ${peaks?.history_status??'unavailable'}.${peaks?.persistence_error?' Peak persistence unavailable; new records may not survive restart.':''}${peaks?.malformed_lines?' Some historical rows could not be read.':''} No samples uses a 0–1 placeholder.`;
+  return scales;
+}
 function chart(series, kind, now, ceiling) {
   const values = (series??[]).filter(s => s?.kind === kind && Number.isFinite(s.time) && Number.isFinite(s.tps) && s.tps>=0 && s.time<=now && now - s.time < 900000).sort((a,b)=>a.time-b.time);
   const max = Number.isFinite(ceiling)&&ceiling>0?ceiling:Math.max(1, ...values.map(s => s.tps));
@@ -68,7 +78,7 @@ function chart(series, kind, now, ceiling) {
   });
   if(trailing)parts.push(marker(cursor+gapWidth/2,now-last.time,'since the last sample'));
   else if(lastPoint)parts.push(`<circle class="chart-last" cx="${lastPoint[0]}" cy="${lastPoint[1]}" r="3.2"/>`);
-  return `<svg class="chart ${kind}" viewBox="0 0 300 60" preserveAspectRatio="none" role="img" aria-label="${kind} last 15 minutes, shared speed scale zero to ${Math.ceil(max)} tokens per second; gaps collapsed to idle-coloured separators, horizontal positions are not wall-clock aligned"><line class="chart-grid" x1="0" y1="8" x2="300" y2="8"/><line class="chart-grid" x1="0" y1="30" x2="300" y2="30"/><line class="chart-baseline" x1="0" y1="52" x2="300" y2="52"/>${parts.join('')}</svg>`;
+  return `<svg class="chart ${kind}" viewBox="0 0 300 60" preserveAspectRatio="none" role="img" aria-label="${kind} last 15 minutes, shared speed scale zero to ${max} tokens per second; gaps collapsed to idle-coloured separators, horizontal positions are not wall-clock aligned"><line class="chart-grid" x1="0" y1="8" x2="300" y2="8"/><line class="chart-grid" x1="0" y1="30" x2="300" y2="30"/><line class="chart-baseline" x1="0" y1="52" x2="300" y2="52"/>${parts.join('')}</svg>`;
 }
 function hardwareMiniChart(series,value,ceiling,label){
   const rows=(series??[]).map(sample=>({time:sample.time,value:value(sample)})).filter(sample=>Number.isFinite(sample.time)&&Number.isFinite(sample.value)).sort((a,b)=>a.time-b.time),max=Math.max(1,ceiling??0,...rows.map(row=>row.value));
@@ -333,7 +343,7 @@ function device(d, w, now, stale, index = 1, scales={}, controls=false) {
     const staleMetric=!Number.isFinite(m?.time)||now-m.time>60000;
     const explanation=kind==='decode'?'Generation speed measured by DS4, including thinking and answer tokens.':'Prompt-processing speed measured by DS4.';
     const measured=`${staleMetric?'Last':'Latest'} measurement: ${age(m?.time,now)}. Values are engine observations, not a promise of current speed.`;
-    return `<div class="metric-block ${staleMetric?'metric-stale':''}"><span class="label" title="${explanation}">${title}</span><div class="rate ${kind}">${fmtWhole(m?.tps)}<em>t/s</em></div><div class="metric-note" title="${esc(measured)}">avg ${fmtWhole(m?.average)} · ${age(m?.time, now)}</div>${chart(d.series, kind, now,scales[kind])}<div class="chart-caption" title="Last 15 minutes; gaps collapsed to idle-coloured separators. Shared ${kind} speed scale, not a shared wall-clock axis.">15m · compressed · 0–${fmtWhole(scales[kind])} t/s</div></div>`;
+    return `<div class="metric-block ${staleMetric?'metric-stale':''}"><span class="label" title="${explanation}">${title}</span><div class="rate ${kind}">${fmtWhole(m?.tps)}<em>t/s</em></div><div class="metric-note" title="${esc(measured)}">avg ${fmtWhole(m?.average)} · ${age(m?.time, now)}</div>${chart(d.series, kind, now,scales[kind])}<div class="chart-caption" title="${esc(scales.detail)} Exact ceiling: ${scales[kind]} t/s. Gaps compressed; not a shared wall-clock axis.">15m · compressed · 0–${fmtWhole(scales[kind])} t/s</div></div>`;
   };
   const prompt = d.prompt ? `Last prompt: ${fmt(d.prompt.prompt)} tokens · ${fmt(d.prompt.cached)} reused · ${esc(d.prompt.cache)}` : 'No prompt start observed yet';
   const f=w?.predictions?.remaining??w?.predictions?.updated??w?.predictions?.admission;
@@ -467,7 +477,7 @@ function render(s) {
   const door=s.continuity_door,waiting=knownWaiting(g,door);
   $('available').textContent = g ? `${g.available} / ${g.total}` : '—'; $('active').textContent = fmt(g?.active); $('queued').textContent = g?fmt(waiting.total):'—';
   $('queued').title=door?.holding?`${fmt(waiting.core)} admitted in the gateway core + ${fmt(waiting.held)} held safely at the Continuity Door. Pi/Hermes work not yet sent to DSG is not visible here.`:'Requests known to DSG and not yet dispatched. Pi/Hermes work not yet sent to DSG is not visible here.';
-  const cap=capacity(g,stale),scales=Object.fromEntries(['decode','prefill'].map(kind=>[kind,Math.ceil(Math.max(1,...s.devices.flatMap(d=>d.series.filter(p=>p.kind===kind && now-p.time<900000).map(p=>p.tps))))]));
+  const cap=capacity(g,stale),scales=rateScales(s.devices,s.rate_peaks,now);
   $('capacity-value').textContent=cap?.percent!=null?`${cap.percent}% occupied`:'Unknown';
   $('capacity-note').textContent=cap?`${cap.occupied} / ${cap.eligible} eligible slots occupied · ${cap.free} immediately free · ${fmt(waiting.total)} waiting in DSG${waiting.held?` (${fmt(waiting.core)} core + ${fmt(waiting.held)} Continuity Door)`:''}`:'Gateway status is unavailable';
   $('capacity-meter').value=cap?.percent||0;$('capacity-meter').hidden=cap?.percent==null;

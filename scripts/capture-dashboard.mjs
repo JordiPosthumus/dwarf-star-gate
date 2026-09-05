@@ -49,6 +49,10 @@ try {
   assert.match(await pause.getAttribute('aria-label'),/no interpolated speed/);
   assert.equal(await pause.locator('.chart-gap-line').evaluate(el=>getComputedStyle(el).stroke),'rgb(196, 135, 135)');
   assert.equal(await page.locator('.phase-legend').count(),0,'No repeated legend text beneath the activity bars');
+  for(const [kind,ceiling] of [['prefill',1250.5],['decode',40.5]]){
+    const labels=await page.locator(`#devices .chart.${kind}`).evaluateAll(charts=>charts.map(chart=>chart.getAttribute('aria-label')));
+    assert.equal(labels.length,3);assert.ok(labels.every(label=>label.includes(`zero to ${ceiling} tokens`)),'Every worker shares its phase record scale');
+  }
   for(const [kind,color] of [['prefill','rgb(120, 174, 232)'],['decode','rgb(185, 216, 137)']]){
     assert.equal(await page.locator(`.activity-timeline .phase-${kind}`).first().evaluate(el=>getComputedStyle(el).fill),color);
     assert.equal(await page.locator(`.rate.${kind}`).first().evaluate(el=>getComputedStyle(el).color),color);

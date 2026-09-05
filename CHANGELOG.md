@@ -1,5 +1,13 @@
 # Changelog
 
+## Preserve historical fleet chart scales
+
+- Share exact all-recorded chunk-speed maxima across machine plots, separately
+  for prefill and decode, with zero origin and no percentile or padding.
+- Seed a bounded private two-peak record from retained telemetry using bounded
+  incremental I/O; expose catch-up/persistence limitations in chart tooltips.
+- Document chart semantics and roadmap an evidence-backed cache-miss view.
+
 ## Simplify machine-card colours
 
 - Match prefill bars, speed numbers, traces and points in blue; match decode in

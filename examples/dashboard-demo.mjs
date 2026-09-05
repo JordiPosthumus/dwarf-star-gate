@@ -92,6 +92,7 @@ const clientWatch={schema:1,mode:'advisory',fresh_after_seconds:45,pre_gateway_a
   {watch_ref:'9c3e70a1d5f8',client:'pi',state:'local_tool',process_alive:true,fresh:true,last_seen_at:new Date(now-12000).toISOString(),last_seen_seconds:12,state_seconds:71,request:{state:'complete',age_seconds:78},diagnosis:'local_tool_active'},
 ]};
 const snapshot = { version:1,demo:true,time:now,started:now-900000,read_only:false,worker_management:true,gateway_at:now,gateway_error:null,telemetry_error:null,
+  rate_peaks:{schema:1,prefill:{tps:1250.5,time:now-86400000},decode:{tps:40.5,time:now-86400000},history_status:'ready',persistence_error:null,malformed_lines:0},
   continuity_door:{service:'dwarf-star-gate-continuity-door',version:1,holding:false,held:0,active:2,core_ready:true,body_spooling:false,replay:false,last_transition:{action:'release',at:new Date(now-300000).toISOString()}},continuity_door_error:null,
   gateway:{model:'deepseek-v4-flash',context_length:262144,queue_timeout_ms:72000000000,total:3,healthy:3,available:3,active:2,queued:1,draining:false,workers,dataset,predictor,recovery,client_watch_version:1,client_watch:clientWatch,
     continuity:{patient_wait:true,queued_relocation:true,automatic_relocation:true,automatic_relocation_scope:'first_unaffined_or_affinity_wait_expired',automatic_affinity_rebalance_min_wait_ms:300000,relocation:{completed:2,rejected:0,offers:1,diagnostics:relocationDiagnostics}}},devices,events };

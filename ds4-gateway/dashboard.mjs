@@ -16,6 +16,7 @@ import { genieTunnel } from './genie-tunnel.mjs';
 import { safeQuarantine } from './generation-health.mjs';
 import { AnalyticsReader } from './analytics.mjs';
 import {FleetSpeedReader} from './fleet-speed.mjs';
+import {RatePeaks} from './rate-peaks.mjs';
 import {HardwareTelemetry} from './hardware-telemetry.mjs';
 import {HardwareSnapshot} from './hardware-snapshot.mjs';
 import { estimateCacheCost } from './cache-cost.mjs';
@@ -154,6 +155,7 @@ export async function runDashboard(configPath, port) {
   const analytics=new AnalyticsReader(path.join(path.dirname(config.state_file),'training'),{enabled:config.dataset_enabled===true});
   fs.mkdirSync(runtime, { recursive: true, mode: 0o700 });
   const fleetSpeed=new FleetSpeedReader(runtime);
+  const ratePeaks=new RatePeaks(runtime);
   let cacheInventoryKey=null,cacheInventoryError=null;
   if(cacheSources.size)try{cacheInventoryKey=loadCacheInventoryKey(runtime);}catch{cacheInventoryError='Cache inventory key unavailable';}
   let closed = false, gateway = null, gatewayAt = null, gatewayError = 'Waiting for gateway', writeError = null;
@@ -167,7 +169,7 @@ export async function runDashboard(configPath, port) {
   const hardwareSnapshot=new HardwareSnapshot(path.join(runtime,'hardware-current.json'));
   const hardware=new HardwareTelemetry(config.hardware_telemetry,row=>{appendMetric(row);hardwareSnapshot.write(row);});
   const attribution=new EngineAttribution(appendMetric);
-  const save = entry => {appendMetric(entry);attribution.acceptEngine(entry);};
+  const save = entry => {appendMetric(entry);ratePeaks.accept(entry);attribution.acceptEngine(entry);};
   function follow(node, device, reader, resetCursor = false) {
     if (closed || !node.ssh || readers.get(node.id)?.node !== node) return;
     if (!/^[\w.@-]+$/.test(node.ssh) || node.ssh.startsWith('-')) throw new Error('Unsupported SSH alias');
@@ -271,7 +273,7 @@ export async function runDashboard(configPath, port) {
   }
   async function poll() {
     if (polling) return;
-    polling = true; readEvents();analytics.poll();fleetSpeed.poll();
+    polling = true; readEvents();analytics.poll();fleetSpeed.poll();ratePeaks.poll();
     if(continuityEnabled(config))try{
       const response=await fetch(`http://127.0.0.1:${config.port}/continuity/status`,{headers:{authorization:`Bearer ${config.api_key}`},signal:AbortSignal.timeout(3000)});
       if(!response.ok)throw new Error();continuityDoor=continuityDoorForDisplay(await response.json());continuityDoorError=continuityDoor?null:'Unsupported continuity door';
@@ -303,7 +305,7 @@ export async function runDashboard(configPath, port) {
   const started = Date.now();
   const managementEnabled = config.ui_worker_management === true && !!config.control_socket;
   const snapshot = () => ({ service:'dwarf-star-gate-dashboard', version: 1, time: Date.now(), started, read_only: !managementEnabled, worker_management:managementEnabled, gateway, gateway_at: gatewayAt, gateway_error: gatewayError, telemetry_error: writeError,
-    continuity_door:continuityDoor,continuity_door_error:continuityDoorError,
+    continuity_door:continuityDoor,continuity_door_error:continuityDoorError,rate_peaks:ratePeaks.snapshot(),
     devices: [...devices.values()].map(d => ({...d.snapshot(),activity:activity.get(d.id),hardware:hardware.snapshot(d.id)})), events, attribution:attribution.snapshot(), notes: 'Rates are DS4 engine measurements. Cache counts cover observed prompt starts, not lifetime requests. Raw prompts and responses are excluded.' });
   const memory=new GenieMemory(path.join(path.dirname(config.state_file),'genie','memory'));
   const providerLedger=new GenieProviderLedger(path.join(path.dirname(config.state_file),'genie','actions'));

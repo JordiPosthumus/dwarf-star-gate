@@ -11,6 +11,7 @@ import { parseTiming, safeGatewayEvent, DeviceTelemetry, JournalReader, journalP
 import { createDashboard, runDashboard } from './dashboard.mjs';
 import { FileLogReader, parseLocalProcessStart, parseLocalTiming, telemetryFiles } from './file-telemetry.mjs';
 import {cacheInventoryDirectories} from './cache-inventory.mjs';
+import './rate-peaks.test.mjs';
 const parse = (s, t = 1000) => parseTiming(`0902 14:00:00 ds4-server: ${s}`, t);
 
 test('dashboard folds connection and diagnostics into its single identity header',()=>{
@@ -51,6 +52,17 @@ test('rate charts compress missing intervals to idle-coloured separators without
   assert.doesNotMatch(render(bad),/<circle|<polyline/);
   assert.doesNotMatch(vm.runInContext("chart([{kind:'decode',time:400000,tps:NaN},{kind:'decode',time:Infinity,tps:20}], 'decode', 500000, Infinity)",context),/NaN|Infinity/);
   const single=render([{kind:'decode',time:200000,tps:0}]);assert.match(single,/class="chart-point"/);assert.doesNotMatch(single,/NaN|Infinity|<polyline/);
+});
+
+test('all machine charts share exact historical maxima per phase with zero origin',()=>{
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const context=vm.createContext({});vm.runInContext(source,context);
+  const scales=vm.runInContext(`rateScales([{series:[{kind:'prefill',tps:500,time:999},{kind:'decode',tps:20,time:999}]}],{prefill:{tps:999.25,time:1},decode:{tps:44.125,time:1}},1000)`,context);
+  assert.equal(scales.prefill,999.25);assert.equal(scales.decode,44.125);
+  const fresh=vm.runInContext(`rateScales([{series:[{kind:'prefill',tps:1234.5,time:1000},{kind:'decode',tps:Infinity,time:1000}]}],null,1000)`,context);
+  assert.equal(fresh.prefill,1234.5);assert.equal(fresh.decode,1);
+  const svg=vm.runInContext(`chart([{kind:'prefill',tps:0,time:1000},{kind:'prefill',tps:999.25,time:2000}],'prefill',2000,999.25)`,context);
+  assert.match(svg,/<polyline points="[^"]*,52.0 [^"]*,8.0"/);
 });
 
 test('forecast labels never present stale snapshots or total service time as a live ETA',()=>{

@@ -33,6 +33,19 @@ dependency that can stall it.**
 These principles set priorities; they do not claim all guarantees are implemented,
 disable existing validated capabilities, or relax activation and maintenance gates.
 
+## Planned: actionable cache misses in machine cards
+
+Replace the low-value “Cache + session evidence” summary with a compact view of
+cache misses and their measured cost. Distinguish normal first/cold prompts,
+resident RAM misses successfully restored from disk, and likely lost reusable
+prefixes. Do not equate a RAM miss with a cold start or every cold start with a
+bug. Report observation coverage, recency, repeated incidents and extra prefill
+tokens/time where attribution is supported; otherwise show unknown cost/cause.
+Expandable evidence should explain what happened and a justified next check.
+Use the existing privacy-safe continuity audit and process/session evidence;
+Genie may summarize patterns, but must not invent cache identity or certainty.
+This is a planned UI/diagnostic change, not permission to move or delete KV data.
+
 ## Prioritized delivery order
 
 Reviewed 2026-09-05.

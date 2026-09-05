@@ -234,6 +234,9 @@ the encoder runs only when explicitly configured, without cloud inference.
 
 ## Dashboard
 
+Machine [speed charts](docs/rate-charts.md) use consistent phase colours and
+separate fleet-record scales for prefill and decode.
+
 Terminal-inspired presentation, per-worker measurements, and a replaceable logo.
 Five focused views keep the control room compact: **Fleet** for live capacity and
 server cards, **Gate Genie** for reports and recovery, **Analytics** for evidence
