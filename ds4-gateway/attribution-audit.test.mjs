@@ -77,6 +77,38 @@ test('later exact usage safely reconciles an overlap without rewriting the recor
   assert.equal(original.status,'abstained');assert.equal(original.reason,'overlapping_gateway_windows');
   assert.ok(!JSON.stringify(result).includes(requestB));
 });
+test('reconciliation requires exact engine-start identity and rejects conflicting duplicate samples',()=>{
+  const original=overlap(),start=engine();
+  const changes=[{time:base+1},{backend_epoch:'b'.repeat(64)},{backend_epoch:null},{backend_epoch_confidence:'bounded'},
+    {prompt:800,cached:700,new_tokens:100}];
+  for(const change of changes){
+    const result=reconcileAttributionRows([original],[{...start,...change}],gateway(),{complete:true});
+    assert.equal(result.reconciled_overlaps,0,JSON.stringify(change));
+    assert.equal(result.reconciliation_block_reasons.engine_start_conflict,1);
+  }
+  for(const values of [[start,{...start,time:base+1}],[{...start,time:base+1},start]]){
+    const result=reconcileAttributionRows([original],values,gateway(),{complete:true});
+    assert.equal(result.reconciled_overlaps,0);assert.equal(result.reconciliation_block_reasons.engine_start_conflict,1);
+  }
+  assert.equal(reconcileAttributionRows([original],[start,{...start}],gateway(),{complete:true}).reconciled_overlaps,1);
+  assert.equal(reconcileAttributionRows([{...original,backend_epoch_confidence:'unavailable'}],[{...start,backend_epoch_confidence:'unavailable'}],gateway(),{complete:true}).reconciled_overlaps,0);
+  assert.equal(original.status,'abstained');
+});
+test('conflicting gateway candidates cannot disappear and manufacture a unique overlap match',()=>{
+  const log=gateway(),requestC='33333333-3333-4333-8333-333333333333';
+  log.push({event:'request_dispatched',node:'spark-a',request_id:requestC,time:iso(base-500)},
+    {event:'request_finished',node:'spark-a',request_id:requestC,time:iso(base+2000),outcome:'complete',usage:{prompt_tokens:1000,cached_tokens:900}},
+    {event:'request_finished',node:'spark-a',request_id:requestC,time:iso(base+3000),outcome:'complete',usage:{prompt_tokens:800,cached_tokens:700}});
+  const result=reconcileAttributionRows([overlap()],[engine()],log,{complete:true});
+  assert.equal(result.reconciled_overlaps,0);assert.equal(result.reconciliation_block_reasons.gateway_evidence_conflict,1);
+  assert.ok(!JSON.stringify(result).includes(requestC));
+  const duplicate=gateway();duplicate.push({...duplicate.at(-1)});
+  assert.equal(reconcileAttributionRows([overlap()],[engine()],duplicate,{complete:true}).reconciled_overlaps,1);
+  const backwards=gateway();backwards.at(-1).time=iso(base-1500);
+  const negative=reconcileAttributionRows([overlap()],[engine()],backwards,{complete:true});
+  assert.equal(negative.reconciled_overlaps,0,'a finish before its own dispatch cannot corroborate an owner');
+  assert.equal(negative.reconciliation_block_reasons.gateway_evidence_conflict,1);
+});
 
 test('fresh-start cohorts retain earlier ownership and competing-start evidence',()=>{
   const original=overlap(),old=overlap(11,{engine_started_at:base-1,request_id:requestB,status:'corroborated',reason:'usage_match',confidence:'high_candidate'});
@@ -99,6 +131,8 @@ test('independently corroborated other ownership can resolve an overlap without 
   const owner=overlap(11,{engine_started_at:other.time,request_id:requestA,status:'corroborated',reason:'usage_match',confidence:'high_candidate',prompt_tokens:800,cached_tokens:700});
   const run=(o=owner,e=other,g=gateway())=>reconcileAttributionRows([overlap(),o],[earlyEngine(),engine(),e],g,{complete:true});
   assert.equal(run().reconciled_overlaps,1);
+  const duplicateOwner=reconcileAttributionRows([overlap(),owner],[earlyEngine(),engine(),other,{...other,backend_epoch_confidence:'bounded'}],gateway(),{complete:true});
+  assert.equal(duplicateOwner.reconciled_overlaps,0,'a conflicting duplicate cannot establish independent ownership');
   for(const change of [{status:'candidate',reason:'request_open'},{request_id:requestB},{backend_epoch:'b'.repeat(64)},{engine_started_at:base-501},{prompt_tokens:801,new_tokens:101}])assert.equal(run({...owner,...change}).reconciled_overlaps,0);
   assert.equal(run(owner,{...other,sample_id:undefined}).reconciled_overlaps,0);
   const failed=gateway();failed[3].outcome='client_cancelled';assert.equal(run(owner,other,failed).reconciled_overlaps,0);

@@ -91,11 +91,16 @@ export function reconcileAttributionRows(attributionRows=[],engineRows=[],gatewa
   // Select only the report cohort. Older ownership and competing starts remain
   // in every reconciliation check; dropping them could manufacture certainty.
   const overlapCount=original.filter(row=>inCohort(row)&&row.reason==='overlapping_gateway_windows').length;
-  const unchanged=()=>({summary:summarizeAttribution(original.filter(inCohort)),reconciled_overlaps:0,remaining_overlap_abstentions:overlapCount,reconciliation_block_reasons:overlapCount?{source_incomplete:overlapCount}:{}});
+  const unchanged=(reason='source_incomplete')=>({summary:summarizeAttribution(original.filter(inCohort)),reconciled_overlaps:0,remaining_overlap_abstentions:overlapCount,reconciliation_block_reasons:overlapCount?{[reason]:overlapCount}:{}});
   const invalid=attributionRows.some(raw=>raw?.event==='engine_attribution'&&!safeAttribution(raw))||engineRows.some(raw=>raw?.kind==='start'&&!safeCollisionStart(raw))||gatewayRows.some(raw=>['request_dispatched','request_finished'].includes(raw?.event)&&(!safeGatewayEvent(raw)||!UUID.test(raw.request_id??'')||!ID.test(raw.node??'')));
   if(!complete||invalid)return unchanged();
-  const starts=new Map();
-  for(const raw of engineRows){const row=safeStart(raw);if(row)starts.set(`${row.node}:${row.sample_id}`,row);}
+  const starts=new Map(),conflictingStarts=new Set();
+  for(const raw of engineRows){
+    const row=safeStart(raw);if(!row)continue;
+    const key=`${row.node}:${row.sample_id}`,prior=starts.get(key);
+    if(prior&&JSON.stringify(prior)!==JSON.stringify(row))conflictingStarts.add(key);
+    starts.set(key,row);
+  }
   const collisionStarts=engineRows.map(safeCollisionStart).filter(Boolean);
   const lifecycle=new Map();let coverageStart=Infinity;
   for(const raw of gatewayRows){
@@ -109,14 +114,21 @@ export function reconcileAttributionRows(attributionRows=[],engineRows=[],gatewa
       request.finished_at=at;request.outcome=event.outcome;request.usage=usage;}
     lifecycle.set(event.request_id,request);
   }
-  const requests=[...lifecycle.values()].filter(request=>!request.conflict&&Number.isFinite(request.dispatched_at));
+  // Dropping a contradictory lifecycle would remove a possible competing owner
+  // and manufacture uniqueness. Keep the recorded view, not a revised match.
+  if([...lifecycle.values()].some(request=>request.conflict||Number.isFinite(request.dispatched_at)&&Number.isFinite(request.finished_at)&&request.finished_at<request.dispatched_at))return unchanged('gateway_evidence_conflict');
+  const requests=[...lifecycle.values()].filter(request=>Number.isFinite(request.dispatched_at));
   const proposals=new Map(),blocks={};
   let currentRow;
   const block=reason=>{if(inCohort(currentRow))blocks[reason]=(blocks[reason]??0)+1;};
   for(const row of original){
     currentRow=row;
     if(row.reason!=='overlapping_gateway_windows')continue;
-    const start=starts.get(`${row.node}:${row.sample_id}`);if(!start){block('engine_start_unavailable');continue;}if(metricCoverageStart>start.time-MAX_DISPATCH_LEAD_MS){block('metric_coverage_incomplete');continue;}if(coverageStart>start.time-MAX_DISPATCH_LEAD_MS){block('gateway_coverage_incomplete');continue;}
+    const startKey=`${row.node}:${row.sample_id}`,start=starts.get(startKey);
+    if(!start){block('engine_start_unavailable');continue;}
+    if(conflictingStarts.has(startKey)||start.time!==row.engine_started_at||!start.backend_epoch||!['strong','bounded'].includes(start.backend_epoch_confidence)||start.backend_epoch!==row.backend_epoch||
+      start.backend_epoch_confidence!==row.backend_epoch_confidence||start.prompt!==row.prompt_tokens||start.cached!==row.cached_tokens||start.new_tokens!==row.new_tokens){block('engine_start_conflict');continue;}
+    if(metricCoverageStart>start.time-MAX_DISPATCH_LEAD_MS){block('metric_coverage_incomplete');continue;}if(coverageStart>start.time-MAX_DISPATCH_LEAD_MS){block('gateway_coverage_incomplete');continue;}
     const candidates=requests.filter(request=>request.node===start.node&&request.dispatched_at<=start.time+SKEW_MS&&start.time-request.dispatched_at<=MAX_DISPATCH_LEAD_MS&&(request.finished_at===null||request.finished_at>=start.time-SKEW_MS));
     if(candidates.length<2){block('candidate_window_changed');continue;}
     if(!candidates.every(request=>Number.isFinite(request.finished_at)&&request.usage?.prompt_tokens!==null&&request.usage?.cached_tokens!==null)){block('candidate_usage_incomplete');continue;}
@@ -134,7 +146,7 @@ export function reconcileAttributionRows(attributionRows=[],engineRows=[],gatewa
   // a proposal from this pass: mutually ambiguous starts cannot prove each other.
   const independentlyOwned=(start,proposal,target)=>{
     const owner=latest.get(`${start.node}:${start.sample_id}`),request=lifecycle.get(owner?.request_id);
-    return !!(start.sample_id&&owner?.status==='corroborated'&&['high_candidate','bounded_candidate'].includes(owner.confidence)&&['usage_match','usage_disambiguated_overlap'].includes(owner.reason)&&
+    return !!(start.sample_id&&!conflictingStarts.has(`${start.node}:${start.sample_id}`)&&owner?.status==='corroborated'&&['high_candidate','bounded_candidate'].includes(owner.confidence)&&['usage_match','usage_disambiguated_overlap'].includes(owner.reason)&&
       owner.request_id!==proposal.request_id&&owners.get(owner.request_id)?.size===1&&request&&!request.conflict&&request.outcome==='complete'&&
       request.node===start.node&&Number.isFinite(request.dispatched_at)&&Number.isFinite(request.finished_at)&&request.finished_at>=request.dispatched_at&&
       start.time>=request.dispatched_at-SKEW_MS&&start.time<=request.finished_at+SKEW_MS&&start.time-request.dispatched_at<=MAX_DISPATCH_LEAD_MS&&

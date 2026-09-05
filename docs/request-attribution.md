@@ -108,6 +108,20 @@ abstention. The report presents the recorded view beside the later-evidence view
 it never rewrites telemetry or hides the original decision. Private request and
 sample IDs are used only inside the bounded join and never returned.
 
+The engine-start record must exactly agree with the attribution row's timestamp,
+process epoch and its strong/bounded confidence, and prompt/cache/new-token tuple.
+A reused sample ID with conflicting normalized start records yields
+`engine_start_conflict`; identical duplicates are harmless. Conflicting samples
+also cannot establish independent ownership for a competing start.
+
+Contradictory dispatch/finish records, including a finish before its own dispatch,
+yield `gateway_evidence_conflict` and leave
+the entire selected cohort's recorded view unchanged. The auditor must not discard
+an inconsistent request and thereby make another match appear unique. These are
+consistency checks in addition to `source_complete`, which describes bounded file
+read/parse coverage, not a guarantee that all records agree. Original historical
+corroborations and abstentions are never rewritten by this offline audit.
+
 A competing start can be excluded only when its **original recorded** attribution
 already corroborates a different, uniquely owned, successfully completed request:
 its engine timestamp, process epoch, prompt/cache tuple and gateway lifetime must

@@ -1,5 +1,16 @@
 # Changelog
 
+## Keep contradictory attribution evidence from manufacturing matches
+
+- Require exact engine-start timestamp, process epoch/confidence and token-tuple
+  agreement before reconciling a recorded overlap. Reject inconsistent duplicate
+  sample identities, including when used to establish another start's ownership.
+- Preserve the recorded view when gateway lifecycle records contradict one
+  another; do not remove a competing request and create false uniqueness.
+- Regress both reproduced false matches, duplicate order, unavailable epoch
+  confidence and harmless exact duplicates. Fresh read-only reconciliation keeps
+  its 55 valid overlap resolutions; no live attribution or routing rules change.
+
 ## Avoid false failures for explicit finishes at clean stream EOF
 
 - Fix a real-Pi regression: its agent/tool loop accepts explicit finish reasons

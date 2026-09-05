@@ -10,6 +10,12 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Hardened later-evidence attribution against contradictions.** Reproduced two
+  false-match cases in the offline auditor: mismatched engine-start identity and
+  a conflicting request being discarded from the candidate set. Both now abstain.
+  A fresh fleet audit still resolves the same 55 valid historical overlaps; no
+  telemetry is rewritten and competing starts with unproven owners stay unknown.
+
 - **Stopped counting accepted reason-only streams as worker failures.** A real
   Pi fixture completed its tool and answer while DSG incorrectly logged two
   failures because `[DONE]` was absent. Explicit, unambiguous finishes at clean
