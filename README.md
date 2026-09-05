@@ -2,6 +2,8 @@
 
 <img src="ds4-gateway/ui/logo.png" alt="Dwarf Star Gate logo" width="240">
 
+[MIT licensed](LICENSE) · Created by [Jordi Posthumus](https://github.com/JordiPosthumus).
+
 [DS4](https://github.com/antirez/ds4) by [antirez](https://github.com/antirez) is an
 excellent local inference engine. Running it efficiently across a home fleet
 takes coordination: connecting your applications, preserving useful caches,
@@ -748,4 +750,16 @@ The UI is loopback-only, validates Host/Origin, has no CORS grants, and uses a
 restrictive content policy. The observer account needs DS4 journal read access.
 Adding the UI does not change any model launch setting.
 
-There is no open-source license grant yet; public visibility alone is not a license.
+## License
+
+Dwarf Star Gate is open source under the [MIT License](LICENSE).
+Copyright © 2026 Jordi Posthumus.
+
+You may use, modify, redistribute, sublicense and sell DSG, including in commercial
+or closed-source projects. Keep the copyright and license notice with copies or
+substantial portions of the software. No visible UI credit or endorsement is
+required; crediting the project publicly is appreciated. The software is provided
+without warranty, as described in the license.
+
+DS4, dependencies and separately obtained model weights retain their own licenses
+and notices; DSG's license does not replace those terms. See [credits](CREDITS.md).

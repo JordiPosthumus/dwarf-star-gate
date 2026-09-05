@@ -70,9 +70,10 @@ actual terminal-event implementations; they do not certify every client/version.
    the backend stopped computing. Service restarts, unresolved work and cache
    ownership need explicit checks before automatic retries or session relocation.
    Never treat a successful model-list probe as a completed recovery test.
-7. **Publication:** the README deliberately records no open-source license grant,
-   and no root gateway `LICENSE` file is present. Preserve that decision unless
-   the maintainer chooses a license; do not inherit upstream's license implicitly.
+7. **Publication — resolved 2026-09-05:** the maintainer selected the
+   [MIT License](../LICENSE), with copyright credit to Jordi Posthumus. The root
+   license, README and package metadata now grant permissive reuse explicitly;
+   upstream and dependency licenses remain separate.
    Existing synthetic screenshots are illustrative, not a complete feature tour.
 
 ## Release discipline

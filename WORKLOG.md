@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Opened DSG for permissive reuse.** Added the MIT License with Jordi Posthumus's
+  copyright credit, aligned Node/Python package metadata and removed the obsolete
+  no-license notices. Commercial use and modification are allowed while copyright
+  and license notices are retained; upstream projects keep their separate terms.
+
 - **Verified the hardened Door's deployment boundary.** An idle-only upgrade
   retained the core, dashboard, model process and configuration, then rejected a
   stale hold receipt and returned unchanged model-discovery bytes. Deployment

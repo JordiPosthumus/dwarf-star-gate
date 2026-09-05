@@ -233,8 +233,9 @@ if any tied candidate lacks fresh deployed evidence and never overrides a freer
 worker or established session home. Receipts distinguish proposed from applied;
 next evaluate realized queue outcomes before widening its scope.
 
-**Maintenance decisions:** the README explicitly has no open-source license grant;
-add license text only if the maintainer chooses it. Keep public screenshots synthetic
+**Maintenance decisions:** DSG is released under the maintainer-selected
+[MIT License](../LICENSE); preserve its attribution and separate third-party notices.
+Keep public screenshots synthetic
 and use the [current reproducible demo](screenshots.md), including collection/Genie UI.
 
 ## Implemented foundation: evidence and bounded Gate Genie actions

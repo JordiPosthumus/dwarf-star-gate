@@ -1,6 +1,7 @@
 [project]
 name = "dsg-offline-predictor"
 version = "0.1.0"
+license = "MIT"
 description = "Offline, non-routing XGBoost service-time experiments for DSG"
 requires-python = ">=3.12,<3.15"
 dependencies = ["numpy==2.5.2", "xgboost==3.4.1"]

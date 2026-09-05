@@ -1,5 +1,14 @@
 # Changelog
 
+## Release Dwarf Star Gate under the MIT License
+
+- Add the standard root MIT license with copyright credit to Jordi Posthumus.
+- Declare MIT in Node and both Python project manifests; make the license and
+  author credit easy to find in the README and credits.
+- Replace obsolete no-license statements in the roadmap and maintenance review.
+- Preserve upstream/dependency notices and existing runtime/package-publication
+  settings. No gateway restart or model configuration change is needed.
+
 ## Distinguish verified lifecycle migration from remaining experimental gates
 
 - Record the verified idle-only Door upgrade without exposing deployment details.

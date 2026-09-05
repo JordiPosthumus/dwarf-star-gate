@@ -1,6 +1,7 @@
 [project]
 name = "dsg-local-encoder"
 version = "0.1.0"
+license = "MIT"
 description = "Isolated CPU-only, local-file embedding worker for DSG evidence"
 requires-python = ">=3.12,<3.15"
 dependencies = ["numpy==2.5.2", "onnxruntime==1.29.0", "tokenizers==0.23.1"]

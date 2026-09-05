@@ -62,6 +62,10 @@ and model artifacts retain their own upstream licenses and notices.
 
 ## What this repository contributes
 
+Dwarf Star Gate is created and maintained by
+[Jordi Posthumus](https://github.com/JordiPosthumus) and released under the
+[MIT License](LICENSE). Retain its copyright and license notice when reusing it.
+
 Dwarf Star Gate contributes session-affinity routing, per-worker admission and
 drain controls, a dashboard with opt-in local routing controls, operational
 telemetry filtering, an optional observer/offline predictor, and tests
