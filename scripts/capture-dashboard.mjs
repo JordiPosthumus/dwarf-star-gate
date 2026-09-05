@@ -99,6 +99,9 @@ try {
   assert.match(await page.locator('#genie-hardening-status').innerText(),/1 suggestion.*1 durable.*newest first/);
   await page.locator('#genie-hardening summary').click();
   assert.match(await page.locator('#genie-hardening-items').innerText(),/Exercise incomplete-stream continuation.*Developer suggestion|Exercise incomplete-stream continuation/s);
+  assert.match(await page.locator('#genie-hardening-items').innerText(),/Change:.*\nTest:.*\nExpected \(not yet verified\):/s);
+  assert.equal(await page.locator('.genie-hardening-item p').last().evaluate(el=>getComputedStyle(el).whiteSpace),'pre-wrap');
+  await page.locator('#genie-hardening').screenshot({path:path.join(projectRoot,'docs/images/genie-hardening.png'),animations:'disabled'});
   await page.locator('#genie-hardening summary').click();
   assert.equal(await page.locator('#routing-message').innerText(),'','A successful control read must clear a stale error banner');
   assert.equal(await page.locator('h1').innerText(),'Dwarf Star Gate');
@@ -302,7 +305,7 @@ try {
   }
   await auditPage.close();
   assert.deepEqual(errors,[]);
-  console.log('Saved six synthetic dashboard screenshots; verified tab navigation, polling, analytics, compact hardware telemetry, named maintenance locks, mobile, reset/milestones, escaped agent holds and Keep paused UX.');
+  console.log('Saved seven synthetic dashboard screenshots; verified proposed experiment labels, tab navigation, polling, analytics, compact hardware telemetry, named maintenance locks, mobile, reset/milestones, escaped agent holds and Keep paused UX.');
 } finally {
   await browser?.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));
   if(learningServer){learningServer.closeAllConnections();await new Promise(resolve=>learningServer.close(resolve));}

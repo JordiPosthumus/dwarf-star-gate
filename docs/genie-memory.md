@@ -28,12 +28,28 @@ The first release records:
   Candidate fields are only failure class, fleet/worker scope, allowlisted reason,
   evidence time, continuity outcome and allowed evidence references. Prompts,
   answers, images, session keys, arbitrary logs and long-generation guesses are
-  excluded. The model supplies only a bounded title and suggested experiment.
+  excluded. For new notes the model supplies a bounded title, proposed change,
+  reproducible test and expected result that would support or refute the idea.
+  The dashboard labels the result **not yet verified**; a proposed test is not
+  an executor command, permission or test receipt. Schema validation cannot
+  establish that a hypothesis is correct or its test is scientifically useful.
   Code reattaches the authoritative candidate facts, deduplicates by class/scope/
   reason and writes a revision only when the evidence time or suggestion changes.
   Repeated signatures keep their newest occurrence within the bounded review
   input, not the oldest duplicate. This is not an all-history incident count;
   distinct workers, failure classes and reasons remain separate envelopes.
+
+New structured experiments use the existing notebook format: their three parts
+become labelled lines in the same 500-character / 1000-byte suggestion field.
+The title retains its existing bound. Older one-paragraph notes and responses
+remain readable; there is no journal migration, additional model call or new
+storage ceiling. Partial/oversized structured experiments are rejected rather
+than silently truncated or converted into actions. Instructions ask Genie to
+check reported runtime safeguards before proposing them again; unknown capability
+evidence is not proof that a safeguard is absent. This improves the review
+contract, not a claim of measured suggestion quality or automatic incident closure.
+
+![Synthetic proposed experiment; expected result is not a test receipt](images/genie-hardening.png)
 
 The private journal is `runtime/genie/memory/notebook.jsonl` beside the configured
 gateway state. Files are mode 0600 inside a mode-0700 directory. It survives model,

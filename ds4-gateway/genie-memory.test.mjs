@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {GenieMemory} from './genie-memory.mjs';
-import {Genie,briefing,hardeningCandidates} from './genie.mjs';
+import {Genie,briefing,hardeningCandidates,parseGenieReview} from './genie.mjs';
 import {createDashboard} from './dashboard.mjs';
 const sample=(at=1000,change={})=>({time:at,gateway_at:at,gateway:{workers:[{id:'worker-a',is_healthy:true,drained:false,operator_paused:false,holds:[],context_length:262144,...change}]},devices:[],events:[]});
 test('marker-only compatibility reaches Genie as a hypothesis, not recovery authority',()=>{
@@ -34,6 +34,27 @@ test('hardening signatures retain their newest bounded occurrence regardless of 
   ]);
 });
 function fixture(t){const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'dsg-memory-')));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));return path.join(root,'memory');}
+test('structured developer experiments retain bounded legacy storage without execution authority',t=>{
+  const s=sample();s.events=[{event:'request_finished',time:new Date(900).toISOString(),node:'worker-a',outcome:'incomplete_sse'}];
+  const evidence=briefing(s),candidate=evidence.hardening_candidates[0];
+  const note={candidate_id:candidate.id,title:'Check clean EOF',suggestion:'Exercise the existing stream guard.',test:'End a scripted stream\nwithout a terminal event.',expected_result:'The client sees an incomplete stream; no replay occurs.'};
+  const parse=value=>parseGenieReview(JSON.stringify({assessment:'A proposed experiment, not an executed test.',ticker:[{severity:'info',text:'Review stream evidence.',recommendation:null,evidence_refs:['worker:worker-a']}],hardening_notes:[value]}),evidence);
+  const parsed=parse(note);assert.equal(parsed.ticker_error,null);assert.equal(parsed.hardening_notes.length,1);
+  const canonical=parsed.hardening_notes[0];assert.deepEqual(Object.keys(canonical).sort(),['candidate_id','suggestion','title']);
+  assert.equal(canonical.suggestion,'Change: Exercise the existing stream guard.\nTest: End a scripted stream without a terminal event.\nExpected (not yet verified): The client sees an incomplete stream; no replay occurs.');
+  for(const key of ['recovery_requests','predictor_requests','relocation_requests'])assert.deepEqual(parsed[key],[]);
+  const m=new GenieMemory(fixture(t),{now:()=>1000});m.setEnabled(true);m.saveHardeningNotes([canonical],[candidate]);
+  const reload=new GenieMemory(m.directory,{now:()=>1000});assert.equal(reload.error,null);
+  const stored=reload.hardening(s)[0];assert.equal(stored.data.suggestion,canonical.suggestion);
+  assert.equal(stored.data.state,'open');assert.equal(Object.hasOwn(stored.data,'expected_result'),false);
+  assert.equal(reload.saveHardeningNotes([canonical],[candidate])[0].state,'unchanged');
+  const {test:unusedTest,expected_result:unusedResult,...legacy}=note;
+  assert.equal(parse(legacy).hardening_notes[0].suggestion,legacy.suggestion);
+  const without=(key)=>Object.fromEntries(Object.entries(note).filter(([k])=>k!==key));
+  for(const bad of [without('test'),without('expected_result'),{...note,test:''},{...note,expected_result:null},{...note,command:'not-allowed'},{...note,candidate_id:'0'.repeat(24)},{...note,suggestion:'x'.repeat(490)},{...note,suggestion:'界'.repeat(350)}]){
+    const result=parse(bad);assert.equal(result.ticker_error,'invalid_structured_review');assert.deepEqual(result.hardening_notes,[]);assert.deepEqual(result.recovery_requests,[]);
+  }
+});
 test('memory is opt-in, durable, idempotent, private and separate from generation proof',t=>{
   const dir=fixture(t),m=new GenieMemory(dir,{now:()=>1000});m.observe(sample());assert.equal(fs.existsSync(dir),false);
   m.setEnabled(true);m.observe(sample(1000,{url:'PRIVATE',prompt:'PRIVATE'}));const size=m.bytes;m.observe(sample());assert.equal(m.bytes,size);
@@ -60,14 +81,16 @@ test('a Genie review publishes and privately saves an exact hardening candidate 
   const memory=new GenieMemory(fixture(t),{now:()=>Date.parse(at)+1});memory.setEnabled(true);let sent;
   const genie=new Genie({url:'http://127.0.0.1:9001/v1'},()=>s,{memory,fetchImpl:async(_url,options)=>{
     sent=JSON.parse(options.body);const candidate=JSON.parse(sent.messages[1].content).evidence.hardening_candidates[0];
-    return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify({assessment:'One bounded stream failure is available for developer review.',ticker:[{severity:'warning',text:'An incomplete stream was observed.',recommendation:'Review the client-continuation regression.',evidence_refs:['worker:worker-a']}],hardening_notes:[{candidate_id:candidate.id,title:'Exercise incomplete-stream continuation',suggestion:'Add a deterministic same-socket continuation test before changing routing.'}]})}}]});
+    return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify({assessment:'One bounded stream failure is available for developer review.',ticker:[{severity:'warning',text:'An incomplete stream was observed.',recommendation:'Review the client-continuation regression.',evidence_refs:['worker:worker-a']}],hardening_notes:[{candidate_id:candidate.id,title:'Exercise incomplete-stream continuation',suggestion:'Exercise the existing stream guard.',test:'End a scripted stream without a terminal event.',expected_result:'No success marker or replay is invented.'}]})}}]});
   }});
   await genie.ask();const status=genie.status();assert.equal(status.hardening_notes.length,1);assert.equal(status.hardening_notes[0].durable,true);assert.equal(status.reports[0].hardening_receipts[0].state,'saved');
   assert.ok(!JSON.stringify(status).includes('PRIVATE'));assert.ok(!fs.readFileSync(memory.file,'utf8').includes('PRIVATE'));assert.deepEqual(status.reports[0].actions_taken,[]);
+  assert.match(status.hardening_notes[0].suggestion,/Change:.*\nTest:.*\nExpected \(not yet verified\):/);
   const instructions=sent.messages[0].content;
   assert.match(instructions,/one specific discriminating test/);assert.match(instructions,/Do not conflate ECONNREFUSED with ECONNRESET/);
   assert.match(instructions,/Never propose blanket retry\/backoff for incomplete SSE/);assert.match(instructions,/respect pauses, reservations and admitted work/);
   assert.match(instructions,/Do not repeat a notebook suggestion merely to refresh its timestamp/);
+  assert.match(instructions,/suggestion, test, expected_result/);assert.match(instructions,/Check the supplied runtime safeguards first/);
   const semantics=JSON.parse(sent.messages[1].content).evidence.semantics.join('\n');
   assert.match(semantics,/model_discovery_hold=true/);assert.match(semantics,/Missing evidence cannot classify an older failed total/);
   assert.match(semantics,/A status transport failure is not a lost inference session/);assert.match(semantics,/neither grants replay permission/);genie.close();

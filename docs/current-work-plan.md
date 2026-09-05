@@ -44,8 +44,10 @@ Private deployment receipts and measurements stay out of this public plan.
    repeated generic retry advice. Preserve newest-first durable notes and the
    action ledger, including borrowed-endpoint receipts. Never retry ambiguous
    dispatched work merely because the provider went quiet.
-   The candidate deduplication now preserves the newest bounded occurrence;
-   grouping, safeguard awareness and hypothesis lifecycle remain unfinished.
+   Candidate deduplication now preserves the newest bounded occurrence. New
+   suggestions separate change, reproducible test and unverified expected result
+   within the existing note budget; old paragraphs remain compatible. Semantic
+   quality, incident grouping, safeguard verification and lifecycle remain work.
 4. **Improve forecast evidence before expanding authority.** Separate engine
    throughput from client-delivery timing; examine long/censored jobs, causal
    early features and sensor/semantic coverage. Score frozen future cohorts by

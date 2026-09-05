@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Made Genie experiments easier to judge.** New suggestions separate the
+  proposed change, concrete test and expected result, explicitly not yet verified.
+  Keep the existing note budget and journal format; preserve older notes and
+  give proposed experiments no execution or recovery authority.
+
 - **Preserved attribution ambiguity across log replay.** Identical engine-start
   records no longer erase overlap guards after request history expires. A replay
   cannot manufacture a corroborated match; valid later completions still work.

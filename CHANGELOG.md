@@ -1,5 +1,15 @@
 # Changelog
 
+## Structure proposed Genie hardening experiments
+
+- Ask new notes for a bounded change, reproducible test and expected result;
+  label expectations as unverified and check reported safeguards before proposing
+  them again. A valid envelope does not prove the experiment is useful.
+- Canonicalize into the existing bounded suggestion field without a journal
+  migration. Preserve legacy paragraphs; reject partial or oversized experiments.
+- Exercise parser, durable reload, privacy, no-action behavior and synthetic
+  browser rendering. No additional inference call or new authority.
+
 ## Preserve attribution guards across identical engine replay
 
 - Retain private overlap/overflow state when an identical normalized start is
