@@ -10,6 +10,12 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Verified the hardened Door's deployment boundary.** An idle-only upgrade
+  retained the core, dashboard, model process and configuration, then rejected a
+  stale hold receipt and returned unchanged model-discovery bytes. Deployment
+  evidence stays private. Mac enrollment, live cache identity/transfer, forecast
+  qualification and ambiguous post-dispatch recovery remain separate gates.
+
 - **Stopped duplicate Door launches from breaking maintenance control.** An
   isolated reproduction showed a failed second launcher unlinking the first
   Door's live control socket. Startup now preserves any connected owner and only

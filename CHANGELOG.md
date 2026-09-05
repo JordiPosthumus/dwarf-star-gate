@@ -1,5 +1,12 @@
 # Changelog
 
+## Distinguish verified lifecycle migration from remaining experimental gates
+
+- Record the verified idle-only Door upgrade without exposing deployment details.
+- Separate per-installation migration checks from uncompleted Mac certification,
+  live cache-shadow inputs, forecast qualification and post-dispatch reconciliation.
+- No runtime, model, configuration or screenshot change.
+
 ## Preserve Continuity Door control ownership during startup
 
 - Reproduce a duplicate launch deleting the running Door's control socket before

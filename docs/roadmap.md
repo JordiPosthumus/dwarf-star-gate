@@ -159,10 +159,13 @@ persistence, broader free-form hypotheses and notebook search remain planned.
 Bounded training recipes, early metadata collection and skip-only calibration
 preflight are implemented separately.
 
-### Remaining validation and activation gates
+### Installation gates and remaining validation
 
-These are still open even when the current regression suites are green. Local
-deployment receipts stay private; source availability is not installation readiness.
+Regression tests and source availability do not certify every installation.
+An idle-only Door upgrade has been verified without restarting the core or model
+servers; older deployments must still follow the migration check below. The
+experimental cache, forecast and post-dispatch requirements remain open. Exact
+local deployment and model-evaluation receipts stay private.
 
 - **Lifecycle deployment:** upgrade an older Continuity Door only in a verified
   idle, unheld window, preserve settings/holds, and verify the running
