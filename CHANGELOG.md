@@ -1,5 +1,14 @@
 # Changelog
 
+## Compress speed gaps to blue separators
+
+- Replace red dots and interpolated-looking bridges with narrow muted-blue
+  vertical separators. Compress leading, internal and trailing missing intervals;
+  preserve their durations in accessible tooltips without asserting hardware idle.
+- Label the horizontal axis as compressed while retaining the shared t/s scale,
+  original measurements and unmodified wall-clock activity timeline.
+- Refresh synthetic dashboard screenshots and regression/browser checks.
+
 ## Reject contradictory latest attribution revisions
 
 - Prevent same-timestamp conflicting ownership records from enabling an overlap

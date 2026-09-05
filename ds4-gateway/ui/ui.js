@@ -45,21 +45,30 @@ function thinkingIndicator(w, stale, now) {
 function chart(series, kind, now, ceiling) {
   const values = (series??[]).filter(s => s?.kind === kind && Number.isFinite(s.time) && Number.isFinite(s.tps) && s.tps>=0 && s.time<=now && now - s.time < 900000).sort((a,b)=>a.time-b.time);
   const max = Number.isFinite(ceiling)&&ceiling>0?ceiling:Math.max(1, ...values.map(s => s.tps));
-  const point=s=>`${((s.time-(now-900000))/900000*300).toFixed(1)},${(52-s.tps/max*44).toFixed(1)}`;
   const groups=[];for(const sample of values){const current=groups.at(-1);if(!current||sample.time-current.at(-1).time>90000)groups.push([sample]);else current.push(sample);}
-  // Preserve wall-clock spacing and measured segments. The subdued connector
-  // is presentation only: absent rate samples do not prove hardware idleness.
-  const pauses=groups.slice(1).map((group,index)=>{
-    const before=groups[index].at(-1),after=group[0],a=point(before).split(','),b=point(after).split(',');
-    const mid=point({time:(before.time+after.time)/2,tps:(before.tps+after.tps)/2}).split(',');
-    const label=`${Math.round((after.time-before.time)/1000)}s between rate measurements. Connector is not a measured rate or proof of idle.`;
-    return `<g class="chart-pause" tabindex="0" role="img" aria-label="${label}"><title>${label}</title><line class="chart-bridge" x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}"/><path class="chart-pause-dot" d="M${mid[0]} ${mid[1]}h0"/></g>`;
-  }).join('');
-  const traces=groups.map(group=>group.length===1?`<circle class="chart-point" cx="${point(group[0]).split(',')[0]}" cy="${point(group[0]).split(',')[1]}" r="2.5"/>`:`<polyline points="${group.map(point).join(' ')}"/>`).join('');
-  const last=values.at(-1),stopped=last&&now-last.time>90000;
-  const lastLabel=stopped?`No new rate measurement for ${Math.round((now-last.time)/1000)}s. The line ends at the last observation; this does not prove idle.`:'';
-  const lastDot=!last?'':stopped?`<path class="chart-last chart-pause-dot" d="M${point(last).replace(',',' ')}h0" tabindex="0" role="img" aria-label="${lastLabel}"><title>${lastLabel}</title></path>`:`<circle class="chart-last" cx="${point(last).split(',')[0]}" cy="${point(last).split(',')[1]}" r="3.2"/>`;
-  return `<svg class="chart ${kind}" viewBox="0 0 300 60" preserveAspectRatio="none" role="img" aria-label="${kind} last 15 minutes, shared scale zero to ${Math.ceil(max)} tokens per second; red dots mark pauses in measurements, not confirmed idle"><line class="chart-grid" x1="0" y1="8" x2="300" y2="8"/><line class="chart-grid" x1="0" y1="30" x2="300" y2="30"/><line class="chart-baseline" x1="0" y1="52" x2="300" y2="52"/>${pauses}${traces}${lastDot}</svg>`;
+  const first=values[0],last=values.at(-1),leading=first&&first.time-(now-900000)>90000,trailing=last&&now-last.time>90000;
+  const gapCount=Math.max(0,groups.length-1)+Number(!!leading)+Number(!!trailing),gapWidth=8;
+  const durations=groups.map(g=>Math.max(1,g.at(-1).time-g[0].time)),total=durations.reduce((sum,n)=>sum+n,0);
+  const available=294-gapCount*gapWidth,parts=[];let cursor=3,lastPoint=null;
+  const marker=(x,ms,scope)=>{
+    const label=`${Math.round(ms/1000)}s ${scope} collapsed. Blue separator marks missing rate measurements, not proof of idle; no interpolated speed.`;
+    return `<g class="chart-gap" tabindex="0" role="img" aria-label="${label}"><title>${label}</title><line class="chart-gap-line" x1="${x.toFixed(1)}" y1="8" x2="${x.toFixed(1)}" y2="52"/></g>`;
+  };
+  // Give each missing interval one narrow separator. Only measured runs get
+  // horizontal space; the x axis is deliberately not a shared wall-clock axis.
+  if(!first)parts.push(marker(150,900000,'without rate samples'));
+  if(leading){parts.push(marker(cursor+gapWidth/2,first.time-(now-900000),'before the first sample'));cursor+=gapWidth;}
+  groups.forEach((group,index)=>{
+    if(index){parts.push(marker(cursor+gapWidth/2,group[0].time-groups[index-1].at(-1).time,'between rate measurements'));cursor+=gapWidth;}
+    const width=available*durations[index]/total,start=group[0].time;
+    const point=s=>`${(cursor+(group.length===1?width/2:(s.time-start)/durations[index]*width)).toFixed(1)},${(52-s.tps/max*44).toFixed(1)}`;
+    lastPoint=point(group.at(-1)).split(',');
+    parts.push(group.length===1?`<circle class="chart-point" cx="${lastPoint[0]}" cy="${lastPoint[1]}" r="2.5"/>`:`<polyline points="${group.map(point).join(' ')}"/>`);
+    cursor+=width;
+  });
+  if(trailing)parts.push(marker(cursor+gapWidth/2,now-last.time,'since the last sample'));
+  else if(lastPoint)parts.push(`<circle class="chart-last" cx="${lastPoint[0]}" cy="${lastPoint[1]}" r="3.2"/>`);
+  return `<svg class="chart ${kind}" viewBox="0 0 300 60" preserveAspectRatio="none" role="img" aria-label="${kind} last 15 minutes, shared speed scale zero to ${Math.ceil(max)} tokens per second; gaps collapsed to blue separators, horizontal positions are not wall-clock aligned"><line class="chart-grid" x1="0" y1="8" x2="300" y2="8"/><line class="chart-grid" x1="0" y1="30" x2="300" y2="30"/><line class="chart-baseline" x1="0" y1="52" x2="300" y2="52"/>${parts.join('')}</svg>`;
 }
 function hardwareMiniChart(series,value,ceiling,label){
   const rows=(series??[]).map(sample=>({time:sample.time,value:value(sample)})).filter(sample=>Number.isFinite(sample.time)&&Number.isFinite(sample.value)).sort((a,b)=>a.time-b.time),max=Math.max(1,ceiling??0,...rows.map(row=>row.value));
@@ -324,7 +333,7 @@ function device(d, w, now, stale, index = 1, scales={}, controls=false) {
     const staleMetric=!Number.isFinite(m?.time)||now-m.time>60000;
     const explanation=kind==='decode'?'Generation speed measured by DS4, including thinking and answer tokens.':'Prompt-processing speed measured by DS4.';
     const measured=`${staleMetric?'Last':'Latest'} measurement: ${age(m?.time,now)}. Values are engine observations, not a promise of current speed.`;
-    return `<div class="metric-block ${staleMetric?'metric-stale':''}"><span class="label" title="${explanation}">${title}</span><div class="rate ${kind}">${fmtWhole(m?.tps)}<em>t/s</em></div><div class="metric-note" title="${esc(measured)}">avg ${fmtWhole(m?.average)} · ${age(m?.time, now)}</div>${chart(d.series, kind, now,scales[kind])}<div class="chart-caption" title="Last 15 minutes; shared ${kind} scale across all server cards">15m · 0–${fmtWhole(scales[kind])} t/s</div></div>`;
+    return `<div class="metric-block ${staleMetric?'metric-stale':''}"><span class="label" title="${explanation}">${title}</span><div class="rate ${kind}">${fmtWhole(m?.tps)}<em>t/s</em></div><div class="metric-note" title="${esc(measured)}">avg ${fmtWhole(m?.average)} · ${age(m?.time, now)}</div>${chart(d.series, kind, now,scales[kind])}<div class="chart-caption" title="Last 15 minutes; gaps collapsed to blue separators. Shared ${kind} speed scale, not a shared wall-clock axis.">15m · compressed · 0–${fmtWhole(scales[kind])} t/s</div></div>`;
   };
   const prompt = d.prompt ? `Last prompt: ${fmt(d.prompt.prompt)} tokens · ${fmt(d.prompt.cached)} reused · ${esc(d.prompt.cache)}` : 'No prompt start observed yet';
   const f=w?.predictions?.remaining??w?.predictions?.updated??w?.predictions?.admission;

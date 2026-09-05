@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Compressed speed-chart gaps into quiet blue separators.** Removed diagonal
+  bridges and red dots. Missing intervals take one narrow divider; tooltips keep
+  their duration, and the caption marks the horizontal axis as compressed.
+  Recorded speeds, shared speed scales and the activity timeline stay unchanged.
+
 - **Stopped file order from deciding ambiguous ownership.** A reproduced audit
   bug let contradictory same-time revisions establish an apparent independent
   owner. Reconciliation now preserves abstention on a tied latest revision;
@@ -53,9 +58,9 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
   speeds first; repeated explanations move into tooltips while stale/last-request
   distinctions remain visible.
 
-- **Made speed traces easier to follow.** Small red dots and subtle connectors
-  replace broken lines between rate measurements, without changing timestamps,
-  recorded speeds or mistaking missing measurements for idle hardware.
+- **First speed-gap presentation (superseded above).** Red dots and subtle
+  connectors initially replaced broken traces. The revised design removes those
+  connectors because they could look like measured acceleration during pauses.
 
 - **Named our promise: Seamless Continuity.** Made it DSG's tagline across the
   README, dashboard and project metadata, grounded in the existing delivery

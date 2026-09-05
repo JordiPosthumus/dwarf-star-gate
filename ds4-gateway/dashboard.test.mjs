@@ -26,25 +26,31 @@ test('dashboard folds connection and diagnostics into its single identity header
   assert.doesNotMatch(header,/control room|class="brand"/);
 });
 
-test('rate charts bridge measurement pauses with red-dot markers without inventing observations',()=>{
+test('rate charts compress missing intervals to blue separators without joining measured runs',()=>{
   const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);
   const render=(series,now=500000)=>vm.runInContext(`chart(${JSON.stringify(series)},'decode',${now},40)`,context);
   const series=[{kind:'decode',time:410000,tps:20},{kind:'decode',time:200000,tps:10},{kind:'decode',time:210000,tps:12},{kind:'decode',time:400000,tps:18}];
   const before=JSON.stringify(series),svg=render(series);
-  assert.equal((svg.match(/class="chart-bridge"/g)||[]).length,1);
-  assert.equal((svg.match(/class="chart-pause-dot"/g)||[]).length,1);
-  assert.equal((svg.match(/<polyline/g)||[]).length,2,'measured runs remain distinct from the visual connector');
-  assert.match(svg,/190s between rate measurements/);assert.match(svg,/not a measured rate or proof of idle/);
+  assert.equal((svg.match(/class="chart-gap-line"/g)||[]).length,2,'leading missing history and one internal gap');
+  assert.doesNotMatch(svg,/chart-bridge|chart-pause-dot/);
+  assert.equal((svg.match(/<polyline/g)||[]).length,2,'measured runs are never connected across a gap');
+  assert.match(svg,/190s between rate measurements collapsed/);assert.match(svg,/no interpolated speed/);
+  assert.match(svg,/horizontal positions are not wall-clock aligned/);
+  const traces=[...svg.matchAll(/<polyline points="([^"]+)"/g)].map(m=>m[1].split(' ').map(p=>p.split(',').map(Number)));
+  assert.equal(traces[1][0][0]-traces[0].at(-1)[0],8,'a long gap occupies just the separator width');
+  assert.equal(traces[0][1][0]-traces[0][0][0],traces[1][1][0]-traces[1][0][0],'equal measured durations retain equal widths');
   assert.match(svg,/tabindex="0" role="img"/);assert.equal(JSON.stringify(series),before);
-  assert.doesNotMatch(svg,/chart-last chart-pause-dot/,'exactly 90 seconds does not mark a trailing pause');
-  const stopped=render(series,500001);assert.match(stopped,/chart-last chart-pause-dot/);
-  assert.match(stopped,/line ends at the last observation/);assert.doesNotMatch(stopped,/d="M300.0 /,'do not extend a stale rate to now');
-  assert.doesNotMatch(render([{kind:'decode',time:400000,tps:10},{kind:'decode',time:490000,tps:11}]),/class="chart-bridge"/);
-  assert.doesNotMatch(render([]),/<circle|<polyline|class="chart-bridge"/);
+  assert.doesNotMatch(svg,/since the last sample/,'exactly 90 seconds does not mark a trailing pause');
+  const stopped=render(series,500001);assert.match(stopped,/since the last sample collapsed/);
+  assert.doesNotMatch(stopped,/class="chart-last"/,'a stale endpoint is followed by a separator, not extrapolated');
+  const close=render([{kind:'decode',time:400000,tps:10},{kind:'decode',time:490000,tps:11}]);
+  assert.doesNotMatch(close,/between rate measurements collapsed/);
+  const empty=render([]);assert.doesNotMatch(empty,/<circle|<polyline/);assert.match(empty,/900s without rate samples collapsed/);
   const bad=[{kind:'decode',time:500001,tps:20},{kind:'decode',time:100000,tps:-1},{kind:'decode',time:null,tps:20},{kind:'prefill',time:400000,tps:100}];
   assert.doesNotMatch(render(bad),/<circle|<polyline/);
   assert.doesNotMatch(vm.runInContext("chart([{kind:'decode',time:400000,tps:NaN},{kind:'decode',time:Infinity,tps:20}], 'decode', 500000, Infinity)",context),/NaN|Infinity/);
+  const single=render([{kind:'decode',time:200000,tps:0}]);assert.match(single,/class="chart-point"/);assert.doesNotMatch(single,/NaN|Infinity|<polyline/);
 });
 
 test('forecast labels never present stale snapshots or total service time as a live ETA',()=>{

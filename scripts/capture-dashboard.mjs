@@ -43,10 +43,11 @@ try {
   }
   assert.equal(await page.locator('header').count(),1,'No separate empty branding strip');
   assert.ok((await page.locator('.dashboard-header').boundingBox()).height<180,'Desktop header stays compact');
-  assert.ok(await page.locator('#devices .chart-bridge').count()>=4,'Demo includes measured pauses for both rate charts');
-  const pause=page.locator('#devices .chart-pause').first();
-  assert.match(await pause.getAttribute('aria-label'),/not a measured rate or proof of idle/);
-  assert.equal(await pause.locator('.chart-pause-dot').evaluate(el=>getComputedStyle(el).stroke),'rgb(239, 119, 119)');
+  assert.ok(await page.locator('#devices .chart-gap-line').count()>=4,'Demo includes compressed gaps for both rate charts');
+  assert.equal(await page.locator('#devices .chart-bridge,#devices .chart-pause-dot').count(),0);
+  const pause=page.locator('#devices .chart-gap').first();
+  assert.match(await pause.getAttribute('aria-label'),/no interpolated speed/);
+  assert.equal(await pause.locator('.chart-gap-line').evaluate(el=>getComputedStyle(el).stroke),'rgb(125, 159, 189)');
   await pause.focus();assert.equal(await pause.evaluate(el=>el===document.activeElement),true);
   const thinking=page.locator('#devices .requested-thinking').first();
   assert.match(await thinking.innerText(),/^Thinking\s+/);
