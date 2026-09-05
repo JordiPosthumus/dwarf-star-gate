@@ -1,5 +1,16 @@
 # Changelog
 
+## Isolate optional training failures from runtime safety gates
+
+- Failed retraining no longer sidelines an otherwise validated placement model;
+  successful training cannot clear independent runtime faults. Existing model,
+  profile, future-evidence and fallback gates remain unchanged.
+- Report a fixed snapshot/fit/validation warning and save bounded private logs
+  even before snapshot creation. Disclose failed log writes, reject directory
+  symlinks and preserve existing diagnostics. No retention or budget changes.
+- Regressions exercise the real over-budget snapshot subprocess, retained
+  placement, independent runtime errors and private diagnostic handling.
+
 ## Clarify prospective early-ETA experiment comparisons
 
 - Document matched future checkpoints, frozen feature/profile contracts and

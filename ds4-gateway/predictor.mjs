@@ -60,7 +60,7 @@ export function promotionGate(model,rows) {
 export const promotionEligible=(model,rows)=>promotionGate(model,rows).eligible;
 export class Predictor {
   constructor(config,{directory,dataDirectory,record,now=Date.now,spawnImpl=spawn}={}) {
-    Object.assign(this,{config,directory,dataDirectory,record,now,spawnImpl});this.configured=config?.enabled===true;this.error=null;this.busy=false;this.child=null;this.closed=false;this.pending=new Map();this.live=new Map();this.bundles=new Map();this.shadow=null;this.inventory={};this.histories=this.makeHistories();this.history=this.histories.get(CURRENT_FEATURE_SCHEMA);
+    Object.assign(this,{config,directory,dataDirectory,record,now,spawnImpl});this.configured=config?.enabled===true;this.error=null;this.trainingError=null;this.busy=false;this.child=null;this.closed=false;this.pending=new Map();this.live=new Map();this.bundles=new Map();this.shadow=null;this.inventory={};this.histories=this.makeHistories();this.history=this.histories.get(CURRENT_FEATURE_SCHEMA);
     this.state={schema:1,automatic_training:config?.automatic_training===true,automatic_promotion:config?.automatic_promotion===true,placement:config?.placement===true,active:{},previous:{},rejected:{},evaluations:{},new_requests:0,last_train_at:0,reset_at:0,milestones:[],receipts:[]};
     const initialState=structuredClone(this.state);
     if(!this.configured)return;
@@ -279,18 +279,32 @@ export class Predictor {
     });
   }
   async runTraining(destination,name,actor,recipeId=DEFAULT_RECIPE) {
+    let stage='snapshot';
     try{
       const start=this.now();await this.runProcess(process.execPath,[path.join(root,'predictor/prepare.mjs'),'--data',this.dataDirectory,'--profiles',this.config.profiles,'--output',destination],30000);
       if(this.closed)throw new Error('Gateway stopped; training interrupted');
       fs.writeFileSync(path.join(destination,'training-request.json'),JSON.stringify({schema:1,recipe_id:recipeId,recipe_policy_sha256:RECIPE_POLICY_SHA256})+'\n',{flag:'wx',mode:0o600});
-      const output=await this.runProcess(this.config.python,[path.join(root,'predictor/fit_v2.py'),'--prepared',path.join(destination,'prepared.json'),'--recipe',recipeId],Math.max(1000,PREDICTION_POLICY.training_timeout_ms-(this.now()-start)));
+      stage='fit';const output=await this.runProcess(this.config.python,[path.join(root,'predictor/fit_v2.py'),'--prepared',path.join(destination,'prepared.json'),'--recipe',recipeId],Math.max(1000,PREDICTION_POLICY.training_timeout_ms-(this.now()-start)));
       if(this.closed)throw new Error('Gateway stopped; training interrupted');fs.writeFileSync(path.join(destination,'trainer.log'),output,{flag:'wx',mode:0o600});
+      stage='validation';
       const produced=JSON.parse(fs.readFileSync(path.join(destination,'candidate.json')));
       if(produced.training_recipe?.id!==recipeId||produced.training_recipe?.policy_sha256!==RECIPE_POLICY_SHA256)throw new Error('Training recipe changed or mismatched; candidate is not accepted');
       this.loadCandidates();if(!this.bundles.has(name))throw new Error(`Produced candidate rejected: ${this.candidateRejectionReasons.get(name)??'unclassified_rejection'}`);
       this.state.new_requests=Math.max(0,this.state.new_requests-(this.state.training?.new_requests??0));
-      this.receipt(actor,'train','completed','Candidate evaluated; no model bypasses future-shadow validation',{candidate_id:name,recipe_id:recipeId});this.error=null;
-    }catch(e){this.error='Predictor training failed; last working model retained';try{if(fs.existsSync(destination))fs.writeFileSync(path.join(destination,'failure.log'),String(e.privateOutput??e.message).slice(0,1024*1024),{flag:'wx',mode:0o600});}catch{}if(!this.closed)try{this.receipt(actor,'train','failed',this.error,{candidate_id:name,recipe_id:recipeId});}catch{}}
+      this.receipt(actor,'train','completed','Candidate evaluated; no model bypasses future-shadow validation',{candidate_id:name,recipe_id:recipeId});this.trainingError=null;
+    }catch(e){
+      // Optional training neither disables a validated model nor repairs an
+      // independent observation, state or artifact fault. Keep those gates.
+      this.trainingError=`Predictor ${stage} failed; existing model validation and fallback gates unchanged`;
+      try{
+        // Preparation can fail before creating its output directory. Do not
+        // follow a replacement symlink or overwrite an existing diagnostic.
+        try{fs.mkdirSync(destination,{mode:0o700});}catch(error){if(error.code!=='EEXIST')throw error;}
+        if(!fs.lstatSync(destination).isDirectory())throw new Error('Invalid candidate directory');
+        fs.writeFileSync(path.join(destination,'failure.log'),Buffer.from(String(e.privateOutput??e.message)).subarray(0,1024*1024),{flag:'wx',mode:0o600});
+      }catch{this.trainingError+='; private failure log could not be saved';}
+      if(!this.closed)try{this.receipt(actor,'train','failed',this.trainingError,{candidate_id:name,recipe_id:recipeId});}catch{}
+    }
     finally{this.busy=false;if(!this.closed){this.state.training=null;try{this.persist();}catch{this.error='Predictor state could not be persisted';}}}
   }
   tick(){if(this.configured&&!this.closed&&this.state.automatic_training&&this.trainingOffer()&&this.now()-this.state.last_train_at>=PREDICTION_POLICY.training_interval_ms)try{this.train('scheduler');}catch{}}
@@ -320,7 +334,7 @@ export class Predictor {
     const candidate=this.shadow,offers=this.state.automatic_training&&this.trainingOffer()?TRAINING_RECIPES.map(r=>({action:'train',evidence_id:this.trainingOffer(),recipe_id:r.id})):[];
     if(this.rollbackOffer())offers.push({action:'rollback',evidence_id:this.rollbackOffer()});
     const candidate_rejection_summary={};for(const reason of this.candidateRejectionReasons?.values()??[])candidate_rejection_summary[reason]=(candidate_rejection_summary[reason]??0)+1;
-    return {configured:this.configured,error:this.error,candidate_artifacts_loaded:this.bundles.size,candidate_rejections:this.candidateRejections??0,candidate_rejection_summary,mode:this.state.placement?'validated-new-session-placement':'forecasts-only',automatic_training:this.state.automatic_training,automatic_promotion:this.state.automatic_promotion,placement:this.state.placement,busy:this.busy,training:this.state.training??null,training_recipes:TRAINING_RECIPES,default_recipe:DEFAULT_RECIPE,candidate_recipe:candidate?.training_recipe?.id??null,new_requests:this.state.new_requests,history_partial:!!this.partialHistory,policy:PREDICTION_POLICY,offers,baseline:DEFAULT_BASELINE,reset_at:this.state.reset_at||null,milestones:this.state.milestones,
+    return {configured:this.configured,error:this.error??this.trainingError,training_error:this.trainingError,candidate_artifacts_loaded:this.bundles.size,candidate_rejections:this.candidateRejections??0,candidate_rejection_summary,mode:this.state.placement?'validated-new-session-placement':'forecasts-only',automatic_training:this.state.automatic_training,automatic_promotion:this.state.automatic_promotion,placement:this.state.placement,busy:this.busy,training:this.state.training??null,training_recipes:TRAINING_RECIPES,default_recipe:DEFAULT_RECIPE,candidate_recipe:candidate?.training_recipe?.id??null,new_requests:this.state.new_requests,history_partial:!!this.partialHistory,policy:PREDICTION_POLICY,offers,baseline:DEFAULT_BASELINE,reset_at:this.state.reset_at||null,milestones:this.state.milestones,
       models:['admission','updated','remaining'].map(kind=>{const m=candidate?.models[kind],active=this.model(kind,{active:true}),report=candidate?.reports[kind];return {kind,active_model_id:active?.id??null,candidate_model_id:m?.id??null,active_feature_schema:this.bundleFor(active)?.feature_schema??null,candidate_feature_schema:candidate?.feature_schema??null,status:report?.status??'not_trained',selected:report?.selected?{family:report.selected.family,rounds:report.selected.rounds,transform:report.selected.transform}:null,feature_coverage:report?.feature_coverage??null,split_usage:report?.split_usage?Object.fromEntries(Object.entries(report.split_usage).slice(0,12)):null,
         default_model_id:DEFAULT_BASELINE.id,effective_model_id:active?.id??DEFAULT_BASELINE.id,promotion:m?this.promotionEvidence(candidate,kind):null,holdout:candidate?.reports[kind]?.holdout??null,baselines:candidate?.reports[kind]?.baselines??null,future:m?score(this.state.evaluations[m.id]??[]):null};}),actions:this.state.receipts.slice(0,30)};
   }

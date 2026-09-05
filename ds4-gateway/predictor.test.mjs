@@ -347,6 +347,52 @@ test('subprocess failure is bounded, logs stay private, no arbitrary executable 
   const {p}=rig(t);p.spawnImpl=()=>{const c=new EventEmitter();c.stdout=new PassThrough();c.stderr=new PassThrough();c.kill=()=>{};queueMicrotask(()=>{c.stderr.write('private synthetic failure');c.emit('close',1);});return c;};
   await assert.rejects(p.runProcess('/fake',['fixed'],1000),e=>e.privateOutput.includes('synthetic failure'));
 });
+test('failed optional retraining preserves validated placement and records early snapshot failures privately',async t=>{
+  const r=rig(t),b=bundle(),p=r.p;install(r,'candidate-one',b);p.state.active.admission='candidate-one';p.state.placement=true;p.state.evaluations[b.models.admission.id]=[...goodRows(),...goodRows('b','q')];
+  const a={id:'a',queue:[]},fallback={id:'b',queue:[]},candidate=n=>({node:n.id,profile:n.id==='a'?'p':'q',context_length:262144,active:0,queued:0});
+  assert.equal(p.choose([a,fallback],'new',fallback,candidate),a);
+  // A sparse fixture exceeds the real preparation cap without allocating or
+  // publishing user evidence. Preparation must reject it before Python starts.
+  const evidence=path.join(r.dir,'data','routing-2023-11-14.jsonl'),fd=fs.openSync(evidence,'wx');fs.ftruncateSync(fd,128*1024**2+1);fs.closeSync(fd);
+  const destination=path.join(r.dir,'candidates','candidate-over-budget');
+  await p.runTraining(destination,'candidate-over-budget','operator');
+  assert.equal(p.choose([a,fallback],'new',fallback,candidate),a,'training failure is not a runtime placement fault');
+  assert.equal(p.error,null);assert.match(p.status().training_error,/snapshot failed/);
+  assert.equal(p.status().error,p.status().training_error,'existing UI still displays the warning');
+  assert.equal(p.state.receipts[0].status,'failed');assert.equal(p.busy,false);assert.equal(p.state.training,null);
+  const log=path.join(destination,'failure.log');assert.match(fs.readFileSync(log,'utf8'),/exceeds 128 MiB; no input silently discarded/);
+  assert.equal(fs.statSync(log).mode&0o777,0o600);assert.equal(fs.statSync(destination).mode&0o777,0o700);
+  assert.equal(fs.statSync(evidence).size,128*1024**2+1);assert.equal(fs.existsSync(path.join(destination,'prepared.json')),false);
+  assert.ok(!JSON.stringify(p.status()).includes('128 MiB'),'raw process output remains private');
+  p.error='Predictor observation failed; inference unchanged';
+  assert.equal(p.choose([a,fallback],'new',fallback,candidate),fallback,'runtime safety gate remains effective');
+});
+test('successful retraining cannot clear an independent runtime fault',async t=>{
+  const r=rig(t),p=r.p,name='candidate-success',destination=path.join(r.dir,'candidates',name),b=bundle();
+  b.training_recipe={id:DEFAULT_RECIPE,policy_sha256:RECIPE_POLICY_SHA256};install(r,name,b);
+  p.runProcess=async()=>'';p.error='Predictor observation failed; inference unchanged';p.trainingError='Previous fit failed';
+  await p.runTraining(destination,name,'operator');
+  assert.equal(p.state.receipts[0].status,'completed');
+  assert.equal(p.error,'Predictor observation failed; inference unchanged');assert.equal(p.status().error,p.error);assert.equal(p.trainingError,null);
+});
+test('preparation startup failure leaves a private bounded diagnostic even before a snapshot exists',async t=>{
+  const {p,dir}=rig(t),destination=path.join(dir,'candidates','candidate-no-snapshot');
+  p.runProcess=async()=>{throw Object.assign(new Error('Could not prepare'),{privateOutput:'private synthetic detail '+ 'é'.repeat(1024*1024)});};
+  await p.runTraining(destination,'candidate-no-snapshot','operator');
+  const bytes=fs.readFileSync(path.join(destination,'failure.log'));
+  assert.equal(bytes.length,1024*1024);assert.ok(bytes.toString().startsWith('private synthetic detail'));
+  assert.ok(!JSON.stringify(p.status()).includes('private synthetic detail'));
+});
+test('failure diagnostics do not follow candidate symlinks or overwrite a previous log',async t=>{
+  const {p,dir}=rig(t),outside=path.join(dir,'outside');fs.mkdirSync(outside);
+  p.runProcess=async()=>{throw new Error('private synthetic failure');};
+  const linked=path.join(dir,'candidates','candidate-linked');fs.symlinkSync(outside,linked,'dir');
+  await p.runTraining(linked,'candidate-linked','operator');
+  assert.equal(fs.existsSync(path.join(outside,'failure.log')),false);assert.match(p.status().training_error,/log could not be saved/);
+  const existing=path.join(dir,'candidates','candidate-existing');fs.mkdirSync(existing);fs.writeFileSync(path.join(existing,'failure.log'),'original diagnostic');
+  await p.runTraining(existing,'candidate-existing','operator');
+  assert.equal(fs.readFileSync(path.join(existing,'failure.log'),'utf8'),'original diagnostic');assert.match(p.state.receipts[0].reason,/log could not be saved/);
+});
 test('analytics freezes independent model versions/stages and excludes failed and pre-30s remaining estimates',()=>{
   const a=new PredictionEvidence();a.accept(decision('a',0));a.accept(row('model_prediction','a',1,{predictor_schema:2,model_id:'a'.repeat(64),model_kind:'admission',prediction_stage:'admission',available_at:origin+1,seconds:50}));a.accept(row('dispatch','a',2,{queue_ms:2}));
   for(const elapsed of [0,30,35])a.accept(row('model_prediction','a',elapsed*1000+2,{predictor_schema:2,model_id:'b'.repeat(64),model_kind:'remaining',prediction_stage:'remaining',available_at:origin+elapsed*1000+2,elapsed_s:elapsed,seconds:20}));

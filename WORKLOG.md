@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Kept optional training failures independent of serving.** A failed fit must
+  not disable a validated predictor, and a successful fit must not erase an
+  unrelated runtime fault. Early snapshot failures now leave private diagnostics
+  without trimming evidence or changing model-activation gates.
+
 - **Checked early-ETA specialization against later traffic.** Compare frozen
   forests and fixed references on identical first-observed checkpoints. Preserve
   negative results and distinguish bias/tail tradeoffs from overall and unseen-

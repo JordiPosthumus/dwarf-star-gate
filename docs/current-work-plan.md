@@ -23,6 +23,12 @@ Private deployment receipts and measurements stay out of this public plan.
 
 ## Next, in order
 
+Completed hardening slice: optional training warnings are separate from runtime
+faults, including real snapshot-limit regression coverage and private diagnostics
+before snapshot creation. Growing training evidence still needs an explicitly
+reviewed input-window policy; no retention, preparation-budget or cadence change
+is implied by this fix.
+
 1. **Finish the hardening and efficiency pass.** Continue focused, measured
    milestones. The attribution-audit index now has boundary/order/parity tests;
    retain ambiguous-overlap and tied-revision abstentions.

@@ -735,8 +735,23 @@ Training has a 120-second overall budget (snapshot stage capped at 30 seconds),
 128 MiB source snapshot and 100,000 prepared-row limits. Exceeding those budgets
 fails explicitly; **no training input or stored user data is silently deleted**.
 As history grows, a reviewed rolling training-window policy will be needed; this
-version does not silently choose a retention policy. Failures keep the last
-working model/fallback and save a bounded private failure log. Restart interrupts
+version does not silently choose a retention policy. Optional training failures
+do not disable an otherwise validated active model, and a successful fit cannot
+clear an independent observation, state or artifact fault. Those runtime faults
+retain their deterministic placement fallback gate. Status exposes a separate
+`training_error` (snapshot, fit or validation); the existing UI warning includes
+it when no runtime fault takes precedence. Training warnings clear on successful
+training or process restart; the last 30 action receipts remain durable.
+
+Failures save at most 1 MiB of private process diagnostics in the candidate's
+`failure.log`, including when preparation failed before creating its snapshot.
+The directory/file use private permissions; existing logs are not overwritten
+and candidate-directory symlinks are rejected. If storage prevents saving the
+log, the warning says so instead of claiming it was saved. Public status and
+receipts contain fixed stage guidance, never raw process output or data paths.
+An input-limit failure leaves all source evidence untouched and still uses the
+existing training cadence and operator cooldown; it does not silently select a
+smaller dataset or increase a budget. Restart interrupts
 training rather than activating a half-written candidate. Runtime history is
 bounded; on startup it replays up to 8 MiB from each of the last two daily files,
 and discloses partial history. Source evidence remains on disk.
