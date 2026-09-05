@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Kept empty Door holds from disappearing on restart.** Zero active/waiting
+  streams does not mean there is no maintenance hold. Ordinary Door stop/restart
+  now requires explicitly unheld status; manual, automatic and unknown hold states
+  refuse the operation. Only an explicit interrupt override bypasses this guard.
+
 - **Clarified Mac recovery enrollment boundaries.** The agent-facing guide now
   distinguishes loaded restart, stopped-service start, certified removed-job
   bootstrap and missing-original-definition manual recovery. Corrected stale

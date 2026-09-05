@@ -35,7 +35,7 @@ export function assertIdle(status,interrupt=false) {
   if(!interrupt&&(!status||status.active!==0||status.queued!==0))throw new Error('Gateway is busy or its state is unknown. Wait for idle, or explicitly use --interrupt.');
 }
 export function assertDoorIdle(status,interrupt=false){
-  if(!interrupt&&(!status||status.active!==0||status.held!==0))throw new Error('Continuity Door has active or held client streams, or its state is unknown. Keep it running, wait for idle, or explicitly use --interrupt.');
+  if(!interrupt&&(!status||status.active!==0||status.held!==0||status.holding!==false))throw new Error('Continuity Door has a hold, active or held client streams, or its state is unknown. Keep it running; wait for an idle, explicitly unheld state, or explicitly use --interrupt.');
 }
 export function assertRegistration(saved,spec) {
   // The operator CLI may use a newer Node than the registered service. Keep the

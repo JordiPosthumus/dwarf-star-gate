@@ -30,6 +30,16 @@ test('legacy Door cannot silently ignore ownership fencing during automated rest
   await assert.rejects(releaseParkedCore(config,{doorStatus:async()=>({holding:true,hold_kind:'manual',reason:PARK_REASON}),coreStatus:async()=>calls.push('read'),release:async()=>calls.push('release')}),/lacks hold ownership/);
   assert.deepEqual(calls,[]);
 });
+test('Door stop/restart preserves even empty manual or automatic holds unless interruption is explicit',()=>{
+  for(const hold_kind of ['manual','automatic']){
+    const state={active:0,held:0,holding:true,hold_kind,reason:'private operator intent'};
+    const before=structuredClone(state);
+    assert.throws(()=>assertDoorIdle(state),error=>/has a hold/.test(error.message)&&!error.message.includes(state.reason));
+    assertDoorIdle(state,true);assert.deepEqual(state,before);
+  }
+  for(const holding of [undefined,null,0,'false'])assert.throws(()=>assertDoorIdle({active:0,held:0,holding}),/unknown/);
+  assertDoorIdle({active:0,held:0,holding:false});
+});
 test('coordinated park drains after holding; start releases only the exact verified park hold',async()=>{
   const config={continuity_door:{enabled:true,control_socket:'/tmp/fixture.sock'},request_timeout_ms:10000};let now=0,index=0;const calls=[],states=[{active:1,queued:1},{active:0,queued:0}];
   const parked=await coordinatedCorePark(config,{doorStatus:async()=>({holding:false}),hold:async body=>calls.push(['hold',body]),read:async()=>states[Math.min(index++,states.length-1)],stop:async()=>calls.push(['stop']),wait:async ms=>{now+=ms;},now:()=>now});
@@ -71,7 +81,7 @@ test('readiness accepts enabled management; service manifests are portable and n
   assert.throws(()=>assertRegistration({...registration,ProgramArguments:['/installed/node','/other/gateway.mjs',spec.args[2]]},spec));
   assert.throws(()=>assertRegistration({...registration,EnvironmentVariables:{GATEWAY_UI_PORT:'1'}},spec));
   assertIdle({active:0,queued:0});for(const state of [null,{active:1,queued:0},{active:0,queued:1}]){assert.throws(()=>assertIdle(state));assertIdle(state,true);}
-  assertDoorIdle({active:0,held:0});for(const state of [null,{active:1,held:0},{active:0,held:1}]){assert.throws(()=>assertDoorIdle(state));assertDoorIdle(state,true);}
+  assertDoorIdle({active:0,held:0,holding:false});for(const state of [null,{active:1,held:0,holding:false},{active:0,held:1,holding:true},{active:0,held:0,holding:true},{active:0,held:0}]){assert.throws(()=>assertDoorIdle(state));assertDoorIdle(state,true);}
   const door=serviceSpec('door','/tmp/config.json',{state_file:'/tmp/runtime/state.json',request_timeout_ms:1000},{root:'/tmp/DSG',node:'/tmp/node',env:{PATH:'/usr/bin'}});assert.ok(door.args[1].endsWith('/ds4-gateway/door.mjs'));assert.ok(door.text.includes('local.dwarf-star-gate.continuity-door'));
 });
 test('clean checkout: initialize, doctor, UI registration, exact forwarding, CLI status and persisted restart',async t=>{

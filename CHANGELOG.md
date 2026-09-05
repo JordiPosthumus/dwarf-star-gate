@@ -1,5 +1,15 @@
 # Changelog
 
+## Preserve empty Continuity Door holds during lifecycle operations
+
+- Reproduce the idle check accepting a held Door with zero active and waiting
+  streams, allowing ordinary stop/restart to erase its in-memory hold.
+- Require explicit `holding:false` in addition to idle counts. Manual/automatic
+  holds and missing or malformed hold state refuse ordinary stop/restart; the
+  existing explicit interruption override is unchanged.
+- Regression-test both hold kinds, unknown states, unchanged inspected state and
+  diagnostics that do not expose the private hold reason. No live hold changed.
+
 ## Align Mac enrollment guides with implemented recovery gates
 
 - Replace stale claims that all removed Mac jobs are unsupported with the actual

@@ -89,6 +89,11 @@ or replay model requests.
 Door code changes are separate from core changes: a core-only cutover does not
 reload this stable endpoint. Update the Door in its own idle maintenance window;
 restarting it over active proxied streams would defeat its continuity guarantee.
+An empty Door is not necessarily unheld: a manual maintenance hold can have zero
+waiting requests. Ordinary Door stop/restart requires `holding:false` as well as
+zero active and held streams; unknown hold state also refuses the operation.
+Inspect and resolve the hold deliberately. `--interrupt` remains the explicit
+override and can discard in-memory hold intent or abandon client connections.
 
 ## Guarantees and boundaries
 
