@@ -19,6 +19,8 @@ test('dashboard folds connection and diagnostics into its single identity header
   const header=html.match(/<header\b[^>]*>[\s\S]*?<\/header>/)[0];
   for(const id of ['connection','control-mode','control-note','model'])assert.ok(header.includes(`id="${id}"`));
   assert.match(header,/<h1>Dwarf Star Gate<\/h1>/);
+  assert.match(header,/<p class="tagline">Seamless Continuity<\/p>/);
+  assert.match(html,/<title>Dwarf Star Gate · Seamless Continuity<\/title>/);
   assert.match(header,/href="\/api\/diagnostics" download/);
   assert.match(header,/aria-label="Download a DSG debug snapshot"/);
   assert.doesNotMatch(header,/control room|class="brand"/);

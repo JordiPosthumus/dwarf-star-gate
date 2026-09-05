@@ -1,5 +1,10 @@
 # Changelog
 
+## Adopt the Seamless Continuity tagline
+
+- Add the tagline to the README, compact dashboard header, browser title and
+  project metadata; keep recovery limits explicit in the delivery principles.
+
 ## Give Pi a concrete visual-history hand-back
 
 - Add explicitly enrolled `dsg_visual_context` selection, scoped to an existing

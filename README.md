@@ -1,5 +1,9 @@
 # Dwarf Star Gate
 
+**Seamless Continuity**
+
+Keep your agents working across a local DS4 fleet.
+
 <img src="ds4-gateway/ui/logo.png" alt="Dwarf Star Gate logo" width="240">
 
 [MIT licensed](LICENSE) · Created by [Jordi Posthumus](https://github.com/JordiPosthumus).

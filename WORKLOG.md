@@ -10,6 +10,10 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Named our promise: Seamless Continuity.** Made it DSG's tagline across the
+  README, dashboard and project metadata, grounded in the existing delivery
+  principles and explicit recovery boundaries.
+
 - **Made visual recovery actionable for Pi.** Added an optional agent-controlled
   image-selection tool that repairs outgoing visual history without deleting the
   saved chat. Full-history and contact-sheet instructions replace ambiguous
