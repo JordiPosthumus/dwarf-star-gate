@@ -41,6 +41,10 @@ is implied by this fix.
    engine-start replays and metadata updates preserve remembered attribution
    ambiguity. Check fresh ordinary
    traffic across process epochs; synthetic speed gains alone are not live proof.
+   Later-evidence attribution now explains overlap outcomes by worker, with
+   recorded/reconciled/remaining counts and blocker totals matching the fleet
+   report. Fresh ordinary-traffic checks do not replace isolated process-boundary
+   validation; unresolved competing owners remain abstentions.
    Stream observers now recognize CR/LF/CRLF consistently with isolated Pi
    acceptance, avoiding false failures while preserving accelerator-error evidence.
    Continue focused lifecycle/privacy/retention checks rather than broad rewrites.

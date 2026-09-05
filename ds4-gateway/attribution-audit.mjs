@@ -108,7 +108,16 @@ export function reconcileAttributionRows(attributionRows=[],engineRows=[],gatewa
   // Select only the report cohort. Older ownership and competing starts remain
   // in every reconciliation check; dropping them could manufacture certainty.
   const overlapCount=original.filter(row=>inCohort(row)&&row.reason==='overlapping_gateway_windows').length;
-  const unchanged=(reason='source_incomplete')=>({summary:summarizeAttribution(original.filter(inCohort)),reconciled_overlaps:0,remaining_overlap_abstentions:overlapCount,reconciliation_block_reasons:overlapCount?{[reason]:overlapCount}:{}});
+  const workerCounts=new Map();
+  for(const row of original)if(inCohort(row)&&row.reason==='overlapping_gateway_windows'){
+    const worker=workerCounts.get(row.node)??{node:row.node,recorded_overlap_abstentions:0,reconciled_overlaps:0,remaining_overlap_abstentions:0,block_reasons:{},competing_start_details:{}};
+    worker.recorded_overlap_abstentions++;worker.remaining_overlap_abstentions++;workerCounts.set(row.node,worker);
+  }
+  const workerReport=()=>[...workerCounts.values()].sort((a,b)=>a.node.localeCompare(b.node));
+  const unchanged=(reason='source_incomplete')=>{
+    for(const worker of workerCounts.values())worker.block_reasons={[reason]:worker.recorded_overlap_abstentions};
+    return {summary:summarizeAttribution(original.filter(inCohort)),reconciled_overlaps:0,remaining_overlap_abstentions:overlapCount,reconciliation_block_reasons:overlapCount?{[reason]:overlapCount}:{},reconciliation_by_worker:workerReport()};
+  };
   const invalid=attributionRows.some(raw=>raw?.event==='engine_attribution'&&!safeAttribution(raw))||engineRows.some(raw=>raw?.kind==='start'&&!safeCollisionStart(raw))||gatewayRows.some(raw=>['request_dispatched','request_finished'].includes(raw?.event)&&!safeLifecycle(raw));
   if(!complete||invalid)return unchanged();
   const starts=new Map(),conflictingStarts=new Set();
@@ -138,7 +147,10 @@ export function reconcileAttributionRows(attributionRows=[],engineRows=[],gatewa
   const requestWindows=timeWindows(requests,'dispatched_at'),startWindows=timeWindows(collisionStarts,'time');
   const proposals=new Map(),blocks={};
   let currentRow;
-  const block=reason=>{if(inCohort(currentRow))blocks[reason]=(blocks[reason]??0)+1;};
+  const block=reason=>{if(inCohort(currentRow)){
+    blocks[reason]=(blocks[reason]??0)+1;
+    const reasons=workerCounts.get(currentRow.node).block_reasons;reasons[reason]=(reasons[reason]??0)+1;
+  }};
   for(const row of original){
     currentRow=row;
     if(row.reason!=='overlapping_gateway_windows')continue;
@@ -191,15 +203,16 @@ export function reconcileAttributionRows(attributionRows=[],engineRows=[],gatewa
         const flags=new Set(competing.map(s=>s.sample_id?'identified_start':'anonymous_start'));
         for(const s of competing)flags.add(s.prompt===row.prompt_tokens&&s.cached===row.cached_tokens?'same_prompt_cache_usage':'different_prompt_cache_usage');
         for(const s of competing){const owner=latest.get(`${s.node}:${s.sample_id}`);flags.add(owner?.status==='corroborated'&&owner.request_id&&owner.request_id!==proposal.request_id?'corroborated_other_owner':'unresolved_competing_owner');}
-        for(const flag of flags)competing_start_details[flag]=(competing_start_details[flag]??0)+1;
+        const workerDetails=workerCounts.get(row.node).competing_start_details;
+        for(const flag of flags){competing_start_details[flag]=(competing_start_details[flag]??0)+1;workerDetails[flag]=(workerDetails[flag]??0)+1;}
       }
       block('competing_engine_start');return row;
     }
-    if(inCohort(row))reconciled_overlaps++;
+    if(inCohort(row)){reconciled_overlaps++;const worker=workerCounts.get(row.node);worker.reconciled_overlaps++;worker.remaining_overlap_abstentions--;}
     return {...row,request_id:proposal.request_id,status:'corroborated',reason:'usage_disambiguated_overlap',
       confidence:row.backend_epoch_confidence==='strong'?'high_candidate':'bounded_candidate',dispatch_delta_ms:proposal.dispatch_delta_ms};
   });
-  return {summary:summarizeAttribution(revised.filter(inCohort)),reconciled_overlaps,competing_start_details,remaining_overlap_abstentions:revised.filter(row=>inCohort(row)&&row.reason==='overlapping_gateway_windows').length,reconciliation_block_reasons:Object.fromEntries(Object.entries(blocks).sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0])))};
+  return {summary:summarizeAttribution(revised.filter(inCohort)),reconciled_overlaps,competing_start_details,remaining_overlap_abstentions:revised.filter(row=>inCohort(row)&&row.reason==='overlapping_gateway_windows').length,reconciliation_block_reasons:Object.fromEntries(Object.entries(blocks).sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0]))),reconciliation_by_worker:workerReport()};
 }
 
 export function auditAttributionReconciliation(directory,gatewayLog,{maxFiles=MAX_FILES,maxBytesPerFile=MAX_RECONCILE_BYTES_PER_FILE,maxGatewayBytes=MAX_GATEWAY_BYTES,sinceMs=null}={}) {
@@ -235,7 +248,7 @@ export function auditAttributionReconciliation(directory,gatewayLog,{maxFiles=MA
   const recorded=summarizeAttribution(attributionRows.filter(inCohort)),later=reconcileAttributionRows(attributionRows,engineRows,gatewayRows,{complete,metricCoverageStart,sinceMs});
   return {schema:1,mode:'read_only_later_evidence_reconciliation',source_complete:complete,files_read:files.length-skipped_files,metric_files_omitted,partial_files,skipped_files,malformed_lines,oversized_lines,invalid_metric_records,anonymous_metric_starts,truncated_records,
     gateway_partial:gateway.partial,gateway_malformed_lines,gateway_oversized_lines,gateway_invalid_records,gateway_truncated_records,recorded,with_later_gateway_evidence:later.summary,
-    cohort_since:sinceMs===null?null:new Date(sinceMs).toISOString(),reconciled_overlaps:later.reconciled_overlaps,remaining_overlap_abstentions:later.remaining_overlap_abstentions,reconciliation_block_reasons:later.reconciliation_block_reasons,competing_start_details:later.competing_start_details??{},
+    cohort_since:sinceMs===null?null:new Date(sinceMs).toISOString(),reconciled_overlaps:later.reconciled_overlaps,remaining_overlap_abstentions:later.remaining_overlap_abstentions,reconciliation_block_reasons:later.reconciliation_block_reasons,competing_start_details:later.competing_start_details??{},reconciliation_by_worker:later.reconciliation_by_worker,
     privacy:'Counts, bounded reason codes and configured server IDs only. Original telemetry is not rewritten; no prompts, responses, request IDs, sample IDs, paths or credentials are returned.'};
 }
 

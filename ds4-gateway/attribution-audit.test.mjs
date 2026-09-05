@@ -113,6 +113,33 @@ test('indexed request candidates preserve inclusive skew, lead and finish edges'
     assert.deepEqual(log,before);
   }
 });
+test('per-worker reconciliation explains the same selected starts without changing ownership',()=>{
+  const rows=[overlap(),overlap(11,{node:'mac-a'})],starts=[engine(),{...engine(11),node:'mac-a'}];
+  const mac=gateway().map(r=>({...r,node:'mac-a',request_id:r.request_id.replace(/^./,'a')}));
+  delete mac.at(-1).usage;
+  const log=[...gateway(),...mac],result=reconcileAttributionRows(rows,starts,log,{complete:true});
+  assert.deepEqual(result.reconciliation_by_worker,[
+    {node:'mac-a',recorded_overlap_abstentions:1,reconciled_overlaps:0,remaining_overlap_abstentions:1,block_reasons:{candidate_usage_incomplete:1},competing_start_details:{}},
+    {node:'spark-a',recorded_overlap_abstentions:1,reconciled_overlaps:1,remaining_overlap_abstentions:0,block_reasons:{},competing_start_details:{}},
+  ]);
+  assert.equal(result.reconciled_overlaps,1);assert.deepEqual(result.reconciliation_block_reasons,{candidate_usage_incomplete:1});
+  assert.deepEqual(reconcileAttributionRows([...rows].reverse(),[...starts].reverse(),[...log].reverse(),{complete:true}),result);
+  const selected=reconcileAttributionRows(rows,starts,log,{complete:false,sinceMs:base+1});assert.deepEqual(selected.reconciliation_by_worker,[]);
+  const incomplete=reconcileAttributionRows(rows,starts,log,{complete:false});
+  assert.ok(incomplete.reconciliation_by_worker.every(w=>w.block_reasons.source_incomplete===1&&w.reconciled_overlaps===0));
+  const serialized=JSON.stringify(result.reconciliation_by_worker);for(const privateId of [requestA,requestB,epoch,sample(10)])assert.ok(!serialized.includes(privateId));
+});
+
+test('per-worker competing-start diagnostics count each blocked target once and preserve global totals',()=>{
+  const result=reconcileAttributionRows([overlap()],[engine(),{...engine(12),prompt:1200,new_tokens:300}],gateway(),{complete:true});
+  assert.equal(result.reconciliation_by_worker.length,1);
+  const worker=result.reconciliation_by_worker[0];assert.equal(worker.recorded_overlap_abstentions,1);assert.equal(worker.remaining_overlap_abstentions,1);
+  assert.deepEqual(worker.block_reasons,result.reconciliation_block_reasons);
+  assert.deepEqual(worker.competing_start_details,result.competing_start_details);
+  assert.equal(worker.competing_start_details.different_prompt_cache_usage,1);
+  const invalid=reconcileAttributionRows([overlap()],[engine()], [...gateway(),{...gateway()[1],time:iso(base-3000)}],{complete:true});
+  assert.deepEqual(invalid.reconciliation_by_worker[0].block_reasons,{gateway_evidence_conflict:1});
+});
 test('indexed competing starts preserve both timing edges and anonymous collision vetoes',()=>{
   const cases=[
     {offset:-6001,blocked:false},{offset:-6000,blocked:true},

@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Made attribution blockers machine-specific.** The read-only audit now shows
+  which overlaps later evidence resolved and what still prevents a match on each
+  worker. Fresh-traffic verification preserves existing decisions; it does not
+  turn timing/usage evidence into protocol identity or restart certification.
+
 - **Stopped a false cache-loss finding.** Conflicting admission records could
   make the auditor hide an intervening request based on input order. It now
   withholds that invalid view while preserving ordinary valid classifications

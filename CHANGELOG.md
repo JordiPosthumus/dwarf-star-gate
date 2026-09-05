@@ -1,5 +1,16 @@
 # Changelog
 
+## Explain attribution reconciliation by worker
+
+- Add a read-only per-worker ledger of recorded, reconciled and remaining
+  overlap abstentions, with fixed blocker reasons and competing-start details.
+  Worker totals reproduce the existing fleet totals; ownership rules are unchanged.
+- Cover mixed-worker outcomes, source failures, cohort selection, immutable
+  ordering and report privacy. A frozen fresh-traffic audit retains exact parity
+  for all pre-existing decisions, counts and reasons.
+- Clarify that better later-evidence yield does not prove exact request identity
+  or certify attribution across a real Mac backend restart.
+
 ## Reject contradictory cache-audit admission positions
 
 - Do not pick the first admission when records for one request disagree on

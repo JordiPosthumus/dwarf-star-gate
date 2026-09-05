@@ -115,6 +115,33 @@ abstention. The report presents the recorded view beside the later-evidence view
 it never rewrites telemetry or hides the original decision. Private request and
 sample IDs are used only inside the bounded join and never returned.
 
+The later-evidence report also provides `reconciliation_by_worker`, sorted by
+configured server ID. Each entry accounts for the selected engine starts that
+were originally abstained as `overlapping_gateway_windows`:
+
+```text
+recorded_overlap_abstentions = reconciled_overlaps + remaining_overlap_abstentions
+```
+
+`block_reasons` explains each remaining overlap once; its counts sum to that
+worker's remaining overlaps. `competing_start_details` describes the subset
+blocked by another engine start. Those flags can overlap—for example, the same
+target can have both an identified competing start and unresolved ownership—so
+they must not be added as if they were separate requests. Per-worker totals
+reproduce the existing fleet totals. Source-incomplete and contradictory-gateway
+failures also retain per-worker explanations without inferring any new match.
+Workers with no selected overlap abstentions are omitted from this breakdown;
+they remain in the ordinary summary when they have other starts.
+
+This is a diagnostic ledger, not a new matching policy or a hardware-fault score.
+Missing candidate usage calls for checking terminal evidence; competing starts
+need independent ownership evidence, not a smaller clock tolerance or circular
+confirmation between new proposals. Selecting a fresh cohort still retains older
+owners and competing starts in the checks. A single observed Mac listen-marker
+epoch cannot validate behavior across a real backend restart: that requires a
+separately authorized, isolated before/after process-boundary exercise. A higher
+later-evidence yield alone does not provide that proof.
+
 The engine-start record must exactly agree with the attribution row's timestamp,
 process epoch and its strong/bounded confidence, and prompt/cache/new-token tuple.
 A reused sample ID with conflicting normalized start records yields
