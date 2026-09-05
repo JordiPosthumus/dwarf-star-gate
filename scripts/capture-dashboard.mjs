@@ -35,6 +35,14 @@ try {
     return header.scrollWidth<=header.clientWidth&&[...header.querySelectorAll('.remaining-estimate,.server-verdict,.badge,.routing-toggle')].every(el=>el.getBoundingClientRect().right<=box.right+.5);
   })),true,'Narrow server-card headers must keep ETA, backlog, phase and routing controls inside the card');
   await page.setViewportSize({width:1440,height:1100});
+  for(const width of [390,750,1440]){
+    await page.setViewportSize({width,height:1100});
+    assert.equal(await page.locator('.dashboard-header').evaluate(el=>el.scrollWidth<=el.clientWidth),true,'Unified header must fit without horizontal overflow');
+    assert.equal(await page.locator('#connection').isVisible(),true);
+    assert.equal(await page.getByRole('link',{name:'Download a DSG debug snapshot'}).isVisible(),true);
+  }
+  assert.equal(await page.locator('header').count(),1,'No separate empty branding strip');
+  assert.ok((await page.locator('.dashboard-header').boundingBox()).height<180,'Desktop header stays compact');
   assert.equal(await page.locator('#tab-fleet').getAttribute('aria-selected'),'true');
   assert.equal(await page.locator('#view-fleet').isVisible(),true);
   assert.equal(await page.locator('#view-genie').isHidden(),true);

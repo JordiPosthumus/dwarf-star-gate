@@ -10,6 +10,10 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Removed the redundant dashboard masthead.** Connection status and debug
+  download now share the existing title area, bringing fleet content higher up
+  without removing diagnostics or changing runtime behavior.
+
 - **Opened DSG for permissive reuse.** Added the MIT License with Jordi Posthumus's
   copyright credit, aligned Node/Python package metadata and removed the obsolete
   no-license notices. Commercial use and modification are allowed while copyright

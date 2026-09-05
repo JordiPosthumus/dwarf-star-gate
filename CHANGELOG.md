@@ -1,5 +1,12 @@
 # Changelog
 
+## Compact the dashboard identity header
+
+- Remove the standalone `[dsg] / control room` strip and divider; fold live
+  connection status and an accessible debug-download link into the title area.
+- Keep controls and status available in a wrapping mobile layout, with header
+  structure and browser layout regression checks.
+
 ## Release Dwarf Star Gate under the MIT License
 
 - Add the standard root MIT license with copyright credit to Jordi Posthumus.

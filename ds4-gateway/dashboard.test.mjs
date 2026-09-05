@@ -13,6 +13,17 @@ import { FileLogReader, parseLocalProcessStart, parseLocalTiming, telemetryFiles
 import {cacheInventoryDirectories} from './cache-inventory.mjs';
 const parse = (s, t = 1000) => parseTiming(`0902 14:00:00 ds4-server: ${s}`, t);
 
+test('dashboard folds connection and diagnostics into its single identity header',()=>{
+  const html=fs.readFileSync(new URL('./ui/index.html',import.meta.url),'utf8');
+  assert.equal((html.match(/<header\b/g)||[]).length,1);
+  const header=html.match(/<header\b[^>]*>[\s\S]*?<\/header>/)[0];
+  for(const id of ['connection','control-mode','control-note','model'])assert.ok(header.includes(`id="${id}"`));
+  assert.match(header,/<h1>Dwarf Star Gate<\/h1>/);
+  assert.match(header,/href="\/api\/diagnostics" download/);
+  assert.match(header,/aria-label="Download a DSG debug snapshot"/);
+  assert.doesNotMatch(header,/control room|class="brand"/);
+});
+
 test('forecast labels never present stale snapshots or total service time as a live ETA',()=>{
   const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);
