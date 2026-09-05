@@ -71,3 +71,26 @@ test('compatibility mirrors stock DS4 header gates and abstains on legacy weight
   assert.equal(cacheCompatibility(entry,{...profile,weights_fp24:0}).status,'unknown');
   assert.equal(cacheCompatibility(entry,null).status,'unknown');
 });
+
+test('impossible header profiles cannot become compatible or prove incompatibility',()=>{
+  const valid={model_id:2,weights_fp24:0xa11ce,quant_bits:2,ctx_size:262144};
+  const invalid={model_id:[-1,256,1.5,NaN,Infinity,'2',true],weights_fp24:[-1,0x1000000,1.5,NaN,Infinity,'3',true],ctx_size:[-1,0,0x100000000,1.5,NaN,Infinity,'262144',true]};
+  for(const [field,values] of Object.entries(invalid))for(const value of values){
+    const malformed={...valid,[field]:value};
+    for(const [source,target] of [[malformed,malformed],[malformed,valid],[valid,malformed]]){
+      const before=structuredClone({source,target});
+      assert.deepEqual(cacheCompatibility({compatibility:source},target),{status:'unknown',reasons:['missing_profile_evidence']});
+      assert.deepEqual({source,target},before);
+    }
+  }
+  for(const model_id of [0,255])for(const ctx_size of [1,0xffffffff]){
+    const profile={...valid,model_id,ctx_size,weights_fp24:0xffffff};
+    assert.equal(cacheCompatibility({compatibility:profile},profile).status,'compatible');
+  }
+  // Zero remains the legacy/unknown fingerprint, not malformed or compatible.
+  assert.deepEqual(cacheCompatibility({compatibility:valid},{...valid,weights_fp24:0}),{status:'unknown',reasons:['legacy_unknown_weights']});
+  // Cross-quantization is still governed by DS4's explicit policy, not equality.
+  const otherQuant={...valid,quant_bits:4,weights_fp24:123};
+  assert.equal(cacheCompatibility({compatibility:valid},otherQuant).status,'compatible');
+  assert.equal(cacheCompatibility({compatibility:valid},otherQuant,{reject_different_quant:true}).status,'incompatible');
+});

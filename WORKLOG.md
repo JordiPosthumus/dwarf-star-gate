@@ -10,6 +10,13 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Rejected impossible cache compatibility profiles.** Reproduced matching
+  negative/oversized header fields being accepted as compatible. Both sides now
+  require valid encoded ranges; invalid evidence stays unknown even when the
+  snapshot reference matches. Valid comparisons, legacy missing fingerprints and
+  DS4's cross-quantization policy are preserved. No cache was read beyond its
+  existing header boundary, moved or loaded by this change.
+
 - **Compared frozen forecasts on genuinely later traffic.** A 35-completion,
   two-session cohort gave the history-plus-semantics candidate a small
   post-embedding improvement, but its updated forecast still lost to simple

@@ -64,3 +64,17 @@ test('ambiguous snapshot references and unspecified completeness cannot establis
   // An incomplete scan may still provide one unambiguous compatible match.
   assert.equal(snapshotPresence({...base,capped:true},ref,profile,{now:2000}).status,'observed');
 });
+
+test('a matching snapshot reference cannot turn an impossible profile into observed compatibility',()=>{
+  const ref='a'.repeat(64),valid={model_id:2,weights_fp24:3,quant_bits:2,ctx_size:262144};
+  for(const bad of [{model_id:-1},{weights_fp24:0x1000000},{ctx_size:0}]){
+    const invalid={...valid,...bad};
+    for(const [source,target] of [[invalid,invalid],[invalid,valid],[valid,invalid]]){
+      const inventory={schema:1,source:'stock_ds4_kvstore_headers',privacy:'installation_keyed_hmac',status:'ready',observed_at:1000,capped:false,rejected:0,
+        entries:[{snapshot_ref:ref,tokens:1000,file_bytes:2000,compatibility:source}]};
+      const before=structuredClone(inventory);
+      assert.deepEqual(snapshotPresence(inventory,ref,target,{now:2000}),{status:'unknown',reason:'missing_profile_evidence',observed_at:1000});
+      assert.deepEqual(inventory,before);
+    }
+  }
+});

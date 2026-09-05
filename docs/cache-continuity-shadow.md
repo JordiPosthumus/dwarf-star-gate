@@ -62,6 +62,14 @@ either cap makes absence inconclusive; no cache files are changed or removed.
 This is stronger than treating “not found” as absence and keeps a permissions or
 filesystem problem from becoming a routing claim.
 
+Both source and target profiles must fit the header's encoded field ranges:
+an unsigned 8-bit model ID, unsigned 24-bit weights fingerprint, supported
+quantization and positive unsigned 32-bit context. Matching invalid integers
+cannot prove compatibility—or incompatibility. A zero weights fingerprint still
+means legacy unknown weights. Valid cross-quantization comparisons retain DS4's
+explicit policy. Even a valid bounded header match is not proof of full model,
+vision or payload portability; it does not authorize a transfer or restore.
+
 ## Why it is not live yet
 
 The [stock-cache feasibility note](cache-transfer-feasibility.md) records the

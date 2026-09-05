@@ -139,7 +139,12 @@ export function summarizeCacheInventory(inventory){
 
 export function cacheCompatibility(entry,target,{reject_different_quant=false}={}){
   const source=entry?.compatibility;
-  if(!source||!target||![source,target].every(value=>Number.isSafeInteger(value.model_id)&&Number.isSafeInteger(value.weights_fp24)&&[2,4].includes(value.quant_bits)&&Number.isSafeInteger(value.ctx_size)))return {status:'unknown',reasons:['missing_profile_evidence']};
+  // These are encoded header fields, not arbitrary matching integers. An
+  // impossible profile must not manufacture a compatible snapshot observation.
+  const valid=value=>value&&Number.isSafeInteger(value.model_id)&&value.model_id>=0&&value.model_id<=0xff&&
+    Number.isSafeInteger(value.weights_fp24)&&value.weights_fp24>=0&&value.weights_fp24<=0xffffff&&
+    [2,4].includes(value.quant_bits)&&Number.isSafeInteger(value.ctx_size)&&value.ctx_size>0&&value.ctx_size<=0xffffffff;
+  if(![source,target].every(valid))return {status:'unknown',reasons:['missing_profile_evidence']};
   const reasons=[];
   if(source.model_id!==target.model_id)reasons.push('model_shape_mismatch');
   if(target.ctx_size<source.ctx_size)reasons.push('target_context_too_small');

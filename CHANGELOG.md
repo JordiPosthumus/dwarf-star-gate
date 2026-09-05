@@ -1,5 +1,18 @@
 # Changelog
 
+## Reject impossible profiles in cache-continuity evidence
+
+- Reproduce negative and over-width matching header fields being classified as
+  compatible, including zero context. Require valid source and target model-ID,
+  fingerprint and context ranges before compatibility classification.
+- Return unknown evidence for malformed profiles rather than manufacturing
+  presence or an incompatibility exclusion. Preserve zero-fingerprint legacy
+  abstention and existing cross-quantization policy for valid profiles.
+- Regress invalid values on either/both sides, valid field boundaries, input
+  immutability and snapshot-presence integration. The helper remains bounded
+  header evidence, never a full transfer/restore certificate.
+- No engine, cache format, model, context setting, routing or live service change.
+
 ## Match future forecast checkpoints before comparing stage accuracy
 
 - Add an offline updated-model `paired_stages` report: compare exactly one upload
