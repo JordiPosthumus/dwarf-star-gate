@@ -1,5 +1,15 @@
 # Changelog
 
+## Explain frozen future-audit selection
+
+- Add per-model prepared-point and distinct-request counts with ordered,
+  mutually exclusive point exclusions. Disclose partially selected requests and
+  the boundary between prepared labels and raw traffic.
+- Preserve existing future-only selection, point order, frozen artifacts and
+  scoring for both completion and occupancy audits. Cover exact time boundaries,
+  repeated IDs across runs, cross-checkpoint exclusions and shuffled evidence.
+- No dashboard, training, promotion, routing or source-retention changes.
+
 ## Structure proposed Genie hardening experiments
 
 - Ask new notes for a bounded change, reproducible test and expected result;

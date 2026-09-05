@@ -192,6 +192,31 @@ def remaining_age_support(training_rows, rows):
             'note':'Completed training jobs only; missing late progress can undercount support. Same worker is not proof of matching hardware/profile era. Bands can share requests; counts are not confidence, independence, promotion or routing authority.'}
 
 
+def select_future_rows(rows, seen, first, cutoff, end):
+    """Explain the existing validated-row predicate, preserving point order.
+
+    Counts describe this model kind's prepared points, not the raw traffic log.
+    first includes every checkpoint kind; seen includes the entire frozen input.
+    Exclusion precedence makes point totals additive even when reasons overlap.
+    """
+    excluded={reason:0 for reason in ('in_training_snapshot','first_checkpoint_at_or_before_freeze','finishes_after_snapshot')}
+    selected=[];source_requests=set();selected_requests=set();excluded_requests=set()
+    for row in rows:
+        key=(row['run_id'],row['request_id']);source_requests.add(key)
+        if key in seen:reason='in_training_snapshot'
+        elif first[key]<=cutoff:reason='first_checkpoint_at_or_before_freeze'
+        elif row['finish_time']>end:reason='finishes_after_snapshot'
+        else:
+            selected.append(row);selected_requests.add(key);continue
+        excluded[reason]+=1;excluded_requests.add(key)
+    return selected,{'source_points':len(rows),'selected_points':len(selected),'excluded_points':excluded,
+                     'source_requests':len(source_requests),'selected_requests':len(selected_requests),
+                     'fully_excluded_requests':len(excluded_requests-selected_requests),
+                     'partially_selected_requests':len(excluded_requests&selected_requests),
+                     'exclusion_precedence':list(excluded),
+                     'note':'Prepared labeled points for this model kind, not all raw traffic. Each excluded point has one reason in the stated precedence. Selected plus fully excluded requests equals source requests; partially selected requests are a subset of selected requests. Counts across model kinds are not additive. No rows are deleted or scoring rules changed.'}
+
+
 def freeze(candidate_path,training_path,receipt_path,*,completion=False):
     candidate,ch=read_json(candidate_path);training,th=read_json(training_path)
     contracts(candidate,training,completion=completion)
@@ -238,9 +263,9 @@ def evaluate(candidate_path,training_path,receipt_path,prepared_path,*,completio
     for kind,model in candidate['models'].items():
         # Do not count later progress on already-admitted or previously labeled
         # jobs as independent new traffic.
-        rows=[r for r in prepared['rows'] if r['kind']==kind and cutoff<r['decision_time']<=r['finish_time']<=end and first[(r['run_id'],r['request_id'])]>cutoff and (r['run_id'],r['request_id']) not in seen]
+        rows,selection=select_future_rows([r for r in prepared['rows'] if r['kind']==kind],seen,first,cutoff,end)
         tr,_=split([r for r in training['rows'] if r['kind']==kind],candidate['reports'][kind]['cutoff'])
-        report={'status':'no_future_labels','target_coverage':target_coverage(rows),
+        report={'status':'no_future_labels','cohort_selection':selection,'target_coverage':target_coverage(rows),
                 'input_support':input_support(model,tr,rows,training.get('groups',{}).get('hardware',[]),training.get('groups',{}))};result['reports'][kind]=report
         report['future_strata']=future_strata(tr,[],[])
         if kind=='updated':report['paired_stages']=updated_stage_pairs([],[],completion=completion)

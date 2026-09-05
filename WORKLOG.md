@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Explained frozen forecast-audit counts.** Account for every supplied prepared
+  point as selected or excluded by a stated rule; distinguish points from requests
+  and label preparation from raw traffic. Preserve the exact selected cohort and
+  scores, including empty cohorts, without exposing request/session identifiers.
+
 - **Made Genie experiments easier to judge.** New suggestions separate the
   proposed change, concrete test and expected result, explicitly not yet verified.
   Keep the existing note budget and journal format; preserve older notes and

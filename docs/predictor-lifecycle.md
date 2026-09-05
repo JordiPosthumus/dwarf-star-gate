@@ -248,6 +248,24 @@ freeze, must not already occur in the prepared training set, and must finish by
 the later snapshot. Later progress on an earlier-admitted job is not independent
 future traffic. No available future labels means no accuracy score, not success.
 
+Each model's `cohort_selection` explains its denominator: supplied prepared points,
+selected points and mutually exclusive exclusion counts. Reasons are applied in
+order: already in the frozen training snapshot, earliest supplied checkpoint at or
+before the freeze, then finish after the later snapshot. This includes training
+holdout rows in the first exclusion; they are not independent future traffic.
+The earliest checkpoint is checked across all model kinds, not just the selected
+kind. It is evidence available in the prepared input, not proof that a missing
+earlier admission never existed.
+
+Selected plus excluded **points** equals supplied points. Selected plus fully
+excluded **requests** equals supplied requests; partially selected requests are
+reported separately as a subset of selected requests. Repeated progress and paired
+upload/embedding points are not separate jobs, and model-kind counts cannot be
+added together. These counts start after label preparation: they do not describe
+all raw requests, unfinished jobs without labels or upstream preparation omissions.
+Consult the preparation manifest for that boundary. No input is deleted or
+rescored by this ledger; a new snapshot can legitimately include more finished jobs.
+
 Reports retain request-balanced errors, duration coverage, capped/normal slices
 and fixed baseline rules: original-training worker means plus causal history. This is
 **frozen-model replay**, not a record of predictions served live, a causal routing

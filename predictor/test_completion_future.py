@@ -65,6 +65,14 @@ class CompletionFutureTests(unittest.TestCase):
             self.assertEqual(report['metrics']['requests'],1);self.assertEqual(report['metrics']['mae_s'],0)
             self.assertNotIn('terminal_classes',report)
         self.assertEqual(result['reports']['updated']['paired_stages']['paired_requests'],1)
+        selection=result['reports']['admission']['cohort_selection']
+        self.assertEqual(selection['source_points'],5)
+        self.assertEqual(selection['selected_points'],1)
+        self.assertEqual(selection['excluded_points'],{'in_training_snapshot':1,
+                         'first_checkpoint_at_or_before_freeze':2,'finishes_after_snapshot':1})
+        self.assertEqual(selection['source_requests'],5)
+        self.assertEqual(selection['fully_excluded_requests'],4)
+        self.assertEqual(result['reports']['remaining']['cohort_selection']['excluded_points']['first_checkpoint_at_or_before_freeze'],1)
         self.assertEqual((self.training,self.candidate,self.future),before)
         for private in ('request_id','private-session','unfinished'):
             self.assertNotIn(private,json.dumps(result))
@@ -99,6 +107,9 @@ class CompletionFutureTests(unittest.TestCase):
         result=self.evaluate()
         for report in result['reports'].values():
             self.assertEqual(report['status'],'no_future_labels');self.assertNotIn('metrics',report)
+            self.assertEqual(report['cohort_selection']['selected_points'],0)
+            self.assertEqual(report['cohort_selection']['fully_excluded_requests'],1)
+            self.assertEqual(report['cohort_selection']['excluded_points']['in_training_snapshot'],1)
         self.assertEqual(result['reports']['updated']['paired_stages']['paired_requests'],0)
 
     def test_completion_stage_pairs_still_require_matching_request_target(self):

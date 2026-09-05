@@ -1,6 +1,7 @@
 import copy
 import datetime as dt
 import json
+import random
 from pathlib import Path
 import tempfile
 import unittest
@@ -9,6 +10,58 @@ import occupancy_future as audit
 
 
 class OccupancyFutureTests(unittest.TestCase):
+    def test_selection_counts_match_original_predicate_and_preserve_point_order(self):
+        rng=random.Random(17);cutoff=1000;end=2000
+        rows=[]
+        for i in range(120):
+            decision=rng.choice([999,1000,1001,1999,2000,2001])
+            finish=decision+rng.choice([0,1,1000])
+            row=self.row(str(i%23),decision,finish,rng.choice(['admission','updated','remaining']))
+            # Reused request identifiers across runs must not collide.
+            row['run_id']='a' if i%2 else 'b';rows.append(row)
+        first={}
+        for row in rows:
+            key=(row['run_id'],row['request_id']);first[key]=min(first.get(key,float('inf')),row['decision_time'])
+        seen={('a','2'),('b','3')}
+        original=copy.deepcopy((rows,seen,first));reference={}
+        for _ in range(8):
+            for kind in ('admission','updated','remaining'):
+                points=[r for r in rows if r['kind']==kind]
+                expected=[r for r in points if cutoff<r['decision_time']<=r['finish_time']<=end
+                          and first[(r['run_id'],r['request_id'])]>cutoff
+                          and (r['run_id'],r['request_id']) not in seen]
+                selected,counts=audit.select_future_rows(points,seen,first,cutoff,end)
+                self.assertEqual(selected,expected)
+                self.assertTrue(all(a is b for a,b in zip(selected,expected,strict=True)))
+                self.assertEqual(counts['source_points'],counts['selected_points']+sum(counts['excluded_points'].values()))
+                self.assertEqual(counts['source_requests'],counts['selected_requests']+counts['fully_excluded_requests'])
+                self.assertLessEqual(counts['partially_selected_requests'],counts['selected_requests'])
+                if kind in reference:self.assertEqual(counts,reference[kind])
+                reference[kind]=counts
+            rng.shuffle(rows)
+        self.assertCountEqual(rows,original[0]);self.assertEqual((seen,first),original[1:])
+
+    def test_selection_boundary_precedence_partial_requests_and_private_identifiers(self):
+        rows=[self.row('private-overlap',100,3000),self.row('private-boundary',1000,3000),
+              self.row('private-partial',1001,2000),self.row('private-partial',1002,2001),
+              self.row('private-finish-boundary',2000,2000)]
+        first={('r',r['request_id']):r['decision_time'] for r in rows}
+        # Actual first checkpoint is shared across kinds, not limited to these rows.
+        first[('r','private-partial')]=1001
+        for row in rows:row['run_id']='r'
+        selected,counts=audit.select_future_rows(rows,{('r','private-overlap')},first,1000,2000)
+        self.assertEqual(selected,[rows[2],rows[4]])
+        self.assertEqual(counts['excluded_points'],{'in_training_snapshot':1,
+                         'first_checkpoint_at_or_before_freeze':1,'finishes_after_snapshot':1})
+        self.assertEqual(counts['source_points'],5);self.assertEqual(counts['source_requests'],4)
+        self.assertEqual(counts['selected_requests'],2);self.assertEqual(counts['fully_excluded_requests'],2)
+        self.assertEqual(counts['partially_selected_requests'],1)
+        self.assertNotIn('private-',json.dumps(counts));self.assertNotIn('request_id',json.dumps(counts))
+        selected,empty=audit.select_future_rows([],set(),{},1000,2000)
+        self.assertEqual(selected,[])
+        self.assertTrue(all(empty[key]==0 for key in ('source_points','selected_points','source_requests','selected_requests','fully_excluded_requests','partially_selected_requests')))
+        self.assertTrue(all(n==0 for n in empty['excluded_points'].values()))
+
     def updated(self,identifier,stage,**changes):
         return {**self.row(identifier,1000,2000,'updated'),'stage':stage,**changes}
 
@@ -268,6 +321,11 @@ class OccupancyFutureTests(unittest.TestCase):
         result=self.evaluate();report=result['reports']['admission']
         self.assertEqual(report['metrics']['requests'],1);self.assertEqual(report['metrics']['mae_s'],0)
         self.assertEqual(result['reports']['remaining']['status'],'no_future_labels')
+        selection=report['cohort_selection']
+        self.assertEqual(selection['source_points'],5);self.assertEqual(selection['selected_points'],1)
+        self.assertEqual(selection['excluded_points'],{'in_training_snapshot':1,
+                         'first_checkpoint_at_or_before_freeze':2,'finishes_after_snapshot':1})
+        self.assertEqual(result['reports']['remaining']['cohort_selection']['excluded_points']['first_checkpoint_at_or_before_freeze'],1)
         self.assertEqual(result['authority'],'none');self.assertFalse(result['routing_enabled'])
         self.assertNotIn('request_id',json.dumps(result));self.assertNotIn('new',json.dumps(report))
 
