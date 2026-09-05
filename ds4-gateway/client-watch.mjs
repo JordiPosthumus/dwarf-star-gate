@@ -3,7 +3,7 @@ import {createHash,randomBytes,randomUUID} from 'node:crypto';
 export const CLIENT_WATCH_HEADER='x-dsg-client-watch-id';
 export const CLIENT_WATCH_ROUTE='/gateway/client-watch';
 const clients=new Set(['pi','hermes','generic']);
-const states=new Set(['local_tool','waiting_for_model','idle','done']);
+const states=new Set(['local_tool','waiting_for_model','idle','done','needs_attention']);
 const requestStates=new Set(['received','queued','dispatched','complete','incomplete','failed','cancelled','rejected']);
 const terminalRequests=new Set(['complete','incomplete','failed','cancelled','rejected']);
 const exactKeys=(value,keys)=>value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).sort().join(',')===keys.slice().sort().join(',');
@@ -26,7 +26,7 @@ export class ClientWatch {
     if(!exactKeys(input,['schema','watch_id','client','state','sequence','process_alive'])||input.schema!==1||!validId(input.watch_id)||!clients.has(input.client)||!states.has(input.state)||!Number.isSafeInteger(input.sequence)||input.sequence<0||input.sequence>Number.MAX_SAFE_INTEGER||typeof input.process_alive!=='boolean')throw new Error('Invalid Client Watch heartbeat');
     const now=this.now(),id=input.watch_id.toLowerCase();this.cleanup(now);
     let entry=this.entries.get(id);
-    if(entry&&input.sequence<entry.sequence)return {accepted:false,reason:'stale_sequence',watch_ref:this.ref(id)};
+    if(entry?.heartbeatSeen&&input.sequence<=entry.sequence)return {accepted:false,reason:'stale_sequence',watch_ref:this.ref(id)};
     if(!entry){entry={id,client:input.client,state:input.state,sequence:input.sequence,processAlive:input.process_alive,lastSeen:now,stateChanged:now,request:null,heartbeatSeen:true};this.entries.set(id,entry);}
     else{
       if(input.state!==entry.state||input.process_alive!==entry.processAlive)entry.stateChanged=now;
@@ -47,6 +47,7 @@ export class ClientWatch {
   diagnosis(entry,now){
     if(now-entry.lastSeen>this.freshMs)return 'heartbeat_stale_unknown';
     if(entry.state==='done')return 'done';
+    if(entry.state==='needs_attention')return 'client_reported_error';
     if(entry.state==='idle')return 'idle';
     if(entry.state==='local_tool')return 'local_tool_active';
     const request=entry.request;
@@ -71,7 +72,7 @@ export class ClientWatch {
 const safeNumber=(value,min,max)=>Number.isFinite(value)&&value>=min&&value<=max?value:null;
 export function clientWatchForDisplay(raw){
   if(!raw||raw.schema!==1||raw.mode!=='advisory'||!Array.isArray(raw.runs))return null;
-  const diagnoses=new Set(['heartbeat_stale_unknown','done','idle','local_tool_active','no_request_reached_dsg','waiting_to_reach_dsg','waiting_inside_dsg','model_response_active','client_processing_after_dsg','unknown']);
+  const diagnoses=new Set(['heartbeat_stale_unknown','done','idle','local_tool_active','no_request_reached_dsg','waiting_to_reach_dsg','waiting_inside_dsg','model_response_active','client_processing_after_dsg','client_reported_error','unknown']);
   const safeStates=new Set(states),safeRequestStates=new Set(requestStates);
   const runs=raw.runs.slice(0,256).flatMap(run=>{
     if(!run||typeof run.watch_ref!=='string'||!/^[a-f0-9]{12}$/.test(run.watch_ref)||!clients.has(run.client)||!safeStates.has(run.state)||typeof run.process_alive!=='boolean'||typeof run.fresh!=='boolean'||!diagnoses.has(run.diagnosis)||typeof run.last_seen_at!=='string'||!Number.isFinite(Date.parse(run.last_seen_at)))return [];

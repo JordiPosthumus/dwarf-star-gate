@@ -1,5 +1,20 @@
 # Changelog
 
+## Report settled client failures without granting replay authority
+
+- Fix Agent Watch's `before_provider_request` hook returning a boolean that Pi
+  interpreted as replacement inference JSON. Passive hooks now return nothing;
+  the installed-Pi session regression verifies preserved serialization.
+- Add Agent Watch's `needs_attention` state and `client_reported_error` diagnosis.
+  Observe only Pi terminal metadata; wait for actual session settlement after
+  automatic continuations, clear on success and exclude aborts/other providers.
+- Surface fresh client-failure warnings in the dashboard and Genie briefing even
+  when transport accounting says complete. Do not retry, nudge or blame the engine.
+- Make duplicate/older heartbeat sequences inert while preserving the first
+  heartbeat's join to a request-tag placeholder.
+- Add privacy, lifecycle, HTTP and UI regressions plus opt-in installed-Pi session
+  tests. Gateway/dashboard deployment and Pi extension reload remain separate steps.
+
 ## Preserve Genie's pool-fallback ledger across dashboard restarts
 
 - Persist only completed pool-fallback receipt metadata in a private 16 MiB bounded

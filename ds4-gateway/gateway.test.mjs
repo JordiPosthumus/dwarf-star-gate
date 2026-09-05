@@ -115,6 +115,9 @@ test('Agent Watch is an authenticated bounded advisory lane and never reaches DS
   const status=await r.request('',null,{path:'/gateway/status',method:'GET'}),body=JSON.parse(status.body),run=body.client_watch.runs[0];
   assert.equal(body.client_watch_version,1);assert.equal(run.client,'pi');assert.equal(run.request.state,'complete');assert.equal(run.diagnosis,'client_processing_after_dsg');
   assert.ok(!JSON.stringify(body.client_watch).includes(watch));assert.ok(!JSON.stringify(body.client_watch).includes('PRIVATE'));
+  const failed=await r.request(JSON.stringify({...JSON.parse(heartbeat(1)),state:'needs_attention'}),null,{path:'/gateway/client-watch'});assert.equal(failed.status,200);
+  const after=JSON.parse((await r.request('',null,{path:'/gateway/status',method:'GET'})).body);
+  assert.equal(after.client_watch.runs[0].diagnosis,'client_reported_error');assert.equal(after.client_watch.runs[0].request.state,'complete');assert.equal(after.workers[0].inference_failures,0);
 });
 
 test('remote workers accept bounded verified SSH alias fallbacks, never options or duplicate routes',()=>{

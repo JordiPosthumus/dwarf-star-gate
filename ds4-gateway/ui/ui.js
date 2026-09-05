@@ -325,6 +325,7 @@ function deterministicHealthAlerts(snapshot) {
   const fleet=`${fmt(gateway?.available)} of ${fmt(gateway?.total)} DS4 servers are available`;
   const alerts=[];
   for(const run of gateway?.client_watch?.runs??[])if(run.fresh&&run.process_alive&&run.diagnosis==='no_request_reached_dsg')alerts.push({severity:'warning',text:`${run.client} run ${run.watch_ref} reports waiting for a model, but no matching request reached DSG after ${fmt(run.state_seconds)}s. Recommendation: Inspect that client's provider transport; no DS4 fault or frozen process is proven.`});
+  for(const run of gateway?.client_watch?.runs??[])if(run.fresh&&run.process_alive&&run.diagnosis==='client_reported_error')alerts.push({severity:'warning',text:`${run.client} run ${run.watch_ref} reports a failed turn with no automatic continuation remaining. Recommendation: Inspect the client before resubmitting; this is not proof that replay is safe or that DS4 failed.`});
   for(const worker of workers) {
     const name=String(worker?.id??'Unknown server').replace(/^spark/i,'Spark '),held=Array.isArray(worker?.holds)&&worker.holds.length>0;
     if(worker?.quarantine) {
@@ -372,10 +373,11 @@ function deterministicHealthAlerts(snapshot) {
 function renderAgentWatch(watch){
   const panel=$('agent-watch'),runs=watch?.runs??[];panel.hidden=!watch;
   if(!watch)return;
-  const fresh=runs.filter(run=>run.fresh).length,attention=runs.filter(run=>run.diagnosis==='no_request_reached_dsg').length;
+  const needsAttention=run=>run.fresh&&['no_request_reached_dsg','client_reported_error'].includes(run.diagnosis);
+  const fresh=runs.filter(run=>run.fresh).length,attention=runs.filter(needsAttention).length;
   $('agent-watch-status').textContent=runs.length?`${fmt(runs.length)} enrolled · ${fmt(fresh)} fresh${attention?` · ${fmt(attention)} check`:''}`:'No enrolled clients reporting';
-  const labels={local_tool_active:'local tool active',waiting_inside_dsg:'waiting inside DSG',model_response_active:'model response active',no_request_reached_dsg:'no request reached DSG',waiting_to_reach_dsg:'waiting to reach DSG',client_processing_after_dsg:'client processing after DSG',heartbeat_stale_unknown:'heartbeat stale · state unknown',idle:'idle',done:'done',unknown:'state unknown'};
-  $('agent-watch-items').innerHTML=runs.length?runs.slice(0,24).map(run=>`<li data-level="${run.diagnosis==='no_request_reached_dsg'?'attention':run.fresh?'current':'unknown'}"><time>${esc(age(Date.parse(run.last_seen_at),Date.now()))}</time><strong>${esc(run.client)} · ${esc(run.watch_ref)}</strong><span>${esc(labels[run.diagnosis]??'state unknown')}${run.request?` · DSG ${esc(run.request.state.replaceAll('_',' '))}`:''}</span></li>`).join(''):'<li class="muted">No enrolled clients reporting.</li>';
+  const labels={local_tool_active:'local tool active',waiting_inside_dsg:'waiting inside DSG',model_response_active:'model response active',no_request_reached_dsg:'no request reached DSG',waiting_to_reach_dsg:'waiting to reach DSG',client_processing_after_dsg:'client processing after DSG',client_reported_error:'client reports a failed turn',heartbeat_stale_unknown:'heartbeat stale · state unknown',idle:'idle',done:'done',unknown:'state unknown'};
+  $('agent-watch-items').innerHTML=runs.length?runs.slice(0,24).map(run=>`<li data-level="${needsAttention(run)?'attention':run.fresh?'current':'unknown'}"><time>${esc(age(Date.parse(run.last_seen_at),Date.now()))}</time><strong>${esc(run.client)} · ${esc(run.watch_ref)}</strong><span>${esc(labels[run.diagnosis]??'state unknown')}${run.request?` · DSG ${esc(run.request.state.replaceAll('_',' '))}`:''}</span></li>`).join(''):'<li class="muted">No enrolled clients reporting.</li>';
 }
 function healthHeadlines(snapshot, ticker) {
   if(!snapshot?.gateway || snapshot.gateway_error)return {level:'unknown',items:[{severity:'info',text:'Gateway status unavailable; recommendations withheld until fresh evidence returns.'}]};

@@ -5,6 +5,23 @@ import {ClientWatch,clientWatchForDisplay,validClientWatchId} from './client-wat
 
 const heartbeat=(watch_id,sequence=0,change={})=>({schema:1,watch_id,client:'pi',state:'waiting_for_model',sequence,process_alive:true,...change});
 
+test('repeated heartbeat sequences cannot refresh liveness or replace a newer state',()=>{
+  let now=1000;const watch=new ClientWatch({now:()=>now}),id=randomUUID(),initial=heartbeat(id,1);
+  watch.heartbeat(initial);const original=watch.snapshot().runs[0];now+=50000;
+  assert.equal(watch.heartbeat(initial).accepted,false);
+  assert.equal(watch.heartbeat({...initial,state:'idle'}).accepted,false);
+  const stale=watch.snapshot().runs[0];assert.equal(stale.last_seen_at,original.last_seen_at);assert.equal(stale.state,'waiting_for_model');assert.equal(stale.diagnosis,'heartbeat_stale_unknown');
+  assert.equal(watch.heartbeat(heartbeat(id,2,{state:'idle'})).accepted,true);assert.equal(watch.snapshot().runs[0].diagnosis,'idle');
+});
+test('an explicitly reported failed client turn is not idle or replay authority',()=>{
+  let now=1000;const watch=new ClientWatch({now:()=>now}),id=randomUUID(),request=randomUUID();
+  watch.observeRequest(id,request,'received');assert.equal(watch.heartbeat(heartbeat(id,0)).accepted,true,'first heartbeat may match request placeholder sequence zero');
+  watch.observeRequest(id,request,'complete');watch.heartbeat(heartbeat(id,1,{state:'needs_attention'}));
+  const run=watch.snapshot().runs[0];assert.equal(run.diagnosis,'client_reported_error');assert.equal(run.request.state,'complete');
+  assert.equal(clientWatchForDisplay(watch.snapshot()).runs[0].diagnosis,'client_reported_error');assert.ok(!JSON.stringify(run).includes(request));
+  now+=50000;assert.equal(watch.snapshot().runs[0].diagnosis,'heartbeat_stale_unknown');
+});
+
 test('Client Watch accepts only a fixed privacy-safe heartbeat and exposes a pseudonym',()=>{
   let now=1_000_000;const watch=new ClientWatch({now:()=>now,salt:Buffer.alloc(32,7)}),id=randomUUID();
   const receipt=watch.heartbeat(heartbeat(id));assert.equal(receipt.accepted,true);assert.match(receipt.watch_ref,/^[a-f0-9]{12}$/);

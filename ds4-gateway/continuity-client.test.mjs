@@ -98,11 +98,30 @@ test('Pi Agent Watch maps lifecycle events without inspecting their payloads',as
   const registered=registerPiContinuity(pi,{provider:'fixture-dsg',baseUrl,agentWatch:true,watchFetchImpl:async(_url,init)=>{heartbeats.push(JSON.parse(init.body));return new Response('{}');},streamSimple:async(_model,_context,options)=>options.fetch(baseUrl+'/chat/completions',{method:'POST',headers:{authorization:'Bearer fixture'},body:'{"safe":true}'})});
   for(const event of ['session_start','session_shutdown','agent_start','before_provider_request','tool_execution_start','tool_execution_end','agent_settled'])assert.equal(typeof handlers.get(event),'function');
   handlers.get('session_start')({prompt:'PRIVATE'},{ui:{setStatus(){}}});
+  assert.equal(handlers.get('before_provider_request')({get payload(){assert.fail('advisory hook must not inspect payload');}}),undefined,'Pi treats any return value as a replacement request payload');
   handlers.get('agent_start')({prompt:'PRIVATE'});await provider.streamSimple(model,{}, {fetch:async()=>new Response('complete')});
   await new Promise(resolve=>setImmediate(resolve));
   handlers.get('tool_execution_start')({toolName:'PRIVATE',args:{secret:'PRIVATE'}});await new Promise(resolve=>setImmediate(resolve));handlers.get('tool_execution_end')({result:'PRIVATE'});await new Promise(resolve=>setImmediate(resolve));
   assert.equal(registered.agentWatch.state,'waiting_for_model');assert.ok(heartbeats.some(item=>item.state==='local_tool'));assert.ok(!JSON.stringify(heartbeats).includes('PRIVATE'));
   await registered.agentWatch.stop();
+});
+test('Pi reports a settled failed turn only after retries, without reading message content',async()=>{
+  const handlers=new Map(),heartbeats=[];let registration;
+  const pi={on:(name,fn)=>handlers.set(name,fn),registerProvider:(_name,value)=>registration=value};
+  const watch=registerPiContinuity(pi,{provider:'fixture-dsg',baseUrl,agentWatch:true,watchFetchImpl:async(_url,init)=>{heartbeats.push(JSON.parse(init.body));return new Response('{}');},streamSimple:async(_m,_c,o)=>o.fetch(baseUrl+'/chat/completions',{method:'POST',headers:{authorization:'Bearer fixture'},body:'{}'})}).agentWatch;
+  const begin=async()=>{handlers.get('agent_start')({});await registration.streamSimple({api:'openai-completions',baseUrl}, {},{fetch:async()=>new Response('fixture')});await new Promise(r=>setImmediate(r));};
+  const terminal=stopReason=>({message:{role:'assistant',provider:'fixture-dsg',api:'openai-completions',stopReason,get content(){assert.fail('message content must not be inspected');},get errorMessage(){assert.fail('raw error must not be inspected');}}});
+  handlers.get('session_start')({}, {ui:{setStatus(){}}});
+  try{
+    await begin();assert.equal(typeof handlers.get('message_end'),'function');handlers.get('message_end')(terminal('error'));
+    assert.equal(watch.state,'waiting_for_model','agent-end error is not a fully settled failure');
+    handlers.get('agent_settled')({});assert.equal(watch.state,'needs_attention');await new Promise(r=>setImmediate(r));
+    await begin();handlers.get('message_end')(terminal('error'));handlers.get('message_end')(terminal('stop'));handlers.get('agent_settled')({});assert.equal(watch.state,'idle','successful retry clears failure');
+    await begin();handlers.get('message_end')(terminal('aborted'));handlers.get('agent_settled')({});assert.equal(watch.state,'idle','intentional abort is not a model failure');
+    await begin();handlers.get('message_end')({message:{role:'assistant',provider:'other',api:'openai-completions',stopReason:'error'}});handlers.get('agent_settled')({});assert.equal(watch.state,'idle','other provider errors are not DSG failure reports');
+    handlers.get('agent_start')({});handlers.get('message_end')(terminal('error'));handlers.get('agent_settled')({});assert.equal(watch.state,'idle','no scoped transport attempt means no DSG error claim');
+    assert.ok(heartbeats.some(row=>row.state==='needs_attention'));assert.ok(heartbeats.every(row=>Object.keys(row).sort().join(',')==='client,process_alive,schema,sequence,state,watch_id'));
+  }finally{await watch.stop();}
 });
 test('a held heartbeat cannot accumulate more calls and session changes cancel obsolete telemetry',async()=>{
   const calls=[],ticks=[];

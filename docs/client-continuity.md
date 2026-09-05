@@ -203,7 +203,12 @@ rewritten. Only newly observed qualifying clean completions use this distinction
 
 The same example extension can separately opt in to the advisory
 [Agent Watch](agent-watch.md) heartbeat with `DSG_AGENT_WATCH=1`. It reports only
-a random run reference and coarse lifecycle state. It does not extend retry
+a random run reference and coarse lifecycle state, including a failed turn only
+after Pi has fully settled with no automatic continuation remaining. A successful
+retry clears that failure; a transient attempt error is not reported as a stopped
+run. The optional installed-Pi session tests exercise actual SDK retries and
+settlement separately from the lower-level agent-loop fixtures above.
+It does not extend retry
 authority, inspect prompts or tools, or let DSG revive Pi.
 
 ## Next, in this order

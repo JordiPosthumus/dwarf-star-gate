@@ -10,6 +10,16 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Distinguished a failed Pi turn from healthy idle.** Agent Watch now reports
+  a scoped terminal error only when Pi's session has fully settled, not while
+  retry/compaction may continue. The UI and Genie distinguish client failure from
+  gateway transport completion without claiming safe replay or a DS4 fault.
+  Duplicate heartbeat sequences no longer refresh apparent liveness or overwrite
+  newer state. Client metadata remains a fixed, content-free advisory envelope.
+  The actual Pi session test also exposed and fixed an advisory hook returning
+  `true`, which Pi interpreted as replacement inference JSON. Real retry exhaustion
+  and successful retry now pass with original xhigh serialization and one tool run.
+
 - **Kept completed Genie pool fallbacks visible across dashboard restarts.** A
   private bounded receipt journal restores the latest 30 small pool-fallback
   records without retaining conversation text or granting action authority.

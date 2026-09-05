@@ -3,7 +3,7 @@ import {setTimeout as sleep} from 'node:timers/promises';
 import {CALL_ID_HEADER,DISPATCH_HEADER,validCallId} from './continuity.mjs';
 import {CLIENT_WATCH_HEADER,CLIENT_WATCH_ROUTE,createClientWatchId} from './client-watch.mjs';
 
-const watchStates=new Set(['local_tool','waiting_for_model','idle','done']);
+const watchStates=new Set(['local_tool','waiting_for_model','idle','done','needs_attention']);
 export function createClientWatchReporter({baseUrl,fetchImpl=fetch,intervalMs=15_000,schedule=setInterval,unschedule=clearInterval}={}){
   const base=new URL(baseUrl),endpoint=new URL(CLIENT_WATCH_ROUTE,base.origin),routes=new Set(['/v1/chat/completions','/v1/completions','/v1/messages','/v1/responses']);
   if(!['http:','https:'].includes(base.protocol)||base.username||base.password||base.search||base.hash||!['/v1','/v1/'].includes(base.pathname)||!Number.isSafeInteger(intervalMs)||intervalMs<1000||intervalMs>300_000)throw new Error('Invalid Agent Watch endpoint or interval');
@@ -93,20 +93,30 @@ export function createContinuityFetch({baseUrl,fetchImpl=fetch,onWait=()=>{},wai
 export function registerPiContinuity(pi,{provider,baseUrl,streamSimple,agentWatch=false,watchFetchImpl=fetch,watchIntervalMs=15_000}){
   if(typeof provider!=='string'||!provider.trim()||typeof streamSimple!=='function')throw new Error('Explicit DSG provider and compatible Pi stream adapter required');
   if(typeof agentWatch!=='boolean')throw new Error('agentWatch must be boolean');
-  let ui=null;const watch=agentWatch?createClientWatchReporter({baseUrl,fetchImpl:watchFetchImpl,intervalMs:watchIntervalMs}):null;
+  let ui=null,watchAttempted=false,terminalFailed=false;const watch=agentWatch?createClientWatchReporter({baseUrl,fetchImpl:watchFetchImpl,intervalMs:watchIntervalMs}):null;
   const status=info=>ui?.setStatus('dsg-continuity',info.state==='waiting'?`DSG waiting: ${info.reason} · attempt ${info.attempts} · Esc to cancel`:undefined);
-  pi.on('session_start',(_event,ctx)=>{ui=ctx.ui;watch?.start();});
+  pi.on('session_start',(_event,ctx)=>{ui=ctx.ui;watchAttempted=false;terminalFailed=false;watch?.start();});
   pi.on('session_shutdown',()=>{ui=null;void watch?.stop();});
   if(watch){
-    pi.on('agent_start',()=>watch.update('waiting_for_model'));
-    pi.on('before_provider_request',()=>watch.update('waiting_for_model'));
-    pi.on('tool_execution_start',()=>watch.update('local_tool'));
-    pi.on('tool_execution_end',()=>watch.update('waiting_for_model'));
-    pi.on('agent_settled',()=>watch.update('idle'));
+    pi.on('agent_start',()=>{watchAttempted=false;terminalFailed=false;watch.update('waiting_for_model');});
+    // Pi treats a non-undefined before_provider_request result as the entire
+    // replacement JSON payload. Advisory hooks must never return update's bool.
+    pi.on('before_provider_request',()=>{watch.update('waiting_for_model');});
+    pi.on('tool_execution_start',()=>{watch.update('local_tool');});
+    pi.on('tool_execution_end',()=>{watch.update('waiting_for_model');});
+    // Read only terminal metadata, never content/error strings. Pi can retry or
+    // compact after message_end/agent_end: only agent_settled certifies that no
+    // automatic continuation remains. This is client evidence, not replay proof.
+    pi.on('message_end',event=>{
+      const message=event?.message;
+      if(message?.role==='assistant')terminalFailed=watchAttempted&&message.provider===provider&&message.api==='openai-completions'&&message.stopReason==='error';
+    });
+    pi.on('agent_settled',()=>{watch.update(terminalFailed?'needs_attention':'idle');});
   }
   // Do not provide a models list: Pi must preserve models.json capabilities.
   pi.registerProvider(provider,{api:'openai-completions',streamSimple:(model,context,options={})=>{
     if(model.api!=='openai-completions'||new URL(model.baseUrl).href.replace(/\/$/,'')!==new URL(baseUrl).href.replace(/\/$/,''))throw new Error('DSG continuity provider API/URL mismatch; no request sent');
+    if(watch)watchAttempted=true;
     const continuity=createContinuityFetch({baseUrl,fetchImpl:options.fetch??fetch,onWait:status});
     return streamSimple(model,context,{...options,fetch:watch?(input,init={})=>continuity(input,watch.decorate(input,init)):continuity});
   }});
