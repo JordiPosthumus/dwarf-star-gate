@@ -87,6 +87,9 @@ stop intent and validate a real removed-job canary before enabling that broader
 recovery. The [offline native-removal auditor](macos-removal-provenance.md) now
 matches exact subsystem/PID/boot evidence and reports bounded caller observations;
 it does not grant recovery authority or replace trusted live capture. The
+[retained-definition preflight](macos-retained-definition.md) verifies private
+pinned plist bytes without rewriting settings or issuing commands. Native live
+provenance, bootstrap execution and the real removed-job canary remain unfinished. The
 enrollment UX still needs a per-worker guided checklist: identify a supported
 installation, inspect without mutation, review exact authority, apply private
 configuration, separately confirm a disruptive canary, then show verified status

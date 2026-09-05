@@ -16,9 +16,11 @@ import json
 import math
 import os
 from pathlib import Path
+import plistlib
 import re
 import socket
 import stat
+import struct
 import subprocess
 import sys
 import time
@@ -100,6 +102,84 @@ def service_profile(config):
         "port": config["port"],
     }
     return digest(json.dumps(value, sort_keys=True).encode())
+
+
+class UniquePlistDict(dict):
+    def __setitem__(self, key, value):
+        if key in self:
+            raise ValueError("retained_definition_ambiguous")
+        super().__setitem__(key, value)
+
+
+def retained_definition(config):
+    """Return verified bytes, never rewritten launch settings or action authority."""
+    expected = config.get("retained_definition_sha256")
+    if not isinstance(expected, str) or not re.fullmatch(r"[a-f0-9]{64}", expected):
+        raise ValueError("retained_definition_not_enrolled")
+    filename = Path(config["plist"])
+    try:
+        # Enrollment uses a canonical private copy, not a transient launchctl path.
+        if not filename.is_absolute() or filename.resolve(strict=True) != filename or not owned_private_directory(filename.parent):
+            raise ValueError("retained_definition_not_private")
+        fd = os.open(filename, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+        try:
+            before = os.fstat(fd)
+            if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.getuid()
+                    or before.st_mode & 0o077 or not 0 < before.st_size <= 1024 * 1024):
+                raise ValueError("retained_definition_not_private_or_bounded")
+            raw = os.read(fd, before.st_size + 1)
+            after = os.fstat(fd)
+            signature = lambda s: (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns, s.st_uid, s.st_mode)
+            if signature(before) != signature(after) or len(raw) != before.st_size:
+                raise ValueError("retained_definition_changed_during_read")
+        finally:
+            os.close(fd)
+    except OSError:
+        raise ValueError("retained_definition_unavailable") from None
+    if digest(raw) != expected:
+        raise ValueError("retained_definition_digest_mismatch")
+    try:
+        if raw.startswith(b"bplist00"):
+            # Bound counts before plistlib can allocate from attacker-sized fields.
+            width, ref_width, count, top, table = struct.unpack(">6xBBQQQ", raw[-32:])
+            if (not 1 <= width <= 8 or not 1 <= ref_width <= 8 or not 0 < count <= len(raw)
+                    or not 0 <= top < count or not 8 <= table < len(raw) - 32
+                    or table + count * width > len(raw) - 32):
+                raise ValueError()
+        definition = plistlib.loads(raw, dict_type=UniquePlistDict)
+        if not isinstance(definition, dict) or definition.get("Label") != config["label"]:
+            raise ValueError()
+        program, args = definition.get("Program"), definition.get("ProgramArguments")
+        valid_string = lambda s: isinstance(s, str) and bool(s) and "\0" not in s
+        if program is not None and (not valid_string(program) or not program.startswith("/")):
+            raise ValueError()
+        if args is not None and (not isinstance(args, list) or not 1 <= len(args) <= 4096 or not all(isinstance(s, str) and "\0" not in s for s in args)):
+            raise ValueError()
+        if program is None and (args is None or not args[0].startswith("/")):
+            raise ValueError()
+        if "Disabled" in definition and type(definition["Disabled"]) is not bool:
+            raise ValueError()
+    except Exception:
+        # plist parser failures must never echo private launch arguments or values.
+        raise ValueError("retained_definition_invalid") from None
+    if definition.get("Disabled") is True:
+        raise ValueError("retained_definition_disabled")
+    return raw
+
+
+def inspect_definition(config):
+    if "retained_definition_sha256" not in config:
+        return {"version": 1, "enrolled": False, "verified": False, "authority": "none", "reason": "retained_definition_not_enrolled"}
+    try:
+        raw = retained_definition(config)
+    except ValueError as error:
+        allowed = {"retained_definition_not_enrolled", "retained_definition_not_private", "retained_definition_not_private_or_bounded",
+                   "retained_definition_changed_during_read", "retained_definition_unavailable", "retained_definition_digest_mismatch",
+                   "retained_definition_invalid", "retained_definition_disabled"}
+        reason = str(error) if str(error) in allowed else "retained_definition_unverified"
+        return {"version": 1, "enrolled": True, "verified": False, "authority": "none", "reason": reason}
+    return {"version": 1, "enrolled": True, "verified": True, "authority": "none",
+            "scope": "pinned_definition_only", "definition_bytes": len(raw)}
 
 
 def parse_launchctl(output):
@@ -413,6 +493,8 @@ def load_history(state_path):
 def handle(config, request, state_path):
     if request == {"action": "inspect"}:
         return inspect(config)
+    if request == {"action": "inspect_definition"}:
+        return inspect_definition(config)
     restart_fields = {"action", "action_id", "instance", "machine", "profile", "canary", "fault_after"}
     start_fields = {"action", "action_id", "stopped_epoch", "machine", "service_profile"}
     action = request.get("action")
@@ -479,13 +561,14 @@ def handle(config, request, state_path):
 
 def validate_config(config_path, config):
     required = {"label", "plist", "port", "binary", "profile_files"}
-    if (not isinstance(config, dict) or not required.issubset(config) or set(config) - (required | {"log_file"})
+    if (not isinstance(config, dict) or not required.issubset(config) or set(config) - (required | {"log_file", "retained_definition_sha256"})
             or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", config.get("label", ""))
             or type(config.get("port")) is not int or not 1 <= config["port"] <= 65535
             or any(not isinstance(config.get(field), str) or not config[field].startswith("/") or "\0" in config[field] for field in ("plist", "binary"))
             or not isinstance(config.get("profile_files"), list) or not 1 <= len(config["profile_files"]) <= 32
             or len(set(config["profile_files"])) != len(config["profile_files"])
             or any(not isinstance(value, str) or not value.startswith("/") or "\0" in value for value in config["profile_files"])
+            or ("retained_definition_sha256" in config and (not isinstance(config["retained_definition_sha256"], str) or not re.fullmatch(r"[a-f0-9]{64}", config["retained_definition_sha256"])))
             or (config.get("log_file") is not None and (not isinstance(config["log_file"], str) or not config["log_file"].startswith("/") or "\0" in config["log_file"]))):
         raise ValueError("invalid_adapter_configuration")
     if not owned_private_directory(config_path.parent) or not owned_private_regular(config_path):

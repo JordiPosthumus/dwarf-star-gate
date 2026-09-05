@@ -424,6 +424,11 @@ launchd records by exact structured subsystem, PID, boot and time window. It
 distinguishes a caller observation from unknown intent and rejects incomplete
 captures. It is an offline diagnostic, not an automatic recovery offer.
 
+The [retained-definition agent preflight](macos-retained-definition.md) now checks
+an optional private content pin without rewriting the plist or issuing commands.
+It preserves XML/binary bytes and returns bounded diagnostics with no action
+authority. It does not prove that a guessed plist matches an existing launch.
+
 Planned support for this case needs separate opt-in enrollment of an exact,
 private, retained service definition;
 verified GUI domain, machine, binary/profile and empty listener; durable one-shot

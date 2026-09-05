@@ -3,6 +3,10 @@ import ctypes
 import json
 import os
 from pathlib import Path
+import plistlib
+import subprocess
+import struct
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -14,6 +18,156 @@ spec.loader.exec_module(adapter)
 
 
 class LaunchdAdapterTests(unittest.TestCase):
+    def definition_fixture(self, directory, definition=None, fmt=plistlib.FMT_XML):
+        root = Path(directory).resolve()
+        filename = root / "retained.plist"
+        definition = definition if definition is not None else {
+            "Label": "com.example.ds4", "ProgramArguments": ["/usr/bin/env", "PRIVATE_KEY=private-value", "/opt/ds4/runner.sh", "/opt/ds4/ds4-server", "--context", "262144", ""],
+            "EnvironmentVariables": {"DS4_CACHE_POLICY": "preserved"}, "WorkingDirectory": "/opt/ds4", "RunAtLoad": True,
+            "KeepAlive": True, "ExitTimeOut": 120, "StandardOutPath": "/opt/ds4/runtime/engine.log",
+        }
+        raw = plistlib.dumps(definition, fmt=fmt)
+        filename.write_bytes(raw)
+        filename.chmod(0o600)
+        return {"label": "com.example.ds4", "plist": str(filename), "retained_definition_sha256": adapter.digest(raw)}, raw
+
+    def test_retained_definition_preflight_preserves_exact_xml_and_binary_bytes_without_actions(self):
+        for fmt in [plistlib.FMT_XML, plistlib.FMT_BINARY]:
+            with self.subTest(fmt=fmt), tempfile.TemporaryDirectory() as temp, patch.object(adapter, "run") as command:
+                config, raw = self.definition_fixture(temp, fmt=fmt)
+                before = Path(config["plist"]).stat()
+                result = adapter.handle(config, {"action": "inspect_definition"}, Path(temp) / "actions.json")
+                self.assertEqual(result, {"version": 1, "enrolled": True, "verified": True, "authority": "none", "scope": "pinned_definition_only", "definition_bytes": len(raw)})
+                self.assertEqual(adapter.retained_definition(config), raw)
+                self.assertEqual(Path(config["plist"]).read_bytes(), raw)
+                self.assertEqual(Path(config["plist"]).stat().st_mtime_ns, before.st_mtime_ns)
+                self.assertEqual(sorted(p.name for p in Path(temp).iterdir()), ["retained.plist"])
+                command.assert_not_called()
+                for private in [config["label"], config["plist"], config["retained_definition_sha256"], "private-value", "runner.sh"]:
+                    self.assertNotIn(private, json.dumps(result))
+
+    def test_retained_definition_is_explicit_and_cannot_supply_paths_or_commands_in_requests(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(adapter, "run") as command:
+            self.assertFalse(adapter.handle({}, {"action": "inspect_definition"}, Path(temp) / "actions.json")["enrolled"])
+            for request in [{"action": "inspect_definition", "plist": "/tmp/invented"}, {"action": "bootstrap"}, {"action": "inspect_definition", "command": "launchctl enable"}]:
+                with self.assertRaisesRegex(ValueError, "invalid_adapter_request"):
+                    adapter.handle({}, request, Path(temp) / "actions.json")
+            command.assert_not_called()
+            self.assertEqual(list(Path(temp).iterdir()), [])
+
+    def test_retained_definition_rejects_drift_label_ambiguity_and_disabled_intent(self):
+        with tempfile.TemporaryDirectory() as temp:
+            config, raw = self.definition_fixture(temp)
+            filename = Path(config["plist"])
+            filename.write_bytes(raw + b"\n")
+            with self.assertRaisesRegex(ValueError, "digest_mismatch"):
+                adapter.retained_definition(config)
+            for definition in [
+                {"Label": "com.example.other", "Program": "/opt/ds4/runner"},
+                {"Label": config["label"], "Program": "relative-runner"},
+                {"Label": config["label"], "ProgramArguments": "not-an-array"},
+                {"Label": config["label"], "ProgramArguments": ["/opt/ds4/runner", 1]},
+                {"Label": config["label"], "ProgramArguments": ["/opt/ds4/runner"], "Disabled": "false"},
+                {"Label": config["label"], "Disabled": False},
+            ]:
+                bad, _ = self.definition_fixture(temp, definition)
+                with self.assertRaisesRegex(ValueError, "retained_definition_invalid"):
+                    adapter.retained_definition(bad)
+            disabled, _ = self.definition_fixture(temp, {"Label": config["label"], "Program": "/opt/ds4/runner", "Disabled": True})
+            with self.assertRaisesRegex(ValueError, "retained_definition_disabled"):
+                adapter.retained_definition(disabled)
+            # Duplicate identity or nested environment keys must not silently take the last value.
+            for duplicate in [b"<key>Label</key><string>com.example.ds4</string>", b"<key>EnvironmentVariables</key><dict><key>X</key><string>a</string><key>X</key><string>b</string></dict>"]:
+                body = b"<plist version='1.0'><dict><key>Label</key><string>com.example.ds4</string><key>Program</key><string>/opt/ds4/runner</string>" + duplicate + b"</dict></plist>"
+                filename.write_bytes(body)
+                with self.assertRaisesRegex(ValueError, "retained_definition_invalid"):
+                    adapter.retained_definition({**config, "retained_definition_sha256": adapter.digest(body)})
+
+    def test_retained_definition_requires_private_regular_canonical_bounded_files(self):
+        with tempfile.TemporaryDirectory() as temp:
+            config, raw = self.definition_fixture(temp)
+            filename = Path(config["plist"])
+            filename.chmod(0o644)
+            with self.assertRaisesRegex(ValueError, "not_private"):
+                adapter.retained_definition(config)
+            filename.chmod(0o600)
+            link = filename.with_name("alias.plist");link.symlink_to(filename)
+            with self.assertRaisesRegex(ValueError, "not_private"):
+                adapter.retained_definition({**config, "plist": str(link)})
+            parent_link = filename.with_name("alias-dir");parent_link.symlink_to(filename.parent, target_is_directory=True)
+            with self.assertRaisesRegex(ValueError, "not_private"):
+                adapter.retained_definition({**config, "plist": str(parent_link / filename.name)})
+            for replacement in [b"", b"x" * (1024 * 1024 + 1)]:
+                filename.write_bytes(replacement)
+                with self.assertRaisesRegex(ValueError, "bounded"):
+                    adapter.retained_definition(config)
+            filename.unlink();filename.mkdir()
+            with self.assertRaisesRegex(ValueError, "bounded"):
+                adapter.retained_definition(config)
+            filename.rmdir();os.mkfifo(filename, 0o600)
+            # NONBLOCK is essential: a FIFO configured by mistake cannot hang enrollment.
+            with self.assertRaisesRegex(ValueError, "bounded"):
+                adapter.retained_definition(config)
+
+    def test_retained_definition_read_race_fails_without_returning_bytes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            config, _ = self.definition_fixture(temp)
+            original = os.read
+            def changed(fd, count):
+                result = original(fd, count)
+                with open(config["plist"], "ab") as file:
+                    file.write(b"\n")
+                return result
+            with patch.object(adapter.os, "read", side_effect=changed):
+                with self.assertRaisesRegex(ValueError, "changed_during_read"):
+                    adapter.retained_definition(config)
+
+    def test_retained_definition_binary_counts_duplicates_and_xml_entities_are_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            config, raw = self.definition_fixture(temp, {"Label": "com.example.ds4", "Program": "/opt/ds4/runner"}, plistlib.FMT_BINARY)
+            filename = Path(config["plist"])
+            width, ref_width, count, top, table = struct.unpack(">6xBBQQQ", raw[-32:])
+            malformed = raw[:-32] + struct.pack(">6xBBQQQ", width, ref_width, 2**63, top, table)
+            filename.write_bytes(malformed)
+            with patch.object(adapter.plistlib, "loads") as parser:
+                result = adapter.inspect_definition({**config, "retained_definition_sha256": adapter.digest(malformed)})
+                self.assertFalse(result["verified"])
+                parser.assert_not_called()
+            root = int.from_bytes(raw[table + top * width:table + (top + 1) * width], "big")
+            self.assertEqual(raw[root], 0xD2)
+            duplicate = bytearray(raw)
+            duplicate[root + 1 + ref_width:root + 1 + 2 * ref_width] = raw[root + 1:root + 1 + ref_width]
+            entity = b'<!DOCTYPE plist [<!ENTITY secret "private-value">]><plist><dict><key>Label</key><string>&secret;</string></dict></plist>'
+            for body in [bytes(duplicate), entity, b"not a plist", b"\xff\xfeinvalid"]:
+                filename.write_bytes(body)
+                result = adapter.inspect_definition({**config, "retained_definition_sha256": adapter.digest(body)})
+                self.assertEqual(result["reason"], "retained_definition_invalid")
+                self.assertNotIn("private-value", json.dumps(result))
+
+    def test_retained_definition_cli_is_read_only_private_and_backward_compatible(self):
+        with tempfile.TemporaryDirectory() as temp:
+            config, raw = self.definition_fixture(temp)
+            config.update({"port": 8001, "binary": "/opt/ds4/ds4-server", "profile_files": ["/opt/ds4/runner.sh"]})
+            filename = Path(temp) / "config.json"
+            filename.write_text(json.dumps(config));filename.chmod(0o600)
+            adapter.validate_config(filename, config)
+            adapter.validate_config(filename, {k:v for k,v in config.items() if k != "retained_definition_sha256"})
+            with patch.object(adapter, "file_digest", return_value="a" * 64):
+                self.assertEqual(adapter.service_profile(config), adapter.service_profile({k:v for k,v in config.items() if k != "retained_definition_sha256"}))
+            for invalid in [None, True, "bad", "A" * 64]:
+                with self.assertRaisesRegex(ValueError, "invalid_adapter_configuration"):
+                    adapter.validate_config(filename, {**config, "retained_definition_sha256": invalid})
+            call = [sys.executable, str(Path(adapter.__file__)), str(filename)]
+            result = subprocess.run(call, input='{"action":"inspect_definition"}', text=True, capture_output=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(json.loads(result.stdout)["authority"], "none")
+            Path(config["plist"]).write_bytes(raw + b"\n")
+            failed = subprocess.run(call, input='{"action":"inspect_definition"}', text=True, capture_output=True, timeout=5)
+            self.assertEqual(failed.returncode, 0)
+            self.assertEqual(json.loads(failed.stdout), {"version": 1, "enrolled": True, "verified": False, "authority": "none", "reason": "retained_definition_digest_mismatch"})
+            self.assertEqual(failed.stderr, "")
+            self.assertEqual(sorted(p.name for p in Path(temp).iterdir()), ["config.json", "retained.plist"])
+
     def test_native_disable_parser_requires_a_complete_unambiguous_override_table(self):
         label = "com.example.ds4"
         self.assertIs(adapter.parse_disabled('disabled services = {\n "com.example.ds4" => disabled\n}', label), True)

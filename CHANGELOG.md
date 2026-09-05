@@ -1,5 +1,17 @@
 # Changelog
 
+## Verify explicitly retained Mac launch definitions
+
+- Add optional private `retained_definition_sha256` and fixed read-only
+  `inspect_definition` preflight to the launchd helper. Preserve exact XML/binary
+  bytes; do not reconstruct launch arguments or modify an existing service.
+- Verify bounded stable private regular-file bytes, exact pin/label and minimal
+  launch shape. Reject ambiguous keys, unsupported shapes, content drift and
+  retained disable intent; expose only bounded reasons, never private values.
+- Add agent-facing preservation/enrollment instructions and file/protocol/privacy
+  regressions. The pin and diagnostic grant no action authority; normal recovery
+  remains unchanged, and removed-job bootstrap/live enrollment are still separate.
+
 ## Recheck native Mac policy through asynchronous recovery
 
 - Fix a reproduced race where native disable during generation verification could

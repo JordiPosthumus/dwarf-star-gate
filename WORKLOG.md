@@ -10,6 +10,12 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Added a retained-definition preflight for Mac recovery enrollment.** An owner's
+  agent can verify a private hash-pinned plist without rewriting any settings or
+  touching services. Tests cover XML/binary byte preservation, drift, duplicate
+  keys, retained disable intent, private file boundaries and concurrent changes.
+  This prepares exact removed-job restoration; it grants no bootstrap authority.
+
 - **Closed a Mac recovery readmission race.** A regression reproduced a native
   disable arriving during generation verification but still clearing quarantine.
   Fresh policy checks now guard action, verification and final readmission/profile
