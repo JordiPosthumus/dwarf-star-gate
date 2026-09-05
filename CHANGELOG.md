@@ -1,5 +1,20 @@
 # Changelog
 
+## Compare reviewed offline recipes using training CV only
+
+- Add an explicit three-recipe occupancy sweep with fresh private output, retained
+  trial artifacts, identical dataset/partition checks and stable CV-score selection
+  per forecast stage. Preserve every selected model's holdout/placement failure;
+  never select by holdout accuracy or silently refit on all data.
+- Give the selected bundle fresh release identities and exact recipe/trial
+  provenance. Keep the UI/Genie single-recipe workflow, compute settings and
+  production feature contracts unchanged; occupancy artifacts remain offline-only.
+- Test holdout-independent selection, per-stage winners/ties, insufficient evidence,
+  invalid contracts/scores, fixed recipe budget and exclusive mode-0600 artifacts.
+- Record a 432-completion sweep: remaining passed its fixed backtest while
+  admission/updated and all new-session placement gates failed. Freeze the exact
+  bundle for independent future evidence; no promotion or routing change.
+
 ## Freeze and audit an offline residual-life baseline
 
 - Add a same-worker completed-history experiment conditioned on occupancy exceeding

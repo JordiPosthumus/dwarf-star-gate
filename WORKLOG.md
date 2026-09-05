@@ -10,6 +10,14 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Trained a newer, matched XGB challenger with training-only recipe selection.**
+  An explicit offline sweep compares the three reviewed recipes without choosing
+  by holdout results or relaxing gates. On 432 usable completions, the remaining
+  challenger passed its backtest (31s MAE versus 47s baseline); admission and
+  updated forecasts still failed. The exact exported bundle is frozen for later
+  traffic, not promoted. Python/JavaScript parity and production-loader rejection
+  were checked; no live model or routing settings changed.
+
 - **Tested a simple elapsed-conditioned alternative instead of assuming it wins.**
   A frozen offline residual-life baseline asks what same-worker historical jobs
   still had left after surviving the current age. It exposes sparse support,

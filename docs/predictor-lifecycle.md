@@ -626,7 +626,7 @@ The UI selector and GG's exact offered actions can choose `standard-v1` (unchang
 depth-two default), `regularized-v1` (larger leaves/stronger regularization), or
 `interactions-v1` (depth three, stronger regularization). The shared
 [recipe definitions](../predictor/recipes.json) accept IDs only, not supplied
-parameters, commands or gates. One recipe per job; no sweep of all offers.
+parameters, commands or gates. One recipe per UI/GG job; no sweep of all offers.
 These are alternatives, not claims of improvement. Scheduled training keeps the
 standard default; GG may choose another when an eligible offer exists.
 
@@ -638,6 +638,41 @@ selection affects one run, not a permanent production setting. Artifacts record
 recipe ID, policy checksum and actual parameters; receipts record the choice.
 Legacy artifacts without recipe metadata still load. Existing feature definitions,
 trained models and collected evidence are preserved.
+
+### Separate offline recipe sweep
+
+Developers can explicitly compare the same three reviewed recipes on one prepared
+**offline occupancy** snapshot:
+
+```sh
+python predictor/recipe_sweep.py \
+  --prepared /private/audit/prepared.json \
+  --output /private/audit/new-sweep
+```
+
+The destination must be new. The sweep retains all three private trial artifacts
+and builds a per-stage candidate using **training-only forward-time CV MAE** to
+select recipes. Each trial still cross-validates feature families, transforms and
+16/64/128 trees; stable reviewed order breaks recipe ties. Holdout results never
+select the winner: if the CV winner fails its holdout or unseen-session gate,
+that failure is preserved. There is no all-data refit. Snapshot, dependency and
+partition agreement are checked, and the final release gets new model identities.
+
+This is three complete offline searches, not a new Genie power or a change to the
+UI controller's single-job/time budget. Each search uses the existing two-thread
+recipes. It neither expands the reviewed recipe list nor changes live training,
+prediction, routing or maintenance settings. The resulting occupancy schema is
+still rejected by the production loader and must be separately future-audited.
+
+The first sweep used 432 usable completions from the same declared recent cohort
+and preserved earlier records as causal history. CV selected interactions for
+admission/remaining and stronger regularization for updated service. The remaining
+model passed its fixed backtest: about 31 seconds MAE versus the strongest
+baseline's 47 seconds on 87 holdout requests. Admission and updated still failed;
+all unseen-session placement gates failed. This development backtest does not
+establish a routing improvement or independent future validation, and the gain
+cannot be attributed to recipe selection alone because the training data grew.
+Freeze the exact chosen bundle before collecting a new future evaluation cohort.
 
 ## Next learning work and current boundaries
 
