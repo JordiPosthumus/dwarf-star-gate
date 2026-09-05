@@ -27,7 +27,8 @@ Private deployment receipts and measurements stay out of this public plan.
    milestones. The attribution-audit index now has boundary/order/parity tests;
    retain ambiguous-overlap and tied-revision abstentions.
    Cache-continuity comparisons now also fence tied session admission clocks;
-   no input-order choice may become a suspected cache-loss alert. Check fresh ordinary
+   no input-order choice may become a suspected cache-loss alert. Identical
+   engine-start replays preserve remembered attribution ambiguity. Check fresh ordinary
    traffic across process epochs; synthetic speed gains alone are not live proof.
    Continue focused lifecycle/privacy/retention checks rather than broad rewrites.
 2. **Make cache misses actionable.** The machine-card view now separates low-reuse

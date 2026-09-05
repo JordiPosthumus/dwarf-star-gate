@@ -1,5 +1,13 @@
 # Changelog
 
+## Preserve attribution guards across identical engine replay
+
+- Retain private overlap/overflow state when an identical normalized start is
+  replayed, including after one remembered request has aged out of history.
+- Reproduce the false-corroboration boundary; verify replay adds no revision,
+  leaks no raw fields and still allows a later valid completion to corroborate.
+- No telemetry rewrite, wider clock tolerance or routing-policy change.
+
 ## Retain newest Genie hardening evidence
 
 - Keep the newest bounded occurrence when deduplicating a failure signature;

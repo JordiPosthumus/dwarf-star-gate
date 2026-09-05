@@ -103,3 +103,34 @@ test('the request cap preserves overlap evidence before unrelated windows and ne
   assert.ok(a.requests.size<=512);const row=a.snapshot().recent.find(value=>value.sample_id===sample);
   assert.equal(row.status,'abstained');assert.equal(row.reason,'overlapping_gateway_windows');assert.equal(row.request_id,null);
 });
+
+test('identical engine replay cannot erase ambiguity after an overlap owner ages out',()=>{
+  const saved=[],a=new EngineAttribution(row=>saved.push(row));
+  a.acceptGateway(dispatch(request,'spark1',10000));a.acceptGateway(dispatch(other,'spark1',11000));a.acceptEngine(start());
+  a.acceptGateway(finish(request,'spark1',13000));a.acceptGateway(finish(other,'spark1',2*3600000));
+  assert.equal(a.snapshot().recent[0].reason,'overlapping_usage_matches');
+  a.acceptGateway(dispatch('33333333-3333-4333-8333-333333333333','spark2',2*3600000+1));
+  assert.equal(a.requests.has(request),false);assert.equal(a.requests.has(other),true);
+  const before=a.snapshot(),writes=saved.length;
+  assert.equal(before.recent[0].reason,'overlapping_gateway_windows');
+  for(let i=0;i<3;i++)a.acceptEngine({...start(),message:'PRIVATE_REPLAY'});
+  assert.deepEqual(a.snapshot(),before);assert.equal(saved.length,writes);
+  assert.ok(!JSON.stringify({snapshot:a.snapshot(),saved}).includes('PRIVATE'));
+});
+
+test('identical engine replay preserves pending evidence and later valid completion',()=>{
+  const saved=[],a=new EngineAttribution(row=>saved.push(row));a.acceptGateway(dispatch());a.acceptEngine(start());
+  const before=a.snapshot(),writes=saved.length;a.acceptEngine(start());
+  assert.deepEqual(a.snapshot(),before);assert.equal(saved.length,writes);
+  a.acceptGateway(finish());assert.equal(a.snapshot().recent[0].reason,'usage_match');
+  const settled=a.snapshot(),settledWrites=saved.length;a.acceptEngine(start());
+  assert.deepEqual(a.snapshot(),settled);assert.equal(saved.length,settledWrites);
+});
+
+test('replay preservation does not suppress changed normalized process evidence',()=>{
+  const a=new EngineAttribution();a.acceptGateway(dispatch());
+  a.acceptEngine(start(sample,'spark1',12000,{backend_epoch:null,backend_epoch_confidence:'unavailable'}));
+  assert.equal(a.snapshot().recent[0].reason,'backend_epoch_unavailable');
+  a.acceptEngine(start());assert.equal(a.snapshot().recent[0].reason,'request_open');
+  a.acceptGateway(finish());assert.equal(a.snapshot().recent[0].reason,'usage_match');
+});

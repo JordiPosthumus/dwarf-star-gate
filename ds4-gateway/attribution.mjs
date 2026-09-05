@@ -86,7 +86,13 @@ export class EngineAttribution {
   }
   acceptEngine(raw) {
     const e=safeEngine(raw);if(!e)return null;
-    this.latest=Math.max(this.latest,e.time);this.starts.set(e.sample_id,e);this.reconcile();return e;
+    this.latest=Math.max(this.latest,e.time);
+    const previous=this.starts.get(e.sample_id);
+    // Identical telemetry replay is not new evidence. Preserve the remembered
+    // overlap/overflow guards after request history has been pruned; replacing
+    // this object could manufacture a unique owner from the surviving window.
+    if(!previous||Object.keys(e).some(key=>previous[key]!==e[key]))this.starts.set(e.sample_id,e);
+    this.reconcile();return e;
   }
   captureOverlaps() {
     const requests=[...this.requests.values()].filter(row=>Number.isFinite(row.dispatched_at)&&!row.conflict);

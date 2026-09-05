@@ -10,6 +10,10 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Preserved attribution ambiguity across log replay.** Identical engine-start
+  records no longer erase overlap guards after request history expires. A replay
+  cannot manufacture a corroborated match; valid later completions still work.
+
 - **Kept recurring Genie failure evidence current.** Fixed duplicate selection
   that retained the oldest occurrence after newest-first sorting. Preserve
   separate workers/reasons and test shuffled input without exposing raw events
