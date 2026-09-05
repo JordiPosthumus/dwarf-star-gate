@@ -1,5 +1,13 @@
 # Changelog
 
+## Audit frozen completion forecasts on later traffic
+
+- Add explicit completion mode to the offline future auditor, preserving default
+  occupancy behavior and separating receipt purposes, feature schemas and labels.
+- Cover future-only request selection, unchanged artifact identity, matched
+  upload/embedding points, empty evidence and rejection of mixed target contracts.
+- Retain worker/session/tail diagnostics without adding routing or promotion power.
+
 ## Plan opt-in Genie Session Rescue
 
 - Specify staged Pi stall review and client-owned resume, with separate consent,

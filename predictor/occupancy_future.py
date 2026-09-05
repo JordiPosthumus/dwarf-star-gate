@@ -9,7 +9,7 @@ import math
 import os
 import stat
 
-from fit_v2 import OCCUPANCY_SCHEMAS, baseline, exported_prediction, feature_coverage, known_session, metrics, session_evidence, split, split_usage, target_coverage
+from fit_v2 import OCCUPANCY_SCHEMAS, SCHEMAS, baseline, exported_prediction, feature_coverage, known_session, metrics, session_evidence, split, split_usage, target_coverage
 
 
 def read_json(path):
@@ -30,13 +30,15 @@ def timestamp(value):
     return parsed.timestamp()*1000
 
 
-def contracts(candidate,training):
-    if candidate.get('schema')!=2 or candidate.get('feature_schema') not in OCCUPANCY_SCHEMAS or candidate.get('routing_enabled') is not False:
-        raise ValueError('Only offline occupancy candidates are supported')
-    if training.get('schema')!=candidate['feature_schema'] or training.get('feature_schema')!=OCCUPANCY_SCHEMAS[candidate['feature_schema']] or candidate.get('snapshot')!=training.get('snapshot'):
+def contracts(candidate,training,*,completion=False):
+    schemas=SCHEMAS if completion else OCCUPANCY_SCHEMAS
+    if candidate.get('schema')!=2 or candidate.get('feature_schema') not in schemas or candidate.get('routing_enabled') is not False:
+        raise ValueError('Candidate does not match the explicit audit target mode')
+    expected_features=None if completion else OCCUPANCY_SCHEMAS[candidate['feature_schema']]
+    if training.get('schema')!=candidate['feature_schema'] or training.get('feature_schema')!=expected_features or candidate.get('snapshot')!=training.get('snapshot'):
         raise ValueError('Training snapshot does not match the frozen candidate')
     if not candidate.get('models') or any(k not in ('admission','updated','remaining') for k in candidate['models']):
-        raise ValueError('Unsupported occupancy model kinds')
+        raise ValueError('Unsupported forecast model kinds')
 
 
 def input_support(model, training_rows, future_rows, hardware_names, groups=None):
@@ -68,7 +70,7 @@ def input_support(model, training_rows, future_rows, hardware_names, groups=None
             'note':'Split counts are structural use, not importance or causal benefit. Coverage is per forecast point; no future-data fitting.'}
 
 
-def updated_stage_pairs(rows, predictions):
+def updated_stage_pairs(rows, predictions, *, completion=False):
     """Compare like-for-like checkpoints, not different marginal populations.
 
     Exactly one upload and embedded point with the same terminal target are
@@ -91,7 +93,7 @@ def updated_stage_pairs(rows, predictions):
         if missing:
             excluded['missing_'+missing]+=1;continue
         upload,embedded=stages['upload'][0],stages['embedded'][0]
-        keys=('node','decision_time','finish_time','target_s','target_contract','terminal_class')
+        keys=('node','decision_time','finish_time','target_s')+(() if completion else ('target_contract','terminal_class'))
         if any(key not in upload[0] or key not in embedded[0] or upload[0][key]!=embedded[0][key] for key in keys):
             excluded['different_target']+=1;continue
         pairs.append((upload,embedded))
@@ -190,13 +192,13 @@ def remaining_age_support(training_rows, rows):
             'note':'Completed training jobs only; missing late progress can undercount support. Same worker is not proof of matching hardware/profile era. Bands can share requests; counts are not confidence, independence, promotion or routing authority.'}
 
 
-def freeze(candidate_path,training_path,receipt_path):
+def freeze(candidate_path,training_path,receipt_path,*,completion=False):
     candidate,ch=read_json(candidate_path);training,th=read_json(training_path)
-    contracts(candidate,training)
+    contracts(candidate,training,completion=completion)
     now=dt.datetime.now(dt.timezone.utc).isoformat()
     if max(timestamp(candidate['created_at']),timestamp(training['snapshot']['created_at']))>timestamp(now):
         raise ValueError('Candidate or training snapshot is dated in the future')
-    receipt={'schema':1,'purpose':'offline_occupancy_future_audit','frozen_at':now,
+    receipt={'schema':1,'purpose':'offline_completion_future_audit' if completion else 'offline_occupancy_future_audit','frozen_at':now,
              'candidate_sha256':ch,'training_sha256':th,'routing_enabled':False}
     fd=os.open(receipt_path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
     with os.fdopen(fd,'w') as stream:
@@ -204,16 +206,17 @@ def freeze(candidate_path,training_path,receipt_path):
     return receipt
 
 
-def evaluate(candidate_path,training_path,receipt_path,prepared_path):
+def evaluate(candidate_path,training_path,receipt_path,prepared_path,*,completion=False):
     candidate,ch=read_json(candidate_path);training,th=read_json(training_path)
     receipt,_=read_json(receipt_path);prepared,ph=read_json(prepared_path)
-    contracts(candidate,training)
-    if receipt.get('schema')!=1 or receipt.get('purpose')!='offline_occupancy_future_audit' or receipt.get('routing_enabled') is not False or receipt.get('candidate_sha256')!=ch or receipt.get('training_sha256')!=th:
+    contracts(candidate,training,completion=completion)
+    purpose='offline_completion_future_audit' if completion else 'offline_occupancy_future_audit'
+    if receipt.get('schema')!=1 or receipt.get('purpose')!=purpose or receipt.get('routing_enabled') is not False or receipt.get('candidate_sha256')!=ch or receipt.get('training_sha256')!=th:
         raise ValueError('Frozen artifact identity changed')
     cutoff=timestamp(receipt['frozen_at']);end=timestamp(prepared['snapshot']['created_at'])
     if cutoff<max(timestamp(candidate['created_at']),timestamp(training['snapshot']['created_at'])) or end<cutoff:
         raise ValueError('Audit evidence predates the freeze')
-    if prepared.get('schema')!=training['schema'] or prepared.get('feature_schema')!=training['feature_schema'] or prepared['snapshot']['feature_builder_sha256']!=training['snapshot']['feature_builder_sha256'] or prepared['snapshot']['hashes']['worker-inventory.json']!=training['snapshot']['hashes']['worker-inventory.json']:
+    if prepared.get('schema')!=training['schema'] or prepared.get('feature_schema')!=training.get('feature_schema') or prepared['snapshot']['feature_builder_sha256']!=training['snapshot']['feature_builder_sha256'] or prepared['snapshot']['hashes']['worker-inventory.json']!=training['snapshot']['hashes']['worker-inventory.json']:
         raise ValueError('Future feature builder or worker profiles changed')
     for data in (training,prepared):
         rows=data.get('rows')
@@ -221,9 +224,10 @@ def evaluate(candidate_path,training_path,receipt_path,prepared_path):
         for r in rows:
             if data['schema']=='dsg-occupancy-v2' and any(key in r.get('features',{}) for key in ('prior_generation_tps','worker_generation_tps','history_generation_estimate_s')):
                 raise ValueError('Legacy generation anchor in delivery-aware contract')
-            if r.get('target_contract')!='observed_terminal_occupancy' or r.get('terminal_class') not in ('normal','output_limited') or any(not isinstance(r.get(k),(int,float)) or not math.isfinite(r[k]) for k in ('decision_time','finish_time','target_s')) or r['target_s']<0 or r['finish_time']<r['decision_time']:
-                raise ValueError('Invalid occupancy label')
-    result={'schema':1,'mode':'offline_frozen_occupancy_future','authority':'none','routing_enabled':False,
+            wrong_target=any(k in r for k in ('target_contract','terminal_class')) if completion else r.get('target_contract')!='observed_terminal_occupancy' or r.get('terminal_class') not in ('normal','output_limited')
+            if wrong_target or any(type(r.get(k)) not in (int,float) or not math.isfinite(r[k]) for k in ('decision_time','finish_time','target_s')) or r['target_s']<0 or r['finish_time']<r['decision_time']:
+                raise ValueError('Invalid forecast label for audit target')
+    result={'schema':1,'mode':'offline_frozen_completion_future' if completion else 'offline_frozen_occupancy_future','authority':'none','routing_enabled':False,
             'frozen_at':receipt['frozen_at'],'evidence_through':prepared['snapshot']['created_at'],
             'candidate_sha256':ch,'prepared_sha256':ph,'reports':{},
             'note':'Frozen-model replay, not logged live predictions or a measured routing benefit. No promotion authority.'}
@@ -239,7 +243,7 @@ def evaluate(candidate_path,training_path,receipt_path,prepared_path):
         report={'status':'no_future_labels','target_coverage':target_coverage(rows),
                 'input_support':input_support(model,tr,rows,training.get('groups',{}).get('hardware',[]),training.get('groups',{}))};result['reports'][kind]=report
         report['future_strata']=future_strata(tr,[],[])
-        if kind=='updated':report['paired_stages']=updated_stage_pairs([],[])
+        if kind=='updated':report['paired_stages']=updated_stage_pairs([],[],completion=completion)
         if kind=='remaining':report['age_support']=remaining_age_support(tr,rows)
         if not rows:
             if kind=='remaining':report['by_elapsed']=elapsed_slices(tr,[],[])
@@ -247,11 +251,12 @@ def evaluate(candidate_path,training_path,receipt_path,prepared_path):
         if not tr:raise ValueError('Frozen training partition is empty')
         predictions=[exported_prediction(model,r['features']) for r in rows]
         if any(not math.isfinite(p) for p in predictions):raise ValueError('Non-finite prediction')
-        if kind=='updated':report['paired_stages']=updated_stage_pairs(rows,predictions)
+        if kind=='updated':report['paired_stages']=updated_stage_pairs(rows,predictions,completion=completion)
         report['future_strata']=future_strata(tr,rows,predictions)
-        report.update(status='observed_not_promoted',metrics=metrics(rows,predictions),baselines=baseline(tr,rows)[0],
-            terminal_classes={label:metrics([r for r in rows if r['terminal_class']==label],[p for r,p in zip(rows,predictions) if r['terminal_class']==label])
-                if any(r['terminal_class']==label for r in rows) else None for label in ('normal','output_limited')})
+        report.update(status='observed_not_promoted',metrics=metrics(rows,predictions),baselines=baseline(tr,rows)[0])
+        if not completion:
+            report['terminal_classes']={label:metrics([r for r in rows if r['terminal_class']==label],[p for r,p in zip(rows,predictions) if r['terminal_class']==label])
+                if any(r['terminal_class']==label for r in rows) else None for label in ('normal','output_limited')}
         if kind=='remaining':report['by_elapsed']=elapsed_slices(tr,rows,predictions)
         # The updated model is called both after upload and after embeddings.
         # Keep those causal stages visible rather than hiding one behind an average.
@@ -269,10 +274,11 @@ if __name__=='__main__':
     parser.add_argument('mode',choices=('freeze','evaluate'))
     for name in ('candidate','training','receipt'):parser.add_argument('--'+name,required=True)
     parser.add_argument('--prepared')
+    parser.add_argument('--completion',action='store_true',help='Explicit V2/V3/V4 normal-completion audit; never occupancy or promotion')
     args=parser.parse_args()
     if args.mode=='evaluate' and not args.prepared:parser.error('evaluate requires --prepared')
     try:
-        result=freeze(args.candidate,args.training,args.receipt) if args.mode=='freeze' else evaluate(args.candidate,args.training,args.receipt,args.prepared)
+        result=freeze(args.candidate,args.training,args.receipt,completion=args.completion) if args.mode=='freeze' else evaluate(args.candidate,args.training,args.receipt,args.prepared,completion=args.completion)
         print(json.dumps(result,allow_nan=False))
     except (ValueError,KeyError,TypeError,OSError) as error:
-        parser.exit(1,'Occupancy audit rejected: '+type(error).__name__+'\n')
+        parser.exit(1,'Forecast audit rejected: '+type(error).__name__+'\n')

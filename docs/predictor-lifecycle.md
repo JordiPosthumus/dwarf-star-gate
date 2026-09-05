@@ -140,7 +140,36 @@ counting only `finish` events would have incorrectly grouped them with the eight
 unresolved admissions. Completion-conditioned early results can underrepresent
 long work; none of these counts establishes current liveness or retry safety.
 
-### Frozen occupancy future audit
+### Frozen occupancy and completion future audits
+
+The same read-only evaluator can also audit normal-completion V2/V3/V4
+candidates with explicit `--completion` on **both** `freeze` and `evaluate`.
+The default remains occupancy-only. Completion and occupancy receipts have
+different purposes; their candidates, prepared schemas and target labels cannot
+be mixed. Completion reports do not invent capped/normal occupancy slices.
+
+For example, freeze a completed V4 sensor-era experiment before collecting its
+next evaluation interval:
+
+```sh
+python predictor/occupancy_future.py freeze --completion \
+  --candidate /private/sensor-era/candidate.json \
+  --training /private/sensor-era/prepared.json \
+  --receipt /private/sensor-era/future-freeze.json
+python predictor/occupancy_future.py evaluate --completion \
+  --candidate /private/sensor-era/candidate.json \
+  --training /private/sensor-era/prepared.json \
+  --receipt /private/sensor-era/future-freeze.json \
+  --prepared /private/later-v4/prepared.json
+```
+
+Prepare the later snapshot with the same feature schema and worker inventory,
+after new requests have finished. Do not retrain the frozen candidate or recycle
+its old holdout as future evidence. Reports distinguish worker and familiar/unseen
+session support, matched upload/embedding checkpoints and late-progress support.
+An empty interval reports `no_future_labels`, not zero error or a passing gate.
+This is frozen-model replay, not live-served prediction evidence or permission to
+promote any model. Existing automatic activation gates remain independent.
 
 #### Experiments after a collector change
 

@@ -10,6 +10,12 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Extended frozen future checks to completion forecasts.** Admission, updated
+  and remaining-time candidates can now use the same read-only artifact binding
+  and genuinely later-request checks as occupancy experiments. Explicit target
+  separation prevents mixing capped occupancy with normal completion. No model
+  is activated by an audit result.
+
 - **Planned opt-in Session Rescue.** Genie could review quiet Pi sessions and
   propose or request a guarded resume when warranted. The roadmap separates
   observation from control, protects legitimate waiting and requires proof of
