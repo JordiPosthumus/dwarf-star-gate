@@ -31,8 +31,10 @@ A metadata-only input audit and preparation preflight now expose aggregate
 size limits before payload parsing, with opened-file race checks retained.
 An offline forecast-specific projection audit now compares complete replay
 outputs and representation size while retaining original conflict identity.
-It writes no derived training input and is not integrated into production;
-versioned provenance, streaming/checkpoint budgets and full-history equivalence
+The read-only audit still writes no input. A separate offline artifact command
+now requires five-schema parity and verifies private derived payloads against
+original source bytes and exact builder versions. Production does not accept
+these artifacts; streaming/checkpoint budgets and broader full-history equivalence
 remain adoption gates, rather than silently choosing recent files.
 Growing training evidence still needs an explicitly
 reviewed input-window policy; no retention, preparation-budget or cadence change

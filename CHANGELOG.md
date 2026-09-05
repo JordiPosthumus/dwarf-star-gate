@@ -1,5 +1,14 @@
 # Changelog
 
+## Verify private forecast projection artifacts
+
+- Add an offline create/verify command with source, inventory, builder and payload
+  provenance. Require exact parity across all five supported replay schemas.
+- Retain event ordering and conflict identity; reject incomplete input, changed
+  provenance, altered payloads, unsafe files and existing output directories.
+- Keep raw evidence and production preparation unchanged. Artifacts grant no
+  training/routing authority and do not bypass existing input budgets.
+
 ## Preserve Genie suggestion recency
 
 - Keep an unchanged durable suggestion's save time instead of refreshing its

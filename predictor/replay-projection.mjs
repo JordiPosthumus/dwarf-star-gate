@@ -78,8 +78,7 @@ function readBounded(file,max){
     return b;
   }finally{fs.closeSync(fd);}
 }
-export function auditProjectionFiles(data,profiles,options={}){
-  contract(options.schema??CURRENT_FEATURE_SCHEMA);
+export function loadProjectionFiles(data,profiles){
   const audit=trainingInputAudit(data);if(audit.state!=='within_budget')reject('input_'+audit.state);
   const inventoryRaw=readBounded(profiles,1024**2),inventory=JSON.parse(inventoryRaw);
   if(inventory?.schema!==1||!inventory.workers||typeof inventory.workers!=='object'||Array.isArray(inventory.workers))reject('invalid_inventory');
@@ -91,7 +90,12 @@ export function auditProjectionFiles(data,profiles,options={}){
       if(events.length>=200000)reject('event_budget');events.push(JSON.parse(line));
     }
   }
-  return {...auditReplayProjection(events,inventory,options),source:{bytes,files:audit.file_count,incomplete_tails:tails,hashes,inventory_sha256:hash(inventoryRaw)}};
+  return {events,inventory,source:{bytes,files:audit.file_count,incomplete_tails:tails,hashes,inventory_sha256:hash(inventoryRaw)}};
+}
+export function auditProjectionFiles(data,profiles,options={}){
+  contract(options.schema??CURRENT_FEATURE_SCHEMA);
+  const {events,inventory,source}=loadProjectionFiles(data,profiles);
+  return {...auditReplayProjection(events,inventory,options),source};
 }
 export function projectionArgs(args){
   const values=new Map();

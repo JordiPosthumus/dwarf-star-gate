@@ -10,6 +10,12 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Made forecast projection experiments reproducible.** A private offline
+  artifact now requires exact full-replay parity across five schemas and can be
+  verified against original evidence and builder versions. It preserves event
+  order/conflict identity without replacing raw history or changing production
+  training limits, inputs or model authority.
+
 - **Stopped repeat Genie reviews from manufacturing suggestion recency.** An
   unchanged saved suggestion keeps its save time. Delayed reviews cannot replace
   newer incident evidence; genuine revisions remain visible, with unsaved advice

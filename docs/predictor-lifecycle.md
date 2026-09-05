@@ -802,9 +802,46 @@ error exits 1. Neither outcome proves compatibility with future feature builders
 Initial frozen-history checks show a worthwhile representation saving, but that
 is not a solution to indefinitely growing history or proof of faster fitting.
 
-Before production adoption, design a versioned derived-artifact manifest tied to
-immutable raw evidence and inventory; verify conflict, ordering and cross-file
-lifecycle equivalence; bound memory/disk/CPU during generation and replay; and
+#### Reproducible private projection artifacts
+
+A separate offline command now creates and verifies a versioned derived artifact.
+It is **not** a prepared dataset, and production training does not accept it.
+Use original, complete private snapshot files, retain them, and choose a new
+output directory whose parent already exists without symlinked components:
+
+```sh
+npm run training-projection:artifact -- create \
+  --data /private/candidate/snapshots \
+  --profiles /private/candidate/snapshots/worker-inventory.json \
+  --output /private/candidate/forecast-projection
+npm run training-projection:artifact -- verify \
+  --data /private/candidate/snapshots \
+  --profiles /private/candidate/snapshots/worker-inventory.json \
+  --output /private/candidate/forecast-projection
+```
+
+Creation pins one bounded input in memory and requires exact replay parity across
+**all five** schemas before writing. It rejects incomplete source tails rather
+than manufacturing a completed artifact from a partial record. The mode-0700
+directory contains mode-0600 `events.jsonl`, `inventory.json` and a manifest
+written last. The manifest binds exact source-file and inventory hashes, ordered
+canonical evidence, projector/artifact-builder hashes, all five feature-builder
+hashes and payload sizes/hashes. It contains private metadata, not just public
+code identifiers. Output is never overwritten; failed writes can leave a partial
+directory for inspection, not an automatically repaired artifact.
+
+Verification regenerates the manifest and payload from the original evidence
+under the current code and compares both exactly. It does not trust artifact
+paths, schema choices or a self-asserted parity result. Source changes (even
+otherwise-unused bytes), code changes, unexpected files and payload tampering
+fail verification. Both commands retain the 128 MiB raw/canonical, 200,000-event
+and 100,000-row limits. Projected payload is capped at 128 MiB; inventory and
+manifest are each capped at 1 MiB. This is not a memory/CPU benchmark, a signed
+attestation, anonymization, or proof of compatibility with another code version.
+Keep artifacts private and do not substitute them for raw audit history.
+
+Before production adoption, verify broader conflict, ordering and cross-file
+lifecycle equivalence; measure memory/disk/CPU during generation and replay; and
 integrate preparation/future-audit provenance without invalidating existing
 models. A streaming/checkpoint policy still needs explicit review. Do not select
 recent files, prune embeddings, delete evidence or lift limits as a shortcut.
