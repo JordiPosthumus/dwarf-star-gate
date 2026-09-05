@@ -385,8 +385,14 @@ service's override from `launchctl print-disabled gui/$UID`. An explicit disable
 blocks starts, restarts, canaries and automatic readmission; DSG never issues
 `enable` to clear it. Unreadable, malformed or duplicate override evidence is
 unknown, not consent. The executor checks again after saving its intent receipt;
-a changed disable setting prevents command issuance and blind reissue. These are
-sampled checks, not an atomic lock over an operator's concurrent launchctl action.
+a changed disable setting prevents command issuance and blind reissue. The
+controller also rechecks fresh inspection evidence before an action, before
+generation verification and before committing readmission or profile adoption.
+This covers stopped starts, canaries, already-replaced instances and persisted
+reconciliation, not just the initial recovery offer. Disabled or unknown policy
+at these checkpoints retains quarantine and does not adopt the new profile.
+These are sampled checks, not an atomic lock over an operator's concurrent
+launchctl action; they do not instantly cancel an already-running generation test.
 
 The bounded status reasons are `launchd_native_disabled` and
 `launchd_disable_state_unverified`; Genie and quarantine alerts explain them.

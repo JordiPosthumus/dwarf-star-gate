@@ -10,6 +10,13 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Closed a Mac recovery readmission race.** A regression reproduced a native
+  disable arriving during generation verification but still clearing quarantine.
+  Fresh policy checks now guard action, verification and final readmission/profile
+  adoption, including stopped starts, canaries and reconciliation without command
+  replay. These are sampled checkpoints, not instantaneous cancellation. Gateway
+  activation is separate; no worker or model settings change.
+
 - **Found the missing native removal evidence.** launchd stores the exact job/PID
   in its structured subsystem, so message-only searches missed the caller record.
   Added a bounded offline auditor for exact identity/boot/time matching, incomplete

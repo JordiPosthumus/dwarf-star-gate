@@ -1,5 +1,16 @@
 # Changelog
 
+## Recheck native Mac policy through asynchronous recovery
+
+- Fix a reproduced race where native disable during generation verification could
+  still clear quarantine. Recheck fresh policy before service action, generation
+  proof and final readmission or profile adoption; unknown evidence also vetoes.
+- Add checkpoint regressions across restart, stopped start, canary, already-replaced
+  instances, profile hand-back and persisted reconciliation without repeat commands.
+- Preserve Linux behavior, operator holds, existing deadlines and model settings.
+  Checks are sampled, not an atomic native lock or instant cancellation of an
+  in-flight proof. Gateway activation remains a separate safe cutover.
+
 ## Audit exact native Mac removal records
 
 - Add a read-only archive auditor and exact-subsystem capture predicate for

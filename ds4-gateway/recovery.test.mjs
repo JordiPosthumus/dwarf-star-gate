@@ -331,6 +331,64 @@ test('operator pause during verification wins and survives subsequent stage upda
   assert.equal(r.recovery.status().operations[0].state,'verified_paused');assert.equal(r.recovery.status().operations[0].operator_override,true);
   assert.ok(r.n.quarantine);assert.equal(r.n.healthy,false);
 });
+test('native disable arriving during Mac verification never readmits the worker',async()=>{
+  const r=rig();r.recovery.configs.set('one',{...config,adapter:'launchd'});
+  let disabled=false;const call=r.recovery.call,verify=r.recovery.verify;
+  r.recovery.call=async(c,input)=>({...await call(c,input),...(input.action==='inspect'?{native_disabled:disabled}:{})});
+  r.recovery.verify=async(...args)=>{const proof=await verify(...args);disabled=true;return proof;};
+  await r.ready();r.recovery.request(r.input());await r.recovery.task;
+  const op=r.recovery.status().operations[0];assert.equal(op.state,'failed');assert.equal(op.error,'launchd_native_disabled');
+  assert.equal(r.restarts,1);assert.equal(r.proofs,1);assert.ok(r.n.quarantine);assert.equal(r.n.healthy,false);
+});
+test('Mac native policy is rechecked before actions, before proof and before every readmission path',async()=>{
+  for(const mode of ['restart','replacement','canary'])for(const cutoff of [2,3,4])for(const disabled of [true,null,undefined]){
+    const r=rig();r.recovery.configs.set('one',{...config,adapter:'launchd'});
+    if(mode==='replacement')r.replace();if(mode==='canary')r.n.drained=true;
+    let inspections=0;const original=r.recovery.call;
+    r.recovery.call=async(c,input)=>{
+      const value=await original(c,input);if(input.action!=='inspect')return value;
+      inspections++;return {...value,native_disabled:inspections>=cutoff?disabled:false,...(mode==='replacement'?{started_at:r.deps.now()+1}:{})};
+    };
+    await r.ready();r.recovery.request(r.input(),'operator',{canary:mode==='canary'});await r.recovery.task;
+    const op=r.recovery.status().operations[0],label=JSON.stringify({mode,cutoff,disabled});
+    assert.equal(op.error,disabled===true?'launchd_native_disabled':'launchd_disable_state_unverified',label);
+    assert.ok(['failed','reconciliation_needed'].includes(op.state),label);assert.ok(r.n.quarantine,label);assert.equal(r.n.healthy,false,label);
+    assert.equal(r.restarts,cutoff===2||mode==='replacement'?0:1,label);assert.equal(r.proofs,cutoff===4?1:0,label);
+    assert.equal(r.n.drained,mode==='canary',label);await r.recovery.close();
+  }
+});
+test('Mac start and profile hand-back races preserve quarantine and the enrolled profile',async()=>{
+  for(const mode of ['start','adopt_restart','adopt_verify'])for(const cutoff of [1,2,3])for(const disabled of [true,null]){
+    const r=rig(),changed='c'.repeat(64),service_profile='d'.repeat(64);
+    const local={...config,adapter:'launchd',...(mode==='start'?{start_stopped:true,service_profile}:{})};
+    r.recovery.configs.set('one',local);let running=mode!=='start',issued=0,inspections=0,armed=false;
+    r.recovery.call=async(_c,input)=>{
+      if(input.action!=='inspect'){issued++;running=true;r.replace();return {state:'issued'};}
+      if(armed)inspections++;
+      const native_disabled=armed&&inspections>=cutoff?disabled:false;
+      if(!running)return {version:1,machine:config.machine,service_profile,loaded:true,stopped:true,stopped_epoch:'e'.repeat(64),active:false,listener:false,native_disabled};
+      return {...r.sample(),profile:mode==='start'?config.profile:changed,native_disabled,
+        ...(mode==='adopt_verify'?{instance:'2'.repeat(32),started_at:r.deps.now()+2000,fault:null}:{})};
+    };
+    await r.ready();r.advance(16000);await r.ready();armed=true;
+    const receipt=r.recovery.request(r.input());assert.equal(receipt.service_action,mode);await r.recovery.task;
+    const label=JSON.stringify({mode,cutoff,disabled}),op=r.recovery.status().operations[0];
+    assert.equal(op.error,disabled===true?'launchd_native_disabled':'launchd_disable_state_unverified',label);
+    assert.equal(issued,cutoff===1||mode==='adopt_verify'?0:1,label);assert.equal(r.proofs,cutoff===3?1:0,label);
+    assert.ok(r.n.quarantine,label);assert.equal(r.n.healthy,false,label);assert.equal(r.recovery.config('one').profile,config.profile,label);
+    await r.recovery.close();
+  }
+});
+test('native disable after an uncertain Mac restart blocks reconciliation without issuing it again',async()=>{
+  const r=rig(),local={...config,adapter:'launchd'};let disabled=false;
+  const original=r.recovery.call,call=async(c,input)=>({...await original(c,input),...(input.action==='inspect'?{native_disabled:disabled}:{})});
+  r.recovery.configs.set('one',local);r.recovery.call=call;await r.ready();r.recovery.request(r.input());await r.recovery.task;
+  const op=r.store.data.recovery.operations[0];op.state='restarting';r.n.quarantine=op.quarantine;r.n.healthy=false;disabled=true;
+  const resumed=new Recovery({workers:[local]},{...r.deps,call});await resumed.tick();await resumed.task;
+  assert.equal(r.restarts,1);assert.equal(r.proofs,1);assert.ok(r.n.quarantine);assert.equal(r.n.healthy,false);
+  assert.equal(resumed.status().operations[0].error,'launchd_native_disabled');assert.notEqual(resumed.status().operations[0].state,'recovered');
+  await resumed.close();await r.recovery.close();
+});
 test('verification failure never clears quarantine',async()=>{
   const r=rig({verify:async()=>{throw new Error('verification_warm_cache_not_proven');}});await r.ready();r.recovery.request(r.input());await r.recovery.task;
   assert.equal(r.recovery.status().operations[0].state,'failed');assert.ok(r.n.quarantine);assert.equal(r.n.healthy,false);

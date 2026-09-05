@@ -8,6 +8,8 @@ const faultReasons=new Set(['fatal_accelerator_error','accelerator_checkpoint_fa
 const adapterReasons=new Set(['adapter_timeout','adapter_output_limit','adapter_spawn_failed','adapter_dns_failure','adapter_host_key_failure','adapter_auth_failure','adapter_connect_timeout','adapter_connection_refused','adapter_route_unreachable','adapter_connection_reset','adapter_unreachable','adapter_check_failed','adapter_local_unavailable','adapter_local_identity_unverified']);
 const publicOperation=op=>Object.fromEntries(['id','worker_id','actor','service_action','state','created_at','updated_at','error','proof','service_action_issued','restart_issued','operator_override','profile_adopted'].filter(k=>op[k]!==undefined).map(k=>[k,op[k]]));
 const digest=value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
+const nativePolicyReason=(s,c)=>c?.adapter==='launchd'&&s?.native_disabled!==false?(s?.native_disabled===true?'launchd_native_disabled':'launchd_disable_state_unverified'):null;
+function requireNativePolicy(s,c){const reason=nativePolicyReason(s,c);if(reason)throw new Error(reason);}
 const identityFields=['enrollment','instance','machine','observed_at','pid','profile','service_profile','started_at'];
 const validIdentityRecord=value=>value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).sort().join(',')===identityFields.join(',')&&
   ['enrollment','machine','profile','service_profile'].every(key=>digest(value[key]))&&/^[a-f0-9]{32}$/.test(value.instance)&&
@@ -100,7 +102,7 @@ export class Recovery {
       if(s.loaded===null&&s.registration==='unverified')return 'launchd_state_unverified';
     }
     if(!live&&!stopped&&!candidate)return s?.stopped===true&&c?.start_stopped!==true?'stopped_service_start_not_enrolled':'service_identity_or_profile_unverified';
-    if(c.adapter==='launchd'&&s.native_disabled!==false)return s.native_disabled===true?'launchd_native_disabled':'launchd_disable_state_unverified';
+    const nativeReason=nativePolicyReason(s,c);if(nativeReason)return nativeReason;
     if(candidate&&(n.active||n.queue.length))return 'profile_handback_wait_for_admitted_work';
     if(n.active || n.queue.length)return 'wait_for_admitted_work';
     if(canary) {
@@ -227,6 +229,7 @@ export class Recovery {
       const before=await this.inspect(n.id),starting=op.service_action==='start',adoptVerify=op.service_action==='adopt_verify';
       const activeBefore=this.valid(before,c),stoppedBefore=this.validStopped(before,c)&&before.stopped_epoch===op.stopped_epoch;
       if(!reconcile && !activeBefore && !(starting&&stoppedBefore))throw new Error('service_identity_or_profile_unverified');
+      if(activeBefore||stoppedBefore)requireNativePolicy(before,c);
       if(n.active || n.queue.length)throw new Error('worker_has_admitted_work');
       if(this.closed)throw new Error('controller_stopping');
       const failedAt=Date.parse(op.quarantine?.at);
@@ -252,10 +255,12 @@ export class Recovery {
       }
       if(this.closed)throw new Error('controller_stopping');
       if(!this.valid(after,c) || after.fault)throw new Error('replacement_identity_or_health_failed');
+      requireNativePolicy(after,c);
       this.update(op,{state:'verifying',new_instance:after.instance});
       const proof=await this.verify(n.url,this.model,op.context_length,{signal:this.abort.signal});
       const final=await this.inspect(n.id);
       if(!this.valid(final,c) || final.instance!==after.instance || final.fault)throw new Error('identity_changed_during_verification');
+      requireNativePolicy(final,c);
       op={...this.current(op)};
       const held=op.operator_override || op.was_paused || n.removed || this.node(n.id)!==n || n.drained || this.stopping();
       const adoption=adopting?{config_profile:enrolled.profile,machine:enrolled.machine,profile:op.adopt_profile,service_profile:digest(op.adopt_service_profile)?op.adopt_service_profile:null,adopted_at:this.now(),operation_id:op.id}:null;
