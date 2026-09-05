@@ -111,6 +111,15 @@ neither artifact was promoted. These are frozen offline replays, not logged live
 forecasts or measured routing benefits. The inspected future cohort is now
 research evidence, not an unseen test for any successor tuned using it.
 
+The corresponding coverage audit counted **36 admissions**, not 20: in addition
+to the scored completions, two completed on a different worker, six had failure
+or cancellation terminal records, and eight had no terminal evidence in that
+snapshot. The frozen label contract correctly abstained on changed-worker work.
+Two queued cancellations had no `finish` record but were nevertheless terminal;
+counting only `finish` events would have incorrectly grouped them with the eight
+unresolved admissions. Completion-conditioned early results can underrepresent
+long work; none of these counts establishes current liveness or retry safety.
+
 ### Frozen occupancy future audit
 
 #### Experiments after a collector change
@@ -212,6 +221,47 @@ remaining targets also mean a lower error in an older slice is not by itself
 proof that the model learned to recognize long work. This offline report includes
 all retained progress points; it is not the UI's single first-at-or-after-30s plot.
 It does not change feature builders, frozen artifacts, tuning or promotion gates.
+
+#### Check the denominator, not only the completed scores
+
+Run the separate read-only census against the **same prepared snapshot**:
+
+```sh
+node predictor/occupancy-coverage.mjs --prepared /private/later/prepared.json
+```
+
+The tool verifies the manifest, raw-file hashes and current versioned feature
+builder, reconstructs the exact prepared rows from full causal history, and then
+counts admissions using the snapshot's declared cohort cutoff. It neither makes
+a new raw copy nor changes prepared files, frozen models or labels. It supports
+both offline occupancy versions; no production endpoint or model is contacted.
+
+Every unambiguous in-cohort, non-Genie admission is assigned once to labeled
+completion, complete without a usable label, noncomplete terminal, no terminal
+evidence, or conflicting lifecycle. Duplicate event copies do not inflate counts;
+ambiguous admissions and orphan lifecycles are reported separately because their
+cohort membership cannot be established. Queued cancellation, queue timeout and
+pre-dispatch unavailability are terminals even without a `finish` event.
+Changed-worker completion is not mislabeled as request failure or given the
+original worker's training label. Other label exclusions remain explicitly
+unclassified instead of inventing a diagnosis.
+
+For admissions without terminal evidence, the report distinguishes whether a
+dispatch was recorded, and shows admission-age bands. **Admission age includes
+queue time**; it is not service age, a remaining-time estimate or proof of a stall.
+A missing terminal record may mean in-flight work or incomplete observation.
+Even a client cancellation does not prove backend generation stopped. The census
+does not authorize retries, recovery or model promotion.
+
+Output is aggregate-only: no request/session/worker identifiers, prompt text,
+vectors, raw backend errors or private paths. Keep operational reports private.
+Input limits are explicit: 128 MiB each for prepared JSON and total raw routing
+bytes, 1 MiB inventory, 200,000 events, 20,000 lifecycle keys and 4,096 manifest
+files. Exceeding a limit rejects the audit, never truncates evidence or pauses
+collection/inference. Unterminated tails are counted but not parsed, matching
+preparation; malformed complete lines, changed rows/bytes, invalid lifecycle
+identities, final-component symlinks and path-escaping manifest entries reject.
+Counts describe captured files and complete lines, not a complete fleet history.
 
 ## Current lifecycle
 

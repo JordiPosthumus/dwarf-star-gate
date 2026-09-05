@@ -10,6 +10,13 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Made the forecast-data denominator explicit.** A read-only, hash-verified
+  snapshot census distinguishes scored completions, label exclusions, unsuccessful
+  terminals and unresolved admissions. The first paired future snapshot had
+  20 labeled completions out of 36 admissions; two queued cancellations would
+  have been mistaken for unresolved work by a finish-only count. No missing
+  terminal is called a failure, and no label or production behavior changes.
+
 - **Checked both frozen occupancy models on genuinely later traffic.** A shared
   snapshot of 20 new completed requests found no meaningful overall gain from
   corrected delivery semantics; both models still underestimated the two longer

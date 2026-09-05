@@ -1,5 +1,19 @@
 # Changelog
 
+## Audit occupancy label coverage against all captured cohort admissions
+
+- Add a bounded, aggregate-only offline census of an existing prepared snapshot.
+  Verify raw hashes, the versioned feature builder and reconstructed rows before
+  reporting coverage; keep original artifacts and evidence unchanged.
+- Account for queued terminals as well as finish records, separate successful
+  changed-worker exclusions from failures, and preserve unresolved/conflicting
+  evidence without inventing liveness, failure or replay authority.
+- Regress exact duplicate handling, run identity, cohort ambiguity, admission-age
+  boundaries, V1/V2 parity, tampered labels/bytes, unsafe manifests/symlinks and
+  private-error redaction. Include the tests in the cross-platform data suite.
+- Document the early future cohort's 20 labels from 36 admissions and its
+  completion-selection caveat. No live collector, model or routing settings change.
+
 ## Separate future remaining-time accuracy by elapsed service age
 
 - Add fixed offline diagnostic slices before 30 seconds, from 30 seconds to
