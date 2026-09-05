@@ -1,5 +1,12 @@
 # Changelog
 
+## Expose sensor coverage in the actual training folds
+
+- Add per-worker/stage hardware coverage for each CV training and validation
+  partition, including sparse searches that cannot fit a model.
+- Document a frozen comparison where every CV training fold preceded sensor
+  collection. Keep model selection, forward-time splits and release gates unchanged.
+
 ## Reject broken cache-continuity evidence chains
 
 - Stop the read-only cache audit on malformed decision, finish or relocation

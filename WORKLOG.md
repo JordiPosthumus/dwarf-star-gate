@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Explained why new sensors were not helping model selection yet.** A paired
+  frozen-data experiment found zero sensor observations in every CV training fold.
+  Reports now expose fold-level coverage, so later availability cannot be mistaken
+  for evidence that the model learned from those inputs. No model was promoted.
+
 - **Hardened cache-audit evidence chains.** A reproduced malformed middle record
   could disappear from pairing and support a false continuity claim. The audit
   now stops with a privacy-safe diagnostic instead; ordinary collection continues.

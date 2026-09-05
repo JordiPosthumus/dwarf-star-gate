@@ -154,6 +154,21 @@ class PredictorV2Tests(unittest.TestCase):
             self.assertTrue(all('hardware' in f for f in new[-2:]))
             self.assertLessEqual(len(new),9)
 
+    def test_hardware_cv_coverage_does_not_backfill_from_later_partitions(self):
+        import copy
+        rows=self.rows(3)
+        for row,value in zip(rows,[None,0,80]):
+            row['features']['hardware_power_watts']=value
+        before=copy.deepcopy(rows)
+        report=v.hardware_partition_coverage(rows[:2],rows[2:],[(rows[:1],rows[1:2])],['hardware_power_watts'])
+        self.assertEqual(report['training'][0]['feature_coverage']['hardware_power_watts'],.5)
+        self.assertEqual(report['holdout'][0]['feature_coverage']['hardware_power_watts'],1)
+        fold=report['folds'][0]
+        self.assertEqual(fold['training'][0]['feature_coverage']['hardware_power_watts'],0)
+        self.assertEqual(fold['validation'][0]['feature_coverage']['hardware_power_watts'],1)
+        self.assertEqual(rows,before)
+        self.assertEqual(v.hardware_partition_coverage([],[],[],[]),{'training':[],'holdout':[],'folds':[]})
+
     def test_target_coverage_distinguishes_points_requests_sessions_and_boundaries(self):
         rows=self.rows(5)
         for row,target in zip(rows,(299,300,3599,3600,7200)):row['target_s']=target
@@ -237,7 +252,8 @@ class PredictorV2Tests(unittest.TestCase):
         self.assertEqual({c['rounds'] for c in report['ablations']},set(v.ROUNDS))
         self.assertIn('history_count',report['feature_coverage'])
         self.assertEqual(set(report['holdout_feature_coverage']),set(report['feature_coverage']))
-        self.assertEqual(report['hardware_coverage'],{'training':[],'holdout':[]})
+        self.assertEqual(report['hardware_coverage'],{'training':[],'holdout':[],
+                         'folds':[{'training':[],'validation':[]} for _ in range(report['folds'])]})
         self.assertEqual(set(report['feature_coverage']),{name for group in data['groups'].values() for name in group})
         self.assertTrue(report['split_usage'])
         self.assertFalse(first['routing_enabled'])

@@ -1,5 +1,25 @@
 # Predictors and Gate Genie
 
+## Hardware features: inspect the training folds, not just live availability
+
+New sensor inputs can be available in validation and holdout data while still
+absent from earlier CV training folds. In that case a hardware-inclusive family
+can tie its non-sensor counterpart because the model had no sensor observations
+to learn from. Keeping the earlier family under a training-only tie is not
+evidence that sensor inputs lack predictive value. Later RAM/activity coverage
+does not imply earlier availability, and missing power/clock readings remain
+unknown rather than zero. Deployment-specific measurements and candidate
+artifacts remain in private experiment receipts, not this guide.
+
+Reports now include `hardware_coverage.folds`, with training/validation coverage
+by worker and stage for the actual CV partitions, alongside existing overall
+training/holdout coverage. This diagnostic does not change folds, feature values,
+tree selection, prediction math or activation rules. For the next experiment,
+predeclare a sensor-era cohort based on collection provenance, keep older data
+as causal priors, and require enough observed training and later validation
+sessions. Do not backfill old features from newer telemetry or select a cutoff
+because it produces a better holdout result.
+
 ## Long jobs and output-limit censoring
 
 Current normal-completion contracts exclude `finish_reason: length`, cancelled

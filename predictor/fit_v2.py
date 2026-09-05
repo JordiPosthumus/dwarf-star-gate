@@ -252,6 +252,15 @@ def hardware_coverage(rows, names):
             for (node,stage),points in sorted(cohorts.items())]
 
 
+def hardware_partition_coverage(training, holdout, cv, names):
+    # Later sensor availability cannot teach a model fitted before collection
+    # began. Expose each actual CV partition without backfilling or resplitting.
+    return {'training':hardware_coverage(training,names),
+            'holdout':hardware_coverage(holdout,names),
+            'folds':[{'training':hardware_coverage(a,names),
+                      'validation':hardware_coverage(b,names)} for a,b in cv]}
+
+
 def split_usage(export):
     origin=[]
     for name in export['encoding']['names']:
@@ -298,6 +307,7 @@ def train(prepared, recipe_id=DEFAULT_RECIPE, *, occupancy=False):
         if count<50 or len(times)<20:continue
         cutoff=times[int(len(times)*.8)]; tr,te=split(subset,cutoff); cv=folds(tr)
         report.update(training_requests=unique(tr),holdout_requests=unique(te),folds=len(cv),
+                      hardware_coverage=hardware_partition_coverage(tr,te,cv,data['groups'].get('hardware',[])),
                       target_coverage={'training':target_coverage(tr),'holdout':target_coverage(te),
                           'folds':[{'training':target_coverage(a),'validation':target_coverage(b)} for a,b in cv]})
         if unique(tr)<25 or unique(te)<10 or len(cv)<2:continue
@@ -343,8 +353,6 @@ def train(prepared, recipe_id=DEFAULT_RECIPE, *, occupancy=False):
         all_names=data.get('feature_names') or list(dict.fromkeys(name for group in data['groups'].values() for name in group))
         report.update(feature_coverage=feature_coverage(tr,all_names),
                       holdout_feature_coverage=feature_coverage(te,all_names),
-                      hardware_coverage={'training':hardware_coverage(tr,data['groups'].get('hardware',[])),
-                                         'holdout':hardware_coverage(te,data['groups'].get('hardware',[]))},
                       split_usage=split_usage(export))
         actual=np.asarray([exported_prediction(export,r['features']) for r in te]);np.testing.assert_allclose(actual,predictions,rtol=2e-5,atol=1e-3)
         model_id=model_identity(export,kind,data['snapshot'],result['created_at'])
