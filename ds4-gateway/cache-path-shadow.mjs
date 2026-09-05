@@ -1,6 +1,6 @@
 // Four-path cache acquisition comparison. Pure shadow evidence: no routing,
 // cache reads, transfer, replay or model calls.
-import {cacheCompatibility} from './cache-inventory.mjs';
+import {cacheCompatibility,DS4_CACHE_HEADER_BYTES} from './cache-inventory.mjs';
 
 const PATHS=['wait_hot','local_restore','remote_acquisition','cold_prefill'];
 const WORKER=/^[a-zA-Z0-9][\w-]{0,63}$/;
@@ -40,6 +40,7 @@ function gate(input,id,{compatibility=false,protocol=false}={}){
     if(input.protocol==='unavailable')return excluded(id,'remote_protocol_unavailable',{worker:target,source_worker:source});
     if(input.protocol!=='validated')return unknown(id,['remote_protocol_unverified'],{worker:target,source_worker:source});
     if(!source)return unknown(id,['remote_source_worker_unverified'],{worker:target});
+    if(source===target)return unknown(id,['remote_source_equals_target'],{worker:target,source_worker:source});
   }
   return null;
 }
@@ -87,8 +88,8 @@ export function compareCachePaths(raw={}){
 }
 
 export function snapshotPresence(inventory,snapshot_ref,target_profile,{now=Date.now(),max_age_ms=120000,reject_different_quant=false}={}){
-  if(typeof snapshot_ref!=='string'||!/^[\da-f]{64}$/.test(snapshot_ref)||!Number.isFinite(now)||!Number.isSafeInteger(max_age_ms)||max_age_ms<1000||max_age_ms>3600000)return {status:'unknown',reason:'invalid_inventory_query'};
-  if(inventory?.schema!==1||inventory?.source!=='stock_ds4_kvstore_headers'||inventory?.privacy!=='installation_keyed_hmac'||inventory?.status!=='ready'||!Array.isArray(inventory.entries)||!Number.isFinite(inventory.observed_at)||inventory.observed_at>now||now-inventory.observed_at>max_age_ms)return {status:'unknown',reason:'inventory_unavailable_or_stale'};
+  if(typeof snapshot_ref!=='string'||!/^[\da-f]{64}$/.test(snapshot_ref)||!Number.isFinite(now)||now<0||!Number.isSafeInteger(max_age_ms)||max_age_ms<1000||max_age_ms>3600000)return {status:'unknown',reason:'invalid_inventory_query'};
+  if(inventory?.schema!==1||inventory?.source!=='stock_ds4_kvstore_headers'||inventory?.privacy!=='installation_keyed_hmac'||inventory?.status!=='ready'||!Array.isArray(inventory.entries)||!Number.isFinite(inventory.observed_at)||inventory.observed_at<0||inventory.observed_at>now||now-inventory.observed_at>max_age_ms)return {status:'unknown',reason:'inventory_unavailable_or_stale'};
   const matches=inventory.entries.filter(candidate=>candidate?.snapshot_ref===snapshot_ref);
   if(matches.length>1)return {status:'unknown',reason:'ambiguous_snapshot_reference'};
   const entry=matches[0];
@@ -101,5 +102,10 @@ export function snapshotPresence(inventory,snapshot_ref,target_profile,{now=Date
   const compatibility=cacheCompatibility(entry,target_profile,{reject_different_quant});
   if(compatibility.status==='incompatible')return {status:'incompatible',reason:compatibility.reasons[0],observed_at:inventory.observed_at};
   if(compatibility.status!=='compatible')return {status:'unknown',reason:compatibility.reasons[0],observed_at:inventory.observed_at};
+  // The join's public result must not turn arbitrary caller metadata into a
+  // token/byte observation. Match the stock header parser's output ranges.
+  if(!Number.isSafeInteger(entry.tokens)||entry.tokens<1||entry.tokens>0xffffffff||
+    !Number.isSafeInteger(entry.file_bytes)||entry.file_bytes<DS4_CACHE_HEADER_BYTES)
+    return {status:'unknown',reason:'snapshot_metadata_unverified',observed_at:inventory.observed_at};
   return {status:'observed',reason:'fresh_header_match',observed_at:inventory.observed_at,tokens:entry.tokens,file_bytes:entry.file_bytes,compatibility:'compatible'};
 }

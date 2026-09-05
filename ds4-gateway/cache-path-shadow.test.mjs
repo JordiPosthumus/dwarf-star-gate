@@ -10,6 +10,50 @@ const evidence=()=>({
   cold_prefill:{availability:'observed',worker:'cold',wait:forecast(0),prefill:measured(500),generation:forecast(200)}
 });
 
+test('a remote source cannot be the destination or win a shadow comparison',()=>{
+  const input=evidence();input.remote_acquisition.source_worker=input.remote_acquisition.worker;
+  for(const key of ['wait','transfer','import_restore','suffix_prefill','generation'])input.remote_acquisition[key]=measured(0);
+  const before=structuredClone(input),result=compareCachePaths(input);
+  assert.equal(result.paths.remote_acquisition.status,'unknown');
+  assert.deepEqual(result.paths.remote_acquisition.reasons,['remote_source_equals_target']);
+  assert.equal(result.would_prefer,null);assert.equal(result.best_known,'local_restore');
+  assert.ok(!result.ranked.some(p=>p.id==='remote_acquisition'));assert.deepEqual(input,before);
+});
+
+test('snapshot presence never exports malformed token or byte metadata as evidence',()=>{
+  const ref='a'.repeat(64),profile={model_id:2,weights_fp24:3,quant_bits:2,ctx_size:262144};
+  const base={schema:1,source:'stock_ds4_kvstore_headers',privacy:'installation_keyed_hmac',status:'ready',observed_at:1000,capped:false,rejected:0};
+  for(const patch of [{tokens:'PRIVATE_VALUE'},{tokens:{secret:'PRIVATE_VALUE'}},{tokens:0},{tokens:-1},{tokens:.5},{tokens:2**32},
+    {tokens:NaN},{tokens:Infinity},{tokens:null},{tokens:undefined},{file_bytes:'PRIVATE_VALUE'},{file_bytes:51},
+    {file_bytes:-1},{file_bytes:52.5},{file_bytes:Number.MAX_SAFE_INTEGER+1},{file_bytes:null},{file_bytes:undefined}]){
+    const inventory={...base,entries:[{snapshot_ref:ref,tokens:1000,file_bytes:2000,compatibility:profile,...patch}]};
+    const result=snapshotPresence(inventory,ref,profile,{now:2000});
+    assert.equal(result.status,'unknown');assert.equal(result.reason,'snapshot_metadata_unverified');
+    assert.ok(!JSON.stringify(result).includes('PRIVATE_VALUE'));assert.equal(result.tokens,undefined);assert.equal(result.file_bytes,undefined);
+  }
+});
+
+test('negative inventory clocks cannot establish freshness, including apparent absence',()=>{
+  const ref='a'.repeat(64),profile={model_id:2,weights_fp24:3,quant_bits:2,ctx_size:262144};
+  const base={schema:1,source:'stock_ds4_kvstore_headers',privacy:'installation_keyed_hmac',status:'ready',observed_at:-1,capped:false,rejected:0,entries:[]};
+  assert.equal(snapshotPresence(base,ref,profile,{now:1000}).status,'unknown');
+  assert.equal(snapshotPresence(base,ref,profile,{now:-1}).reason,'invalid_inventory_query');
+});
+
+test('valid metadata boundaries and exact inventory freshness retain bounded observations',()=>{
+  const ref='a'.repeat(64),profile={model_id:2,weights_fp24:3,quant_bits:2,ctx_size:262144};
+  const base={schema:1,source:'stock_ds4_kvstore_headers',privacy:'installation_keyed_hmac',status:'ready',observed_at:0,capped:false,rejected:0};
+  for(const tokens of [1,0xffffffff])for(const file_bytes of [52,Number.MAX_SAFE_INTEGER]){
+    const inventory={...base,entries:[{snapshot_ref:ref,tokens,file_bytes,compatibility:profile}]},before=structuredClone(inventory);
+    const result=snapshotPresence(inventory,ref,profile,{now:120000});
+    assert.equal(result.status,'observed');assert.equal(result.tokens,tokens);assert.equal(result.file_bytes,file_bytes);
+    assert.equal(snapshotPresence(inventory,ref,profile,{now:120001}).status,'unknown');
+    assert.deepEqual(inventory,before);
+  }
+  assert.equal(snapshotPresence({...base,entries:[]},ref,profile,{now:0}).status,'absent');
+  assert.equal(snapshotPresence({...base,observed_at:1001,entries:[]},ref,profile,{now:1000}).status,'unknown');
+});
+
 test('four-path shadow uses critical-path math and ranks only complete evidence without routing authority',()=>{
   const result=compareCachePaths(evidence());assert.equal(result.complete,true);assert.equal(result.would_prefer,'local_restore');assert.equal(result.paths.wait_hot.estimated_ms,300);assert.equal(result.paths.local_restore.estimated_ms,290);assert.equal(result.paths.remote_acquisition.estimated_ms,340);assert.equal(result.paths.cold_prefill.estimated_ms,700);assert.equal(result.authority,'none');assert.equal(result.mode,'shadow_only');
   const serial=evidence();serial.remote_acquisition.parallel_staging_verified=false;assert.equal(compareCachePaths(serial).paths.remote_acquisition.estimated_ms,400);

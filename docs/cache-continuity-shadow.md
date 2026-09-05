@@ -41,6 +41,10 @@ incompatibility or protocol unavailability can exclude a path. Missing or stale
 evidence makes it unknown. Any unknown path suppresses `would_prefer`; DSG may
 still report `best_known` for diagnostics, but that is not a scheduling decision.
 
+A remote source must be a different worker from its destination. A self-transfer
+claim is contradictory evidence, not a free remote path or proof of absence: it
+stays unknown and cannot win the comparison.
+
 ## Snapshot evidence boundary
 
 The helper can join a private installation-keyed HMAC snapshot reference against
@@ -54,6 +58,13 @@ the first header matches: entry ordering must not determine compatibility.
 Absence also requires an explicit `capped: false`, not a missing or malformed
 completeness flag. An unambiguous compatible match can still establish bounded
 presence within an otherwise capped scan.
+
+Freshness requires nonnegative observation/query clocks; the exact age boundary
+remains inclusive. A compatible match must also carry the stock parser's numeric
+metadata ranges: a positive unsigned 32-bit token count and a safe-integer file
+size of at least the 52-byte header. Malformed metadata stays unknown and is never
+echoed as token/byte evidence. These checks do not validate the payload or prove
+that a restore would succeed.
 
 Inventory traversal is bounded to 16,384 directory entries and 4,096 cache
 headers per scan. Unrelated files count toward the traversal budget. Hitting

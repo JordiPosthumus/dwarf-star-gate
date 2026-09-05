@@ -1,5 +1,15 @@
 # Changelog
 
+## Reject contradictory and malformed cache-shadow evidence
+
+- Keep same-worker remote acquisition unknown and out of rankings rather than
+  treating a self-transfer as an available path. Any unknown still blocks a winner.
+- Validate joined token/file-byte metadata before returning bounded presence;
+  never echo arbitrary values in numeric evidence fields. Reject negative query
+  and observation clocks while preserving the exact freshness boundary.
+- Regress each previously accepted case and valid boundary behavior. No live
+  routing, transfer/import protocol, cache file or DS4 setting changes.
+
 ## Audit forecast-specific evidence projection before choosing a training window
 
 - Add an offline, bounded comparison for latency V2/V3/V4 and occupancy V1/V2:

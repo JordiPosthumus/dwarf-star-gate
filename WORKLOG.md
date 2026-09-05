@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Closed false-evidence edges in cache-path shadows.** A self-transfer cannot
+  masquerade as a fast remote path; malformed token/byte metadata and negative
+  inventory clocks cannot establish cache presence or freshness. Valid arithmetic
+  and scan boundaries stay unchanged. The comparator remains offline-only.
+
 - **Tested smaller forecast evidence without shortening history.** A read-only
   experiment compares full replay against a forecast-specific representation,
   including every feature/label and conflict distinction. It reports savings
