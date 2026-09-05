@@ -10,17 +10,19 @@ import {createContinuityFetch,registerPiContinuity} from './continuity-client.mj
 
 // Exercise the real installed Pi serializer AND agent/tool loop, isolated from
 // operator settings, sessions and real DS4 devices. Set DSG_PI_ROOT explicitly.
-for(const mode of ['gateway-wait','certified-retries','partial-stream','terminal-without-reason','reason-without-marker'])test(`real Pi agent ${['partial-stream','terminal-without-reason'].includes(mode)?'does not replay':'survives'} ${mode} between tool execution and continuation`,{skip:!process.env.DSG_PI_ROOT},async t=>{
+for(const mode of ['gateway-wait','certified-retries','partial-stream','terminal-without-reason','reason-without-marker','redirect'])test(`real Pi agent ${['partial-stream','terminal-without-reason','redirect'].includes(mode)?'does not replay':'survives'} ${mode} between tool execution and continuation`,{skip:!process.env.DSG_PI_ROOT},async t=>{
   const root=process.env.DSG_PI_ROOT;
   const {streamSimple}=await import(pathToFileURL(path.join(root,'node_modules/@earendil-works/pi-ai/dist/api/openai-completions.js')));
   const {Agent}=await import(pathToFileURL(path.join(root,'node_modules/@earendil-works/pi-agent-core/dist/agent.js')));
   const {composeModelProvider}=await import(pathToFileURL(path.join(root,'dist/core/provider-composer.js')));
-  let requests=0,tools=0,waits=0,gateway;
+  let requests=0,tools=0,waits=0,redirected=0,gateway;
   const backend=http.createServer((req,res)=>{
+    if(req.url==='/redirected'){redirected++;req.resume();return res.end('unexpected redirected request');}
     if(req.url==='/v1/models')return res.end(JSON.stringify({data:[{id:'deepseek-v4-flash',context_length:262144}]}));
     let body='';req.on('data',c=>body+=c);req.on('end',()=>{
       const p=JSON.parse(body);assert.equal(p.model,'deepseek-v4-flash');assert.equal(p.reasoning_effort,'xhigh');++requests;
       assert.equal(req.headers['x-dsg-call-id'],undefined);
+      if(mode==='redirect'&&requests===2){res.writeHead(307,{location:`http://127.0.0.1:${backend.address().port}/redirected`});return res.end('fixture redirect');}
       res.writeHead(200,{'content-type':'text/event-stream'});
       if(mode==='partial-stream'&&requests===2)return res.end(`data: ${JSON.stringify({id:'test',choices:[{index:0,delta:{content:'Unfinished answer'},finish_reason:null}]})}\n\n`);
       if(mode==='terminal-without-reason'&&requests===2)return res.end(`data: ${JSON.stringify({id:'test',choices:[{index:0,delta:{content:'Marker is not a finish reason'},finish_reason:null}]})}\n\ndata: [DONE]\n\n`);
@@ -45,7 +47,12 @@ for(const mode of ['gateway-wait','certified-retries','partial-stream','terminal
     return {content:[{type:'text',text:'counted'}],details:{}};
   }}]},sessionId:'fixture-session',getApiKey:()=> 'fixture',streamFn:(m,c,o)=>streamSimple(m,c,{...o,...(mode!=='gateway-wait'?{fetch:transport}:{})})});
   await agent.prompt('Call count_once, then answer DONE.');
-  assert.equal(waits,mode==='certified-retries'?4:0);assert.equal(requests,2);assert.equal(tools,1);
+  assert.equal(waits,mode==='certified-retries'?4:0);assert.equal(requests,2);assert.equal(tools,1);assert.equal(redirected,0);
+  if(mode==='redirect'){
+    assert.equal(agent.state.messages.at(-1).stopReason,'error');
+    assert.match(agent.state.messages.at(-1).errorMessage,/307/);
+    return;
+  }
   if(['partial-stream','terminal-without-reason'].includes(mode)){
     const last=agent.state.messages.at(-1);
     assert.equal(last.stopReason,'error');assert.match(last.errorMessage,/finish_reason/);

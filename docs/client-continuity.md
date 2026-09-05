@@ -144,6 +144,19 @@ list, authentication, context/output limits, reasoning and Pi serialization.
 No automatic edits to models.json/settings.json or unrelated providers. Existing
 custom stream overrides require compatibility review before combining extensions.
 
+Scoped inference requests do **not follow HTTP redirects**, even within the same
+origin. Fetch's automatic 307/308 handling would otherwise resend the POST before
+the adapter could check a dispatch receipt. The default and explicit `follow`
+mode become `manual`; an explicit `error` mode remains stricter. Redirect status,
+headers and body are returned to the caller unchanged, not treated as permission
+to retry or as a successful model turn. Correct the configured endpoint or proxy
+redirect rather than enabling blind replay. This is a compatibility boundary for
+redirect-based deployments, not automatic recovery of the interrupted turn.
+Agent Watch also refuses redirected heartbeats. Other providers, out-of-scope
+requests and caller-owned `Request` objects retain their existing fetch behavior;
+custom fetch implementations must honor standard redirect options. Existing Pi
+sessions need a deliberate extension reload to adopt this protection.
+
 The retry loop requires the exact DSG header/envelope and matching call/request
 IDs. It snapshots the eligible request's URL, options, headers and original abort
 signal before waiting, so caller mutation cannot redirect a retry or replace its

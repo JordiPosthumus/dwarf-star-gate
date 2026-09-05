@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {randomUUID} from 'node:crypto';
+import {createServer} from 'node:http';
 import {createClientWatchReporter,createContinuityFetch,registerPiContinuity} from './continuity-client.mjs';
 import {evidence} from './dataset.mjs';
 import {continuityForDisplay,continuityDoorForDisplay,fallbackTieBreakForDisplay} from './continuity.mjs';
@@ -12,12 +13,68 @@ test('DSG error labeling is idempotent and malformed HTTP receives an identified
   assert.match(wire,/^HTTP\/1.1 431/);assert.match(JSON.parse(wire.split('\r\n\r\n')[1]).error.message,/^DSG Report: /);
 });
 const baseUrl='http://127.0.0.1:30000/v1';
+test('native fetch cannot redirect scoped inference or Agent Watch outside its exact endpoint',async t=>{
+  const arrivals=[];
+  const target=createServer((req,res)=>{let body='';req.on('data',chunk=>body+=chunk);req.on('end',()=>{arrivals.push({url:req.url,body});res.end('unexpected redirect');});});
+  let redirectStatus=307,location,firstArrivals=0;
+  const origin=createServer((req,res)=>{
+    if(req.url==='/redirected'){arrivals.push({url:req.url});return res.end('unexpected same-origin redirect');}
+    req.resume();req.on('end',()=>{firstArrivals++;res.writeHead(redirectStatus,{location});res.end('fixture redirect body');});
+  });
+  t.after(async()=>{for(const server of [origin,target]){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}});
+  for(const server of [origin,target])await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  const endpoint=`http://127.0.0.1:${origin.address().port}`,remote=`http://127.0.0.1:${target.address().port}/redirected`;
+  const continuity=createContinuityFetch({baseUrl:endpoint+'/v1',wait:async()=>assert.fail('redirect is not a retry certificate')});
+  for(const status of [301,302,303,307,308])for(const destination of [endpoint+'/redirected',remote])await t.test(`${status} to ${destination===remote?'another':'same'} origin`,async()=>{
+    arrivals.length=0;redirectStatus=status;location=destination;
+    const before=firstArrivals;
+    const response=await continuity(endpoint+'/v1/chat/completions',{method:'POST',body:'{"messages":[{"role":"user","content":"private fixture"}]}',headers:{authorization:'Bearer fixture'},signal:AbortSignal.timeout(10000)});
+    assert.equal(await response.text(),'fixture redirect body');
+    assert.equal(arrivals.length,0,'no redirected request, even without a body, is authorized');
+    assert.equal(response.status,status);assert.equal(response.headers.get('location'),destination);assert.equal(firstArrivals,before+1);
+  });
+  await t.test('explicit error redirect mode remains stricter',async()=>{
+    arrivals.length=0;redirectStatus=307;location=remote;
+    await assert.rejects(continuity(endpoint+'/v1/chat/completions',{method:'POST',body:'{}',redirect:'error'}));
+    assert.equal(arrivals.length,0);
+  });
+  await t.test('Agent Watch does not forward credentials or private watch metadata through redirects',async()=>{
+    arrivals.length=0;redirectStatus=307;location=remote;
+    const watch=createClientWatchReporter({baseUrl:endpoint+'/v1',schedule:()=>({unref(){}}),unschedule(){}});
+    watch.start();watch.decorate(endpoint+'/v1/chat/completions',{method:'POST',body:'{}',headers:{authorization:'Bearer fixture'}});
+    // stop cancels any first heartbeat and awaits its own final attempt.
+    assert.equal(await watch.stop(),false);assert.equal(arrivals.length,0);
+  });
+});
+test('scoped redirect protection covers every inference route and preserves unscoped fetch options',async()=>{
+  const received=[],f=createContinuityFetch({baseUrl,fetchImpl:async(url,init)=>{received.push({url,init});return new Response('fixture');}});
+  for(const route of ['chat/completions','completions','messages','responses'])for(const [input,expected] of [[undefined,'manual'],['follow','manual'],['manual','manual'],['error','error'],['invalid','invalid']]){
+    const init={method:'POST',body:'{}',redirect:input};await f(baseUrl+'/'+route,init);
+    assert.equal(received.at(-1).init.redirect,expected);assert.equal(init.redirect,input);
+  }
+  for(const [url,init] of [[baseUrl+'/models',{redirect:'follow'}],['http://unrelated.example/v1/chat/completions',{method:'POST',body:'{}',redirect:'follow'}],[new Request(baseUrl+'/chat/completions',{method:'POST',body:'{}'}),{redirect:'follow'}]]){
+    await f(url,init);assert.equal(received.at(-1).init,init);
+  }
+});
+test('Agent Watch disposes redirected and rejected response bodies without following or retrying',async()=>{
+  for(const status of [307,503]){
+    let calls=0,cancelled=0;
+    const watch=createClientWatchReporter({baseUrl,schedule:()=>({unref(){}}),unschedule(){},fetchImpl:async(_url,init)=>{
+      calls++;assert.equal(init.redirect,'manual');
+      return new Response(new ReadableStream({cancel(){cancelled++;}}),{status});
+    }});
+    watch.start();watch.decorate(baseUrl+'/chat/completions',{method:'POST',body:'{}',headers:{authorization:'Bearer fixture'}});
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(await watch.stop(),false);assert.equal(calls,2);assert.equal(cancelled,2);
+  }
+});
 function refusal(init,change={}){
   const id=randomUUID();return new Response(JSON.stringify({error:{type:'gateway_error',code:'home_unavailable',continuity:{schema:1,request_id:id,call_id:init.headers.get('x-dsg-call-id'),dispatch_state:'not_dispatched',retry_class:'wait_then_retry',reason:'same_session_active',...change}}}),{status:503,headers:{'x-dsg-dispatch-state':'not_dispatched','x-request-id':id}});
 }
 test('certified waits retry unchanged input beyond three attempts with one call ID',async()=>{
   const sent=[],states=[],waits=[];
   const f=createContinuityFetch({baseUrl,wait:async(ms)=>waits.push(ms),onWait:s=>states.push(s),fetchImpl:async(url,init)=>{
+    assert.equal(init.redirect,'manual','certified retries must also forbid implicit redirects');
     sent.push({url,body:init.body,call:init.headers.get('x-dsg-call-id'),auth:init.headers.get('authorization')});
     return sent.length<5?refusal(init):new Response('complete');
   }});

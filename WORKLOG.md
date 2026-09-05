@@ -10,6 +10,13 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Closed an implicit client replay path.** Real loopback tests showed automatic
+  HTTP redirects bypassing DSG's retry-certificate check. Scoped inference now
+  returns redirects without following them; Agent Watch also keeps its metadata
+  on the configured endpoint. This does not solve arbitrary post-dispatch recovery
+  or change running Pi sessions. Redirect-based setups need an explicit endpoint
+  correction before adopting the updated opt-in extension.
+
 - **Kept empty Door holds from disappearing on restart.** Zero active/waiting
   streams does not mean there is no maintenance hold. Ordinary Door stop/restart
   now requires explicitly unheld status; manual, automatic and unknown hold states

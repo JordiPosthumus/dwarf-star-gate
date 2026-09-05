@@ -16,9 +16,12 @@ export function createClientWatchReporter({baseUrl,fetchImpl=fetch,intervalMs=15
     try{
       // Disposable telemetry must never accumulate behind a held Continuity Door.
       // This deadline belongs only to heartbeats, never inference or Genie calls.
-      const response=await fetchImpl(endpoint,{method:'POST',headers:{authorization,'content-type':'application/json'},body,signal:AbortSignal.any([controller.signal,AbortSignal.timeout(15_000)])});
+      const response=await fetchImpl(endpoint,{method:'POST',redirect:'manual',headers:{authorization,'content-type':'application/json'},body,signal:AbortSignal.any([controller.signal,AbortSignal.timeout(15_000)])});
+      // Unsuccessful/redirected heartbeats are disposable too: do not leave an
+      // unread response holding transport resources until garbage collection.
+      await response.body?.cancel();
       if(!response.ok)throw new Error(`Agent Watch heartbeat rejected (${response.status})`);
-      await response.body?.cancel();return true;
+      return true;
     }finally{if(pending===controller)pending=null;}
   };
   const safely=()=>{void transmit().catch(()=>{});};
@@ -60,7 +63,12 @@ export function createContinuityFetch({baseUrl,fetchImpl=fetch,onWait=()=>{},wai
     // Caller-owned URL/RequestInit objects can change while a certified wait is
     // pending. Pin the destination and immutable text/options once, otherwise a
     // retry could send changed content or credentials to a different origin.
-    const requestUrl=url.href,requestInit={...init,headers};
+    // Fetch follows redirects before returning a response: 307/308 can replay
+    // this POST without any dispatch certificate, including to another origin.
+    // Surface redirects unchanged; preserve explicit error/manual modes and
+    // native validation of invalid values. Never extend this to other providers.
+    const redirect=init.redirect===undefined||init.redirect==='follow'?'manual':init.redirect;
+    const requestUrl=url.href,requestInit={...init,headers,redirect};
     let attempts=0;
     try{
       while(true){

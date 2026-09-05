@@ -1,5 +1,18 @@
 # Changelog
 
+## Prevent implicit redirects in the opt-in continuity client
+
+- Reproduce native Fetch following same- and cross-origin redirects before DSG
+  can inspect a retry certificate; 307/308 can forward the original POST body.
+- Use manual redirects for scoped inference, preserving caller `error` mode and
+  unchanged redirect responses. Leave other providers and unsupported request
+  forms untouched. Agent Watch heartbeats never follow redirects either.
+- Cover all five common redirect statuses with real isolated HTTP servers,
+  every scoped API route, caller-option preservation and the installed Pi
+  agent/tool-loop boundary. No production requests, settings or sessions changed.
+- Document the deliberate compatibility boundary for redirect-based deployments;
+  this closes a replay gap, not arbitrary post-dispatch continuation.
+
 ## Preserve empty Continuity Door holds during lifecycle operations
 
 - Reproduce the idle check accepting a held Door with zero active and waiting
