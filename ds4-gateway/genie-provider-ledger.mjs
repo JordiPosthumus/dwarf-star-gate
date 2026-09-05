@@ -26,7 +26,8 @@ export class GenieProviderLedger {
     if(fs.realpathSync(this.directory)!==path.resolve(this.directory)||!info.isDirectory()||(info.mode&0o777)!==0o700||info.uid!==process.getuid())throw new Error();
   }
   open(flags){
-    const fd=fs.openSync(this.file,flags|fs.constants.O_NOFOLLOW,0o600),s=fs.fstatSync(fd);
+    // Optional receipt history must not stall the dashboard on a FIFO open.
+    const fd=fs.openSync(this.file,flags|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK,0o600),s=fs.fstatSync(fd);
     if(!s.isFile()||s.nlink!==1||(s.mode&0o777)!==0o600||s.uid!==process.getuid()){fs.closeSync(fd);throw new Error();}
     return fd;
   }

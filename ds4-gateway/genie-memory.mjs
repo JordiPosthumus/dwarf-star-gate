@@ -63,7 +63,8 @@ export class GenieMemory {
     if(resolved!==path.resolve(this.directory)||!s.isDirectory()||(s.mode&0o777)!==0o700||s.uid!==process.getuid())throw new Error();
   }
   open(flags){
-    const fd=fs.openSync(this.file,flags|fs.constants.O_NOFOLLOW,0o600);
+    // Validate the opened object without waiting for a FIFO peer first.
+    const fd=fs.openSync(this.file,flags|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK,0o600);
     const s=fs.fstatSync(fd);if(!s.isFile()||s.nlink!==1||(s.mode&0o777)!==0o600||s.uid!==process.getuid()){fs.closeSync(fd);throw new Error();}return fd;
   }
   load(){

@@ -1,5 +1,13 @@
 # Changelog
 
+## Reject blocking objects in optional Genie storage
+
+- Open notebook and pool-action journals nonblocking before descriptor checks,
+  preventing FIFO paths from hanging dashboard startup or saves.
+- Preserve regular-file validation, journal contents and explicit storage errors;
+  no automatic repair, deletion or provider-policy change.
+- Cover both journals' load and append paths with bounded subprocess regressions.
+
 ## Record forecast-verifier resource tradeoffs
 
 - Document an unadopted shared-projection experiment: exact output equality and

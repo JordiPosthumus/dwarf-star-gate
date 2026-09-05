@@ -72,6 +72,12 @@ The dashboard is its sole writer. Corrupt/partial journals, permission problems,
 conflicting writers and failed fsyncs stop memory writes; there is no automatic
 repair or deletion. Inspect/back up the journal before manual repair. A storage
 fault can prevent persisting a subsequent disable; verify the setting after repair.
+Both notebook and pool-receipt journals use nonblocking opens before validating
+the file descriptor. An invalid FIFO (named pipe) therefore reports unavailable
+storage instead of waiting for another process during dashboard startup or a
+save. The object is not replaced or removed; regular-file ownership, permissions,
+link-count checks and durability behavior remain in place. This is not a general
+deadline for an unresponsive filesystem.
 
 Retrieval is at most **12 records / 16 KiB**, with operator notes first, developer
 suggestions next and other records newest first, limited to current worker IDs plus fleet notes. Each worker

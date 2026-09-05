@@ -65,6 +65,8 @@ is implied by this fix.
    Stream observers now recognize CR/LF/CRLF consistently with isolated Pi
    acceptance, avoiding false failures while preserving accelerator-error evidence.
    Continue focused lifecycle/privacy/retention checks rather than broad rewrites.
+   Optional Genie journals now reject FIFO objects without blocking their opens;
+   invalid storage remains diagnostic, with no automatic deletion or repair.
 2. **Make cache misses actionable.** The machine-card view now separates low-reuse
    findings, unconfirmed evidence, engine RAM misses/disk restores and starts
    without reuse. It shows coverage, recency, measured disk-load spans and next

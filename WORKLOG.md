@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Prevented invalid Genie journals from hanging the dashboard.** Both private
+  journal readers/writers now open nonblocking before checking the descriptor,
+  so a named pipe cannot wait forever for a peer. Four isolated regressions
+  cover load and append; invalid objects stay untouched and errors remain visible.
+
 - **Measured and rejected a misleading verification optimization.** Sharing one
   projection across schemas preserved exact outputs and reduced elapsed time,
   but raised peak memory in alternating comparisons. The prototype was not
