@@ -137,6 +137,10 @@ test('a late native capture cannot overwrite a newer live identity observation',
 test('native removal evidence is strictly bounded before reaching Genie and carries no offer',()=>{
   const now=Date.now(),value={...unavailableNativeRemoval(now),status:'exact_removal_observed',source_complete:true,records:1,observations:[{at:now-1000,caller:'loginwindow'}]};
   assert.deepEqual(safeNativeRemoval(value,{now}),value);
+  const stop={...value,status:'exact_stop_request_observed',observations:[{at:now-1000,caller:'launchctl'}],native_stop_caller_observed:true};
+  assert.deepEqual(safeNativeRemoval(stop,{now}),stop);
+  for(const change of [{native_stop_caller_observed:false},{observations:[{at:now-1000,caller:'loginwindow'}]},{observations:[]},{authority:'bootstrap'}])
+    assert.equal(safeNativeRemoval({...stop,...change},{now}),null);
   for(const change of [{raw:'PRIVATE_LOG'},{authority:'restart'},{status:'invented'},{checked_at:now+10001},{observations:[{at:now-1000,caller:'PRIVATE_CALLER'}]},
     {status:'conflicting_callers'},{native_stop_caller_observed:true},{records:0},{source_complete:false},{observations_omitted:-1},{observations:Array(17).fill(value.observations[0])}])assert.equal(safeNativeRemoval({...value,...change},{now}),null);
   const snapshot={time:new Date(now).toISOString(),devices:[],gateway:{workers:[{id:'one'}],recovery:{automatic:true,workers:[{worker_id:'one',configured:true,reason:'launchd_registration_absent',eligible:false,removal:value}]}}};

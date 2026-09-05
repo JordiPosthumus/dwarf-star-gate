@@ -10,6 +10,14 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-04
 
+- **Validated Mac bootstrap against a real disposable LaunchAgent.** The native
+  test found a missed `bootout initiated by` event format. DSG now distinguishes
+  stop initiation from completed removal, preserves the ordinary-stop veto, and
+  permits that evidence only for an explicit operator canary. Native checks proved
+  exact-byte restoration, changed process/same profile, duplicate suppression and
+  cleanup. This is lifecycle proof, not a DS4 generation/cache certificate; real
+  worker enrollment and controlled installation validation remain required.
+
 - **Made Genie's work easier to inspect.** The filtered action ledger now renders
   the latest 30 available receipts in a keyboard-scrollable list; recovery and
   predictor feeds expose 30, and small pool-fallback receipts survive review-text

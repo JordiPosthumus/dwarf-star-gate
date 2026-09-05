@@ -1,5 +1,5 @@
 // Native-helper diagnostics only. Never an action offer or a raw-log passthrough.
-const successes=new Set(['exact_removal_observed','no_exact_removal_record','conflicting_callers']);
+const successes=new Set(['exact_removal_observed','exact_stop_request_observed','no_exact_removal_record','conflicting_callers']);
 const failures=new Set(['prior_identity_unverified','machine_changed','boot_unverified_or_changed','service_profile_changed','job_not_absent',
   'identity_changed_during_capture','capture_timeout','capture_output_limit','capture_unavailable','capture_incomplete']);
 const fields=['authority','checked_at','native_stop_caller_observed','observations','observations_omitted','records','source','source_complete','status','version'];
@@ -21,6 +21,7 @@ export function safeNativeRemoval(value,{now=Date.now(),after=0}={}){
     if(!value.source_complete||((value.status==='no_exact_removal_record')!==(observations.length===0))||
       (value.status==='no_exact_removal_record'&&value.observations_omitted)||
       (value.status==='exact_removal_observed'&&kinds.size!==1)||
+      (value.status==='exact_stop_request_observed'&&(kinds.size!==1||!kinds.has('launchctl')||!value.native_stop_caller_observed))||
       (value.status==='conflicting_callers'&&value.observations_omitted===0&&kinds.size<2)||
       (kinds.has('launchctl')&&!value.native_stop_caller_observed)||
       (value.observations_omitted===0&&value.native_stop_caller_observed!==observations.some(row=>row.caller==='launchctl')))return null;

@@ -39,6 +39,23 @@ test('native stop callers and conflicting records are retained without inventing
   assert.equal(other.observations[0].caller,'other');assert.ok(!JSON.stringify(other).includes('PRIVATE'));
 });
 
+test('native bootout initiation is bounded stop-request evidence, not completed removal',()=>{
+  const message='bootout initiated by: launchctl[321]<-fixture-runner[300]<-fixture-ui[299]';
+  const result=auditLaunchdRemoval(archive([event({eventMessage:message})]),identity);
+  assert.equal(result.status,'exact_stop_request_observed');assert.equal(result.native_stop_caller_observed,true);
+  assert.equal(result.authority,'none');assert.equal(result.observations[0].caller,'launchctl');
+  assert.ok(!JSON.stringify(result).includes('fixture-runner'));
+  for(const eventMessage of [message.replace('[321]','[1]'),message.replace('[321]','[2147483648]'),message+'\n',message+'\nextra',
+    'bootout initiated by: launchctl[321]<-','bootout initiated by: launchctl[321]<-'+'x'.repeat(1025),'removing job: caller = loginwindow\n'])
+    assert.equal(auditLaunchdRemoval(archive([event({eventMessage})]),identity).status,'no_exact_removal_record');
+  for(const patch of [{processID:2},{senderImagePath:'/tmp/fake'},{bootUUID:null},{subsystem:'gui/501/com.example.ds4 [5678]'}, {timestamp:'2026-09-04T10:02:00Z'}])
+    assert.equal(auditLaunchdRemoval(archive([event({eventMessage:message,...patch})]),identity).status,'no_exact_removal_record');
+  const mixed=auditLaunchdRemoval(archive([event(),event({eventMessage:message})]),identity);
+  assert.equal(mixed.status,'conflicting_callers');assert.equal(mixed.observations.length,2);
+  const repeated=auditLaunchdRemoval(archive([event({eventMessage:message}),event({eventMessage:message,timestamp:'2026-09-04T10:00:20Z'})]),identity);
+  assert.equal(repeated.status,'exact_stop_request_observed');assert.equal(repeated.observations.length,2);
+});
+
 test('partial, malformed or incomplete captures never expose positive evidence',()=>{
   const good=archive([event()]);
   for(const text of [good.trimEnd(),good.split('\n')[0]+'\n',good.replace('"count":1','"count":2'),good+'{}\n',good.replace('"finished":1','"finished":0'),'{broken}\n'+good,archive([event({timestamp:'not a timestamp'})])]){

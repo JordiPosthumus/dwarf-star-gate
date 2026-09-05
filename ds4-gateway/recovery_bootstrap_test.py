@@ -40,7 +40,7 @@ class BootstrapTests(unittest.TestCase):
                    "definition_sha256": config["retained_definition_sha256"], "canary": False}
         return config, request, root / "actions.json", raw
 
-    def native(self, config, request, caller="loginwindow"):
+    def native(self, config, request, caller="loginwindow", message=None):
         stack = ExitStack()
         stack.enter_context(patch.object(adapter.time, "time", return_value=NOW / 1000))
         stack.enter_context(patch.object(adapter, "machine_identity", return_value=request["prior"]["machine"]))
@@ -51,7 +51,7 @@ class BootstrapTests(unittest.TestCase):
         stack.enter_context(patch.object(adapter, "port_occupied", return_value=False))
         event = {"eventType": "logEvent", "timestamp": "2026-09-04T23:59:30Z", "processID": 1,
                  "processImagePath": "/sbin/launchd", "senderImagePath": "/sbin/launchd", "bootUUID": BOOT,
-                 "subsystem": f"gui/{os.getuid()}/{config['label']} [123]", "eventMessage": f"removing job: caller = {caller}"}
+                 "subsystem": f"gui/{os.getuid()}/{config['label']} [123]", "eventMessage": message if message is not None else f"removing job: caller = {caller}"}
         stack.enter_context(patch.object(adapter, "bounded_capture", return_value=json.dumps(event) + '\n{"count":1,"finished":1}\n'))
         return stack
 
@@ -129,6 +129,22 @@ class BootstrapTests(unittest.TestCase):
                         command.assert_called_once()
                     else:
                         with self.assertRaisesRegex(ValueError, "caller_not_enrolled"):
+                            adapter.handle(config, request, state)
+                        command.assert_not_called()
+                        self.assertFalse(state.exists())
+
+    def test_bootout_initiation_requires_explicit_canary_and_current_native_absence(self):
+        message = "bootout initiated by: launchctl[321]<-fixture-runner[300]"
+        for canary, absent in [(False, True), (True, True), (True, False)]:
+            with self.subTest(canary=canary, absent=absent), tempfile.TemporaryDirectory() as temp:
+                config, request, state, _ = self.fixture(temp)
+                request["canary"] = canary
+                with self.native(config, request, message=message), patch.object(adapter, "launch_state", return_value={"registration": "absent" if absent else "loaded"}), patch.object(adapter, "run", return_value=("", 0)) as command:
+                    if canary and absent:
+                        self.assertEqual(adapter.handle(config, request, state)["state"], "issued")
+                        command.assert_called_once()
+                    else:
+                        with self.assertRaisesRegex(ValueError, "caller_not_enrolled|exact_removal_required"):
                             adapter.handle(config, request, state)
                         command.assert_not_called()
                         self.assertFalse(state.exists())

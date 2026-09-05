@@ -85,7 +85,8 @@ false leaves this capability off. `bootstrap_callers` may contain only explicitl
 approved `loginwindow` and/or `runningboardd`, without duplicates. An empty list
 allows no ordinary OS-caller restoration. `launchctl` and unknown callers cannot
 be enrolled for ordinary restoration. A separately authorized operator canary may
-use `canary:true` with an exact `launchctl` removal observation; that flag is
+use `canary:true` with an exact `launchctl` removal or stop-request observation
+and independently verified current job absence; that flag is
 privileged executor input, **not** a field for Genie to choose. The helper transport
 is an owner-trusted execution boundary, not a public unauthenticated API.
 
@@ -111,7 +112,8 @@ invalidates the corresponding certificate; do not reuse a previous approval.
    rather than overriding another agent's work.
 4. Remove only that exact job through the operator-reviewed native canary step.
    Wait for DSG's fresh inspection to show an absent job and the matching native
-   `launchctl` removal. This is a deliberate interruption, never an automatic
+   `launchctl` removal or stop-request event. Stop initiation alone is not proof
+   of completed removal. This is a deliberate interruption, never an automatic
    preparation step performed by Genie.
 5. Invoke `node ds4-gateway/recovery-control.mjs canary WORKER_ID`. The controller,
    not the request payload or Genie, selects the bootstrap action and prior
@@ -142,7 +144,8 @@ exact retained `prior` identity used by `inspect_removal`, the reviewed
 commands or launch settings. The helper independently:
 
 1. Queries native evidence for that exact prior PID/boot and requires one complete
-   unambiguous removal observation within its bounded capture window. A caller
+   unambiguous removal observation within its bounded capture window (or a native
+   `launchctl` stop request for an explicit operator canary only). A caller
    identifies the actor, not whether the removal was accidental. Owner-selected
    caller policy supplies authorization; the log cannot supply it.
 2. Checks the machine, boot, static dependencies, absent job in a usable GUI

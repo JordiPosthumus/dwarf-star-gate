@@ -43,6 +43,37 @@ zero and substantial reuse of each continuation's original prefix; see
 
 ## Finish the rollout
 
+### Optional native lifecycle fixture (not a DS4 canary)
+
+Before touching a model service, an agent can run this opt-in macOS smoke test
+from a non-root GUI session with Node available:
+
+```sh
+python3 scripts/launchd-recovery-smoke.py --run
+```
+
+It accepts no existing worker, service label, port, config or launch command. It
+creates a private temporary directory and one random-label, loopback-only nonce
+server, exercises native stop evidence, proves the ordinary-stop veto, restores
+the exact retained bytes in canary mode, verifies changed process/same profile,
+and checks duplicate suppression. It unregisters its own job and checks port
+release before reporting success. Normal CI never invokes this native exercise.
+
+The private directory and receipt are retained for inspection. SIGTERM/SIGINT
+exercise cleanup; a fixture-only five-minute process lifetime limits damage if
+the runner is killed abruptly. SIGKILL or host failure can still prevent job
+unregistration: inspect the private helper config and exact fixture label before
+any manual cleanup. Never substitute a production label or delete a loaded plist.
+`cleanup:review_required` is a failed test, not permission to repeat bootstrap.
+
+A real native fixture run verified these lifecycle checks, including the
+`exact_stop_request_observed` message format. Its receipt explicitly says
+`ds4_certified:false`: a nonce response is not generation or cache proof. Every
+DS4 installation still needs the approved cold/warm canary above, with its own
+original launch bytes, enrollment, maintenance coordination and verification.
+
+### Complete the installation rollout
+
 After successful verification, resume the worker, test a real request through
 DSG, and confirm the configured pool guarantee and existing session affinity.
 Enable automatic recovery only after validating each enrolled service. Check

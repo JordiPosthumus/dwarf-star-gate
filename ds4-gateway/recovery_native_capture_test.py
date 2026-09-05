@@ -29,6 +29,21 @@ def archive(rows):
 
 
 class NativeCaptureTests(unittest.TestCase):
+    def test_native_bootout_request_is_distinct_stop_intent_not_completed_removal(self):
+        message = "bootout initiated by: launchctl[321]<-fixture-runner[300]<-fixture-ui[299]"
+        result = adapter.audit_native_removal(archive([event(eventMessage=message)]), CONFIG["label"], 123, BOOT, NOW - 60000, NOW)
+        self.assertEqual(result["status"], "exact_stop_request_observed")
+        self.assertEqual(result["observations"][0]["caller"], "launchctl")
+        self.assertTrue(result["native_stop_caller_observed"])
+        self.assertNotIn("fixture-runner", json.dumps(result))
+        for bad in [message.replace("[321]", "[1]"), message.replace("[321]", "[2147483648]"), message + "\n", message + "\nextra", "bootout initiated by: launchctl[321]<-", "bootout initiated by: launchctl[321]<-" + "x" * 1025]:
+            self.assertEqual(adapter.audit_native_removal(archive([event(eventMessage=bad)]), CONFIG["label"], 123, BOOT, NOW - 60000, NOW)["status"], "no_exact_removal_record")
+        for change in [{"processID": 2}, {"senderImagePath": "/tmp/fake"}, {"bootUUID": None}, {"subsystem": "gui/999/com.example.ds4 [123]"}, {"timestamp": "2026-09-04T23:00:00Z"}]:
+            self.assertEqual(adapter.audit_native_removal(archive([event(eventMessage=message, **change)]), CONFIG["label"], 123, BOOT, NOW - 60000, NOW)["status"], "no_exact_removal_record")
+        mixed = adapter.audit_native_removal(archive([event(), event(eventMessage=message)]), CONFIG["label"], 123, BOOT, NOW - 60000, NOW)
+        self.assertEqual(mixed["status"], "conflicting_callers")
+        self.assertEqual(len(mixed["observations"]), 2)
+
     def test_boot_identity_requires_exact_native_success_and_does_not_invent_a_boot(self):
         with patch.object(adapter, "run", return_value=(BOOT.upper() + "\n", 0)) as command:
             self.assertEqual(adapter.boot_identity(), BOOT)

@@ -1,5 +1,21 @@
 # Changelog
 
+## Verify native Mac bootstrap and distinguish stop-request evidence
+
+- Fix a real native smoke-test failure: launchd can emit a bounded, exact-identity
+  `bootout initiated by: launchctl[...]` record instead of `removing job: caller`.
+  Report `exact_stop_request_observed`, never mislabel initiation as completed
+  removal or expose parent-process ancestry.
+- Keep ordinary deliberate-stop recovery ineligible. Only an explicitly drained
+  operator canary can use that evidence, with independent current absence,
+  identity, native policy, maintenance, one-shot and generation/cache gates intact.
+  Update helper, controller, offline auditor, sanitized evidence and Genie semantics.
+- Add an opt-in random-label native fixture that accepts no existing target.
+  A real macOS run proved ordinary-stop refusal, exact-byte bootstrap, replacement
+  identity, a loopback nonce response, duplicate suppression and clean unregistration.
+  Keep private receipts and interrupted-run cleanup tests; a fixture-only finite
+  process lifetime does not alter production timeouts. No DS4 certificate is claimed.
+
 ## Expand Genie action visibility and sharpen developer suggestions
 
 - Render all 30 available newest-first ledger rows, keep filters, preserve the

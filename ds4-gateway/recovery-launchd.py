@@ -154,6 +154,7 @@ def audit_native_removal(text, label, pid, boot, since, until):
             or type(rows[-1]["count"]) is not int or type(rows[-1]["finished"]) is not int):
         raise ValueError("capture_incomplete")
     observations = set()
+    removed = False
     for row in rows[:-1]:
         if not isinstance(row, dict) or row.get("eventType") != "logEvent":
             raise ValueError("capture_incomplete")
@@ -166,8 +167,16 @@ def audit_native_removal(text, label, pid, boot, since, until):
         if match:
             caller = match[1] if match[1] in {"loginwindow", "launchctl", "runningboardd"} else "other"
             observations.add((at, caller))
+            removed = True
+        else:
+            # Observed native bootout logs identify the initiating command and
+            # opaque ancestry, not completed removal. Never export the ancestry
+            # or infer ordinary recovery authority from a deliberate stop.
+            stop = re.fullmatch(r"bootout initiated by: launchctl\[([1-9][0-9]{0,9})\](?:<-[^\r\n]{1,1024})?", str(row.get("eventMessage", "")))
+            if stop and 2 <= int(stop[1]) <= 2147483647:
+                observations.add((at, "launchctl"))
     callers = {caller for _, caller in observations}
-    return {"status": "conflicting_callers" if len(callers) > 1 else "exact_removal_observed" if observations else "no_exact_removal_record",
+    return {"status": "conflicting_callers" if len(callers) > 1 else "exact_removal_observed" if removed else "exact_stop_request_observed" if observations else "no_exact_removal_record",
             "source_complete": True, "records": len(rows) - 1,
             "observations": [{"at": at, "caller": caller} for at, caller in sorted(observations)[-16:]],
             "observations_omitted": max(0, len(observations) - 16),
@@ -357,12 +366,13 @@ def bootstrap_removed(config, request, state_path, history, request_hash):
     # native OS. A caller name is evidence, not proof that removal was accidental.
     removal = inspect_removal(config, prior)
     observations = removal["observations"]
-    if (removal["status"] != "exact_removal_observed" or removal["source_complete"] is not True
+    if (removal["status"] not in {"exact_removal_observed", "exact_stop_request_observed"} or removal["source_complete"] is not True
             or removal["observations_omitted"] != 0 or len(observations) != 1):
         raise ValueError("bootstrap_exact_removal_required")
     caller = observations[0]["caller"]
     allowed = config.get("bootstrap_callers", [])
-    if not (caller in allowed or (request["canary"] is True and caller == "launchctl")):
+    if ((removal["status"] == "exact_stop_request_observed" and not (request["canary"] is True and caller == "launchctl"))
+            or not (caller in allowed or (request["canary"] is True and caller == "launchctl"))):
         raise ValueError("bootstrap_removal_caller_not_enrolled")
     if any(item.get("operation") == "bootstrap" and item.get("instance") == prior["instance"] for item in history.values()):
         raise ValueError("removed_instance_already_attempted")

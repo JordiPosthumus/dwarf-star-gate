@@ -122,9 +122,10 @@ export class Recovery {
     if(canary&&!n.drained)return 'drain_before_canary';
     if(!canary&&n.drained)return 'operator_paused';
     if(n.healthy!==false)return 'worker_health_not_failed';
-    if(!r||this.now()-r.checked_at>60000||r.checked_at>this.now()+10000||r.status!=='exact_removal_observed'||!r.source_complete||
+    if(!r||this.now()-r.checked_at>60000||r.checked_at>this.now()+10000||!['exact_removal_observed','exact_stop_request_observed'].includes(r.status)||!r.source_complete||
       r.observations_omitted!==0||r.observations.length!==1)return 'launchd_bootstrap_removal_unverified';
     const observation=r.observations[0];
+    if(r.status==='exact_stop_request_observed'&&!(canary&&observation.caller==='launchctl'))return 'launchd_bootstrap_caller_not_enrolled';
     if(observation.at<p.observed_at||!((canary&&observation.caller==='launchctl')||c.bootstrap_callers.includes(observation.caller)))return 'launchd_bootstrap_caller_not_enrolled';
     const previous=this.state.operations.filter(op=>op.worker_id===n.id&&op.id!==operationId);
     if(previous.some(op=>op.service_action==='bootstrap'&&op.instance===p.instance))return 'removed_instance_already_attempted';

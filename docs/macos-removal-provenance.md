@@ -42,6 +42,11 @@ boot or a message quoting the native wording is insufficient.
 
 - `exact_removal_observed`: a complete supplied capture contains a matching record.
   The bounded caller is `loginwindow`, `launchctl`, `runningboardd` or `other`.
+- `exact_stop_request_observed`: the matching native message is
+  `bootout initiated by: launchctl[321]<-fixture-runner[300]` (synthetic example).
+  This records stop initiation, **not completed removal**. Parent-process text and
+  PIDs are not exported or interpreted as authorization. Current job absence must
+  be checked independently; ordinary automatic recovery still refuses this stop.
 - `conflicting_callers`: more than one caller class matched; all bounded
   observations remain visible. Never select the most convenient cause.
 - `no_exact_removal_record`: no qualifying record was found, **not** proof that
@@ -85,7 +90,8 @@ historical observation or imply that it is fresh.
 
 For a confirmed absent job with matching retained evidence and a capable helper,
 the recovery controller runs this diagnostic at most once per five minutes for
-the same identity. Changed identity/state invalidates it; a late result cannot
+the same identity, or once per minute for separately enrolled bootstrap workers.
+Changed identity/state invalidates it; a late result cannot
 replace newer live-service evidence. Capture failures do not create recovery
 operations or change worker health. The bounded result is exposed as `removal`
 in recovery worker status and included in Genie's evidence with `authority:none`.
@@ -99,9 +105,11 @@ identifies a PID/boot, not a full proof against every possible PID-reuse history
 completeness still does not guarantee full OS retention. Do not reinterpret these
 diagnostics as automatic start permission.
 
-Before automated bootstrap, DSG still needs separately approved restore policy,
+Automated bootstrap additionally requires separately approved restore policy,
 a [verified retained definition](macos-retained-definition.md), command-time
 GUI/native-disable/DSG-hold and listener checks, durable one-shot execution, and an
-approved real removed-job cold/warm canary. Those capabilities remain separate
-work. Updating the source checkout does not deploy a helper or enroll a real Mac.
+approved real removed-job cold/warm canary. The helper and controller implement
+these separate gates; a native stop-request event can support only an explicitly
+authorized operator canary, never an ordinary recovery offer. Updating the source
+checkout does not deploy a helper or enroll a real Mac.
 See [worker recovery](worker-recovery.md).

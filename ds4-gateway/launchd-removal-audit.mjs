@@ -32,7 +32,7 @@ export function auditLaunchdRemoval(text,identity){
   const lines=text.split('\n'),truncated=text.length>0&&!text.endsWith('\n');
   if(lines.at(-1)==='')lines.pop();
   if(lines.length>MAX_ROWS+1)throw new Error('Removal log exceeds row bound');
-  const observations=[],callers=new Set();let malformed=0,records=0,summary=null,summaryInvalid=false,unverified=0;
+  const observations=[],callers=new Set();let malformed=0,records=0,summary=null,summaryInvalid=false,unverified=0,removed=false;
   for(let i=0;i<lines.length;i++){
     let row;try{row=JSON.parse(lines[i]);}catch{malformed++;continue;}
     if(row&&typeof row==='object'&&!Array.isArray(row)&&Object.hasOwn(row,'finished')){
@@ -45,19 +45,23 @@ export function auditLaunchdRemoval(text,identity){
     const at=timestamp(row.timestamp);
     if(row.processID!==1||row.processImagePath!=='/sbin/launchd'||row.senderImagePath!=='/sbin/launchd'||
       !uuid(row.bootUUID)||row.bootUUID.toLowerCase()!==expected.boot||at<expected.from||at>expected.to){unverified++;continue;}
-    const match=typeof row.eventMessage==='string'&&/^removing job: caller = ([A-Za-z0-9_.-]{1,128})$/.exec(row.eventMessage);
-    if(!match)continue;
-    const caller=['loginwindow','launchctl','runningboardd'].includes(match[1])?match[1]:'other';
+    const message=typeof row.eventMessage==='string'?row.eventMessage:'';
+    if(/[\r\n]/.test(message))continue;
+    const match=/^removing job: caller = ([A-Za-z0-9_.-]{1,128})$/.exec(message);
+    const stop=/^bootout initiated by: launchctl\[([1-9][0-9]{0,9})\](?:<-[^\r\n]{1,1024})?$/.exec(message);
+    if(!match&&!(stop&&Number(stop[1])>=2&&Number(stop[1])<=2147483647))continue;
+    const caller=match?(['loginwindow','launchctl','runningboardd'].includes(match[1])?match[1]:'other'):'launchctl';
+    if(match)removed=true;
     callers.add(caller);observations.push({at:new Date(at).toISOString(),caller});
   }
   const complete=!truncated&&!malformed&&!summaryInvalid&&summary?.count===records;
   const exact=[...new Map(observations.map(row=>[JSON.stringify(row),row])).values()].sort((a,b)=>a.at.localeCompare(b.at));
   return {schema:1,mode:'offline_launchd_removal_audit',authority:'none',
-    status:!complete?'source_incomplete':!exact.length?'no_exact_removal_record':callers.size>1?'conflicting_callers':'exact_removal_observed',
+    status:!complete?'source_incomplete':!exact.length?'no_exact_removal_record':callers.size>1?'conflicting_callers':removed?'exact_removal_observed':'exact_stop_request_observed',
     source:{complete,records,malformed,truncated,summary_valid:!!summary&&!summaryInvalid&&summary.count===records,unverified_identity_records:unverified},
     observations:complete?exact.slice(-16):[],observations_omitted:complete?Math.max(0,exact.length-16):0,
     native_stop_caller_observed:complete&&callers.has('launchctl'),
-    note:'Exact archived event matching only. Caller identity does not explain intent or grant bootstrap/restart authority. Missing records do not prove no removal. No raw messages, labels, PIDs, boot IDs, paths or credentials are returned.'};
+    note:'Exact archived event matching only. A stop request is not proof of completed removal. Caller identity does not explain intent or grant bootstrap/restart authority. Missing records do not prove no removal. No raw messages, labels, PIDs, boot IDs, paths or credentials are returned.'};
 }
 
 function readRegular(file,limit){

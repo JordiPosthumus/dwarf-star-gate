@@ -54,6 +54,20 @@ test('bootstrap enrollment is launchd-only, exact and does not implicitly permit
     assert.throws(()=>recoveryConfig({workers:[{...c,...update}]}));
   }
 });
+test('bootout request evidence permits only an explicitly drained operator canary',async()=>{
+  const r=rig();await r.ready();r.hooks.removal=value=>({...value,status:'exact_stop_request_observed'});await r.remove();
+  assert.equal(r.recovery.workerStatus(r.node).eligible,false);
+  r.node.drained=false;assert.throws(()=>r.recovery.request(r.input(),'operator'),/caller_not_enrolled/);
+  assert.throws(()=>r.recovery.request(r.input(),'operator',{canary:true}),/drain_before_canary/);
+  r.node.drained=true;const op=await r.canary();assert.equal(op.state,'verified_paused');assert.equal(r.bootstraps,1);
+  r.node.drained=false;r.advance(31*60000);await r.remove();
+  assert.equal(r.recovery.workerStatus(r.node).reason,'launchd_bootstrap_caller_not_enrolled');
+  assert.equal(r.recovery.workerStatus(r.node).eligible,false);assert.equal(r.bootstraps,1);
+  r.node.drained=true;r.hooks.removal=value=>({...value,status:'exact_stop_request_observed',observations:[...value.observations,{at:value.checked_at-1,caller:'launchctl'}],records:2});
+  await r.recovery.inspect(c.id,{freshRemoval:true});
+  assert.throws(()=>r.recovery.request({worker_id:c.id},'operator',{canary:true}),/removal_unverified/);
+  await r.recovery.close();
+});
 test('acknowledged removed-job canary certifies exact enrollment, stays paused, then enables detector recovery',async()=>{
   const r=rig();await r.ready();await r.remove();
   assert.equal(r.recovery.workerStatus(r.node).eligible,false);
