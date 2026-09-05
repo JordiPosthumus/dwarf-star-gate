@@ -69,7 +69,7 @@ test('cancellations, unknown endings, relocations, mismatched profiles and ambig
   }
   const events=fixture();assert.equal(replayOccupancy([...events,events.at(-1)],inventory).rows.length,replayOccupancy(events,inventory).rows.length);
 });
-test('declared occupancy cohort preserves raw snapshots and older causal history',t=>{
+test('declared occupancy and V4 cohorts preserve raw snapshots and older causal history',t=>{
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-cohort-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
   const source=path.join(root,'source');fs.mkdirSync(source);
   const old=fixture();old.at(-1).finish_reason='stop';old.at(-1).usage={prompt_tokens:100,completion_tokens:10,cached_tokens:0};
@@ -92,6 +92,16 @@ test('declared occupancy cohort preserves raw snapshots and older causal history
   assert.deepEqual(cohort.snapshot.hashes,original.snapshot.hashes);
   assert.equal(fs.readFileSync(path.join(selected,'snapshots',file),'utf8'),raw);
   assert.equal(fs.readFileSync(path.join(source,file),'utf8'),raw);
+  const hardwareAll=path.join(root,'hardware-all'),hardwareSelected=path.join(root,'hardware-selected');
+  prepare(source,profiles,hardwareAll,'dsg-latency-v4');
+  prepare(source,profiles,hardwareSelected,'dsg-latency-v4',{cohortSince:since});
+  const hAll=JSON.parse(fs.readFileSync(path.join(hardwareAll,'prepared.json'))),hSelected=JSON.parse(fs.readFileSync(path.join(hardwareSelected,'prepared.json')));
+  assert.deepEqual(hSelected.rows,hAll.rows.filter(r=>r.request_id==='new'));
+  assert.ok(hSelected.rows.length>0);assert.equal(hSelected.rows.find(r=>r.stage==='admission').features.history_count,1);
+  assert.equal(hAll.snapshot.cohort,undefined);assert.deepEqual(hSelected.snapshot.hashes,hAll.snapshot.hashes);
+  assert.equal(hSelected.snapshot.cohort.selected_requests,1);assert.equal(hSelected.snapshot.cohort.source_requests,2);
+  assert.equal(fs.readFileSync(path.join(hardwareSelected,'snapshots',file),'utf8'),raw);
+  assert.ok(hSelected.rows.every(r=>r.features.hardware_power_watts===null)); // Missing sensors do not exclude requests.
   const delivery=path.join(root,'delivery');prepare(source,profiles,delivery,'dsg-occupancy-v2',{cohortSince:since});
   const newer=JSON.parse(fs.readFileSync(path.join(delivery,'prepared.json')));
   assert.deepEqual(newer.snapshot.hashes,cohort.snapshot.hashes);assert.equal(newer.rows.length,cohort.rows.length);
@@ -107,16 +117,18 @@ test('declared occupancy cohort preserves raw snapshots and older causal history
 test('cohort selection uses earliest admission per run/request, never later progress or outcomes',()=>{
   const since='2020-01-01T00:00:00Z',cut=Date.parse(since);
   const point=(run,id,time,kind='admission')=>({run_id:run,request_id:id,decision_time:time,kind});
-  const data={schema:'dsg-occupancy-v1',rows:[point('a','old',cut-1),point('a','old',cut+1,'remaining'),point('b','old',cut),point('a','new',cut+1)]};
+  for(const schema of ['dsg-occupancy-v1','dsg-occupancy-v2','dsg-latency-v4']){
+  const data={schema,rows:[point('a','old',cut-1),point('a','old',cut+1,'remaining'),point('b','old',cut),point('a','new',cut+1)]};
   const receipt=selectOccupancyCohort(data,since);
   assert.equal(receipt.source_points,4);assert.equal(receipt.selected_points,2);assert.equal(receipt.selected_requests,2);
   assert.deepEqual(data.rows.map(r=>[r.run_id,r.request_id]),[['b','old'],['a','new']]);
+  }
 });
 test('cohort selection rejects malformed dates and never silently changes ordinary preparation',()=>{
   for(const since of ['2026-02-30T00:00:00Z','2026-01-01','2026-01-01T00:00:00+00:00','2999-01-01T00:00:00Z','bad','',0]){
-    assert.throws(()=>prepare('/missing','/missing','/missing','dsg-occupancy-v1',{cohortSince:since}),/Cohort start/);
+    for(const schema of ['dsg-occupancy-v1','dsg-latency-v4'])assert.throws(()=>prepare('/missing','/missing','/missing',schema,{cohortSince:since}),/Cohort start/);
   }
-  assert.throws(()=>prepare('/missing','/missing','/missing','dsg-latency-v4',{cohortSince:'2020-01-01T00:00:00Z'}),/offline occupancy/);
+  for(const schema of ['dsg-latency-v2','dsg-latency-v3'])assert.throws(()=>prepare('/missing','/missing','/missing',schema,{cohortSince:'2020-01-01T00:00:00Z'}),/explicit offline/);
   assert.throws(()=>selectOccupancyCohort({schema:'dsg-occupancy-v1',rows:[{decision_time:NaN}]},'2020-01-01T00:00:00Z'),/admission time/);
   const data={schema:'dsg-latency-v4',rows:[{unchanged:true}]},before=structuredClone(data);
   assert.equal(selectOccupancyCohort(data,null),null);assert.deepEqual(data,before);

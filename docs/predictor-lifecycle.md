@@ -147,8 +147,8 @@ long work; none of these counts establishes current liveness or retry safety.
 An all-history chronological split can put every newly collected feature in the
 holdout and none in training/CV. Repeated ordinary retraining cannot teach a
 feature that the training partition never sees. For an explicitly declared
-collector-change experiment, occupancy preparation supports an admission-time
-cohort:
+collector-change experiment, occupancy and explicit V4 hardware preparation
+support an admission-time cohort:
 
 ```sh
 node predictor/prepare.mjs --schema dsg-occupancy-v1 \
@@ -159,7 +159,8 @@ node predictor/prepare.mjs --schema dsg-occupancy-v1 \
 
 Replace the illustrative timestamp with the independently recorded collector
 activation time, chosen before comparing this experiment's outcome scores. This
-is opt-in and restricted to offline occupancy experiments; ordinary preparation,
+is opt-in and restricted to offline occupancy or `--schema dsg-latency-v4`
+hardware experiments; ordinary V3 preparation,
 the live collector, model settings and activation gates are unchanged. Invalid,
 future, duplicate or misspelled options fail instead of quietly changing the cohort.
 
@@ -171,6 +172,20 @@ filter selects favorable cases. `snapshot.cohort` records the cutoff, selector
 source hash and source/selected/excluded point and request counts. Empty cohorts
 stay empty, and the existing snapshot/row budgets are not bypassed. Original
 collector files and earlier candidates are not edited or removed.
+
+For a sensor-era experiment, record the cutoff from collection provenance before
+fitting, not from favorable error scores. V4 still offers matched non-sensor
+feature families in its training-only search. Requests with missing sensors are
+not excluded, and no earlier stage is backfilled with a later sample. Inspect
+`hardware_coverage.folds` to verify that sensors actually reached training as
+well as validation. Cohort selection alone does not authorize importing or
+activating the resulting candidate.
+
+A completed sensor-era check removed the earlier zero-training-coverage problem,
+but the offered sensor-inclusive families still did not win selection. Treat
+that as a bounded experiment result, not proof that sensors cannot help. The
+remaining-time component still needs genuinely later validation; pre-dispatch
+forecasts must beat simple history before influencing placement.
 
 Use the unchanged trainer and inspect fold support before interpreting accuracy.
 Small cohorts can train yet still fail minimum holdout/session requirements; do

@@ -1,5 +1,12 @@
 # Changelog
 
+## Enable declared offline sensor-era experiments
+
+- Extend admission-time cohort preparation to the explicit V4 hardware schema;
+  preserve full raw snapshots and older causal priors.
+- Keep default V3 preparation, missing-sensor requests, training search and
+  activation gates unchanged. Add replay/snapshot/history regression coverage.
+
 ## Expose sensor coverage in the actual training folds
 
 - Add per-worker/stage hardware coverage for each CV training and validation

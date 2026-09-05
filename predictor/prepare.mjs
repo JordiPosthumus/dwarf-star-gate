@@ -16,13 +16,13 @@ export function occupancyFeatureHash(schema){
 }
 function cohortTime(value,schema){
   if(value===null)return null;
-  if(!occupancySchemas.has(schema))throw new Error('Cohort selection requires the explicit offline occupancy schema');
+  if(!occupancySchemas.has(schema)&&schema!=='dsg-latency-v4')throw new Error('Cohort selection requires an explicit offline occupancy or V4 hardware experiment');
   if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value))throw new Error('Cohort start requires a UTC ISO timestamp');
   const at=Date.parse(value),canonical=value.includes('.')?value:value.replace('Z','.000Z');
   if(!Number.isSafeInteger(at)||at<0||new Date(at).toISOString()!==canonical||at>Date.now())throw new Error('Cohort start must be a valid past UTC timestamp');
   return at;
 }
-export function selectOccupancyCohort(dataset,since){
+export function selectAdmissionCohort(dataset,since){
   const at=cohortTime(since,dataset.schema);if(at===null)return null;
   const first=new Map();
   for(const row of dataset.rows){
@@ -39,6 +39,8 @@ export function selectOccupancyCohort(dataset,since){
     source_requests:first.size,selected_requests:selected.size,excluded_requests:first.size-selected.size,
     selector_sha256:hash(fs.readFileSync(new URL('./prepare.mjs',import.meta.url)))};
 }
+// Retain the occupancy audit's existing entry point.
+export const selectOccupancyCohort=selectAdmissionCohort;
 export function prepare(data,profiles,output,schema=CURRENT_FEATURE_SCHEMA,{cohortSince=null}={}) {
   cohortTime(cohortSince,schema);
   if(fs.existsSync(output))throw new Error('Candidate directory already exists');
@@ -49,7 +51,7 @@ export function prepare(data,profiles,output,schema=CURRENT_FEATURE_SCHEMA,{coho
   if(inventory.schema!==1||!inventory.workers)throw new Error('Versioned worker inventory required');
   const occupancy=occupancySchemas.has(schema);
   const dataset=schema==='dsg-occupancy-v2'?replayDeliveryOccupancy(events,inventory):occupancy?replayOccupancy(events,inventory):featureContract(schema).replay(events,inventory);if(dataset.rows.length>100000)throw new Error('Prepared data exceeds bounded trainer row budget');
-  const cohort=selectOccupancyCohort(dataset,cohortSince);
+  const cohort=selectAdmissionCohort(dataset,cohortSince);
   fs.mkdirSync(path.join(output,'snapshots'),{recursive:true,mode:0o700});
   for(const b of blobs)fs.writeFileSync(path.join(output,'snapshots',b.name),b.bytes,{flag:'wx',mode:0o600});
   fs.writeFileSync(path.join(output,'snapshots','worker-inventory.json'),inventoryBytes,{flag:'wx',mode:0o600});
