@@ -10,6 +10,13 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Kept completed Genie pool fallbacks visible across dashboard restarts.** A
+  private bounded receipt journal restores the latest 30 small pool-fallback
+  records without retaining conversation text or granting action authority.
+  Corrupt storage, unsafe links, concurrent writers and failed writes are tested;
+  failures remain visible and do not turn a completed review into a retry.
+  Recovery/predictor receipts retain their existing independent durable sources.
+
 - **Trained a newer, matched XGB challenger with training-only recipe selection.**
   An explicit offline sweep compares the three reviewed recipes without choosing
   by holdout results or relaxing gates. On 432 usable completions, the remaining

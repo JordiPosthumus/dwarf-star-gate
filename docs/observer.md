@@ -195,8 +195,8 @@ attention. “Pool commandeering” means a dedicated-provider attempt failed an
 completed review was proven to have used the unpinned DSG fallback; the server is
 named only when the gateway returned a validated `x-ds4-node` receipt. Recovery
 and predictor rows come from their durable executor journals, queue moves from
-the bounded recent evidence reader, and provider fallback from the current
-dashboard run. Operator actions are excluded. No prompt, answer, request/session
+the bounded recent evidence reader, and completed provider fallbacks from a private
+local receipt journal. Operator actions are excluded. No prompt, answer, request/session
 identifier, endpoint, credential or raw error enters the ledger, and no row is a
 claim that model prose directly performed an action.
 
@@ -206,8 +206,22 @@ explicitly available history, not a lifetime total. Recovery/predictor status
 exposes up to 30 recent receipts per feed; other actors can occupy those source
 windows before the ledger filters them out. The dashboard separately keeps 30
 small completed pool-fallback receipts so rotating full review text does not
-erase that run's recent fallback history. Dashboard restart still resets provider
-history; this view is not a substitute for a durable consolidated audit archive.
+erase recent fallback history. These receipts now survive dashboard restarts in
+`genie/actions/pool-actions.jsonl` beside runtime state: report UUID, completion
+time, fallback kind and an observed worker ID (or unknown). Full reviews, questions,
+endpoints and action offers are never restored from this journal. This is an
+operational receipt log, separate from the optional memory notebook and its toggle.
+
+The directory/file are mode 0700/0600. Appends are exclusive-writer guarded and
+file/directory-synced; readers reject corrupt tails, duplicate IDs and unsafe
+links/modes without repairing or deleting evidence. At the 16 MiB ceiling, or if
+storage fails, new receipts remain in the current session's 30-row view and the
+ledger shows **pool history not saved**. `/api/genie` exposes
+`provider_action_storage` with bounded status and a sanitized error. Storage errors
+do not retry inference/actions or invalidate a completed review. The ceiling does
+not prune old evidence or cap inference. Receipts missing before this feature was
+installed are not invented. This remains a mixed-source recent view, not a durable
+consolidated archive of every Genie action or every failed provider attempt.
 
 Developer suggestions are hypotheses, not executor receipts. Review instructions
 ask for a specific test and the outcomes it would distinguish, avoid conflating

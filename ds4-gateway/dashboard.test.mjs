@@ -480,6 +480,9 @@ test('Genie ledger renders all 30 available receipts, filters and preserves scro
   assert.match(nodes['genie-action-summary'].textContent,/30 shown.*newest first/);
   list.scrollTop=180;const children=list.children;vm.runInContext('renderGenieActionLedger()',context);
   assert.equal(list.children,children);assert.equal(list.scrollTop,180);
+  vm.runInContext("genieState.provider_action_storage={error:'PRIVATE_ERROR'};renderGenieActionLedger()",context);
+  assert.match(nodes['genie-action-summary'].textContent,/pool history not saved/);assert.doesNotMatch(nodes['genie-action-summary'].title,/PRIVATE/);
+  assert.equal(list.children,children);assert.equal(list.scrollTop,180);
   vm.runInContext("genieState.provider_actions.unshift({id:'new',time:2000,served_by:'pool_fallback'});renderGenieActionLedger()",context);
   assert.equal(list.children.length,30);assert.equal(list.scrollTop,180);
   nodes['genie-action-filter'].value='attention';vm.runInContext('renderGenieActionLedger()',context);

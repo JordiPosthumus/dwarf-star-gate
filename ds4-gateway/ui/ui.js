@@ -697,6 +697,9 @@ function renderGenieActionLedger() {
   const rows=genieActionRows(wireSnapshot,genieState,analyticsState),filter=$('genie-action-filter')?.value??'all';
   const visible=rows.filter(row=>filter==='all'?true:filter==='attention'?row.level==='attention':row.kind===filter),attention=rows.filter(row=>row.level==='attention').length;
   $('genie-action-summary').textContent=rows.length?`${visible.length} shown · latest ${rows.length} available / 30 · newest first${attention?` · ${attention} need attention`:''}`:'No evidenced Genie actions yet';
+  const storageError=genieState?.provider_action_storage?.error;
+  if(storageError)$('genie-action-summary').textContent+=' · pool history not saved';
+  $('genie-action-summary').title=storageError?'Pool action storage needs attention; new receipts remain session-only. Inspect Genie status. Nothing was deleted.':'';
   const signature=JSON.stringify([filter,visible]);if(signature===genieLedgerSignature)return;genieLedgerSignature=signature;
   const items=visible.map(row=>{
     const item=document.createElement('li');item.dataset.level=row.level;

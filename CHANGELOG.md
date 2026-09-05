@@ -1,5 +1,17 @@
 # Changelog
 
+## Preserve Genie's pool-fallback ledger across dashboard restarts
+
+- Persist only completed pool-fallback receipt metadata in a private 16 MiB bounded
+  append-only journal; reload the latest 30 without restoring review text or powers.
+- Reject unsafe storage, corrupt tails, conflicting writers and duplicate identity
+  changes without automatic repair or evidence deletion. Fsync failures and the
+  ceiling leave new receipts session-only; inference and review completion continue.
+- Expose sanitized storage status and a concise ledger warning. Keep the optional
+  memory notebook separate and retain existing receipt filters/scroll position.
+- Add fresh-process, privacy, filesystem, idempotency, short-write, storage-failure
+  and Genie completion regressions to the cross-platform memory test job.
+
 ## Compare reviewed offline recipes using training CV only
 
 - Add an explicit three-recipe occupancy sweep with fresh private output, retained

@@ -279,12 +279,13 @@ Recommendations are advice, not actions you performed. Request recovery only for
 Use only supplied evidence; label hypotheses as hypotheses. Do not infer a stall from long thinking, a cold start from a resident miss, or ignored xhigh from unavailable thinking metadata. Check the supplied semantics carefully, especially milliseconds versus seconds and historical waits versus current ETAs. Similarity and counterfactual speed are not measured. If there is no evidenced issue, use one good item only when positive health or improvement is demonstrated; otherwise use one info item explaining that no action is indicated by this snapshot. Each item must cite relevant allowed evidence_refs. Do not turn missing evidence into an all-clear.`;
 
 export class Genie {
-  constructor(config, snapshot, {fetchImpl=genieLoopbackFetch,recover=null,predict=null,rebalance=null,memory=null}={}) {
+  constructor(config, snapshot, {fetchImpl=genieLoopbackFetch,recover=null,predict=null,rebalance=null,memory=null,providerLedger=null}={}) {
     // A configured Genie is a core observer and starts on. Recovery, predictor
     // mutation and other powers remain separately authorized by their own gates.
     this.config=config;this.getSnapshot=snapshot;this.fetch=fetchImpl;this.enabled=!!config&&config.enabled!==false;this.busy=false;this.source=config?.default_source==='pool'?'pool':'primary';
     this.last=null;this.reports=[];this.providerActions=[];this.error=null;this.abort=null;this.closed=false;this.queuedQuestion=null;this.questionReceipt=null;this.actionOfferKey=null;this.actionOfferAt=0;this.busyKind=null;this.preempted=false;this.activeProvider=null;this.providerStartedAt=null;this.providerDeadlineAt=null;this.reviewFinishedAt=null;this.consecutiveFailures=0;this.providerAttempts=[];
-    this.recover=recover;this.predict=predict;this.rebalance=rebalance;this.memory=memory;
+    this.recover=recover;this.predict=predict;this.rebalance=rebalance;this.memory=memory;this.providerLedger=providerLedger;
+    this.providerActions=providerLedger?.recent()??[];
     for(const endpoint of [config,config?.fallback].filter(Boolean)) {
       const u=new URL(endpoint.url);
       if(u.protocol!=='http:' || u.hostname!=='127.0.0.1' || u.username || u.password || u.search || u.hash || !['/v1','/v1/'].includes(u.pathname))throw new Error('Genie must use a configured loopback /v1 endpoint');
@@ -302,10 +303,12 @@ export class Genie {
     const hardening=[...byCandidate.values()];
     hardening.sort((a,b)=>b.at-a.at||a.candidate_id.localeCompare(b.candidate_id));
     return {configured:!!this.config,enabled:this.enabled,busy:this.busy,review_kind:this.busyKind,predictor_supervision:!!this.predict&&!!snapshot.gateway?.predictor?.configured,action_supervision:actionSupervision,mode:actionSupervision?'evidence-gated-actions':'observation-only',source:this.source,fallback_available:!!this.config?.fallback,last_served_by:this.reports[0]?.served_by??null,primary_timeout_ms:this.config?(this.config.timeout_ms??DEFAULT_GENIE_TIMEOUT_MS):null,fallback_timeout_ms:this.config?.fallback?(this.config.fallback.timeout_ms??DEFAULT_POOL_TIMEOUT_MS):null,active_provider:this.busy?this.activeProvider:null,provider_started_at:this.busy?this.providerStartedAt:null,provider_deadline_at:this.busy?this.providerDeadlineAt:null,review_finished_at:this.reviewFinishedAt,consecutive_failures:this.consecutiveFailures,provider_attempts:this.providerAttempts,last_check:this.last,error:this.error,question:this.publicQuestion(),reports:this.reports,provider_actions:this.providerActions,hardening_notes:hardening.slice(0,24),
-    ticker:tickerStatus(this.reports[0],snapshot,this),memory};}
+    ticker:tickerStatus(this.reports[0],snapshot,this),memory,provider_action_storage:this.providerLedger?.status()??null};}
   recordProviderAction(report) {
     if(report.served_by!=='pool_fallback')return;
     const {id,time,served_by,served_on}=report;
+    this.providerLedger?.append({id,time,served_by,served_on:served_on??null});
+    this.providerActions=this.providerActions.filter(row=>row.id!==id);
     this.providerActions.unshift({id,time,served_by,served_on});
     this.providerActions=this.providerActions.slice(0,30);
   }
