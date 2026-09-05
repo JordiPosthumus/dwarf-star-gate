@@ -74,6 +74,25 @@ See the [upstream observability research note](upstream-observability.md) for a
 pinned-source request-correlation opportunity and related Responses/cache work.
 It records investigation, not an approved or implemented server change.
 
+### Potential PR: investigate the per-request image-count limit
+
+DS4's observed rejection and upstream `request_tokenize_multimodal_prompt`
+currently enforce at most 16 images across a submitted conversation, independently
+of GIF format support. Investigate the rationale before proposing a change:
+
+- Pin the deployed and upstream revisions; inspect blame, issues and PR history.
+- Determine whether the bound protects memory, vision processing, context capacity,
+  latency or abuse resistance, and identify any other fixed-size assumptions.
+- On an isolated test engine, measure 16/17 and larger requests across image sizes,
+  memory use, cancellation and supported backends. Do not benchmark production caches.
+- If justified, propose a configurable/resource-aware bound with a compatible default,
+  capability discovery and a structured rejection. Otherwise document the rationale
+  and improve the error/capability contract rather than simply removing a guard.
+
+Status: research candidate, not an approved engine patch or PR submission. DSG's
+gateway-only continuity work must remain useful with stock DS4 and cannot depend
+on this upstream change. A chat's lifetime image count is not a request limit.
+
 ## Calibration must preserve production caches
 
 The planned manual/optional hourly development runner must have a proven

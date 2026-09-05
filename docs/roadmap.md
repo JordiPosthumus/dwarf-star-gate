@@ -436,6 +436,15 @@ memory grants no powers. Broader experiment lessons and search remain planned. A
 [mutually beneficial upstream PR opportunities](ds4-integration.md#upstream-contributions)
 without changing DS4 or creating a private-fork dependency.
 
+**Visual continuity design (pending):** make accumulated image history recoverable
+inside the gateway without requiring a Pi companion or treating 16 as a chat limit.
+Choose an explicit outgoing-image policy with the operator before implementation;
+preserve saved history, disclose omitted input and verify real agent continuation.
+Native harness compaction is a possible recovery action, not something gateway
+prose can execute or guarantee. Separately track the
+[per-request image-limit research/possible PR](ds4-integration.md#potential-pr-investigate-the-per-request-image-count-limit);
+do not change the engine limit before establishing its rationale and resource bounds.
+
 **Implemented foundations:** [pre-assignment hint collection](client-metadata.md),
 [three XGB recipe choices](predictor-lifecycle.md#reviewed-training-recipes), and
 [read-only calibration preflight](calibration.md). Existing V2 artifacts remain
