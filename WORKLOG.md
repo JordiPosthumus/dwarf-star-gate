@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Removed a timing race from routing-shadow CI.** The idle-worker fixture now
+  controls response completion order instead of relying on two short timers.
+  It still proves that queued work stays on its home worker without replay;
+  production timeouts and scheduling are unchanged.
+
 - **Kept missing overlap evidence distinct from completed work.** Capacity
   eviction could prematurely release surviving lifecycle records. The audit now
   preserves them for delayed reconciliation within its existing limits, while

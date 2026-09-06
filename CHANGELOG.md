@@ -1,5 +1,12 @@
 # Changelog
 
+## Make idle-worker reassessment fixtures deterministic
+
+- Replace competing response timers with explicit fixture-only stream release.
+  Observe queued work before the alternate worker completes, then release home.
+- Preserve assertions that shadow evaluation neither moves nor replays work;
+  no production scheduler, deadline or model behavior changes.
+
 ## Preserve unresolved overlap evidence after capacity eviction
 
 - Do not treat a missing lifecycle candidate as a completed request. Retain

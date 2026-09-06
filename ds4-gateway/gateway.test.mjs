@@ -76,11 +76,13 @@ async function backend(id) {
         res.write('data: {"choices":[{"delta":{"reasoning_content":"thinking"}}]}\n\n');
         const progress=p.progress?setInterval(()=>res.write('data: {"choices":[{"delta":{"reasoning_content":"working"}}]}\n\n'),15):null;
         res.on('close',()=>clearInterval(progress));
-        const timer = setTimeout(() => {
+        const complete = () => {
           if (res.destroyed) return;
           ended = true;
           res.end('data: {"choices":[{"delta":{"content":"OK"}}],"usage":{"prompt_tokens":9000,"completion_tokens":2,"prompt_tokens_details":{"cached_tokens":8192}}}\n\ndata: [DONE]\n\n');
-        }, p.delay ?? 10);
+        };
+        if(p.fixture_hold_stream){(b.heldStreams??=[]).push(complete);return;}
+        const timer = setTimeout(complete, p.delay ?? 10);
         res.on('close', () => clearTimeout(timer));
       } else {
         setTimeout(() => { if (!res.destroyed) { ended = true; res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ node: id, body: body.toString() })); } }, p.delay ?? 0);
@@ -991,13 +993,18 @@ test('shadow collection is opt-in, preserves bytes and affinity, and reassesses 
 
 test('idle-worker event records shadow reassessment without consuming queued uploads or replay',async t=>{
   const r=await rig(t,2,{dataset_enabled:true,routing_shadow_enabled:true});
-  const home=r.request('{"stream":true,"delay":200}','home');await until(()=>r.backends[0].active===1);
-  const other=r.request('{"stream":true,"delay":60}','other');await until(()=>r.backends[1].active===1);
+  const home=r.request('{"stream":true,"fixture_hold_stream":true}','home');await until(()=>r.backends[0].heldStreams?.length===1);
+  const other=r.request('{"stream":true,"fixture_hold_stream":true}','other');await until(()=>r.backends[1].heldStreams?.length===1);
   const queued=r.request('{"stream":true,"delay":10}','home');await until(()=>r.gateway.stats().queued===1);
   const read=()=>{const dir=path.join(path.dirname(r.config.state_file),'training');return fs.existsSync(dir)?fs.readdirSync(dir).flatMap(f=>fs.readFileSync(path.join(dir,f),'utf8').trim().split('\n').filter(Boolean).map(JSON.parse)):[];};
+  // Observe the queue before releasing the alternate worker. Wall-clock delays
+  // cannot guarantee this ordering on a loaded runner; home must remain active.
+  r.backends[1].heldStreams.shift()();
   await other;await until(()=>read().some(row=>row.kind==='routing_shadow'&&row.reason==='worker_free'));
   const reassessment=read().find(row=>row.kind==='routing_shadow'&&row.reason==='worker_free');
   assert.equal(reassessment.verdict,'handover_blocked');assert.equal(r.backends[1].records.length,1);
+  assert.equal(r.backends[0].active,1);assert.equal(r.gateway.stats().queued,1);
+  r.backends[0].heldStreams.shift()();
   await Promise.all([home,queued]);assert.equal(r.backends[0].records.length,2);
 });
 
