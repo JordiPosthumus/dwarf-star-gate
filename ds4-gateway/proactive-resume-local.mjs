@@ -2,6 +2,7 @@ import {mkdir,lstat} from 'node:fs/promises';
 import {isAbsolute,join} from 'node:path';
 import {proactiveResumeMainOptions} from './proactive-resume-host.mjs';
 import {ProactiveResumeReviewer} from './proactive-resume-reviewer.mjs';
+import {priorityProvider} from './priority-classifier.mjs';
 
 /** Local trusted-host assembly. Files and inference start only after task approval. */
 export function proactiveResumeLocalOptions({gatewayBaseUrl,receiptRoot,ReceiptStore,getReviewState,enrollmentMs,attemptBudget,fetchImpl}={}){
@@ -27,12 +28,13 @@ export function proactiveResumeLocalOptions({gatewayBaseUrl,receiptRoot,ReceiptS
         try{return await ReceiptStore.create(directory,sessionId);}
         catch(error){if(error?.code!=='EEXIST')throw error;return ReceiptStore.open(directory,sessionId);}
       },
-      reviewer:{review:async(input,options)=>{
+      reviewer:Object.fromEntries(['review','reviewProgress'].map(method=>[method,async(input,options)=>{
         if(preparing||statePending)return {state:'blocked',reason:'reviewer_busy'};
         preparing=true;
         const deadline=new AbortController(),timer=setTimeout(()=>deadline.abort(),60000);timer.unref?.();
         const signal=AbortSignal.any([deadline.signal,...(options.signal?[options.signal]:[])]);
         try{
+          while(true){
           signal.throwIfAborted();
           const stateSignal=AbortSignal.any([signal,AbortSignal.timeout(5000)]);
           let cancel;
@@ -44,10 +46,20 @@ export function proactiveResumeLocalOptions({gatewayBaseUrl,receiptRoot,ReceiptS
           finally{stateSignal.removeEventListener('abort',cancel);}
           signal.throwIfAborted();
           genie={...state.genie};reviewer.genie=genie;snapshot=state.snapshot;
-          return await reviewer.review(input,{...options,signal});
+          const pool=genie.source==='pool'?genie.config?.fallback:genie.config?.url===gatewayBaseUrl?genie.config:genie.config?.fallback;
+          const canWait=genie.enabled&&!genie.closed&&snapshot?.gateway?.genie_admission_version===1&&pool?.url===gatewayBaseUrl&&pool.model===snapshot.gateway.model&&unique.some(p=>p.url===pool.url&&p.model===pool.model);
+          if(priorityProvider(genie,snapshot,Date.now(),gatewayBaseUrl)||!canWait)return await reviewer[method](input,{...options,signal});
+          // No inference has been dispatched. Refresh free capacity within this
+          // same advisory deadline; ordinary Pi input never waits for this loop.
+          await new Promise((resolve,reject)=>{
+            const cancel=()=>{clearTimeout(wait);reject(new Error('Review cancelled'));};
+            const wait=setTimeout(()=>{signal.removeEventListener('abort',cancel);resolve();},1000);wait.unref?.();
+            signal.addEventListener('abort',cancel,{once:true});
+          });
+          }
         }catch{return {state:'blocked',reason:signal.aborted?'review_cancelled_or_expired':'provider_unavailable'};}
         finally{clearTimeout(timer);preparing=false;}
-      }}
+      }]))
     };
   }});
 }

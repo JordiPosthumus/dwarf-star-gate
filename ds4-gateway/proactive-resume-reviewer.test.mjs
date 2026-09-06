@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Readable} from 'node:stream';
-import {ProactiveResumeReviewer,resumeAdvice,resumeReviewInput} from './proactive-resume-reviewer.mjs';
+import {ProactiveResumeReviewer,resumeAdvice,resumeReviewInput,progressAdvice,progressReviewInput} from './proactive-resume-reviewer.mjs';
 
 const endpoint={url:'http://127.0.0.1:19999/v1',model:'fixture-genie'};
 const disclosure={disclosedProviders:[endpoint]};
@@ -10,6 +10,10 @@ const input=()=>({scope_id:'scope',ticket_id:'ticket',task_message_id:'user-task
   {id:'assistant-last',role:'assistant',text:'Step one is done. Shall I continue with step two?'}
 ]});
 const advice=(verdict='continue')=>({verdict,reason:({continue:'courtesy_check_in',completed:'task_complete',human_input:'owner_decision',uncertain:'insufficient_evidence'})[verdict],evidence:['user-task','assistant-last']});
+const progressInput=()=>({...input(),proposal_id:'proposal',cue_message_id:'cue',messages:[...input().messages,
+  {id:'cue',role:'tool',text:'Gate Genie attributed courtesy cue'},
+  {id:'new-result',role:'tool',text:'Synthetic step two finished'},
+  {id:'final',role:'assistant',text:'Both steps are complete'}]});
 function setup(answer=advice(),options={}){
   const calls=[];
   const fetchImpl=async(url,init)=>{
@@ -184,5 +188,34 @@ for(const trigger of ['cancel','deadline']){
     assert.equal(calls,1,'settlement never triggers an automatic retry');
     assert.equal((await reviewer.review(input(),disclosure)).state,'reviewed');
     assert.equal(calls,2);
+  });
+}
+
+test('progress review requires receipt-bound post-cue evidence and reuses the disclosed transport limits',async()=>{
+  const answer={verdict:'completed',reason:'task_complete',evidence:['user-task','cue','new-result','final']};
+  const {reviewer,calls}=setup(answer);
+  const result=await reviewer.reviewProgress(progressInput(),disclosure);
+  assert.deepEqual(result.advice,answer);assert.equal(result.ticket_id,'ticket');assert.equal(calls.length,1);
+  const payload=JSON.parse(calls[0].body);assert.match(payload.messages[0].content,/Acknowledgments/);
+  assert.deepEqual(JSON.parse(payload.messages[1].content),progressInput());
+  assert.equal(payload.max_tokens,8192);assert.equal(payload.reasoning_effort,'low');
+});
+
+test('progress output cannot use old work, the cue alone, fabricated evidence or model-supplied commands',()=>{
+  const review=progressReviewInput(progressInput()),valid={verdict:'progress',reason:'new_task_work',evidence:['user-task','cue','new-result']};
+  assert.deepEqual(progressAdvice(valid,review),valid);
+  for(const value of [
+    {...valid,evidence:['user-task','assistant-last']},
+    {...valid,evidence:['user-task','cue']},
+    {...valid,evidence:['user-task','cue','invented']},
+    {...valid,command:'continue'},
+    {...valid,verdict:'continue',reason:'courtesy_check_in'}
+  ])assert.throws(()=>progressAdvice(value,review));
+});
+
+for(const [verdict,reason] of [['no_progress','no_new_task_work'],['human_input','owner_decision'],['uncertain','insufficient_evidence']]){
+  test('preserves the '+verdict+' progress outcome without promoting it to successful work',async()=>{
+    const answer={verdict,reason,evidence:['final']},{reviewer}=setup(answer);
+    assert.deepEqual((await reviewer.reviewProgress(progressInput(),disclosure)).advice,answer);
   });
 }

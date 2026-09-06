@@ -51,7 +51,8 @@ Valid courtesy advice goes through native ticket acceptance, including its
 post-persistence race check. Lost acknowledgments reconcile the same proposal;
 they do not issue another one. A separate metadata receipt remains available
 when subsequent inspection reports unverified progress. Acceptance still does
-not prove progress, and this bridge has no progress classifier or outage policy.
+not prove progress. The candidate now has a separate receipt-bound progress
+review; outage policy remains unfinished.
 
 A local fixture joining the actual DSG reviewer/bridge with the Pi source
 candidate passes eight tests using faux Pi generation and scripted Genie replies:
@@ -221,4 +222,16 @@ Three candidate CLI tests cover real faux generation through the ordinary print 
 
 Declining creates no receipt directory. Approval creates a session-specific native store or reopens its existing store. It never removes a prior record to regain an attempt: reopening a prior acceptance becomes unknown and blocks further automatic work. A stopped refresh cannot later start inference.
 
-The local source launcher passed version and help initialization in a disposable Pi directory. Its normal invocation supplies no diagnostic offline, model, thinking, tool or capacity overrides. Three portable tests verify provider/capacity refresh and opt-out. Seventeen private integration checks now include the real native receipt reopen behavior and one attributed cue through the assembled local host after actual terminal-selector approval. These use faux Pi generation and scripted Genie responses; live judgment, installation, progress confirmation and outage continuation remain outstanding.
+The local source launcher passed version and help initialization in a disposable Pi directory. Its normal invocation supplies no diagnostic offline, model, thinking, tool or capacity overrides. Portable tests verify provider/capacity refresh and opt-out. Private integration checks include native receipt reopen behavior and attributed cues through the assembled local host after actual terminal-selector approval. These use faux Pi generation and scripted Genie responses; live judgment, installation and outage continuation remain outstanding.
+
+### Receipt-bound progress confirmation
+
+The enrollment selector now also discloses result review. After an accepted cue's own native run settles, `inspectProgress` issues a ticket bound to that receipt, generation and admission revision. The reviewer compares the existing task with evidence after the exact attributed cue. Positive advice must cite the task, cue and a later result; an acknowledgment, repeated pause, real owner decision or uncertain outcome cannot become confirmed progress.
+
+`confirmProgress` validates the ticket before persistence and the native boundary afterward. Automatic cue admission stays closed throughout that write. If input races persistence, the saved verdict is historical only and the controller is revoked. A real journal failure retains unverified evidence and blocks new cues. Successful native settlement alone never promotes a receipt.
+
+The bridge confirms progress, stops after completion, and closes enrollment on no progress, a human decision or uncertainty. Verified unfinished work can receive the next courtesy check-in within its existing attempt budget. The terminal distinguishes checking the result, verified work, owner decisions and uncertainty. Receipt metadata contains no task text or free-form model explanation.
+
+If compatible pool capacity is occupied, a still-undispatched review can refresh availability within the same sixty-second advisory deadline. It never queues inference behind normal work or retries a dispatched model request. Opt-out aborts the wait.
+
+Validation: 39 candidate native receipt/continuation/CLI checks, 24 private integration checks and 33 portable reviewer/host/context checks pass, along with the candidate repository check and DSG syntax checks. Fixtures cover two successive authorized synthetic steps, completion, acknowledgments, owner decisions, uncertainty, lost acceptance acknowledgment, input before transcript append, active tools and an actual progress-journal write failure. Model advice is scripted, so these tests establish the protocol and execution behavior rather than real-model judgment accuracy. The installed Pi runtime is unchanged.

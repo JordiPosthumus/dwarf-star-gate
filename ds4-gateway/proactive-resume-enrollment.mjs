@@ -23,6 +23,7 @@ export async function enrollProactiveResume({session,ui,reviewer,taskMessage,gat
     'Review provider: '+disclosed.map(p=>JSON.stringify(p.model)+' at '+JSON.stringify(p.url)).join('; '),
     'Share supported conversation text and tool results, up to 24 messages / 32 KiB. Thinking and images are excluded.',
     'Allow Gate Genie courtesy cues only for this authorized task. Human decisions and new input stop automatic continuation.',
+    'Genie also reviews the result to verify new task work. Uncertain results stop further cues.',
     'Expires: '+new Date(expiresAt).toISOString()+' · At most '+attemptBudget+' accepted attempts.',
     'Approval expires after 60 seconds. /proactive-resume-off opts out; ordinary Pi work continues.'
   ].join('\n');
@@ -39,7 +40,7 @@ export async function enrollProactiveResume({session,ui,reviewer,taskMessage,gat
     if(signal?.aborted){prepared.cancel();return {state:'declined'};}
     receipts=await createReceipts(sessionId);
     const control=prepared.activate(receipts);
-    bridge=new ProactiveResumePi({session,control,reviewer,taskMessage,scopeId,consent:{reviewText:true,providers:disclosed}});
+    bridge=new ProactiveResumePi({session,control,reviewer,taskMessage,scopeId,consent:{reviewText:true,reviewProgress:true,providers:disclosed}});
     const initial=start?await bridge.start():null;
     return {state:'enrolled',bridge,initial,close:async()=>{bridge.close();await receipts.close();}};
   }catch{

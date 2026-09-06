@@ -1,5 +1,7 @@
 import {enrollProactiveResume} from './proactive-resume-enrollment.mjs';
 
+const outcomeLabel=last=>last?.state==='reviewing_progress'?'checking result':last?.state==='progress_review_stale'?'result review superseded':({task_complete:last?.receipt_status==='progress_confirmed'?'task complete; work verified':'task complete',new_task_work:'new task work verified',no_new_task_work:'no new task work',owner_decision:'needs your decision',insufficient_evidence:'review uncertain',progress_unverified:'progress not verified',progress_review_unavailable:'result review unavailable',progress_review_stale:'result review superseded'}[last?.reason]||String(last?.reason||last?.receipt_status||last?.verdict||'waiting').replaceAll('_',' '));
+
 /** Candidate Pi main() options. Native CLI parsing, providers and session switching stay owned by Pi. */
 export function proactiveResumeMainOptions({getEnrollmentOptions}={}){
   if(typeof getEnrollmentOptions!=='function')throw new Error('Trusted enrollment options required');
@@ -21,7 +23,7 @@ export function registerProactiveResumeHost(pi,{getSession,getEnrollmentOptions}
   let active=null,pending=null,scheduled=null,statusUI=null;
   const show=()=>{
     const bridge=active?.bridge;
-    const suffix=bridge&&!bridge.closed?'on · '+(bridge.last?.receipt_status||bridge.last?.reason||bridge.last?.verdict||'waiting')+' · /proactive-resume-off':'off';
+    const suffix=bridge?(bridge.closed?'off':'on')+' · '+outcomeLabel(bridge.last)+(bridge.closed?'':' · /proactive-resume-off'):'off';
     statusUI?.setStatus('dsg-proactive-resume','Proactive Resume: '+suffix);
   };
   const close=async()=>{
@@ -50,7 +52,11 @@ export function registerProactiveResumeHost(pi,{getSession,getEnrollmentOptions}
       if(abort.signal.aborted){if(result.state==='enrolled')await result.close();return;}
       if(result.state!=='enrolled'){show();ctx.ui.notify(result.state==='declined'?'Proactive Resume remains off.':'Proactive Resume could not enroll: '+result.reason,'info');return;}
       active=result;
-      result.bridge.onStatus=()=>{if(active===result)show();};
+      result.bridge.onStatus=last=>{
+        if(active!==result)return;
+        show();
+        if(['progress_confirmed','failed','unknown','progress_review_stale'].includes(last.state))ctx.ui.notify('Proactive Resume: '+outcomeLabel(last),last.state==='progress_confirmed'?'info':'warning');
+      };
       show();
       // The command's own native input hold releases before the next event-loop
       // turn. Ordinary user work is never queued behind a Genie review.

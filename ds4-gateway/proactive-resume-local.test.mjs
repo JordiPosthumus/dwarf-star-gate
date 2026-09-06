@@ -31,7 +31,7 @@ test('provider refresh cannot send task text to a newly configured undisclosed m
   const r=await rig(t,{nextState:state=>({...state,genie:{...state.genie,config:{...state.genie.config,model:'changed'}}})});
   await r.run('proactive-resume');await turn();
   assert.equal(r.stats().reads,2);assert.equal(r.stats().fetches,0);
-  assert.match(r.statuses.at(-1),/review_unavailable/);
+  assert.match(r.statuses.at(-1),/review unavailable/);
 });
 test('fresh pool occupancy prevents a review even when capacity was free at enrollment',async t=>{
   const r=await rig(t,{nextState:state=>({...state,snapshot:{...state.snapshot,gateway:{...state.snapshot.gateway,workers:[{is_healthy:true,load:1,queued:0}]}}})});
@@ -41,4 +41,20 @@ test('opt-out during metadata refresh prevents a late snapshot from starting inf
   const barrier=deferred(),r=await rig(t,{barrier});await r.run('proactive-resume');await turn();
   assert.equal(r.stats().reads,2);await r.run('proactive-resume-off');barrier.resolve();await turn();
   assert.equal(r.stats().fetches,0);assert.equal(r.statuses.at(-1),'Proactive Resume: off');
+});
+
+test('a still-undispatched review uses newly freed capacity without retrying inference',async t=>{
+  t.mock.timers.enable({apis:['setTimeout']});let checks=0;
+  const r=await rig(t,{nextState:state=>++checks===1?{...state,snapshot:{...state.snapshot,gateway:{...state.snapshot.gateway,workers:[{is_healthy:true,load:1,queued:0}]}}}:state});
+  await r.run('proactive-resume');await turn();assert.equal(r.stats().fetches,0);
+  t.mock.timers.tick(999);await turn();assert.equal(r.stats().fetches,0);
+  t.mock.timers.tick(1);await turn();assert.equal(r.stats().fetches,1);assert.equal(r.stats().reads,3);
+  t.mock.timers.tick(60000);await turn();assert.equal(r.stats().fetches,1);
+});
+
+test('capacity waiting shares the sixty-second ceiling and never queues a model request',async t=>{
+  t.mock.timers.enable({apis:['setTimeout']});
+  const r=await rig(t,{nextState:state=>({...state,snapshot:{...state.snapshot,gateway:{...state.snapshot.gateway,workers:[{is_healthy:true,load:1,queued:0}]}}})});
+  await r.run('proactive-resume');await turn();t.mock.timers.tick(60000);await turn();
+  assert.equal(r.stats().fetches,0);assert.match(r.statuses.at(-1),/review unavailable/);
 });
