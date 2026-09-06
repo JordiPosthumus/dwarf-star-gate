@@ -1225,3 +1225,9 @@ Wrapped long task/reason text within explicit column widths, shortened repeated 
 Added an options helper for the candidate Pi CLI runtime hook. Commands resolve the current native session after replacement and refuse enrollment before the runtime exists. The normal CLI continues to own arguments, model selection and lifecycle; host setup failure disposes its runtime before any prompt. This remains candidate integration with explicit task enrollment and caller-supplied disclosed review configuration, not an installed launcher.
 
 Validation: candidate CLI 3 passed, host 4 passed, native bridge/enrollment 13 passed, and candidate static/type/dependency/browser smoke checks passed. No production Pi, model/server configuration, enrollment, restart or installation changed.
+
+## 2026-09-06 — Proactive Resume local launcher assembly
+
+Assembled explicit local host settings, fresh provider/capacity checks and native session receipt ownership. Decline creates no store; reopening preserves unresolved acceptance. The review keeps its originally disclosed provider boundary and cancels stale metadata work before inference. A private optional source launcher passes version/help initialization using disposable settings; no installed launcher was replaced.
+
+Validation: reviewer/host/local guards 23 passed; native bridge/enrollment/local integration 17 passed, including one cue after real selector approval and durable receipt reopen. Live synthetic judgment validation was deferred after a read-only capacity check found both Sparks busy with queued work and M3 reserved for optimization. No live inference, enrollment or service interruption occurred.
