@@ -1,5 +1,14 @@
 # Changelog
 
+## Bound the separate rate-normalized prefill study
+
+- Compare a learned rate correction with the same causal rate anchor, retaining
+  the existing baseline-first policy and explicit sparse-history abstention.
+- Freeze the evaluation boundary after all artifact bytes exist; verify model,
+  feature, evaluator and scorer hashes before genuinely later scoring.
+- Keep the first small suffix-only cohort separate from missing cold/tail and
+  unseen-epoch evidence. This private follow-up does not activate a predictor.
+
 ## Reject the frozen prefill candidate after later comparison
 
 - A second disjoint later cohort now includes shared-baseline opportunities;

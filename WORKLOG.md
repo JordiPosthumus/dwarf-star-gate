@@ -8,7 +8,13 @@ For implementation detail, see the [changelog](CHANGELOG.md). For exact history,
 see [Git commits](https://github.com/JordiPosthumus/dwarf-star-gate/commits/main/).
 For unfinished work, see the [roadmap](docs/roadmap.md).
 
-## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
+## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-06
+
+- **Started a separate causal-rate forecast study.** A new frozen candidate
+  learns a correction to a prior per-token estimate and is compared with that
+  same simple estimate on added coverage. The first later sample is small and
+  suffix-only; it cannot resolve development cold-tail errors. The old rejection
+  stands, both studies remain private, and production activation stays closed.
 
 - **Rejected the prefill candidate on later evidence.** A second disjoint cohort
   supplied the missing matched comparison: the frozen candidate was less accurate

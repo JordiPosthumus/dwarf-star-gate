@@ -143,6 +143,9 @@ is implied by this fix.
    candidate-only cold-span error. The frozen candidate is rejected for
    activation; preserve its adverse results and the current fallback. A revised
    hypothesis needs a new study boundary and genuinely new future validation.
+   A separate rate-normalized candidate now has its own frozen evaluation
+   contract and initial suffix-only later evidence. Complete cold/tail and
+   unseen-epoch coverage; its development tail still bars activation.
 5. **Settle the gateway-only image-continuity contract.** The Pi image companion
    was withdrawn. Investigate a transparent outgoing visual window, explicit
    markers and agent-directed rereads/batching, without altering saved history.

@@ -161,6 +161,27 @@ component forecast, not an admission-time cache-path choice. Live activation,
 end-to-end calibration and routing benefit remain separate gates; no such hybrid
 is enabled by this protocol.
 
+### Separate rate-normalized follow-up
+
+A new private hypothesis learns a correction to a causal per-token estimate
+rather than directly predicting elapsed time. Its anchor uses at least three
+prior positive-new-token observations from the same process epoch and cold/suffix
+regime, within the existing history bounds. Sparse history and zero-new-token
+queries abstain for this candidate; a finite existing baseline still wins.
+Compare the learned correction with that exact simple anchor on identical added
+opportunities, not with an absent baseline or a different coverage partition.
+
+Previously inspected captures are development/training for this new hypothesis,
+not untouched validation. Freeze an exact evaluation boundary only after model,
+feature, evaluator, scorer and policy bytes exist; a rounded model timestamp can
+otherwise admit requests observed before freezing finished. Verify all pinned
+hashes before later scoring and preserve baseline parity during row extraction.
+
+The first later check is a small suffix-only cohort. It supplies bounded evidence
+but cannot address the severe development tail, cold regimes or new process
+epochs. Keep those missing partitions explicit; do not let favorable early error
+averages substitute for them. No candidate, fallback or routing change is enabled.
+
 ## Privacy-safe snapshot inventory
 
 **Implemented as an opt-in local/mounted-directory foundation; it does not route
