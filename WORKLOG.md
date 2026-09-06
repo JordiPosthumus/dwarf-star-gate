@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Separated forecast gap filling from baseline replacement.** The experiment
+  protocol now compares shared opportunities and newly covered spans separately,
+  purges unfinished training outcomes and requires a frozen combination policy
+  before later scoring. Broader coverage alone does not justify activation.
+
 - **Made cache-component validation explicit.** The study protocol fixes prefill
   estimates before completion, excludes co-observed prediction opportunities and
   reports coverage alongside error. Later scoring needs a frozen evaluator;

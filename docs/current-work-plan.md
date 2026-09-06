@@ -135,6 +135,10 @@ is implied by this fix.
    from genuinely later scoring, fixes forecasts at observed starts and discloses
    coverage by worker/regime. Freeze evaluator and cohort before new evidence;
    disk-load token counts observed after loading are not pre-load forecasts.
+   Compare broader-coverage prefill candidates on shared baseline opportunities
+   and added coverage separately. A baseline-first gap-filling hypothesis needs
+   a frozen combination policy and later evidence; engine-start features cannot
+   be repurposed as admission-time inputs. No replacement or hybrid is enabled.
 5. **Settle the gateway-only image-continuity contract.** The Pi image companion
    was withdrawn. Investigate a transparent outgoing visual window, explicit
    markers and agent-directed rereads/batching, without altering saved history.

@@ -1,5 +1,14 @@
 # Changelog
 
+## Separate prefill gap filling from baseline replacement
+
+- Document matched-baseline versus candidate-only comparisons and a private
+  baseline-first experiment with chronological, label-availability-purged folds.
+- Require a separately frozen combination policy and later traffic, retaining
+  worker/regime coverage and abstention rather than scoring unknowns as zero.
+- Keep engine-start features distinct from admission-time inputs. This is a
+  study protocol, not an enabled hybrid, predictor replacement or routing change.
+
 ## Define causal cache-component validation
 
 - Separate historical replay, frozen future evaluation and routing benefit.

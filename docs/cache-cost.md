@@ -114,6 +114,26 @@ observations may train the unchanged rolling baseline but are not future test
 rows. Keep deployment results private. This protocol does not add a live
 collector, change sample retention, fit an XGB model or relax activation gates.
 
+### Evaluate gap filling separately from replacement
+
+Broader prediction coverage is not sufficient reason to replace the local
+baseline. Compare a candidate against it on exactly the spans where both predict;
+report candidate-only coverage and errors separately. A worker/regime training
+median is a useful simple comparator, not a substitute for the matched baseline.
+
+One offline hypothesis is **baseline first, candidate only when it abstains**.
+Select the candidate recipe using chronological training-only validation, purging
+labels not yet completed at each cutoff. Inspect development results once, then
+freeze both model and combination policy before later traffic. Do not rename an
+inspected development partition as future validation or retune on that future
+cohort. Unknown workers and invalid features still require abstention.
+
+These prefill features become available at engine start, after cache selection.
+Even a successful gap-filling experiment would initially support an updated
+component forecast, not an admission-time cache-path choice. Live activation,
+end-to-end calibration and routing benefit remain separate gates; no such hybrid
+is enabled by this protocol.
+
 ## Privacy-safe snapshot inventory
 
 **Implemented as an opt-in local/mounted-directory foundation; it does not route
