@@ -56,7 +56,9 @@ function result(start,requests) {
     backend_epoch:start.backend_epoch,backend_epoch_confidence:start.backend_epoch_confidence,request_id:null,
     status:'abstained',reason:null,confidence:'none',basis:'stock_ds4_timing_shadow',dispatch_delta_ms:null,
     prompt_tokens:start.prompt,cached_tokens:start.cached,new_tokens:start.new_tokens};
-  if(!start.backend_epoch)return {...base,reason:'backend_epoch_unavailable'};
+  // A syntactically valid digest says nothing about how the epoch was observed.
+  // Unknown provenance must not fall through to the bounded-confidence branch.
+  if(!start.backend_epoch||!['strong','bounded'].includes(start.backend_epoch_confidence))return {...base,reason:'backend_epoch_unavailable'};
   if(start.lifecycle_conflict)return {...base,reason:'gateway_evidence_conflict'};
   const candidates=candidateWindows(start,requests),candidateIds=new Set(candidates.map(request=>request.request_id));
   // Once an engine start has overlapped multiple gateway windows, pruning or a

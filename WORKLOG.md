@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Stopped unknown epoch provenance from looking corroborated.** A digest
+  without recognized confidence now stays unassigned even when usage matches.
+  Preserved evidence can still reconcile when valid metadata arrives; no cache,
+  model, request or routing setting changed.
+
 - **Gave Genie the missing attribution explanations.** His bounded briefing now
   distinguishes uniquely matched overlaps from duplicate usage matches, keeps
   candidate confidence and valid signed clock offsets, and still excludes

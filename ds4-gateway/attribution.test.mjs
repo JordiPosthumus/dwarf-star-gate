@@ -156,6 +156,36 @@ test('boot and PID fallback can corroborate but never receives strong-epoch conf
   assert.equal(a.snapshot().recent[0].status,'corroborated');assert.equal(a.snapshot().recent[0].confidence,'bounded_candidate');
 });
 
+test('an epoch hash without recognized provenance confidence cannot corroborate a request',()=>{
+  for(const confidence of [undefined,null,'unavailable','unknown-source']){
+    const a=new EngineAttribution();a.acceptGateway(dispatch());
+    a.acceptEngine(start(sample,'spark1',12000,{backend_epoch_confidence:confidence}));
+    assert.equal(a.snapshot().recent[0].reason,'backend_epoch_unavailable');
+    a.acceptGateway(finish());
+    const row=a.snapshot().recent[0];assert.equal(row.backend_epoch,epoch);
+    assert.equal(row.backend_epoch_confidence,'unavailable');assert.equal(row.status,'abstained');
+    assert.equal(row.confidence,'none');assert.equal(row.request_id,null);
+    assert.equal(a.snapshot().quality.counts.corroborated,0);
+    // Later recognized metadata is usable without rereading or inventing usage.
+    a.acceptEngine(start(sample,'spark1',12000,{backend_epoch_confidence:'bounded'}));
+    assert.equal(a.snapshot().recent[0].reason,'usage_match');
+    assert.equal(a.snapshot().recent[0].confidence,'bounded_candidate');
+  }
+});
+
+test('unavailable epoch confidence preserves overlapping owners until genuine metadata arrives',()=>{
+  const a=new EngineAttribution();a.acceptGateway(dispatch());a.acceptGateway(dispatch(other));
+  a.acceptEngine(start(sample,'spark1',12000,{backend_epoch_confidence:'unavailable'}));
+  a.acceptGateway(finish());a.acceptGateway(finish(other,'spark1',30000,{prompt_tokens:700,cached_tokens:600}));
+  assert.equal(a.snapshot().recent[0].reason,'backend_epoch_unavailable');
+  a.acceptEngine(start());
+  assert.equal(a.snapshot().recent[0].reason,'usage_disambiguated_overlap');
+  assert.equal(a.snapshot().recent[0].request_id,request);
+  a.acceptEngine(start(sample,'spark1',12000,{backend_epoch_confidence:'unavailable'}));
+  assert.equal(a.snapshot().recent[0].reason,'backend_epoch_unavailable');
+  assert.equal(a.snapshot().recent[0].request_id,null);
+});
+
 test('attribution input and output are bounded and allowlisted',()=>{
   const saved=[],a=new EngineAttribution(row=>saved.push(row));
   assert.equal(a.acceptGateway({...dispatch(),request_id:'bad'}),null);assert.equal(a.acceptEngine({...start(),sample_id:'bad'}),null);

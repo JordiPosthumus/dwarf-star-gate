@@ -1,5 +1,14 @@
 # Changelog
 
+## Keep unknown epoch provenance out of corroborated attribution
+
+- Require recognized strong or bounded epoch confidence as well as a valid
+  digest before assigning a request candidate. Unknown provenance abstains.
+- Retain the digest, overlap guards and observed usage for later metadata
+  reconciliation; no history, matching windows or production settings change.
+- Cover single/overlapping requests, missing or invalid confidence and later
+  metadata enrichment or withdrawal with synthetic regressions.
+
 ## Preserve attribution explanations in Genie briefings
 
 - Share the fixed reason/confidence vocabulary with the attribution summary,

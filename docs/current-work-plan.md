@@ -72,6 +72,9 @@ is implied by this fix.
    Genie now receives the canonical overlap reasons and candidate confidence,
    with signed offsets inside the same correlator bounds. This explains existing
    results without upgrading their ownership evidence or exposing request IDs.
+   A valid-looking epoch digest with missing/unrecognized provenance confidence
+   now remains unavailable, rather than falling through to bounded corroboration.
+   Later recognized metadata can still reconcile preserved evidence.
    Stream observers now recognize CR/LF/CRLF consistently with isolated Pi
    acceptance, avoiding false failures while preserving accelerator-error evidence.
    Continue focused lifecycle/privacy/retention checks rather than broad rewrites.

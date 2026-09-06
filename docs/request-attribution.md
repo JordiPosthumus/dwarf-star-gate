@@ -36,8 +36,9 @@ events in the same worker and observed process epoch. A row is:
 - `corroborated` when that one candidate later reports exactly matching prompt
   and cached-token usage, or when every clock-overlapped gateway window has
   completed and exactly one reports that matching usage tuple;
-- `abstained` when the epoch is missing, no window exists, windows overlap, one
-  request sees multiple starts, returned usage conflicts, or more than one
+- `abstained` when the epoch or recognized epoch confidence is missing, no window
+  exists, windows overlap, one request sees multiple starts, returned usage
+  conflicts, or more than one
   overlapped request reports the same tuple.
 
 With a strong systemd epoch, `corroborated` means **high-confidence candidate**,
@@ -46,6 +47,11 @@ explicitly bounded. DS4 does not currently echo the gateway request ID into its
 timing record. Invisible direct clients and unknown clock error cannot be ruled
 out merely by a time-and-usage match. Therefore these rows do not train XGB,
 accuse a route of a cache miss, move work, or authorize recovery.
+
+A well-formed epoch digest without `strong` or `bounded` provenance confidence
+remains `backend_epoch_unavailable`; it cannot become a bounded candidate merely
+because usage matches. The digest and overlap guards are retained, so later
+recognized metadata can reconcile the same start with already observed evidence.
 
 The correlator normally retains 15 minutes of completed history, but preserves an
 open attribution span for up to seven days so long-context xhigh generations are
