@@ -1,5 +1,21 @@
 import {enrollProactiveResume} from './proactive-resume-enrollment.mjs';
 
+/** Candidate Pi main() options. Native CLI parsing, providers and session switching stay owned by Pi. */
+export function proactiveResumeMainOptions({getEnrollmentOptions}={}){
+  if(typeof getEnrollmentOptions!=='function')throw new Error('Trusted enrollment options required');
+  let runtime;
+  return {
+    onRuntimeCreated:value=>{runtime=value;},
+    extensionFactories:[pi=>registerProactiveResumeHost(pi,{
+      getSession:()=>{
+        if(!runtime)throw new Error('Native runtime unavailable');
+        return runtime.session;
+      },
+      getEnrollmentOptions
+    })]
+  };
+}
+
 /** Explicit trusted-host registration; the ordinary installed extension does not call it. */
 export function registerProactiveResumeHost(pi,{getSession,getEnrollmentOptions}={}){
   let active=null,pending=null,scheduled=null,statusUI=null;

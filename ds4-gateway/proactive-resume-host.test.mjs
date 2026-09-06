@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {registerProactiveResumeHost} from './proactive-resume-host.mjs';
+import {registerProactiveResumeHost,proactiveResumeMainOptions} from './proactive-resume-host.mjs';
 
 const deferred=()=>{let resolve;const promise=new Promise(r=>{resolve=r;});return {promise,resolve};};
 const turn=()=>new Promise(resolve=>setImmediate(resolve));
@@ -39,4 +39,20 @@ test('session exit aborts an in-flight review and late completion cannot restore
   assert.equal(r.stats().reviewed,1);await r.events.get('session_before_switch')();
   assert.equal(r.stats().reviewSignal.aborted,true);assert.equal(r.stats().closed,1);
   reviewWait.resolve();await turn();assert.equal(r.statuses.at(-1),'Proactive Resume: off');
+});
+
+test('CLI host refuses pre-runtime enrollment and binds each new command to the current native session',async()=>{
+  const commands=new Map(),observed=[],notices=[];
+  const options=proactiveResumeMainOptions({getEnrollmentOptions:session=>{
+    observed.push(session);
+    return {gatewayBaseUrl:session.model.baseUrl,providers:[{url:session.model.baseUrl,model:'fixture'}],expiresAt:Date.now()+60000,attemptBudget:1};
+  }});
+  options.extensionFactories[0]({registerCommand:(name,command)=>commands.set(name,command.handler),on:()=>{}});
+  const ui={select:async()=> 'Keep disabled',setStatus:()=>{},notify:message=>notices.push(message)};
+  const invoke=()=>commands.get('proactive-resume')('',{hasUI:true,ui});
+  await invoke();assert.equal(observed.length,0);assert.match(notices.at(-1),/unavailable/);
+  const session=id=>({sessionId:id,model:{baseUrl:'http://127.0.0.1:30000/v1'},messages:[{role:'user',content:'Complete task '+id}],prepareContinuationEnrollment:()=>({cancel:()=>{}})});
+  const first=session('one'),second=session('two'),runtime={session:first};
+  options.onRuntimeCreated(runtime);await invoke();
+  runtime.session=second;await invoke();assert.deepEqual(observed,[first,second]);
 });

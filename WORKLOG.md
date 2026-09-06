@@ -1219,3 +1219,9 @@ Validation: release suite 696 passed / 9 optional skips; installed Pi inline/fil
 ## 2026-09-06 — Current Jobs table readability
 
 Wrapped long task/reason text within explicit column widths, shortened repeated status wording, and separated waited/running times. Compact priority labels and current accessible names keep the controls usable; narrow screens scroll within a keyboard-focusable table region. The synthetic Genie screenshot is refreshed. Four-width overflow checks and the existing browser navigation/priority-control flows pass.
+
+## 2026-09-06 — Proactive Resume candidate CLI host
+
+Added an options helper for the candidate Pi CLI runtime hook. Commands resolve the current native session after replacement and refuse enrollment before the runtime exists. The normal CLI continues to own arguments, model selection and lifecycle; host setup failure disposes its runtime before any prompt. This remains candidate integration with explicit task enrollment and caller-supplied disclosed review configuration, not an installed launcher.
+
+Validation: candidate CLI 3 passed, host 4 passed, native bridge/enrollment 13 passed, and candidate static/type/dependency/browser smoke checks passed. No production Pi, model/server configuration, enrollment, restart or installation changed.
