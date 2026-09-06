@@ -3,12 +3,43 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import {createHash} from 'node:crypto';
 import {GenieMemory} from './genie-memory.mjs';
 import {Genie,briefing,hardeningCandidates,parseGenieReview} from './genie.mjs';
 import {createDashboard} from './dashboard.mjs';
 import {safeGatewayEvent} from './telemetry.mjs';
 import {EngineAttribution} from './attribution.mjs';
 const sample=(at=1000,change={})=>({time:at,gateway_at:at,gateway:{workers:[{id:'worker-a',is_healthy:true,drained:false,operator_paused:false,holds:[],context_length:262144,...change}]},devices:[],events:[]});
+
+test('unrepresentable evidence times cannot crash a Genie briefing or create dated incidents',()=>{
+  for(const at of [Number.MAX_SAFE_INTEGER,8640000000000001,-1,Infinity,NaN]){
+    const s=sample(at,{is_healthy:false,probe_error:'ECONNRESET',last_probe:at});s.gateway_error=true;
+    s.gateway.recovery={operations:[{worker_id:'worker-a',state:'failed',error:'probe_failed',updated_at:at}]};
+    assert.deepEqual(hardeningCandidates(s),[]);assert.deepEqual(briefing(s).hardening_candidates,[]);
+  }
+  const s=sample(1000,{is_healthy:false,probe_error:'ECONNRESET',last_probe:Number.MAX_SAFE_INTEGER});
+  assert.equal(hardeningCandidates(s)[0].observed_at,new Date(1000).toISOString());
+  for(const at of [0,8640000000000000]){
+    const s=sample(at,{is_healthy:false,probe_error:'ECONNRESET',last_probe:at});
+    assert.equal(hardeningCandidates(s)[0].observed_at,new Date(at).toISOString());
+  }
+});
+
+test('legacy notebook notes with unrepresentable dates stay visible without rewriting history',t=>{
+  const s=sample(),m=new GenieMemory(fixture(t),{now:()=>1000});m.setEnabled(true);
+  s.events=[{event:'request_finished',time:new Date(900).toISOString(),node:'worker-a',outcome:'incomplete_sse'}];
+  const [candidate]=hardeningCandidates(s);
+  m.saveHardeningNotes([{candidate_id:candidate.id,title:'Retained evidence',suggestion:'Inspect the recorded event time.'}],[candidate]);
+  const rows=fs.readFileSync(m.file,'utf8').trim().split('\n').map(JSON.parse),note=rows.find(row=>row.kind==='hardening_note');
+  note.data.observed_at=Number.MAX_SAFE_INTEGER;
+  note.source_digest=createHash('sha256').update(JSON.stringify(note.data)).digest('hex');
+  const before=rows.map(row=>JSON.stringify(row)+'\n').join('');fs.writeFileSync(m.file,before);
+  const loaded=new GenieMemory(m.directory),genie=new Genie(null,()=>s,{memory:loaded});t.after(()=>genie.close());
+  const shown=genie.status().hardening_notes[0];
+  assert.equal(shown.title,'Retained evidence');assert.equal(shown.observed_at,null);assert.equal(shown.durable,true);
+  assert.equal(loaded.error,null);assert.equal(loaded.hardening(s)[0].data.observed_at,Number.MAX_SAFE_INTEGER);
+  assert.equal(fs.readFileSync(m.file,'utf8'),before);
+});
 
 test('Genie preserves actual overlap explanations and bounded candidate confidence',()=>{
   for(const duplicate of [false,true]){

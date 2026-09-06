@@ -101,6 +101,12 @@ const stableHash=value=>createHash('sha256').update(JSON.stringify(value)).diges
 const boundedCode=value=>typeof value==='string'&&/^[a-zA-Z0-9_:-]{1,128}$/.test(value)?value.toLowerCase():null;
 const boundedWorker=value=>typeof value==='string'&&/^\w[\w-]{0,63}$/.test(value)?value:null;
 const boundedTime=value=>typeof value==='string'&&Number.isFinite(Date.parse(value))?new Date(value).toISOString():null;
+const boundedEvidenceTime=value=>{
+  if(typeof value==='string')return boundedTime(value);
+  if(!Number.isSafeInteger(value)||value<0)return null;
+  const date=new Date(value);
+  return Number.isFinite(date.getTime())?date.toISOString():null;
+};
 const requestFailureOutcomes=new Set(['upstream_http_error','upstream_engine_error','incomplete_sse','upstream_stream_error','upstream_aborted','upstream_error','connection_closed']);
 const safeHttpStatus=value=>Number.isInteger(value)&&value>=100&&value<=599?value:null;
 
@@ -109,7 +115,7 @@ const safeHttpStatus=value=>Number.isInteger(value)&&value>=100&&value<=599?valu
 // response, image, session key or arbitrary log prose enters this list.
 export function hardeningCandidates(snapshot) {
   const g=snapshot.gateway,candidates=[];
-  const timeOf=value=>boundedTime(value)??(Number.isSafeInteger(value)&&value>=0?new Date(value).toISOString():null);
+  const timeOf=boundedEvidenceTime;
   const add=({failure_class,scope='fleet',reason,observed_at,continuity,evidence_refs})=>{
     if(!boundedCode(failure_class)||!(scope==='fleet'||boundedWorker(scope))||!boundedCode(reason)||!boundedTime(observed_at))return;
     const allowed=[...new Set((evidence_refs??[]).filter(ref=>ref==='fleet'||/^worker:\w[\w-]{0,63}$/.test(ref)))].slice(0,4);
@@ -140,7 +146,7 @@ export function hardeningCandidates(snapshot) {
   if(last&&['guided','failed'].includes(last.kind))add({failure_class:'visual_compatibility',scope:last.node??'fleet',reason:last.reason??`visual_${last.kind}`,observed_at:last.time,
     continuity:last.kind==='guided'?'guidance_turn_completed':'unknown',evidence_refs:[last.node?`worker:${last.node}`:'fleet']});
   for(const row of (g?.recovery?.operations??[]).slice(0,8)){
-    const scope=boundedWorker(row.worker_id),observed_at=Number.isSafeInteger(row.updated_at)?new Date(row.updated_at).toISOString():boundedTime(row.updated_at),reason=boundedCode(row.error)??boundedCode(row.state);
+    const scope=boundedWorker(row.worker_id),observed_at=timeOf(row.updated_at),reason=boundedCode(row.error)??boundedCode(row.state);
     if(scope&&row.state==='failed'&&observed_at&&reason)add({failure_class:'recovery_failure',scope,reason,observed_at,continuity:'unknown',evidence_refs:[`worker:${scope}`]});
   }
   const snapshotAt=timeOf(snapshot.time)??timeOf(snapshot.gateway_at);
@@ -321,7 +327,7 @@ export class Genie {
   publicQuestion(){return this.questionReceipt&&Object.fromEntries(['id','state','submitted_at','started_at','finished_at','report_id','error'].filter(k=>this.questionReceipt[k]!==undefined).map(k=>[k,this.questionReceipt[k]]));}
   status(){const snapshot=this.getSnapshot(),actionSupervision=!!this.rebalance||!!this.predict||!!this.recover&&!!snapshot.gateway?.recovery?.automatic;
     const memory=this.memory?{...this.memory.status(),...this.memory.retrieve(snapshot)}:{available:false,enabled:false,error:null,notes:[]},byCandidate=new Map();
-    for(const note of this.memory?.hardening?.(snapshot)??[])byCandidate.set(note.data.candidate_id,{id:note.id,candidate_id:note.data.candidate_id,title:note.data.title,suggestion:note.data.suggestion,failure_class:note.data.failure_class,scope:note.data.worker??'fleet',reason:note.data.reason,observed_at:new Date(note.data.observed_at).toISOString(),continuity:note.data.continuity,at:note.at,revision:note.revision,durable:true});
+    for(const note of this.memory?.hardening?.(snapshot)??[])byCandidate.set(note.data.candidate_id,{id:note.id,candidate_id:note.data.candidate_id,title:note.data.title,suggestion:note.data.suggestion,failure_class:note.data.failure_class,scope:note.data.worker??'fleet',reason:note.data.reason,observed_at:boundedEvidenceTime(note.data.observed_at),continuity:note.data.continuity,at:note.at,revision:note.revision,durable:true});
     for(const report of this.reports)for(const note of report.hardening_notes??[]){
       const current=byCandidate.get(note.candidate_id),same=current&&['title','suggestion','failure_class','scope','reason','observed_at','continuity'].every(key=>current[key]===note[key]);
       // Review time is not evidence time. Repeating a saved hypothesis must

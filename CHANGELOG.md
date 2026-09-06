@@ -1,5 +1,14 @@
 # Changelog
 
+## Keep invalid evidence dates from crashing Genie
+
+- Check date representability before converting numeric failure evidence or
+  durable notebook timestamps. Safe integers alone are not valid date evidence.
+- Keep legacy notes and journal bytes intact; unavailable display times become
+  unknown instead of an exception or an invented epoch timestamp.
+- Cover invalid inputs, valid date boundaries, briefing construction and legacy
+  notebook loading. No storage repair, model setting or recovery authority changes.
+
 ## Keep unknown epoch provenance out of corroborated attribution
 
 - Require recognized strong or bounded epoch confidence as well as a valid

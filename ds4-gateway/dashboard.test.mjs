@@ -14,6 +14,15 @@ import {cacheInventoryDirectories} from './cache-inventory.mjs';
 import './rate-peaks.test.mjs';
 const parse = (s, t = 1000) => parseTiming(`0902 14:00:00 ds4-server: ${s}`, t);
 
+test('dashboard clocks show unknown for missing or unrepresentable evidence times',()=>{
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const context=vm.createContext({});vm.runInContext(source,context);
+  for(const value of ['null','undefined','NaN','Infinity','Number.MAX_SAFE_INTEGER','"invalid"','{}','[]','true'])
+    assert.equal(vm.runInContext(`clock(${value})`,context),'unknown');
+  for(const value of ['0','1000','"2026-01-01T00:00:00Z"'])
+    assert.equal(vm.runInContext(`clock(${value})`,context),vm.runInContext(`new Date(${value}).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'})`,context));
+});
+
 test('cache cards distinguish low-reuse evidence, disk-load time and unknown loss cost',()=>{
   const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);

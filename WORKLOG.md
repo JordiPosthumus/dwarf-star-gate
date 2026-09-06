@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Kept malformed dates from taking Genie offline.** Failure evidence now
+  checks whether timestamps can actually be represented as dates. Legacy notes
+  remain visible with an unknown date, without deleting or rewriting history.
+  Valid timestamps keep their existing display.
+
 - **Stopped unknown epoch provenance from looking corroborated.** A digest
   without recognized confidence now stays unassigned even when usage matches.
   Preserved evidence can still reconcile when valid metadata arrives; no cache,

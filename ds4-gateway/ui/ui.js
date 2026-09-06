@@ -5,7 +5,11 @@ const fmtWhole = n => Number.isFinite(n) ? Math.round(n).toLocaleString() : '—
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const age = (time, now) => !time ? 'no sample yet' : now - time < 5000 ? 'just now' : now - time < 60000 ? `${Math.floor((now-time)/1000)}s ago` : `${Math.floor((now-time)/60000)}m ago`;
 const remaining = (time, now) => !time ? 'unknown' : time <= now ? 'expired' : time-now < 60000 ? `${Math.ceil((time-now)/1000)}s` : time-now < 3600000 ? `${Math.ceil((time-now)/60000)}m` : `${(Math.ceil((time-now)/360000)/10).toFixed(1).replace(/\.0$/,'')}h`;
-const clock = t => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+const clock = t => {
+  if(!['string','number'].includes(typeof t))return 'unknown';
+  const date=new Date(t);
+  return Number.isFinite(date.getTime())?date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }):'unknown';
+};
 function predictionSessionLabel(evidence){
   if(!Number.isSafeInteger(evidence?.known_sessions)||evidence.known_sessions<0)return `${fmt(evidence?.sessions??0)} recorded groups`;
   return `${fmt(evidence.known_sessions)} known sessions${evidence.unknown_identity_requests>0?` · ${fmt(evidence.unknown_identity_requests)} requests without identity`:''}`;

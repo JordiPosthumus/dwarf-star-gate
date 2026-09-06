@@ -83,6 +83,9 @@ is implied by this fix.
    Notebook reads now pin the checked byte length and reject observed size
    changes; appends verify journal identity as well as length. Preserve the
    single-writer contract rather than silently accepting replacement history.
+   Failure-evidence and legacy notebook timestamps now check date representability
+   before display. Invalid dates remain unknown; saved notes and journal bytes
+   stay intact rather than crashing optional Genie status or repairing history.
 2. **Make cache misses actionable.** The machine-card view now separates low-reuse
    findings, unconfirmed evidence, engine RAM misses/disk restores and starts
    without reuse. It shows coverage, recency, measured disk-load spans and next
