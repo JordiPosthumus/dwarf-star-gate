@@ -14,6 +14,7 @@ const MEMORY_SCOPES=new Set(['host','host_unified']);
 const ACTIVITY_SCOPES=new Set(['gpu_kernel_time','accelerator']);
 const POWER_SCOPES=new Set(['compute_module','system','gpu_only']);
 const CLOCK_SCOPES=new Set(['sm','accelerator']);
+const TEMPERATURE_SENSORS={smc_tf14:'gpu',smc_tf04:'cpu',nvidia_gpu:'gpu',cpu_package:'cpu',gpu:'gpu',ambient:'ambient',board:'board'};
 
 // This command is a source constant: configuration can choose the adapter and
 // sample interval, but can never inject a command or SSH option. Spark's unified
@@ -23,6 +24,11 @@ export function nvidiaLinuxCommand(intervalMs){
   const seconds=intervalMs/1000;
   if(!Number.isInteger(seconds)||seconds<10||seconds>60)throw new Error('Hardware interval must be whole seconds from 10–60');
   return `while :; do mem=$(awk '/^MemTotal:/{t=$2}/^MemAvailable:/{a=$2}END{printf "%s,%s",t,a}' /proc/meminfo); gpu=$(timeout 3s nvidia-smi --query-gpu=module.power.draw.instant,power.draw,utilization.gpu,clocks.current.sm --format=csv,noheader,nounits -i 0 2>/dev/null | head -n 1 | tr -d ' '); case "$gpu" in *,*,*,*) ;; *) gpu=",$(timeout 3s nvidia-smi --query-gpu=power.draw,utilization.gpu,clocks.current.sm --format=csv,noheader,nounits -i 0 2>/dev/null | head -n 1 | tr -d ' ')" ;; esac; printf 'DSG_HW_V2|%s|%s\\n' "$mem" "$gpu"; sleep ${seconds}; done`;
+}
+
+export function nvidiaThermalCommand(intervalMs=60000){
+  if(intervalMs!==60000)throw new Error('Thermal observer cadence is 60 seconds');
+  return "while :; do thermal=$(timeout 3s nvidia-smi --query-gpu=temperature.gpu,clocks_event_reasons.hw_thermal_slowdown,clocks_event_reasons.sw_thermal_slowdown --format=csv,noheader,nounits -i 0 2>/dev/null | head -n 1); printf 'DSG_THERMAL_V1|%s\\n' \"$thermal\"; sleep 60; done";
 }
 
 const finite=(value,min,max)=>{
@@ -39,9 +45,30 @@ const sampleShape=(raw,time=Date.now())=>{
   if(memoryTotal!==null&&memoryUsed!==null&&memoryUsed<=memoryTotal&&MEMORY_SCOPES.has(raw.memory_scope))Object.assign(sample,{memory_used_bytes:memoryUsed,memory_total_bytes:memoryTotal,memory_scope:raw.memory_scope});
   if(activity!==null&&ACTIVITY_SCOPES.has(raw.accelerator_scope))Object.assign(sample,{accelerator_activity_pct:activity,accelerator_scope:raw.accelerator_scope});
   if(power!==null&&POWER_SCOPES.has(raw.power_scope))Object.assign(sample,{power_watts:power,power_scope:raw.power_scope});
+  if(sample.power_watts!==undefined&&raw.power_sensor==='smc_pstr'&&raw.power_scope==='system')sample.power_sensor='smc_pstr';
   if(clock!==null&&CLOCK_SCOPES.has(raw.clock_scope))Object.assign(sample,{clock_mhz:clock,clock_scope:raw.clock_scope});
+  if(Array.isArray(raw.temperatures)&&raw.temperatures.length<=4){
+    const seen=new Set(),temperatures=[];
+    for(const row of raw.temperatures){
+      const celsius=finite(row?.celsius,-50,150),measured=finite(row?.time??at,1,at);
+      if(!Object.hasOwn(TEMPERATURE_SENSORS,row?.sensor)||row.scope!==TEMPERATURE_SENSORS[row.sensor]||celsius===null||measured===null||seen.has(row.sensor))continue;
+      seen.add(row.sensor);temperatures.push({sensor:row.sensor,scope:row.scope,celsius,time:measured});
+    }
+    if(temperatures.length)sample.temperatures=temperatures;
+  }
+  if(typeof raw.thermal_throttling==='boolean'&&raw.thermal_sensor==='nvidia_gpu')Object.assign(sample,{thermal_throttling:raw.thermal_throttling,thermal_sensor:'nvidia_gpu'});
   return Object.keys(sample).length>1?sample:null;
 };
+
+export function parseNvidiaThermal(line,time=Date.now()){
+  if(typeof line!=='string'||line.length>MAX_LINE)return null;
+  const [tag,values,...extra]=line.trim().split('|');if(tag!=='DSG_THERMAL_V1'||extra.length)return null;
+  const fields=(values??'').split(',').map(value=>value.trim());if(fields.length!==3)return null;
+  const [temperature,hardware,software]=fields,celsius=finite(temperature,-50,150),sample={time};
+  if(celsius!==null)sample.temperatures=[{sensor:'nvidia_gpu',scope:'gpu',celsius,time}];
+  if([hardware,software].every(value=>['Active','Not Active'].includes(value)))Object.assign(sample,{thermal_throttling:hardware==='Active'||software==='Active',thermal_sensor:'nvidia_gpu'});
+  return sampleShape(sample,time);
+}
 
 export function parseNvidiaLinux(line,time=Date.now()){
   if(typeof line!=='string'||line.length>MAX_LINE)return null;
@@ -103,15 +130,15 @@ class FileSource{
 }
 
 class NvidiaSource{
-  constructor(ssh,interval,accept,status,{spawnImpl=spawn,setTimer=setTimeout,clearTimer=clearTimeout,now=Date.now}={}){
-    Object.assign(this,{ssh,interval,accept,status,spawnImpl,setTimer,clearTimer,now});this.child=null;this.retry=null;this.watchdog=null;this.closed=false;this.buffer='';this.bad=0;this.pendingReason=null;
+  constructor(ssh,interval,accept,status,{spawnImpl=spawn,setTimer=setTimeout,clearTimer=clearTimeout,now=Date.now,command=nvidiaLinuxCommand,parse=parseNvidiaLinux}={}){
+    Object.assign(this,{ssh,interval,accept,status,spawnImpl,setTimer,clearTimer,now,command,parse});this.child=null;this.retry=null;this.watchdog=null;this.closed=false;this.buffer='';this.bad=0;this.pendingReason=null;
   }
-  start(){if(this.closed||this.child||this.retry)return;this.status('connecting',null);let child;try{child=this.spawnImpl('/usr/bin/ssh',['-T','-o','BatchMode=yes','-o','ConnectTimeout=8','-o','ServerAliveInterval=15','-o','ServerAliveCountMax=2',this.ssh,nvidiaLinuxCommand(this.interval)],{stdio:['ignore','pipe','ignore']});}catch{this.status('disconnected','adapter_spawn_failed');this.retry=this.setTimer(()=>{this.retry=null;this.start();},10000);return;}this.child=child;child.stdout.setEncoding('utf8');this.arm();
+  start(){if(this.closed||this.child||this.retry)return;this.status('connecting',null);let child;try{child=this.spawnImpl('/usr/bin/ssh',['-T','-o','BatchMode=yes','-o','ConnectTimeout=8','-o','ServerAliveInterval=15','-o','ServerAliveCountMax=2',this.ssh,this.command(this.interval)],{stdio:['ignore','pipe','ignore']});}catch{this.status('disconnected','adapter_spawn_failed');this.retry=this.setTimer(()=>{this.retry=null;this.start();},10000);return;}this.child=child;child.stdout.setEncoding('utf8');this.arm();
     child.stdout.on('data',data=>this.data(data));child.on('error',()=>this.finish('adapter_spawn_failed'));child.on('close',()=>this.finish(this.pendingReason??'adapter_unavailable'));
   }
   arm(){if(this.watchdog)this.clearTimer(this.watchdog);this.watchdog=this.setTimer(()=>{this.watchdog=null;this.pendingReason='adapter_timeout';this.status('disconnected',this.pendingReason);this.child?.kill();},Math.max(35000,this.interval*3+5000));}
   data(data){this.buffer+=data;if(Buffer.byteLength(this.buffer)>MAX_LINE*4){this.pendingReason='adapter_output_limit';this.status('disconnected',this.pendingReason);this.child?.kill();return;}let end;
-    while((end=this.buffer.indexOf('\n'))>=0){const line=this.buffer.slice(0,end).replace(/\r$/,'');this.buffer=this.buffer.slice(end+1);const sample=parseNvidiaLinux(line,this.now());if(sample){this.bad=0;this.pendingReason=null;this.accept(sample);this.status('connected',null);this.arm();}else if(++this.bad>=3){this.pendingReason='adapter_invalid_output';this.status('disconnected',this.pendingReason);this.child?.kill();return;}}
+    while((end=this.buffer.indexOf('\n'))>=0){const line=this.buffer.slice(0,end).replace(/\r$/,'');this.buffer=this.buffer.slice(end+1);const sample=this.parse(line,this.now());if(sample){this.bad=0;this.pendingReason=null;this.accept(sample);this.status('connected',null);this.arm();}else if(++this.bad>=3){this.pendingReason='adapter_invalid_output';this.status('disconnected',this.pendingReason);this.child?.kill();return;}}
   }
   finish(reason){if(!this.child)return;this.child=null;this.buffer='';this.pendingReason=null;if(this.watchdog){this.clearTimer(this.watchdog);this.watchdog=null;}if(this.closed)return;this.status('disconnected',reason);if(!this.retry)this.retry=this.setTimer(()=>{this.retry=null;this.start();},10000);}
   close(){this.closed=true;if(this.retry)this.clearTimer(this.retry);if(this.watchdog)this.clearTimer(this.watchdog);this.retry=this.watchdog=null;this.child?.kill();this.child=null;}
@@ -120,21 +147,31 @@ class NvidiaSource{
 export class HardwareTelemetry{
   constructor(raw,save=()=>{},options={}){
     this.config=hardwareTelemetryConfig(raw);this.save=save;this.options=options;this.sources=new Map();this.states=new Map();this.sequence=0;this.nextPoll=0;
-    for(const [id,config] of this.config.workers)this.states.set(id,{configured:true,adapter:config.adapter,state:'waiting',reason:null,last_sample_at:null,current:null,series:[],rejected:0});
+    for(const [id,config] of this.config.workers)this.states.set(id,{configured:true,adapter:config.adapter,state:'waiting',reason:null,last_sample_at:null,current:null,series:[],temperature_at:null,temperature_state:'waiting',temperature_reason:null,temperature_current:null,temperature_series:[],rejected:0});
   }
   status(id,state,reason=null){const value=this.states.get(id);if(value){value.state=state;value.reason=reason;}}
   accept(id,sample){const value=this.states.get(id),safe=sampleShape(sample,this.options.now?.()??Date.now());if(!value||!safe){if(value)value.rejected++;return;}
-    if(value.last_sample_at!==null&&safe.time<=value.last_sample_at){value.rejected++;return;}
+    const thermalOnly=Object.keys(safe).every(key=>['time','temperatures','thermal_throttling','thermal_sensor'].includes(key));
+    const previous=thermalOnly?value.temperature_at:value.last_sample_at;
+    if(previous!==null&&safe.time<=previous){value.rejected++;return;}
     const row={sample_id:createHash('sha256').update(`dsg-hardware-v1\0${id}\0${safe.time}\0${this.sequence++}\0${JSON.stringify(safe)}`).digest('hex'),observed_at:this.options.now?.()??Date.now(),node:id,kind:'hardware',...safe};
-    value.current=safe;value.last_sample_at=safe.time;value.series.push(safe);value.series=value.series.filter(item=>safe.time-item.time<HISTORY_MS).slice(-MAX_SAMPLES);value.state='connected';value.reason=null;this.save(row);
+    if(!thermalOnly){value.current=safe;value.last_sample_at=safe.time;value.series.push(safe);value.series=value.series.filter(item=>safe.time-item.time<HISTORY_MS).slice(-MAX_SAMPLES);value.state='connected';value.reason=null;}
+    if((safe.temperatures||typeof safe.thermal_throttling==='boolean')&&(value.temperature_at===null||safe.time>value.temperature_at)){
+      const thermal={time:safe.time,...(safe.temperatures?{temperatures:safe.temperatures}:{}),...(typeof safe.thermal_throttling==='boolean'?{thermal_throttling:safe.thermal_throttling,thermal_sensor:safe.thermal_sensor}:{})};
+      value.temperature_at=safe.time;value.temperature_current=thermal;value.temperature_state='connected';value.temperature_reason=null;
+      value.temperature_series.push(thermal);value.temperature_series=value.temperature_series.filter(item=>safe.time-item.time<HISTORY_MS).slice(-MAX_SAMPLES);
+    }
+    this.save(row);
   }
   sync(definitions=[],workers=[]){if(!this.config.enabled)return;const active=new Set(workers.map(worker=>worker.id)),nodes=new Map(definitions.map(node=>[node.id,node]));
     for(const [id,config] of this.config.workers){const signature=['nvidia-linux','macos-local'].includes(config.adapter)?`${config.adapter}:${nodes.get(id)?.ssh??''}`:`${config.adapter}:${config.path}`;const existing=this.sources.get(id);
-      if(!active.has(id)){existing?.source.close();this.sources.delete(id);this.status(id,'waiting','worker_not_registered');continue;}
-      if(existing?.signature===signature)continue;existing?.source.close();this.sources.delete(id);
+      if(!active.has(id)){existing?.source.close();existing?.thermal?.close();this.sources.delete(id);this.status(id,'waiting','worker_not_registered');continue;}
+      if(existing?.signature===signature)continue;existing?.source.close();existing?.thermal?.close();this.sources.delete(id);
       if(config.adapter==='nvidia-linux'){
         const ssh=nodes.get(id)?.ssh;if(!SSH.test(ssh??'')||ssh.startsWith('-')){this.status(id,'disconnected','management_transport_unavailable');continue;}
-        const source=new NvidiaSource(ssh,this.config.interval_ms,sample=>this.accept(id,sample),(state,reason)=>this.status(id,state,reason),this.options);this.sources.set(id,{signature,source,adapter:config.adapter});source.start();
+        const source=new NvidiaSource(ssh,this.config.interval_ms,sample=>this.accept(id,sample),(state,reason)=>this.status(id,state,reason),this.options);
+        const thermal=new NvidiaSource(ssh,60000,sample=>this.accept(id,sample),(state,reason)=>{const value=this.states.get(id);if(value){value.temperature_state=state;value.temperature_reason=reason;}},{...this.options,command:nvidiaThermalCommand,parse:parseNvidiaThermal});
+        this.sources.set(id,{signature,source,thermal,adapter:config.adapter});source.start();thermal.start();
       }else if(config.adapter==='macos-local'){
         if(nodes.get(id)?.ssh){this.status(id,'disconnected','local_adapter_remote_worker');continue;}
         this.sources.set(id,{signature,source:new MacSource(sample=>this.accept(id,sample),(state,reason)=>this.status(id,state,reason)),adapter:config.adapter});
@@ -148,7 +185,9 @@ export class HardwareTelemetry{
   snapshot(id,now=this.options.now?.()??Date.now()){
     const value=this.states.get(id);if(!value)return {schema:1,configured:false,state:'not_configured',reason:null,last_sample_at:null,current:null,series:[]};
     const stale=value.last_sample_at!==null&&now-value.last_sample_at>Math.max(60000,this.config.interval_ms*4);
-    return {schema:1,configured:true,adapter:value.adapter,state:stale?'stale':value.state,reason:stale?'sample_stale':value.reason,last_sample_at:value.last_sample_at,current:value.current,series:value.series.filter(sample=>now-sample.time<HISTORY_MS),rejected:value.rejected};
+    const temperatureStale=value.temperature_at!==null&&now-value.temperature_at>120000;
+    return {schema:1,configured:true,adapter:value.adapter,state:stale?'stale':value.state,reason:stale?'sample_stale':value.reason,last_sample_at:value.last_sample_at,current:value.current,series:value.series.filter(sample=>now-sample.time<HISTORY_MS),rejected:value.rejected,
+      temperature_state:temperatureStale?'stale':value.temperature_state,temperature_reason:temperatureStale?'sample_stale':value.temperature_reason,temperature_at:value.temperature_at,temperature_current:value.temperature_current,temperature_series:value.temperature_series.filter(sample=>now-sample.time<HISTORY_MS)};
   }
-  close(){for(const {source} of this.sources.values())source.close();this.sources.clear();}
+  close(){for(const {source,thermal} of this.sources.values()){source.close();thermal?.close();}this.sources.clear();}
 }

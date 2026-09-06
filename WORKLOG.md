@@ -1109,3 +1109,28 @@ the repository documentation.
 ### 2026-09-06 — machine performance evidence
 
 Added a separate bounded comparison reader and compact Decode / Prefill / Cache hits lights. Weighted context-matched comparisons, sustained slowdown confirmation, explicit configuration attestations, history exclusions and an evidence dialog preserve the existing pulse gauges and source files. A read-only audit of five existing daily metric files exposed substantial request-boundary exclusions and unsupported peer identity; those remain unknown. No live activation or server/model changes. Pi 0.84.4 inspection confirmed the deferred-queue/final-acceptance gap, documented as still open. Full suite: 678 tests, 676 passed, two optional skips. Subsequent final bounds/configuration/direct-activity checks: 19/19 domain and fleet-speed tests, 2/2 UI checks and the real dashboard profile/backfill privacy fixture passed. The ten-capture synthetic browser run passed, including unchanged card height, dialog persistence and restored keyboard focus; overview and evidence dialog visually inspected. Syntax and whitespace checks passed. No live activation.
+
+
+## 2026-09-06 — Measured Mac power and bounded thermal evidence (source)
+
+Added fixed unprivileged AppleSMC PSTR/Tf14/Tf04 reads alongside the existing
+RAM/AGX query, with independent failures and bounded execution. Added a separate
+60-second NVIDIA temperature/thermal-flag observer, preserving the base command
+and cadence. Temperature freshness is independent of power. The dashboard has
+compact temperature evidence and a per-worker energy coverage dialog. Energy
+integration breaks at sensor/scope changes, ignores late GPU-only rows, excludes
+retired workers, and clips linear power curves correctly at window boundaries.
+
+Focused hardware/energy tests: 23 passed. Dashboard/demo integration: 86 passed.
+Three real local samples took 27–43 ms and yielded 172.35–173.64 W; independently
+calculated energy matched 0.001441509 kWh over 30.075 seconds. This remains source
+validation; live enrollment/reload and remote thermal validation are distinct.
+No DS4 process, launch definition, cache or inference setting was changed.
+
+Final synthetic browser checks passed with temperature/energy dialogs, shared-time
+trends, polling and focus restoration; overview and both new dialog screenshots
+were visually reviewed. The full run had 686 tests: 678 passed, two optional
+skips, and six failures in the analytics DOM mock (missing `dataset`). Updating
+that mock was followed by a passing affected analytics suite. Python decoder/ABI
+checks and repository syntax/privacy checks also passed. No production activation
+is claimed.

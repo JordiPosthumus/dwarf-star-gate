@@ -22,7 +22,7 @@ test('fleet means difference cumulative counters and weight real active seconds,
   assert.ok(Math.abs(decode.mean_tps-200/15)<1e-9);assert.equal(decode.active_seconds,15);assert.equal(decode.samples,3);assert.equal(decode.observed_workers,2);
   assert.ok(Math.abs(decode.activity_lower_bound_pct-15/(2*3600)*100)<1e-9);
   assert.equal(snapshot.calibration.decode.max_tps,50);assert.equal(snapshot.intervals,3);
-  assert.ok(!JSON.stringify(snapshot).includes('spark-a'),'the UI summary exports counts, not worker identities');
+  assert.deepEqual(snapshot.windows['1h'].energy.workers.map(row=>row.worker),['spark-a','spark-b'],'energy coverage names the current configured workers');
 });
 
 test('prefill uses processed/new-token deltas and clips an interval at the selected window boundary',()=>{
@@ -81,5 +81,36 @@ test('power integration never bridges gaps or rolls its cursor backward',()=>{
 
 test('power without an honest whole-device scope is never integrated',()=>{
   const speed=new FleetSpeed();speed.accept(row(300,'one',now-10000,'hardware',{power_watts:100}));speed.accept(row(301,'one',now,'hardware',{power_watts:100,power_scope:'gpu_only'}));
-  const snapshot=speed.snapshot(now,['one']);assert.equal(snapshot.power_intervals,0);assert.equal(snapshot.rejected_records,2);
+  const snapshot=speed.snapshot(now,['one']);assert.equal(snapshot.power_intervals,0);assert.equal(snapshot.rejected_records,1);assert.equal(snapshot.excluded_power_records,1);
+});
+
+
+test('older GPU-only observations cannot erase the measured-system integration cursor',()=>{
+ const speed=new FleetSpeed();
+ speed.accept(row(401,'one',now-30000,'hardware',{power_watts:100,power_scope:'system',power_sensor:'smc_pstr'}));
+ speed.accept(row(402,'one',now-40000,'hardware',{power_watts:50,power_scope:'gpu_only'}));
+ speed.accept(row(403,'one',now,'hardware',{power_watts:200,power_scope:'system',power_sensor:'smc_pstr'}));
+ const energy=speed.snapshot(now,['one','missing']).windows['1h'].energy;
+ assert.ok(Math.abs(energy.measured_kwh-150*30/3600000)<1e-12);
+ assert.deepEqual(energy.workers[0].sensors,['smc_pstr']);assert.equal(energy.workers[1].coverage_pct,0);
+ assert.equal(energy.estimated_kwh,null);assert.equal(speed.snapshot(now,[]).windows['1h'].energy.measured_kwh,0);
+});
+
+test('scope changes break adjacency and thermal-only rows add no power coverage',()=>{
+ const speed=new FleetSpeed();
+ speed.accept(row(410,'one',now-40000,'hardware',{power_watts:100,power_scope:'system'}));
+ speed.accept(row(411,'one',now-30000,'hardware',{power_watts:100,power_scope:'compute_module'}));
+ speed.accept(row(412,'one',now-20000,'hardware',{temperatures:[{celsius:70}]}));
+ speed.accept(row(413,'one',now-10000,'hardware',{power_watts:100,power_scope:'compute_module'}));
+ const energy=speed.snapshot(now,['one']).windows['1h'].energy;
+ assert.ok(Math.abs(energy.measured_kwh-100*20/3600000)<1e-12);assert.equal(speed.energy.length,1);
+});
+
+
+test('a clipped energy interval integrates its linear power curve at the window boundary',()=>{
+ const speed=new FleetSpeed(),from=now-HOUR;
+ speed.accept(row(420,'one',from-30000,'hardware',{power_watts:100,power_scope:'system'}));
+ speed.accept(row(421,'one',from+30000,'hardware',{power_watts:300,power_scope:'system'}));
+ const energy=speed.snapshot(now,['one']).windows['1h'].energy;
+ assert.ok(Math.abs(energy.measured_kwh-250*30/3600000)<1e-12);
 });

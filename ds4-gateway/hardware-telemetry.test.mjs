@@ -5,10 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import {EventEmitter} from 'node:events';
 import {PassThrough} from 'node:stream';
-import {HardwareTelemetry,hardwareTelemetryConfig,nvidiaLinuxCommand,parseNvidiaLinux} from './hardware-telemetry.mjs';
+import {HardwareTelemetry,hardwareTelemetryConfig,nvidiaLinuxCommand,parseNvidiaLinux,nvidiaThermalCommand,parseNvidiaThermal} from './hardware-telemetry.mjs';
 import {HardwareSnapshot} from './hardware-snapshot.mjs';
 import {evidence} from './dataset.mjs';
-import {parseMacActivity,sampleMacHardware} from './macos-hardware.mjs';
+import {parseMacActivity,sampleMacHardware,parseMacSensors} from './macos-hardware.mjs';
 import {MacSource} from './hardware-telemetry.mjs';
 
 test('unprivileged Mac samples expose occupied RAM and one driver activity reading, never guessed power',async()=>{
@@ -89,9 +89,9 @@ test('remote adapter uses fixed SSH argv, records samples and never exports its 
   const children=[],rows=[],timers=[];let time=now;
   const spawnImpl=(file,args)=>{const child=new EventEmitter();child.stdout=new PassThrough();child.kill=()=>{child.killed=true;};children.push({file,args,child});return child;};
   const telemetry=new HardwareTelemetry({enabled:true,interval_ms:10000,workers:{spark:{adapter:'nvidia-linux'}}},row=>rows.push(row),{spawnImpl,now:()=>time,setTimer:(fn,ms)=>{const token={fn,ms};timers.push(token);return token;},clearTimer:token=>{token.cleared=true;}});
-  telemetry.sync([{id:'spark',ssh:'spark-private-alias'}],[{id:'spark'}]);assert.equal(children.length,1);assert.equal(children[0].file,'/usr/bin/ssh');assert.ok(children[0].args.includes('spark-private-alias'));assert.equal(children[0].args.at(-1),nvidiaLinuxCommand(10000));
+  telemetry.sync([{id:'spark',ssh:'spark-private-alias'}],[{id:'spark'}]);assert.equal(children.length,2);assert.equal(children[0].file,'/usr/bin/ssh');assert.ok(children[0].args.includes('spark-private-alias'));assert.equal(children[0].args.at(-1),nvidiaLinuxCommand(10000));
   children[0].child.stdout.write(valid+'\n');const snapshot=telemetry.snapshot('spark',time);assert.equal(snapshot.state,'connected');assert.equal(snapshot.current.power_scope,'compute_module');assert.equal(rows.length,1);assert.ok(!JSON.stringify(snapshot).includes('spark-private-alias'));assert.ok(!JSON.stringify(rows[0]).includes('spark-private-alias'));
-  time+=61000;assert.equal(telemetry.snapshot('spark',time).state,'stale');telemetry.close();assert.equal(children[0].child.killed,true);
+  time+=61000;assert.equal(telemetry.snapshot('spark',time).state,'stale');telemetry.close();assert.equal(children[0].child.killed,true);assert.equal(children[1].child.killed,true);
 });
 
 test('remote adapter times out, preserves the bounded reason and reconnects',()=>{
@@ -100,10 +100,35 @@ test('remote adapter times out, preserves the bounded reason and reconnects',()=
   const setTimer=(fn,ms)=>{const timer={fn,ms,cleared:false};timers.push(timer);return timer;},clearTimer=timer=>{timer.cleared=true;};
   const telemetry=new HardwareTelemetry({enabled:true,workers:{spark:{adapter:'nvidia-linux'}}},()=>{},{spawnImpl,setTimer,clearTimer,now:()=>now});telemetry.sync([{id:'spark',ssh:'spark'}],[{id:'spark'}]);
   const watchdog=timers.find(timer=>timer.ms===35000);watchdog.fn();assert.equal(children[0].killed,true);assert.equal(telemetry.snapshot('spark',now).reason,'adapter_timeout');
-  children[0].emit('close',255);assert.equal(telemetry.snapshot('spark',now).reason,'adapter_timeout');const retry=timers.find(timer=>timer.ms===10000&&!timer.cleared);retry.fn();assert.equal(children.length,2);assert.equal(telemetry.snapshot('spark',now).state,'connecting');telemetry.close();
+  children[0].emit('close',255);assert.equal(telemetry.snapshot('spark',now).reason,'adapter_timeout');const retry=timers.find(timer=>timer.ms===10000&&!timer.cleared);retry.fn();assert.equal(children.length,3);assert.equal(telemetry.snapshot('spark',now).state,'connecting');telemetry.close();
 });
 
 test('unregistered and transport-less workers stay explicit without spawning',()=>{
   let calls=0;const telemetry=new HardwareTelemetry({enabled:true,workers:{spark:{adapter:'nvidia-linux'}}},()=>{},{spawnImpl:()=>{calls++;}});
   telemetry.sync([],[{id:'spark'}]);assert.equal(telemetry.snapshot('spark').reason,'management_transport_unavailable');telemetry.sync([],[]);assert.equal(telemetry.snapshot('spark').reason,'worker_not_registered');assert.equal(calls,0);telemetry.close();
+});
+
+
+test('Mac SMC samples preserve system sensor identity, reject sentinels and isolate query failures',async()=>{
+ const text=JSON.stringify({schema:1,values:{PSTR:123.5,Tf14:72,Tf04:65,PRIVATE:'private sensor'}});
+ const parsed=parseMacSensors(text,now);assert.equal(parsed.power_scope,'system');assert.equal(parsed.power_sensor,'smc_pstr');
+ assert.deepEqual(parsed.temperatures.map(row=>row.scope),['gpu','cpu']);assert.ok(!JSON.stringify(parsed).includes('PRIVATE'));
+ assert.deepEqual(parseMacSensors(JSON.stringify({schema:1,values:{PSTR:0,Tf14:151,Tf04:'65'}})),{});
+ const calls=[];const sample=await sampleMacHardware({platform:'darwin',totalmem:()=>128,freemem:()=>32,now:()=>now,exec:async(file,args,options)=>{
+  calls.push({file,args,options});if(file==='/usr/sbin/ioreg')throw new Error('driver unavailable');return {stdout:text};
+ }});
+ assert.equal(calls.length,2);assert.equal(sample.memory_used_bytes,96);assert.equal(sample.power_watts,123.5);assert.equal(sample.temperatures[0].time,now);
+ const smc=calls.find(call=>call.file.endsWith('/python3'));assert.equal(smc.options.maxBuffer,16384);assert.equal(smc.args.length,1);assert.ok(smc.args[0].endsWith('/macos-smc.py'));
+});
+
+test('thermal observer preserves independent freshness and does not turn unsupported flags into false',()=>{
+ assert.equal(parseNvidiaThermal('DSG_THERMAL_V1|72,Not Active,Active',now).thermal_throttling,true);
+ assert.equal(parseNvidiaThermal('DSG_THERMAL_V1|72,[N/A],Not Active',now).thermal_throttling,undefined);
+ assert.equal(parseNvidiaThermal('DSG_THERMAL_V1|[N/A],[N/A],[N/A]',now),null);
+ assert.match(nvidiaThermalCommand(),/sleep 60/);assert.throws(()=>nvidiaThermalCommand(10000));
+ let time=now;const rows=[],h=new HardwareTelemetry({enabled:true,workers:{one:{adapter:'nvidia-linux'}}},row=>rows.push(row),{now:()=>time});
+ h.accept('one',{time,power_watts:100,power_scope:'compute_module'});
+ time+=61000;h.accept('one',parseNvidiaThermal('DSG_THERMAL_V1|72,Not Active,Not Active',time));
+ let snapshot=h.snapshot('one',time);assert.equal(snapshot.state,'stale');assert.equal(snapshot.last_sample_at,now);assert.equal(snapshot.temperature_state,'connected');assert.equal(snapshot.temperature_at,time);assert.equal(snapshot.current.power_watts,100);
+ time+=120001;snapshot=h.snapshot('one',time);assert.equal(snapshot.temperature_state,'stale');h.close();
 });

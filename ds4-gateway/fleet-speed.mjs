@@ -19,7 +19,7 @@ const niceCeiling=value=>{
 export class FleetSpeed {
   constructor({maxIntervals=MAX_INTERVALS}={}){
     if(!Number.isInteger(maxIntervals)||maxIntervals<1||maxIntervals>MAX_INTERVALS)throw new Error('Fleet speed interval budget must be 1–200000');
-    this.maxIntervals=maxIntervals;this.states=new Map();this.powerStates=new Map();this.seen=new Set();this.intervals=[];this.energy=[];this.rejected=0;this.evicted=0;
+    this.maxIntervals=maxIntervals;this.states=new Map();this.powerStates=new Map();this.powerObservations=new Map();this.excludedPower=0;this.seen=new Set();this.intervals=[];this.energy=[];this.rejected=0;this.evicted=0;
   }
   resetNode(node,epoch=null,at=null){this.states.set(node,{epoch,at,prefill:null,decode:null});}
   add(node,kind,at,current){
@@ -41,16 +41,16 @@ export class FleetSpeed {
     this.intervals.push({node,kind,start,end:at,seconds:duration,tokens:tokenDelta*fraction,rate});
     if(this.intervals.length>this.maxIntervals){this.intervals.splice(0,this.intervals.length-this.maxIntervals);this.evicted++;}
   }
-  addPower(node,at,watts,epoch){
+  addPower(node,at,watts,epoch,scope,sensor=null){
     const prior=this.powerStates.get(node);
     if(prior&&at<=prior.at){this.rejected++;return;}
-    this.powerStates.set(node,{at,watts,epoch});
-    if(!prior||(prior.epoch&&epoch&&prior.epoch!==epoch))return;
+    this.powerStates.set(node,{at,watts,epoch,scope,sensor});
+    if(!prior||(prior.epoch&&epoch&&prior.epoch!==epoch)||prior.scope!==scope||prior.sensor!==sensor)return;
     const duration=(at-prior.at)/1000;
     // The planned hardware lane samples every 10 seconds. Never bridge a
     // collector outage or machine disappearance into fictional energy use.
     if(duration>60)return;
-    this.energy.push({node,start:prior.at,end:at,seconds:duration,watt_hours:(prior.watts+watts)/2*duration/3600});
+    this.energy.push({node,start:prior.at,end:at,seconds:duration,watt_hours:(prior.watts+watts)/2*duration/3600,start_watts:prior.watts,end_watts:watts,scope,sensor});
     if(this.energy.length>this.maxIntervals){this.energy.splice(0,this.energy.length-this.maxIntervals);this.evicted++;}
   }
   accept(row){
@@ -60,8 +60,16 @@ export class FleetSpeed {
     if(this.seen.size>400000)this.seen.delete(this.seen.values().next().value);
     const epoch=EPOCH.test(row.backend_epoch??'')?row.backend_epoch:null,state=this.states.get(row.node);
     if(row.kind==='hardware'){
-      const watts=Number(row.power_watts);if(!['compute_module','system'].includes(row.power_scope)||!Number.isFinite(watts)||watts<0||watts>5000){this.rejected++;return;}
-      this.addPower(row.node,row.time,watts,epoch);return;
+      // A RAM-only or thermal-only sample says nothing about power; it is not
+      // zero watts and does not refresh a power sample or its coverage.
+      if(row.power_watts===undefined||row.power_watts===null)return;
+      const watts=row.power_watts;if(typeof watts!=='number'||!Number.isFinite(watts)||watts<0||watts>5000||!['compute_module','system','gpu_only'].includes(row.power_scope)){this.rejected++;return;}
+      const sensor=row.power_sensor==='smc_pstr'&&row.power_scope==='system'?'smc_pstr':null;
+      if(row.time<=(this.powerObservations.get(row.node)?.at??0)){this.rejected++;return;}
+      this.powerObservations.set(row.node,{at:row.time,scope:row.power_scope,sensor});
+      if(this.powerObservations.size>512)this.powerObservations.delete(this.powerObservations.keys().next().value);
+      if(row.power_scope==='gpu_only'){this.excludedPower++;this.powerStates.delete(row.node);return;}
+      this.addPower(row.node,row.time,watts,epoch,row.power_scope,sensor);return;
     }
     if(state?.epoch&&epoch&&state.epoch!==epoch)this.resetNode(row.node,epoch,row.time);
     else if(state&&epoch&&!state.epoch)state.epoch=epoch;
@@ -99,14 +107,21 @@ export class FleetSpeed {
   energySummary(windowMs,now,workers){
     const from=now-windowMs,allowed=new Set(workers),byWorker=new Map();let measured=0;
     for(const row of this.energy){
-      if(row.end<=from||row.start>=now||(allowed.size&&!allowed.has(row.node)))continue;
+      if(row.end<=from||row.start>=now||!allowed.has(row.node))continue;
       const start=Math.max(row.start,from),end=Math.min(row.end,now),duration=(end-start)/1000;if(!(duration>0))continue;
-      const share=duration/row.seconds,entry=byWorker.get(row.node)??{seconds:0,watt_hours:0};entry.seconds+=duration;entry.watt_hours+=row.watt_hours*share;byWorker.set(row.node,entry);measured+=row.watt_hours*share;
+      const span=row.end-row.start,delta=row.end_watts-row.start_watts,wattsStart=row.start_watts+delta*(start-row.start)/span,wattsEnd=row.start_watts+delta*(end-row.start)/span,wattHours=(wattsStart+wattsEnd)/2*duration/3600,entry=byWorker.get(row.node)??{seconds:0,watt_hours:0,scopes:new Set(),sensors:new Set()};entry.seconds+=duration;entry.watt_hours+=wattHours;entry.scopes.add(row.scope);if(row.sensor)entry.sensors.add(row.sensor);byWorker.set(row.node,entry);measured+=wattHours;
     }
     const windowSeconds=windowMs/1000,coverage=workers.length?100*[...byWorker.values()].reduce((sum,row)=>sum+Math.min(windowSeconds,row.seconds),0)/(workers.length*windowSeconds):null;
     let estimated=0,ready=workers.length>0;
-    for(const worker of workers){const row=byWorker.get(worker),share=row?row.seconds/windowSeconds:0;if(!row||share<.8){ready=false;break;}estimated+=row.watt_hours/share;}
+    const included=workers.map(worker=>{
+      const row=byWorker.get(worker),share=row?Math.min(1,row.seconds/windowSeconds):0,latest=this.powerObservations.get(worker),scopes=[...(row?.scopes??[])].sort(),sensors=[...(row?.sensors??[])].sort();
+      const eligible=!!row&&share>=.8&&scopes.length===1;
+      if(!eligible)ready=false;else estimated+=row.watt_hours/share;
+      return {worker,measured_kwh:row?row.watt_hours/1000:0,coverage_pct:share*100,estimated_kwh:eligible?row.watt_hours/share/1000:null,scopes,sensors,
+        status:eligible?'estimated_from_measured_power':scopes.length>1?'power_scope_changed':row?'insufficient_power_coverage':latest?.scope==='gpu_only'&&latest.at>from?'gpu_only_excluded':'awaiting_power_data'};
+    });
     return {estimated_kwh:ready?estimated/1000:null,measured_kwh:measured/1000,coverage_pct:coverage===null?null:Math.min(100,coverage),
+      window_start:from,window_end:now,workers:included,method:'trapezoidal_measured_power_max_60s_gap_per_worker_80pct_extrapolation',
       status:ready?'estimated_from_measured_power':byWorker.size?'insufficient_power_coverage':'awaiting_power_data'};
   }
   snapshot(now=Date.now(),workers=[]){
@@ -122,8 +137,8 @@ export class FleetSpeed {
     }
     return {schema:1,source:'ds4_engine_cumulative_timing_deltas',as_of:now,
       windows:Object.fromEntries(Object.entries(WINDOWS).map(([name,ms])=>[name,{window_ms:ms,decode:this.phase('decode',ms,now,ids),prefill:this.phase('prefill',ms,now,ids),energy:this.energySummary(ms,now,ids)}])),
-      calibration,intervals:relevant.length,power_intervals:this.energy.filter(row=>!ids.length||ids.includes(row.node)).length,rejected_records:this.rejected,evicted_intervals:this.evicted,
-      oldest_interval_at:relevant.length?Math.min(...relevant.map(row=>row.start)):null};
+      calibration,intervals:relevant.length,power_intervals:this.energy.filter(row=>!ids.length||ids.includes(row.node)).length,excluded_power_records:this.excludedPower,rejected_records:this.rejected,evicted_intervals:this.evicted,
+      oldest_interval_at:relevant.length?relevant.reduce((oldest,row)=>Math.min(oldest,row.start),Infinity):null};
   }
 }
 

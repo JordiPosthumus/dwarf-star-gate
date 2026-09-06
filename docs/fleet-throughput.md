@@ -36,9 +36,15 @@ This makes additional Sparks legible as fleet value rather than just capacity:
 more work, more energy, and the efficiency relating the two. DSG integrates
 adjacent measured watt samples and refuses to bridge gaps longer than one minute.
 It estimates a full-period total only when every current device has at least 80%
-measured coverage; the tooltip discloses coverage and measured energy. Until
-the optional [hardware adapters](hardware-telemetry.md) are configured and meet
-that threshold, the UI says **energy awaiting power data**. It does not
+measured coverage and one consistent measurement scope. The energy footer opens
+a per-worker breakdown with the exact period, sensor/scope, measured subtotal,
+coverage and missing-data status. Before the threshold it shows any measured
+subtotal, clearly distinguished from a complete fleet estimate; without samples
+it says **energy awaiting power data**. System and compute-module measurements
+have different physical boundaries, so their sum is not utility-meter energy.
+Scope or sensor changes break adjacency, and GPU-only readings are excluded.
+Window-boundary clipping integrates the corresponding part of the linear power
+curve. Removing a worker removes its energy from current-fleet totals. It does not
 substitute a device TDP, infer power from token speed, or present missing devices
 as zero watts.
 
@@ -54,9 +60,9 @@ The machine cards also have separate [Decode, Prefill and Cache hits indicators]
 The dashboard reads only the two newest `metrics-YYYY-MM-DD.jsonl` files through
 a bounded, incremental, read-only parser. It accepts a small allowlist of numeric
 DS4 timing/power fields, caps lines and bytes per pass, handles rotation or
-replacement by rebuilding, and publishes aggregate values only. Worker names,
-session identifiers, prompt text, response text, vectors, endpoints and paths do
-not enter the browser summary.
+replacement by rebuilding, and publishes aggregates plus current configured
+worker IDs for the explicit energy-coverage breakdown. Session identifiers,
+prompt text, response text, vectors, endpoints and paths do not enter this summary.
 
 Malformed rows, counter regressions, engine-epoch changes, partial history,
 collector gaps and unavailable files fail closed. Dashes or an explicit waiting

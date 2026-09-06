@@ -1,5 +1,11 @@
 # Changelog
 
+## Measured hardware and energy evidence
+
+- Source: measured AppleSMC system watts and named CPU/GPU temperatures; independent
+  NVIDIA thermal observations; compact temperature evidence and per-worker energy
+  coverage with explicit subtotals, scopes and missing measurements.
+
 ## Observational machine performance lights
 
 - Replace the expanding machine cache panel with compact Decode, Prefill and

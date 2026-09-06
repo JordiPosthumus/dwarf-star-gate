@@ -50,7 +50,7 @@ built-in NVIDIA Linux adapter:
 }
 ```
 
-The adapter opens a persistent batch-mode SSH observer and runs one fixed,
+The base adapter opens a persistent batch-mode SSH observer and runs one fixed,
 repository-owned command. Configuration cannot supply a command or SSH option.
 It samples:
 
@@ -70,6 +70,16 @@ official [`nvidia-smi` field definitions](https://docs.nvidia.com/deploy/nvidia-
 Unsupported fields stay unknown. The observer uses a bounded line buffer, a
 no-sample watchdog and reconnect delay. It does not invoke DS4 or touch its
 service.
+
+A second fixed read-only observer queries GPU temperature and the driver's
+hardware/software thermal-slowdown flags once per minute. This preserves the
+existing RAM/GPU/power/clock command and cadence. Temperature has independent
+freshness (120 seconds) and a bounded 15-minute history; it never refreshes stale
+power. Unsupported temperature or flags remain unknown. Closing or removing a
+worker closes both observers. The compact temperature control opens sensor,
+time and throttling evidence; temperature alone does not establish a cooling
+fault. Compare GPU temperature, activity and clock under similar load; ambient
+conditions and CPU temperatures cannot be assumed equivalent.
 
 ### Missing power despite working GPU and RAM readings
 
@@ -91,10 +101,18 @@ For a DS4 worker running on the **same Mac as the dashboard**, explicitly enroll
 occupied RAM (`total memory − free memory`, including reclaimable caches) and
 the single AGX driver's reported device-utilization percentage. RAM occupancy is
 not memory pressure, and GPU activity is not request attribution. Missing or
-ambiguous driver readings remain unknown. It does not estimate power or clocks,
-invoke sudo/powermetrics, or modify DS4. SSH-backed workers are rejected rather
+ambiguous driver readings remain unknown. A fixed, unprivileged AppleSMC helper
+reads system-total power (`PSTR`), one GPU temperature (`Tf14`) and one CPU
+temperature (`Tf04`). It accepts only supported finite sensor values; missing keys
+and zero sentinel values remain unknown. These sensor identities follow the
+[Stats sensor definitions](https://github.com/exelban/stats/blob/master/Modules/Sensors/values.swift);
+they are not a utility-meter calibration or a CPU/GPU package average.
+The helper uses the existing Command Line Tools Python interpreter; no installation
+prompt, sudo, powermetrics or SMC write operation is used. Missing interpreter or
+SMC access leaves power/temperature unknown while RAM/GPU queries continue.
+It does not estimate clocks or modify DS4. SSH-backed workers are rejected rather
 than mistakenly assigned the dashboard host's readings. Queries are asynchronous,
-bounded to four seconds/4 MiB, and never overlap. Closing the observer cancels its
+bounded to four seconds each (4 MiB for AGX, 16 KiB for SMC), and polling calls never overlap. Closing the observer cancels its
 pending query. Unsupported platforms remain explicitly unavailable.
 
 ### Existing numerical-file producer
@@ -148,3 +166,14 @@ without connecting to any server, and warns about missing workers, SSH transport
 or local files. Unit and browser fixtures cover partial/missing fields, stale
 samples, path and route privacy, fixed SSH arguments, whole-device power scopes
 and the compact UI.
+
+## Source validation
+
+The Mac adapter was directly exercised with three real samples 15 seconds apart:
+172.35, 172.10 and 173.64 W, each collected in 27–43 ms while retaining RAM and GPU
+activity. GPU sensor readings were 67.20–69.02 °C and CPU readings 62.41–65.47 °C.
+The measured 30.075-second interval integrated to 0.001441509 kWh, agreeing with
+an independent trapezoidal calculation to floating-point rounding. This short
+check correctly produced no full-hour estimate. It validates local collection;
+it does not demonstrate production enrollment or a restarted dashboard. No DS4
+process, model setting or cache was changed for this check.

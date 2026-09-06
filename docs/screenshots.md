@@ -85,3 +85,11 @@ private hostnames, conversation IDs, model reports or credentials. Do not publis
 live UI screenshots without a separate privacy review.
 
 The Fleet overview now includes Decode, Prefill and Cache hits lights. [Performance evidence](images/performance-evidence.png) shows the compact dialog; it does not expand the machine card. Both use scripted numerical fixtures, not a live hardware benchmark.
+
+
+`temperature-evidence.png` shows synthetic temperature, activity and clock trends
+on one wall-clock axis with separate labelled scales and explicit sensor/throttle
+status. `energy-evidence.png` shows the selected period, measured subtotal,
+per-worker coverage and measurement scope. The capture checks click/Escape and
+focus restoration for both dialogs. These are synthetic examples, not production
+measurements.

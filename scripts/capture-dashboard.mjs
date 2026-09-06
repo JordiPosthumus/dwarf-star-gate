@@ -61,6 +61,15 @@ try {
     assert.equal(await page.locator(`.chart.${kind} circle`).first().evaluate(el=>getComputedStyle(el).fill),color);
   }
   await pause.focus();assert.equal(await pause.evaluate(el=>el===document.activeElement),true);
+  const temperature=page.locator('.temperature-reading').first();
+  await temperature.click();assert.match(await page.locator('.performance-dialog').innerText(),/GPU sensor nvidia_gpu/);
+  assert.match(await page.locator('.performance-dialog').innerText(),/Ambient temperature is unknown/);
+  assert.equal(await page.locator('.hardware-evidence-plots svg').count(),3);
+  await page.locator('.performance-dialog').screenshot({path:path.join(output,'temperature-evidence.png')});
+  await page.keyboard.press('Escape');assert.equal(await temperature.evaluate(el=>el===document.activeElement),true);
+  await page.locator('#fleet-speed-value').click();assert.match(await page.locator('.performance-dialog').innerText(),/Measured subtotal/);
+  assert.match(await page.locator('.performance-dialog').innerText(),/coverage/);await page.locator('.performance-dialog').screenshot({path:path.join(output,'energy-evidence.png')});await page.keyboard.press('Escape');
+  assert.equal(await page.locator('#fleet-speed-value').evaluate(el=>el===document.activeElement),true);
   const thinking=page.locator('#devices .requested-thinking').first();
   assert.match(await thinking.innerText(),/^Thinking\s+/);
   assert.doesNotMatch(await thinking.innerText(),/Current request|REQUESTED THINKING/);
@@ -383,7 +392,7 @@ try {
   }
   await auditPage.close();
   assert.deepEqual(errors,[]);
-  console.log('Saved ten synthetic dashboard screenshots; verified proposed experiment labels, tab navigation, polling, analytics, compact hardware telemetry, named maintenance locks, mobile, reset/milestones, escaped agent holds and Keep paused UX.');
+  console.log('Saved twelve synthetic dashboard screenshots; verified proposed experiment labels, tab navigation, polling, analytics, compact hardware telemetry, named maintenance locks, mobile, reset/milestones, escaped agent holds and Keep paused UX.');
 } finally {
   await browser?.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));
   if(learningServer){learningServer.closeAllConnections();await new Promise(resolve=>learningServer.close(resolve));}
