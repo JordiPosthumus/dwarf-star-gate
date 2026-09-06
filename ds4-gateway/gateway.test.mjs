@@ -2040,9 +2040,17 @@ test('Genie names ordinary gateway requests without a Pi extension, without read
   const next=r.request(nextBody,'gateway-title-session');await until(()=>r.backends[0].heldStreams.length===1);
   try{assert.equal(r.gateway.priorityStatus(true).jobs[0].title,null);await classifier.tick();assert.equal(r.gateway.priorityStatus(true).jobs[0].title,'Release notes summary');}
   finally{for(const finish of r.backends[0].heldStreams.splice(0))finish();await next;}
+  const followBody=JSON.stringify({stream:true,fixture_hold_stream:true,messages:[{role:'user',content:'Summarize release notes.'},{role:'assistant',content:'PRIVATE_ASSISTANT_SENTINEL'},{role:'user',content:'Proceed'}]});
+  const follow=r.request(followBody,'gateway-title-session');await until(()=>r.backends[0].heldStreams.length===1);
+  try{
+    assert.equal(r.gateway.priorityStatus(true).jobs[0].request_preview.text,'Earlier user request: Summarize release notes. Latest user reply: Proceed');
+    await classifier.tick();assert.equal(modelInputs.at(-1).recent_user_excerpt,'Earlier user request: Summarize release notes.\nLatest user reply: Proceed');
+    assert.equal(r.gateway.priorityStatus(true).jobs[0].title,'Release notes summary');
+    assert.equal(r.backends[0].records.at(-1).body.toString(),followBody,'task context selection does not rewrite the inference request');
+  }finally{for(const finish of r.backends[0].heldStreams.splice(0))finish();await follow;}
   for(const headers of [{'x-dsg-priority-intent':'off'},{'x-dsg-observer':'gate-genie'}]){
     await r.request(JSON.stringify({messages:[{role:'user',content:'Do not name this request'}]}),null,{headers});
-    await classifier.tick();assert.equal(modelInputs.length,2);
+    await classifier.tick();assert.equal(modelInputs.length,3);
   }
   assert.ok(!JSON.stringify(r.gateway.stats()).includes('Export formatting repair'));
   assert.ok(!fs.readFileSync(r.config.state_file,'utf8').includes('Export formatting repair'));

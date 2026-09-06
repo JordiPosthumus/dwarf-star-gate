@@ -16,6 +16,9 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
   unread requests stay unidentified. The preview shares the existing excerpt's
   lifetime and is rendered as plain text inside the wrapped job column. Live
   activation remains separate from source and browser validation.
+  Live inspection also exposed unhelpful “Proceed” previews. Such short replies
+  now carry explicitly labelled earlier user task context within the same excerpt
+  budget; clipboard-image temporary paths no longer crowd out the task words.
 
 - **Validated macOS restart-only recovery on a real deployment.** The enrolled
   canary proved generation and cold-to-warm cache reuse while retaining effective

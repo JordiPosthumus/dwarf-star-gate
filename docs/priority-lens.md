@@ -45,7 +45,13 @@ bodies, titles, excerpts and free-text model explanations are excluded.
 
 Genie generates a concise task title from at most **1,024 UTF-8 bytes** of the
 latest user-role text in a request passing through DSG. No Pi extension is needed.
-Only text blocks from that user message are selected; system messages, assistant
+For a short continuation such as “Proceed,” or a background-task status message,
+the excerpt also includes the closest earlier substantive user request, explicitly
+labelled separately from the latest reply. The combined excerpt stays below the
+same byte limit. Search stops at an unsupported user turn and considers at most
+eight earlier user messages. Leading clipboard-image temporary paths are replaced
+with an attachment label so they do not crowd out the task words.
+Only text blocks from those user messages are selected; system messages, assistant
 reasoning, tool messages and image data are excluded. User-role text remains
 untrusted data, including any client-generated continuation serialized with that
 role. Genie returns a bounded single-line title and typed priority/reason.
