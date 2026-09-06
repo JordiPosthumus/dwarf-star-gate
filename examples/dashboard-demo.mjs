@@ -7,6 +7,7 @@ import {TRAINING_RECIPES,DEFAULT_RECIPE} from '../ds4-gateway/training-recipes.m
 import {calibrationPreflight} from '../ds4-gateway/calibration.mjs';
 import {FleetThroughput} from '../ds4-gateway/throughput.mjs';
 import {FleetSpeed} from '../ds4-gateway/fleet-speed.mjs';
+import {PriorityLens} from '../ds4-gateway/priority-lens.mjs';
 // Optional memory is supplied only by the isolated browser-test fixture. The
 // ordinary demo has no persistent storage and reads no installation config.
 export function createDemoServer({learningMilestone=false,agentHold=false,quarantinedWorker=false,memory=null}={}) {
@@ -97,6 +98,14 @@ const snapshot = { version:1,demo:true,time:now,started:now-900000,read_only:fal
   continuity_door:{service:'dwarf-star-gate-continuity-door',version:1,holding:false,held:0,active:2,core_ready:true,body_spooling:false,replay:false,last_transition:{action:'release',at:new Date(now-300000).toISOString()}},continuity_door_error:null,
   gateway:{model:'deepseek-v4-flash',context_length:262144,queue_timeout_ms:72000000000,total:3,healthy:3,available:3,active:2,queued:1,draining:false,workers,dataset,predictor,recovery,client_watch_version:1,client_watch:clientWatch,
     continuity:{patient_wait:true,queued_relocation:true,automatic_relocation:true,automatic_relocation_scope:'first_unaffined_or_affinity_wait_expired',automatic_affinity_rebalance_min_wait_ms:300000,relocation:{completed:2,rejected:0,offers:1,diagnostics:relocationDiagnostics}}},devices,events };
+const priority=new PriorityLens({maxEligibleWaitMs:600000});
+priority.setManual({chat:'a'.repeat(64),priority:'High',expected_revision:0});
+priority.advise(priority.ticket('b'.repeat(64),1),{priority:'Low',reason:'background'},1);
+const prioritySnapshot=()=>({...priority.settings(),demo:true,selections:0,receipts:[],jobs:[
+  {request_id:'demo-priority-a',chat:'a'.repeat(64),title:'Synthetic: urgent fix',state:'running',machine:'sparkA',waiting_ms:1200,running_ms:60000},
+  {request_id:'demo-priority-b',chat:'b'.repeat(64),title:'Synthetic: background documentation',state:'running',machine:'sparkB',waiting_ms:5000,running_ms:30000},
+  {request_id:'demo-priority-c',chat:'c'.repeat(64),title:'Synthetic: <review> next steps',state:'queued',machine:'sparkA',waiting_ms:45000,running_ms:null},
+].map(job=>({...job,...priority.decision(job.chat)})),jobs_truncated:false});
 const registry=()=>({model:'deepseek-v4-flash',minimum_context:snapshot.gateway.context_length,context_limit_control:true,context_limit_source:'saved',queue_timeout_ms:snapshot.gateway.queue_timeout_ms,queue_timeout_control:true,queue_timeout_source:'saved',workers,recovery,queued_relocation:relocation});
 if(agentHold)Object.assign(workers[2],{drained:true,operator_paused:false,holds:[{id:'demo-hold',owner_id:'test-agent',reason:'<DS4 compatibility test>'}]});
 if(quarantinedWorker)Object.assign(workers[2],{is_healthy:false,quarantine:{reason:'repeated_inference_failures',at:new Date(now-600000).toISOString()}});
@@ -161,7 +170,7 @@ return createDashboard(()=>({...snapshot,time:Date.now(),gateway_at:Date.now(),
       service_ms:8000+i*2600+(i%3)*3200,predicted_service_ms:i%7?10000+i*2450:null,reference_service_ms:i%7?12000+i*2500:null,service_state:'complete'}))})),
   rows:Array.from({length:20},(_,i)=>({node:workers[i%workers.length]?.id,at:now-i*60000,
     queue_ms:i?10000+i*3000:0,predicted_queue_ms:i%5?8000+i*2800:null,
-    service_ms:i<18?40000+i*2100:null,predicted_service_ms:i%4?35000+i*2500:null,service_state:i<18?'complete':i===18?'pending':'excluded'}))}));
+    service_ms:i<18?40000+i*2100:null,predicted_service_ms:i%4?35000+i*2500:null,service_state:i<18?'complete':i===18?'pending':'excluded'}))}),{read:async()=>prioritySnapshot(),act:async(action,input)=>{if(action==='manual')priority.setManual(input);else if(action==='settings')priority.configure(input);else if(action==='rules')priority.setRules(input);else throw new Error('Unsupported synthetic priority action');return prioritySnapshot();}});
 }
 if(isMain(import.meta.url)) {
 const server=createDemoServer();

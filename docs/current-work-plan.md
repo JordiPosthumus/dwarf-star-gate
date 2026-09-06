@@ -190,10 +190,11 @@ delivery while keeping permissions and ordinary gateway operation independent.
   Door error-response IDs now match local failure receipts and survive the
   diagnostic projection. These are proxy-failure IDs, not backend identities or
   retry certificates; caller IDs are not added to the failure ledger.
-- **[Priority Lens](roadmap.md#future-opt-in-priority-lens):** persistent consent
-  to bounded request snippets, explainable prioritization and user feedback.
-  Protect privacy/fairness; core scheduling must survive Genie unavailability.
-- **[Session Rescue](roadmap.md#planned-opt-in-session-rescue):** enrolled Pi
+- **[Priority Lens](priority-lens.md):** source now includes manual controls,
+  bounded eligible-conversation scheduling and asynchronous optional Pi intent
+  classification. Agreed aging, chat corrections/general-rule confirmation,
+  model-quality evidence and live rollout remain. Inference never waits on Genie.
+- **[Proactive Resume](roadmap.md#planned-opt-in-session-rescue):** enrolled Pi
   observation first, then supported client-owned continuation. A routine “shall
   I continue the authorized work?” may qualify; missing human decisions, new
   authority, active tools and unknown execution state do not. Agent Watch already

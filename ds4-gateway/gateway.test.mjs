@@ -145,11 +145,11 @@ test('remote workers accept bounded verified SSH alias fallbacks, never options 
 async function rig(t, count = 2, overrides = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ds4-gateway-test-'));
   const backends = await Promise.all(Array.from({ length: count }, (_, i) => backend(`spark${i + 1}`)));
-  const {visionTranscode,...configOverrides}=overrides;
+  const {visionTranscode,priorityRandom,...configOverrides}=overrides;
   const config = { host: '127.0.0.1', port: 0, api_key: 'none', model: 'deepseek-v4-flash', context_length: 153600,
     state_file: path.join(dir, 'affinity.json'), health_interval_ms: 100000, nodes: backends.map(b => ({ id: b.id, url: b.url })), ...configOverrides };
   if (config.control_socket === true) config.control_socket = path.join(dir, 'control.sock');
-  const gatewayOptions=visionTranscode?{visionTranscode}:undefined;
+  const gatewayOptions={visionTranscode,priorityRandom};
   const r = { config, backends, gateway: createGateway(config,gatewayOptions) };
   r.address = await r.gateway.start();
   r.request = (body = '{}', key, options = {}) => new Promise((resolve, reject) => {
@@ -1821,4 +1821,135 @@ test('slow consumer receives the exact multi-megabyte stream without truncation'
     }); req.on('error', reject); req.end('{"large_stream":true}');
   });
   assert.equal(bytes, 128 * (32768 + 8) + 'data: [DONE]\n\n'.length);
+});
+
+test('Priority Lens selects actual queued requests, preserves chat FIFO and applies edits only after active work',async t=>{
+  const r=await rig(t,1,{control_socket:true,priority_lens:{max_eligible_wait_ms:600000},priorityRandom:()=>0.5});
+  const chat=value=>createHash('sha256').update(value).digest('hex');
+  const set=(name,priority)=>workerControl(r.config.control_socket,'/priority-manual',{chat:chat(name),priority,expected_revision:r.gateway.priorityStatus().revision});
+  const blocker=r.request(JSON.stringify({stream:true,fixture_hold_stream:true}),'block');
+  await until(()=>r.backends[0].heldStreams?.length===1);
+  const lowBody=JSON.stringify({messages:[{role:'user',content:'private-low-body'}],reasoning_effort:'xhigh',max_tokens:20000});
+  const low=r.request(lowBody,'low');await until(()=>r.gateway.nodes[0].queue.length===1);
+  const high=r.request(JSON.stringify({stream:true,delay:200,request_label:'high-first'}),'high');await until(()=>r.gateway.nodes[0].queue.length===2);
+  const next=r.request(JSON.stringify({request_label:'high-next'}),'high');await until(()=>r.gateway.nodes[0].queue.length===3);
+  try {
+    await set('low','Low');await set('high','High');
+    assert.equal(r.backends[0].records.length,1,'queued bodies remain unread by the backend');
+    const activeId=r.gateway.nodes[0].active.id;
+    assert.equal(r.gateway.priorityStatus(true).jobs.find(j=>j.request_id===activeId).state,'running');
+    r.backends[0].heldStreams.shift()();
+    await until(()=>r.backends[0].records.some(row=>row.payload.request_label==='high-first'));
+    const highId=r.gateway.nodes[0].active.id;
+    await set('high','Low');await set('low','High');
+    assert.equal(r.gateway.nodes[0].active.id,highId,'manual edits do not interrupt active work');
+    const responses=await Promise.all([blocker,low,high,next]);assert.ok(responses.every(response=>response.status===200));
+    assert.deepEqual(r.backends[0].records.map(row=>row.payload.request_label??(row.payload.messages?'low':'block')),['block','high-first','low','high-next']);
+    assert.equal(r.backends[0].records.find(row=>row.payload.messages).body.toString(),lowBody);
+    const receipts=r.gateway.priorityStatus(true).receipts;
+    assert.ok(receipts.some(row=>row.method==='weighted_lottery'&&row.eligible_conversations===2));
+    assert.ok(receipts.every(row=>row.genie_wait_ms===0));
+    assert.doesNotMatch(JSON.stringify(receipts),/private-low-body|request_label/);
+    assert.equal(r.backends[0].peak,1);
+  } finally {for(const finish of r.backends[0].heldStreams.splice(0))finish();await Promise.allSettled([blocker,low,high,next]);}
+});
+
+test('Priority Lens aging takes the next real slot, while ordinary unclassified and disabled queues remain FIFO',async t=>{
+  const r=await rig(t,1,{priority_lens:{max_eligible_wait_ms:1000},priorityRandom:()=>0.99});
+  const chat=value=>createHash('sha256').update(value).digest('hex');
+  const set=(name,priority)=>r.gateway.priorityControl('manual',{chat:chat(name),priority,expected_revision:r.gateway.priorityStatus().revision});
+  const blocker=r.request(JSON.stringify({stream:true,fixture_hold_stream:true}),'block');
+  await until(()=>r.backends[0].heldStreams?.length===1);
+  const low=r.request('{"label":"aged-low"}','low');await until(()=>r.gateway.nodes[0].queue.length===1);set('low','Low');
+  await delay(1050);
+  const high=r.request('{"label":"new-high"}','high');await until(()=>r.gateway.nodes[0].queue.length===2);set('high','High');
+  try {
+    r.backends[0].heldStreams.shift()();await Promise.all([blocker,low,high]);
+    assert.deepEqual(r.backends[0].records.filter(row=>row.payload.label).map(row=>row.payload.label),['aged-low','new-high']);
+    assert.ok(r.gateway.priorityStatus(true).receipts.some(row=>row.method==='aging'&&row.priority==='Low'));
+  }finally{for(const finish of r.backends[0].heldStreams.splice(0))finish();await Promise.allSettled([blocker,low,high]);}
+  const current=r.gateway.priorityStatus();r.gateway.priorityControl('settings',{expected_revision:current.revision,enabled:false,weights:current.weights,max_eligible_wait_ms:1000});
+  const held=r.request(JSON.stringify({stream:true,fixture_hold_stream:true}),'block');await until(()=>r.backends[0].heldStreams.length===1);
+  const first=r.request('{"label":"off-low"}','low');await until(()=>r.gateway.nodes[0].queue.length===1);
+  const second=r.request('{"label":"off-high"}','high');await until(()=>r.gateway.nodes[0].queue.length===2);
+  try{r.backends[0].heldStreams.shift()();await Promise.all([held,first,second]);assert.deepEqual(r.backends[0].records.slice(-2).map(row=>row.payload.label),['off-low','off-high']);}
+  finally{for(const finish of r.backends[0].heldStreams.splice(0))finish();await Promise.allSettled([held,first,second]);}
+});
+
+test('Priority Lens controls stay local, save overrides and rules atomically, and leave invalid saved state intact',async t=>{
+  const r=await rig(t,1,{control_socket:true});await r.request('{}','chat');
+  const chat=createHash('sha256').update('chat').digest('hex');
+  const forbidden=await r.request(JSON.stringify({chat,priority:'High',expected_revision:0}),null,{path:'/priority-manual'});
+  assert.equal(forbidden.status,404);
+  await workerControl(r.config.control_socket,'/priority-manual',{chat,priority:'High',expected_revision:0});
+  await assert.rejects(workerControl(r.config.control_socket,'/priority-manual',{chat,priority:'Low',expected_revision:0}),/current chat/);
+  const rules=Array.from({length:30},(_,i)=>`Intentional preference ${i} ${'a'.repeat(150)}`);
+  await workerControl(r.config.control_socket,'/priority-rules',{rules,expected_revision:1});
+  assert.equal(r.gateway.stats().priority_lens.rules,undefined,'preference text is not on public inference status');
+  const original=fs.readFileSync(r.config.state_file,'utf8');
+  await r.restart();
+  assert.equal(r.gateway.store.data.priority_lens.manual[chat],'High');assert.deepEqual(r.gateway.priorityStatus(true).rules,rules);
+  assert.equal(fs.readFileSync(r.config.state_file,'utf8'),original);
+  assert.ok(fs.readdirSync(path.dirname(r.config.state_file)).some(name=>name.includes('.priority-')),'a pre-change backup exists');
+  r.gateway.store.save({...r.gateway.store.data,priority_lens:{schema:999,private_unrecognized:'preserve this'}});
+  const invalid=fs.readFileSync(r.config.state_file,'utf8');await r.restart();
+  assert.equal(r.gateway.priorityStatus().activation,'unavailable');
+  assert.equal((await r.request('{}','chat')).status,200,'optional priority corruption does not stop inference');
+  assert.equal(fs.readFileSync(r.config.state_file,'utf8'),invalid,'no automatic repair or history replacement');
+});
+
+test('Priority intent handoff is private, asynchronous and stripped from actual inference',async t=>{
+  const r=await rig(t,1,{control_socket:true,dataset_enabled:true,priority_lens:{max_eligible_wait_ms:600000}});
+  const input={schema:1,id:randomUUID(),session:'intent-session',client:'pi',title:'PRIVATE_TITLE_Ω',excerpt:'PRIVATE_EXCERPT: urgent user task'};
+  const route={path:'/gateway/priority-intent'};
+  assert.equal((await r.request(JSON.stringify(input),null,{...route,headers:{authorization:'Bearer wrong'}})).status,401);
+  assert.equal((await r.request(JSON.stringify({...input,extra:true}),null,route)).status,400);
+  assert.equal((await r.request('x'.repeat(8193),null,route)).status,413);
+  assert.equal((await r.request(JSON.stringify(input),null,route)).status,200);
+  assert.equal((await workerControl(r.config.control_socket,'/priority-review-next',{})).review,null,'unbound snippets cannot be classified');
+  const body=JSON.stringify({stream:true,fixture_hold_stream:true,reasoning_effort:'xhigh',max_tokens:24000});
+  const running=r.request(body,input.session,{headers:{'x-dsg-priority-intent':input.id}});
+  await until(()=>r.backends[0].heldStreams?.length===1);
+  try {
+    assert.equal(r.backends[0].records[0].body.toString(),body);
+    assert.equal(r.backends[0].records[0].headers['x-dsg-priority-intent'],undefined);
+    const status=await workerControl(r.config.control_socket,'/priority-status');
+    assert.equal(status.jobs[0].title,input.title);assert.equal(status.jobs[0].state,'running');
+    assert.ok(!JSON.stringify(status).includes(input.excerpt));
+    const review=(await workerControl(r.config.control_socket,'/priority-review-next',{})).review;
+    assert.equal(review.excerpt,input.excerpt);assert.equal(review.deadline_ms,60000);
+    assert.equal((await r.request('{}',null,{path:'/priority-review-next'})).status,404);
+    const result={lease:review.lease,intent_id:review.intent_id,advice:{priority:'High',reason:'urgent'}};
+    assert.equal((await workerControl(r.config.control_socket,'/priority-review-result',result)).accepted,true);
+    assert.equal((await workerControl(r.config.control_socket,'/priority-review-result',result)).accepted,false);
+    assert.equal(r.gateway.priorityStatus(true).jobs[0].priority,'High');
+    assert.equal(r.backends[0].records.length,1,'advice does not restart active inference');
+    const publicStatus=JSON.stringify(r.gateway.stats());assert.ok(!publicStatus.includes(input.title));assert.ok(!publicStatus.includes(input.excerpt));
+    assert.ok(!fs.readFileSync(r.config.state_file,'utf8').includes('PRIVATE_'));
+  }finally{for(const finish of r.backends[0].heldStreams.splice(0))finish();await running;}
+  const next=r.request(JSON.stringify({stream:true,fixture_hold_stream:true}),input.session);
+  await until(()=>r.backends[0].heldStreams.length===1);
+  try{assert.equal(r.gateway.priorityStatus(true).jobs[0].source,'default','a request without current intent cannot inherit stale advice');}
+  finally{for(const finish of r.backends[0].heldStreams.splice(0))finish();await next;}
+  const directory=path.join(path.dirname(r.config.state_file),'training');
+  for(const file of fs.readdirSync(directory))if(file.endsWith('.jsonl'))assert.ok(!fs.readFileSync(path.join(directory,file),'utf8').includes('PRIVATE_'));
+});
+
+test('Priority classifier no-wait pool admission refuses a busy slot without queuing or reading its body upstream',async t=>{
+  const r=await rig(t,1);const running=r.request(JSON.stringify({stream:true,fixture_hold_stream:true}),'occupied');await until(()=>r.backends[0].heldStreams?.length===1);
+  try{
+    const rejected=await r.request('{"private_advisory_body":"never dispatched"}',null,{headers:{'x-dsg-observer':'gate-genie','x-dsg-review-no-wait':'1'}});
+    assert.equal(rejected.status,503);assert.equal(rejected.headers['x-dsg-dispatch-state'],'not_dispatched');assert.equal(r.gateway.nodes[0].queue.length,0);assert.equal(r.backends[0].records.length,1);
+  }finally{r.backends[0].heldStreams.shift()();await running;}
+  assert.equal((await r.request('{}',null,{headers:{'x-dsg-observer':'gate-genie','x-dsg-review-no-wait':'1'}})).status,200);
+  assert.equal(r.backends[0].records.at(-1).headers['x-dsg-review-no-wait'],undefined);
+});
+
+test('Priority preferences preserve Unicode split across control-socket chunks',async t=>{
+  const r=await rig(t,1,{control_socket:true}),rules=['Treat ☃ winter maintenance as background work'];
+  const body=Buffer.from(JSON.stringify({expected_revision:0,rules})),split=body.indexOf(Buffer.from('☃'))+1;
+  const status=await new Promise((resolve,reject)=>{
+    const req=http.request({socketPath:r.config.control_socket,path:'/priority-rules',method:'POST',headers:{'content-type':'application/json'}},res=>{let text='';res.setEncoding('utf8');res.on('data',chunk=>text+=chunk);res.on('end',()=>resolve({code:res.statusCode,body:JSON.parse(text)}));});req.on('error',reject);req.write(body.subarray(0,split));setImmediate(()=>req.end(body.subarray(split)));
+  });
+  assert.equal(status.code,200);assert.deepEqual(status.body.rules,rules);assert.deepEqual(r.gateway.store.data.priority_lens.rules,rules);
 });

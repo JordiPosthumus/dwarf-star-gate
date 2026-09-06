@@ -25,17 +25,17 @@ follow-up.** Inference continues when this optional integration or Genie is down
 | --- | --- | --- |
 | Agent Watch | Existing opt-in metadata-only reporting | Distinguish tools, queueing, active responses and settled failures |
 | Task review | Proposed; off; separate consent to bounded task/last-turn context | Distinguish routine continuation check-ins from genuine human decisions |
-| Session Rescue | Proposed; off; explicit client/session and authorized-task scope | Permit an eligible client-owned follow-up after a fresh independent check |
-| Priority Lens | Proposed; off; persistent separate consent to bounded request snippets | Advise priority among undispatched requests under fairness and cache guards |
+| Proactive Resume | Proposed; off; explicit client/session and authorized-task scope | Permit an eligible client-owned follow-up after a fresh independent check |
+| Priority Lens | Source implemented; switch on, aging agreement pending; Pi snippets separately opted in | Advise priority among undispatched requests under fairness and cache guards |
 
 One capability never enables another. Status reporting grants neither transcript
-access nor control. Priority Lens does not grant Session Rescue. Show the Genie
+access nor control. Priority Lens does not grant Proactive Resume. Show the Genie
 provider receiving permitted content, byte/retention bounds, consent, exclusions
 and revocation controls. No system prompts, hidden reasoning, tool arguments,
 images or full transcripts by default. Retain bounded numerical receipts, not
 raw snippets in logs, notebooks, browser diagnostics or training data.
 
-## Session Rescue: start with the easy case
+## Proactive Resume: start with the easy case
 
 The first action is **continue an existing settled session**, not restart the Pi
 process, abort a request, replay a tool or recreate a lost session.
@@ -114,18 +114,18 @@ Repeated non-progress escalates to a human, not endless “proceed” messages.
 Rescue asks **“Should this settled agent continue?”** Lens asks **“Which waiting
 request should run next?”** Keep permissions, receipts and success measures separate.
 
-Current DSG placement precedes reading the request body. Pi could offer a
-separately consented, bounded intent envelope correlated with an undispatched
-request, without spooling or rewriting its inference body. This is a proposed
-metadata path, not permission to read all prompts or put snippets in model headers
-and routine HTTP logs. Missing/late intent uses ordinary scheduling; clients
-without Pi support must not be starved or forced to install the integration.
+DSG placement still precedes inference body reading. The optional Pi adapter now
+provides a separate bounded intent envelope, correlated using existing serializer
+affinity and core admission order. See [Priority Lens](priority-lens.md) for exact
+byte limits, retention, configured-provider disclosure and tested behavior. The
+source implementation does not install or activate a live Pi integration.
+Missing intent uses ordinary scheduling; other clients remain supported.
 
 Genie recommends; fixed code enforces eligible workers, maintenance, session
 ordering/cache continuity, aging and maximum priority advantage. No interruption
 of dispatched work. Show a concise coloured explanation. Operator feedback
 becomes a reviewable, versioned policy—not arbitrary chat silently changing
-scheduling. See the [full Lens plan](roadmap.md#future-opt-in-priority-lens).
+scheduling. See the [Lens implementation](priority-lens.md).
 
 ## Contract and delivery checklist
 
@@ -145,7 +145,8 @@ with tool-state and durable receipt tests. Do not globally disable native retrie
 or reinterpret an unknown outcome as safe without explicit operator approval.
 
 - [x] Document the current boundary: coarse Agent Watch and scoped transport
-  fixtures; no installed session control or snippet-reading capability.
+  fixtures; no live session-control installation. Optional snippet handoff is
+  implemented and fixture-tested separately; see Priority Lens.
 - [ ] Verify supported Pi lifecycle/follow-up APIs and pin the tested contract,
   using disposable SDK sessions. The 0.84.4 custom-message primitive and its
   queue/idempotency limitations are now exercised above; atomic client acceptance,

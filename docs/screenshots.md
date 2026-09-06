@@ -3,7 +3,8 @@
 Refreshed 2026-09-04 from the checked-in synthetic demo and current UI assets.
 Analytics refreshed 2026-09-05 to distinguish known sessions from requests with
 missing identity; the values remain fictional.
-Layout refreshed 2026-09-06: hardening suggestions now belong to the Gate Genie tab.
+Layout refreshed 2026-09-06: hardening suggestions now belong to the Gate Genie tab,
+with the primary Current Jobs / Priority / Reason table and separate scheduling settings.
 These are actual browser captures of fictional data, not edited production
 screenshots, benchmark results, a live incident report or a promoted model.
 
@@ -18,7 +19,9 @@ screenshots, benchmark results, a live incident report or a promoted model.
   Spark profile, 20,000-hour queue allowance, one synthetic exact queued-handover
   offer with its cache-locality warning, and a synthetic named maintenance lock
   whose exact release cannot resume routing by itself.
-- `dashboard-genie.png`: an open assessment, collapsible hardening suggestions below
+- `priority-settings.png`: bounded weight controls and an explicitly selected
+  synthetic ten-minute eligible-wait backstop; this is not a production default.
+- `dashboard-genie.png`: current jobs and manual priorities, an open assessment, collapsible hardening suggestions below
   the conversation, linked agent enrollment guide, recovery controls and the private
   Gate Genie notebook.
 - `dashboard-analytics.png`: local collection/embedding status, stage-specific XGB

@@ -25,6 +25,8 @@ import {dsgReport,invalidHttp} from './report.mjs';
 import {ClientWatch,CLIENT_WATCH_HEADER,CLIENT_WATCH_ROUTE,validClientWatchId} from './client-watch.mjs';
 import {JPEG_REJECTION_INSPECTION_BYTES,VisionProtection,visionGuidance,visionRejectionKind} from './vision-protection.mjs';
 import {compareFallbackTieBreak,selectFallbackTieBreak} from './fallback-tiebreak.mjs';
+import {PriorityLens} from './priority-lens.mjs';
+import {PriorityIntents,PRIORITY_INTENT_HEADER,PRIORITY_INTENT_ROUTE} from './priority-intent.mjs';
 import net from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -227,7 +229,7 @@ export class UsageObserver {
   }
 }
 
-export function createGateway(config,{visionTranscode}={}) {
+export function createGateway(config,{visionTranscode,priorityRandom}={}) {
   if (!validContext(config.context_length)) throw new Error('Invalid configured pool context limit');
   const configuredQueueTimeout=queueTimeout(config.queue_timeout_ms);
   const initial = workerConfigs(config.nodes);
@@ -269,6 +271,47 @@ export function createGateway(config,{visionTranscode}={}) {
   const parkedFor=n=>waiting.filter(j=>j.fixedHome===n);
   const rejections=[];
   const clientWatch=new ClientWatch();
+  let priority,priorityError=null;
+  try {
+    priority=new PriorityLens({state:store.data.priority_lens,random:priorityRandom,
+      enabled:config.priority_lens!==false&&config.priority_lens?.enabled!==false,
+      maxEligibleWaitMs:config.priority_lens?.max_eligible_wait_ms??null,
+      save:state=>{
+        if(fs.existsSync(store.filename))fs.copyFileSync(store.filename,`${store.filename}.priority-${Date.now()}-${randomUUID()}.bak`,fs.constants.COPYFILE_EXCL);
+        store.save({...store.data,priority_lens:state});
+      }});
+  }catch{priorityError='Priority state unavailable; ordinary scheduling continues. Saved state was not changed.';}
+  const priorityIntents=priority?new PriorityIntents({lens:priority}):null;
+  const priorityJobs=()=>[...nodes.flatMap(node=>[...(node.active?[node.active]:[]),...node.queue]),...waiting];
+  const priorityEligible=job=>!draining&&!shuttingDown&&job.node?.healthy&&!job.node.drained&&!job.node.quarantine&&!job.node.recovering&&!job.node.removed&&!job.waitReason&&(!job.key||!nodes.some(node=>node.active?.key===job.key));
+  function observePriority(){
+    if(!priority)return;
+    try{priorityIntents.sweep();priority.observe(priorityJobs(),{eligible:priorityEligible});}
+    catch{priorityError='Priority observation unavailable; ordinary scheduling continues.';}
+  }
+  function priorityStatus(details=false){
+    if(!priority)return {schema:1,activation:'unavailable',error:priorityError};
+    const {rules,...settings}=priority.settings();
+    const status={...settings,error:priorityError,selections:priority.selections,fallbacks:priority.fallbacks,genie_delay_ceiling_ms:60000,genie_wait_ms:0,intents:priorityIntents.status()};
+    if(!details)return status;
+    const jobs=priorityJobs();
+    return {...status,rules,receipts:structuredClone(priority.receipts),jobs:jobs.slice(0,512).map(job=>({
+      request_id:job.id,chat:job.key??null,title:priorityIntents.title(job.priorityIntentId,job.key),machine:job.node?.id??job.fixedHome?.id??null,
+      state:job.dispatched?'running':job.waitReason||!priorityEligible(job)?'blocked':'queued',
+      ...priority.decision(job.key),request_reason:job.dispatched?'Request is already running':job.waitReason??(job.node?.drained?'Routing is paused':!priorityEligible(job)?'Worker or conversation is not eligible':null),
+      waiting_ms:job.dispatched?Math.max(0,job.dispatchedMono-job.createdMono):Math.max(0,performance.now()-job.createdMono),
+      running_ms:job.dispatched?Math.max(0,performance.now()-job.dispatchedMono):null,eligible_wait_ms:priority.eligibleWait(job)
+    })),jobs_truncated:jobs.length>512};
+  }
+  function priorityControl(action,input){
+    if(!priority)throw new Error(priorityError);
+    if(action==='manual'&&!store.get(input?.chat))throw new Error('Choose a known DSG conversation');
+    if(action==='settings')priority.configure(input);
+    else if(action==='manual')priority.setManual(input);
+    else if(action==='rules')priority.setRules(input);
+    else throw new Error('Unknown priority action');
+    observePriority();return priorityStatus(true);
+  }
   function reject(req,res,status,code,message,{id=randomUUID(),callId=validCallId(req.headers[CALL_ID_HEADER]),key=null,node=null,reason}={}){
     const receipt=rejectionReceipt({request_id:id,call_id:callId,session:key,node:node?.id??null,code,reason});
     const recorded={time:new Date().toISOString(),...receipt};
@@ -305,7 +348,7 @@ export function createGateway(config,{visionTranscode}={}) {
   const auth = Buffer.from(`Bearer ${config.api_key}`);
   const lastOperatorAction=id=>[...(store.data.operator_actions??[])].reverse().find(action=>action.workers.includes(id))??null;
   const stats = () => ({ version: 1, agent_api_version:1, maintenance_lock_version:1,client_watch_version:1,client_watch:clientWatch.snapshot(), model: config.model, context_length: contextLimit(), queue_timeout_ms:queueTimeoutMs(), request_timeout_ms:config.request_timeout_ms??360000000, draining,startup:{...startup}, dataset:{...dataset.snapshot(),embedding_collection:embeddings.snapshot()}, routing_shadow:shadow.snapshot(),fallback_tiebreak_shadow:{...fallbackTieBreak},recovery:recovery.status(),predictor:predictor.status(),protections:visionProtection.status(),
-    calibration:calibrationPreflight(nodes,{draining}),continuity:{schema:1,recent_rejections:rejections.slice(0,20),safe_retry_contract:true,queued_relocation:true,automatic_relocation:true,automatic_relocation_scope:automaticRelocationScope,automatic_affinity_rebalance_min_wait_ms:automaticAffinityWait,patient_wait:true,
+    priority_lens:priorityStatus(),calibration:calibrationPreflight(nodes,{draining}),continuity:{schema:1,recent_rejections:rejections.slice(0,20),safe_retry_contract:true,queued_relocation:true,automatic_relocation:true,automatic_relocation_scope:automaticRelocationScope,automatic_affinity_rebalance_min_wait_ms:automaticAffinityWait,patient_wait:true,
       relocation:{completed:relocation.completed,rejected:relocation.rejected,offers:relocationOffers().length,genie_enabled:config.genie_load_balancing!==false,genie_offers:genieRelocationOffers(),diagnostics:relocationDiagnostics(),last:relocation.last},
       waiting:waiting.length,oldest_wait_seconds:waiting.length?Math.max(0,(performance.now()-waiting[0].createdMono)/1000):null,
       waiting_reasons:Object.fromEntries([...new Set(waiting.map(j=>j.waitReason))].map(reason=>[reason,waiting.filter(j=>j.waitReason===reason).length]))},
@@ -517,11 +560,13 @@ export function createGateway(config,{visionTranscode}={}) {
     if(job.waitReason)log('request_wait_resumed',{request_id:job.id,node:node.id,wait_ms:performance.now()-job.createdMono});
     job.waitReason=null;
     node.queue.push(job);node.queue.sort((a,b)=>a.sequence-b.sequence);
+    observePriority();
     clientWatch.observeRequest(job.watchId,job.id,'queued');
     evaluateShadow(node,job,wasAdmitted?'worker_free':'admission');schedule(node);
   }
   function pumpWaiting() {
     if(shuttingDown)return;
+    observePriority();
     for(const n of nodes)for(const job of n.queue)heartbeat(job);
     // Retain FIFO within each conversation; independent conversations can proceed.
     for(const job of [...waiting]){
@@ -560,11 +605,24 @@ export function createGateway(config,{visionTranscode}={}) {
   function schedule(node) {
     if (node.active) return;
     while (node.queue.length) {
-      const job = node.queue.shift();
+      let index=0;
+      // Already-admitted work keeps the existing drain contract. A priority
+      // choice never promotes a request through a hold or operator pause.
+      if(priority?.active&&!priorityError&&node.healthy&&!node.drained&&!node.quarantine&&!node.recovering&&!draining&&!shuttingDown){
+        observePriority();
+        try{
+          const selection=priority.select(node.queue,{eligible:priorityEligible});
+          if(!selection){node.queue=node.queue.filter(job=>!job.cancelled);return;}
+          index=node.queue.indexOf(selection.job);
+          log('priority_selection',{node:node.id,...selection.receipt});
+        }catch{priorityError='Priority selection unavailable; ordinary scheduling continues.';}
+      }
+      const [job] = node.queue.splice(index,1);
       if (job.cancelled) continue;
       if (!node.healthy || node.quarantine || node.recovering) { park(job,node,unavailableReason(node)); continue; }
       job.queueTimer?.cancel();
       node.active = job;
+      observePriority();
       dispatch(node, job);
       return;
     }
@@ -586,6 +644,8 @@ export function createGateway(config,{visionTranscode}={}) {
     // are intentionally unauthenticated behind loopback or an SSH tunnel, so
     // the ingress secret must never cross the worker boundary.
     delete headers.authorization;
+    delete headers['x-dsg-review-no-wait']; // Advisory admission option only.
+    delete headers[PRIORITY_INTENT_HEADER]; // Private advisory correlation, never DS4 input.
     delete headers[CLIENT_METADATA_HEADER]; // DSG hint only; never a DS4 setting.
     delete headers[CALL_ID_HEADER];
     delete headers[CLIENT_WATCH_HEADER]; // Ephemeral client liveness hint; never DS4 input.
@@ -842,6 +902,16 @@ export function createGateway(config,{visionTranscode}={}) {
     const route = `${req.method} ${req.url}`;
     if (route === 'GET /gateway/status' || route === 'GET /workers') return json(res, 200, stats());
     if (route === 'GET /health') {const ready=!draining&&nodes.some(n=>n.healthy&&!n.drained);return json(res,ready?200:503,{...stats(),...(!ready?{error:{type:'gateway_error',code:'not_ready',message:dsgReport('Gateway is draining or no DS4 server is ready.')}}:{})});}
+    if(route===`POST ${PRIORITY_INTENT_ROUTE}`){
+      if(!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type']??'')){req.resume();return error(res,415,'priority_media_type','Priority intent requires JSON');}
+      const declared=Number(req.headers['content-length']);if(Number.isFinite(declared)&&declared>8192){req.resume();return error(res,413,'priority_too_large','Priority intent exceeds 8 KiB');}
+      let chunks=[],bytes=0,finished=false;
+      const timer=setTimeout(()=>{if(finished)return;finished=true;chunks=[];error(res,408,'priority_timeout','Priority intent was incomplete');req.destroy();},5000);timer.unref();
+      req.on('data',chunk=>{if(finished)return;bytes+=chunk.length;if(bytes>8192){finished=true;chunks=[];clearTimeout(timer);error(res,413,'priority_too_large','Priority intent exceeds 8 KiB');req.resume();return;}chunks.push(chunk);});
+      const cleanup=()=>{finished=true;chunks=[];clearTimeout(timer);};req.on('error',cleanup);req.on('aborted',cleanup);
+      req.on('end',()=>{if(finished)return;finished=true;clearTimeout(timer);try{const input=JSON.parse(Buffer.concat(chunks).toString('utf8'));chunks=[];return json(res,200,{schema:1,accepted:priorityIntents?.receive(input)??false});}catch{chunks=[];return error(res,400,'invalid_priority_intent','Invalid priority intent');}});
+      return;
+    }
     if(route===`POST ${CLIENT_WATCH_ROUTE}`){
       if(!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type']??'')){req.resume();return error(res,415,'client_watch_media_type','Client Watch requires JSON');}
       const declared=Number(req.headers['content-length']);if(Number.isFinite(declared)&&declared>2048){req.resume();return error(res,413,'client_watch_too_large','Client Watch heartbeat exceeds 2 KiB');}
@@ -906,9 +976,16 @@ export function createGateway(config,{visionTranscode}={}) {
       res.on('close', () => probe.destroy());
       return;
     }
+    if(trafficClass==='genie'&&req.headers['x-dsg-review-no-wait']==='1'){
+      // Check atomically at admission. A previously free snapshot cannot grant
+      // permission to put an advisory review behind user work after a race.
+      if(key||waitReason||!node||node.active||node.queue.length||parkedFor(node).length||node.quarantine||node.recovering||node.removed)return reject(req,res,503,'no_healthy_workers','No compatible worker is immediately free for this advisory review',{id:requestId,callId,key,reason:'no_ready_worker'});
+    }
     if ((node&&node.queue.length+parkedFor(node).length>=queueBound())||(!node&&waiting.length>=waitingBound()))return reject(req,res,429,'queue_full','DSG waiting capacity is full; request was not dispatched. Wait for capacity or use the patient client adapter.',{id:requestId,callId,key,node,reason:'queue_full'});
     const job = { req, res, key, affinity, id:requestId,callId,watchId, sequence:sequence++,admissionMetadata,created: Date.now(), createdMono:performance.now(), cancelled: false,queueTimeoutMs:queueTimeoutMs(),
       trafficClass };
+    job.priorityIntentId=req.headers[PRIORITY_INTENT_HEADER];
+    priorityIntents?.bind(job.priorityIntentId,job);
     const cancel = () => {
       if (res.writableFinished) return;
       job.cancelled = true;
@@ -1006,6 +1083,7 @@ export function createGateway(config,{visionTranscode}={}) {
     if (node.ssh) node.stopTunnel = superviseTunnel(node, () => shuttingDown || node.removed);
   };
   const registry = () => ({ model: config.model, minimum_context: contextLimit(), context_limit_control:true,
+    priority_lens:priorityStatus(),
     context_limit_source:store.data.pool_context_length === undefined ? 'config' : 'saved',
     queue_timeout_ms:queueTimeoutMs(),queue_timeout_control:true,queue_timeout_source:store.data.queue_timeout_ms!==undefined?'saved':config.queue_timeout_ms!==undefined?'config':'default',
     recovery:recovery.status(),protections:visionProtection.status(),queued_relocation:{schema:1,automatic:true,automatic_scope:automaticRelocationScope,automatic_affinity_rebalance_min_wait_ms:automaticAffinityWait,offers:relocationOffers(),diagnostics:relocationDiagnostics(),completed:relocation.completed,rejected:relocation.rejected},
@@ -1121,6 +1199,7 @@ export function createGateway(config,{visionTranscode}={}) {
     store.save({...store.data,...agents.manualUpdate(ids,drained),operator_actions:[...(store.data.operator_actions??[]),action].slice(-256)});
     if(drained)recovery.operatorPause(ids);
     for (const n of nodes) if (ids.includes(n.id)) n.drained = drained;
+    observePriority();
     log('workers_drain_changed', { ids, drained, operator_action_id:action.id, control_channel:action.control_channel });
     return stats();
   }
@@ -1132,10 +1211,12 @@ export function createGateway(config,{visionTranscode}={}) {
     if(!agentRoute&&req.headers.authorization)return error(res,403,'wrong_ingress','Agent credentials are accepted only on the versioned agent API');
     if(req.method==='GET'&&req.url==='/agent/v1/status')return json(res,200,agents.status(actor));
     if(req.method==='GET'&&req.url==='/agents')return json(res,200,agents.adminStatus());
+    if (req.method === 'GET' && req.url === '/priority-status') return json(res,200,priorityStatus(true));
     if (req.method === 'GET' && req.url === '/workers') return json(res, 200, registry());
-    if (req.method !== 'POST' || !['/drain-workers', '/resume-workers', '/maintenance-lock','/release-maintenance-lock','/maintenance-receipt','/add-worker', '/remove-worker', '/set-ssh-fallbacks','/set-context-limit','/set-queue-timeout','/set-protection','/relocate-queued','/genie-relocate-queued','/recovery-policy','/recovery-handback-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/predictor','/genie-predictor','/grant-agent','/revoke-agent','/release-agent-hold','/agent/v1/drain','/agent/v1/resume','/agent/v1/receipt'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
+    if (req.method !== 'POST' || !['/drain-workers', '/resume-workers', '/maintenance-lock','/release-maintenance-lock','/maintenance-receipt','/add-worker', '/remove-worker', '/set-ssh-fallbacks','/set-context-limit','/set-queue-timeout','/set-protection','/priority-settings','/priority-manual','/priority-rules','/priority-review-next','/priority-review-result','/relocate-queued','/genie-relocate-queued','/recovery-policy','/recovery-handback-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/predictor','/genie-predictor','/grant-agent','/revoke-agent','/release-agent-hold','/agent/v1/drain','/agent/v1/resume','/agent/v1/receipt'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
     let body = '';
-    req.on('data', chunk => { body += chunk; if (body.length > 4096) req.destroy(); });
+    if(req.url.startsWith('/priority-'))req.setEncoding('utf8');
+    req.on('data', chunk => { body += chunk; if (Buffer.byteLength(body) > (req.url==='/priority-rules'?12288:4096)) req.destroy(); });
     req.on('error', () => {});
     req.on('end', () => {
       void serialize(async () => {
@@ -1162,6 +1243,12 @@ export function createGateway(config,{visionTranscode}={}) {
           if(['/recover-worker','/genie-recover-worker','/recovery-canary'].includes(req.url))return json(res,202,recovery.request(input,req.url==='/genie-recover-worker'?'genie':'operator',{canary:req.url==='/recovery-canary'}));
           if (req.url === '/set-context-limit') return json(res,200,await setContextLimit(input));
           if (req.url === '/set-queue-timeout') return json(res,200,setQueueTimeout(input));
+          if(req.url==='/priority-review-next'){
+            if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).length)throw new Error('Priority review claim takes no arguments');
+            return json(res,200,{schema:1,review:priorityIntents?.claim()??null});
+          }
+          if(req.url==='/priority-review-result')return json(res,200,{schema:1,accepted:priorityIntents?.complete(input)??false});
+          if(['/priority-settings','/priority-manual','/priority-rules'].includes(req.url))return json(res,200,priorityControl(req.url.slice('/priority-'.length),input));
           if (req.url === '/set-protection') return json(res,200,visionProtection.set(input));
           if (req.url === '/relocate-queued') return json(res,200,relocateQueued(input));
           if (req.url === '/genie-relocate-queued') {
@@ -1203,7 +1290,7 @@ export function createGateway(config,{visionTranscode}={}) {
   }) : null;
   control?.on('clientError',invalidHttp);
   return {
-    server, nodes, stats, store, drainNodes, registry,recovery,relocateQueued,visionProtection,
+    server, nodes, stats, store, drainNodes, registry,recovery,relocateQueued,visionProtection,priorityControl,priorityStatus,
     async start() {
       nodes.forEach(startTunnel);
       if(startup.barrier){

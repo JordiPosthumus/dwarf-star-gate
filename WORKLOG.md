@@ -10,6 +10,12 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-06
 
+- **Connected the first Priority Lens source slice.** Current jobs have persistent
+  manual priorities, explicit preference rules and guarded eligible-conversation
+  scheduling. Optional Pi excerpts feed asynchronous Genie advice with independent
+  expiry and no dispatch wait. Tests cover real Pi serialization and synthetic
+  dispatch; aging agreement, chat corrections and live rollout remain.
+
 - **Moved hardening suggestions into Gate Genie.** Suggestions now sit below the
   conversation in their existing collapsible section, freeing space above every
   other tab. Newest-first ordering and saved notes retain their existing behavior.

@@ -85,6 +85,33 @@ try {
   assert.equal(await page.locator('#tab-fleet').getAttribute('aria-selected'),'true');
   assert.equal(new URL(page.url()).hash,'');
   await page.locator('#tab-genie').click();
+  await page.waitForFunction(()=>document.querySelectorAll('#priority-jobs tr').length===3&&!document.getElementById('priority-toggle').disabled);
+  assert.deepEqual(await page.locator('.priority-work th').allTextContents(),['Current Jobs','Priority','Reason','State','Machine','Waiting / running']);
+  assert.match(await page.locator('#priority-coverage').innerText(),/Synthetic example/);
+  assert.match(await page.locator('#priority-jobs').innerText(),/Synthetic: <review> next steps/);
+  assert.equal(await page.locator('#priority-jobs review').count(),0,'Client titles are text, not markup');
+  const prioritySelect=page.locator('#priority-jobs select').first();
+  assert.equal(await prioritySelect.inputValue(),'High');
+  await prioritySelect.selectOption('Low');
+  await page.waitForFunction(()=>document.getElementById('priority-message').textContent.includes('Conversation priority saved'));
+  assert.equal(await page.locator('#priority-jobs tr').first().locator('td').nth(3).innerText(),'Running','Changing priority does not stop active work');
+  await prioritySelect.selectOption('automatic');
+  await page.waitForFunction(()=>!document.querySelector('#priority-jobs select').disabled&&document.querySelector('#priority-jobs select').value==='automatic');
+  await prioritySelect.selectOption('High');
+  await page.waitForFunction(()=>!document.querySelector('#priority-jobs select').disabled);
+  await page.locator('#priority-preferences summary').click();
+  await page.locator('#priority-rules').fill('Synthetic preference: prioritize urgent incident response.');
+  await page.waitForTimeout(5500);
+  assert.equal(await page.locator('#priority-rules').inputValue(),'Synthetic preference: prioritize urgent incident response.','Polling preserves unsaved preferences');
+  await page.locator('#priority-rules-save').click();
+  await page.waitForFunction(()=>document.getElementById('priority-message').textContent.includes('Priority preferences saved'));
+  await page.locator('#priority-preferences summary').click();
+  await page.locator('#priority-toggle').click();
+  await page.waitForFunction(()=>document.getElementById('priority-toggle').getAttribute('aria-pressed')==='false'&&!document.getElementById('priority-toggle').disabled);
+  assert.match(await page.locator('#priority-status').innerText(),/Off.*ordinary scheduling/);
+  assert.equal(await prioritySelect.inputValue(),'High','Opt-out preserves the saved override');
+  await page.locator('#priority-toggle').click();
+  await page.waitForFunction(()=>document.getElementById('priority-toggle').getAttribute('aria-pressed')==='true'&&!document.getElementById('priority-toggle').disabled);
   const enrollmentGuide=page.getByRole('link',{name:'Setup guide for your agent ↗'});
   assert.equal(await enrollmentGuide.count(),1);
   assert.equal(await enrollmentGuide.getAttribute('href'),'https://github.com/JordiPosthumus/dwarf-star-gate/blob/main/docs/agent-recovery-enrollment.md');
@@ -164,6 +191,17 @@ try {
   await page.waitForFunction(()=>document.getElementById('queue-timeout-current').textContent.includes('20,000'));
   await page.reload();await page.locator('#queue-timeout-form').waitFor();
   assert.equal(await page.locator('#queue-timeout-input').inputValue(),'20000');
+  await page.locator('#priority-settings-save').waitFor();
+  await page.waitForFunction(()=>!document.getElementById('priority-settings-save').disabled);
+  await page.locator('#priority-weight-high').fill('4');await page.locator('#priority-aging').fill('15');
+  await page.locator('#priority-settings-save').click();
+  await page.waitForFunction(()=>document.getElementById('priority-settings-message').textContent.includes('saved'));
+  await page.reload();await page.waitForFunction(()=>document.getElementById('priority-weight-high').value==='4');
+  assert.equal(await page.locator('#priority-aging').inputValue(),'15');
+  await page.locator('#priority-weight-high').fill('3');await page.locator('#priority-aging').fill('10');
+  await page.locator('#priority-settings-save').click();
+  await page.waitForFunction(()=>document.getElementById('priority-settings-message').textContent.includes('saved'));
+  await page.locator('section[aria-labelledby="priority-settings-title"]').screenshot({path:path.join(output,'priority-settings.png'),animations:'disabled'});
   assert.match(await page.locator('#relocation-controls').innerText(),/Safe queued handovers.*configured first-refusal window.*gateway core may move/s);
   assert.equal(await page.locator('#relocation-offers button').count(),1);
   assert.match(await page.locator('#relocation-offers button').getAttribute('title'),/warm cache/);
@@ -314,7 +352,7 @@ try {
   }
   await auditPage.close();
   assert.deepEqual(errors,[]);
-  console.log('Saved seven synthetic dashboard screenshots; verified proposed experiment labels, tab navigation, polling, analytics, compact hardware telemetry, named maintenance locks, mobile, reset/milestones, escaped agent holds and Keep paused UX.');
+  console.log('Saved eight synthetic dashboard screenshots; verified proposed experiment labels, tab navigation, polling, analytics, compact hardware telemetry, named maintenance locks, mobile, reset/milestones, escaped agent holds and Keep paused UX.');
 } finally {
   await browser?.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));
   if(learningServer){learningServer.closeAllConnections();await new Promise(resolve=>learningServer.close(resolve));}

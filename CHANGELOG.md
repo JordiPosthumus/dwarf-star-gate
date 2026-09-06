@@ -1,5 +1,18 @@
 # Changelog
 
+## Add guarded Priority Lens source and optional Pi intent review
+
+- Add current jobs, persistent manual priorities, revision-checked preferences
+  and bounded conversation-head selection, with activation awaiting an agreed
+  eligible-wait backstop and a visible opt-out.
+- Correlate short opted-in Pi user excerpts separately from unchanged inference.
+  Bound transient storage and independently expire review leases at 60 seconds.
+- Classify asynchronously through configured Genie capacity; refuse busy pool
+  admission and do not replay ambiguous advisory attempts. Preserve normal Genie
+  options and deadlines. Keep raw excerpts out of durable records and status.
+- Add policy, HTTP, deadline and installed-Pi contract fixtures. Natural-language
+  corrections, measured classifier quality and live rollout remain unfinished.
+
 ## Keep hardening suggestions in the Gate Genie tab
 
 - Move the existing collapsible suggestions section below Genie's conversation,

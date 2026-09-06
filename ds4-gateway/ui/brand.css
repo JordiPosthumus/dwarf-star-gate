@@ -102,3 +102,21 @@ button:disabled{opacity:.4;cursor:default}input:focus-visible,select:focus-visib
 @media(max-width:440px){.hardware-strip{grid-template-columns:1fr}.hardware-reading{grid-template-columns:56px auto 1fr;grid-template-rows:auto}.hardware-reading>small{grid-column:auto}.hardware-mini-chart{grid-column:auto;height:18px}}
 @media(max-width:750px){.genie-hardening>summary{align-items:flex-start;flex-direction:column;gap:3px}.genie-hardening>summary small{text-align:left}}
 @media(max-width:620px){.status-deck .capacity-panel{grid-template-columns:1fr}.status-deck .capacity-panel small{grid-column:1;text-align:left}}
+/* Priority Lens is a work overview, with its settings in the existing Settings tab. */
+.priority-lens{border:1px solid var(--line,#343936);border-radius:8px;padding:18px 20px;margin:0 0 18px}
+.priority-heading{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.priority-heading h2{margin:0}
+.priority-work-scroll{overflow:auto;max-height:28rem;margin:12px 0}
+.priority-work{width:100%;border-collapse:collapse;font-size:12px;text-align:left}
+.priority-work th,.priority-work td{padding:9px 10px;border-bottom:1px solid #343936;vertical-align:top}
+.priority-work th{color:#b5beb8;white-space:nowrap}
+.priority-work td:first-child{min-width:145px;overflow-wrap:anywhere}
+.priority-work td:nth-child(3){min-width:180px;max-width:320px;overflow-wrap:anywhere}
+.priority-work select{max-width:190px;min-width:130px}
+#priority-preferences{margin-top:12px}
+#priority-preferences-form{display:grid;gap:8px;margin-top:12px}
+#priority-rules{width:100%;box-sizing:border-box;resize:vertical;min-height:110px;background:#101211;color:#e4e9e5;border:1px solid #343936;border-radius:4px;padding:10px;font:inherit}
+.priority-settings-form{display:flex;gap:12px;align-items:end;flex-wrap:wrap}
+.priority-settings-form label{display:grid;gap:6px;font-size:12px;flex:1 1 130px}
+.priority-settings-form input{width:100%;box-sizing:border-box}
+@media(max-width:600px){.priority-lens{padding:12px}.priority-work th,.priority-work td{padding:8px 6px}}

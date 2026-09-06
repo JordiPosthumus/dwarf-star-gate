@@ -718,48 +718,24 @@ not possible, ordinary cold re-prefill remains an explicit costed alternative,
 not a disguised cache transfer. The Genie could propose a move; an independently
 validated deterministic mechanism would enforce the handover.
 
-## Future opt-in: Priority Lens
+## Priority Lens — source implemented, delivery continuing
 
-The [Pi integration plan](pi-integration-plan.md) explains how optional bounded
-intent can arrive before body reading without becoming a dependency for other
-harnesses. Session Rescue and Priority Lens remain separate permissions.
+The [Priority Lens implementation and boundaries](priority-lens.md) document the
+current-jobs UI, persistent overrides, explicit 30-line preference editor,
+bounded conversation-head lottery, eligible-wait aging, optional Pi user-intent
+handoff and asynchronous Genie classifier. The visible switch defaults on;
+queue priority awaits an explicitly agreed aging backstop. Pi content sharing
+remains separately opted in. Source/tested behavior does not imply live rollout.
 
-**Priority Lens** is the proposed UI name for intent-aware dispatch. When the
-operator explicitly enables its persistent setting, DSG may give Gate Genie a
-small bounded slice of the newest visible user request for each *undispatched*
-stream. Genie can recommend which waiting work is most valuable to run next and
-write a concise, separately colored dispatch explanation to the health wire.
-This is proposed, not implemented or enabled.
+The implementation never waits for Genie in dispatch. Independent core leases
+expire after 60 seconds; stale/manual-conflicting advice is rejected. New pool
+classification requires a free compatible slot at actual admission. Model
+options, normal Genie review deadlines, cache ownership and holds are preserved.
 
-The content boundary must be unusually obvious: default off; visible while on;
-newest user text only; no system/developer messages, tool arguments, images,
-hidden reasoning or whole conversation; a documented byte limit; and no raw
-snippet in logs, training rows, receipts, notebook memory or browser snapshots.
-The configured Genie provider receives the snippet, so the UI must identify that
-trust boundary before opt-in. Turning the feature off stops new content capture
-immediately and returns scheduling to the deterministic policy.
-
-Genie supplies a bounded recommendation, reason category and confidence—not a
-queue mutation. Fixed code enforces eligibility, session/cache continuity,
-operator holds, starvation protection, FIFO aging, a maximum priority advantage
-and idempotent receipts. It can reorder only requests that DSG has not dispatched;
-it cannot interrupt or replay active work. Missing, late, malformed or failed
-advice is a deterministic abstention, never a blocked request.
-
-Chat may help the operator refine durable preferences such as project priority,
-deadline sensitivity, background-work treatment and maximum tolerated starvation.
-Genie should propose a concrete, reviewable policy delta; the UI shows and applies
-that version explicitly rather than silently treating conversational prose as
-authority. Every applied decision records only bounded metadata: policy version,
-priority class, reason category, alternatives considered, decision time and
-eventual wait/outcome. This gives us audit and learning evidence without retaining
-the request text.
-
-Acceptance: opt-in persistence and opt-out, provider-boundary disclosure, content
-exclusion/redaction tests, zero raw-text persistence, bounded inference timeout,
-starvation/adversarial-prompt resistance, same-session/cache invariants, decision
-receipts, deterministic fallback and a shadow-only evaluation showing that the
-policy improves an operator-defined objective before it gains routing authority.
+Remaining: chat corrections with a clear distinction between one-chat overrides
+and a confirmed general preference, agreed activation settings, measured
+classification quality, richer task lifecycle coverage and rollout validation.
+Proactive Resume remains a separate optional Pi capability and permission.
 
 ## Lightweight hardware telemetry — first adapters implemented
 
