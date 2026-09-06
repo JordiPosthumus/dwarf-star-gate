@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Made Door errors traceable to their local failure receipts.** One generated
+  ID now connects a pre-header error response with its bounded diagnostic entry.
+  Older missing IDs remain unknown, caller IDs stay out of the ledger, and
+  after-header failures still abort without fabricated completion or replay.
+
 - **Kept notebook limits and writer checks valid across file changes.** Loading
   now stays within its checked byte allowance and rejects observed growth or
   truncation. Appending rejects equal-sized replacement journals. Regression

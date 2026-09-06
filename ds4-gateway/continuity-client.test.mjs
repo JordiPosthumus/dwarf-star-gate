@@ -263,6 +263,11 @@ test('Door failure projection preserves fixed diagnostics without payloads or in
   assert.equal(s.failed,40);assert.equal(s.model_discovery_hold,true);assert.equal(s.failure_evidence.recent.length,30);
   assert.equal(s.failure_evidence.by_request_class.status,37);assert.equal(s.failure_evidence.recent[0].backend_dispatch,'unknown');
   assert.equal(s.failure_evidence.recent[0].at,'2026-09-05T00:00:00.000Z');assert.ok(!JSON.stringify(s).includes('PRIVATE'));
+  for(const failure_id of [undefined,'PRIVATE_ID','AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE']){
+    const displayed=continuityDoorForDisplay({...base,failure_evidence:{...failure_evidence,recent:[{...row,failure_id}]}}).failure_evidence.recent[0];
+    assert.equal(displayed.failure_id,failure_id?.startsWith('AAAA')?failure_id.toLowerCase():null);
+    assert.ok(!JSON.stringify(displayed).includes('PRIVATE'));
+  }
   for(const invalid of [null,{...row,request_class:'PRIVATE'},{...row,phase:'PRIVATE'},{...row,at:'PRIVATE'},{...row,backend_dispatch:'not_dispatched'},{...row,sequence:-1}]){
     assert.deepEqual(continuityDoorForDisplay({...base,failure_evidence:{...failure_evidence,recent:[invalid]}}).failure_evidence.recent,[]);
   }

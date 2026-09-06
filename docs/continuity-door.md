@@ -42,11 +42,18 @@ cancellation timings and genuine upstream disconnects. A lifetime counter alone
 does not identify the cause of a particular historical failure. New Doors also
 expose `failure_evidence`: process-lifetime counters for inference, model discovery,
 status and other requests, plus the latest 30 failure receipts, newest first.
-Each contains a sequence, timestamp, fixed request class, before/after-response-
+Each new receipt contains a Door-generated `failure_id`, sequence, timestamp,
+fixed request class, before/after-response-
 headers phase, and hold state at failure. No paths, queries, request bodies,
 credentials or backend error text are retained in these receipts. The dashboard
 and Genie receive a bounded, allowlisted projection; older missing evidence is
 unknown, not zero failures. This evidence resets when the Door restarts.
+The generated ID links a particular proxy failure to a pre-header error response:
+it matches `X-Request-Id` and `error.continuity.request_id` when such a response
+can be returned. Caller-supplied call IDs are not stored in this ledger. Older
+receipts have an unknown/null ID in the display projection; no ID is invented
+retroactively. After-header failures get a local receipt but still abort the
+stream without appending an ID, guidance or a success marker.
 
 A status-poll failure is not an inference-session loss. Neither response phase
 establishes whether a backend executed the request: every receipt explicitly says
@@ -118,7 +125,8 @@ adds `X-DSG-Dispatch-State: unknown` plus an `error.continuity` envelope:
 `schema: 1`, `source: continuity_door`, `dispatch_state: unknown`,
 `retry_class: inspect_before_retry`, and `reason: core_connection_failed`.
 Its new `request_id` matches `X-Request-Id` and identifies this **Door response**,
-not a proven core/backend execution. Only a valid caller `X-DSG-Call-Id` is echoed
+and the corresponding Door `failure_id`, not a proven core/backend execution.
+Only a valid caller `X-DSG-Call-Id` is echoed
 as `call_id`; otherwise it is null. This is never a non-dispatch certificate.
 After response headers, transport failure still aborts the stream; the Door does
 not append guidance, a finish marker or a fabricated successful completion.

@@ -153,6 +153,9 @@ delivery while keeping permissions and ordinary gateway operation independent.
   can still resubmit independently of DSG's transport. Preserve typed uncertainty
   through a negotiated client/provider contract and prove tool-state/idempotency
   behavior before claiming safe resumption. No installed retry settings change.
+  Door error-response IDs now match local failure receipts and survive the
+  diagnostic projection. These are proxy-failure IDs, not backend identities or
+  retry certificates; caller IDs are not added to the failure ledger.
 - **[Priority Lens](roadmap.md#future-opt-in-priority-lens):** persistent consent
   to bounded request snippets, explainable prioritization and user feedback.
   Protect privacy/fairness; core scheduling must survive Genie unavailability.

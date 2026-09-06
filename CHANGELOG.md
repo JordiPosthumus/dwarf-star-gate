@@ -1,5 +1,14 @@
 # Changelog
 
+## Correlate Door error replies with local failure evidence
+
+- Share one generated ID between a local proxy-failure receipt and its pre-header
+  error response. Preserve it through the allowlisted dashboard/Genie projection.
+- Keep older missing IDs unknown and caller IDs out of the bounded failure
+  ledger. No backend-execution, session-identity or retry authority is implied.
+- Retain HTTP/error semantics, post-header stream aborts and no-replay behavior;
+  add correlation, uniqueness, compatibility and privacy regression assertions.
+
 ## Preserve notebook read bounds and file identity
 
 - Pin notebook reads to the checked length, handle short reads, and reject

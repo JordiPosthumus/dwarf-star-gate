@@ -13,11 +13,10 @@ const hopHeaders=new Set(['connection','keep-alive','proxy-authenticate','proxy-
 function headers(input){const excluded=new Set([...hopHeaders,...String(input.connection??'').toLowerCase().split(',').map(x=>x.trim())]);return Object.fromEntries(Object.entries(input).filter(([key])=>!excluded.has(key.toLowerCase())));}
 function json(res,status,value){if(res.destroyed||res.headersSent)return;res.writeHead(status,{'content-type':'application/json','cache-control':'no-store'});res.end(JSON.stringify(value));}
 function report(res,status,code,message){json(res,status,{error:{type:'gateway_error',code,message:dsgReport(message)}});}
-function reportUnknownCoreExecution(req,res){
+function reportUnknownCoreExecution(req,res,request_id){
   if(res.destroyed||res.headersSent)return;
   // This identifies the Door's error response, not a backend execution. Even a
   // lost response before headers may follow acceptance/dispatch by the core.
-  const request_id=randomUUID();
   res.setHeader('x-request-id',request_id);res.setHeader(DISPATCH_HEADER,'unknown');
   json(res,503,{error:{type:'gateway_error',code:'continuity_core_unavailable',
     message:dsgReport('Connection to the DSG core failed. Backend execution is unknown: the core may already have forwarded this request. DSG did not replay it. Check the task state before deciding whether to retry.'),
@@ -81,13 +80,16 @@ export function createDoor(config,{now=Date.now}={}){
     state.active++;
     const finish=failed=>{
       if(settled)return;settled=true;state.active--;
+      let failure;
       if(failed){
         state.failed++;const request_class=requestClass(req);failureCounts[request_class]++;
-        failures.unshift({sequence:state.failed,at:new Date(now()).toISOString(),request_class,
-          phase:upstreamResponse?'after_response_headers':'before_response_headers',holding:state.holding,hold_kind:state.hold_kind,backend_dispatch:'unknown'});
+        failure={failure_id:randomUUID(),sequence:state.failed,at:new Date(now()).toISOString(),request_class,
+          phase:upstreamResponse?'after_response_headers':'before_response_headers',holding:state.holding,hold_kind:state.hold_kind,backend_dispatch:'unknown'};
+        failures.unshift(failure);
         if(failures.length>30)failures.pop();
       }
       req.off('aborted',cancel);req.off('error',cancel);res.off('close',clientClosed);
+      return failure;
     };
     // Settle before destroying either leg: destruction can emit an aborted/error
     // event synchronously. A client cancellation is not a failed core or a reason
@@ -100,7 +102,7 @@ export function createDoor(config,{now=Date.now}={}){
       upstreamResponse=up;state.forwarded++;
       res.writeHead(up.statusCode,headers(up.headers));up.on('error',responseFailed);up.on('aborted',responseFailed);up.on('end',()=>finish(false));up.pipe(res);
     });
-    upstream.on('error',()=>{if(settled)return;finish(true);automaticHold('core_connection_failed');if(!res.headersSent)reportUnknownCoreExecution(req,res);else res.destroy();});
+    upstream.on('error',()=>{if(settled)return;const failure=finish(true);automaticHold('core_connection_failed');if(!res.headersSent)reportUnknownCoreExecution(req,res,failure.failure_id);else res.destroy();});
     req.on('aborted',cancel);req.on('error',cancel);res.on('close',clientClosed);req.pipe(upstream);
   }
   const release=()=>{invalidateProbe();state.holding=false;state.hold_id=null;state.hold_kind=null;state.reason=null;state.since=null;state.last_transition={action:'release',at:new Date(now()).toISOString()};for(const item of [...held]){remove(item);proxy(item.req,item.res);}};

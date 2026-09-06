@@ -11,7 +11,7 @@ function doorFailuresForDisplay(value){
     recent:(Array.isArray(value.recent)?value.recent:[]).slice(0,30).flatMap(row=>{
       if(!row||!count(row.sequence)||!classes.includes(row.request_class)||!['before_response_headers','after_response_headers'].includes(row.phase)||
         typeof row.at!=='string'||!Number.isFinite(Date.parse(row.at))||row.backend_dispatch!=='unknown')return [];
-      return [{sequence:row.sequence,at:new Date(row.at).toISOString(),request_class:row.request_class,phase:row.phase,
+      return [{failure_id:validCallId(row.failure_id),sequence:row.sequence,at:new Date(row.at).toISOString(),request_class:row.request_class,phase:row.phase,
         holding:row.holding===true,hold_kind:['manual','automatic'].includes(row.hold_kind)?row.hold_kind:null,backend_dispatch:'unknown'}];
     })};
 }

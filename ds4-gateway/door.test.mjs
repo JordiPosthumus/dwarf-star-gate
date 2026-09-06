@@ -10,6 +10,7 @@ import {spawn} from 'node:child_process';
 import {createDoor} from './door.mjs';
 import {doorControl} from './door-client.mjs';
 import {createContinuityFetch} from './continuity-client.mjs';
+import {continuityDoorForDisplay} from './continuity.mjs';
 import {coordinatedCoreRestart,releaseParkedCore,PARK_REASON} from './service-control.mjs';
 
 test('lifecycle release cannot clear a newer hold, even with an identical reason',{timeout:5000},async t=>{
@@ -50,12 +51,17 @@ test('lost core replies report unknown execution, not permission to resubmit',{t
   assert.equal(c.schema,1);assert.equal(c.source,'continuity_door');assert.equal(c.dispatch_state,'unknown');
   assert.equal(c.retry_class,'inspect_before_retry');assert.equal(c.reason,'core_connection_failed');assert.equal(c.call_id,callId);
   assert.equal(c.request_id,response.headers.get('x-request-id'));assert.match(c.request_id,/^[a-f0-9-]{36}$/);
+  const failure=door.status().failure_evidence.recent[0];assert.equal(failure.failure_id,c.request_id);
+  assert.equal(continuityDoorForDisplay(door.status()).failure_evidence.recent[0].failure_id,c.request_id);
+  assert.ok(!JSON.stringify(failure).includes(callId),'caller identity is not stored in the Door failure ledger');
   assert.match(body.error.message,/Backend execution is unknown/);assert.doesNotMatch(body.error.message,/retry after DSG reports ready/);
   assert.equal(fetches,1);assert.equal(executions,1);assert.equal(response.headers.get('retry-after'),null);
   assert.ok(!JSON.stringify(body).includes('PRIVATE_BODY'));
   door.release();
   const invalid=await fetch(baseUrl+'/chat/completions',{method:'POST',headers:{'x-dsg-call-id':'PRIVATE_CALL'},body:'{}'});
   const invalidBody=await invalid.json();assert.equal(invalidBody.error.continuity.call_id,null);assert.ok(!JSON.stringify(invalidBody).includes('PRIVATE_CALL'));
+  assert.equal(door.status().failure_evidence.recent[0].failure_id,invalidBody.error.continuity.request_id);
+  assert.notEqual(invalidBody.error.continuity.request_id,c.request_id);
   assert.equal(executions,2);
 });
 test('duplicate Door startup preserves the running control socket and maintenance hold',{timeout:5000},async t=>{
@@ -356,6 +362,8 @@ test('failure evidence separates request types, stays bounded and exposes no pat
   assert.equal(door.status().failed,36);assert.equal(evidence.by_request_class.status,33);assert.equal(evidence.recent.length,30);
   assert.equal(evidence.recent[0].sequence,36);assert.equal(evidence.recent.at(-1).sequence,7);
   assert.ok(evidence.recent.every(r=>r.backend_dispatch==='unknown'));
+  assert.equal(new Set(evidence.recent.map(r=>r.failure_id)).size,30);
+  assert.ok(evidence.recent.every(r=>/^[a-f0-9-]{36}$/.test(r.failure_id)));
   for(const text of ['secret','private','/gateway','Bearer','body'])assert.equal(JSON.stringify(evidence).includes(text),false);
   evidence.by_request_class.status=999;evidence.recent[0].request_class='mutated';evidence.recent.length=0;
   assert.equal(door.status().failure_evidence.by_request_class.status,33);assert.equal(door.status().failure_evidence.recent[0].request_class,'status');
