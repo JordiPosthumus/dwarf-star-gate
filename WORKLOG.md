@@ -1259,3 +1259,7 @@ Three private native Pi/DSG bridge checks pass for partial failed tool calls, co
 ## 2026-09-06 — Pi candidate distribution build
 
 Built the native candidate offline and added its missing public receipt-store export. Nine local tarballs installed offline in an isolated directory. Installed-package checks verify local import resolution, bundled CLI version/help, one attributed native cue/effect, duplicate prevention, progress receipt reopening and preservation of fixture model metadata/thinking. Full candidate check passes; source hashing identifies only the intended index export as this build's source delta. No global Pi installation, normal launcher, model or service changed. Faux-model packaging evidence does not establish live judgment, context/output boundary behavior or positive outage recovery.
+
+## 2026-09-06 — Packaged interactive Proactive Resume host
+
+Validated the assembled DSG host against the isolated installed native Pi and TUI packages: default decline creates no receipts/reviews; explicit approval produces one attributed synthetic step, two scripted courtesy/progress reviews, visible completion and opt-out, with confirmed receipt reopen. Added a separate private launcher selecting an explicit candidate install and preserving the source launcher's configuration/host/bootstrap behavior. Version/help and syntax pass without production receipt creation. No normal Pi installation, launcher, model or service changed.
