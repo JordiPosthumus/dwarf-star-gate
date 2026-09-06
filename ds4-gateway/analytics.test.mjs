@@ -241,6 +241,8 @@ test('fleet pulse defaults to 12h, keeps missing energy unknown and exposes cali
   call('renderFleetSpeed(sample)');assert.equal(get('fleet-speed-window').value,'12h');assert.equal(get('fleet-decode-speed').textContent,'20');assert.equal(get('fleet-prefill-speed').textContent,'680');
   assert.equal(get('fleet-speed-decode').style.values.get('--speed-fill'),'50');assert.equal(get('fleet-speed-decode').style.values.get('--activity-fill'),'12.5');
   assert.match(get('fleet-speed-value').textContent,/21.6k tok · energy awaiting power data/);assert.match(get('fleet-speed-summary').title,/does not invent an energy estimate/);
+  ctx.sample.fleet_speed.windows['12h'].energy={status:'insufficient_power_coverage',estimated_kwh:null,measured_kwh:0.0378,coverage_pct:1.7};call('renderFleetSpeed(sample)');
+  assert.match(get('fleet-speed-summary').attributes.get('aria-label'),/Measured energy subtotal 0.038 kilowatt hours. Fleet estimate unavailable/);
   ctx.sample.fleet_speed.windows['12h'].energy={status:'estimated_from_measured_power',estimated_kwh:3.1,measured_kwh:3.1,coverage_pct:100};call('renderFleetSpeed(sample)');
   assert.match(get('fleet-speed-value').textContent,/21.6k tok · ≈3.1 kWh · .* tok\/kWh/);assert.match(get('fleet-speed-summary').attributes.get('aria-label'),/Estimated energy 3.1 kilowatt hours/);
 });

@@ -472,6 +472,11 @@ test('hardware cards stay compact, label unified memory honestly and preserve mi
   const html=vm.runInContext(`hardwareMarkup(${JSON.stringify(hardware)},100001)`,context);assert.match(html,/RAM/);assert.match(html,/75%/);assert.match(html,/GPU/);assert.match(html,/42%/);assert.match(html,/89 W/);assert.match(html,/1,200 MHz SM/);assert.match(html,/Unified host memory used; not dedicated GPU RAM/);assert.match(html,/Measured compute-module power/);
   hardware.current={time:100000,memory_used_bytes:75,memory_total_bytes:100,memory_scope:'host_unified'};const partial=vm.runInContext(`hardwareMarkup(${JSON.stringify(hardware)},100001)`,context);assert.match(partial,/class="hardware-reading accelerator[^"]*"[^>]*>[\s\S]*?<strong>—<\/strong>/);assert.match(partial,/Power unavailable; no TDP estimate is substituted/);
   assert.equal(vm.runInContext('hardwareMarkup({configured:false},100001)',context),'');
+  hardware.temperature_current={temperatures:[{scope:'gpu',sensor:'fixture_gpu',celsius:70,time:100000}]};
+  hardware.series=[{time:-900000,clock_mhz:1500},{time:100000,clock_mhz:null}];
+  const temperature=vm.runInContext(`temperatureMarkup(${JSON.stringify(hardware)},100001)`,context);
+  assert.match(temperature,/GPU clock · unavailable/);assert.doesNotMatch(temperature,/GPU clock · 0–1 MHz/);
+
 });
 async function fixture(t, management = null) {
   const server = createDashboard(() => ({ version:1, read_only:true, devices:[] }), undefined, management);
