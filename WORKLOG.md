@@ -1205,3 +1205,8 @@ Validated cancellation while enrollment options are pending, opt-out before the 
 The candidate Pi runtime passes 13 bridge/enrollment integration tests, including the real interactive command, confirmation selector, one attributed continuation and visible opt-out. Six host/context unit tests pass. No installed Pi binary, provider, model or active session was changed.
 
 Release verification for these changes: main suite 690 passed / 5 optional skips; installed Pi title contracts 4 passed separately; candidate native bridge/enrollment 13 passed; host/context 6 passed; JavaScript/shell syntax and indexed privacy checks passed. The source release does not activate the installed clients or restart the live core.
+
+
+## 2026-09-06 — Current Jobs table readability
+
+Wrapped long task/reason text within explicit column widths, shortened repeated status wording, and separated waited/running times. Compact priority labels and current accessible names keep the controls usable; narrow screens scroll within a keyboard-focusable table region. The synthetic Genie screenshot is refreshed. Four-width overflow checks and the existing browser navigation/priority-control flows pass.

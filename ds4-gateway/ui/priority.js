@@ -56,12 +56,15 @@ function render(next){
     }
     const cells=row.children,select=cells[1].firstElementChild;
     cells[0].textContent=job.title||`Title not supplied · ${job.request_id.slice(0,8)}`;
-    select.dataset.chat=job.chat||'';select.options[0].textContent=`Automatic (${job.source==='user'?'return to Genie':job.priority||'Medium'})`;
+    select.dataset.chat=job.chat||'';select.options[0].textContent=job.source==='user'?'Return to automatic':`Auto · ${job.priority||'Medium'}`;
+    select.setAttribute('aria-label',`Priority for ${job.title||'untitled conversation'} ${job.request_id.slice(0,8)}`);
     if(document.activeElement!==select)select.value=job.source==='user'?job.priority:'automatic';
-    cells[2].textContent=[job.reason,job.request_reason].filter(Boolean).join(' · ');
+    const reason=job.source==='default'?'No priority advice yet':job.source==='user'?'Set by you':job.reason;
+    cells[2].textContent=[reason,job.request_reason==='Request is already running'?null:job.request_reason].filter(Boolean).join('\n');
+    cells[2].title=[job.reason,job.request_reason].filter(Boolean).join(' · ');
     cells[3].textContent=job.state==='running'?'Running':job.state==='queued'?'Queued':'Blocked';
     cells[4].textContent=job.machine||'Unassigned';
-    cells[5].textContent=`${elapsed(job.waiting_ms)} waiting${job.state==='running'?` · ${elapsed(job.running_ms)} running`:''}`;
+    cells[5].textContent=job.state==='running'?`Waited ${elapsed(job.waiting_ms)}\nRunning ${elapsed(job.running_ms)}`:`Waiting ${elapsed(job.waiting_ms)}`;
   }
   for(const row of [...root.children])if(!keep.has(row.dataset.request))row.remove();
   $('priority-coverage').textContent=`${next.demo?'Synthetic example; no real tasks are connected. ':''}${keep.size?'':'No requests currently observed. '}${next.jobs_truncated?'Showing the first 512 requests; additional requests are not displayed. ':''}Only DSG requests are shown. Direct activity and work inside an unobserved client remain unknown.`;

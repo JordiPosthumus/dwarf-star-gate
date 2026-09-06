@@ -108,6 +108,18 @@ try {
   assert.match(await page.locator('#priority-coverage').innerText(),/Synthetic example/);
   assert.match(await page.locator('#priority-jobs').innerText(),/Synthetic: <review> next steps/);
   assert.equal(await page.locator('#priority-jobs review').count(),0,'Client titles are text, not markup');
+  for(const width of [1440,1100,750,390]){
+    await page.setViewportSize({width,height:1100});
+    const fits=await page.locator('#priority-jobs tr').first().evaluate(row=>{
+      const cell=row.cells[2],previous=cell.textContent;
+      cell.textContent='A deliberately long synthetic reason must wrap inside its own column instead of obscuring the state, machine or elapsed times.';
+      const range=document.createRange();range.selectNodeContents(cell);const bounds=cell.getBoundingClientRect();
+      const fits=[...range.getClientRects()].every(rect=>rect.right<=bounds.right+1&&rect.left>=bounds.left-1);
+      cell.textContent=previous;return fits&&document.documentElement.scrollWidth<=innerWidth+1;
+    });
+    assert.equal(fits,true,`Priority reasons stay within their columns at ${width}px`);
+  }
+  await page.setViewportSize({width:1440,height:1100});
   const prioritySelect=page.locator('#priority-jobs select').first();
   assert.equal(await prioritySelect.inputValue(),'High');
   await prioritySelect.selectOption('Low');
