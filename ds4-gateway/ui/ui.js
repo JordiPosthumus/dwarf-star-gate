@@ -801,10 +801,12 @@ function renderGenieActionLedger() {
   const storageError=genieState?.provider_action_storage?.error;
   if(storageError)$('genie-action-summary').textContent+=' · pool history not saved';
   $('genie-action-summary').title=storageError?'Pool action storage needs attention; new receipts remain session-only. Inspect Genie status. Nothing was deleted.':'';
-  const signature=JSON.stringify([filter,visible]);if(signature===genieLedgerSignature)return;genieLedgerSignature=signature;
+  const signature=JSON.stringify([filter,visible]);if(signature===genieLedgerSignature)return;
   const items=visible.map(row=>{
     const item=document.createElement('li');item.dataset.level=row.level;
-    const time=document.createElement('time');time.dateTime=new Date(row.at).toISOString();time.textContent=clock(row.at);
+    const time=document.createElement('time'),date=new Date(row.at);
+    if(Number.isFinite(date.getTime()))time.dateTime=date.toISOString();
+    time.textContent=clock(row.at);
     const title=document.createElement('strong');title.textContent=row.title;
     const detail=document.createElement('span');detail.textContent=row.detail;detail.title=row.detail;
     item.append(time,title,detail);return item;
@@ -813,6 +815,8 @@ function renderGenieActionLedger() {
   const list=$('genie-action-items'),scrollTop=list.scrollTop;
   list.replaceChildren(...items);
   list.scrollTop=scrollTop;
+  // Only a completed render may suppress an identical future refresh.
+  genieLedgerSignature=signature;
 }
 const workspaceNames=['fleet','genie','analytics','activity','settings'];
 let currentWorkspace='fleet';

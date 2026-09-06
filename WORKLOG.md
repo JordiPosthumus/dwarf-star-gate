@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Kept the action ledger readable after a bad date or failed refresh.**
+  Receipts with unrepresentable dates remain visible as unknown. A rendering
+  failure no longer marks the view as up to date and suppresses later refreshes.
+  Journal bytes, filtering and the latest-thirty view stay unchanged.
+
 - **Kept malformed dates from taking Genie offline.** Failure evidence now
   checks whether timestamps can actually be represented as dates. Legacy notes
   remain visible with an unknown date, without deleting or rewriting history.

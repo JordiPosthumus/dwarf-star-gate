@@ -1,5 +1,14 @@
 # Changelog
 
+## Preserve action-ledger rendering across invalid dates and failed refreshes
+
+- Show unrepresentable action dates as unknown without dropping receipts or
+  changing saved history, row limits, action authority or filtering.
+- Record the render signature only after successful DOM replacement and scroll
+  restoration, so identical evidence can retry after a failed render.
+- Cover real durable receipt loading, all four action categories, valid date
+  boundaries and injected construction/replacement failures with isolated fixtures.
+
 ## Keep invalid evidence dates from crashing Genie
 
 - Check date representability before converting numeric failure evidence or

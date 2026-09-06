@@ -11,6 +11,7 @@ import { parseTiming, safeGatewayEvent, DeviceTelemetry, JournalReader, journalP
 import { createDashboard, runDashboard } from './dashboard.mjs';
 import { FileLogReader, parseLocalProcessStart, parseLocalTiming, telemetryFiles } from './file-telemetry.mjs';
 import {cacheInventoryDirectories} from './cache-inventory.mjs';
+import {GenieProviderLedger} from './genie-provider-ledger.mjs';
 import './rate-peaks.test.mjs';
 const parse = (s, t = 1000) => parseTiming(`0902 14:00:00 ds4-server: ${s}`, t);
 
@@ -580,6 +581,43 @@ test('Genie ledger renders all 30 available receipts, filters and preserves scro
   const css=fs.readFileSync(new URL('./ui/brand.css',import.meta.url),'utf8'),html=fs.readFileSync(new URL('./ui/index.html',import.meta.url),'utf8');
   assert.match(css,/\.genie-action-items\{[^}]*max-height:320px;overflow-y:auto/);
   assert.match(html,/id="genie-action-items"[^>]*tabindex="0"[^>]*aria-label="Latest 30/);
+});
+test('Genie ledger preserves legacy receipts with unrepresentable dates alongside valid actions',t=>{
+  const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'dsg-ledger-dates-')));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  const ledger=new GenieProviderLedger(path.join(root,'actions'));
+  assert.equal(ledger.append({id:'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',time:Number.MAX_SAFE_INTEGER,served_by:'pool_fallback',served_on:'worker-a'}),true);
+  const bytes=fs.readFileSync(ledger.file),loaded=new GenieProviderLedger(ledger.directory);
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const make=()=>({dataset:{},children:[],scrollTop:0,append(...items){this.children.push(...items);},replaceChildren(...items){this.children=items;this.scrollTop=0;}});
+  const nodes={'genie-action-filter':{value:'all'},'genie-action-summary':make(),'genie-action-items':make()};
+  const context=vm.createContext({document:{getElementById:id=>nodes[id],createElement:make},receipts:loaded.recent()});vm.runInContext(source,context);
+  vm.runInContext(`wireSnapshot={gateway:{recovery:{operations:[{id:'recovery',actor:'genie',updated_at:Number.MAX_SAFE_INTEGER,state:'failed'}]},predictor:{actions:[{id:'predictor',actor:'genie',time:Number.MAX_SAFE_INTEGER,status:'failed'}]}}};
+    analyticsState={handovers:{rows:[{actor:'genie',at:Number.MAX_SAFE_INTEGER,source:'worker-a',destination:'worker-b'}]}};
+    genieState={provider_actions:[...receipts,...[0,1000,8640000000000000].map((time,i)=>({id:'valid-'+i,time,served_by:'pool_fallback'}))]};renderGenieActionLedger()`,context);
+  const list=nodes['genie-action-items'],times=list.children.map(item=>item.children[0]);
+  assert.equal(times.length,7);assert.equal(times.filter(time=>time.textContent==='unknown').length,4);
+  assert.ok(times.filter(time=>time.textContent==='unknown').every(time=>time.dateTime===undefined));
+  assert.deepEqual(times.filter(time=>time.dateTime!==undefined).map(time=>time.dateTime),[8640000000000000,1000,0].map(at=>new Date(at).toISOString()));
+  assert.match(nodes['genie-action-summary'].textContent,/7 shown/);
+  list.scrollTop=80;const children=list.children;vm.runInContext('renderGenieActionLedger()',context);
+  assert.equal(list.children,children);assert.equal(list.scrollTop,80);
+  assert.equal(loaded.recent()[0].time,Number.MAX_SAFE_INTEGER);assert.deepEqual(fs.readFileSync(ledger.file),bytes);
+});
+test('Genie ledger retries unchanged evidence after a failed render',()=>{
+  for(const failure of ['create','replace']){
+    let fail=false;
+    const make=()=>({dataset:{},children:[],scrollTop:0,append(...items){this.children.push(...items);},replaceChildren(...items){if(fail&&failure==='replace')throw new Error('fixture render failure');this.children=items;this.scrollTop=0;}});
+    const nodes={'genie-action-filter':{value:'all'},'genie-action-summary':make(),'genie-action-items':make()};
+    const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+    const context=vm.createContext({document:{getElementById:id=>nodes[id],createElement:()=>{if(fail&&failure==='create')throw new Error('fixture render failure');return make();}}});vm.runInContext(source,context);
+    vm.runInContext("wireSnapshot={};analyticsState={};genieState={provider_actions:[{id:'old',time:0,served_by:'pool_fallback'}]};renderGenieActionLedger()",context);
+    const list=nodes['genie-action-items'],old=list.children;list.scrollTop=80;fail=true;
+    assert.throws(()=>vm.runInContext("genieState.provider_actions.push({id:'new',time:1000,served_by:'pool_fallback'});renderGenieActionLedger()",context),/fixture render failure/);
+    assert.equal(list.children,old);assert.equal(list.scrollTop,80);fail=false;
+    vm.runInContext('renderGenieActionLedger()',context);
+    assert.equal(list.children.length,2);assert.equal(list.children[0].children[0].dateTime,new Date(1000).toISOString());assert.equal(list.scrollTop,80);
+    const recovered=list.children;vm.runInContext('renderGenieActionLedger()',context);assert.equal(list.children,recovered);
+  }
 });
 test('health wire shows Genie-authored findings and recommendations, withholding stale or unavailable advice',()=>{
   const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];

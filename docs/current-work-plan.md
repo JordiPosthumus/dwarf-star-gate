@@ -86,6 +86,9 @@ is implied by this fix.
    Failure-evidence and legacy notebook timestamps now check date representability
    before display. Invalid dates remain unknown; saved notes and journal bytes
    stay intact rather than crashing optional Genie status or repairing history.
+   The action ledger also preserves receipts with unrepresentable dates and
+   retries unchanged evidence after a failed render. Only successful DOM updates
+   count as displayed; storage, row selection and action authority are unchanged.
 2. **Make cache misses actionable.** The machine-card view now separates low-reuse
    findings, unconfirmed evidence, engine RAM misses/disk restores and starts
    without reuse. It shows coverage, recency, measured disk-load spans and next
