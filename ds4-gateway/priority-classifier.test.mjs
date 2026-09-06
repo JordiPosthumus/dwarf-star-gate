@@ -2,13 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Readable} from 'node:stream';
 import {randomUUID} from 'node:crypto';
-import {PriorityClassifier,priorityProvider,priorityAdvice} from './priority-classifier.mjs';
+import {PriorityClassifier,priorityProvider,priorityAdvice,priorityReviewAdvice} from './priority-classifier.mjs';
 import {PriorityLens} from './priority-lens.mjs';
 import {PriorityIntents,priorityEnvelope} from './priority-intent.mjs';
 
 const fixtureGenie=()=>({config:{url:'http://127.0.0.1:10001/v1',api_key:'fixture',fallback:{url:'http://127.0.0.1:10002/v1',api_key:'fixture'}},enabled:true,source:'primary',busy:false,providerAttempts:[]});
 const snapshot=(now=100000)=>({gateway_at:now,gateway_error:null,gateway:{model:'deepseek-v4-flash',genie_admission_version:1,draining:false,workers:[{is_healthy:true,load:0,queued:0,drained:false}]}});
-const response=advice=>({ok:true,body:Readable.from([JSON.stringify({choices:[{finish_reason:'stop',message:{content:JSON.stringify(advice)}}]})])});
+const response=advice=>({ok:true,body:Readable.from([JSON.stringify({choices:[{finish_reason:'stop',message:{content:JSON.stringify({title:'Review synthetic task',...advice})}}]})])});
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 function rig(fetchImpl){
   let now=100000;const lens=new PriorityLens(),intents=new PriorityIntents({lens,now:()=>now}),genie=fixtureGenie(),calls=[];
@@ -64,4 +64,32 @@ test('independent classifier deadline releases a hung provider even when the pro
 
 test('classification output cannot carry arbitrary prose, rules, urgency or tool instructions',()=>{
   for(const value of [{priority:'High',reason:'uncertain'},{priority:'High',reason:'urgent',rules:['persist']},{priority:'Critical',reason:'urgent'},{priority:'High',reason:'run command'}])assert.throws(()=>priorityAdvice(value));
+});
+
+test('Genie generates a title without a supplied title or routing identity',async()=>{
+  const r=rig(async()=>response({title:'Repair export formatting',priority:'Medium',reason:'routine'}));
+  r.intents.entries.clear();r.intents.current.clear();
+  const input={schema:2,id:randomUUID(),client:'pi',title:null,excerpt:'Please repair the CSV export formatting.'};
+  r.intents.receive(input);r.intents.bind(input.id,{key:null,sequence:2});
+  assert.equal(r.intents.titleState(input.id,null),'pending_review');
+  await r.classifier.tick();
+  assert.equal(r.classifier.completed,1);assert.equal(r.intents.title(input.id,null),'Repair export formatting');
+  assert.equal(r.intents.titleSource(input.id,null),'genie');assert.equal(r.intents.titleState(input.id,null),'ready');
+  assert.equal(r.lens.decisions.size,0,'naming does not invent conversation priority');
+  assert.equal(r.intents.entries.get(input.id).excerpt,null);
+  assert.ok(!JSON.stringify(r.lens.state).includes('Repair export'));
+});
+
+test('Genie can name a task while preserving its manual priority',async()=>{
+  const r=rig(async()=>response({title:'Fix export formatting',priority:'High',reason:'urgent'}));
+  const input={schema:2,id:randomUUID(),client:'pi',title:null,excerpt:'Fix export formatting'},chat=priorityEnvelope(r.input).chat;
+  r.intents.receive(input);r.intents.bind(input.id,{key:chat,sequence:2});
+  r.lens.setManual({chat,priority:'Low',expected_revision:0});await r.classifier.tick();
+  assert.equal(r.intents.title(input.id,chat),'Fix export formatting');assert.equal(r.lens.decision(chat).priority,'Low');
+});
+
+test('generated titles are bounded single-line data with a strict priority schema',()=>{
+  for(const title of ['', 'x'.repeat(257), 'two\nlines', 'tab\there', 'bad\u0000title'])assert.throws(()=>priorityReviewAdvice({title,priority:'Medium',reason:'routine'}));
+  assert.throws(()=>priorityReviewAdvice({title:'Task',priority:'High',reason:'uncertain'}));
+  assert.throws(()=>priorityReviewAdvice({title:'Task',priority:'Medium',reason:'routine',command:'execute'}));
 });

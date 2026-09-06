@@ -6,6 +6,7 @@ import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
 import { RequestedThinkingObserver } from './requested-thinking.mjs';
+import {requestUserExcerpt} from './priority-request.mjs';
 import { Dataset } from './dataset.mjs';
 import { clientMetadata, CLIENT_METADATA_HEADER } from './client-metadata.mjs';
 import { EmbeddingCollector } from './embeddings.mjs';
@@ -296,7 +297,7 @@ export function createGateway(config,{visionTranscode,priorityRandom}={}) {
     if(!details)return status;
     const jobs=priorityJobs();
     return {...status,rules,receipts:structuredClone(priority.receipts),jobs:jobs.slice(0,512).map(job=>({
-      request_id:job.id,chat:job.key??null,title:priorityIntents.title(job.priorityIntentId,job.key),machine:job.node?.id??job.fixedHome?.id??null,
+      request_id:job.id,chat:job.key??null,title:priorityIntents.title(job.priorityIntentId,job.key),title_source:priorityIntents.titleSource(job.priorityIntentId,job.key),title_state:priorityIntents.titleState(job.priorityIntentId,job.key),machine:job.node?.id??job.fixedHome?.id??null,
       state:job.dispatched?'running':job.waitReason||!priorityEligible(job)?'blocked':'queued',
       ...priority.decision(job.key),request_reason:job.dispatched?'Request is already running':job.waitReason??(job.node?.drained?'Routing is paused':!priorityEligible(job)?'Worker or conversation is not eligible':null),
       waiting_ms:job.dispatched?Math.max(0,job.dispatchedMono-job.createdMono):Math.max(0,performance.now()-job.createdMono),
@@ -659,6 +660,7 @@ export function createGateway(config,{visionTranscode,priorityRandom}={}) {
     job.thinking = new RequestedThinkingObserver(req.headers['content-encoding'],(body,thinking)=>{
       job.requestStream=typeof body?.stream==='boolean'?body.stream:null;
       job.requestedUsage=typeof body?.stream_options?.include_usage==='boolean'?body.stream_options.include_usage:null;
+      if(job.priorityFromRequest)job.priorityIntentId=priorityIntents?.observeRequest(job,requestUserExcerpt(body))??null;
       embeddings.observe(body,thinking,{request_id:job.id,node:node.id,route:req.url,traffic_class:job.trafficClass,request_bytes:requestBytes});
     });
     const observeBody = chunk => {
@@ -992,7 +994,8 @@ export function createGateway(config,{visionTranscode,priorityRandom}={}) {
     const job = { req, res, key, affinity, id:requestId,callId,watchId, sequence:sequence++,admissionMetadata,created: Date.now(), createdMono:performance.now(), cancelled: false,queueTimeoutMs:queueTimeoutMs(),
       trafficClass,genieFlexible };
     job.priorityIntentId=req.headers[PRIORITY_INTENT_HEADER];
-    priorityIntents?.bind(job.priorityIntentId,job);
+    job.priorityFromRequest=!job.priorityIntentId&&trafficClass!=='genie'&&req.url==='/v1/chat/completions';
+    if(!job.priorityFromRequest)priorityIntents?.bind(job.priorityIntentId,job);
     const cancel = () => {
       if (res.writableFinished) return;
       job.cancelled = true;

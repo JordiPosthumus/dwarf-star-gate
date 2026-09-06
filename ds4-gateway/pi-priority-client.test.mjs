@@ -20,5 +20,5 @@ test('title-only adapter preserves inference transport and offers visible opt-ou
   assert.match(statuses.at(-1),/on.*\/priority-lens off/);
   await commands.get('priority-lens').handler('off',ctx);
   await registered.streamSimple(model,{},options);
-  assert.equal(serialized.o,options);assert.equal(intents.length,1);assert.match(statuses.at(-1),/off/);
+  assert.equal(serialized.o.maxTokens,options.maxTokens);assert.equal(serialized.o.reasoning,options.reasoning);assert.equal(new Headers(requests[1].init.headers).get('x-dsg-priority-intent'),'off');assert.equal(requests[1].init.body,requests[0].init.body);assert.equal(intents.length,1);assert.match(statuses.at(-1),/off/);
 });

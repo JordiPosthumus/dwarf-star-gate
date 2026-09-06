@@ -12,7 +12,7 @@ import {registerPiContinuity} from './continuity-client.mjs';
 import {registerPiPriorityLens} from './pi-priority-client.mjs';
 import {workerControl} from './worker-client.mjs';
 
-for(const affinity of [true,false])for(const adapter of ['continuity','title-only'])test('installed Pi serializer supplies exact affinity for '+adapter+' priority intent with affinity '+affinity+' without changing model capabilities',{skip:!process.env.DSG_PI_ROOT,timeout:30000},async t=>{
+for(const affinity of [true,false])for(const adapter of ['continuity','title-only','title-file','continuity-file'])test('installed Pi serializer supplies exact affinity for '+adapter+' priority intent with affinity '+affinity+' without changing model capabilities',{skip:!process.env.DSG_PI_ROOT,timeout:30000},async t=>{
   const root=process.env.DSG_PI_ROOT,load=relative=>import(pathToFileURL(path.join(root,relative)));
   const [{createAgentSession},{ModelRuntime},{SessionManager},{SettingsManager},{DefaultResourceLoader},{streamSimple}]=await Promise.all([
     load('dist/core/sdk.js'),load('dist/core/model-runtime.js'),load('dist/core/session-manager.js'),load('dist/core/settings-manager.js'),load('dist/core/resource-loader.js'),load('node_modules/@earendil-works/pi-ai/dist/api/openai-completions.js')]);
@@ -33,13 +33,24 @@ for(const affinity of [true,false])for(const adapter of ['continuity','title-onl
   const model={id:'deepseek-v4-flash',name:'Fixture',reasoning:true,thinkingLevelMap:{xhigh:'xhigh'},input:['text','image'],contextWindow:262144,maxTokens:262144,cost:{input:0,output:0,cacheRead:0,cacheWrite:0},compat:{supportsReasoningEffort:true,...(affinity?{sendSessionAffinityHeaders:true}:{})}};
   const modelsPath=path.join(dir,'models.json');fs.writeFileSync(modelsPath,JSON.stringify({providers:{[provider]:{baseUrl,api:'openai-completions',apiKey:'fixture',models:[model]}}}),{mode:0o600});
   const runtime=await ModelRuntime.create({modelsPath,authPath:path.join(dir,'auth.json'),modelsStorePath:path.join(dir,'models-store.json'),allowModelNetwork:false,refreshOnCreate:false});
+  const entryPath=path.join(dir,'priority.ts');
+  if(adapter.endsWith('-file')){
+    const source=fs.readFileSync(new URL(adapter==='continuity-file'?'../examples/pi-dsg-continuity.ts':'../examples/pi-dsg-priority.ts',import.meta.url),'utf8')
+      .replace("'../ds4-gateway/pi-priority-client.mjs'",JSON.stringify(new URL('./pi-priority-client.mjs',import.meta.url).href))
+      .replace("'../ds4-gateway/continuity-client.mjs'",JSON.stringify(new URL('./continuity-client.mjs',import.meta.url).href))
+      .replace('process.env.DSG_PI_PROVIDER',JSON.stringify(provider)).replace('process.env.DSG_PI_BASE_URL',JSON.stringify(baseUrl)).replace("process.env.DSG_PRIORITY_LENS!=='0'",'true').replace("process.env.DSG_PRIORITY_LENS==='1'",'true').replace("process.env.DSG_AGENT_WATCH==='1'",'false').replace("process.env.DSG_CLIENT_METADATA==='1'",'false');
+    fs.writeFileSync(entryPath,source,{mode:0o600});
+    gateway.server.on('request',req=>{if(req.url!=='/gateway/priority-intent')return;const chunks=[];req.on('data',chunk=>chunks.push(chunk));req.on('end',()=>envelopes.push(JSON.parse(Buffer.concat(chunks).toString())));});
+  }
   const original=structuredClone(runtime.getModel(provider,model.id)),settings=SettingsManager.inMemory({});
-  const loader=new DefaultResourceLoader({cwd:dir,agentDir:dir,settingsManager:settings,noExtensions:true,noSkills:true,noPromptTemplates:true,noThemes:true,noContextFiles:true,systemPrompt:'PRIVATE_SYSTEM_NOT_FOR_CLASSIFIER',extensionFactories:[pi=>{
+  const loader=new DefaultResourceLoader({cwd:dir,agentDir:dir,settingsManager:settings,noExtensions:true,noSkills:true,noPromptTemplates:true,noThemes:true,noContextFiles:true,systemPrompt:'PRIVATE_SYSTEM_NOT_FOR_CLASSIFIER',additionalExtensionPaths:adapter.endsWith('-file')?[entryPath]:[],extensionFactories:adapter.endsWith('-file')?[]:[pi=>{
     const handoff=async(url,init)=>{envelopes.push(JSON.parse(init.body));return fetch(url,init);};
     if(adapter==='continuity')registerPiContinuity(pi,{provider,baseUrl,streamSimple,priorityLens:true,priorityFetchImpl:handoff});
     else registerPiPriorityLens(pi,{provider,baseUrl,streamSimple,fetchImpl:handoff});
   }]});await loader.reload();
-  ({session}=await createAgentSession({cwd:dir,agentDir:dir,modelRuntime:runtime,model:runtime.getModel(provider,model.id),thinkingLevel:'xhigh',settingsManager:settings,sessionManager:SessionManager.inMemory(dir),resourceLoader:loader,noTools:'builtin',customTools:[{name:'count_once',label:'Count',description:'Count once',parameters:{type:'object',properties:{}},execute:async()=>{tools++;return {content:[{type:'text',text:'PRIVATE_TOOL_RESULT'}],details:{}};}}]}));
+  assert.deepEqual(loader.getExtensions().errors,[],'extension loader diagnostics');
+  const sessionManager=SessionManager.inMemory(dir);sessionManager.appendSessionInfo('Fixture task title');
+  ({session}=await createAgentSession({cwd:dir,agentDir:dir,modelRuntime:runtime,model:runtime.getModel(provider,model.id),thinkingLevel:'xhigh',settingsManager:settings,sessionManager,resourceLoader:loader,noTools:'builtin',customTools:[{name:'count_once',label:'Count',description:'Count once',parameters:{type:'object',properties:{}},execute:async()=>{tools++;return {content:[{type:'text',text:'PRIVATE_TOOL_RESULT'}],details:{}};}}]}));
   await session.bindExtensions({onError:error=>errors.push(error.message)});
   for(const field of ['contextWindow','maxTokens','reasoning','input','thinkingLevelMap','compat','baseUrl'])assert.deepEqual(session.model[field],original[field],`preserve ${field}`);
   await session.prompt('Urgent real user request. Call count_once then finish.');await session.waitForIdle();
@@ -48,14 +59,14 @@ for(const affinity of [true,false])for(const adapter of ['continuity','title-onl
   assert.ok(!JSON.stringify(envelopes).includes('PRIVATE_'));assert.deepEqual(errors,[]);
   assert.deepEqual(visibleTitles,[envelopes[0].title,envelopes[0].title]);
   let review;for(let i=0;i<(affinity?20:1)&&!review;i++){review=(await workerControl(control,'/priority-review-next',{})).review;if(!review)await new Promise(resolve=>setTimeout(resolve,10));}
-  if(affinity){assert.equal(review.excerpt,envelopes[0].excerpt);assert.equal(review.title,envelopes[0].title);}
-  else assert.equal(review,null,'unkeyed requests do not invent conversation priority');
+  assert.equal(review.excerpt,envelopes[0].excerpt);assert.equal(review.title,envelopes[0].title);
   await session.prompt('Next user task.');await session.waitForIdle();assert.equal(envelopes.length,2);assert.notEqual(envelopes[0].id,envelopes[1].id);
   if(affinity)assert.equal((await workerControl(control,'/priority-review-result',{lease:review.lease,intent_id:review.intent_id,advice:{priority:'High',reason:'urgent'}})).accepted,false,'new user input rejects old in-flight classification');
-  if(adapter==='title-only'){
+  if(adapter.startsWith('title-')){
     await session.prompt('/priority-lens off');
     await session.prompt('A task after opting out.');await session.waitForIdle();
     assert.equal(envelopes.length,2,'client opt-out stops title and excerpt handoff');
+    assert.equal(visibleTitles.length,3,'gateway does not name an opted-out request');
     assert.equal(requests.at(-1).payload.reasoning_effort,'xhigh');
   }
 });

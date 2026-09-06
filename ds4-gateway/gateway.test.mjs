@@ -19,6 +19,7 @@ import {workerConfig,sshTargets,assertUniqueWorker,replaceSshFallbacks} from './
 import {createContinuityFetch} from './continuity-client.mjs';
 import {safeGatewayEvent} from './telemetry.mjs';
 import {evidence} from './dataset.mjs';
+import {PriorityClassifier} from './priority-classifier.mjs';
 
 async function until(fn, timeout = 3000) {
   const end = Date.now() + timeout;
@@ -2004,4 +2005,46 @@ for(const cancelDuring of ['normalized_retry','conversion'])test(`vision cancell
   assert.equal(vision.failed,0);assert.equal(vision.guided,0);assert.equal(vision.rescued,0);
   assert.equal(r.backends[0].records.length,cancelDuring==='conversion'?1:2);
   assert.equal((await r.request('{}')).status,200,'cancellation releases capacity');
+});
+
+
+test('Genie names ordinary gateway requests without a Pi extension, without reading queued bodies or persisting excerpts',{timeout:10000},async t=>{
+  const r=await rig(t,1,{control_socket:true,dataset_enabled:true}),modelInputs=[];
+  const classifier=new PriorityClassifier({genie:{enabled:true,closed:false,config:{url:'http://127.0.0.1:19999/v1',model:'fixture-genie'}},snapshot:()=>({}),control:(route,body)=>workerControl(r.config.control_socket,route,body),fetchImpl:async(_url,init)=>{
+    const input=JSON.parse(JSON.parse(init.body).messages[1].content);modelInputs.push(input);
+    return new Response(JSON.stringify({choices:[{finish_reason:'stop',message:{content:JSON.stringify({title:input.recent_user_excerpt.includes('Summarize')?'Release notes summary':'Export formatting repair',priority:'Medium',reason:'routine'})}}]}));
+  }});t.after(()=>classifier.close());
+  const body=JSON.stringify({stream:true,fixture_hold_stream:true,reasoning_effort:'xhigh',max_tokens:262144,messages:[{role:'system',content:'PRIVATE_SYSTEM_SENTINEL'},{role:'user',content:'Repair CSV export formatting today.'},{role:'assistant',content:'PRIVATE_ASSISTANT_SENTINEL'},{role:'tool',content:'PRIVATE_TOOL_SENTINEL'}]});
+  const first=r.request(body,'gateway-title-session');await until(()=>r.backends[0].heldStreams?.length===1);
+  let second;
+  try{
+    assert.equal(r.gateway.priorityStatus(true).jobs[0].title,null);assert.equal(r.gateway.priorityStatus(true).jobs[0].title_state,'pending_review');
+    await classifier.tick();assert.equal(modelInputs.length,1);assert.equal(modelInputs[0].recent_user_excerpt,'Repair CSV export formatting today.');
+    assert.ok(!JSON.stringify(modelInputs).includes('PRIVATE_'));
+    assert.equal(r.gateway.priorityStatus(true).jobs[0].title,'Export formatting repair');assert.equal(r.gateway.priorityStatus(true).jobs[0].title_source,'genie');
+    second=r.request(body,'gateway-title-session');await until(()=>r.gateway.priorityStatus(true).jobs.length===2);
+    const queued=r.gateway.priorityStatus(true).jobs.find(job=>job.state!=='running');
+    assert.equal(queued.title,'Export formatting repair');assert.equal(queued.title_state,'previous_observation');
+    assert.equal(r.backends[0].records.length,1,'queued upload remains unread by the backend');
+    r.backends[0].heldStreams.shift()();await first;await until(()=>r.backends[0].records.length===2&&r.backends[0].heldStreams.length===1);
+    await classifier.tick();assert.equal(modelInputs.length,1,'same observed user excerpt reuses its title and recommendation');
+    assert.equal(r.backends[0].records[0].body.toString(),body);assert.equal(r.backends[0].records[1].body.toString(),body);
+  }finally{
+    for(const finish of r.backends[0].heldStreams.splice(0))finish();await first;
+    if(second){await until(()=>r.backends[0].records.length===2);for(const finish of r.backends[0].heldStreams.splice(0))finish();await second;}
+  }
+  const nextBody=JSON.stringify({stream:true,fixture_hold_stream:true,messages:[{role:'user',content:'Summarize release notes.'}]});
+  const next=r.request(nextBody,'gateway-title-session');await until(()=>r.backends[0].heldStreams.length===1);
+  try{assert.equal(r.gateway.priorityStatus(true).jobs[0].title,null);await classifier.tick();assert.equal(r.gateway.priorityStatus(true).jobs[0].title,'Release notes summary');}
+  finally{for(const finish of r.backends[0].heldStreams.splice(0))finish();await next;}
+  for(const headers of [{'x-dsg-priority-intent':'off'},{'x-dsg-observer':'gate-genie'}]){
+    await r.request(JSON.stringify({messages:[{role:'user',content:'Do not name this request'}]}),null,{headers});
+    await classifier.tick();assert.equal(modelInputs.length,2);
+  }
+  assert.ok(!JSON.stringify(r.gateway.stats()).includes('Export formatting repair'));
+  assert.ok(!fs.readFileSync(r.config.state_file,'utf8').includes('Export formatting repair'));
+  for(const file of fs.readdirSync(path.join(path.dirname(r.config.state_file),'training')))if(file.endsWith('.jsonl')){
+    const text=fs.readFileSync(path.join(path.dirname(r.config.state_file),'training',file),'utf8');
+    for(const marker of ['PRIVATE_','Repair CSV','Export formatting repair'])assert.ok(!text.includes(marker));
+  }
 });

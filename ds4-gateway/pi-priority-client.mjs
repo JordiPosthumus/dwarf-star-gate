@@ -17,11 +17,15 @@ export function registerPiPriorityLens(pi,{provider,baseUrl,streamSimple,enabled
       if(enabled)priority.start({},ctx);
     }
     status();
-    ctx.ui.notify(enabled?'Priority Lens shares the session title and up to 1 KiB of the latest user message with configured Genie capacity. /priority-lens off stops new sharing.':'Priority Lens client sharing is off. Ordinary inference continues.','info');
+    ctx.ui.notify(enabled?'Priority Lens shares the session title and up to 1 KiB of the latest user message with configured Genie capacity. /priority-lens off stops new sharing.':'Priority Lens is off for this client. DSG will skip task naming and priority excerpts for these requests.','info');
   }});
   pi.registerProvider(provider,{api:'openai-completions',streamSimple:(model,context,options={})=>{
     // Other model definitions on this provider keep Pi's original serializer.
     const intent=enabled?priority.snapshot(model,options):null;
+    if(!enabled&&model.provider===provider){
+      const originalFetch=options.fetch??fetch;
+      return streamSimple(model,context,{...options,fetch:(input,init)=>originalFetch(input,priority.optOut(input,init))});
+    }
     if(!intent)return streamSimple(model,context,options);
     const originalFetch=options.fetch??fetch;
     return streamSimple(model,context,{...options,fetch:(input,init)=>originalFetch(input,priority.decorate(input,init,intent))});

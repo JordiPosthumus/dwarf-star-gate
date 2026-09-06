@@ -55,7 +55,8 @@ function render(next){
       row.children[1].append(select);root.append(row);
     }
     const cells=row.children,select=cells[1].firstElementChild;
-    cells[0].textContent=job.title||`Title not supplied · ${job.request_id.slice(0,8)}`;
+    cells[0].textContent=job.title||`${['pending_review','reviewing'].includes(job.title_state)?'Genie title pending':'Title unavailable'} · ${job.request_id.slice(0,8)}`;
+    cells[0].title=job.title_state==='previous_observation'?'Latest observed conversation title; this queued request body has not been read yet.':job.title_source==='genie'?'Genie-generated task title':job.title_source==='client'?'Client-supplied task title':'Genie needs a recent user excerpt and available review capacity.';
     select.dataset.chat=job.chat||'';select.options[0].textContent=job.source==='user'?'Return to automatic':`Auto · ${job.priority||'Medium'}`;
     select.setAttribute('aria-label',`Priority for ${job.title||'untitled conversation'} ${job.request_id.slice(0,8)}`);
     if(document.activeElement!==select)select.value=job.source==='user'?job.priority:'automatic';
@@ -70,7 +71,7 @@ function render(next){
   $('priority-coverage').textContent=`${next.demo?'Synthetic example; no real tasks are connected. ':''}${keep.size?'':'No requests currently observed. '}${next.jobs_truncated?'Showing the first 512 requests; additional requests are not displayed. ':''}Only DSG requests are shown. Direct activity and work inside an unobserved client remain unknown.`;
   if(next.classifier||next.demo){
     const classifier=next.classifier;
-    $('priority-provider').textContent=next.demo?'Synthetic priorities; no model is called.':classifier.connected&&classifier.enabled?`Genie classifies optional Pi user excerpts asynchronously · ${classifier.busy?'reviewing':`${classifier.completed} accepted`}. Inference never waits for advice.`:'Genie classification is unavailable or disabled. Manual priorities remain available; absent advice uses ordinary scheduling.';
+    $('priority-provider').textContent=next.demo?'Synthetic priorities; no model is called.':classifier.connected&&classifier.enabled?`Genie names and classifies tasks from short user excerpts asynchronously · ${classifier.busy?'reviewing':`${classifier.completed} accepted`}. Inference never waits for advice.`:'Genie classification is unavailable or disabled. Manual priorities remain available; absent advice uses ordinary scheduling.';
   }
   if(!rulesDirty&&document.activeElement!==$('priority-rules')){$('priority-rules').value=(next.rules||[]).join('\n');rulesRevision=next.revision;}
   $('priority-preference-count').textContent=`${$('priority-rules').value.split('\n').filter(line=>line.trim()).length} / 30 lines`;

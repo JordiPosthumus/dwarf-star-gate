@@ -34,9 +34,16 @@ export function createPiPriorityIntent({provider,baseUrl,fetchImpl=fetch}={}){
         }
         if(!excerpt)return null;
         const name=manager.getSessionName?.();
-        const title=bounded(typeof name==='string'&&name.trim()?name:excerpt.split('\n')[0],256);
+        const title=typeof name==='string'&&name.trim()?bounded(name,256):null;
         clear();current={entry:user.id,id:randomUUID(),session,title,excerpt,sent:false};return current;
       }catch{return null;}
+    },
+    optOut(input,init={}){
+      if(input instanceof Request)return init;
+      let url;try{url=new URL(input);}catch{return init;}
+      if(url.origin!==base.origin||url.pathname!=='/v1/chat/completions'||url.search||url.hash||init.method?.toUpperCase()!=='POST'||typeof init.body!=='string')return init;
+      const headers=new Headers(init.headers);if(!headers.has('authorization'))return init;
+      headers.set(PRIORITY_INTENT_HEADER,'off');return {...init,headers};
     },
     decorate(input,init={},intent){
       if(!intent||intent!==current||input instanceof Request)return init;
@@ -51,7 +58,7 @@ export function createPiPriorityIntent({provider,baseUrl,fetchImpl=fetch}={}){
       if(!intent.sent){
         intent.sent=true;
         const controller=new AbortController();pending=controller;
-        const body=JSON.stringify({schema:affinity?1:2,id:intent.id,...(affinity?{session:intent.session}:{}),client:'pi',title:intent.title,excerpt:intent.excerpt});
+        const body=JSON.stringify({schema:affinity&&intent.title?1:2,id:intent.id,...(affinity&&intent.title?{session:intent.session}:{}),client:'pi',title:intent.title,excerpt:intent.excerpt});
         intent.excerpt=null;
         // Start separately, without waiting before inference. No retry after a
         // rejected or ambiguous advisory submission; a new user turn may try.

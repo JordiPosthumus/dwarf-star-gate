@@ -1207,6 +1207,15 @@ The candidate Pi runtime passes 13 bridge/enrollment integration tests, includin
 Release verification for these changes: main suite 690 passed / 5 optional skips; installed Pi title contracts 4 passed separately; candidate native bridge/enrollment 13 passed; host/context 6 passed; JavaScript/shell syntax and indexed privacy checks passed. The source release does not activate the installed clients or restart the live core.
 
 
+## 2026-09-06 — Genie-generated titles and readable Current Jobs
+
+Ordinary requests now supply a bounded latest-user excerpt through the gateway's existing passive observer. Genie generates the title; Pi naming or an extension is not required. Queued uploads remain unread, subsequent observed calls can reuse their conversation title, and unavailable text stays explicit. The local title view distinguishes generated, client-supplied and last-observed names. Content stays outside durable diagnostics and scheduling receipts. Client and global opt-outs stop new naming.
+
+The jobs table wraps long titles/reasons within fixed columns, removes repeated running-state wording, and separates waited/running times. Four-width browser checks cover long synthetic content. Installed Pi file-loader validation also caught and fixed the examples' serializer import alias: they now use the exported API factory. Live activation is recorded separately from source validation.
+
+Validation: release suite 696 passed / 9 optional skips; installed Pi inline/file-loader contracts 8 passed separately; generated-title gateway flow 3 passed; final intent/excerpt/classifier guards 20 passed. Browser navigation, priority correction controls and four-width wrapping checks passed; the Genie screenshot was refreshed.
+
+
 ## 2026-09-06 — Current Jobs table readability
 
 Wrapped long task/reason text within explicit column widths, shortened repeated status wording, and separated waited/running times. Compact priority labels and current accessible names keep the controls usable; narrow screens scroll within a keyboard-focusable table region. The synthetic Genie screenshot is refreshed. Four-width overflow checks and the existing browser navigation/priority-control flows pass.

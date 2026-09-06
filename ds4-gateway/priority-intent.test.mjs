@@ -91,3 +91,16 @@ test('request-bound envelopes accept either arrival order and cannot change the 
     assert.equal(intents.complete(reply(intents.claim())),true);assert.equal(lens.decision(key).priority,'High');
   }
 });
+
+
+test('unread requests can show the last observed title but rejected or unsupported observations cannot inherit a newer task name',()=>{
+  const {intents}=rig(),key='a'.repeat(64);
+  const id=intents.observeRequest({key,sequence:2},'Name the current task');
+  const review=intents.claim();
+  assert.equal(intents.complete({...reply(review),title:'Current task name'}),true);
+  assert.equal(intents.title(undefined,key),'Current task name');
+  assert.equal(intents.titleState(undefined,key),'previous_observation');
+  assert.equal(intents.observeRequest({key,sequence:1},'An older body arrives late'),null);
+  assert.equal(intents.title(null,key),null);
+  assert.equal(intents.title(id,key),'Current task name');
+});

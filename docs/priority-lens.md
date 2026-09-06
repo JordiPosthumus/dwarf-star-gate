@@ -2,7 +2,10 @@
 
 Priority Lens shows **Current Jobs | Priority | Reason** in the Genie tab.
 The local source includes manual controls, guarded queue selection, an optional
-Pi intent handoff and asynchronous Genie classification. Source and fixture
+Pi intent handoff and asynchronous Genie task naming/classification. Ordinary
+DSG requests now provide the default excerpt path without a Pi extension. The
+new request-based naming path still requires live activation; the earlier real-model
+classification sample below did not test generated titles. Source and fixture
 validation is complemented by one private deployment activation and six synthetic
 classification cases on one real DS4 host. All six returned the expected priority;
 this small sample does not establish broad classification accuracy or routing
@@ -38,56 +41,61 @@ advice must be Medium. The scheduler never calls or waits for a model. Metadata
 receipts retain at most 32 selections and at most 128 candidate rows each; request
 bodies, titles, excerpts and free-text model explanations are excluded.
 
-## Optional Pi content boundary
+## Task titles and the content boundary
 
-`Title not supplied` means the request has no correlated client title; it is not
-a pending title-generation job. A title comes from Pi's session name, or a bounded
-first line of the latest user task when no name exists.
+Genie generates a concise task title from at most **1,024 UTF-8 bytes** of the
+latest user-role text in a request passing through DSG. No Pi extension is needed.
+Only text blocks from that user message are selected; system messages, assistant
+reasoning, tool messages and image data are excluded. User-role text remains
+untrusted data, including any client-generated continuation serialized with that
+role. Genie returns a bounded single-line title and typed priority/reason.
+An explicitly supplied client title is retained instead of replacing that name.
 
-The separate `examples/pi-dsg-priority.ts` entry supplies titles/priority intent
-without enabling the continuity retry transport. Load it explicitly with
-`DSG_PI_PROVIDER` and `DSG_PI_BASE_URL` identifying the existing DSG provider.
-Sharing defaults on for this explicitly loaded entry and announces its content
-boundary at startup. `DSG_PRIORITY_LENS=0` starts it off; `/priority-lens off`
-stops new capture and transmission, and `/priority-lens on` enables it for the
-current session. Existing shared metadata retains the core's bounded lifetime.
-This entry is source-only until installed and validated in a client; merely
-updating the dashboard does not load it into running Pi processes.
+Capture uses the already parsed body from DSG's existing passive request observer.
+It does not read queued uploads early, buffer additional request bodies, change
+upload/context limits or delay dispatch. The existing 8 MiB observation budget
+and unsupported/encoded-body exclusions still apply; lack of observed text leaves
+the title unavailable. A new queued conversation can therefore remain unnamed
+until its request body has passed through DSG. Later calls in an identified
+conversation reuse the last observed title; the UI tooltip marks that scope while
+the new request body remains unread. Observing a different user excerpt replaces
+the old intent; repeated tool-loop requests with the same excerpt reuse its review.
 
-Agent Watch and the existing client metadata adapter remain metadata-only.
-Separately opt into content handoff with `DSG_PRIORITY_LENS=1` when explicitly
-loading `examples/pi-dsg-continuity.ts` for an existing DSG provider. This does
-not edit Pi's models or settings and does not enable session continuation.
+The configured dedicated Genie or configured DSG pool receives only the short
+excerpt and intentionally saved priority preferences. The in-memory store holds
+at most 1,024 intents with a ten-minute idle lifetime. Review completion, failure,
+expiry, policy change or opt-out clears disposable excerpts. Generated titles
+appear in the local jobs view and private correction context. Titles and excerpts
+are excluded from public inference status, selection receipts, training data,
+logs, diagnostic exports, notebook storage and durable affinity state.
 
-The opted-in adapter takes at most **1,024 UTF-8 bytes** from the most recent
-genuine Pi user message and at most **256 bytes** of task title. It excludes
-custom continuation messages, system prompts, model reasoning, tool messages and
-image data. The configured dedicated Genie or configured DSG pool receives this
-short excerpt plus the intentionally saved priority preferences. Do not enable
-this handoff for a provider that should not receive that content.
+Turning the visible Lens switch off stops new request-text capture and invalidates
+pending review authority. A client may also send `x-dsg-priority-intent: off` to
+skip naming and priority excerpts for its requests. DSG strips this private
+header before forwarding. Ordinary Genie observer requests are excluded from
+naming, preventing recursive title reviews.
 
-The handoff requires Pi's existing serializer to supply a conversation-affinity
-header matching its session ID. It never enables affinity or invents ownership.
-Without that matching header, the optional handoff is omitted. A separate
-bounded JSON POST goes to `/gateway/priority-intent`; the inference request gains
-only an opaque correlation ID that DSG strips before forwarding to DS4. Its
-inference body, reasoning, context and output options are unchanged. Content is
-never put in HTTP headers. Submission is asynchronous and is not retried after
-an ambiguous failure.
+### Optional early Pi handoff
 
-The core correlates either arrival order using its own admission sequence.
-Newer user intent and manual/settings changes invalidate stale advisory replies.
-A subsequent request with no valid intent drops old automatic advice. The
-in-memory store holds at most 1,024 entries, expires idle entries after ten
-minutes, and clears an excerpt when its review completes, fails, expires or is
-revoked. Titles appear only in the dedicated local jobs endpoint, not public
-inference status. Excerpts never enter dashboard snapshots, diagnostic exports,
-training rows, logs, notebook entries or durable affinity state. The client drops
-its excerpt after forming its one disposable submission.
+`examples/pi-dsg-priority.ts` can supply a genuine Pi user excerpt before the
+inference body is observed. An existing session name is optional; Pi no longer
+turns the first user line into a task title. Genie names unnamed tasks. Explicitly
+load the entry with `DSG_PI_PROVIDER` and `DSG_PI_BASE_URL` identifying the existing
+DSG provider. It uses Pi's exported OpenAI serializer factory and preserves model,
+reasoning, context, output and inference transport settings.
 
-Turning the core switch off rejects new content and clears retained excerpts;
-the opted-in client may still make its disposable submission. Remove the Pi
-opt-in to stop client-side capture/transmission entirely.
+This optional entry announces its content boundary. `DSG_PRIORITY_LENS=0` starts
+it off; `/priority-lens off` stops its handoff and sends the request-level opt-out
+so the gateway also skips new excerpts. `/priority-lens on` enables handoff again.
+Agent Watch and client metadata remain separate. The continuity entry's
+`DSG_PRIORITY_LENS=1` explicitly enables its optional content handoff.
+
+Schema-1 envelopes retain existing session-affinity binding. Schema-2 envelopes
+can omit a title and bind to the core's existing request identity, without adding
+or changing affinity headers. A request without a conversation key can still get
+a generated title but cannot receive a conversation-level priority or override.
+The separate JSON handoff is asynchronous and never retried after an ambiguous
+failure. No raw content is placed in inference headers.
 
 ## Asynchronous Genie review
 
@@ -150,10 +158,8 @@ in-memory sessions. It verifies unchanged model capabilities and `xhigh`, one
 intent across a real tool loop, exact serializer affinity, and rejection of an
 old lease after new user input. It neither installs nor changes a live Pi setup.
 
-### Pi clients without affinity headers
-
-The title-only adapter also supports Pi's default serializer configuration, where session-affinity headers are absent. Its schema-2 envelope supplies an opaque intent ID, title and bounded excerpt; the existing inference request carries only that intent ID. The core uses its existing request conversation key when one exists. Neither the adapter nor the envelope creates routing affinity. Legacy schema-1 envelopes remain supported.
-
-A request without a conversation key can display its supplied title but receives no conversation-level classification or override. Such requests retain their existing routing behavior. Installing the client adapter and activating the updated core are necessary before this behavior appears in a live dashboard; already-running clients do not acquire the adapter automatically.
-
-Validation uses installed Pi 0.84.4 with synthetic endpoints: both continuity and title-only adapters display titles during real SDK tool loops, with and without affinity enabled. Model capabilities and xhigh are preserved, and title-only opt-out stops subsequent handoffs. This is fixture validation, not evidence of live installation.
+The installed Pi contract also loads both example files through the actual
+extension loader, with and without affinity headers. This catches import alias
+failures that inline extension factories alone cannot expose. File loading,
+title handoff, capability preservation and request-level opt-out are covered;
+the fixture does not install or reload any live client.
