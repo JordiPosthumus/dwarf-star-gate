@@ -2,6 +2,7 @@
 // The gateway supplies currently eligible conversation heads and durable writes.
 // A model recommendation can change a future selection, never an active request.
 export const PRIORITIES=Object.freeze(['High','Medium','Low']);
+export const DEFAULT_ELIGIBLE_WAIT_MS=60*60*1000;
 export const DEFAULT_PRIORITY_WEIGHTS=Object.freeze({High:3,Medium:1,Low:0.5});
 export const PRIORITY_REASONS=Object.freeze({
   urgent:'Recent user words indicate urgency',
@@ -36,7 +37,7 @@ export function priorityState(raw){
 }
 
 export class PriorityLens {
-  constructor({state,save=()=>{},random=Math.random,now=()=>performance.now(),maxEligibleWaitMs=null,enabled=true}={}){
+  constructor({state,save=()=>{},random=Math.random,now=()=>performance.now(),maxEligibleWaitMs=DEFAULT_ELIGIBLE_WAIT_MS,enabled=true}={}){
     this.state=priorityState(state??{schema:1,revision:0,enabled,weights:{...DEFAULT_PRIORITY_WEIGHTS},max_eligible_wait_ms:maxEligibleWaitMs,manual:{},rules:[]});
     this.save=save;this.random=random;this.now=now;
     this.decisions=new Map();this.waits=new Map();this.receipts=[];

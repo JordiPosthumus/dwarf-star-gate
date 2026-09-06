@@ -233,12 +233,13 @@ try {
   assert.equal(await page.locator('#queue-timeout-input').inputValue(),'20000');
   await page.locator('#priority-settings-save').waitFor();
   await page.waitForFunction(()=>!document.getElementById('priority-settings-save').disabled);
+  assert.equal(await page.locator('#priority-aging').inputValue(),'60');
   await page.locator('#priority-weight-high').fill('4');await page.locator('#priority-aging').fill('15');
   await page.locator('#priority-settings-save').click();
   await page.waitForFunction(()=>document.getElementById('priority-settings-message').textContent.includes('saved'));
   await page.reload();await page.waitForFunction(()=>document.getElementById('priority-weight-high').value==='4');
   assert.equal(await page.locator('#priority-aging').inputValue(),'15');
-  await page.locator('#priority-weight-high').fill('3');await page.locator('#priority-aging').fill('10');
+  await page.locator('#priority-weight-high').fill('3');await page.locator('#priority-aging').fill('60');
   await page.locator('#priority-settings-save').click();
   await page.waitForFunction(()=>document.getElementById('priority-settings-message').textContent.includes('saved'));
   await page.locator('section[aria-labelledby="priority-settings-title"]').screenshot({path:path.join(output,'priority-settings.png'),animations:'disabled'});

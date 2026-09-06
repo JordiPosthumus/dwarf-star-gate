@@ -724,7 +724,7 @@ The [Priority Lens implementation and boundaries](priority-lens.md) document the
 current-jobs UI, persistent overrides, explicit 30-line preference editor,
 bounded conversation-head lottery, eligible-wait aging, optional Pi user-intent
 handoff and asynchronous Genie classifier. The visible switch defaults on;
-queue priority awaits an explicitly agreed aging backstop. Pi content sharing
+queue priority defaults to a configurable one-hour eligible-wait backstop. Pi content sharing
 remains separately opted in. Source/tested behavior does not imply live rollout.
 
 The implementation never waits for Genie in dispatch. Independent core leases

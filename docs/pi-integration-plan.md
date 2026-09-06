@@ -26,7 +26,7 @@ follow-up.** Inference continues when this optional integration or Genie is down
 | Agent Watch | Existing opt-in metadata-only reporting | Distinguish tools, queueing, active responses and settled failures |
 | Task review | Proposed; off; separate consent to bounded task/last-turn context | Distinguish routine continuation check-ins from genuine human decisions |
 | Proactive Resume | Proposed; off; explicit client/session and authorized-task scope | Permit an eligible client-owned follow-up after a fresh independent check |
-| Priority Lens | Source implemented; switch on, aging agreement pending; Pi snippets separately opted in | Advise priority among undispatched requests under fairness and cache guards |
+| Priority Lens | Source implemented; switch on, configurable one-hour aging backstop; Pi snippets separately opted in | Advise priority among undispatched requests under fairness and cache guards |
 
 One capability never enables another. Status reporting grants neither transcript
 access nor control. Priority Lens does not grant Proactive Resume. Show the Genie

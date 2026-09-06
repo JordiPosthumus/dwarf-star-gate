@@ -49,7 +49,8 @@ no request reached this gateway” apart—without sending task or conversation 
 
 **[Priority Lens](docs/priority-lens.md)** now has local source for a current-jobs
 view, persistent manual priorities and asynchronous Genie advice from separately
-opted-in short Pi user excerpts. Queue priority awaits an agreed aging threshold.
+opted-in short Pi user excerpts. Queue priority has a configurable one-hour
+eligible-wait backstop.
 The [optional Pi plan](docs/pi-integration-plan.md) also covers future guarded
 Proactive Resume. Agent Watch does not enable either content review or session control.
 

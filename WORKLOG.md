@@ -1166,3 +1166,19 @@ owner's own endpoints and private configuration. Explain the distinction between
 core setup and optional Pi, hardware or recovery capabilities. Revalidated all
 nine installation tests, including the fresh-checkout integration fixture. These
 checks use a synthetic DS4 server; each owner's real connection still needs testing.
+
+
+### One-hour Priority Lens backstop
+
+Set the agreed default to one hour of eligible waiting. The Settings field shows
+60 minutes and accepts changes; legacy saved values and explicitly unset states
+are preserved. A clock-controlled test verifies lottery selection just before
+one hour and oldest-eligible precedence exactly at one hour. Gateway fixtures
+verify default activation and dispatch behavior. Browser checks verify 60 as the
+default, saving/reloading a different value and returning to 60. The screenshot
+uses only synthetic data.
+
+Focused checks: 23 policy/intent/correction tests, three gateway Priority Lens
+tests and 86 dashboard/demo tests passed; the full synthetic browser flow passed.
+
+Full regression suite: 687 passed, two optional tests skipped. Source checks passed.

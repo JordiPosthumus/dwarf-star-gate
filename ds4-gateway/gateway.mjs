@@ -275,7 +275,7 @@ export function createGateway(config,{visionTranscode,priorityRandom}={}) {
   try {
     priority=new PriorityLens({state:store.data.priority_lens,random:priorityRandom,
       enabled:config.priority_lens!==false&&config.priority_lens?.enabled!==false,
-      maxEligibleWaitMs:config.priority_lens?.max_eligible_wait_ms??null,
+      maxEligibleWaitMs:config.priority_lens?.max_eligible_wait_ms,
       save:state=>{
         if(fs.existsSync(store.filename))fs.copyFileSync(store.filename,`${store.filename}.priority-${Date.now()}-${randomUUID()}.bak`,fs.constants.COPYFILE_EXCL);
         store.save({...store.data,priority_lens:state});

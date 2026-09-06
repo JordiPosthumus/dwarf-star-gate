@@ -125,7 +125,7 @@ const snapshot = { version:1,demo:true,time:now,started:now-900000,read_only:fal
   continuity_door:{service:'dwarf-star-gate-continuity-door',version:1,holding:false,held:0,active:2,core_ready:true,body_spooling:false,replay:false,last_transition:{action:'release',at:new Date(now-300000).toISOString()}},continuity_door_error:null,
   gateway:{model:'deepseek-v4-flash',context_length:262144,queue_timeout_ms:72000000000,total:3,healthy:3,available:3,active:2,queued:1,draining:false,workers,dataset,predictor,recovery,client_watch_version:1,client_watch:clientWatch,
     continuity:{patient_wait:true,queued_relocation:true,automatic_relocation:true,automatic_relocation_scope:'first_unaffined_or_affinity_wait_expired',automatic_affinity_rebalance_min_wait_ms:300000,relocation:{completed:2,rejected:0,offers:1,diagnostics:relocationDiagnostics}}},devices,events };
-const priority=new PriorityLens({maxEligibleWaitMs:600000});
+const priority=new PriorityLens();
 priority.setManual({chat:'a'.repeat(64),priority:'High',expected_revision:0});
 priority.advise(priority.ticket('b'.repeat(64),1),{priority:'Low',reason:'background'},1);
 const prioritySnapshot=()=>({...priority.settings(),demo:true,selections:0,receipts:[],jobs:[

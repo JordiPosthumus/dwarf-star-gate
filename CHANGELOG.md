@@ -1,5 +1,11 @@
 # Changelog
 
+## One-hour configurable priority backstop
+
+- Default new Priority Lens state to one hour of eligible waiting, with the
+  duration editable in Settings. Preserve existing saved durations and opt-outs.
+- Verify the exact one-hour selection boundary and browser save/reload behavior.
+
 ## Explain transport observations and preserve image-recovery cancellation
 
 - Explain readiness refusal/reset independently of SSH management status and

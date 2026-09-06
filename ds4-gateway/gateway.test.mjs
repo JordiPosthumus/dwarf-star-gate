@@ -1878,6 +1878,8 @@ test('Priority Lens aging takes the next real slot, while ordinary unclassified 
 
 test('Priority Lens controls stay local, save overrides and rules atomically, and leave invalid saved state intact',async t=>{
   const r=await rig(t,1,{control_socket:true});await r.request('{}','chat');
+  assert.equal(r.gateway.priorityStatus(true).max_eligible_wait_ms,3600000);
+  assert.equal(r.gateway.priorityStatus(true).activation,'active');
   const chat=createHash('sha256').update('chat').digest('hex');
   const forbidden=await r.request(JSON.stringify({chat,priority:'High',expected_revision:0}),null,{path:'/priority-manual'});
   assert.equal(forbidden.status,404);

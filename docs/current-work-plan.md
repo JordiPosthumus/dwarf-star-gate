@@ -192,8 +192,8 @@ delivery while keeping permissions and ordinary gateway operation independent.
   retry certificates; caller IDs are not added to the failure ledger.
 - **[Priority Lens](priority-lens.md):** source now includes manual controls,
   bounded eligible-conversation scheduling and asynchronous optional Pi intent
-  classification and explicitly confirmed chat corrections. Agreed aging,
-  model-quality evidence and live rollout remain. Inference never waits on Genie.
+  classification and explicitly confirmed chat corrections, with a configurable
+  one-hour eligible-wait backstop. Model-quality evidence and live rollout remain. Inference never waits on Genie.
 - **[Proactive Resume](roadmap.md#planned-opt-in-session-rescue):** enrolled Pi
   observation first, then supported client-owned continuation. A routine “shall
   I continue the authorized work?” may qualify; missing human decisions, new

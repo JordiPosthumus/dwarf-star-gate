@@ -8,9 +8,10 @@ or that real-model classification quality has been measured.
 
 ## Scheduling and controls
 
-The visible Lens switch defaults on. Queue priority remains inactive until an
-operator agrees and saves an eligible-wait backstop in Settings; there is no
-silently chosen production threshold. The UI identifies that pending state.
+The visible Lens switch defaults on with a **one-hour eligible-wait backstop**.
+Change its duration in Settings → Priority Lens scheduling, in minutes. Existing
+saved durations and opt-outs are preserved; legacy states with an explicitly
+unset threshold remain pending until their operator saves a duration.
 Turning Lens off restores ordinary scheduling and invalidates transient advice.
 Manual priorities and intentionally saved preferences survive that switch.
 

@@ -9,7 +9,7 @@ const manual=(lens,chat,priority)=>lens.setManual({chat:key(chat),priority,expec
 function settings(lens,patch){return lens.configure({expected_revision:lens.state.revision,enabled:lens.enabled,weights:lens.state.weights,max_eligible_wait_ms:lens.state.max_eligible_wait_ms,...patch});}
 
 test('absent or late Genie advice never requires waiting; no activation without an agreed aging threshold',()=>{
-  const lens=new PriorityLens({random:()=>0.999}),a=job('a'),b=job('b',1);
+  const lens=new PriorityLens({random:()=>0.999,maxEligibleWaitMs:null}),a=job('a'),b=job('b',1);
   manual(lens,'b','High');
   assert.equal(lens.settings().activation,'awaiting_aging_agreement');
   assert.equal(lens.select([a,b]).job,a);
@@ -120,4 +120,18 @@ test('preferences are explicit, editable, bounded and versioned without silently
   for(const weights of [{High:0,Medium:1,Low:1},{High:3,Medium:Infinity,Low:1},{High:11,Medium:1,Low:1},{High:3,Medium:1,Low:1,admin:true}])assert.throws(()=>priorityWeights(weights));
   assert.throws(()=>priorityState({...saved,manual:{private_text:'High'}}));
   assert.throws(()=>new PriorityLens({state:{...saved,schema:2}}));
+});
+
+
+test('one-hour default gives the oldest eligible chat precedence exactly at the boundary and preserves saved choices',()=>{
+  let now=0;const lens=new PriorityLens({now:()=>now,random:()=>0.999});
+  const low=job('low'),high=job('high',1);manual(lens,'low','Low');manual(lens,'high','High');
+  assert.equal(lens.settings().activation,'active');assert.equal(lens.state.max_eligible_wait_ms,3600000);
+  lens.observe([low,high]);now=3599999;
+  assert.equal(lens.select([low,high]).job,high);assert.equal(lens.receipts[0].method,'weighted_lottery');
+  now=3600000;assert.equal(lens.select([low,high]).job,low);assert.equal(lens.receipts[0].method,'aging');
+  settings(lens,{max_eligible_wait_ms:7200000});
+  assert.equal(new PriorityLens({state:lens.state}).state.max_eligible_wait_ms,7200000);
+  settings(lens,{max_eligible_wait_ms:null});
+  assert.equal(new PriorityLens({state:lens.state}).settings().activation,'awaiting_aging_agreement');
 });
