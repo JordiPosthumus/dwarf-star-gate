@@ -1251,3 +1251,7 @@ Six private source-candidate tests passed with actual SIGKILL and a fresh recove
 ## 2026-09-06 — Late review across native session replacement
 
 The assembled terminal/host fixture now covers successful runtime replacement and replacement-factory failure during a pending Genie review. Both abort and dispose a late continue response, submit zero cues, and leave the old normally closed receipt store empty. Successful replacement still accepts ordinary task input and the off command. Three command tests pass; faux generation and a disposable replacement factory limit the evidence to these lifecycle paths. No live runtime changes.
+
+## 2026-09-06 — Failed-turn native execution boundary
+
+Three private native Pi/DSG bridge checks pass for partial failed tool calls, completed tool effects before failure, and effects followed by a tool exception. Automatic review/cues remain blocked at the native failed boundary, transcript/model/thinking are preserved, and fresh owner input remains usable. This is refusal evidence with synthetic failures; safe positive outage continuation remains unfinished and no production behavior changed.
