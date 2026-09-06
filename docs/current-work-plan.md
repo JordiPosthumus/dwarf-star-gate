@@ -131,6 +131,10 @@ is implied by this fix.
    for consistent overall and unseen-session accuracy; retain negative results.
    Retain all original validation gates and deterministic fallbacks; report
    actual routing benefit separately. No experimental promotion is implied.
+   The cache-component validation protocol now separates chronological replay
+   from genuinely later scoring, fixes forecasts at observed starts and discloses
+   coverage by worker/regime. Freeze evaluator and cohort before new evidence;
+   disk-load token counts observed after loading are not pre-load forecasts.
 5. **Settle the gateway-only image-continuity contract.** The Pi image companion
    was withdrawn. Investigate a transparent outgoing visual window, explicit
    markers and agent-directed rereads/batching, without altering saved history.

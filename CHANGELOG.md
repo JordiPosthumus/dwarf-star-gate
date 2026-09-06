@@ -1,5 +1,13 @@
 # Changelog
 
+## Define causal cache-component validation
+
+- Separate historical replay, frozen future evaluation and routing benefit.
+- Require observed-start forecasts, process/span guards, explicit observer-tick
+  exclusions and server/cold/suffix coverage alongside predictive error.
+- Keep retrospective disk-load comparisons separate from pre-load forecasts.
+  This documents the study boundary, not a model promotion or live collector.
+
 ## Preserve action-ledger rendering across invalid dates and failed refreshes
 
 - Show unrepresentable action dates as unknown without dropping receipts or

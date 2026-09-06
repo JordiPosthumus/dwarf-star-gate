@@ -109,6 +109,11 @@ an automatic cache mover. The next safe step is to produce bounded live shadow
 records only where all required identities and components can be proven, then
 compare the forecast with the realized outcome before considering scheduler use.
 
+The [component-validation protocol](cache-cost.md#validate-component-forecasts-without-borrowing-the-answer)
+separates start-time prefill forecasts from retrospective load checks. It requires
+coverage and error by regime before composition; an accurate selected subset is
+not proof that all four alternatives can be forecast or safely acted upon.
+
 The separate [cache-continuity audit](cache-continuity-audit.md) now supplies a
 privacy-safe realized baseline: aggregate reuse ratios and exact abstention
 reasons for consecutive same-session work. It deliberately does not manufacture

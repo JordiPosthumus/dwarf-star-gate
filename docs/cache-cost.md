@@ -76,6 +76,44 @@ keep the component estimate and the uncertainty; do not force a guessed join.
 Unit tests exercise span matching, freshness, sample bounds, distinct cold/warm
 regimes, unknown tiers, API validation and unchanged read-only authority.
 
+## Validate component forecasts without borrowing the answer
+
+An offline study should distinguish three different claims: a descriptive fit to
+history, a chronological replay using only prior observations, and a forecast
+scored on traffic that arrived after the evaluator was frozen. Only the last is
+genuinely later validation of the frozen study. None proves a routing speedup.
+
+For prefill, freeze the existing baseline's estimate when `prompt start` is
+observed, using its known cached/new/total token counts. Match the later
+`prompt done` only within the same evidenced process epoch and unambiguous span.
+Do not update the estimate with its own completion. Keep journal fractional
+milliseconds; they are not malformed integer timestamps.
+
+Observer timing matters too. Entries collected in the same observer tick must
+not train one another's frozen forecasts; a start and completion first observed
+together are not evidence of an online prediction opportunity. Preserve them as
+historical component observations, but disclose their exclusion from scored
+opportunities. Unknown epochs, overlapping starts, conflicting duplicates and
+incomplete spans must not become invented matches or zero-cost labels.
+
+Report coverage as well as error, separately by server and cold versus reused
+suffix prefill: eligible opportunities, scored opportunities, insufficient
+history, mean absolute error, signed bias and large-error behavior. The current
+three-sample, one-hour, token-bucket baseline can be accurate on a narrow subset
+while abstaining elsewhere. Missing predictions do not count as successes, and
+better subset accuracy does not justify weakening identity or freshness checks.
+
+Disk-load validation needs a different checkpoint: the restored token count may
+only be reported after the load. Selecting comparable past loads using that
+completed event is a retrospective component check, not a pre-load forecast.
+Do not mix it into the start-time prefill score or claim a cache-path decision.
+
+Retain private source hashes, exact evaluator/baseline versions, cohort boundary
+and exclusions. Freeze those before collecting a later scoring cohort; earlier
+observations may train the unchanged rolling baseline but are not future test
+rows. Keep deployment results private. This protocol does not add a live
+collector, change sample retention, fit an XGB model or relax activation gates.
+
 ## Privacy-safe snapshot inventory
 
 **Implemented as an opt-in local/mounted-directory foundation; it does not route

@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Made cache-component validation explicit.** The study protocol fixes prefill
+  estimates before completion, excludes co-observed prediction opportunities and
+  reports coverage alongside error. Later scoring needs a frozen evaluator;
+  retrospective disk-load checks cannot masquerade as forecasts or routing wins.
+
 - **Kept the action ledger readable after a bad date or failed refresh.**
   Receipts with unrepresentable dates remain visible as unknown. A rendering
   failure no longer marks the view as up to date and suppresses later refreshes.
