@@ -350,5 +350,9 @@ as `failed`. It neither deletes the attempt nor refunds its budget. Unknown or
 reopened ambiguous receipts cannot use this path, and an outage ticket cannot be
 confirmed as successful progress. The bridge then requests fresh outage advice
 before a new attempt. Tests cover a second failure, one eventual tool effect,
-budget exhaustion and input during the write. This follow-up is not yet included
-in the previously verified package and remains untested against a live outage.
+budget exhaustion and input during the write. A new isolated package now includes
+this follow-up. Its installed SDK/TUI test produces two attributed cues and one
+tool effect, then reopens the retained failed first receipt and verified second
+receipt. The native and courtesy package checks also pass; previous archives and
+source hashes are preserved. Network failures and advice remain synthetic, so
+live outage validation is still outstanding.

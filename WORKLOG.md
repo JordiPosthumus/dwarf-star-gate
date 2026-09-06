@@ -1327,3 +1327,10 @@ and changed evidence remain blocked; no-dispatch tickets cannot claim successful
 progress. Forty-one bridge/outage fixtures, 36 native admission/journal cases,
 27 portable reviewer/bridge cases and the native repository check pass. The
 previously verified package is preserved and does not contain this follow-up.
+
+A subsequent isolated rebuild includes accepted-cue reconciliation. All three
+installed-package smoke programs pass, including repeated certified no-dispatch
+failure: two cues, one tool effect, retained failed receipt, verified completion
+receipt and working opt-out. Prior archives and source hashes are preserved.
+These remain synthetic network/advice checks; no normal Pi installation or live
+service configuration changed.
