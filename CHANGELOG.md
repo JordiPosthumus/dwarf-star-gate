@@ -1,5 +1,14 @@
 # Changelog
 
+## Preserve attribution explanations in Genie briefings
+
+- Share the fixed reason/confidence vocabulary with the attribution summary,
+  retaining resolved-overlap and duplicate-usage explanations previously omitted.
+- Preserve signed clock offsets within unchanged correlator bounds. Keep
+  request/sample identifiers, arbitrary prose and unknown labels excluded.
+- Explain the shadow-only semantics; test actual correlator-to-briefing output,
+  offset boundaries and privacy without granting recovery or routing authority.
+
 ## Reduce offline replay-verifier peak memory
 
 - Pack reference rows transiently before the second replay, then restore each

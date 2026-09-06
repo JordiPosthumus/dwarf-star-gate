@@ -69,6 +69,9 @@ is implied by this fix.
    Capacity-evicted overlap owners no longer count as completed: surviving
    evidence can reconcile delayed records within the unchanged bounded history.
    Actual all-peer completion still releases retention; new possible owners reopen it.
+   Genie now receives the canonical overlap reasons and candidate confidence,
+   with signed offsets inside the same correlator bounds. This explains existing
+   results without upgrading their ownership evidence or exposing request IDs.
    Stream observers now recognize CR/LF/CRLF consistently with isolated Pi
    acceptance, avoiding false failures while preserving accelerator-error evidence.
    Continue focused lifecycle/privacy/retention checks rather than broad rewrites.

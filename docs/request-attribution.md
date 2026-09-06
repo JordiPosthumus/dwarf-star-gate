@@ -93,6 +93,13 @@ status and epoch digests are saved in the private dashboard metrics stream;
 private candidate sets, prompts, responses, journal text, paths and credentials
 are absent.
 
+The Genie briefing uses the same fixed reason/confidence vocabulary as the
+quality summary, including uniquely disambiguated overlaps and duplicate usage
+matches. It retains signed dispatch offsets only within the correlator's existing
+clock-tolerance/dispatch-lead bounds. Request/sample IDs and arbitrary prose
+are not included in this briefing projection. These explanations do not upgrade
+bounded epoch evidence, prove a cache hit or grant action authority.
+
 ## Attribution-yield audit
 
 The dashboard now reports an honest corroboration rate over **resolved** engine

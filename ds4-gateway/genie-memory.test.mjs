@@ -7,7 +7,33 @@ import {GenieMemory} from './genie-memory.mjs';
 import {Genie,briefing,hardeningCandidates,parseGenieReview} from './genie.mjs';
 import {createDashboard} from './dashboard.mjs';
 import {safeGatewayEvent} from './telemetry.mjs';
+import {EngineAttribution} from './attribution.mjs';
 const sample=(at=1000,change={})=>({time:at,gateway_at:at,gateway:{workers:[{id:'worker-a',is_healthy:true,drained:false,operator_paused:false,holds:[],context_length:262144,...change}]},devices:[],events:[]});
+
+test('Genie preserves actual overlap explanations and bounded candidate confidence',()=>{
+  for(const duplicate of [false,true]){
+    const a=new EngineAttribution(),ids=['aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee','11111111-2222-4333-8444-555555555555'];
+    for(const request_id of ids)a.acceptGateway({event:'request_dispatched',request_id,node:'worker-a',time:10000});
+    a.acceptEngine({kind:'start',node:'worker-a',time:12000,sample_id:'a'.repeat(64),prompt:1000,cached:900,new_tokens:100,backend_epoch:'b'.repeat(64),backend_epoch_confidence:'bounded'});
+    for(const [i,request_id] of ids.entries())a.acceptGateway({event:'request_finished',request_id,node:'worker-a',time:30000,outcome:'complete',usage:{prompt_tokens:!duplicate&&i?700:1000,cached_tokens:!duplicate&&i?600:900}});
+    const raw=a.snapshot(),shown=briefing({...sample(),attribution:raw}).attribution;
+    assert.equal(shown.recent[0].reason,duplicate?'overlapping_usage_matches':'usage_disambiguated_overlap');
+    assert.equal(shown.recent[0].status,raw.recent[0].status);
+    assert.equal(shown.recent[0].confidence,raw.recent[0].confidence);
+    assert.equal(shown.request_identity,'heuristic_not_protocol_proof');
+    assert.ok(!JSON.stringify(shown).includes(ids[0]));assert.ok(!JSON.stringify(shown).includes('sample_id'));
+  }
+});
+
+test('Genie attribution retains signed clock tolerance but excludes unknown prose and out-of-range deltas',()=>{
+  const recent=[-5001,-5000,-2000,0,600000,600001].map(dispatch_delta_ms=>({node:'worker-a',status:'candidate',reason:'usage_unavailable',confidence:'heuristic',dispatch_delta_ms,request_id:'PRIVATE_ID',prompt:'PRIVATE_CONTENT'}));
+  recent.push({node:'worker-a',status:'abstained',reason:'PRIVATE_REASON',confidence:'PRIVATE_CONFIDENCE',dispatch_delta_ms:NaN});
+  const shown=briefing({...sample(),attribution:{schema:1,mode:'shadow',recent}}).attribution;
+  assert.deepEqual(shown.recent.map(row=>row.dispatch_delta_ms),[undefined,-5000,-2000,0,600000,undefined,undefined]);
+  assert.ok(shown.recent.slice(0,6).every(row=>row.reason==='usage_unavailable'&&row.confidence==='heuristic'));
+  assert.equal(shown.recent.at(-1).reason,undefined);assert.equal(shown.recent.at(-1).confidence,undefined);
+  assert.ok(!JSON.stringify(shown).includes('PRIVATE'));
+});
 test('marker-only compatibility reaches Genie as a hypothesis, not recovery authority',()=>{
   const at='2026-09-04T12:00:00Z',s=sample(Date.parse(at));
   s.events=['terminal_without_finish_reason','terminal_reason_unobserved','terminal_without_done','terminal','PRIVATE_REASON'].map(stream_end=>({event:'request_finished',time:at,node:'worker-a',outcome:'complete',stream_end,prompt:'PRIVATE_CONTENT',request_id:'PRIVATE_ID'}));

@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Gave Genie the missing attribution explanations.** His bounded briefing now
+  distinguishes uniquely matched overlaps from duplicate usage matches, keeps
+  candidate confidence and valid signed clock offsets, and still excludes
+  request identifiers. More faithful evidence is not stronger action authority.
+
 - **Reduced the offline verifier's peak memory without dropping evidence.**
   Reference replay rows are kept in a checked compact representation until each
   exact comparison. Frozen-input runs retain identical payloads and all five

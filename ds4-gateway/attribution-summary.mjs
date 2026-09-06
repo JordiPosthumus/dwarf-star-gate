@@ -11,6 +11,9 @@ const REASONS=new Set([
 ]);
 const CONFIDENCE=new Set(['none','heuristic','bounded_candidate','high_candidate']);
 
+export const safeAttributionReason=value=>REASONS.has(value)?value:null;
+export const safeAttributionConfidence=value=>CONFIDENCE.has(value)?value:null;
+
 function safe(raw,index) {
   if(!raw||raw.event!=='engine_attribution'||!ID.test(raw.node??'')||!SAMPLE.test(raw.sample_id??'')||
     !STATUSES.has(raw.status)||!REASONS.has(raw.reason)||!CONFIDENCE.has(raw.confidence))return null;
