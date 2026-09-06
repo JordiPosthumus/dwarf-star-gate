@@ -1,3 +1,4 @@
+import {PerformanceHistory} from '../ds4-gateway/performance-lights.mjs';
 // Synthetic, clearly labelled telemetry for screenshots. No gateway, SSH, logs or secrets.
 import { createDashboard } from '../ds4-gateway/dashboard.mjs';
 import { workerConfig, assertUniqueWorker } from '../ds4-gateway/worker-config.mjs';
@@ -108,6 +109,16 @@ const clientWatch={schema:1,mode:'advisory',fresh_after_seconds:45,pre_gateway_a
   {watch_ref:'4f9a2c6d0b31',client:'pi',state:'waiting_for_model',process_alive:true,fresh:true,last_seen_at:new Date(now-5000).toISOString(),last_seen_seconds:5,state_seconds:38,request:{state:'queued',age_seconds:34},diagnosis:'waiting_inside_dsg'},
   {watch_ref:'9c3e70a1d5f8',client:'pi',state:'local_tool',process_alive:true,fresh:true,last_seen_at:new Date(now-12000).toISOString(),last_seen_seconds:12,state_seconds:71,request:{state:'complete',age_seconds:78},diagnosis:'local_tool_active'},
 ]};
+// Scripted timings feed the real comparator; these are synthetic UI examples.
+const performanceHistory=new PerformanceHistory();let performanceSample=0;
+for(const [i,node] of ['sparkA','sparkB'].entries())for(const minutes of [180,170,160,150,19,16,9,6,2]){
+  const at=now-minutes*60000,recent=minutes<30,prefillSeconds=recent&&i===0?60:30,decodeRate=recent&&i===1?16:20;
+  const add=(kind,time,extra={})=>performanceHistory.accept({node,kind,time,backend_epoch:'d'.repeat(64),sample_id:(++performanceSample).toString(16).padStart(64,'0'),...extra});
+  add('start',at,{prompt:8192,cached:4096,new_tokens:4096});
+  add('prefill_done',at+prefillSeconds*1000,{prompt:8192,cached:4096,new_tokens:4096,seconds:prefillSeconds});
+  add('decode',at+(prefillSeconds+30)*1000,{generated:decodeRate*30,seconds:30});
+  add('finish',at+(prefillSeconds+30)*1000+1);
+}
 const snapshot = { version:1,demo:true,time:now,started:now-900000,read_only:false,worker_management:true,gateway_at:now,gateway_error:null,telemetry_error:null,
   rate_peaks:{schema:1,prefill:{tps:1250.5,time:now-86400000},decode:{tps:40.5,time:now-86400000},history_status:'ready',persistence_error:null,malformed_lines:0},
   cache_continuity:{schema:1,status:'ready',checked_at:now,interval_ms:15000,partial_history:false,workers:{sparkA:{candidate_pairs:12,assessed_pairs:10,high_suspicion_low_reuse:1,unconfirmed_low_reuse:1,last_low_reuse_at:now-120000,abstention_reasons:{worker_profile_changed:2}},sparkB:{candidate_pairs:8,assessed_pairs:8,high_suspicion_low_reuse:0,unconfirmed_low_reuse:0,abstention_reasons:{}},'mac-ultra':{candidate_pairs:0,assessed_pairs:0,high_suspicion_low_reuse:0,unconfirmed_low_reuse:0,abstention_reasons:{}}}},
@@ -134,7 +145,13 @@ const registry=()=>({model:'deepseek-v4-flash',minimum_context:snapshot.gateway.
 if(agentHold)Object.assign(workers[2],{drained:true,operator_paused:false,holds:[{id:'demo-hold',owner_id:'test-agent',reason:'<DS4 compatibility test>'}]});
 if(quarantinedWorker)Object.assign(workers[2],{is_healthy:false,quarantine:{reason:'repeated_inference_failures',at:new Date(now-600000).toISOString()}});
 return createDashboard(()=>({...snapshot,time:Date.now(),gateway_at:Date.now(),
-  devices:workers.map(w=>devices.find(d=>d.id===w.id)||new DeviceTelemetry(w.id).snapshot()),
+  performance_lights:performanceHistory.snapshot(Date.now(),workers.map(w=>({id:w.id,backend_epoch:'d'.repeat(64),connected:w.is_healthy,active:!!w.load,decode:{time:Date.now()-1000},prefill:{time:Date.now()-1000}}))),
+  devices:workers.map(w=>{
+    const d=devices.find(d=>d.id===w.id);if(!d)return new DeviceTelemetry(w.id).snapshot();
+    const shift=Date.now()-now;
+    return {...d,last_event:d.last_event+shift,decode:{...d.decode,time:d.decode.time+shift},prefill:{...d.prefill,time:d.prefill.time+shift},series:d.series.map(row=>({...row,time:row.time+shift}))};
+  }),
+  cache_continuity:{...snapshot.cache_continuity,checked_at:Date.now()},
   gateway:{...snapshot.gateway,calibration:calibrationPreflight(workers.map(w=>({id:w.id,healthy:w.is_healthy,drained:w.drained,active:w.load,queue:Array(w.queued).fill(null)}))),total:workers.length,healthy:workers.filter(w=>w.is_healthy).length,available:workers.filter(w=>w.is_healthy&&!w.drained).length,active:workers.filter(w=>w.load).length,queued:workers.reduce((a,w)=>a+w.queued,0)}}),undefined,{
   read:async()=>registry(),
   act:async(action,input)=>{

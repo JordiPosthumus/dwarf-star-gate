@@ -128,16 +128,17 @@ export class FleetSpeed {
 }
 
 export class FleetSpeedReader {
-  constructor(directory,{readBytes=READ_BYTES}={}){
+  constructor(directory,{readBytes=READ_BYTES,retainedFiles=2,createAccumulator=()=>new FleetSpeed()}={}){
     if(typeof directory!=='string'||!path.isAbsolute(directory))throw new Error('Fleet speed directory must be absolute');
     if(!Number.isInteger(readBytes)||readBytes<1024||readBytes>READ_BYTES)throw new Error('Fleet speed read budget must be 1024–4194304');
-    Object.assign(this,{directory,readBytes});this.cursors=new Map();this.speed=new FleetSpeed();this.status='waiting';this.lastRead=null;this.malformed=0;this.rescans=0;
+    if(!Number.isInteger(retainedFiles)||retainedFiles<2||retainedFiles>8||typeof createAccumulator!=='function')throw new Error('Metric reader requires 2–8 files and an accumulator');
+    Object.assign(this,{directory,readBytes,retainedFiles,createAccumulator});this.cursors=new Map();this.speed=createAccumulator();this.status='waiting';this.lastRead=null;this.malformed=0;this.rescans=0;
   }
-  rebuild(){this.cursors.clear();this.speed=new FleetSpeed();this.rescans++;this.status='rescanning';}
+  rebuild(){this.cursors.clear();this.speed=this.createAccumulator();this.rescans++;this.status='rescanning';}
   poll(now=Date.now()){
     try{
       const root=fs.lstatSync(this.directory);if(!root.isDirectory()||root.isSymbolicLink())throw new Error('Not a real directory');
-      const files=fs.readdirSync(this.directory).filter(name=>FILE.test(name)).sort().slice(-2);
+      const files=fs.readdirSync(this.directory).filter(name=>FILE.test(name)).sort().slice(-this.retainedFiles);
       if([...this.cursors.keys()].some(file=>!files.includes(file))){this.rebuild();return;}
       let backlog=false;
       for(const file of files){

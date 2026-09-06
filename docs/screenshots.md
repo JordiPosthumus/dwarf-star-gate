@@ -12,7 +12,7 @@ screenshots, benchmark results, a live incident report or a promoted model.
   the single-row desktop fleet band, mixed-server
   activity, aligned rounded speeds, requested thinking, compact synthetic RAM /
   GPU / POWER strips, the 12-hour fleet-speed and measured-energy pulse, and the ready Continuity Door
-  contract. Detailed cache/session evidence is folded into each server card.
+  contract. Decode, Prefill and Cache hits lights open evidence without expanding the card.
 - `overview-mobile.png`: the compact status row at 390px, including both calibrated
   speed gauges and their dense value/energy footer.
 - `worker-management.png`: the capability-gated Settings view, recommended
@@ -83,3 +83,5 @@ Before committing, visually inspect all changed PNGs and run `npm run check`,
 invented: never populate them by copying `/api/status`, production training rows,
 private hostnames, conversation IDs, model reports or credentials. Do not publish
 live UI screenshots without a separate privacy review.
+
+The Fleet overview now includes Decode, Prefill and Cache hits lights. [Performance evidence](images/performance-evidence.png) shows the compact dialog; it does not expand the machine card. Both use scripted numerical fixtures, not a live hardware benchmark.

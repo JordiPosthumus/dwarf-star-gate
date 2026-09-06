@@ -23,7 +23,11 @@ test('public demo has synthetic mixed servers, current panels and no promoted mo
   assert.equal(s.gateway.predictor.placement,false);
   const registry=await get('/api/workers');assert.equal(registry.queued_relocation.automatic,true);assert.equal(registry.queued_relocation.offers.length,1);
   const g=await get('/api/genie');assert.match(g.reports[0].text,/Synthetic demonstration/);
-  assert.equal(g.last_served_by,'dedicated');
+  assert.equal(g.last_served_by,'pool_assigned');
+  assert.equal(s.performance_lights.workers.sparkA.decode.level,'green');
+  assert.equal(s.performance_lights.workers.sparkA.prefill.level,'red');
+  assert.equal(s.performance_lights.workers.sparkB.decode.level,'amber');
+  assert.equal(s.performance_lights.workers['mac-ultra'].decode.level,'grey');
   assert.ok(g.ticker.entries.every(e=>e.text.startsWith('Demo:')));
   const a=await get('/api/analytics');assert.equal(a.demo,true);
   assert.deepEqual(a.model_series.map(s=>s.stage),['admission','upload','embedded','remaining']);

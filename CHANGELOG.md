@@ -1,5 +1,17 @@
 # Changelog
 
+## Observational machine performance lights
+
+- Replace the expanding machine cache panel with compact Decode, Prefill and
+  Cache hits indicators and an evidence dialog that survives polling.
+- Compare cumulative phase token/time deltas against matched self-history up to
+  seven days and separately against fully attested equivalent peers. Missing
+  evidence stays grey; sustained slowdown uses configurable 15% / 30% defaults.
+- Separate cold, cached-suffix and restored-suffix prefill; preserve the existing
+  fleet gauges, source metric files, server settings and routing behavior.
+- Keep automatic Pi Proactive Resume open pending a client-owned atomic
+  acceptance API; the installed extension API cannot fence every deferred queue.
+
 ## Assign new Genie reviews quickly without ambiguous replay
 
 - Prefer fresh free compatible pool capacity after recent dedicated slowness or

@@ -25,18 +25,18 @@ test('dashboard clocks show unknown for missing or unrepresentable evidence time
     assert.equal(vm.runInContext(`clock(${value})`,context),vm.runInContext(`new Date(${value}).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'})`,context));
 });
 
-test('cache cards distinguish low-reuse evidence, disk-load time and unknown loss cost',()=>{
+test('compact performance lights keep uncertain cache evidence grey or amber and retain measurement details',()=>{
   const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);
-  const render=d=>vm.runInContext(`cacheHealthMarkup(${JSON.stringify(d)},100000)`,context);
-  const d={id:'worker',cache:{cold:2,resident_misses:3,disk_restores:2},cache_observed_since:1000,cache_cost:{samples:[{kind:'disk_load',time:90000,ms:1200},{kind:'disk_load',time:95000,ms:300}]},cache_continuity:{status:'ready',checked_at:99000,workers:{worker:{candidate_pairs:5,assessed_pairs:3,high_suspicion_low_reuse:1,unconfirmed_low_reuse:1,last_low_reuse_at:90000,abstention_reasons:{worker_profile_changed:2}}}}};
-  const html=render(d);assert.match(html,/Cache checks/);assert.match(html,/2 low-reuse turns/);assert.match(html,/3 of 5 consecutive pairs/);assert.match(html,/1 possible lost-reuse turn · 1 unconfirmed/);
-  assert.match(html,/1.5s in 2 measured disk-load spans/);assert.match(html,/Extra time caused by lost reuse: unknown/);assert.match(html,/not necessarily a fault/);
-  assert.doesNotMatch(html,/Cache \+ session|assigned sessions|Prefix reused/);
-  d.cache_continuity.status='source_gap';assert.match(render(d),/Evidence gap/);assert.doesNotMatch(render(d),/2 low-reuse turns/);
-  delete d.cache_continuity;assert.match(render(d),/Not enough evidence/);
-  d.cache_continuity={status:'ready',workers:{worker:{assessed_pairs:1,candidate_pairs:1,abstention_reasons:{'<img onerror=bad()>':1}}}};
-  assert.doesNotMatch(render(d),/<img/);assert.match(render(d),/No low reuse in 1 pair/);
+  const render=d=>vm.runInContext(`performanceLightsMarkup(${JSON.stringify(d)},100000,false)`,context);
+  const d={id:'worker',connected:true,last_event:99000,backend_epoch:'a'.repeat(64),cache_cost:{samples:[{kind:'disk_load',time:90000,ms:1200},{kind:'disk_load',time:95000,ms:300}]},cache_continuity:{status:'ready',checked_at:99000,workers:{worker:{assessed_pairs:3,high_suspicion_low_reuse:1,unconfirmed_low_reuse:1,last_low_reuse_at:90000}}}};
+  const html=render(d);assert.match(html,/Cache hits/);assert.match(html,/data-level="amber"/);assert.doesNotMatch(html,/data-level="red"/);
+  assert.match(html,/1.5s in 2 measured disk-load spans/);assert.match(html,/Extra time caused by lost reuse: unknown/);assert.match(html,/do not prove a cache defect/);assert.doesNotMatch(html,/<details/);
+  d.cache_continuity.status='source_gap';assert.doesNotMatch(render(d),/data-level="amber"/);
+  d.recent=[1,2,3].map(n=>({kind:'start',backend_epoch:'a'.repeat(64),time:90000+n,cached:400}));assert.match(render(d),/data-level="green"/);
+  d.backend_epoch=null;d.recent.forEach(row=>row.backend_epoch=null);assert.doesNotMatch(render(d),/data-level="green"/);
+  d.connected=false;assert.doesNotMatch(render(d),/data-level="green"/);
+  assert.match(html,/At least three requests and 60 active seconds/);assert.match(html,/Self:/);assert.match(html,/Peers:/);
 });
 
 test('dashboard folds connection and diagnostics into its single identity header',()=>{
@@ -790,7 +790,7 @@ test('fleet overview is a dense status band and controls live in one settings ta
   assert.doesNotMatch(html,/id="server-settings"|\[ server controls \]/);assert.match(js,/openServerSettings/);
   assert.match(html,/id="tab-settings"[^>]*aria-controls="view-settings"[^>]*data-workspace-tab="settings"/);
   assert.match(html,/id="view-settings"[^>]*>[\s\S]*id="worker-management"[\s\S]*id="spark-profile"/);
-  assert.match(js,/fmtWhole\(m\?\.tps\)/);assert.match(js,/class="remaining-estimate/);assert.match(js,/class="device-evidence"/);
+  assert.match(js,/fmtWhole\(m\?\.tps\)/);assert.match(js,/class="remaining-estimate/);assert.match(js,/class="performance-lights"/);
   assert.match(css,/\.metric-block\{display:grid;grid-template-rows:/);assert.match(css,/\.status-deck\{display:grid;grid-template-columns:/);assert.match(css,/\.workspace-tabs \.settings-tab\{display:inline-flex;[^}]*margin-left:auto/);
   assert.doesNotMatch(html.split('<nav class="workspace-tabs"')[0],/id="genie-hardening"/);assert.match(html,/Private developer hypotheses distilled from bounded DSG failure evidence/);
   assert.match(js,/function renderHardeningNotes/);assert.match(js,/suggestion\.textContent=note\.suggestion/);assert.match(css,/\.genie-hardening\{/);
@@ -978,18 +978,24 @@ test('dashboard ingests a local engine log without inference calls or exporting 
   const {dir,file}=logFixture(t), calls=[];
   const now=new Date(), pad=n=>String(n).padStart(2,'0');
   const prefix=`${pad(now.getMonth()+1)}${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())} ds4-server: `;
-  fs.writeFileSync(file,prefix+'chat ctx=0..10:10 prompt start\n'+prefix+'chat ctx=10..60:50 gen=50 THINKING decoding chunk=36.2 t/s avg=35.7 t/s 1.40s\nprivate answer NEVER_EXPORT\n');
+  const old=new Date(now.getTime()-60000),oldPrefix=`${pad(old.getMonth()+1)}${pad(old.getDate())} ${pad(old.getHours())}:${pad(old.getMinutes())}:${pad(old.getSeconds())} ds4-server: `;
+  fs.writeFileSync(file,oldPrefix+'chat ctx=0..10:10 prompt start\n'+oldPrefix+'gen=0 finish=stop\n'+prefix+'chat ctx=0..10:10 prompt start\n'+prefix+'chat ctx=10..60:50 gen=50 THINKING decoding chunk=36.2 t/s avg=35.7 t/s 1.40s\nprivate answer NEVER_EXPORT\n');
   const backend=http.createServer((req,res)=>{calls.push(req.url);res.end(JSON.stringify({version:1,model:'ds4',workers:[{id:'studio',is_healthy:true,load:1}]}));});
   backend.listen(0,'127.0.0.1');await once(backend,'listening');t.after(()=>{backend.closeAllConnections();backend.close();});
   const config=path.join(dir,'config.json');
-  fs.writeFileSync(config,JSON.stringify({port:backend.address().port,api_key:'test',state_file:path.join(dir,'state.json'),nodes:[{id:'studio',telemetry_service:null}],telemetry_files:{studio:file}}));
+  fs.writeFileSync(config,JSON.stringify({port:backend.address().port,api_key:'test',state_file:path.join(dir,'state.json'),nodes:[{id:'studio',telemetry_service:null}],telemetry_files:{studio:file},performance_lights:{worker_profiles:{studio:{hardware:'fixture-private-hardware',model:'fixture-model',quantization:'fixture-quant',engine_build:'fixture-build',concurrency:1}}}}));
   const app=await runDashboard(config,0);t.after(app.close);
   const d=app.snapshot().devices[0];assert.equal(d.telemetry_source,'file');assert.equal(d.connected,true);assert.equal(d.decode.tps,36.2);
-  assert.equal(app.snapshot().attribution.mode,'shadow');assert.equal(app.snapshot().attribution.counts.abstained,1,'local log has no proven process epoch');
+  assert.equal(app.snapshot().attribution.mode,'shadow');assert.equal(app.snapshot().attribution.counts.abstained,2,'both local starts have no proven process epoch');
   const url=`http://127.0.0.1:${app.server.address().port}`;
   const exported=await(await fetch(url+'/api/diagnostics')).text();
   const persisted=fs.readdirSync(path.join(dir,'dashboard')).map(f=>fs.readFileSync(path.join(dir,'dashboard',f),'utf8')).join('');
   for(const text of [exported,persisted]) {assert.ok(!text.includes(file));assert.ok(!text.includes('NEVER_EXPORT'));assert.ok(!text.includes('ds4-server:'));}
+  const metrics=fs.readdirSync(path.join(dir,'dashboard')).filter(name=>name.startsWith('metrics-')).flatMap(name=>fs.readFileSync(path.join(dir,'dashboard',name),'utf8').trim().split('\n').map(JSON.parse));
+  const starts=metrics.filter(row=>row.kind==='start');assert.equal(starts.length,2);
+  assert.equal(starts[0].performance_profile,undefined,'current profile must not label old journal backfill');
+  assert.match(starts[1].performance_profile,/^[a-f0-9]{64}$/);
+  assert.ok(!persisted.includes('fixture-private-hardware'));assert.ok(!exported.includes('fixture-private-hardware'));
   assert.deepEqual(calls,['/gateway/status']);
 });
 test('dashboard ingests opt-in hardware numbers without exporting the source path or raw fields',async t=>{

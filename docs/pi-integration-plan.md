@@ -98,6 +98,15 @@ capabilities. A reviewed client contract must expose/own the relevant queues and
 atomically fence consent, session epoch/generation, user stops and duplicate
 delivery before automatic rescue is proposed.
 
+A further read-only inspection of the installed 0.84.4 implementation on
+2026-09-06 confirmed that extension `hasPendingMessages()` delegates to the same
+incomplete pending count. `sendMessage()` still has no conditional acceptance
+or idempotent receipt operation. Supporting automatic Proactive Resume therefore
+requires an additive client-owned API for a final generation/stop/queue fence;
+the current extension alone cannot meet that requirement. No installed Pi code,
+settings or sessions were modified. This remains open while independent DSG
+observability work proceeds.
+
 Run this optional contract fixture by setting `DSG_PI_ROOT` to an installed Pi
 package root and running `npm run continuity:test`. It deliberately requires the
 reviewed version; a different version needs reinspection, not a silently broadened

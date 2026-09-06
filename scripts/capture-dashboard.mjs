@@ -67,14 +67,22 @@ try {
   assert.ok((await thinking.boundingBox()).height<40,'Thinking settings use a compact single row');
   assert.equal(await page.locator('#devices .metric-block>.label').first().innerText(),'DECODE');
   assert.equal(await page.locator('#devices .metric-block>.label').nth(1).innerText(),'PREFILL');
-  const cacheCard=page.locator('#devices .device-evidence').first();
-  assert.match(await cacheCard.locator('summary').innerText(),/Cache checks.*2 low-reuse turns/s);
-  await cacheCard.locator('summary').click();
-  assert.match(await cacheCard.innerText(),/Extra time caused by lost reuse: unknown/);
-  assert.match(await cacheCard.innerText(),/Not proof of a cache defect/);
+  const lights=page.locator('#devices .performance-lights').first();
+  assert.equal(await lights.locator('button').count(),3);
+  assert.deepEqual(await lights.locator('button>span:not(.light-dot)').allTextContents(),['Decode','Prefill','Cache hits']);
+  const beforeCard=await page.locator('#devices .device').first().boundingBox();
+  await lights.locator('[data-light="cache"]').click();
+  const evidence=page.locator('.performance-dialog');assert.equal(await evidence.isVisible(),true);
+  assert.match(await evidence.innerText(),/Extra time caused by lost reuse: unknown/);
+  assert.match(await evidence.innerText(),/do not prove a cache defect/);
   await page.waitForTimeout(16000);
-  assert.equal(await cacheCard.getAttribute('open'),'','Fleet polling must retain expanded cache evidence');
-  await cacheCard.locator('summary').click();
+  assert.equal(await evidence.isVisible(),true,'Fleet polling must retain the evidence dialog');
+  assert.ok(Math.abs((await page.locator('#devices .device').first().boundingBox()).height-beforeCard.height)<2,'Evidence does not expand the machine card');
+  await page.keyboard.press('Escape');assert.equal(await evidence.isVisible(),false);
+  await page.waitForFunction(()=>document.activeElement?.dataset?.light==='cache');
+  await lights.locator('[data-light="decode"]').click();assert.match(await evidence.innerText(),/Self:/);assert.match(await evidence.innerText(),/Peers:/);
+  await page.screenshot({path:path.join(output,'performance-evidence.png'),fullPage:true});
+  await evidence.locator('button').click();
   assert.equal(await page.locator('#tab-fleet').getAttribute('aria-selected'),'true');
   assert.equal(await page.locator('#view-fleet').isVisible(),true);
   assert.equal(await page.locator('#view-genie').isHidden(),true);
@@ -375,7 +383,7 @@ try {
   }
   await auditPage.close();
   assert.deepEqual(errors,[]);
-  console.log('Saved nine synthetic dashboard screenshots; verified proposed experiment labels, tab navigation, polling, analytics, compact hardware telemetry, named maintenance locks, mobile, reset/milestones, escaped agent holds and Keep paused UX.');
+  console.log('Saved ten synthetic dashboard screenshots; verified proposed experiment labels, tab navigation, polling, analytics, compact hardware telemetry, named maintenance locks, mobile, reset/milestones, escaped agent holds and Keep paused UX.');
 } finally {
   await browser?.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));
   if(learningServer){learningServer.closeAllConnections();await new Promise(resolve=>learningServer.close(resolve));}

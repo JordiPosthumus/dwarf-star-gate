@@ -1104,3 +1104,8 @@ that the public fixtures do not establish.
 The work log is a progress map, not a release certification. Source changes still
 need the tests, deployment procedure and hardware-specific validation described in
 the repository documentation.
+
+
+### 2026-09-06 — machine performance evidence
+
+Added a separate bounded comparison reader and compact Decode / Prefill / Cache hits lights. Weighted context-matched comparisons, sustained slowdown confirmation, explicit configuration attestations, history exclusions and an evidence dialog preserve the existing pulse gauges and source files. A read-only audit of five existing daily metric files exposed substantial request-boundary exclusions and unsupported peer identity; those remain unknown. No live activation or server/model changes. Pi 0.84.4 inspection confirmed the deferred-queue/final-acceptance gap, documented as still open. Full suite: 678 tests, 676 passed, two optional skips. Subsequent final bounds/configuration/direct-activity checks: 19/19 domain and fleet-speed tests, 2/2 UI checks and the real dashboard profile/backfill privacy fixture passed. The ten-capture synthetic browser run passed, including unchanged card height, dialog persistence and restored keyboard focus; overview and evidence dialog visually inspected. Syntax and whitespace checks passed. No live activation.

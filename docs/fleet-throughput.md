@@ -47,6 +47,8 @@ It is distinct from the older completion-time usage counters: unfinished but
 observed generation can contribute here, while missing intervals can undercount.
 Direct traffic appears only if it enters the same allowlisted engine metric lane.
 
+The machine cards also have separate [Decode, Prefill and Cache hits indicators](performance-lights.md). Their seven-day comparison reader does not change these fleet gauges or their calibration.
+
 ## Reader and privacy boundaries
 
 The dashboard reads only the two newest `metrics-YYYY-MM-DD.jsonl` files through

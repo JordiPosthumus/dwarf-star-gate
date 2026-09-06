@@ -352,8 +352,9 @@ function renderDevices(devices,workers,now,stale,scales,controls) {
     const fresh=template.content.firstElementChild;let current=existing.get(d.id);
     if(!current)current=fresh;
     else{
-      const evidenceOpen=current.querySelector('.device-evidence')?.open;
-      for(const selector of ['.device-identity','.server-verdict','.badge','.device-readings']){const before=current.querySelector(selector),after=fresh.querySelector(selector);if(before.innerHTML!==after.innerHTML)before.innerHTML=after.innerHTML;if(selector==='.device-readings'&&evidenceOpen)before.querySelector('.device-evidence')?.setAttribute('open','');if(before.className!==after.className)before.className=after.className;for(const name of ['data-level','title','hidden']){const value=after.getAttribute(name);if(value===null)before.removeAttribute(name);else before.setAttribute(name,value);}}
+      const focusedLight=current.contains(document.activeElement)?document.activeElement?.dataset?.light:null;
+      for(const selector of ['.device-identity','.server-verdict','.badge','.device-readings']){const before=current.querySelector(selector),after=fresh.querySelector(selector);if(before.innerHTML!==after.innerHTML)before.innerHTML=after.innerHTML;if(before.className!==after.className)before.className=after.className;for(const name of ['data-level','title','hidden']){const value=after.getAttribute(name);if(value===null)before.removeAttribute(name);else before.setAttribute(name,value);}}
+      if(focusedLight)current.querySelector(`[data-light="${focusedLight}"]`)?.focus({preventScroll:true});
       updateRoutingNode(current.querySelector('.worker-routing'),fresh.querySelector('.worker-routing'));
     }
     if(container.children[i]!==current)container.insertBefore(current,container.children[i]||null);
@@ -386,20 +387,45 @@ function serverVerdict(d,w,now,stale=false) {
   if(d?.telemetry_configured!==false&&(!d?.connected||eventAge>5*60000))return {level:'unknown',label:'Ready · telemetry stale',detail:'Routing is ready, but recent engine timing data is unavailable.'};
   return {level:'ok',label:'Ready · idle',detail:'Healthy, enabled and immediately free for a gateway request.'};
 }
-function cacheHealthMarkup(d,now) {
-  const view=d.cache_continuity,worker=view?.status==='ready'?view.workers?.[d.id]:null;
-  const assessed=worker?.assessed_pairs??0,strong=worker?.high_suspicion_low_reuse??0,weak=worker?.unconfirmed_low_reuse??0;
-  const states={disabled:'Collection off',waiting:'Awaiting evidence',catching_up:'Reading evidence',rescanning:'Rebuilding evidence',unavailable:'Evidence unavailable',event_limit:'Evidence window full',source_gap:'Evidence gap',invalid_evidence:'Evidence needs review'};
-  const summary=strong+weak?`${fmt(strong+weak)} low-reuse ${strong+weak===1?'turn':'turns'}`:assessed?`No low reuse in ${fmt(assessed)} ${assessed===1?'pair':'pairs'}`:states[view?.status]??'Not enough evidence';
-  const details=worker?`${fmt(assessed)} of ${fmt(worker.candidate_pairs)} consecutive pairs assessed · checked ${age(view.checked_at,now)}.`:states[view?.status]??'No assessable consecutive requests yet.';
-  const findings=strong+weak?`${fmt(strong)} possible lost-reuse ${strong===1?'turn':'turns'} · ${fmt(weak)} unconfirmed. Last low reuse ${age(worker.last_low_reuse_at,now)}. Not proof of a cache defect.`:'Low reuse is not assessed when continuity evidence is missing.';
-  const spans=(d.cache_cost?.samples??[]).filter(s=>s.kind==='disk_load'&&Number.isFinite(s.ms)&&s.ms>=0&&Number.isFinite(s.time)&&s.time<=now&&now-s.time<=3600000);
-  const load=spans.length?`${fmt(spans.reduce((n,s)=>n+s.ms,0)/1000)}s in ${fmt(spans.length)} measured disk-load spans (last hour, up to 128 retained components).`:'Disk-load time not measured in the last hour.';
-  const reasons=Object.entries(worker?.abstention_reasons??{}).filter(([reason])=>reason!=='no_prior_session_request').sort((a,b)=>b[1]-a[1]);
-  const omitted=reasons.length?` Not assessed: ${reasons.map(([reason,n])=>`${reason.replaceAll('_',' ')} (${fmt(n)})`).join('; ')}.`:'';
-  const next=view?.status==='disabled'?'Enable optional numerical evidence collection to assess continuity.':view?.status&&view.status!=='ready'?'Review the evidence-reader state; missing evidence is not proof of no misses.':strong?'Check history edits, compaction and backend process changes before blaming cache eviction.':weak?'Check client turn/compaction metadata and backend identity to confirm whether reuse was expected.':!assessed?'Collect two completed same-session turns with usable token counts; gaps stay unknown.':'Compare any new low-reuse turn with its preceding prompt and process evidence.';
-  return `<details class="device-evidence"><summary><span>Cache checks</span><span>${esc(summary)}</span></summary><p class="cache-note">${esc(details)} ${esc(findings)}</p><p class="cache-note">Engine observations since ${d.cache_observed_since?clock(d.cache_observed_since):'connection'}: ${fmt(d.cache?.cold)} starts without reuse · ${fmt(d.cache?.resident_misses)} RAM misses · ${fmt(d.cache?.disk_restores)} disk restores. A RAM miss can be recovered from disk; a start without reuse is not necessarily a fault.</p><p class="cache-note">${esc(load)} Extra time caused by lost reuse: unknown.</p><p class="cache-note">Next: ${esc(next)}</p><p class="cache-note">Recent retained evidence, not lifetime totals${view?.partial_history?'; earlier source content omitted':''}.${esc(omitted)}</p></details>`;
+function cacheLight(d,now,stale) {
+  const view=d.cache_continuity,worker=view?.status==='ready'&&Number.isFinite(view.checked_at)&&now-view.checked_at>=0&&now-view.checked_at<=15000?view.workers?.[d.id]:null;
+  const recent=(d.recent??[]).filter(row=>row.kind==='start'&&/^[a-f0-9]{64}$/.test(d.backend_epoch??'')&&row.backend_epoch===d.backend_epoch&&now-row.time>=0&&now-row.time<=30*60000);
+  const hits=recent.filter(row=>row.cached>0).length;
+  const fresh=!stale&&d.connected&&Number.isFinite(d.last_event)&&now-d.last_event>=0&&now-d.last_event<=15000;
+  const low=worker&&Number.isFinite(worker.last_low_reuse_at)&&now-worker.last_low_reuse_at>=0&&now-worker.last_low_reuse_at<=30*60000;
+  const level=!fresh?'grey':low?'amber':hits>=3?'green':'grey';
+  const reason=low?'Recent low reuse needs review':hits>=3?'Repeated reuse observed':'Not enough recent reuse evidence';
+  const spans=(d.cache_cost?.samples??[]).filter(row=>row.kind==='disk_load'&&Number.isFinite(row.ms)&&row.ms>=0&&now-row.time>=0&&now-row.time<=3600000);
+  const load=spans.length?`${fmt(spans.reduce((sum,row)=>sum+row.ms,0)/1000)}s in ${spans.length} measured disk-load spans in the last hour.`:'Disk-load time unavailable.';
+  const details=`${reason}. ${hits} starts reused a prefix among ${recent.length} retained starts in the last 30 minutes; at most 30 non-chunk engine events are retained. ${fmt(worker?.assessed_pairs)} consecutive request pairs assessed; checked ${age(view?.checked_at,now)}. ${fmt(worker?.high_suspicion_low_reuse)} stronger-suspicion and ${fmt(worker?.unconfirmed_low_reuse)} unconfirmed low-reuse pairs in retained audit history. ${load} Extra time caused by lost reuse: unknown. These counts do not prove a cache defect. A cold start or successful disk restore is not itself a problem. Confidence: bounded engine reuse observations; exact prefix equality and fault causality are unavailable. Next: ${low?'Check history edits, compaction, process changes and prefix evidence for the affected turn.':'Inspect a pair of completed same-session turns if reuse was expected but not observed.'} ${!fresh?'Live telemetry is stale or unavailable.':''}`;
+  return {level,details};
 }
+function performanceLightDetail(value,kind,history,now) {
+  const labels={matched_comparison:'Matched comparison',insufficient_matched_history:'Insufficient matched history',awaiting_sustained_confirmation:'Awaiting sustained confirmation',peer_configuration_unverified:'Equivalent peer configuration is unverified',history_reader_unavailable:'History reader unavailable',idle:'Idle',stale_or_unavailable:'Stale or unavailable'};
+  const summary=comparison=>!comparison?'Unknown':comparison.level==='grey'?labels[comparison.reason]??'Unknown':`${fmtWhole(comparison.recent?.tps)} vs ${fmtWhole(comparison.baseline_tps)} t/s; ${fmt(Math.max(0,comparison.slowdown)*100)}% slower, ${fmt(comparison.recent?.requests)} recent requests, ${fmtWhole(comparison.recent?.seconds)} active seconds, ${fmt(comparison.matched_fraction*100)}% matched`;
+  const basis=value?.configuration_basis==='operator_attested_profile'?'Matching operator-attested hardware, model, quantization, build and serial concurrency. Attestation is not live verification.':'Same backend process only; cross-restart build/configuration and equivalent hardware peers are unverified. No overlapping prompt starts are admitted to the comparison.';
+  return [
+    `${labels[value?.reason]??'Awaiting history'} · last 30 minutes. Self: ${summary(value?.self)}. Peers: ${summary(value?.peers)}. Verdict basis: ${(value?.basis??'none').replaceAll('_',' ')}. Measurement ${age(value?.as_of,now)}.`,
+    kind==='decode'?'Accounting: generated-token deltas / active decode seconds, including thinking. Prefill, queue and idle are excluded. Context uses power-of-two token bands.':'Accounting: new-token deltas / active prefill seconds. Cold, cached suffix and restored suffix work are separate. Context and suffix use power-of-two token bands; disk-load time is excluded.',
+    `Confidence: limited by workload bands and observed coverage. ${basis} Baseline: up to seven days, excluding recent work; oldest matching sample ${age(value?.history_from,now)}.`,
+    `At least three requests and 60 active seconds per matched cohort; 80% of recent time must match. Slowdowns need two disjoint ten-minute blocks, each with two requests and 20 active seconds. Thresholds: ${fmt((history?.thresholds?.amber??.15)*100)}% amber / ${fmt((history?.thresholds?.red??.30)*100)}% red.`,
+    history?.partial_history||history?.skipped_intervals?`Evidence exclusions: ${Object.entries(history?.exclusion_reasons??{}).map(([key,n])=>`${key.replaceAll('_',' ')} (${fmt(n)})`).join('; ')||'reader gaps or history limits'}.`:null,
+    'Next: check workload/context, concurrency, build changes and hardware telemetry before attributing a slowdown to a server fault.'
+  ].filter(Boolean).join('\n\n');
+}
+function performanceLightsMarkup(d,now,stale) {
+  const history=d.performance_history,worker=history?.workers?.[d.id];
+  const levels={green:'Normal',amber:'Review',red:'Slow',grey:'Unknown'};
+  return `<div class="performance-lights" aria-label="Observed performance">${['decode','prefill','cache'].map(kind=>{
+    const title=kind==='cache'?'Cache hits':kind==='decode'?'Decode':'Prefill';
+    const value=kind==='cache'?cacheLight(d,now,stale):worker?.[kind];
+    const level=stale?'grey':Object.hasOwn(levels,value?.level)?value.level:'grey';
+    const detail=kind==='cache'?value.details:performanceLightDetail(value,kind,history,now);
+    const label=kind==='cache'&&level==='green'?'Reuse':levels[level];
+    return `<button type="button" class="performance-light" data-light="${kind}" data-level="${level}" data-light-title="${title}" data-light-detail="${esc(detail)}" title="${esc(detail)}" aria-label="${title}: ${label}. Open evidence"><span class="light-dot" aria-hidden="true"></span><span>${title}</span><small>${label}</small></button>`;
+  }).join('')}</div>`;
+}
+
 function device(d, w, now, stale, index = 1, scales={}, controls=false) {
   const state = phase(d,w,now,stale);
   const bad = stale || !w?.is_healthy;
@@ -415,7 +441,7 @@ function device(d, w, now, stale, index = 1, scales={}, controls=false) {
   const duration=!stale&&w?.load&&Number.isFinite(w.active_seconds)?`<span class="remaining-estimate" title="Elapsed time of the active DSG request; not an estimate">${fmtWhole(Math.floor(w.active_seconds/60))}m active</span>`:'';
   const forecast=duration+(f?`<span class="remaining-estimate${stale||now-f.at>60000?' stale':''}" title="${esc(`${f.experimental?'Experimental':'Validated'} historical ${f.stage==='remaining'?'remaining':'total server-time'} estimate · ${fmt(f.seconds)} seconds · ${age(f.at,now)}. Stale or exceeded estimates are not current ETAs.`)}">${forecastLabel(f,now,stale)}</span>`:'');
   const phaseRedundant=['unavailable','paused'].includes(state);
-  return `<article class="device" data-worker-id="${esc(d.id)}"><div class="device-top"><div class="device-identity"><div class="device-name"><span class="device-number">${String(index).padStart(2,'0')}</span><span class="device-name-text">${esc(d.id.replace(/^spark/, 'Spark '))}</span></div>${forecast}</div><div class="device-status"><span class="server-verdict" data-level="${verdict.level}" title="${esc(verdict.detail)}">${esc(verdict.label)}</span><span class="badge ${bad ? 'bad' : w?.load ? 'busy' : ''}" title="Current generation phase" ${phaseRedundant?'hidden':''}>${esc(!stale&&w?.quarantine?'quarantined':state==='decode'?'answering':state)}</span>${routingMarkup(w,{stale,controls,recovering:recoveryState?.workers?.some(r=>r.worker_id===w?.id&&r.state==='recovering')})}</div></div><div class="device-readings">${timeline(d,now)}${thinkingIndicator(w,stale,now)}<div class="metrics">${metric('decode','DECODE')}${metric('prefill','PREFILL')}</div>${hardwareMarkup(d.hardware,now)}${cacheHealthMarkup(d,now)}</div></article>`;
+  return `<article class="device" data-worker-id="${esc(d.id)}"><div class="device-top"><div class="device-identity"><div class="device-name"><span class="device-number">${String(index).padStart(2,'0')}</span><span class="device-name-text">${esc(d.id.replace(/^spark/, 'Spark '))}</span></div>${forecast}</div><div class="device-status"><span class="server-verdict" data-level="${verdict.level}" title="${esc(verdict.detail)}">${esc(verdict.label)}</span><span class="badge ${bad ? 'bad' : w?.load ? 'busy' : ''}" title="Current generation phase" ${phaseRedundant?'hidden':''}>${esc(!stale&&w?.quarantine?'quarantined':state==='decode'?'answering':state)}</span>${routingMarkup(w,{stale,controls,recovering:recoveryState?.workers?.some(r=>r.worker_id===w?.id&&r.state==='recovering')})}</div></div><div class="device-readings">${timeline(d,now)}${thinkingIndicator(w,stale,now)}<div class="metrics">${metric('decode','DECODE')}${metric('prefill','PREFILL')}</div>${hardwareMarkup(d.hardware,now)}${performanceLightsMarkup(d,now,stale||!(d.performance_history?.workers?.[d.id]?.active??w?.load))}</div></article>`;
 }
 const headlineSeverity=value=>['good','info','warning','critical'].includes(value)?value:'info';
 function deterministicHealthAlerts(snapshot) {
@@ -551,7 +577,7 @@ function render(s) {
   const excluded=visibleWorkers.filter(w=>routingInfo(w).excluded);
   $('routing-summary').hidden=!excluded.length&&!stale&&!g?.draining;
   $('routing-summary').textContent=stale?'Routing status is stale. Controls are disabled until live status returns.':`${g?.draining?'The gateway is draining: all new admission is stopped. ':''}${excluded.length?`${excluded.length} server${excluded.length===1?' is':'s are'} not accepting new work: ${excluded.map(w=>w.id).join(', ')}. See the highlighted reason and routing control on each server card below.`:''}`;
-  renderDevices(s.devices.map(d=>({...d,cache_continuity:s.cache_continuity})),visibleWorkers,now,stale,scales,workerControlsVisible);
+  renderDevices(s.devices.map(d=>({...d,cache_continuity:s.cache_continuity,performance_history:s.performance_lights})),visibleWorkers,now,stale,scales,workerControlsVisible);
   const ds=g?.dataset;
   $('embedding-detail').textContent=embeddingInfo(ds);
   $('cache-evidence-status').textContent=cacheEvidenceText(s,stale);
@@ -1056,4 +1082,25 @@ $('recovery-workers').addEventListener('click',event=>{
   const button=event.target.closest('button[data-recover]');if(!button||button.disabled)return;
   const worker=recoveryState?.workers.find(w=>w.worker_id===button.dataset.recover);
   if(worker?.eligible)void workerAction('recover',{worker_id:worker.worker_id,evidence_id:worker.evidence_id,action_id:crypto.randomUUID()});
+});
+
+// Kept outside the polling card DOM so evidence remains readable and does not
+// expand the machine card. Native dialog supplies keyboard/Escape behavior.
+const performanceDialog=document.createElement('dialog');
+performanceDialog.className='performance-dialog';
+performanceDialog.setAttribute('aria-labelledby','performance-evidence-title');
+performanceDialog.setAttribute('aria-describedby','performance-evidence-detail');
+performanceDialog.innerHTML='<form method="dialog"><button class="button" aria-label="Close performance evidence">Close</button></form><h2 id="performance-evidence-title"></h2><p id="performance-evidence-detail"></p>';
+let performanceDialogTarget=null;
+performanceDialog.addEventListener('close',()=>{
+  const card=[...document.querySelectorAll('.device')].find(el=>el.dataset.workerId===performanceDialogTarget?.worker);
+  card?.querySelector(`[data-light="${performanceDialogTarget?.kind}"]`)?.focus({preventScroll:true});
+});
+document.body.append(performanceDialog);
+document.addEventListener('click',event=>{
+  const button=event.target.closest?.('.performance-light');if(!button)return;
+  performanceDialogTarget={worker:button.closest('.device')?.dataset.workerId,kind:button.dataset.light};
+  performanceDialog.querySelector('h2').textContent=button.dataset.lightTitle;
+  performanceDialog.querySelector('p').textContent=button.dataset.lightDetail;
+  performanceDialog.showModal();
 });
