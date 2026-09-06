@@ -14,7 +14,12 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
   manual priorities, explicit preference rules and guarded eligible-conversation
   scheduling. Optional Pi excerpts feed asynchronous Genie advice with independent
   expiry and no dispatch wait. Tests cover real Pi serialization and synthetic
-  dispatch; aging agreement, chat corrections and live rollout remain.
+  dispatch; aging agreement, measured model quality and live rollout remain.
+
+- **Added reviewable priority corrections in Genie chat.** One-conversation
+  corrections and general preferences have distinct confirmation controls. Rule
+  consolidation shows exact removals/additions; clarification, expiry and stale
+  revision checks prevent a vague or old suggestion from silently changing policy.
 
 - **Moved hardening suggestions into Gate Genie.** Suggestions now sit below the
   conversation in their existing collapsible section, freeing space above every

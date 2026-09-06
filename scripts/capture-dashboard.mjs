@@ -10,6 +10,7 @@ const {chromium}=await import(modulePath?pathToFileURL(path.resolve(modulePath))
 const server=createDemoServer();
 let browser,learningServer,holdServer;
 try {
+  const output=path.join(projectRoot,'docs/images');await fs.mkdir(output,{recursive:true});
   await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});
   const origin=`http://127.0.0.1:${server.address().port}`;
   browser=await chromium.launch({headless:true,channel:process.env.DSG_SCREENSHOT_CHANNEL||undefined});
@@ -112,6 +113,28 @@ try {
   assert.equal(await prioritySelect.inputValue(),'High','Opt-out preserves the saved override');
   await page.locator('#priority-toggle').click();
   await page.waitForFunction(()=>document.getElementById('priority-toggle').getAttribute('aria-pressed')==='true'&&!document.getElementById('priority-toggle').disabled);
+  const askCorrection=async question=>{
+    await page.locator('#genie-question').fill(question);await page.locator('#genie-send').click();
+    await page.waitForFunction(()=>!document.getElementById('priority-correction').hidden);
+  };
+  await askCorrection('Demo correction: make urgent fix Low for this conversation.');
+  assert.equal(await prioritySelect.inputValue(),'High','A chat proposal does not apply itself');
+  assert.match(await page.locator('#priority-correction-changes').innerText(),/urgent fix.*Low.*Other conversations/s);
+  await page.locator('#priority-correction-confirm').click();
+  await page.waitForFunction(()=>document.querySelector('#priority-jobs select').value==='Low'&&!document.querySelector('#priority-jobs select').disabled);
+  assert.equal(await page.locator('#priority-jobs tr').first().locator('td').nth(3).innerText(),'Running');
+  await askCorrection('Demo correction: prefer urgent work.');
+  assert.equal(await page.locator('#priority-correction-confirm').isVisible(),false);
+  await page.locator('#priority-correction-reply').click();assert.equal(await page.locator('#genie-question').evaluate(el=>document.activeElement===el),true);
+  await page.locator('#genie-question').fill('Demo correction: apply generally.');await page.locator('#genie-send').click();
+  await page.waitForFunction(()=>document.getElementById('priority-correction-title').textContent.includes('general'));
+  assert.match(await page.locator('#priority-correction-changes').innerText(),/Remove.*prioritize urgent incident response.*Add.*urgent incident response is High/s);
+  assert.equal(await page.locator('#priority-rules').inputValue(),'Synthetic preference: prioritize urgent incident response.');
+  await page.locator('#priority-correction').screenshot({path:path.join(output,'priority-correction.png'),animations:'disabled'});
+  await page.locator('#priority-correction-confirm').click();
+  await page.waitForFunction(()=>document.getElementById('priority-rules').value==='Synthetic preference: urgent incident response is High.');
+  assert.equal(await prioritySelect.inputValue(),'Low','A general preference does not replace a manual override');
+  await prioritySelect.selectOption('High');await page.waitForFunction(()=>!document.querySelector('#priority-jobs select').disabled);
   const enrollmentGuide=page.getByRole('link',{name:'Setup guide for your agent ↗'});
   assert.equal(await enrollmentGuide.count(),1);
   assert.equal(await enrollmentGuide.getAttribute('href'),'https://github.com/JordiPosthumus/dwarf-star-gate/blob/main/docs/agent-recovery-enrollment.md');
@@ -176,7 +199,6 @@ try {
   const statusBand=await page.locator('.status-deck').boundingBox(),activityTab=await page.locator('#tab-activity').boundingBox(),settingsTab=await page.locator('#tab-settings').boundingBox();
   assert.ok(statusBand&&statusBand.height<150,`Fleet status band is too tall: ${statusBand?.height}px`);
   assert.ok(activityTab&&settingsTab&&settingsTab.x>activityTab.x+activityTab.width,'Settings must be the far-right workspace tab');
-  const output=path.join(projectRoot,'docs/images');await fs.mkdir(output,{recursive:true});
   await page.locator('#tab-settings').click();
   await page.locator('#queue-timeout-form').waitFor();
   assert.equal(await page.locator('#queue-timeout-input').inputValue(),'20000');
@@ -352,7 +374,7 @@ try {
   }
   await auditPage.close();
   assert.deepEqual(errors,[]);
-  console.log('Saved eight synthetic dashboard screenshots; verified proposed experiment labels, tab navigation, polling, analytics, compact hardware telemetry, named maintenance locks, mobile, reset/milestones, escaped agent holds and Keep paused UX.');
+  console.log('Saved nine synthetic dashboard screenshots; verified proposed experiment labels, tab navigation, polling, analytics, compact hardware telemetry, named maintenance locks, mobile, reset/milestones, escaped agent holds and Keep paused UX.');
 } finally {
   await browser?.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));
   if(learningServer){learningServer.closeAllConnections();await new Promise(resolve=>learningServer.close(resolve));}

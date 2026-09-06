@@ -1,4 +1,6 @@
 /* Small, local, legible. The owner's artwork supplies the character. */
+.priority-correction{margin-top:14px;padding:14px;border:1px solid var(--accent);border-radius:7px;overflow-wrap:anywhere}
+.priority-correction[hidden],.priority-correction [hidden]{display:none}.priority-correction h4{margin-bottom:4px}.priority-correction ul{margin-top:4px}
 .analytics-intent{margin:12px 0 8px}.analytics-use{padding:10px 0;margin-bottom:12px;border-block:1px solid var(--line);font-size:11px;line-height:1.7}
 .analytics-snapshot{display:flex;align-items:center;flex-wrap:wrap;gap:8px}.analytics-snapshot p{margin-right:auto}.analytics-snapshot .button{padding:6px 9px}
 .analytics-collection{max-width:none;margin:12px 0}.analytics-collection strong{font-weight:400;margin-left:10px}

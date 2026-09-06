@@ -732,9 +732,10 @@ expire after 60 seconds; stale/manual-conflicting advice is rejected. New pool
 classification requires a free compatible slot at actual admission. Model
 options, normal Genie review deadlines, cache ownership and holds are preserved.
 
-Remaining: chat corrections with a clear distinction between one-chat overrides
-and a confirmed general preference, agreed activation settings, measured
-classification quality, richer task lifecycle coverage and rollout validation.
+Genie chat now proposes conversation-only or general corrections, with explicit
+confirmation, exact rule removals/additions, clarification and stale-revision
+guards. Remaining: agreed activation settings, measured classification quality,
+richer task lifecycle coverage and rollout validation.
 Proactive Resume remains a separate optional Pi capability and permission.
 
 ## Lightweight hardware telemetry — first adapters implemented

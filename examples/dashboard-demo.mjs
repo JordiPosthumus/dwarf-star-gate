@@ -8,6 +8,7 @@ import {calibrationPreflight} from '../ds4-gateway/calibration.mjs';
 import {FleetThroughput} from '../ds4-gateway/throughput.mjs';
 import {FleetSpeed} from '../ds4-gateway/fleet-speed.mjs';
 import {PriorityLens} from '../ds4-gateway/priority-lens.mjs';
+import {PriorityCorrections} from '../ds4-gateway/priority-corrections.mjs';
 // Optional memory is supplied only by the isolated browser-test fixture. The
 // ordinary demo has no persistent storage and reads no installation config.
 export function createDemoServer({learningMilestone=false,agentHold=false,quarantinedWorker=false,memory=null}={}) {
@@ -50,7 +51,7 @@ const dataset={enabled:true,written:4200,bytes:18*1048576,pending:0,dropped:0,fi
   embedding_collection:{enabled:true,ready:true,completed:308,observed:312,pending:0,failed:0,dropped:0,missing:4,last_duration_ms:24,
     model:'all-MiniLM-L6-v2',revision:'demo-only',dimensions:384}};
 const genie={enabled:true,busy:false,source:'primary',memory,
-  status(){return {configured:true,enabled:this.enabled,busy:false,source:this.source,fallback_available:true,last_served_by:'dedicated',mode:'bounded-recovery',predictor_supervision:true,last_check:now-60000,memory:memory?{...memory.status(),...memory.retrieve(snapshot)}:null,
+  status(){return {configured:true,enabled:this.enabled,busy:this.busy,question:this.questionReceipt??null,source:this.source,fallback_available:true,last_served_by:'dedicated',mode:'bounded-recovery',predictor_supervision:true,last_check:now-60000,memory:memory?{...memory.status(),...memory.retrieve(snapshot)}:null,
     hardening_notes:[{candidate_id:'f'.repeat(24),title:'Exercise incomplete-stream continuation',suggestion:'Change: Regression-test the existing incomplete-stream boundary.\nTest: End a scripted upstream stream without a terminal event.\nExpected (not yet verified): The client sees incomplete-stream evidence; no replay occurs.',failure_class:'request_failure',scope:'sparkB',reason:'incomplete_sse',observed_at:new Date(now-90000).toISOString(),continuity:'unknown',at:now-60000,revision:1,durable:true}],
     reports:[{id:'synthetic-review',time:now-60000,evidence_at:now-62000,source:'demo',text:'Synthetic demonstration, not a live assessment. One request is waiting at its session home while the Mac is idle. That preserves cache locality; it does not prove the fastest completion time. Compare warm-home wait against measured cache acquisition elsewhere before changing placement. The candidate models are still shadow-only.',actions_taken:[]}],
     ticker:{state:this.enabled?'ready':'off',evidence_at:now-62000,entries:[
@@ -59,7 +60,22 @@ const genie={enabled:true,busy:false,source:'primary',memory,
       {severity:'info',text:'Demo: XGB candidates are scoring in shadow. No model is promoted.'}]}};},
   setEnabled(value){this.enabled=value===true;return this.status();},
   setSource(value){if(!['primary','pool'].includes(value))throw new Error('Unknown demo source');this.source=value;return this.status();},
-  async ask(){return this.status();}};
+  async ask(){return this.status();},
+  submit(question){
+    if(this.busy)throw new Error('Synthetic review is busy');this.busy=true;
+    const receipt={id:'synthetic-question-'+Date.now(),state:'queued',submitted_at:Date.now()};this.questionReceipt=receipt;
+    void (async()=>{
+      let context;
+      try{
+        context=await corrections.context(question);
+        // Explicit scripted demonstration cases, never a production classifier.
+        const proposal=question==='Demo correction: make urgent fix Low for this conversation.'?{scope:'chat',chat:'a'.repeat(64),priority:'Low',message:'Synthetic proposal: change only this conversation.'}:
+          question==='Demo correction: prefer urgent work.'?{scope:'clarify',message:'Only this conversation, or a general preference for urgent work?'}:
+          question==='Demo correction: apply generally.'?{scope:'general',message:'Synthetic proposal: replace the overlapping urgency rule.',remove_rules:context.rules.length?[0]:[],add_rules:['Synthetic preference: urgent incident response is High.']}:null;
+        corrections.propose(proposal,context);receipt.state='answered';
+      }catch{receipt.state='failed';}finally{corrections.finish(context);receipt.finished_at=Date.now();this.busy=false;}
+    })();return {...receipt};
+  }};
 const events = Array.from({length:8},(_,i)=>({
   time:new Date(now-(8-i)*37000).toISOString(),event:'request_finished',node:workers[i%3].id,
   request_id:`${(0xa1b2c300+i).toString(16)}-0000-4000-8000-000000000000`,outcome:i===1?'client_cancelled':'complete',queue_ms:i===4?4200:0,elapsed_ms:12340+i*3700,
@@ -106,6 +122,14 @@ const prioritySnapshot=()=>({...priority.settings(),demo:true,selections:0,recei
   {request_id:'demo-priority-b',chat:'b'.repeat(64),title:'Synthetic: background documentation',state:'running',machine:'sparkB',waiting_ms:5000,running_ms:30000},
   {request_id:'demo-priority-c',chat:'c'.repeat(64),title:'Synthetic: <review> next steps',state:'queued',machine:'sparkA',waiting_ms:45000,running_ms:null},
 ].map(job=>({...job,...priority.decision(job.chat)})),jobs_truncated:false});
+const priorityAct=async(action,input)=>{if(action==='manual')priority.setManual(input);else if(action==='settings')priority.configure(input);else if(action==='rules')priority.setRules(input);else throw new Error('Unsupported synthetic priority action');return prioritySnapshot();};
+const corrections=new PriorityCorrections({read:async()=>prioritySnapshot(),act:priorityAct});
+const priorityControls={read:async()=>({...prioritySnapshot(),corrections:corrections.status()}),act:async(action,input)=>{
+  if(action==='confirm-correction')await corrections.confirm(input);
+  else if(action==='dismiss-correction')corrections.dismiss(input);
+  else await priorityAct(action,input);
+  return {...prioritySnapshot(),corrections:corrections.status()};
+}};
 const registry=()=>({model:'deepseek-v4-flash',minimum_context:snapshot.gateway.context_length,context_limit_control:true,context_limit_source:'saved',queue_timeout_ms:snapshot.gateway.queue_timeout_ms,queue_timeout_control:true,queue_timeout_source:'saved',workers,recovery,queued_relocation:relocation});
 if(agentHold)Object.assign(workers[2],{drained:true,operator_paused:false,holds:[{id:'demo-hold',owner_id:'test-agent',reason:'<DS4 compatibility test>'}]});
 if(quarantinedWorker)Object.assign(workers[2],{is_healthy:false,quarantine:{reason:'repeated_inference_failures',at:new Date(now-600000).toISOString()}});
@@ -170,7 +194,7 @@ return createDashboard(()=>({...snapshot,time:Date.now(),gateway_at:Date.now(),
       service_ms:8000+i*2600+(i%3)*3200,predicted_service_ms:i%7?10000+i*2450:null,reference_service_ms:i%7?12000+i*2500:null,service_state:'complete'}))})),
   rows:Array.from({length:20},(_,i)=>({node:workers[i%workers.length]?.id,at:now-i*60000,
     queue_ms:i?10000+i*3000:0,predicted_queue_ms:i%5?8000+i*2800:null,
-    service_ms:i<18?40000+i*2100:null,predicted_service_ms:i%4?35000+i*2500:null,service_state:i<18?'complete':i===18?'pending':'excluded'}))}),{read:async()=>prioritySnapshot(),act:async(action,input)=>{if(action==='manual')priority.setManual(input);else if(action==='settings')priority.configure(input);else if(action==='rules')priority.setRules(input);else throw new Error('Unsupported synthetic priority action');return prioritySnapshot();}});
+    service_ms:i<18?40000+i*2100:null,predicted_service_ms:i%4?35000+i*2500:null,service_state:i<18?'complete':i===18?'pending':'excluded'}))}),priorityControls);
 }
 if(isMain(import.meta.url)) {
 const server=createDemoServer();

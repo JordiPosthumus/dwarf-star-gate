@@ -89,10 +89,27 @@ changed by this separate classifier. Its status keeps bounded outcome/timing
 metadata, never its model input or response.
 
 The preference editor stores up to 30 explicitly saved single-line rules, each
-at most 256 bytes. Natural-language chat corrections, proposed general-rule
-confirmation, richer client task lifecycle coverage and measured classification
-quality remain unfinished. An ordinary Genie chat does not silently change this
-memory. The jobs table covers observed DSG requests; unobserved local tools and
+at most 256 bytes. Genie chat now accepts correction requests and returns a reviewable proposal.
+A one-conversation proposal sets only that conversation's manual priority. A
+general proposal lists every removed rule and every added rule, plus the count
+of untouched rules, so consolidation cannot silently discard distinct preferences.
+Ambiguous scope or conversation identity calls for a clarification. A bounded
+clarification context is supplied with the next chat reply.
+
+Only **Apply to this conversation** or **Confirm these preference changes** saves
+the displayed proposal. Each proposal expires after five minutes; revision checks
+reject intervening policy changes. Confirmation is consumed before awaiting the
+core response, preventing duplicate clicks from applying twice. An ambiguous
+control response is never replayed. Proposals and clarification context are
+transient and separate from notebook records and fleet report metadata.
+
+Manual Genie questions receive up to 32 current conversation identities/titles
+and the confirmed rules through the private local control path. Scheduled fleet
+reviews do not receive this priority context. No recent Pi excerpt is included
+in this chat-correction context. Existing Genie model options and deadlines
+remain unchanged. An ordinary Genie chat does not silently change this memory.
+Richer client task lifecycle coverage and measured classification quality remain
+unfinished. The jobs table covers observed DSG requests; unobserved local tools and
 direct-provider activity remain unknown.
 
 ## Validation
@@ -103,6 +120,12 @@ actual dispatch order, unchanged request bytes, active-work preservation,
 no-wait classifier admission, local-only controls and content exclusion. A
 clock-controlled test proves the independent 60-second deadline even when a
 provider ignores cancellation.
+
+Correction fixtures also verify scoped application, explicit rule replacement,
+clarification follow-ups, stale revisions, expiry, Unicode, unknown conversations
+and duplicate/ambiguous confirmations. Browser checks exercise the actual Genie
+chat and review buttons; scripted model responses do not establish real-model
+interpretation quality.
 
 An optional installed Pi 0.84.4 SDK fixture uses disposable local providers and
 in-memory sessions. It verifies unchanged model capabilities and `xhigh`, one

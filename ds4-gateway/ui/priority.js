@@ -8,10 +8,37 @@ const permitted=()=>state?.schema===1&&typeof state.enabled==='boolean'&&Number.
 function buttons(){
   for(const id of ['priority-toggle','priority-rules-save','priority-settings-save'])$(id).disabled=busy||!permitted();
   for(const select of $('priority-jobs').querySelectorAll('select'))select.disabled=busy||!permitted()||!select.dataset.chat;
+  $('priority-correction-confirm').disabled=busy||!permitted()||state?.corrections?.proposal?.revision!==state?.revision;
+  $('priority-correction-dismiss').disabled=busy||!permitted();
+}
+function correction(next){
+  const root=$('priority-correction'),proposal=next.corrections?.proposal;
+  root.hidden=!proposal;if(!proposal)return;
+  const general=proposal.scope==='general',clarify=proposal.scope==='clarify';
+  if(root.dataset.proposal!==proposal.id){
+    root.dataset.proposal=proposal.id;
+    $('priority-correction-title').textContent=clarify?'Genie needs a clarification':general?'Review general preference changes':'Review this conversation’s priority';
+    $('priority-correction-explanation').textContent=proposal.message;
+    const changes=$('priority-correction-changes');changes.replaceChildren();
+    if(proposal.scope==='chat'){
+      const text=document.createElement('p');text.textContent=`${proposal.title||`Conversation ${proposal.chat?.slice(0,12)}`} → ${proposal.priority}. Other conversations keep their priorities.`;changes.append(text);
+    }else if(general){
+      for(const [label,lines] of [['Remove',proposal.remove_rules],['Add',proposal.add_rules]])if(lines?.length){
+        const heading=document.createElement('h4');heading.textContent=label;const list=document.createElement('ul');
+        for(const line of lines){const item=document.createElement('li');item.textContent=line;list.append(item);}changes.append(heading,list);
+      }
+      const text=document.createElement('p');text.textContent=`${proposal.unchanged_rules} existing preference rules remain unchanged.`;changes.append(text);
+    }
+    $('priority-correction-confirm').hidden=clarify;
+    $('priority-correction-confirm').textContent=general?'Confirm these preference changes':'Apply to this conversation';
+    $('priority-correction-reply').hidden=!clarify;
+  }
+  $('priority-correction-status').textContent=proposal.revision!==next.revision?'Priority settings changed after this proposal. Ask Genie to revise it against the current settings.':clarify?'Answer the question in Genie chat. No priority or preference has changed.':'Nothing has changed yet. Confirm only if this scope and exact change match your intent.';
 }
 function render(next){
   state=next;stale=false;
   const ready=next.available&&next.schema===1;
+  correction(next);
   $('priority-toggle').textContent=ready?`Priority Lens · ${next.enabled?'on':'off'}`:'Priority Lens · unavailable';
   $('priority-toggle').setAttribute('aria-pressed',String(ready&&next.enabled===true));
   $('priority-status').textContent=!ready?'Priority Lens needs a compatible DSG core':next.error||next.activation==='active'?next.error||`${next.jobs?.length??0}${next.jobs_truncated?'+':''} observed requests · ${next.selections??0} selections`:next.activation==='off'?'Off · ordinary scheduling': 'On · waiting for an agreed aging threshold before queue priority activates';
@@ -62,7 +89,7 @@ async function act(action,input,target='priority-message'){
     const response=await fetch('/api/priority',{method:'POST',headers:{'content-type':'application/json','x-dsg-csrf':state.csrf_token},body:JSON.stringify({action,...input}),signal:AbortSignal.timeout(15000)});
     const next=await response.json();if(!response.ok)throw new Error(next.error||'Save rejected; refresh before editing again');
     if(action==='rules')rulesDirty=false;if(action==='settings'&&target==='priority-settings-message')settingsDirty=false;
-    render(next);$(target).textContent=action==='manual'?'Conversation priority saved; active work continues.':action==='rules'?'Priority preferences saved.':'Priority scheduling settings saved.';
+    render(next);$(target).textContent=action==='manual'?'Conversation priority saved; active work continues.':action==='rules'?'Priority preferences saved.':action==='confirm-correction'?'Confirmed priority correction saved; active work continues.':action==='dismiss-correction'?'Proposed correction dismissed.':'Priority scheduling settings saved.';
   }catch(error){$(target).textContent=error.name==='TimeoutError'||error.name==='TypeError'?'Save response unavailable. Check current state before retrying; the change may have been saved.':error.message;}
   finally{busy=false;buttons();void load();}
 }
@@ -92,4 +119,7 @@ $('priority-settings-form').addEventListener('submit',event=>{
 });
 $('priority-rules-reload').addEventListener('click',()=>{rulesDirty=false;void load();});
 $('priority-settings-reload').addEventListener('click',()=>{settingsDirty=false;document.activeElement?.blur();void load();});
+$('priority-correction-confirm').addEventListener('click',()=>{const proposal=state?.corrections?.proposal;if(proposal)void act('confirm-correction',{proposal_id:proposal.id});});
+$('priority-correction-dismiss').addEventListener('click',()=>{const proposal=state?.corrections?.proposal;if(proposal)void act('dismiss-correction',{proposal_id:proposal.id});});
+$('priority-correction-reply').addEventListener('click',()=>{$('genie-question').focus();$('genie-question').scrollIntoView({block:'center'});});
 void load();setInterval(()=>void load(),5000);

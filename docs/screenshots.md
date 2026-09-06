@@ -19,6 +19,8 @@ screenshots, benchmark results, a live incident report or a promoted model.
   Spark profile, 20,000-hour queue allowance, one synthetic exact queued-handover
   offer with its cache-locality warning, and a synthetic named maintenance lock
   whose exact release cannot resume routing by itself.
+- `priority-correction.png`: an explicitly scripted general-rule proposal,
+  showing exact removal/addition before confirmation; no live policy change.
 - `priority-settings.png`: bounded weight controls and an explicitly selected
   synthetic ten-minute eligible-wait backstop; this is not a production default.
 - `dashboard-genie.png`: current jobs and manual priorities, an open assessment, collapsible hardening suggestions below

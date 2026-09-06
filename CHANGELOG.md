@@ -1,5 +1,15 @@
 # Changelog
 
+## Review and confirm priority corrections from Genie chat
+
+- Let manual chat questions propose conversation-only priorities or explicit
+  general preference edits; ask for clarification when scope is ambiguous.
+- Show exact rule removals/additions and retain unrelated preferences. Apply
+  only after local confirmation, with revision, expiry and duplicate-click guards.
+- Keep proposal metadata separate from fleet reports and notebooks. Preserve
+  normal Genie model options/deadlines and ordinary inference behavior.
+- Verify the Genie/model boundary, confirmation races and synthetic browser flow.
+
 ## Add guarded Priority Lens source and optional Pi intent review
 
 - Add current jobs, persistent manual priorities, revision-checked preferences

@@ -11,6 +11,7 @@ import { FileLogReader, telemetryFiles } from './file-telemetry.mjs';
 import { Activity } from './ui/activity.js';
 import { Genie } from './genie.mjs';
 import {PriorityClassifier} from './priority-classifier.mjs';
+import {PriorityCorrections} from './priority-corrections.mjs';
 import {GenieMemory} from './genie-memory.mjs';
 import {GenieProviderLedger} from './genie-provider-ledger.mjs';
 import { genieTunnel } from './genie-tunnel.mjs';
@@ -89,7 +90,7 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
       const stop=()=>{ended=true;clearTimeout(timer);};req.on('error',stop);req.on('aborted',stop);
       req.on('data',chunk=>{if(ended)return;bytes+=Buffer.byteLength(chunk);if(bytes>12288){stop();reply(413,{error:'Priority request too large'});req.destroy();return;}body+=chunk;});
       req.on('end',()=>{clearTimeout(timer);if(ended)return;ended=true;
-        try{const {action,...input}=JSON.parse(body);if(!['settings','manual','rules'].includes(action))throw new Error();
+        try{const {action,...input}=JSON.parse(body);if(!['settings','manual','rules','confirm-correction','dismiss-correction'].includes(action))throw new Error();
           void priority.act(action,input).then(state=>reply(200,{...state,available:true,controls:true,csrf_token:csrf})).catch(error=>reply(400,{error:error.message}));
         }catch{reply(400,{error:'Invalid priority request'});}
       });return;
@@ -334,19 +335,28 @@ export async function runDashboard(configPath, port) {
   const memory=new GenieMemory(path.join(path.dirname(config.state_file),'genie','memory'));
   const providerLedger=new GenieProviderLedger(path.join(path.dirname(config.state_file),'genie','actions'));
   const runtimeGenie=genieRuntimeConfig(config);
-  const genie=new Genie(runtimeGenie,snapshot,{memory,providerLedger,recover:managementEnabled?input=>workerControl(config.control_socket,'/genie-recover-worker',input,{channel:'gate_genie'}):null,predict:managementEnabled?input=>workerControl(config.control_socket,'/genie-predictor',input,{channel:'gate_genie'}):null,rebalance:managementEnabled?input=>workerControl(config.control_socket,'/genie-relocate-queued',input,{channel:'gate_genie'}):null});
+  const priorityRead=()=>workerControl(config.control_socket,'/priority-status',undefined,{channel:'dashboard'});
+  const priorityAct=(action,input)=>workerControl(config.control_socket,`/priority-${action}`,input,{channel:'dashboard'});
+  const priorityCorrections=new PriorityCorrections({read:managementEnabled?priorityRead:null,act:managementEnabled?priorityAct:null});
+  const genie=new Genie(runtimeGenie,snapshot,{memory,providerLedger,priorityCorrections,recover:managementEnabled?input=>workerControl(config.control_socket,'/genie-recover-worker',input,{channel:'gate_genie'}):null,predict:managementEnabled?input=>workerControl(config.control_socket,'/genie-predictor',input,{channel:'gate_genie'}):null,rebalance:managementEnabled?input=>workerControl(config.control_socket,'/genie-relocate-queued',input,{channel:'gate_genie'}):null});
   const priorityClassifier=new PriorityClassifier({genie,snapshot,poolUrl:`http://127.0.0.1:${config.port}/v1`,control:managementEnabled?(route,input)=>workerControl(config.control_socket,route,input,{channel:'gate_genie'}):null});
   const stopGenieTunnel=genieTunnel(config.genie);
   const server = createDashboard(snapshot, path.join(here,'ui'), managementEnabled ? {
     read:()=>workerControl(config.control_socket,'/workers',undefined,{channel:'dashboard'}),
     act:(action,input)=>workerControl(config.control_socket,({add:'/add-worker',remove:'/remove-worker',drain:'/drain-workers',resume:'/resume-workers',lock:'/maintenance-lock',unlock:'/release-maintenance-lock',fallbacks:'/set-ssh-fallbacks',context:'/set-context-limit','queue-timeout':'/set-queue-timeout',protection:'/set-protection',relocate:'/relocate-queued',recover:'/recover-worker','recovery-policy':'/recovery-policy','recovery-handback-policy':'/recovery-handback-policy','recovery-recheck':'/recovery-recheck',predictor:'/predictor'})[action],input,{channel:'dashboard'}),
   } : null,genie,()=>({...analytics.snapshot(),fleet_speed:fleetSpeed.snapshot(Date.now(),gateway?.workers?.map(worker=>worker.id)??[])}),config.control_socket?{
-    read:async()=>({...await workerControl(config.control_socket,'/priority-status',undefined,{channel:'dashboard'}),classifier:priorityClassifier.status()}),
-    act:managementEnabled?(action,input)=>workerControl(config.control_socket,`/priority-${action}`,input,{channel:'dashboard'}):null,
+    read:async()=>({...await priorityRead(),classifier:priorityClassifier.status(),corrections:priorityCorrections.status()}),
+    act:managementEnabled?async(action,input)=>{
+      let state;
+      if(action==='confirm-correction')state=await priorityCorrections.confirm(input);
+      else if(action==='dismiss-correction'){priorityCorrections.dismiss(input);state=await priorityRead();}
+      else state=await priorityAct(action,input);
+      return {...state,classifier:priorityClassifier.status(),corrections:priorityCorrections.status()};
+    }:null,
   }:null);
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
   await poll(); const interval = setInterval(poll, 2000), genieTimer=setInterval(()=>genie.tick(),10000),priorityTimer=setInterval(()=>void priorityClassifier.tick(),5000);
-  const close = () => { closed = true; clearInterval(interval);clearInterval(genieTimer);clearInterval(priorityTimer);priorityClassifier.close();genie.close();hardware.close();stopGenieTunnel(); for (const t of timers) clearTimeout(t); for (const child of children) child.kill(); server.closeAllConnections(); server.close(); process.removeListener('SIGTERM', close); process.removeListener('SIGINT', close); };
+  const close = () => { closed = true; clearInterval(interval);clearInterval(genieTimer);clearInterval(priorityTimer);priorityClassifier.close();priorityCorrections.close();genie.close();hardware.close();stopGenieTunnel(); for (const t of timers) clearTimeout(t); for (const child of children) child.kill(); server.closeAllConnections(); server.close(); process.removeListener('SIGTERM', close); process.removeListener('SIGINT', close); };
   process.once('SIGTERM', close); process.once('SIGINT', close);
   console.log(`Dwarf Star Gate: http://127.0.0.1:${server.address().port} (${managementEnabled ? 'local worker controls' : 'read-only'})`);
   return { server, snapshot, close };
