@@ -1291,3 +1291,10 @@ wire assertion expected a string; Pi emits text blocks, and the assertion was
 corrected to that actual representation. No live Pi installation or provider
 configuration was changed. This does not identify queued clients that have not
 loaded the optional handoff.
+
+The title-only adapter also supports one explicit list of provider scopes with
+a shared status and opt-out command. This avoids duplicate command registrations
+when an installation has multiple DSG provider names. Scope tests verify one
+off/on control, endpoint isolation, shutdown and validation before registration;
+single-provider compatibility remains supported. No production enrollment is
+implied by this source change.

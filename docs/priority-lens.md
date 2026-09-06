@@ -107,6 +107,12 @@ so the gateway also skips new excerpts. `/priority-lens on` enables handoff agai
 Agent Watch and client metadata remain separate. The continuity entry's
 `DSG_PRIORITY_LENS=1` explicitly enables its optional content handoff.
 
+For installations with multiple DSG provider names, `registerPiPriorityLens`
+accepts an explicit `providers: [{provider, baseUrl}, ...]` list instead of a
+single scope. Register it once: its visible status and `/priority-lens` command
+control every enrolled scope together. Each provider still matches its exact
+endpoint; the adapter does not discover or enroll other providers automatically.
+
 Schema-1 envelopes retain existing session-affinity binding. Schema-2 envelopes
 can omit a title and bind to the core's existing request identity, without adding
 or changing affinity headers. A request without a conversation key can still get
