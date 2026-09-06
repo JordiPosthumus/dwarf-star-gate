@@ -1277,3 +1277,17 @@ Validated the assembled DSG host against the isolated installed native Pi and TU
 ## 2026-09-06 — Per-attempt outage transport evidence
 
 Added an opt-in metadata-only attempt observer and shared the existing exact pre-dispatch certificate predicate with continuity fetch. The observer preserves unknown earlier attempts, original arguments/responses and normal retries. Bounded clone inspection is asynchronous; pending/timeout/overflow/closed states refuse positive evidence. Seven new observer tests pass, including the existing certified wait chain; 68 Door/continuity regressions and repository syntax pass. Native execution binding and positive outage continuation remain unfinished. No live configuration, provider or service changed.
+
+## 2026-09-06 — Earlier task context in optional Pi priority handoff
+
+The optional early Pi handoff now uses the same bounded context selection as
+gateway-observed excerpts, so short replies retain the preceding user task.
+Only genuine Pi user entries are eligible, and the visible sharing notice
+describes this scope. Twelve focused tests and eight installed-Pi contract cases
+pass. The native fixtures observe a named follow-up while it is undispatched at
+a paused disposable worker, unchanged serialized user input, model capabilities,
+thinking and affinity, and rejection of stale classification. The first new
+wire assertion expected a string; Pi emits text blocks, and the assertion was
+corrected to that actual representation. No live Pi installation or provider
+configuration was changed. This does not identify queued clients that have not
+loaded the optional handoff.

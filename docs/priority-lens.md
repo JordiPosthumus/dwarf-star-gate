@@ -92,7 +92,10 @@ naming, preventing recursive title reviews.
 ### Optional early Pi handoff
 
 `examples/pi-dsg-priority.ts` can supply a genuine Pi user excerpt before the
-inference body is observed. An existing session name is optional; Pi no longer
+inference body is observed. Short replies use the same bounded earlier-task
+context selection described above, applied only to genuine Pi user entries;
+custom messages, assistant reasoning and tool results are excluded. An existing
+session name is optional; Pi no longer
 turns the first user line into a task title. Genie names unnamed tasks. Explicitly
 load the entry with `DSG_PI_PROVIDER` and `DSG_PI_BASE_URL` identifying the existing
 DSG provider. It uses Pi's exported OpenAI serializer factory and preserves model,
@@ -170,7 +173,10 @@ interpretation quality.
 An optional installed Pi 0.84.4 SDK fixture uses disposable local providers and
 in-memory sessions. It verifies unchanged model capabilities and `xhigh`, one
 intent across a real tool loop, exact serializer affinity, and rejection of an
-old lease after new user input. It neither installs nor changes a live Pi setup.
+old lease after new user input. A paused disposable worker also verifies that a
+follow-up has its supplied session title while still undispatched; its advisory
+excerpt contains earlier task context and its serialized user input is unchanged.
+It neither installs nor changes a live Pi setup.
 
 The installed Pi contract also loads both example files through the actual
 extension loader, with and without affinity headers. This catches import alias

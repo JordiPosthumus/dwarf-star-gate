@@ -60,7 +60,21 @@ for(const affinity of [true,false])for(const adapter of ['continuity','title-onl
   assert.deepEqual(visibleTitles,[envelopes[0].title,envelopes[0].title]);
   let review;for(let i=0;i<(affinity?20:1)&&!review;i++){review=(await workerControl(control,'/priority-review-next',{})).review;if(!review)await new Promise(resolve=>setTimeout(resolve,10));}
   assert.equal(review.excerpt,envelopes[0].excerpt);assert.equal(review.title,envelopes[0].title);
-  await session.prompt('Next user task.');await session.waitForIdle();assert.equal(envelopes.length,2);assert.notEqual(envelopes[0].id,envelopes[1].id);
+  gateway.drainNodes(['fixture'],true);
+  const followUp=session.prompt('Proceed.');
+  try{
+    let queued;
+    for(let i=0;i<100&&!queued;i++){
+      queued=gateway.priorityStatus(true).jobs.find(job=>job.state!=='running'&&job.title==='Fixture task title');
+      if(!queued)await new Promise(resolve=>setTimeout(resolve,10));
+    }
+    assert.ok(queued,'early handoff identifies the real Pi request while still undispatched');
+    assert.equal(requests.length,2,'the queued follow-up has not reached the backend');
+  }finally{gateway.drainNodes(['fixture'],false);await followUp;}
+  await session.waitForIdle();assert.equal(envelopes.length,2);assert.notEqual(envelopes[0].id,envelopes[1].id);
+  assert.equal(envelopes[1].excerpt,'Earlier user request: Urgent real user request. Call count_once then finish.\nLatest user reply: Proceed.');
+  assert.ok(!JSON.stringify(envelopes).includes('PRIVATE_'));
+  assert.deepEqual(requests.at(-1).payload.messages.filter(message=>message.role==='user').at(-1).content,[{type:'text',text:'Proceed.'}],'context selection never rewrites native user input');
   if(affinity)assert.equal((await workerControl(control,'/priority-review-result',{lease:review.lease,intent_id:review.intent_id,advice:{priority:'High',reason:'urgent'}})).accepted,false,'new user input rejects old in-flight classification');
   if(adapter.startsWith('title-')){
     await session.prompt('/priority-lens off');

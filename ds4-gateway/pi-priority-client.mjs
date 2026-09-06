@@ -7,7 +7,7 @@ export function registerPiPriorityLens(pi,{provider,baseUrl,streamSimple,enabled
   const priority=createPiPriorityIntent({provider,baseUrl,fetchImpl});
   let context=null;
   const status=()=>context?.ui?.setStatus('dsg-priority-lens',`Priority Lens titles: ${enabled?'on · /priority-lens off':'off · /priority-lens on'}`);
-  pi.on('session_start',(event,ctx)=>{context=ctx;if(enabled){priority.start(event,ctx);ctx.ui.notify('Priority Lens shares this session title and up to 1 KiB of the latest user message with configured Genie capacity. /priority-lens off stops new sharing.','info');}status();});
+  pi.on('session_start',(event,ctx)=>{context=ctx;if(enabled){priority.start(event,ctx);ctx.ui.notify('Priority Lens shares this session title and up to 1 KiB of user request text (including earlier task context for short replies) with configured Genie capacity. /priority-lens off stops new sharing.','info');}status();});
   pi.on('session_shutdown',()=>{priority.stop();context=null;});
   pi.registerCommand('priority-lens',{description:'Show or change DSG title/priority text sharing: on, off, status',handler:async(args,ctx)=>{
     const action=args.trim()||'status';
@@ -17,7 +17,7 @@ export function registerPiPriorityLens(pi,{provider,baseUrl,streamSimple,enabled
       if(enabled)priority.start({},ctx);
     }
     status();
-    ctx.ui.notify(enabled?'Priority Lens shares the session title and up to 1 KiB of the latest user message with configured Genie capacity. /priority-lens off stops new sharing.':'Priority Lens is off for this client. DSG will skip task naming and priority excerpts for these requests.','info');
+    ctx.ui.notify(enabled?'Priority Lens shares the session title and up to 1 KiB of user request text (including earlier task context for short replies) with configured Genie capacity. /priority-lens off stops new sharing.':'Priority Lens is off for this client. DSG will skip task naming and priority excerpts for these requests.','info');
   }});
   pi.registerProvider(provider,{api:'openai-completions',streamSimple:(model,context,options={})=>{
     // Other model definitions on this provider keep Pi's original serializer.

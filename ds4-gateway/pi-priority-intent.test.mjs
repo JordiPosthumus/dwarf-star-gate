@@ -8,6 +8,7 @@ const model={provider,baseUrl},options={sessionId:'pi-session'};
 const request={method:'POST',headers:{authorization:'Bearer fixture','x-session-affinity':'pi-session'},body:'UNCHANGED INFERENCE'};
 const endpoint=baseUrl+'/chat/completions';
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
+const userEntry=(id,content)=>({id,type:'message',message:{role:'user',content}});
 function rig(){
   const calls=[];let branch=[{id:'user-1',type:'message',message:{role:'user',content:'Urgent: fix the actual user task.'}}];
   const reporter=createPiPriorityIntent({provider,baseUrl,fetchImpl:async(url,init)=>{calls.push({url,init});return new Response('{}');}});
@@ -52,6 +53,36 @@ test('failed optional submissions are not retried and cannot reject inference de
   reporter.start({}, {sessionManager:{getSessionId:()=>options.sessionId,getBranch:()=>[{id:'user',type:'message',message:{role:'user',content:'Actual user'}}]}});
   const intent=reporter.snapshot(model,options);assert.equal(reporter.decorate(endpoint,request,intent).body,request.body);await flush();
   reporter.decorate(endpoint,request,intent);await flush();assert.equal(calls,1);reporter.stop();
+});
+
+test('early Pi handoff identifies short follow-ups using genuine task context before inference starts',async()=>{
+  const r=rig();
+  r.setBranch([
+    userEntry('task','Design a kite festival poster.'),
+    {type:'message',message:{role:'assistant',get content(){throw new Error('Do not read reasoning');}}},
+    {type:'message',message:{role:'toolResult',get content(){throw new Error('Do not read tool content');}}},
+    {type:'custom_message',message:{role:'user',content:'PRIVATE_CUSTOM_TASK'}},
+    userEntry('reply','Proceed.'),
+  ]);
+  const intent=r.reporter.snapshot(model,options);
+  const decorated=r.reporter.decorate(endpoint,request,intent);
+  assert.equal(decorated.body,request.body);
+  assert.equal(decorated.headers.get('x-session-affinity'),options.sessionId);
+  await flush();
+  const envelope=JSON.parse(r.calls[0].init.body);
+  assert.equal(envelope.excerpt,'Earlier user request: Design a kite festival poster.\nLatest user reply: Proceed.');
+  assert.ok(!envelope.excerpt.includes('PRIVATE_'));
+  priorityEnvelope(envelope);
+  r.reporter.stop();
+});
+
+test('early Pi context does not cross an image-only user turn or exceed its user-history bound',()=>{
+  const r=rig();
+  r.setBranch([userEntry('task','Design a kite festival poster.'),userEntry('image',[{type:'image',data:'PRIVATE_IMAGE'}]),userEntry('reply','Proceed')]);
+  assert.equal(r.reporter.snapshot(model,options).excerpt,'Proceed');
+  r.setBranch([userEntry('task','Design a kite festival poster.'),...Array.from({length:9},(_,i)=>userEntry(`reply-${i}`,'Continue'))]);
+  assert.equal(r.reporter.snapshot(model,options).excerpt,'Continue');
+  r.reporter.stop();
 });
 
  test('absent affinity uses request-bound metadata without adding routing identity',async()=>{

@@ -1,8 +1,9 @@
 // Separately opted-in content handoff. The metadata-only adapter stays separate.
-// Only the most recent genuine Pi user message is read; custom continuation
+// Genuine Pi user messages supply a bounded task excerpt; custom continuation
 // messages, tool content, system prompts and model reasoning are excluded.
 import {randomUUID} from 'node:crypto';
 import {PRIORITY_INTENT_HEADER,PRIORITY_INTENT_ROUTE} from './priority-intent.mjs';
+import {requestUserExcerpt} from './priority-request.mjs';
 
 const bounded=(text,max)=>{
   let result='',bytes=0;
@@ -25,13 +26,7 @@ export function createPiPriorityIntent({provider,baseUrl,fetchImpl=fetch}={}){
         const user=branch.findLast(entry=>entry?.type==='message'&&entry.message?.role==='user');
         if(typeof user?.id!=='string'||!user.id||user.id.length>256)return null;
         if(current?.entry===user.id)return current;
-        const content=user.message.content;
-        let excerpt='';
-        if(typeof content==='string')excerpt=bounded(content,1024);
-        else if(Array.isArray(content))for(const block of content){
-          if(block?.type==='text'&&typeof block.text==='string')excerpt=bounded(excerpt+(excerpt?'\n':'')+bounded(block.text,1024),1024);
-          if(Buffer.byteLength(excerpt)>=1024)break;
-        }
+        const excerpt=requestUserExcerpt({messages:branch.filter(entry=>entry?.type==='message'&&entry.message?.role==='user').map(entry=>entry.message)});
         if(!excerpt)return null;
         const name=manager.getSessionName?.();
         const title=typeof name==='string'&&name.trim()?bounded(name,256):null;
