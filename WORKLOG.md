@@ -10,6 +10,10 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-06
 
+- **Moved hardening suggestions into Gate Genie.** Suggestions now sit below the
+  conversation in their existing collapsible section, freeing space above every
+  other tab. Newest-first ordering and saved notes retain their existing behavior.
+
 - **Started a separate causal-rate forecast study.** A new frozen candidate
   learns a correction to a prior per-token estimate and is compared with that
   same simple estimate on added coverage. The first later sample is small and

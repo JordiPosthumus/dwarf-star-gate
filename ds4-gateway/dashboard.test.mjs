@@ -309,7 +309,8 @@ test('excluded routing states are explicit; quarantine offers checked readmissio
   assert.ok(!markup({...q,holds:[{owner_id:'<script>evil</script>'}]}).includes('<script>'));
   assert.match(markup({...q,holds:[{owner_id:'<script>evil</script>'}]}),/&lt;script&gt;/);
   const html=fs.readFileSync(new URL('./ui/index.html',import.meta.url),'utf8');
-  assert.ok(html.includes('id="routing-summary"'));assert.ok(html.indexOf('id="routing-message"')>html.indexOf('</details>'));
+  const fleet=html.split('id="view-fleet"')[1].split('id="view-genie"')[0];
+  assert.match(fleet,/id="routing-summary"[\s\S]*id="routing-message"[\s\S]*id="devices"/);
   assert.match(source,/\$\('devices'\)\.addEventListener\('click',handleWorkerClick\)/);
   assert.match(source,/Verify and readmit.*small test response/);
   const css=fs.readFileSync(new URL('./ui/brand.css',import.meta.url),'utf8');
@@ -786,7 +787,7 @@ test('fleet overview is a dense status band and controls live in one settings ta
   assert.match(html,/id="view-settings"[^>]*>[\s\S]*id="worker-management"[\s\S]*id="spark-profile"/);
   assert.match(js,/fmtWhole\(m\?\.tps\)/);assert.match(js,/class="remaining-estimate/);assert.match(js,/class="device-evidence"/);
   assert.match(css,/\.metric-block\{display:grid;grid-template-rows:/);assert.match(css,/\.status-deck\{display:grid;grid-template-columns:/);assert.match(css,/\.workspace-tabs \.settings-tab\{display:inline-flex;[^}]*margin-left:auto/);
-  assert.match(html,/id="health-wire"[\s\S]*id="genie-hardening"[\s\S]*class="workspace-tabs"/);assert.match(html,/Private developer hypotheses distilled from bounded DSG failure evidence/);
+  assert.doesNotMatch(html.split('<nav class="workspace-tabs"')[0],/id="genie-hardening"/);assert.match(html,/Private developer hypotheses distilled from bounded DSG failure evidence/);
   assert.match(js,/function renderHardeningNotes/);assert.match(js,/suggestion\.textContent=note\.suggestion/);assert.match(css,/\.genie-hardening\{/);
 });
 test('dashboard uses accessible persistent views instead of one overwhelming vertical page',()=>{
@@ -799,7 +800,7 @@ test('dashboard uses accessible persistent views instead of one overwhelming ver
   assert.match(html,/id="tab-settings"[^>]*role="tab"[^>]*aria-controls="view-settings"[^>]*data-workspace-tab="settings"[^>]*>[\s\S]*<span>Settings<\/span>/);
   assert.match(html,/id="view-settings"[^>]*role="tabpanel"[^>]*aria-labelledby="tab-settings"[^>]*data-workspace-view="settings"/);
   assert.match(html,/id="view-fleet"[^>]*>[\s\S]*id="devices"[\s\S]*<\/section>\s*<section id="view-genie"/);
-  assert.match(html,/id="view-genie"[^>]*hidden>[\s\S]*id="genie-reports"[\s\S]*id="recovery-actions"[\s\S]*id="genie-memory"/);
+  assert.match(html,/id="view-genie"[^>]*hidden>[\s\S]*id="genie-reports"[\s\S]*id="genie-hardening"[\s\S]*id="recovery-actions"[\s\S]*id="genie-memory"/);
   assert.match(html,/id="view-analytics"[^>]*hidden>[\s\S]*id="dataset-status"[\s\S]*id="analytics"/);
   assert.match(html,/id="view-activity"[^>]*hidden>[\s\S]*id="continuity-rejections"[\s\S]*id="requests"/);
   assert.match(html,/id="view-settings"[^>]*hidden>[\s\S]*id="worker-management"[\s\S]*id="worker-form"/);

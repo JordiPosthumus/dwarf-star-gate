@@ -3,11 +3,12 @@
 Refreshed 2026-09-04 from the checked-in synthetic demo and current UI assets.
 Analytics refreshed 2026-09-05 to distinguish known sessions from requests with
 missing identity; the values remain fictional.
+Layout refreshed 2026-09-06: hardening suggestions now belong to the Gate Genie tab.
 These are actual browser captures of fictional data, not edited production
 screenshots, benchmark results, a live incident report or a promoted model.
 
-- `dashboard-overview.png`: branding, persistent health wire, compact cross-view
-  hardening notice, focused navigation, the single-row desktop fleet band, mixed-server
+- `dashboard-overview.png`: branding, persistent health wire, focused navigation,
+  the single-row desktop fleet band, mixed-server
   activity, aligned rounded speeds, requested thinking, compact synthetic RAM /
   GPU / POWER strips, the 12-hour fleet-speed and measured-energy pulse, and the ready Continuity Door
   contract. Detailed cache/session evidence is folded into each server card.
@@ -17,7 +18,8 @@ screenshots, benchmark results, a live incident report or a promoted model.
   Spark profile, 20,000-hour queue allowance, one synthetic exact queued-handover
   offer with its cache-locality warning, and a synthetic named maintenance lock
   whose exact release cannot resume routing by itself.
-- `dashboard-genie.png`: an open assessment, linked agent enrollment guide, recovery controls and the private
+- `dashboard-genie.png`: an open assessment, collapsible hardening suggestions below
+  the conversation, linked agent enrollment guide, recovery controls and the private
   Gate Genie notebook.
 - `dashboard-analytics.png`: local collection/embedding status, stage-specific XGB
   chart, candidate lifecycle, recipe selector, calibration skip status and cache

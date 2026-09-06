@@ -77,6 +77,7 @@ try {
   assert.equal(await page.locator('#tab-fleet').getAttribute('aria-selected'),'true');
   assert.equal(await page.locator('#view-fleet').isVisible(),true);
   assert.equal(await page.locator('#view-genie').isHidden(),true);
+  assert.equal(await page.locator('#genie-hardening').isHidden(),true,'Suggestions use no space in the fleet view');
   await page.locator('#tab-fleet').focus();await page.keyboard.press('ArrowRight');
   assert.equal(await page.locator('#tab-genie').getAttribute('aria-selected'),'true');
   assert.equal(new URL(page.url()).hash,'#genie');
@@ -91,6 +92,8 @@ try {
   assert.equal(await enrollmentGuide.evaluate(el=>getComputedStyle(el).textDecorationLine),'underline');
   assert.match(await enrollmentGuide.locator('..').innerText(),/does not grant restart permission/);
   assert.equal(await page.locator('#genie-hardening').isVisible(),true);
+  assert.equal(await page.locator('#genie-hardening').evaluate(el=>el.closest('[role="tabpanel"]').id),'view-genie');
+  assert.ok((await page.locator('#genie-hardening').boundingBox()).y>=(await page.locator('.genie-insights').boundingBox()).y+(await page.locator('.genie-insights').boundingBox()).height,'Suggestions follow the main Genie conversation');
   assert.equal(await page.locator('#agent-watch').isVisible(),true);
   assert.match(await page.locator('#agent-watch-status').innerText(),/2 enrolled.*2 fresh/);
   await page.locator('#agent-watch summary').click();
@@ -101,12 +104,17 @@ try {
   assert.match(await page.locator('#genie-hardening-items').innerText(),/Exercise incomplete-stream continuation.*Developer suggestion|Exercise incomplete-stream continuation/s);
   assert.match(await page.locator('#genie-hardening-items').innerText(),/Change:.*\nTest:.*\nExpected \(not yet verified\):/s);
   assert.equal(await page.locator('.genie-hardening-item p').last().evaluate(el=>getComputedStyle(el).whiteSpace),'pre-wrap');
+  await page.locator('#tab-fleet').click();
+  assert.equal(await page.locator('#genie-hardening').isHidden(),true);
+  await page.locator('#tab-genie').click();
+  assert.equal(await page.locator('#genie-hardening').getAttribute('open'),'','Switching tabs preserves expanded suggestions');
   await page.locator('#genie-hardening').screenshot({path:path.join(projectRoot,'docs/images/genie-hardening.png'),animations:'disabled'});
   await page.locator('#genie-hardening summary').click();
   assert.equal(await page.locator('#routing-message').innerText(),'','A successful control read must clear a stale error banner');
   assert.equal(await page.locator('h1').innerText(),'Dwarf Star Gate');
   assert.match(await page.locator('#connection').innerText(),/Demo/);
   await page.locator('#tab-analytics').click();
+  assert.equal(await page.locator('#genie-hardening').isHidden(),true);
   await page.locator('details.predictor-panel>summary').click();
   assert.match(await page.locator('#predictor-status').innerText(),/0 validated models/);
   assert.equal(await page.locator('#predictor-recipe option').count(),3);
@@ -183,7 +191,8 @@ try {
   const checked=await page.locator('#updated').innerText();
   await page.waitForFunction(previous=>document.getElementById('updated').textContent!==previous,checked,{timeout:10000});
   assert.equal(await page.locator('#genie-reports details').getAttribute('open'),'');
-  await page.locator('#view-genie').screenshot({path:path.join(output,'dashboard-genie.png'),animations:'disabled'});
+  await page.evaluate(()=>window.scrollTo(0,0));
+  await page.screenshot({path:path.join(output,'dashboard-genie.png'),fullPage:true,clip:await page.locator('#view-genie').boundingBox(),animations:'disabled'});
   await page.locator('#tab-analytics').click();
   await page.locator('#analytics-question').selectOption('remaining');
   await page.waitForFunction(()=>document.querySelectorAll('#analytics-chart circle').length===20);

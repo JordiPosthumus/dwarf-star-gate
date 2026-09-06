@@ -1,5 +1,12 @@
 # Changelog
 
+## Keep hardening suggestions in the Gate Genie tab
+
+- Move the existing collapsible suggestions section below Genie's conversation,
+  removing its global row above the tabs. Keep stable element IDs and rendering.
+- Update layout and synthetic-browser checks for tab visibility, placement and
+  expansion state; refresh the affected dashboard captures and documentation.
+
 ## Bound the separate rate-normalized prefill study
 
 - Compare a learned rate correction with the same causal rate anchor, retaining

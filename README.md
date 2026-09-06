@@ -133,8 +133,8 @@ routing authority unless it passes the independent holdout and future-traffic
 gates. [Calibration preflight](docs/calibration.md) skips without a proven
 cache-preserving path. An opt-in [persistent Genie notebook](docs/genie-memory.md)
 records worker-state changes, incident/recovery references, explicit operator
-notes and evidence-gated developer hardening suggestions. A compact notice above
-the focused views lists the newest suggestion first. Genie may describe a
+notes and evidence-gated developer hardening suggestions. A collapsible section
+below the conversation in the Gate Genie tab lists the newest suggestion first. Genie may describe a
 test or design improvement only for a deterministic, privacy-bounded failure
 candidate selected by DSG code; the suggestion is a hypothesis, cannot modify the
 gateway or servers and never includes inference content. It survives dashboard
