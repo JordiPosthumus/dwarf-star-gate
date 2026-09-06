@@ -6,6 +6,86 @@ The API belongs inside the client that owns input, queues, session storage and
 execution. An extension cannot reproduce it by polling idle state or wrapping
 only its own send calls.
 
+### Experimental reviewer source
+
+The separate `proactive-resume-reviewer.mjs` component implements bounded Genie
+advice, not a live integration or an enrollment endpoint. It reuses configured
+Genie provider selection and transport. The caller must provide the exact
+disclosed provider URL and model; a free pool cannot receive context merely
+because it is available. This parameter is not authentication or proof of user
+consent. The eventual local enrollment and authenticated controller must supply it.
+
+The review carries one scope/ticket identity, the authorized user task reference
+and at most 24 text messages totaling 32 KiB. Oversized input is rejected rather
+than silently losing task constraints. The model returns only a fixed verdict,
+reason code and existing message references. A continue verdict must cite the
+task and latest assistant. It cannot provide a command, new scope or enrollment.
+Only the client may turn valid advice into its fixed attributed cue.
+
+The new advisory call has a sixty-second ceiling and no automatic retry or
+post-dispatch fallback. If cancellation returns before the transport settles,
+new reviews remain blocked until that outstanding transport finishes; settlement
+does not itself trigger another review. Context and free-form model output are not stored in
+reviewer status. Tests use scripted responses to verify disclosure, parsing,
+binding, cancellation and transport behavior; they do not prove a real model
+correctly distinguishes courtesy from owner decisions or completed work.
+The reviewer is not connected to dashboard routes or the installed Pi adapter.
+
+### Experimental native bridge source
+
+`proactive-resume-pi.mjs` now connects that reviewer to an already-enrolled
+native Pi capability inside the owning process. It requires an existing user
+task, matching scope and explicit text/provider consent from the trusted host.
+It subscribes only when started. No dashboard route or inference credential
+grants this capability, and no real session is enrolled by loading this module.
+
+The bridge reviews the complete supported effective text context within the
+reviewer's bounds. It preserves tool-call arguments and attributed tool/custom
+results, excludes private thinking, and rejects images, unsupported message
+types and oversized context. It does not silently truncate task constraints.
+New user messages invalidate the task binding and require fresh enrollment.
+Completed advice revokes it; other non-continuation verdicts cannot submit a cue.
+The same settled response is not repeatedly reviewed after failure or uncertainty.
+
+Valid courtesy advice goes through native ticket acceptance, including its
+post-persistence race check. Lost acknowledgments reconcile the same proposal;
+they do not issue another one. A separate metadata receipt remains available
+when subsequent inspection reports unverified progress. Acceptance still does
+not prove progress, and this bridge has no progress classifier or outage policy.
+
+A local fixture joining the actual DSG reviewer/bridge with the Pi source
+candidate passes eight tests using faux Pi generation and scripted Genie replies:
+one attributed cue/one synthetic tool effect, non-continuation verdicts, held
+native input, revocation, lost acknowledgment and input during durable reservation.
+These are local integration checks, not installed-Pi compatibility or real-model
+classification evidence. The portable default suite covers context conversion
+and reviewer transport; the source-candidate integration fixture is separate.
+Installed command wiring, supported lifecycle certification and deployment remain
+unfinished. The installed adapter still must not advertise this capability.
+
+### Experimental local enrollment selector
+
+`proactive-resume-enrollment.mjs` provides an opt-in selector for a trusted Pi
+host. It displays a labelled task preview, exact review providers, the text
+boundary, enrollment expiry and attempt budget. The default selection keeps the
+feature disabled. Receipt creation and review start only after explicit approval.
+The returned enrollment has a close operation that revokes it and closes its
+receipt owner; an installed command and visible opt-out control are still needed.
+
+Pi's candidate `prepareContinuationEnrollment()` captures the admission revision,
+settlement, session and model after the selector establishes its own input hold.
+Its single-use approval expires after sixty seconds. It rechecks at activation,
+after any asynchronous receipt creation, so intervening input or a stop cannot
+turn a stale choice into authority. The prepared operation itself grants no
+continuation capability. A cancelled selector creates no receipts or inference.
+
+Four local tests use Pi's initialized terminal selector and the actual reviewer
+transport component with scripted replies. They cover default decline, explicit
+enable and programmatic close, human input during approval, and a stop during
+receipt creation. Separate native tests cover single use, cloned scope options,
+cancellation, expiry and input revision changes. This remains staged source;
+real-user enrollment and the installed adapter have not been enabled.
+
 ## Evidence driving the contract
 
 The real-Pi contract fixture holds a human prompt inside an asynchronous `input`
@@ -119,3 +199,10 @@ contract. The future client implementation must pass:
 
 Only after those tests and interactive rendering checks pass should the optional
 DSG adapter advertise this capability or enroll a real session.
+
+
+## Candidate trusted-host commands
+
+`registerProactiveResumeHost` supplies `/proactive-resume` and `/proactive-resume-off` to a trusted host that owns the native session and receipt factory. Enrollment names the task and review providers, requires an explicit selector choice, and remains task-local and bounded. The host starts review after the command releases its input hold. Switching, forking, shutdown and opt-out revoke the bridge; pending reviews are aborted and late results cannot restore authority. Cleanup is idempotent.
+
+The candidate Pi runtime passes the real selector and command integration fixture: explicit approval produces one attributed continuation, and `/proactive-resume-off` displays confirmation. Thirteen bridge/enrollment integration checks pass, plus three isolated host cancellation checks. This does not establish that the installed Pi runtime supports native enrollment: these commands remain a candidate trusted-host integration, with no automatic installation or production enrollment.

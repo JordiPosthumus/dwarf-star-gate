@@ -11,8 +11,9 @@ const exact=(value,keys)=>value&&typeof value==='object'&&!Array.isArray(value)&
 const text=(value,max)=>typeof value==='string'&&value.trim().length>0&&Buffer.byteLength(value)<=max&&!/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(value);
 export const validPriorityIntentId=id=>typeof id==='string'&&uuid.test(id)?id:null;
 export function priorityEnvelope(input){
-  if(!exact(input,['schema','id','session','client','title','excerpt'])||input.schema!==1||!validPriorityIntentId(input.id)||input.client!=='pi'||!text(input.session,256)||!text(input.title,256)||!text(input.excerpt,1024))throw new Error('Invalid priority intent');
-  return {id:input.id,chat:createHash('sha256').update(input.session).digest('hex'),title:input.title,excerpt:input.excerpt};
+  const legacy=input?.schema===1;
+  if(!exact(input,legacy?['schema','id','session','client','title','excerpt']:['schema','id','client','title','excerpt'])||(!legacy&&input.schema!==2)||!validPriorityIntentId(input.id)||input.client!=='pi'||(legacy&&!text(input.session,256))||!text(input.title,256)||!text(input.excerpt,1024))throw new Error('Invalid priority intent');
+  return {id:input.id,chat:legacy?createHash('sha256').update(input.session).digest('hex'):null,title:input.title,excerpt:input.excerpt};
 }
 
 export class PriorityIntents {
@@ -39,9 +40,13 @@ export class PriorityIntents {
   }
   entry(id,chat){
     this.sweep();
-    if(!this.lens.enabled||!validPriorityIntentId(id)||!chatKey.test(chat??''))return null;
+    if(!this.lens.enabled||!validPriorityIntentId(id)||(chat!==null&&!chatKey.test(chat??'')))return null;
     let entry=this.entries.get(id);
-    if(entry)return entry.chat===chat?entry:null;
+    if(entry){
+      if(chat===null)return entry;
+      if(entry.chat===null)entry.chat=chat;
+      return entry.chat===chat?entry:null;
+    }
     if(this.entries.size>=this.capacity)return null;
     entry={id,chat,title:null,excerpt:null,sequence:null,expires:this.now()+this.ttlMs,attempted:false,lease:null};
     this.entries.set(id,entry);return entry;
@@ -58,7 +63,7 @@ export class PriorityIntents {
   }
   bind(id,job){
     if(!Number.isSafeInteger(job?.sequence)||job.sequence<0)return false;
-    const entry=validPriorityIntentId(id)?this.entry(id,job.key):null;
+    const entry=validPriorityIntentId(id)&&chatKey.test(job.key??'')?this.entry(id,job.key):null;
     if(!entry){
       const previous=this.current.get(job.key);
       if(previous&&job.sequence>previous.sequence){

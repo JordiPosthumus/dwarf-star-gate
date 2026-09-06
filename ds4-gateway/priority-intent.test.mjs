@@ -80,3 +80,14 @@ test('capacity rejection of a new intent cannot retain stale urgency from a prev
   assert.equal(intents.receive(next),false);assert.equal(intents.bind(next.id,job(next,2)),false);
   assert.equal(lens.decision(job(old,1).key).source,'default');assert.equal(intents.current.size,0);
 });
+
+test('request-bound envelopes accept either arrival order and cannot change the core conversation',()=>{
+  for(const first of ['envelope','request']){
+    const {lens,intents}=rig(),input={schema:2,id:randomUUID(),client:'pi',title:'Task',excerpt:'Urgent task'},key='a'.repeat(64);
+    if(first==='envelope'){assert.equal(intents.receive(input),true);assert.equal(intents.claim(),null);assert.equal(intents.bind(input.id,{key,sequence:1}),true);}
+    else{assert.equal(intents.bind(input.id,{key,sequence:1}),true);assert.equal(intents.receive(input),true);}
+    assert.equal(intents.title(input.id,key),'Task');
+    assert.equal(intents.bind(input.id,{key:'b'.repeat(64),sequence:2}),false);
+    assert.equal(intents.complete(reply(intents.claim())),true);assert.equal(lens.decision(key).priority,'High');
+  }
+});

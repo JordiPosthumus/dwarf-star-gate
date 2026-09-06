@@ -29,11 +29,11 @@ test('Pi priority reports only the genuine latest user text, once, without chang
   r.reporter.stop();assert.equal(r.reporter.snapshot(model,options),null);
 });
 
-test('Pi priority honors exact provider, session, endpoint, existing hints and absent affinity',async()=>{
+test('Pi priority honors exact provider, session, endpoint, existing hints',async()=>{
   const r=rig();assert.equal(r.reporter.snapshot({...model,provider:'other'},options),null);assert.equal(r.reporter.snapshot(model,{sessionId:'other'}),null);
   assert.equal(r.reporter.snapshot({...model,baseUrl:'http://127.0.0.1:54321/v1'},options),null);
   const intent=r.reporter.snapshot(model,options);
-  for(const [url,init] of [[endpoint,{...request,headers:{authorization:'Bearer fixture'}}],[endpoint,{...request,headers:{...request.headers,'x-session-affinity':'another'}}],['http://127.0.0.1:54321/v1/chat/completions',request],[endpoint+'?query=1',request],[endpoint,{...request,headers:{...request.headers,'x-dsg-priority-intent':'caller-owned'}}],[endpoint,{...request,method:'GET'}]])assert.equal(r.reporter.decorate(url,init,intent),init);
+  for(const [url,init] of [[endpoint,{...request,headers:{...request.headers,'x-session-affinity':'another'}}],['http://127.0.0.1:54321/v1/chat/completions',request],[endpoint+'?query=1',request],[endpoint,{...request,headers:{...request.headers,'x-dsg-priority-intent':'caller-owned'}}],[endpoint,{...request,method:'GET'}]])assert.equal(r.reporter.decorate(url,init,intent),init);
   await flush();assert.equal(r.calls.length,0);
 });
 
@@ -52,4 +52,14 @@ test('failed optional submissions are not retried and cannot reject inference de
   reporter.start({}, {sessionManager:{getSessionId:()=>options.sessionId,getBranch:()=>[{id:'user',type:'message',message:{role:'user',content:'Actual user'}}]}});
   const intent=reporter.snapshot(model,options);assert.equal(reporter.decorate(endpoint,request,intent).body,request.body);await flush();
   reporter.decorate(endpoint,request,intent);await flush();assert.equal(calls,1);reporter.stop();
+});
+
+ test('absent affinity uses request-bound metadata without adding routing identity',async()=>{
+  const r=rig(),intent=r.reporter.snapshot(model,options);
+  const init={...request,headers:{authorization:'Bearer fixture'}};
+  const decorated=r.reporter.decorate(endpoint,init,intent);
+  assert.equal(decorated.body,init.body);assert.equal(decorated.headers.get('x-session-affinity'),null);
+  assert.equal(decorated.headers.get('x-dsg-priority-intent'),intent.id);
+  await flush();const envelope=JSON.parse(r.calls[0].init.body);
+  assert.equal(envelope.schema,2);assert.equal('session' in envelope,false);assert.equal(priorityEnvelope(envelope).chat,null);
 });

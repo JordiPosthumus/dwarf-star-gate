@@ -46,12 +46,12 @@ export function createPiPriorityIntent({provider,baseUrl,fetchImpl=fetch}={}){
       const affinity=headers.get('x-session-affinity')||headers.get('x-ds4-conversation-id')||headers.get('x-session-id')||headers.get('session_id');
       // An existing affinity is the authority. Never enable Pi cache affinity or
       // invent a conversation identity merely to attach optional advice.
-      if(!credential||affinity!==intent.session||headers.has(PRIORITY_INTENT_HEADER))return init;
+      if(!credential||(affinity&&affinity!==intent.session)||headers.has(PRIORITY_INTENT_HEADER))return init;
       headers.set(PRIORITY_INTENT_HEADER,intent.id);
       if(!intent.sent){
         intent.sent=true;
         const controller=new AbortController();pending=controller;
-        const body=JSON.stringify({schema:1,id:intent.id,session:intent.session,client:'pi',title:intent.title,excerpt:intent.excerpt});
+        const body=JSON.stringify({schema:affinity?1:2,id:intent.id,...(affinity?{session:intent.session}:{}),client:'pi',title:intent.title,excerpt:intent.excerpt});
         intent.excerpt=null;
         // Start separately, without waiting before inference. No retry after a
         // rejected or ambiguous advisory submission; a new user turn may try.

@@ -40,6 +40,20 @@ bodies, titles, excerpts and free-text model explanations are excluded.
 
 ## Optional Pi content boundary
 
+`Title not supplied` means the request has no correlated client title; it is not
+a pending title-generation job. A title comes from Pi's session name, or a bounded
+first line of the latest user task when no name exists.
+
+The separate `examples/pi-dsg-priority.ts` entry supplies titles/priority intent
+without enabling the continuity retry transport. Load it explicitly with
+`DSG_PI_PROVIDER` and `DSG_PI_BASE_URL` identifying the existing DSG provider.
+Sharing defaults on for this explicitly loaded entry and announces its content
+boundary at startup. `DSG_PRIORITY_LENS=0` starts it off; `/priority-lens off`
+stops new capture and transmission, and `/priority-lens on` enables it for the
+current session. Existing shared metadata retains the core's bounded lifetime.
+This entry is source-only until installed and validated in a client; merely
+updating the dashboard does not load it into running Pi processes.
+
 Agent Watch and the existing client metadata adapter remain metadata-only.
 Separately opt into content handoff with `DSG_PRIORITY_LENS=1` when explicitly
 loading `examples/pi-dsg-continuity.ts` for an existing DSG provider. This does
@@ -135,3 +149,11 @@ An optional installed Pi 0.84.4 SDK fixture uses disposable local providers and
 in-memory sessions. It verifies unchanged model capabilities and `xhigh`, one
 intent across a real tool loop, exact serializer affinity, and rejection of an
 old lease after new user input. It neither installs nor changes a live Pi setup.
+
+### Pi clients without affinity headers
+
+The title-only adapter also supports Pi's default serializer configuration, where session-affinity headers are absent. Its schema-2 envelope supplies an opaque intent ID, title and bounded excerpt; the existing inference request carries only that intent ID. The core uses its existing request conversation key when one exists. Neither the adapter nor the envelope creates routing affinity. Legacy schema-1 envelopes remain supported.
+
+A request without a conversation key can display its supplied title but receives no conversation-level classification or override. Such requests retain their existing routing behavior. Installing the client adapter and activating the updated core are necessary before this behavior appears in a live dashboard; already-running clients do not acquire the adapter automatically.
+
+Validation uses installed Pi 0.84.4 with synthetic endpoints: both continuity and title-only adapters display titles during real SDK tool loops, with and without affinity enabled. Model capabilities and xhigh are preserved, and title-only opt-out stops subsequent handoffs. This is fixture validation, not evidence of live installation.

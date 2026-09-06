@@ -1189,3 +1189,19 @@ Focused checks: 23 policy/intent/correction tests, three gateway Priority Lens
 tests and 86 dashboard/demo tests passed; the full synthetic browser flow passed.
 
 Full regression suite: 687 passed, two optional tests skipped. Source checks passed.
+
+
+## 2026-09-06 — Pi title handoff without changing affinity
+
+Added request-bound schema-2 priority metadata for Pi clients whose native serializer omits affinity headers. Existing schema-1 handoffs are retained. Core conversation ownership remains authoritative; unkeyed requests display titles without inventing conversation priority. No live client configuration or gateway process was changed.
+
+Validation: 14 focused intent/adapter tests pass. Four installed Pi 0.84.4 contracts pass against isolated synthetic endpoints, covering both adapters with/without affinity, visible titles during tool loops, capability preservation and title-only opt-out. Live activation remains outstanding.
+
+
+## 2026-09-06 — Trusted-host Proactive Resume command validation
+
+Validated cancellation while enrollment options are pending, opt-out before the scheduled review, and session exit during review. Made bridge cleanup idempotent so host teardown and receipt cleanup revoke once. Added the host and title-only adapter checks to the relevant package scripts.
+
+The candidate Pi runtime passes 13 bridge/enrollment integration tests, including the real interactive command, confirmation selector, one attributed continuation and visible opt-out. Six host/context unit tests pass. No installed Pi binary, provider, model or active session was changed.
+
+Release verification for these changes: main suite 690 passed / 5 optional skips; installed Pi title contracts 4 passed separately; candidate native bridge/enrollment 13 passed; host/context 6 passed; JavaScript/shell syntax and indexed privacy checks passed. The source release does not activate the installed clients or restart the live core.
