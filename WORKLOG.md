@@ -1255,3 +1255,7 @@ The assembled terminal/host fixture now covers successful runtime replacement an
 ## 2026-09-06 — Failed-turn native execution boundary
 
 Three private native Pi/DSG bridge checks pass for partial failed tool calls, completed tool effects before failure, and effects followed by a tool exception. Automatic review/cues remain blocked at the native failed boundary, transcript/model/thinking are preserved, and fresh owner input remains usable. This is refusal evidence with synthetic failures; safe positive outage continuation remains unfinished and no production behavior changed.
+
+## 2026-09-06 — Pi candidate distribution build
+
+Built the native candidate offline and added its missing public receipt-store export. Nine local tarballs installed offline in an isolated directory. Installed-package checks verify local import resolution, bundled CLI version/help, one attributed native cue/effect, duplicate prevention, progress receipt reopening and preservation of fixture model metadata/thinking. Full candidate check passes; source hashing identifies only the intended index export as this build's source delta. No global Pi installation, normal launcher, model or service changed. Faux-model packaging evidence does not establish live judgment, context/output boundary behavior or positive outage recovery.
