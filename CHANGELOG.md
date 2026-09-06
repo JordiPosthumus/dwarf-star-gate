@@ -1,5 +1,14 @@
 # Changelog
 
+## Reject the frozen prefill candidate after later comparison
+
+- A second disjoint later cohort now includes shared-baseline opportunities;
+  the private candidate performed worse there and exposed a large cold-span error.
+- Keep the candidate and evidence frozen, reject activation, and preserve the
+  existing baseline and production models. Added coverage alone is insufficient.
+- Require a new study boundary for any revised hypothesis; inspected future
+  evidence cannot remain an untouched test after it informs model selection.
+
 ## Record the first later prefill gap-coverage check
 
 - Score the frozen private candidate and baseline-first policy on later ordinary

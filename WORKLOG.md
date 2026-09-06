@@ -10,6 +10,12 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Rejected the prefill candidate on later evidence.** A second disjoint cohort
+  supplied the missing matched comparison: the frozen candidate was less accurate
+  than the baseline there, with a severe candidate-only cold-span error too.
+  It remains inactive and unchanged. Any revised hypothesis needs its own new
+  study boundary; existing production forecasts and fallbacks are preserved.
+
 - **Completed an initial later-traffic gap-coverage check.** The frozen private
   prefill candidate was scored without refitting on newly captured ordinary
   traffic. It covered spans where the baseline abstained, but the cohort had no

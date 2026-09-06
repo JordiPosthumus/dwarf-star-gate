@@ -128,11 +128,14 @@ freeze both model and combination policy before later traffic. Do not rename an
 inspected development partition as future validation or retune on that future
 cohort. Unknown workers and invalid features still require abstention.
 
-The first private later-traffic check has now exercised this frozen policy without
-refitting. Its eligible spans were all candidate-only: it supplies added-coverage
-error evidence, not a matched-baseline result. The sample is small and uneven
-across workers and regimes, so it does not justify activation. Deployment records,
-source captures and model artifacts remain private.
+Private later-traffic checks have now exercised this frozen policy without
+refitting. The first cohort supplied only candidate-only error evidence, not a
+matched-baseline result. A second disjoint cohort added shared opportunities:
+the candidate was less accurate than the baseline there, and a candidate-only
+cold span exposed a severe error. This candidate is rejected for activation,
+including unqualified gap filling. Small and uneven regime partitions remain
+limits, not reasons to discard the adverse evidence. Deployment records, source
+captures and model artifacts remain private.
 
 For each later capture, verify model, feature-builder, evaluator, baseline and
 runtime versions against the frozen records. Use the latest applicable model,
@@ -146,8 +149,11 @@ Report an empty shared partition as count zero with unknown error metrics, never
 zero error or a percentage improvement. Keep candidate-only, shared and overall
 descriptive scores separate, including worker/regime counts, known versus unseen
 training epochs and large-error behavior. A new epoch is not an independent
-session or hardware profile. Preserve the frozen candidate while gathering the
-missing shared-baseline and cold/tail evidence; any retuning begins a new study.
+session or hardware profile. Disclose individual severe errors that an aggregate
+percentile can hide. Preserve the frozen candidate and its adverse results;
+any revised hypothesis begins a new study with new future evidence. Once a test
+cohort informs model or policy selection, it is no longer untouched validation
+for that revised candidate.
 
 These prefill features become available at engine start, after cache selection.
 Even a successful gap-filling experiment would initially support an updated
