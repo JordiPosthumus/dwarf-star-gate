@@ -1134,3 +1134,26 @@ skips, and six failures in the analytics DOM mock (missing `dataset`). Updating
 that mock was followed by a passing affected analytics suite. Python decoder/ABI
 checks and repository syntax/privacy checks also passed. No production activation
 is claimed.
+
+
+### Image-recovery cancellation accounting (source only)
+
+Two isolated regressions failed before the fix: cancellation of a normalized
+retry incremented visual failures, and cancellation while conversion was pending
+could report a guidance turn when conversion subsequently failed. Exclude
+`client_cancelled` from normalized-retry visual failures and guard guidance
+before recording or writing it, settling cancelled work and releasing capacity.
+Preserve existing request outcome accounting and recovery behavior.
+
+Both regressions and the existing focused JPEG/GIF/image-count/cancellation
+fixtures pass (14 tests). No live rollout or service restart was performed.
+Historical counters are not rewritten; this prevents future misattribution.
+
+Transport text now separates readiness refusal/reset from the management path
+and states that routing pause leaves the listener running. Dashboard and Genie
+memory tests pass (105 tests), including incident grouping/newer-evidence and
+cancellation exclusion. Existing hardening instructions already require specific
+observations, bounded proposals and falsifiable tests; no new authority was added.
+
+Full gateway/image-protection validation: 151 passed, one optional test skipped.
+Source syntax checks passed. This milestone changes source only.

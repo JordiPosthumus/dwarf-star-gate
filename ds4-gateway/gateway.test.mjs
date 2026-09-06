@@ -1980,3 +1980,26 @@ test('Fast Genie respects a paused free worker and drops a cancelled pending rev
     assert.equal(r.backends[0].records.length,1);assert.equal(r.backends[1].records.length,0);assert.ok(r.gateway.nodes[0].active);
   }finally{controller.abort();for(const finish of r.backends[0].heldStreams.splice(0))finish();await Promise.allSettled([running,rejected]);}
 });
+
+for(const cancelDuring of ['normalized_retry','conversion'])test(`vision cancellation during ${cancelDuring} does not report visual failure or guidance`,async t=>{
+  let release,entered=false;
+  const gate=new Promise(resolve=>{release=resolve;});
+  const r=await rig(t,1,{vision_compatibility:{enabled:true},visionTranscode:async()=>{
+    entered=true;
+    if(cancelDuring==='conversion'){await gate;throw new Error('transcoder_failed');}
+    return Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB','base64');
+  }});
+  t.after(()=>release());r.backends[0].rejectJpeg=true;
+  const req=http.request({host:'127.0.0.1',port:r.address.port,path:'/v1/chat/completions',method:'POST',headers:{authorization:'Bearer none'}},res=>res.resume());
+  req.on('error',()=>{});
+  req.end(JSON.stringify({stream:true,fixture_hold_stream:true,messages:[{role:'user',content:[{type:'image_url',image_url:{url:'data:image/jpeg;base64,/9j/2Q=='}}]}]}));
+  await until(()=>cancelDuring==='conversion'?entered:r.backends[0].heldStreams?.length===1);
+  req.destroy();
+  if(cancelDuring==='conversion'){await delay(30);release();}
+  await until(()=>r.gateway.stats().active===0);
+  await delay(30);
+  const vision=r.gateway.stats().protections.vision_jpeg;
+  assert.equal(vision.failed,0);assert.equal(vision.guided,0);assert.equal(vision.rescued,0);
+  assert.equal(r.backends[0].records.length,cancelDuring==='conversion'?1:2);
+  assert.equal((await r.request('{}')).status,200,'cancellation releases capacity');
+});

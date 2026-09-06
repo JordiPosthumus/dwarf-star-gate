@@ -703,7 +703,7 @@ export function createGateway(config,{visionTranscode,priorityRandom}={}) {
           visionProtection.record('rescued',{images:job.visionNormalized.images,formats:job.visionNormalized.formats,node:node.id});
           log('vision_image_rescued',{request_id:job.id,node:node.id,images:job.visionNormalized.images,formats:job.visionNormalized.formats});
         }
-        else if(outcome!=='vision_guidance')visionProtection.record('failed',{reason:'normalized_retry_failed',node:node.id});
+        else if(!['vision_guidance','client_cancelled'].includes(outcome))visionProtection.record('failed',{reason:'normalized_retry_failed',node:node.id});
       }
       log('request_finished', { request_id: job.id, node: node.id, session: job.key?.slice(0, 12), outcome,
         queue_ms: job.dispatched - job.created, elapsed_ms: Date.now() - job.dispatched,
@@ -760,6 +760,8 @@ export function createGateway(config,{visionTranscode,priorityRandom}={}) {
       finish(up.statusCode>=400?'upstream_http_error':!isSSE?'complete':streamEnd==='engine_error'?'upstream_engine_error':['terminal','terminal_without_done','terminal_without_finish_reason','terminal_reason_unobserved'].includes(streamEnd)?'complete':streamEnd==='observation_limited'?'sse_observation_limited':'incomplete_sse',up.statusCode,streamEnd);
     };
     const sendGuidance=(reason,stream,kind='jpeg')=>{
+      if(settled)return;
+      if(job.cancelled||res.destroyed){finish('client_cancelled','CLIENT_CLOSED');return;}
       const guide=visionGuidance({stream,model:config.model,requestId:job.id,kind});
       response=undefined;clientStatus=200;responseFormat=guide.format;observer.done=true;observer.finish_reason='stop';
       const protectionKind=kind==='gif'?'vision-gif-guidance':kind==='image_limit'?'vision-image-limit-guidance':'vision-jpeg-guidance';

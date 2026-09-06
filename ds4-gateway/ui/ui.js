@@ -315,9 +315,19 @@ function routingInfo(w,{stale=false,recovering=false}={}) {
   return {level:w.quarantine||!w.is_healthy?'bad':excluded?'paused':'ok',label,detail:reasons.join(' '),excluded,
     action:excluded?'resume':'drain',button:w.quarantine?'Verify & readmit':excluded?'Resume routing':'Pause routing',
     blocked:held||locked||recovering||!!w.quarantine&&busy,
-    title:locked?'Release the exact named maintenance lock in Settings first; review times never auto-release it.':held?'Release agent holds first.':recovering?'Wait for service recovery.':w.quarantine&&busy?'Wait for admitted work to settle before verification.':excluded?'Check readiness and return to routing. Does not start or restart DS4.':'Stop new gateway admission. Existing admitted work, model process and caches stay intact.'};
+    title:locked?'Release the exact named maintenance lock in Settings first; review times never auto-release it.':held?'Release agent holds first.':recovering?'Wait for service recovery.':w.quarantine&&busy?'Wait for admitted work to settle before verification.':excluded?'Check readiness and return to routing. Does not start or restart DS4.':'Stop new gateway admission. Existing admitted work, model process and caches stay intact; the DS4 listener remains running.'};
 }
 function managementDetail(w) {
+  const probe={
+    ECONNREFUSED:'The last DS4 readiness connection was refused at the configured endpoint. This does not identify whether the listener, tunnel forwarding or another network boundary caused it.',
+    ECONNRESET:'The last DS4 readiness connection was reset. This observation alone does not prove that DS4 crashed or establish the state of an inference request.',
+    PROBE_TIMEOUT:'The last DS4 readiness probe exceeded its deadline; the cause is not established.',
+    model_or_context_mismatch:'The endpoint answered, but its model or context did not match the enrolled requirements.',
+    invalid_model_response:'The endpoint answered without a valid model-readiness response.'
+  }[w?.probe_error];
+  return managementPathDetail(w)+(probe?' '+probe:'');
+}
+function managementPathDetail(w) {
   const m=w?.management_path,reason=m?.reason;
   const reasons={
     adapter_dns_failure:'The SSH management path cannot resolve its configured host alias.',

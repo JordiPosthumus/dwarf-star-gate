@@ -1,5 +1,13 @@
 # Changelog
 
+## Explain transport observations and preserve image-recovery cancellation
+
+- Explain readiness refusal/reset independently of SSH management status and
+  preserve the distinction between routing pause and a stopped DS4 listener.
+- Exclude cancelled normalized retries from visual-failure counts. A converter
+  failure arriving after client cancellation now settles as cancellation,
+  releases capacity and cannot report a guidance turn that was never delivered.
+
 ## Measured hardware and energy evidence
 
 - Source: measured AppleSMC system watts and named CPU/GPU temperatures; independent

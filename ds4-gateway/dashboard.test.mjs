@@ -299,6 +299,11 @@ test('excluded routing states are explicit; quarantine offers checked readmissio
   assert.ok(state(q,{recovering:true}).blocked);
   assert.equal(state({...q,quarantine:null,drained:true,operator_paused:true}).button,'Resume routing');
   assert.equal(state({...q,quarantine:null,drained:true,operator_paused:true}).blocked,false,'fresh probe may restore a previously unavailable paused server');
+  const unavailable={...q,quarantine:null,management_path:{transport:'ssh_tunnel',state:'ssh_process_active'}};
+  assert.match(state({...unavailable,probe_error:'ECONNREFUSED'}).detail,/process exists.*readiness connection was refused.*does not identify/);
+  assert.match(state({...unavailable,probe_error:'ECONNRESET'}).detail,/readiness connection was reset.*does not prove.*inference request/);
+  assert.match(state({...unavailable,probe_error:'model_or_context_mismatch'}).detail,/model or context did not match/);
+  assert.doesNotMatch(state({...unavailable,probe_error:'private arbitrary error'}).detail,/private arbitrary/);
   const ready={...q,quarantine:null,is_healthy:true};assert.equal(state(ready).button,'Pause routing');assert.equal(state(ready).excluded,false);
   const compact=markup(ready);assert.match(compact,/class="worker-routing"/);assert.match(compact,/data-action="drain"/);assert.match(compact,/<svg/);
   assert.match(compact,/data-tooltip="ROUTING ENABLED[^\"]*New requests may use this server[^\"]*admitted requests finish/);

@@ -310,3 +310,15 @@ decide promotion. Turning Genie off does not disable predictor automation or the
 separately authorized recovery runner. [Embedding collection](embeddings.md) is
 also implemented and opt-in. See the [roadmap](roadmap.md) for exact cache-health
 attribution, persistent conversation/history and further operational powers.
+
+
+Dashboard transport explanations distinguish a running SSH tunnel process from
+a verified DS4 readiness response. A refused endpoint connection, a reset and a
+probe timeout are separate observations, without an inferred root cause or any
+claim about a different inference request. Pause routing preserves the running
+DS4 listener, admitted work and caches.
+
+Image-recovery cancellation remains a cancelled request: cancelled normalized
+retries do not increment visual failures, and a converter error arriving after
+client cancellation cannot create a guidance receipt. Existing historical
+counters remain unchanged. These source changes require a separate rollout.
