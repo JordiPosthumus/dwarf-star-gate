@@ -1,13 +1,33 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
-import {createContinuityAttemptObserver} from './continuity-attempt-observer.mjs';
+import {createContinuityAttemptObserver,createCorrelatedContinuityAttemptObserver} from './continuity-attempt-observer.mjs';
 const baseUrl='http://127.0.0.1:19999/v1',url=baseUrl+'/chat/completions';
 const init=()=>({method:'POST',body:'PRIVATE',headers:{'x-dsg-call-id':randomUUID(),authorization:'Bearer PRIVATE'}});
 function rejection(options,change={}){
   const id=randomUUID();return new Response(JSON.stringify({error:{type:'gateway_error',code:'queue_full',continuity:{schema:1,call_id:options.headers['x-dsg-call-id'],request_id:id,dispatch_state:'not_dispatched',retry_class:'wait_then_retry',...change}}}),{status:429,headers:{'x-dsg-dispatch-state':'not_dispatched','x-request-id':id}});
 }
 async function done(observer){for(let i=0;i<100&&observer.snapshot().pending;i++)await new Promise(r=>setTimeout(r,2));assert.equal(observer.snapshot().pending,0);return observer.snapshot();}
+test('explicit correlation adds only a missing scoped ID and leaves ordinary transport options intact',async()=>{
+  const sent=[],signal=new AbortController().signal;
+  const observer=createCorrelatedContinuityAttemptObserver({baseUrl,fetchImpl:async(input,options)=>{sent.push({input,options});return rejection({...options,headers:Object.fromEntries(new Headers(options.headers))});}});
+  const options={method:'POST',body:'UNCHANGED',headers:{authorization:'Bearer fixture'},signal,redirect:'manual'};
+  await(await observer.fetch(url,options)).text();
+  const actual=sent[0].options;assert.equal(actual.body,options.body);assert.equal(actual.signal,signal);assert.equal(actual.redirect,options.redirect);assert.equal(actual.headers.get('authorization'),'Bearer fixture');
+  assert.match(actual.headers.get('x-dsg-call-id'),/^[a-f0-9-]{36}$/);assert.equal(options.headers['x-dsg-call-id'],undefined);
+  const existing={...options,headers:{...options.headers,'x-dsg-call-id':randomUUID()}};
+  await(await observer.fetch(url,existing)).text();assert.equal(sent[1].options,existing);
+  observer.seal();assert.equal((await done(observer)).state,'certified_not_dispatched');assert.equal(sent.length,2);
+  observer.close();
+  await(await observer.fetch(url,options)).text();assert.equal(sent.at(-1).options,options,'closed adapter stops adding correlation IDs');
+});
+test('correlation never rewrites caller-owned IDs or unsupported request forms',async()=>{
+  const variants=[['https://other.invalid/v1/chat/completions',{method:'POST',body:'same'}],[url,{method:'POST',body:'same',headers:{'x-dsg-call-id':'caller-owned-invalid'}}],[url,{method:'GET'}],[new Request(url,{method:'POST',body:'same'}),{}]];
+  for(const [input,options] of variants){
+    const observer=createCorrelatedContinuityAttemptObserver({baseUrl,fetchImpl:async(actual,init)=>{assert.equal(actual,input);assert.equal(init,options);return new Response('unchanged');}});
+    assert.equal(await(await observer.fetch(input,options)).text(),'unchanged');observer.seal();assert.equal(observer.snapshot().state,'unknown');observer.close();
+  }
+});
 test('observes all retries without changing arguments, response ownership or request count',async()=>{
   const calls=[],observer=createContinuityAttemptObserver({baseUrl,fetchImpl:async(input,options)=>{calls.push({input,options});return rejection(options);}});
   for(let i=0;i<3;i++){const options=init(),response=await observer.fetch(url,options);assert.equal(calls.at(-1).input,url);assert.equal(calls.at(-1).options,options);assert.equal((await response.json()).error.code,'queue_full');}

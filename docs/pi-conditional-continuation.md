@@ -266,33 +266,62 @@ An initialized terminal fixture now joins the current DSG local host with the is
 
 A separate private packaged launcher requires explicit candidate-install and DSG-configuration paths. It resolves the selected package's ESM import entry, requires the native receipt API, and mirrors that pinned package's CLI initialization, including its HTTP dispatcher. Its configuration and host body matches the existing source launcher. Version/help checks pass with disposable settings and create no production receipts. No existing launcher was replaced. The terminal helper is a bundled test utility, generation/advice remain synthetic, and live model validation plus positive outage continuation are still open.
 
-### Request-attempt observation for outage evidence
+### Certified no-dispatch outage flow in the source candidate
 
-The private native candidate now binds optional observation to session identity,
-source generation and the final settlement revision. Its six transport fixtures
-exercise both provider SDK retries and Pi retries: two native invocations retain
-all four HTTP attempts when each SDK invocation retries once. An unknown first
-attempt remains unknown after later certified rejections. New owner input during
-settlement invalidates the binding before transcript append. Observer failure
-preserves ordinary transport, and closing preserves a later owner's stream wrapper.
-The candidate's full repository check passes. These synthetic transport fixtures
-do not grant continuation authority: the native failed-turn guard still reports
-`unsettled_execution`. Tool-result accounting, positive outage admission and the
-fresh task review remain required. This source addition is absent from the earlier
-isolated packaged artifact and from installed production Pi.
+The source candidate now joins native execution evidence, explicit task
+approval, fresh service readiness, a distinct outage review and progress
+confirmation for a run that never reached a worker. This is experimental source
+and synthetic integration evidence. The earlier packaged artifact and ordinary
+installed Pi do not contain this native path; no production enrollment is implied.
+Outages after tool activity still require separate outcome reconciliation.
 
-An internal no-execution assessment additionally requires empty error responses
-throughout that run and absence of native tool-start, tool-end or tool-result
-events. It rechecks the response object to reject later content corrections.
-Nine native transport fixtures cover positive all-rejected evidence and refusal
-of unknown attempts, partial output, successful tool effects and effects followed
-by tool errors. Observer-boundary failures cannot interrupt ordinary transport or
-tool events. This assessment issues no ticket and the host handle does not expose
-it. Enrollment/review integration and completed-tool-result reconciliation remain
-unfinished; these checks do not complete positive outage continuation.
+`proactiveResumeLocalOptions({outageResume: true, ...})` explicitly enables
+session-start observation for the selected DSG endpoint. The default is false.
+Observation alone creates no receipt directory and grants no continuation. Its
+startup notice distinguishes observation from task approval. The real
+`/proactive-resume` selector discloses the content/provider boundary and outage
+policy; `/proactive-resume-off` closes observation and the controller. Model and
+session changes close the old observation; switching models does not undo opt-out.
 
-The new `continuity-attempt-observer.mjs` is an optional transport observer, not a continuation controller. One instance records every HTTP attempt in its caller-defined lifetime. It uses the same exact certificate validator as the existing continuity transport, retaining only validated request/call IDs and fixed rejection codes. An earlier unknown attempt stays unknown even after later certified rejections. Empty, unsealed, pending, oversized, timed-out, invalidated or overflowed observations cannot become positive evidence.
+The passive `createContinuityAttemptObserver` still preserves fetch arguments,
+response ownership and SDK retry behavior. The separately selected
+`createCorrelatedContinuityAttemptObserver` adds only a missing `x-dsg-call-id`
+for supported requests to the exact DSG endpoint. It preserves caller-owned IDs,
+body bytes, signals and options. Closing stops further header decoration. Neither
+adapter retries inference or changes context, output or thinking settings.
+Validated error-envelope inspection remains bounded and asynchronous. Unknown,
+pending, redirected, oversized, unsealed or exhausted observations cannot certify
+execution.
 
-The observer passes the original fetch arguments and response through unchanged, adds no requests or retries, and reads bounded cloned error envelopes alongside SDK consumption. Closing or timing out inspection cancels only its clone. Seven tests cover redirect refusal, identity mutation, unknown earlier attempts, response ownership, metadata bounds and the existing continuity wait chain. The 68 existing Door/continuity checks and repository syntax checks pass after extracting their shared certificate predicate.
+Native evidence binds every observed attempt to its session and generation.
+No-dispatch admission additionally requires empty error responses and no native
+tool activity in that run. A transcript digest lets explicit enrollment advance
+its administrative revision only when the observed transcript and generation
+still match. Admission checks the digest again and preserves draft/dialog/input
+fences and durable duplicate prevention. Only this alternate native boundary
+issues an `undispatched_outage` ticket; its trigger is part of ticket freshness.
+No transcript is persisted by the observation adapter.
 
-The observer is not installed in Pi or connected to native admission. Its snapshot has no native session/generation authority and cannot itself permit a cue. Binding all relevant calls and retries to the owning native execution, checking tool outcomes, reviewing the task after restoration, and accepting one guarded continuation remain required for the positive outage case.
+The bridge requires separate outage consent and fresh readiness before review
+and again before acceptance. Readiness requires recent gateway observations,
+no Door hold or gateway drain, and healthy compatible pool capacity. Native
+routing still owns conversation affinity and actual dispatch; readiness is not
+a promise of immediate execution. A started controller polls unavailable service
+without sending inference, and closes its timer on opt-out. Native expiration or
+changed task state ends eligibility. Genie reviews unfinished authorized work
+using `continue/outage_recovery`, independently of courtesy-check-in advice.
+Empty failed assistant responses are represented as native response metadata;
+error strings are not passed off as assistant statements. Completion still needs
+a separate receipt-bound progress review.
+
+The assembled fixture uses the real Pi SDK, initialized terminal and task
+selector with synthetic network responses. It observes one certified failed
+request before enrollment, sends zero reviews or new inference while unavailable,
+then confirms exactly one attributed continuation and one tool effect after
+restoration. Receipt reopen retains verified progress. Ordinary input after
+opt-out carries no added correlation ID. Other fixtures reject unknown attempts,
+changed transcripts, partial output, tool effects, stale input, stops, closed
+observers and a second outage after review. Tests preserve history and model
+metadata; they do not measure full context/output boundaries, runtime hashing
+cost, real-model judgment or real failure classification. Packaging, live
+validation and broader outage reconciliation remain unfinished.

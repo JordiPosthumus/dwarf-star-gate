@@ -17,10 +17,12 @@ function reviewText(message){
 /** Text snapshot of the full effective Pi context; never silently truncates it. */
 export function piResumeReviewInput(messages,taskIndex,ticket){
   return resumeReviewInput({scope_id:ticket.scopeId,ticket_id:ticket.id,task_message_id:'m'+taskIndex,
+    ...(ticket.trigger==='undispatched_outage'?{trigger:ticket.trigger}:{}),
     messages:messages.map((message,index)=>{
       const role=message.role==='toolResult'||message.role==='custom'?'tool':message.role;
       if(!['user','assistant','tool'].includes(role))throw new Error('Unsupported review message');
       let text=reviewText(message);
+      if(message.role==='assistant'&&message.stopReason==='error'&&Array.isArray(message.content)&&message.content.length===0)text=JSON.stringify({native_response:{stop_reason:'error',content:[]}});
       if(message.role==='toolResult')text=JSON.stringify({tool:message.toolName,result:text,isError:message.isError===true});
       if(message.role==='custom')text=JSON.stringify({customType:message.customType,content:text});
       return {id:'m'+index,role,text};
@@ -33,12 +35,14 @@ export function piResumeReviewInput(messages,taskIndex,ticket){
  * inference credential can construct that authority through this module.
  */
 export class ProactiveResumePi {
-  constructor({session,control,reviewer,taskMessage,scopeId,consent}={}){
+  constructor({session,control,reviewer,taskMessage,scopeId,consent,outageReady}={}){
     if(!session||!control||!reviewer||taskMessage?.role!=='user'||!session.messages.includes(taskMessage))throw new Error('Select an existing authorized user task');
     if(typeof scopeId!=='string'||!/^[A-Za-z0-9_-]{1,128}$/.test(scopeId))throw new Error('Invalid task scope');
     if(consent?.reviewText!==true||!Array.isArray(consent.providers)||!consent.providers.length||consent.providers.length>2||consent.providers.some(p=>typeof p.url!=='string'||typeof p.model!=='string'||!p.model.trim()))throw new Error('Explicit content and provider consent required');
     this.session=session;this.control=control;this.reviewer=reviewer;this.scopeId=scopeId;
     this.reviewProgress=consent.reviewProgress===true;this.progressTask=null;this.nextReview=null;
+    this.reviewOutage=consent.reviewOutage===true;this.outageReady=outageReady;
+    this.started=false;this.outageRetry=null;
     this.providers=consent.providers.map(({url,model})=>({url,model}));
     this.sessionId=session.sessionId;this.taskIndex=session.messages.indexOf(taskMessage);
     this.humanContext=fingerprint(session.messages.filter(message=>message.role==='user'));
@@ -48,14 +52,23 @@ export class ProactiveResumePi {
     if(this.closed)return;
     this.closed=true;this.control.revoke();this.abort?.abort();this.unsubscribe?.();this.unsubscribe=null;
     if(this.nextReview){clearImmediate(this.nextReview);this.nextReview=null;}
+    if(this.outageRetry){clearTimeout(this.outageRetry);this.outageRetry=null;}
     this.record({state:'closed',reason:'revoked'});
   }
   record(value){this.last=value;try{this.onStatus?.({...value});}catch{}return value;}
   start(){
+    this.started=true;
     if(!this.closed&&!this.unsubscribe)this.unsubscribe=this.session.subscribe(event=>{
       if(event.type==='agent_settled')void this.runOnce().catch(()=>{this.record({state:'blocked',reason:'bridge_failed'});});
     });
     return this.runOnce();
+  }
+  waitForRestoration(){
+    if(this.started&&!this.closed&&!this.outageRetry){
+      this.outageRetry=setTimeout(()=>{this.outageRetry=null;void this.runOnce().catch(()=>this.record({state:'blocked',reason:'bridge_failed'}));},1000);
+      this.outageRetry.unref?.();
+    }
+    return this.record({state:'blocked',reason:'gateway_not_restored'});
   }
   taskIsCurrent(){
     return this.session.sessionId===this.sessionId&&fingerprint(this.session.messages.filter(message=>message.role==='user'))===this.humanContext;
@@ -105,13 +118,20 @@ export class ProactiveResumePi {
     if(!inspected.ticket)return this.record({state:'blocked',reason:inspected.blockedReason});
     const ticket=inspected.ticket;
     if(ticket.scopeId!==this.scopeId){this.close();return this.record({state:'blocked',reason:'scope_mismatch'});}
+    if(ticket.trigger!==undefined&&ticket.trigger!=='undispatched_outage')return this.record({state:'blocked',reason:'unsupported_review_trigger'});
+    const outage=ticket.trigger==='undispatched_outage';
+    if(outage&&(!this.reviewOutage||typeof this.outageReady!=='function'))return this.record({state:'blocked',reason:'outage_review_not_enrolled'});
     const latest=fingerprint(this.session.messages.at(-1));
     if(latest===this.lastReviewed)return {state:'blocked',reason:'settlement_already_reviewed'};
     let input;
     try{input=piResumeReviewInput(this.session.messages,this.taskIndex,ticket);}
     catch{return this.record({state:'blocked',reason:'review_context_unsupported'});}
-    this.busy=true;this.lastReviewed=latest;const abort=new AbortController();this.abort=abort;
+    this.busy=true;const abort=new AbortController();this.abort=abort;
     try{
+      if(outage&&await this.outageReady({signal:abort.signal})!==true)return this.waitForRestoration();
+      if(this.closed||abort.signal.aborted)return this.record({state:'blocked',reason:'review_revoked'});
+      this.lastReviewed=latest;
+      if(outage)this.record({state:'reviewing_outage',reason:'checking_outage_task'});
       const result=await this.reviewer.review(input,{disclosedProviders:this.providers,signal:abort.signal});
       if(this.closed||abort.signal.aborted)return this.record({state:'blocked',reason:'review_revoked'});
       if(!this.taskIsCurrent()){this.close();return this.record({state:'blocked',reason:'task_input_changed'});}
@@ -123,6 +143,8 @@ export class ProactiveResumePi {
         if(advice.verdict==='completed')this.close();
         return this.record({state:'reviewed',verdict:advice.verdict,reason:advice.reason});
       }
+      if(outage&&await this.outageReady({signal:abort.signal})!==true){this.lastReviewed=null;return this.waitForRestoration();}
+      if(this.closed||abort.signal.aborted)return this.record({state:'blocked',reason:'review_revoked'});
       // inspect is for visible preflight; native accept rechecks after durable I/O.
       const current=this.control.inspect();
       if(current.ticket?.id!==ticket.id)return this.record({state:'blocked',reason:current.blockedReason||'review_stale'});

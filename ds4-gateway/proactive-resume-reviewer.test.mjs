@@ -40,6 +40,21 @@ test('review carries only disclosed bounded context and returns advice bound to 
   assert.equal(JSON.stringify(reviewer.last).includes('fixture-secret'),false);
 });
 
+test('native outage review uses a distinct prompt and cannot exchange courtesy reasons',async()=>{
+  const outage={...input(),trigger:'undispatched_outage'},answer={...advice(),reason:'outage_recovery'};
+  outage.messages[1].text=JSON.stringify({native_response:{stop_reason:'error',content:[]}});
+  const {reviewer,calls}=setup(answer);
+  assert.deepEqual((await reviewer.review(outage,disclosure)).advice,answer);
+  const payload=JSON.parse(calls[0].body);
+  assert.match(payload.messages[0].content,/every attempt was certified not dispatched/);
+  assert.match(payload.messages[0].content,/Do not require the assistant to have asked for encouragement/);
+  assert.equal(JSON.parse(payload.messages[1].content).trigger,'undispatched_outage');
+  assert.throws(()=>resumeAdvice(advice(),outage));
+  assert.throws(()=>resumeAdvice(answer,input()));
+  assert.throws(()=>resumeReviewInput({...outage,trigger:'unknown_execution'}));
+  assert.throws(()=>resumeReviewInput({...outage,dispatch_state:'not_dispatched'}));
+});
+
 for(const verdict of ['completed','human_input','uncertain']){
   test('preserves the non-continuation '+verdict+' verdict',async()=>{
     const {reviewer}=setup(advice(verdict));

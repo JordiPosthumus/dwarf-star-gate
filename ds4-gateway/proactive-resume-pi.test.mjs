@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {piResumeReviewInput} from './proactive-resume-pi.mjs';
+import {piResumeReviewInput,ProactiveResumePi} from './proactive-resume-pi.mjs';
 
 const ticket={scopeId:'scope',id:'ticket'};
 const user={role:'user',content:'Complete the synthetic task.'};
@@ -30,4 +30,24 @@ test('unsupported or oversized native context is rejected without silently dropp
     [{...user,content:'x'.repeat(32769)},assistant],
     [user,...Array.from({length:24},()=>assistant)]
   ])assert.throws(()=>piResumeReviewInput(messages,0,ticket));
+});
+
+test('empty native errors remain typed metadata in outage and later progress context',()=>{
+  const failed={role:'assistant',stopReason:'error',content:[],errorMessage:'PRIVATE_TRANSPORT_DIAGNOSTIC'};
+  const outage=piResumeReviewInput([user,failed],0,{...ticket,trigger:'undispatched_outage'});
+  assert.equal(outage.trigger,'undispatched_outage');
+  assert.deepEqual(JSON.parse(outage.messages[1].text),{native_response:{stop_reason:'error',content:[]}});
+  const later=piResumeReviewInput([user,failed,assistant],0,ticket);
+  assert.equal(later.trigger,undefined);assert.equal(JSON.stringify(later).includes('PRIVATE_'),false);
+});
+
+test('opting out stops restoration polling without any inference',async()=>{
+  let checks=0,reviews=0;
+  const session={sessionId:'session',messages:[user,{role:'assistant',stopReason:'error',content:[]}],subscribe:()=>()=>{}};
+  const bridge=new ProactiveResumePi({session,taskMessage:user,scopeId:'scope',control:{inspect:()=>({ticket:{...ticket,trigger:'undispatched_outage'}}),revoke:()=>{}},reviewer:{review:async()=>{reviews++;throw new Error('No review expected');}},outageReady:async()=>{checks++;return false;},consent:{reviewText:true,reviewOutage:true,providers:[{url:'http://127.0.0.1:19999/v1',model:'fixture'}]}});
+  try{
+    assert.equal((await bridge.start()).reason,'gateway_not_restored');
+    bridge.close();await new Promise(resolve=>setTimeout(resolve,1100));
+    assert.equal(checks,1);assert.equal(reviews,0);
+  }finally{bridge.close();}
 });

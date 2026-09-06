@@ -3,14 +3,25 @@ import {isAbsolute,join} from 'node:path';
 import {proactiveResumeMainOptions} from './proactive-resume-host.mjs';
 import {ProactiveResumeReviewer} from './proactive-resume-reviewer.mjs';
 import {priorityProvider} from './priority-classifier.mjs';
+import {createCorrelatedContinuityAttemptObserver} from './continuity-attempt-observer.mjs';
+
+/** Fresh observed service availability only; native routing still owns affinity and holds. */
+export function proactiveOutageReady(snapshot,model,now=Date.now()){
+  const gateway=snapshot?.gateway,door=snapshot?.continuity_door;
+  const fresh=at=>Number.isFinite(at)&&now-at>=0&&now-at<=5000;
+  return fresh(snapshot?.time)&&fresh(snapshot?.gateway_at)&&snapshot.gateway_error===null&&snapshot.continuity_door_error===null&&door?.holding===false&&gateway?.draining===false&&gateway.model===model?.id&&Number.isFinite(model?.contextWindow)&&Array.isArray(gateway.workers)&&gateway.workers.some(worker=>worker.is_healthy===true&&worker.drained===false&&!worker.quarantine&&Number.isFinite(worker.context_length)&&worker.context_length>=model.contextWindow);
+}
 
 /** Local trusted-host assembly. Files and inference start only after task approval. */
-export function proactiveResumeLocalOptions({gatewayBaseUrl,receiptRoot,ReceiptStore,getReviewState,enrollmentMs,attemptBudget,fetchImpl}={}){
+export function proactiveResumeLocalOptions({gatewayBaseUrl,receiptRoot,ReceiptStore,getReviewState,enrollmentMs,attemptBudget,fetchImpl,outageResume=false}={}){
   const gateway=new URL(gatewayBaseUrl);
   if(gateway.protocol!=='http:'||gateway.hostname!=='127.0.0.1'||gateway.username||gateway.password||gateway.search||gateway.hash||!['/v1','/v1/'].includes(gateway.pathname))throw new Error('Explicit local DSG gateway required');
   if(!isAbsolute(receiptRoot)||typeof ReceiptStore?.create!=='function'||typeof ReceiptStore?.open!=='function'||typeof getReviewState!=='function')throw new Error('Local receipt owner and review state required');
   if(!Number.isSafeInteger(enrollmentMs)||enrollmentMs<1||enrollmentMs>24*60*60*1000||!Number.isInteger(attemptBudget)||attemptBudget<1||attemptBudget>10)throw new Error('Explicit bounded enrollment limits required');
-  return proactiveResumeMainOptions({getEnrollmentOptions:async session=>{
+  if(typeof outageResume!=='boolean')throw new Error('Explicit outage enrollment option required');
+  return proactiveResumeMainOptions({
+    ...(outageResume?{observeSession:session=>session.model?.baseUrl===gatewayBaseUrl&&typeof session.installContinuationTransportObserver==='function'?session.installContinuationTransportObserver({gatewayBaseUrl,createObserver:createCorrelatedContinuityAttemptObserver}):null}:{}),
+    getEnrollmentOptions:async session=>{
     if(session.model?.baseUrl!==gatewayBaseUrl)throw new Error('This session does not use the configured DSG gateway');
     const initial=await getReviewState({signal:AbortSignal.timeout(5000)});
     let genie={...initial.genie},snapshot=initial.snapshot;
@@ -19,6 +30,18 @@ export function proactiveResumeLocalOptions({gatewayBaseUrl,receiptRoot,ReceiptS
     const reviewer=new ProactiveResumeReviewer({genie,snapshot:()=>snapshot,poolUrl:gatewayBaseUrl,...(fetchImpl?{fetchImpl}:{})});
     let preparing=false,statePending=false;
     return {gatewayBaseUrl,providers:unique,expiresAt:Date.now()+enrollmentMs,attemptBudget,
+      allowUndispatchedOutage:outageResume,
+      outageReady:async({signal}={})=>{
+        if(statePending||preparing)return false;
+        const stateSignal=AbortSignal.any([AbortSignal.timeout(5000),...(signal?[signal]:[])]);
+        stateSignal.throwIfAborted();let cancel;
+        const cancelled=new Promise((_,reject)=>{cancel=()=>reject(new Error('Outage readiness cancelled'));stateSignal.addEventListener('abort',cancel,{once:true});});
+        statePending=true;
+        const refresh=Promise.resolve().then(()=>getReviewState({signal:stateSignal})).finally(()=>{statePending=false;});
+        try{const state=await Promise.race([refresh,cancelled]);stateSignal.throwIfAborted();return session.model?.baseUrl===gatewayBaseUrl&&proactiveOutageReady(state.snapshot,session.model);}
+        catch{return false;}
+        finally{stateSignal.removeEventListener('abort',cancel);}
+      },
       createReceipts:async sessionId=>{
         if(!/^[A-Za-z0-9_-]{1,128}$/.test(sessionId))throw new Error('Invalid native session identity');
         await mkdir(receiptRoot,{recursive:true,mode:0o700});

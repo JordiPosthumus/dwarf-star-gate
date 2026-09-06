@@ -1,5 +1,26 @@
 import {CALL_ID_HEADER,DISPATCH_HEADER,validCallId} from './continuity.mjs';
 import {certifiedNotDispatched} from './continuity-certificate.mjs';
+import {randomUUID} from 'node:crypto';
+
+/** Explicit enrollment adapter: add only a missing DSG correlation header.
+ * The passive observer below remains unchanged; retries stay owned by the SDK.
+ */
+export function createCorrelatedContinuityAttemptObserver(options){
+  const observer=createContinuityAttemptObserver(options),base=new URL(options.baseUrl);
+  let closed=false;
+  return Object.freeze({...observer,close(){closed=true;observer.close();},fetch:(input,init={})=>{
+    if(closed)return observer.fetch(input,init);
+    let decorated=init;
+    try{
+      const url=new URL(input instanceof Request?input.url:input);
+      if(!(input instanceof Request)&&url.origin===base.origin&&url.pathname==='/v1/chat/completions'&&!url.search&&!url.hash&&init.method?.toUpperCase()==='POST'&&typeof init.body==='string'){
+        const headers=new Headers(init.headers);
+        if(!headers.has(CALL_ID_HEADER)){headers.set(CALL_ID_HEADER,randomUUID());decorated={...init,headers};}
+      }
+    }catch{}
+    return observer.fetch(input,decorated);
+  }});
+}
 
 /** One observer per provider invocation. It observes, never retries or grants a native cue. */
 export function createContinuityAttemptObserver({baseUrl,fetchImpl=fetch,maxAttempts=256,inspectionMs=5000}={}){

@@ -3,7 +3,17 @@ import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {proactiveResumeLocalOptions} from './proactive-resume-local.mjs';
+import {proactiveResumeLocalOptions,proactiveOutageReady} from './proactive-resume-local.mjs';
+
+test('outage readiness requires fresh compatible service evidence and respects holds',()=>{
+  const now=10000,model={id:'fixture',contextWindow:262144};
+  const snapshot={time:now,gateway_at:now,gateway_error:null,continuity_door_error:null,continuity_door:{holding:false},gateway:{model:'fixture',draining:false,workers:[{is_healthy:true,drained:false,context_length:262144}]}};
+  assert.equal(proactiveOutageReady(snapshot,model,now),true);
+  for(const mutate of [s=>{s.time=4999;},s=>{s.gateway_at=10001;},s=>{s.gateway_error='unavailable';},s=>{s.continuity_door.holding=true;},s=>{s.continuity_door_error='unavailable';},s=>{s.gateway.draining=true;},s=>{s.gateway.model='other';},s=>{s.gateway.workers[0].is_healthy=false;},s=>{s.gateway.workers[0].drained=true;},s=>{s.gateway.workers[0].context_length=131072;}]){
+    const changed=structuredClone(snapshot);mutate(changed);assert.equal(proactiveOutageReady(changed,model,now),false);
+  }
+  assert.equal(proactiveOutageReady({},model,now),false);
+});
 
 const turn=()=>new Promise(resolve=>setImmediate(resolve));
 function deferred(){let resolve;const promise=new Promise(r=>{resolve=r;});return {resolve,promise};}

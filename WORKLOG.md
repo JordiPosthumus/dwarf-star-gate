@@ -1298,3 +1298,17 @@ when an installation has multiple DSG provider names. Scope tests verify one
 off/on control, endpoint isolation, shutdown and validation before registration;
 single-provider compatibility remains supported. No production enrollment is
 implied by this source change.
+
+## 2026-09-06 — Source no-dispatch outage flow
+
+Connected the isolated native no-execution boundary to a distinct outage review,
+fresh service-readiness checks and explicit task approval. Optional startup
+observation precedes the failed request; task enrollment can renew its revision
+only with an unchanged generation/transcript digest. A separately opted-in
+adapter adds a missing correlation header without changing body bytes or retry
+settings. The initialized Pi terminal/SDK fixture waits without inference while
+service is unavailable, then verifies one attributed cue, one synthetic effect,
+progress receipt reopen and ordinary input after opt-out. Native and source
+regressions pass. Advice and failures are synthetic; packaging, real-model
+validation and outages after prior tool effects remain unfinished. Normal Pi,
+production configuration and live model services were not changed.
