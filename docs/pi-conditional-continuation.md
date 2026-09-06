@@ -339,3 +339,16 @@ uses actual installed SDK/TUI code with synthetic HTTP and Genie replies; it
 includes observation before task approval and ordinary input after opt-out.
 These artifacts remain optional candidates, with no normal Pi installation,
 model configuration or production launcher replacement.
+
+### Accepted cue rejected before dispatch
+
+The source candidate can reconcile its own accepted continuation when that exact
+run subsequently settles with complete no-dispatch evidence. Its progress ticket
+carries the outage trigger. Native `reconcileUndispatched` checks ownership,
+freshness and evidence before and after the journal write, retaining the receipt
+as `failed`. It neither deletes the attempt nor refunds its budget. Unknown or
+reopened ambiguous receipts cannot use this path, and an outage ticket cannot be
+confirmed as successful progress. The bridge then requests fresh outage advice
+before a new attempt. Tests cover a second failure, one eventual tool effect,
+budget exhaustion and input during the write. This follow-up is not yet included
+in the previously verified package and remains untested against a live outage.

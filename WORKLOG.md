@@ -1319,3 +1319,11 @@ smoke programs pass: native CLI/receipts, courtesy terminal enrollment, and the
 complete simulated no-dispatch outage flow with progress receipt reopen and
 ordinary input after opt-out. Native imports resolve inside the install. Live
 model judgment and broader outage reconciliation remain open.
+
+The native source now reconciles a controller-owned accepted cue that was
+certified never dispatched, retaining its failed receipt and consumed budget.
+The bridge obtains fresh outage advice for any later attempt. Unknown receipts
+and changed evidence remain blocked; no-dispatch tickets cannot claim successful
+progress. Forty-one bridge/outage fixtures, 36 native admission/journal cases,
+27 portable reviewer/bridge cases and the native repository check pass. The
+previously verified package is preserved and does not contain this follow-up.

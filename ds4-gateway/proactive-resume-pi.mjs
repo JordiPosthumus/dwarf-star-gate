@@ -87,6 +87,16 @@ export class ProactiveResumePi {
       if(this.closed||abort.signal.aborted)return;
       if(!inspected.ticket)return this.record({state:'blocked',reason:inspected.blockedReason||'progress_unverified'});
       const ticket=inspected.ticket;
+      if(ticket.scopeId!==this.scopeId||ticket.proposalId!==proposalId)throw new Error('Progress receipt binding mismatch');
+      if(ticket.trigger==='undispatched_outage'){
+        if(!this.reviewOutage||typeof this.control.reconcileUndispatched!=='function')return this.record({state:'blocked',reason:'outage_reconciliation_unavailable'});
+        const reconciliation=await this.control.reconcileUndispatched(ticket.id,proposalId);
+        this.receipt={proposal_id:proposalId,receipt_status:reconciliation.receipt.status};
+        if(!reconciliation.applied){this.close();return this.record({state:'blocked',reason:'outage_reconciliation_stale',...this.receipt});}
+        const outcome=this.record({state:'not_dispatched',reason:'outage_recovery_wait',...this.receipt});
+        if(!this.closed)this.nextReview=setImmediate(()=>{this.nextReview=null;void this.runOnce().catch(()=>this.record({state:'blocked',reason:'bridge_failed'}));});
+        return outcome;
+      }
       const cueIndex=this.session.messages.findIndex(message=>message.role==='custom'&&message.customType==='dsg-proactive-resume'&&message.details?.proposalId===proposalId&&message.details?.scopeId===this.scopeId);
       if(cueIndex<0||ticket.scopeId!==this.scopeId||ticket.proposalId!==proposalId)throw new Error('Progress receipt binding mismatch');
       const before=fingerprint(this.session.messages);
