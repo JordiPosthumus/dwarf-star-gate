@@ -403,6 +403,30 @@ endpoints kept private by loopback or the SSH tunnel; DSG never forwards its
 bearer secret to them. Authenticated generic OpenAI backends are deliberately
 outside this DS4-specific worker contract.
 
+**Setting up with your own agent:** give any local agent that can run shell
+commands the following handoff. Replace the bracketed details with your own
+checkout and existing DS4 endpoints; no particular agent framework is required.
+
+> Set up DSG in [checkout directory] using this repository's Quick start and
+> `docs/agent-api.md`. Inspect the existing configuration and running services
+> first. For a new installation, use `npm run setup -- --controls`; preserve an
+> existing private config. Register only my existing DS4 endpoints [worker IDs,
+> loopback URLs or verified SSH aliases]. Ask for missing endpoint details rather
+> than inventing them. Keep credentials and machine details in ignored local
+> files. Preserve my model, context, output, reasoning and cache settings. Run
+> `npm run doctor`, start the gateway/Continuity Door/dashboard using the documented
+> method for my OS, and verify a small request through the Door. Report the local
+> dashboard and client endpoint, which checks passed, and any remaining setup
+> issue without printing credentials. Use the scoped agent guide if I also want
+> ongoing fleet management; setup alone does not grant recovery or session control.
+
+The core setup has no npm dependencies. The clean-checkout test exercises private
+configuration creation, refusal to overwrite it, doctor, worker registration,
+unchanged request forwarding and persistence across a gateway restart using a
+synthetic DS4 endpoint. Your real engine and agent still need their own connection
+check. Optional [Pi integration](docs/pi-integration-plan.md), hardware collectors
+and service recovery have separate setup instructions and capability checks.
+
 On macOS, use login services instead of the foreground processes (stop those
 first):
 

@@ -1157,3 +1157,12 @@ observations, bounded proposals and falsifiable tests; no new authority was adde
 
 Full gateway/image-protection validation: 151 passed, one optional test skipped.
 Source syntax checks passed. This milestone changes source only.
+
+
+### Portable setup with an owner's own agent
+
+Add a copyable Quick start handoff for any shell-capable local agent, using the
+owner's own endpoints and private configuration. Explain the distinction between
+core setup and optional Pi, hardware or recovery capabilities. Revalidated all
+nine installation tests, including the fresh-checkout integration fixture. These
+checks use a synthetic DS4 server; each owner's real connection still needs testing.
