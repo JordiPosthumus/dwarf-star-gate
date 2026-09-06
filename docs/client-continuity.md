@@ -274,3 +274,9 @@ identity. Parked, undispatched requests are separate so they do not deadlock rec
 The full end-to-end acceptance test is a real compatible client surviving a
 staged failure and continuing its turn without manual intervention—not merely
 a restarted service or green model-list endpoint.
+
+### Door rejection certificates
+
+The Door now emits a matching schema-1 `not_dispatched` certificate when its hold queue is full or it rejects a request before forwarding during shutdown. The opt-in Pi continuity transport accepts these two Door-specific codes only with `source: continuity_door`, a matching reason, and the existing call/request/header checks. It waits using the existing cancellable backoff and resubmits the same immutable request. Holds remain owned by their existing operator or lifecycle; a retry does not release them.
+
+This covers only the certified HTTP attempt. A lost core reply remains `unknown` even before response headers, and connection errors are not replayed by this transport. These certificates do not authorize a new native Pi turn, resolve earlier ambiguous attempts, or change Pi retry settings. Source fixtures prove identical-body recovery with one core execution and shutdown rejection with zero forwarding; live activation and model validation remain separate.

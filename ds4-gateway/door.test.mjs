@@ -425,3 +425,22 @@ test('conditional hold preserves an existing operator hold',async t=>{
   await assert.rejects(doorControl(config.continuity_door.control_socket,'/hold',{reason:'planned_gateway_core_park',if_unheld:true}),/already has a hold/);
   assert.equal(door.status().reason,'operator maintenance');assert.equal(door.status().hold_kind,'manual');
 });
+
+test('full Door hold certifies no dispatch and continuity resumes identical work once released',{timeout:5000},async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-door-certified-')),received=[];
+  const core=http.createServer((req,res)=>{if(req.url==='/health'){req.resume();return res.end('ok');}let body='';req.on('data',c=>body+=c);req.on('end',()=>{received.push(body);res.end('ok');});});
+  const corePort=await listen(core),door=createDoor({host:'127.0.0.1',port:0,api_key:'test',continuity_door:{enabled:true,core_port:corePort,control_socket:path.join(dir,'door.sock'),health_interval_ms:60000,max_held_requests:1}});
+  await door.start();t.after(async()=>{await door.close();core.closeAllConnections();await new Promise(r=>core.close(r));fs.rmSync(dir,{recursive:true,force:true});});
+  door.hold('operator maintenance');const first=request(door.server.address().port,'first');
+  while(door.status().held!==1)await new Promise(r=>setImmediate(r));
+  const baseUrl=`http://127.0.0.1:${door.server.address().port}/v1`,body=' {"max_tokens":262144,"reasoning_effort":"xhigh"}\n',sent=[],receipts=[];
+  const transport=createContinuityFetch({baseUrl,fetchImpl:async(url,init)=>{sent.push({body:init.body,call:init.headers.get('x-dsg-call-id')});const response=await fetch(url,init);if(response.status===429){const envelope=await response.clone().json();receipts.push(envelope.error.continuity);assert.equal(response.headers.get('x-request-id'),receipts.at(-1).request_id);}return response;},wait:async ms=>{assert.equal(ms,5000);assert.deepEqual(received,[]);assert.equal(door.status().holding,true);door.release();assert.equal((await first).body,'ok');}});
+  assert.equal(await(await transport(baseUrl+'/chat/completions',{method:'POST',body})).text(),'ok');
+  assert.deepEqual(received,['first',body]);assert.equal(sent.length,2);assert.deepEqual(sent[0],sent[1]);
+  assert.equal(receipts.length,1);assert.equal(receipts[0].source,'continuity_door');assert.equal(receipts[0].dispatch_state,'not_dispatched');assert.equal(receipts[0].call_id,sent[0].call);
+  door.hold('shutdown fixture');const held=request(door.server.address().port,'never forwarded');
+  while(door.status().held!==1)await new Promise(r=>setImmediate(r));
+  const closing=door.close(),rejected=await held;await closing;
+  assert.equal(rejected.status,503);assert.equal(rejected.headers['x-dsg-dispatch-state'],'not_dispatched');
+  const c=JSON.parse(rejected.body).error.continuity;assert.equal(c.reason,'continuity_stopping');assert.equal(c.call_id,null);assert.equal(c.request_id,rejected.headers['x-request-id']);assert.deepEqual(received,['first',body]);
+});

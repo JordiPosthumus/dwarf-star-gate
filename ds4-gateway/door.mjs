@@ -13,6 +13,15 @@ const hopHeaders=new Set(['connection','keep-alive','proxy-authenticate','proxy-
 function headers(input){const excluded=new Set([...hopHeaders,...String(input.connection??'').toLowerCase().split(',').map(x=>x.trim())]);return Object.fromEntries(Object.entries(input).filter(([key])=>!excluded.has(key.toLowerCase())));}
 function json(res,status,value){if(res.destroyed||res.headersSent)return;res.writeHead(status,{'content-type':'application/json','cache-control':'no-store'});res.end(JSON.stringify(value));}
 function report(res,status,code,message){json(res,status,{error:{type:'gateway_error',code,message:dsgReport(message)}});}
+// Only call before forward(): this certificate covers this HTTP attempt alone.
+function reportNotForwarded(req,res,status,code,message){
+  if(res.destroyed||res.headersSent)return;
+  const request_id=randomUUID();
+  res.setHeader('x-request-id',request_id);res.setHeader(DISPATCH_HEADER,'not_dispatched');
+  json(res,status,{error:{type:'gateway_error',code,message:dsgReport(message),
+    continuity:{schema:1,source:'continuity_door',request_id,call_id:validCallId(req.headers[CALL_ID_HEADER]),
+      dispatch_state:'not_dispatched',retry_class:'wait_then_retry',reason:code,retry_after_ms:5000}}});
+}
 function reportUnknownCoreExecution(req,res,request_id){
   if(res.destroyed||res.headersSent)return;
   // This identifies the Door's error response, not a backend execution. Even a
@@ -144,9 +153,9 @@ export function createDoor(config,{now=Date.now}={}){
   };
   const server=http.createServer((req,res)=>{
     if(req.url==='/continuity/status'&&req.method==='GET'){req.resume();return authorized(req)?json(res,200,status()):report(res,401,'unauthorized','Bearer API key required');}
-    if(closing){req.resume();return report(res,503,'continuity_stopping','Continuity door is stopping; request was not forwarded.');}
+    if(closing){req.resume();return reportNotForwarded(req,res,503,'continuity_stopping','Continuity door is stopping; request was not forwarded.');}
     if(!state.holding||(!['POST','PUT','PATCH'].includes(req.method)&&requestClass(req)!=='model_discovery'))return proxy(req,res);
-    if(held.length>=limit){req.resume();return report(res,429,'continuity_hold_full','Continuity door hold capacity is full; request was not forwarded.');}
+    if(held.length>=limit){req.resume();return reportNotForwarded(req,res,429,'continuity_hold_full','Continuity door hold capacity is full; request was not forwarded.');}
     const item={req,res};item.cancel=()=>{remove(item);};
     req.pause();req.on('aborted',item.cancel);req.on('error',item.cancel);res.on('close',item.cancel);
     item.heartbeat=setInterval(()=>{if(!res.destroyed&&!res.headersSent)res.writeProcessing();},15000);item.heartbeat.unref?.();held.push(item);
@@ -202,7 +211,7 @@ export function createDoor(config,{now=Date.now}={}){
       await new Promise(resolve=>server.close(resolve));
       throw error;
     }finally{starting=false;}
-  },async close(){if(closing)return;closing=true;clearInterval(monitor);invalidateProbe();for(const item of [...held]){remove(item);report(item.res,503,'continuity_stopping','Continuity door stopped before this held request was forwarded.');item.req.resume();}await new Promise(resolve=>server.close(resolve));await new Promise(resolve=>control.close(resolve));}};
+  },async close(){if(closing)return;closing=true;clearInterval(monitor);invalidateProbe();for(const item of [...held]){remove(item);reportNotForwarded(item.req,item.res,503,'continuity_stopping','Continuity door stopped before this held request was forwarded.');item.req.resume();}await new Promise(resolve=>server.close(resolve));await new Promise(resolve=>control.close(resolve));}};
 }
 
 if(isMain(import.meta.url)){

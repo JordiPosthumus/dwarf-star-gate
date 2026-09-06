@@ -275,3 +275,13 @@ test('Door failure projection preserves fixed diagnostics without payloads or in
     assert.equal(continuityDoorForDisplay({...base,failure_evidence:invalid}).failure_evidence,null);
   }
 });
+
+test('Door retry certificates require Door source and matching allowed reason',async()=>{
+  for(const change of [{source:'gateway'},{reason:'core_connection_failed'},{code:'continuity_core_unavailable'},{call_id:randomUUID()}]){
+    let calls=0;const f=createContinuityFetch({baseUrl,wait:async()=>assert.fail('invalid Door receipt must not retry'),fetchImpl:async(_url,init)=>{
+      calls++;const id=randomUUID(),code=change.code??'continuity_hold_full';
+      return new Response(JSON.stringify({error:{type:'gateway_error',code,continuity:{schema:1,source:'continuity_door',request_id:id,call_id:init.headers.get('x-dsg-call-id'),dispatch_state:'not_dispatched',retry_class:'wait_then_retry',reason:'continuity_hold_full',...change}}}),{status:429,headers:{'x-request-id':id,'x-dsg-dispatch-state':'not_dispatched'}});
+    }});
+    assert.equal((await f(baseUrl+'/chat/completions',{method:'POST',body:'{}'})).status,429);assert.equal(calls,1);
+  }
+});
