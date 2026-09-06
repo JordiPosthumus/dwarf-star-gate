@@ -10,6 +10,12 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Completed an initial later-traffic gap-coverage check.** The frozen private
+  prefill candidate was scored without refitting on newly captured ordinary
+  traffic. It covered spans where the baseline abstained, but the cohort had no
+  shared baseline opportunities and cannot establish a comparative improvement.
+  Worker/regime, unseen-epoch and tail results stay separate; activation is closed.
+
 - **Separated forecast gap filling from baseline replacement.** The experiment
   protocol now compares shared opportunities and newly covered spans separately,
   purges unfinished training outcomes and requires a frozen combination policy

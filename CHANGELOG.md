@@ -1,5 +1,14 @@
 # Changelog
 
+## Record the first later prefill gap-coverage check
+
+- Score the frozen private candidate and baseline-first policy on later ordinary
+  traffic, preserving evaluator/model hashes and start-time feature semantics.
+- Keep an empty shared-baseline cohort explicit: added coverage has an error
+  score, but cannot establish an improvement over a missing baseline estimate.
+- Retain worker/regime and epoch-novelty partitions, tiny-cohort limits and
+  unknown metrics. No refitting, model promotion or production change.
+
 ## Separate prefill gap filling from baseline replacement
 
 - Document matched-baseline versus candidate-only comparisons and a private

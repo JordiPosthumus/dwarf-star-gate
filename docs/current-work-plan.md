@@ -139,6 +139,9 @@ is implied by this fix.
    and added coverage separately. A baseline-first gap-filling hypothesis needs
    a frozen combination policy and later evidence; engine-start features cannot
    be repurposed as admission-time inputs. No replacement or hybrid is enabled.
+   An initial frozen later-traffic check now supplies candidate-only error
+   evidence, but no shared-baseline comparison. Continue with larger, genuinely
+   later shared/cold/tail cohorts; do not retune or promote from this small sample.
 5. **Settle the gateway-only image-continuity contract.** The Pi image companion
    was withdrawn. Investigate a transparent outgoing visual window, explicit
    markers and agent-directed rereads/batching, without altering saved history.

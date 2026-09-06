@@ -128,6 +128,27 @@ freeze both model and combination policy before later traffic. Do not rename an
 inspected development partition as future validation or retune on that future
 cohort. Unknown workers and invalid features still require abstention.
 
+The first private later-traffic check has now exercised this frozen policy without
+refitting. Its eligible spans were all candidate-only: it supplies added-coverage
+error evidence, not a matched-baseline result. The sample is small and uneven
+across workers and regimes, so it does not justify activation. Deployment records,
+source captures and model artifacts remain private.
+
+For each later capture, verify model, feature-builder, evaluator, baseline and
+runtime versions against the frozen records. Use the latest applicable model,
+evaluator or combination-policy freeze as the score boundary. Retain earlier
+observations only as causal rolling-baseline history. Check that repeated samples
+cannot move their first observation later and change which labels were available.
+Instrumented row extraction must reproduce the unchanged baseline on the same
+cohort; adding candidate features must not change its estimates or eligibility.
+
+Report an empty shared partition as count zero with unknown error metrics, never
+zero error or a percentage improvement. Keep candidate-only, shared and overall
+descriptive scores separate, including worker/regime counts, known versus unseen
+training epochs and large-error behavior. A new epoch is not an independent
+session or hardware profile. Preserve the frozen candidate while gathering the
+missing shared-baseline and cold/tail evidence; any retuning begins a new study.
+
 These prefill features become available at engine start, after cache selection.
 Even a successful gap-filling experiment would initially support an updated
 component forecast, not an admission-time cache-path choice. Live activation,
