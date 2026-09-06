@@ -23,7 +23,7 @@ screenshots, benchmark results, a live incident report or a promoted model.
   showing exact removal/addition before confirmation; no live policy change.
 - `priority-settings.png`: bounded weight controls and an explicitly selected
   synthetic ten-minute eligible-wait backstop; this is not a production default.
-- `dashboard-genie.png`: current jobs and manual priorities, an open assessment, collapsible hardening suggestions below
+- `dashboard-genie.png`: current jobs and manual priorities, a synthetic pre-dispatch pool assignment receipt, an open assessment, collapsible hardening suggestions below
   the conversation, linked agent enrollment guide, recovery controls and the private
   Gate Genie notebook.
 - `dashboard-analytics.png`: local collection/embedding status, stage-specific XGB

@@ -1,20 +1,21 @@
-// Completed pool-fallback receipts only. Never conversation text or action authority.
+// Completed pool-fallback or pre-dispatch assignment receipts, in separate files. Never conversation text or action authority.
 import fs from 'node:fs';
 import path from 'node:path';
 import {validCallId} from './continuity.mjs';
 
 export const PROVIDER_LEDGER_LIMIT=16*1024*1024;
 const unavailable='Pool action history unavailable; inspect private storage. No automatic repair or deletion.';
-function receipt(value){
-  if(!value||validCallId(value.id)!==value.id||!Number.isSafeInteger(value.time)||value.time<0||value.served_by!=='pool_fallback'||
+function receipt(value,kind='pool_fallback'){
+  if(!value||validCallId(value.id)!==value.id||!Number.isSafeInteger(value.time)||value.time<0||value.served_by!==kind||
     !(value.served_on===null||typeof value.served_on==='string'&&/^[\w-]{1,64}$/.test(value.served_on)))throw new Error('Invalid receipt');
-  return {id:value.id,time:value.time,served_by:'pool_fallback',served_on:value.served_on};
+  return {id:value.id,time:value.time,served_by:value.served_by,served_on:value.served_on};
 }
 export class GenieProviderLedger {
-  constructor(directory,{maxBytes=PROVIDER_LEDGER_LIMIT,io=fs}={}){
-    this.directory=path.resolve(directory);this.file=path.join(this.directory,'pool-actions.jsonl');this.maxBytes=maxBytes;this.io=io;
+  constructor(directory,{maxBytes=PROVIDER_LEDGER_LIMIT,io=fs,kind='pool_fallback'}={}){
+    this.directory=path.resolve(directory);this.kind=kind;this.file=path.join(this.directory,kind==='pool_assigned'?'pool-assignments.jsonl':'pool-actions.jsonl');this.maxBytes=maxBytes;this.io=io;
     this.bytes=0;this.rows=[];this.seen=new Map();this.identity=null;this.error=null;this.loaded=false;
     try{
+      if(!['pool_fallback','pool_assigned'].includes(kind))throw new Error();
       if(!Number.isSafeInteger(maxBytes)||maxBytes<1||maxBytes>PROVIDER_LEDGER_LIMIT)throw new Error();
       let exists=true;try{fs.lstatSync(directory);}catch(error){if(error.code!=='ENOENT')throw error;exists=false;}
       if(exists)this.load();
@@ -49,7 +50,7 @@ export class GenieProviderLedger {
     for(const line of text.split('\n').filter(Boolean)){
       if(Buffer.byteLength(line)>512)throw new Error();const event=JSON.parse(line);
       if(event.schema!==1||Object.keys(event).sort().join(',')!=='id,schema,served_by,served_on,time')throw new Error();
-      const row=receipt(event);if(this.seen.has(row.id))throw new Error();this.apply(row);
+      const row=receipt(event,this.kind);if(this.seen.has(row.id))throw new Error();this.apply(row);
     }
     this.bytes=s.size;this.identity={dev:s.dev,ino:s.ino};
   }
@@ -57,7 +58,7 @@ export class GenieProviderLedger {
     if(this.error)return false;
     let lock,fd,saved=false;
     try{
-      const row=receipt(value),previous=this.seen.get(row.id);
+      const row=receipt(value,this.kind),previous=this.seen.get(row.id);
       if(previous!==undefined){if(previous!==JSON.stringify(row))throw new Error();return true;}
       const bytes=Buffer.from(JSON.stringify({schema:1,...row})+'\n');
       if(this.bytes+bytes.length>this.maxBytes){this.error='Pool action history storage ceiling reached; new receipts are session-only. Nothing deleted.';return false;}

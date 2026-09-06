@@ -135,6 +135,7 @@ try {
   await page.waitForFunction(()=>document.getElementById('priority-rules').value==='Synthetic preference: urgent incident response is High.');
   assert.equal(await prioritySelect.inputValue(),'Low','A general preference does not replace a manual override');
   await prioritySelect.selectOption('High');await page.waitForFunction(()=>!document.querySelector('#priority-jobs select').disabled);
+  assert.match(await page.locator('#genie-action-items').innerText(),/Pool selected before dispatch/);
   const enrollmentGuide=page.getByRole('link',{name:'Setup guide for your agent ↗'});
   assert.equal(await enrollmentGuide.count(),1);
   assert.equal(await enrollmentGuide.getAttribute('href'),'https://github.com/JordiPosthumus/dwarf-star-gate/blob/main/docs/agent-recovery-enrollment.md');

@@ -116,8 +116,12 @@ copy is hidden from screen readers.
 In the web UI, open the **Gate Genie** tab. **Enable** /
 **Turn off** controls the observer. The source dropdown chooses a dedicated-first
 policy or explicit DSG-pool use; it does not edit endpoint addresses. In dedicated-
-first mode, an explicit connection, HTTP, timeout or malformed-answer failure
-causes one attempt through the configured pool fallback. With no `genie.url`, DSG
+first mode, a new review can select fresh, free compatible DSG capacity when a
+recent dedicated attempt failed or took at least 60 seconds. Up to 16 attempt
+records are kept in memory; dedicated evidence expires after 30 minutes, so it
+survives the normal five-minute review cadence. A positively witnessed TCP refusal
+before connecting can still use the configured fallback. Timeouts, resets, HTTP
+errors and malformed answers are not non-dispatch proof and do not trigger replay. With no `genie.url`, DSG
 uses its own pool by default and Gate Genie starts enabled; no extra bot framework
 or endpoint is required. An explicitly configured dedicated endpoint automatically
 gets a bounded pool fallback unless `genie.fallback` overrides it. There is no URL/model/
@@ -132,7 +136,9 @@ two hours so long local reasoning is not mistaken for failure. Set an endpoint's
 `timeout_ms` from 1,000 through 86,400,000 milliseconds only when its hardware
 needs a different budget. The UI separately shows elapsed time and actual remaining
 allowance; it does not format a future deadline as an elapsed timestamp. A timeout
-counts as an explicit attempt failure and permits the single configured fallback.
+counts as a failed attempt with unknown backend completion; it does not permit
+a duplicate review. A subsequent new review uses fresh evidence and may select
+available pool capacity before dispatch.
 Genie inference uses a loopback-only streaming HTTP transport whose sole deadline
 is that configured allowance. It does not inherit Node's shorter built-in Fetch
 response-header deadline, so a legitimate long DS4 queue or prefill cannot defeat
@@ -184,15 +190,16 @@ in status, diagnostics or the training dataset. Turning Genie off cancels a
 queued question. A dashboard restart cannot preserve unsent question text.
 
 Status includes the sanitized attempts for the current or latest review: dedicated,
-pool or pool fallback; start/finish times; `complete`, `failed` or `cancelled`;
+pool, pre-dispatch pool assignment or proven-refusal pool fallback; start/finish times; `complete`, `failed` or `cancelled`;
 and a fixed reason category. It never includes endpoint details, credentials,
 prompts, raw responses or raw transport errors. This makes a slow provider,
 explicit fallback and failed review distinguishable without granting new powers.
 
 The same tab has a compact, reverse-chronological **Action ledger** with filters
 for pool commandeering, recovery, queue moves, predictor work and items needing
-attention. “Pool commandeering” means a dedicated-provider attempt failed and a
-completed review was proven to have used the unpinned DSG fallback; the server is
+attention. Pool rows distinguish a new review assigned before dispatch from a
+completed dedicated-provider fallback. Historical fallback rows retain their old
+meaning; they are not retroactively treated as proof of non-dispatch. The server is
 named only when the gateway returned a validated `x-ds4-node` receipt. Recovery
 and predictor rows come from their durable executor journals, queue moves from
 the bounded recent evidence reader, and completed provider fallbacks from a private
@@ -205,12 +212,16 @@ across these feeds, newest first, with filters over that window. Its count is
 explicitly available history, not a lifetime total. Recovery/predictor status
 exposes up to 30 recent receipts per feed; other actors can occupy those source
 windows before the ledger filters them out. The dashboard separately keeps 30
-small completed pool-fallback receipts so rotating full review text does not
-erase recent fallback history. These receipts now survive dashboard restarts in
+small completed pool receipts so rotating full review text does not
+erase recent provider history. These receipts now survive dashboard restarts in
 `genie/actions/pool-actions.jsonl` beside runtime state: report UUID, completion
 time, fallback kind and an observed worker ID (or unknown). Full reviews, questions,
 endpoints and action offers are never restored from this journal. This is an
 operational receipt log, separate from the optional memory notebook and its toggle.
+New `pool_assigned` receipts use a separate `pool-assignments.jsonl` file. The
+original fallback file is not rewritten or given new record kinds, preserving
+its readability by the older release. Both files retain their independent
+bounded storage and protective writer checks; the UI combines the latest 30 rows.
 
 The directory/file are mode 0700/0600. Appends are exclusive-writer guarded and
 file/directory-synced; readers reject corrupt tails, duplicate IDs and unsafe
@@ -246,16 +257,30 @@ own requests, **not production server defaults or limits on user requests**. A
 budget-exhausted answer is reported incomplete, never presented as a finished
 assessment. Existing server context, output settings and caches are unchanged.
 
-The source selector chooses dedicated-first or normal DSG-pool-only operation.
-Pool requests are deliberately unpinned: a Genie review contains its complete
-bounded live briefing, so any available DS4 server may serve it. It competes for
-one normal inference slot; first/unaffined queued-handover rules can move that
-still-undispatched call to a newly free server. Pool calls receive no private
-Genie notebook history. If the dedicated attempt fails explicitly, DSG makes one
-pool attempt and marks the report `pool_fallback`; it never combines partial model
-answers or processes actions from a failed attempt. If both fail, no report or
-action is accepted. Off cancels the local review connection; that alone does not
-prove backend execution stopped.
+The source selector chooses dedicated-preferred or DSG-pool-only operation.
+Pool requests remain unpinned and receive no private Genie notebook history.
+Fast assignment uses the exact configured DSG pool URL, matching model, fresh
+status no older than six seconds, and a healthy free worker without holds,
+quarantine or recovery. It never treats an arbitrary custom fallback as this
+known pool. Explicit pool selection retains ordinary queuing when necessary.
+
+A compatible core advertises `genie_flexible_assignment`. New ordinary Genie pool
+reviews then keep their original socket and unread body in the existing bounded
+waiting lane until a compatible worker is free. A worker pause and earlier
+assigned work remain authoritative; a cancellation removes the pending review.
+This handles a free-slot race without failing the question or reissuing its body.
+Older cores keep the prior queue behavior. The separate short Priority Lens
+classifier still uses atomic no-wait admission and abstains if capacity is busy.
+
+A `pool_assigned` report identifies a new review selected before dispatch.
+`pool_fallback` is used only after the transport witnesses a fresh TCP socket
+refusing connection before it ever connected. Partial answers and actions from a
+failed attempt are never combined with another attempt. Off cancels the local
+connection; that alone does not prove backend execution stopped.
+
+These are local source and fixture guarantees, not a claim that an existing live
+dashboard has been upgraded. Provider deadlines, output/reasoning settings,
+server configurations, cache ownership and normal request deadlines are unchanged.
 
 This is a question + fresh-briefing interface, optionally augmented by bounded
 notebook history, not a persistent multi-turn agent conversation. Twelve recent assessments live in memory and are

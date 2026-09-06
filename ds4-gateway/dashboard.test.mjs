@@ -556,6 +556,10 @@ test('Genie action ledger is concise, newest-first and includes proven pool comm
   assert.deepEqual(rows.map(row=>row.kind),['provider','recovery','routing','predictor']);
   assert.match(rows[0].title,/Pool commandeered · spark2/);assert.match(rows[1].detail,/verified profile hand-back/);assert.match(rows[2].detail,/75% prompt reused/);
   assert.equal(rows.find(row=>row.level==='attention'),undefined);assert.ok(!JSON.stringify(rows).includes('private-worker'));
+  context.genie={provider_actions:[{id:'assigned',time:9000,served_by:'pool_assigned',served_on:'spark2'},...genie.reports]};
+  const assignedRows=JSON.parse(vm.runInContext('JSON.stringify(genieActionRows(snapshot,genie,analytics))',context));
+  assert.match(assignedRows[0].detail,/Pool selected before dispatch/);assert.match(assignedRows[1].detail,/Dedicated provider unavailable/);
+  assert.doesNotMatch(assignedRows[1].detail,/refus|before dispatch/,'historical fallback rows must not gain new proof retroactively');
   const html=fs.readFileSync(new URL('./ui/index.html',import.meta.url),'utf8'),css=fs.readFileSync(new URL('./ui/brand.css',import.meta.url),'utf8');
   assert.match(html,/id="genie-action-ledger"/);assert.match(html,/Pool commandeering/);assert.match(html,/Newest first|title="Proven executor receipts/);
   assert.match(css,/\.genie-action-items li\{display:grid/);assert.match(source,/textContent=row\.detail/);assert.doesNotMatch(source,/innerHTML=.*genieActionRows/);

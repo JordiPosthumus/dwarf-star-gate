@@ -21,6 +21,12 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
   consolidation shows exact removals/additions; clarification, expiry and stale
   revision checks prevent a vague or old suggestion from silently changing policy.
 
+- **Added fast assignment for new Genie reviews.** Recent dedicated slowness or
+  failure can send a new review to free compatible pool capacity. Pending pool
+  reviews keep one socket and body until a worker is free; ambiguous dispatched
+  failures do not cause a duplicate review. Two-hour deadlines remain intact,
+  and new assignment receipts use a separate file to preserve old history.
+
 - **Moved hardening suggestions into Gate Genie.** Suggestions now sit below the
   conversation in their existing collapsible section, freeing space above every
   other tab. Newest-first ordering and saved notes retain their existing behavior.

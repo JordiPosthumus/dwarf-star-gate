@@ -55,7 +55,8 @@ test('ceiling, locked writer, partial writes and fsync failure do not block revi
     const ledger=new GenieProviderLedger(dir,{maxBytes:failure==='ceiling'?1:16384,io});
     if(failure==='lock'){fs.mkdirSync(dir,{mode:0o700});fs.writeFileSync(path.join(dir,'writer.lock'),'external',{mode:0o600});}
     const genie=new Genie({url:'http://127.0.0.1:9001/v1',fallback:{url:'http://127.0.0.1:9002/v1'}},()=>({time:Date.now(),gateway_at:Date.now(),gateway:{workers:[]},events:[],devices:[]}),{providerLedger:ledger});
-    genie.modelAnswer=async(_endpoint,{servedBy})=>{if(servedBy!=='pool_fallback')throw new Error('unavailable');return {served_by:servedBy,served_on:null,answer:JSON.stringify({assessment:'No evidence.',ticker:[{severity:'info',text:'No evidence.',recommendation:null,evidence_refs:['fleet']}]})};};
+    // Assignment policy has separate transport tests; inject its completed receipt to isolate storage failures.
+    genie.modelAnswer=async()=>({served_by:'pool_fallback',served_on:null,answer:JSON.stringify({assessment:'No evidence.',ticker:[{severity:'info',text:'No evidence.',recommendation:null,evidence_refs:['fleet']}]})});
     const state=await genie.ask();assert.equal(state.error,null);assert.equal(state.reports.length,1);assert.equal(state.provider_actions.length,1);
     assert.ok(state.provider_action_storage.error);assert.ok(!JSON.stringify(state.provider_action_storage).includes('PRIVATE_IO'));
     if(failure==='lock')assert.equal(fs.readFileSync(path.join(dir,'writer.lock'),'utf8'),'external');genie.close();
@@ -90,4 +91,13 @@ test('dangling directory/file links and nonprivate directories are not empty his
     const ledger=new GenieProviderLedger(dir);assert.ok(ledger.error);assert.equal(ledger.status().saved_receipts,null);
     assert.equal(ledger.append(record()),false);assert.equal(fs.existsSync(target),false);
   }
+});
+
+
+test('pre-dispatch assignment receipts use a separate file and preserve legacy fallback history',t=>{
+  const dir=fixture(t),fallback=new GenieProviderLedger(dir),old=record();fallback.append(old);const bytes=fs.readFileSync(fallback.file);
+  const assigned=new GenieProviderLedger(dir,{kind:'pool_assigned'}),next={...record(2000),served_by:'pool_assigned'};assert.equal(assigned.append(next),true);
+  assert.deepEqual(fs.readFileSync(fallback.file),bytes);assert.deepEqual(new GenieProviderLedger(dir).recent(),[old]);assert.deepEqual(new GenieProviderLedger(dir,{kind:'pool_assigned'}).recent(),[next]);
+  const genie=new Genie(null,()=>({gateway:{workers:[]}}),{providerLedger:new GenieProviderLedger(dir),assignmentLedger:new GenieProviderLedger(dir,{kind:'pool_assigned'})});
+  assert.deepEqual(genie.status().provider_actions,[next,old]);assert.deepEqual(genie.status().reports,[]);genie.close();
 });

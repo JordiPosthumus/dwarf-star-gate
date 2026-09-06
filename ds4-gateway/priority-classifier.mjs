@@ -1,5 +1,6 @@
+import {freeGeniePool,GENIE_ASSIGNMENT_HISTORY_MS} from './genie-assignment.mjs';
 import {StringDecoder} from 'node:string_decoder';
-import {genieLoopbackFetch} from './genie.mjs';
+import {genieLoopbackFetch} from './genie-transport.mjs';
 import {PRIORITIES,PRIORITY_REASONS} from './priority-lens.mjs';
 import {PRIORITY_REVIEW_CEILING_MS} from './priority-intent.mjs';
 
@@ -10,16 +11,13 @@ export function priorityAdvice(value){
 }
 export function priorityProvider(genie,snapshot,now=Date.now(),poolUrl=null){
   if(!genie?.enabled||genie.closed||!genie.config)return null;
-  const gateway=snapshot?.gateway;
-  const poolFree=!snapshot?.gateway_error&&Number.isFinite(snapshot?.gateway_at)&&now-snapshot.gateway_at>=0&&now-snapshot.gateway_at<=6000&&!gateway?.draining&&
-    gateway?.workers?.some(worker=>worker.is_healthy===true&&worker.load===0&&worker.queued===0&&!worker.drained&&!worker.quarantine&&!worker.recovery_waiting&&!worker.holds?.length&&!worker.maintenance_locks?.length);
-  const recent=genie.providerAttempts?.find(attempt=>attempt.provider==='dedicated'&&now-attempt.finished_at>=0&&now-attempt.finished_at<300000);
+  const recent=(genie.providerHistory??genie.providerAttempts)?.find(attempt=>attempt.provider==='dedicated'&&now-attempt.finished_at>=0&&now-attempt.finished_at<GENIE_ASSIGNMENT_HISTORY_MS);
   const slow=recent&&(recent.outcome==='failed'||recent.finished_at-recent.started_at>=PRIORITY_REVIEW_CEILING_MS);
   const dedicatedBusy=genie.busy&&genie.activeProvider==='dedicated';
   const primaryIsPool=poolUrl&&genie.config.url.replace(/\/$/,'')===poolUrl.replace(/\/$/,'');
   if(genie.source==='pool'||primaryIsPool||dedicatedBusy||slow){
     const endpoint=primaryIsPool&&genie.source!=='pool'?genie.config:genie.config.fallback;
-    if(!poolFree||!endpoint||!poolUrl||endpoint.url.replace(/\/$/,'')!==poolUrl.replace(/\/$/,''))return null;
+    if(!freeGeniePool(snapshot,endpoint,poolUrl,now))return null;
     return {endpoint,source:'pool',reason:dedicatedBusy?'dedicated_busy':slow?'recent_dedicated_delay':'pool_selected'};
   }
   return {endpoint:genie.config,source:'dedicated',reason:'dedicated_selected'};

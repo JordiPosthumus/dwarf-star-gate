@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
+import {genieNotDispatched} from './genie-transport.mjs';
 import {PriorityLens} from './priority-lens.mjs';
 import {PriorityCorrections} from './priority-corrections.mjs';
 import {Dataset,evidence} from './dataset.mjs';
@@ -295,11 +296,12 @@ test('Genie question failures remain visible and an off Genie never silently acc
   assert.equal(g.status().question.state,'failed');assert.match(g.status().question.error,/Observation failed/);
   assert.ok(!JSON.stringify(g.status()).includes('private transport details'));g.close();
 });
-test('Genie automatically borrows one unpinned pool slot after dedicated-provider failure',async()=>{
+test('Genie borrows one unpinned pool slot only after a proven pre-dispatch TCP refusal',async()=>{
+  const proof=await refusedGenieConnection();
   assert.throws(()=>new Genie({url:'http://example.com/v1'},snapshot),/loopback/);
   const memory={retrieve:()=>({notes:[{id:'private-note',revision:1,data:{text:'PRIVATE_NOTE'}}],truncated:false}),status:()=>({available:true,enabled:true})};
   const calls=[];const g=new Genie({url:'http://127.0.0.1:9001/v1',fallback:{url:'http://127.0.0.1:9002/v1'}},snapshot,{memory,fetchImpl:async(url,options)=>{
-    calls.push({url,headers:options.headers,body:JSON.parse(options.body)});if(calls.length===1)throw new Error('private details');
+    calls.push({url,headers:options.headers,body:JSON.parse(options.body)});if(calls.length===1)throw proof;
     return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(authoredReview())}}]},{headers:{'x-ds4-node':'spark2'}});
   }});
   g.setEnabled(true);await g.ask();assert.equal(calls.length,2);assert.match(calls[0].url,/9001/);assert.match(calls[1].url,/9002/);
@@ -307,13 +309,13 @@ test('Genie automatically borrows one unpinned pool slot after dedicated-provide
   assert.deepEqual(JSON.parse(calls[1].body.messages[1].content).notebook_history.notes,[]);assert.ok(!JSON.stringify(calls[1]).includes('PRIVATE_NOTE'));
   assert.equal(g.status().last_served_by,'pool_fallback');assert.equal(g.status().reports[0].served_by,'pool_fallback');assert.equal(g.status().reports[0].served_on,'spark2');assert.deepEqual(g.status().reports[0].memory_used,[]);g.close();
 });
-test('a bounded dedicated timeout aborts that attempt and borrows the pool',async()=>{
+test('a bounded dedicated timeout does not replay an ambiguous dispatched review',async()=>{
   const calls=[];const g=new Genie({url:'http://127.0.0.1:9001/v1',timeout_ms:1000,fallback:{url:'http://127.0.0.1:9002/v1'}},snapshot,{fetchImpl:async(url,options)=>{
     calls.push(url);if(calls.length===1)await new Promise((resolve,reject)=>options.signal.addEventListener('abort',()=>reject(new DOMException('Aborted','AbortError')),{once:true}));
     return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(authoredReview())}}]});
   }});
-  await g.ask();assert.equal(calls.length,2);assert.equal(g.status().last_served_by,'pool_fallback');assert.equal(g.status().error,null);
-  assert.deepEqual(g.status().provider_attempts.map(x=>[x.provider,x.outcome,x.reason]),[['pool_fallback','complete',null],['dedicated','failed','timeout']]);g.close();
+  await g.ask();assert.equal(calls.length,1);assert.equal(g.status().last_served_by,null);assert.match(g.status().error,/timed out/);
+  assert.deepEqual(g.status().provider_attempts.map(x=>[x.provider,x.outcome,x.reason]),[['dedicated','failed','timeout']]);g.close();
 });
 test('Genie loopback transport waits for delayed headers until its explicit signal and streams the response',async t=>{
   const server=http.createServer((req,res)=>{setTimeout(()=>{res.writeHead(200,{'content-type':'application/json','x-ds4-node':'spark2'});res.end('{"ok":true}');},40);});
@@ -343,10 +345,10 @@ test('Genie endpoint deadlines are bounded, default to two hours and expose live
   const g=new Genie({url:'http://127.0.0.1:9001/v1',timeout_ms:5000,fallback:{url:'http://127.0.0.1:9002/v1',timeout_ms:7000}},snapshot);
   const status=g.status();assert.equal(status.primary_timeout_ms,5000);assert.equal(status.fallback_timeout_ms,7000);assert.ok(!JSON.stringify(status).includes('9001'));g.close();
 });
-test('Genie reports failure only after both dedicated and pool providers fail',async()=>{
+test('Genie surfaces an ambiguous dedicated failure without blindly replaying it',async()=>{
   let calls=0;const g=new Genie({url:'http://127.0.0.1:9001/v1',fallback:{url:'http://127.0.0.1:9002/v1'}},snapshot,{fetchImpl:async()=>{calls++;throw new Error('private details');}});
-  g.setEnabled(true);await g.ask();assert.equal(calls,2);assert.equal(g.status().error,'Observation failed; gateway unaffected');assert.equal(g.status().consecutive_failures,1);
-  assert.deepEqual(g.status().provider_attempts.map(x=>[x.provider,x.outcome,x.reason]),[['pool_fallback','failed','transport_error'],['dedicated','failed','transport_error']]);
+  g.setEnabled(true);await g.ask();assert.equal(calls,1);assert.equal(g.status().error,'Observation failed; gateway unaffected');assert.equal(g.status().consecutive_failures,1);
+  assert.deepEqual(g.status().provider_attempts.map(x=>[x.provider,x.outcome,x.reason]),[['dedicated','failed','transport_error']]);
   g.fetch=async()=>Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(authoredReview())}}]});await g.ask();
   assert.deepEqual(g.status().provider_attempts.map(x=>[x.provider,x.outcome,x.reason]),[['dedicated','complete',null]]);assert.equal(g.status().error,null);g.close();
 });
@@ -379,4 +381,30 @@ test('Genie chat proposes scoped priority corrections without mutating settings 
   assert.equal(genie.status().reports[0].priority_proposal,undefined);assert.ok(!JSON.stringify(genie.status()).includes('PRIVATE_CHAT_TITLE'));
   await genie.ask('Routine fleet check',{kind:'scheduled'});assert.equal(JSON.parse(sent[1].messages[1].content).priority_context,undefined,'scheduled reviews do not receive private priority context');
   await corrections.confirm({proposal_id:corrections.status().proposal.id});assert.equal(lens.decision(chat).priority,'Low');genie.close();
+});
+
+async function refusedGenieConnection(){
+  const server=http.createServer();await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const port=server.address().port;await new Promise(resolve=>server.close(resolve));
+  try{await genieLoopbackFetch(`http://127.0.0.1:${port}/v1/chat/completions`,{body:'{}'});assert.fail('Expected refusal');}
+  catch(error){assert.equal(genieNotDispatched(error),true);return error;}
+}
+
+test('Genie transport does not accept forged proof or classify cancellation/reset as non-dispatch',async t=>{
+  assert.equal(genieNotDispatched(Object.assign(new Error('fake'),{code:'ECONNREFUSED',dispatch_state:'not_dispatched'})),false);
+  const aborted=new AbortController();aborted.abort();await assert.rejects(genieLoopbackFetch('http://127.0.0.1:1/v1/chat/completions',{body:'{}',signal:aborted.signal}),error=>error.name==='AbortError'&&!genieNotDispatched(error));
+  const server=http.createServer(req=>req.socket.destroy());await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>server.close());
+  await assert.rejects(genieLoopbackFetch(`http://127.0.0.1:${server.address().port}/v1/chat/completions`,{body:'{}'}),error=>!genieNotDispatched(error));
+});
+
+test('a new Genie review uses fresh free compatible pool capacity after measured dedicated slowness',async()=>{
+  const state=()=>{const s=snapshot();return {...s,gateway_at:Date.now(),gateway_error:null,gateway:{...s.gateway,model:'deepseek-v4-flash',genie_admission_version:1,genie_flexible_assignment:true,draining:false,workers:[{id:'spark2',is_healthy:true,load:0,queued:0}]}};};
+  const calls=[],g=new Genie({url:'http://127.0.0.1:9001/v1',timeout_ms:7200000,fallback:{url:'http://127.0.0.1:9002/v1',timeout_ms:7200000}},state,{poolUrl:'http://127.0.0.1:9002/v1',fetchImpl:async(url,options)=>{
+    calls.push({url,options});if(calls.length===1)g.providerStartedAt=Date.now()-90000;
+    return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(authoredReview())}}]},{headers:{'x-ds4-node':'spark2'}});
+  }});
+  await g.ask('First new review');await g.ask('Second new review with fresh evidence');
+  assert.equal(calls.length,2);assert.match(calls[0].url,/9001/);assert.match(calls[1].url,/9002/);
+  assert.equal(calls[1].options.headers['x-dsg-review-flexible'],'1');assert.equal(calls[1].options.headers['x-dsg-review-no-wait'],undefined);assert.equal(calls[1].options.headers['x-session-affinity'],undefined);
+  assert.equal(g.status().last_served_by,'pool_assigned');assert.equal(g.status().assignment.reason,'recent_dedicated_delay');assert.equal(g.status().primary_timeout_ms,7200000);assert.equal(g.status().fallback_timeout_ms,7200000);
+  assert.equal(g.status().provider_actions[0].served_by,'pool_assigned');assert.equal(JSON.parse(calls[1].options.body).max_tokens,8192);g.close();
 });

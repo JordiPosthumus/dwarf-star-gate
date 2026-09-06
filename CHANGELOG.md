@@ -1,5 +1,16 @@
 # Changelog
 
+## Assign new Genie reviews quickly without ambiguous replay
+
+- Prefer fresh free compatible pool capacity after recent dedicated slowness or
+  failure, using bounded timing history that survives the review cadence.
+- Keep undispatched pool reviews flexible in the core waiting lane with their
+  original body/socket/deadlines; preserve holds, active work and cancellation.
+- Permit fallback only after a witnessed never-connected TCP refusal. Preserve
+  provider deadlines, model settings and existing explicit pool queue capability.
+- Keep completed pre-dispatch assignment receipts in a separate journal so older
+  fallback history remains readable. Add native transport and dispatch fixtures.
+
 ## Review and confirm priority corrections from Genie chat
 
 - Let manual chat questions propose conversation-only priorities or explicit

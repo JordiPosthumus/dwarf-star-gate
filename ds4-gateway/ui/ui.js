@@ -771,10 +771,10 @@ function renderGenieReports(reports = []) {
 function genieActionRows(snapshot,genie,analytics) {
   const clean=value=>String(value??'').replaceAll('_',' ').replace(/\s+/g,' ').trim().slice(0,240);
   const rows=[];
-  for(const report of genie?.provider_actions??genie?.reports??[])if(report.served_by==='pool_fallback'&&Number.isFinite(report.time))rows.push({
+  for(const report of genie?.provider_actions??genie?.reports??[])if(['pool_fallback','pool_assigned'].includes(report.served_by)&&Number.isFinite(report.time))rows.push({
     id:`provider:${report.id}`,kind:'provider',at:report.time,level:'good',
     title:`Pool commandeered${report.served_on?` · ${clean(report.served_on)}`:''}`,
-    detail:`Dedicated provider unavailable · review completed${report.served_on?' on the named DSG server':' on an unpinned DSG slot; exact server unproven'}`
+    detail:`${report.served_by==='pool_assigned'?'Pool selected before dispatch':'Dedicated provider unavailable'} · review completed${report.served_on?' on the named DSG server':' on an unpinned DSG slot; exact server unproven'}`
   });
   for(const op of snapshot?.gateway?.recovery?.operations??[])if(op.actor==='genie'&&Number.isFinite(op.updated_at??op.created_at)){
     const state=clean(op.state),good=['recovered','verified paused'].includes(state),attention=['failed','reconciliation needed'].includes(state);
@@ -798,7 +798,7 @@ function renderGenieActionLedger() {
   const rows=genieActionRows(wireSnapshot,genieState,analyticsState),filter=$('genie-action-filter')?.value??'all';
   const visible=rows.filter(row=>filter==='all'?true:filter==='attention'?row.level==='attention':row.kind===filter),attention=rows.filter(row=>row.level==='attention').length;
   $('genie-action-summary').textContent=rows.length?`${visible.length} shown · latest ${rows.length} available / 30 · newest first${attention?` · ${attention} need attention`:''}`:'No evidenced Genie actions yet';
-  const storageError=genieState?.provider_action_storage?.error;
+  const storageError=genieState?.provider_action_storage?.error||genieState?.provider_assignment_storage?.error;
   if(storageError)$('genie-action-summary').textContent+=' · pool history not saved';
   $('genie-action-summary').title=storageError?'Pool action storage needs attention; new receipts remain session-only. Inspect Genie status. Nothing was deleted.':'';
   const signature=JSON.stringify([filter,visible]);if(signature===genieLedgerSignature)return;
@@ -926,9 +926,9 @@ async function genieAction(input) {
 async function loadGenie() {
   try {const r=await fetch('/api/genie',{signal:AbortSignal.timeout(5000)});if(!r.ok)throw new Error();const s=await r.json();genieToken=s.csrf_token;genieState=s;wireState={...s.ticker,provider_attempts:s.provider_attempts};
     if(wireSnapshot)renderHealthWire(wireSnapshot);
-    const now=Date.now(),activeProvider=s.active_provider==='pool_fallback'?'DSG pool fallback':s.active_provider==='pool'?'DSG pool':'dedicated provider',providerProgress=s.busy&&s.provider_started_at?`${activeProvider} · ${age(s.provider_started_at,now)} elapsed${s.provider_deadline_at?` · deadline in ${remaining(s.provider_deadline_at,now)}`:''}`:null;
+    const now=Date.now(),activeProvider=s.active_provider==='pool_fallback'?'DSG pool fallback':['pool','pool_assigned'].includes(s.active_provider)?'DSG pool':'dedicated provider',providerProgress=s.busy&&s.provider_started_at?`${activeProvider} · ${age(s.provider_started_at,now)} elapsed${s.provider_deadline_at?` · deadline in ${remaining(s.provider_deadline_at,now)}`:''}`:null;
     const q=s.question,qtext=q?.state==='queued'?(s.review_kind==='action'?'Your question is queued behind an evidence-gated action review':'Your question is queued; a routine review is being yielded'):q?.state==='answering'?`Answering your question · ${providerProgress??'provider starting…'}`:q?.state==='answered'?`Question answered ${age(q.finished_at,now)}`:['failed','cancelled'].includes(q?.state)?`Question ${q.state}: ${q.error}`:null;
-    const provider=s.last_served_by==='pool_fallback'?' · dedicated provider failed; last review borrowed a DSG pool slot':s.last_served_by==='pool'?' · last review used the DSG pool':s.last_served_by==='dedicated'?' · last review used the dedicated provider':'';
+    const provider=s.last_served_by==='pool_assigned'?' · last review was assigned to free DSG capacity before dispatch':s.last_served_by==='pool_fallback'?' · last review used fallback after a proven connection refusal':s.last_served_by==='pool'?' · last review used the DSG pool':s.last_served_by==='dedicated'?' · last review used the dedicated provider':'';
     const attempts=(s.provider_attempts||[]).slice(0,s.error&&s.fallback_available?2:1),attemptText=attempts.length?` · ${attempts.map(attempt=>`${attempt.provider.replaceAll('_',' ')} ${attempt.outcome}${attempt.reason?` (${attempt.reason.replaceAll('_',' ')})`:''}`).join(' · ')}`:'';
     $('genie-status').textContent=!s.configured?'Not configured':!s.enabled?'Off · enable Gate Genie before asking':qtext||(s.error?`${s.error}${attemptText}`:(s.busy?`Scheduled fleet review · ${providerProgress??'provider starting…'}`:`Enabled · last review ${age(s.last_check,now)}${provider}${attemptText}`));
     $('genie-mode').textContent=[s.action_supervision?'evidence-gated actions':'observation',s.predictor_supervision?'predictor supervision':''].filter(Boolean).join(' · ');

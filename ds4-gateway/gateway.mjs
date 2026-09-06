@@ -348,7 +348,7 @@ export function createGateway(config,{visionTranscode,priorityRandom}={}) {
   const auth = Buffer.from(`Bearer ${config.api_key}`);
   const lastOperatorAction=id=>[...(store.data.operator_actions??[])].reverse().find(action=>action.workers.includes(id))??null;
   const stats = () => ({ version: 1, agent_api_version:1, maintenance_lock_version:1,client_watch_version:1,client_watch:clientWatch.snapshot(), model: config.model, context_length: contextLimit(), queue_timeout_ms:queueTimeoutMs(), request_timeout_ms:config.request_timeout_ms??360000000, draining,startup:{...startup}, dataset:{...dataset.snapshot(),embedding_collection:embeddings.snapshot()}, routing_shadow:shadow.snapshot(),fallback_tiebreak_shadow:{...fallbackTieBreak},recovery:recovery.status(),predictor:predictor.status(),protections:visionProtection.status(),
-    priority_lens:priorityStatus(),calibration:calibrationPreflight(nodes,{draining}),continuity:{schema:1,recent_rejections:rejections.slice(0,20),safe_retry_contract:true,queued_relocation:true,automatic_relocation:true,automatic_relocation_scope:automaticRelocationScope,automatic_affinity_rebalance_min_wait_ms:automaticAffinityWait,patient_wait:true,
+    genie_admission_version:1,genie_flexible_assignment:true,priority_lens:priorityStatus(),calibration:calibrationPreflight(nodes,{draining}),continuity:{schema:1,recent_rejections:rejections.slice(0,20),safe_retry_contract:true,queued_relocation:true,automatic_relocation:true,automatic_relocation_scope:automaticRelocationScope,automatic_affinity_rebalance_min_wait_ms:automaticAffinityWait,patient_wait:true,
       relocation:{completed:relocation.completed,rejected:relocation.rejected,offers:relocationOffers().length,genie_enabled:config.genie_load_balancing!==false,genie_offers:genieRelocationOffers(),diagnostics:relocationDiagnostics(),last:relocation.last},
       waiting:waiting.length,oldest_wait_seconds:waiting.length?Math.max(0,(performance.now()-waiting[0].createdMono)/1000):null,
       waiting_reasons:Object.fromEntries([...new Set(waiting.map(j=>j.waitReason))].map(reason=>[reason,waiting.filter(j=>j.waitReason===reason).length]))},
@@ -564,6 +564,7 @@ export function createGateway(config,{visionTranscode,priorityRandom}={}) {
     clientWatch.observeRequest(job.watchId,job.id,'queued');
     evaluateShadow(node,job,wasAdmitted?'worker_free':'admission');schedule(node);
   }
+  const freeGenieNode=()=>nodes.filter(node=>node.healthy&&!node.drained&&!node.quarantine&&!node.recovering&&!node.removed&&!node.active&&!node.queue.length&&!parkedFor(node).length).sort((a,b)=>store.count(a.id)-store.count(b.id)||a.id.localeCompare(b.id))[0];
   function pumpWaiting() {
     if(shuttingDown)return;
     observePriority();
@@ -572,6 +573,7 @@ export function createGateway(config,{visionTranscode,priorityRandom}={}) {
     for(const job of [...waiting]){
       if(job.cancelled)continue;
       heartbeat(job);
+      if(job.genieFlexible){const free=freeGenieNode();if(free)admit(job,free);else job.waitReason='no_ready_worker';continue;}
       if(job.key&&waiting.some(j=>j!==job&&j.sequence<job.sequence&&j.key===job.key)){job.waitReason='same_session_queued';continue;}
       const home=job.key&&store.get(job.key),outstanding=sessionWork(nodes,job.key);
       let node=job.fixedHome??(home&&nodes.find(n=>n.id===home.node));
@@ -644,6 +646,7 @@ export function createGateway(config,{visionTranscode,priorityRandom}={}) {
     // are intentionally unauthenticated behind loopback or an SSH tunnel, so
     // the ingress secret must never cross the worker boundary.
     delete headers.authorization;
+    delete headers['x-dsg-review-flexible']; // Core-owned undispatched assignment only.
     delete headers['x-dsg-review-no-wait']; // Advisory admission option only.
     delete headers[PRIORITY_INTENT_HEADER]; // Private advisory correlation, never DS4 input.
     delete headers[CLIENT_METADATA_HEADER]; // DSG hint only; never a DS4 setting.
@@ -976,6 +979,8 @@ export function createGateway(config,{visionTranscode,priorityRandom}={}) {
       res.on('close', () => probe.destroy());
       return;
     }
+    const genieFlexible=trafficClass==='genie'&&!key&&req.headers['x-dsg-review-flexible']==='1';
+    if(genieFlexible){node=freeGenieNode();waitReason=node?null:'no_ready_worker';}
     if(trafficClass==='genie'&&req.headers['x-dsg-review-no-wait']==='1'){
       // Check atomically at admission. A previously free snapshot cannot grant
       // permission to put an advisory review behind user work after a race.
@@ -983,7 +988,7 @@ export function createGateway(config,{visionTranscode,priorityRandom}={}) {
     }
     if ((node&&node.queue.length+parkedFor(node).length>=queueBound())||(!node&&waiting.length>=waitingBound()))return reject(req,res,429,'queue_full','DSG waiting capacity is full; request was not dispatched. Wait for capacity or use the patient client adapter.',{id:requestId,callId,key,node,reason:'queue_full'});
     const job = { req, res, key, affinity, id:requestId,callId,watchId, sequence:sequence++,admissionMetadata,created: Date.now(), createdMono:performance.now(), cancelled: false,queueTimeoutMs:queueTimeoutMs(),
-      trafficClass };
+      trafficClass,genieFlexible };
     job.priorityIntentId=req.headers[PRIORITY_INTENT_HEADER];
     priorityIntents?.bind(job.priorityIntentId,job);
     const cancel = () => {
@@ -1083,7 +1088,7 @@ export function createGateway(config,{visionTranscode,priorityRandom}={}) {
     if (node.ssh) node.stopTunnel = superviseTunnel(node, () => shuttingDown || node.removed);
   };
   const registry = () => ({ model: config.model, minimum_context: contextLimit(), context_limit_control:true,
-    priority_lens:priorityStatus(),
+    genie_admission_version:1,genie_flexible_assignment:true,priority_lens:priorityStatus(),
     context_limit_source:store.data.pool_context_length === undefined ? 'config' : 'saved',
     queue_timeout_ms:queueTimeoutMs(),queue_timeout_control:true,queue_timeout_source:store.data.queue_timeout_ms!==undefined?'saved':config.queue_timeout_ms!==undefined?'config':'default',
     recovery:recovery.status(),protections:visionProtection.status(),queued_relocation:{schema:1,automatic:true,automatic_scope:automaticRelocationScope,automatic_affinity_rebalance_min_wait_ms:automaticAffinityWait,offers:relocationOffers(),diagnostics:relocationDiagnostics(),completed:relocation.completed,rejected:relocation.rejected},

@@ -7,7 +7,7 @@ import {PriorityLens} from './priority-lens.mjs';
 import {PriorityIntents,priorityEnvelope} from './priority-intent.mjs';
 
 const fixtureGenie=()=>({config:{url:'http://127.0.0.1:10001/v1',api_key:'fixture',fallback:{url:'http://127.0.0.1:10002/v1',api_key:'fixture'}},enabled:true,source:'primary',busy:false,providerAttempts:[]});
-const snapshot=(now=100000)=>({gateway_at:now,gateway_error:null,gateway:{draining:false,workers:[{is_healthy:true,load:0,queued:0,drained:false}]}});
+const snapshot=(now=100000)=>({gateway_at:now,gateway_error:null,gateway:{model:'deepseek-v4-flash',genie_admission_version:1,draining:false,workers:[{is_healthy:true,load:0,queued:0,drained:false}]}});
 const response=advice=>({ok:true,body:Readable.from([JSON.stringify({choices:[{finish_reason:'stop',message:{content:JSON.stringify(advice)}}]})])});
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 function rig(fetchImpl){

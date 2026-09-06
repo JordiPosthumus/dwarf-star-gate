@@ -1953,3 +1953,30 @@ test('Priority preferences preserve Unicode split across control-socket chunks',
   });
   assert.equal(status.code,200);assert.deepEqual(status.body.rules,rules);assert.deepEqual(r.gateway.store.data.priority_lens.rules,rules);
 });
+
+test('Fast Genie keeps one undispatched review flexible and uses the first compatible worker to become free',async t=>{
+  const r=await rig(t,2),first=r.request(JSON.stringify({stream:true,fixture_hold_stream:true}),'busy-one');await until(()=>r.backends[0].heldStreams?.length===1);
+  const second=r.request(JSON.stringify({stream:true,fixture_hold_stream:true}),'busy-two');await until(()=>r.backends[1].heldStreams?.length===1);
+  const body=JSON.stringify({messages:[{role:'user',content:'Synthetic independent review'}],reasoning_effort:'low',max_tokens:8192});
+  const review=r.request(body,null,{headers:{'x-dsg-observer':'gate-genie','x-dsg-review-flexible':'1'}});
+  await until(()=>r.gateway.stats().continuity.waiting===1);
+  try{
+    assert.equal(r.gateway.stats().genie_flexible_assignment,true);assert.equal(r.gateway.stats().genie_admission_version,1);
+    assert.ok(r.gateway.nodes.every(node=>node.queue.length===0));assert.ok(r.backends.every(backend=>backend.records.length===1),'pending review did not reach either worker');
+    r.backends[1].heldStreams.shift()();const result=await review;assert.equal(result.headers['x-ds4-node'],'spark2');
+    assert.equal(r.backends[1].records[1].body.toString(),body);assert.equal(r.backends[1].records[1].headers['x-dsg-review-flexible'],undefined);
+    assert.equal(r.backends[0].records.length,1);assert.ok(r.gateway.nodes[0].active,'existing active work was not interrupted');assert.equal(r.backends[1].peak,1);
+  }finally{for(const backend of r.backends)for(const finish of backend.heldStreams.splice(0))finish();await Promise.allSettled([first,second,review]);}
+});
+
+test('Fast Genie respects a paused free worker and drops a cancelled pending review without dispatch',async t=>{
+  const r=await rig(t,2);r.gateway.drainNodes(['spark2'],true);
+  const running=r.request(JSON.stringify({stream:true,fixture_hold_stream:true}),'busy');await until(()=>r.backends[0].heldStreams?.length===1);
+  const controller=new AbortController(),review=fetch(`http://127.0.0.1:${r.address.port}/v1/chat/completions`,{method:'POST',headers:{authorization:'Bearer none','content-type':'application/json','x-dsg-observer':'gate-genie','x-dsg-review-flexible':'1'},body:'{}',signal:controller.signal});
+  const rejected=assert.rejects(review,error=>error.name==='AbortError');
+  try{
+    await until(()=>r.gateway.stats().continuity.waiting===1);assert.equal(r.backends[1].records.length,0);
+    controller.abort();await rejected;await until(()=>r.gateway.stats().continuity.waiting===0);
+    assert.equal(r.backends[0].records.length,1);assert.equal(r.backends[1].records.length,0);assert.ok(r.gateway.nodes[0].active);
+  }finally{controller.abort();for(const finish of r.backends[0].heldStreams.splice(0))finish();await Promise.allSettled([running,rejected]);}
+});

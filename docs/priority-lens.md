@@ -76,7 +76,7 @@ opt-in to stop client-side capture/transmission entirely.
 
 The dashboard classifier requires local management capability and enabled Genie.
 It checks fresh available pool capacity before claiming work. A busy dedicated
-Genie or a recent measured dedicated failure/long review can select the free
+Genie or a measured dedicated failure/long review within 30 minutes can select the free
 compatible pool for this new advisory request. A core admission check refuses
 pool classification if the slot has become busy in the meantime. The review is
 not placed behind user work and is never replayed on another provider after an
@@ -84,8 +84,9 @@ ambiguous dispatched attempt.
 
 A core-owned lease rejects replies at **60 seconds**, independently of the
 classifier's own deadline. Inference adds **zero normal wait** for this advice.
-Normal Genie review deadlines, model settings and fallback behavior are not
-changed by this separate classifier. Its status keeps bounded outcome/timing
+Normal Genie review deadlines and model settings are not changed by this separate
+classifier. Ordinary Genie now has its own [fast assignment](observer.md) path
+for new reviews; ambiguous dispatched failures are not replayed. Its status keeps bounded outcome/timing
 metadata, never its model input or response.
 
 The preference editor stores up to 30 explicitly saved single-line rules, each
