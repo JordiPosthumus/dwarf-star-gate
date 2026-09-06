@@ -356,3 +356,23 @@ tool effect, then reopens the retained failed first receipt and verified second
 receipt. The native and courtesy package checks also pass; previous archives and
 source hashes are preserved. Network failures and advice remain synthetic, so
 live outage validation is still outstanding.
+
+### Recorded tool outcome evidence — source only
+
+The private native candidate now observes tool requests, starts, final outcomes
+and transcript results, retaining identifiers and digests instead of copying tool
+arguments or results. It reconciles those events against the fresh native
+transcript, the exact completed model responses, and the model-facing context
+after context transforms. A completed batch followed by certified empty failed
+requests can be distinguished from changed, missing, duplicate or failed tool
+results, partial responses and unknown failures. Native retry attempts remain
+accounted for. Eighty-eight focused and outage regression cases pass, including
+actual SDK tool execution; network responses remain synthetic.
+
+This evidence grants no continuation or replay authority. Existing admission
+still refuses runs containing tool activity. A distinct review/admission path,
+accepted-cue progress accounting and installed-package/live validation remain
+necessary. The previously verified package does not contain this follow-up.
+Synthetic cost measurements also show that hashing large results has measurable
+overhead; end-to-end impact has not been established and this observer has not
+been activated in normal Pi.
