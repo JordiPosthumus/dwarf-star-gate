@@ -13,14 +13,15 @@ export function proactiveOutageReady(snapshot,model,now=Date.now()){
 }
 
 /** Local trusted-host assembly. Files and inference start only after task approval. */
-export function proactiveResumeLocalOptions({gatewayBaseUrl,receiptRoot,ReceiptStore,getReviewState,enrollmentMs,attemptBudget,fetchImpl,outageResume=false}={}){
+export function proactiveResumeLocalOptions({gatewayBaseUrl,receiptRoot,ReceiptStore,getReviewState,enrollmentMs,attemptBudget,fetchImpl,outageResume=false,recordedToolOutageResume=false}={}){
   const gateway=new URL(gatewayBaseUrl);
   if(gateway.protocol!=='http:'||gateway.hostname!=='127.0.0.1'||gateway.username||gateway.password||gateway.search||gateway.hash||!['/v1','/v1/'].includes(gateway.pathname))throw new Error('Explicit local DSG gateway required');
   if(!isAbsolute(receiptRoot)||typeof ReceiptStore?.create!=='function'||typeof ReceiptStore?.open!=='function'||typeof getReviewState!=='function')throw new Error('Local receipt owner and review state required');
   if(!Number.isSafeInteger(enrollmentMs)||enrollmentMs<1||enrollmentMs>24*60*60*1000||!Number.isInteger(attemptBudget)||attemptBudget<1||attemptBudget>10)throw new Error('Explicit bounded enrollment limits required');
+  if(typeof recordedToolOutageResume!=='boolean'||(recordedToolOutageResume&&!outageResume))throw new Error('Recorded-tool recovery requires separate explicit outage enrollment');
   if(typeof outageResume!=='boolean')throw new Error('Explicit outage enrollment option required');
   return proactiveResumeMainOptions({
-    ...(outageResume?{observeSession:session=>session.model?.baseUrl===gatewayBaseUrl&&typeof session.installContinuationTransportObserver==='function'?session.installContinuationTransportObserver({gatewayBaseUrl,createObserver:createCorrelatedContinuityAttemptObserver}):null}:{}),
+    ...(outageResume?{observeSession:session=>session.model?.baseUrl===gatewayBaseUrl&&typeof session.installContinuationTransportObserver==='function'?session.installContinuationTransportObserver({gatewayBaseUrl,observeRecordedTools:recordedToolOutageResume,createObserver:createCorrelatedContinuityAttemptObserver}):null}:{}),
     getEnrollmentOptions:async session=>{
     if(session.model?.baseUrl!==gatewayBaseUrl)throw new Error('This session does not use the configured DSG gateway');
     const initial=await getReviewState({signal:AbortSignal.timeout(5000)});
@@ -30,7 +31,7 @@ export function proactiveResumeLocalOptions({gatewayBaseUrl,receiptRoot,ReceiptS
     const reviewer=new ProactiveResumeReviewer({genie,snapshot:()=>snapshot,poolUrl:gatewayBaseUrl,...(fetchImpl?{fetchImpl}:{})});
     let preparing=false,statePending=false;
     return {gatewayBaseUrl,providers:unique,expiresAt:Date.now()+enrollmentMs,attemptBudget,
-      allowUndispatchedOutage:outageResume,
+      allowUndispatchedOutage:outageResume,allowRecordedToolOutage:recordedToolOutageResume,
       outageReady:async({signal}={})=>{
         if(statePending||preparing)return false;
         const stateSignal=AbortSignal.any([AbortSignal.timeout(5000),...(signal?[signal]:[])]);

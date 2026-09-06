@@ -4,6 +4,7 @@ import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {proactiveResumeLocalOptions,proactiveOutageReady} from './proactive-resume-local.mjs';
+import {enrollProactiveResume} from './proactive-resume-enrollment.mjs';
 
 test('outage readiness requires fresh compatible service evidence and respects holds',()=>{
   const now=10000,model={id:'fixture',contextWindow:262144};
@@ -67,4 +68,21 @@ test('capacity waiting shares the sixty-second ceiling and never queues a model 
   const r=await rig(t,{nextState:state=>({...state,snapshot:{...state.snapshot,gateway:{...state.snapshot.gateway,workers:[{is_healthy:true,load:1,queued:0}]}}})});
   await r.run('proactive-resume');await turn();t.mock.timers.tick(60000);await turn();
   assert.equal(r.stats().fetches,0);assert.match(r.statuses.at(-1),/review unavailable/);
+});
+
+test('recorded-tool recovery is separate from the existing outage opt-in',()=>{
+  const base={gatewayBaseUrl:'http://127.0.0.1:19999/v1',receiptRoot:'/tmp/synthetic-receipts',ReceiptStore:{create(){},open(){}},getReviewState:async()=>({}),enrollmentMs:60000,attemptBudget:2};
+  assert.throws(()=>proactiveResumeLocalOptions({...base,recordedToolOutageResume:true}),/separate explicit/);
+  assert.throws(()=>proactiveResumeLocalOptions({...base,outageResume:true,recordedToolOutageResume:'true'}),/separate explicit/);
+});
+
+test('recorded-tool enrollment refuses an older native package and discloses the extra policy before approval',async()=>{
+  const task={role:'user',content:'Complete a synthetic task'},endpoint={url:'http://127.0.0.1:19999/v1',model:'fixture'};
+  let selections=0,creates=0,title;
+  const session={sessionId:'fixture',model:{baseUrl:endpoint.url},messages:[task,{role:'assistant',content:'Shall I continue?'}],prepareContinuationEnrollment:()=>({cancel(){},activate(){throw new Error('No approval expected');}})};
+  const options={session,taskMessage:task,gatewayBaseUrl:endpoint.url,providers:[endpoint],expiresAt:Date.now()+60000,attemptBudget:2,allowUndispatchedOutage:true,allowRecordedToolOutage:true,outageObservation:{inspect:()=>({recordedToolObservation:true}),close(){}},outageReady:async()=>true,createReceipts:async()=>{creates++;},ui:{select:async value=>{selections++;title=value;return 'Keep disabled';}}};
+  assert.deepEqual(await enrollProactiveResume(options),{state:'blocked',reason:'recorded_tool_policy_unavailable'});assert.equal(selections,0);
+  session.continuationPolicies=['recorded_tool_outage'];
+  assert.deepEqual(await enrollProactiveResume({...options,outageObservation:{inspect:()=>({recordedToolObservation:false}),close(){}}}),{state:'blocked',reason:'recorded_tool_policy_unavailable'});
+  assert.deepEqual(await enrollProactiveResume(options),{state:'declined'});assert.match(title,/completed tool work/);assert.match(title,/Hashing tool results adds local CPU work/);assert.equal(creates,0);
 });

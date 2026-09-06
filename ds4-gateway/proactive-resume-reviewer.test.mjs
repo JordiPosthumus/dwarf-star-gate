@@ -234,3 +234,24 @@ for(const [verdict,reason] of [['no_progress','no_new_task_work'],['human_input'
     assert.deepEqual((await reviewer.reviewProgress(progressInput(),disclosure)).advice,answer);
   });
 }
+
+test('recorded-tool recovery uses its own review policy and requires a recorded-result citation',async()=>{
+  const value={...input(),trigger:'recorded_tool_outage',recorded_tool_message_ids:['recorded'],messages:[input().messages[0],{id:'recorded',role:'tool',text:'Recorded successful synthetic result'},{id:'assistant-last',role:'assistant',text:'{"native_response":{"stop_reason":"error","content":[]}}'}]};
+  const answer={verdict:'continue',reason:'recorded_tool_recovery',evidence:['user-task','recorded','assistant-last']};
+  const {reviewer,calls}=setup(answer);assert.deepEqual((await reviewer.review(value,disclosure)).advice,answer);
+  assert.match(JSON.parse(calls[0].body).messages[0].content,/recorded tool work/);
+  assert.throws(()=>resumeAdvice({...answer,reason:'outage_recovery'},value));
+  assert.throws(()=>resumeAdvice({...answer,reason:'courtesy_check_in'},value));
+  assert.throws(()=>resumeAdvice({...answer,evidence:['user-task','assistant-last']},value));
+  assert.throws(()=>resumeReviewInput({...value,recorded_tool_message_ids:['assistant-last']}));
+  assert.throws(()=>resumeReviewInput({...value,recorded_tool_message_ids:[]}));
+  assert.throws(()=>resumeReviewInput({...value,recorded_tool_message_ids:['recorded','recorded']}));
+});
+
+test('progress after recorded-tool outage cites a real result after its own cue',()=>{
+  const review=progressReviewInput({...progressInput(),trigger:'recorded_tool_outage',recorded_tool_message_ids:['new-result']});
+  const answer={verdict:'progress',reason:'new_task_work',evidence:['user-task','cue','new-result']};
+  assert.deepEqual(progressAdvice(answer,review),answer);
+  assert.throws(()=>progressAdvice({...answer,evidence:['user-task','cue','final']},review));
+  assert.throws(()=>progressReviewInput({...progressInput(),trigger:'undispatched_outage'}));
+});

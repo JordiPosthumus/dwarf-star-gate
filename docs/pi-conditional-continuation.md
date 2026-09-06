@@ -347,7 +347,7 @@ run subsequently settles with complete no-dispatch evidence. Its progress ticket
 carries the outage trigger. Native `reconcileUndispatched` checks ownership,
 freshness and evidence before and after the journal write, retaining the receipt
 as `failed`. It neither deletes the attempt nor refunds its budget. Unknown or
-reopened ambiguous receipts cannot use this path, and an outage ticket cannot be
+reopened ambiguous receipts cannot use this path, and a no-dispatch ticket cannot be
 confirmed as successful progress. The bridge then requests fresh outage advice
 before a new attempt. Tests cover a second failure, one eventual tool effect,
 budget exhaustion and input during the write. A new isolated package now includes
@@ -357,7 +357,7 @@ receipt. The native and courtesy package checks also pass; previous archives and
 source hashes are preserved. Network failures and advice remain synthetic, so
 live outage validation is still outstanding.
 
-### Recorded tool outcome evidence — source only
+### Recovery after recorded tool work — source only
 
 The private native candidate now observes tool requests, starts, final outcomes
 and transcript results, retaining identifiers and digests instead of copying tool
@@ -366,13 +366,36 @@ transcript, the exact completed model responses, and the model-facing context
 after context transforms. A completed batch followed by certified empty failed
 requests can be distinguished from changed, missing, duplicate or failed tool
 results, partial responses and unknown failures. Native retry attempts remain
-accounted for. Eighty-eight focused and outage regression cases pass, including
-actual SDK tool execution; network responses remain synthetic.
+accounted for. Observation alone grants no continuation or replay authority.
 
-This evidence grants no continuation or replay authority. Existing admission
-still refuses runs containing tool activity. A distinct review/admission path,
-accepted-cue progress accounting and installed-package/live validation remain
-necessary. The previously verified package does not contain this follow-up.
-Synthetic cost measurements also show that hashing large results has measurable
-overhead; end-to-end impact has not been established and this observer has not
-been activated in normal Pi.
+The local host now has a separate `recordedToolOutageResume` option, defaulting
+to false and requiring `outageResume`. It enables the additional native tool
+observation before work starts. Task enrollment explicitly discloses this policy
+and its hashing cost. Existing no-tool outage enrollment is not expanded. Older
+native packages that lack the policy, or observation that began without it,
+cannot enroll this mode. The extra tool/context/response hashes are not computed
+when this option is off; ordinary no-tool observation remains available.
+
+Native admission issues a distinct `recorded_tool_outage` ticket only after
+reconciliation, and checks it again around acceptance. Its attributed cue tells
+Pi to use recorded results and continue the unfinished task without repeating
+completed actions. Genie advice uses a separate reason and must cite a recorded
+tool result. Service readiness, input, drafts, revocation and receipt guards
+remain in force. The native runtime continues with the existing transcript; it
+does not resubmit the old tool calls. This does not certify a real model's future
+choice of actions.
+
+If an accepted cue did tool work before the outage, its receipt requires a
+progress review citing a result after that cue. It cannot be reconciled as never
+dispatched. Verified progress retains the receipt and consumed attempt; uncertain
+progress stops further cues. A later continuation requires fresh outage advice.
+
+The initialized terminal test verifies explicit approval, one tool effect,
+restoration waiting, one continuation and receipt reopen. The accepted-cue test
+verifies two cues, one effect and both progress receipts. In total, 105 focused
+native cases and 36 admission/journal regressions pass, along with portable
+reviewer/host tests and the native repository check. HTTP and Genie responses are
+synthetic. The previous package is preserved and lacks this follow-up; a new
+installed-package check and real-model/outage validation remain outstanding.
+Synthetic measurements show measurable hashing overhead, with end-to-end impact
+still unverified. Normal Pi and production settings have not been changed.

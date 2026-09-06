@@ -17,7 +17,8 @@ function reviewText(message){
 /** Text snapshot of the full effective Pi context; never silently truncates it. */
 export function piResumeReviewInput(messages,taskIndex,ticket){
   return resumeReviewInput({scope_id:ticket.scopeId,ticket_id:ticket.id,task_message_id:'m'+taskIndex,
-    ...(ticket.trigger==='undispatched_outage'?{trigger:ticket.trigger}:{}),
+    ...(['undispatched_outage','recorded_tool_outage'].includes(ticket.trigger)?{trigger:ticket.trigger}:{}),
+    ...(ticket.trigger==='recorded_tool_outage'?{recorded_tool_message_ids:messages.flatMap((message,index)=>message.role==='toolResult'&&message.isError===false?['m'+index]:[])}:{}),
     messages:messages.map((message,index)=>{
       const role=message.role==='toolResult'||message.role==='custom'?'tool':message.role;
       if(!['user','assistant','tool'].includes(role))throw new Error('Unsupported review message');
@@ -41,7 +42,7 @@ export class ProactiveResumePi {
     if(consent?.reviewText!==true||!Array.isArray(consent.providers)||!consent.providers.length||consent.providers.length>2||consent.providers.some(p=>typeof p.url!=='string'||typeof p.model!=='string'||!p.model.trim()))throw new Error('Explicit content and provider consent required');
     this.session=session;this.control=control;this.reviewer=reviewer;this.scopeId=scopeId;
     this.reviewProgress=consent.reviewProgress===true;this.progressTask=null;this.nextReview=null;
-    this.reviewOutage=consent.reviewOutage===true;this.outageReady=outageReady;
+    this.reviewOutage=consent.reviewOutage===true;this.reviewRecordedToolOutage=consent.reviewRecordedToolOutage===true;this.outageReady=outageReady;
     this.started=false;this.outageRetry=null;
     this.providers=consent.providers.map(({url,model})=>({url,model}));
     this.sessionId=session.sessionId;this.taskIndex=session.messages.indexOf(taskMessage);
@@ -97,6 +98,7 @@ export class ProactiveResumePi {
         if(!this.closed)this.nextReview=setImmediate(()=>{this.nextReview=null;void this.runOnce().catch(()=>this.record({state:'blocked',reason:'bridge_failed'}));});
         return outcome;
       }
+      if(ticket.trigger==='recorded_tool_outage'&&(!this.reviewOutage||!this.reviewRecordedToolOutage))return this.record({state:'blocked',reason:'recorded_tool_outage_not_enrolled'});
       const cueIndex=this.session.messages.findIndex(message=>message.role==='custom'&&message.customType==='dsg-proactive-resume'&&message.details?.proposalId===proposalId&&message.details?.scopeId===this.scopeId);
       if(cueIndex<0||ticket.scopeId!==this.scopeId||ticket.proposalId!==proposalId)throw new Error('Progress receipt binding mismatch');
       const before=fingerprint(this.session.messages);
@@ -128,8 +130,9 @@ export class ProactiveResumePi {
     if(!inspected.ticket)return this.record({state:'blocked',reason:inspected.blockedReason});
     const ticket=inspected.ticket;
     if(ticket.scopeId!==this.scopeId){this.close();return this.record({state:'blocked',reason:'scope_mismatch'});}
-    if(ticket.trigger!==undefined&&ticket.trigger!=='undispatched_outage')return this.record({state:'blocked',reason:'unsupported_review_trigger'});
-    const outage=ticket.trigger==='undispatched_outage';
+    if(ticket.trigger!==undefined&&!['undispatched_outage','recorded_tool_outage'].includes(ticket.trigger))return this.record({state:'blocked',reason:'unsupported_review_trigger'});
+    const outage=['undispatched_outage','recorded_tool_outage'].includes(ticket.trigger);
+    if(ticket.trigger==='recorded_tool_outage'&&!this.reviewRecordedToolOutage)return this.record({state:'blocked',reason:'recorded_tool_outage_not_enrolled'});
     if(outage&&(!this.reviewOutage||typeof this.outageReady!=='function'))return this.record({state:'blocked',reason:'outage_review_not_enrolled'});
     const latest=fingerprint(this.session.messages.at(-1));
     if(latest===this.lastReviewed)return {state:'blocked',reason:'settlement_already_reviewed'};

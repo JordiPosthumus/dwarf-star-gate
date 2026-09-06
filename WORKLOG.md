@@ -1334,3 +1334,16 @@ failure: two cues, one tool effect, retained failed receipt, verified completion
 receipt and working opt-out. Prior archives and source hashes are preserved.
 These remain synthetic network/advice checks; no normal Pi installation or live
 service configuration changed.
+
+## 2026-09-06 — Separate recorded-tool outage policy in source
+
+Added separately disclosed enrollment for recovery after natively reconciled
+tool results and a later certified no-dispatch failure. A distinct review reason
+and attributed cue preserve existing results. Accepted cues with tool work require
+progress evidence and cannot be recorded as never dispatched. Uncertain outcomes
+stop further continuation. The extra observation hashes are opt-in; old packages
+cannot silently enroll the new policy. Initialized terminal and native bridge
+fixtures pass, including one effect across two cues and retained progress receipts.
+The combined native set passes 105 cases, admission/journal regressions pass 36,
+and portable/native checks pass. Network and advice remain synthetic; packaging
+and real-service validation remain open. Normal Pi and live services are unchanged.
