@@ -1247,3 +1247,7 @@ Validation: Door + continuity suites 67 passed; continuity suite after additiona
 ## 2026-09-06 — Pi process-kill acceptance evidence
 
 Six private source-candidate tests passed with actual SIGKILL and a fresh recovery process at reservation, execution, acceptance and progress-write boundaries. Before reservation/reservation-only cases produced zero effects; post-execution cases produced exactly one disposable tool effect. Recovery refused both reopening and exclusive recreation, retained the abandoned owner and every receipt byte, and produced no repeated effect. No production source, Pi installation or service configuration changed. Disk-session restoration, power-loss behavior, filesystem-internal crash timing and safe owner reconciliation remain unverified.
+
+## 2026-09-06 — Late review across native session replacement
+
+The assembled terminal/host fixture now covers successful runtime replacement and replacement-factory failure during a pending Genie review. Both abort and dispose a late continue response, submit zero cues, and leave the old normally closed receipt store empty. Successful replacement still accepts ordinary task input and the off command. Three command tests pass; faux generation and a disposable replacement factory limit the evidence to these lifecycle paths. No live runtime changes.
