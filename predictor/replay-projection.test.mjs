@@ -5,6 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
+import {isDeepStrictEqual} from 'node:util';
 import {auditReplayProjection,auditProjectionFiles,projectReplayEvent,projectionArgs} from './replay-projection.mjs';
 import {featureContract} from '../ds4-gateway/prediction-feature-registry.mjs';
 import {replayOccupancy} from './occupancy.mjs';
@@ -12,6 +13,46 @@ import {replayDeliveryOccupancy} from './occupancy-delivery.mjs';
 
 const schemas=['dsg-latency-v2','dsg-latency-v3','dsg-latency-v4','dsg-occupancy-v1','dsg-occupancy-v2'];
 const replay=s=>s==='dsg-occupancy-v1'?replayOccupancy:s==='dsg-occupancy-v2'?replayDeliveryOccupancy:featureContract(s).replay;
+
+test('reference packing retains strict row and metadata comparison semantics',t=>{
+  const contract=featureContract('dsg-latency-v3');
+  const cases=[
+    [{rows:[{value:undefined}],invalid:0},{rows:[{}],invalid:0}],
+    [{rows:[{value:-0}],invalid:0},{rows:[{value:0}],invalid:0}],
+    [{rows:[{value:NaN}],invalid:0},{rows:[{value:null}],invalid:0}],
+    [{rows:[{value:NaN,optional:undefined}],invalid:0},{rows:[{optional:undefined,value:NaN}],invalid:0}],
+    [{rows:[{value:Infinity}],invalid:0},{rows:[{value:Infinity}],invalid:0}],
+    [{rows:[{value:1}],optional:undefined},{rows:[{value:1}]}],
+    [{rows:[],invalid:0},{rows:[{value:1}],invalid:0}],
+    [{rows:[{value:1}],invalid:0},{rows:[],invalid:0}],
+    [{rows:[{value:1}],invalid:0},{rows:[{value:1}],invalid:1}]
+  ];
+  for(const [original,candidate] of cases){
+    const mocked=t.mock.method(contract,'replay',events=>events[0].dsg_projection_source_sha256?candidate:original);
+    const report=auditReplayProjection([{kind:'decision'}],{}, {schema:'dsg-latency-v3'});
+    assert.equal(report.parity,isDeepStrictEqual(original,candidate));
+    const {rows:a,...metaA}=original,{rows:b,...metaB}=candidate;
+    assert.equal(report.metadata_equal,isDeepStrictEqual(metaA,metaB));
+    let changed=0;for(let i=0;i<Math.max(a.length,b.length);i++)if(!isDeepStrictEqual(a[i],b[i]))changed++;
+    assert.equal(report.changed_rows,changed);
+    mocked.mock.restore();
+  }
+});
+
+test('unsupported reference values and nonstandard row arrays cannot certify parity',t=>{
+  const contract=featureContract('dsg-latency-v3'),symbol=Symbol('fixture');
+  class Nonstandard {constructor(){this.value=1;}}
+  for(const rows of [Array(1),Object.assign([{value:1}],{extra:true}),Object.assign([],{[symbol]:1})]){
+    const mocked=t.mock.method(contract,'replay',()=>({rows}));
+    assert.throws(()=>auditReplayProjection([{kind:'decision'}],{}, {schema:'dsg-latency-v3'}),/invalid_replay_rows/);
+    mocked.mock.restore();
+  }
+  for(const row of [new Nonstandard(),{value:1,[symbol]:2}]){
+    const mocked=t.mock.method(contract,'replay',()=>({rows:[row]}));
+    assert.throws(()=>auditReplayProjection([{kind:'decision'}],{}, {schema:'dsg-latency-v3'}),/reference_roundtrip_mismatch/);
+    mocked.mock.restore();
+  }
+});
 const inventory={schema:1,workers:{worker:{matching_profiles:['profile'],hardware_family:'spark',accelerator_family:'cuda',ram_gib:128}}};
 function fixture(request='first',offset=0){
   const at=1700000000000+offset;

@@ -851,6 +851,20 @@ streaming/checkpoints next. Existing feature builders and their model
 fingerprints remain unchanged; do not alter a deployed builder just to improve
 an offline audit benchmark.
 
+The offline verifier now packs each reference replay row in memory before
+building the projected replay, then restores one reference row at a time for
+the strict comparison. A round-trip check rejects values the binary codec
+would alter or omit; nonstandard row arrays also fail closed. Metadata, row
+order, row counts and every feature/label still participate. The binary rows
+are transient, not new artifact files or a persistent format. Alternating
+frozen-input measurements showed lower peak memory with similar elapsed time;
+this is not a faster-training claim or a production budget change.
+
+The projector fingerprint changes, but feature-builder/model fingerprints and
+projected payload bytes do not. An older artifact still requires its pinned
+verifier version; create a separate new artifact to verify under changed code,
+without overwriting the old artifact or discarding original evidence.
+
 Before production adoption, verify broader conflict, ordering and cross-file
 lifecycle equivalence; measure memory/disk/CPU during generation and replay; and
 integrate preparation/future-audit provenance without invalidating existing

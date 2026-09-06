@@ -39,6 +39,10 @@ remain adoption gates, rather than silently choosing recent files.
 A shared-projection experiment retained exact outputs but raised peak memory;
 it was not adopted. Profile shorter object lifetimes and bounded streaming next,
 retaining all comparisons and existing feature-builder/model fingerprints.
+Reference rows now have a shorter-lived object graph in the offline verifier:
+round-trip-checked binary packing reduces peak memory while preserving strict
+comparison and exact payloads. Normal preparation still does not use it, and
+streaming/checkpoint provenance and existing runtime budgets remain adoption gates.
 Growing training evidence still needs an explicitly
 reviewed input-window policy; no retention, preparation-budget or cadence change
 is implied by this fix.

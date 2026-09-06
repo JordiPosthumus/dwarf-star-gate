@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
+import {serialize,deserialize} from 'node:v8';
 import {isMain} from '../ds4-gateway/config.mjs';
 import {featureContract,featureBuilderHash,CURRENT_FEATURE_SCHEMA} from '../ds4-gateway/prediction-feature-registry.mjs';
 import {replayOccupancy} from './occupancy.mjs';
@@ -40,6 +41,26 @@ export function projectReplayEvent(event){
   projected.dsg_projection_source_sha256=hash(JSON.stringify(event));
   return projected;
 }
+function checkedRows(rows){
+  if(!Array.isArray(rows)||Object.getPrototypeOf(rows)!==Array.prototype)reject('invalid_replay_rows');
+  if(rows.length>100000)reject('row_budget');
+  const keys=Object.keys(rows);
+  if(keys.length!==rows.length||keys.some((key,i)=>key!==String(i))||Object.getOwnPropertySymbols(rows).some(key=>Object.prototype.propertyIsEnumerable.call(rows,key)))reject('invalid_replay_rows');
+  return rows;
+}
+function referenceReplay(replay,events,inventory){
+  const {rows,...metadata}=replay(events,inventory);
+  // Keep the exact reference values without retaining their full object graph
+  // during the second replay. V8 serialization preserves undefined, NaN and -0;
+  // JSON packing would erase distinctions used by the strict comparison.
+  return {rows:checkedRows(rows).map(row=>{
+    const packed=serialize(row);
+    // A future builder may introduce values the codec normalizes or omits.
+    // Fail closed rather than silently weakening the original strict check.
+    if(!isDeepStrictEqual(row,deserialize(packed)))reject('reference_roundtrip_mismatch');
+    return packed;
+  }),metadata};
+}
 export function auditReplayProjection(events,inventory,{schema=CURRENT_FEATURE_SCHEMA}={}){
   const c=contract(schema);
   if(!Array.isArray(events)||events.length>200000)reject('event_budget');
@@ -53,16 +74,16 @@ export function auditReplayProjection(events,inventory,{schema=CURRENT_FEATURE_S
     const count=kinds[kind]??={events:0,canonical_bytes:0,projected_bytes:0};
     count.events++;count.canonical_bytes+=before;count.projected_bytes+=after;
   }
-  const original=c.replay(events,inventory),candidate=c.replay(projected,inventory);
-  if(original.rows.length>100000||candidate.rows.length>100000)reject('row_budget');
-  const {rows:a,...metaA}=original,{rows:b,...metaB}=candidate;
-  let changedRows=0;for(let i=0;i<Math.max(a.length,b.length);i++)if(!isDeepStrictEqual(a[i],b[i]))changedRows++;
+  const {rows:a,metadata:metaA}=referenceReplay(c.replay,events,inventory),{rows:b,...metaB}=c.replay(projected,inventory);
+  checkedRows(b);
+  let changedRows=0;for(let i=0;i<Math.max(a.length,b.length);i++)if(!isDeepStrictEqual(i<a.length?deserialize(a[i]):undefined,b[i]))changedRows++;
+  const metadataEqual=isDeepStrictEqual(metaA,metaB);
   return {schema:1,experiment:'forecast_replay_projection',authority:'none',production_enabled:false,
     feature_schema:schema,feature_builder_sha256:c.hash,projector_sha256:hash(fs.readFileSync(new URL(import.meta.url))),
     source_canonical_sha256:sourceHash.digest('hex'),inventory_canonical_sha256:hash(JSON.stringify(inventory)),
     events:events.length,canonical_bytes:rawBytes,projected_bytes:projectedBytes,
     saved_bytes:rawBytes-projectedBytes,saved_fraction:rawBytes?(rawBytes-projectedBytes)/rawBytes:null,
-    parity:isDeepStrictEqual(original,candidate),metadata_equal:isDeepStrictEqual(metaA,metaB),
+    parity:a.length===b.length&&changedRows===0&&metadataEqual,metadata_equal:metadataEqual,
     original_rows:a.length,projected_rows:b.length,changed_rows:changedRows,kinds,
     limitations:['Exact comparison covers only this input and these builder versions.',
       'Unused fields remain necessary for other audits; raw source must be retained.',

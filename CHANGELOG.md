@@ -1,5 +1,14 @@
 # Changelog
 
+## Reduce offline replay-verifier peak memory
+
+- Pack reference rows transiently before the second replay, then restore each
+  for strict comparison. Check codec round trips and reject nonstandard row arrays.
+- Retain full metadata/row checks, all five schemas, input bounds and exact
+  artifact payloads; feature builders and production preparation are unchanged.
+- Cover strict value distinctions, row-count differences, metadata changes and
+  unsupported representations. Measure time and peak memory on alternating runs.
+
 ## Make idle-worker reassessment fixtures deterministic
 
 - Replace competing response timers with explicit fixture-only stream release.
