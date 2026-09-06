@@ -268,6 +268,29 @@ A separate private packaged launcher requires explicit candidate-install and DSG
 
 ### Request-attempt observation for outage evidence
 
+The private native candidate now binds optional observation to session identity,
+source generation and the final settlement revision. Its six transport fixtures
+exercise both provider SDK retries and Pi retries: two native invocations retain
+all four HTTP attempts when each SDK invocation retries once. An unknown first
+attempt remains unknown after later certified rejections. New owner input during
+settlement invalidates the binding before transcript append. Observer failure
+preserves ordinary transport, and closing preserves a later owner's stream wrapper.
+The candidate's full repository check passes. These synthetic transport fixtures
+do not grant continuation authority: the native failed-turn guard still reports
+`unsettled_execution`. Tool-result accounting, positive outage admission and the
+fresh task review remain required. This source addition is absent from the earlier
+isolated packaged artifact and from installed production Pi.
+
+An internal no-execution assessment additionally requires empty error responses
+throughout that run and absence of native tool-start, tool-end or tool-result
+events. It rechecks the response object to reject later content corrections.
+Nine native transport fixtures cover positive all-rejected evidence and refusal
+of unknown attempts, partial output, successful tool effects and effects followed
+by tool errors. Observer-boundary failures cannot interrupt ordinary transport or
+tool events. This assessment issues no ticket and the host handle does not expose
+it. Enrollment/review integration and completed-tool-result reconciliation remain
+unfinished; these checks do not complete positive outage continuation.
+
 The new `continuity-attempt-observer.mjs` is an optional transport observer, not a continuation controller. One instance records every HTTP attempt in its caller-defined lifetime. It uses the same exact certificate validator as the existing continuity transport, retaining only validated request/call IDs and fixed rejection codes. An earlier unknown attempt stays unknown even after later certified rejections. Empty, unsealed, pending, oversized, timed-out, invalidated or overflowed observations cannot become positive evidence.
 
 The observer passes the original fetch arguments and response through unchanged, adds no requests or retries, and reads bounded cloned error envelopes alongside SDK consumption. Closing or timing out inspection cancels only its clone. Seven tests cover redirect refusal, identity mutation, unknown earlier attempts, response ownership, metadata bounds and the existing continuity wait chain. The 68 existing Door/continuity checks and repository syntax checks pass after extracting their shared certificate predicate.
