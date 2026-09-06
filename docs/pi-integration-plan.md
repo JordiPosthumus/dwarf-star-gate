@@ -88,6 +88,7 @@ model server. It establishes a submission primitive, not a safe rescue protocol.
 | Extension `pi.sendMessage` returns `undefined`; asynchronous errors use the extension error channel | Its return is not an accepted-action or completion receipt |
 | Sending an identical custom message/details again starts another turn | Proposal IDs in custom details are not idempotency keys; a client-owned durable receipt/acceptance gate is still required |
 | A custom `deliverAs:'nextTurn'` message can wait while `isIdle` is true and `pendingMessageCount` is zero | Idle/heartbeat/queue count alone cannot prove the client has no queued work or deferred context; do not build automatic rescue on that inference |
+| Human input waiting in an asynchronous `input` hook still reports idle, zero pending messages and no transcript entry | Invalidate reviews at synchronous input admission, before hooks or model preparation; lifecycle/transcript polling misses this race |
 
 The fixture also observes `agent_settled`, `waitForIdle()` and non-idle tool
 execution. Existing `pi-watch.test.mjs` covers retry/settled behavior. These
@@ -105,7 +106,9 @@ or idempotent receipt operation. Supporting automatic Proactive Resume therefore
 requires an additive client-owned API for a final generation/stop/queue fence;
 the current extension alone cannot meet that requirement. No installed Pi code,
 settings or sessions were modified. This remains open while independent DSG
-observability work proceeds.
+observability work proceeds. The proposed [conditional continuation contract](pi-conditional-continuation.md)
+now specifies admission revisions, durable receipts, turn claims and the required
+race/crash acceptance matrix for that client API.
 
 Run this optional contract fixture by setting `DSG_PI_ROOT` to an installed Pi
 package root and running `npm run continuity:test`. It deliberately requires the

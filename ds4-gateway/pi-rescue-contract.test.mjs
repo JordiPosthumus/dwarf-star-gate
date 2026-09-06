@@ -17,7 +17,7 @@ test('real Pi custom continuation preserves history/tools but is not an idempote
   const [{createAgentSession},{ModelRuntime},{SessionManager},{SettingsManager},{DefaultResourceLoader}]=await Promise.all([
     load('dist/core/sdk.js'),load('dist/core/model-runtime.js'),load('dist/core/session-manager.js'),load('dist/core/settings-manager.js'),load('dist/core/resource-loader.js')]);
   const dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'dsg-pi-rescue-contract-')));
-  let session,extension,requests=0;const counts={first_once:0,next_once:0},events=[],payloads=[],errors=[];
+  let session,extension,inputBarrier=null,requests=0;const counts={first_once:0,next_once:0},events=[],payloads=[],errors=[];
   const backend=http.createServer((req,res)=>{
     let body='';req.on('data',c=>body+=c);req.on('end',()=>{
       assert.equal(req.url,'/v1/chat/completions');const p=JSON.parse(body);payloads.push(p);requests++;
@@ -38,7 +38,15 @@ test('real Pi custom continuation preserves history/tools but is not an idempote
   const original=structuredClone(runtime.getModel(provider,model.id));
   const settings=SettingsManager.inMemory({compaction:{enabled:false},retry:{enabled:false}});
   const loader=new DefaultResourceLoader({cwd:dir,agentDir:dir,settingsManager:settings,noExtensions:true,noSkills:true,noPromptTemplates:true,noThemes:true,noContextFiles:true,
-    systemPrompt:'Disposable synthetic contract fixture.',extensionFactories:[pi=>{extension=pi;}]});
+    systemPrompt:'Disposable synthetic contract fixture.',extensionFactories:[pi=>{
+      extension=pi;
+      pi.on('input',async event=>{
+        if(event.text==='New human input during review'&&inputBarrier){
+          inputBarrier.entered();await inputBarrier.wait;
+        }
+        return {action:'continue'};
+      });
+    }]});
   await loader.reload();
   ({session}=await createAgentSession({cwd:dir,agentDir:dir,modelRuntime:runtime,model:runtime.getModel(provider,model.id),thinkingLevel:'xhigh',settingsManager:settings,
     sessionManager:SessionManager.inMemory(dir),resourceLoader:loader,noTools:'builtin',customTools:Object.keys(counts).map(name=>({name,label:name,description:'Count a synthetic step',parameters:{type:'object',properties:{}},
@@ -68,11 +76,32 @@ test('real Pi custom continuation preserves history/tools but is not an idempote
   assert.equal(extension.sendMessage(cue,{triggerTurn:true}),undefined);await settled;await session.waitForIdle();
   custom=session.messages.filter(m=>m.role==='custom');assert.equal(custom.length,2);assert.equal(requests,5);
   assert.deepEqual(counts,{first_once:1,next_once:1});assert.equal(session.messages.filter(m=>m.role==='user').length,1);
+  // Input has already arrived, but an asynchronous input handler has not yet
+  // allowed prompt preparation to finish. Public idle/queue state still looks
+  // settled: a rescue fence must invalidate at ingress, before this await.
+  let entered,release;
+  const inputEntered=new Promise(resolve=>{entered=resolve;});
+  const inputWait=new Promise(resolve=>{release=resolve;});
+  inputBarrier={entered,wait:inputWait};
+  const requestCountBeforeInput=requests;
+  const humanPrompt=session.prompt('New human input during review');
+  try {
+    await inputEntered;
+    assert.equal(session.isIdle,true,'idle does not include asynchronous input preparation');
+    assert.equal(session.pendingMessageCount,0,'the human prompt is not represented in queued-message count');
+    assert.equal(requests,requestCountBeforeInput,'the new human prompt has not reached the model');
+    assert.ok(!session.messages.some(m=>m.role==='user'&&text(m.content)==='New human input during review'),
+      'transcript polling also misses this admitted input');
+  } finally { release();await humanPrompt;inputBarrier=null; }
+  await session.waitForIdle();
+  assert.equal(requests,requestCountBeforeInput+1,'the held human input resumes exactly once');
+  assert.ok(session.messages.some(m=>m.role==='user'&&text(m.content)==='New human input during review'));
+  assert.deepEqual(counts,{first_once:1,next_once:1},'input preparation never replays completed tools');
   // A deferred custom next-turn message is not visible in the public pending
   // count or transcript yet. Idle + zero count cannot certify an empty client.
   await session.sendCustomMessage({customType:'another-extension-fixture',display:true,content:'Deferred synthetic context'},
     {deliverAs:'nextTurn',triggerTurn:false});
-  assert.equal(session.isIdle,true);assert.equal(session.pendingMessageCount,0);assert.equal(requests,5);
+  assert.equal(session.isIdle,true);assert.equal(session.pendingMessageCount,0);assert.equal(requests,6);
   assert.equal(session.messages.filter(m=>m.role==='custom').length,2);
   assert.deepEqual(errors,[]);
 });
