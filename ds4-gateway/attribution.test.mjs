@@ -198,6 +198,57 @@ test('the request cap preserves overlap evidence before unrelated windows and ne
   assert.equal(row.status,'abstained');assert.equal(row.reason,'overlapping_gateway_windows');assert.equal(row.request_id,null);
 });
 
+test('an evicted unresolved owner is not a terminal event and surviving evidence can reconcile later',()=>{
+  const a=new EngineAttribution(),pressure=[];
+  a.acceptGateway(dispatch());a.acceptGateway(dispatch(other));a.acceptEngine(start());
+  a.acceptGateway(finish(other,'spark1',13000,{prompt_tokens:700,cached_tokens:600}));
+  // Every row is protected by an unresolved overlap. The fixed 512-row cap
+  // must eventually evict an owner; that is missing evidence, not completion.
+  let index=0;
+  for(let group=0;group<8;group++){
+    const node=`pressure-${group}`;
+    a.acceptEngine(start((group+1).toString(16).repeat(64),node));
+    for(let i=0;i<(group===7?63:64);i++){
+      const id=(++index).toString(16).padStart(8,'0')+'-0000-4000-8000-'+index.toString(16).padStart(12,'0');
+      pressure.push({id,node});a.acceptGateway(dispatch(id,node));
+    }
+  }
+  assert.equal(a.requests.size,512);assert.equal(a.requests.has(request),false);
+  assert.equal(a.requests.has(other),true);
+  assert.equal(a.snapshot().recent.find(row=>row.sample_id===sample).reason,'overlapping_gateway_windows');
+  for(const {id,node} of pressure)a.acceptGateway(finish(id,node,14000));
+  const tick='33333333-3333-4333-8333-333333333333';
+  a.acceptGateway(dispatch(tick,'unrelated',3600000));
+  assert.equal(a.requests.has(other),true,'keep the surviving peer beyond ordinary completed history');
+  a.acceptGateway(dispatch());a.acceptGateway(finish(request,'spark1',3600001));
+  const row=a.snapshot().recent.find(row=>row.sample_id===sample);
+  assert.equal(row.reason,'usage_disambiguated_overlap');assert.equal(row.request_id,request);
+  assert.equal(a.starts.get(sample).overlap_settled,true);
+  a.acceptGateway(finish(tick,'unrelated',7200000));
+  assert.equal(a.starts.has(sample),false,'genuinely settled evidence still retires normally');
+  assert.ok(a.requests.size<=512);
+});
+
+test('a newly discovered overlap reopens retention after observed completion',()=>{
+  const a=new EngineAttribution(),late='33333333-3333-4333-8333-333333333333';
+  a.acceptGateway(dispatch());a.acceptGateway(dispatch(other));a.acceptEngine(start());
+  a.acceptGateway(finish());a.acceptGateway(finish(other,'spark1',30000,{prompt_tokens:700,cached_tokens:600}));
+  assert.equal(a.starts.get(sample).overlap_settled,true);
+  a.acceptGateway(dispatch(late));assert.equal(a.starts.get(sample).overlap_settled,false);
+  a.acceptGateway(finish(late,'spark1',3600000,{prompt_tokens:800,cached_tokens:700}));
+  assert.equal(a.snapshot().recent[0].reason,'usage_disambiguated_overlap');
+  assert.equal(a.snapshot().recent[0].request_id,request);
+  assert.equal(a.starts.get(sample).overlap_settled,true);
+});
+
+test('unresolved overlap retention still expires at the seven-day open-span bound',()=>{
+  const a=new EngineAttribution(),tick='33333333-3333-4333-8333-333333333333';
+  a.acceptGateway(dispatch());a.acceptGateway(dispatch(other));a.acceptEngine(start());
+  a.acceptGateway(finish(other,'spark1',13000));
+  a.acceptGateway(dispatch(tick,'unrelated',12000+7*24*3600000+1));
+  assert.equal(a.starts.has(sample),false);assert.equal(a.requests.has(other),false);
+});
+
 test('identical engine replay cannot erase ambiguity after an overlap owner ages out',()=>{
   const saved=[],a=new EngineAttribution(row=>saved.push(row));
   a.acceptGateway(dispatch(request,'spark1',10000));a.acceptGateway(dispatch(other,'spark1',11000));a.acceptEngine(start());

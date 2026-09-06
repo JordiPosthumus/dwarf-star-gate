@@ -10,6 +10,11 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Kept missing overlap evidence distinct from completed work.** Capacity
+  eviction could prematurely release surviving lifecycle records. The audit now
+  preserves them for delayed reconciliation within its existing limits, while
+  genuinely settled history still ages out. No matching rule or routing changed.
+
 - **Made Door errors traceable to their local failure receipts.** One generated
   ID now connects a pre-header error response with its bounded diagnostic entry.
   Older missing IDs remain unknown, caller IDs stay out of the ledger, and

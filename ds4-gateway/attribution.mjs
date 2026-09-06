@@ -163,9 +163,12 @@ export class EngineAttribution {
     // Once every remembered overlap candidate has a terminal event, the next
     // ordinary prune may release the private lifecycle rows. The remembered IDs
     // remain as a fail-closed guard if late/out-of-order evidence appears.
-    for(const start of this.starts.values())if(start.overlap_candidates?.size>1&&!start.overlap_overflow){
+    // Missing/evicted candidates are not terminal events. Once real completion
+    // has been observed for all peers, preserve that fact across ordinary aging;
+    // captureOverlaps resets it if another possible owner is later discovered.
+    for(const start of this.starts.values())if(start.overlap_candidates?.size>1&&!start.overlap_overflow&&!start.overlap_settled){
       const candidates=new Map(candidateWindows(start,requests).map(request=>[request.request_id,request]));
-      start.overlap_settled=[...start.overlap_candidates].every(id=>candidates.get(id)?.finished_at!==null);
+      start.overlap_settled=[...start.overlap_candidates].every(id=>Number.isFinite(candidates.get(id)?.finished_at));
     }
     this.rows=rows.sort((a,b)=>b.engine_started_at-a.engine_started_at).slice(0,64);
   }

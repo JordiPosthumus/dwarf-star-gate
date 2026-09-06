@@ -62,6 +62,9 @@ is implied by this fix.
    recorded/reconciled/remaining counts and blocker totals matching the fleet
    report. Fresh ordinary-traffic checks do not replace isolated process-boundary
    validation; unresolved competing owners remain abstentions.
+   Capacity-evicted overlap owners no longer count as completed: surviving
+   evidence can reconcile delayed records within the unchanged bounded history.
+   Actual all-peer completion still releases retention; new possible owners reopen it.
    Stream observers now recognize CR/LF/CRLF consistently with isolated Pi
    acceptance, avoiding false failures while preserving accelerator-error evidence.
    Continue focused lifecycle/privacy/retention checks rather than broad rewrites.

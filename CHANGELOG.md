@@ -1,5 +1,14 @@
 # Changelog
 
+## Preserve unresolved overlap evidence after capacity eviction
+
+- Do not treat a missing lifecycle candidate as a completed request. Retain
+  surviving overlap evidence for delayed reconciliation within existing bounds.
+- Preserve observed all-peer completion across ordinary aging, while newly
+  discovered owners reopen retention. Matching and ambiguity rules are unchanged.
+- Cover real record-cap eviction, later disambiguation, ordinary retirement,
+  newly discovered owners and the seven-day bound with synthetic regressions.
+
 ## Correlate Door error replies with local failure evidence
 
 - Share one generated ID between a local proxy-failure receipt and its pre-header

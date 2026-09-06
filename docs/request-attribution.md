@@ -54,7 +54,11 @@ that is still running, its private candidate window is retained until every
 candidate has a terminal event. The set is capped at 64 candidates per start and
 512 lifecycle records overall. Under capacity pressure, a missing remembered
 candidate preserves the overlap abstention; forgetting evidence can never create
-a unique owner. Settled evidence returns to the ordinary history bound.
+a unique owner. A missing candidate is not counted as a terminal event: surviving
+overlap windows remain eligible for delayed reconciliation within the same
+seven-day/512-record bounds. Once every candidate's completion has actually been
+observed, settled evidence returns to the ordinary history bound; ordinary aging
+does not reopen retention. A newly discovered possible owner does reopen it.
 Identical normalized engine-start replays and later normalized field updates
 preserve the remembered overlap and overflow guards, even after a completed
 candidate has aged out. Epoch/confidence enrichment still updates the displayed
