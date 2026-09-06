@@ -271,8 +271,9 @@ A separate private packaged launcher requires explicit candidate-install and DSG
 The source candidate now joins native execution evidence, explicit task
 approval, fresh service readiness, a distinct outage review and progress
 confirmation for a run that never reached a worker. This is experimental source
-and synthetic integration evidence. The earlier packaged artifact and ordinary
-installed Pi do not contain this native path; no production enrollment is implied.
+and synthetic integration evidence. A rebuilt isolated package also passes the
+assembled flow; ordinary installed Pi does not contain this native path, and no
+production enrollment is implied.
 Outages after tool activity still require separate outcome reconciliation.
 
 `proactiveResumeLocalOptions({outageResume: true, ...})` explicitly enables
@@ -323,5 +324,18 @@ opt-out carries no added correlation ID. Other fixtures reject unknown attempts,
 changed transcripts, partial output, tool effects, stale input, stops, closed
 observers and a second outage after review. Tests preserve history and model
 metadata; they do not measure full context/output boundaries, runtime hashing
-cost, real-model judgment or real failure classification. Packaging, live
+cost, real-model judgment or real failure classification. Live
 validation and broader outage reconciliation remain unfinished.
+
+### Rebuilt isolated package verification
+
+The changed native package now builds against the existing workspace dependency
+artifacts and installs offline in a new isolated directory. The previous archive
+set is preserved. Source hashes match before and after building. Installed entry
+points resolve inside that new directory, without native source-checkout imports.
+Three smoke programs cover CLI/export/receipt behavior, the existing courtesy
+terminal flow, and the new terminal outage flow described above. The outage case
+uses actual installed SDK/TUI code with synthetic HTTP and Genie replies; it
+includes observation before task approval and ordinary input after opt-out.
+These artifacts remain optional candidates, with no normal Pi installation,
+model configuration or production launcher replacement.

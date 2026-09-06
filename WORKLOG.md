@@ -1309,6 +1309,13 @@ adapter adds a missing correlation header without changing body bytes or retry
 settings. The initialized Pi terminal/SDK fixture waits without inference while
 service is unavailable, then verifies one attributed cue, one synthetic effect,
 progress receipt reopen and ordinary input after opt-out. Native and source
-regressions pass. Advice and failures are synthetic; packaging, real-model
-validation and outages after prior tool effects remain unfinished. Normal Pi,
+regressions pass. Advice and failures are synthetic; real-model validation and
+outages after prior tool effects remain unfinished. Normal Pi,
 production configuration and live model services were not changed.
+
+Rebuilt the changed native package into a new isolated archive/install, preserving
+the prior archives and verifying unchanged source hashes. Three installed-package
+smoke programs pass: native CLI/receipts, courtesy terminal enrollment, and the
+complete simulated no-dispatch outage flow with progress receipt reopen and
+ordinary input after opt-out. Native imports resolve inside the install. Live
+model judgment and broader outage reconciliation remain open.
