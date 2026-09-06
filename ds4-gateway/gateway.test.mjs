@@ -2019,9 +2019,12 @@ test('Genie names ordinary gateway requests without a Pi extension, without read
   let second;
   try{
     assert.equal(r.gateway.priorityStatus(true).jobs[0].title,null);assert.equal(r.gateway.priorityStatus(true).jobs[0].title_state,'pending_review');
+    assert.deepEqual(r.gateway.priorityStatus(true).jobs[0].request_preview,{text:'Repair CSV export formatting today.',previous_observation:false});
+    assert.ok(!JSON.stringify(r.gateway.stats()).includes('Repair CSV export'));
     await classifier.tick();assert.equal(modelInputs.length,1);assert.equal(modelInputs[0].recent_user_excerpt,'Repair CSV export formatting today.');
     assert.ok(!JSON.stringify(modelInputs).includes('PRIVATE_'));
     assert.equal(r.gateway.priorityStatus(true).jobs[0].title,'Export formatting repair');assert.equal(r.gateway.priorityStatus(true).jobs[0].title_source,'genie');
+    assert.equal(r.gateway.priorityStatus(true).jobs[0].request_preview,null);
     second=r.request(body,'gateway-title-session');await until(()=>r.gateway.priorityStatus(true).jobs.length===2);
     const queued=r.gateway.priorityStatus(true).jobs.find(job=>job.state!=='running');
     assert.equal(queued.title,'Export formatting repair');assert.equal(queued.title_state,'previous_observation');

@@ -297,7 +297,7 @@ export function createGateway(config,{visionTranscode,priorityRandom}={}) {
     if(!details)return status;
     const jobs=priorityJobs();
     return {...status,rules,receipts:structuredClone(priority.receipts),jobs:jobs.slice(0,512).map(job=>({
-      request_id:job.id,chat:job.key??null,title:priorityIntents.title(job.priorityIntentId,job.key),title_source:priorityIntents.titleSource(job.priorityIntentId,job.key),title_state:priorityIntents.titleState(job.priorityIntentId,job.key),machine:job.node?.id??job.fixedHome?.id??null,
+      request_id:job.id,chat:job.key??null,title:priorityIntents.title(job.priorityIntentId,job.key),request_preview:priorityIntents.preview(job.priorityIntentId,job.key),title_source:priorityIntents.titleSource(job.priorityIntentId,job.key),title_state:priorityIntents.titleState(job.priorityIntentId,job.key),machine:job.node?.id??job.fixedHome?.id??null,
       state:job.dispatched?'running':job.waitReason||!priorityEligible(job)?'blocked':'queued',
       ...priority.decision(job.key),request_reason:job.dispatched?'Request is already running':job.waitReason??(job.node?.drained?'Routing is paused':!priorityEligible(job)?'Worker or conversation is not eligible':null),
       waiting_ms:job.dispatched?Math.max(0,job.dispatchedMono-job.createdMono):Math.max(0,performance.now()-job.createdMono),

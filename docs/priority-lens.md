@@ -51,6 +51,14 @@ untrusted data, including any client-generated continuation serialized with that
 role. Genie returns a bounded single-line title and typed priority/reason.
 An explicitly supplied client title is retained instead of replacing that name.
 
+While a title is pending, the local job row shows a **Request:** preview of up to
+160 Unicode characters from the existing excerpt. It uses plain text and wraps
+inside the job column. A queued row using the last observed conversation excerpt
+is labelled **Previous request:**. This preview needs no Genie inference and
+creates no additional retained copy: it disappears when the existing excerpt is
+cleared or a title becomes available. Unsupported or still-unread requests are
+labelled **Request not yet identified**, without guessing a task name.
+
 Capture uses the already parsed body from DSG's existing passive request observer.
 It does not read queued uploads early, buffer additional request bodies, change
 upload/context limits or delay dispatch. The existing 8 MiB observation budget

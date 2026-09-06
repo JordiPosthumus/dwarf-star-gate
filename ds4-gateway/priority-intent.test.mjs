@@ -104,3 +104,23 @@ test('unread requests can show the last observed title but rejected or unsupport
   assert.equal(intents.title(null,key),null);
   assert.equal(intents.title(id,key),'Current task name');
 });
+
+test('request previews identify pending work without retaining text after its existing lifetime',()=>{
+  for(const end of ['deadline','optout','superseded','ttl','title']){
+    const {intents,lens,advance}=rig(),key='a'.repeat(64),excerpt='Fix the export\nformat '+ '💡'.repeat(180);
+    const id=intents.observeRequest({key,sequence:1},excerpt);
+    const preview=intents.preview(id,key);
+    assert.equal(preview.previous_observation,false);assert.equal([...preview.text].length,161);
+    assert.ok(preview.text.startsWith('Fix the export format '));assert.ok(!preview.text.includes('\ufffd'));
+    assert.deepEqual(intents.preview(undefined,key),{...preview,previous_observation:true});
+    assert.equal(intents.preview(null,key),null);assert.equal(intents.preview(id,'b'.repeat(64)),null);
+    assert.ok(!JSON.stringify(lens.state).includes('Fix the export'));
+    if(end==='deadline'){intents.claim();advance(60000);}
+    if(end==='optout')lens.configure({expected_revision:0,enabled:false,weights:{High:3,Medium:1,Low:.5},max_eligible_wait_ms:null});
+    if(end==='superseded')intents.observeRequest({key,sequence:2},'Prepare a different task');
+    if(end==='ttl')advance(600000);
+    if(end==='title')assert.equal(intents.complete({...reply(intents.claim()),title:'Repair export formatting'}),true);
+    assert.equal(intents.preview(id,key),null);
+    assert.ok(![...intents.entries.values()].some(entry=>entry.excerpt===excerpt));
+  }
+});

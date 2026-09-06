@@ -10,6 +10,13 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-06
 
+- **Made pending job names useful before Genie responds.** The local priority
+  table displays a short preview from an already observed user request while its
+  generated title is pending. Previous-request previews are labelled explicitly;
+  unread requests stay unidentified. The preview shares the existing excerpt's
+  lifetime and is rendered as plain text inside the wrapped job column. Live
+  activation remains separate from source and browser validation.
+
 - **Validated macOS restart-only recovery on a real deployment.** The enrolled
   canary proved generation and cold-to-warm cache reuse while retaining effective
   launch arguments and executable identity. This is bounded restart evidence;

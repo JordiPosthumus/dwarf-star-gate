@@ -132,6 +132,14 @@ export class PriorityIntents {
   }
   resolve(id,chat){const entry=this.entries.get(id===undefined?this.current.get(chat)?.id:id);return entry?.chat===chat?entry:null;}
   title(id,chat){this.sweep();return this.resolve(id,chat)?.title??null;}
+  preview(id,chat){
+    this.sweep();const entry=this.resolve(id,chat);
+    if(entry?.title||!entry?.excerpt)return null;
+    // Derive on read from the existing transient excerpt. Do not retain a copy
+    // after its review deadline, opt-out, supersession or expiration.
+    const chars=[...entry.excerpt.replace(/\s+/gu,' ').trim()];
+    return {text:chars.slice(0,160).join('')+(chars.length>160?'…':''),previous_observation:id===undefined};
+  }
   titleState(id,chat){this.sweep();const entry=this.resolve(id,chat);return !entry?'no_excerpt':entry.title?id?'ready':'previous_observation':entry.lease?'reviewing':entry.excerpt&&!entry.attempted?'pending_review':'unavailable';}
   titleSource(id,chat){return this.resolve(id,chat)?.titleSource??null;}
   status(){this.sweep();return {pending:[...this.entries.values()].filter(entry=>entry.excerpt&&!entry.attempted&&this.isCurrent(entry)).length,reviewing:[...this.entries.values()].filter(entry=>entry.lease).length,expired_reviews:this.expiredReviews,genie_wait_ms:0};}

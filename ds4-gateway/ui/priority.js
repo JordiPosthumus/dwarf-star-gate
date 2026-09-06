@@ -55,10 +55,12 @@ function render(next){
       row.children[1].append(select);root.append(row);
     }
     const cells=row.children,select=cells[1].firstElementChild;
-    cells[0].textContent=job.title||`${['pending_review','reviewing'].includes(job.title_state)?'Genie title pending':'Title unavailable'} · ${job.request_id.slice(0,8)}`;
-    cells[0].title=job.title_state==='previous_observation'?'Latest observed conversation title; this queued request body has not been read yet.':job.title_source==='genie'?'Genie-generated task title':job.title_source==='client'?'Client-supplied task title':'Genie needs a recent user excerpt and available review capacity.';
+    const preview=typeof job.request_preview?.text==='string'?job.request_preview:null;
+    const label=job.title||(preview?`${preview.previous_observation?'Previous request':'Request'}: ${preview.text}`:null);
+    cells[0].textContent=label||`${['pending_review','reviewing'].includes(job.title_state)?'Genie title pending':'Request not yet identified'} · ${job.request_id.slice(0,8)}`;
+    cells[0].title=preview&&!job.title?`${preview.previous_observation?'Preview of the last observed request in this conversation; the queued body has not been read.':'Short preview of the observed user request.'} Genie has not supplied a title yet.`:job.title_state==='previous_observation'?'Latest observed conversation title; this queued request body has not been read yet.':job.title_source==='genie'?'Genie-generated task title':job.title_source==='client'?'Client-supplied task title':'No supported request text is currently available. DSG has not identified this job.';
     select.dataset.chat=job.chat||'';select.options[0].textContent=job.source==='user'?'Return to automatic':`Auto · ${job.priority||'Medium'}`;
-    select.setAttribute('aria-label',`Priority for ${job.title||'untitled conversation'} ${job.request_id.slice(0,8)}`);
+    select.setAttribute('aria-label',`Priority for ${label||'unidentified conversation'} ${job.request_id.slice(0,8)}`);
     if(document.activeElement!==select)select.value=job.source==='user'?job.priority:'automatic';
     const reason=job.source==='default'?'No priority advice yet':job.source==='user'?'Set by you':job.reason;
     cells[2].textContent=[reason,job.request_reason==='Request is already running'?null:job.request_reason].filter(Boolean).join('\n');
