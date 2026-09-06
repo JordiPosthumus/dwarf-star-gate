@@ -78,6 +78,14 @@ storage instead of waiting for another process during dashboard startup or a
 save. The object is not replaced or removed; regular-file ownership, permissions,
 link-count checks and durability behavior remain in place. This is not a general
 deadline for an unresponsive filesystem.
+Notebook loads read only the descriptor length checked against the existing
+ceiling, handle short reads, and reject observed growth or truncation before
+accepting the snapshot. Appends verify size and device/inode identity against
+the loaded or newly created journal, so an equal-sized replacement is not
+mistaken for the same history. Conflicting files are left untouched. These checks
+do not authenticate journal contents or promise an atomic snapshot against an
+uncooperative writer changing bytes in place without changing file size; the
+dashboard remains the sole supported writer.
 
 Retrieval is at most **12 records / 16 KiB**, with operator notes first, developer
 suggestions next and other records newest first, limited to current worker IDs plus fleet notes. Each worker

@@ -1,5 +1,14 @@
 # Changelog
 
+## Preserve notebook read bounds and file identity
+
+- Pin notebook reads to the checked length, handle short reads, and reject
+  observed growth/truncation before accepting a loaded snapshot.
+- Verify device/inode identity and size before appending, preserving equal-sized
+  replacement files instead of mixing histories. Keep the single-writer contract.
+- Add isolated read-race and replacement regressions; retain existing ceilings,
+  regular-file checks, history and explicit storage errors.
+
 ## Reject blocking objects in optional Genie storage
 
 - Open notebook and pool-action journals nonblocking before descriptor checks,

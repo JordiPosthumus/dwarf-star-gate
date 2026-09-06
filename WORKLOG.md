@@ -10,6 +10,12 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-05
 
+- **Kept notebook limits and writer checks valid across file changes.** Loading
+  now stays within its checked byte allowance and rejects observed growth or
+  truncation. Appending rejects equal-sized replacement journals. Regression
+  fixtures preserve both conflicting files and exercise short reads; no repair,
+  deletion or storage-ceiling increase is introduced.
+
 - **Prevented invalid Genie journals from hanging the dashboard.** Both private
   journal readers/writers now open nonblocking before checking the descriptor,
   so a named pipe cannot wait forever for a peer. Four isolated regressions

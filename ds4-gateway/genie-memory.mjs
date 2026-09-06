@@ -53,7 +53,7 @@ function validate(event,notes){
 export class GenieMemory {
   constructor(directory,{maxBytes=MEMORY_LIMIT,now=Date.now,io=fs}={}){
     this.directory=directory;this.file=path.join(directory,'notebook.jsonl');this.maxBytes=maxBytes;this.now=now;this.io=io;
-    this.notes=new Map();this.history=new Map();this.enabled=false;this.error=null;this.bytes=0;this.lastWrite=null;this.loaded=false;
+    this.notes=new Map();this.history=new Map();this.enabled=false;this.error=null;this.bytes=0;this.identity=null;this.lastWrite=null;this.loaded=false;
     try{if(!Number.isSafeInteger(maxBytes)||maxBytes<1||maxBytes>MEMORY_LIMIT)throw new Error();
       if(fs.existsSync(directory))this.load();else this.loaded=true;
     }catch{this.error='Memory unavailable: inspect private storage, permissions or journal. No records changed.';}
@@ -69,12 +69,19 @@ export class GenieMemory {
   }
   load(){
     this.checkDirectory();if(!fs.existsSync(this.file)){this.loaded=true;return;}
-    const fd=this.open(fs.constants.O_RDONLY);let text;
-    try{const s=fs.fstatSync(fd);if(s.size>this.maxBytes)throw new Error();text=fs.readFileSync(fd,'utf8');this.bytes=s.size;}finally{fs.closeSync(fd);}
+    const fd=this.open(fs.constants.O_RDONLY);let text,s;
+    try{
+      s=fs.fstatSync(fd);if(!Number.isSafeInteger(s.size)||s.size<0||s.size>this.maxBytes)throw new Error();
+      // Read only the checked length; readFileSync(fd) could follow growth past
+      // the ceiling. A changing journal is not a trustworthy loaded snapshot.
+      const bytes=Buffer.alloc(s.size);let at=0;
+      while(at<bytes.length){const n=fs.readSync(fd,bytes,at,bytes.length-at,at);if(n<=0)throw new Error();at+=n;}
+      if(fs.fstatSync(fd).size!==s.size)throw new Error();text=bytes.toString('utf8');
+    }finally{fs.closeSync(fd);}
     if(text&&!text.endsWith('\n'))throw new Error();
     const events=text.split('\n').filter(Boolean).map(line=>{if(Buffer.byteLength(line)>4096)throw new Error();return JSON.parse(line);});
     for(const e of events){validate(e,this.notes);this.apply(e);}
-    this.loaded=true;
+    this.bytes=s.size;this.identity={dev:s.dev,ino:s.ino};this.loaded=true;
   }
   apply(event){
     if(event.kind==='settings')this.enabled=event.enabled;
@@ -89,11 +96,12 @@ export class GenieMemory {
       fs.mkdirSync(this.directory,{recursive:true,mode:0o700});this.checkDirectory();
       lock=fs.openSync(path.join(this.directory,'writer.lock'),fs.constants.O_WRONLY|fs.constants.O_CREAT|fs.constants.O_EXCL|fs.constants.O_NOFOLLOW,0o600);
       fd=this.open(fs.constants.O_WRONLY|fs.constants.O_CREAT|fs.constants.O_APPEND);
-      if(fs.fstatSync(fd).size!==this.bytes)throw new Error('changed');
+      const s=fs.fstatSync(fd);
+      if(s.size!==this.bytes||this.identity&&(s.dev!==this.identity.dev||s.ino!==this.identity.ino))throw new Error('changed');
       let at=0;while(at<bytes.length){const n=this.io.writeSync(fd,bytes,at,bytes.length-at);if(n<=0)throw new Error();at+=n;}
       this.io.fsyncSync(fd);
       const dir=fs.openSync(this.directory,fs.constants.O_RDONLY);try{this.io.fsyncSync(dir);}finally{fs.closeSync(dir);}
-      this.bytes+=bytes.length;this.apply(event);return {id:event.id??null,revision:event.revision??null,saved_at:event.at};
+      this.bytes+=bytes.length;this.identity={dev:s.dev,ino:s.ino};this.apply(event);return {id:event.id??null,revision:event.revision??null,saved_at:event.at};
     }catch(e){this.error=e.message==='ceiling'?'Memory storage ceiling reached; writes paused, nothing deleted.':'Memory write failed; inspect journal/lock privately. No automatic repair.';throw new Error(this.error);}
     finally{if(fd!==undefined)fs.closeSync(fd);if(lock!==undefined){fs.closeSync(lock);fs.unlinkSync(path.join(this.directory,'writer.lock'));}}
   }
