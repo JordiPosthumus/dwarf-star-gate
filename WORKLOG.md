@@ -1263,3 +1263,7 @@ Built the native candidate offline and added its missing public receipt-store ex
 ## 2026-09-06 — Packaged interactive Proactive Resume host
 
 Validated the assembled DSG host against the isolated installed native Pi and TUI packages: default decline creates no receipts/reviews; explicit approval produces one attributed synthetic step, two scripted courtesy/progress reviews, visible completion and opt-out, with confirmed receipt reopen. Added a separate private launcher selecting an explicit candidate install and preserving the source launcher's configuration/host/bootstrap behavior. Version/help and syntax pass without production receipt creation. No normal Pi installation, launcher, model or service changed.
+
+## 2026-09-06 — Per-attempt outage transport evidence
+
+Added an opt-in metadata-only attempt observer and shared the existing exact pre-dispatch certificate predicate with continuity fetch. The observer preserves unknown earlier attempts, original arguments/responses and normal retries. Bounded clone inspection is asynchronous; pending/timeout/overflow/closed states refuse positive evidence. Seven new observer tests pass, including the existing certified wait chain; 68 Door/continuity regressions and repository syntax pass. Native execution binding and positive outage continuation remain unfinished. No live configuration, provider or service changed.

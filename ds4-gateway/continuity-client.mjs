@@ -1,4 +1,5 @@
 import {randomUUID} from 'node:crypto';
+import {certifiedNotDispatched} from './continuity-certificate.mjs';
 import {setTimeout as sleep} from 'node:timers/promises';
 import {CALL_ID_HEADER,DISPATCH_HEADER,validCallId} from './continuity.mjs';
 import {CLIENT_WATCH_HEADER,CLIENT_WATCH_ROUTE,createClientWatchId} from './client-watch.mjs';
@@ -87,7 +88,7 @@ export function createContinuityFetch({baseUrl,fetchImpl=fetch,onWait=()=>{},wai
           while(true){const part=await reader.read();if(part.done)break;bytes+=part.value.byteLength;if(bytes>8192)return response;body+=decoder.decode(part.value,{stream:true});}
           body+=decoder.decode();
           const error=JSON.parse(body).error,c=error?.continuity;
-          if(error?.type!=='gateway_error'||c?.schema!==1||c.dispatch_state!=='not_dispatched'||c.retry_class!=='wait_then_retry'||c.call_id!==callId||!validCallId(c.request_id)||c.request_id!==response.headers.get('x-request-id')||!(['draining','home_unavailable','no_healthy_workers','queue_full','queue_timeout'].includes(error.code)||(c.source==='continuity_door'&&['continuity_stopping','continuity_hold_full'].includes(error.code)&&c.reason===error.code)))return response;
+          if(!certifiedNotDispatched(response,error,callId))return response;
           ++attempts;notify({state:'waiting',attempts,call_id:callId,request_id:c.request_id,reason:c.reason,worker:c.node??null});
         }catch{return response;}finally{void reader?.cancel().catch(()=>{});reader?.releaseLock();}
         void response.body?.cancel().catch(()=>{});
