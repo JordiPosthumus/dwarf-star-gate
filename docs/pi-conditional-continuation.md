@@ -357,7 +357,7 @@ receipt. The native and courtesy package checks also pass; previous archives and
 source hashes are preserved. Network failures and advice remain synthetic, so
 live outage validation is still outstanding.
 
-### Recovery after recorded tool work — source only
+### Recovery after recorded tool work — isolated candidate
 
 The private native candidate now observes tool requests, starts, final outcomes
 and transcript results, retaining identifiers and digests instead of copying tool
@@ -389,13 +389,22 @@ If an accepted cue did tool work before the outage, its receipt requires a
 progress review citing a result after that cue. It cannot be reconciled as never
 dispatched. Verified progress retains the receipt and consumed attempt; uncertain
 progress stops further cues. A later continuation requires fresh outage advice.
+While service is down, a pending recorded-tool receipt waits without progress
+inference. Fresh progress tickets can replace expired tickets only within the
+original enrollment and unchanged native boundary; old IDs cannot confirm a
+result. Opt-out cancels the restoration poll and retains the pending receipt.
 
 The initialized terminal test verifies explicit approval, one tool effect,
 restoration waiting, one continuation and receipt reopen. The accepted-cue test
-verifies two cues, one effect and both progress receipts. In total, 105 focused
+verifies two cues, one effect and both progress receipts. In total, 109 focused
 native cases and 36 admission/journal regressions pass, along with portable
 reviewer/host tests and the native repository check. HTTP and Genie responses are
-synthetic. The previous package is preserved and lacks this follow-up; a new
-installed-package check and real-model/outage validation remain outstanding.
+synthetic. A new isolated package passes five installed scenarios: native
+CLI/receipts, courtesy enrollment, repeated no-dispatch outage, recovery after
+prior tool work, and recovery after tool work within an accepted cue. The last
+scenario simulates 61 seconds within the test process and verifies progress-ticket
+renewal, two cues, one effect, reopened progress receipts and opt-out. Native source
+hashes and prior archives are preserved. Real-model/outage validation remains
+outstanding; future model action choices are not certified by these fixtures.
 Synthetic measurements show measurable hashing overhead, with end-to-end impact
 still unverified. Normal Pi and production settings have not been changed.

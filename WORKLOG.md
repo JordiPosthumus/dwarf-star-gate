@@ -1347,3 +1347,13 @@ fixtures pass, including one effect across two cues and retained progress receip
 The combined native set passes 105 cases, admission/journal regressions pass 36,
 and portable/native checks pass. Network and advice remain synthetic; packaging
 and real-service validation remain open. Normal Pi and live services are unchanged.
+
+Installed testing exposed a missing restoration wait for accepted cues with tool
+work. The bridge now waits before progress inference, and native progress-ticket
+renewal stays within the original enrollment and unchanged boundary. Old ticket
+IDs and expired enrollment remain invalid; opt-out retains the pending receipt.
+The final isolated rebuild passes five installed scenarios, including a simulated
+61-second outage, two cues, one tool effect and two reopened progress receipts.
+The source regression set now passes 109 cases, with 36 journal/admission and 42
+portable cases also passing. Prior archives and source hashes are preserved.
+Real-model and real-outage validation remain outstanding.

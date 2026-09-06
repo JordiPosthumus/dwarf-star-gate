@@ -43,7 +43,7 @@ export class ProactiveResumePi {
     this.session=session;this.control=control;this.reviewer=reviewer;this.scopeId=scopeId;
     this.reviewProgress=consent.reviewProgress===true;this.progressTask=null;this.nextReview=null;
     this.reviewOutage=consent.reviewOutage===true;this.reviewRecordedToolOutage=consent.reviewRecordedToolOutage===true;this.outageReady=outageReady;
-    this.started=false;this.outageRetry=null;
+    this.started=false;this.outageRetry=null;this.progressOutageRetry=null;
     this.providers=consent.providers.map(({url,model})=>({url,model}));
     this.sessionId=session.sessionId;this.taskIndex=session.messages.indexOf(taskMessage);
     this.humanContext=fingerprint(session.messages.filter(message=>message.role==='user'));
@@ -54,6 +54,7 @@ export class ProactiveResumePi {
     this.closed=true;this.control.revoke();this.abort?.abort();this.unsubscribe?.();this.unsubscribe=null;
     if(this.nextReview){clearImmediate(this.nextReview);this.nextReview=null;}
     if(this.outageRetry){clearTimeout(this.outageRetry);this.outageRetry=null;}
+    if(this.progressOutageRetry){clearTimeout(this.progressOutageRetry);this.progressOutageRetry=null;}
     this.record({state:'closed',reason:'revoked'});
   }
   record(value){this.last=value;try{this.onStatus?.({...value});}catch{}return value;}
@@ -70,6 +71,13 @@ export class ProactiveResumePi {
       this.outageRetry.unref?.();
     }
     return this.record({state:'blocked',reason:'gateway_not_restored'});
+  }
+  waitForProgressRestoration(proposalId,reason='gateway_not_restored'){
+    if(this.started&&!this.closed&&!this.progressOutageRetry){
+      this.progressOutageRetry=setTimeout(()=>{this.progressOutageRetry=null;this.followProgress(proposalId,Promise.resolve());},1000);
+      this.progressOutageRetry.unref?.();
+    }
+    return this.record({state:'blocked',reason,...this.receipt});
   }
   taskIsCurrent(){
     return this.session.sessionId===this.sessionId&&fingerprint(this.session.messages.filter(message=>message.role==='user'))===this.humanContext;
@@ -99,6 +107,11 @@ export class ProactiveResumePi {
         return outcome;
       }
       if(ticket.trigger==='recorded_tool_outage'&&(!this.reviewOutage||!this.reviewRecordedToolOutage))return this.record({state:'blocked',reason:'recorded_tool_outage_not_enrolled'});
+      if(ticket.trigger==='recorded_tool_outage'){
+        if(typeof this.outageReady!=='function')return this.record({state:'blocked',reason:'outage_reconciliation_unavailable'});
+        if(await this.outageReady({signal:abort.signal})!==true)return this.waitForProgressRestoration(proposalId);
+        if(this.closed||abort.signal.aborted)return;
+      }
       const cueIndex=this.session.messages.findIndex(message=>message.role==='custom'&&message.customType==='dsg-proactive-resume'&&message.details?.proposalId===proposalId&&message.details?.scopeId===this.scopeId);
       if(cueIndex<0||ticket.scopeId!==this.scopeId||ticket.proposalId!==proposalId)throw new Error('Progress receipt binding mismatch');
       const before=fingerprint(this.session.messages);
@@ -107,7 +120,7 @@ export class ProactiveResumePi {
       const result=await this.reviewer.reviewProgress(input,{disclosedProviders:this.providers,signal:abort.signal});
       if(this.closed||abort.signal.aborted)return;
       if(!this.taskIsCurrent()||fingerprint(this.session.messages)!==before){this.close();return this.record({state:'blocked',reason:'progress_review_stale'});}
-      if(result.state!=='reviewed')return this.record({state:'blocked',reason:'progress_review_unavailable',...this.receipt});
+      if(result.state!=='reviewed')return ticket.trigger==='recorded_tool_outage'?this.waitForProgressRestoration(proposalId,'progress_review_unavailable'):this.record({state:'blocked',reason:'progress_review_unavailable',...this.receipt});
       if(result.scope_id!==ticket.scopeId||result.ticket_id!==ticket.id||!this.providers.some(p=>p.url.replace(/\/$/,'')===result.provider?.url.replace(/\/$/,'')&&p.model===result.provider.model))throw new Error('Progress review binding mismatch');
       const advice=progressAdvice(result.advice,input);
       const current=await this.control.inspectProgress(proposalId);
