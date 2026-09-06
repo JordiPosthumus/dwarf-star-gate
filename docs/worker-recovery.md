@@ -59,9 +59,11 @@ all of them with a single green badge. Use the
 The production-canary adapter is **Linux systemd user services**, tested with a
 native DS4 service on DGX Spark. A separate **macOS launchd LaunchAgent adapter**
 implements the same private protocol and has synthetic identity, fault, exact-job,
-idempotency and no-repeat tests. It is not automatically enrolled and has not yet
-completed a public-repository real-Mac canary. Each Mac must pass its own private
-inspection and operator canary before automatic recovery is enabled. These are
+idempotency and no-repeat tests. A private real-Mac restart-only canary also
+validated generation, cold-to-warm disk-cache reuse and unchanged effective launch
+arguments and executable identity. This does not validate stopped or removed-job
+restoration. Each Mac must pass its own private inspection and operator canary
+before automatic recovery is enabled. These are
 install-type boundaries, not hardware checks. Manually launched processes,
 LaunchDaemons/system jobs and containers remain manual. Adding an endpoint in the
 UI does not grant permission to start or restart it.

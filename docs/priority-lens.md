@@ -2,9 +2,11 @@
 
 Priority Lens shows **Current Jobs | Priority | Reason** in the Genie tab.
 The local source includes manual controls, guarded queue selection, an optional
-Pi intent handoff and asynchronous Genie classification. This is source and
-fixture validation; it does not claim that an existing fleet has been upgraded,
-or that real-model classification quality has been measured.
+Pi intent handoff and asynchronous Genie classification. Source and fixture
+validation is complemented by one private deployment activation and six synthetic
+classification cases on one real DS4 host. All six returned the expected priority;
+this small sample does not establish broad classification accuracy or routing
+benefit. Other installations still require their own activation and validation.
 
 ## Scheduling and controls
 
@@ -110,8 +112,8 @@ and the confirmed rules through the private local control path. Scheduled fleet
 reviews do not receive this priority context. No recent Pi excerpt is included
 in this chat-correction context. Existing Genie model options and deadlines
 remain unchanged. An ordinary Genie chat does not silently change this memory.
-Richer client task lifecycle coverage and measured classification quality remain
-unfinished. The jobs table covers observed DSG requests; unobserved local tools and
+Richer client task lifecycle coverage and broader classification-quality
+evaluation remain unfinished. The jobs table covers observed DSG requests; unobserved local tools and
 direct-provider activity remain unknown.
 
 ## Validation

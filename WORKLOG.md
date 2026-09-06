@@ -10,11 +10,18 @@ For unfinished work, see the [roadmap](docs/roadmap.md).
 
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-06
 
+- **Validated macOS restart-only recovery on a real deployment.** The enrolled
+  canary proved generation and cold-to-warm cache reuse while retaining effective
+  launch arguments and executable identity. This is bounded restart evidence;
+  each installation still needs its own enrollment and canary.
+
 - **Connected the first Priority Lens source slice.** Current jobs have persistent
   manual priorities, explicit preference rules and guarded eligible-conversation
   scheduling. Optional Pi excerpts feed asynchronous Genie advice with independent
   expiry and no dispatch wait. Tests cover real Pi serialization and synthetic
-  dispatch; aging agreement, measured model quality and live rollout remain.
+  dispatch. The configurable aging backstop defaults to one hour; one private
+  deployment activation and six real-model synthetic priority cases passed.
+  Broader accuracy and routing-benefit evaluation remain.
 
 - **Added reviewable priority corrections in Genie chat.** One-conversation
   corrections and general preferences have distinct confirmation controls. Rule
