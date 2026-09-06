@@ -1243,3 +1243,7 @@ Still-undispatched reviews may observe newly freed compatible capacity within th
 Added versioned not-dispatched receipts for hold-capacity and pre-forward shutdown rejections. The scoped continuity transport recognizes only the matching Door source/code/reason alongside existing opaque call/request/header validation. Unknown core failures retain inspect-before-retry behavior. No live service, model, provider, hold or launcher changes.
 
 Validation: Door + continuity suites 67 passed; continuity suite after additional mismatched-source/reason/code/call checks 36 passed. Real localhost Door fixture verifies a full hold reaches the core once after explicit release with identical bytes/call ID, while a shutdown-held request never reaches the core. These are transport fixtures, not production incidence or native outage-continuation certification.
+
+## 2026-09-06 — Pi process-kill acceptance evidence
+
+Six private source-candidate tests passed with actual SIGKILL and a fresh recovery process at reservation, execution, acceptance and progress-write boundaries. Before reservation/reservation-only cases produced zero effects; post-execution cases produced exactly one disposable tool effect. Recovery refused both reopening and exclusive recreation, retained the abandoned owner and every receipt byte, and produced no repeated effect. No production source, Pi installation or service configuration changed. Disk-session restoration, power-loss behavior, filesystem-internal crash timing and safe owner reconciliation remain unverified.
