@@ -2050,6 +2050,20 @@ test('queued read-ahead hands a partial chunked upload to dispatch before upload
   assert.equal(r.gateway.stats().workers[0].last_requested_thinking.fields.reasoning_effort,'xhigh');
 });
 
+test('queued uploads exceeding 8 MiB retain the full body and output settings',{timeout:10000},async t=>{
+  const r=await rig(t,1),hold=r.request(JSON.stringify({stream:true,fixture_hold_stream:true}),'busy');
+  await until(()=>r.backends[0].heldStreams?.length===1);
+  const body=JSON.stringify({messages:[{role:'user',content:'Analyze the attached synthetic image.'},{role:'user',content:[{type:'image_url',image_url:{url:'data:image/png;base64,'+'A'.repeat(THINKING_CAPTURE_BYTES)}}]}],reasoning_effort:'xhigh',max_tokens:262144});
+  const queued=r.request(body,'large-stock-request');
+  await until(()=>r.gateway.priorityStatus(true).queued_body.buffered_bytes===THINKING_CAPTURE_BYTES);
+  assert.equal(r.backends[0].records.length,1);
+  assert.equal(r.gateway.priorityStatus(true).jobs.find(j=>j.state==='queued').title,null);
+  r.backends[0].heldStreams.shift()();await hold;assert.equal((await queued).status,200);
+  assert.equal(r.backends[0].records[1].body.toString(),body);
+  assert.equal(r.backends[0].records[1].payload.max_tokens,262144);
+  assert.equal(r.gateway.priorityStatus(true).queued_body.buffered_bytes,0);
+});
+
 test('Genie names ordinary gateway requests without a Pi extension or persisting excerpts',{timeout:10000},async t=>{
   const r=await rig(t,1,{control_socket:true,dataset_enabled:true}),modelInputs=[];
   const classifier=new PriorityClassifier({genie:{enabled:true,closed:false,config:{url:'http://127.0.0.1:19999/v1',model:'fixture-genie'}},snapshot:()=>({}),control:(route,body)=>workerControl(r.config.control_socket,route,body),fetchImpl:async(_url,init)=>{
