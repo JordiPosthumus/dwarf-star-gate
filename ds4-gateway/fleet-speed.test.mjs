@@ -114,3 +114,34 @@ test('a clipped energy interval integrates its linear power curve at the window 
  const energy=speed.snapshot(now,['one']).windows['1h'].energy;
  assert.ok(Math.abs(energy.measured_kwh-250*30/3600000)<1e-12);
 });
+
+test('worker rolling averages weight active time, clip six-hour edges, and compare adjacent halves',()=>{
+  const reader=new FleetSpeedReader('/tmp/unused-rolling-rates');reader.status='ready';
+  const add=(end,duration,rate,kind='prefill',node='spark-a')=>reader.speed.intervals.push({node,kind,start:end-duration*1000,end,seconds:duration,tokens:duration*rate,rate});
+  // Half of this interval is outside the six-hour window.
+  add(now-6*HOUR+30000,60,100);
+  for(let i=0;i<3;i++){add(now-4*HOUR+i*60000,30,100);add(now-HOUR+i*60000,60,200);}
+  add(now-HOUR,60,999,'prefill','another-worker');
+  let r=reader.workerRates('spark-a',now).prefill;
+  assert.equal(r.mean_tps,160);assert.equal(r.active_seconds,300);assert.equal(r.samples,7);
+  assert.equal(r.change_pct,100);assert.equal(r.trend,'up');assert.equal(r.history_span_ms,6*HOUR);
+  assert.equal(reader.workerRates('spark-a',now).decode.mean_tps,null);
+  assert.equal(reader.workerRates('spark-a',now+7*HOUR).prefill.mean_tps,null,'idle history expires');
+  reader.speed.intervals.forEach(r=>{if(r.end>now-3*HOUR&&r.node==='spark-a'){r.tokens=r.seconds*50;r.rate=50;}});
+  assert.equal(reader.workerRates('spark-a',now).prefill.trend,'down');
+  reader.speed.intervals.forEach(r=>{if(r.end>now-3*HOUR&&r.node==='spark-a'){r.tokens=r.seconds*102;r.rate=102;}});
+  assert.equal(reader.workerRates('spark-a',now).prefill.trend,'steady');
+  reader.status='catching_up';assert.equal(reader.workerRates('spark-a',now).prefill.mean_tps,null);
+  reader.status='ready';reader.malformed=1;r=reader.workerRates('spark-a',now).prefill;
+  assert.equal(r.trend,'insufficient');assert.equal(r.partial_history,true);
+});
+
+test('rolling rates recover persisted cumulative samples without double-counting request totals or replay',t=>{
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'rolling-rates-'));t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
+  const rows=[row(1,'spark-a',now-10000,'start'),row(2,'spark-a',now-5000,'prefill',{processed:500,seconds:5}),row(3,'spark-a',now,'prefill_done',{new_tokens:1000,seconds:10})];
+  fs.writeFileSync(path.join(directory,'metrics-2026-09-07.jsonl'),[...rows,...rows].map(r=>JSON.stringify(r)).join('\n')+'\n');
+  for(let i=0;i<2;i++){
+    const reader=new FleetSpeedReader(directory);reader.poll(now);const r=reader.workerRates('spark-a',now).prefill;
+    assert.equal(r.mean_tps,100);assert.equal(r.active_seconds,10);assert.equal(r.samples,2);assert.equal(r.trend,'insufficient');
+  }
+});

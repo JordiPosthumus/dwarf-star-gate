@@ -1056,3 +1056,15 @@ test('Current Jobs API is read-only, same-origin and separate from diagnostics',
   for(const route of ['/api/status','/api/diagnostics'])assert.doesNotMatch(await(await fetch(origin+route)).text(),/Private request preview/);
   const script=await fetch(origin+'/current-jobs.js');assert.equal(script.status,200);assert.doesNotMatch(await script.text(),/localStorage|sessionStorage|innerHTML/);
 });
+
+test('rolling rate UI shows six-hour averages, accessible coloured trends and honest missing history',()=>{
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const context=vm.createContext({});vm.runInContext(source,context);
+  const render=value=>vm.runInContext(`rollingRateNote(${JSON.stringify(value)})`,context);
+  const value={mean_tps:129,trend:'up',samples:30,active_seconds:300,history_span_ms:18000000,change_pct:12.3,recent_mean_tps:135,previous_mean_tps:120};
+  const html=render(value);assert.match(html,/6h avg 129 t\/s/);assert.match(html,/rate-trend up/);assert.match(html,/aria-label="faster"/);assert.match(html,/5.00h of 6h/);assert.match(html,/\+12.3%/);
+  assert.match(render({...value,trend:'down'}),/aria-label="slower"/);
+  assert.match(render({...value,trend:'steady'}),/aria-label="steady"/);
+  const missing=render(null);assert.match(missing,/6h avg — t\/s/);assert.doesNotMatch(missing,/rate-trend/);
+  const insufficient=render({...value,trend:'insufficient',change_pct:null});assert.match(insufficient,/60 active seconds/);assert.doesNotMatch(insufficient,/rate-trend/);
+});

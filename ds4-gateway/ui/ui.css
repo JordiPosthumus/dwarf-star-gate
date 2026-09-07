@@ -23,3 +23,5 @@
 .hardware-reading.accelerator>small{display:flex;justify-content:space-between;gap:3px;align-items:center}.hardware-reading.accelerator .temperature-reading{flex-shrink:0}
 
 .hardware-evidence-plots>div{margin:12px 0}.hardware-evidence-plots .hardware-mini-chart{display:block;width:100%;height:65px}.hardware-evidence-plots small{color:var(--muted)}
+
+.rate-trend.up{color:#64d5a4}.rate-trend.down{color:#e78b87}.rate-trend.steady{color:var(--muted)}.rolling-rate{cursor:help}

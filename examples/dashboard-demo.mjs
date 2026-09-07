@@ -20,6 +20,7 @@ const devices = workers.map((w,i) => ({
   id:w.id, connected:true, telemetry_source:i===2?'file':'journal', observed_since:now-900000, last_event:now-(i===2?120000:0), phase:i ? 'decode':'thinking',
   decode:{ time:now-(i===2?120000:1000), tps:[14.6,14.4,28.2][i], average:[14.5,14.3,27.9][i] },
   prefill:{ time:now-(i===2?180000:45000), tps:[853.2,824.8,460.3][i], average:[827.5,802.6,442.8][i] },
+  rolling_rates:Object.fromEntries(['decode','prefill'].map(kind=>[kind,{mean_tps:kind==='decode'?[14.5,14.3,27.9][i]:[827.5,802.6,442.8][i],trend:['up','down','steady'][i],change_pct:[8,-7,1][i],recent_mean_tps:kind==='decode'?[15.1,13.8,28][i]:[860,774,445][i],previous_mean_tps:kind==='decode'?[14,14.8,27.7][i]:[796,832,441][i],samples:240,active_seconds:1200,history_span_ms:21600000,status:'ready'}])),
   prompt:{ prompt:i ? 42600:55300, cached:i ? 42402:53248, cache:i ? 'prefix reuse':'disk restore' },
   cache:{ starts:i ? 30:34, reused:i ? 28:31, cold:i ? 2:3, resident_misses:i ? 4:6, disk_restores:i ? 3:5 },
   // Synthetic measurement pauses demonstrate the red-dot chart connectors.

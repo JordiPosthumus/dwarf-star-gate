@@ -343,6 +343,15 @@ function performanceLightsMarkup(d,now,stale) {
   }).join('')}</div>`;
 }
 
+function rollingRateNote(value){
+  const known=Number.isFinite(value?.mean_tps),trend=['up','down','steady'].includes(value?.trend)?value.trend:'insufficient';
+  const direction={up:'↑',down:'↓',steady:'→',insufficient:''}[trend];
+  const span=Number.isFinite(value?.history_span_ms)?Math.min(6,value.history_span_ms/3600000):0;
+  const comparison=Number.isFinite(value?.change_pct)?`${value.change_pct>=0?'+':''}${value.change_pct.toFixed(1)}%: latest 3h versus preceding 3h (${fmtWhole(value.recent_mean_tps)} versus ${fmtWhole(value.previous_mean_tps)} t/s).`:'Trend needs at least 3 timing intervals and 60 active seconds in each 3h half, with complete readable history.';
+  const detail=known?`Rolling 6h: total observed tokens / active processing seconds; idle time excluded. ${value.samples} timing intervals, ${Math.round(value.active_seconds)} active seconds. Available measurement span: ${span.toFixed(2)}h of 6h${value.partial_history?'; partial history':''}. ${comparison} Changes under 5% are steady. Workload and context length affect observed speed.`:`Rolling 6h average unavailable (${value?.status??'awaiting history'}).`;
+  return `<span class="rolling-rate" tabindex="0" title="${esc(detail)}">6h avg ${known?fmtWhole(value.mean_tps):'—'} t/s${direction?` <span class="rate-trend ${trend}" aria-label="${trend==='up'?'faster':trend==='down'?'slower':'steady'}">${direction}</span>`:''}</span>`;
+}
+
 function device(d, w, now, stale, index = 1, scales={}, controls=false) {
   const state = phase(d,w,now,stale);
   const bad = stale || !w?.is_healthy;
@@ -352,7 +361,7 @@ function device(d, w, now, stale, index = 1, scales={}, controls=false) {
     const staleMetric=!Number.isFinite(m?.time)||now-m.time>60000;
     const explanation=kind==='decode'?'Generation speed measured by DS4, including thinking and answer tokens.':'Prompt-processing speed measured by DS4.';
     const measured=`${staleMetric?'Last':'Latest'} measurement: ${age(m?.time,now)}. Values are engine observations, not a promise of current speed.`;
-    return `<div class="metric-block ${staleMetric?'metric-stale':''}"><span class="label" title="${explanation}">${title}</span><div class="rate ${kind}">${fmtWhole(m?.tps)}<em>t/s</em></div><div class="metric-note" title="${esc(measured)}">avg ${fmtWhole(m?.average)} · ${age(m?.time, now)}</div>${chart(d.series, kind, now,scales[kind])}<div class="chart-caption" title="${esc(scales.detail)} Exact ceiling: ${scales[kind]} t/s. Gaps compressed; not a shared wall-clock axis.">15m · compressed · 0–${fmtWhole(scales[kind])} t/s</div></div>`;
+    return `<div class="metric-block ${staleMetric?'metric-stale':''}"><span class="label" title="${explanation}">${title}</span><div class="rate ${kind}">${fmtWhole(m?.tps)}<em>t/s</em></div><div class="metric-note" title="${esc(measured)}">${rollingRateNote(d.rolling_rates?.[kind])} · ${age(m?.time, now)}</div>${chart(d.series, kind, now,scales[kind])}<div class="chart-caption" title="${esc(scales.detail)} Exact ceiling: ${scales[kind]} t/s. Gaps compressed; not a shared wall-clock axis.">15m · compressed · 0–${fmtWhole(scales[kind])} t/s</div></div>`;
   };
   const duration=!stale&&w?.load&&Number.isFinite(w.active_seconds)?`<span class="remaining-estimate" title="Elapsed time of the active DSG request; not an estimate">${fmtWhole(Math.floor(w.active_seconds/60))}m active</span>`:'';
   const activityDuration=duration;

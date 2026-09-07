@@ -181,6 +181,25 @@ export class FleetSpeedReader {
       this.status=!files.length?'waiting':backlog?'catching_up':'ready';this.lastRead=now;
     }catch{this.status='unavailable';}
   }
+  workerRates(node,now=Date.now()){
+    const partial=!!(this.malformed||this.speed.rejected||this.speed.evicted);
+    const ready=this.status==='ready',windowMs=6*HOUR;
+    return Object.fromEntries(['decode','prefill'].map(kind=>{
+      const total=this.speed.phase(kind,windowMs,now,[node]);
+      const recent=this.speed.phase(kind,3*HOUR,now,[node]);
+      const previous=this.speed.phase(kind,3*HOUR,now-3*HOUR,[node]);
+      const supported=ready&&!partial&&[recent,previous].every(x=>x.samples>=3&&x.active_seconds>=60&&x.mean_tps>0);
+      const change=supported?100*(recent.mean_tps/previous.mean_tps-1):null;
+      let oldest=null;
+      for(const row of this.speed.intervals)if(row.node===node&&row.kind===kind&&row.end>now-windowMs&&row.start<now)
+        oldest=oldest===null?Math.max(now-windowMs,row.start):Math.min(oldest,Math.max(now-windowMs,row.start));
+      return [kind,{window_ms:windowMs,mean_tps:ready?total.mean_tps:null,samples:ready?total.samples:0,
+        active_seconds:ready?total.active_seconds:0,history_span_ms:ready&&oldest!==null?now-oldest:0,
+        recent_mean_tps:ready?recent.mean_tps:null,previous_mean_tps:ready?previous.mean_tps:null,
+        change_pct:change,trend:change===null?'insufficient':change>=5?'up':change<=-5?'down':'steady',
+        status:this.status,partial_history:partial}];
+    }));
+  }
   snapshot(now=Date.now(),workers=[]){return {...this.speed.snapshot(now,workers),status:this.status,last_read_at:this.lastRead,malformed_lines:this.malformed,rescans:this.rescans,
     partial_history:!!(this.malformed||this.speed.rejected||this.speed.evicted)};}
 }
