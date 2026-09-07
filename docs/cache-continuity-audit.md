@@ -125,8 +125,7 @@ currently receive an exact rendered-prefix identity from stock DS4. The auditor
 therefore identifies where to investigate; it does not accuse automatically,
 move a session, rewrite a prompt, delete a cache or restart a worker.
 
-This audit complements, but does not unlock, the
-[four-path cache-continuity shadow](cache-continuity-shadow.md). It supplies
+The four-path cache comparator has been retired. This audit supplies
 realized reuse evidence and data-quality reasons. It does not prove that a
 particular disk snapshot exists, implement a remote acquisition protocol, or
 validate the counterfactual completion time of an unchosen path.

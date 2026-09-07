@@ -161,9 +161,8 @@ saved time.
 3. Compare the deployed remaining/service forecasts with measured local restore
    and cold-prefill components. Do not double-count acquisition costs already
    present in a total-service forecast.
-4. Use only small, non-displacing calibration trials after the existing preflight
-   can prove cache preservation. Then decide whether any broader established-
-   session automation has enough margin, uncertainty bounds and hysteresis.
+The separate synthetic-calibration preflight and four-path comparator have been
+retired. This historical study protocol does not authorize new experiments.
 
 Until those gates pass, exact established-session handover remains evidence-bound
 and revalidated. An operator or Genie may request one mature exact offer, while

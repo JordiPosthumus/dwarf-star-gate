@@ -93,21 +93,11 @@ Status: research candidate, not an approved engine patch or PR submission. DSG's
 gateway-only continuity work must remain useful with stock DS4 and cannot depend
 on this upstream change. A chat's lifetime image count is not a request limit.
 
-## Calibration must preserve production caches
+## Synthetic calibration — retired
 
-The planned manual/optional hourly development runner must have a proven
-non-displacing execution path before it sends any synthetic work. **Skip when
-warm-cache preservation cannot be established.** No active/queued gateway work
-is necessary but insufficient: idle servers can still hold valuable hot sessions,
-and direct clients can be invisible to DSG. A maximum number of hot slots is not
-a measurement of which slots are resident or safe to use.
-
-Use a separately provisioned calibration server or another verified stock-DS4
-mechanism only when it actually preserves production state and resources. Do
-not assume session IDs, cancellation or a short prompt make eviction impossible.
-The future UI must expose skip reason, execution budget and whether the results
-are synthetic calibration or production observations. Ordinary workload collection
-and CPU retraining continue even when every calibration opportunity is skipped.
+The calibration preflight and speculative cache comparator have been removed.
+Ordinary request observations and cache telemetry remain available. No synthetic
+request, cache transfer or model-server change is implied by telemetry.
 
 ## Genie boundary
 

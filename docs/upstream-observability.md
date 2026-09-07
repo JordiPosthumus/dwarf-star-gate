@@ -90,9 +90,9 @@ admission-time training features or count as forecasts of unchosen paths.
 
 ## A separate stage: genuinely non-mutating prefix inspection
 
-The [four-path comparator](cache-continuity-shadow.md) still needs exact eligible
-prefix identity, compatible inventories and component forecasts. Passive cache
-observations alone do not meet those gates.
+The four-path comparator has been retired. The following inspection design is
+historical research, outside the active simplified system; passive cache
+observations remain available without it.
 
 Do not reuse the current restore routine as a probe. The inspected loader changes
 session state, touches cache hit metadata and can unlink a corrupt payload;

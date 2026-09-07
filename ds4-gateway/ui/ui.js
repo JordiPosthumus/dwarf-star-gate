@@ -471,7 +471,6 @@ function renderHealthWire(snapshot) {
 }
 function render(s) {
   const g = s.gateway, now = s.time, stale = !!s.gateway_error;
-  $('calibration-status').textContent=stale?'Calibration safety status unavailable; no job is authorized.':g?.calibration?.execution_available===false?'Synthetic calibration skipped: no verified cache-preserving execution path. Idle does not prove warm caches are safe. Ordinary traffic collection and operational collection continue.':'Synthetic calibration is not configured; no job is authorized.';
   renderHealthWire(s);
   renderAgentWatch(g?.client_watch);
   const rejected=g?.continuity?.recent_rejections??[];

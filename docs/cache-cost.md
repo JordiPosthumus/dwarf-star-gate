@@ -213,11 +213,8 @@ accepts the exact stock `<40-hex>.kv` filename shape; unrelated files are ignore
 
 Scans run no more than once per minute and examine at most 4,096 cache-shaped
 files. Missing, symlinked, unreadable, oversized or invalid inputs abstain. The
-scanner performs no inference and no writes to the DS4 directory. The next stage
-now has a pure [four-path shadow comparator](cache-continuity-shadow.md). It
-compares wait-hot, local-restore, remote-acquisition and cold-prefill critical
-paths while preserving unknown evidence. It is not yet fed from live requests;
-no remote command, copy protocol or automatic routing is claimed.
+scanner performs no inference and no writes to the DS4 directory. The speculative four-path comparator and calibration preflight are retired.
+Inventory remains a read-only observation and does not select routes.
 
 A separate [cache-continuity audit](cache-continuity-audit.md) measures realized
 same-session reuse from the private numerical dataset. Its aggregate ratios help

@@ -120,8 +120,7 @@ strict affinity. Gate Genie or the operator may request an exact continuity-safe
 offer sooner. The deterministic executor revalidates every move and preserves
 the original client stream and deadline. Destination cache locality remains
 explicitly unknown.
-[Calibration preflight](docs/calibration.md) skips without a proven
-cache-preserving path. An opt-in [persistent Genie notebook](docs/genie-memory.md)
+An opt-in [persistent Genie notebook](docs/genie-memory.md)
 records worker-state changes, incident/recovery references, explicit operator
 notes and evidence-gated developer hardening suggestions. A collapsible section
 below the conversation in the Gate Genie tab lists the newest suggestion first. Genie may describe a
@@ -182,10 +181,8 @@ Optional [queued-work shadow collection](docs/routing-shadow.md) records idle an
 session-recency clocks and compares a historical baseline without moving work.
 Its estimates are explicitly unvalidated. Operational evidence also includes a read-only
 [cache-cost calculator](docs/cache-cost.md) using measured disk-load/prefill
-components. A separate pure [four-path cache-continuity shadow](docs/cache-continuity-shadow.md)
-defines how to compare waiting hot, restoring locally, acquiring remotely and
-prefilling cold. Unknown cache costs and unverified cache existence stay explicit;
-the comparator has no live routing or cache-movement authority.
+components. The speculative four-path comparator and calibration preflight have
+been retired; these observations do not determine routing.
 
 ## The engine is Antirez's. Start there.
 
@@ -473,9 +470,7 @@ exports only aggregate cohort/count/size evidence. Bare 40-hex names and
 unrelated files are ignored.
 It never loads, copies, deletes or rewrites a cache. See
 [cache acquisition evidence](docs/cache-cost.md#privacy-safe-snapshot-inventory).
-The private inventory can support the fail-closed presence gate in the
-[four-path shadow](docs/cache-continuity-shadow.md), but DSG cannot yet derive an
-exact live snapshot identity or transfer a cache between arbitrary servers.
+DSG does not transfer caches between servers.
 Separately, `npm run cache-continuity:audit` evaluates consecutive same-session
 reuse from the private numerical dataset. It reports only aggregate counts,
 ratios and abstention reasons; low reuse is not called high-suspicion without

@@ -4,7 +4,6 @@ import { createDashboard } from '../ds4-gateway/dashboard.mjs';
 import { workerConfig, assertUniqueWorker } from '../ds4-gateway/worker-config.mjs';
 import { DeviceTelemetry } from '../ds4-gateway/telemetry.mjs';
 import { isMain } from '../ds4-gateway/config.mjs';
-import {calibrationPreflight} from '../ds4-gateway/calibration.mjs';
 import {FleetThroughput} from '../ds4-gateway/throughput.mjs';
 import {FleetSpeed} from '../ds4-gateway/fleet-speed.mjs';
 // Optional memory is supplied only by the isolated browser-test fixture. The
@@ -115,7 +114,7 @@ return createDashboard(()=>({...snapshot,time:Date.now(),gateway_at:Date.now(),
     return {...d,last_event:d.last_event+shift,decode:{...d.decode,time:d.decode.time+shift},prefill:{...d.prefill,time:d.prefill.time+shift},series:d.series.map(row=>({...row,time:row.time+shift}))};
   }),
   cache_continuity:{...snapshot.cache_continuity,checked_at:Date.now()},
-  gateway:{...snapshot.gateway,calibration:calibrationPreflight(workers.map(w=>({id:w.id,healthy:w.is_healthy,drained:w.drained,active:w.load,queue:Array(w.queued).fill(null)}))),total:workers.length,healthy:workers.filter(w=>w.is_healthy).length,available:workers.filter(w=>w.is_healthy&&!w.drained).length,active:workers.filter(w=>w.load).length,queued:workers.reduce((a,w)=>a+w.queued,0)}}),undefined,{
+  gateway:{...snapshot.gateway,total:workers.length,healthy:workers.filter(w=>w.is_healthy).length,available:workers.filter(w=>w.is_healthy&&!w.drained).length,active:workers.filter(w=>w.load).length,queued:workers.reduce((a,w)=>a+w.queued,0)}}),undefined,{
   read:async()=>registry(),
   act:async(action,input)=>{
     if(action==='queue-timeout'){

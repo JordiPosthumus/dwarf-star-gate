@@ -18,8 +18,8 @@ Private deployment receipts and measurements stay outside this public repository
   safe queued handover and certified pre-dispatch retry.
 - [x] Keep measured cache/prefill/decode evidence, power and energy visibility,
   temperature telemetry, Genie explanations and existing enrolled recovery.
-- [x] Keep speculative cache comparison and calibration preflight unchanged;
-  document their observational/research limits.
+- [x] Retire speculative cache comparison and calibration preflight; document
+  the remaining load-based placement, affinity and safe queued handover.
 - [x] Update the README, feature documentation, roadmap, changelog, work log,
   synthetic screenshots and this checklist for the reduced scope.
 - [x] Pass gateway/dashboard, continuity, browser, syntax and privacy checks.

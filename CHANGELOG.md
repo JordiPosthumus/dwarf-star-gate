@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-09-07 — remove unused cache experiments
+
+Removed the speculative four-path cache comparator and calibration preflight,
+including their dashboard and Genie status. Load-based placement, conversation
+affinity, FIFO and safe queued handover are unchanged. Passive cache, throughput
+and hardware observations remain. The system overview now documents the exact
+remaining load-balancing rules and their limits.
+
+
 ## 2026-09-07 — simpler request visibility
 
 Retired Priority Lens and Proactive Resume. Current Jobs remains read-only,

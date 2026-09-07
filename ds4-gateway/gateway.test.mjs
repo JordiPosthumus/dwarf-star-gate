@@ -1167,7 +1167,7 @@ test('hot removal requires paused and fully idle; existing conversation reassign
   assert.equal((await r.request('{}',null,{path:'/remove-worker'})).status,404);
 });
 
-test('real dashboard polling exposes maintenance ownership and calibration, without private reasons',async t=>{
+test('real dashboard polling exposes maintenance ownership, without private reasons',async t=>{
   const r=await rig(t,1,{control_socket:true,ui_worker_management:true});
   const granted=await workerControl(r.config.control_socket,'/grant-agent',{agent_id:'tester',workers:['spark1']});
   await agentRequest({control_socket:r.config.control_socket,token:granted.token},'drain',{worker_id:'spark1',reason:'PRIVATE_OPERATOR_REASON',request_id:randomUUID()});
@@ -1175,7 +1175,7 @@ test('real dashboard polling exposes maintenance ownership and calibration, with
   const blocked=r.request('{}','blocked');await until(()=>r.gateway.stats().continuity.waiting===1);
   const configPath=path.join(path.dirname(r.config.state_file),'dashboard-config.json');fs.writeFileSync(configPath,JSON.stringify({...r.config,port:r.address.port}));
   const dashboard=await runDashboard(configPath,0);t.after(()=>dashboard.close());
-  const s=dashboard.snapshot();assert.equal(s.gateway.agent_api_version,1);assert.equal(s.gateway.maintenance_lock_version,1);assert.deepEqual(s.gateway.calibration,r.gateway.stats().calibration);
+  const s=dashboard.snapshot();assert.equal(s.gateway.agent_api_version,1);assert.equal(s.gateway.maintenance_lock_version,1);assert.equal(Object.hasOwn(s.gateway,'calibration'),false);assert.equal(Object.hasOwn(r.gateway.stats(),'calibration'),false);
   assert.equal(s.gateway.continuity.waiting,1);assert.equal(s.gateway.queued,1);assert.equal(s.gateway.continuity.waiting_reasons.no_ready_worker,1);
   assert.equal(s.gateway.workers[0].holds[0].owner_id,'tester');assert.equal(s.gateway.workers[0].gateway_drained,true);assert.equal(s.gateway.workers[0].operator_paused,false);
   assert.equal(s.gateway.workers[0].maintenance_locks[0].name,'speed-test');

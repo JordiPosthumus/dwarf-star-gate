@@ -56,24 +56,45 @@ No classifier, priority score or separate model call is involved.
 Historical designs and source remain in Git history. Private deployment backups
 and operational receipts are retained separately from published documentation.
 
-## Cache comparison and calibration: retained, inactive research
+## Load balancing
 
-The four-path cache comparator estimates hypothetical completion costs for
-waiting at a warm worker, restoring a local disk cache, acquiring a compatible
-remote cache, or rebuilding through cold prefill. It is a shadow comparison:
-it does not route requests, read or transfer caches, replay work or call a model.
+New conversations use the eligible worker with the smallest number of active
+plus queued requests. Ties go to the worker with fewer assigned conversations,
+then stable worker-ID order. Eligibility includes the existing model/context,
+health, pause and ownership safeguards. This counts requests; it does not predict
+how much compute each request will take.
 
-Calibration would deliberately measure those component costs with extra work.
-The current implementation is only a read-only preflight. There is no verified
-non-displacing calibration runner, so it reports that execution is unavailable
-and skipped. No new calibration experiment or cache-transfer capability is
-activated by this simplification.
+Existing conversations prefer their assigned worker for cache locality. Requests
+run in ordinary FIFO order. If a worker becomes unavailable, the existing
+session/ownership checks govern reassignment or waiting.
 
-Measurements from ordinary requests remain useful independently of both:
-reported cache reuse, observed misses, disk-load spans and prefill/decode speed.
-Unknown cause or missing coverage stays unknown. See the
-[cache continuity comparison](cache-continuity-shadow.md) and
-[cache audit](cache-continuity-audit.md).
+The core can move a safe undispatched queue head from a busy worker to a
+completely idle eligible worker. New or unaffined work can move immediately;
+established conversations have a five-minute affinity window by default
+(`automatic_affinity_rebalance_min_wait_ms`, or `false` for strict affinity).
+Genie may request an independently validated offer after its separate wait
+threshold, one minute by default (`genie_rebalance_min_wait_ms`). Operator
+controls use the same exact-offer checks. Active or competing same-conversation
+work prevents a move. Handover retains the original client stream and deadline;
+it does not move running inference or copy KV files. Destination cache reuse
+is unknown and a cold prefill may be needed.
+
+Genie's own new reviews can use compatible free capacity under the existing
+provider-assignment policy. None of these routing rules depends on the retired
+XGB models, priority classifier, four-path comparator or calibration preflight.
+
+## Cache comparison and calibration — retired
+
+The experimental comparison of waiting hot, restoring locally, acquiring a
+remote cache or rebuilding cold has been removed, together with its calibration
+preflight and dashboard/Genie status. No calibration job or cache-transfer
+protocol was active; this retirement does not change the routing rules above.
+
+Passive measurements from ordinary requests remain: reported cache reuse,
+observed misses, disk-load spans and prefill/decode speed. Unknown cause or
+missing coverage stays unknown. Fleet gauge scale fitting is also retained;
+its internal `calibration` field only sizes charts from observed rates and
+never submits synthetic work. See the [cache audit](cache-continuity-audit.md).
 
 ## Operation and validation
 

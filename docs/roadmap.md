@@ -117,8 +117,8 @@ rewrites, unrelated-session merging, or speculative cache deletion.
 only stock DS4's 52-byte disk-KV header, replaces prompt-derived filenames with
 installation-keyed HMACs, reports aggregate compatibility cohorts and abstains on
 legacy unknown weights. It does not expose snapshot references, read prompt bytes,
-copy caches or change routing. Next: explicitly enrolled remote inventory and the
-four-path shadow comparison using measured critical-path components.
+copy caches or change routing. The speculative four-path comparator and
+calibration preflight have been retired.
 
 **Implemented audit slice:** a bounded read-only dataset audit measures reuse on
 consecutive same-session/same-worker completions. It reports aggregate ratios and
@@ -178,101 +178,17 @@ advisory; it cannot submit new input or control a client session.
 
 Use stable categorical worker identities plus shared hardware-class features and
 configuration-labelled evidence, not machine-name-only predictions. New machines start with limited confidence,
-compatibility checks and small calibration. Removed machines stop being routing
+compatibility checks and ordinary operational observations. Removed machines stop being routing
 candidates; their measurements need not be erased. Never lower the pool context
 guarantee just to admit an incompatible worker. The dedicated Genie endpoint is
 not itself required to match the worker pool's context size.
 
-## Moonshot next idea: cache-aware session relocation
+## Cache comparison and calibration — retired
 
-Could the Genie move a conversation from a congested server to an idle compatible
-server, carrying its disk KV cache instead of paying for a full cold prefill?
-Worth investigating, **not implemented, and cross-device cache portability is
-not yet verified**. Matching API model names alone do not establish compatibility.
-
-### Agreed direction: compare four paths to completion
-
-Long-context prefill can be expensive. A disk or remotely fetched checkpoint may
-be much cheaper than repeating it. A hot cache is a useful advantage, not an
-absolute routing rule. Choose the
-lowest expected completion time among feasible **server + cache-source** pairs:
-
-1. **Wait for the hot server:** its queue/residual work + new-suffix prefill +
-   generation. Waiting can outweigh the benefit of RAM residency.
-2. **Restore a local snapshot:** destination wait + local read/restore + uncached
-   suffix prefill + generation.
-3. **Fetch a remote snapshot:** destination wait and transfer/export scheduling +
-   integrity checks + destination restore + uncached suffix prefill + generation.
-4. **Prefill cold:** destination wait + full prefill + generation. This remains a
-   legitimate fallback when no compatible useful checkpoint exists.
-
-Model the critical path: transfer may overlap waiting, so do not blindly add
-durations that run in parallel. Include donor/export stalls, network contention,
-destination memory pressure and displacement of another valuable hot session.
-An older nearby checkpoint plus a small suffix can beat fetching the newest,
-largest remote checkpoint. No route is automatically best because it is "hot,"
-"local," "fast hardware" or "the latest checkpoint."
-
-**Proposed storage shape:** keep fast per-server local cache storage and give DSG
-a fleet-wide catalog of compatible snapshots. Fetch or selectively replicate a
-completed immutable snapshot to the destination's local storage when measured
-savings justify it. The catalog can be centralized without making one central
-disk or the conductor host a mandatory bulk-data bottleneck. Do not mirror every update to
-every server by default. No shared mutable cache directory is being enabled.
-
-The source review supports investigation, not a portability claim:
-[Antirez's cache-format documentation](https://github.com/antirez/ds4/blob/main/README.md)
-describes persistent session/token/tensor state and limits portability to
-compatible engine builds/model layouts. The inspected cache manager also updates
-file headers, replaces entries and evicts files. A common writable network folder
-would need explicit multi-process ownership, atomic publication and eviction
-coordination; a common mount alone does not supply those properties.
-
-Record for the evaluator: checkpoint identity/version, exact compatible model
-cohort, cached-prefix token count, bytes, source/replica locations, evidence age,
-export/transfer/restore timings, network throughput under load, suffix-prefill
-cost, actual destination reused-token count and final latency. Snapshot identity
-must cover model weights, format/layout, exact token history and required
-tool/vision state. Embedding similarity may inform cost estimation, but must
-**never authorize KV reuse**. Keep whole checkpoints private: they can contain
-verbatim conversation text, not merely the anonymous-looking session hash.
-
-First experiment: a completed checkpoint restored between compatible Sparks,
-then a separately certified Spark/Mac pair. Prove correct continuation and a real
-warm-prefix hit versus cold execution; measure end-to-end savings at representative
-context lengths. Resolve the current accelerator-checkpoint/OOM failures before
-trusting a wider restore/replication path. A checkpoint failure alone does not
-prove the stored file is corrupt. No cache deletion, format conversion, replication
-daemon or automatic migration is authorized merely by this planning note.
-
-Start with **between-turn migration**, not a running decode or process migration:
-
-1. Respect operator eligibility: a paused, drained or quarantined target is not
-   spare capacity. Check target context, memory/cache headroom and competing work.
-2. Prove cache compatibility across engine/cache format versions, model weights
-   and quantization, tokenizer/template, vision state, and CPU/GPU backends. A
-   Spark-to-Mac transfer needs its own restore test; do not assume it from two
-   successful independent cold runs or from a matching filename.
-3. Obtain a completed, immutable session snapshot through a supported export or
-   verified safe disk mechanism. Prevent new source work during handover. Never
-   copy a mutable file out from under an active generation.
-4. Compare expected completion times: source queue + warm execution versus
-   transfer + verification + destination restore + execution + cache eviction
-   cost. Require a meaningful margin under uncertainty and avoid repeated moves.
-5. Transfer privately over authenticated transport, verify integrity and restore
-   into isolated destination state. KV files contain sensitive conversation state;
-   never put them in public diagnostics or datasets.
-6. Prove real prefix reuse at the destination and atomically hand over affinity
-   with an ownership/generation check. Do not let a racing next turn split the
-   conversation across machines. Keep the source copy until handover is confirmed;
-   failure retains a safe source route or rolls back, without deleting the cache.
-
-Acceptance: correct continuation and actual cache-hit evidence across each
-supported hardware pair; interrupted transfer, incompatible cache, full target,
-new turn during migration, and failed commit/rollback tests. If compatibility is
-not possible, ordinary cold re-prefill remains an explicit costed alternative,
-not a disguised cache transfer. The Genie could propose a move; an independently
-validated deterministic mechanism would enforce the handover.
+The four-path comparison, speculative cache-transfer direction and calibration
+preflight were retired on 2026-09-07. Existing safe queued handover remains;
+see the [current load-balancing rules](simplified-system.md#load-balancing).
+Historical designs do not authorize further experiments.
 
 ## Current Jobs — read-only request visibility
 

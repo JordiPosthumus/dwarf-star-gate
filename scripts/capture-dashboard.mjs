@@ -151,7 +151,7 @@ try {
   assert.match(await page.locator('#connection').innerText(),/Demo/);
   await page.locator('#tab-analytics').click();
   assert.equal(await page.locator('#genie-hardening').isHidden(),true);
-  assert.match(await page.locator('#calibration-status').innerText(),/skipped.*cache-preserving/);
+  assert.equal(await page.locator('#calibration-status').count(),0);
   await page.locator('.analytics-collection>summary').click();
   await page.locator('.analytics-collection>summary').click();
   await page.locator('#tab-fleet').click();

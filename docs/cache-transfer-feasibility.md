@@ -1,5 +1,8 @@
 # KV transfer: evidence and next experiment
 
+Historical research: the four-path comparator and calibration preflight were
+retired on 2026-09-07. No cache-transfer work remains on the active plan.
+
 Research checked 2026-09-04 against upstream DS4 revision
 [`b0a147a`](https://github.com/antirez/ds4/tree/b0a147a7fba6d1a104d047d5a140e9bb4bfc13cd).
 No cache transfer, server change, enrollment or performance claim is implied.
@@ -64,7 +67,7 @@ Only then should an enrolled executor offer a bounded cache-acquire operation
 to the scheduler or Genie. Failure must preserve the original undispatched
 request and ownership; it never authorizes replay of active work.
 
-See the [four-path contract](cache-continuity-shadow.md) and
+See the [retirement note](cache-continuity-shadow.md) and
 [handover outcome audit](routing-shadow.md#applied-handover-outcome-audit).
 An optional upstream identity/inspection hook may help, but needs a narrow,
 mutually beneficial design and evidence before a PR is proposed.
