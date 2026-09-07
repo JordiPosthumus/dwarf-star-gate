@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {requestUserExcerpt} from './priority-request.mjs';
+import {requestUserExcerpt} from './request-preview.mjs';
 
 test('request excerpt selects only the latest user text and excludes tools, reasoning and images',()=>{
   assert.equal(requestUserExcerpt({messages:[{role:'system',content:'PRIVATE_SYSTEM'},{role:'user',content:'Old task'},{role:'assistant',content:'PRIVATE_REASONING'},{role:'tool',content:'PRIVATE_TOOL'},{role:'user',content:[{type:'image_url',image_url:{url:'PRIVATE_IMAGE'}},{type:'text',text:'Fix the export format.'},{type:'tool_result',content:'PRIVATE_RESULT'}]},{role:'assistant',content:'PRIVATE_ASSISTANT'}]}),'Fix the export format.');

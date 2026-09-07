@@ -1,5 +1,15 @@
 # Dwarf Star Gate work log
 
+## 2026-09-07 — simpler request visibility
+
+Retired Priority Lens and Proactive Resume. Current Jobs remains read-only,
+showing transient request previews, state, worker placement and timing. Removed
+priority preferences, classification calls, weighted selection and optional
+continuation enrollment/review adapters. Ordinary FIFO scheduling, affinity,
+holds, certified pre-dispatch retry, Door and safe queued handover remain.
+Speculative cache comparisons and calibration preflight are unchanged.
+
+
 This is the short, human-readable record of meaningful DSG progress. It answers
 “what did we build, and why does it matter?” without reproducing every commit or
 private deployment event.

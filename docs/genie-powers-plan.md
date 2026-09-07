@@ -17,8 +17,7 @@ the current in-memory report list is not a durable operational memory.
 
 ## Division of responsibility
 
-- **DSG scheduler:** enforces compatibility, ownership, health, queue order and
-  configured Priority Lens policy without waiting for Genie.
+- **DSG scheduler:** enforces compatibility, ownership, health and ordinary queue order without waiting for Genie.
 - **Genie:** interprets evidence and requests offered operational actions.
 - **Action runner:** independently validates its allowlist and records receipts.
 

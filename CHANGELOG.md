@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-09-07 — simpler request visibility
+
+Retired Priority Lens and Proactive Resume. Current Jobs remains read-only,
+showing transient request previews, state, worker placement and timing. Removed
+priority preferences, classification calls, weighted selection and optional
+continuation enrollment/review adapters. Ordinary FIFO scheduling, affinity,
+holds, certified pre-dispatch retry, Door and safe queued handover remain.
+Speculative cache comparisons and calibration preflight are unchanged.
+
+
 ## Retire XGB and embeddings
 
 - Remove model training, feature extraction, embeddings, predictions, promotion

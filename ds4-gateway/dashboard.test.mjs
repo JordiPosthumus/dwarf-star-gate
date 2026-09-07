@@ -1,6 +1,5 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import {PriorityLens} from './priority-lens.mjs';
 import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -1043,25 +1042,14 @@ test('dashboard refuses a symlinked gateway event log and recovers when a regula
   assert.equal(app.snapshot().events.length,1);assert.equal(fs.readFileSync(target,'utf8'),event+'\n');
 });
 
-test('Priority Lens local API separates preferences from diagnostics and requires explicit same-origin controls',async t=>{
-  const lens=new PriorityLens({maxEligibleWaitMs:600000});
-  const server=createDashboard(()=>({version:1,devices:[]}),undefined,null,null,null,{
-    read:async()=>({...lens.settings(),jobs:[],rules:lens.state.rules,corrections:{proposal:{message:'Private correction proposal'}}}),
-    act:async(action,input)=>{if(action==='rules')lens.setRules(input);else if(action==='settings')lens.configure(input);else throw new Error('Unsupported fixture action');return {...lens.settings(),jobs:[]};}
-  });
+test('Current Jobs API is read-only, same-origin and separate from diagnostics',async t=>{
+  const server=createDashboard(()=>({version:1,devices:[]}),undefined,null,null,null,{read:async()=>({schema:1,jobs:[{request_id:'fixture',request_preview:{text:'Private request preview'}}]})});
   server.listen(0,'127.0.0.1');await once(server,'listening');t.after(()=>{server.closeAllConnections();server.close();});
   const origin=`http://127.0.0.1:${server.address().port}`;
-  let response=await fetch(origin+'/api/priority');assert.equal(response.status,200);const state=await response.json();
-  assert.equal(state.activation,'active');assert.equal(state.controls,true);assert.equal(state.corrections.proposal.message,'Private correction proposal');
-  const body=JSON.stringify({action:'rules',expected_revision:state.revision,rules:['Intentional private preference']});
-  for(const headers of [{'content-type':'application/json'},{'content-type':'application/json',origin},{'content-type':'application/json',origin:'http://other.example','x-dsg-csrf':state.csrf_token}]){
-    const denied=await fetch(origin+'/api/priority',{method:'POST',headers,body});assert.equal(denied.status,403);assert.equal(lens.state.revision,0);
-  }
-  const headers={'content-type':'application/json',origin,'x-dsg-csrf':state.csrf_token};
-  response=await fetch(origin+'/api/priority',{method:'POST',headers,body});assert.equal(response.status,200);
-  assert.deepEqual((await response.json()).rules,['Intentional private preference']);
-  assert.equal((await fetch(origin+'/api/priority',{method:'POST',headers,body})).status,400,'stale edits cannot overwrite a newer preference');
-  for(const route of ['/api/status','/api/diagnostics'])assert.doesNotMatch(await(await fetch(origin+route)).text(),/Intentional private preference|Private correction proposal/);
-  response=await fetch(origin+'/priority.js');assert.equal(response.status,200);assert.match(response.headers.get('content-type'),/javascript/);
-  assert.doesNotMatch(await response.text(),/localStorage|sessionStorage|innerHTML/);
+  const response=await fetch(origin+'/api/current-jobs');assert.equal(response.status,200);assert.match(await response.text(),/Private request preview/);
+  assert.equal((await fetch(origin+'/api/current-jobs',{headers:{origin:'http://other.example'}})).status,403);
+  assert.equal((await fetch(origin+'/api/current-jobs',{method:'POST',headers:{origin},body:'{}'})).status,405);
+  assert.equal((await fetch(origin+'/api/priority')).status,404);
+  for(const route of ['/api/status','/api/diagnostics'])assert.doesNotMatch(await(await fetch(origin+route)).text(),/Private request preview/);
+  const script=await fetch(origin+'/current-jobs.js');assert.equal(script.status,200);assert.doesNotMatch(await script.text(),/localStorage|sessionStorage|innerHTML/);
 });

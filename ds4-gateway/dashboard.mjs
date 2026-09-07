@@ -10,8 +10,6 @@ import { workerControl } from './worker-client.mjs';
 import { FileLogReader, telemetryFiles } from './file-telemetry.mjs';
 import { Activity } from './ui/activity.js';
 import { Genie } from './genie.mjs';
-import {PriorityClassifier} from './priority-classifier.mjs';
-import {PriorityCorrections} from './priority-corrections.mjs';
 import {GenieMemory} from './genie-memory.mjs';
 import {GenieProviderLedger} from './genie-provider-ledger.mjs';
 import { genieTunnel } from './genie-tunnel.mjs';
@@ -42,7 +40,7 @@ function safeManagementPath(raw){
 }
 const assets = new Map([['/', ['index.html', 'text/html']], ['/ui.css', ['ui.css', 'text/css']], ['/brand.css', ['brand.css', 'text/css']], ['/ui.js', ['ui.js', 'text/javascript']], ['/logo.png', ['logo.png', 'image/png']]]);
 assets.set('/activity.js',['activity.js','text/javascript']);
-assets.set('/priority.js',['priority.js','text/javascript']);
+assets.set('/current-jobs.js',['current-jobs.js','text/javascript']);
 for(const [route,file,mime] of [
   ['favicon.ico','favicon.ico','image/x-icon'],['favicon-v2.ico','favicon.ico','image/x-icon'],
   ['favicon-v1.svg','favicon-v1.svg','image/svg+xml'],['favicon-v2.svg','favicon-v1.svg','image/svg+xml'],
@@ -56,7 +54,7 @@ export function genieRuntimeConfig(config){
   if(config.genie?.url)return {...config.genie,enabled:config.genie.enabled!==false,fallback:config.genie.fallback??pool};
   return {...pool,enabled:config.genie?.enabled!==false,fallback:pool,default_source:'pool'};
 }
-export function createDashboard(getSnapshot, assetsDirectory = path.join(here, 'ui'), management = null, genie = null, requestHistory = null, priority = null) {
+export function createDashboard(getSnapshot, assetsDirectory = path.join(here, 'ui'), management = null, genie = null, requestHistory = null, currentJobs = null) {
   const csrf = randomBytes(32).toString('base64url');
   // Freeze one complete release in memory: edits on disk cannot expose half an
   // update to a live browser. Only the dashboard needs a reload to promote it.
@@ -73,27 +71,10 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
       res.writeHead(403, headers); return res.end(dsgReport('Local same-origin dashboard only'));
     }
     const reply = (status, value) => { if (!res.destroyed && !res.headersSent) { res.writeHead(status,{...headers,'content-type':'application/json'}); res.end(JSON.stringify(status>=400&&typeof value.error==='string'?{...value,error:dsgReport(value.error)}:value)); } };
-    // Content-bearing priority preferences belong only on this explicit local
-    // surface, never in general status, diagnostics or the training collector.
-    if(req.url==='/api/priority'&&req.method==='GET'){
-      if(!priority)return reply(200,{available:false,controls:false,csrf_token:csrf});
-      void priority.read().then(state=>reply(200,{...state,available:true,controls:!!priority.act,csrf_token:csrf})).catch(()=>reply(503,{error:'Priority Lens core status unavailable'}));return;
-    }
-    if(req.url==='/api/priority'&&req.method==='POST'){
-      if(!priority?.act)return reply(403,{error:'Priority Lens controls are unavailable'});
-      const token=Buffer.from(req.headers['x-dsg-csrf']||''),expected=Buffer.from(csrf);
-      if(req.headers.origin!==`http://${req.headers.host}`||token.length!==expected.length||!timingSafeEqual(token,expected))return reply(403,{error:'Same-origin Priority Lens control session required'});
-      if(req.headers['content-type']!=='application/json')return reply(415,{error:'JSON required'});
-      let body='',bytes=0,ended=false;
-      req.setEncoding('utf8');
-      const timer=setTimeout(()=>{ended=true;reply(408,{error:'Incomplete priority request'});req.destroy();},5000);
-      const stop=()=>{ended=true;clearTimeout(timer);};req.on('error',stop);req.on('aborted',stop);
-      req.on('data',chunk=>{if(ended)return;bytes+=Buffer.byteLength(chunk);if(bytes>12288){stop();reply(413,{error:'Priority request too large'});req.destroy();return;}body+=chunk;});
-      req.on('end',()=>{clearTimeout(timer);if(ended)return;ended=true;
-        try{const {action,...input}=JSON.parse(body);if(!['settings','manual','rules','confirm-correction','dismiss-correction'].includes(action))throw new Error();
-          void priority.act(action,input).then(state=>reply(200,{...state,available:true,controls:true,csrf_token:csrf})).catch(error=>reply(400,{error:error.message}));
-        }catch{reply(400,{error:'Invalid priority request'});}
-      });return;
+    // Content-bearing previews belong only on this same-origin local surface.
+    if(req.url==='/api/current-jobs'&&req.method==='GET'){
+      if(!currentJobs)return reply(200,{available:false});
+      void currentJobs.read().then(state=>reply(200,{...state,available:true})).catch(()=>reply(503,{error:'Current Jobs core status unavailable'}));return;
     }
     if(req.url==='/api/genie' && req.method==='GET')return reply(200,{...(genie?.status()||{configured:false}),csrf_token:csrf});
     if(req.url==='/api/genie' && req.method==='POST' && genie) {
@@ -343,28 +324,17 @@ export async function runDashboard(configPath, port) {
   const providerLedger=new GenieProviderLedger(path.join(path.dirname(config.state_file),'genie','actions'));
   const assignmentLedger=new GenieProviderLedger(path.join(path.dirname(config.state_file),'genie','actions'),{kind:'pool_assigned'});
   const runtimeGenie=genieRuntimeConfig(config);
-  const priorityRead=()=>workerControl(config.control_socket,'/priority-status',undefined,{channel:'dashboard'});
-  const priorityAct=(action,input)=>workerControl(config.control_socket,`/priority-${action}`,input,{channel:'dashboard'});
-  const priorityCorrections=new PriorityCorrections({read:managementEnabled?priorityRead:null,act:managementEnabled?priorityAct:null});
-  const genie=new Genie(runtimeGenie,snapshot,{memory,providerLedger,assignmentLedger,priorityCorrections,poolUrl:`http://127.0.0.1:${config.port}/v1`,recover:managementEnabled?input=>workerControl(config.control_socket,'/genie-recover-worker',input,{channel:'gate_genie'}):null,rebalance:managementEnabled?input=>workerControl(config.control_socket,'/genie-relocate-queued',input,{channel:'gate_genie'}):null});
-  const priorityClassifier=new PriorityClassifier({genie,snapshot,poolUrl:`http://127.0.0.1:${config.port}/v1`,control:managementEnabled?(route,input)=>workerControl(config.control_socket,route,input,{channel:'gate_genie'}):null});
+  const genie=new Genie(runtimeGenie,snapshot,{memory,providerLedger,assignmentLedger,poolUrl:`http://127.0.0.1:${config.port}/v1`,recover:managementEnabled?input=>workerControl(config.control_socket,'/genie-recover-worker',input,{channel:'gate_genie'}):null,rebalance:managementEnabled?input=>workerControl(config.control_socket,'/genie-relocate-queued',input,{channel:'gate_genie'}):null});
   const stopGenieTunnel=genieTunnel(config.genie);
   const server = createDashboard(snapshot, path.join(here,'ui'), managementEnabled ? {
     read:()=>workerControl(config.control_socket,'/workers',undefined,{channel:'dashboard'}),
     act:(action,input)=>workerControl(config.control_socket,({add:'/add-worker',remove:'/remove-worker',drain:'/drain-workers',resume:'/resume-workers',lock:'/maintenance-lock',unlock:'/release-maintenance-lock',fallbacks:'/set-ssh-fallbacks',context:'/set-context-limit','queue-timeout':'/set-queue-timeout',protection:'/set-protection',relocate:'/relocate-queued',recover:'/recover-worker','recovery-policy':'/recovery-policy','recovery-handback-policy':'/recovery-handback-policy','recovery-recheck':'/recovery-recheck'})[action],input,{channel:'dashboard'}),
   } : null,genie,()=>({...requestHistory.snapshot(),fleet_speed:fleetSpeed.snapshot(Date.now(),gateway?.workers?.map(worker=>worker.id)??[])}),config.control_socket?{
-    read:async()=>({...await priorityRead(),classifier:priorityClassifier.status(),corrections:priorityCorrections.status()}),
-    act:managementEnabled?async(action,input)=>{
-      let state;
-      if(action==='confirm-correction')state=await priorityCorrections.confirm(input);
-      else if(action==='dismiss-correction'){priorityCorrections.dismiss(input);state=await priorityRead();}
-      else state=await priorityAct(action,input);
-      return {...state,classifier:priorityClassifier.status(),corrections:priorityCorrections.status()};
-    }:null,
+    read:()=>workerControl(config.control_socket,'/current-jobs',undefined,{channel:'dashboard'}),
   }:null);
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
-  await poll(); const interval = setInterval(poll, 2000), genieTimer=setInterval(()=>genie.tick(),10000),priorityTimer=setInterval(()=>void priorityClassifier.tick(),5000);
-  const close = () => { closed = true; clearInterval(interval);clearInterval(genieTimer);clearInterval(priorityTimer);priorityClassifier.close();priorityCorrections.close();genie.close();hardware.close();stopGenieTunnel(); for (const t of timers) clearTimeout(t); for (const child of children) child.kill(); server.closeAllConnections(); server.close(); process.removeListener('SIGTERM', close); process.removeListener('SIGINT', close); };
+  await poll(); const interval = setInterval(poll, 2000), genieTimer=setInterval(()=>genie.tick(),10000);
+  const close = () => { closed = true; clearInterval(interval);clearInterval(genieTimer);genie.close();hardware.close();stopGenieTunnel(); for (const t of timers) clearTimeout(t); for (const child of children) child.kill(); server.closeAllConnections(); server.close(); process.removeListener('SIGTERM', close); process.removeListener('SIGINT', close); };
   process.once('SIGTERM', close); process.once('SIGINT', close);
   console.log(`Dwarf Star Gate: http://127.0.0.1:${server.address().port} (${managementEnabled ? 'local worker controls' : 'read-only'})`);
   return { server, snapshot, close };

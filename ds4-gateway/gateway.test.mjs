@@ -19,7 +19,6 @@ import {workerConfig,sshTargets,assertUniqueWorker,replaceSshFallbacks} from './
 import {createContinuityFetch} from './continuity-client.mjs';
 import {safeGatewayEvent} from './telemetry.mjs';
 import {evidence} from './dataset.mjs';
-import {PriorityClassifier} from './priority-classifier.mjs';
 
 async function until(fn, timeout = 3000) {
   const end = Date.now() + timeout;
@@ -146,11 +145,11 @@ test('remote workers accept bounded verified SSH alias fallbacks, never options 
 async function rig(t, count = 2, overrides = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ds4-gateway-test-'));
   const backends = await Promise.all(Array.from({ length: count }, (_, i) => backend(`spark${i + 1}`)));
-  const {visionTranscode,priorityRandom,...configOverrides}=overrides;
+  const {visionTranscode,...configOverrides}=overrides;
   const config = { host: '127.0.0.1', port: 0, api_key: 'none', model: 'deepseek-v4-flash', context_length: 153600,
     state_file: path.join(dir, 'affinity.json'), health_interval_ms: 100000, nodes: backends.map(b => ({ id: b.id, url: b.url })), ...configOverrides };
   if (config.control_socket === true) config.control_socket = path.join(dir, 'control.sock');
-  const gatewayOptions={visionTranscode,priorityRandom};
+  const gatewayOptions={visionTranscode};
   const r = { config, backends, gateway: createGateway(config,gatewayOptions) };
   r.address = await r.gateway.start();
   r.request = (body = '{}', key, options = {}) => new Promise((resolve, reject) => {
@@ -1757,121 +1756,7 @@ test('slow consumer receives the exact multi-megabyte stream without truncation'
   assert.equal(bytes, 128 * (32768 + 8) + 'data: [DONE]\n\n'.length);
 });
 
-test('Priority Lens selects actual queued requests, preserves chat FIFO and applies edits only after active work',async t=>{
-  const r=await rig(t,1,{control_socket:true,priority_lens:{max_eligible_wait_ms:600000},priorityRandom:()=>0.5});
-  const chat=value=>createHash('sha256').update(value).digest('hex');
-  const set=(name,priority)=>workerControl(r.config.control_socket,'/priority-manual',{chat:chat(name),priority,expected_revision:r.gateway.priorityStatus().revision});
-  const blocker=r.request(JSON.stringify({stream:true,fixture_hold_stream:true}),'block');
-  await until(()=>r.backends[0].heldStreams?.length===1);
-  const lowBody=JSON.stringify({messages:[{role:'user',content:'private-low-body'}],reasoning_effort:'xhigh',max_tokens:20000});
-  const low=r.request(lowBody,'low');await until(()=>r.gateway.nodes[0].queue.length===1);
-  const high=r.request(JSON.stringify({stream:true,delay:200,request_label:'high-first'}),'high');await until(()=>r.gateway.nodes[0].queue.length===2);
-  const next=r.request(JSON.stringify({request_label:'high-next'}),'high');await until(()=>r.gateway.nodes[0].queue.length===3);
-  try {
-    await set('low','Low');await set('high','High');
-    assert.equal(r.backends[0].records.length,1,'queued bodies remain unread by the backend');
-    const activeId=r.gateway.nodes[0].active.id;
-    assert.equal(r.gateway.priorityStatus(true).jobs.find(j=>j.request_id===activeId).state,'running');
-    r.backends[0].heldStreams.shift()();
-    await until(()=>r.backends[0].records.some(row=>row.payload.request_label==='high-first'));
-    const highId=r.gateway.nodes[0].active.id;
-    await set('high','Low');await set('low','High');
-    assert.equal(r.gateway.nodes[0].active.id,highId,'manual edits do not interrupt active work');
-    const responses=await Promise.all([blocker,low,high,next]);assert.ok(responses.every(response=>response.status===200));
-    assert.deepEqual(r.backends[0].records.map(row=>row.payload.request_label??(row.payload.messages?'low':'block')),['block','high-first','low','high-next']);
-    assert.equal(r.backends[0].records.find(row=>row.payload.messages).body.toString(),lowBody);
-    const receipts=r.gateway.priorityStatus(true).receipts;
-    assert.ok(receipts.some(row=>row.method==='weighted_lottery'&&row.eligible_conversations===2));
-    assert.ok(receipts.every(row=>row.genie_wait_ms===0));
-    assert.doesNotMatch(JSON.stringify(receipts),/private-low-body|request_label/);
-    assert.equal(r.backends[0].peak,1);
-  } finally {for(const finish of r.backends[0].heldStreams.splice(0))finish();await Promise.allSettled([blocker,low,high,next]);}
-});
-
-test('Priority Lens aging takes the next real slot, while ordinary unclassified and disabled queues remain FIFO',async t=>{
-  const r=await rig(t,1,{priority_lens:{max_eligible_wait_ms:1000},priorityRandom:()=>0.99});
-  const chat=value=>createHash('sha256').update(value).digest('hex');
-  const set=(name,priority)=>r.gateway.priorityControl('manual',{chat:chat(name),priority,expected_revision:r.gateway.priorityStatus().revision});
-  const blocker=r.request(JSON.stringify({stream:true,fixture_hold_stream:true}),'block');
-  await until(()=>r.backends[0].heldStreams?.length===1);
-  const low=r.request('{"label":"aged-low"}','low');await until(()=>r.gateway.nodes[0].queue.length===1);set('low','Low');
-  await delay(1050);
-  const high=r.request('{"label":"new-high"}','high');await until(()=>r.gateway.nodes[0].queue.length===2);set('high','High');
-  try {
-    r.backends[0].heldStreams.shift()();await Promise.all([blocker,low,high]);
-    assert.deepEqual(r.backends[0].records.filter(row=>row.payload.label).map(row=>row.payload.label),['aged-low','new-high']);
-    assert.ok(r.gateway.priorityStatus(true).receipts.some(row=>row.method==='aging'&&row.priority==='Low'));
-  }finally{for(const finish of r.backends[0].heldStreams.splice(0))finish();await Promise.allSettled([blocker,low,high]);}
-  const current=r.gateway.priorityStatus();r.gateway.priorityControl('settings',{expected_revision:current.revision,enabled:false,weights:current.weights,max_eligible_wait_ms:1000});
-  const held=r.request(JSON.stringify({stream:true,fixture_hold_stream:true}),'block');await until(()=>r.backends[0].heldStreams.length===1);
-  const first=r.request('{"label":"off-low"}','low');await until(()=>r.gateway.nodes[0].queue.length===1);
-  const second=r.request('{"label":"off-high"}','high');await until(()=>r.gateway.nodes[0].queue.length===2);
-  try{r.backends[0].heldStreams.shift()();await Promise.all([held,first,second]);assert.deepEqual(r.backends[0].records.slice(-2).map(row=>row.payload.label),['off-low','off-high']);}
-  finally{for(const finish of r.backends[0].heldStreams.splice(0))finish();await Promise.allSettled([held,first,second]);}
-});
-
-test('Priority Lens controls stay local, save overrides and rules atomically, and leave invalid saved state intact',async t=>{
-  const r=await rig(t,1,{control_socket:true});await r.request('{}','chat');
-  assert.equal(r.gateway.priorityStatus(true).max_eligible_wait_ms,3600000);
-  assert.equal(r.gateway.priorityStatus(true).activation,'active');
-  const chat=createHash('sha256').update('chat').digest('hex');
-  const forbidden=await r.request(JSON.stringify({chat,priority:'High',expected_revision:0}),null,{path:'/priority-manual'});
-  assert.equal(forbidden.status,404);
-  await workerControl(r.config.control_socket,'/priority-manual',{chat,priority:'High',expected_revision:0});
-  await assert.rejects(workerControl(r.config.control_socket,'/priority-manual',{chat,priority:'Low',expected_revision:0}),/current chat/);
-  const rules=Array.from({length:30},(_,i)=>`Intentional preference ${i} ${'a'.repeat(150)}`);
-  await workerControl(r.config.control_socket,'/priority-rules',{rules,expected_revision:1});
-  assert.equal(r.gateway.stats().priority_lens.rules,undefined,'preference text is not on public inference status');
-  const original=fs.readFileSync(r.config.state_file,'utf8');
-  await r.restart();
-  assert.equal(r.gateway.store.data.priority_lens.manual[chat],'High');assert.deepEqual(r.gateway.priorityStatus(true).rules,rules);
-  assert.equal(fs.readFileSync(r.config.state_file,'utf8'),original);
-  assert.ok(fs.readdirSync(path.dirname(r.config.state_file)).some(name=>name.includes('.priority-')),'a pre-change backup exists');
-  r.gateway.store.save({...r.gateway.store.data,priority_lens:{schema:999,private_unrecognized:'preserve this'}});
-  const invalid=fs.readFileSync(r.config.state_file,'utf8');await r.restart();
-  assert.equal(r.gateway.priorityStatus().activation,'unavailable');
-  assert.equal((await r.request('{}','chat')).status,200,'optional priority corruption does not stop inference');
-  assert.equal(fs.readFileSync(r.config.state_file,'utf8'),invalid,'no automatic repair or history replacement');
-});
-
-test('Priority intent handoff is private, asynchronous and stripped from actual inference',async t=>{
-  const r=await rig(t,1,{control_socket:true,dataset_enabled:true,priority_lens:{max_eligible_wait_ms:600000}});
-  const input={schema:1,id:randomUUID(),session:'intent-session',client:'pi',title:'PRIVATE_TITLE_Ω',excerpt:'PRIVATE_EXCERPT: urgent user task'};
-  const route={path:'/gateway/priority-intent'};
-  assert.equal((await r.request(JSON.stringify(input),null,{...route,headers:{authorization:'Bearer wrong'}})).status,401);
-  assert.equal((await r.request(JSON.stringify({...input,extra:true}),null,route)).status,400);
-  assert.equal((await r.request('x'.repeat(8193),null,route)).status,413);
-  assert.equal((await r.request(JSON.stringify(input),null,route)).status,200);
-  assert.equal((await workerControl(r.config.control_socket,'/priority-review-next',{})).review,null,'unbound snippets cannot be classified');
-  const body=JSON.stringify({stream:true,fixture_hold_stream:true,reasoning_effort:'xhigh',max_tokens:24000});
-  const running=r.request(body,input.session,{headers:{'x-dsg-priority-intent':input.id}});
-  await until(()=>r.backends[0].heldStreams?.length===1);
-  try {
-    assert.equal(r.backends[0].records[0].body.toString(),body);
-    assert.equal(r.backends[0].records[0].headers['x-dsg-priority-intent'],undefined);
-    const status=await workerControl(r.config.control_socket,'/priority-status');
-    assert.equal(status.jobs[0].title,input.title);assert.equal(status.jobs[0].state,'running');
-    assert.ok(!JSON.stringify(status).includes(input.excerpt));
-    const review=(await workerControl(r.config.control_socket,'/priority-review-next',{})).review;
-    assert.equal(review.excerpt,input.excerpt);assert.equal(review.deadline_ms,60000);
-    assert.equal((await r.request('{}',null,{path:'/priority-review-next'})).status,404);
-    const result={lease:review.lease,intent_id:review.intent_id,advice:{priority:'High',reason:'urgent'}};
-    assert.equal((await workerControl(r.config.control_socket,'/priority-review-result',result)).accepted,true);
-    assert.equal((await workerControl(r.config.control_socket,'/priority-review-result',result)).accepted,false);
-    assert.equal(r.gateway.priorityStatus(true).jobs[0].priority,'High');
-    assert.equal(r.backends[0].records.length,1,'advice does not restart active inference');
-    const publicStatus=JSON.stringify(r.gateway.stats());assert.ok(!publicStatus.includes(input.title));assert.ok(!publicStatus.includes(input.excerpt));
-    assert.ok(!fs.readFileSync(r.config.state_file,'utf8').includes('PRIVATE_'));
-  }finally{for(const finish of r.backends[0].heldStreams.splice(0))finish();await running;}
-  const next=r.request(JSON.stringify({stream:true,fixture_hold_stream:true}),input.session);
-  await until(()=>r.backends[0].heldStreams.length===1);
-  try{assert.equal(r.gateway.priorityStatus(true).jobs[0].source,'default','a request without current intent cannot inherit stale advice');}
-  finally{for(const finish of r.backends[0].heldStreams.splice(0))finish();await next;}
-  const directory=path.join(path.dirname(r.config.state_file),'requests');
-  for(const file of fs.readdirSync(directory))if(file.endsWith('.jsonl'))assert.ok(!fs.readFileSync(path.join(directory,file),'utf8').includes('PRIVATE_'));
-});
-
-test('Priority classifier no-wait pool admission refuses a busy slot without queuing or reading its body upstream',async t=>{
+test('Genie no-wait pool admission refuses a busy slot without queuing or reading its body upstream',async t=>{
   const r=await rig(t,1);const running=r.request(JSON.stringify({stream:true,fixture_hold_stream:true}),'occupied');await until(()=>r.backends[0].heldStreams?.length===1);
   try{
     const rejected=await r.request('{"private_advisory_body":"never dispatched"}',null,{headers:{'x-dsg-observer':'gate-genie','x-dsg-review-no-wait':'1'}});
@@ -1879,15 +1764,6 @@ test('Priority classifier no-wait pool admission refuses a busy slot without que
   }finally{r.backends[0].heldStreams.shift()();await running;}
   assert.equal((await r.request('{}',null,{headers:{'x-dsg-observer':'gate-genie','x-dsg-review-no-wait':'1'}})).status,200);
   assert.equal(r.backends[0].records.at(-1).headers['x-dsg-review-no-wait'],undefined);
-});
-
-test('Priority preferences preserve Unicode split across control-socket chunks',async t=>{
-  const r=await rig(t,1,{control_socket:true}),rules=['Treat ☃ winter maintenance as background work'];
-  const body=Buffer.from(JSON.stringify({expected_revision:0,rules})),split=body.indexOf(Buffer.from('☃'))+1;
-  const status=await new Promise((resolve,reject)=>{
-    const req=http.request({socketPath:r.config.control_socket,path:'/priority-rules',method:'POST',headers:{'content-type':'application/json'}},res=>{let text='';res.setEncoding('utf8');res.on('data',chunk=>text+=chunk);res.on('end',()=>resolve({code:res.statusCode,body:JSON.parse(text)}));});req.on('error',reject);req.write(body.subarray(0,split));setImmediate(()=>req.end(body.subarray(split)));
-  });
-  assert.equal(status.code,200);assert.deepEqual(status.body.rules,rules);assert.deepEqual(r.gateway.store.data.priority_lens.rules,rules);
 });
 
 test('Fast Genie keeps one undispatched review flexible and uses the first compatible worker to become free',async t=>{
@@ -1941,29 +1817,23 @@ for(const cancelDuring of ['normalized_retry','conversion'])test(`vision cancell
 });
 
 
-test('new stock requests get queued previews and Genie titles before any backend dispatch',{timeout:10000},async t=>{
+test('stock requests get local queued previews without backend dispatch',{timeout:10000},async t=>{
   const r=await rig(t,1,{control_socket:true});
   const hold=r.request(JSON.stringify({stream:true,fixture_hold_stream:true}),'busy');
   await until(()=>r.backends[0].heldStreams?.length===1);
   const body=JSON.stringify({reasoning_effort:'xhigh',max_tokens:262144,messages:[{role:'user',content:'Repair CSV export formatting.'}]});
   const queued=r.request(body,'new-stock-task');
-  await until(()=>r.gateway.priorityStatus(true).jobs.some(j=>j.state==='queued'&&j.request_preview?.text==='Repair CSV export formatting.'));
-  assert.equal(r.gateway.priorityStatus(true).queued_body.buffered_bytes,Buffer.byteLength(body));
+  await until(()=>r.gateway.currentJobsStatus().jobs.some(j=>j.state==='queued'&&j.request_preview?.text==='Repair CSV export formatting.'));
+  assert.equal(r.gateway.currentJobsStatus().queued_body.buffered_bytes,Buffer.byteLength(body));
   assert.equal(r.backends[0].records.length,1);
-  const inputs=[];
-  const classifier=new PriorityClassifier({genie:{enabled:true,config:{url:'http://127.0.0.1:19999/v1',model:'fixture'}},snapshot:()=>({}),control:(route,input)=>workerControl(r.config.control_socket,route,input),fetchImpl:async(_url,options)=>{
-    inputs.push(JSON.parse(JSON.parse(options.body).messages[1].content));
-    return new Response(JSON.stringify({choices:[{finish_reason:'stop',message:{content:JSON.stringify({title:'CSV export formatting repair',priority:'High',reason:'urgent'})}}]}));
-  }});
   try{
-    await classifier.tick();
-    const row=r.gateway.priorityStatus(true).jobs.find(j=>j.state==='queued');
-    assert.equal(row.title,'CSV export formatting repair');assert.equal(row.title_source,'genie');assert.equal(row.priority,'High');
-    assert.equal(inputs[0].recent_user_excerpt,'Repair CSV export formatting.');
-    assert.equal(r.backends[0].records.length,1,'naming never dispatches the queued inference');
-  }finally{classifier.close();r.backends[0].heldStreams.shift()();await hold;await queued;}
+    const row=r.gateway.currentJobsStatus().jobs.find(j=>j.state==='queued');
+    assert.equal(row.title,null);assert.equal(row.priority,undefined);
+    assert.equal(row.request_preview.text,'Repair CSV export formatting.');
+    assert.equal(r.backends[0].records.length,1,'reading the jobs view never dispatches inference');
+  }finally{r.backends[0].heldStreams.shift()();await hold;await queued;}
   assert.equal(r.backends[0].records.length,2);assert.equal(r.backends[0].records[1].body.toString(),body);
-  assert.equal(r.gateway.priorityStatus(true).queued_body.buffered_bytes,0);
+  assert.equal(r.gateway.currentJobsStatus().queued_body.buffered_bytes,0);
 });
 
 test('queued read-ahead hands a partial chunked upload to dispatch before upload end',{timeout:10000},async t=>{
@@ -1988,63 +1858,44 @@ test('queued uploads exceeding 8 MiB retain the full body and output settings',{
   await until(()=>r.backends[0].heldStreams?.length===1);
   const body=JSON.stringify({messages:[{role:'user',content:'Analyze the attached synthetic image.'},{role:'user',content:[{type:'image_url',image_url:{url:'data:image/png;base64,'+'A'.repeat(THINKING_CAPTURE_BYTES)}}]}],reasoning_effort:'xhigh',max_tokens:262144});
   const queued=r.request(body,'large-stock-request');
-  await until(()=>r.gateway.priorityStatus(true).queued_body.buffered_bytes===THINKING_CAPTURE_BYTES);
+  await until(()=>r.gateway.currentJobsStatus().queued_body.buffered_bytes===THINKING_CAPTURE_BYTES);
   assert.equal(r.backends[0].records.length,1);
-  assert.equal(r.gateway.priorityStatus(true).jobs.find(j=>j.state==='queued').title,null);
+  assert.equal(r.gateway.currentJobsStatus().jobs.find(j=>j.state==='queued').title,null);
   r.backends[0].heldStreams.shift()();await hold;assert.equal((await queued).status,200);
   assert.equal(r.backends[0].records[1].body.toString(),body);
   assert.equal(r.backends[0].records[1].payload.max_tokens,262144);
-  assert.equal(r.gateway.priorityStatus(true).queued_body.buffered_bytes,0);
+  assert.equal(r.gateway.currentJobsStatus().queued_body.buffered_bytes,0);
 });
 
-test('Genie names ordinary gateway requests without a Pi extension or persisting excerpts',{timeout:10000},async t=>{
-  const r=await rig(t,1,{control_socket:true,dataset_enabled:true}),modelInputs=[];
-  const classifier=new PriorityClassifier({genie:{enabled:true,closed:false,config:{url:'http://127.0.0.1:19999/v1',model:'fixture-genie'}},snapshot:()=>({}),control:(route,body)=>workerControl(r.config.control_socket,route,body),fetchImpl:async(_url,init)=>{
-    const input=JSON.parse(JSON.parse(init.body).messages[1].content);modelInputs.push(input);
-    return new Response(JSON.stringify({choices:[{finish_reason:'stop',message:{content:JSON.stringify({title:input.recent_user_excerpt.includes('Summarize')?'Release notes summary':'Export formatting repair',priority:'Medium',reason:'routine'})}}]}));
-  }});t.after(()=>classifier.close());
+test('Current Jobs previews stay private and retire with the request',{timeout:10000},async t=>{
+  const r=await rig(t,1,{control_socket:true,dataset_enabled:true});
   const body=JSON.stringify({stream:true,fixture_hold_stream:true,reasoning_effort:'xhigh',max_tokens:262144,messages:[{role:'system',content:'PRIVATE_SYSTEM_SENTINEL'},{role:'user',content:'Repair CSV export formatting today.'},{role:'assistant',content:'PRIVATE_ASSISTANT_SENTINEL'},{role:'tool',content:'PRIVATE_TOOL_SENTINEL'}]});
-  const first=r.request(body,'gateway-title-session');await until(()=>r.backends[0].heldStreams?.length===1);
-  let second;
+  const first=r.request(body,'job-session');await until(()=>r.backends[0].heldStreams?.length===1);
   try{
-    assert.equal(r.gateway.priorityStatus(true).jobs[0].title,null);assert.equal(r.gateway.priorityStatus(true).jobs[0].title_state,'pending_review');
-    assert.deepEqual(r.gateway.priorityStatus(true).jobs[0].request_preview,{text:'Repair CSV export formatting today.',previous_observation:false});
-    assert.ok(!JSON.stringify(r.gateway.stats()).includes('Repair CSV export'));
-    await classifier.tick();assert.equal(modelInputs.length,1);assert.equal(modelInputs[0].recent_user_excerpt,'Repair CSV export formatting today.');
-    assert.ok(!JSON.stringify(modelInputs).includes('PRIVATE_'));
-    assert.equal(r.gateway.priorityStatus(true).jobs[0].title,'Export formatting repair');assert.equal(r.gateway.priorityStatus(true).jobs[0].title_source,'genie');
-    assert.equal(r.gateway.priorityStatus(true).jobs[0].request_preview,null);
-    second=r.request(body,'gateway-title-session');await until(()=>r.gateway.priorityStatus(true).jobs.length===2);
-    const queued=r.gateway.priorityStatus(true).jobs.find(job=>job.state!=='running');
-    assert.equal(queued.title,'Export formatting repair');assert.equal(queued.title_state,'ready');
-    assert.equal(r.backends[0].records.length,1,'queued upload remains unread by the backend');
-    r.backends[0].heldStreams.shift()();await first;await until(()=>r.backends[0].records.length===2&&r.backends[0].heldStreams.length===1);
-    await classifier.tick();assert.equal(modelInputs.length,1,'same observed user excerpt reuses its title and recommendation');
-    assert.equal(r.backends[0].records[0].body.toString(),body);assert.equal(r.backends[0].records[1].body.toString(),body);
-  }finally{
-    for(const finish of r.backends[0].heldStreams.splice(0))finish();await first;
-    if(second){await until(()=>r.backends[0].records.length===2);for(const finish of r.backends[0].heldStreams.splice(0))finish();await second;}
+    const state=await workerControl(r.config.control_socket,'/current-jobs');
+    assert.deepEqual(state.jobs[0].request_preview,{text:'Repair CSV export formatting today.',previous_observation:false});
+    assert.equal(state.jobs[0].priority,undefined);
+    assert.doesNotMatch(JSON.stringify(state),/PRIVATE_/);
+    assert.doesNotMatch(JSON.stringify(r.gateway.stats()),/Repair CSV|PRIVATE_/);
+    assert.equal(r.backends[0].records[0].body.toString(),body);
+    assert.equal((await r.request('{}',null,{path:'/gateway/priority-intent'})).status,404);
+  }finally{r.backends[0].heldStreams.shift()();await first;}
+  assert.deepEqual(r.gateway.currentJobsStatus().jobs,[]);
+  assert.doesNotMatch(fs.readFileSync(r.config.state_file,'utf8'),/Repair CSV|PRIVATE_/);
+  for(const file of fs.readdirSync(path.join(path.dirname(r.config.state_file),'requests')))if(file.endsWith('.jsonl'))assert.doesNotMatch(fs.readFileSync(path.join(path.dirname(r.config.state_file),'requests',file),'utf8'),/Repair CSV|PRIVATE_/);
+  const held=r.request(JSON.stringify({stream:true,fixture_hold_stream:true,messages:[{role:'user',content:'Do not inspect'}]}),null,{headers:{'x-dsg-priority-intent':'off'}});
+  await until(()=>r.backends[0].heldStreams.length===1);
+  try{assert.equal(r.gateway.currentJobsStatus().jobs[0].request_preview,null);assert.equal(r.backends[0].records.at(-1).headers['x-dsg-priority-intent'],undefined);}
+  finally{r.backends[0].heldStreams.shift()();await held;}
+});
+
+test('ordinary queue scheduling preserves admission and conversation FIFO',async t=>{
+  const r=await rig(t,1),hold=r.request(JSON.stringify({stream:true,fixture_hold_stream:true}),'busy');
+  await until(()=>r.backends[0].heldStreams?.length===1);
+  const requests=[];
+  for(const [label,session] of [['first','one'],['second','two'],['third','two']]){
+    requests.push(r.request(JSON.stringify({label} ),session));await until(()=>r.gateway.stats().queued===requests.length);
   }
-  const nextBody=JSON.stringify({stream:true,fixture_hold_stream:true,messages:[{role:'user',content:'Summarize release notes.'}]});
-  const next=r.request(nextBody,'gateway-title-session');await until(()=>r.backends[0].heldStreams.length===1);
-  try{assert.equal(r.gateway.priorityStatus(true).jobs[0].title,null);await classifier.tick();assert.equal(r.gateway.priorityStatus(true).jobs[0].title,'Release notes summary');}
-  finally{for(const finish of r.backends[0].heldStreams.splice(0))finish();await next;}
-  const followBody=JSON.stringify({stream:true,fixture_hold_stream:true,messages:[{role:'user',content:'Summarize release notes.'},{role:'assistant',content:'PRIVATE_ASSISTANT_SENTINEL'},{role:'user',content:'Proceed'}]});
-  const follow=r.request(followBody,'gateway-title-session');await until(()=>r.backends[0].heldStreams.length===1);
-  try{
-    assert.equal(r.gateway.priorityStatus(true).jobs[0].request_preview.text,'Earlier user request: Summarize release notes. Latest user reply: Proceed');
-    await classifier.tick();assert.equal(modelInputs.at(-1).recent_user_excerpt,'Earlier user request: Summarize release notes.\nLatest user reply: Proceed');
-    assert.equal(r.gateway.priorityStatus(true).jobs[0].title,'Release notes summary');
-    assert.equal(r.backends[0].records.at(-1).body.toString(),followBody,'task context selection does not rewrite the inference request');
-  }finally{for(const finish of r.backends[0].heldStreams.splice(0))finish();await follow;}
-  for(const headers of [{'x-dsg-priority-intent':'off'},{'x-dsg-observer':'gate-genie'}]){
-    await r.request(JSON.stringify({messages:[{role:'user',content:'Do not name this request'}]}),null,{headers});
-    await classifier.tick();assert.equal(modelInputs.length,3);
-  }
-  assert.ok(!JSON.stringify(r.gateway.stats()).includes('Export formatting repair'));
-  assert.ok(!fs.readFileSync(r.config.state_file,'utf8').includes('Export formatting repair'));
-  for(const file of fs.readdirSync(path.join(path.dirname(r.config.state_file),'requests')))if(file.endsWith('.jsonl')){
-    const text=fs.readFileSync(path.join(path.dirname(r.config.state_file),'requests',file),'utf8');
-    for(const marker of ['PRIVATE_','Repair CSV','Export formatting repair'])assert.ok(!text.includes(marker));
-  }
+  try{r.backends[0].heldStreams.shift()();assert.ok((await Promise.all([hold,...requests])).every(result=>result.status===200));assert.deepEqual(r.backends[0].records.slice(1).map(row=>row.payload.label),['first','second','third']);assert.equal(r.backends[0].peak,1);}
+  finally{for(const finish of r.backends[0].heldStreams.splice(0))finish();await Promise.allSettled([hold,...requests]);}
 });

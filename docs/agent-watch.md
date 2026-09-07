@@ -101,12 +101,5 @@ revive or control Pi/Hermes. Any future revival adapter is a separate opt-in
 capability requiring current evidence, an idempotent action and a visible receipt;
 silence alone will never grant authority.
 
-The proposed [Session Rescue roadmap](roadmap.md#planned-opt-in-session-rescue)
-specifies separate observation and automatic-resume permissions, client-side
-execution guards and visible outcomes. It is future work; enabling Agent Watch
-today does not enable session control or transcript inspection.
-
-The [Pi integration plan](pi-integration-plan.md) makes this a first-class,
-optional harness relationship: independent status, content-review, rescue and
-Priority Lens permissions. It extends this advisory foundation without making
-Pi or an extra companion mandatory for ordinary DSG inference.
+Priority Lens and Proactive Resume were retired on 2026-09-07. Agent Watch
+remains advisory and optional; it grants no transcript review or session control.

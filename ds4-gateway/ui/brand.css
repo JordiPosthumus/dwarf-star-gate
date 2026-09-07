@@ -1,6 +1,4 @@
 /* Small, local, legible. The owner's artwork supplies the character. */
-.priority-correction{margin-top:14px;padding:14px;border:1px solid var(--accent);border-radius:7px;overflow-wrap:anywhere}
-.priority-correction[hidden],.priority-correction [hidden]{display:none}.priority-correction h4{margin-bottom:4px}.priority-correction ul{margin-top:4px}
 .analytics-collection{max-width:none;margin:12px 0}.analytics-collection strong{font-weight:400;margin-left:10px}
 header.dashboard-header{height:auto;min-height:0;border:0;padding:16px 0;flex-wrap:nowrap}
 .dashboard-header .intro-copy{min-width:0}
@@ -98,21 +96,14 @@ button:disabled{opacity:.4;cursor:default}input:focus-visible,select:focus-visib
 @media(max-width:440px){.hardware-strip{grid-template-columns:1fr}.hardware-reading{grid-template-columns:56px auto 1fr;grid-template-rows:auto}.hardware-reading>small{grid-column:auto}.hardware-mini-chart{grid-column:auto;height:18px}}
 @media(max-width:750px){.genie-hardening>summary{align-items:flex-start;flex-direction:column;gap:3px}.genie-hardening>summary small{text-align:left}}
 @media(max-width:620px){.status-deck .capacity-panel{grid-template-columns:1fr}.status-deck .capacity-panel small{grid-column:1;text-align:left}}
-/* Priority Lens is a work overview, with its settings in the existing Settings tab. */
-.priority-lens{border:1px solid var(--line,#343936);border-radius:8px;padding:18px 20px;margin:0 0 18px}
-.priority-heading{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap}
-.priority-heading h2{margin:0}
-.priority-work-scroll{overflow:auto;max-height:28rem;margin:12px 0}
-.priority-work{width:100%;min-width:980px;table-layout:fixed;border-collapse:collapse;font-size:13px;line-height:1.5;text-align:left;white-space:normal}
-.priority-work th,.priority-work td{padding:12px 14px;border-bottom:1px solid #343936;vertical-align:top;white-space:normal;overflow-wrap:anywhere}
-.priority-work th{color:#b5beb8;position:sticky;top:0;z-index:1;background:var(--bg)}
-.priority-work th:first-child{width:26%}.priority-work th:nth-child(2){width:16%}.priority-work th:nth-child(3){width:23%}.priority-work th:nth-child(4){width:9%}.priority-work th:nth-child(5){width:11%}.priority-work th:nth-child(6){width:15%}
-.priority-work td:nth-child(3),.priority-work td:nth-child(6){white-space:pre-line}.priority-work td:nth-child(3){color:var(--muted)}
-.priority-work select{width:100%;min-width:0;max-width:100%;font:inherit}
-#priority-preferences{margin-top:12px}
-#priority-preferences-form{display:grid;gap:8px;margin-top:12px}
-#priority-rules{width:100%;box-sizing:border-box;resize:vertical;min-height:110px;background:#101211;color:#e4e9e5;border:1px solid #343936;border-radius:4px;padding:10px;font:inherit}
-.priority-settings-form{display:flex;gap:12px;align-items:end;flex-wrap:wrap}
-.priority-settings-form label{display:grid;gap:6px;font-size:12px;flex:1 1 130px}
-.priority-settings-form input{width:100%;box-sizing:border-box}
-@media(max-width:600px){.priority-lens{padding:12px}.priority-work th,.priority-work td{padding:8px 6px}}
+/* Read-only overview of currently observed requests. */
+.current-jobs{border:1px solid var(--line,#343936);border-radius:8px;padding:18px 20px;margin:0 0 18px}
+.jobs-heading{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.jobs-heading h2{margin:0}
+.jobs-work-scroll{overflow:auto;max-height:28rem;margin:12px 0}
+.jobs-work{width:100%;min-width:980px;table-layout:fixed;border-collapse:collapse;font-size:13px;line-height:1.5;text-align:left;white-space:normal}
+.jobs-work th,.jobs-work td{padding:12px 14px;border-bottom:1px solid #343936;vertical-align:top;white-space:normal;overflow-wrap:anywhere}
+.jobs-work th{color:#b5beb8;position:sticky;top:0;z-index:1;background:var(--bg)}
+.jobs-work th:first-child{width:35%}.jobs-work th:nth-child(2){width:10%}.jobs-work th:nth-child(3){width:12%}.jobs-work th:nth-child(4){width:18%}.jobs-work th:nth-child(5){width:25%}
+.jobs-work td:nth-child(4),.jobs-work td:nth-child(5){white-space:pre-line}.jobs-work td:nth-child(5){color:var(--muted)}
+@media(max-width:600px){.current-jobs{padding:12px}.jobs-work th,.jobs-work td{padding:8px 6px}}

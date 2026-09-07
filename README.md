@@ -47,12 +47,11 @@ An optional [Agent Watch](docs/agent-watch.md) heartbeat also lets DSG and Genie
 tell local tool work, waiting inside DSG, and “the client says it is waiting but
 no request reached this gateway” apart—without sending task or conversation text.
 
-**[Priority Lens](docs/priority-lens.md)** now has local source for a current-jobs
-view, persistent manual priorities and asynchronous Genie advice from separately
-opted-in short Pi user excerpts. Queue priority has a configurable one-hour
-eligible-wait backstop.
-The [optional Pi plan](docs/pi-integration-plan.md) also covers future guarded
-Proactive Resume. Agent Watch does not enable either content review or session control.
+**Current Jobs** is a read-only local view of observed requests, with short user
+request previews, worker placement, state and waiting/running times. Previews
+remain transient and do not trigger model calls or affect scheduling. Priority
+Lens and Proactive Resume were retired on 2026-09-07. Agent Watch and certified
+pre-dispatch continuity remain available.
 
 **Follow the project:** [recent work in plain English](WORKLOG.md) ·
 [detailed changelog](CHANGELOG.md) · [current work plan](docs/current-work-plan.md) ·

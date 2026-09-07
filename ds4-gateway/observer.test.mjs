@@ -5,8 +5,6 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import {genieNotDispatched} from './genie-transport.mjs';
-import {PriorityLens} from './priority-lens.mjs';
-import {PriorityCorrections} from './priority-corrections.mjs';
 import {Dataset,evidence} from './dataset.mjs';
 import {Genie,briefing,genieLoopbackFetch,hardeningCandidates,parseGenieReview,tickerStatus} from './genie.mjs';
 import {safeQuarantine} from './generation-health.mjs';
@@ -367,20 +365,6 @@ test('Genie APIs enforce same-origin CSRF and reject mutation tools',async t=>{
   assert.equal((await fetch(url+'/api/genie',{method:'POST',headers,body:JSON.stringify({action:'enable',enabled:true})})).status,200);
   assert.equal((await fetch(url+'/api/genie',{method:'POST',headers,body:JSON.stringify({action:'drain'})})).status,400);
   assert.ok(!(await(await fetch(url+'/api/status')).text()).includes('csrf_token'));
-});
-
-test('Genie chat proposes scoped priority corrections without mutating settings or adding proposal metadata to fleet reports',async()=>{
-  const lens=new PriorityLens(),chat='a'.repeat(64),sent=[],changes=[];
-  const corrections=new PriorityCorrections({read:async()=>({...lens.settings(),jobs:[{chat,title:'PRIVATE_CHAT_TITLE',...lens.decision(chat)}]}),act:async(action,input)=>{changes.push(action);lens.setManual(input);return lens.settings();}});
-  const answer={...authoredReview(),priority_proposal:{scope:'chat',chat,priority:'Low',message:'Only this conversation would become Low.'}};
-  const genie=new Genie({url:'http://127.0.0.1:9001/v1'},snapshot,{priorityCorrections:corrections,fetchImpl:async(_url,init)=>{sent.push(JSON.parse(init.body));return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(answer)}}]});}});
-  await genie.ask('Make PRIVATE_CHAT_TITLE Low for this conversation only.');
-  const content=JSON.parse(sent[0].messages[1].content);assert.equal(content.priority_context.jobs[0].chat,chat);assert.ok(sent[0].messages[0].content.includes('Proposals are not saved'));
-  assert.equal(sent[0].max_tokens,8192);assert.equal(sent[0].reasoning_effort,'low');assert.equal(genie.status().primary_timeout_ms,7200000);
-  assert.equal(lens.decision(chat).priority,'Medium');assert.equal(changes.length,0);assert.equal(corrections.status().proposal.scope,'chat');
-  assert.equal(genie.status().reports[0].priority_proposal,undefined);assert.ok(!JSON.stringify(genie.status()).includes('PRIVATE_CHAT_TITLE'));
-  await genie.ask('Routine fleet check',{kind:'scheduled'});assert.equal(JSON.parse(sent[1].messages[1].content).priority_context,undefined,'scheduled reviews do not receive private priority context');
-  await corrections.confirm({proposal_id:corrections.status().proposal.id});assert.equal(lens.decision(chat).priority,'Low');genie.close();
 });
 
 async function refusedGenieConnection(){

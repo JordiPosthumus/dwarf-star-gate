@@ -264,8 +264,8 @@ reviews then keep their original socket and unread body in the existing bounded
 waiting lane until a compatible worker is free. A worker pause and earlier
 assigned work remain authoritative; a cancellation removes the pending review.
 This handles a free-slot race without failing the question or reissuing its body.
-Older cores keep the prior queue behavior. The separate short Priority Lens
-classifier still uses atomic no-wait admission and abstains if capacity is busy.
+Older cores keep the prior queue behavior. Priority Lens classification was
+retired; Current Jobs previews never call a model.
 
 A `pool_assigned` report identifies a new review selected before dispatch.
 `pool_fallback` is used only after the transport witnesses a fresh TCP socket

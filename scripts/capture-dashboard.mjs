@@ -102,67 +102,24 @@ try {
   assert.equal(await page.locator('#tab-fleet').getAttribute('aria-selected'),'true');
   assert.equal(new URL(page.url()).hash,'');
   await page.locator('#tab-genie').click();
-  await page.waitForFunction(()=>document.querySelectorAll('#priority-jobs tr').length===3&&!document.getElementById('priority-toggle').disabled);
-  assert.deepEqual(await page.locator('.priority-work th').allTextContents(),['Current Jobs','Priority','Reason','State','Machine','Waiting / running']);
-  assert.match(await page.locator('#priority-coverage').innerText(),/Synthetic example/);
-  assert.match(await page.locator('#priority-jobs').innerText(),/Synthetic: <review> next steps/);
-  assert.equal(await page.locator('#priority-jobs review').count(),0,'Client titles are text, not markup');
+  await page.waitForFunction(()=>document.querySelectorAll('#jobs-rows tr').length===3);
+  assert.deepEqual(await page.locator('.jobs-work th').allTextContents(),['Request','State','Machine','Waiting / running','Reason']);
+  assert.match(await page.locator('#jobs-coverage').innerText(),/Synthetic example/);
+  assert.match(await page.locator('#jobs-rows').innerText(),/Synthetic: <review> next steps/);
+  assert.equal(await page.locator('#jobs-rows review').count(),0,'Client titles are text, not markup');
   for(const width of [1440,1100,750,390]){
     await page.setViewportSize({width,height:1100});
-    const fits=await page.locator('#priority-jobs tr').first().evaluate(row=>{
+    const fits=await page.locator('#jobs-rows tr').first().evaluate(row=>{
       const cell=row.cells[2],previous=cell.textContent;
       cell.textContent='A deliberately long synthetic reason must wrap inside its own column instead of obscuring the state, machine or elapsed times.';
       const range=document.createRange();range.selectNodeContents(cell);const bounds=cell.getBoundingClientRect();
       const fits=[...range.getClientRects()].every(rect=>rect.right<=bounds.right+1&&rect.left>=bounds.left-1);
       cell.textContent=previous;return fits&&document.documentElement.scrollWidth<=innerWidth+1;
     });
-    assert.equal(fits,true,`Priority reasons stay within their columns at ${width}px`);
+    assert.equal(fits,true,`Job details stay within their columns at ${width}px`);
   }
   await page.setViewportSize({width:1440,height:1100});
-  const prioritySelect=page.locator('#priority-jobs select').first();
-  assert.equal(await prioritySelect.inputValue(),'High');
-  await prioritySelect.selectOption('Low');
-  await page.waitForFunction(()=>document.getElementById('priority-message').textContent.includes('Conversation priority saved'));
-  assert.equal(await page.locator('#priority-jobs tr').first().locator('td').nth(3).innerText(),'Running','Changing priority does not stop active work');
-  await prioritySelect.selectOption('automatic');
-  await page.waitForFunction(()=>!document.querySelector('#priority-jobs select').disabled&&document.querySelector('#priority-jobs select').value==='automatic');
-  await prioritySelect.selectOption('High');
-  await page.waitForFunction(()=>!document.querySelector('#priority-jobs select').disabled);
-  await page.locator('#priority-preferences summary').click();
-  await page.locator('#priority-rules').fill('Synthetic preference: prioritize urgent incident response.');
-  await page.waitForTimeout(5500);
-  assert.equal(await page.locator('#priority-rules').inputValue(),'Synthetic preference: prioritize urgent incident response.','Polling preserves unsaved preferences');
-  await page.locator('#priority-rules-save').click();
-  await page.waitForFunction(()=>document.getElementById('priority-message').textContent.includes('Priority preferences saved'));
-  await page.locator('#priority-preferences summary').click();
-  await page.locator('#priority-toggle').click();
-  await page.waitForFunction(()=>document.getElementById('priority-toggle').getAttribute('aria-pressed')==='false'&&!document.getElementById('priority-toggle').disabled);
-  assert.match(await page.locator('#priority-status').innerText(),/Off.*ordinary scheduling/);
-  assert.equal(await prioritySelect.inputValue(),'High','Opt-out preserves the saved override');
-  await page.locator('#priority-toggle').click();
-  await page.waitForFunction(()=>document.getElementById('priority-toggle').getAttribute('aria-pressed')==='true'&&!document.getElementById('priority-toggle').disabled);
-  const askCorrection=async question=>{
-    await page.locator('#genie-question').fill(question);await page.locator('#genie-send').click();
-    await page.waitForFunction(()=>!document.getElementById('priority-correction').hidden);
-  };
-  await askCorrection('Demo correction: make urgent fix Low for this conversation.');
-  assert.equal(await prioritySelect.inputValue(),'High','A chat proposal does not apply itself');
-  assert.match(await page.locator('#priority-correction-changes').innerText(),/urgent fix.*Low.*Other conversations/s);
-  await page.locator('#priority-correction-confirm').click();
-  await page.waitForFunction(()=>document.querySelector('#priority-jobs select').value==='Low'&&!document.querySelector('#priority-jobs select').disabled);
-  assert.equal(await page.locator('#priority-jobs tr').first().locator('td').nth(3).innerText(),'Running');
-  await askCorrection('Demo correction: prefer urgent work.');
-  assert.equal(await page.locator('#priority-correction-confirm').isVisible(),false);
-  await page.locator('#priority-correction-reply').click();assert.equal(await page.locator('#genie-question').evaluate(el=>document.activeElement===el),true);
-  await page.locator('#genie-question').fill('Demo correction: apply generally.');await page.locator('#genie-send').click();
-  await page.waitForFunction(()=>document.getElementById('priority-correction-title').textContent.includes('general'));
-  assert.match(await page.locator('#priority-correction-changes').innerText(),/Remove.*prioritize urgent incident response.*Add.*urgent incident response is High/s);
-  assert.equal(await page.locator('#priority-rules').inputValue(),'Synthetic preference: prioritize urgent incident response.');
-  await page.locator('#priority-correction').screenshot({path:path.join(output,'priority-correction.png'),animations:'disabled'});
-  await page.locator('#priority-correction-confirm').click();
-  await page.waitForFunction(()=>document.getElementById('priority-rules').value==='Synthetic preference: urgent incident response is High.');
-  assert.equal(await prioritySelect.inputValue(),'Low','A general preference does not replace a manual override');
-  await prioritySelect.selectOption('High');await page.waitForFunction(()=>!document.querySelector('#priority-jobs select').disabled);
+
   assert.match(await page.locator('#genie-action-items').innerText(),/Pool selected before dispatch/);
   const enrollmentGuide=page.getByRole('link',{name:'Setup guide for your agent ↗'});
   assert.equal(await enrollmentGuide.count(),1);
@@ -237,18 +194,7 @@ try {
   await page.waitForFunction(()=>document.getElementById('queue-timeout-current').textContent.includes('20,000'));
   await page.reload();await page.locator('#queue-timeout-form').waitFor();
   assert.equal(await page.locator('#queue-timeout-input').inputValue(),'20000');
-  await page.locator('#priority-settings-save').waitFor();
-  await page.waitForFunction(()=>!document.getElementById('priority-settings-save').disabled);
-  assert.equal(await page.locator('#priority-aging').inputValue(),'60');
-  await page.locator('#priority-weight-high').fill('4');await page.locator('#priority-aging').fill('15');
-  await page.locator('#priority-settings-save').click();
-  await page.waitForFunction(()=>document.getElementById('priority-settings-message').textContent.includes('saved'));
-  await page.reload();await page.waitForFunction(()=>document.getElementById('priority-weight-high').value==='4');
-  assert.equal(await page.locator('#priority-aging').inputValue(),'15');
-  await page.locator('#priority-weight-high').fill('3');await page.locator('#priority-aging').fill('60');
-  await page.locator('#priority-settings-save').click();
-  await page.waitForFunction(()=>document.getElementById('priority-settings-message').textContent.includes('saved'));
-  await page.locator('section[aria-labelledby="priority-settings-title"]').screenshot({path:path.join(output,'priority-settings.png'),animations:'disabled'});
+
   assert.match(await page.locator('#relocation-controls').innerText(),/Safe queued handovers.*configured first-refusal window.*gateway core may move/s);
   assert.equal(await page.locator('#relocation-offers button').count(),1);
   assert.match(await page.locator('#relocation-offers button').getAttribute('title'),/warm cache/);

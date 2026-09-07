@@ -7,8 +7,6 @@ import { isMain } from '../ds4-gateway/config.mjs';
 import {calibrationPreflight} from '../ds4-gateway/calibration.mjs';
 import {FleetThroughput} from '../ds4-gateway/throughput.mjs';
 import {FleetSpeed} from '../ds4-gateway/fleet-speed.mjs';
-import {PriorityLens} from '../ds4-gateway/priority-lens.mjs';
-import {PriorityCorrections} from '../ds4-gateway/priority-corrections.mjs';
 // Optional memory is supplied only by the isolated browser-test fixture. The
 // ordinary demo has no persistent storage and reads no installation config.
 export function createDemoServer({agentHold=false,quarantinedWorker=false,memory=null}={}) {
@@ -51,17 +49,7 @@ const genie={enabled:true,busy:false,source:'primary',memory,
   submit(question){
     if(this.busy)throw new Error('Synthetic review is busy');this.busy=true;
     const receipt={id:'synthetic-question-'+Date.now(),state:'queued',submitted_at:Date.now()};this.questionReceipt=receipt;
-    void (async()=>{
-      let context;
-      try{
-        context=await corrections.context(question);
-        // Explicit scripted demonstration cases, never a production classifier.
-        const proposal=question==='Demo correction: make urgent fix Low for this conversation.'?{scope:'chat',chat:'a'.repeat(64),priority:'Low',message:'Synthetic proposal: change only this conversation.'}:
-          question==='Demo correction: prefer urgent work.'?{scope:'clarify',message:'Only this conversation, or a general preference for urgent work?'}:
-          question==='Demo correction: apply generally.'?{scope:'general',message:'Synthetic proposal: replace the overlapping urgency rule.',remove_rules:context.rules.length?[0]:[],add_rules:['Synthetic preference: urgent incident response is High.']}:null;
-        corrections.propose(proposal,context);receipt.state='answered';
-      }catch{receipt.state='failed';}finally{corrections.finish(context);receipt.finished_at=Date.now();this.busy=false;}
-    })();return {...receipt};
+    receipt.state='answered';receipt.finished_at=Date.now();this.busy=false;return {...receipt};
   }};
 const events = Array.from({length:8},(_,i)=>({
   time:new Date(now-(8-i)*37000).toISOString(),event:'request_finished',node:workers[i%3].id,
@@ -111,22 +99,11 @@ const snapshot = { version:1,demo:true,time:now,started:now-900000,read_only:fal
   continuity_door:{service:'dwarf-star-gate-continuity-door',version:1,holding:false,held:0,active:2,core_ready:true,body_spooling:false,replay:false,last_transition:{action:'release',at:new Date(now-300000).toISOString()}},continuity_door_error:null,
   gateway:{model:'deepseek-v4-flash',context_length:262144,queue_timeout_ms:72000000000,total:3,healthy:3,available:3,active:2,queued:1,draining:false,workers,dataset,recovery,client_watch_version:1,client_watch:clientWatch,
     continuity:{patient_wait:true,queued_relocation:true,automatic_relocation:true,automatic_relocation_scope:'first_unaffined_or_affinity_wait_expired',automatic_affinity_rebalance_min_wait_ms:300000,relocation:{completed:2,rejected:0,offers:1,diagnostics:relocationDiagnostics}}},devices,events };
-const priority=new PriorityLens();
-priority.setManual({chat:'a'.repeat(64),priority:'High',expected_revision:0});
-priority.advise(priority.ticket('b'.repeat(64),1),{priority:'Low',reason:'background'},1);
-const prioritySnapshot=()=>({...priority.settings(),demo:true,selections:0,receipts:[],jobs:[
-  {request_id:'demo-priority-a',chat:'a'.repeat(64),title:'Synthetic: urgent fix',state:'running',machine:'sparkA',waiting_ms:1200,running_ms:60000},
-  {request_id:'demo-priority-b',chat:'b'.repeat(64),title:'Synthetic: background documentation',state:'running',machine:'sparkB',waiting_ms:5000,running_ms:30000},
-  {request_id:'demo-priority-c',chat:'c'.repeat(64),title:'Synthetic: <review> next steps',state:'queued',machine:'sparkA',waiting_ms:45000,running_ms:null},
-].map(job=>({...job,...priority.decision(job.chat)})),jobs_truncated:false});
-const priorityAct=async(action,input)=>{if(action==='manual')priority.setManual(input);else if(action==='settings')priority.configure(input);else if(action==='rules')priority.setRules(input);else throw new Error('Unsupported synthetic priority action');return prioritySnapshot();};
-const corrections=new PriorityCorrections({read:async()=>prioritySnapshot(),act:priorityAct});
-const priorityControls={read:async()=>({...prioritySnapshot(),corrections:corrections.status()}),act:async(action,input)=>{
-  if(action==='confirm-correction')await corrections.confirm(input);
-  else if(action==='dismiss-correction')corrections.dismiss(input);
-  else await priorityAct(action,input);
-  return {...prioritySnapshot(),corrections:corrections.status()};
-}};
+const currentJobs={read:async()=>({schema:1,demo:true,jobs:[
+  {request_id:'demo-job-a',title:'Synthetic: repair export',state:'running',machine:'sparkA',waiting_ms:1200,running_ms:60000},
+  {request_id:'demo-job-b',title:'Synthetic: background documentation',state:'running',machine:'sparkB',waiting_ms:5000,running_ms:30000},
+  {request_id:'demo-job-c',title:'Synthetic: <review> next steps',state:'queued',machine:'sparkA',waiting_ms:45000,running_ms:null},
+],jobs_truncated:false})};
 const registry=()=>({model:'deepseek-v4-flash',minimum_context:snapshot.gateway.context_length,context_limit_control:true,context_limit_source:'saved',queue_timeout_ms:snapshot.gateway.queue_timeout_ms,queue_timeout_control:true,queue_timeout_source:'saved',workers,recovery,queued_relocation:relocation});
 if(agentHold)Object.assign(workers[2],{drained:true,operator_paused:false,holds:[{id:'demo-hold',owner_id:'test-agent',reason:'<DS4 compatibility test>'}]});
 if(quarantinedWorker)Object.assign(workers[2],{is_healthy:false,quarantine:{reason:'repeated_inference_failures',at:new Date(now-600000).toISOString()}});
@@ -186,7 +163,7 @@ return createDashboard(()=>({...snapshot,time:Date.now(),gateway_at:Date.now(),
     return registry();
   },
 },genie,()=>({enabled:true,status:'ready',demo:true,window_limit:500,not_dispatched:1,throughput:throughput.snapshot(),fleet_speed:{...fleetSpeed.snapshot(Date.now(),workers.map(worker=>worker.id)),status:'ready',partial_history:false},
-  handovers:{rows:[]}}),priorityControls);
+  handovers:{rows:[]}}),currentJobs);
 }
 if(isMain(import.meta.url)) {
 const server=createDemoServer();

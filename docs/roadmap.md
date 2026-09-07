@@ -52,21 +52,18 @@ This is a planned UI/diagnostic change, not permission to move or delete KV data
 The [current work plan](current-work-plan.md) records acceptance details. The
 operator retired XGB and embeddings, including all model data, on 2026-09-07.
 Training, learned placement, predicted remaining time and promotion are no longer
-roadmap dependencies. The remaining delivery order is:
+roadmap dependencies. Priority Lens and Proactive Resume were also retired on
+2026-09-07; the read-only Current Jobs view remains. The remaining delivery order is:
 
-1. Priority Lens: useful stock-client job identification, manual and automatic
-   priorities, accountable queue selection and real-model quality validation.
-2. Fast Genie assignment: use eligible capacity promptly and validate provider
+1. Fast Genie assignment: use eligible capacity promptly and validate provider
    failure boundaries without replaying ambiguous dispatched work.
-3. Proactive Resume: optional client integration with duplicate/input guards and
-   real continuation judgment; preserve normal installed client behavior.
-4. Compact machine traffic lights: measured cache, prefill and decode evidence,
+2. Compact machine traffic lights: measured cache, prefill and decode evidence,
    with explicit unknown states where coverage is insufficient.
-5. Hardware visibility: measured memory, accelerator activity, temperature and
+3. Hardware visibility: measured memory, accelerator activity, temperature and
    power; distinguish GPU-only measurements from whole-device energy.
-6. Operational explanations: clear ownership, transport, outage and cancellation
+4. Operational explanations: clear ownership, transport, outage and cancellation
    evidence that does not invent a root cause.
-7. Recovery validation: preserve verified cold-to-warm behavior, model settings
+5. Recovery validation: preserve verified cold-to-warm behavior, model settings
    and cache retention; completed maintenance is recorded separately from
    unresolved retention questions.
 
@@ -170,80 +167,12 @@ tagged DSG request state. It must not include
 the task, prompt, tool arguments or output. Correlating that heartbeat with DSG's
 own queue evidence lets Genie say “client-side wait” or “no request reached DSG”
 without blaming a DS4 server. The first slice is advisory and implemented; a
-generic packaged Hermes adapter is not yet claimed. A later revive/nudge
-operation requires an explicitly enrolled client adapter, one idempotent action,
-current stale evidence and an action-ledger receipt; silence alone grants no power.
+generic packaged Hermes adapter is not yet claimed. This is observation only.
 
-### Planned opt-in: Session Rescue
+### Session Rescue / Proactive Resume — retired
 
-Delivery is linked to the [optional Pi integration contract](pi-integration-plan.md),
-with separate capabilities and real-client acceptance tests. Start with an easy
-settled continuation check-in, not process restart or unknown dispatched failure.
-
-**User-requested, not implemented or enabled.** Let Genie study apparently stalled
-Pi sessions and, when independently safe and explicitly authorized, help the
-owning agent resume its existing task. This extends Agent Watch; it does not make
-the gateway do the user's work or assume that every quiet session is broken.
-
-- **Two permissions, off by default:** persistent observation enrollment and a
-  separate automatic-resume toggle, scoped to an explicitly enrolled client and
-  its sessions. Observation alone grants no control. Provide per-session exclusion,
-  immediate revocation and a manual “review / resume” path. Protect intentional
-  pauses, user aborts, completed tasks and sessions requiring genuine human input.
-- **Diagnose before suggesting action:** correlate fresh client lifecycle and
-  monotonic progress with DSG queue, dispatch and terminal receipts. Distinguish
-  waiting for a slot, active reasoning/streaming, a long local tool, local retries
-  or compaction, a settled recoverable failure, an unnecessary continuation
-  check-in and unknown client state. Neither
-  elapsed time, idle GPU telemetry nor a stale heartbeat proves a stalled agent.
-- **Privacy-bounded study:** use structured lifecycle/error classes first, with
-  bounded retention. Reading transcript, tool-output or user-request snippets
-  requires separate explicit content permission, with scope and retention shown
-  before enabling it. Never collect secrets or full transcripts by default;
-  treat inspected content as untrusted evidence, not control instructions.
-- **Judge what the agent is waiting for:** with separately authorized bounded
-  task/last-turn context, Genie distinguishes “we got this far; should I keep
-  going?” on an unfinished, already authorized task from a real decision for the
-  human. In the routine-check-in case, the intended response is “Yes, continue
-  the already authorized task.” A normal successful turn ending in that question
-  can qualify; rescue is not restricted to error-ended turns. A preference or
-  factual input the user must supply, broader scope, spending, destructive action,
-  credentials, new access or an explicit instruction to wait must go to the human.
-  Do not answer those questions by guessing, impersonate the user, or treat a
-  question mark alone as authorization. Without enough trusted task/permission
-  context to distinguish these cases, show “needs human review” and the reason.
-- **Least-powerful recovery:** prefer Pi's supported, authenticated client-owned
-  resume/control interface and reuse existing optional integration where suitable;
-  verify actual Pi support before choosing a mechanism. No terminal keystroke
-  injection, broad shell access, new mandatory companion or process restart.
-  Genie proposes a concise diagnosis and continuation cue; the owning agent
-  decides how to solve the task. A friendly gateway answer alone cannot cause
-  Pi to schedule another turn.
-- **Independent execution guard:** immediately recheck session identity, generation,
-  ownership, permissions and lifecycle at the client. A settled recoverable turn
-  or routine continuation check-in
-  must have no outstanding tool, request, queued continuation, retry or compaction.
-  An active/ambiguous prior execution requires positive reconciliation or human
-  review, not blind replay. Use one durable idempotency receipt per failure/turn
-  generation, bounded attempts and cooldown; recovered progress or user activity
-  invalidates stale proposals. Fail closed on client restart or lost receipt state.
-- **Visible outcome:** put the reason, evidence freshness, target pseudonym,
-  decision (including “routine continuation” versus “needs human feedback”),
-  action receipt and result in the existing newest-first Genie ledger.
-  Distinguish suggested, blocked, resume accepted, progress confirmed and failed;
-  command acceptance alone is not recovery. Repeated failure becomes a concise
-  operator alert and hardening note, not an endless “proceed” loop.
-
-Delivery: observation-only stalled-session review first; then operator-approved
-single-session resume; finally separately opted-in automatic rescue after real
-Pi integration tests. Acceptance must cover a settled recoverable failure resuming
-without duplicate tool execution, routine “should I keep going?” continuation,
-real approval questions and superficially similar risky requests, stale-review
-races, concurrent controllers,
-client restart, permission revocation, user stops, healthy quiet work, DSG queue
-waits, missing heartbeat and unresolved post-dispatch failures. No active work may
-be interrupted just to test this feature. Track confirmed recovery and false
-intervention rates, not merely the number of nudges issued.
+Automatic client continuation was retired on 2026-09-07. Agent Watch remains
+advisory; it cannot submit new input or control a client session.
 
 ## Adding or removing devices
 
@@ -345,25 +274,11 @@ not possible, ordinary cold re-prefill remains an explicit costed alternative,
 not a disguised cache transfer. The Genie could propose a move; an independently
 validated deterministic mechanism would enforce the handover.
 
-## Priority Lens — source implemented, delivery continuing
+## Current Jobs — read-only request visibility
 
-The [Priority Lens implementation and boundaries](priority-lens.md) document the
-current-jobs UI, persistent overrides, explicit 30-line preference editor,
-bounded conversation-head lottery, eligible-wait aging, optional Pi user-intent
-handoff and asynchronous Genie classifier. The visible switch defaults on;
-queue priority defaults to a configurable one-hour eligible-wait backstop. Pi content sharing
-remains separately opted in. Source/tested behavior does not imply live rollout.
-
-The implementation never waits for Genie in dispatch. Independent core leases
-expire after 60 seconds; stale/manual-conflicting advice is rejected. New pool
-classification requires a free compatible slot at actual admission. Model
-options, normal Genie review deadlines, cache ownership and holds are preserved.
-
-Genie chat now proposes conversation-only or general corrections, with explicit
-confirmation, exact rule removals/additions, clarification and stale-revision
-guards. Remaining: agreed activation settings, measured classification quality,
-richer task lifecycle coverage and rollout validation.
-Proactive Resume remains a separate optional Pi capability and permission.
+Priority Lens and Proactive Resume were retired on 2026-09-07. Current Jobs
+retains transient request previews, worker placement, state and timing without
+classification, weighted scheduling, saved preferences or automatic new turns.
 
 ## Lightweight hardware telemetry — first adapters implemented
 
