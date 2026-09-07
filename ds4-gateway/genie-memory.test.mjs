@@ -142,7 +142,8 @@ test('structured developer experiments retain bounded legacy storage without exe
   const parsed=parse(note);assert.equal(parsed.ticker_error,null);assert.equal(parsed.hardening_notes.length,1);
   const canonical=parsed.hardening_notes[0];assert.deepEqual(Object.keys(canonical).sort(),['candidate_id','suggestion','title']);
   assert.equal(canonical.suggestion,'Change: Exercise the existing stream guard.\nTest: End a scripted stream without a terminal event.\nExpected (not yet verified): The client sees an incomplete stream; no replay occurs.');
-  for(const key of ['recovery_requests','predictor_requests','relocation_requests'])assert.deepEqual(parsed[key],[]);
+  for(const key of ['recovery_requests','relocation_requests'])assert.deepEqual(parsed[key],[]);
+  assert.equal(Object.hasOwn(parsed,'predictor_requests'),false,'retired model actions are absent from the review contract');
   const m=new GenieMemory(fixture(t),{now:()=>1000});m.setEnabled(true);m.saveHardeningNotes([canonical],[candidate]);
   const reload=new GenieMemory(m.directory,{now:()=>1000});assert.equal(reload.error,null);
   const stored=reload.hardening(s)[0];assert.equal(stored.data.suggestion,canonical.suggestion);
