@@ -53,6 +53,8 @@ remain transient and do not trigger model calls or affect scheduling. Priority
 Lens and Proactive Resume were retired on 2026-09-07. Agent Watch and certified
 pre-dispatch continuity remain available.
 
+**[Read the simplified system overview](docs/simplified-system.md).**
+
 **Follow the project:** [recent work in plain English](WORKLOG.md) ·
 [detailed changelog](CHANGELOG.md) · [current work plan](docs/current-work-plan.md) ·
 [detailed roadmap](docs/roadmap.md).
