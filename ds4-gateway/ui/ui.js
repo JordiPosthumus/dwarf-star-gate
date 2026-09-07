@@ -10,17 +10,6 @@ const clock = t => {
   const date=new Date(t);
   return Number.isFinite(date.getTime())?date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }):'unknown';
 };
-function predictionSessionLabel(evidence){
-  if(!Number.isSafeInteger(evidence?.known_sessions)||evidence.known_sessions<0)return `${fmt(evidence?.sessions??0)} recorded groups`;
-  return `${fmt(evidence.known_sessions)} known sessions${evidence.unknown_identity_requests>0?` · ${fmt(evidence.unknown_identity_requests)} requests without identity`:''}`;
-}
-function forecastLabel(f, now, stale=false) {
-  if (!f || !Number.isFinite(f.at) || !Number.isFinite(f.seconds) || f.seconds<0 || f.at>now) return 'ETA unknown';
-  if (stale || now-f.at>60000) return 'Forecast stale';
-  if (f.stage!=='remaining') return `Total est. ${fmtWhole(f.seconds)}s`;
-  const left=f.seconds-(now-f.at)/1000;
-  return left<=0?'Estimate exceeded':`ETA ~${fmtWhole(left)}s`;
-}
 function knownWaiting(gateway,door) {
   const core=Number.isSafeInteger(gateway?.queued)&&gateway.queued>=0?gateway.queued:0;
   const held=door?.holding&&Number.isSafeInteger(door.held)&&door.held>=0?door.held:0;
@@ -117,53 +106,7 @@ function telemetryStatus(d) {
   if (d.telemetry_configured === false) return 'Engine timings not configured';
   return `${d.telemetry_source === 'file' ? 'Model log' : 'Journal'} ${d.connected ? 'connected' : 'disconnected'}`;
 }
-function analyticsMetrics(snapshot,metric='queue',worker='') {
-  const finite=x=>Number.isFinite(x)&&x>=0;
-  const rows=(snapshot?.rows||[]).filter(r=>!worker || r.node===worker);
-  const eligible=rows.filter(r=>metric==='queue'?finite(r.queue_ms)&&r.queue_ms>=1000:r.service_state==='complete'&&(finite(r.service_ms)||r.forecast_eligible===true));
-  const pairs=eligible.map(r=>({node:r.node,at:r.at,actual:metric==='queue'?r.queue_ms:r.service_ms,
-    predicted:metric==='queue'?r.predicted_queue_ms:r.predicted_service_ms})).filter(r=>finite(r.predicted)&&finite(r.actual));
-  return {pairs,total:rows.length,eligible:eligible.length,missing:eligible.length-pairs.length,
-    immediate:rows.filter(r=>finite(r.queue_ms)&&r.queue_ms<1000).length,
-    unfinished:rows.filter(r=>r.service_state==='pending').length,excluded:rows.filter(r=>r.service_state==='excluded').length,
-    coverage:eligible.length?pairs.length/eligible.length*100:null,
-    mae:pairs.length?pairs.reduce((sum,r)=>sum+Math.abs(r.actual-r.predicted),0)/pairs.length:null};
-}
-function predictionChart(pairs) {
-  if(!pairs.length)return '<p class="analytics-empty">No matched predictions yet.<br>Unknown estimates are not plotted as zero.</p>';
-  const max=Math.max(1000,...pairs.flatMap(p=>[p.actual,p.predicted])),unit=max>=120000?60000:1000,label=unit===60000?'min':'s';
-  const x=v=>48+v/max*180,y=v=>202-v/max*180;
-  return `<svg viewBox="0 0 266 246" role="img" aria-label="Predicted versus actual duration in ${label}; identical axes; dots above the diagonal took longer than predicted"><title>${pairs.length} paired requests; frozen forecasts at the selected stage</title><text x="48" y="12">Actual (${label})</text>${[0,.5,1].map(f=>`<line class="analytics-grid" x1="48" x2="228" y1="${y(f*max)}" y2="${y(f*max)}"/><text x="41" y="${y(f*max)+4}" text-anchor="end">${fmt(f*max/unit)}</text><text x="${x(f*max)}" y="219" text-anchor="middle">${fmt(f*max/unit)}</text>`).join('')}<line class="analytics-equal" x1="48" y1="202" x2="228" y2="22"/>${pairs.map(p=>`<circle class="${p.actual>p.predicted?'underestimated':'estimated'}" cx="${x(p.predicted).toFixed(2)}" cy="${y(p.actual).toFixed(2)}" r="3"><title>${esc(p.node)}: predicted ${fmt(p.predicted/1000)}s, actual ${fmt(p.actual/1000)}s</title></circle>`).join('')}<text x="138" y="240" text-anchor="middle">Predicted (${label})</text></svg>`;
-}
-let analyticsState=null,analyticsDisplayed=null,analyticsCapturedAt=null,analyticsRefreshRequested=false,analyticsLoading=false,analyticsWorkerSignature='',analyticsChartSignature='',genieState=null;
-const analyticsPins=new Map();
-function receiveAnalytics(value){
-  analyticsState=value;
-  if(value?.status==='ready'&&(!analyticsDisplayed||analyticsRefreshRequested)){
-    analyticsDisplayed=structuredClone(value);analyticsCapturedAt=Date.now();analyticsRefreshRequested=false;
-  }
-}
-function analyticsMetric(){
-  const question=$('analytics-question').value||'service',method=$('analytics-method');
-  $('analytics-history-option').disabled=question==='remaining';
-  if(question==='queue')method.value='history';
-  if(question==='remaining'&&method.value==='history')method.value='xgb';
-  const rule=method.value==='history',paired=method.value==='reference';
-  $('analytics-method-label').hidden=question==='queue';
-  $('analytics-stage-label').hidden=question!=='service'||rule;
-  return question==='queue'?'queue':rule?'service':`${paired?'reference':'xgb'}-${question==='remaining'?'remaining':$('analytics-stage').value||'admission'}`;
-}
-function pinnedAnalyticsVersion(versions,stage){
-  if(!analyticsPins.has(stage)&&versions[0])analyticsPins.set(stage,versions[0].id);
-  return analyticsPins.get(stage)??'';
-}
-function analyticsUse(state,tieBreak,stale=false){
-  if(stale)return 'Current use unavailable; the study snapshot below is historical.';
-  if(!state?.configured)return 'Optional XGB runtime not configured. Ordinary routing works without models; no training setup is required to view this page.';
-  const models=state.models??[],active=kind=>models.find(m=>m.kind===kind)?.active_model_id;
-  const roles=[['admission','Arrival total'],['updated','Updated total'],['remaining','Time left']].map(([kind,label])=>`${label}: ${active(kind)?'validated XGB where supported':models.find(m=>m.kind===kind)?.candidate_model_id?'experiment only':'no learned model'}`);
-  return `${roles.join(' · ')}. New-session placement: ${!state.placement?'off':!active('admission')?'armed, but no qualified admission model':'armed; independent request/worker gates apply'}. ${Number.isSafeInteger(tieBreak?.applied)?`Forecast tie-break: ${tieBreak.applied} applied changes in this gateway run.`:'Applied routing benefit is not established by prediction accuracy.'}`;
-}
+let requestHistoryState=null,requestHistoryLoading=false,genieState=null;
 const fleetSpeedWindows=new Set(['1h','12h','24h']);let fleetSpeedWindow='12h';
 try{const saved=globalThis.localStorage?.getItem('dsg-fleet-speed-window-v1');if(fleetSpeedWindows.has(saved))fleetSpeedWindow=saved;}catch{/* Browser privacy settings may deny storage; 12h remains the safe default. */}
 function compactValue(n){return !Number.isFinite(n)?'—':n>=1000000?fmt(n/1000000)+'M':n>=1000?fmt(n/1000)+'k':fmtWhole(n);}
@@ -188,58 +131,11 @@ function renderFleetSpeed(a){
   energyButton.dataset.lightDetail=energy?`Period ${new Date(energy.window_start).toLocaleString()} to ${new Date(energy.window_end).toLocaleString()}. Measured subtotal ${(energy.measured_kwh??0).toFixed(4)} kWh; fleet estimate ${Number.isFinite(estimated)?estimated.toFixed(4)+' kWh':'unavailable'}. Adjacent power readings are integrated trapezoidally; gaps over 60 seconds are excluded. Each worker needs at least 80% coverage and one measurement scope for extrapolation. System and compute-module measurements have different boundaries; this is not utility-meter energy. GPU-only readings are excluded.\n\n${(energy.workers??[]).map(row=>`${row.worker}: ${row.measured_kwh.toFixed(4)} kWh measured, ${fmt(row.coverage_pct)}% coverage; ${row.scopes.join(', ')||'no eligible scope'}${row.sensors.length?' ('+row.sensors.join(', ')+')':''}; ${row.status.replaceAll('_',' ')}.`).join('\n')}`:state;
   $('fleet-speed-summary').title=detail;$('fleet-speed-summary').setAttribute?.('aria-label',ready?`Fleet speed over ${fleetSpeedWindow}. Decode ${fmtWhole(window?.decode?.mean_tps)} tokens per second. Prefill ${fmtWhole(window?.prefill?.mean_tps)} tokens per second. ${Number.isFinite(estimated)?`Estimated energy ${fmt(estimated)} kilowatt hours.`:Number.isFinite(energy?.measured_kwh)&&energy.measured_kwh>0?`Measured energy subtotal ${energy.measured_kwh.toFixed(3)} kilowatt hours. Fleet estimate unavailable.`:'Energy unavailable.'}`:state);
 }
-function renderAnalytics() {
-  // Never pin a partial backfill's oldest model or animate partial study dots
-  // while the reader is catching up. Live fleet telemetry remains independent.
-  const a=analyticsDisplayed??(analyticsState?.status==='ready'?analyticsState:{...analyticsState,rows:[],model_series:[]}),worker=$('analytics-worker'),metric=analyticsMetric();
-  renderFleetSpeed(analyticsState);
-  const ids=[...new Set([...(a?.rows||[]),...(a?.model_series??[]).flatMap(s=>s.rows??[])].map(r=>r.node))].sort();
-  if(worker.value&&!ids.includes(worker.value))ids.push(worker.value);
-  const signature=JSON.stringify(ids);
-  if(signature!==analyticsWorkerSignature) {
-    analyticsWorkerSignature=signature;const previous=worker.value;
-    worker.innerHTML='<option value="">All servers</option>'+ids.map(id=>`<option value="${esc(id)}">${esc(id)}</option>`).join('');
-    worker.value=ids.includes(previous)?previous:'';
-  }
-  const versioned=metric.includes('-'),reference=metric.startsWith('reference-'),stage=versioned?metric.slice(metric.indexOf('-')+1):'admission';
-  const versions=(a?.model_series||[]).filter(m=>m.stage===stage).sort((a,b)=>(b.last_forecast_at??0)-(a.last_forecast_at??0)||a.id.localeCompare(b.id)),version=$('analytics-version');
-  $('analytics-version-label').hidden=!versioned;$('analytics-latest').hidden=!versioned;
-  const pin=versioned?pinnedAnalyticsVersion(versions,stage):'',selected=versions.find(m=>m.id===pin);
-  const options=versions.map(m=>`<option value="${esc(m.id)}">${esc(m.id.slice(0,12))}${m===versions[0]?' · newest in snapshot':''}</option>`).join('')+(!selected&&pin?`<option value="${esc(pin)}">${esc(pin.slice(0,12))} · outside snapshot</option>`:!versions.length?'<option value="">No saved forecasts</option>':'');
-  if(version.innerHTML!==options)version.innerHTML=options;version.value=pin;
-  $('analytics-latest').disabled=!versions.length||pin===versions[0]?.id;
-  const selectedRows=selected?.rows??[],scoreRows=reference?selectedRows.map(r=>({...r,predicted_service_ms:r.reference_service_ms??null})):selectedRows;
-  const m=analyticsMetrics(versioned?{rows:scoreRows}:a,versioned?'service':metric,worker.value);
-  const liveStatus=analyticsState?.status;
-  $('analytics-status').textContent=a?.demo?'Synthetic demo · not measured predictions':analyticsDisplayed?`Study snapshot · ${reference?'paired reference rule':versioned?'XGB':'recent-history rule · unvalidated'}${pin?' · '+pin.slice(0,12):''}`:({disabled:'Evidence collection is off. Routing does not require this panel.',waiting:'No saved evidence yet. Finish requests with collection enabled to populate this view.',catching_up:'Reading recent evidence; the first ready snapshot will be held.',rescanning:'Evidence files changed; rebuilding the recent window.',unavailable:'Evidence unavailable — previous values are historical.',ready:'Recent-history rule · unvalidated'})[a?.status]||'Analytics unavailable — previous values are historical.';
-  const newer=analyticsDisplayed&&JSON.stringify([analyticsState?.rows,analyticsState?.model_series,analyticsState?.rescans])!==JSON.stringify([analyticsDisplayed.rows,analyticsDisplayed.model_series,analyticsDisplayed.rescans]);
-  $('analytics-snapshot-note').textContent=`${analyticsCapturedAt?'Held at '+clock(analyticsCapturedAt)+'. ':''}${liveStatus==='unavailable'?'Source unavailable; held evidence is historical.':liveStatus==='disabled'?'Collection is off; held evidence is historical.':liveStatus==='waiting'?'Waiting for saved evidence.':liveStatus==='catching_up'||liveStatus==='rescanning'?'Source is rebuilding; held evidence stays unchanged.':newer?'Newer evidence is available. Refresh to include it.':'Refresh explicitly to include later results.'} Fleet telemetry is independent; changing filters only changes this view. Page reload starts a new snapshot.`;
-  $('analytics-refresh').disabled=analyticsLoading;
-  const contract=versioned?stage==='remaining'?'Time left: first saved progress forecast at/after 30s, compared with time remaining from that checkpoint.':stage==='admission'?'Total server time: forecast at arrival, before the body/embeddings are available. Queue wait is excluded.':'Total server time: updated after '+(stage==='upload'?'upload':'embeddings')+'. This information arrives after the original placement decision.':'Recent-history rule: previous prompt-size bucket median; queue estimates add active residual work and jobs ahead. This is not XGB’s paired reference rule.';
-  $('analytics-contract').textContent=contract+(reference?' Reference values were saved beside this exact model version and checkpoint.':versioned?' '+(selectedRows.some(r=>r.experimental)?'Includes experimental forecasts; plotted does not mean used for routing.':'Forecast use is separate from chart eligibility.'):'');
-  const chartSignature=JSON.stringify(m.pairs);
-  if(chartSignature!==analyticsChartSignature){analyticsChartSignature=chartSignature;$('analytics-chart').innerHTML=predictionChart(m.pairs);}
-  $('analytics-stats').innerHTML=`<div><span class="label">REQUESTS PLOTTED</span><strong>${fmt(m.pairs.length)}</strong></div><div><span class="label">COVERAGE</span><strong>${m.coverage===null?'—':fmt(m.coverage)+'%'}</strong></div><div><span class="label">AVERAGE MISS</span><strong>${m.mae===null?'—':fmt(m.mae/1000)+'s'}</strong></div>`;
-  $('analytics-stats').title='Average miss is mean absolute error: average distance between the saved forecast and actual duration. Coverage is plotted divided by eligible requests in this selection, not all-time model coverage.';
-  $('analytics-counts').textContent=`${m.eligible} eligible = ${m.pairs.length} plotted + ${m.missing} missing ${reference?'reference values':'forecasts'}.${!m.pairs.length?' No scored pairs in this selection—not proof that no predictions were made.':''}`;
-  const h=a?.handovers,handover=h?.total?` Applied handovers: ${fmt(h.total)} observed · ${fmt(h.completed)} completed · ${fmt(h.pending)} pending · ${fmt(h.excluded)} excluded; destination outcome only, no invented no-move result.`:'';
-  $('analytics-detail').textContent=`Recent window: up to ${fmt(a?.window_limit||500)} dispatched non-Genie requests from the latest two daily evidence files. ${fmt(m.missing)} missing estimates; ${metric==='queue'?`${fmt(m.immediate)} waits under 1s excluded from this graph`:`${fmt(m.unfinished)} unfinished and ${fmt(m.excluded)} failed/output-limited or otherwise incomplete responses excluded`}. ${fmt(a?.not_dispatched||0)} observed requests ended before dispatch (all servers; not zero waits).${handover}${a?.partial_history?' Older file content was skipped by the bounded reader.':''}${a?.rejected_events||a?.malformed_lines||h?.rejected_events?` Evidence gaps: ${fmt(a.rejected_events)} rejected/unjoined prediction events, ${fmt(h?.rejected_events||0)} rejected handover events, ${fmt(a.malformed_lines)} malformed/oversized lines.`:''}`;
-  const w=a?.window,reader=a?.reader_window,range=w?.first_dispatch_at&&w?.last_dispatch_at?`${new Date(w.first_dispatch_at).toLocaleString()} – ${new Date(w.last_dispatch_at).toLocaleString()}`:'No dispatch time range available';
-  $('analytics-window-summary').textContent=`${m.total} selected rows · snapshot, not lifetime totals`;
-  const accounting=[['Selected rows',m.total],['Eligible to score',m.eligible],['Plotted',m.pairs.length],['Missing forecast/reference',m.missing],...(metric==='queue'?[['Wait below 1 second',m.immediate]]:[['Unfinished',m.unfinished],['Failed / limited / ineligible',m.excluded]]),['Outside selected model/stage coverage',versioned?Math.max(0,analyticsMetrics(a,'service',worker.value).total-m.total):0],['Outside latest-dispatch plot limit (all servers)',w?.outside_view??0],['Request-index evictions (not file deletion)',w?.request_index_evictions??a?.evicted_requests??0],['Reader rebuilds',a?.rescans??0],['Skipped older bytes',reader?.skipped_bytes??(a?.partial_history?'unknown':0)],...Object.entries(a?.rejection_reasons??{}).filter(([,count])=>count>0).map(([reason,count])=>['Unjoined/invalid events: '+reason.replaceAll('_',' '),count])];
-  $('analytics-accounting').innerHTML=`<p>${esc(range)}. Rebuild reason: ${esc(reader?.last_rebuild_reason?.replaceAll('_',' ')??'not reported')}.</p><dl>${accounting.map(([label,count])=>`<div><dt>${esc(label)}</dt><dd>${esc(count)}</dd></div>`).join('')}</dl><p>Rows and events are different units; global reader diagnostics are not additional subtractions from the selected-row count. Coverage is specific to this model, checkpoint and server filter.</p>`;
-  if(a?.series_window)$('analytics-accounting').innerHTML+=`<p>Saved version/checkpoint groups: ${esc(a.series_window.in_view)} shown, ${esc(a.series_window.outside_view)} outside the ${esc(a.series_window.limit)}-group limit. Newest saved forecast first; a pinned version never silently switches.</p>`;
-}
-async function loadAnalytics() {
-  if(analyticsLoading)return;analyticsLoading=true;
-  try {const r=await fetch('/api/analytics',{cache:'no-store',signal:AbortSignal.timeout(5000)});if(!r.ok)throw new Error();receiveAnalytics(await r.json());}
-  catch {analyticsState={...analyticsState,status:'unavailable'};}
-  finally {analyticsLoading=false;renderAnalytics();}
-}
-function embeddingInfo(ds) {
-  const e=ds?.embedding_collection;
-  if(!e?.enabled)return 'Embeddings off. Numerical collection can continue independently.';
-  return `Local embeddings ${e.ready?'ready':e.error||'starting'} · ${fmt(e.completed)} encoded / ${fmt(e.observed)} observed · ${fmt(e.pending)} queued · ${fmt(e.failed)} failed · ${fmt(e.dropped)} dropped · ${fmt(e.missing)} unavailable text · last batch ${fmt(e.last_duration_ms)} ms · ${e.model||'unknown encoder'} @ ${typeof e.revision==='string'?e.revision.slice(0,8):'unknown revision'} · ${fmt(e.dimensions)} dimensions. Latest user + bounded recent conversation; no raw text saved. Optional updated-forecast inputs, not initial-routing features.`;
+async function loadRequestHistory() {
+  if(requestHistoryLoading)return;requestHistoryLoading=true;
+  try{const response=await fetch('/api/request-history');if(!response.ok)throw new Error();requestHistoryState=await response.json();}
+  catch{requestHistoryState={...requestHistoryState,status:'unavailable'};}
+  finally{requestHistoryLoading=false;renderFleetSpeed(requestHistoryState);renderGenieActionLedger();}
 }
 function cacheCostText(result) {
   const part=p=>p?.estimated_ms===null||p?.estimated_ms===undefined?
@@ -463,11 +359,10 @@ function device(d, w, now, stale, index = 1, scales={}, controls=false) {
     const measured=`${staleMetric?'Last':'Latest'} measurement: ${age(m?.time,now)}. Values are engine observations, not a promise of current speed.`;
     return `<div class="metric-block ${staleMetric?'metric-stale':''}"><span class="label" title="${explanation}">${title}</span><div class="rate ${kind}">${fmtWhole(m?.tps)}<em>t/s</em></div><div class="metric-note" title="${esc(measured)}">avg ${fmtWhole(m?.average)} · ${age(m?.time, now)}</div>${chart(d.series, kind, now,scales[kind])}<div class="chart-caption" title="${esc(scales.detail)} Exact ceiling: ${scales[kind]} t/s. Gaps compressed; not a shared wall-clock axis.">15m · compressed · 0–${fmtWhole(scales[kind])} t/s</div></div>`;
   };
-  const f=w?.predictions?.remaining??w?.predictions?.updated??w?.predictions?.admission;
   const duration=!stale&&w?.load&&Number.isFinite(w.active_seconds)?`<span class="remaining-estimate" title="Elapsed time of the active DSG request; not an estimate">${fmtWhole(Math.floor(w.active_seconds/60))}m active</span>`:'';
-  const forecast=duration+(f?`<span class="remaining-estimate${stale||now-f.at>60000?' stale':''}" title="${esc(`${f.experimental?'Experimental':'Validated'} historical ${f.stage==='remaining'?'remaining':'total server-time'} estimate · ${fmt(f.seconds)} seconds · ${age(f.at,now)}. Stale or exceeded estimates are not current ETAs.`)}">${forecastLabel(f,now,stale)}</span>`:'');
+  const activityDuration=duration;
   const phaseRedundant=['unavailable','paused'].includes(state);
-  return `<article class="device" data-worker-id="${esc(d.id)}"><div class="device-top"><div class="device-identity"><div class="device-name"><span class="device-number">${String(index).padStart(2,'0')}</span><span class="device-name-text">${esc(d.id.replace(/^spark/, 'Spark '))}</span></div>${forecast}</div><div class="device-status"><span class="server-verdict" data-level="${verdict.level}" title="${esc(verdict.detail)}">${esc(verdict.label)}</span><span class="badge ${bad ? 'bad' : w?.load ? 'busy' : ''}" title="Current generation phase" ${phaseRedundant?'hidden':''}>${esc(!stale&&w?.quarantine?'quarantined':state==='decode'?'answering':state)}</span>${routingMarkup(w,{stale,controls,recovering:recoveryState?.workers?.some(r=>r.worker_id===w?.id&&r.state==='recovering')})}</div></div><div class="device-readings">${timeline(d,now)}${thinkingIndicator(w,stale,now)}<div class="metrics">${metric('decode','DECODE')}${metric('prefill','PREFILL')}</div>${hardwareMarkup(d.hardware,now)}${performanceLightsMarkup(d,now,stale||!(d.performance_history?.workers?.[d.id]?.active??w?.load))}</div></article>`;
+  return `<article class="device" data-worker-id="${esc(d.id)}"><div class="device-top"><div class="device-identity"><div class="device-name"><span class="device-number">${String(index).padStart(2,'0')}</span><span class="device-name-text">${esc(d.id.replace(/^spark/, 'Spark '))}</span></div>${activityDuration}</div><div class="device-status"><span class="server-verdict" data-level="${verdict.level}" title="${esc(verdict.detail)}">${esc(verdict.label)}</span><span class="badge ${bad ? 'bad' : w?.load ? 'busy' : ''}" title="Current generation phase" ${phaseRedundant?'hidden':''}>${esc(!stale&&w?.quarantine?'quarantined':state==='decode'?'answering':state)}</span>${routingMarkup(w,{stale,controls,recovering:recoveryState?.workers?.some(r=>r.worker_id===w?.id&&r.state==='recovering')})}</div></div><div class="device-readings">${timeline(d,now)}${thinkingIndicator(w,stale,now)}<div class="metrics">${metric('decode','DECODE')}${metric('prefill','PREFILL')}</div>${hardwareMarkup(d.hardware,now)}${performanceLightsMarkup(d,now,stale||!(d.performance_history?.workers?.[d.id]?.active??w?.load))}</div></article>`;
 }
 const headlineSeverity=value=>['good','info','warning','critical'].includes(value)?value:'info';
 function deterministicHealthAlerts(snapshot) {
@@ -576,9 +471,7 @@ function renderHealthWire(snapshot) {
 }
 function render(s) {
   const g = s.gateway, now = s.time, stale = !!s.gateway_error;
-  renderPredictor(g?.predictor,stale||!s.worker_management);
-  $('analytics-use').textContent=analyticsUse(g?.predictor,g?.fallback_tiebreak_shadow,stale);
-  $('calibration-status').textContent=stale?'Calibration safety status unavailable; no job is authorized.':g?.calibration?.execution_available===false?'Synthetic calibration skipped: no verified cache-preserving execution path. Idle does not prove warm caches are safe. Ordinary traffic collection and CPU training continue.':'Synthetic calibration is not configured; no job is authorized.';
+  $('calibration-status').textContent=stale?'Calibration safety status unavailable; no job is authorized.':g?.calibration?.execution_available===false?'Synthetic calibration skipped: no verified cache-preserving execution path. Idle does not prove warm caches are safe. Ordinary traffic collection and operational collection continue.':'Synthetic calibration is not configured; no job is authorized.';
   renderHealthWire(s);
   renderAgentWatch(g?.client_watch);
   const rejected=g?.continuity?.recent_rejections??[];
@@ -605,7 +498,6 @@ function render(s) {
   $('routing-summary').textContent=stale?'Routing status is stale. Controls are disabled until live status returns.':`${g?.draining?'The gateway is draining: all new admission is stopped. ':''}${excluded.length?`${excluded.length} server${excluded.length===1?' is':'s are'} not accepting new work: ${excluded.map(w=>w.id).join(', ')}. See the highlighted reason and routing control on each server card below.`:''}`;
   renderDevices(s.devices.map(d=>({...d,cache_continuity:s.cache_continuity,performance_history:s.performance_lights})),visibleWorkers,now,stale,scales,workerControlsVisible);
   const ds=g?.dataset;
-  $('embedding-detail').textContent=embeddingInfo(ds);
   $('cache-evidence-status').textContent=cacheEvidenceText(s,stale);
   const selector=$('cache-cost-worker'),selected=selector.value,options=(g?.workers||[]).map(w=>`<option value="${esc(w.id)}">${esc(w.id)}</option>`).join('');
   if(selector.innerHTML!==options){selector.innerHTML=options;if((g?.workers||[]).some(w=>w.id===selected))selector.value=selected;}
@@ -805,7 +697,7 @@ function renderGenieReports(reports = []) {
       const answer = document.createElement('p');
       answer.className = 'genie-answer';
       answer.textContent = report.text;
-      if(report.actions_taken?.length)answer.textContent+='\n\nAction request results: '+report.actions_taken.map(a=>`${a.predictor?'predictor '+a.predictor:a.relocation?'relocation '+a.relocation:a.worker_id}: ${a.state??a.status??'pending'}${a.id?` (${a.id})`:''}`).join('; ');
+      if(report.actions_taken?.length)answer.textContent+='\n\nAction request results: '+report.actions_taken.map(a=>`${a.relocation?'relocation '+a.relocation:a.worker_id}: ${a.state??a.status??'pending'}${a.id?` (${a.id})`:''}`).join('; ');
       if(report.memory_used?.length)answer.textContent+='\n\nHistorical notebook references: '+report.memory_used.map(n=>`${n.id} r${n.revision}`).join(', ');
       node.append(summary, answer);
     }
@@ -833,11 +725,6 @@ function genieActionRows(snapshot,genie,analytics) {
     rows.push({id:`recovery:${op.id}`,kind:'recovery',at:op.updated_at??op.created_at,level:attention?'attention':good?'good':'pending',
       title:`Recovery · ${clean(op.worker_id)}`,detail:`${clean(op.service_action)||'service check'} · ${state}${op.profile_adopted?' · verified profile hand-back':''}${op.proof?' · cache proof recorded':''}`});
   }
-  for(const action of snapshot?.gateway?.predictor?.actions??[])if(action.actor==='genie'&&Number.isFinite(action.time)){
-    const status=clean(action.status),good=['verified','complete','completed'].includes(status),attention=['failed','interrupted','rejected'].includes(status);
-    rows.push({id:`predictor:${action.id??`${action.time}:${action.action}`}`,kind:'predictor',at:action.time,level:attention?'attention':good?'good':status==='running'?'pending':'neutral',
-      title:`Predictor · ${clean(action.action)}`,detail:[status,clean(action.reason)].filter(Boolean).join(' · ')});
-  }
   for(const move of analytics?.handovers?.rows??[])if(move.actor==='genie'&&Number.isFinite(move.at)){
     const state=clean(move.service_state),cache=Number.isFinite(move.cached_fraction)?` · ${Math.round(move.cached_fraction*100)}% prompt reused`:'';
     rows.push({id:`routing:${move.at}:${move.source}:${move.destination}`,kind:'routing',at:move.at,level:state==='complete'?'good':state==='pending'?'pending':'attention',
@@ -847,7 +734,7 @@ function genieActionRows(snapshot,genie,analytics) {
 }
 let genieLedgerSignature='';
 function renderGenieActionLedger() {
-  const rows=genieActionRows(wireSnapshot,genieState,analyticsState),filter=$('genie-action-filter')?.value??'all';
+  const rows=genieActionRows(wireSnapshot,genieState,requestHistoryState),filter=$('genie-action-filter')?.value??'all';
   const visible=rows.filter(row=>filter==='all'?true:filter==='attention'?row.level==='attention':row.kind===filter),attention=rows.filter(row=>row.level==='attention').length;
   $('genie-action-summary').textContent=rows.length?`${visible.length} shown · latest ${rows.length} available / 30 · newest first${attention?` · ${attention} need attention`:''}`:'No evidenced Genie actions yet';
   const storageError=genieState?.provider_action_storage?.error||genieState?.provider_assignment_storage?.error;
@@ -904,12 +791,7 @@ setupWorkspaceTabs();
 $('request-filter').addEventListener('change',()=>{requestFilter=$('request-filter').value;renderRequests(wireSnapshot?.events??[]);});
 function openServerSettings({focus=false}={}){activateWorkspaceTab('settings',{updateHash:true});const panel=$('worker-management');panel.scrollIntoView({behavior:'smooth',block:'start'});if(focus)panel.querySelector('input[name="id"]')?.focus({preventScroll:true});}
 $('devices').addEventListener('click',event=>{if(!event.target.closest('[data-add-first]'))return;openServerSettings({focus:true});});
-for(const id of ['analytics-question','analytics-method','analytics-stage'])$(id).addEventListener('change',renderAnalytics);
-$('analytics-worker').addEventListener('change',renderAnalytics);
-$('analytics-version').addEventListener('change',()=>{const metric=analyticsMetric();analyticsPins.set(metric.slice(metric.indexOf('-')+1),$('analytics-version').value);renderAnalytics();});
-$('analytics-refresh').addEventListener('click',()=>{analyticsRefreshRequested=true;void loadAnalytics();});
-$('analytics-latest').addEventListener('click',()=>{const metric=analyticsMetric();analyticsPins.delete(metric.slice(metric.indexOf('-')+1));renderAnalytics();});
-$('fleet-speed-window').addEventListener('change',()=>{const value=$('fleet-speed-window').value;if(!fleetSpeedWindows.has(value))return;fleetSpeedWindow=value;try{globalThis.localStorage?.setItem('dsg-fleet-speed-window-v1',value);}catch{/* Selection still works for this page. */}renderFleetSpeed(analyticsState);});
+$('fleet-speed-window').addEventListener('change',()=>{const value=$('fleet-speed-window').value;if(!fleetSpeedWindows.has(value))return;fleetSpeedWindow=value;try{globalThis.localStorage?.setItem('dsg-fleet-speed-window-v1',value);}catch{/* Selection still works for this page. */}renderFleetSpeed(requestHistoryState);});
 let cacheCostBusy=false;
 $('cache-cost-form').addEventListener('submit',async event=>{
   event.preventDefault();if(cacheCostBusy)return;cacheCostBusy=true;
@@ -919,7 +801,7 @@ $('cache-cost-form').addEventListener('submit',async event=>{
   catch(e){$('cache-cost-result').textContent=e.message;}
   finally{button.disabled=false;cacheCostBusy=false;}
 });
-void loadAnalytics();setInterval(()=>{if(!document.hidden)void loadAnalytics();},10000);
+void loadRequestHistory();setInterval(()=>{if(!document.hidden)void loadRequestHistory();},10000);
 $('health-wire').addEventListener('mouseleave',()=>{if(wireSnapshot)renderHealthWire(wireSnapshot);});
 $('health-wire').addEventListener('focusout',()=>queueMicrotask(()=>{if(wireSnapshot)renderHealthWire(wireSnapshot);}));
 let genieToken=null,memoryEditing=null,memoryBusy=false;
@@ -983,7 +865,7 @@ async function loadGenie() {
     const provider=s.last_served_by==='pool_assigned'?' · last review was assigned to free DSG capacity before dispatch':s.last_served_by==='pool_fallback'?' · last review used fallback after a proven connection refusal':s.last_served_by==='pool'?' · last review used the DSG pool':s.last_served_by==='dedicated'?' · last review used the dedicated provider':'';
     const attempts=(s.provider_attempts||[]).slice(0,s.error&&s.fallback_available?2:1),attemptText=attempts.length?` · ${attempts.map(attempt=>`${attempt.provider.replaceAll('_',' ')} ${attempt.outcome}${attempt.reason?` (${attempt.reason.replaceAll('_',' ')})`:''}`).join(' · ')}`:'';
     $('genie-status').textContent=!s.configured?'Not configured':!s.enabled?'Off · enable Gate Genie before asking':qtext||(s.error?`${s.error}${attemptText}`:(s.busy?`Scheduled fleet review · ${providerProgress??'provider starting…'}`:`Enabled · last review ${age(s.last_check,now)}${provider}${attemptText}`));
-    $('genie-mode').textContent=[s.action_supervision?'evidence-gated actions':'observation',s.predictor_supervision?'predictor supervision':''].filter(Boolean).join(' · ');
+    $('genie-mode').textContent=s.action_supervision?'evidence-gated actions':'observation';
     $('genie-toggle').disabled=!s.configured;$('genie-toggle').textContent=s.enabled?'Turn off':'Enable';
     $('genie-source').disabled=!s.fallback_available||s.busy;$('genie-source').value=s.source||'primary';
     $('genie-review').disabled=$('genie-send').disabled=!s.enabled||q?.state==='queued'||q?.state==='answering';
@@ -1031,68 +913,6 @@ function renderRecovery(state) {
     const p=document.createElement('p');p.textContent=`${clock(op.updated_at)} · ${op.worker_id} · ${op.actor}${recoveryIssuanceText(op)} · ${op.state.replaceAll('_',' ')}${op.error?` · ${op.error.replaceAll('_',' ')}`:''}${op.proof?` · ${op.proof.samples.map(s=>`${s.label}: ${s.cached_tokens}/${s.prompt_tokens} cached`).join(' · ')}`:''} · ${op.id}`;return p;
   }));
 }
-let predictorState=null,predictorControlBusy=false,predictorUnavailable=true,milestoneSignature=null,recipeSignature=null;
-function renderMilestones(milestones,unavailable){
-  const signature=JSON.stringify(milestones);
-  $('learning-milestones').hidden=!milestones.length;
-  // Keep the reading position, focused button and selected text across polls.
-  if(signature!==milestoneSignature){
-    milestoneSignature=signature;
-    $('learning-milestone-items').replaceChildren(...milestones.map(m=>{
-      const article=document.createElement('article');article.className='learning-milestone';
-      const title=document.createElement('strong');title.textContent=`${m.kind}: a challenger earned its place.`;
-      const facts=document.createElement('p'),s=m.evidence.baseline,c=m.evidence.champion;
-      const gain=s.baseline_mae_s>0?100*(1-s.mae_s/s.baseline_mae_s):null;
-      facts.textContent=`Verified at ${clock(m.time)} · model ${m.model_id.slice(0,8)} · ${fmt(gain)}% lower mean absolute prediction error than ${m.baseline_id}: ${fmt(s.mae_s)}s vs ${fmt(s.baseline_mae_s)}s over ${s.requests} requests / ${predictionSessionLabel(s)} (${(m.evidence.workers||[]).join(', ')}).${c?` Matched incumbent ${m.comparator_id.slice(0,8)}: ${fmt(c.mae_s)}s vs ${fmt(c.baseline_mae_s)}s over ${c.requests} requests; ${c.fallback_points}/${c.forecast_points} incumbent forecast points used its baseline fallback.`:''} This is prediction accuracy, not a measured routing speedup.`;
-      article.append(title,facts);
-      if(m.commentary){const comment=document.createElement('p');comment.textContent=`Genie commentary: ${m.commentary.text}`;article.append(comment);}
-      const button=document.createElement('button');button.type='button';button.className='button';button.dataset.milestone=m.id;button.textContent='Dismiss announcement';article.append(button);
-      return article;
-    }));
-  }
-  for(const button of $('learning-milestone-items').querySelectorAll('button'))button.disabled=unavailable||predictorControlBusy;
-}
-function renderPredictor(state,unavailable=false){
-  predictorState=state;predictorUnavailable=unavailable||!state?.configured;
-  const recipes=state?.training_recipes??[],signature=JSON.stringify(recipes),selector=$('predictor-recipe');
-  if(recipes.length&&signature!==recipeSignature){
-    recipeSignature=signature;const chosen=selector.value;
-    selector.replaceChildren(...recipes.map(r=>{const option=document.createElement('option');option.value=r.id;option.textContent=r.label;option.title=r.description;return option;}));
-    selector.value=recipes.some(r=>r.id===chosen)?chosen:state.default_recipe;
-  }
-  selector.disabled=predictorUnavailable||predictorControlBusy||!!state?.busy||!recipes.length;
-  // During a telemetry outage keep already-seen notices visible, but read-only.
-  if(state)renderMilestones(state.milestones||[],predictorUnavailable);
-  else for(const b of $('learning-milestone-items').querySelectorAll('button'))b.disabled=true;
-  const active=(state?.models||[]).filter(m=>m.active_model_id).length;
-  $('predictor-baseline').textContent=`Default: ${state?.baseline?.name||'Measured history baseline'} (${state?.baseline?.id||'causal-history-v1'}). Fixed recipe, continuously updated observations; no evidence means unknown. ${state?.reset_at?'Last reset: '+clock(state.reset_at)+'. ':''}${active?'Validated tuned forecasts are active where supported.':'No tuned forecast is active; ordinary routing remains in use.'}`;
-  const rejected=state?.candidate_rejections?` · ${fmt(state.candidate_rejections)} incompatible artifact${state.candidate_rejections===1?'':'s'} ignored`:'';
-  $('predictor-status').textContent=unavailable?'Predictor controls unavailable or stale':!state?.configured?'Optional predictor runtime not configured':state.error||`${state.busy?'Training candidate':'Collecting and scoring forecasts'} · ${active} validated models · ${fmt(state.new_requests)} new completed requests since training${state.placement?' · new-session placement armed (evidence gates still apply)':''}${rejected}`;
-  $('predictor-status').title=state?.candidate_rejections?`Loaded ${fmt(state.candidate_artifacts_loaded)} candidate artifacts. Rejected categories: ${Object.entries(state.candidate_rejection_summary||{}).map(([reason,count])=>`${reason.replaceAll('_',' ')} ${fmt(count)}`).join(', ')||'unclassified'}. Rejected artifacts never influence forecasts or routing.`:'';
-  for(const b of $('predictor-controls').querySelectorAll('button')){
-    const action=b.dataset.predictor;
-    b.disabled=unavailable||!state?.configured||predictorControlBusy||(action==='train'&&state.busy)||(action==='rollback'&&!active);
-    if(['automatic_training','automatic_promotion','placement'].includes(action)){const label={automatic_training:'Auto training',automatic_promotion:'Auto validation',placement:'New-session placement'}[action];b.textContent=`${label}: ${state?.[action]?'on':'off'}`;b.setAttribute('aria-pressed',String(!!state?.[action]));}
-  }
-  $('predictor-models').innerHTML=`<table><thead><tr><th>Forecast</th><th>Candidate</th><th>Backtest MAE</th><th>Future MAE / baseline</th><th>Future evidence</th><th>Selection</th></tr></thead><tbody>${(state?.models||[]).map(m=>`<tr><td>${esc(m.kind)}${m.active_model_id?' · active '+esc(m.active_model_id.slice(0,8)):''}</td><td>${esc(m.status.replaceAll('_',' '))}${m.candidate_model_id?' · '+esc(m.candidate_model_id.slice(0,8)):''}</td><td>${fmt(m.holdout?.mae_s)}s</td><td>${fmt(m.future?.mae_s)}s / ${fmt(m.future?.baseline_mae_s)}s</td><td>${fmt(m.future?.requests||0)} requests · ${esc(predictionSessionLabel(m.future))}</td><td>${m.selected?esc(`${m.selected.rounds} trees · ${m.selected.transform} · ${m.selected.family.join(' + ')}`):'Not enough evidence'}</td></tr>`).join('')}</tbody></table>`;
-  $('predictor-actions').replaceChildren(...(state?.actions||[]).slice(0,5).map(a=>{const p=document.createElement('p');p.textContent=`${clock(a.time)} · ${a.actor} · ${a.action} · ${a.status}${a.recipe_id?' · '+a.recipe_id:''}: ${a.reason}`;return p;}));
-}
-$('predictor-controls').addEventListener('click',async event=>{
-  const button=event.target.closest('button[data-predictor]');if(!button||button.disabled||!csrfToken)return;
-  const action=button.dataset.predictor,input=['train','rollback','reset_baseline'].includes(action)?{action}:{action,enabled:!predictorState?.[action]};
-  if(action==='train'&&predictorState?.training_recipes?.length)input.recipe_id=$('predictor-recipe').value;
-  if(action==='reset_baseline'&&!window.confirm('Restore the baseline for all forecasts? Existing candidates cannot immediately undo this. Collection continues; training, auto-validation and placement switches stay as set. Servers, sessions and caches are unchanged.'))return;
-  if(action==='placement'&&input.enabled&&!window.confirm('Arm placement for new sessions only? It remains inactive until backtest, unseen-session and future-live gates pass. Existing sessions will not move.'))return;
-  predictorControlBusy=true;renderPredictor(predictorState);
-  try{const r=await fetch('/api/workers/predictor',{method:'POST',headers:{'content-type':'application/json','x-dsg-csrf':csrfToken},body:JSON.stringify(input)}),v=await r.json();if(!r.ok)throw new Error(v.error||'Action rejected');$('predictor-status').textContent=`${action} accepted; awaiting authoritative status`;}
-  catch(e){$('predictor-status').textContent=e.message;}finally{predictorControlBusy=false;}
-});
-$('learning-milestone-items').addEventListener('click',async event=>{
-  const button=event.target.closest('button[data-milestone]');if(!button||button.disabled||!csrfToken||predictorUnavailable)return;
-  predictorControlBusy=true;renderMilestones(predictorState?.milestones||[],predictorUnavailable);
-  try{const response=await fetch('/api/workers/predictor',{method:'POST',headers:{'content-type':'application/json','x-dsg-csrf':csrfToken},body:JSON.stringify({action:'acknowledge_milestone',milestone_id:button.dataset.milestone})});const result=await response.json();if(!response.ok)throw new Error(result.error||'Dismissal failed');}
-  catch(error){$('predictor-status').textContent=error.message;}finally{predictorControlBusy=false;}
-});
 $('recovery-toggle').addEventListener('click',()=>{
   if(!recoveryState?.configured)return;
   if(!recoveryState.automatic&&!window.confirm('Allow GG and the known-fatal watcher to restart registered DS4 services after identity and fault checks? RAM-resident caches are lost; server settings and disk caches are preserved.'))return;

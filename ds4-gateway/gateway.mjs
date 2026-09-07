@@ -1,5 +1,4 @@
 import http from 'node:http';
-import {HardwareSnapshot} from './hardware-snapshot.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
@@ -10,14 +9,12 @@ import {requestUserExcerpt} from './priority-request.mjs';
 import {QueuedBodyBudget,QueuedRequestBody} from './queued-request-body.mjs';
 import { Dataset } from './dataset.mjs';
 import { clientMetadata, CLIENT_METADATA_HEADER } from './client-metadata.mjs';
-import { EmbeddingCollector } from './embeddings.mjs';
 import { RoutingShadow } from './routing-shadow.mjs';
 import { GenerationFaultObserver, verifyGeneration } from './generation-health.mjs';
 import { workerConfig, workerConfigs, assertUniqueWorker, sshTargets, replaceSshFallbacks } from './worker-config.mjs';
 import { Recovery } from './recovery.mjs';
 import { classifySshFailure } from './recovery-transport.mjs';
 import { loadConfig, isMain, gatewayPort, gatewayHost, continuityEnabled } from './config.mjs';
-import { Predictor } from './predictor.mjs';
 import { calibrationPreflight } from './calibration.mjs';
 import { AgentControl } from './agent-control.mjs';
 import {deadlineTimer,queueTimeout,queueTimeoutMessage} from './deadline.mjs';
@@ -26,7 +23,6 @@ import {JsonUsageObserver} from './json-usage.mjs';
 import {dsgReport,invalidHttp} from './report.mjs';
 import {ClientWatch,CLIENT_WATCH_HEADER,CLIENT_WATCH_ROUTE,validClientWatchId} from './client-watch.mjs';
 import {JPEG_REJECTION_INSPECTION_BYTES,VisionProtection,visionGuidance,visionRejectionKind} from './vision-protection.mjs';
-import {compareFallbackTieBreak,selectFallbackTieBreak} from './fallback-tiebreak.mjs';
 import {PriorityLens} from './priority-lens.mjs';
 import {PriorityIntents,PRIORITY_INTENT_HEADER,PRIORITY_INTENT_ROUTE} from './priority-intent.mjs';
 import net from 'node:net';
@@ -245,13 +241,10 @@ export function createGateway(config,{visionTranscode,priorityRandom}={}) {
   try { definitions = store.data.workers === undefined ? initial : workerConfigs(store.data.workers); }
   catch (e) { store.close(); throw e; }
   const nodes = definitions.map(makeNode);
-  const dataset = new Dataset(path.join(path.dirname(config.state_file),'training'),{enabled:config.dataset_enabled===true});
-  const hardwareSnapshot=config.hardware_telemetry?.enabled===true?new HardwareSnapshot(path.join(path.dirname(config.state_file),'dashboard','hardware-current.json')):null;
-  const predictor=new Predictor(dataset.enabled?config.predictor:null,{directory:path.join(path.dirname(config.state_file),'predictor'),dataDirectory:dataset.directory,record:(kind,row)=>dataset.record(kind,row)});
-  dataset.onRecord=row=>predictor.observe(row);
+  const dataset = new Dataset(path.join(path.dirname(config.state_file),'requests'),{enabled:config.dataset_enabled===true});
   const shadow = new RoutingShadow({enabled:config.routing_shadow_enabled===true && config.dataset_enabled===true});
   const observe = fn => {if(shadow.enabled)try{return fn();}catch{shadow.state.errors++;}};
-  let draining = false, shuttingDown = false, healthTimer, recoveryTimer, predictorTimer, waitingTimer;
+  let draining = false, shuttingDown = false, healthTimer, recoveryTimer, waitingTimer;
   const startup={barrier:continuityEnabled(config),complete:false,started_at:new Date().toISOString(),completed_at:null,unavailable:[]};
   // Undispatched HTTP requests only. Bodies remain on their original streams,
   // with backpressure; no prompt spool and no optimistic 200/SSE response.
@@ -261,7 +254,6 @@ export function createGateway(config,{visionTranscode,priorityRandom}={}) {
   // This may influence only genuinely new/unaffined work, where no established
   // cache home exists. It still abstains unless every tied worker has fresh
   // forecasts from the deployed, independently validated models.
-  const fallbackTieBreak={schema:1,mode:'active_with_abstention',policy:'validated_remaining_tiebreak',evaluations:0,comparable:0,would_change:0,applied:0,insufficient_evidence:0,errors:0,last:null};
   const queueBound=()=>config.max_queued_per_node??128;
   const waitingBound=()=>Math.max(1,nodes.length)*queueBound();
   // Long affinity-bound waits must not depend on the dashboard/Genie process.
@@ -346,14 +338,12 @@ export function createGateway(config,{visionTranscode,priorityRandom}={}) {
     await freshProbe(n);
     if(shuttingDown||draining||n.recovering||n.quarantine||n.probeError||!n.modelMatches||!validContext(n.contextLength)||n.contextLength<contextLimit())throw new Error('Fresh compatible worker readiness required; hold retained');
   }});}catch(e){store.close();throw e;}
-  const embeddings=new EmbeddingCollector(dataset.enabled?config.embeddings:null,(kind,row)=>dataset.record(kind,{...row,hardware:hardwareSnapshot?.get(row.node)??null}));
   const visionProtection=new VisionProtection(config.vision_compatibility,store,path.dirname(config.state_file),visionTranscode?{transcode:visionTranscode}:undefined);
-  dataset.state.embeddings=embeddings.state.enabled;
   const agent = new http.Agent({ keepAlive: true, maxSockets: 16 });
   const accepted = new Set(['POST /v1/chat/completions', 'POST /v1/completions', 'POST /v1/responses', 'POST /v1/messages', 'GET /v1/models']);
   const auth = Buffer.from(`Bearer ${config.api_key}`);
   const lastOperatorAction=id=>[...(store.data.operator_actions??[])].reverse().find(action=>action.workers.includes(id))??null;
-  const stats = () => ({ version: 1, agent_api_version:1, maintenance_lock_version:1,client_watch_version:1,client_watch:clientWatch.snapshot(), model: config.model, context_length: contextLimit(), queue_timeout_ms:queueTimeoutMs(), request_timeout_ms:config.request_timeout_ms??360000000, draining,startup:{...startup}, dataset:{...dataset.snapshot(),embedding_collection:embeddings.snapshot()}, routing_shadow:shadow.snapshot(),fallback_tiebreak_shadow:{...fallbackTieBreak},recovery:recovery.status(),predictor:predictor.status(),protections:visionProtection.status(),
+  const stats = () => ({ version: 1, agent_api_version:1, maintenance_lock_version:1,client_watch_version:1,client_watch:clientWatch.snapshot(), model: config.model, context_length: contextLimit(), queue_timeout_ms:queueTimeoutMs(), request_timeout_ms:config.request_timeout_ms??360000000, draining,startup:{...startup}, dataset:dataset.snapshot(), routing_shadow:shadow.snapshot(),recovery:recovery.status(),protections:visionProtection.status(),
     genie_admission_version:1,genie_flexible_assignment:true,priority_lens:priorityStatus(),calibration:calibrationPreflight(nodes,{draining}),continuity:{schema:1,recent_rejections:rejections.slice(0,20),safe_retry_contract:true,queued_relocation:true,automatic_relocation:true,automatic_relocation_scope:automaticRelocationScope,automatic_affinity_rebalance_min_wait_ms:automaticAffinityWait,patient_wait:true,
       relocation:{completed:relocation.completed,rejected:relocation.rejected,offers:relocationOffers().length,genie_enabled:config.genie_load_balancing!==false,genie_offers:genieRelocationOffers(),diagnostics:relocationDiagnostics(),last:relocation.last},
       waiting:waiting.length,oldest_wait_seconds:waiting.length?Math.max(0,(performance.now()-waiting[0].createdMono)/1000):null,
@@ -367,7 +357,6 @@ export function createGateway(config,{visionTranscode,priorityRandom}={}) {
       oldest_queue_seconds:n.queue.length?Math.max(0,(performance.now()-n.queue[0].createdMono)/1000):null,
       oldest_queue_remaining_seconds:n.queue.length?Math.max(0,(n.queue[0].queueTimeoutMs-(performance.now()-n.queue[0].createdMono))/1000):null,
       active_seconds: n.active ? Math.round((Date.now() - n.active.dispatched) / 1000) : 0,
-      predictions:n.active?predictor.forecasts(n.active.id):null,
       requested_thinking: n.active?.thinking?.result ?? null,
       last_requested_thinking: n.lastThinking ?? null, last_request_finished_at: n.lastFinishedAt ?? null,
       context_length: n.contextLength ?? null,
@@ -379,7 +368,7 @@ export function createGateway(config,{visionTranscode,priorityRandom}={}) {
   const briefJob = j => ({key:j.key,route:j.req.url,trafficClass:j.trafficClass});
   function candidate(n,key) {
     return {node:n.id,healthy:n.healthy,paused:n.drained,active:Number(!!n.active),queued:n.queue.length,
-      assigned_sessions:store.count(n.id),context_length:n.contextLength,hardware:hardwareSnapshot?.get(n.id)??null,
+      assigned_sessions:store.count(n.id),context_length:n.contextLength,
       profile:digest(JSON.stringify({id:n.id,url:n.url,model:config.model,context:n.contextLength})),
       ...(observe(()=>({...shadow.timing(n.id,key,n.active),active_request_id:n.active?.id??null}))??{})};
   }
@@ -451,7 +440,6 @@ export function createGateway(config,{visionTranscode,priorityRandom}={}) {
       const {job,destination}=decision;
       offers.push({schema:1,evidence_id:relocationEvidence(job,source,destination),request_id:job.id,source:source.id,destination:destination.id,
         waiting_seconds:Math.max(0,(performance.now()-job.createdMono)/1000),source_active_seconds:source.active?Math.max(0,(performance.now()-source.active.dispatchedMono)/1000):null,
-        source_remaining_prediction:source.active?predictor.forecasts(source.active.id)?.remaining??null:null,
         affinity:job.affinity,cache_locality:'unknown',destination_immediately_free:true,automatic:false});
     }
     return offers.slice(0,32);
@@ -512,24 +500,6 @@ export function createGateway(config,{visionTranscode,priorityRandom}={}) {
     return nodes.filter(n => n.healthy && !n.drained && n.id !== exclude).sort((a, b) =>
       (Number(!!a.active) + a.queue.length) - (Number(!!b.active) + b.queue.length) ||
       store.count(a.id) - store.count(b.id) || a.id.localeCompare(b.id))[0];
-  }
-  function evaluateFallbackTieBreak(selected,requestId) {
-    const eligible=nodes.filter(n=>n.healthy&&!n.drained&&!n.quarantine&&!n.recovering&&!n.removed);
-    const result=compareFallbackTieBreak(eligible,selected,id=>predictor.forecasts(id));
-    fallbackTieBreak.evaluations++;
-    if(['would_keep','would_change'].includes(result.verdict))fallbackTieBreak.comparable++;
-    if(result.verdict==='would_change')fallbackTieBreak.would_change++;
-    if(result.verdict==='insufficient_evidence')fallbackTieBreak.insufficient_evidence++;
-    fallbackTieBreak.last={...result,request_id:requestId,applied:false};
-    return result;
-  }
-  function applyFallbackTieBreak(selected,requestId) {
-    const result=evaluateFallbackTieBreak(selected,requestId);
-    const alternative=selectFallbackTieBreak(nodes,selected,result);
-    const applied=alternative!==selected;if(applied)fallbackTieBreak.applied++;
-    fallbackTieBreak.last.applied=applied;
-    dataset.record('routing_tiebreak_shadow',{request_id:requestId,node:selected.id,...result,applied});
-    return alternative;
   }
   function detach(job) {
     if(job.node)job.node.queue=job.node.queue.filter(j=>j!==job);
@@ -667,7 +637,6 @@ export function createGateway(config,{visionTranscode,priorityRandom}={}) {
       job.requestStream=typeof body?.stream==='boolean'?body.stream:null;
       job.requestedUsage=typeof body?.stream_options?.include_usage==='boolean'?body.stream_options.include_usage:null;
       if(job.priorityFromRequest)job.priorityIntentId=priorityIntents?.observeRequest(job,requestUserExcerpt(body))??null;
-      embeddings.observe(body,thinking,{request_id:job.id,node:node.id,route:req.url,traffic_class:job.trafficClass,request_bytes:requestBytes});
     });
     const observeBody = chunk => {
       requestBytes+=chunk.length;job.thinking.accept(chunk);
@@ -683,11 +652,6 @@ export function createGateway(config,{visionTranscode,priorityRandom}={}) {
     };
     const bodyAborted=()=>{captureChunks=[];finishCapture(null);};
     let settled = false, response, faults,jsonUsage,responseFormat='no_response',clientStatus=null;
-    const progress=()=>{if(dataset.enabled && !settled && job.trafficClass!=='genie')dataset.record('progress',{request_id:job.id,node:node.id,
-      active_elapsed_ms:performance.now()-job.dispatchedMono,hardware:hardwareSnapshot?.get(node.id)??null,phase:observer.phase,semantic_characters:observer.semanticCharacters,
-      thinking_characters:observer.thinkingCharacters,answer_characters:observer.answerCharacters,tool_characters:observer.toolCharacters,
-      semantic_age_ms:observer.lastSemanticAt===null?null:performance.now()-observer.lastSemanticAt,requested_thinking:job.thinking.result});};
-    const progressTimer=dataset.enabled?setInterval(progress,30000):null;progressTimer?.unref();
     const finish = (outcome, detail, observedStreamEnd=null) => {
       if (settled) return; settled = true;
       const streamEnd=responseFormat==='sse'?(observedStreamEnd??observer.finishState({cleanEOF:false})):null;
@@ -700,7 +664,6 @@ export function createGateway(config,{visionTranscode,priorityRandom}={}) {
         if(++node.inferenceFailures>=3)quarantine(node,'repeated_inference_failures',job.id);
       } else if(outcome==='complete')node.inferenceFailures=0;
       clearTimeout(job.deadline);
-      clearInterval(progressTimer);
       requestBody.off('data', observeBody);requestBody.off('end',bodyEnded);req.off('aborted',bodyAborted);requestBody.off('error',bodyAborted);job.thinking.dispose();
       captureChunks=[];finishCapture(null);
       node.lastThinking = job.thinking.result; node.lastFinishedAt = new Date().toISOString();
@@ -901,7 +864,6 @@ export function createGateway(config,{visionTranscode,priorityRandom}={}) {
     job.deadline = setTimeout(() => { job.upstream?.destroy(Object.assign(new Error('100-hour request deadline'), { code: 'REQUEST_DEADLINE' })); }, config.request_timeout_ms ?? 360000000);
     log('request_dispatched', { request_id: job.id, node: node.id, session: job.key?.slice(0, 12), affinity: job.affinity, queue_ms: job.dispatched - job.created });
     dataset.record('dispatch',{request_id:job.id,node:node.id,queue_ms:job.dispatchedMono-job.createdMono});
-    progress();
     // A queued read-ahead prefix feeds the same observers and upstream once,
     // followed by the still-streaming original upload with backpressure.
     requestBody.on('data',observeBody);requestBody.once('end',bodyEnded);req.once('aborted',bodyAborted);requestBody.once('error',bodyAborted);
@@ -956,10 +918,8 @@ export function createGateway(config,{visionTranscode,priorityRandom}={}) {
     }
     if (!node&&!waitReason) {
       node=pick();
-      if(node&&!home&&req.method==='POST'&&trafficClass!=='genie')try{node=applyFallbackTieBreak(node,requestId);}catch{fallbackTieBreak.errors++;}
       // Existing homes and reassignment retain their established safety/cache
       // behavior. Only genuinely new conversations may use validated placement.
-      if(node&&key&&!home&&req.method==='POST')node=predictor.choose(nodes.filter(n=>n.healthy&&!n.drained&&!n.quarantine),key,node,candidate);
     }
     if(key&&waiting.some(j=>j.key===key)){node=null;waitReason='same_session_queued';}
     if (req.method === 'GET') {
@@ -1234,7 +1194,7 @@ export function createGateway(config,{visionTranscode,priorityRandom}={}) {
     if(req.method==='GET'&&req.url==='/agents')return json(res,200,agents.adminStatus());
     if (req.method === 'GET' && req.url === '/priority-status') return json(res,200,priorityStatus(true));
     if (req.method === 'GET' && req.url === '/workers') return json(res, 200, registry());
-    if (req.method !== 'POST' || !['/drain-workers', '/resume-workers', '/maintenance-lock','/release-maintenance-lock','/maintenance-receipt','/add-worker', '/remove-worker', '/set-ssh-fallbacks','/set-context-limit','/set-queue-timeout','/set-protection','/priority-settings','/priority-manual','/priority-rules','/priority-review-next','/priority-review-result','/relocate-queued','/genie-relocate-queued','/recovery-policy','/recovery-handback-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/predictor','/genie-predictor','/grant-agent','/revoke-agent','/release-agent-hold','/agent/v1/drain','/agent/v1/resume','/agent/v1/receipt'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
+    if (req.method !== 'POST' || !['/drain-workers', '/resume-workers', '/maintenance-lock','/release-maintenance-lock','/maintenance-receipt','/add-worker', '/remove-worker', '/set-ssh-fallbacks','/set-context-limit','/set-queue-timeout','/set-protection','/priority-settings','/priority-manual','/priority-rules','/priority-review-next','/priority-review-result','/relocate-queued','/genie-relocate-queued','/recovery-policy','/recovery-handback-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/grant-agent','/revoke-agent','/release-agent-hold','/agent/v1/drain','/agent/v1/resume','/agent/v1/receipt'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
     let body = '';
     if(req.url.startsWith('/priority-'))req.setEncoding('utf8');
     req.on('data', chunk => { body += chunk; if (Buffer.byteLength(body) > (req.url==='/priority-rules'?12288:4096)) req.destroy(); });
@@ -1251,7 +1211,6 @@ export function createGateway(config,{visionTranscode,priorityRandom}={}) {
           if(req.url==='/maintenance-lock')return json(res,201,agents.maintenanceLock(input,req.headers['x-dsg-control-channel']));
           if(req.url==='/release-maintenance-lock')return json(res,200,agents.maintenanceRelease(input,req.headers['x-dsg-control-channel']));
           if(req.url==='/maintenance-receipt')return json(res,200,agents.maintenanceReceipt(input));
-          if(['/predictor','/genie-predictor'].includes(req.url))return json(res,200,predictor.control(input,req.url==='/genie-predictor'?'genie':'operator'));
           if(req.url==='/recovery-recheck')return json(res,202,recovery.reconcile(input));
           if(req.url==='/recovery-policy') {
             if(Object.keys(input).length!==1 || !Object.hasOwn(input,'enabled'))throw new Error('Specify enabled only');
@@ -1341,7 +1300,6 @@ export function createGateway(config,{visionTranscode,priorityRandom}={}) {
       healthTimer = setInterval(() => { for (const n of nodes) void probe(n); }, config.health_interval_ms ?? 5000);
       waitingTimer=setInterval(pumpWaiting,1000);waitingTimer.unref?.();
       void recovery.tick();recoveryTimer=setInterval(()=>void recovery.tick(),30000);
-      predictorTimer=setInterval(()=>predictor.tick(),60000);predictorTimer.unref?.();
       return server.address();
     },
     drain(value = true) { draining = value; log('drain_changed', { draining }); },
@@ -1350,11 +1308,10 @@ export function createGateway(config,{visionTranscode,priorityRandom}={}) {
       shuttingDown = true; draining = true;
       clearInterval(waitingTimer);
       for(const job of [...waiting]){detach(job);reject(job.req,job.res,503,'draining','Gateway is stopping; the waiting request was not dispatched. A compatible patient client may retry after DSG returns.',{...job,node:job.fixedHome,reason:'gateway_draining'});job.cleanup();}
-      clearInterval(predictorTimer);predictor.close();
       clearInterval(recoveryTimer);await recovery.close();
       if (control) await new Promise(resolve => control.close(resolve));
       await new Promise(resolve => { server.close(resolve); server.closeIdleConnections(); });
-      clearInterval(healthTimer); agent.destroy(); store.close();embeddings.close(); await dataset.close();
+      clearInterval(healthTimer); agent.destroy(); store.close();await dataset.close();
       nodes.forEach(n => { n.removed = true; n.stopTunnel?.(); });
     },
   };

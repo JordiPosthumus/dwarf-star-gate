@@ -193,7 +193,7 @@ test('fresh TCP refusal certifies no worker dispatch and patient transport retri
   assert.equal(waits,1);assert.equal(attempts,2);assert.equal(b.records.length,1);
   assert.equal(b.records[0].body.toString(),body);
   await until(()=>r.gateway.stats().dataset.finished===3);
-  const dir=path.join(path.dirname(r.config.state_file),'training');
+  const dir=path.join(path.dirname(r.config.state_file),'requests');
   const rows=fs.readdirSync(dir).flatMap(f=>fs.readFileSync(path.join(dir,f),'utf8').trim().split('\n').map(JSON.parse));
   const rejection=rows.find(row=>row.kind==='rejection'&&row.request_id===receipt.request_id);
   assert.equal(rejection.reason,'worker_connect_refused');assert.equal(rejection.dispatch_state,'not_dispatched');
@@ -256,7 +256,7 @@ test('all workers unavailable: one client request waits, then dispatches once wi
   assert.match(out.body,/\[DONE\]/);assert.equal(r.gateway.stats().continuity.waiting,0);
   await until(()=>r.gateway.stats().dataset.finished===1);
   await r.gateway.close();
-  const dir=path.join(path.dirname(r.config.state_file),'training'),rows=fs.readdirSync(dir).flatMap(f=>fs.readFileSync(path.join(dir,f),'utf8').trim().split('\n').map(JSON.parse));
+  const dir=path.join(path.dirname(r.config.state_file),'requests'),rows=fs.readdirSync(dir).flatMap(f=>fs.readFileSync(path.join(dir,f),'utf8').trim().split('\n').map(JSON.parse));
   assert.equal(rows.filter(x=>x.kind==='decision').length,1);assert.equal(rows.filter(x=>x.kind==='dispatch').length,1);
   const wait=rows.find(x=>x.kind==='waiting'),finish=rows.find(x=>x.kind==='finish');
   assert.equal(wait.reason,'no_ready_worker');assert.equal(wait.dispatch_state,'not_dispatched');assert.ok(finish.queue_ms>=3200);
@@ -446,7 +446,7 @@ test('non-streaming JSON usage is collected while request and response bytes rem
   const body=JSON.stringify({fixture_json:response,stream:false,model:'deepseek-v4-flash',reasoning_effort:'xhigh',max_tokens:262144});
   const result=await r.request(body,'json-usage');assert.equal(result.status,200);assert.equal(result.body,response);assert.equal(r.backends[0].records[0].body.toString(),body);
   await until(()=>r.gateway.stats().dataset.finished===1);
-  const dir=path.join(path.dirname(r.config.state_file),'training'),rows=fs.readdirSync(dir).flatMap(f=>fs.readFileSync(path.join(dir,f),'utf8').trim().split('\n').map(JSON.parse)),f=rows.find(x=>x.kind==='finish');
+  const dir=path.join(path.dirname(r.config.state_file),'requests'),rows=fs.readdirSync(dir).flatMap(f=>fs.readFileSync(path.join(dir,f),'utf8').trim().split('\n').map(JSON.parse)),f=rows.find(x=>x.kind==='finish');
   assert.equal(f.response_format,'json');assert.equal(f.route,'/v1/chat/completions');assert.equal(f.request_stream,false);assert.equal(f.http_status,200);assert.equal(f.usage_observation,'observed');assert.equal(f.usage.completion_tokens,20);assert.equal(f.usage.cached_tokens,900);assert.equal(f.finish_reason,'stop');assert.equal(f.generation.first_semantic_ms,null);
   assert.ok(!JSON.stringify(rows).includes('private answer'));assert.equal(r.gateway.stats().workers[0].quarantine,null);
 });
@@ -491,7 +491,7 @@ test('gateway records bounded incomplete-stream shape without changing response 
   assert.equal(a.body,clean);assert.equal(b.body,partial);assert.equal(r.backends[0].records.length,2);
   await until(()=>r.gateway.stats().dataset.finished===2);
   await r.gateway.close();
-  const dir=path.join(path.dirname(r.config.state_file),'training'),rows=fs.readdirSync(dir).flatMap(f=>fs.readFileSync(path.join(dir,f),'utf8').trim().split('\n').map(JSON.parse));
+  const dir=path.join(path.dirname(r.config.state_file),'requests'),rows=fs.readdirSync(dir).flatMap(f=>fs.readFileSync(path.join(dir,f),'utf8').trim().split('\n').map(JSON.parse));
   const finishes=rows.filter(row=>row.kind==='finish');assert.deepEqual(finishes.map(row=>row.outcome),['incomplete_sse','incomplete_sse']);
   assert.deepEqual(finishes.map(row=>row.stream_end),['clean_eof_no_terminal','partial_sse_event']);
   assert.ok(!JSON.stringify(rows).includes('PRIVATE_STREAM_ALPHA'));assert.ok(!JSON.stringify(rows).includes('PRIVATE_STREAM_BETA'));
@@ -567,7 +567,7 @@ test('carriage-return streams preserve response bytes and cannot falsely quarant
   const worker=r.gateway.stats().workers[0];assert.equal(worker.inference_failures,0);assert.equal(worker.quarantine,null);assert.equal(worker.completed,3);
   assert.equal(r.backends[0].records.length,3,'one upstream dispatch per original request');
   await until(()=>r.gateway.stats().dataset.finished===3);await r.gateway.close();
-  const dir=path.join(path.dirname(r.config.state_file),'training'),rows=fs.readdirSync(dir).flatMap(f=>fs.readFileSync(path.join(dir,f),'utf8').trim().split('\n').map(JSON.parse));
+  const dir=path.join(path.dirname(r.config.state_file),'requests'),rows=fs.readdirSync(dir).flatMap(f=>fs.readFileSync(path.join(dir,f),'utf8').trim().split('\n').map(JSON.parse));
   const finishes=rows.filter(row=>row.kind==='finish');assert.equal(finishes.length,3);
   assert.ok(finishes.every(row=>row.outcome==='complete'&&row.stream_end==='terminal'&&row.usage?.prompt_tokens===10&&row.usage?.completion_tokens===2));
   assert.ok(!JSON.stringify(rows).includes('PRIVATE_CR'));
@@ -579,7 +579,7 @@ test('explicit clean reason-only completions preserve bytes and do not quarantin
   const worker=r.gateway.stats().workers[0];assert.equal(worker.inference_failures,0);assert.equal(worker.quarantine,null);assert.equal(worker.completed,3);
   assert.equal(r.backends[0].records.length,3,'no synthetic continuation or replay');
   await until(()=>r.gateway.stats().dataset.finished===3);await r.gateway.close();
-  const dir=path.join(path.dirname(r.config.state_file),'training'),rows=fs.readdirSync(dir).flatMap(f=>fs.readFileSync(path.join(dir,f),'utf8').trim().split('\n').map(JSON.parse));
+  const dir=path.join(path.dirname(r.config.state_file),'requests'),rows=fs.readdirSync(dir).flatMap(f=>fs.readFileSync(path.join(dir,f),'utf8').trim().split('\n').map(JSON.parse));
   assert.ok(rows.filter(r=>r.kind==='finish').every(r=>r.outcome==='complete'&&r.stream_end==='terminal_without_done'&&r.finish_reason==='stop'));
   assert.ok(!JSON.stringify(rows).includes('PRIVATE_REASON_ONLY'));
 });
@@ -591,7 +591,7 @@ test('reason-only content cannot turn an aborted upstream transport into success
   assert.equal(r.gateway.stats().workers[0].inference_failures,1);assert.equal(r.gateway.stats().workers[0].completed,0);
   assert.equal(r.backends[0].records.length,1);
   await r.gateway.close();
-  const dir=path.join(path.dirname(r.config.state_file),'training'),rows=fs.readdirSync(dir).flatMap(f=>fs.readFileSync(path.join(dir,f),'utf8').trim().split('\n').map(JSON.parse));
+  const dir=path.join(path.dirname(r.config.state_file),'requests'),rows=fs.readdirSync(dir).flatMap(f=>fs.readFileSync(path.join(dir,f),'utf8').trim().split('\n').map(JSON.parse));
   const finish=rows.find(r=>r.kind==='finish');assert.ok(['upstream_aborted','upstream_stream_error'].includes(finish.outcome));
   assert.notEqual(finish.stream_end,'terminal_without_done','aborted transport never receives a clean-EOF diagnostic');
   assert.equal(rows.filter(r=>r.kind==='rejection').length,0);assert.ok(!JSON.stringify(rows).includes('PRIVATE_ABORT'));
@@ -623,24 +623,24 @@ test('marker-only diagnostics preserve bytes and do not quarantine permissive-pr
   assert.equal(worker.completed,3,'transport outcome accounting is unchanged; this is not proof of harness acceptance');
   assert.equal(r.backends[0].records.length,3,'no synthetic continuation or replay');
   await until(()=>r.gateway.stats().dataset.finished===3);await r.gateway.close();
-  const dir=path.join(path.dirname(r.config.state_file),'training'),rows=fs.readdirSync(dir).flatMap(f=>fs.readFileSync(path.join(dir,f),'utf8').trim().split('\n').map(JSON.parse));
+  const dir=path.join(path.dirname(r.config.state_file),'requests'),rows=fs.readdirSync(dir).flatMap(f=>fs.readFileSync(path.join(dir,f),'utf8').trim().split('\n').map(JSON.parse));
   const finishes=rows.filter(row=>row.kind==='finish');assert.equal(finishes.length,3);
   assert.ok(finishes.every(row=>row.outcome==='complete'&&row.stream_end==='terminal_without_finish_reason'&&row.finish_reason===null));
   assert.ok(!JSON.stringify(rows).includes('PRIVATE_MARKER_ONLY'));
 });
 
-test('unavailable embedding encoder cannot change inference bytes, thinking, model limits or success',async t=>{
+test('retired encoder configuration is ignored while numerical collection preserves inference bytes and settings',async t=>{
   const r=await rig(t,1,{dataset_enabled:true,embeddings:{enabled:true,python:'/does-not-exist/dsg-python',model_dir:'/does-not-exist/encoder'}});
   const body=JSON.stringify({model:'deepseek-v4-flash',messages:[{role:'user',content:'PRIVATE_EMBED_TEST'}],reasoning_effort:'xhigh',max_tokens:131072,stream:true});
   const result=await r.request(body,'embed-missing');
   assert.equal(result.status,200);assert.ok(result.body.includes('[DONE]'));
   assert.equal(r.backends[0].records[0].body.toString(),body);
-  await until(()=>r.gateway.stats().dataset.embedding_collection.failed===1);
+  assert.equal(r.gateway.stats().dataset.request_feature_collection,undefined);
   assert.equal(r.gateway.stats().workers[0].quarantine,null);assert.equal(r.gateway.stats().context_length,153600);
   await until(()=>r.gateway.stats().dataset.finished===1);
-  const files=fs.readdirSync(path.join(path.dirname(r.config.state_file),'training'));
-  const lines=files.map(f=>fs.readFileSync(path.join(path.dirname(r.config.state_file),'training',f),'utf8')).join('');
-  assert.ok(!lines.includes('PRIVATE_EMBED_TEST'));
+  const files=fs.readdirSync(path.join(path.dirname(r.config.state_file),'requests'));
+  const lines=files.map(f=>fs.readFileSync(path.join(path.dirname(r.config.state_file),'requests',f),'utf8')).join('');
+  assert.ok(!lines.includes('PRIVATE_EMBED_TEST'));assert.ok(!lines.includes('\"kind\":\"embedding\"'));assert.ok(!lines.includes('request_features'));
 });
 
 test('client metadata is recorded while queued, never changes body settings or reaches DS4',async t=>{
@@ -650,7 +650,7 @@ test('client metadata is recorded while queued, never changes body settings or r
   const body=JSON.stringify({stream:true,reasoning_effort:'xhigh',max_tokens:131072});
   const header=JSON.stringify({schema:1,prompt_tokens_estimate:262144,turn_index:4,compaction_count:1,reasoning_effort:'low'});
   const second=r.request(body,'early',{headers:{'x-dsg-client-metadata':header}});
-  const read=()=>{const dir=path.join(path.dirname(r.config.state_file),'training');return fs.existsSync(dir)?fs.readdirSync(dir).flatMap(f=>fs.readFileSync(path.join(dir,f),'utf8').trim().split('\n').filter(Boolean).map(JSON.parse)):[];};
+  const read=()=>{const dir=path.join(path.dirname(r.config.state_file),'requests');return fs.existsSync(dir)?fs.readdirSync(dir).flatMap(f=>fs.readFileSync(path.join(dir,f),'utf8').trim().split('\n').filter(Boolean).map(JSON.parse)):[];};
   await until(()=>read().some(e=>e.kind==='decision'&&e.client_metadata?.status==='ready'));
   const event=read().find(e=>e.client_metadata?.status==='ready');
   assert.ok(!read().some(e=>e.request_id===event.request_id&&e.kind==='dispatch'));
@@ -670,76 +670,10 @@ test('predictor misconfiguration cannot change inference or model limits; split 
   const sse='data: {"choices":[{"delta":{"reasoning_content":"think"}}]}\n\ndata: {"choices":[{"delta":{"content":"OK","tool_calls":[{"function":{"arguments":"{}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":100,"completion_tokens":7}}\n\ndata: [DONE]\n\n';
   const body=JSON.stringify({fixture_sse:sse,model:'deepseek-v4-flash',reasoning_effort:'xhigh',max_tokens:131072,messages:[{role:'user',content:'SYNTHETIC PRIVATE TEXT'}]});
   const response=await r.request(body,'pred-fallback');assert.equal(response.body,sse);assert.equal(r.backends[0].records[0].body.toString(),body);
-  assert.equal(r.gateway.stats().predictor.configured,false);assert.equal(r.gateway.stats().context_length,153600);
+  assert.equal(r.gateway.stats().predictor,undefined);assert.equal(r.gateway.stats().context_length,153600);
   await until(()=>r.gateway.stats().dataset.finished===1);
-  const dir=path.join(path.dirname(r.config.state_file),'training'),events=fs.readdirSync(dir).flatMap(f=>fs.readFileSync(path.join(dir,f),'utf8').trim().split('\n').map(JSON.parse)),finish=events.find(e=>e.kind==='finish');
+  const dir=path.join(path.dirname(r.config.state_file),'requests'),events=fs.readdirSync(dir).flatMap(f=>fs.readFileSync(path.join(dir,f),'utf8').trim().split('\n').map(JSON.parse)),finish=events.find(e=>e.kind==='finish');
   assert.equal(finish.generation.thinking_characters,5);assert.equal(finish.generation.answer_characters,2);assert.equal(finish.generation.tool_characters,2);assert.ok(!JSON.stringify(events).includes('SYNTHETIC PRIVATE TEXT'));
-});
-
-test('core hardware evidence reaches causal dataset stages without becoming an inference dependency',async t=>{
-  for(const scenario of ['fresh','stale','malformed','disabled'])await t.test(scenario,async t=>{
-    const r=await rig(t,1,{dataset_enabled:true,hardware_telemetry:{enabled:scenario!=='disabled'},
-      embeddings:{enabled:true,python:'/does-not-exist/dsg-python',model_dir:'/does-not-exist/encoder'}});
-    const root=path.dirname(r.config.state_file),dashboard=path.join(root,'dashboard');fs.mkdirSync(dashboard);
-    const at=Date.now()-(scenario==='stale'?60001:0);
-    const sample={node:'spark1',time:at,observed_at:at,power_watts:42,power_scope:'gpu_only',
-      memory_used_bytes:64,memory_total_bytes:128,memory_scope:'host_unified',private_note:'PRIVATE_HARDWARE_FIXTURE'};
-    fs.writeFileSync(path.join(dashboard,'hardware-current.json'),scenario==='malformed'?'invalid json':
-      JSON.stringify({schema:1,samples:[sample,{...sample,node:'other-worker',power_watts:999}]}));
-    const body=JSON.stringify({messages:[{role:'user',content:'PRIVATE_REQUEST_FIXTURE'}],stream:true,reasoning_effort:'xhigh',max_tokens:131072});
-    const result=await r.request(body,'hardware-fixture');
-    assert.equal(result.status,200);assert.ok(result.body.includes('[DONE]'));
-    assert.equal(r.backends[0].records[0].body.toString(),body,'telemetry cannot alter inference bytes');
-    await until(()=>r.gateway.stats().dataset.finished===1);
-    const directory=path.join(root,'training'),text=fs.readdirSync(directory).map(f=>fs.readFileSync(path.join(directory,f),'utf8')).join('');
-    const rows=text.trim().split('\n').map(JSON.parse),decision=rows.find(row=>row.kind==='decision');
-    const requestFeatures=rows.find(row=>row.kind==='request_features'),progress=rows.find(row=>row.kind==='progress');
-    assert.ok(decision&&requestFeatures&&progress,'real core callbacks wrote every requested stage');
-    assert.equal(progress.request_id,decision.request_id);assert.equal(requestFeatures.request_id,decision.request_id);
-    for(const evidence of [decision.candidates.find(c=>c.node==='spark1'),requestFeatures,progress]){
-      if(scenario==='fresh'){
-        assert.equal(evidence.hardware.node,'spark1');assert.equal(evidence.hardware.power_watts,42);
-        assert.equal(evidence.hardware.power_scope,'gpu_only');assert.equal(evidence.hardware.memory_used_bytes,64);
-      }else assert.equal(evidence.hardware,null,'missing or disabled telemetry remains unknown, not zero');
-    }
-    assert.ok(!text.includes('PRIVATE_HARDWARE_FIXTURE'));assert.ok(!text.includes('PRIVATE_REQUEST_FIXTURE'));
-    assert.equal(r.gateway.stats().workers[0].quarantine,null);
-  });
-});
-
-test('30-second progress is correlated to active work and its timer is cleared on completion',async t=>{
-  const r=await rig(t,1,{dataset_enabled:true});
-  const request=r.request(JSON.stringify({stream:true,delay:31000}),'progress-fixture');
-  const read=()=>{
-    const directory=path.join(path.dirname(r.config.state_file),'training');
-    return fs.existsSync(directory)?fs.readdirSync(directory).flatMap(f=>fs.readFileSync(path.join(directory,f),'utf8').trim().split('\n').filter(Boolean).map(JSON.parse)):[];
-  };
-  await until(()=>read().filter(row=>row.kind==='progress').length>=2,32000);
-  const progress=read().filter(row=>row.kind==='progress');
-  assert.equal(progress[1].request_id,progress[0].request_id);assert.equal(progress[1].run_id,progress[0].run_id);
-  assert.equal(progress[1].phase,'thinking');assert.equal(progress[1].semantic_characters,8);
-  assert.ok(progress[1].active_elapsed_ms>=29000);assert.ok(progress[1].semantic_age_ms>=29000);
-  assert.equal((await request).status,200);await until(()=>r.gateway.stats().dataset.finished===1);
-  assert.equal(read().filter(row=>row.kind==='progress').length,2);
-  // Gateway teardown completes instead of retaining an active progress callback.
-});
-
-test('opt-in prepared real encoder joins vectors to the forwarded request without persisting text',
-  {skip:!process.env.DSG_TEST_ENCODER_PYTHON||!process.env.DSG_TEST_ENCODER_BUNDLE},async t=>{
-  const r=await rig(t,1,{dataset_enabled:true,embeddings:{enabled:true,python:process.env.DSG_TEST_ENCODER_PYTHON,model_dir:process.env.DSG_TEST_ENCODER_BUNDLE}});
-  await until(()=>r.gateway.stats().dataset.embedding_collection.ready,20000);
-  const body=JSON.stringify({messages:[{role:'system',content:'PRIVATE_SYSTEM_FIXTURE'},{role:'user',content:'Previous fixture question'},{role:'assistant',content:'Previous fixture response'},{role:'user',content:'PRIVATE_LATEST_FIXTURE'}],reasoning_effort:'xhigh',stream:true});
-  const result=await r.request(body,'embed-real');assert.equal(result.status,200);assert.ok(result.body.includes('[DONE]'));
-  assert.equal(r.backends[0].records[0].body.toString(),body);
-  await until(()=>r.gateway.stats().dataset.embedding_collection.completed===1,20000);
-  await until(()=>r.gateway.stats().dataset.written>=6);
-  const directory=path.join(path.dirname(r.config.state_file),'training');
-  const text=fs.readdirSync(directory).map(f=>fs.readFileSync(path.join(directory,f),'utf8')).join('');
-  assert.ok(!text.includes('PRIVATE_'));assert.ok(!text.includes('Previous fixture'));
-  const rows=text.trim().split('\n').map(JSON.parse),embedding=rows.find(r=>r.kind==='embedding'),dispatch=rows.find(r=>r.kind==='dispatch');
-  assert.equal(embedding.request_id,dispatch.request_id);assert.equal(embedding.run_id,dispatch.run_id);assert.equal(embedding.node,dispatch.node);
-  for(const v of Object.values(embedding.vectors)){assert.equal(v.vector.length,384);assert.ok(Math.abs(Math.hypot(...v.vector)-1)<.001);}
-  assert.ok(embedding.available_at>=Date.parse(dispatch.time));assert.ok(embedding.available_at>=embedding.queued_at);
 });
 
 test('removed quarantined worker can register paused without bypassing verified recovery',async t=>{
@@ -840,8 +774,8 @@ test('an oversized unobservable terminal is unknown, not a proven failed or succ
   assert.equal(r.gateway.stats().workers[0].quarantine,null);assert.equal(r.gateway.stats().workers[0].completed,0);
   assert.equal(r.gateway.stats().workers[0].failed,0);assert.equal(r.gateway.stats().workers[0].observation_limited,3);
   assert.equal(r.gateway.stats().dataset.failed_or_cancelled,0);assert.equal(r.gateway.stats().dataset.observation_limited,3);
-  const file=fs.readdirSync(path.join(path.dirname(r.config.state_file),'training'))[0];
-  const events=fs.readFileSync(path.join(path.dirname(r.config.state_file),'training',file),'utf8').trim().split('\n').map(JSON.parse);
+  const file=fs.readdirSync(path.join(path.dirname(r.config.state_file),'requests'))[0];
+  const events=fs.readFileSync(path.join(path.dirname(r.config.state_file),'requests',file),'utf8').trim().split('\n').map(JSON.parse);
   assert.ok(events.filter(e=>e.kind==='finish').every(e=>e.outcome==='sse_observation_limited'));
 });
 
@@ -961,14 +895,13 @@ test('collector records decision-time fleet and outcomes without altering body o
   const response=await r.request(body,'collector-test');assert.equal(response.status,200);assert.match(response.body,/\[DONE\]/);
   assert.equal(r.backends[0].records[0].body.toString(),body);
   await until(()=>r.gateway.stats().dataset.finished===1);
-  const dir=path.join(path.dirname(r.config.state_file),'training'),file=fs.readdirSync(dir)[0],text=fs.readFileSync(path.join(dir,file),'utf8');
+  const dir=path.join(path.dirname(r.config.state_file),'requests'),file=fs.readdirSync(dir)[0],text=fs.readFileSync(path.join(dir,file),'utf8');
   assert.ok(!text.includes('PRIVATE_UNIQUE_TEXT'));const rows=text.trim().split('\n').map(JSON.parse);
-  assert.deepEqual(rows.map(r=>r.kind),['routing_tiebreak_shadow','decision','dispatch','progress','finish']);assert.equal(new Set(rows.map(r=>r.request_id)).size,1);
-  assert.equal(rows[0].mode,'active_with_abstention');assert.equal(rows[0].applied,false);assert.equal(rows[0].verdict,'free_tie');
-  assert.equal(rows[1].candidates.length,2);assert.equal(rows[1].candidates[0].assigned_sessions,0);assert.equal(rows[1].candidates[0].active,0);
-  assert.equal(rows[3].phase,'awaiting_content');assert.equal(rows[3].semantic_age_ms,null);
-  assert.equal(rows[4].usage.cached_tokens,8192);assert.equal(rows[4].requested_thinking.fields.reasoning_effort,'xhigh');
-  assert.ok(rows[4].first_body_byte_ms>=0);assert.ok(rows[4].total_ms>=rows[4].service_ms);
+  assert.deepEqual(rows.map(r=>r.kind),['decision','dispatch','finish']);assert.equal(new Set(rows.map(r=>r.request_id)).size,1);
+  assert.equal(rows[0].candidates.length,2);assert.equal(rows[0].candidates[0].assigned_sessions,0);assert.equal(rows[0].candidates[0].active,0);
+  assert.equal(rows[2].usage.cached_tokens,8192);assert.equal(rows[2].requested_thinking.fields.reasoning_effort,'xhigh');
+  assert.ok(rows[2].first_body_byte_ms>=0);assert.ok(rows[2].total_ms>=rows[2].service_ms);
+
 });
 
 test('shadow collection is opt-in, preserves bytes and affinity, and reassesses on worker completion',async t=>{
@@ -982,7 +915,7 @@ test('shadow collection is opt-in, preserves bytes and affinity, and reassesses 
   assert.equal(r.gateway.stats().routing_shadow.last.verdict,'handover_blocked');
   await Promise.all([first,second]);await until(()=>r.gateway.stats().dataset.finished===2);
   assert.equal(r.backends[0].records[1].body.toString(),body);assert.equal(r.backends[1].records.length,0);
-  const dir=path.join(path.dirname(r.config.state_file),'training');
+  const dir=path.join(path.dirname(r.config.state_file),'requests');
   const text=fs.readdirSync(dir).map(f=>fs.readFileSync(path.join(dir,f),'utf8')).join('');
   assert.ok(!text.includes('PRIVATE_SHADOW_BODY'));assert.ok(!text.includes('same-private-session'));
   const rows=text.trim().split('\n').map(JSON.parse),shadow=rows.filter(x=>x.kind==='routing_shadow');
@@ -997,7 +930,7 @@ test('idle-worker event records shadow reassessment without consuming queued upl
   const home=r.request('{"stream":true,"fixture_hold_stream":true}','home');await until(()=>r.backends[0].heldStreams?.length===1);
   const other=r.request('{"stream":true,"fixture_hold_stream":true}','other');await until(()=>r.backends[1].heldStreams?.length===1);
   const queued=r.request('{"stream":true,"delay":10}','home');await until(()=>r.gateway.stats().queued===1);
-  const read=()=>{const dir=path.join(path.dirname(r.config.state_file),'training');return fs.existsSync(dir)?fs.readdirSync(dir).flatMap(f=>fs.readFileSync(path.join(dir,f),'utf8').trim().split('\n').filter(Boolean).map(JSON.parse)):[];};
+  const read=()=>{const dir=path.join(path.dirname(r.config.state_file),'requests');return fs.existsSync(dir)?fs.readdirSync(dir).flatMap(f=>fs.readFileSync(path.join(dir,f),'utf8').trim().split('\n').filter(Boolean).map(JSON.parse)):[];};
   // Observe the queue before releasing the alternate worker. Wall-clock delays
   // cannot guarantee this ordering on a loaded runner; home must remain active.
   r.backends[1].heldStreams.shift()();
@@ -1934,7 +1867,7 @@ test('Priority intent handoff is private, asynchronous and stripped from actual 
   await until(()=>r.backends[0].heldStreams.length===1);
   try{assert.equal(r.gateway.priorityStatus(true).jobs[0].source,'default','a request without current intent cannot inherit stale advice');}
   finally{for(const finish of r.backends[0].heldStreams.splice(0))finish();await next;}
-  const directory=path.join(path.dirname(r.config.state_file),'training');
+  const directory=path.join(path.dirname(r.config.state_file),'requests');
   for(const file of fs.readdirSync(directory))if(file.endsWith('.jsonl'))assert.ok(!fs.readFileSync(path.join(directory,file),'utf8').includes('PRIVATE_'));
 });
 
@@ -2110,8 +2043,8 @@ test('Genie names ordinary gateway requests without a Pi extension or persisting
   }
   assert.ok(!JSON.stringify(r.gateway.stats()).includes('Export formatting repair'));
   assert.ok(!fs.readFileSync(r.config.state_file,'utf8').includes('Export formatting repair'));
-  for(const file of fs.readdirSync(path.join(path.dirname(r.config.state_file),'training')))if(file.endsWith('.jsonl')){
-    const text=fs.readFileSync(path.join(path.dirname(r.config.state_file),'training',file),'utf8');
+  for(const file of fs.readdirSync(path.join(path.dirname(r.config.state_file),'requests')))if(file.endsWith('.jsonl')){
+    const text=fs.readFileSync(path.join(path.dirname(r.config.state_file),'requests',file),'utf8');
     for(const marker of ['PRIVATE_','Repair CSV','Export formatting repair'])assert.ok(!text.includes(marker));
   }
 });

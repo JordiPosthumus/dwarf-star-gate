@@ -90,19 +90,6 @@ test('all machine charts share exact historical maxima per phase with zero origi
   assert.match(svg,/<polyline points="[^"]*,52.0 [^"]*,8.0"/);
 });
 
-test('forecast labels never present stale snapshots or total service time as a live ETA',()=>{
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
-  const context=vm.createContext({});vm.runInContext(source,context);
-  const label=(f,now=100000,stale=false)=>vm.runInContext(`forecastLabel(${JSON.stringify(f)},${now},${stale})`,context);
-  assert.equal(label({at:90000,seconds:50,stage:'remaining'}),'ETA ~40s');
-  assert.equal(label({at:0,seconds:50,stage:'remaining'}),'Forecast stale');
-  assert.equal(label({at:90000,seconds:10,stage:'remaining'}),'Estimate exceeded');
-  assert.equal(label({at:90000,seconds:50,stage:'upload'}),'Total est. 50s');
-  assert.equal(label({at:90000,seconds:50,stage:'remaining'},100000,true),'Forecast stale');
-  assert.equal(label({at:100001,seconds:50,stage:'remaining'}),'ETA unknown');
-  assert.equal(label({at:90000,seconds:null,stage:'remaining'}),'ETA unknown');
-});
-
 const logTime = +new Date(2026,8,2,14,0,5);
 const logLine = message => `0902 14:00:00 ds4-server: ${message}\n`;
 function logFixture(t) {
@@ -539,16 +526,6 @@ test('Genie report bodies remain inert text and an empty refresh does not close 
   render([]);assert.equal(container.children[0],node);assert.ok(node.open);
   node.open=false;render([]);assert.equal(container.children.length,0);
 });
-test('predictor session labels distinguish known identities from legacy grouping',()=>{
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'');
-  const context=vm.createContext({});vm.runInContext(source.split('\npoll();')[0],context);
-  assert.equal(vm.runInContext('predictionSessionLabel({sessions:3,known_sessions:2,unknown_identity_requests:2})',context),'2 known sessions · 2 requests without identity');
-  assert.equal(vm.runInContext('predictionSessionLabel({sessions:3})',context),'3 recorded groups');
-  assert.equal(vm.runInContext('predictionSessionLabel({known_sessions:0,unknown_identity_requests:0})',context),'0 known sessions');
-  assert.equal(vm.runInContext('predictionSessionLabel({known_sessions:"<img>",sessions:3})',context),'3 recorded groups');
-  assert.match(source,/predictionSessionLabel\(s\)/);assert.match(source,/esc\(predictionSessionLabel\(m.future\)\)/);
-});
-
 test('Genie action ledger is concise, newest-first and includes proven pool commandeering',()=>{
   const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);
@@ -563,7 +540,7 @@ test('Genie action ledger is concise, newest-first and includes proven pool comm
   const analytics={handovers:{rows:[{actor:'genie',at:3000,source:'spark1',destination:'m3-studio',waiting_before_move_ms:91000,service_state:'complete',cached_fraction:.75},{actor:'operator',at:8000,source:'private-worker',destination:'spark2',waiting_before_move_ms:1,service_state:'complete'}]}};
   context.snapshot=snapshot;context.genie=genie;context.analytics=analytics;
   const rows=JSON.parse(vm.runInContext('JSON.stringify(genieActionRows(snapshot,genie,analytics))',context));
-  assert.deepEqual(rows.map(row=>row.kind),['provider','recovery','routing','predictor']);
+  assert.deepEqual(rows.map(row=>row.kind),['provider','recovery','routing']);
   assert.match(rows[0].title,/Pool commandeered · spark2/);assert.match(rows[1].detail,/verified profile hand-back/);assert.match(rows[2].detail,/75% prompt reused/);
   assert.equal(rows.find(row=>row.level==='attention'),undefined);assert.ok(!JSON.stringify(rows).includes('private-worker'));
   context.genie={provider_actions:[{id:'assigned',time:9000,served_by:'pool_assigned',served_on:'spark2'},...genie.reports]};
@@ -580,7 +557,7 @@ test('Genie ledger renders all 30 available receipts, filters and preserves scro
   const nodes={'genie-action-filter':{value:'all'},'genie-action-summary':make(),'genie-action-items':make()};
   const context=vm.createContext({document:{getElementById:id=>nodes[id],createElement:make}});vm.runInContext(source,context);
   context.receipts=Array.from({length:35},(_,i)=>({id:String(i),time:1000+i,served_by:'pool_fallback',served_on:'worker-a'}));
-  vm.runInContext('wireSnapshot={};analyticsState={};genieState={provider_actions:receipts};renderGenieActionLedger()',context);
+  vm.runInContext('wireSnapshot={};requestHistoryState={};genieState={provider_actions:receipts};renderGenieActionLedger()',context);
   const list=nodes['genie-action-items'];assert.equal(list.children.length,30);
   assert.equal(list.children[0].children[0].dateTime,new Date(1034).toISOString());
   assert.equal(list.children.at(-1).children[0].dateTime,new Date(1005).toISOString());
@@ -608,13 +585,13 @@ test('Genie ledger preserves legacy receipts with unrepresentable dates alongsid
   const nodes={'genie-action-filter':{value:'all'},'genie-action-summary':make(),'genie-action-items':make()};
   const context=vm.createContext({document:{getElementById:id=>nodes[id],createElement:make},receipts:loaded.recent()});vm.runInContext(source,context);
   vm.runInContext(`wireSnapshot={gateway:{recovery:{operations:[{id:'recovery',actor:'genie',updated_at:Number.MAX_SAFE_INTEGER,state:'failed'}]},predictor:{actions:[{id:'predictor',actor:'genie',time:Number.MAX_SAFE_INTEGER,status:'failed'}]}}};
-    analyticsState={handovers:{rows:[{actor:'genie',at:Number.MAX_SAFE_INTEGER,source:'worker-a',destination:'worker-b'}]}};
+    requestHistoryState={handovers:{rows:[{actor:'genie',at:Number.MAX_SAFE_INTEGER,source:'worker-a',destination:'worker-b'}]}};
     genieState={provider_actions:[...receipts,...[0,1000,8640000000000000].map((time,i)=>({id:'valid-'+i,time,served_by:'pool_fallback'}))]};renderGenieActionLedger()`,context);
   const list=nodes['genie-action-items'],times=list.children.map(item=>item.children[0]);
-  assert.equal(times.length,7);assert.equal(times.filter(time=>time.textContent==='unknown').length,4);
+  assert.equal(times.length,6);assert.equal(times.filter(time=>time.textContent==='unknown').length,3);
   assert.ok(times.filter(time=>time.textContent==='unknown').every(time=>time.dateTime===undefined));
   assert.deepEqual(times.filter(time=>time.dateTime!==undefined).map(time=>time.dateTime),[8640000000000000,1000,0].map(at=>new Date(at).toISOString()));
-  assert.match(nodes['genie-action-summary'].textContent,/7 shown/);
+  assert.match(nodes['genie-action-summary'].textContent,/6 shown/);
   list.scrollTop=80;const children=list.children;vm.runInContext('renderGenieActionLedger()',context);
   assert.equal(list.children,children);assert.equal(list.scrollTop,80);
   assert.equal(loaded.recent()[0].time,Number.MAX_SAFE_INTEGER);assert.deepEqual(fs.readFileSync(ledger.file),bytes);
@@ -626,7 +603,7 @@ test('Genie ledger retries unchanged evidence after a failed render',()=>{
     const nodes={'genie-action-filter':{value:'all'},'genie-action-summary':make(),'genie-action-items':make()};
     const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
     const context=vm.createContext({document:{getElementById:id=>nodes[id],createElement:()=>{if(fail&&failure==='create')throw new Error('fixture render failure');return make();}}});vm.runInContext(source,context);
-    vm.runInContext("wireSnapshot={};analyticsState={};genieState={provider_actions:[{id:'old',time:0,served_by:'pool_fallback'}]};renderGenieActionLedger()",context);
+    vm.runInContext("wireSnapshot={};requestHistoryState={};genieState={provider_actions:[{id:'old',time:0,served_by:'pool_fallback'}]};renderGenieActionLedger()",context);
     const list=nodes['genie-action-items'],old=list.children;list.scrollTop=80;fail=true;
     assert.throws(()=>vm.runInContext("genieState.provider_actions.push({id:'new',time:1000,served_by:'pool_fallback'});renderGenieActionLedger()",context),/fixture render failure/);
     assert.equal(list.children,old);assert.equal(list.scrollTop,80);fail=false;
@@ -783,7 +760,7 @@ test('dashboard names DS4 servers and explains gateway-only concurrency and avai
   const { url } = await fixture(t);
   const html = await (await fetch(url)).text();
   const js = await (await fetch(url+'/ui.js')).text();
-  assert.match(html,/AVAILABLE DS4 SERVERS/);assert.match(html,/ACTIVE REQUESTS/);assert.match(html,/WAITING IN DSG/);assert.match(html,/Queues still inside Pi, Hermes or another client/);assert.match(js,/incompatible artifact/);
+  assert.match(html,/AVAILABLE DS4 SERVERS/);assert.match(html,/ACTIVE REQUESTS/);assert.match(html,/WAITING IN DSG/);assert.match(html,/Queues still inside Pi, Hermes or another client/);
   assert.match(html,/Manage DS4 servers/);assert.match(html,/not necessarily one physical machine/);
   assert.match(html,/Direct clients are outside this limit/);
   assert.match(html,/Available means healthy and enabled, including busy servers/);
@@ -808,7 +785,7 @@ test('fleet overview is a dense status band and controls live in one settings ta
 test('dashboard uses accessible persistent views instead of one overwhelming vertical page',()=>{
   const html=fs.readFileSync(new URL('./ui/index.html',import.meta.url),'utf8'),js=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8'),css=fs.readFileSync(new URL('./ui/brand.css',import.meta.url),'utf8');
   assert.match(html,/class="workspace-tabs" role="tablist"/);
-  for(const [name,label] of [['fleet','Fleet'],['genie','Gate Genie'],['analytics','Analytics'],['activity','Activity']]){
+  for(const [name,label] of [['fleet','Fleet'],['genie','Gate Genie'],['analytics','Evidence'],['activity','Activity']]){
     assert.match(html,new RegExp(`id="tab-${name}"[^>]*role="tab"[^>]*aria-controls="view-${name}"[^>]*data-workspace-tab="${name}"[^>]*>${label}<`));
     assert.match(html,new RegExp(`id="view-${name}"[^>]*role="tabpanel"[^>]*aria-labelledby="tab-${name}"[^>]*data-workspace-view="${name}"`));
   }
@@ -816,7 +793,7 @@ test('dashboard uses accessible persistent views instead of one overwhelming ver
   assert.match(html,/id="view-settings"[^>]*role="tabpanel"[^>]*aria-labelledby="tab-settings"[^>]*data-workspace-view="settings"/);
   assert.match(html,/id="view-fleet"[^>]*>[\s\S]*id="devices"[\s\S]*<\/section>\s*<section id="view-genie"/);
   assert.match(html,/id="view-genie"[^>]*hidden>[\s\S]*id="genie-reports"[\s\S]*id="genie-hardening"[\s\S]*id="recovery-actions"[\s\S]*id="genie-memory"/);
-  assert.match(html,/id="view-analytics"[^>]*hidden>[\s\S]*id="dataset-status"[\s\S]*id="analytics"/);
+  assert.match(html,/id="view-analytics"[^>]*hidden>[\s\S]*id="dataset-status"[\s\S]*class="cache-cost-panel"/);
   assert.match(html,/id="view-activity"[^>]*hidden>[\s\S]*id="continuity-rejections"[\s\S]*id="requests"/);
   assert.match(html,/id="view-settings"[^>]*hidden>[\s\S]*id="worker-management"[\s\S]*id="worker-form"/);
   assert.match(js,/function activateWorkspaceTab/);assert.match(js,/ArrowRight/);assert.match(js,/history\?\.replaceState/);assert.match(js,/activateWorkspaceTab\('settings',\{updateHash:true\}\)/);

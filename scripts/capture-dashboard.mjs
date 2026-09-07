@@ -8,7 +8,7 @@ import { projectRoot } from '../ds4-gateway/config.mjs';
 const modulePath=process.env.DSG_PLAYWRIGHT_MODULE;
 const {chromium}=await import(modulePath?pathToFileURL(path.resolve(modulePath)).href:'playwright');
 const server=createDemoServer();
-let browser,learningServer,holdServer;
+let browser,holdServer;
 try {
   const output=path.join(projectRoot,'docs/images');await fs.mkdir(output,{recursive:true});
   await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});
@@ -29,7 +29,6 @@ try {
   await page.goto(origin);
   await page.waitForFunction(()=>document.getElementById('routing-message').classList.contains('error'));
   await page.waitForFunction(()=>document.getElementById('routing-message').textContent===''&&!document.getElementById('routing-message').classList.contains('error'));
-  await page.waitForFunction(()=>document.querySelectorAll('.device').length===3&&document.querySelectorAll('#genie-reports details').length===1&&document.querySelectorAll('#analytics-chart circle').length>0);
   await page.setViewportSize({width:951,height:900});
   assert.equal(await page.locator('.device').evaluateAll(cards=>cards.every(card=>{
     const box=card.getBoundingClientRect(),header=card.querySelector('.device-top');
@@ -195,13 +194,8 @@ try {
   assert.match(await page.locator('#connection').innerText(),/Demo/);
   await page.locator('#tab-analytics').click();
   assert.equal(await page.locator('#genie-hardening').isHidden(),true);
-  await page.locator('details.predictor-panel>summary').click();
-  assert.match(await page.locator('#predictor-status').innerText(),/0 validated models/);
-  assert.equal(await page.locator('#predictor-recipe option').count(),3);
-  assert.equal(await page.locator('#predictor-recipe').inputValue(),'standard-v1');
   assert.match(await page.locator('#calibration-status').innerText(),/skipped.*cache-preserving/);
   await page.locator('.analytics-collection>summary').click();
-  assert.match(await page.locator('#embedding-detail').innerText(),/384 dimensions/);
   await page.locator('.analytics-collection>summary').click();
   await page.locator('#tab-fleet').click();
   await page.waitForFunction(()=>document.getElementById('fleet-decode-speed').textContent!=='—');
@@ -272,7 +266,6 @@ try {
   await maintenanceRow.getByRole('button',{name:'Resume routing',exact:true}).click();
   await maintenanceRow.getByText('ROUTING ENABLED',{exact:true}).waitFor();
   await page.locator('#tab-fleet').click();
-  await page.waitForFunction(()=>document.querySelectorAll('.device').length===3&&document.querySelectorAll('#analytics-chart circle').length>0);
   await page.evaluate(()=>window.scrollTo(0,0));
   const devices=await page.locator('#devices').boundingBox();
   await page.screenshot({path:path.join(output,'dashboard-overview.png'),fullPage:true,clip:{x:0,y:0,width:1440,height:Math.ceil(devices.y+devices.height+24)},animations:'disabled'});
@@ -285,34 +278,18 @@ try {
   await page.evaluate(()=>window.scrollTo(0,0));
   await page.screenshot({path:path.join(output,'dashboard-genie.png'),fullPage:true,clip:await page.locator('#view-genie').boundingBox(),animations:'disabled'});
   await page.locator('#tab-analytics').click();
-  await page.locator('#analytics-question').selectOption('remaining');
-  await page.waitForFunction(()=>document.querySelectorAll('#analytics-chart circle').length===20);
-  assert.match(await page.locator('#analytics-status').innerText(),/Synthetic demo/);
-  assert.equal(await page.locator('#analytics-version-label').isVisible(),true);
-  assert.match(await page.locator('#predictor-models').textContent(),/3 known sessions · 2 requests without identity/);
-  await page.locator('details.predictor-panel').evaluate(el=>{el.open=false;});
+  await page.locator('.analytics-collection').evaluate(el=>{el.open=true;});
+  await page.locator('#view-analytics .cache-cost-panel').first().evaluate(el=>{el.open=true;});
   await page.evaluate(()=>window.scrollTo(0,0));
   // Element screenshots scroll tall panels under the sticky tab bar, obscuring
   // the first heading. Capture document coordinates without that auto-scroll.
   await page.screenshot({path:path.join(output,'dashboard-analytics.png'),fullPage:true,clip:await page.locator('#view-analytics').boundingBox(),animations:'disabled'});
   await page.locator('#tab-activity').click();
   await page.locator('#view-activity').screenshot({path:path.join(output,'dashboard-activity.png'),animations:'disabled'});
-  for(const [file,minHeight] of [['dashboard-overview.png',950],['dashboard-genie.png',250],['dashboard-analytics.png',700],['dashboard-activity.png',150]]) {
+  for(const [file,minHeight] of [['dashboard-overview.png',950],['dashboard-genie.png',250],['dashboard-analytics.png',150],['dashboard-activity.png',150]]) {
     const png=await fs.readFile(path.join(output,file));
     assert.ok(png.readUInt32BE(20)>=minHeight,`${file}: screenshot was clipped`);
   }
-  await page.locator('#tab-analytics').click();await page.locator('#analytics-question').selectOption('queue');
-  assert.equal(await page.locator('#analytics-version-label').isVisible(),false);
-  await page.locator('details.predictor-panel>summary').click();
-  await page.locator('#predictor-recipe').selectOption('interactions-v1');
-  const recipePoll=await page.locator('#updated').innerText();
-  await page.waitForFunction(previous=>document.getElementById('updated').textContent!==previous,recipePoll,{timeout:10000});
-  assert.equal(await page.locator('#predictor-recipe').inputValue(),'interactions-v1','Polling must preserve the operator choice');
-  const trainRequest=page.waitForRequest(r=>r.url().endsWith('/api/workers/predictor')&&r.method()==='POST');
-  const trainResponse=page.waitForResponse(r=>r.url().endsWith('/api/workers/predictor')&&r.request().method()==='POST');
-  await page.locator('[data-predictor="train"]').click();
-  assert.deepEqual((await trainRequest).postDataJSON(),{action:'train',recipe_id:'interactions-v1'});
-  assert.equal((await trainResponse).ok(),false,'The demo must refuse real training');
   await page.locator('#tab-fleet').click();
   await page.setViewportSize({width:390,height:844});
   const mobileLayout=await page.evaluate(()=>({
@@ -326,36 +303,6 @@ try {
   }));
   assert.ok(mobileLayout.scrollWidth<=mobileLayout.width,`Mobile page must not overflow horizontally: ${JSON.stringify(mobileLayout)}`);
   await page.locator('.overview').screenshot({path:path.join(output,'overview-mobile.png'),animations:'disabled'});
-  // Separate synthetic scenario: exercise persistent notice UX and safe reset.
-  // No live configuration, telemetry or model server is read by either demo.
-  learningServer=createDemoServer({learningMilestone:true});
-  await new Promise(resolve=>learningServer.listen(0,'127.0.0.1',resolve));
-  const learningOrigin=`http://127.0.0.1:${learningServer.address().port}`;allowedOrigins.add(learningOrigin);
-  await page.setViewportSize({width:1440,height:1100});await page.goto(learningOrigin);
-  await page.waitForFunction(()=>document.querySelectorAll('.learning-milestone').length===1);
-  await page.locator('#tab-genie').click();
-  assert.match(await page.locator('#learning-milestone-items').innerText(),/33\.3%.*42 requests/);
-  assert.match(await page.locator('#learning-milestone-items').innerText(),/<No HTML is interpreted\./);
-  await page.locator('[data-milestone]').focus();
-  const notice=await page.locator('.learning-milestone').elementHandle();
-  const updated=await page.locator('#updated').innerText();
-  await page.waitForFunction(previous=>document.getElementById('updated').textContent!==previous,updated,{timeout:10000});
-  assert.equal(await notice.evaluate(el=>el===document.querySelector('.learning-milestone')),true,'Polling replaced the notice being read');
-  assert.equal(await page.locator('[data-milestone]').evaluate(el=>el===document.activeElement),true);
-  await page.reload();await page.locator('[data-milestone]').waitFor();
-  await page.locator('#tab-analytics').click();
-  await page.locator('details.predictor-panel>summary').click();
-  page.once('dialog',dialog=>dialog.accept());await page.locator('[data-predictor="reset_baseline"]').click();
-  await page.waitForFunction(()=>document.getElementById('predictor-status').textContent.includes('0 validated models'));
-  assert.match(await page.locator('[data-predictor="automatic_training"]').innerText(),/on/);
-  assert.match(await page.locator('[data-predictor="automatic_promotion"]').innerText(),/on/);
-  await page.locator('#tab-genie').click();
-  assert.equal(await page.locator('.learning-milestone').count(),1,'Reset must not erase a historical milestone');
-  await page.setViewportSize({width:390,height:844});
-  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),'Milestone must wrap on mobile');
-  await page.locator('[data-milestone]').click();await page.waitForFunction(()=>document.getElementById('learning-milestones').hidden);
-  await page.reload();await page.waitForFunction(()=>document.querySelectorAll('.device').length===3);
-  assert.equal(await page.locator('#learning-milestones').isHidden(),true,'Acknowledged milestone reappeared after reload');
   holdServer=createDemoServer({agentHold:true});await new Promise(resolve=>holdServer.listen(0,'127.0.0.1',resolve));
   const holdOrigin=`http://127.0.0.1:${holdServer.address().port}`;allowedOrigins.add(holdOrigin);
   await page.setViewportSize({width:1440,height:1100});await page.goto(holdOrigin);
@@ -369,45 +316,9 @@ try {
   assert.equal(await held.getByRole('button',{name:'Keep paused',exact:true}).count(),0);
   const holdPoll=await page.locator('#updated').innerText();await page.waitForFunction(previous=>document.getElementById('updated').textContent!==previous,holdPoll,{timeout:10000});
   assert.match(await held.innerText(),/Held by test-agent/);assert.match(await held.innerText(),/Operator pause/);
-  // Isolated synthetic response changes prove that polling cannot move study
-  // dots or choose a newer model behind the reader's back.
-  const auditPage=await context.newPage();auditPage.on('pageerror',e=>errors.push(e.message));
-  let auditData=await(await page.request.get(origin+'/api/analytics')).json();
-  await auditPage.route('**/api/analytics',route=>route.fulfill({json:auditData}));
-  await auditPage.goto(origin+'/#analytics');
-  await auditPage.waitForFunction(()=>document.querySelectorAll('#analytics-chart circle').length>0);
-  const studyCount=await auditPage.locator('#analytics-chart circle').count(),studyPin=await auditPage.locator('#analytics-version').inputValue();
-  const studyModel=auditData.model_series.find(m=>m.id===studyPin&&m.stage==='admission');
-  studyModel.rows.push({...studyModel.rows[1],at:Date.now(),service_ms:99000});
-  auditData.model_series.push({...structuredClone(studyModel),id:'f'.repeat(64),last_forecast_at:Date.now()});
-  await auditPage.waitForFunction(()=>document.getElementById('analytics-snapshot-note').textContent.includes('Newer evidence'),null,{timeout:20000});
-  assert.equal(await auditPage.locator('#analytics-chart circle').count(),studyCount);
-  assert.equal(await auditPage.locator('#analytics-version').inputValue(),studyPin);
-  assert.match(await auditPage.locator('#analytics-snapshot-note').innerText(),/Newer evidence/);
-  await auditPage.locator('#analytics-refresh').click();
-  await auditPage.waitForFunction(n=>document.querySelectorAll('#analytics-chart circle').length===n,studyCount+1);
-  assert.equal(await auditPage.locator('#analytics-version').inputValue(),studyPin);
-  await auditPage.locator('#analytics-latest').click();assert.equal(await auditPage.locator('#analytics-version').inputValue(),'f'.repeat(64));
-  await auditPage.locator('#analytics-method').selectOption('reference');
-  assert.ok(await auditPage.locator('#analytics-chart circle').count()>0,'Paired reference values are visible separately');
-  await auditPage.locator('.analytics-evidence>summary').click();assert.match(await auditPage.locator('#analytics-accounting').innerText(),/not file deletion/);
-  for(const width of [390,750,1440]){await auditPage.setViewportSize({width,height:1000});assert.ok(await auditPage.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Analytics must fit mobile and desktop');}
-  // No predictor artifacts, Python runtime, encoder or telemetry history is
-  // required to render the optional analytics empty state.
-  const freshStatus=await(await page.request.get(origin+'/api/status')).json();
-  freshStatus.gateway.predictor=null;freshStatus.gateway.dataset={enabled:false};freshStatus.devices=[];
-  await auditPage.route('**/api/status',route=>route.fulfill({json:freshStatus}));
-  for(const status of ['disabled','waiting','catching_up','rescanning','unavailable']){
-    auditData={enabled:status!=='disabled',status,rows:[],model_series:[]};await auditPage.reload();
-    await auditPage.waitForFunction(()=>document.getElementById('analytics-counts').textContent.includes('0 eligible'));
-    assert.equal(await auditPage.locator('#analytics-chart circle').count(),0);
-    assert.match(await auditPage.locator('#analytics-use').innerText(),/Ordinary routing works without models/);
-  }
-  await auditPage.close();
   assert.deepEqual(errors,[]);
-  console.log('Saved twelve synthetic dashboard screenshots; verified proposed experiment labels, tab navigation, polling, analytics, compact hardware telemetry, named maintenance locks, mobile, reset/milestones, escaped agent holds and Keep paused UX.');
+  console.log('Saved synthetic dashboard screenshots; verified tab navigation, polling, operational evidence, hardware telemetry, named maintenance locks, mobile, escaped agent holds and Keep paused UX.');
 } finally {
   await browser?.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));
-  if(learningServer){learningServer.closeAllConnections();await new Promise(resolve=>learningServer.close(resolve));}
   if(holdServer){holdServer.closeAllConnections();await new Promise(resolve=>holdServer.close(resolve));}
 }

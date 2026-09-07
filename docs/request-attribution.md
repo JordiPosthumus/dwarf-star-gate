@@ -45,7 +45,7 @@ With a strong systemd epoch, `corroborated` means **high-confidence candidate**,
 not protocol proof. The boot/PID fallback and local-log listen-marker epoch remain
 explicitly bounded. DS4 does not currently echo the gateway request ID into its
 timing record. Invisible direct clients and unknown clock error cannot be ruled
-out merely by a time-and-usage match. Therefore these rows do not train XGB,
+out merely by a time-and-usage match. Therefore these rows do not
 accuse a route of a cache miss, move work, or authorize recovery.
 
 A well-formed epoch digest without `strong` or `bounded` provenance confidence

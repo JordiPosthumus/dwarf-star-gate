@@ -59,8 +59,8 @@ unknown, not evidence of successful generation or a reason alone to quarantine.
 The optional collector stores numerical/categorical evidence locally, not prompt
 text or embeddings. The optional Genie receives a sanitized briefing and can
 request only separately authorized, independently checked recovery. It has no
-shell or control credentials; its in-memory assessments are not action receipts. Offline XGBoost
-artifacts and hardware inventory also remain private and are excluded from Git.
+shell or control credentials; its in-memory assessments are not action receipts. Hardware inventory also remains private and is excluded from Git.
+XGB and embedding collection have been retired.
 
 Source-level privacy checks catch common mistakes but cannot prove absence of all
 secrets or identifying data. Treat screenshots and binary metadata as reviewable

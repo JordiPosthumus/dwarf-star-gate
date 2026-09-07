@@ -26,9 +26,8 @@ screenshots, benchmark results, a live incident report or a promoted model.
 - `dashboard-genie.png`: current jobs and manual priorities, a synthetic pre-dispatch pool assignment receipt, an open assessment, collapsible hardening suggestions below
   the conversation, linked agent enrollment guide, recovery controls and the private
   Gate Genie notebook.
-- `dashboard-analytics.png`: local collection/embedding status, stage-specific XGB
-  chart, candidate lifecycle, recipe selector, calibration skip status and cache
-  acquisition calculator.
+- `dashboard-analytics.png`: operational collection status, calibration skip
+  status and cache acquisition calculator.
 - `dashboard-activity.png`: Continuity Door rejection evidence and the filtered
   request log, separated from the live fleet view.
 - `genie-memory.png`: synthetic worker incident/recovery history and an explicit
@@ -55,7 +54,7 @@ The script launches its **own synthetic server on an ephemeral loopback port**;
 it accepts no production dashboard URL, loads no private config/logs and blocks
 non-demo browser requests. No model, encoder, trainer, SSH connection or Genie
 inference runs. Interactive `npm run ui:demo` uses the same fixture on port 30011.
-Recovery/training mutations are intentionally rejected in the demo.
+Recovery mutations are intentionally rejected in the demo.
 Reset and milestone dismissal manipulate synthetic in-memory UI fixtures only.
 The separate notebook fixture creates its own disposable private directory. It
 checks persistence by restarting only its synthetic dashboard, then removes that
@@ -63,24 +62,17 @@ test directory. It never reads or modifies the deployed notebook.
 
 The capture uses 1440px width, UTC, en-US and reduced motion so headlines are
 readable. It checks the real logo, exact title, accessible tab and keyboard state,
-the far-right Settings tab, a fleet band under 150px tall, populated cards, no activated
-predictor, synthetic labels even when selecting XGB, report persistence across
+the far-right Settings tab, a fleet band under 150px tall, populated cards, operational evidence, report persistence across
 a real refresh, and a 390px mobile viewport without page-level horizontal overflow.
 Timestamps and platform fonts may differ; this is a content/privacy smoke test,
 not a pixel-perfect golden-image test.
-An additional isolated scenario verifies that learning milestones remain readable
-across polling/reload, escape Genie text, survive a reset and remain dismissed
-after acknowledgement/reload. Reset leaves the learning switches on. This does
-not read or reset any live predictor.
-The recipe test verifies all three options, selection across polling, and the
-exact submitted recipe ID. The synthetic server refuses training; no fit runs.
 The worker-management capture creates and releases a synthetic maintenance lock,
 proves the card Resume is disabled while held, then proves release leaves an
 operator pause and a separate Resume is required. No live worker is involved.
 
 Before committing, visually inspect all changed PNGs and run `npm run check`,
 `npm test` and `npm run privacy-check`. Numerical fixture values must remain
-invented: never populate them by copying `/api/status`, production training rows,
+invented: never populate them by copying `/api/status`, production request rows,
 private hostnames, conversation IDs, model reports or credentials. Do not publish
 live UI screenshots without a separate privacy review.
 

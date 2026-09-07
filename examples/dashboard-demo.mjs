@@ -4,7 +4,6 @@ import { createDashboard } from '../ds4-gateway/dashboard.mjs';
 import { workerConfig, assertUniqueWorker } from '../ds4-gateway/worker-config.mjs';
 import { DeviceTelemetry } from '../ds4-gateway/telemetry.mjs';
 import { isMain } from '../ds4-gateway/config.mjs';
-import {TRAINING_RECIPES,DEFAULT_RECIPE} from '../ds4-gateway/training-recipes.mjs';
 import {calibrationPreflight} from '../ds4-gateway/calibration.mjs';
 import {FleetThroughput} from '../ds4-gateway/throughput.mjs';
 import {FleetSpeed} from '../ds4-gateway/fleet-speed.mjs';
@@ -12,7 +11,7 @@ import {PriorityLens} from '../ds4-gateway/priority-lens.mjs';
 import {PriorityCorrections} from '../ds4-gateway/priority-corrections.mjs';
 // Optional memory is supplied only by the isolated browser-test fixture. The
 // ordinary demo has no persistent storage and reads no installation config.
-export function createDemoServer({learningMilestone=false,agentHold=false,quarantinedWorker=false,memory=null}={}) {
+export function createDemoServer({agentHold=false,quarantinedWorker=false,memory=null}={}) {
 const now = Date.now();
 const workers = [
   { id:'sparkA', is_healthy:true, drained:false, load:1, queued:1, active_seconds:84, completed:42, failed:0, assigned_sessions:4 },
@@ -36,29 +35,16 @@ workers[0].requested_thinking = { status:'specified', fields:{reasoning_effort:'
 workers[1].requested_thinking = { status:'specified', fields:{thinking:false} };
 workers[2].last_requested_thinking = { status:'specified', fields:{reasoning_effort:'high'} };
 workers[2].last_request_finished_at = new Date(now-120000).toISOString();
-const modelIds=['a'.repeat(64),'b'.repeat(64),'c'.repeat(64)];
-const predictor={configured:true,automatic_training:true,automatic_promotion:true,placement:false,busy:false,new_requests:24,baseline:{id:'causal-history-v1',name:'Measured history baseline'},milestones:[],
-  training_recipes:TRAINING_RECIPES,default_recipe:DEFAULT_RECIPE,
-  models:['admission','updated','remaining'].map((kind,i)=>({kind,active_model_id:null,candidate_model_id:modelIds[i],status:i===2?'awaiting_future':'holdout_failed',
-    holdout:{mae_s:[64,48,26][i]},future:{mae_s:[58,44,25][i],baseline_mae_s:[51,42,31][i],requests:24,sessions:4,known_sessions:3,unknown_identity_requests:2},
-    selected:{family:i===2?['base','progress']:['base','history'],rounds:i===1?16:128,transform:'log'}})),
-  actions:[{time:now-120000,actor:'genie',action:'train',status:'completed',reason:'Synthetic example: candidate evaluated; no routing model activated.'}]};
-if(learningMilestone){
-  predictor.models[2].active_model_id=modelIds[2];
-  predictor.milestones.push({id:'demo-learning-win',time:now-60000,kind:'remaining',model_id:modelIds[2],baseline_id:'causal-history-v1',comparator_id:'causal-history-v1',commentary:{actor:'genie',text:'Synthetic celebration: the challenger brought receipts. <No HTML is interpreted.>'},evidence:{baseline:{mae_s:20,baseline_mae_s:30,requests:42,sessions:8},champion:null,workers:['sparkA','sparkB','mac-ultra']}});
-}
 const recovery={configured:true,automatic:false,workers:workers.slice(0,2).map(w=>({worker_id:w.id,state:'healthy',eligible:false,reason:'no_current_fatal_evidence'})),operations:[]};
-const dataset={enabled:true,written:4200,bytes:18*1048576,pending:0,dropped:0,finished:312,missing_usage:2,truncated:3,failed_or_cancelled:1,last_write:now,
-  embedding_collection:{enabled:true,ready:true,completed:308,observed:312,pending:0,failed:0,dropped:0,missing:4,last_duration_ms:24,
-    model:'all-MiniLM-L6-v2',revision:'demo-only',dimensions:384}};
+const dataset={enabled:true,written:4200,bytes:18*1048576,pending:0,dropped:0,finished:312,missing_usage:2,truncated:3,failed_or_cancelled:1,last_write:now};
 const genie={enabled:true,busy:false,source:'primary',memory,
-  status(){return {configured:true,enabled:this.enabled,busy:this.busy,question:this.questionReceipt??null,source:this.source,fallback_available:true,last_served_by:'pool_assigned',provider_actions:[{id:'synthetic-assignment',time:now-60000,served_by:'pool_assigned',served_on:'mac-ultra'}],mode:'bounded-recovery',predictor_supervision:true,last_check:now-60000,memory:memory?{...memory.status(),...memory.retrieve(snapshot)}:null,
+  status(){return {configured:true,enabled:this.enabled,busy:this.busy,question:this.questionReceipt??null,source:this.source,fallback_available:true,last_served_by:'pool_assigned',provider_actions:[{id:'synthetic-assignment',time:now-60000,served_by:'pool_assigned',served_on:'mac-ultra'}],mode:'bounded-recovery',last_check:now-60000,memory:memory?{...memory.status(),...memory.retrieve(snapshot)}:null,
     hardening_notes:[{candidate_id:'f'.repeat(24),title:'Exercise incomplete-stream continuation',suggestion:'Change: Regression-test the existing incomplete-stream boundary.\nTest: End a scripted upstream stream without a terminal event.\nExpected (not yet verified): The client sees incomplete-stream evidence; no replay occurs.',failure_class:'request_failure',scope:'sparkB',reason:'incomplete_sse',observed_at:new Date(now-90000).toISOString(),continuity:'unknown',at:now-60000,revision:1,durable:true}],
     reports:[{id:'synthetic-review',time:now-60000,evidence_at:now-62000,source:'demo',text:'Synthetic demonstration, not a live assessment. One request is waiting at its session home while the Mac is idle. That preserves cache locality; it does not prove the fastest completion time. Compare warm-home wait against measured cache acquisition elsewhere before changing placement. The candidate models are still shadow-only.',actions_taken:[]}],
     ticker:{state:this.enabled?'ready':'off',evidence_at:now-62000,entries:[
       {severity:'warning',text:'Demo: one request is waiting at a busy session home.',recommendation:'Compare its warm-cache wait with idle-server acquisition cost.'},
       {severity:'good',text:'Demo: three healthy servers; the Mac has a free request slot.'},
-      {severity:'info',text:'Demo: XGB candidates are scoring in shadow. No model is promoted.'}]}};},
+      {severity:'info',text:'Demo: operational request and cache evidence is synthetic.'}]}};},
   setEnabled(value){this.enabled=value===true;return this.status();},
   setSource(value){if(!['primary','pool'].includes(value))throw new Error('Unknown demo source');this.source=value;return this.status();},
   async ask(){return this.status();},
@@ -123,7 +109,7 @@ const snapshot = { version:1,demo:true,time:now,started:now-900000,read_only:fal
   rate_peaks:{schema:1,prefill:{tps:1250.5,time:now-86400000},decode:{tps:40.5,time:now-86400000},history_status:'ready',persistence_error:null,malformed_lines:0},
   cache_continuity:{schema:1,status:'ready',checked_at:now,interval_ms:15000,partial_history:false,workers:{sparkA:{candidate_pairs:12,assessed_pairs:10,high_suspicion_low_reuse:1,unconfirmed_low_reuse:1,last_low_reuse_at:now-120000,abstention_reasons:{worker_profile_changed:2}},sparkB:{candidate_pairs:8,assessed_pairs:8,high_suspicion_low_reuse:0,unconfirmed_low_reuse:0,abstention_reasons:{}},'mac-ultra':{candidate_pairs:0,assessed_pairs:0,high_suspicion_low_reuse:0,unconfirmed_low_reuse:0,abstention_reasons:{}}}},
   continuity_door:{service:'dwarf-star-gate-continuity-door',version:1,holding:false,held:0,active:2,core_ready:true,body_spooling:false,replay:false,last_transition:{action:'release',at:new Date(now-300000).toISOString()}},continuity_door_error:null,
-  gateway:{model:'deepseek-v4-flash',context_length:262144,queue_timeout_ms:72000000000,total:3,healthy:3,available:3,active:2,queued:1,draining:false,workers,dataset,predictor,recovery,client_watch_version:1,client_watch:clientWatch,
+  gateway:{model:'deepseek-v4-flash',context_length:262144,queue_timeout_ms:72000000000,total:3,healthy:3,available:3,active:2,queued:1,draining:false,workers,dataset,recovery,client_watch_version:1,client_watch:clientWatch,
     continuity:{patient_wait:true,queued_relocation:true,automatic_relocation:true,automatic_relocation_scope:'first_unaffined_or_affinity_wait_expired',automatic_affinity_rebalance_min_wait_ms:300000,relocation:{completed:2,rejected:0,offers:1,diagnostics:relocationDiagnostics}}},devices,events };
 const priority=new PriorityLens();
 priority.setManual({chat:'a'.repeat(64),priority:'High',expected_revision:0});
@@ -155,13 +141,7 @@ return createDashboard(()=>({...snapshot,time:Date.now(),gateway_at:Date.now(),
   gateway:{...snapshot.gateway,calibration:calibrationPreflight(workers.map(w=>({id:w.id,healthy:w.is_healthy,drained:w.drained,active:w.load,queue:Array(w.queued).fill(null)}))),total:workers.length,healthy:workers.filter(w=>w.is_healthy).length,available:workers.filter(w=>w.is_healthy&&!w.drained).length,active:workers.filter(w=>w.load).length,queued:workers.reduce((a,w)=>a+w.queued,0)}}),undefined,{
   read:async()=>registry(),
   act:async(action,input)=>{
-    if(action==='predictor'&&input.action==='acknowledge_milestone'&&Object.keys(input).sort().join(',')==='action,milestone_id'){
-      if(!predictor.milestones.some(m=>m.id===input.milestone_id))throw new Error('No such synthetic milestone');
-      predictor.milestones=predictor.milestones.filter(m=>m.id!==input.milestone_id);
-    }else if(action==='predictor'&&input.action==='reset_baseline'&&Object.keys(input).join(',')==='action'){
-      for(const m of predictor.models)m.active_model_id=null;
-      predictor.reset_at=Date.now();
-    }else if(action==='queue-timeout'){
+    if(action==='queue-timeout'){
       if(Object.keys(input).sort().join(',')!=='expected_queue_timeout_ms,queue_timeout_ms'||!Number.isSafeInteger(input.queue_timeout_ms)||input.queue_timeout_ms<1)throw new Error('Invalid queue allowance');
       if(input.expected_queue_timeout_ms!==snapshot.gateway.queue_timeout_ms)throw new Error('Queue allowance changed');
       snapshot.gateway.queue_timeout_ms=input.queue_timeout_ms;
@@ -202,16 +182,11 @@ return createDashboard(()=>({...snapshot,time:Date.now(),gateway_at:Date.now(),
         w.drained=action==='drain';
         if(w.drained)setTimeout(()=>{w.load=0;w.queued=0;w.last_requested_thinking=w.requested_thinking;w.requested_thinking=null;w.last_request_finished_at=new Date().toISOString();},500);
       }
-    } else throw new Error('This screenshot demo does not run recovery or training. No real services are connected.');
+    } else throw new Error('This screenshot demo does not run recovery. No real services are connected.');
     return registry();
   },
 },genie,()=>({enabled:true,status:'ready',demo:true,window_limit:500,not_dispatched:1,throughput:throughput.snapshot(),fleet_speed:{...fleetSpeed.snapshot(Date.now(),workers.map(worker=>worker.id)),status:'ready',partial_history:false},
-  model_series:['admission','upload','embedded','remaining'].map((stage,j)=>({id:modelIds[j===0?0:j===3?2:1],stage,
-    rows:Array.from({length:24},(_,i)=>({node:workers[i%workers.length]?.id,at:now-i*30000,experimental:true,
-      service_ms:8000+i*2600+(i%3)*3200,predicted_service_ms:i%7?10000+i*2450:null,reference_service_ms:i%7?12000+i*2500:null,service_state:'complete'}))})),
-  rows:Array.from({length:20},(_,i)=>({node:workers[i%workers.length]?.id,at:now-i*60000,
-    queue_ms:i?10000+i*3000:0,predicted_queue_ms:i%5?8000+i*2800:null,
-    service_ms:i<18?40000+i*2100:null,predicted_service_ms:i%4?35000+i*2500:null,service_state:i<18?'complete':i===18?'pending':'excluded'}))}),priorityControls);
+  handovers:{rows:[]}}),priorityControls);
 }
 if(isMain(import.meta.url)) {
 const server=createDemoServer();

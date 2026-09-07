@@ -52,11 +52,11 @@ We echo that acknowledgement and encourage readers to visit
 The model families and weights are the work of their respective model authors;
 an inference engine and a gateway must not claim to have created them.
 
-The optional CPU encoder uses [Sentence Transformers' all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2),
+The retired CPU encoder used [Sentence Transformers' all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2),
 with inference by [ONNX Runtime](https://onnxruntime.ai/) and tokenization by
-[Hugging Face Tokenizers](https://github.com/huggingface/tokenizers). The offline
-predictor uses [XGBoost](https://xgboost.readthedocs.io/). These projects and their
-contributors deserve credit for that machinery; DSG supplies the bounded
+[Hugging Face Tokenizers](https://github.com/huggingface/tokenizers). The retired offline
+predictor used [XGBoost](https://xgboost.readthedocs.io/). These projects and their
+contributors deserve credit for that machinery; DSG supplied the bounded
 extraction, evidence collection and evaluation integration. Their dependencies
 and model artifacts retain their own upstream licenses and notices.
 
@@ -68,7 +68,7 @@ Dwarf Star Gate is created and maintained by
 
 Dwarf Star Gate contributes session-affinity routing, per-worker admission and
 drain controls, a dashboard with opt-in local routing controls, operational
-telemetry filtering, an optional observer/offline predictor, and tests
+telemetry filtering, an optional observer, and tests
 for that gateway layer. Credit for the original inference engine remains with
 Antirez and the upstream contributors. Errors introduced in this gateway are our
 responsibility, not theirs; gateway-specific bugs belong in this repository.

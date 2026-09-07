@@ -202,9 +202,9 @@ or idempotency history. Archival/rotation automation is not implemented.
 ## Relationship to Gate Genie and other agents
 
 The **executor and worker state are shared; authority is not universal**. Genie
-continues using its existing guarded recovery/predictor offers. External agents
+continues using its existing guarded recovery and queued-handover offers. External agents
 receive the small grant above; this change does not grant them service restarts,
-predictor changes or control over other agents. Genie does not automatically
+model-setting changes or control over other agents. Genie does not automatically
 receive drain/resume powers. A future MCP wrapper can call this same client/API;
 it should not grow a parallel execution path. Remote agents currently need an
 operator-approved command environment on the DSG host; there is no LAN admin API.

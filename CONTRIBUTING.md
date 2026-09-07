@@ -7,8 +7,7 @@ Engine changes should follow [its own contribution guide](https://github.com/ant
 ## Start with a small, reproducible change
 
 1. Explain the problem and expected behavior in an issue or pull request.
-2. Use Node 22.22.2 or newer. The gateway/dashboard need no dependency installation;
-   the optional predictor uses its separate locked Python environment.
+2. Use Node 22.22.2 or newer. The gateway/dashboard need no dependency installation.
 3. Install the local hook with `npm run hooks:install`. Run `npm run check`,
    `npm test`, `npm run privacy-check`, and `npm run privacy:test`.
 4. Add a regression test for changed behavior; use fixture workers, not live GPUs.

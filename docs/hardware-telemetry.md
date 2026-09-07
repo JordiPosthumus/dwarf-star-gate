@@ -10,29 +10,10 @@ The feature is off until it is explicitly configured in the ignored private
 setting power. Activating or changing it needs only a dashboard reload; the
 gateway core and DS4 servers do not need a restart.
 
-## Predictor integration status
+## Operational measurements
 
-Dynamic RAM usage, GPU activity, power and clock samples feed dashboard telemetry.
-The dashboard also writes a private atomic `runtime/dashboard/hardware-current.json`
-snapshot. When hardware telemetry is enabled, the gateway reads this bounded file
-(at most once per second) and records fresh, same-worker measurements with admission
-candidates, upload metadata, embedding completion and progress events. Each stage
-uses its own available snapshot; later observations never amend earlier forecasts.
-File failures produce unknowns, never inference
-failures. Activating the core ingestion requires a gateway restart in addition to
-the dashboard reload. Static hardware family and RAM capacity in the worker
-inventory remain separate existing predictor inputs.
-Missing measurements must remain unknown. Post-dispatch readings must never enter
-an admission forecast retrospectively. Enrollment and actual sample coverage must
-be verified on each deployment; demo charts are synthetic, not proof of collection.
-
-An explicit `dsg-latency-v4` challenger contract now accepts timestamped hardware
-snapshots on candidate and progress evidence. It checks worker identity, collection
-availability and 60-second freshness, and retains power/memory/activity scopes.
-The trainer tests hardware and no-hardware alternatives. V3 remains the default:
-deployment, live coverage validation and future-validated V4 training remain
-pending. An explicit V4 preparation uses `--schema dsg-latency-v4`; recording
-hardware evidence does not mean a production model has learned from it.
+Hardware collection feeds the dashboard, measured energy and performance
+evidence. The former model-feature snapshot bridge has been removed.
 
 ## DGX Spark / NVIDIA Linux
 

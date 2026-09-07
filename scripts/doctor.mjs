@@ -61,12 +61,5 @@ try {
     if(source.adapter==='nvidia-linux'&&!node?.ssh)warnings.push('An NVIDIA Linux hardware adapter has no enrolled SSH transport; its metrics will remain unavailable.');
     if(source.adapter==='jsonl-file')try{const stat=fs.lstatSync(source.path);if(!stat.isFile()||stat.isSymbolicLink())throw new Error();fs.accessSync(source.path,fs.constants.R_OK);}catch{warnings.push('A configured hardware telemetry file is missing, unreadable or not a regular file; its metrics will remain unavailable.');}
   }
-  if(c.embeddings?.enabled===true){fs.accessSync(c.embeddings.python,fs.constants.X_OK);fs.accessSync(path.join(c.embeddings.model_dir,'manifest.json'),fs.constants.R_OK);}
-  if(c.predictor?.enabled===true){
-    if(c.dataset_enabled!==true)throw new Error('Predictor requires dataset_enabled');
-    fs.accessSync(c.predictor.python,fs.constants.X_OK);
-    const p=JSON.parse(fs.readFileSync(c.predictor.profiles));if(p.schema!==1||!p.workers)throw new Error('Predictor requires a versioned private worker inventory');
-    warnings.push('Predictor configuration is present; doctor does not certify fitted models or routing evidence. Inspect Analytics → Predictor lifecycle.');
-  }
   console.log(JSON.stringify({ok:true,read_only:true,config:filename,workers:nodes.length,worker_registry:registry,gateway_port:c.port,gateway_core_port:core,continuity_door:continuityEnabled(c),dashboard_port:ui,context_length:c.context_length,warnings},null,2));
 }catch(error){console.error(error.message);process.exitCode=1;}

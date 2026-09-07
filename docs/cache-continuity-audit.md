@@ -10,7 +10,7 @@ Run it from a deployment checkout:
 ```sh
 npm run cache-continuity:audit
 # Optional bounded horizon:
-node ds4-gateway/cache-continuity-audit.mjs --data /absolute/private/training --max-age-hours 24
+node ds4-gateway/cache-continuity-audit.mjs --data /absolute/private/requests --max-age-hours 24
 ```
 
 The report is private operational metadata. It contains only aggregate counts,

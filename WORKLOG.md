@@ -8,6 +8,15 @@ For implementation detail, see the [changelog](CHANGELOG.md). For exact history,
 see [Git commits](https://github.com/JordiPosthumus/dwarf-star-gate/commits/main/).
 For unfinished work, see the [roadmap](docs/roadmap.md).
 
+## Simplify DSG by retiring model experiments — 2026-09-07
+
+XGB and embeddings became a distraction from reliable fleet operation. Their
+training, inference, feature collection, promotion controls and UI have been
+removed. Operational request history is factored independently so cache,
+throughput, energy and continuity evidence remain useful. The operator also
+requested removal of the associated private datasets and experiment copies.
+Older entries below describe historical work, not current capabilities.
+
 ## Queued stock-client job identification — 2026-09-07
 
 DSG now inspects ordinary queued requests before backend dispatch, allowing a

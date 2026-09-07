@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {FleetThroughput} from './throughput.mjs';
-import {AnalyticsReader} from './analytics.mjs';
+import {RequestHistoryReader} from './request-history.mjs';
 const HOUR=3600000,now=48*HOUR;
 const finish=(id,at,usage={completion_tokens:100,prompt_tokens:1000,cached_tokens:800},extra={})=>({schema:1,run_id:'run-a',request_id:id,event_id:id,node:'worker-a',time:new Date(at).toISOString(),kind:'finish',outcome:'complete',usage,...extra});
 test('rolling output, peak hour, token-weighted cache reuse and request counts have exact boundaries',()=>{
@@ -38,8 +38,8 @@ test('overflow is unknown and exports never contain worker/session/prompt/embedd
 test('reader rebuilds counters after file replacement and survives a dashboard-reader restart without duplication',t=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-throughput-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
   const file=path.join(dir,'routing-2000-01-01.jsonl'),write=r=>fs.writeFileSync(file,JSON.stringify(r)+'\n');write(finish('a',now));
-  const reader=new AnalyticsReader(dir,{enabled:true});reader.poll(now);reader.poll(now);assert.equal(reader.snapshot(now).throughput.output_tokens_1h,100);
-  const again=new AnalyticsReader(dir,{enabled:true});again.poll(now);assert.equal(again.snapshot(now).throughput.output_tokens_1h,100);
+  const reader=new RequestHistoryReader(dir,{enabled:true});reader.poll(now);reader.poll(now);assert.equal(reader.snapshot(now).throughput.output_tokens_1h,100);
+  const again=new RequestHistoryReader(dir,{enabled:true});again.poll(now);assert.equal(again.snapshot(now).throughput.output_tokens_1h,100);
   fs.renameSync(file,path.join(dir,'old'));write(finish('b',now,{completion_tokens:200,prompt_tokens:300,cached_tokens:200}));reader.poll(now);assert.equal(reader.status,'rescanning');reader.poll(now);assert.equal(reader.snapshot(now).throughput.output_tokens_1h,200);
-  assert.equal(new AnalyticsReader(dir).snapshot(now).status,'disabled');
+  assert.equal(new RequestHistoryReader(dir).snapshot(now).status,'disabled');
 });

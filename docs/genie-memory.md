@@ -2,7 +2,7 @@
 
 Status: **bounded operational memory and developer hardening suggestions implemented,
 opt-in and off by default**. A small, private, DSG-owned operational
-notebook, not a replacement for the collector, predictor or permission checks.
+notebook, not a replacement for the collector or permission checks.
 It survives dashboard restarts and changing Genie's model or device. It needs
 neither Pi/Hermes nor a permanently warm DS4 session.
 
@@ -97,7 +97,7 @@ Records older than seven days are labelled review-due, never silently deleted.
 Reports show the IDs/revisions supplied to the model. They are context, not action
 offers; executor permissions and current evidence still govern every action.
 
-Notebook contents never enter diagnostic exports or XGB training. Do not save
+Notebook contents never enter diagnostic exports. Do not save
 secrets, inference content or raw logs in operator notes. Dedicated Genie reviews
 may receive bounded notebook history, including operator notes; choose that
 endpoint accordingly. Pool and pool-fallback reviews deliberately omit private
@@ -184,8 +184,7 @@ forecasting or the fixed fallback.
 
 Do not store inference prompts, tool results, reasoning traces, keys, raw logs
 or full operator-chat transcripts. The operator can explicitly save a concise
-operational note. Predictor embeddings stay in their separate private dataset;
-they are sensitive and not needed to search a few hundred operational notes.
+operational note. Embeddings and model training have been retired.
 
 ## Small storage contract
 
@@ -244,7 +243,7 @@ content versus separately retained source evidence; erasing one is not both.
 
 Add a compact **Memory** section: enable switch, state/count, last successful
 write, open/review-due incidents and storage health. Memory retrieval/writes are
-independent of Genie inference and predictor controls. Off retains records and
+independent of Genie inference. Off retains records and
 changes no permissions. Show notes used by each report and actual save receipts.
 Allow view/search, explicit “Remember this operational note,” correction, archive
 and scoped forget. Show age, evidence, worker/epoch and hypothesis/stale labels.
@@ -274,9 +273,8 @@ zero, hostile stored instructions, no authority escalation, privacy-safe exports
 UI polling preserving open notes, and unaffected gateway/baseline with memory off
 or broken. Memory is a failure-tolerant aid, not a dependency of safe operation.
 
-## Next learning slices
+## Further operational evidence
 
-Extending memory need not delay early client metadata, reviewed bounded XGB
-recipes and cache-preserving calibration preflight. Memory explains experiments;
-it never supplies labels or grades a model. Calibration may stay skipped until a
-non-displacing path is proved; organic traffic needs no synthetic generation.
+Memory explains observations; it does not invent measurements or grant actions.
+Calibration may stay skipped until a cache-preserving path is proved; organic
+traffic needs no synthetic generation.

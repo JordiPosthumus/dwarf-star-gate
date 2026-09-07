@@ -16,16 +16,15 @@ import {GenieMemory} from './genie-memory.mjs';
 import {GenieProviderLedger} from './genie-provider-ledger.mjs';
 import { genieTunnel } from './genie-tunnel.mjs';
 import { safeQuarantine } from './generation-health.mjs';
-import { AnalyticsReader } from './analytics.mjs';
+import { RequestHistoryReader } from './request-history.mjs';
 import {FleetSpeedReader} from './fleet-speed.mjs';
 import {PerformanceReader,performanceProfile,performanceActive} from './performance-lights.mjs';
 import {RatePeaks} from './rate-peaks.mjs';
 import {HardwareTelemetry} from './hardware-telemetry.mjs';
-import {HardwareSnapshot} from './hardware-snapshot.mjs';
 import { estimateCacheCost } from './cache-cost.mjs';
 import {CacheInventoryReader,cacheInventoryDirectories,loadCacheInventoryKey} from './cache-inventory.mjs';
 import { loadConfig, dashboardPort, isMain, continuityEnabled } from './config.mjs';
-import {continuityForDisplay,continuityDoorForDisplay,fallbackTieBreakForDisplay} from './continuity.mjs';
+import {continuityForDisplay,continuityDoorForDisplay} from './continuity.mjs';
 import {dsgReport,invalidHttp} from './report.mjs';
 import {EngineAttribution} from './attribution.mjs';
 import {clientWatchForDisplay} from './client-watch.mjs';
@@ -57,7 +56,7 @@ export function genieRuntimeConfig(config){
   if(config.genie?.url)return {...config.genie,enabled:config.genie.enabled!==false,fallback:config.genie.fallback??pool};
   return {...pool,enabled:config.genie?.enabled!==false,fallback:pool,default_source:'pool'};
 }
-export function createDashboard(getSnapshot, assetsDirectory = path.join(here, 'ui'), management = null, genie = null, analytics = null, priority = null) {
+export function createDashboard(getSnapshot, assetsDirectory = path.join(here, 'ui'), management = null, genie = null, requestHistory = null, priority = null) {
   const csrf = randomBytes(32).toString('base64url');
   // Freeze one complete release in memory: edits on disk cannot expose half an
   // update to a live browser. Only the dashboard needs a reload to promote it.
@@ -124,7 +123,7 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
       void management.read().then(registry => reply(200,{enabled:true,csrf_token:csrf,...registry})).catch(() => reply(503,{error:'Worker controls unavailable'}));
       return;
     }
-    const actions = { '/api/workers/add':'add', '/api/workers/remove':'remove', '/api/workers/drain':'drain', '/api/workers/resume':'resume','/api/workers/lock':'lock','/api/workers/unlock':'unlock','/api/workers/fallbacks':'fallbacks', '/api/workers/context':'context','/api/workers/queue-timeout':'queue-timeout','/api/workers/protection':'protection','/api/workers/relocate':'relocate', '/api/workers/recover':'recover', '/api/workers/recovery-policy':'recovery-policy','/api/workers/recovery-handback-policy':'recovery-handback-policy','/api/workers/recovery-recheck':'recovery-recheck','/api/workers/predictor':'predictor' };
+    const actions = { '/api/workers/add':'add', '/api/workers/remove':'remove', '/api/workers/drain':'drain', '/api/workers/resume':'resume','/api/workers/lock':'lock','/api/workers/unlock':'unlock','/api/workers/fallbacks':'fallbacks', '/api/workers/context':'context','/api/workers/queue-timeout':'queue-timeout','/api/workers/protection':'protection','/api/workers/relocate':'relocate', '/api/workers/recover':'recover', '/api/workers/recovery-policy':'recovery-policy','/api/workers/recovery-handback-policy':'recovery-handback-policy','/api/workers/recovery-recheck':'recovery-recheck' };
     if (management && req.method === 'POST' && Object.hasOwn(actions,req.url)) {
       const token = Buffer.from(req.headers['x-dsg-csrf'] || ''), expected = Buffer.from(csrf);
       if (req.headers.origin !== `http://${req.headers.host}` || token.length !== expected.length || !timingSafeEqual(token,expected)) return reply(403,{error:'Same-origin worker-control session required; refresh and retry'});
@@ -154,7 +153,7 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
         return reply(200,estimateCacheCost(device.cache_cost,{tier:p.get('tier'),cached_tokens:Number(p.get('cached_tokens')),prompt_tokens:Number(p.get('prompt_tokens'))}));
       }catch{return reply(400,{error:'Specify worker, tier, integer cached_tokens and prompt_tokens'});}
     }
-    if (req.url === '/api/analytics') return reply(200,analytics?analytics():{enabled:false,status:'disabled',rows:[]});
+    if (req.url === '/api/request-history') return reply(200,requestHistory?requestHistory():{enabled:false,status:'disabled',rows:[]});
     if (req.url === '/api/status' || req.url === '/api/diagnostics') {
       if (req.url === '/api/diagnostics') headers['content-disposition'] = 'attachment; filename="spark-gateway-diagnostics.json"';
       res.writeHead(200, { ...headers, 'content-type': 'application/json' }); return res.end(JSON.stringify(getSnapshot()));
@@ -178,7 +177,7 @@ export async function runDashboard(configPath, port) {
     if (node.telemetry_service !== null && !/^[\w@.-]+\.service$/.test(node.telemetry_service || 'ds4-vision-q2.service')) throw new Error('Unsupported journal unit');
   }
   const runtime = path.join(path.dirname(config.state_file), 'dashboard');
-  const analytics=new AnalyticsReader(path.join(path.dirname(config.state_file),'training'),{enabled:config.dataset_enabled===true});
+  const requestHistory=new RequestHistoryReader(path.join(path.dirname(config.state_file),'requests'),{enabled:config.dataset_enabled===true});
   fs.mkdirSync(runtime, { recursive: true, mode: 0o700 });
   const fleetSpeed=new FleetSpeedReader(runtime);
   const performanceHistory=new PerformanceReader(runtime,config.performance_lights??{});
@@ -193,8 +192,7 @@ export async function runDashboard(configPath, port) {
     try { fs.appendFileSync(path.join(runtime, `metrics-${new Date().toISOString().slice(0, 10)}.jsonl`), JSON.stringify(entry) + '\n', { mode: 0o600 }); }
     catch { writeError = 'Telemetry file could not be written; live monitoring continues'; }
   };
-  const hardwareSnapshot=new HardwareSnapshot(path.join(runtime,'hardware-current.json'));
-  const hardware=new HardwareTelemetry(config.hardware_telemetry,row=>{appendMetric(row);hardwareSnapshot.write(row);});
+  const hardware=new HardwareTelemetry(config.hardware_telemetry,row=>appendMetric(row));
   const attribution=new EngineAttribution(appendMetric);
   const save = entry => {
     // Never stamp today's configuration onto journal backfill. Profiles are
@@ -306,7 +304,7 @@ export async function runDashboard(configPath, port) {
   }
   async function poll() {
     if (polling) return;
-    polling = true; readEvents();analytics.poll();fleetSpeed.poll();performanceHistory.poll();ratePeaks.poll();
+    polling = true; readEvents();requestHistory.poll();fleetSpeed.poll();performanceHistory.poll();ratePeaks.poll();
     if(continuityEnabled(config))try{
       const response=await fetch(`http://127.0.0.1:${config.port}/continuity/status`,{headers:{authorization:`Bearer ${config.api_key}`},signal:AbortSignal.timeout(3000)});
       if(!response.ok)throw new Error();continuityDoor=continuityDoorForDisplay(await response.json());continuityDoorError=continuityDoor?null:'Unsupported continuity door';
@@ -316,13 +314,13 @@ export async function runDashboard(configPath, port) {
       if (!r.ok) throw new Error('Status unavailable');
       const s = await r.json();
       if (s.version !== 1 || !Array.isArray(s.workers)) throw new Error('Unsupported gateway');
-      gateway = { genie_flexible_assignment:s.genie_flexible_assignment===true,genie_admission_version:s.genie_admission_version===1?1:null,model: s.model, context_length: s.context_length,queue_timeout_ms:s.queue_timeout_ms,request_timeout_ms:s.request_timeout_ms, total: s.total, healthy: s.healthy, available: s.available, active: s.active, queued: s.queued, draining: s.draining, dataset:s.dataset,recovery:s.recovery,predictor:s.predictor,calibration:s.calibration,protections:s.protections,agent_api_version:s.agent_api_version,maintenance_lock_version:s.maintenance_lock_version,client_watch_version:s.client_watch_version,client_watch:clientWatchForDisplay(s.client_watch),fallback_tiebreak_shadow:fallbackTieBreakForDisplay(s.fallback_tiebreak_shadow),
+      gateway = { genie_flexible_assignment:s.genie_flexible_assignment===true,genie_admission_version:s.genie_admission_version===1?1:null,model: s.model, context_length: s.context_length,queue_timeout_ms:s.queue_timeout_ms,request_timeout_ms:s.request_timeout_ms, total: s.total, healthy: s.healthy, available: s.available, active: s.active, queued: s.queued, draining: s.draining, dataset:s.dataset,recovery:s.recovery,calibration:s.calibration,protections:s.protections,agent_api_version:s.agent_api_version,maintenance_lock_version:s.maintenance_lock_version,client_watch_version:s.client_watch_version,client_watch:clientWatchForDisplay(s.client_watch),
         continuity:continuityForDisplay(s.continuity),
         workers: s.workers.map(w => ({ id: w.id, is_healthy: w.is_healthy, drained: w.drained, quarantine:safeQuarantine(w.quarantine), load: w.load, queued: w.queued, active_seconds: w.active_seconds, completed: w.completed, failed: w.failed, assigned_sessions: w.assigned_sessions,
           gateway_drained:w.gateway_drained,recovery_waiting:Number.isSafeInteger(w.recovery_waiting)?w.recovery_waiting:0,operator_paused:w.operator_paused,holds:Array.isArray(w.holds)?w.holds.slice(0,1024).map(h=>({id:h.id,owner_id:h.owner_id,created_at:h.created_at})):[],maintenance_locks:Array.isArray(w.maintenance_locks)?w.maintenance_locks.slice(0,1024).flatMap(l=>typeof l.id==='string'&&typeof l.name==='string'&&Number.isFinite(l.created_at)?[{id:l.id,name:l.name.slice(0,64),created_at:l.created_at,review_at:Number.isFinite(l.review_at)?l.review_at:null,control_channel:typeof l.control_channel==='string'?l.control_channel:null}]:[]):[],
           last_operator_action:w.last_operator_action&&['pause','resume'].includes(w.last_operator_action.action)&&typeof w.last_operator_action.time==='string'&&Number.isFinite(Date.parse(w.last_operator_action.time))&&typeof w.last_operator_action.control_channel==='string'&&/^[a-z][a-z0-9_]{0,31}$/.test(w.last_operator_action.control_channel)?{action:w.last_operator_action.action,time:w.last_operator_action.time,control_channel:w.last_operator_action.control_channel}:null,
           oldest_queue_seconds:w.oldest_queue_seconds??null,oldest_queue_remaining_seconds:w.oldest_queue_remaining_seconds??null,
-          context_length:Number.isSafeInteger(w.context_length)?w.context_length:null, requested_thinking: safeRequestedThinking(w.requested_thinking), last_requested_thinking: safeRequestedThinking(w.last_requested_thinking),predictions:w.predictions,
+          context_length:Number.isSafeInteger(w.context_length)?w.context_length:null, requested_thinking: safeRequestedThinking(w.requested_thinking), last_requested_thinking: safeRequestedThinking(w.last_requested_thinking),
           health_probe_deferred:Number.isSafeInteger(w.health_probe_deferred)?w.health_probe_deferred:0,
           health_state_source:['model_probe','recent_upstream_progress'].includes(w.health_state_source)?w.health_state_source:null,
           management_path:safeManagementPath(w.management_path),
@@ -338,7 +336,7 @@ export async function runDashboard(configPath, port) {
   const started = Date.now();
   const managementEnabled = config.ui_worker_management === true && !!config.control_socket;
   const snapshot = () => ({ service:'dwarf-star-gate-dashboard', version: 1, time: Date.now(), started, read_only: !managementEnabled, worker_management:managementEnabled, gateway, gateway_at: gatewayAt, gateway_error: gatewayError, telemetry_error: writeError,
-    continuity_door:continuityDoor,continuity_door_error:continuityDoorError,rate_peaks:ratePeaks.snapshot(),cache_continuity:analytics.cacheSnapshot(),
+    continuity_door:continuityDoor,continuity_door_error:continuityDoorError,rate_peaks:ratePeaks.snapshot(),cache_continuity:requestHistory.cacheSnapshot(),
     performance_lights:performanceHistory.snapshot(Date.now(),[...devices.values()].map(d=>({...d.snapshot(),connected:d.connected&&!gatewayError,active:performanceActive(d,gateway?.workers?.find(w=>w.id===d.id))}))),
     devices: [...devices.values()].map(d => ({...d.snapshot(),activity:activity.get(d.id),hardware:hardware.snapshot(d.id)})), events, attribution:attribution.snapshot(), notes: 'Rates are DS4 engine measurements. Cache counts cover observed prompt starts, not lifetime requests. Raw prompts and responses are excluded.' });
   const memory=new GenieMemory(path.join(path.dirname(config.state_file),'genie','memory'));
@@ -348,13 +346,13 @@ export async function runDashboard(configPath, port) {
   const priorityRead=()=>workerControl(config.control_socket,'/priority-status',undefined,{channel:'dashboard'});
   const priorityAct=(action,input)=>workerControl(config.control_socket,`/priority-${action}`,input,{channel:'dashboard'});
   const priorityCorrections=new PriorityCorrections({read:managementEnabled?priorityRead:null,act:managementEnabled?priorityAct:null});
-  const genie=new Genie(runtimeGenie,snapshot,{memory,providerLedger,assignmentLedger,priorityCorrections,poolUrl:`http://127.0.0.1:${config.port}/v1`,recover:managementEnabled?input=>workerControl(config.control_socket,'/genie-recover-worker',input,{channel:'gate_genie'}):null,predict:managementEnabled?input=>workerControl(config.control_socket,'/genie-predictor',input,{channel:'gate_genie'}):null,rebalance:managementEnabled?input=>workerControl(config.control_socket,'/genie-relocate-queued',input,{channel:'gate_genie'}):null});
+  const genie=new Genie(runtimeGenie,snapshot,{memory,providerLedger,assignmentLedger,priorityCorrections,poolUrl:`http://127.0.0.1:${config.port}/v1`,recover:managementEnabled?input=>workerControl(config.control_socket,'/genie-recover-worker',input,{channel:'gate_genie'}):null,rebalance:managementEnabled?input=>workerControl(config.control_socket,'/genie-relocate-queued',input,{channel:'gate_genie'}):null});
   const priorityClassifier=new PriorityClassifier({genie,snapshot,poolUrl:`http://127.0.0.1:${config.port}/v1`,control:managementEnabled?(route,input)=>workerControl(config.control_socket,route,input,{channel:'gate_genie'}):null});
   const stopGenieTunnel=genieTunnel(config.genie);
   const server = createDashboard(snapshot, path.join(here,'ui'), managementEnabled ? {
     read:()=>workerControl(config.control_socket,'/workers',undefined,{channel:'dashboard'}),
-    act:(action,input)=>workerControl(config.control_socket,({add:'/add-worker',remove:'/remove-worker',drain:'/drain-workers',resume:'/resume-workers',lock:'/maintenance-lock',unlock:'/release-maintenance-lock',fallbacks:'/set-ssh-fallbacks',context:'/set-context-limit','queue-timeout':'/set-queue-timeout',protection:'/set-protection',relocate:'/relocate-queued',recover:'/recover-worker','recovery-policy':'/recovery-policy','recovery-handback-policy':'/recovery-handback-policy','recovery-recheck':'/recovery-recheck',predictor:'/predictor'})[action],input,{channel:'dashboard'}),
-  } : null,genie,()=>({...analytics.snapshot(),fleet_speed:fleetSpeed.snapshot(Date.now(),gateway?.workers?.map(worker=>worker.id)??[])}),config.control_socket?{
+    act:(action,input)=>workerControl(config.control_socket,({add:'/add-worker',remove:'/remove-worker',drain:'/drain-workers',resume:'/resume-workers',lock:'/maintenance-lock',unlock:'/release-maintenance-lock',fallbacks:'/set-ssh-fallbacks',context:'/set-context-limit','queue-timeout':'/set-queue-timeout',protection:'/set-protection',relocate:'/relocate-queued',recover:'/recover-worker','recovery-policy':'/recovery-policy','recovery-handback-policy':'/recovery-handback-policy','recovery-recheck':'/recovery-recheck'})[action],input,{channel:'dashboard'}),
+  } : null,genie,()=>({...requestHistory.snapshot(),fleet_speed:fleetSpeed.snapshot(Date.now(),gateway?.workers?.map(worker=>worker.id)??[])}),config.control_socket?{
     read:async()=>({...await priorityRead(),classifier:priorityClassifier.status(),corrections:priorityCorrections.status()}),
     act:managementEnabled?async(action,input)=>{
       let state;

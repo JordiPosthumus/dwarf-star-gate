@@ -1,10 +1,8 @@
 # Exactly what the routing collector stores — schema 1
 
 Implementation: [`dataset.mjs`](../ds4-gateway/dataset.mjs), with observation
-points in [`gateway.mjs`](../ds4-gateway/gateway.mjs). This numerical evidence feeds
-the optional [predictor lifecycle](predictor-lifecycle.md) and the preserved
-[v1 offline experiment](../predictor/README.md). Collection does not by itself
-enable prediction-based placement or by itself constitute a cache-hit auditor.
+points in [`gateway.mjs`](../ds4-gateway/gateway.mjs). This journal supports
+operational request, throughput and continuity evidence.
 The separate [cache-continuity audit](cache-continuity-audit.md) joins only
 allowlisted numerical/session metadata, reports aggregate evidence and preserves
 the distinction between measured reuse, high suspicion and an unconfirmed anomaly.
@@ -17,7 +15,7 @@ the distinction between measured reuse, high suspicion and an unconfirmed anomal
 | `run_id` | UUID for this gateway process run |
 | `event_id` | UUID for this event |
 | `time` | Gateway wall-clock ISO timestamp |
-| `kind` | `decision`, `dispatch`, `finish`, `queued_cancel`, `queue_timeout`, `unavailable_before_dispatch`, `queue_relocation`, `progress`, or optional `routing_shadow`, `routing_tiebreak_shadow`, `request_features`, `embedding`, `model_prediction`, `rejection`, `waiting` |
+| `kind` | `decision`, `dispatch`, `finish`, `queued_cancel`, `queue_timeout`, `unavailable_before_dispatch`, `queue_relocation`, or optional `routing_shadow`, `rejection`, `waiting` |
 | `request_id` | Gateway-assigned request UUID, shared across this request's events |
 | `node` | Selected registered server ID; null on a pre-admission rejection with no selected server |
 
@@ -32,13 +30,8 @@ the distinction between measured reuse, high suspicion and an unconfirmed anomal
 | `queued_cancel` | `total_ms` spent admitted before client cancellation |
 | `queue_timeout` | `total_ms` spent admitted before queue expiry |
 | `unavailable_before_dispatch` | `total_ms` spent admitted before rejecting dispatch to an unavailable assigned server |
-| `queue_relocation` | Allowlisted pre-dispatch receipt: source/destination IDs, operator, scheduler or Gate Genie actor, waiting time, `dispatch_state:not_dispatched`, `body_replayed:false`, `deadline_preserved:true`, and explicit unknown cache locality. Analytics joins it to the destination dispatch/finish by gateway run and request ID, but keeps the unobserved no-move result unknown and excludes the moved request from ordinary decision-node predictor labels |
+| `queue_relocation` | Allowlisted pre-dispatch receipt: source/destination IDs, operator, scheduler or Gate Genie actor, waiting time, `dispatch_state:not_dispatched`, `body_replayed:false`, `deadline_preserved:true`, and explicit unknown cache locality. Analytics joins it to the destination dispatch/finish by gateway run and request ID, but keeps the unobserved no-move result unknown |
 | `routing_shadow` | Repeatable, non-label assessment: `shadow_schema`, `reason`, `verdict`, `confidence`, `basis`, `source`, `alternative`, `session_busy`, `waiting_ms`, `saving_ms`, `candidates`, truncation flag |
-| `routing_tiebreak_shadow` | Repeatable bounded receipt for the validated remaining-time tie-break: mode, fixed policy, verdict, selected/alternative workers, minimum deterministic load, whether it applied, and allowlisted per-candidate cost status. It is never a completion label. |
-| `progress` | `progress_schema:1`, `prediction_point:while_active`, `active_elapsed_ms`, `phase`, `semantic_characters`, `semantic_age_ms`, thinking/answer/tool character counts, `requested_thinking` |
-| `request_features` | `feature_schema:2`, `prediction_point:after_upload`, extraction/status, `available_at`, request bytes, bounded role/message/text/image/tool counts, output controls and history-scan flag |
-| `embedding` | `embedding_schema:1`, status/extraction; ready rows add model/revision/dimensions, per-scope vectors/token metadata, queued/available times and encoding duration |
-| `model_prediction` | `predictor_schema:2`, `model_id`, `model_kind`, `prediction_stage`, `experimental`, `seconds`, `baseline_seconds`, `elapsed_s`, `available_at` |
 
 `client_metadata` contains schema/status/source plus nullable prompt-token
 estimate, model-call index, compaction count and requested effort. It is untrusted
@@ -140,28 +133,7 @@ restores and their load times, and observed finish events. This slice **does not
 join these to request IDs by guessing from timestamps**. They must not silently
 become request-level training features or accusations of a bad route.
 
-## Optional derived embeddings and progress
+## Retired model collection
 
-No raw prompts, answers, hidden reasoning text, image data, tool arguments,
-credentials, or model/cache files are stored by this collector. Optional
-[local embedding collection](embeddings.md) stores derived vectors for bounded
-latest-user and preceding-visible-conversation slices. The linked contract names
-the exact encoder, revision, dimensions, pooling, tokenizer bounds, exclusions,
-failure behavior and sensitive-data handling. No prompt-similarity cache identity
-or cache-hit proof is inferred from those vectors.
-
-Progress records start at dispatch and repeat every 30 seconds until termination.
-Semantic character/age measurements come from recognized SSE text/reasoning/tool
-deltas, not heartbeats; they do not contain source text or prove prefill phase.
-Unknown/unsupported progress remains unknown. New stream kinds must not create
-duplicate training examples or false analytics gaps.
-
-Use only features available by a predictor's declared prediction time. Embedding
-ready times occur after initial placement and sometimes after a short request
-finishes. No future-answer embedding or hindsight routing prediction is permitted.
-Historical numerical records cannot be backfilled because raw text was not kept.
-Compare metadata-only and embedding-assisted predictors before adopting either.
-
-For storage bounds, permissions and UI counters, see [observer setup](observer.md).
-For the next embedding collection slice and its feature-availability boundaries,
-see the [delivery decisions in the roadmap](roadmap.md#immediate-next-delivery-decisions--2026-09-02).
+Model features, embeddings, model predictions and periodic training progress
+records are no longer collected. Operational events use `runtime/requests/`.

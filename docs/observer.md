@@ -6,14 +6,14 @@ See the [exact field-by-field schema](collector-schema.md) for what is and is no
 recorded, including the distinction between routing evidence and engine logs.
 
 Optional [early client hints](client-metadata.md) are recorded at admission with
-client-reported provenance. They do not change inference or yet enter XGB.
+client-reported provenance. They do not change inference.
 The opt-in [Genie notebook](genie-memory.md) persists operational observations,
 incident/recovery references and explicitly saved notes, separately from numerical
 collection. Full health reports and chat transcripts are not persisted.
 
 Set `"dataset_enabled": true` in your private gateway config, then restart the
 gateway when safe. Model servers and their settings do not need to change.
-The default is off. Evidence is written under `training/` beside the affinity
+The default is off. Evidence is written under `requests/` beside the affinity
 state file, in daily mode-0600 JSONL files inside a mode-0700 directory.
 
 Records have a schema version, gateway-run ID, event ID and request ID. Join
@@ -46,16 +46,12 @@ decision (truncation explicitly flagged). These bound telemetry only, never flee
 size, context or inference. At 1 GiB stored, collection pauses and reports an error;
 it **does not delete evidence** or block inference. No automatic expiry yet.
 The UI shows current-run saved/pending/dropped counts, total stored bytes and last
-write. Retention and optional encoder activation remain operator decisions.
-No raw text or credentials are stored. Separately enabled
-[local embeddings](embeddings.md) add sensitive derived vectors and availability
-metadata. Numerical collection also records bounded semantic progress every 30
-seconds while active; it does not guess engine-phase attribution. Keep the dataset
-out of Git and public exports.
+write. Retention remains an operator decision. No raw text, credentials,
+embeddings or model features are stored. Keep the journal out of Git and public exports.
 
 Completion observation understands each supported API's terminal event rather
 than requiring `[DONE]` for every stream. Oversized, unobservable endings are
-`sse_observation_limited`, excluded from successful training, and counted separately
+`sse_observation_limited`, excluded from successful completion evidence, and counted separately
 from engine failures. This observation limit does not truncate forwarded output.
 
 ## Genie
@@ -94,7 +90,7 @@ thinking metadata does not alter forwarded reasoning settings, and a resident
 cache miss may still restore from disk. The model is instructed not to infer a
 stall from long thinking or to claim an action occurred. The wire itself is
 advice only. Separately structured requests may ask deterministic executors for
-one exact offered recovery, predictor or queued-handover action; prose never
+one exact offered recovery or queued-handover action; prose never
 grants a power.
 
 Per-worker `immediately_free` is computed from health, pause/quarantine, gateway
@@ -178,7 +174,7 @@ without changing the remote server. Keep the chosen local port free.
 Restart the dashboard. A configured Genie is **on by default** and his first
 review starts within ten seconds. **Turn off** pauses him for the rest of that
 dashboard run; private config may set `"enabled": false` for an installation that
-should start off. Recovery and predictor mutation remain separately gated;
+should start off. Recovery mutation remain separately gated;
 enabling observation does not grant those powers. Subsequent automatic reviews
 start no more often than every five minutes **after the prior review finishes**;
 a slow review therefore cannot create a permanent back-to-back review loop. Manual
@@ -186,7 +182,7 @@ questions have a 2,000-character limit and one review can run at a time. A manua
 question submitted during a scheduled review is held as the single pending
 question, then run next. Its in-memory receipt remains visibly `queued`,
 `answering`, `answered`, `failed` or `cancelled`; question text is never included
-in status, diagnostics or the training dataset. Turning Genie off cancels a
+in status, diagnostics or the request journal. Turning Genie off cancels a
 queued question. A dashboard restart cannot preserve unsent question text.
 
 Status includes the sanitized attempts for the current or latest review: dedicated,
@@ -196,12 +192,11 @@ prompts, raw responses or raw transport errors. This makes a slow provider,
 explicit fallback and failed review distinguishable without granting new powers.
 
 The same tab has a compact, reverse-chronological **Action ledger** with filters
-for pool commandeering, recovery, queue moves, predictor work and items needing
+for pool commandeering, recovery, queue moves and items needing
 attention. Pool rows distinguish a new review assigned before dispatch from a
 completed dedicated-provider fallback. Historical fallback rows retain their old
 meaning; they are not retroactively treated as proof of non-dispatch. The server is
-named only when the gateway returned a validated `x-ds4-node` receipt. Recovery
-and predictor rows come from their durable executor journals, queue moves from
+named only when the gateway returned a validated `x-ds4-node` receipt. Recovery rows come from their durable executor journals, queue moves from
 the bounded recent evidence reader, and completed provider fallbacks from a private
 local receipt journal. Operator actions are excluded. No prompt, answer, request/session
 identifier, endpoint, credential or raw error enters the ledger, and no row is a
@@ -209,7 +204,7 @@ claim that model prose directly performed an action.
 
 The scrollable, keyboard-focusable ledger renders the latest 30 available actions
 across these feeds, newest first, with filters over that window. Its count is
-explicitly available history, not a lifetime total. Recovery/predictor status
+explicitly available history, not a lifetime total. Recovery status
 exposes up to 30 recent receipts per feed; other actors can occupy those source
 windows before the ledger filters them out. The dashboard separately keeps 30
 small completed pool receipts so rotating full review text does not
@@ -284,15 +279,15 @@ server configurations, cache ownership and normal request deadlines are unchange
 
 This is a question + fresh-briefing interface, optionally augmented by bounded
 notebook history, not a persistent multi-turn agent conversation. Twelve recent assessments live in memory and are
-not included in downloadable diagnostics or training records. The model has no
+not included in downloadable diagnostics or request records. The model has no
 shell or control credentials. Its optional structured `recovery_requests`,
-`predictor_requests` and `relocation_requests` are validated against exact current
+and `relocation_requests` are validated against exact current
 offers and rechecked by their deterministic runners;
 prose is rendered as text, never executed. Durable executor receipts are separate
 from in-memory assessments and are included in sanitized operational status.
 The dashboard's same-origin/CSRF checks protect its enable/source/ask and notebook
 controls. Memory can collect while Genie inference is off; switching memory off
-retains its records. Notes are excluded from diagnostic exports and training data.
+retains its records. Notes are excluded from diagnostic exports and request journals.
 
 See the sanitized [worker-reachability incident](incidents/2026-09-03-worker-reachability.md)
 for the distinction between tunnel self-healing, busy-server probe evidence and
@@ -304,12 +299,9 @@ panel normally shows the latest three reports; an older open or keyboard-focused
 report stays visible while you read, even as newer reports arrive. This is only
 page-local reading state, not durable history across a page/dashboard restart.
 
-The optional [predictor lifecycle](predictor-lifecycle.md) is implemented: GG can
-request offered training or evidence-backed rollback, while independent validators
-decide promotion. Turning Genie off does not disable predictor automation or the
-separately authorized recovery runner. [Embedding collection](embeddings.md) is
-also implemented and opt-in. See the [roadmap](roadmap.md) for exact cache-health
-attribution, persistent conversation/history and further operational powers.
+Model training and embedding collection have been retired. Turning Genie off
+does not disable operational collection or the separately authorized recovery
+runner. See the [roadmap](roadmap.md) for remaining work.
 
 
 Dashboard transport explanations distinguish a running SSH tunnel process from

@@ -1,13 +1,12 @@
 # Gate Genie powers: recovery, model stewardship and operator controls
 
-Status: **bounded systemd recovery, an opt-in launchd adapter, and predictor stewardship implemented; broader powers below remain a design**.
+Status: **bounded systemd recovery, an opt-in launchd adapter, implemented; broader powers below remain a design**.
 The authoritative shipped scope, setup, controls and limits are in
 [bounded worker recovery](worker-recovery.md): private systemd-user or launchd
 enrollment, one guarded runner shared by GG and a fatal-fault detector, durable
 receipts and verified reinstatement. Systemd has a real deployment canary; launchd
 requires a per-installation canary before activation. Container adapters, editable
-Genie endpoints, persistent chat remain future work. Predictor training/rollback, fixed promotion
-gates and operator switches are specified in [the shipped lifecycle](predictor-lifecycle.md).
+Genie endpoints, persistent chat remain future work.
 The sections below
 retain the original broader plan; they are not a claim that every item shipped.
 A running process is not upgraded merely by changing files on disk.
@@ -18,23 +17,12 @@ the current in-memory report list is not a durable operational memory.
 
 ## Division of responsibility
 
-- **XGB:** predicts service cost from a versioned request/worker feature contract.
-- **DSG scheduler:** applies deterministic compatibility, ownership, health and
-  routing rules, and eventually combines predicted service time with waiting and
-  cache costs. Optional new-session placement uses only qualifying validated XGB
-  artifacts; experimental artifacts never control routing.
-- **Genie:** interprets evidence, requests approved operational actions, and
-  stewards XGB training/calibration. It does not invent telemetry, choose commands
-  or override hard routing constraints.
-- **Action runner:** executes a small allowlist after independent checks; records
-  receipts and verification. It must work without an LLM for known fatal faults.
+- **DSG scheduler:** enforces compatibility, ownership, health, queue order and
+  configured Priority Lens policy without waiting for Genie.
+- **Genie:** interprets evidence and requests offered operational actions.
+- **Action runner:** independently validates its allowlist and records receipts.
 
-Keep the feature contract and promotion tests fixed outside the Genie's control.
-Genie may request bounded XGB candidate training and tuning, including tree-count
-cross-validation, but cannot change its own acceptance gates. Choosing among
-pre-approved features versus adding new feature extractors remains an operator
-policy decision. Turning Genie off leaves collection, the last approved model
-and deterministic fallback routing intact.
+XGB stewardship and model training were retired on 2026-09-07.
 
 ## How the CUDA incident could have recovered automatically
 
@@ -161,7 +149,7 @@ it is not a URL editor. Endpoint/model/auth/tunnel settings live in the private
 configuration's `genie` and `genie.fallback` blocks. Changes currently require a
 dashboard restart; changing only Genie settings does not require a model restart.
 The view also has a compact filtered action ledger. It merges proven Genie
-provider fallback, durable recovery/predictor receipts and bounded queue-move
+provider fallback, durable recovery receipts and bounded queue-move
 evidence, newest first; it is not persistent chat history.
 
 **Proposed next controls:**
@@ -187,7 +175,7 @@ evidence, newest first; it is not persistent chat history.
   quarantined server idle or count it as immediately usable capacity.
 - **Chat and feedback:** persistent question/assessment threads, linked to action
   and evidence IDs. Useful/wrong/resolved feedback is annotation, not fabricated
-  ground truth for XGB. Operator override and disable controls stay accessible.
+  operational ground truth. Operator override and disable controls stay accessible.
 
 Turning off automatic recovery stops new recovery actions. If a start or restart is
 already issued, do not abandon reconciliation or verification halfway through;
@@ -219,7 +207,7 @@ Do not promise an already-issued remote command can be cancelled.
 6. **UI/privacy tests:** on/off and permissions, endpoint validation, secret
    redaction, failed save rollback, stale status, actions survive dashboard
    restart, restricted exports and accessible state labels. Feedback cannot
-   promote a predictor or clear quarantine by itself.
+   clear quarantine by itself.
 
 ## Staged deployment
 

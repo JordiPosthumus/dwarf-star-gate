@@ -8,10 +8,9 @@ path is compiled into the source.
 DSG/
   ds4-gateway/           versioned gateway, dashboard, encoder and recovery code
   scripts/              versioned setup/check commands
-  predictor/            versioned optional offline training code
   examples/             public, generic example configuration
   config.local.json     PRIVATE, ignored: key, endpoints and local policy
-  runtime/              PRIVATE, ignored: affinity, logs, reports, training data
+  runtime/              PRIVATE, ignored: affinity, logs, reports, request evidence
 ```
 
 DS4 itself, model weights, and engine KV caches belong to the model-server
@@ -169,7 +168,7 @@ continue to use the foreground commands under your chosen supervisor.
    admission drain produces a prominent warning, not a false inference-ready claim.
 
 Starting DSG also starts its **already-configured** SSH tunnels and optional
-collector/encoder/predictor components through the ordinary gateway. The script
+operational collector components through the ordinary gateway. The script
 does not provision SSH trust, install Python environments, download models, start
 remote DS4 services, clear quarantines, release maintenance locks or agent holds, resume workers or
 alter model/context/output/thinking/cache/concurrency settings. Missing setup is
@@ -194,7 +193,7 @@ dashboard, Continuity Door and gateway core in that order and verifies every
 launchd removal and port closure.
 An unexpected surviving listener is an error; it is never killed by guessing its
 PID. Repeating stop on an already-stopped installation is safe. Stop does **not**
-run syntax or optional encoder/predictor dependency checks, so those failures do
+run syntax checks, so those failures do
 not prevent an otherwise valid managed shutdown.
 
 The existing dashboard controller separately archives Genie reports before
@@ -231,7 +230,7 @@ If gateway start succeeds but dashboard start fails, the gateway is left running
 and the failure is reported. Resolve it and rerun start; do not blindly restart.
 
 The automatic backup is deliberately small: config and one atomic affinity-file
-snapshot, **not** a consistent backup of all logs, reports, embeddings or training
+snapshot, **not** a consistent backup of all logs, reports or request
 data. Backups remain private and are not pruned automatically. For disaster
 recovery, safely stop writers and separately back up the complete runtime.
 Restoring config/state is an explicit stopped-service operation, never automatic.
@@ -247,7 +246,7 @@ fencing/launchd removal. These do not constitute a remote DS4 performance test.
 Login services write gateway logs beside the state file and UI logs beneath
 `runtime/dashboard/`. `start-gateway.sh` also records foreground gateway output;
 `npm start` writes to its terminal. `gateway-logs.sh` follows the selected log.
-Live diagnostics and training artifacts are private even without raw text.
+Live diagnostics and request journals are private even without raw text.
 
 Before updating: inspect `git status`, back up private config/runtime and record
 the current commit. Pull/review the update, run checks, then restart only DSG.
@@ -260,7 +259,7 @@ Install the staged-content privacy hook with `npm run hooks:install` and read
 [publication policy](publication-policy.md). `.gitignore` prevents ordinary adds,
 not forced adds or disclosure of already tracked files. Hooks and CI add checks,
 not a guarantee; review the staged diff. Never publish `config.local.json`, real
-inventory, credentials, runtime, embeddings, candidate models or local backups.
+inventory, credentials, runtime or local backups.
 
 The clean-checkout test in `ds4-gateway/install.test.mjs` starts actual DSG
 processes from an unrelated cwd, registers a synthetic DS4 endpoint through the

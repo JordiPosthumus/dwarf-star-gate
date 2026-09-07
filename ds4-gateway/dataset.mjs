@@ -4,13 +4,11 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { safeRequestedThinking } from './requested-thinking.mjs';
 import { safeClientMetadata } from './client-metadata.mjs';
-import { ENCODER_MODEL, ENCODER_REVISION, EXTRACTION } from './embeddings.mjs';
 import {validCallId,rejectionReasons} from './continuity.mjs';
-import {safeHardwareSnapshot} from './hardware-snapshot.mjs';
 
 const number = x => Number.isFinite(x) && x >= 0 ? x : null;
 const id = x => typeof x === 'string' && /^[\w-]{1,64}$/.test(x) ? x : null;
-export const EVIDENCE_KINDS=Object.freeze(['decision','dispatch','finish','queued_cancel','queue_timeout','unavailable_before_dispatch','queue_relocation','routing_shadow','routing_tiebreak_shadow','request_features','embedding','progress','model_prediction','rejection','waiting']);
+export const EVIDENCE_KINDS=Object.freeze(['decision','dispatch','finish','queued_cancel','queue_timeout','unavailable_before_dispatch','queue_relocation','routing_shadow','rejection','waiting']);
 const kinds = new Set(EVIDENCE_KINDS);
 const timingKeys=['worker_idle_ms','active_elapsed_ms','upstream_byte_age_ms','session_last_used_ms','session_last_finished_ms','intervening_requests','prior_prompt_tokens','prior_cached_tokens','observation_epoch'];
 export function evidence(kind, raw) {
@@ -46,45 +44,6 @@ export function evidence(kind, raw) {
   }
   if(kind==='finish'&&raw.generation)row.generation=Object.fromEntries(['thinking_characters','answer_characters','tool_characters','first_semantic_ms'].map(k=>[k,number(raw.generation[k])]));
   if (raw.requested_thinking) row.requested_thinking=safeRequestedThinking(raw.requested_thinking);
-  if(kind==='model_prediction'){
-    if(raw.predictor_schema!==2||!/^[a-f0-9]{64}$/.test(raw.model_id)||!['admission','updated','remaining'].includes(raw.model_kind)||!['admission','upload','embedded','remaining'].includes(raw.prediction_stage))return null;
-    Object.assign(row,{predictor_schema:2,model_id:raw.model_id,model_kind:raw.model_kind,prediction_stage:raw.prediction_stage,experimental:raw.experimental===true});
-    for(const k of ['seconds','baseline_seconds','elapsed_s','available_at'])row[k]=number(raw[k]);if(row.seconds===null||row.available_at===null)return null;
-  }
-  if(kind==='request_features') {
-    row.hardware=safeHardwareSnapshot(raw.hardware,row.node);
-    row.feature_schema=2;row.prediction_point='after_upload';
-    row.status=['ready','invalid_body','unsupported_route','unsupported_body','no_recent_user_text','capture_limit','encoded_body','invalid_json','incomplete_body'].includes(raw.status)?raw.status:'unavailable';
-    row.extraction=EXTRACTION;
-    for(const key of ['available_at','visible_messages_considered','latest_characters','recent_characters','request_bytes','message_count','user_messages','assistant_messages','system_messages','tool_messages','text_characters','image_parts','tool_definitions','max_output_tokens','temperature','top_p'])row[key]=number(raw[key]);
-    row.request_stream=typeof raw.request_stream==='boolean'?raw.request_stream:null;
-    row.request_route=['/v1/chat/completions','/v1/responses','/v1/messages'].includes(raw.request_route)?raw.request_route:null;
-    row.bounded_slice=true;row.history_scan_limited=raw.history_scan_limited===true;
-  }
-  if(kind==='embedding') {
-    row.hardware=safeHardwareSnapshot(raw.hardware,row.node);
-    row.embedding_schema=1;row.extraction=EXTRACTION;
-    row.status=['ready','queue_full','worker_unavailable','worker_timeout','invalid_worker_output','collector_stopped'].includes(raw.status)?raw.status:'unavailable';
-    if(row.status==='ready') {
-      if(raw.model!==ENCODER_MODEL||raw.revision!==ENCODER_REVISION||raw.dimensions!==384)return null;
-      row.model=ENCODER_MODEL;row.revision=ENCODER_REVISION;row.dimensions=384;
-      for(const key of ['available_at','queued_at','elapsed_ms']){row[key]=number(raw[key]);if(row[key]===null)return null;}
-      row.vectors={};
-      for(const scope of ['latest_user','recent_conversation']) {
-        const v=raw.vectors?.[scope];if(!v)continue;
-        if(!Array.isArray(v.vector)||v.vector.length!==384||!v.vector.every(Number.isFinite)||Math.abs(Math.hypot(...v.vector)-1)>.001||!Number.isInteger(v.input_tokens)||v.input_tokens<1||v.used_tokens!==Math.min(v.input_tokens,256)||v.truncated!==(v.input_tokens>256))return null;
-        row.vectors[scope]={vector:v.vector,input_tokens:v.input_tokens,used_tokens:v.used_tokens,truncated:v.truncated};
-      }
-      if(!row.vectors.latest_user)return null;
-    }
-  }
-  if(kind==='progress') {
-    row.hardware=safeHardwareSnapshot(raw.hardware,row.node);
-    row.progress_schema=1;row.prediction_point='while_active';
-    for(const key of ['active_elapsed_ms','semantic_characters','semantic_age_ms','thinking_characters','answer_characters','tool_characters'])row[key]=number(raw[key]);
-    row.phase=['awaiting_content','thinking','answering','tool_output'].includes(raw.phase)?raw.phase:'unknown';
-    row.requested_thinking=safeRequestedThinking(raw.requested_thinking);
-  }
   if(kind==='routing_shadow') {
     row.shadow_schema=1;
     row.reason=['admission','worker_free'].includes(raw.reason)?raw.reason:null;
@@ -93,18 +52,10 @@ export function evidence(kind, raw) {
     row.source=id(raw.source);row.alternative=id(raw.alternative);row.session_busy=raw.session_busy===true;
     row.waiting_ms=number(raw.waiting_ms);row.saving_ms=number(raw.saving_ms);
   }
-  if(kind==='routing_tiebreak_shadow'){
-    row.shadow_schema=1;row.mode=['shadow','active_with_abstention'].includes(raw.mode)?raw.mode:null;row.applied=raw.applied===true;row.policy=raw.policy==='validated_remaining_tiebreak'?raw.policy:null;
-    row.verdict=['would_change','would_keep','insufficient_evidence','not_tied','free_tie'].includes(raw.verdict)?raw.verdict:null;
-    row.selected=id(raw.selected);row.alternative=id(raw.alternative);row.minimum_load=number(raw.minimum_load);
-    const statuses=new Set(['supported','immediately_free','missing_active_remaining','missing_queued_service','forecast_unavailable']);
-    row.candidate_costs=(Array.isArray(raw.candidates)?raw.candidates:[]).slice(0,128).flatMap(c=>id(c?.node)&&statuses.has(c.status)?[{node:id(c.node),load:number(c.load),status:c.status,predicted_wait_seconds:number(c.predicted_wait_seconds),evidence:(Array.isArray(c.evidence)?c.evidence:[]).filter(v=>['active_remaining','queued_service'].includes(v)).slice(0,32)}]:[]);
-    if(!row.mode||!row.policy||!row.verdict||!row.selected)return null;
-  }
-  if (kind!=='routing_tiebreak_shadow'&&Array.isArray(raw.candidates)) {
+  if (Array.isArray(raw.candidates)) {
     row.candidates=raw.candidates.slice(0,128).map(w=>({node:id(w.node), healthy:w.healthy===true, paused:w.paused===true,
       active:number(w.active), queued:number(w.queued), assigned_sessions:number(w.assigned_sessions), context_length:number(w.context_length),
-      profile:/^[a-f0-9]{64}$/.test(w.profile)?w.profile:null,hardware:safeHardwareSnapshot(w.hardware,w.node),
+      profile:/^[a-f0-9]{64}$/.test(w.profile)?w.profile:null,
       ...('worker_idle_ms' in w?Object.fromEntries(timingKeys.map(k=>[k,number(w[k])])):{}),
       ...('worker_idle_ms' in w?{cache_residence:'unknown',backend_epoch:null,
         active_request_id:/^[a-f0-9-]{36}$/.test(w.active_request_id)?w.active_request_id:null}:{}),
@@ -119,7 +70,7 @@ export class Dataset {
     this.directory=directory; this.enabled=enabled; this.maxBytes=maxBytes; this.maxPending=maxPending;
     this.run=randomUUID(); this.queue=[]; this.writing=null; this.closed=false;
     this.state={enabled,run_id:this.run,written:0,dropped:0,bytes:0,last_write:null,error:null,
-      schema:1,raw_text:false,embeddings:false,retention:'No automatic deletion',finished:0,missing_usage:0,truncated:0,failed_or_cancelled:0,observation_limited:0};
+      schema:1,raw_text:false,retention:'No automatic deletion',finished:0,missing_usage:0,truncated:0,failed_or_cancelled:0,observation_limited:0};
     this.ready=enabled ? this.initialize() : Promise.resolve();
   }
   async initialize() {
@@ -136,7 +87,6 @@ export class Dataset {
       if(Buffer.byteLength(line)>65536 || this.queue.length>=this.maxPending) {this.state.dropped++;return;}
       this.queue.push(line); this.flush();
       // Prediction failures cannot erase collected evidence or affect inference.
-      try{this.onRecord?.(event);}catch{}
     } catch {this.state.dropped++;this.state.error='Evidence serialization failed';}
   }
   flush() {

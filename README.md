@@ -108,11 +108,7 @@ with separately opt-in [bounded DS4 service recovery](docs/worker-recovery.md). 
 and [experimental collector/Genie setup](docs/observer.md). A read-only
 [cache-continuity audit](docs/cache-continuity-audit.md) now measures same-session
 reuse and keeps weak low-reuse evidence unconfirmed; cache migration remains a
-roadmap item. The optional [predictor lifecycle](docs/predictor-lifecycle.md)
-adds live shadow forecasts, causal next-turn history, embedding-aware updates,
-remaining-time models, fixed cross-validation and future-traffic promotion gates.
-Prediction-assisted **new-session** placement is separately opt-in and requires
-unseen-session evidence. Independently of that predictor, DSG now performs a
+roadmap item. DSG performs a
 [safe queued handover](docs/queued-handover.md) when a first/unaffined request is
 still undispatched and another server becomes free. An established session gets
 a five-minute warm-home first-refusal window by default; after that, the gateway
@@ -122,18 +118,8 @@ server even if the dashboard or Genie is unavailable. The private setting
 strict affinity. Gate Genie or the operator may request an exact continuity-safe
 offer sooner. The deterministic executor revalidates every move and preserves
 the original client stream and deadline. Destination cache locality remains
-explicitly unknown. A fitted model alone does not qualify broader automatic movement. The
-[v1 offline experiment](predictor/README.md) remains reproducible.
-**Reset to baseline** restores the measured-history recipe without switching
-learning off. A challenger must beat both that baseline and any incumbent on
-matched future evidence. Verified promotions create persistent, dismissible
-learning milestones; Genie can add commentary, not invent the result.
-The UI and Genie can choose among [three reviewed XGB recipes](docs/predictor-lifecycle.md#reviewed-training-recipes)
-without changing the validation gates. [Early client hints](docs/client-metadata.md)
-and bounded request-shape evidence now enter the separately versioned V3
-challenger contract; V2 incumbents remain byte-compatible and V3 still has no
-routing authority unless it passes the independent holdout and future-traffic
-gates. [Calibration preflight](docs/calibration.md) skips without a proven
+explicitly unknown.
+[Calibration preflight](docs/calibration.md) skips without a proven
 cache-preserving path. An opt-in [persistent Genie notebook](docs/genie-memory.md)
 records worker-state changes, incident/recovery references, explicit operator
 notes and evidence-gated developer hardening suggestions. A collapsible section
@@ -193,9 +179,7 @@ motion shows static text. Expanded assessments stay open across refreshes.
 
 Optional [queued-work shadow collection](docs/routing-shadow.md) records idle and
 session-recency clocks and compares a historical baseline without moving work.
-Its estimates are explicitly unvalidated; no live XGB routing is implied.
-Separately opt in to [local embedding/progress collection](docs/embeddings.md)
-for optional updated workload forecasts. Analytics also includes a read-only
+Its estimates are explicitly unvalidated. Operational evidence also includes a read-only
 [cache-cost calculator](docs/cache-cost.md) using measured disk-load/prefill
 components. A separate pure [four-path cache-continuity shadow](docs/cache-continuity-shadow.md)
 defines how to compare waiting hot, restoring locally, acquiring remotely and
@@ -236,10 +220,6 @@ The gateway core, Continuity Door and dashboard use Node.js built-ins only; the 
 helper uses Python's standard library. No package installation, database, Kubernetes, frontend
 build system, CDN, analytics service or cloud telemetry.
 
-The optional predictor trainer and CPU embedding encoder use separate, locked
-Python environments. Neither is required for ordinary gateway operation;
-the encoder runs only when explicitly configured, without cloud inference.
-
 ## Dashboard
 
 Machine [speed charts](docs/rate-charts.md) use consistent phase colours and
@@ -247,8 +227,7 @@ separate fleet-record scales for prefill and decode.
 
 Terminal-inspired presentation, per-worker measurements, and a replaceable logo.
 Five focused views keep the control room compact: **Fleet** for live capacity and
-server cards, **Gate Genie** for reports and recovery, **Analytics** for evidence
-and predictors, **Activity** for continuity and request history, and a far-right
+server cards, **Gate Genie** for reports and recovery, **Evidence** for collection and cache evidence, **Activity** for continuity and request history, and a far-right
 **Settings** tab for server enrollment and gateway controls. Settings appears only
 when this dashboard has the local management capability. The health wire remains
 visible above every view so a focused page does not hide an incident.
@@ -264,7 +243,7 @@ See [screenshot reproduction and checks](docs/screenshots.md).
 
 ![Synthetic Gate Genie assessment and recovery view](docs/images/dashboard-genie.png)
 
-![Synthetic evidence collection, XGB accuracy and cache calculator](docs/images/dashboard-analytics.png)
+![Synthetic operational evidence and cache calculator](docs/images/dashboard-analytics.png)
 
 ![Synthetic continuity evidence and request history](docs/images/dashboard-activity.png)
 
@@ -586,15 +565,10 @@ deleted or automatically rotated: choose retention for your installation.
 Raw gateway logs can contain SSH error messages and host details; do not publish
 them without review. Monitoring logs are separate from the inference path.
 
-The local **Analytics** panel compares saved shadow forecasts with actual queue
-waits and server durations, with sample counts, missing-prediction coverage and
-per-server filtering. Select historical baselines or separately versioned XGB
-forecasts at admission, after upload/embeddings, or while active. See
-[analytics definitions](docs/analytics.md) and [validation/controls](docs/predictor-lifecycle.md).
-The same panel shows optional embedding collection status and the cache-cost
-calculator. Those retain their independent meanings; they do not replace the
-historical charts. GG can request bounded training or measured-regression rollback;
-the fixed validator, not an LLM, decides whether a candidate qualifies.
+The local **Evidence** panel shows request collection and cache-cost evidence.
+Measured fleet speed, energy and continuity outcomes remain available. See the
+[operational evidence guide](docs/analytics.md). XGB forecasting, training and
+embedding collection have been retired.
 
 ## Client affinity
 
@@ -761,8 +735,7 @@ classification, bounded JPEG/GIF repair/guidance,
 persistent generation quarantine,
 verified reinstatement after remove/re-add, fresh control sockets after restart,
 collector privacy, privacy-safe Agent Watch correlation, and bounded Genie/recovery boundaries. `npm run recovery:test`
-also tests both optional Python service adapters. Optional predictor tests
-run with `npm run predictor:test` in the locked Python environment. See the
+also tests both optional Python service adapters. See the
 [dated maintenance review](docs/maintenance-review-2026-09-02.md) for findings and scope.
 Default dashboards remain read-only.
 Pool-size tests cover 1, 2, 3, 6, 12 and 20 fixture workers. These are validation

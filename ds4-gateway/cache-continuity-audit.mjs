@@ -4,7 +4,7 @@
 // touches a DS4 cache. Low reuse is an anomaly, not protocol proof of a miss.
 import path from 'node:path';
 import {isMain} from './config.mjs';
-import {readEvidence} from '../predictor/audit.mjs';
+import {readEvidence} from './read-request-evidence.mjs';
 
 const ID=/^[\w-]{1,64}$/;
 const SESSION=/^[a-f0-9]{64}$/;
@@ -156,7 +156,7 @@ export function auditCacheContinuity(input,{maxAgeMs=DEFAULT_MAX_AGE_MS,maxEvent
 }
 
 function args(argv) {
-  let data=path.resolve('runtime/training'),maxAgeMs=DEFAULT_MAX_AGE_MS;
+  let data=path.resolve('runtime/requests'),maxAgeMs=DEFAULT_MAX_AGE_MS;
   for(let i=0;i<argv.length;i++){
     if(argv[i]==='--data'&&argv[i+1])data=path.resolve(argv[++i]);
     else if(argv[i]==='--max-age-hours'&&argv[i+1]){const hours=Number(argv[++i]);if(!Number.isFinite(hours)||hours<1||hours>168)throw new Error('--max-age-hours must be 1 through 168');maxAgeMs=hours*60*60*1000;}

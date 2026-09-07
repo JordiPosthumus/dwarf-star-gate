@@ -59,8 +59,8 @@ test('configuration precedence and relative local paths are independent of calle
   assert.equal(configPath(null,{env:{},cwd:'/unrelated',root}),path.join(root,'config.local.json'));
   assert.equal(configPath('custom.json',{env:{DWARF_GATE_CONFIG:'other'},cwd:root}),file);
   const {config}=loadConfig(null,{env:{DWARF_GATE_CONFIG:file},cwd:'/unrelated'});
-  assert.equal(config.state_file,path.join(root,'runtime/affinity.json'));assert.equal(config.embeddings.model_dir,path.join(root,'models/encoder'));
-  assert.equal(config.predictor.python,path.join(root,'predictor/bin/python'));assert.equal(config.predictor.profiles,path.join(root,'runtime/profiles.json'));
+  assert.equal(config.state_file,path.join(root,'runtime/affinity.json'));assert.equal(config.embeddings.model_dir,'models/encoder');
+  assert.deepEqual(config.predictor,raw.predictor); // Legacy optional fields are inert.
   assert.equal(config.telemetry_files.worker,path.join(root,'engine.log'));assert.deepEqual(config.recovery,raw.recovery);assert.equal(config.context_length,262144);assert.equal(config.request_timeout_ms,360000000);
   assert.equal(config.cache_directories.worker,path.join(root,'cache'));
   assert.equal(config.hardware_telemetry.workers.worker.path,path.join(root,'hardware.jsonl'));assert.deepEqual(config.hardware_telemetry.workers.spark,{adapter:'nvidia-linux'});

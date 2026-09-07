@@ -1,5 +1,14 @@
 # Changelog
 
+## Retire XGB and embeddings
+
+- Remove model training, feature extraction, embeddings, predictions, promotion
+  and prediction-based placement/tie-breaks, including Genie and UI controls.
+- Keep request outcomes, cache continuity, handovers, measured fleet speed, power
+  and energy in a separate operational journal under `runtime/requests/`.
+- Remove the Python model environments from installation requirements and refresh
+  operational documentation and synthetic browser checks.
+
 ## One-hour configurable priority backstop
 
 - Default new Priority Lens state to one hour of eligible waiting, with the
