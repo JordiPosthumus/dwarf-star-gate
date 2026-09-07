@@ -9,7 +9,7 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { AffinityStore, createGateway, UsageObserver, workerRegistrationTimeout } from './gateway.mjs';
-import { requestedThinking, RequestedThinkingObserver, THINKING_CAPTURE_BYTES, safeRequestedThinking } from './requested-thinking.mjs';
+import { servedThinking, requestedThinking, RequestedThinkingObserver, THINKING_CAPTURE_BYTES, safeRequestedThinking } from './requested-thinking.mjs';
 import { workerControl } from './worker-client.mjs';
 import {agentRequest} from './agent-client.mjs';
 import {randomUUID,createHash} from 'node:crypto';
@@ -1006,7 +1006,7 @@ test('per-worker requested thinking follows dispatch, not affinity or queued req
   assert.equal(workers[0].last_requested_thinking.fields['reasoning.effort'],'low');
   assert.equal(workers[1].last_requested_thinking.fields.thinking,false);
   await r.request('{}','a');
-  assert.deepEqual(r.gateway.stats().workers[0].last_requested_thinking,{status:'not_specified'});
+  assert.deepEqual(r.gateway.stats().workers[0].last_requested_thinking,{status:'not_specified',served:{mode:'high',basis:'ds4_request_rules'}});
 });
 
 test('oversized vision upload is forwarded byte-for-byte; only its thinking observation is unavailable', async t => {
@@ -1898,4 +1898,33 @@ test('ordinary queue scheduling preserves admission and conversation FIFO',async
   }
   try{r.backends[0].heldStreams.shift()();assert.ok((await Promise.all([hold,...requests])).every(result=>result.status===200));assert.deepEqual(r.backends[0].records.slice(1).map(row=>row.payload.label),['first','second','third']);assert.equal(r.backends[0].peak,1);}
   finally{for(const finish of r.backends[0].heldStreams.splice(0))finish();await Promise.allSettled([hold,...requests]);}
+});
+
+
+test('served thinking distinguishes native DS4 mode from request aliases without changing the body',()=>{
+  const serving={route:'/v1/chat/completions',model:'deepseek-v4-flash',contextLength:262144};
+  const mode=body=>servedThinking(body,serving)?.mode;
+  for(const reasoning_effort of ['minimal','low','medium','high','xhigh','max'])assert.equal(mode({reasoning_effort}),'high');
+  assert.equal(servedThinking({reasoning_effort:'max'},{...serving,contextLength:393216}).mode,'max');
+  assert.equal(servedThinking({reasoning_effort:'max'},{...serving,contextLength:null}),null);
+  assert.equal(mode({reasoning_effort:'none'}),'none');
+  assert.equal(mode({reasoning_effort:'max',thinking:{type:'disabled'}}),'none');
+  assert.equal(mode({think:false}),'none');
+  assert.equal(servedThinking({output_config:{effort:'max'},reasoning_effort:'high'},{...serving,route:'/v1/messages'}),null);
+  assert.equal(mode({thinking:false,think:true}),undefined);
+  assert.equal(mode({model:'deepseek-chat'}),'none');
+  assert.equal(mode({model:'deepseek-chat',thinking:true}),'high');
+  assert.equal(mode({enable_thinking:false,reasoning:{effort:'max'}}),'high','unsupported chat controls do not alter DS4 mode');
+  assert.equal(mode({reasoning_effort:'banana'}),undefined);
+  assert.equal(servedThinking({reasoning_effort:'low'},{...serving,model:'another-model'}),null);
+  assert.equal(servedThinking({reasoning:{effort:'low'}},{...serving,route:'/v1/responses'}).mode,'high');
+  assert.equal(servedThinking({reasoning:{effort:'none'}},{...serving,route:'/v1/responses'}).mode,'none');
+  assert.equal(servedThinking({thinking:false,reasoning_effort:'none'},{...serving,route:'/v1/responses'}).mode,'high','Responses ignores chat-only controls');
+  assert.equal(servedThinking({output_config:{effort:'max'}},{...serving,route:'/v1/messages',contextLength:393216}).mode,'max');
+  const raw=Buffer.from(JSON.stringify({reasoning_effort:'low',messages:[]}));
+  const observer=new RequestedThinkingObserver(undefined,null,serving);observer.accept(raw);
+  const result=observer.finish();assert.equal(result.fields.reasoning_effort,'low');assert.equal(result.served.mode,'high');
+  assert.deepEqual(safeRequestedThinking({...result,served:{...result.served,secret:'private'}}),result);
+  assert.equal(safeRequestedThinking({...result,served:{mode:'low',basis:'ds4_request_rules'}}).served,undefined);
+  assert.equal(JSON.parse(raw).reasoning_effort,'low');
 });

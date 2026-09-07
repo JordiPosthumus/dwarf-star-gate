@@ -177,7 +177,7 @@ test('one Genie call supplies assessment and ticker; unchanged budgets, evidence
   const g=new Genie({url:'http://127.0.0.1:9001/v1'},()=>s,{fetchImpl:async(_u,o)=>{
     calls++;sent=JSON.parse(o.body);return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(authoredReview())}}]});}});
   g.setEnabled(true);await g.ask();const status=g.status();
-  assert.equal(calls,1);assert.equal(sent.max_tokens,8192);assert.equal(sent.reasoning_effort,'low');assert.equal(sent.tools,undefined);
+  assert.equal(calls,1);assert.equal(sent.max_tokens,8192);assert.equal(sent.reasoning_effort,'high');assert.equal(sent.tools,undefined);
   assert.match(sent.messages[0].content,/No humour/);assert.match(sent.messages[0].content,/Recommendations are advice/);
   assert.match(sent.messages[0].content,/Choose severity per item/);assert.match(sent.messages[0].content,/never recovery permission/);
   assert.equal(status.reports[0].evidence_at,s.gateway_at);assert.deepEqual(status.reports[0].actions_taken,[]);

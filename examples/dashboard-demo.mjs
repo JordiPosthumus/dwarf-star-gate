@@ -28,9 +28,9 @@ const devices = workers.map((w,i) => ({
   activity:['idle','prefill','thinking','decode','prefill',i===2?'idle':i?'decode':'thinking'].map((phase,j)=>({start:now-900000+j*150000,end:now-750000+j*150000,phase})),
   recent:[],
 }));
-workers[0].requested_thinking = { status:'specified', fields:{reasoning_effort:'xhigh'} };
-workers[1].requested_thinking = { status:'specified', fields:{thinking:false} };
-workers[2].last_requested_thinking = { status:'specified', fields:{reasoning_effort:'high'} };
+workers[0].requested_thinking = { status:'specified', fields:{reasoning_effort:'low'}, served:{mode:'high',basis:'ds4_request_rules'} };
+workers[1].requested_thinking = { status:'specified', fields:{thinking:false}, served:{mode:'none',basis:'ds4_request_rules'} };
+workers[2].last_requested_thinking = { status:'specified', fields:{reasoning_effort:'high'}, served:{mode:'high',basis:'ds4_request_rules'} };
 workers[2].last_request_finished_at = new Date(now-120000).toISOString();
 const recovery={configured:true,automatic:false,workers:workers.slice(0,2).map(w=>({worker_id:w.id,state:'healthy',eligible:false,reason:'no_current_fatal_evidence'})),operations:[]};
 const dataset={enabled:true,written:4200,bytes:18*1048576,pending:0,dropped:0,finished:312,missing_usage:2,truncated:3,failed_or_cancelled:1,last_write:now};

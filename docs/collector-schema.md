@@ -94,10 +94,18 @@ silently treated as zero.
 
 `requested_thinking` contains a parsing status and allowlisted scalar client
 controls: `reasoning_effort`, `reasoning.effort`, `output_config.effort`,
-`thinking`, `enable_thinking`, `thinking.type`, `thinking.budget_tokens`, as
+`thinking`, `think`, `enable_thinking`, `thinking.type`, `thinking.budget_tokens`, as
 recognized by the existing observer. It is requested configuration, not measured
 reasoning complexity or proof of the server's effective setting. It is collected
 after upload, not available to the current placement decision.
+
+An optional `served: {mode, basis}` records `high`, `max` or `none` derived from
+the supported DeepSeek DS4 request rules (`basis: ds4_request_rules`), including
+protocol-specific controls and native-context demotion of Max below 393,216.
+This is an interpretation, not engine-reported telemetry or measured complexity.
+Unknown models, conflicting controls and incomplete observations have no served
+mode. The card shows this mode (or Unknown); hover shows the original requested
+fields and the evidence basis. Genie explicitly requests `high`.
 
 Durations use the gateway's monotonic clock. `service_ms` spans dispatch through
 upstream finish/failure, **not decode alone**. First body bytes may be a stream

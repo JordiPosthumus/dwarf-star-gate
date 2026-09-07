@@ -448,6 +448,12 @@ See [installation, upgrades and private files](docs/installation.md) for details
 
 ## Monitoring and debugging
 
+The **Thinking** row shows the DS4 serving mode derived from supported request
+rules and the server context. Hover to see the original requested fields and
+evidence basis. Unavailable interpretations show Unknown; idle cards retain a
+marked Last value. Genie requests `high` explicitly. This observation does not
+change client requests or server settings.
+
 Per worker, the dashboard displays:
 
 - Actual decode chunk t/s and request-average t/s, including reasoning tokens.

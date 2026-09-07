@@ -590,7 +590,7 @@ export function createGateway(config,{visionTranscode}={}) {
       job.requestStream=typeof body?.stream==='boolean'?body.stream:null;
       job.requestedUsage=typeof body?.stream_options?.include_usage==='boolean'?body.stream_options.include_usage:null;
       if(job.previewFromRequest)observeJobPreview(job,requestUserExcerpt(body));
-    });
+    },{route:req.url,model:config.model,contextLength:node.contextLength});
     const observeBody = chunk => {
       requestBytes+=chunk.length;job.thinking.accept(chunk);
       if(captureLimit&&!captureOverflow){

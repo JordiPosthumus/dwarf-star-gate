@@ -70,7 +70,9 @@ try {
   assert.match(await page.locator('.performance-dialog').innerText(),/coverage/);await page.locator('.performance-dialog').screenshot({path:path.join(output,'energy-evidence.png')});await page.keyboard.press('Escape');
   assert.equal(await page.locator('#fleet-speed-value').evaluate(el=>el===document.activeElement),true);
   const thinking=page.locator('#devices .requested-thinking').first();
-  assert.match(await thinking.innerText(),/^Thinking\s+/);
+  assert.match(await thinking.innerText(),/^Thinking\s+HIGH/);
+  assert.match(await thinking.getAttribute('title'),/Requested: reasoning_effort=low/);
+  assert.doesNotMatch(await thinking.innerText(),/LOW/);
   assert.doesNotMatch(await thinking.innerText(),/Current request|REQUESTED THINKING/);
   assert.ok((await thinking.boundingBox()).height<40,'Thinking settings use a compact single row');
   assert.equal(await page.locator('#devices .metric-block>.label').first().innerText(),'DECODE');

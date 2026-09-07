@@ -18,22 +18,17 @@ function knownWaiting(gateway,door) {
 function thinkingInfo(t) {
   if (!t) return { label:'Unavailable', detail:'This request predates thinking telemetry, or no request has been observed.' };
   if (t.status === 'pending') return { label:'Reading request', detail:'Waiting for the request upload to finish.' };
-  if (t.status === 'not_specified') return { label:'Not specified', detail:'No recognized thinking fields were supplied. The server chooses its default.' };
-  if (t.status !== 'specified') return { label:'Unknown', detail:({capture_limit:'Upload exceeded the 8 MiB metadata observation budget. The full request still passes through unchanged.',encoded_body:'Encoded request body; not inspected.',invalid_json:'Request metadata could not be parsed.',incomplete_body:'Request upload did not finish.'})[t.reason] || 'Requested thinking metadata unavailable.' };
-  const f = t.fields || {}, values = Object.values(f), parts = [];
-  const efforts = [...new Set(['reasoning_effort','reasoning.effort','output_config.effort'].map(k=>f[k]).filter(v=>typeof v==='string' && v!=='unrecognized'))];
-  const modes = [...new Set([f.thinking, f.enable_thinking, f['thinking.type']].map(v=>v===true || v==='enabled' ? 'ON' : v===false || v==='disabled' ? 'OFF' : v==='adaptive' ? 'ADAPTIVE' : null).filter(Boolean))];
-  parts.push(...modes, ...efforts.map(v=>v.toUpperCase()));
-  if (Number.isSafeInteger(f['thinking.budget_tokens'])) parts.push(`${fmt(f['thinking.budget_tokens'])} token budget`);
-  if (values.includes('unrecognized')) parts.push('Unrecognized field');
-  const detail = Object.entries(f).map(([k,v])=>`${k}=${v}`).join('; ');
-  return { label:parts.join(' · ') || (values.length ? 'Not set' : 'Unknown'), detail:`${detail}. Requested settings only—not proof of the engine's effective level. Multiple controls are shown without assuming precedence.` };
+  if (t.status === 'not_specified' && !t.served) return { label:'Unknown', detail:'Requested: no recognized thinking fields. Serving mode is unavailable.' };
+  if (!['specified','not_specified'].includes(t.status)) return { label:'Unknown', detail:({capture_limit:'Upload exceeded the 8 MiB metadata observation budget. The full request still passes through unchanged.',encoded_body:'Encoded request body; not inspected.',invalid_json:'Request metadata could not be parsed.',incomplete_body:'Request upload did not finish.'})[t.reason] || 'Requested thinking metadata unavailable.' };
+  const detail = Object.entries(t.fields || {}).map(([k,v])=>`${k}=${v}`).join('; ') || 'No thinking controls supplied';
+  const mode=t.served?.basis==='ds4_request_rules' && ['high','max','none'].includes(t.served.mode) ? t.served.mode : null;
+  return {label:mode==='none'?'OFF':mode?mode.toUpperCase():'Unknown',detail:`Requested: ${detail}. ${mode?'Serving mode derived from DS4 request rules and server context; not an engine-reported measurement.':'Serving mode could not be established from the captured request and supported DS4 mapping.'}`};
 }
 function thinkingIndicator(w, stale, now) {
   const info = thinkingInfo(w?.load ? w.requested_thinking : w?.last_requested_thinking);
   const scope = stale ? 'Historical snapshot' : w?.load ? 'Current request' : w?.last_request_finished_at ? `Last request · ${age(Date.parse(w.last_request_finished_at),now)}` : 'No active request';
   const qualifier=stale?'Stale':!w?.load&&w?.last_request_finished_at?'Last':'';
-  return `<div class="requested-thinking" title="${esc(scope+'. Requested settings, not proof of effective reasoning. '+info.detail)}"><span class="label">Thinking</span><strong>${esc(info.label)}</strong>${qualifier?`<span class="thinking-scope">${qualifier}</span>`:''}</div>`;
+  return `<div class="requested-thinking" title="${esc(scope+'. '+info.detail)}"><span class="label">Thinking</span><strong>${esc(info.label)}</strong>${qualifier?`<span class="thinking-scope">${qualifier}</span>`:''}</div>`;
 }
 function rateScales(devices,peaks,now){
   const scales=Object.fromEntries(['prefill','decode'].map(kind=>{

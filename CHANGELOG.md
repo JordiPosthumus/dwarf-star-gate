@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-09-07 — served thinking mode
+
+Genie now requests `high` explicitly. The Thinking row displays the native DS4
+mode derived from supported DeepSeek request rules and server context; hover
+shows the original requested controls and interpretation basis. Unavailable or
+ambiguous interpretations stay unknown. Request bodies, routing, model services
+and their settings are unchanged.
+
 ## 2026-09-07 — remove unused cache experiments
 
 Removed the speculative four-path cache comparator and calibration preflight,
