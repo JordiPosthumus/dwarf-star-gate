@@ -11,6 +11,11 @@ gateway and dashboard code before using it; a Git update alone does not activate
 it. Check `agent_api_version: 1` in gateway status. Plan a normal controlled
 cutover; do not restart live inference merely to try this guide.
 
+For preparing a new machine or registering another worker, use the
+[machine-onboarding runbook](agent-machine-setup.md). That is an authorized
+operator setup task; the scoped API here manages existing named workers and
+does not grant provisioning or registration access.
+
 ## What “permission” means
 
 There are two separate steps:

@@ -17,6 +17,10 @@ DS4 itself, model weights, and engine KV caches belong to the model-server
 installation, not this gateway. SSH credentials stay in the operator's normal SSH
 configuration. DSG does not copy them into the project.
 
+For agent-led machine provisioning or live fleet expansion, follow the
+[machine-onboarding runbook](agent-machine-setup.md). It distinguishes engine
+preparation from DSG registration and gives acceptance and rollback steps.
+
 ## First run
 
 Follow the [README quick start](../README.md). Node 22.22.2+ is required; the core

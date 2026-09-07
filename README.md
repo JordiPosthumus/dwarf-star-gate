@@ -381,12 +381,17 @@ endpoints kept private by loopback or the SSH tunnel; DSG never forwards its
 bearer secret to them. Authenticated generic OpenAI backends are deliberately
 outside this DS4-specific worker contract.
 
+**Adding machines with an agent:** use the [machine-onboarding runbook](docs/agent-machine-setup.md).
+It includes a copyable handoff, new-Spark preparation, paused live registration,
+telemetry, real inference/cache acceptance and rollback without disturbing the
+existing fleet.
+
 **Setting up with your own agent:** give any local agent that can run shell
 commands the following handoff. Replace the bracketed details with your own
 checkout and existing DS4 endpoints; no particular agent framework is required.
 
 > Set up DSG in [checkout directory] using this repository's Quick start and
-> `docs/agent-api.md`. Inspect the existing configuration and running services
+> `docs/agent-machine-setup.md`. Inspect the existing configuration and running services
 > first. For a new installation, use `npm run setup -- --controls`; preserve an
 > existing private config. Register only my existing DS4 endpoints [worker IDs,
 > loopback URLs or verified SSH aliases]. Ask for missing endpoint details rather
