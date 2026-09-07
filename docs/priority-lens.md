@@ -65,15 +65,28 @@ creates no additional retained copy: it disappears when the existing excerpt is
 cleared or a title becomes available. Unsupported or still-unread requests are
 labelled **Request not yet identified**, without guessing a task name.
 
-Capture uses the already parsed body from DSG's existing passive request observer.
-It does not read queued uploads early, buffer additional request bodies, change
-upload/context limits or delay dispatch. The existing 8 MiB observation budget
-and unsupported/encoded-body exclusions still apply; lack of observed text leaves
-the title unavailable. A new queued conversation can therefore remain unnamed
-until its request body has passed through DSG. Later calls in an identified
-conversation reuse the last observed title; the UI tooltip marks that scope while
-the new request body remains unread. Observing a different user excerpt replaces
-the old intent; repeated tool-loop requests with the same excerpt reuse its review.
+Queued ordinary requests are now read ahead into memory so a completed upload
+can supply its preview and Genie review **before backend dispatch**. Stock Pi
+needs no extension. The original bytes are retained and forwarded exactly once;
+dispatch can begin during an unfinished upload and streams the remaining bytes
+with backpressure. It never waits for the title review.
+
+Read-ahead is bounded by the existing **8 MiB per-request observation budget**
+and a shared **64 MiB in-memory prefix budget**. Exhaustion pauses further
+read-ahead until dispatch or shared capacity becomes available; it never rejects,
+truncates or adds an upload/context/output limit. Raw prefixes are released as
+they are forwarded, or on cancellation, queue expiry or shutdown, and are never
+written to disk. Metadata status reports current buffered bytes and the shared
+budget. Opt-out stops further early inspection, retaining any already-read bytes
+only for faithful forwarding. Unsupported or encoded bodies retain the existing
+forwarding path. Oversized, incomplete or temporarily unobserved uploads can still
+lack an early title; a full upload within the observation budget no longer needs
+a free backend before DSG can identify it.
+
+Later calls in an identified conversation reuse the last observed title until
+new text is available; the UI tooltip marks that scope while the new body remains
+unread. A different user excerpt replaces the old intent; repeated tool-loop
+requests with the same excerpt reuse its review.
 
 The configured dedicated Genie or configured DSG pool receives only the short
 excerpt and intentionally saved priority preferences. The in-memory store holds

@@ -8,6 +8,21 @@ For implementation detail, see the [changelog](CHANGELOG.md). For exact history,
 see [Git commits](https://github.com/JordiPosthumus/dwarf-star-gate/commits/main/).
 For unfinished work, see the [roadmap](docs/roadmap.md).
 
+## Queued stock-client job identification — 2026-09-07
+
+DSG now inspects ordinary queued requests before backend dispatch, allowing a
+request preview and Genie-generated title without a Pi extension. An in-memory
+prefix preserves exact forwarding and streaming backpressure; dispatch never
+waits for the upload to finish or for Genie. The existing 8 MiB observation bound
+and a shared 64 MiB read-ahead budget limit inspection, never accepted upload or
+model capacity. Opt-out stops early inspection, and cancellation/forwarding
+releases retained prefixes. No request bodies are spooled to disk.
+
+The full suite passed 714 tests with nine skips. Added checks cover queued title
+advice before dispatch, partial-upload handoff, exact bytes, shared memory bounds,
+oversized uploads, opt-out and cancellation. Source validation is complete; live
+activation and real-model acceptance are separate deployment checks.
+
 ## Recent reliability and intelligence sprint — 2026-09-03 to 2026-09-06
 
 - **Made pending job names useful before Genie responds.** The local priority

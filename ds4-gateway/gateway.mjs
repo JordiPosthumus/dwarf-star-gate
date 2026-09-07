@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
 import { RequestedThinkingObserver } from './requested-thinking.mjs';
 import {requestUserExcerpt} from './priority-request.mjs';
+import {QueuedBodyBudget,QueuedRequestBody} from './queued-request-body.mjs';
 import { Dataset } from './dataset.mjs';
 import { clientMetadata, CLIENT_METADATA_HEADER } from './client-metadata.mjs';
 import { EmbeddingCollector } from './embeddings.mjs';
@@ -283,6 +284,7 @@ export function createGateway(config,{visionTranscode,priorityRandom}={}) {
       }});
   }catch{priorityError='Priority state unavailable; ordinary scheduling continues. Saved state was not changed.';}
   const priorityIntents=priority?new PriorityIntents({lens:priority}):null;
+  const queuedBodyBudget=new QueuedBodyBudget();
   const priorityJobs=()=>[...nodes.flatMap(node=>[...(node.active?[node.active]:[]),...node.queue]),...waiting];
   const priorityEligible=job=>!draining&&!shuttingDown&&job.node?.healthy&&!job.node.drained&&!job.node.quarantine&&!job.node.recovering&&!job.node.removed&&!job.waitReason&&(!job.key||!nodes.some(node=>node.active?.key===job.key));
   function observePriority(){
@@ -293,7 +295,7 @@ export function createGateway(config,{visionTranscode,priorityRandom}={}) {
   function priorityStatus(details=false){
     if(!priority)return {schema:1,activation:'unavailable',error:priorityError};
     const {rules,...settings}=priority.settings();
-    const status={...settings,error:priorityError,selections:priority.selections,fallbacks:priority.fallbacks,genie_delay_ceiling_ms:60000,genie_wait_ms:0,intents:priorityIntents.status()};
+    const status={...settings,error:priorityError,selections:priority.selections,fallbacks:priority.fallbacks,genie_delay_ceiling_ms:60000,genie_wait_ms:0,intents:priorityIntents.status(),queued_body:{buffered_bytes:queuedBodyBudget.used,budget_bytes:queuedBodyBudget.limit}};
     if(!details)return status;
     const jobs=priorityJobs();
     return {...status,rules,receipts:structuredClone(priority.receipts),jobs:jobs.slice(0,512).map(job=>({
@@ -307,7 +309,10 @@ export function createGateway(config,{visionTranscode,priorityRandom}={}) {
   function priorityControl(action,input){
     if(!priority)throw new Error(priorityError);
     if(action==='manual'&&!store.get(input?.chat))throw new Error('Choose a known DSG conversation');
-    if(action==='settings')priority.configure(input);
+    if(action==='settings'){
+      priority.configure(input);
+      if(!priority.enabled)for(const job of priorityJobs())job.queuedBody?.stopInspection();
+    }
     else if(action==='manual')priority.setManual(input);
     else if(action==='rules')priority.setRules(input);
     else throw new Error('Unknown priority action');
@@ -632,6 +637,7 @@ export function createGateway(config,{visionTranscode,priorityRandom}={}) {
   }
   function dispatch(node, job) {
     const { req, res } = job;
+    const requestBody=job.queuedBody?.stream()??req;
     job.dispatched = Date.now();
     job.dispatchedMono=performance.now();
     clientWatch.observeRequest(job.watchId,job.id,'dispatched');
@@ -695,7 +701,7 @@ export function createGateway(config,{visionTranscode,priorityRandom}={}) {
       } else if(outcome==='complete')node.inferenceFailures=0;
       clearTimeout(job.deadline);
       clearInterval(progressTimer);
-      req.off('data', observeBody);req.off('end',bodyEnded);req.off('aborted',bodyAborted);req.off('error',bodyAborted);job.thinking.dispose();
+      requestBody.off('data', observeBody);requestBody.off('end',bodyEnded);req.off('aborted',bodyAborted);requestBody.off('error',bodyAborted);job.thinking.dispose();
       captureChunks=[];finishCapture(null);
       node.lastThinking = job.thinking.result; node.lastFinishedAt = new Date().toISOString();
       if (outcome === 'complete') node.completed++; else if(outcome==='vision_guidance')node.protected++;else if(outcome==='sse_observation_limited')node.observationLimited++;else node.failed++;
@@ -878,7 +884,7 @@ export function createGateway(config,{visionTranscode,priorityRandom}={}) {
         // and normalized follow-up attempts remain ambiguous. Never replay here.
         if(!settled&&!job.cancelled&&!res.destroyed&&!res.headersSent&&req.method==='POST'&&!retry&&!replacement&&
           !gotResponse&&freshConnectingSocket&&!connected&&upstream.reusedSocket===false&&errorValue.code==='ECONNREFUSED'){
-          req.unpipe(upstream);clientStatus=503;
+          requestBody.unpipe(upstream);clientStatus=503;
           finish('upstream_error',errorValue.code);
           return reject(req,res,503,'home_unavailable','The DS4 connection was refused before it connected; this request did not reach the server. A compatible patient client can wait and retry the unchanged request.',{id:job.id,callId:job.callId,key:job.key,node,reason:'worker_connect_refused'});
         }
@@ -896,10 +902,10 @@ export function createGateway(config,{visionTranscode,priorityRandom}={}) {
     log('request_dispatched', { request_id: job.id, node: node.id, session: job.key?.slice(0, 12), affinity: job.affinity, queue_ms: job.dispatched - job.created });
     dataset.record('dispatch',{request_id:job.id,node:node.id,queue_ms:job.dispatchedMono-job.createdMono});
     progress();
-    // Passive observation only while dispatched; queued uploads remain untouched.
-    // The original pipe retains streaming/backpressure and exact body bytes.
-    req.on('data',observeBody);req.once('end',bodyEnded);req.once('aborted',bodyAborted);req.once('error',bodyAborted);
-    req.pipe(upstream);
+    // A queued read-ahead prefix feeds the same observers and upstream once,
+    // followed by the still-streaming original upload with backpressure.
+    requestBody.on('data',observeBody);requestBody.once('end',bodyEnded);req.once('aborted',bodyAborted);requestBody.once('error',bodyAborted);
+    requestBody.pipe(upstream);
   }
 
   const server = http.createServer((req, res) => {
@@ -1016,7 +1022,7 @@ export function createGateway(config,{visionTranscode,priorityRandom}={}) {
         pumpWaiting();
       }
     };
-    job.cleanup = () => { job.queueTimer?.cancel();req.off('aborted', cancel); res.off('close', cancel); req.off('error', cancel); };
+    job.cleanup = () => { job.queueTimer?.cancel();job.queuedBody?.dispose();req.off('aborted', cancel); res.off('close', cancel); req.off('error', cancel); };
     req.on('aborted', cancel); req.on('error', cancel); res.on('close', cancel);
     job.queueTimer = deadlineTimer(() => {
       detach(job);
@@ -1025,6 +1031,11 @@ export function createGateway(config,{visionTranscode,priorityRandom}={}) {
       dataset.record('queue_timeout',{request_id:job.id,node:owner?.id??null,total_ms:performance.now()-job.createdMono});
       job.cleanup(); req.resume();pumpWaiting();
     }, job.queueTimeoutMs);
+    if(job.priorityFromRequest&&priority?.enabled&&(!req.headers['content-encoding']||req.headers['content-encoding']==='identity')){
+      job.queuedBody=new QueuedRequestBody(req,{budget:queuedBodyBudget,onBody:body=>{
+        if(!job.cancelled)job.priorityIntentId=priorityIntents.observeRequest(job,requestUserExcerpt(body))??null;
+      }});
+    }
     if(node)admit(job,node);else park(job,null,waitReason??'no_ready_worker');
   });
   server.requestTimeout = 0; // Covers upload + queue; no hidden five-minute Node default.

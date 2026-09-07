@@ -2008,7 +2008,49 @@ for(const cancelDuring of ['normalized_retry','conversion'])test(`vision cancell
 });
 
 
-test('Genie names ordinary gateway requests without a Pi extension, without reading queued bodies or persisting excerpts',{timeout:10000},async t=>{
+test('new stock requests get queued previews and Genie titles before any backend dispatch',{timeout:10000},async t=>{
+  const r=await rig(t,1,{control_socket:true});
+  const hold=r.request(JSON.stringify({stream:true,fixture_hold_stream:true}),'busy');
+  await until(()=>r.backends[0].heldStreams?.length===1);
+  const body=JSON.stringify({reasoning_effort:'xhigh',max_tokens:262144,messages:[{role:'user',content:'Repair CSV export formatting.'}]});
+  const queued=r.request(body,'new-stock-task');
+  await until(()=>r.gateway.priorityStatus(true).jobs.some(j=>j.state==='queued'&&j.request_preview?.text==='Repair CSV export formatting.'));
+  assert.equal(r.gateway.priorityStatus(true).queued_body.buffered_bytes,Buffer.byteLength(body));
+  assert.equal(r.backends[0].records.length,1);
+  const inputs=[];
+  const classifier=new PriorityClassifier({genie:{enabled:true,config:{url:'http://127.0.0.1:19999/v1',model:'fixture'}},snapshot:()=>({}),control:(route,input)=>workerControl(r.config.control_socket,route,input),fetchImpl:async(_url,options)=>{
+    inputs.push(JSON.parse(JSON.parse(options.body).messages[1].content));
+    return new Response(JSON.stringify({choices:[{finish_reason:'stop',message:{content:JSON.stringify({title:'CSV export formatting repair',priority:'High',reason:'urgent'})}}]}));
+  }});
+  try{
+    await classifier.tick();
+    const row=r.gateway.priorityStatus(true).jobs.find(j=>j.state==='queued');
+    assert.equal(row.title,'CSV export formatting repair');assert.equal(row.title_source,'genie');assert.equal(row.priority,'High');
+    assert.equal(inputs[0].recent_user_excerpt,'Repair CSV export formatting.');
+    assert.equal(r.backends[0].records.length,1,'naming never dispatches the queued inference');
+  }finally{classifier.close();r.backends[0].heldStreams.shift()();await hold;await queued;}
+  assert.equal(r.backends[0].records.length,2);assert.equal(r.backends[0].records[1].body.toString(),body);
+  assert.equal(r.gateway.priorityStatus(true).queued_body.buffered_bytes,0);
+});
+
+test('queued read-ahead hands a partial chunked upload to dispatch before upload end',{timeout:10000},async t=>{
+  const r=await rig(t,1),hold=r.request(JSON.stringify({stream:true,fixture_hold_stream:true}),'busy');
+  await until(()=>r.backends[0].heldStreams?.length===1);
+  let req;const response=new Promise((resolve,reject)=>{
+    req=http.request({host:'127.0.0.1',port:r.address.port,path:'/v1/chat/completions',method:'POST',headers:{authorization:'Bearer none','content-type':'application/json'}},res=>{res.resume();res.on('end',resolve);res.on('error',reject);});req.on('error',reject);
+  });
+  const first='{ "messages":[{"role":"user","content":"Stock queued upload"}],';
+  req.write(first);await until(()=>r.gateway.stats().queued===1);
+  const before=r.backends[0].receivedBytes;
+  r.backends[0].heldStreams.shift()();await hold;
+  await until(()=>r.backends[0].receivedBytes===before+Buffer.byteLength(first));
+  assert.equal(req.writableEnded,false);assert.equal(r.backends[0].records.length,1);
+  const last=' "reasoning_effort":"xhigh", "max_tokens":262144 }';req.end(last);await response;
+  assert.equal(r.backends[0].records[1].body.toString(),first+last);
+  assert.equal(r.gateway.stats().workers[0].last_requested_thinking.fields.reasoning_effort,'xhigh');
+});
+
+test('Genie names ordinary gateway requests without a Pi extension or persisting excerpts',{timeout:10000},async t=>{
   const r=await rig(t,1,{control_socket:true,dataset_enabled:true}),modelInputs=[];
   const classifier=new PriorityClassifier({genie:{enabled:true,closed:false,config:{url:'http://127.0.0.1:19999/v1',model:'fixture-genie'}},snapshot:()=>({}),control:(route,body)=>workerControl(r.config.control_socket,route,body),fetchImpl:async(_url,init)=>{
     const input=JSON.parse(JSON.parse(init.body).messages[1].content);modelInputs.push(input);
@@ -2027,7 +2069,7 @@ test('Genie names ordinary gateway requests without a Pi extension, without read
     assert.equal(r.gateway.priorityStatus(true).jobs[0].request_preview,null);
     second=r.request(body,'gateway-title-session');await until(()=>r.gateway.priorityStatus(true).jobs.length===2);
     const queued=r.gateway.priorityStatus(true).jobs.find(job=>job.state!=='running');
-    assert.equal(queued.title,'Export formatting repair');assert.equal(queued.title_state,'previous_observation');
+    assert.equal(queued.title,'Export formatting repair');assert.equal(queued.title_state,'ready');
     assert.equal(r.backends[0].records.length,1,'queued upload remains unread by the backend');
     r.backends[0].heldStreams.shift()();await first;await until(()=>r.backends[0].records.length===2&&r.backends[0].heldStreams.length===1);
     await classifier.tick();assert.equal(modelInputs.length,1,'same observed user excerpt reuses its title and recommendation');

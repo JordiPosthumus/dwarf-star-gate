@@ -1,5 +1,5 @@
-// Consume an already parsed request from the gateway's existing passive observer.
-// No extra body capture, queue reads, upload limits or durable content storage.
+// Select a disposable excerpt from early queued inspection or the dispatched
+// request observer. This selector never rewrites or stores the inference body.
 function userText(message){
   const blocks=typeof message?.content==='string'?[{type:'text',text:message.content}]:message?.content;
   if(!Array.isArray(blocks))return null;
