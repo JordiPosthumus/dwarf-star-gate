@@ -615,15 +615,17 @@ async function workerAction(action, input) {
   finally { workerBusy=false;$('worker-form').querySelector('button').disabled=false;$('pool-context-form').querySelector('button').disabled=false;$('queue-timeout-form').querySelector('button').disabled=false;updateConnectionFields();refreshRoutingControls();void loadWorkers(); }
 }
 function updateConnectionFields() {
-  const form=$('worker-form'), remote=form.elements.connection.value==='ssh';
+  const form=$('worker-form'), remote=form.elements.connection.value==='ssh', generic=form.elements.backend.value==='openai';
+  $('worker-context-field').hidden=!generic;$('worker-key-field').hidden=!generic;
+  form.elements.context_length.disabled=!generic;form.elements.api_key_file.disabled=!generic;
   $('ssh-host-field').hidden=!remote;$('ssh-fallback-field').hidden=!remote;$('remote-port-field').hidden=!remote;
   form.elements.ssh.disabled=!remote;form.elements.ssh.required=remote;form.elements.ssh_fallbacks.disabled=!remote;form.elements.remote_port.disabled=!remote;
-  $('endpoint-label').textContent=remote?'Local tunnel URL (free port)':'Local server URL';
+  $('endpoint-label').textContent=remote?'Local tunnel URL (free port)':generic?'API base URL':'Local server URL';
   form.elements.url.placeholder=remote?'http://127.0.0.1:38003':'http://127.0.0.1:8000';
 }
 function wireWorkerControls() {
   if(controlsWired)return;controlsWired=true;
-  const form=$('worker-form');form.elements.connection.addEventListener('change',updateConnectionFields);
+  const form=$('worker-form');form.elements.connection.addEventListener('change',updateConnectionFields);form.elements.backend.addEventListener('change',updateConnectionFields);
   $('pool-context-input').addEventListener('input',()=>{contextDirty=true;});
   $('queue-timeout-input').addEventListener('input',()=>{queueDirty=true;});
   $('queue-timeout-form').addEventListener('submit',e=>{
@@ -641,6 +643,11 @@ function wireWorkerControls() {
   });
   form.addEventListener('submit',e=>{
     e.preventDefault();const worker={id:form.elements.id.value.trim(),url:form.elements.url.value.trim()};
+    if(form.elements.backend.value==='openai'){
+      worker.backend='openai';
+      if(form.elements.context_length.value)worker.context_length=Number(form.elements.context_length.value);
+      if(form.elements.api_key_file.value.trim())worker.api_key_file=form.elements.api_key_file.value.trim();
+    }
     if(form.elements.connection.value==='ssh'){
       worker.ssh=form.elements.ssh.value.trim();worker.remote_port=Number(form.elements.remote_port.value);
       const fallbacks=[...new Set(form.elements.ssh_fallbacks.value.split(',').map(v=>v.trim()).filter(Boolean))];if(fallbacks.length)worker.ssh_fallbacks=fallbacks;

@@ -1,5 +1,7 @@
 // Operator-supplied routing endpoints only. No model launch commands or settings.
-const keys = new Set(['id', 'url', 'ssh', 'ssh_fallbacks', 'remote_port', 'telemetry_service']);
+import path from 'node:path';
+export const workerFields = ['id', 'url', 'ssh', 'ssh_fallbacks', 'remote_port', 'telemetry_service', 'backend', 'context_length', 'api_key_file'];
+const keys = new Set(workerFields);
 const validSshAlias=value=>typeof value==='string'&&/^[a-zA-Z0-9][\w.@-]{0,252}$/.test(value);
 const fallbackList=(value,primary)=>{
   if(!Array.isArray(value)||value.length>4||value.some(alias=>!validSshAlias(alias)))throw new Error('SSH fallbacks must be an array of at most four host aliases');
@@ -13,9 +15,21 @@ export function sshTargets(worker) {
 export function workerConfig(raw, { registration = false } = {}) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw) || Object.keys(raw).some(k => !keys.has(k))) throw new Error('Unsupported worker configuration field');
   if (typeof raw.id !== 'string' || !/^[a-zA-Z0-9][\w-]{0,63}$/.test(raw.id)) throw new Error('Worker ID must use 1–64 letters, digits, underscores or hyphens');
+  if (raw.backend !== undefined && !['ds4', 'openai'].includes(raw.backend)) throw new Error('Backend must be ds4 or openai');
   const u = new URL(raw.url);
-  if (u.protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(u.hostname) || !u.port || u.username || u.password || u.search || u.hash || !['/', '/v1', '/v1/'].includes(u.pathname)) throw new Error('Use a local HTTP endpoint or an SSH tunnel to a local port');
-  const result = { id: raw.id, url: `http://127.0.0.1:${u.port}` };
+  const local = u.protocol === 'http:' && ['127.0.0.1', 'localhost'].includes(u.hostname) && !!u.port;
+  if (u.username || u.password || u.search || u.hash || !['http:', 'https:'].includes(u.protocol)) throw new Error('Use an HTTP(S) base URL without credentials, query or fragment');
+  if ((raw.backend !== 'openai' || raw.ssh) && (!local || !['/', '/v1', '/v1/'].includes(u.pathname))) throw new Error('Use a local HTTP endpoint or an SSH tunnel to a local port');
+  const result = { id: raw.id, url: raw.backend === 'openai' ? `${u.origin}${u.pathname === '/' ? '/v1' : u.pathname.replace(/\/$/, '')}` : `http://127.0.0.1:${u.port}` };
+  if (raw.backend !== undefined) result.backend = raw.backend;
+  if (raw.context_length !== undefined) {
+    if (!Number.isSafeInteger(raw.context_length) || raw.context_length < 1) throw new Error('Worker context length must be a positive whole token count');
+    result.context_length = raw.context_length;
+  }
+  if (raw.api_key_file !== undefined) {
+    if (raw.backend !== 'openai' || typeof raw.api_key_file !== 'string' || !path.isAbsolute(raw.api_key_file)) throw new Error('OpenAI endpoint credentials require an absolute local token-file path');
+    result.api_key_file = raw.api_key_file;
+  }
   if (raw.ssh !== undefined) {
     if (!validSshAlias(raw.ssh)) throw new Error('Invalid SSH host or alias');
     result.ssh = raw.ssh;
@@ -30,7 +44,7 @@ export function workerConfig(raw, { registration = false } = {}) {
   if (raw.telemetry_service !== undefined) {
     if (raw.telemetry_service !== null && (typeof raw.telemetry_service !== 'string' || !/^[\w@.-]+\.service$/.test(raw.telemetry_service))) throw new Error('Invalid journal service');
     result.telemetry_service = raw.telemetry_service;
-  } else if (registration) result.telemetry_service = null; // Macs need not have journalctl.
+  } else if (registration || raw.backend === 'openai') result.telemetry_service = null; // Generic endpoints need not run DS4's journal service.
   return result;
 }
 export function workerConfigs(raw) {
@@ -41,7 +55,8 @@ export function workerConfigs(raw) {
 }
 export function assertUniqueWorker(list, worker) {
   if (list.some(n => n.id === worker.id)) throw new Error('Worker ID already registered');
-  if (list.some(n => n.url === worker.url)) throw new Error('Local endpoint already registered');
+  const endpoint = n => n.backend === 'openai' ? n.url.replace(/\/$/,'') : `${n.url.replace(/\/$/,'')}/v1`;
+  if (list.some(n => endpoint(n) === endpoint(worker))) throw new Error('Local endpoint already registered');
   if (worker.ssh && list.some(n => (n.remote_port ?? 8000) === (worker.remote_port ?? 8000) && sshTargets(n).some(alias=>sshTargets(worker).includes(alias)))) throw new Error('SSH endpoint already registered');
 }
 

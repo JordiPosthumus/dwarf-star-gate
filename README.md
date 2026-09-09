@@ -2,7 +2,7 @@
 
 **Seamless Continuity**
 
-Keep your agents working across a local DS4 fleet.
+Keep your agents working across a local inference fleet.
 
 <img src="ds4-gateway/ui/logo.png" alt="Dwarf Star Gate logo" width="240">
 
@@ -13,11 +13,15 @@ excellent local inference engine. Running it efficiently across a home fleet
 takes coordination: connecting your applications, preserving useful caches,
 keeping track of queues, and dealing with server failures.
 
-**Dwarf Star Gate is a local gateway for multiple devices running DS4—DGX Sparks,
-Macs, or a mix.** It gives your applications one endpoint and you one dashboard,
+**Dwarf Star Gate is a local gateway for multiple devices running DS4 or other
+OpenAI-compatible servers—DGX Sparks, Macs, or a mix.** It gives your applications one endpoint and you one dashboard,
 helping you manage a home inference fleet with less manual effort and make better
 use of your hardware. See which devices are busy or idle, where requests are
 waiting, and how much time is spent processing prompts and generating responses.
+
+For oMLX, vLLM, SGLang or another compatible server, see
+[OpenAI-compatible workers](docs/openai-endpoints.md). Model handling stays with
+the backend; DSG preserves its existing scheduling and a shared context limit.
 
 > Our guiding light: a low-effort DS4 fleet that keeps agents working.
 > Intelligence should make that dependable foundation better—not become another

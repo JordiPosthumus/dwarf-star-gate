@@ -1,5 +1,5 @@
-import http from 'node:http';
 import { StringDecoder } from 'node:string_decoder';
+import {endpointUrl, endpointTransport, endpointHeaders} from './endpoint.mjs';
 
 export function safeQuarantine(raw) {
   if(!raw || !['fatal_accelerator_error','accelerator_checkpoint_failure','repeated_inference_failures'].includes(raw.reason))return null;
@@ -45,9 +45,10 @@ export class GenerationFaultObserver {
 
 // Explicit operator recovery only, on an isolated idle endpoint. No model-server
 // settings change. The synthetic request has its own small output/time budget.
-export function verifyGeneration(url, model) {
+export function verifyGeneration(url, model, {worker} = {}) {
   return new Promise((resolve,reject)=>{
-    const req=http.request(new URL('/v1/chat/completions',url),{method:'POST',agent:false,headers:{'content-type':'application/json'}},res=>{
+    const target = worker ? endpointUrl(worker, '/v1/chat/completions') : new URL('/v1/chat/completions',url);
+    const req=endpointTransport(target).request(target,{method:'POST',agent:false,headers:{'content-type':'application/json',...(worker ? endpointHeaders(worker) : {})}},res=>{
       let body='';
       res.on('data',chunk=>{body+=chunk.toString('utf8');if(body.length>65536)req.destroy(new Error('Recovery response too large'));});
       res.on('error',reject);
@@ -61,6 +62,6 @@ export function verifyGeneration(url, model) {
     });
     const timer=setTimeout(()=>req.destroy(new Error('Recovery generation timed out; worker remains quarantined')),20000);
     req.once('close',()=>clearTimeout(timer));req.on('error',reject);
-    req.end(JSON.stringify({model,stream:false,max_tokens:32,temperature:0,thinking:{type:'disabled'},reasoning_effort:'none',messages:[{role:'user',content:'Reply with exactly DSG_RECOVERY_OK and nothing else.'}]}));
+    req.end(JSON.stringify({model,stream:false,max_tokens:32,temperature:0,...(worker?.backend === 'openai' ? {chat_template_kwargs:{enable_thinking:false}} : {thinking:{type:'disabled'},reasoning_effort:'none'}),messages:[{role:'user',content:'Reply with exactly DSG_RECOVERY_OK and nothing else.'}]}));
   });
 }

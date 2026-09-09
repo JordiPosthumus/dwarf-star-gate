@@ -1,5 +1,11 @@
 # Dwarf Star Gate work log
 
+## 2026-09-09 — OpenAI-compatible endpoints
+
+- Register oMLX and other compatible servers alongside DS4, with endpoint
+  credentials and a shared context guarantee, while keeping DSG's existing
+  routing behavior.
+
 ## 2026-09-07 — served thinking mode
 
 Genie now requests `high` explicitly. The Thinking row displays the native DS4

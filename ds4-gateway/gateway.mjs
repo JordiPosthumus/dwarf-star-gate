@@ -1,4 +1,5 @@
 import http from 'node:http';
+import https from 'node:https';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
@@ -11,7 +12,8 @@ import { Dataset } from './dataset.mjs';
 import { clientMetadata, CLIENT_METADATA_HEADER } from './client-metadata.mjs';
 import { RoutingShadow } from './routing-shadow.mjs';
 import { GenerationFaultObserver, verifyGeneration } from './generation-health.mjs';
-import { workerConfig, workerConfigs, assertUniqueWorker, sshTargets, replaceSshFallbacks } from './worker-config.mjs';
+import { workerConfig, workerConfigs, workerFields, assertUniqueWorker, sshTargets, replaceSshFallbacks } from './worker-config.mjs';
+import {endpointUrl, endpointTransport, endpointHeaders, endpointMetadata} from './endpoint.mjs';
 import { Recovery } from './recovery.mjs';
 import { classifySshFailure } from './recovery-transport.mjs';
 import { loadConfig, isMain, gatewayPort, gatewayHost, continuityEnabled } from './config.mjs';
@@ -227,6 +229,7 @@ export class UsageObserver {
 
 export function createGateway(config,{visionTranscode}={}) {
   if (!validContext(config.context_length)) throw new Error('Invalid configured pool context limit');
+  if (config.model_agnostic !== undefined && typeof config.model_agnostic !== 'boolean') throw new Error('model_agnostic must be a boolean');
   const configuredQueueTimeout=queueTimeout(config.queue_timeout_ms);
   const initial = workerConfigs(config.nodes);
   const store = new AffinityStore(config.state_file);
@@ -290,7 +293,7 @@ export function createGateway(config,{visionTranscode}={}) {
   }
   let mutation = Promise.resolve();
   const serialize = fn => { const next = mutation.then(fn); mutation = next.catch(() => {}); return next; };
-  const definition = n => Object.fromEntries(['id','url','ssh','ssh_fallbacks','remote_port','telemetry_service'].filter(k => n[k] !== undefined).map(k => [k,n[k]]));
+  const definition = n => Object.fromEntries(workerFields.filter(k => n[k] !== undefined).map(k => [k,n[k]]));
   let recovery;
   try { recovery=new Recovery(config.recovery,{store,nodes,model:config.model,stopping:()=>shuttingDown||draining,log,
     reinstate:(n,expected,recoveryState)=>{
@@ -308,6 +311,8 @@ export function createGateway(config,{visionTranscode}={}) {
   }});}catch(e){store.close();throw e;}
   const visionProtection=new VisionProtection(config.vision_compatibility,store,path.dirname(config.state_file),visionTranscode?{transcode:visionTranscode}:undefined);
   const agent = new http.Agent({ keepAlive: true, maxSockets: 16 });
+  const tlsAgent = new https.Agent({ keepAlive: true, maxSockets: 16 });
+  const upstreamOptions = (node, url) => ({ agent: url.protocol === 'https:' ? tlsAgent : agent, headers: node.upstreamHeaders ?? {} });
   const accepted = new Set(['POST /v1/chat/completions', 'POST /v1/completions', 'POST /v1/responses', 'POST /v1/messages', 'GET /v1/models']);
   const auth = Buffer.from(`Bearer ${config.api_key}`);
   const lastOperatorAction=id=>[...(store.data.operator_actions??[])].reverse().find(action=>action.workers.includes(id))??null;
@@ -570,12 +575,14 @@ export function createGateway(config,{visionTranscode}={}) {
     let captureChunks=[],captureBytes=0,captureOverflow=false,captureResolved=false,resolveCapture;
     const bodyReady=new Promise(resolve=>{resolveCapture=resolve;});
     const finishCapture=value=>{if(captureResolved)return;captureResolved=true;resolveCapture(value);};
-    const target = new URL(req.url, node.url);
+    const target = endpointUrl(node, req.url);
     const headers = forwardHeaders(req.headers);
     // The bearer credential authenticates callers to DSG. Stock DS4 workers
     // are intentionally unauthenticated behind loopback or an SSH tunnel, so
     // the ingress secret must never cross the worker boundary.
     delete headers.authorization;
+    delete headers['x-api-key'];
+    Object.assign(headers, node.upstreamHeaders ?? {});
     delete headers['x-dsg-review-flexible']; // Core-owned undispatched assignment only.
     delete headers['x-dsg-review-no-wait']; // Advisory admission option only.
     delete headers['x-dsg-priority-intent']; // Strip retired client metadata during upgrades.
@@ -590,7 +597,7 @@ export function createGateway(config,{visionTranscode}={}) {
       job.requestStream=typeof body?.stream==='boolean'?body.stream:null;
       job.requestedUsage=typeof body?.stream_options?.include_usage==='boolean'?body.stream_options.include_usage:null;
       if(job.previewFromRequest)observeJobPreview(job,requestUserExcerpt(body));
-    },{route:req.url,model:config.model,contextLength:node.contextLength});
+    },{route:req.url,model:node.backend === 'openai' ? undefined : node.probeModel ?? config.model,contextLength:node.contextLength});
     const observeBody = chunk => {
       requestBytes+=chunk.length;job.thinking.accept(chunk);
       if(captureLimit&&!captureOverflow){
@@ -782,7 +789,7 @@ export function createGateway(config,{visionTranscode}={}) {
       let gotResponse=false,freshConnectingSocket=false,connected=false;
       const attemptHeaders={...headers};
       if(replacement){delete attemptHeaders['transfer-encoding'];attemptHeaders['content-length']=replacement.length;}
-      const upstream=http.request(target,{method:req.method,headers:attemptHeaders,agent},up=>{
+      const upstream=endpointTransport(target).request(target,{...upstreamOptions(node,target),method:req.method,headers:attemptHeaders},up=>{
         gotResponse=true;
         if(up.statusCode===400&&visionProtection.enabled&&(retry||captureLimit))bufferCandidate(up,retry);
         else forwardResponse(up);
@@ -868,7 +875,8 @@ export function createGateway(config,{visionTranscode}={}) {
     if (req.method === 'GET') {
       if(!node)return reject(req,res,503,'no_healthy_workers','No DS4 server is currently ready; model metadata is unavailable',{id:requestId,callId,key,reason:'no_ready_worker'});
       // Model-list requests must not sit behind a multi-hour generation.
-      const probe = http.get(new URL(req.url, node.url), { agent }, up => {
+      const modelsUrl = endpointUrl(node, req.url);
+      const probe = endpointTransport(modelsUrl).get(modelsUrl, upstreamOptions(node,modelsUrl), up => {
         let body = '';
         up.on('data', chunk => { body += chunk; if (body.length > 1048576) probe.destroy(new Error('Model metadata too large')); });
         up.on('error', () => error(res, 502, 'models_unavailable', 'Model metadata unavailable'));
@@ -880,6 +888,7 @@ export function createGateway(config,{visionTranscode}={}) {
             // This only changes model-list metadata; generation bytes are untouched.
             for (const model of data.data) {
               model.context_length = contextLimit();
+              if (model.max_model_len !== undefined) model.max_model_len = contextLimit();
               if (model.top_provider) model.top_provider = { ...model.top_provider, context_length:contextLimit(),
                 max_completion_tokens: Math.min(model.top_provider.max_completion_tokens ?? contextLimit(), contextLimit()) };
             }
@@ -978,18 +987,22 @@ export function createGateway(config,{visionTranscode}={}) {
         if (was !== node.healthy) log('worker_health', { node: node.id, healthy: node.healthy, reason });
         resolve();
       };
-      const p = http.get(new URL('/v1/models', node.url), { agent }, res => {
+      try { node.upstreamHeaders = endpointHeaders(node); }
+      catch { finish(false, 'endpoint_credentials_unavailable'); return; }
+      const modelsUrl = endpointUrl(node, '/v1/models');
+      const p = endpointTransport(modelsUrl).get(modelsUrl, upstreamOptions(node,modelsUrl), res => {
         let body = '';
         res.on('data', chunk => { body += chunk; if (body.length > 1048576) p.destroy(); });
         res.on('error', e => finish(false, e.code));
         res.on('end', () => {
           try {
-            const model = JSON.parse(body).data?.find(m => m.id === config.model);
-            node.modelMatches = res.statusCode === 200 && !!model;
+            const metadata = endpointMetadata(node, JSON.parse(body), config);
+            node.modelMatches = res.statusCode === 200 && metadata.available;
+            node.probeModel = metadata.probeModel;
             const previousContext=node.contextLength;
-            node.contextLength = Number.isSafeInteger(model?.context_length) ? model.context_length : null;
+            node.contextLength = metadata.contextLength;
             if(previousContext!==undefined && previousContext!==node.contextLength)observe(()=>shadow.reset(node.id));
-            const ok = res.statusCode === 200 && !!model && node.contextLength >= contextLimit();
+            const ok = node.modelMatches && node.contextLength >= contextLimit();
             finish(ok, ok ? undefined : 'model_or_context_mismatch');
           } catch { finish(false, 'invalid_model_response'); }
         });
@@ -1076,7 +1089,7 @@ export function createGateway(config,{visionTranscode}={}) {
         await delay(250);
       } while (Date.now() < until);
       if (shuttingDown) throw new Error('Gateway is stopping');
-      if (!compatible()) throw new Error(`Compatibility check failed (${node.probeError || 'unavailable'}). Required model ${config.model}, context at least ${contextLimit()}; observed context ${node.contextLength ?? 'unknown'}.`);
+      if (!compatible()) throw new Error(`Compatibility check failed (${node.probeError || 'unavailable'}). Required ${config.model_agnostic || node.backend === 'openai' ? 'available endpoint' : `model ${config.model}`}, context at least ${contextLimit()}; observed context ${node.contextLength ?? 'unknown'}.`);
       store.setWorkers([...nodes.map(definition), settings], { ...store.data.drained, [node.id]: true });
       nodes.push(node);
       log('worker_registered', { node: node.id, context_length: node.contextLength, drained: true });
@@ -1181,7 +1194,7 @@ export function createGateway(config,{visionTranscode}={}) {
             const recovered=[];
             for(const n of selected.filter(n=>n.quarantine)) {
               if(n.active || n.queue.length)throw new Error('Wait for this worker to become idle before recovery verification');
-              const proof=await verifyGeneration(n.url,config.model);
+              const proof=await verifyGeneration(n.url,n.probeModel ?? config.model,{worker:n});
               if(shuttingDown || draining)throw new Error('Gateway is draining');
               recovered.push({node:n,proof});
             }
@@ -1244,7 +1257,7 @@ export function createGateway(config,{visionTranscode}={}) {
       clearInterval(recoveryTimer);await recovery.close();
       if (control) await new Promise(resolve => control.close(resolve));
       await new Promise(resolve => { server.close(resolve); server.closeIdleConnections(); });
-      clearInterval(healthTimer); agent.destroy(); store.close();await dataset.close();
+      clearInterval(healthTimer); agent.destroy(); tlsAgent.destroy(); store.close();await dataset.close();
       nodes.forEach(n => { n.removed = true; n.stopTunnel?.(); });
     },
   };

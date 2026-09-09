@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-09-09 — OpenAI-compatible endpoints
+
+Worker registration now supports generic HTTP(S) API bases, private bearer-token
+files and declared context limits. Discovery recognizes `max_model_len` as well
+as DS4 context metadata, using the smallest available capacity. The optional
+`model_agnostic` pool mode removes legacy model-identity checks. Request bodies,
+model fields, queues and affinity remain unchanged. Generic workers do not
+inherit DS4 journal collection, and their served thinking mode is not inferred
+from DS4 parser rules. Added mock-server coverage for authenticated discovery,
+unchanged requests, streaming tools, context guarantees and backend errors.
+
 ## 2026-09-07 — served thinking mode
 
 Genie now requests `high` explicitly. The Thinking row displays the native DS4
