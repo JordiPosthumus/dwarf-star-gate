@@ -73,6 +73,92 @@ checks may establish preliminary evidence without exercising the live model.
    for the named profile, route and tested scope only, with open limitations,
    their owners and the evidence still needed.
 
+## Output allowance and complete prompts
+
+For this stack, treat `max_tokens` (or the selected output-limit alias) as an
+upper bound on generation. A large output allowance must not reserve space by
+rejecting or shortening an otherwise valid prompt. Use MTPLX's sequence:
+
+1. Render the complete chat template, including system instructions, tools,
+   retained reasoning and processed image/audio tokens where supported.
+2. Count the actual model input tokens. If the prompt fills or exceeds the
+   context window, return a clear context-length error before generation.
+3. Calculate the remaining space and use the smaller of that space and the
+   requested output allowance. Keep smaller intentional limits, such as the
+   client's compaction-summary budget. When the request omits the limit, resolve
+   the documented model/server default and fit it into the remaining space.
+4. Let generation finish naturally. If it consumes its allowed space first,
+   return the normal length-limit finish reason and accurate token usage.
+   Record any allowance adjustment in logs or metadata, not appended answer text.
+
+For example, a 1,000-token context with a 700-token prompt and a requested
+1,000-token output allows 300 output tokens. A request for only 100 output tokens
+still allows 100. This does not discard any prompt tokens or impose an arbitrary
+fixed response cap. Preserve the declared model output capability and the
+owner's settings; do not introduce a smaller output default to conceal inaccurate
+client token estimates.
+
+The backend owns this calculation because it owns the exact tokenizer, chat
+template and multimodal processing. DSG forwards the client's request unchanged.
+Its setup must not add character-based token estimates, remove output-limit
+fields, shorten prompts or alter thinking settings to compensate for a backend
+that fails this contract.
+
+### Implementation checks by backend
+
+- **MTPLX:** verify the installed generation path counts the final prompt token
+  IDs, fits the output allowance to the remaining context, and exposes the
+  requested/effective allowance. Check separately for intentionally configured
+  server response limits.
+- **vLLM:** inspect both early renderer validation and the later generation
+  budget resolver, followed by final sampling and beam-search conversion. A
+  correct `get_max_tokens()` result alone is insufficient if an early renderer
+  or a later custom Qwen validator rejects the request. Every validator must
+  accept the resolved remaining-space allowance. Keep valid input intact through text
+  checks, tokenizer encoding and token checks; retain output limits across
+  `with_kwargs` and multimodal processing. Preserve explicitly requested
+  truncation and padding, including their automatic sentinel values. The
+  [upstream proposal](https://github.com/vllm-project/vllm/pull/42482) describes
+  these interactions; it is a proposal, not a released compatibility guarantee.
+  Pin and test any local patch against the actual installed source, retain prior
+  patches, and include the correction in the normal image/launcher so container
+  recreation does not lose it.
+- **oMLX:** inspect the installed resolver and its callers. For installations
+  with a Qwen-specific output-budget validator, replace oversized-output
+  rejection with remaining-space calculation while retaining invalid-value and
+  full-prompt errors. Text and vision requests must use the exact prepared
+  inputs that generation consumes; avoid counting images as text or processing
+  the prompt twice with different results.
+- **Other runtimes:** run the checks below before deciding whether a change is
+  needed. A compatible endpoint does not establish this behavior.
+
+### Required acceptance checks
+
+Exercise the full parser/template/tokenizer/resolver path, then the authorized
+live client-to-backend path. Include an oversized output request with a fitting
+prompt, a smaller intentional output request, omission, one remaining token,
+exactly full and overfull prompts, tool history, and supported multimodal inputs.
+Check both streaming and complete responses. Verify valid prompts retain every
+input token; cover explicit truncation separately so a fix does not silently
+change its meaning. Test a real post-compaction continuation as well as an
+ordinary short prompt, and prove a cold-to-warm prefix-cache hit without clearing
+existing caches.
+
+With automatic compaction enabled, Pi 0.85.1 can compact and retry a length-stopped
+turn once when it ended below the model's intended output limit. This is client
+recovery, not server compaction or a guarantee that every answer will finish.
+The backend must report an honest length stop rather than disguise an incomplete
+answer as a natural finish. See the
+[Pi recovery implementation](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/agent-session.ts).
+
+Keep reusable, versioned patch diffs with source prerequisites, exact source-hash
+checks, check/apply/rollback commands and installed-path regression tests. Refuse
+unknown source rather than silently overwriting later changes. Keep private
+source/build identity, before/after settings, rollback receipts and live test
+receipts in operational records. Record readiness only for
+the tested version, route and scope; a parsing patch or successful startup is not
+an acceptance test.
+
 ## Per-backend contract
 
 Create one instance of this compact record for each distinct model/runtime
