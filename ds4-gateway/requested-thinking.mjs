@@ -9,11 +9,11 @@ const object = v => v !== null && typeof v === 'object' && !Array.isArray(v);
 const own = (v, k) => Object.hasOwn(v, k);
 function scalar(key, value) {
   if (value === null) return null;
-  if (key === 'thinking' || key === 'think' || key === 'enable_thinking') return typeof value === 'boolean' ? value : 'unrecognized';
+  if (key === 'thinking' || key === 'think' || key === 'enable_thinking' || key === 'chat_template_kwargs.enable_thinking') return typeof value === 'boolean' ? value : 'unrecognized';
   if (key === 'thinking.budget_tokens') return Number.isSafeInteger(value) && value >= 0 ? value : 'unrecognized';
   return (key === 'thinking.type' ? types : efforts).has(value) ? value : 'unrecognized';
 }
-const keys = ['think', 'reasoning_effort', 'reasoning.effort', 'output_config.effort', 'thinking', 'thinking.type', 'thinking.budget_tokens', 'enable_thinking'];
+const keys = ['think', 'reasoning_effort', 'reasoning.effort', 'output_config.effort', 'thinking', 'thinking.type', 'thinking.budget_tokens', 'enable_thinking', 'chat_template_kwargs.enable_thinking', 'chat_template_kwargs.reasoning_effort'];
 
 // Re-allowlist at the dashboard boundary as well as during body observation.
 export function safeRequestedThinking(raw) {
@@ -36,6 +36,7 @@ export function requestedThinking(body) {
     if (object(body[parent]) && own(body[parent], 'effort')) fields[`${parent}.effort`] = scalar(`${parent}.effort`, body[parent].effort);
     else if (own(body, parent) && body[parent] !== null && !object(body[parent])) fields[`${parent}.effort`] = 'unrecognized';
   }
+  if(object(body.chat_template_kwargs)){for(const key of ['enable_thinking','reasoning_effort'])if(own(body.chat_template_kwargs,key))fields['chat_template_kwargs.'+key]=scalar('chat_template_kwargs.'+key,body.chat_template_kwargs[key]);}
   if (object(body.thinking)) {
     for (const key of ['type', 'budget_tokens']) if (own(body.thinking, key)) fields[`thinking.${key}`] = scalar(`thinking.${key}`, body.thinking[key]);
     // Do not mistake an unfamiliar thinking object for an omitted setting.

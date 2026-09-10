@@ -23,3 +23,35 @@ test('collector provenance is strictly allowlisted and does not save headers or 
   const e=evidence('finish',{request_id:'req',node:'worker',route:'/private-secret',response_format:'private',http_status:200,usage_observation:'private',request_stream:'private',requested_usage:true,raw_body:'private'});
   assert.equal(e.route,null);assert.equal(e.response_format,null);assert.equal(e.http_status,200);assert.equal(e.usage_observation,null);assert.equal(e.request_stream,null);assert.equal(e.requested_usage,true);assert.ok(!JSON.stringify(e).includes('private'));
 });
+
+import {UsageObserver} from './gateway.mjs';
+import {GenerationEvidence} from './generation-evidence.mjs';
+test('JSON and SSE output warnings recognize refusals, tools, alternate reasoning and unknown shapes',()=>{
+  const cases=[
+    [{refusal:'PRIVATE_REFUSAL'},false,15],
+    [{content:[{type:'text',text:'PRIVATE_ANSWER'}]},false,14],
+    [{tool_calls:[{function:{name:'clock',arguments:''}}]},false,0],
+    [{function_call:{name:'clock',arguments:''}},false,0],
+    [{content:[{type:'image_url',image_url:{url:'PRIVATE'}}]},false,0],
+    [{reasoning_text:'PRIVATE_THOUGHT'},true,0],
+    [{content:null},true,0],
+  ];
+  for(const [message,warns,answers] of cases)for(const format of ['json','sse']){
+    let generation;
+    if(format==='json'){
+      const o=new JsonUsageObserver('/v1/chat/completions');o.accept(Buffer.from(JSON.stringify({choices:[{message,finish_reason:'stop'}]})));generation=o.finish().generation;
+    }else{
+      const o=new UsageObserver();
+      o.accept(Buffer.from(`data: ${JSON.stringify({choices:[{index:0,delta:message,finish_reason:null}]})}\n\ndata: ${JSON.stringify({choices:[{index:0,delta:{},finish_reason:'stop'}]})}\n\ndata: [DONE]\n\n`));
+      o.finishState();generation={thinking_characters:o.thinkingCharacters,answer_characters:o.answerCharacters,tool_characters:o.toolCharacters,output_present:o.outputPresent,observation_complete:o.shapeComplete&&!o.limited&&!o.reasonEofAmbiguous&&o.singleChoiceFinish};
+    }
+    assert.equal(generation.answer_characters,answers);
+    const row=evidence('finish',{run_id:'run',request_id:'req',node:'spark',outcome:'complete',route:'/v1/chat/completions',finish_reason:'stop',generation});
+    const h=new GenerationEvidence(),now=Date.now();h.accept({...row,schema:1,run_id:'run',time:new Date(now).toISOString()});
+    assert.equal(h.snapshot(now).rows.length,warns?1:0,`${format}: ${JSON.stringify(message)}`);
+    assert.ok(!JSON.stringify(row).includes('PRIVATE'));
+  }
+});
+test('old output counts without completeness evidence cannot establish an empty response',()=>{
+ const h=new GenerationEvidence(),now=Date.now();h.accept({schema:1,kind:'finish',run_id:'run',request_id:'req',node:'spark',outcome:'complete',route:'/v1/chat/completions',finish_reason:'stop',time:new Date(now).toISOString(),generation:{thinking_characters:0,answer_characters:0,tool_characters:0}});assert.equal(h.snapshot(now).rows.length,0);
+});

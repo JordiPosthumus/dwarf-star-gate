@@ -277,11 +277,12 @@ Recommendations are advice, not actions you performed. Request recovery only for
 Use only supplied evidence; label hypotheses as hypotheses. Do not infer a stall from long thinking, a cold start from a resident miss, or ignored xhigh from unavailable thinking metadata. Check the supplied semantics carefully, especially milliseconds versus seconds and historical waits versus current ETAs. Similarity and counterfactual speed are not measured. If there is no evidenced issue, use one good item only when positive health or improvement is demonstrated; otherwise use one info item explaining that no action is indicated by this snapshot. Each item must cite relevant allowed evidence_refs. Do not turn missing evidence into an all-clear.`;
 
 export class Genie {
-  constructor(config, snapshot, {fetchImpl=genieLoopbackFetch,recover=null,rebalance=null,memory=null,providerLedger=null,assignmentLedger=null,poolUrl=null}={}) {
+  constructor(config, snapshot, {fetchImpl=genieLoopbackFetch,recover=null,rebalance=null,memory=null,providerLedger=null,assignmentLedger=null,poolUrl=null,isTesting=()=>false}={}) {
     // A configured Genie is a core observer and starts on. Recovery and relocation
     // mutation and other powers remain separately authorized by their own gates.
     this.config=config;this.getSnapshot=snapshot;this.fetch=fetchImpl;this.enabled=!!config&&config.enabled!==false;this.busy=false;this.source=config?.default_source==='pool'?'pool':'primary';
     this.last=null;this.reports=[];this.providerActions=[];this.error=null;this.abort=null;this.closed=false;this.queuedQuestion=null;this.questionReceipt=null;this.actionOfferKey=null;this.actionOfferAt=0;this.busyKind=null;this.preempted=false;this.activeProvider=null;this.providerStartedAt=null;this.providerDeadlineAt=null;this.reviewFinishedAt=null;this.consecutiveFailures=0;this.providerAttempts=[];
+    this.isTesting=isTesting;
     this.poolUrl=poolUrl;this.providerHistory=[];this.assignment=null;
     this.recover=recover;this.rebalance=rebalance;this.memory=memory;this.providerLedger=providerLedger;this.assignmentLedger=assignmentLedger;
     this.providerActions=[...(providerLedger?.recent()??[]),...(assignmentLedger?.recent()??[])].sort((a,b)=>b.time-a.time).slice(0,30);
@@ -291,6 +292,7 @@ export class Genie {
       if(endpoint.timeout_ms!==undefined&&(!Number.isSafeInteger(endpoint.timeout_ms)||endpoint.timeout_ms<1000||endpoint.timeout_ms>MAX_GENIE_TIMEOUT_MS))throw new Error(`Genie endpoint timeout_ms must be an integer from 1000 to ${MAX_GENIE_TIMEOUT_MS}`);
     }
   }
+  get testing(){return this.isTesting();}
   publicQuestion(){return this.questionReceipt&&Object.fromEntries(['id','state','submitted_at','started_at','finished_at','report_id','error'].filter(k=>this.questionReceipt[k]!==undefined).map(k=>[k,this.questionReceipt[k]]));}
   status(){const snapshot=this.getSnapshot(),actionSupervision=!!this.rebalance||!!this.recover&&!!snapshot.gateway?.recovery?.automatic;
     const memory=this.memory?{...this.memory.status(),...this.memory.retrieve(snapshot)}:{available:false,enabled:false,error:null,notes:[]},byCandidate=new Map();
@@ -305,8 +307,8 @@ export class Genie {
     }
     const hardening=[...byCandidate.values()];
     hardening.sort((a,b)=>b.at-a.at||a.candidate_id.localeCompare(b.candidate_id));
-    return {configured:!!this.config,enabled:this.enabled,busy:this.busy,review_kind:this.busyKind,action_supervision:actionSupervision,mode:actionSupervision?'evidence-gated-actions':'observation-only',source:this.source,fallback_available:!!this.config?.fallback,last_served_by:this.reports[0]?.served_by??null,primary_timeout_ms:this.config?(this.config.timeout_ms??DEFAULT_GENIE_TIMEOUT_MS):null,fallback_timeout_ms:this.config?.fallback?(this.config.fallback.timeout_ms??DEFAULT_POOL_TIMEOUT_MS):null,active_provider:this.busy?this.activeProvider:null,provider_started_at:this.busy?this.providerStartedAt:null,provider_deadline_at:this.busy?this.providerDeadlineAt:null,review_finished_at:this.reviewFinishedAt,consecutive_failures:this.consecutiveFailures,provider_attempts:this.providerAttempts,assignment:this.assignment,last_check:this.last,error:this.error,question:this.publicQuestion(),reports:this.reports,provider_actions:this.providerActions,hardening_notes:hardening.slice(0,24),
-    ticker:tickerStatus(this.reports[0],snapshot,this),memory,provider_action_storage:this.providerLedger?.status()??null,provider_assignment_storage:this.assignmentLedger?.status()??null};}
+    return {configured:!!this.config,enabled:this.enabled,suspended_for_testing:this.testing,busy:this.busy,review_kind:this.busyKind,action_supervision:actionSupervision,mode:actionSupervision?'evidence-gated-actions':'observation-only',source:this.source,fallback_available:!!this.config?.fallback,last_served_by:this.reports[0]?.served_by??null,primary_timeout_ms:this.config?(this.config.timeout_ms??DEFAULT_GENIE_TIMEOUT_MS):null,fallback_timeout_ms:this.config?.fallback?(this.config.fallback.timeout_ms??DEFAULT_POOL_TIMEOUT_MS):null,active_provider:this.busy?this.activeProvider:null,provider_started_at:this.busy?this.providerStartedAt:null,provider_deadline_at:this.busy?this.providerDeadlineAt:null,review_finished_at:this.reviewFinishedAt,consecutive_failures:this.consecutiveFailures,provider_attempts:this.providerAttempts,assignment:this.assignment,last_check:this.last,error:this.error,question:this.publicQuestion(),reports:this.reports,provider_actions:this.providerActions,hardening_notes:hardening.slice(0,24),
+    ticker:tickerStatus(this.reports[0],snapshot,{...this,enabled:this.enabled&&!this.testing}),memory,provider_action_storage:this.providerLedger?.status()??null,provider_assignment_storage:this.assignmentLedger?.status()??null};}
   recordProviderAction(report) {
     if(!['pool_fallback','pool_assigned'].includes(report.served_by))return;
     const {id,time,served_by,served_on}=report;
@@ -321,6 +323,7 @@ export class Genie {
     this.source=source;this.error=null;return this.status();
   }
   setEnabled(value) {
+    if(this.testing)throw new Error('Gate Genie is suspended for testing; its previous setting is preserved');
     if(!this.config)throw new Error('Gate Genie is not configured');
     if(typeof value!=='boolean')throw new Error('enabled must be boolean');
     this.enabled=value;
@@ -331,6 +334,7 @@ export class Genie {
     return this.status();
   }
   submit(question='Review the current fleet. Flag only evidence-backed issues; distinguish unknowns.') {
+    if(this.testing)throw new Error('Gate Genie is suspended for testing');
     if(!this.enabled||this.closed)throw new Error('Gate Genie is off. Enable him before asking; the question was not queued.');
     if(typeof question!=='string'||question.length>2000)throw new Error('Question must be at most 2000 characters');
     if(this.queuedQuestion||['accepted','answering'].includes(this.questionReceipt?.state))throw new Error('One question is already pending; wait for its receipt to finish');
@@ -342,7 +346,7 @@ export class Genie {
     queueMicrotask(()=>this.runSubmitted());return this.publicQuestion();
   }
   async runSubmitted(){
-    if(this.busy||!this.queuedQuestion||this.closed||!this.enabled)return;
+    if(this.testing||this.busy||!this.queuedQuestion||this.closed||!this.enabled)return;
     const item=this.queuedQuestion;this.queuedQuestion=null;Object.assign(item.receipt,{state:'answering',started_at:Date.now()});
     const before=this.reports[0]?.id;await this.ask(item.question,{kind:'manual'});
     Object.assign(item.receipt,{state:this.reports[0]?.id!==before?'answered':'failed',finished_at:Date.now()});
@@ -350,6 +354,7 @@ export class Genie {
     if(this.queuedQuestion)queueMicrotask(()=>this.runSubmitted());
   }
   async modelAnswer(endpoint,{question,data,history,servedBy='dedicated',flexible=false}) {
+    if(this.testing)throw new Error('Gate Genie is suspended for testing');
     const pool=servedBy!=='dedicated';
     const attempt=new AbortController();let timedOut=false,response;
     const cancelled=()=>attempt.abort();this.abort.signal.addEventListener('abort',cancelled,{once:true});
@@ -382,6 +387,7 @@ export class Genie {
     finally {response?.body?.destroy?.();await response?.body?.cancel?.().catch(()=>{});clearTimeout(timer);this.abort.signal.removeEventListener('abort',cancelled);}
   }
   async ask(question='Review the current fleet. Flag only evidence-backed issues; distinguish unknowns.',{kind='manual'}={}) {
+    if(this.testing)throw new Error('Gate Genie is suspended for testing');
     if(!this.enabled || this.closed)throw new Error('Enable Gate Genie first');
     if(this.busy)throw new Error('Gate Genie is already reviewing');
     if(typeof question!=='string' || question.length>2000)throw new Error('Question must be at most 2000 characters');
@@ -395,19 +401,19 @@ export class Genie {
       this.assignment={source:assignment.servedBy,reason:assignment.reason,at:Date.now(),flexible_admission:assignment.flexible};
       try{completion=await this.modelAnswer(assignment.endpoint,{question,data,history,servedBy:assignment.servedBy,flexible:assignment.flexible});}
       catch(primaryError){
-        if(assignment.servedBy!=='dedicated'||!genieNotDispatched(primaryError)||!this.config.fallback||!this.enabled||this.closed||this.abort.signal.aborted)throw primaryError;
+        if(assignment.servedBy!=='dedicated'||!genieNotDispatched(primaryError)||!this.config.fallback||this.testing||!this.enabled||this.closed||this.abort.signal.aborted)throw primaryError;
         this.assignment={source:'pool_fallback',reason:'proven_pre_dispatch_refusal',at:Date.now(),flexible_admission:false};
         completion=await this.modelAnswer(this.config.fallback,{question,data,history,servedBy:'pool_fallback'});
       }
-      if(!this.enabled || this.closed)return this.status();
+      if(this.testing||!this.enabled || this.closed)return this.status();
       const parsed=parseGenieReview(completion.answer,data),actions=[];
       for(const request of parsed.recovery_requests) {
-        if(!this.enabled || this.closed || !this.recover)break;
+        if(this.testing||!this.enabled || this.closed || !this.recover)break;
         try {actions.push(await this.recover({...request,action_id:randomUUID()}));}
         catch {actions.push({worker_id:request.worker_id,state:'rejected',error:'Recovery evidence or policy changed; inspect executor status'});}
       }
       for(const request of parsed.relocation_requests){
-        if(!this.enabled||this.closed||!this.rebalance)break;
+        if(this.testing||!this.enabled||this.closed||!this.rebalance)break;
         try{actions.push({relocation:request.request_id,...await this.rebalance(request)});}catch{actions.push({relocation:request.request_id,state:'rejected',error:'Relocation evidence or policy changed; the original request was left in place'});}
       }
 
@@ -425,7 +431,7 @@ export class Genie {
     return this.status();
   }
   tick(){
-    if(!this.enabled||this.busy)return;
+    if(this.testing||!this.enabled||this.busy)return;
     if(this.queuedQuestion){queueMicrotask(()=>this.runSubmitted());return;}
     const snapshot=this.getSnapshot(),offers=[
       ...(snapshot.gateway?.recovery?.automatic?(snapshot.gateway.recovery.workers??[]).filter(w=>w.eligible).map(w=>`recover:${w.worker_id}:${w.evidence_id}`):[]),

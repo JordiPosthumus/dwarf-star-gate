@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import {gzipSync,gunzipSync} from 'node:zlib';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -56,6 +57,7 @@ async function backend(id) {
       if(p.generic_json_error){ended=true;res.writeHead(400,{'content-type':'application/json','x-backend-proof':'unchanged'});res.end(JSON.stringify({error:{message:'invalid JSON request',type:'invalid_request_error'}}));return;}
       if(p.client_error) {ended=true;res.writeHead(400,{'content-type':'text/plain'});res.end(typeof p.client_error==='string'?p.client_error:'invalid request');return;}
       if(typeof p.fixture_sse==='string') {
+        if(p.fixture_encoding==='gzip'){ended=true;res.writeHead(200,{'content-type':'text/event-stream','content-encoding':'gzip'});res.end(gzipSync(p.fixture_sse));return;}
         res.writeHead(200,{'content-type':'text/event-stream'});
         if(p.fixture_abort){res.write(p.fixture_sse);const timer=setTimeout(()=>res.destroy(),30);res.once('close',()=>clearTimeout(timer));}
         else {ended=true;res.end(p.fixture_sse);}return;
@@ -145,18 +147,18 @@ test('remote workers accept bounded verified SSH alias fallbacks, never options 
 async function rig(t, count = 2, overrides = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ds4-gateway-test-'));
   const backends = await Promise.all(Array.from({ length: count }, (_, i) => backend(`spark${i + 1}`)));
-  const {visionTranscode,...configOverrides}=overrides;
+  const {visionTranscode,tunnelFactory,...configOverrides}=overrides;
   const config = { host: '127.0.0.1', port: 0, api_key: 'none', model: 'deepseek-v4-flash', context_length: 153600,
-    state_file: path.join(dir, 'affinity.json'), health_interval_ms: 100000, nodes: backends.map(b => ({ id: b.id, url: b.url })), ...configOverrides };
+    conversation_turns:1, state_file: path.join(dir, 'affinity.json'), health_interval_ms: 100000, nodes: backends.map(b => ({ id: b.id, url: b.url })), ...configOverrides };
   if (config.control_socket === true) config.control_socket = path.join(dir, 'control.sock');
-  const gatewayOptions={visionTranscode};
+  const gatewayOptions={visionTranscode,tunnelFactory};
   const r = { config, backends, gateway: createGateway(config,gatewayOptions) };
   r.address = await r.gateway.start();
   r.request = (body = '{}', key, options = {}) => new Promise((resolve, reject) => {
     const req = http.request({ host: '127.0.0.1', port: r.address.port, path: options.path ?? '/v1/chat/completions', method: options.method ?? 'POST', agent: false,
       headers: { authorization: 'Bearer none', 'content-type': 'application/json', ...(key ? { 'x-session-affinity': key } : {}), ...options.headers } }, res => {
       const chunks = []; res.on('data', c => chunks.push(c));
-      res.on('error', reject); res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks).toString() }));
+      res.on('error', reject); res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks).toString(), bytes:Buffer.concat(chunks) }));
     });
     req.on('error', reject); req.end(body);
   });
@@ -1927,4 +1929,192 @@ test('served thinking distinguishes native DS4 mode from request aliases without
   assert.deepEqual(safeRequestedThinking({...result,served:{...result.served,secret:'private'}}),result);
   assert.equal(safeRequestedThinking({...result,served:{mode:'low',basis:'ds4_request_rules'}}).served,undefined);
   assert.equal(JSON.parse(raw).reasoning_effort,'low');
+});
+
+test('endpoint edit preserves identity, paused maintenance state and history, backs up and persists routing',async t=>{
+  const r=await rig(t,1,{control_socket:true}),m=await backend('replacement');r.backends.push(m);
+  const ctl=(route,input)=>workerControl(r.config.control_socket,route,input);
+  await r.request('{}','existing-history');
+  await ctl('/drain-workers',{workers:['spark1']});
+  await ctl('/maintenance-lock',{worker_id:'spark1',name:'owner-maintenance',reason:'Keep paused',review_after_hours:null,request_id:randomUUID()});
+  const before=structuredClone(r.gateway.store.data),node=r.gateway.nodes[0],oldUrl=node.url;
+  const result=await ctl('/edit-endpoint',{id:'spark1',expected_url:oldUrl,url:m.url});
+  assert.equal(r.gateway.nodes[0],node);assert.equal(result.workers[0].url,m.url);assert.equal(result.workers[0].drained,true);
+  const after=structuredClone(r.gateway.store.data);delete after.workers;delete before.workers;assert.deepEqual(after,before);
+  const files=fs.readdirSync(path.dirname(r.config.state_file));assert.ok(files.some(f=>f.includes('.endpoint-')&&f.endsWith('.bak')));
+  await r.restart();assert.equal(r.gateway.nodes[0].url,m.url);assert.equal(r.gateway.nodes[0].drained,true);
+  const state=await ctl('/workers');assert.equal(state.workers[0].maintenance_locks[0].name,'owner-maintenance');
+});
+
+test('endpoint edit rejects busy, stale, duplicate and incompatible targets without altering current routing',async t=>{
+  const r=await rig(t,2,{control_socket:true}),m=await backend('replacement');r.backends.push(m);
+  const ctl=(route,input)=>workerControl(r.config.control_socket,route,input),oldUrl=r.backends[0].url;
+  const change=url=>ctl('/edit-endpoint',{id:'spark1',expected_url:oldUrl,url});
+  await assert.rejects(change(m.url),/Pause this server/);
+  const running=r.request('{"delay":200}','edit-busy');await until(()=>r.gateway.stats().active===1);
+  await ctl('/drain-workers',{workers:['spark1']});await assert.rejects(change(m.url),/Pause this server/);await running;
+  const before=JSON.stringify(r.gateway.store.data);
+  await assert.rejects(ctl('/edit-endpoint',{id:'spark1',expected_url:'http://127.0.0.1:1',url:m.url}),/Endpoint changed/);
+  await assert.rejects(change(r.backends[1].url),/already registered/);
+  m.context_length=128000;await assert.rejects(change(m.url),/check failed/i);
+  assert.equal(JSON.stringify(r.gateway.store.data),before);assert.equal(r.gateway.nodes[0].url,oldUrl);
+  m.context_length=153600;await change(m.url);await ctl('/resume-workers',{workers:['spark1']});await ctl('/drain-workers',{workers:['spark2']});
+  await r.request('{}','after-edit');assert.equal(m.records.length,1);assert.equal(r.backends[0].records.length,1);
+});
+
+test('test connection and authenticated generic endpoint editing do not enable routing or send inference',async t=>{
+  const r=await rig(t,1,{control_socket:true}),m=await backend('generic');r.backends.push(m);
+  const ctl=(route,input)=>workerControl(r.config.control_socket,route,input);
+  const token=path.join(path.dirname(r.config.state_file),'endpoint-token');fs.writeFileSync(token,'private-fixture-token',{mode:0o600});
+  const worker={id:'new-server',url:m.url+'/v1',backend:'openai',api_key_file:token,context_length:153600};
+  const before=JSON.stringify(r.gateway.store.data),checked=await ctl('/check-endpoint',{worker});
+  assert.equal(checked.ok,true);assert.equal(checked.saved,false);assert.equal(checked.context_length,153600);
+  assert.equal(JSON.stringify(r.gateway.store.data),before);assert.equal(m.records.length,0);assert.equal(m.modelHeaders.at(-1).authorization,'Bearer private-fixture-token');
+  await ctl('/drain-workers',{workers:['spark1']});
+  await ctl('/edit-endpoint',{id:'spark1',expected_url:r.backends[0].url,url:worker.url,backend:'openai',api_key_file:token,context_length:153600});
+  assert.equal(r.gateway.nodes[0].backend,'openai');assert.equal(r.gateway.nodes[0].drained,true);
+  await ctl('/resume-workers',{workers:['spark1']});
+  const body=JSON.stringify({model:'opaque-model-name',stream:true,messages:[{role:'user',content:[{type:'image_url',image_url:{url:'data:image/png;base64,fixture'}}]}]});
+  const response=await r.request(body,'generic-edit');assert.equal(response.status,200);assert.match(response.body,/\[DONE\]/);
+  assert.equal(m.records[0].body.toString(),body);assert.equal(m.records[0].headers.authorization,'Bearer private-fixture-token');
+});
+
+test('SSH endpoint editor checks a temporary tunnel and replaces the route at the same local port',async t=>{
+  const tunnelFactory=(node)=>{
+    const server=http.createServer((req,res)=>{const upstream=http.request({host:'127.0.0.1',port:node.remote_port,path:req.url,method:req.method,headers:req.headers},reply=>{res.writeHead(reply.statusCode,reply.headers);reply.pipe(res);});upstream.on('error',()=>{res.writeHead(502);res.end();});req.pipe(upstream);});
+    server.listen(Number(new URL(node.url).port),'127.0.0.1');
+    return async()=>{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));};
+  };
+  const r=await rig(t,1,{control_socket:true,tunnelFactory}),m=await backend('second');r.backends.push(m);
+  const holder=http.createServer();await new Promise(resolve=>holder.listen(0,'127.0.0.1',resolve));const port=holder.address().port;await new Promise(resolve=>holder.close(resolve));
+  const ctl=(route,input)=>workerControl(r.config.control_socket,route,input),url=`http://127.0.0.1:${port}`;
+  await ctl('/add-worker',{worker:{id:'remote',url,ssh:'test-alias',remote_port:Number(new URL(r.backends[0].url).port)}});
+  const current=await ctl('/workers'),before=current.workers.find(w=>w.id==='remote');
+  m.context_length=128000;
+  await assert.rejects(ctl('/edit-endpoint',{id:'remote',expected_url:url,url,remote_port:Number(new URL(m.url).port)}),/check failed/i);
+  assert.equal((await ctl('/workers')).workers.find(w=>w.id==='remote').remote_port,before.remote_port);
+  m.context_length=153600;
+  await ctl('/edit-endpoint',{id:'remote',expected_url:url,url,remote_port:Number(new URL(m.url).port)});
+  const after=(await ctl('/workers')).workers.find(w=>w.id==='remote');assert.equal(after.ssh,'test-alias');assert.equal(after.remote_port,Number(new URL(m.url).port));assert.equal(after.drained,true);
+  await ctl('/resume-workers',{workers:['remote']});await ctl('/drain-workers',{workers:['spark1']});await r.request('{}','ssh-edited');assert.equal(m.records.length,1);
+});
+
+
+test('explicit pool alias reaches native backend with content-length, tools, image and SSE intact',async t=>{
+ const r=await rig(t,1);await r.gateway.close();r.config.nodes[0].model_aliases={pool:'deepseek-v4-flash'};r.gateway=createGateway(r.config);r.address=await r.gateway.start();
+ const payload={model:'pool',stream:true,messages:[{role:'user',content:[{type:'text',text:'model pool'},{type:'image_url',image_url:{url:'data:image/png;base64,abc'}}]}],tools:[{type:'function',function:{name:'model',parameters:{type:'object',properties:{model:{type:'string'}}}}}]};
+ const body=JSON.stringify(payload),response=await r.request(body,'alias',{headers:{'content-length':Buffer.byteLength(body)}});assert.equal(response.status,200);assert.match(response.body,/\[DONE\]/);assert.deepEqual(r.backends[0].records.at(-1).payload,{...payload,model:'deepseek-v4-flash'});
+ const models=JSON.parse((await r.request('',null,{method:'GET',path:'/v1/models'})).body);assert.ok(models.data.some(m=>m.id==='pool'));
+});
+
+async function routedRig(t){
+ const r=await rig(t,3,{control_socket:true,automatic_affinity_rebalance_min_wait_ms:0});
+ await r.gateway.close();r.config.model_routes={pool:['spark1','spark2','spark3'],m3:['spark3']};r.gateway=createGateway(r.config);r.address=await r.gateway.start();return r;
+}
+const routedHeaders=name=>({'x-dsg-model':name});
+test('Pi model route restricts native choice to M3 and shared choice uses all idle workers',async t=>{
+ const r=await routedRig(t);
+ const native=await r.request('{"model":"m3"}','native',{headers:routedHeaders('m3')});assert.equal(native.status,200);assert.equal(JSON.parse(native.body).node,'spark3');assert.equal(r.backends[2].records.at(-1).headers['x-dsg-model'],undefined);
+ const runs=await Promise.all(['a','b','c'].map(key=>r.request('{"model":"pool","delay":80}',key,{headers:routedHeaders('pool')})));assert.deepEqual(new Set(runs.map(x=>JSON.parse(x.body).node)),new Set(['spark1','spark2','spark3']));
+ const unknown=await r.request('{}',null,{headers:routedHeaders('bogus')});assert.equal(unknown.status,400);assert.match(unknown.body,/unknown_model_route/);
+});
+test('M3-only queue cannot relocate to an idle Spark, including operator and Genie offers',async t=>{
+ const r=await routedRig(t);const active=r.request('{"model":"m3","delay":200}','first',{headers:routedHeaders('m3')});await until(()=>r.backends[2].active===1);
+ const queued=r.request('{"model":"m3"}','second',{headers:routedHeaders('m3')});await delay(35);
+ assert.equal(r.backends[0].records.length+r.backends[1].records.length,0);
+ const registry=await workerControl(r.config.control_socket,'/workers');assert.equal(registry.queued_relocation.offers.length,0);
+ await active;assert.equal(JSON.parse((await queued).body).node,'spark3');
+});
+test('M3-only request waits while M3 paused then resumes on M3 without fallback',async t=>{
+ const r=await routedRig(t);await workerControl(r.config.control_socket,'/drain-workers',{workers:['spark3']});
+ const pending=r.request('{"model":"m3"}','wait-m3',{headers:routedHeaders('m3')});await delay(40);assert.ok(r.backends.every(b=>b.records.length===0));
+ await workerControl(r.config.control_socket,'/resume-workers',{workers:['spark3']});assert.equal(JSON.parse((await pending).body).node,'spark3');
+});
+test('same Pi session changing to M3 waits for its active Spark turn and then stays M3',async t=>{
+ const r=await routedRig(t);const first=r.request('{"model":"pool","delay":180}','same',{headers:routedHeaders('pool')});await until(()=>r.backends[0].active===1);
+ const second=r.request('{"model":"m3"}','same',{headers:routedHeaders('m3')});await delay(35);assert.equal(r.backends[2].records.length,0);
+ await first;assert.equal(JSON.parse((await second).body).node,'spark3');
+ const warm=await r.request('{"model":"pool"}','same',{headers:routedHeaders('pool')});assert.equal(JSON.parse(warm.body).node,'spark3');
+});
+test('Pi route forwards partial uploads before their end with original bytes and disconnect cleanup',async t=>{
+ const r=await routedRig(t);const first='{"model":"m3","messages":[{"role":"user","content":"';
+ const result=new Promise((resolve,reject)=>{const q=http.request({host:'127.0.0.1',port:r.address.port,path:'/v1/chat/completions',method:'POST',headers:{authorization:'Bearer none','content-type':'application/json',...routedHeaders('m3')}},res=>{let b='';res.on('data',c=>b+=c);res.on('end',()=>resolve(JSON.parse(b)));});q.on('error',reject);q.write(first);until(()=>r.backends[2].receivedBytes===Buffer.byteLength(first)).then(()=>q.end('héllo"}]}'),reject);});
+ const reply=await result;assert.equal(reply.node,'spark3');assert.equal(r.backends[2].records[0].body.toString(),first+'héllo"}]}');
+});
+
+test('Qwen chat-template thinking settings are observed and sanitized without changing DS4 effective-mode rules',()=>{
+ const value=requestedThinking({chat_template_kwargs:{enable_thinking:true,reasoning_effort:'xhigh',secret:'not retained'}});
+ assert.deepEqual(value,{status:'specified',fields:{'chat_template_kwargs.enable_thinking':true,'chat_template_kwargs.reasoning_effort':'xhigh'}});
+ assert.deepEqual(safeRequestedThinking(value),value);assert.equal(servedThinking({chat_template_kwargs:{enable_thinking:true}},{model:'qwen3.8-flash-next',route:'/v1/chat/completions',contextLength:262144}),null);
+});
+
+test('encoded SSE passes byte-for-byte without false incomplete-stream failures or quarantine',async t=>{
+ const r=await rig(t,1,{dataset_enabled:true});
+ const body='data: {"choices":[{"index":0,"delta":{"reasoning_content":"reasoning","content":"answer"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n';
+ for(let i=0;i<4;i++){
+  const response=await r.request(JSON.stringify({fixture_sse:body,fixture_encoding:'gzip',stream:true}),'gzip-session');assert.equal(response.status,200);assert.equal(response.headers['content-encoding'],'gzip');assert.deepEqual(response.bytes,gzipSync(body));assert.equal(gunzipSync(response.bytes).toString(),body);assert.equal(r.gateway.stats().workers[0].quarantine,null);
+ }
+ assert.equal(r.gateway.stats().workers[0].quarantine,null);assert.equal(r.backends[0].records.length,4);
+ await r.gateway.close();const dir=path.join(path.dirname(r.config.state_file),'requests'),rows=fs.readdirSync(dir).flatMap(name=>fs.readFileSync(path.join(dir,name),'utf8').trim().split('\n').map(JSON.parse)).filter(row=>row.kind==='finish');
+ assert.equal(rows.length,4);assert.ok(rows.every(row=>row.outcome==='sse_observation_limited'&&row.stream_end==='encoded_unobserved'&&row.generation===undefined));
+});
+
+test('default five-turn allocation yields to another conversation ahead of pipelined sixth turn',async t=>{
+  const r=await rig(t,1,{conversation_turns:undefined,conversation_turn_idle_ms:50});
+  assert.equal(r.gateway.stats().conversation_turns,5);
+  const hold=r.request(JSON.stringify({label:'A1',stream:true,fixture_hold_stream:true}),'A');
+  await until(()=>r.backends[0].heldStreams?.length===1);
+  const pending=[];
+  for(const [label,key] of [['B1','B'],['A2','A'],['A3','A'],['A4','A'],['A5','A'],['A6','A']]){
+    pending.push(r.request(JSON.stringify({label}),key));await until(()=>r.gateway.stats().queued===pending.length);
+  }
+  r.backends[0].heldStreams.shift()();
+  assert.ok((await Promise.all([hold,...pending])).every(result=>result.status===200));
+  assert.deepEqual(r.backends[0].records.map(row=>row.payload.label),['A1','A2','A3','A4','A5','B1','A6']);
+  assert.equal(r.backends[0].peak,1);
+});
+
+test('separate sequential model calls retain the allocation across short tool gaps and yield at N',async t=>{
+  const r=await rig(t,1,{conversation_turns:3,conversation_turn_idle_ms:400});
+  await r.request(JSON.stringify({label:'A1'}),'A');
+  const b=r.request(JSON.stringify({label:'B1'}),'B');await until(()=>r.gateway.stats().queued===1);
+  await delay(20);assert.equal(r.backends[0].records.length,1);
+  await r.request(JSON.stringify({label:'A2'}),'A');
+  await r.request(JSON.stringify({label:'A3'}),'A');await b;
+  assert.deepEqual(r.backends[0].records.map(row=>row.payload.label),['A1','A2','A3','B1']);
+});
+
+test('unused turns expire from completion time and never hold a competitor indefinitely',async t=>{
+  const r=await rig(t,1,{conversation_turns:5,conversation_turn_idle_ms:100});
+  await r.request('{}','A');const start=performance.now();
+  const b=r.request('{}','B');await until(()=>r.gateway.stats().queued===1);
+  assert.equal(r.gateway.stats().workers[0].turn_allocation.waiting_for_next_turn,true);
+  assert.equal(r.backends[0].records.length,1);await b;
+  assert.ok(performance.now()-start>=60);
+  assert.equal(r.backends[0].records.length,2);
+});
+
+test('N=1 retains FIFO and no grace period; unidentified requests do not acquire an allocation',async t=>{
+  const r=await rig(t,1,{conversation_turns:1});
+  await r.request('{}','A');assert.equal(r.gateway.stats().workers[0].turn_allocation,null);
+  const b=await r.request('{}','B');assert.equal(b.status,200);
+  const unkeyed=await rig(t,1,{conversation_turns:5});
+  await unkeyed.request('{}');assert.equal(unkeyed.gateway.stats().workers[0].turn_allocation,null);
+});
+
+test('failed requests release the allocation and no contention allows more than N turns',async t=>{
+  const r=await rig(t,1,{conversation_turns:2,conversation_turn_idle_ms:1000});
+  assert.equal((await r.request(JSON.stringify({client_error:true}),'A')).status,400);
+  assert.equal(r.gateway.stats().workers[0].turn_allocation,null);
+  for(let i=0;i<5;i++)assert.equal((await r.request('{}','B')).status,200);
+  assert.equal(r.backends[0].records.length,6);
+});
+
+test('cancelling active inference releases its unused turns to the waiting conversation',async t=>{
+  const r=await rig(t,1,{conversation_turns:5,conversation_turn_idle_ms:1000});
+  const req=http.request({host:'127.0.0.1',port:r.address.port,path:'/v1/chat/completions',method:'POST',headers:{authorization:'Bearer none','content-type':'application/json','x-session-affinity':'A'}},res=>res.on('error',()=>{}));
+  req.on('error',()=>{});req.end(JSON.stringify({stream:true,fixture_hold_stream:true}));
+  await until(()=>r.backends[0].heldStreams?.length===1);
+  const b=r.request('{}','B');await until(()=>r.gateway.stats().queued===1);req.destroy();
+  await until(()=>r.backends[0].records.length===2);assert.equal((await b).status,200);
 });

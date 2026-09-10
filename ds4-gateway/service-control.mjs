@@ -208,7 +208,7 @@ export async function serviceCommand(command,kinds=['gateway','door','dashboard'
     if(!ready)throw new Error(`${kind} did not become ready. Inspect ${expected(kind).stderr}. Other services were not rolled back automatically.`);
   }
   const resumed=command==='start'&&kinds.includes('gateway')&&loaded('door')?await releaseParkedCore(config):null;
-  if(genie?.configured){const url=`http://127.0.0.1:${dashboardPort(config)}/api/genie`,fresh=await(await fetch(url,{signal:AbortSignal.timeout(3000)})).json();for(const body of [{action:'source',source:genie.source},{action:'enable',enabled:genie.enabled}]){
+  if(genie?.configured){const url=`http://127.0.0.1:${dashboardPort(config)}/api/genie`,fresh=await(await fetch(url,{signal:AbortSignal.timeout(3000)})).json();for(const body of [...(fresh.source===genie.source?[]:[{action:'source',source:genie.source}]),...(fresh.enabled===genie.enabled?[]:[{action:'enable',enabled:genie.enabled}])]){
     const r=await fetch(url,{method:'POST',headers:{'content-type':'application/json',origin:`http://127.0.0.1:${dashboardPort(config)}`,'x-dsg-csrf':fresh.csrf_token},body:JSON.stringify(body)});if(!r.ok)throw new Error('Services started, but Genie settings could not be restored');}}
   return {started:[...(coordinated?['gateway']:[]),...kinds],...(coordinated?{kept_running:['door'],continuity:coordinated}:{}),...(resumed?.released?{continuity_resumed:resumed}:{}),model_servers_unchanged:true};
 }

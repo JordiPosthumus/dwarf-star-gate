@@ -1,5 +1,6 @@
 // Read-only operational request history: cache continuity, handovers and throughput.
 import fs from 'node:fs';
+import {GenerationEvidence} from './generation-evidence.mjs';
 import path from 'node:path';
 import {FleetThroughput} from './throughput.mjs';
 import {CacheContinuityEvidence} from './cache-continuity-evidence.mjs';
@@ -54,7 +55,7 @@ export class RequestHistoryReader {
   constructor(directory,{enabled=false,readBytes=READ_BYTES,tailBytes=TAIL_BYTES}={}) {
     Object.assign(this,{directory,enabled,readBytes,tailBytes});this.cursors=new Map();this.handovers=new HandoverEvidence();this.throughput=new FleetThroughput();
     this.status='waiting';this.lastRead=null;this.partialHistory=false;this.malformed=0;this.rescans=0;this.scanReason='initial_read';this.skippedBytes=0;
-    this.cacheContinuity=new CacheContinuityEvidence();
+    this.cacheContinuity=new CacheContinuityEvidence();this.generationEvidence=new GenerationEvidence();
   }
   poll(now=Date.now()) {
     if(!this.enabled)return;
@@ -62,7 +63,7 @@ export class RequestHistoryReader {
       if(!fs.lstatSync(this.directory).isDirectory())throw new Error('Not a directory');
       const files=fs.readdirSync(this.directory).filter(f=>/^routing-\d{4}-\d{2}-\d{2}\.jsonl$/.test(f)).sort().slice(-2);
       if([...this.cursors.keys()].some(file=>!files.includes(file))) {
-        this.cursors.clear();this.handovers=new HandoverEvidence();this.throughput=new FleetThroughput();this.cacheContinuity=new CacheContinuityEvidence();this.rescans++;this.scanReason='daily_window_changed';this.skippedBytes=0;this.partialHistory=false;this.status='rescanning';return;
+        this.cursors.clear();this.handovers=new HandoverEvidence();this.throughput=new FleetThroughput();this.cacheContinuity=new CacheContinuityEvidence();this.generationEvidence=new GenerationEvidence();this.rescans++;this.scanReason='daily_window_changed';this.skippedBytes=0;this.partialHistory=false;this.status='rescanning';return;
       }
       let backlog=false;
       for(const file of files) {
@@ -79,7 +80,7 @@ export class RequestHistoryReader {
           if(changed) {
             // Rebuild a bounded window after replacement/truncation; do not mix
             // old labels with a new file that happens to reuse request IDs.
-            this.cursors.clear();this.handovers=new HandoverEvidence();this.throughput=new FleetThroughput();this.cacheContinuity=new CacheContinuityEvidence();this.rescans++;this.scanReason='file_replaced_or_rewritten';this.skippedBytes=0;this.partialHistory=false;this.status='rescanning';return;
+            this.cursors.clear();this.handovers=new HandoverEvidence();this.throughput=new FleetThroughput();this.cacheContinuity=new CacheContinuityEvidence();this.generationEvidence=new GenerationEvidence();this.rescans++;this.scanReason='file_replaced_or_rewritten';this.skippedBytes=0;this.partialHistory=false;this.status='rescanning';return;
           }
           if(!c) {
             const offset=Math.max(0,stat.size-this.tailBytes);this.partialHistory ||= offset>0;this.skippedBytes+=offset;
@@ -94,7 +95,7 @@ export class RequestHistoryReader {
           let from=0,end;
           while((end=buffer.indexOf(10,from))>=0) {
             if(!c.skipping && end-from<=LINE_BYTES) {
-              try {const row=JSON.parse(buffer.subarray(from,end).toString('utf8'));this.handovers.accept(row);this.throughput.accept(row);this.cacheContinuity.accept(row);} catch {this.malformed++;this.cacheContinuity.invalidate();}
+              try {const row=JSON.parse(buffer.subarray(from,end).toString('utf8'));this.handovers.accept(row);this.throughput.accept(row);this.cacheContinuity.accept(row);this.generationEvidence.accept(row);} catch {this.malformed++;this.cacheContinuity.invalidate();}
             } else if(!c.skipping){this.malformed++;this.cacheContinuity.invalidate();}
             c.skipping=false;from=end+1;
           }

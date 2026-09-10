@@ -8,6 +8,7 @@ import {timingSafeEqual,randomUUID} from 'node:crypto';
 import {loadConfig,isMain,continuityEnabled,gatewayPort,doorSocket} from './config.mjs';
 import {dsgReport,invalidHttp} from './report.mjs';
 import {CALL_ID_HEADER,DISPATCH_HEADER,validCallId} from './continuity.mjs';
+import {testingModeFile,readTestingMode,writeTestingMode} from './testing-mode.mjs';
 
 const hopHeaders=new Set(['connection','keep-alive','proxy-authenticate','proxy-authorization','te','trailer','transfer-encoding','upgrade']);
 function headers(input){const excluded=new Set([...hopHeaders,...String(input.connection??'').toLowerCase().split(',').map(x=>x.trim())]);return Object.fromEntries(Object.entries(input).filter(([key])=>!excluded.has(key.toLowerCase())));}
@@ -76,19 +77,20 @@ export function createDoor(config,{now=Date.now}={}){
   if(!Number.isSafeInteger(limit)||limit<1||limit>65536)throw new Error('continuity_door.max_held_requests must be 1–65536');
   const interval=config.continuity_door.health_interval_ms??1000;if(!Number.isSafeInteger(interval)||interval<250||interval>60000)throw new Error('continuity_door.health_interval_ms must be 250–60000');
   const auth=Buffer.from(`Bearer ${config.api_key}`),held=[],state={holding:false,hold_id:null,hold_kind:null,reason:null,since:null,last_transition:null,forwarded:0,failed:0,active:0,core_ready:false,core_failures:0};
+  const testingFile=testingModeFile(config);let testing=readTestingMode(testingFile);const lanes=new WeakMap(),laneActive={normal:0,test:0};
   const failureCounts={inference:0,model_discovery:0,status:0,other:0},failures=[];
   let closing=false,starting=false,monitor,probe=null,probeGeneration=0;
   const invalidateProbe=()=>{probeGeneration++;const previous=probe;probe=null;previous?.cancel();};
   const authorized=req=>{const value=Buffer.from(req.headers.authorization??'');return value.length===auth.length&&timingSafeEqual(value,auth);};
-  const status=()=>({service:'dwarf-star-gate-continuity-door',version:1,holding:state.holding,hold_kind:state.hold_kind,reason:state.reason,since:state.since,last_transition:state.last_transition,held:held.length,active:state.active,forwarded:state.forwarded,failed:state.failed,core_ready:state.core_ready,core_failures:state.core_failures,body_spooling:false,replay:false,core_port:corePort,
+  const status=()=>({service:'dwarf-star-gate-continuity-door',version:1,testing:{...testing,endpoint:'/testing/v1',held:held.filter(item=>lanes.get(item.req)!=='test'&&requestClass(item.req)==='inference').length,normal_active:laneActive.normal,test_active:laneActive.test},holding:state.holding,hold_kind:state.hold_kind,reason:state.reason,since:state.since,last_transition:state.last_transition,held:held.length,active:state.active,forwarded:state.forwarded,failed:state.failed,core_ready:state.core_ready,core_failures:state.core_failures,body_spooling:false,replay:false,core_port:corePort,
     hold_ownership:1,hold_id:state.hold_id,model_discovery_hold:true,failure_evidence:{schema:1,scope:'door_process',by_request_class:{...failureCounts},recent:failures.map(row=>({...row}))}});
   const remove=item=>{const index=held.indexOf(item);if(index>=0)held.splice(index,1);clearInterval(item.heartbeat);item.req.off('aborted',item.cancel);item.req.off('error',item.cancel);item.res.off('close',item.cancel);};
   function proxy(req,res){
     if(req.destroyed||res.destroyed)return;
     let settled=false,upstreamResponse;
-    state.active++;
+    state.active++;const lane=requestClass(req)==='inference'?(lanes.get(req)??'normal'):null;if(lane)laneActive[lane]++;
     const finish=failed=>{
-      if(settled)return;settled=true;state.active--;
+      if(settled)return;settled=true;state.active--;if(lane)laneActive[lane]--;
       let failure;
       if(failed){
         state.failed++;const request_class=requestClass(req);failureCounts[request_class]++;
@@ -114,7 +116,10 @@ export function createDoor(config,{now=Date.now}={}){
     upstream.on('error',()=>{if(settled)return;const failure=finish(true);automaticHold('core_connection_failed');if(!res.headersSent)reportUnknownCoreExecution(req,res,failure.failure_id);else res.destroy();});
     req.on('aborted',cancel);req.on('error',cancel);res.on('close',clientClosed);req.pipe(upstream);
   }
-  const release=()=>{invalidateProbe();state.holding=false;state.hold_id=null;state.hold_kind=null;state.reason=null;state.since=null;state.last_transition={action:'release',at:new Date(now()).toISOString()};for(const item of [...held]){remove(item);proxy(item.req,item.res);}};
+  const shouldHold=req=>(state.holding&&(['POST','PUT','PATCH'].includes(req.method)||requestClass(req)==='model_discovery'))||(testing.enabled&&lanes.get(req)!=='test'&&requestClass(req)==='inference');
+  const flushHeld=()=>{for(const item of [...held])if(!shouldHold(item.req)){remove(item);proxy(item.req,item.res);}};
+  const setTesting=enabled=>{testing=writeTestingMode(testingFile,enabled,now());flushHeld();return status();};
+  const release=()=>{invalidateProbe();state.holding=false;state.hold_id=null;state.hold_kind=null;state.reason=null;state.since=null;state.last_transition={action:'release',at:new Date(now()).toISOString()};flushHeld();};
   const hold=(reason,kind='manual')=>{invalidateProbe();if(state.holding&&state.hold_kind==='manual'&&kind==='automatic')return;state.holding=true;state.hold_id=randomUUID();state.hold_kind=kind;state.reason=typeof reason==='string'&&reason.length<=160?reason:'planned_core_change';state.since??=new Date(now()).toISOString();state.last_transition={action:'hold',kind,at:new Date(now()).toISOString(),reason:state.reason};};
   const automaticHold=reason=>{state.core_ready=false;hold(reason,'automatic');};
   const checkCore=()=>{
@@ -154,7 +159,15 @@ export function createDoor(config,{now=Date.now}={}){
   const server=http.createServer((req,res)=>{
     if(req.url==='/continuity/status'&&req.method==='GET'){req.resume();return authorized(req)?json(res,200,status()):report(res,401,'unauthorized','Bearer API key required');}
     if(closing){req.resume();return reportNotForwarded(req,res,503,'continuity_stopping','Continuity door is stopping; request was not forwarded.');}
-    if(!state.holding||(!['POST','PUT','PATCH'].includes(req.method)&&requestClass(req)!=='model_discovery'))return proxy(req,res);
+    const testPath=req.url?.startsWith('/testing/');
+    if(testPath){
+      if(!authorized(req)){req.resume();return report(res,401,'unauthorized','Bearer API key required');}
+      if(!req.url.startsWith('/testing/v1/')){req.resume();return report(res,404,'not_found','Unknown testing endpoint');}
+      if(!testing.enabled){req.resume();return reportNotForwarded(req,res,409,'testing_disabled','Testing endpoint is closed; enable Testing in DSG first.');}
+      req.url=req.url.slice('/testing'.length);lanes.set(req,'test');
+    }
+    if(!shouldHold(req))return proxy(req,res);
+    if(testing.enabled&&requestClass(req)==='inference'&&!authorized(req)){req.resume();return report(res,401,'unauthorized','Bearer API key required');}
     if(held.length>=limit){req.resume();return reportNotForwarded(req,res,429,'continuity_hold_full','Continuity door hold capacity is full; request was not forwarded.');}
     const item={req,res};item.cancel=()=>{remove(item);};
     req.pause();req.on('aborted',item.cancel);req.on('error',item.cancel);res.on('close',item.cancel);
@@ -163,12 +176,16 @@ export function createDoor(config,{now=Date.now}={}){
   server.requestTimeout=0;server.timeout=0;server.headersTimeout=60000;server.keepAliveTimeout=5000;server.on('clientError',invalidHttp);
   const control=http.createServer((req,res)=>{
     if(req.method==='GET'&&req.url==='/status')return json(res,200,status());
-    if(req.method!=='POST'||!['/hold','/release'].includes(req.url))return report(res,404,'not_found','Unknown continuity control action');
+    if(req.method!=='POST'||!['/hold','/release','/testing'].includes(req.url))return report(res,404,'not_found','Unknown continuity control action');
     let body='',ended=false;
     req.on('data',chunk=>{if(ended)return;body+=chunk;if(Buffer.byteLength(body)>4096){ended=true;report(res,413,'control_request_too_large','Continuity control request exceeded 4 KiB');req.resume();}});
     req.on('error',()=>{ended=true;});
     req.on('end',async()=>{if(ended)return;ended=true;try{
       const input=body?JSON.parse(body):{};
+      if(req.url==='/testing'){
+        if(Object.keys(input).join(',')!=='enabled'||typeof input.enabled!=='boolean')return report(res,400,'invalid_testing_request','Only boolean enabled is accepted');
+        return json(res,200,setTesting(input.enabled));
+      }
       if(req.url==='/hold'){
         if(input.if_unheld===true&&state.holding)return report(res,409,'continuity_already_holding','Continuity Door already has a hold; it was preserved.');
         hold(input.reason);
@@ -190,7 +207,7 @@ export function createDoor(config,{now=Date.now}={}){
     }catch{report(res,400,'invalid_control_request','Invalid continuity control request');}});
   });
   control.on('clientError',invalidHttp);
-  return {server,control,status,hold,release,checkCore,async start(){
+  return {server,control,status,hold,release,checkCore,setTesting,async start(){
     if(starting||closing||server.listening||control.listening)throw new Error('Continuity Door already started, starting or closing');
     starting=true;
     try{

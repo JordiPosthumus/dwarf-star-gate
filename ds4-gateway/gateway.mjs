@@ -1,4 +1,7 @@
+import {outputShape} from './output-shape.mjs';
 import http from 'node:http';
+import {modelAliasTransform} from './model-alias.mjs';
+import {MODEL_ROUTE_HEADER,modelRoutes,routeSelection,allowsWorker} from './model-routing.mjs';
 import https from 'node:https';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -109,6 +112,7 @@ export class AffinityStore {
 export class UsageObserver {
   phase='awaiting_content';semanticCharacters=0;lastSemanticAt=null;
   thinkingCharacters=0;answerCharacters=0;toolCharacters=0;firstSemanticAt=null;
+  outputPresent=false;shapeComplete=true;
   pending = ''; usage = undefined; done = false; finish_reason = null;
   skipping = false; limited = false; failed = false; decoder = new StringDecoder('utf8');
   eventBoundary = true; closed = false; afterCR = false;
@@ -168,9 +172,15 @@ export class UsageObserver {
       const delta=parsed.choices?.[0]?.delta;
       const progress=(text,phase)=>{if(typeof text==='string'&&text.length){this.semanticCharacters+=text.length;this.lastSemanticAt=performance.now();this.firstSemanticAt??=this.lastSemanticAt;this.phase=phase;if(phase==='thinking')this.thinkingCharacters+=text.length;else if(phase==='answering')this.answerCharacters+=text.length;else if(phase==='tool_output')this.toolCharacters+=text.length;}};
       if(delta) {
-        progress(delta.reasoning_content||delta.reasoning,'thinking');
-        progress(delta.content,'answering');
-        if(Array.isArray(delta.tool_calls))for(const call of delta.tool_calls)progress(call?.function?.arguments,'tool_output');
+        const shape=outputShape(delta);
+        this.outputPresent ||= shape.output_present;
+        this.shapeComplete &&= shape.observation_complete;
+        // Use lengths directly: observed text is never retained for reporting.
+        for(const [key,phase] of [['thinking_characters','thinking'],['answer_characters','answering'],['tool_characters','tool_output']]){
+          const n=shape[key];if(!n)continue;
+          this.semanticCharacters+=n;this.lastSemanticAt=performance.now();this.firstSemanticAt??=this.lastSemanticAt;this.phase=phase;
+          if(phase==='thinking')this.thinkingCharacters+=n;else if(phase==='answering')this.answerCharacters+=n;else this.toolCharacters+=n;
+        }
       } else if(parsed.type==='content_block_delta') {
         const d=parsed.delta;if(d?.type==='thinking_delta')progress(d.thinking,'thinking');
         else if(d?.type==='text_delta')progress(d.text,'answering');
@@ -227,10 +237,14 @@ export class UsageObserver {
   }
 }
 
-export function createGateway(config,{visionTranscode}={}) {
+export function createGateway(config,{visionTranscode,tunnelFactory=superviseTunnel}={}) {
   if (!validContext(config.context_length)) throw new Error('Invalid configured pool context limit');
   if (config.model_agnostic !== undefined && typeof config.model_agnostic !== 'boolean') throw new Error('model_agnostic must be a boolean');
   const configuredQueueTimeout=queueTimeout(config.queue_timeout_ms);
+  const conversationTurns=config.conversation_turns??5;
+  const conversationTurnIdleMs=config.conversation_turn_idle_ms??2000;
+  if(!Number.isSafeInteger(conversationTurns)||conversationTurns<1)throw new Error('conversation_turns must be a positive whole number');
+  if(!Number.isSafeInteger(conversationTurnIdleMs)||conversationTurnIdleMs<0||conversationTurnIdleMs>2147483647)throw new Error('conversation_turn_idle_ms must be a whole millisecond count from 0 to 2147483647');
   const initial = workerConfigs(config.nodes);
   const store = new AffinityStore(config.state_file);
   const queueTimeoutMs=()=>store.data.queue_timeout_ms??configuredQueueTimeout;
@@ -242,6 +256,7 @@ export function createGateway(config,{visionTranscode}={}) {
   try { definitions = store.data.workers === undefined ? initial : workerConfigs(store.data.workers); }
   catch (e) { store.close(); throw e; }
   const nodes = definitions.map(makeNode);
+  let routes;try{routes=modelRoutes(config.model_routes,definitions);}catch(e){store.close();throw e;}
   const dataset = new Dataset(path.join(path.dirname(config.state_file),'requests'),{enabled:config.dataset_enabled===true});
   const shadow = new RoutingShadow({enabled:config.routing_shadow_enabled===true && config.dataset_enabled===true});
   const observe = fn => {if(shadow.enabled)try{return fn();}catch{shadow.state.errors++;}};
@@ -316,7 +331,7 @@ export function createGateway(config,{visionTranscode}={}) {
   const accepted = new Set(['POST /v1/chat/completions', 'POST /v1/completions', 'POST /v1/responses', 'POST /v1/messages', 'GET /v1/models']);
   const auth = Buffer.from(`Bearer ${config.api_key}`);
   const lastOperatorAction=id=>[...(store.data.operator_actions??[])].reverse().find(action=>action.workers.includes(id))??null;
-  const stats = () => ({ version: 1, agent_api_version:1, maintenance_lock_version:1,client_watch_version:1,client_watch:clientWatch.snapshot(), model: config.model, context_length: contextLimit(), queue_timeout_ms:queueTimeoutMs(), request_timeout_ms:config.request_timeout_ms??360000000, draining,startup:{...startup}, dataset:dataset.snapshot(), routing_shadow:shadow.snapshot(),recovery:recovery.status(),protections:visionProtection.status(),
+  const stats = () => ({ version: 1, conversation_turns:conversationTurns,conversation_turn_idle_ms:conversationTurnIdleMs, model_routes:routes?Object.fromEntries([...routes].map(([name,workers])=>[name,[...workers]])):null, agent_api_version:1, maintenance_lock_version:1,client_watch_version:1,client_watch:clientWatch.snapshot(), model: config.model, context_length: contextLimit(), queue_timeout_ms:queueTimeoutMs(), request_timeout_ms:config.request_timeout_ms??360000000, draining,startup:{...startup}, dataset:dataset.snapshot(), routing_shadow:shadow.snapshot(),recovery:recovery.status(),protections:visionProtection.status(),
     genie_admission_version:1,genie_flexible_assignment:true,continuity:{schema:1,recent_rejections:rejections.slice(0,20),safe_retry_contract:true,queued_relocation:true,automatic_relocation:true,automatic_relocation_scope:automaticRelocationScope,automatic_affinity_rebalance_min_wait_ms:automaticAffinityWait,patient_wait:true,
       relocation:{completed:relocation.completed,rejected:relocation.rejected,offers:relocationOffers().length,genie_enabled:config.genie_load_balancing!==false,genie_offers:genieRelocationOffers(),diagnostics:relocationDiagnostics(),last:relocation.last},
       waiting:waiting.length,oldest_wait_seconds:waiting.length?Math.max(0,(performance.now()-waiting[0].createdMono)/1000):null,
@@ -326,6 +341,7 @@ export function createGateway(config,{visionTranscode}={}) {
     workers: nodes.map(n => ({ id: n.id, url: n.url, is_healthy: n.healthy, drained: n.drained, quarantine:n.quarantine, inference_failures:n.inferenceFailures,
       ...agents.pauseStatus(n.id),last_operator_action:lastOperatorAction(n.id),
       gateway_drained: n.drained && !n.active && !n.queue.length, load: Number(!!n.active),
+      turn_allocation:n.turnAllocation?{turns_used:n.turnAllocation.used,remaining:Math.max(0,conversationTurns-n.turnAllocation.used),waiting_for_next_turn:!n.active&&n.turnAllocation.until>performance.now(),idle_remaining_ms:Math.max(0,Math.ceil(n.turnAllocation.until-performance.now()))}:null,
       queued: n.queue.length, recovery_waiting:parkedFor(n).length, assigned_sessions: store.count(n.id), completed: n.completed, failed: n.failed, protected:n.protected, observation_limited:n.observationLimited,
       oldest_queue_seconds:n.queue.length?Math.max(0,(performance.now()-n.queue[0].createdMono)/1000):null,
       oldest_queue_remaining_seconds:n.queue.length?Math.max(0,(n.queue[0].queueTimeoutMs-(performance.now()-n.queue[0].createdMono))/1000):null,
@@ -381,7 +397,7 @@ export function createGateway(config,{visionTranscode}={}) {
     else if(source.queue[0]!==job)reason='cancelled_queue_head';
     else if(job.upstream||job.dispatched)reason='already_dispatched';
     else if((conflict=conflictingSessionWork(job)))reason=conflict.reason;
-    const destination=idle.find(node=>node!==source);
+    const destination=idle.find(node=>node!==source&&allowsWorker(job.modelRoute,node));
     if(reason==='offer_ready'&&!destination)reason='no_idle_destination';
     const home=job.key&&store.get(job.key);
     if(reason==='offer_ready'&&job.key&&home?.node!==source.id)reason='durable_home_mismatch';
@@ -430,7 +446,7 @@ export function createGateway(config,{visionTranscode}={}) {
     const source=nodes.find(n=>n.id===input.source),destination=nodes.find(n=>n.id===input.destination),job=source?.queue[0];
     const rejectMove=message=>{relocation.rejected++;throw new Error(message);};
     if(!source||!destination||source===destination||!job||job.id!==input.request_id)return rejectMove('Queued-handover offer is stale; refresh before retrying');
-    if(job.cancelled||job.upstream||job.dispatched||!source.active||!eligibleDestination(destination))return rejectMove('Queued-handover state changed; request was left in place');
+    if(job.cancelled||job.upstream||job.dispatched||!source.active||(!eligibleDestination(destination)||!allowsWorker(job.modelRoute,destination)))return rejectMove('Queued-handover state changed; request was left in place');
     if(relocationEvidence(job,source,destination)!==input.evidence_id)return rejectMove('Queued-handover evidence changed; request was left in place');
     if(conflictingSessionWork(job))return rejectMove('Same-session work prevents a safe handover; request was left in place');
     const home=job.key&&store.get(job.key);
@@ -469,8 +485,8 @@ export function createGateway(config,{visionTranscode}={}) {
     log('worker_quarantined',{node:node.id,...node.quarantine});
   }
 
-  function pick(exclude) {
-    return nodes.filter(n => n.healthy && !n.drained && n.id !== exclude).sort((a, b) =>
+  function pick(exclude,modelRoute) {
+    return nodes.filter(n => n.healthy && !n.drained && n.id !== exclude && allowsWorker(modelRoute,n)).sort((a, b) =>
       (Number(!!a.active) + a.queue.length) - (Number(!!b.active) + b.queue.length) ||
       store.count(a.id) - store.count(b.id) || a.id.localeCompare(b.id))[0];
   }
@@ -492,6 +508,7 @@ export function createGateway(config,{visionTranscode}={}) {
     dataset.record('waiting',{request_id:job.id,node:job.fixedHome?.id??null,reason,total_ms:performance.now()-job.createdMono});
   }
   function admit(job,node) {
+    if(!allowsWorker(job.modelRoute,node))throw new Error("Model route does not allow this worker");
     const home=job.key&&store.get(job.key);
     const wasAdmitted=job.recordedDecision===true;
     const candidates=job.recordedDecision?null:nodes.map(n=>candidate(n,job.key));
@@ -512,7 +529,7 @@ export function createGateway(config,{visionTranscode}={}) {
     clientWatch.observeRequest(job.watchId,job.id,'queued');
     evaluateShadow(node,job,wasAdmitted?'worker_free':'admission');schedule(node);
   }
-  const freeGenieNode=()=>nodes.filter(node=>node.healthy&&!node.drained&&!node.quarantine&&!node.recovering&&!node.removed&&!node.active&&!node.queue.length&&!parkedFor(node).length).sort((a,b)=>store.count(a.id)-store.count(b.id)||a.id.localeCompare(b.id))[0];
+  const freeGenieNode=(modelRoute)=>nodes.filter(node=>allowsWorker(modelRoute,node)&&node.healthy&&!node.drained&&!node.quarantine&&!node.recovering&&!node.removed&&!node.active&&!node.queue.length&&!parkedFor(node).length).sort((a,b)=>store.count(a.id)-store.count(b.id)||a.id.localeCompare(b.id))[0];
   function pumpWaiting() {
     if(shuttingDown)return;
     for(const n of nodes)for(const job of n.queue)heartbeat(job);
@@ -520,7 +537,7 @@ export function createGateway(config,{visionTranscode}={}) {
     for(const job of [...waiting]){
       if(job.cancelled)continue;
       heartbeat(job);
-      if(job.genieFlexible){const free=freeGenieNode();if(free)admit(job,free);else job.waitReason='no_ready_worker';continue;}
+      if(job.genieFlexible){const free=freeGenieNode(job.modelRoute);if(free)admit(job,free);else job.waitReason='no_ready_worker';continue;}
       if(job.key&&waiting.some(j=>j!==job&&j.sequence<job.sequence&&j.key===job.key)){job.waitReason='same_session_queued';continue;}
       const home=job.key&&store.get(job.key),outstanding=sessionWork(nodes,job.key);
       let node=job.fixedHome??(home&&nodes.find(n=>n.id===home.node));
@@ -528,11 +545,11 @@ export function createGateway(config,{visionTranscode}={}) {
         if(node.removed||!node.healthy||node.drained||node.quarantine||node.recovering){job.waitReason=unavailableReason(node);continue;}
         if(outstanding&&outstanding.node!==node){job.waitReason=outstanding.reason;continue;}
       }else{
-        if(node&&(!node.healthy||node.drained||node.quarantine||node.recovering)){
+        if(node&&(!allowsWorker(job.modelRoute,node)||!node.healthy||node.drained||node.quarantine||node.recovering)){
           if(outstanding){job.waitReason=outstanding.reason;continue;}
-          node=pick(node.id);job.affinity='reassigned';
+          node=pick(node.id,job.modelRoute);job.affinity='reassigned';
         }
-        if(!node)node=pick();
+        if(!node)node=pick(undefined,job.modelRoute);
         if(!node){job.waitReason='no_ready_worker';continue;}
         if(outstanding&&outstanding.node!==node){job.waitReason=outstanding.reason;continue;}
       }
@@ -553,15 +570,48 @@ export function createGateway(config,{visionTranscode}={}) {
   }
   function schedule(node) {
     if (node.active) return;
+    if(node.turnAllocation?.until&&node.turnAllocation.until<=performance.now())releaseTurns(node);
+    if(!node.healthy||node.quarantine||node.recovering||shuttingDown)releaseTurns(node);
+    node.queue=node.queue.filter(job=>!job.cancelled);
     while (node.queue.length) {
-      const job = node.queue.shift();
+      let index=0;
+      const allocation=node.turnAllocation;
+      if(allocation){
+        if(allocation.used<conversationTurns){
+          const next=node.queue.findIndex(job=>job.key===allocation.key);
+          if(next>=0)index=next;
+          else if(allocation.until>performance.now())return;
+          else releaseTurns(node);
+        }else{
+          // Yield to the oldest OTHER conversation even if this one has
+          // already pipelined more requests. Preserve FIFO within each key.
+          const next=node.queue.findIndex(job=>job.key!==allocation.key);
+          if(next>=0)index=next;
+          releaseTurns(node);
+        }
+      }
+      const [job] = node.queue.splice(index,1);
       if (job.cancelled) continue;
       if (!node.healthy || node.quarantine || node.recovering) { park(job,node,unavailableReason(node)); continue; }
       job.queueTimer?.cancel();
+      clearTimeout(node.turnTimer);node.turnTimer=null;
+      if(conversationTurns>1&&job.key){
+        if(node.turnAllocation?.key!==job.key)node.turnAllocation={key:job.key,used:0,until:0};
+        node.turnAllocation.used++;node.turnAllocation.until=0;
+      }else releaseTurns(node);
       node.active = job;
       dispatch(node, job);
       return;
     }
+  }
+  function releaseTurns(node){clearTimeout(node.turnTimer);node.turnTimer=null;node.turnAllocation=null;}
+  function finishTurn(node,outcome){
+    const allocation=node.turnAllocation;
+    if(outcome!=='complete'||shuttingDown||!allocation){releaseTurns(node);return;}
+    if(allocation.used>=conversationTurns)return;
+    allocation.until=performance.now()+conversationTurnIdleMs;
+    node.turnTimer=setTimeout(()=>{releaseTurns(node);schedule(node);pumpWaiting();},conversationTurnIdleMs);
+    node.turnTimer.unref?.();
   }
   function dispatch(node, job) {
     const { req, res } = job;
@@ -582,6 +632,7 @@ export function createGateway(config,{visionTranscode}={}) {
     // the ingress secret must never cross the worker boundary.
     delete headers.authorization;
     delete headers['x-api-key'];
+    delete headers[MODEL_ROUTE_HEADER];
     Object.assign(headers, node.upstreamHeaders ?? {});
     delete headers['x-dsg-review-flexible']; // Core-owned undispatched assignment only.
     delete headers['x-dsg-review-no-wait']; // Advisory admission option only.
@@ -611,13 +662,13 @@ export function createGateway(config,{visionTranscode}={}) {
       captureChunks=[];finishCapture(body);
     };
     const bodyAborted=()=>{captureChunks=[];finishCapture(null);};
-    let settled = false, response, faults,jsonUsage,responseFormat='no_response',clientStatus=null;
+    let settled = false, response, faults,jsonUsage,responseFormat='no_response',clientStatus=null,responseEncoded=false;
     const finish = (outcome, detail, observedStreamEnd=null) => {
       if (settled) return; settled = true;
-      const streamEnd=responseFormat==='sse'?(observedStreamEnd??observer.finishState({cleanEOF:false})):null;
+      const streamEnd=responseFormat==='sse'?(observedStreamEnd??(responseEncoded?'encoded_unobserved':observer.finishState({cleanEOF:false}))):null;
       const jsonMetadata=jsonUsage?.finish();
       if(jsonMetadata){observer.usage=jsonMetadata.usage??undefined;observer.finish_reason=jsonMetadata.finish_reason??null;}
-      const usageObservation=jsonMetadata?.status??(responseFormat!=='sse'?'unsupported_format':!observer.usage?'not_reported':observer.usage.prompt_tokens!=null&&observer.usage.completion_tokens!=null?'observed':'partial');
+      const usageObservation=responseEncoded?'encoded_body':jsonMetadata?.status??(responseFormat!=='sse'?'unsupported_format':!observer.usage?'not_reported':observer.usage.prompt_tokens!=null&&observer.usage.completion_tokens!=null?'observed':'partial');
       const fault=faults?.finish();
       if(fault){quarantine(node,fault,job.id);if(outcome==='complete')outcome='upstream_engine_error';}
       else if(!job.cancelled && ((outcome==='upstream_http_error' && detail>=500) || ['incomplete_sse','upstream_engine_error','upstream_error','upstream_stream_error','upstream_aborted','connection_closed'].includes(outcome))) {
@@ -643,12 +694,13 @@ export function createGateway(config,{visionTranscode}={}) {
         route:req.url,response_format:responseFormat,http_status:clientStatus??response?.statusCode,usage_observation:usageObservation,request_stream:job.requestStream,requested_usage:job.requestedUsage,traffic_class:job.trafficClass,
         service_ms:performance.now()-job.dispatchedMono,total_ms:performance.now()-job.createdMono,first_body_byte_ms:firstBodyByte,
         request_bytes:requestBytes,usage:observer.usage,finish_reason:observer.finish_reason,stream_end:streamEnd,requested_thinking:job.thinking.result,
-        generation:jsonMetadata?.generation??(responseFormat==='sse'?{thinking_characters:observer.thinkingCharacters,answer_characters:observer.answerCharacters,tool_characters:observer.toolCharacters,first_semantic_ms:observer.firstSemanticAt===null?null:observer.firstSemanticAt-job.dispatchedMono}:null)});
+        generation:jsonMetadata?.generation??(responseFormat==='sse'&&!responseEncoded?{thinking_characters:observer.thinkingCharacters,answer_characters:observer.answerCharacters,tool_characters:observer.toolCharacters,output_present:observer.outputPresent,observation_complete:observer.shapeComplete&&!observer.limited&&!observer.reasonEofAmbiguous&&observer.singleChoiceFinish,first_semantic_ms:observer.firstSemanticAt===null?null:observer.firstSemanticAt-job.dispatchedMono}:null)});
       observe(()=>shadow.finished(node.id,job.key,{outcome,finish_reason:observer.finish_reason,
         service_ms:performance.now()-job.dispatchedMono,usage:observer.usage,route:req.url,traffic_class:job.trafficClass}));
       job.cleanup();
       job.upstream=null;job.upstreamResponse=null;
       node.active = null;
+      finishTurn(node,outcome);
       schedule(node);
       pumpWaiting();
       if(shadow.enabled)setImmediate(evaluateWaiting);
@@ -673,22 +725,23 @@ export function createGateway(config,{visionTranscode}={}) {
     const observeResponse=(up,isSSE)=>{
       response=up;clientStatus=up.statusCode;
       responseFormat=isSSE?'sse':String(up.headers['content-type']).includes('application/json')?'json':'other';
-      if(responseFormat==='json'&&!up.headers['content-encoding'])jsonUsage=new JsonUsageObserver(req.url);
-      faults=new GenerationFaultObserver(isSSE);
+      responseEncoded=!!up.headers['content-encoding']&&String(up.headers['content-encoding']).trim().toLowerCase()!=='identity';
+      if(responseFormat==='json'&&!responseEncoded)jsonUsage=new JsonUsageObserver(req.url);
+      faults=responseEncoded?null:new GenerationFaultObserver(isSSE);
     };
     const acceptResponseChunk=(up,chunk,isSSE)=>{
       if(firstBodyByte===null)firstBodyByte=performance.now()-job.dispatchedMono;
       job.lastUpstreamByteMono=performance.now();
       if(jsonUsage)jsonUsage.accept(chunk);
       if(isSSE||up.statusCode>=400)faults?.accept(chunk);
-      if(isSSE)observer.accept(chunk);
+      if(isSSE&&!responseEncoded)observer.accept(chunk);
     };
     const sendBuffered=(up,body)=>{
       const isSSE=String(up.headers['content-type']).includes('text/event-stream');
       observeResponse(up,isSSE);if(body.length)acceptResponseChunk(up,body,isSSE);
       res.writeHead(up.statusCode,responseHeaders(up));res.end(body);
-      const streamEnd=isSSE?observer.finishState():null;
-      finish(up.statusCode>=400?'upstream_http_error':!isSSE?'complete':streamEnd==='engine_error'?'upstream_engine_error':['terminal','terminal_without_done','terminal_without_finish_reason','terminal_reason_unobserved'].includes(streamEnd)?'complete':streamEnd==='observation_limited'?'sse_observation_limited':'incomplete_sse',up.statusCode,streamEnd);
+      const streamEnd=isSSE?(responseEncoded?'encoded_unobserved':observer.finishState()):null;
+      finish(up.statusCode>=400?'upstream_http_error':!isSSE?'complete':streamEnd==='engine_error'?'upstream_engine_error':['terminal','terminal_without_done','terminal_without_finish_reason','terminal_reason_unobserved'].includes(streamEnd)?'complete':['observation_limited','encoded_unobserved'].includes(streamEnd)?'sse_observation_limited':'incomplete_sse',up.statusCode,streamEnd);
     };
     const sendGuidance=(reason,stream,kind='jpeg')=>{
       if(settled)return;
@@ -782,13 +835,14 @@ export function createGateway(config,{visionTranscode}={}) {
       up.on('data',chunk=>acceptResponseChunk(up,chunk,isSSE));
       up.on('error',e=>{res.destroy();finish(job.cancelled?'client_cancelled':'upstream_stream_error',e.code);});
       up.on('aborted',()=>{res.destroy();finish(job.cancelled?'client_cancelled':'upstream_aborted');});
-      up.on('end',()=>{const streamEnd=isSSE?observer.finishState():null;finish(up.statusCode>=400?'upstream_http_error':!isSSE?'complete':streamEnd==='engine_error'?'upstream_engine_error':['terminal','terminal_without_done','terminal_without_finish_reason','terminal_reason_unobserved'].includes(streamEnd)?'complete':streamEnd==='observation_limited'?'sse_observation_limited':'incomplete_sse',up.statusCode,streamEnd);});
+      up.on('end',()=>{const streamEnd=isSSE?(responseEncoded?'encoded_unobserved':observer.finishState()):null;finish(up.statusCode>=400?'upstream_http_error':!isSSE?'complete':streamEnd==='engine_error'?'upstream_engine_error':['terminal','terminal_without_done','terminal_without_finish_reason','terminal_reason_unobserved'].includes(streamEnd)?'complete':['observation_limited','encoded_unobserved'].includes(streamEnd)?'sse_observation_limited':'incomplete_sse',up.statusCode,streamEnd);});
       up.pipe(res);
     };
     const issue=(replacement,retry=false)=>{
       let gotResponse=false,freshConnectingSocket=false,connected=false;
       const attemptHeaders={...headers};
       if(replacement){delete attemptHeaders['transfer-encoding'];attemptHeaders['content-length']=replacement.length;}
+      if(node.model_aliases)delete attemptHeaders['content-length'];
       const upstream=endpointTransport(target).request(target,{...upstreamOptions(node,target),method:req.method,headers:attemptHeaders},up=>{
         gotResponse=true;
         if(up.statusCode===400&&visionProtection.enabled&&(retry||captureLimit))bufferCandidate(up,retry);
@@ -817,7 +871,10 @@ export function createGateway(config,{visionTranscode}={}) {
         finish(job.cancelled?'client_cancelled':'upstream_error',errorValue.code);
       });
       upstream.on('close',()=>{if(!settled&&(job.cancelled||!gotResponse))finish(job.cancelled?'client_cancelled':'connection_closed');});
-      if(replacement)upstream.end(replacement);
+      if(replacement){
+        if(node.model_aliases){const rewrite=modelAliasTransform(node.model_aliases,req.headers['content-encoding']);rewrite.on('error',e=>upstream.destroy(e));rewrite.pipe(upstream);rewrite.end(replacement);}
+        else upstream.end(replacement);
+      }
       return upstream;
     };
     const upstream=issue(null);
@@ -827,7 +884,8 @@ export function createGateway(config,{visionTranscode}={}) {
     // A queued read-ahead prefix feeds the same observers and upstream once,
     // followed by the still-streaming original upload with backpressure.
     requestBody.on('data',observeBody);requestBody.once('end',bodyEnded);req.once('aborted',bodyAborted);requestBody.once('error',bodyAborted);
-    requestBody.pipe(upstream);
+    if(node.model_aliases){const rewrite=modelAliasTransform(node.model_aliases,req.headers['content-encoding']);rewrite.on('error',e=>upstream.destroy(e));upstream.once('close',()=>{requestBody.unpipe(rewrite);rewrite.destroy();});requestBody.pipe(rewrite).pipe(upstream);}
+    else requestBody.pipe(upstream);
   }
 
   const server = http.createServer((req, res) => {
@@ -854,20 +912,21 @@ export function createGateway(config,{visionTranscode}={}) {
     const requestId=randomUUID(),callId=validCallId(req.headers[CALL_ID_HEADER]),watchId=validClientWatchId(req.headers[CLIENT_WATCH_HEADER]),trafficClass=req.headers['x-dsg-observer']==='gate-genie'?'genie':'unclassified';
     if(req.method==='POST')clientWatch.observeRequest(watchId,requestId,'received');
     if(draining)return reject(req,res,503,'draining','Gateway is draining; no new requests admitted',{id:requestId,callId,key,reason:'gateway_draining'});
+    let modelRoute;try{modelRoute=routeSelection(routes,req.headers[MODEL_ROUTE_HEADER]);}catch(e){req.resume();return error(res,400,'unknown_model_route',e.message);}
     const home = key && store.get(key);
     let node = home && nodes.find(n => n.id === home.node);
     let affinity = key ? home ? 'existing' : 'new' : 'none';
     let waitReason=null;
-    if (node && (!node.healthy || node.drained)) {
+    if (node && (!allowsWorker(modelRoute,node) || !node.healthy || node.drained)) {
       // Ownership is conversation-scoped. Unrelated work must not block a safe
       // undispatched retry; same-session work, including cancelled active work,
       // retains ownership until its dispatch actually settles.
       const outstanding=sessionWork(nodes,key);
       if(outstanding){waitReason=outstanding.reason;node=null;}
-      else {node = pick(node.id); affinity = 'reassigned';}
+      else {node = pick(node.id,modelRoute); affinity = 'reassigned';}
     }
     if (!node&&!waitReason) {
-      node=pick();
+      node=pick(undefined,modelRoute);
       // Existing homes and reassignment retain their established safety/cache
       // behavior. Only genuinely new conversations may use validated placement.
     }
@@ -884,8 +943,9 @@ export function createGateway(config,{visionTranscode}={}) {
           try {
             if (up.statusCode !== 200) throw new Error();
             const data = JSON.parse(body); if (!Array.isArray(data.data)) throw new Error();
+            if(node.model_aliases){const originals=[...data.data];for(const [alias,id] of Object.entries(node.model_aliases)){const model=originals.find(m=>m.id===id);if(model&&!data.data.some(m=>m.id===alias))data.data.push({...model,id:alias,owned_by:'dsg-pool'});}}
             // Publish the pool guarantee, never one larger worker's limit.
-            // This only changes model-list metadata; generation bytes are untouched.
+            // Explicit per-worker aliases only rewrite the top-level request model.
             for (const model of data.data) {
               model.context_length = contextLimit();
               if (model.max_model_len !== undefined) model.max_model_len = contextLimit();
@@ -902,7 +962,7 @@ export function createGateway(config,{visionTranscode}={}) {
       return;
     }
     const genieFlexible=trafficClass==='genie'&&!key&&req.headers['x-dsg-review-flexible']==='1';
-    if(genieFlexible){node=freeGenieNode();waitReason=node?null:'no_ready_worker';}
+    if(genieFlexible){node=freeGenieNode(modelRoute);waitReason=node?null:'no_ready_worker';}
     if(trafficClass==='genie'&&req.headers['x-dsg-review-no-wait']==='1'){
       // Check atomically at admission. A previously free snapshot cannot grant
       // permission to put an advisory review behind user work after a race.
@@ -910,7 +970,7 @@ export function createGateway(config,{visionTranscode}={}) {
     }
     if ((node&&node.queue.length+parkedFor(node).length>=queueBound())||(!node&&waiting.length>=waitingBound()))return reject(req,res,429,'queue_full','DSG waiting capacity is full; request was not dispatched. Wait for capacity or use the patient client adapter.',{id:requestId,callId,key,node,reason:'queue_full'});
     const job = { req, res, key, affinity, id:requestId,callId,watchId, sequence:sequence++,admissionMetadata,created: Date.now(), createdMono:performance.now(), cancelled: false,queueTimeoutMs:queueTimeoutMs(),
-      trafficClass,genieFlexible };
+      trafficClass,genieFlexible,modelRoute };
     job.previewFromRequest=req.headers['x-dsg-priority-intent']!=='off'&&trafficClass!=='genie'&&req.url==='/v1/chat/completions';
     const cancel = () => {
       if (res.writableFinished) return;
@@ -954,7 +1014,8 @@ export function createGateway(config,{visionTranscode}={}) {
   server.keepAliveTimeout = 5000;
   server.on('clientError',invalidHttp);
 
-  async function probe(node) {
+  async function probe(node,force=false) {
+    if(node.endpointEditing&&!force)return;
     if (node.probing) return;
     node.probing = true;
     const activeAtStart=node.active;
@@ -995,6 +1056,7 @@ export function createGateway(config,{visionTranscode}={}) {
         res.on('data', chunk => { body += chunk; if (body.length > 1048576) p.destroy(); });
         res.on('error', e => finish(false, e.code));
         res.on('end', () => {
+          if(res.statusCode===401||res.statusCode===403){finish(false,'authentication_required');return;}
           try {
             const metadata = endpointMetadata(node, JSON.parse(body), config);
             node.modelMatches = res.statusCode === 200 && metadata.available;
@@ -1015,7 +1077,7 @@ export function createGateway(config,{visionTranscode}={}) {
     });
   }
   const startTunnel = node => {
-    if (node.ssh) node.stopTunnel = superviseTunnel(node, () => shuttingDown || node.removed);
+    if (node.ssh) node.stopTunnel = tunnelFactory(node, () => shuttingDown || node.removed);
   };
   const registry = () => ({ model: config.model, minimum_context: contextLimit(), context_limit_control:true,
     genie_admission_version:1,genie_flexible_assignment:true,
@@ -1096,6 +1158,66 @@ export function createGateway(config,{visionTranscode}={}) {
       return registry();
     } catch (e) { node.removed = true; node.probeRequest?.destroy(); node.stopTunnel?.(); throw e; }
   }
+  async function inspectEndpoint(settings) {
+    const candidate=makeNode(settings);candidate.drained=true;
+    if(settings.ssh){
+      const port=await new Promise((resolve,reject)=>{const listener=net.createServer();listener.once('error',reject);listener.listen(0,'127.0.0.1',()=>{const value=listener.address().port;listener.close(()=>resolve(value));});});
+      const url=new URL(settings.url);url.port=String(port);candidate.url=url.href.replace(/\/$/,'');
+      startTunnel(candidate);
+    }
+    try{
+      const until=Date.now()+12000;
+      do{await probe(candidate);if(!candidate.probeError||!settings.ssh||candidate.probeError==='authentication_required'||candidate.probeError==='model_or_context_mismatch')break;await delay(200);}while(Date.now()<until&&!shuttingDown);
+      if(!candidate.modelMatches||candidate.probeError||!validContext(candidate.contextLength))throw new Error(`Connection check failed (${candidate.probeError||'context not reported'}). Check URL, backend, authentication and context length.`);
+      return candidate;
+    }finally{candidate.removed=true;candidate.probeRequest?.destroy();await candidate.stopTunnel?.();}
+  }
+  async function checkEndpoint(input) {
+    if(!input||Object.keys(input).join(',')!=='worker')throw new Error('Specify endpoint settings only');
+    const settings=workerConfig(input.worker,{registration:true}),candidate=await inspectEndpoint(settings);
+    return {ok:true,url:settings.url,model:candidate.probeModel,context_length:candidate.contextLength,saved:false};
+  }
+  async function editEndpoint(input) {
+    if(shuttingDown||draining)throw new Error('Gateway is draining');
+    const fields=['url','backend','context_length','api_key_file','ssh','ssh_fallbacks','remote_port'];
+    if(!input||Array.isArray(input)||Object.keys(input).some(k=>!['id','expected_url','expected_settings',...fields].includes(k)))throw new Error('Specify server ID and supported endpoint settings');
+    const node=nodes.find(n=>n.id===input.id);
+    if(!node)throw new Error('Unknown worker');
+    if(input.expected_url!==node.url||(input.expected_settings&&JSON.stringify(input.expected_settings)!==JSON.stringify(definition(node))))throw new Error('Endpoint changed; refresh before saving');
+    const idle=()=>node.drained&&!node.active&&!node.queue.length&&!parkedFor(node).length&&!node.recovering;
+    if(!idle())throw new Error('Pause this server and wait for its active and queued work to finish before editing its endpoint');
+    const before=definition(node),raw={...before,...Object.fromEntries(fields.filter(k=>Object.hasOwn(input,k)).map(k=>[k,input[k]]))};
+    if(raw.api_key_file==='')delete raw.api_key_file;
+    if(raw.ssh===null||raw.ssh===''){delete raw.ssh;delete raw.ssh_fallbacks;delete raw.remote_port;}
+    const settings=workerConfig(raw);assertUniqueWorker(nodes.filter(n=>n!==node),settings);
+    if(JSON.stringify(settings)===JSON.stringify(before))return registry();
+    const candidate=await inspectEndpoint(settings),required=Math.max(contextLimit(),node.contextLength??0);
+    if(candidate.contextLength<required)throw new Error(`Endpoint check failed: required context at least ${required}; observed ${candidate.contextLength}. Current endpoint retained.`);
+    node.endpointEditing=true;
+    try{
+      while(node.probing)await delay(10);
+      if(shuttingDown||draining||!idle())throw new Error('Server state changed; current endpoint retained');
+      if(fs.existsSync(store.filename)){const backup=`${store.filename}.endpoint-${Date.now()}-${randomUUID()}.bak`;fs.copyFileSync(store.filename,backup,fs.constants.COPYFILE_EXCL);fs.chmodSync(backup,0o600);}
+      const route=n=>JSON.stringify([n.url,n.ssh,n.remote_port,n.ssh_fallbacks]);
+      const transportChanged=route(before)!==route(settings);
+      const apply=value=>{for(const key of workerFields){if(Object.hasOwn(value,key))node[key]=value[key];else delete node[key];}};
+      try{
+        if(transportChanged)await node.stopTunnel?.();
+        apply(settings);
+        if(transportChanged){node.stopTunnel=null;node.managementPath=makeNode(settings).managementPath;startTunnel(node);}
+        const until=Date.now()+12000;
+        do{await probe(node,true);if(!node.probeError||!node.ssh)break;await delay(200);}while(Date.now()<until);
+        if(node.probeError)throw new Error('Updated connection did not become ready');
+        store.save({...store.data,workers:nodes.map(definition)});
+      }catch(error){
+        if(transportChanged)await node.stopTunnel?.();apply(before);
+        if(transportChanged){node.stopTunnel=null;node.managementPath=makeNode(before).managementPath;startTunnel(node);}
+        await probe(node,true);throw error;
+      }
+      observe(()=>shadow.reset(node.id));
+      log('worker_endpoint_changed',{node:node.id,previous:before.url,url:node.url,drained:node.drained});return registry();
+    }finally{node.endpointEditing=false;}
+  }
   function setSshFallbacks(input) {
     if(shuttingDown||draining)throw new Error('Gateway is draining');
     const next=replaceSshFallbacks(nodes.map(definition),input),updated=next.find(worker=>worker.id===input.id),node=nodes.find(worker=>worker.id===input.id);
@@ -1147,7 +1269,7 @@ export function createGateway(config,{visionTranscode}={}) {
     if(req.method==='GET'&&req.url==='/agents')return json(res,200,agents.adminStatus());
     if (req.method === 'GET' && req.url === '/current-jobs') return json(res,200,currentJobsStatus());
     if (req.method === 'GET' && req.url === '/workers') return json(res, 200, registry());
-    if (req.method !== 'POST' || !['/drain-workers', '/resume-workers', '/maintenance-lock','/release-maintenance-lock','/maintenance-receipt','/add-worker', '/remove-worker', '/set-ssh-fallbacks','/set-context-limit','/set-queue-timeout','/set-protection','/relocate-queued','/genie-relocate-queued','/recovery-policy','/recovery-handback-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/grant-agent','/revoke-agent','/release-agent-hold','/agent/v1/drain','/agent/v1/resume','/agent/v1/receipt'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
+    if (req.method !== 'POST' || !['/drain-workers', '/resume-workers', '/maintenance-lock','/release-maintenance-lock','/maintenance-receipt','/add-worker', '/edit-endpoint', '/check-endpoint', '/remove-worker', '/set-ssh-fallbacks','/set-context-limit','/set-queue-timeout','/set-protection','/relocate-queued','/genie-relocate-queued','/recovery-policy','/recovery-handback-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/grant-agent','/revoke-agent','/release-agent-hold','/agent/v1/drain','/agent/v1/resume','/agent/v1/receipt'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
     let body = '';
     req.on('data', chunk => { body += chunk; if (Buffer.byteLength(body) > 4096) req.destroy(); });
     req.on('error', () => {});
@@ -1181,6 +1303,8 @@ export function createGateway(config,{visionTranscode}={}) {
             if(config.genie_load_balancing===false||!genieRelocationOffers().some(offer=>['request_id','source','destination','evidence_id'].every(key=>offer[key]===input?.[key])))throw new Error('Genie relocation evidence or policy changed; request was left in place');
             return json(res,200,relocateQueued(input,'genie'));
           }
+          if (req.url === '/check-endpoint') return json(res, 200, await checkEndpoint(input));
+          if (req.url === '/edit-endpoint') return json(res, 200, await editEndpoint(input));
           if (req.url === '/add-worker') return json(res, 201, await addWorker(input.worker));
           if (req.url === '/set-ssh-fallbacks') return json(res, 200, setSshFallbacks(input));
           if (req.url === '/remove-worker') return json(res, 200, removeWorker(input.id));
@@ -1252,6 +1376,7 @@ export function createGateway(config,{visionTranscode}={}) {
     async close() {
       if (shuttingDown) return;
       shuttingDown = true; draining = true;
+      for(const node of nodes)releaseTurns(node);
       clearInterval(waitingTimer);
       for(const job of [...waiting]){detach(job);reject(job.req,job.res,503,'draining','Gateway is stopping; the waiting request was not dispatched. A compatible patient client may retry after DSG returns.',{...job,node:job.fixedHome,reason:'gateway_draining'});job.cleanup();}
       clearInterval(recoveryTimer);await recovery.close();
@@ -1264,10 +1389,10 @@ export function createGateway(config,{visionTranscode}={}) {
 }
 
 function superviseTunnel(node, stopping) {
-  let child, timer,targetIndex=0;
+  let child, timer,targetIndex=0,stopped=false;
   const update=(state,reason=null)=>{node.managementPath={...node.managementPath,transport:'ssh_tunnel',state,reason,changed_at:new Date().toISOString()};};
   const start = () => {
-    if (stopping()) return;
+    if (stopped||stopping()) return;
     const targets=sshTargets(node);targetIndex%=targets.length;
     node.managementPath={...node.managementPath,transport:'ssh_tunnel',state:'connecting',reason:null,attempts:(node.managementPath?.attempts??0)+1,changed_at:new Date().toISOString()};
     const port = new URL(node.url).port;
@@ -1281,11 +1406,11 @@ function superviseTunnel(node, stopping) {
       update('retrying',node.managementPath?.reason??classifySshFailure('',null,code));
       log('tunnel_exited', { node: node.id, code, signal });
       targetIndex=(targetIndex+1)%sshTargets(node).length;
-      if (!stopping()) timer = setTimeout(start, 3000);
+      if (!stopped&&!stopping()) timer = setTimeout(start, 3000);
     });
   };
   start();
-  return () => { clearTimeout(timer); child?.kill('SIGTERM'); };
+  return async () => { stopped=true;clearTimeout(timer);if(child&&child.exitCode===null&&child.signalCode===null)await new Promise(resolve=>{child.once('exit',resolve);child.kill('SIGTERM');}); };
 }
 
 if (isMain(import.meta.url)) {

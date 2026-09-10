@@ -23,6 +23,14 @@ For oMLX, vLLM, SGLang or another compatible server, see
 [OpenAI-compatible workers](docs/openai-endpoints.md). Model handling stays with
 the backend; DSG preserves its existing scheduling and a shared context limit.
 
+For adding an inference backend, see the
+[new-backend onboarding guide](docs/server-setup-guide.md): parameter contracts,
+thinking choices and evidence for the Hourglass → DSG → backend chain.
+
+Use [Testing mode](docs/testing-mode.md) for isolated admission through the normal
+gateway machinery. [Conversation turns](docs/conversation-turns.md) explains the
+default five-turn allocation and the client conversation header.
+
 > Our guiding light: a low-effort DS4 fleet that keeps agents working.
 > Intelligence should make that dependable foundation better—not become another
 > dependency that can stall it.

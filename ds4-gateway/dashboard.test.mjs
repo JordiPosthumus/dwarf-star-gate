@@ -202,7 +202,7 @@ test('activity view uses three honest operational colors and folds thinking into
   assert.match(html,/aria-label="Observed activity over the last fifteen minutes:/);
   assert.doesNotMatch(html,/15m activity|sampled every 2s|status badge distinguishes/);
   const css=fs.readFileSync(new URL('./ui/brand.css',import.meta.url),'utf8');
-  assert.match(css,/\.phase-prefill\{fill:#78aee8\}/);assert.match(css,/\.phase-decode\{fill:#b9d889\}/);assert.match(css,/\.phase-idle-off\{fill:#c48787\}/);
+  assert.match(css,/\.phase-prefill\{fill:#78aee8\}/);assert.match(css,/\.phase-decode\{fill:#b9d889\}/);assert.match(css,/\.phase-idle-off\{fill:#42484c\}/);
 });
 
 test('worker controls show escaped hold ownership and block ordinary Enable/Remove',()=>{
@@ -436,7 +436,7 @@ test('thinking UI distinguishes requested controls, omitted/unknown, current/las
   assert.match(info({status:'specified',fields:{reasoning_effort:'low'},served}).detail,/Requested: reasoning_effort=low/);
   assert.equal(info({status:'specified',fields:{reasoning_effort:'max'},served:{...served,mode:'max'}}).label,'MAX');
   assert.equal(info({status:'specified',fields:{thinking:false},served:{...served,mode:'none'}}).label,'OFF');
-  assert.equal(info({status:'specified',fields:{reasoning_effort:'low'}}).label,'Unknown');
+  assert.equal(info({status:'specified',fields:{reasoning_effort:'low'}}).label,'Requested LOW');
   assert.equal(info({status:'not_specified',served}).label,'HIGH');
   assert.equal(info({status:'not_specified'}).label,'Unknown');
   assert.equal(info({status:'pending'}).label,'Reading request');
@@ -653,9 +653,9 @@ test('health wire cannot hide live quarantine or wasted-capacity evidence behind
     {id:'m3-studio',is_healthy:false,drained:true,operator_paused:true,holds:[{owner:'agent'}],quarantine:null}],
     recovery:{workers:[{worker_id:'spark2',state:'quarantined',eligible:false,reason:'service_identity_or_profile_unverified'}]}};
   const stalled=news({gateway},{state:'reviewing'});
-  assert.equal(stalled.level,'critical');assert.match(stalled.label,/DSG safety alert · live gateway evidence/);
+  assert.equal(stalled.level,'critical');assert.match(stalled.label,/DSG safety alert · observed gateway evidence/);
   assert.equal(stalled.items.length,1);assert.match(stalled.items[0].text,/Spark 2 is quarantined after accelerator checkpoint failure/);
-  assert.match(stalled.items[0].text,/2 of 3 DS4 servers are available/);assert.match(stalled.items[0].text,/2 requests are being held/);
+  assert.match(stalled.items[0].text,/2 of 3 model servers are available/);assert.match(stalled.items[0].text,/2 requests are being held/);
   assert.match(stalled.items[0].text,/deliberately re-enroll the changed DS4 service profile/);
   for(const [reason,expected] of [['launchd_registration_absent',/registration is missing.*no bootstrap authority/],['launchd_gui_domain_unavailable',/GUI service domain is unavailable.*does not prove/],['launchd_state_unverified',/inspection could not establish.*absence is not proven/],['launchd_native_disabled',/macOS explicitly disables.*DSG will not enable/],['launchd_disable_state_unverified',/native disable setting could not be verified.*unknown policy is not permission/]]){
     const specific=news({gateway:{...gateway,recovery:{workers:[{worker_id:'spark2',eligible:false,reason}]}}},{state:'reviewing'});
@@ -758,16 +758,16 @@ test('dashboard serves local assets and a downloadable read-only snapshot', asyn
     await r.arrayBuffer();
   }
 });
-test('dashboard names DS4 servers and explains gateway-only concurrency and availability', async t => {
+test('dashboard names model servers and explains gateway-only concurrency and availability', async t => {
   const { url } = await fixture(t);
   const html = await (await fetch(url)).text();
   const js = await (await fetch(url+'/ui.js')).text();
-  assert.match(html,/AVAILABLE DS4 SERVERS/);assert.match(html,/ACTIVE REQUESTS/);assert.match(html,/WAITING IN DSG/);assert.match(html,/Queues still inside Pi, Hermes or another client/);
-  assert.match(html,/Manage DS4 servers/);assert.match(html,/not necessarily one physical machine/);
+  assert.match(html,/AVAILABLE MODEL SERVERS/);assert.match(html,/ACTIVE REQUESTS/);assert.match(html,/WAITING IN DSG/);assert.match(html,/Queues still inside Pi, Hermes or another client/);
+  assert.match(html,/Manage servers/);assert.match(html,/not necessarily one physical machine/);
   assert.match(html,/Direct clients are outside this limit/);
   assert.match(html,/Available means healthy and enabled, including busy servers/);
   assert.match(html,/Warm cache slots retain sessions/);
-  assert.match(js,/one active gateway request per DS4 server/);
+  assert.match(js,/one active gateway request per model server/);
   assert.doesNotMatch(html+js,/AVAILABLE SPARKS|AVAILABLE WORKERS|active generation per Spark|active gateway request per worker/);
 });
 test('fleet overview is a dense status band and controls live in one settings tab',()=>{
@@ -778,9 +778,9 @@ test('fleet overview is a dense status band and controls live in one settings ta
   assert.doesNotMatch(html,/Gateway request slots, not GPU utilization\. Warm cache slots are separate\./);
   assert.doesNotMatch(html,/id="server-settings"|\[ server controls \]/);assert.match(js,/openServerSettings/);
   assert.match(html,/id="tab-settings"[^>]*aria-controls="view-settings"[^>]*data-workspace-tab="settings"/);
-  assert.match(html,/id="view-settings"[^>]*>[\s\S]*id="worker-management"[\s\S]*id="spark-profile"/);
+  assert.match(html,/id="view-settings"[^>]*>[\s\S]*id="worker-management"/);
   assert.match(js,/fmtWhole\(m\?\.tps\)/);assert.match(js,/class="remaining-estimate/);assert.match(js,/class="performance-lights"/);
-  assert.match(css,/\.metric-block\{display:grid;grid-template-rows:/);assert.match(css,/\.status-deck\{display:grid;grid-template-columns:/);assert.match(css,/\.workspace-tabs \.settings-tab\{display:inline-flex;[^}]*margin-left:auto/);
+  assert.match(css,/\.metric-block\{display:grid;[^}]*grid-template-rows:/);assert.match(css,/\.status-deck\{display:grid;grid-template-columns:/);assert.match(css,/\.workspace-tabs \.settings-tab\{display:inline-flex;[^}]*margin-left:auto/);
   assert.doesNotMatch(html.split('<nav class="workspace-tabs"')[0],/id="genie-hardening"/);assert.match(html,/Private developer hypotheses distilled from bounded DSG failure evidence/);
   assert.match(js,/function renderHardeningNotes/);assert.match(js,/suggestion\.textContent=note\.suggestion/);assert.match(css,/\.genie-hardening\{/);
 });
@@ -805,19 +805,6 @@ test('cache evidence health exposes epoch coverage and abstention without claimi
   const {url}=await fixture(t),html=await (await fetch(url)).text(),js=await (await fetch(url+'/ui.js')).text();
   assert.match(html,/Cache evidence and cost · measured components/);assert.match(html,/id="cache-evidence-status"/);
   assert.match(js,/telemetry-enabled servers have an observed process epoch/);assert.match(js,/Corroborated is still a bounded candidate, not protocol proof or a cache-hit verdict/);
-});
-test('dashboard links the pinned Spark recommendation without implying live configuration or fixed disk slots', async t => {
-  const { url } = await fixture(t);
-  const html = await (await fetch(url)).text();
-  const profile = fs.readFileSync(new URL('../docs/recommended-spark-profile.md',import.meta.url),'utf8');
-  assert.match(html, /<details id="spark-profile"><summary>Recommended DGX Spark configuration/);
-  assert.match(html, /href="https:\/\/github.com\/JordiPosthumus\/dwarf-star-gate\/blob\/main\/docs\/recommended-spark-profile\.md" target="_blank" rel="noopener noreferrer"/);
-  assert.match(html, /262,144-token context, two hot sessions, one active request per Spark/);
-  assert.match(html, /349,525 MiB/); assert.match(html, /not a fixed ten-slot guarantee/);
-  assert.match(html, /guidance, not a reading of live settings/); assert.match(html, /does not change servers or apply to Macs/);
-  assert.match(profile, /552f6b834ce0b5c53b25a89a8468df5fdd1804de/);
-  for (const flag of ['--ctx 262144','--tokens 262144','--batched-session 2','--max-active-requests 1','--kv-disk-space-mb 349525','--prefill-chunk 2048']) assert.ok(profile.includes(flag),flag);
-  assert.match(profile, /DS4_KV_REWIND_REUSE=0/); assert.match(profile, /NV_ERR_NO_MEMORY/);
 });
 test('every HTML-referenced asset is served, including a real PNG logo with bounded fallback dimensions', async t => {
   const { url } = await fixture(t);
@@ -893,8 +880,8 @@ test('opt-in worker controls require same origin, JSON and a CSRF token; diagnos
   assert.equal(calls.length,0);
   assert.equal((await post('/api/workers/context','{}',{'content-type':'application/json'})).status,403);
   assert.equal((await post('/api/workers/queue-timeout','{}',{'content-type':'application/json'})).status,403);
-  for(const action of ['add','drain','resume','lock','unlock','remove','fallbacks','context','queue-timeout','protection','relocate']) assert.equal((await post('/api/workers/'+action,JSON.stringify({id:'fake'}),valid)).status,200);
-  assert.deepEqual(calls.map(x=>x.action),['add','drain','resume','lock','unlock','remove','fallbacks','context','queue-timeout','protection','relocate']);
+  for(const action of ['add','endpoint','test','drain','resume','lock','unlock','remove','fallbacks','context','queue-timeout','protection','relocate']) assert.equal((await post('/api/workers/'+action,JSON.stringify({id:'fake'}),valid)).status,200);
+  assert.deepEqual(calls.map(x=>x.action),['add','endpoint','test','drain','resume','lock','unlock','remove','fallbacks','context','queue-timeout','protection','relocate']);
   assert.ok(!(await(await fetch(url+'/api/diagnostics')).text()).includes(init.csrf_token));
   const plain=await fixture(t);assert.deepEqual(await(await fetch(plain.url+'/api/workers')).json(),{enabled:false});
 });
@@ -945,7 +932,7 @@ test('request log filters problems and slow work while treating compatibility gu
 });
 test('fresh empty fleets get an explicit first-server setup path',async t=>{
   const {url}=await fixture(t),html=await(await fetch(url)).text(),js=await(await fetch(url+'/ui.js')).text();
-  assert.match(html,/Manage DS4 servers/);assert.match(js,/Add your first DS4 server/);assert.match(js,/data-add-first/);assert.match(js,/function openServerSettings/);assert.match(js,/activateWorkspaceTab\('settings',\{updateHash:true\}\)/);
+  assert.match(html,/Manage servers/);assert.match(js,/Add your first model server/);assert.match(js,/data-add-first/);assert.match(js,/function openServerSettings/);assert.match(js,/activateWorkspaceTab\('settings',\{updateHash:true\}\)/);
 });
 test('dashboard follows live membership and marks machines without engine logs explicitly', async t => {
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-membership-ui-'));
@@ -1067,4 +1054,23 @@ test('rolling rate UI shows six-hour averages, accessible coloured trends and ho
   assert.match(render({...value,trend:'steady'}),/aria-label="steady"/);
   const missing=render(null);assert.match(missing,/6h avg — t\/s/);assert.doesNotMatch(missing,/rate-trend/);
   const insufficient=render({...value,trend:'insufficient',change_pct:null});assert.match(insufficient,/60 active seconds/);assert.doesNotMatch(insufficient,/rate-trend/);
+});
+
+test('OpenAI evidence cards do not imply DwarfStar telemetry failure or hide independent cache evidence when paused',()=>{
+ const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+ const context=vm.createContext({});vm.runInContext(source,context);
+ const d={id:'spark',backend:'openai',connected:false,cache_continuity:{status:'ready',checked_at:99000,workers:{spark:{assessed_pairs:4,reuse_observed:2,partial_reuse:1,last_assessed_at:90000,last_low_reuse_at:90000}}}};
+ const render=()=>vm.runInContext(`performanceLightsMarkup(${JSON.stringify(d)},100000,true)`,context);
+ const html=render();assert.match(html,/data-level="amber"/);assert.match(html,/completed DSG request usage/);assert.match(html,/comparisons are not available for this OpenAI backend/);assert.doesNotMatch(html,/Live telemetry is stale|History reader unavailable|disk-load spans|Evidence exclusions/);
+ d.cache_continuity.status='source_gap';assert.doesNotMatch(render(),/data-level="amber"/);
+});
+
+test('endpoint prefill average keeps the same basis across active and idle phases',()=>{
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const context=vm.createContext({phase:()=> 'idle'});vm.runInContext(source,context);
+  const base={id:'m3',backend:'openai',cache:{},series:[],endpoint_metrics:{source:'omlx',connected:true,at:100000,requests:5,prefill_tps:500,decode_tps:30,live_rate_scope:'active_request_average',live_activity:true,series:[]}};
+  const render=(running,phase,liveRate)=>vm.runInContext(`device(${JSON.stringify({...base,endpoint_metrics:{...base.endpoint_metrics,running,phase,live_prefill_tps:liveRate}})},{id:'m3',load:1,is_healthy:true},100000,false)`,context);
+  const active=render(1,'prefill',1200),idle=render(0,'idle',null);
+  for(const html of [active,idle]){assert.match(html,/Average · incl. overhead/);assert.match(html,/rate prefill">500<em>/);assert.match(html,/engine-session average/);}
+  assert.match(active,/metric-live-chunk">1,200 live/);assert.doesNotMatch(idle,/metric-live-chunk/);
 });

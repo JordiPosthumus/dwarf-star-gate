@@ -119,3 +119,11 @@ test('fleet pulse defaults to 12h, keeps missing energy unknown and exposes cali
   ctx.sample.fleet_speed.windows['12h'].energy={status:'estimated_from_measured_power',estimated_kwh:3.1,measured_kwh:3.1,coverage_pct:100};call('renderFleetSpeed(sample)');
   assert.match(get('fleet-speed-value').textContent,/21.6k tok · ≈3.1 kWh · .* tok\/kWh/);assert.match(get('fleet-speed-summary').attributes.get('aria-label'),/Estimated energy 3.1 kilowatt hours/);
 });
+
+import {GenerationEvidence} from './generation-evidence.mjs';
+test('output-shape warnings are bounded, private, expire, and exclude failed or unobserved responses',()=>{
+ const h=new GenerationEvidence(),now=Date.now(),row={schema:1,kind:'finish',run_id:'run',request_id:'request',node:'spark',outcome:'complete',finish_reason:'stop',route:'/v1/chat/completions',time:new Date(now).toISOString(),generation:{observation_complete:true,output_present:false,thinking_characters:40,answer_characters:0,tool_characters:0},prompt:'PRIVATE'};
+ h.accept(row);h.accept(row);assert.equal(h.snapshot(now).rows.length,1);assert.equal(h.snapshot(now).rows[0].kind,'reasoning_only_final');assert.ok(!JSON.stringify(h.snapshot(now)).includes('PRIVATE'));assert.equal(h.snapshot(now+3600001).rows.length,0);
+ for(const delta of [{outcome:'upstream_error'},{finish_reason:'length'},{generation:{observation_complete:true,output_present:false,thinking_characters:null,answer_characters:0,tool_characters:0}},{generation:{observation_complete:true,output_present:false,thinking_characters:1,answer_characters:10,tool_characters:0}},{finish_reason:'tool_calls'},{route:'/v1/responses'}])h.accept({...row,...delta,request_id:'excluded'});
+ assert.equal(h.snapshot(now).rows.length,1);h.accept({...row,request_id:'empty',generation:{observation_complete:true,output_present:false,thinking_characters:0,answer_characters:0,tool_characters:0}});assert.equal(h.snapshot(now).rows.length,2);assert.equal(h.snapshot(now).automatic_action,false);
+});

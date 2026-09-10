@@ -27,6 +27,8 @@ export function endpointHeaders(worker) {
 const capacity = value => Number.isSafeInteger(value) && value > 0 ? value : null;
 export function endpointMetadata(worker, data, { model, model_agnostic = false } = {}) {
   const models = Array.isArray(data?.data) ? data.data.filter(m => m && typeof m.id === 'string' && m.id.length) : [];
+  const aliasIds=Object.values(worker.model_aliases??{});
+  if(aliasIds.some(id=>!models.some(m=>m.id===id)))return {available:false,contextLength:null,probeModel:null};
   const candidates = model_agnostic || worker.backend === 'openai' ? models : models.filter(m => m.id === model);
   const configured = capacity(worker.context_length);
   const limits = candidates.map(m => {

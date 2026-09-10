@@ -1,6 +1,6 @@
 // Operator-supplied routing endpoints only. No model launch commands or settings.
 import path from 'node:path';
-export const workerFields = ['id', 'url', 'ssh', 'ssh_fallbacks', 'remote_port', 'telemetry_service', 'backend', 'context_length', 'api_key_file'];
+export const workerFields = ['id', 'url', 'ssh', 'ssh_fallbacks', 'remote_port', 'telemetry_service', 'backend', 'context_length', 'api_key_file', 'model_aliases'];
 const keys = new Set(workerFields);
 const validSshAlias=value=>typeof value==='string'&&/^[a-zA-Z0-9][\w.@-]{0,252}$/.test(value);
 const fallbackList=(value,primary)=>{
@@ -29,6 +29,11 @@ export function workerConfig(raw, { registration = false } = {}) {
   if (raw.api_key_file !== undefined) {
     if (raw.backend !== 'openai' || typeof raw.api_key_file !== 'string' || !path.isAbsolute(raw.api_key_file)) throw new Error('OpenAI endpoint credentials require an absolute local token-file path');
     result.api_key_file = raw.api_key_file;
+  }
+  if(raw.model_aliases!==undefined){
+    const a=raw.model_aliases;
+    if(!a||typeof a!=='object'||Array.isArray(a)||Object.keys(a).length>32||Object.entries(a).some(([k,v])=>!k||k.length>256||typeof v!=='string'||!v||v.length>256))throw new Error('Model aliases must map at most 32 nonempty model IDs (up to 256 characters)');
+    result.model_aliases={...a};
   }
   if (raw.ssh !== undefined) {
     if (!validSshAlias(raw.ssh)) throw new Error('Invalid SSH host or alias');
