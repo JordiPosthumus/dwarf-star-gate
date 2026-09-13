@@ -16,6 +16,7 @@ import { FileLogReader, telemetryFiles } from './file-telemetry.mjs';
 import { Activity } from './ui/activity.js';
 import { Genie } from './genie.mjs';
 import {GenieChat} from './genie-chat.mjs';
+import {ServerRecords} from './server-records.mjs';
 import {hermesProvider} from './genie-hermes.mjs';
 import {GenieMemory} from './genie-memory.mjs';
 import {GenieProviderLedger} from './genie-provider-ledger.mjs';
@@ -396,7 +397,8 @@ export async function runDashboard(configPath, port) {
   }
   const started = Date.now();
   const managementEnabled = config.ui_worker_management === true && !!config.control_socket;
-  const snapshot = () => ({ service:'dwarf-star-gate-dashboard', version: 1, time: Date.now(), started, read_only: !managementEnabled, worker_management:managementEnabled, gateway, gateway_at: gatewayAt, gateway_error: gatewayError, telemetry_error: writeError,monitoring_history:monitoringHistory.snapshot(),
+  const serverRecords=new ServerRecords(config.server_records_directory);
+  const snapshot = () => ({ server_records:serverRecords.snapshot(gateway?.workers?.map(w=>w.id)??[]),service:'dwarf-star-gate-dashboard', version: 1, time: Date.now(), started, read_only: !managementEnabled, worker_management:managementEnabled, gateway, gateway_at: gatewayAt, gateway_error: gatewayError, telemetry_error: writeError,monitoring_history:monitoringHistory.snapshot(),
     continuity_door:continuityDoor,continuity_door_error:continuityDoorError,rate_peaks:ratePeaks.snapshot(),cache_continuity:requestHistory.cacheSnapshot(),generation_alerts:requestHistory.generationEvidence.snapshot(),
     performance_lights:performanceHistory.snapshot(Date.now(),[...devices.values()].map(d=>({...d.snapshot(),connected:d.connected&&!gatewayError,active:performanceActive(d,gateway?.workers?.find(w=>w.id===d.id))}))),
     devices: [...devices.values()].map(d => ({...d.snapshot(),rolling_rates:fleetSpeed.workerRates(d.id),activity:activity.get(d.id),activity_markers:activity.getMarkers(d.id),hardware:hardware.snapshot(d.id),endpoint_metrics:endpointTelemetry.snapshot(d.id)})), events, attribution:attribution.snapshot(), notes: 'Engine-log rates are measurements from configured log collectors; OpenAI endpoint rates have separately labeled scopes. Cache counts cover observed prompt starts, not lifetime requests. Raw prompts and responses are excluded.' });

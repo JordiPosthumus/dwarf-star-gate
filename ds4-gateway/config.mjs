@@ -19,6 +19,7 @@ export function loadConfig(explicit,options) {
     return path.resolve(base,value);
   };
   config.state_file=local(config.state_file,'state_file');
+  if(config.server_records_directory!=null)config.server_records_directory=local(config.server_records_directory,'server_records_directory');
   if(config.control_socket!=null)config.control_socket=local(config.control_socket,'control_socket');
   if(config.continuity_door?.control_socket!=null)config.continuity_door.control_socket=local(config.continuity_door.control_socket,'continuity_door.control_socket');
   if(config.telemetry_files && typeof config.telemetry_files==='object'&&!Array.isArray(config.telemetry_files))

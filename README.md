@@ -47,6 +47,10 @@ inference capacity and never grants unrestricted machine access. See
 [Genie setup and boundaries](docs/observer.md), [memory](docs/genie-memory.md),
 and [service recovery](docs/worker-recovery.md).
 
+An optional [private server configuration library](docs/server-records.md) gives
+Settings and conversational Genie dated engine facts, with observations kept
+separate from approved configurations and restoration evidence.
+
 For a conversation-first interface, the opt-in [conversational Genie](docs/genie-conversation.md)
 adds saved chats and follow-up questions through Hermes. Try the clearly labelled
 example interface with `npm run genie:demo`, then connect your own model using the

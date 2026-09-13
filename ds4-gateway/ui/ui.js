@@ -521,7 +521,28 @@ function renderHealthWire(snapshot) {
   // Polling preserves the animated track rather than restarting its animation.
   $('health-wire-track').style.animationDuration=`${Math.max(12,$('health-wire-text').getBoundingClientRect().width/52)}s`;
 }
+function renderServerRecords(value){
+  const panel=$('server-records');if(!panel)return;panel.hidden=!value?.configured;
+  const items=$('server-record-items');if(!value?.configured){items.replaceChildren();return;}
+  const signature=JSON.stringify(value);if(items.dataset.signature===signature)return;items.dataset.signature=signature;items.replaceChildren();
+  for(const row of value.records??[]){
+    const entry=document.createElement('details'),heading=document.createElement('summary');heading.textContent=row.worker_id;entry.append(heading);
+    for(const kind of ['observed','approved','proposed']){
+      const record=row[kind],p=document.createElement('p');
+      if(!record){p.textContent=kind==='approved'?'No owner-approved configuration recorded.':kind==='observed'?'No inspection recorded.':'No proposed change recorded.';entry.append(p);continue;}
+      const settings=record.settings,parts=[record.runtime.name,record.runtime.version,record.model.name].filter(Boolean);
+      if(settings.context_length!==undefined)parts.push(`context ${settings.context_length?.toLocaleString()??'unknown'}`);
+      if(settings.server_concurrency!==undefined)parts.push(`server concurrency ${settings.server_concurrency??'unknown'}`);
+      p.textContent=`${kind[0].toUpperCase()+kind.slice(1)} · ${new Date(record.recorded_at).toLocaleString()} · ${parts.join(' · ')}`;entry.append(p);
+      const proof=document.createElement('p');proof.className='muted';proof.textContent=`Revision ${record.revision.slice(0,12)} · restore ${record.restoration.drill.status==='restored-in-drill'?'demonstrated in a recorded drill':'unproven'}`;entry.append(proof);
+      if(record.discrepancies.length){const warning=document.createElement('p');warning.textContent='Differences to review: '+record.discrepancies.map(v=>({configured_route_differs:'startup route differs from the saved live route',recovery_binding_differs:'recovery enrollment uses a different route',launcher_differs:'launcher differs from the inspected process',source_has_local_changes:'runtime source has local modifications',runtime_settings_unverified:'some running settings remain unverified'})[v]).join('; ');entry.append(warning);}
+    }
+    items.append(entry);
+  }
+  if(value.unavailable?.length){const p=document.createElement('p');p.textContent='Some configuration records could not be read. Existing files were preserved.';items.append(p);}
+}
 function render(s) {
+  renderServerRecords(s.server_records);
   const g = s.gateway, now = s.time, stale = !!s.gateway_error;
   renderHealthWire(s);
   renderAgentWatch(g?.client_watch);
