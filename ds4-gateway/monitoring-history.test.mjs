@@ -22,3 +22,11 @@ test('history faults and symlinks do not affect live observations or overwrite t
  const file=fixture(t),target=file+'.target';fs.writeFileSync(target,'PRIVATE');fs.symlinkSync(target,file);const a=new Activity(),e={histories:new Map()},store=new MonitoringHistory(file);assert.equal(store.status,'unavailable');store.sync([worker],a,e);store.save(a,e);assert.equal(store.status,'unavailable');assert.equal(fs.readFileSync(target,'utf8'),'PRIVATE');
  a.observe({id:'m3',backend:'openai',endpoint_metrics:{connected:true,at:1000,running:1,phase:'prefill'}},{...worker,is_healthy:true,load:0},1000);assert.equal(a.get('m3')[0].phase,'prefill');
 });
+
+test('corrected prefill rates survive reload while obsolete scrape-derived spikes stay out of the graph',t=>{
+ const file=fixture(t),first=new MonitoringHistory(file,{now:()=>2000}),activity=new Activity(),telemetry={histories:new Map()};first.sync([worker],activity,telemetry);
+ telemetry.histories.set(worker.id,[{time:1000,kind:'prefill',tps:100000,scope:'poll_interval_throughput'},{time:1500,kind:'prefill',tps:1900,scope:'completed_request_average'},{time:1600,kind:'decode',tps:30,scope:'poll_interval_throughput'}]);first.save(activity,telemetry);
+ assert.equal(JSON.parse(fs.readFileSync(file)).workers[worker.id].rates.length,3);
+ const restored=new MonitoringHistory(file,{now:()=>2500}),live={histories:new Map()};restored.sync([worker],new Activity(),live);
+ assert.deepEqual(live.histories.get(worker.id).map(row=>row.tps),[1900,30]);
+});

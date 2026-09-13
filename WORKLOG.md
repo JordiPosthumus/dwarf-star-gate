@@ -1,4 +1,9 @@
-# Dwarf Star Gate work log
+# Star Gate work log
+
+## 2026-09-13 — Star Gate branding
+
+- Renamed the product to Star Gate, with an updated wordmark, dashboard and
+  introduction. Existing service, configuration and API names remain compatible.
 
 ## 2026-09-09 — OpenAI-compatible endpoints
 

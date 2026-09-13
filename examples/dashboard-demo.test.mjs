@@ -27,7 +27,7 @@ test('public demo has synthetic mixed servers, current panels and no promoted mo
   assert.equal(s.performance_lights.workers['mac-ultra'].decode.level,'grey');
   assert.ok(g.ticker.entries.every(e=>e.text.startsWith('Demo:')));
   const a=await get('/api/request-history');assert.equal(a.demo,true);
-  const html=await (await fetch(url)).text();assert.match(html,/<h1>Dwarf Star Gate<\/h1>/);
+  const html=await (await fetch(url)).text();assert.match(html,/<h1>Star Gate<\/h1>/);
 });
 test('demo controls affect only in-memory fixtures and refuse recovery/training',async t=>{
   const {get,post}=await demo(t);
@@ -40,4 +40,15 @@ test('demo controls affect only in-memory fixtures and refuse recovery/training'
   assert.equal((await post('/api/workers/predictor',{action:'train'})).status,405);
   assert.equal((await post('/api/workers/recover',{worker_id:'sparkA'})).status,400);
   const fresh=await demo(t);assert.equal((await fresh.get('/api/workers')).workers[2].drained,false);
+});
+
+test('demo conversation Apply control validates and updates only its own fixture',async t=>{
+ const {get,post}=await demo(t);
+ assert.equal((await get('/api/workers')).conversation_turns,5);
+ const changed=await post('/api/workers/conversation-turns',{conversation_turns:2,expected_conversation_turns:5});
+ assert.equal(changed.status,200);assert.equal((await changed.json()).conversation_turns,2);
+ assert.equal((await get('/api/status')).gateway.conversation_turns,2);
+ assert.equal((await post('/api/workers/conversation-turns',{conversation_turns:3,expected_conversation_turns:5})).status,400);
+ assert.equal((await post('/api/workers/conversation-turns',{conversation_turns:0,expected_conversation_turns:2})).status,400);
+ const fresh=await demo(t);assert.equal((await fresh.get('/api/workers')).conversation_turns,5);
 });

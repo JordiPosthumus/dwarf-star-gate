@@ -26,7 +26,7 @@ function cachePair(){
 }
 function ui() {
   const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
-  const elements=new Map(),get=id=>{if(!elements.has(id)){const attributes=new Map(),values=new Map();elements.set(id,{value:id==='analytics-metric'?'queue':'',innerHTML:'',textContent:'',dataset:{},style:{setProperty:(name,value)=>values.set(name,value),values},setAttribute:(name,value)=>attributes.set(name,value),attributes});}return elements.get(id);};
+  const elements=new Map(),get=id=>{if(!elements.has(id)){const attributes=new Map(),values=new Map();elements.set(id,{value:id==='analytics-metric'?'queue':'',innerHTML:'',textContent:'',dataset:{},classList:{toggle:(name,value)=>attributes.set('class:'+name,value)},style:{setProperty:(name,value)=>values.set(name,value),values},setAttribute:(name,value)=>attributes.set(name,value),attributes});}return elements.get(id);};
   const ctx=vm.createContext({document:{getElementById:get},structuredClone});vm.runInContext(source,ctx);return {ctx,get,call:expr=>vm.runInContext(expr,ctx)};
 }
 test('cache dashboard projection is private, bounded and evaluated at most every 15 seconds',()=>{
@@ -109,15 +109,18 @@ test('collection and cache UI distinguish missing metadata, sparse evidence and 
   assert.match(call('cacheEvidenceText({},true)'),/unavailable/);
 });
 test('fleet pulse defaults to 12h, keeps missing energy unknown and exposes calibrated activity',()=>{
-  const {ctx,get,call}=ui(),phase=(mean,tokens,activity)=>({mean_tps:mean,tokens_observed:tokens,active_seconds:100,samples:9,observed_workers:3,worker_count:3,activity_lower_bound_pct:activity});
+  const {ctx,get,call}=ui(),phase=(mean,tokens,activity)=>({mean_tps:mean,tokens_observed:tokens,active_seconds:100,samples:9,observed_workers:3,workers:["one","two","three"],worker_count:3,activity_lower_bound_pct:activity});
   ctx.sample={fleet_speed:{schema:1,status:'ready',calibration:{decode:{max_tps:40},prefill:{max_tps:1000}},windows:{'12h':{decode:phase(20,21600,12.5),prefill:phase(680,null,4.2),energy:{status:'awaiting_power_data',estimated_kwh:null,coverage_pct:null}}}}};
   call('renderFleetSpeed(sample)');assert.equal(get('fleet-speed-window').value,'12h');assert.equal(get('fleet-decode-speed').textContent,'20');assert.equal(get('fleet-prefill-speed').textContent,'680');
   assert.equal(get('fleet-speed-decode').style.values.get('--speed-fill'),'50');assert.equal(get('fleet-speed-decode').style.values.get('--activity-fill'),'12.5');
-  assert.match(get('fleet-speed-value').textContent,/21.6k tok · energy awaiting power data/);assert.match(get('fleet-speed-summary').title,/does not invent an energy estimate/);
+  assert.match(get('fleet-speed-value').textContent,/3\/3 servers · Energy unavailable/);assert.match(get('fleet-speed-summary').title,/Missing history is excluded/);
   ctx.sample.fleet_speed.windows['12h'].energy={status:'insufficient_power_coverage',estimated_kwh:null,measured_kwh:0.0378,coverage_pct:1.7};call('renderFleetSpeed(sample)');
   assert.match(get('fleet-speed-summary').attributes.get('aria-label'),/Measured energy subtotal 0.038 kilowatt hours. Fleet estimate unavailable/);
   ctx.sample.fleet_speed.windows['12h'].energy={status:'estimated_from_measured_power',estimated_kwh:3.1,measured_kwh:3.1,coverage_pct:100};call('renderFleetSpeed(sample)');
-  assert.match(get('fleet-speed-value').textContent,/21.6k tok · ≈3.1 kWh · .* tok\/kWh/);assert.match(get('fleet-speed-summary').attributes.get('aria-label'),/Estimated energy 3.1 kilowatt hours/);
+  assert.match(get('fleet-speed-value').textContent,/3\/3 servers · ≈3.1 kWh/);assert.match(get('fleet-speed-summary').attributes.get('aria-label'),/Estimated energy 3.1 kilowatt hours/);
+  ctx.sample.fleet_speed.windows['12h'].prefill.mean_tps=0;ctx.sample.fleet_speed.calibration.prefill.max_tps=null;call('renderFleetSpeed(sample)');assert.equal(get('fleet-prefill-speed').textContent,'0');assert.equal(get('fleet-speed-prefill').attributes.get('class:has-speed'),false);
+  ctx.sample.fleet_speed.windows['12h'].prefill.mean_tps=null;call('renderFleetSpeed(sample)');assert.equal(get('fleet-prefill-speed').textContent,'—');
+  assert.match(get('fleet-speed-value').dataset.lightDetail,/cached prefill tokens are excluded/);
 });
 
 import {GenerationEvidence} from './generation-evidence.mjs';

@@ -1,7 +1,7 @@
 # Agent Watch
 
 Agent Watch is an opt-in, advisory bridge between a local client harness and
-Dwarf Star Gate. It addresses one narrow blind spot: DSG normally cannot tell
+Star Gate. It addresses one narrow blind spot: DSG normally cannot tell
 whether a quiet Pi/Hermes run is executing a local tool, waiting before its next
 provider request, or has already placed work in DSG.
 

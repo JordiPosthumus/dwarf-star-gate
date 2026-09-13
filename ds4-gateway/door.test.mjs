@@ -444,3 +444,43 @@ test('full Door hold certifies no dispatch and continuity resumes identical work
   assert.equal(rejected.status,503);assert.equal(rejected.headers['x-dsg-dispatch-state'],'not_dispatched');
   const c=JSON.parse(rejected.body).error.continuity;assert.equal(c.reason,'continuity_stopping');assert.equal(c.call_id,null);assert.equal(c.request_id,rejected.headers['x-request-id']);assert.deepEqual(received,['first',body]);
 });
+
+test('Door forwards core queue heartbeats and preserves the eventual error response',{timeout:5000},async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-door-heartbeat-'));let finishRequest,executions=0;
+  const core=http.createServer((req,res)=>{
+    if(req.url==='/health'||req.url==='/gateway/status'){req.resume();return res.end(JSON.stringify({startup:{complete:true}}));}
+    executions++;req.resume();res.writeProcessing();const timer=setInterval(()=>res.writeProcessing(),20);
+    res.once('close',()=>clearInterval(timer));finishRequest=()=>{clearInterval(timer);res.writeHead(429,{'content-type':'application/json','x-backend-proof':'kept'});res.end('{"error":"still an error"}');};
+  });const port=await listen(core),door=createDoor({host:'127.0.0.1',port:0,api_key:'test',continuity_door:{enabled:true,core_port:port,control_socket:path.join(dir,'door.sock'),health_interval_ms:60000}});await door.start();
+  t.after(async()=>{core.closeAllConnections();await door.close();await new Promise(r=>core.close(r));fs.rmSync(dir,{recursive:true,force:true});});
+  let heartbeats=0,finalHeaders=false;
+  const result=new Promise((resolve,reject)=>{
+    const req=http.request({host:'127.0.0.1',port:door.server.address().port,path:'/v1/chat/completions',method:'POST',headers:{authorization:'Bearer test'}},res=>{finalHeaders=true;const parts=[];res.on('data',c=>parts.push(c));res.on('end',()=>resolve({status:res.statusCode,proof:res.headers['x-backend-proof'],body:Buffer.concat(parts).toString()}));});
+    req.on('error',reject);req.on('information',info=>{assert.equal(info.statusCode,102);assert.equal(finalHeaders,false);if(++heartbeats===3)finishRequest();});req.end('{}');
+  });
+  assert.deepEqual(await result,{status:429,proof:'kept',body:'{"error":"still an error"}'});assert.equal(executions,1);assert.ok(heartbeats>=3);
+});
+
+test('Door flushes real response headers before a delayed first streaming token',{timeout:5000},async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-door-stream-headers-'));let finishBody;
+  const core=http.createServer((req,res)=>{
+    if(req.url==='/health'||req.url==='/gateway/status'){req.resume();return res.end(JSON.stringify({startup:{complete:true}}));}
+    req.resume();res.writeHead(200,{'content-type':'text/event-stream'});res.flushHeaders();finishBody=()=>res.end('data: [DONE]\n\n');
+  });const port=await listen(core),door=createDoor({host:'127.0.0.1',port:0,api_key:'test',continuity_door:{enabled:true,core_port:port,control_socket:path.join(dir,'door.sock'),health_interval_ms:60000}});await door.start();
+  t.after(async()=>{core.closeAllConnections();await door.close();await new Promise(r=>core.close(r));fs.rmSync(dir,{recursive:true,force:true});});
+  const result=await new Promise((resolve,reject)=>{const req=http.request({host:'127.0.0.1',port:door.server.address().port,path:'/v1/chat/completions',method:'POST',headers:{authorization:'Bearer test'}},res=>{assert.equal(res.statusCode,200);const parts=[];res.on('data',c=>parts.push(c));res.on('end',()=>resolve(Buffer.concat(parts).toString()));finishBody();});req.on('error',reject);req.end('{}');});
+  assert.equal(result,'data: [DONE]\n\n');
+});
+
+test('real gateway waiting heartbeat traverses Door before a worker becomes ready',{timeout:5000},async t=>{
+  const {createGateway}=await import('./gateway.mjs');const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-door-real-queue-'));let executions=0;
+  const backend=http.createServer((req,res)=>{
+    req.resume();if(req.url==='/v1/models')return res.end(JSON.stringify({data:[{id:'deepseek-v4-flash',context_length:262144}]}));
+    executions++;res.setHeader('content-type','application/json');res.end('{"choices":[{"message":{"content":"OK"},"finish_reason":"stop"}]}');
+  });const port=await listen(backend),gateway=createGateway({host:'127.0.0.1',port:0,api_key:'test',model:'deepseek-v4-flash',context_length:262144,state_file:path.join(dir,'state.json'),health_interval_ms:60000,nodes:[{id:'worker',url:`http://127.0.0.1:${port}`}]}),address=await gateway.start();
+  const door=createDoor({host:'127.0.0.1',port:0,api_key:'test',continuity_door:{enabled:true,core_port:address.port,control_socket:path.join(dir,'door.sock'),health_interval_ms:60000}});await door.start();gateway.nodes[0].healthy=false;
+  t.after(async()=>{await door.close();await gateway.close();backend.closeAllConnections();await new Promise(r=>backend.close(r));fs.rmSync(dir,{recursive:true,force:true});});
+  let heartbeats=0;
+  await new Promise((resolve,reject)=>{const req=http.request({host:'127.0.0.1',port:door.server.address().port,path:'/v1/chat/completions',method:'POST',headers:{authorization:'Bearer test'}},res=>{assert.equal(res.statusCode,200);res.resume();res.on('end',resolve);});req.on('error',reject);req.on('information',info=>{assert.equal(info.statusCode,102);assert.equal(executions,0);heartbeats++;gateway.nodes[0].healthy=true;});req.end('{}');});
+  assert.ok(heartbeats>=1);assert.equal(executions,1);
+});

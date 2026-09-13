@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-09-13 — Star Gate branding
+
+Product branding is now Star Gate. Updated dashboard text, browser metadata,
+vector wordmark, Genie identity and project introductions. Engine-specific
+DwarfStar attribution remains accurate. Runtime identifiers and settings are unchanged.
+
 ## 2026-09-09 — OpenAI-compatible endpoints
 
 Worker registration now supports generic HTTP(S) API bases, private bearer-token

@@ -8,7 +8,7 @@ import {FleetThroughput} from '../ds4-gateway/throughput.mjs';
 import {FleetSpeed} from '../ds4-gateway/fleet-speed.mjs';
 // Optional memory is supplied only by the isolated browser-test fixture. The
 // ordinary demo has no persistent storage and reads no installation config.
-export function createDemoServer({agentHold=false,quarantinedWorker=false,memory=null}={}) {
+export function createDemoServer({agentHold=false,quarantinedWorker=false,memory=null,chatFactory=null}={}) {
 const now = Date.now();
 const workers = [
   { id:'sparkA', is_healthy:true, drained:false, load:1, queued:1, active_seconds:84, completed:42, failed:0, assigned_sessions:4 },
@@ -97,14 +97,14 @@ const snapshot = { version:1,demo:true,time:now,started:now-900000,read_only:fal
   rate_peaks:{schema:1,prefill:{tps:1250.5,time:now-86400000},decode:{tps:40.5,time:now-86400000},history_status:'ready',persistence_error:null,malformed_lines:0},
   cache_continuity:{schema:1,status:'ready',checked_at:now,interval_ms:15000,partial_history:false,workers:{sparkA:{candidate_pairs:12,assessed_pairs:10,high_suspicion_low_reuse:1,unconfirmed_low_reuse:1,last_low_reuse_at:now-120000,abstention_reasons:{worker_profile_changed:2}},sparkB:{candidate_pairs:8,assessed_pairs:8,high_suspicion_low_reuse:0,unconfirmed_low_reuse:0,abstention_reasons:{}},'mac-ultra':{candidate_pairs:0,assessed_pairs:0,high_suspicion_low_reuse:0,unconfirmed_low_reuse:0,abstention_reasons:{}}}},
   continuity_door:{service:'dwarf-star-gate-continuity-door',version:1,holding:false,held:0,active:2,core_ready:true,body_spooling:false,replay:false,last_transition:{action:'release',at:new Date(now-300000).toISOString()}},continuity_door_error:null,
-  gateway:{model:'deepseek-v4-flash',context_length:262144,queue_timeout_ms:72000000000,total:3,healthy:3,available:3,active:2,queued:1,draining:false,workers,dataset,recovery,client_watch_version:1,client_watch:clientWatch,
+  gateway:{model:'deepseek-v4-flash',context_length:262144,queue_timeout_ms:72000000000,conversation_turns:5,conversation_turn_idle_ms:2000,total:3,healthy:3,available:3,active:2,queued:1,draining:false,workers,dataset,recovery,client_watch_version:1,client_watch:clientWatch,
     continuity:{patient_wait:true,queued_relocation:true,automatic_relocation:true,automatic_relocation_scope:'first_unaffined_or_affinity_wait_expired',automatic_affinity_rebalance_min_wait_ms:300000,relocation:{completed:2,rejected:0,offers:1,diagnostics:relocationDiagnostics}}},devices,events };
 const currentJobs={read:async()=>({schema:1,demo:true,jobs:[
   {request_id:'demo-job-a',title:'Synthetic: repair export',state:'running',machine:'sparkA',waiting_ms:1200,running_ms:60000},
   {request_id:'demo-job-b',title:'Synthetic: background documentation',state:'running',machine:'sparkB',waiting_ms:5000,running_ms:30000},
   {request_id:'demo-job-c',title:'Synthetic: <review> next steps',state:'queued',machine:'sparkA',waiting_ms:45000,running_ms:null},
 ],jobs_truncated:false})};
-const registry=()=>({model:'deepseek-v4-flash',minimum_context:snapshot.gateway.context_length,context_limit_control:true,context_limit_source:'saved',queue_timeout_ms:snapshot.gateway.queue_timeout_ms,queue_timeout_control:true,queue_timeout_source:'saved',workers,recovery,queued_relocation:relocation});
+const registry=()=>({model:'deepseek-v4-flash',minimum_context:snapshot.gateway.context_length,context_limit_control:true,context_limit_source:'saved',queue_timeout_ms:snapshot.gateway.queue_timeout_ms,conversation_turns:snapshot.gateway.conversation_turns,conversation_turn_idle_ms:2000,conversation_turns_control:true,conversation_turns_source:'saved',queue_timeout_control:true,queue_timeout_source:'saved',workers,recovery,queued_relocation:relocation});
 if(agentHold)Object.assign(workers[2],{drained:true,operator_paused:false,holds:[{id:'demo-hold',owner_id:'test-agent',reason:'<DS4 compatibility test>'}]});
 if(quarantinedWorker)Object.assign(workers[2],{is_healthy:false,quarantine:{reason:'repeated_inference_failures',at:new Date(now-600000).toISOString()}});
 return createDashboard(()=>({...snapshot,time:Date.now(),gateway_at:Date.now(),
@@ -118,7 +118,11 @@ return createDashboard(()=>({...snapshot,time:Date.now(),gateway_at:Date.now(),
   gateway:{...snapshot.gateway,total:workers.length,healthy:workers.filter(w=>w.is_healthy).length,available:workers.filter(w=>w.is_healthy&&!w.drained).length,active:workers.filter(w=>w.load).length,queued:workers.reduce((a,w)=>a+w.queued,0)}}),undefined,{
   read:async()=>registry(),
   act:async(action,input)=>{
-    if(action==='queue-timeout'){
+    if(action==='conversation-turns'){
+      if(Object.keys(input).sort().join(',')!=='conversation_turns,expected_conversation_turns'||!Number.isSafeInteger(input.conversation_turns)||input.conversation_turns<1)throw new Error('Invalid conversation turn allowance');
+      if(input.expected_conversation_turns!==snapshot.gateway.conversation_turns)throw new Error('Conversation turn allowance changed');
+      snapshot.gateway.conversation_turns=input.conversation_turns;
+    }else if(action==='queue-timeout'){
       if(Object.keys(input).sort().join(',')!=='expected_queue_timeout_ms,queue_timeout_ms'||!Number.isSafeInteger(input.queue_timeout_ms)||input.queue_timeout_ms<1)throw new Error('Invalid queue allowance');
       if(input.expected_queue_timeout_ms!==snapshot.gateway.queue_timeout_ms)throw new Error('Queue allowance changed');
       snapshot.gateway.queue_timeout_ms=input.queue_timeout_ms;
@@ -163,7 +167,7 @@ return createDashboard(()=>({...snapshot,time:Date.now(),gateway_at:Date.now(),
     return registry();
   },
 },genie,()=>({enabled:true,status:'ready',demo:true,window_limit:500,not_dispatched:1,throughput:throughput.snapshot(),fleet_speed:{...fleetSpeed.snapshot(Date.now(),workers.map(worker=>worker.id)),status:'ready',partial_history:false},
-  handovers:{rows:[]}}),currentJobs);
+  handovers:{rows:[]}}),currentJobs,null,null,chatFactory?.(()=>({...snapshot,time:Date.now(),gateway_at:Date.now()}))??null);
 }
 if(isMain(import.meta.url)) {
 const server=createDemoServer();

@@ -9,6 +9,7 @@ import {loadConfig,isMain,continuityEnabled,gatewayPort,doorSocket} from './conf
 import {dsgReport,invalidHttp} from './report.mjs';
 import {CALL_ID_HEADER,DISPATCH_HEADER,validCallId} from './continuity.mjs';
 import {testingModeFile,readTestingMode,writeTestingMode} from './testing-mode.mjs';
+import {isLoopback,lanSharingFile,lanBindable,readLanSharing,writeLanSharing,lanAddresses} from './lan-sharing.mjs';
 
 const hopHeaders=new Set(['connection','keep-alive','proxy-authenticate','proxy-authorization','te','trailer','transfer-encoding','upgrade']);
 function headers(input){const excluded=new Set([...hopHeaders,...String(input.connection??'').toLowerCase().split(',').map(x=>x.trim())]);return Object.fromEntries(Object.entries(input).filter(([key])=>!excluded.has(key.toLowerCase())));}
@@ -77,6 +78,13 @@ export function createDoor(config,{now=Date.now}={}){
   if(!Number.isSafeInteger(limit)||limit<1||limit>65536)throw new Error('continuity_door.max_held_requests must be 1–65536');
   const interval=config.continuity_door.health_interval_ms??1000;if(!Number.isSafeInteger(interval)||interval<250||interval>60000)throw new Error('continuity_door.health_interval_ms must be 250–60000');
   const auth=Buffer.from(`Bearer ${config.api_key}`),held=[],state={holding:false,hold_id:null,hold_kind:null,reason:null,since:null,last_transition:null,forwarded:0,failed:0,active:0,core_ready:false,core_failures:0};
+  const lanFile=lanSharingFile(config),canShare=lanBindable(config);
+  let lan=readLanSharing(lanFile,canShare);
+  const lanStatus=()=>({available:canShare,enabled:canShare&&lan.enabled,urls:lanAddresses({...config,port:server.address()?.port??config.port}),api_key:config.api_key});
+  const setLanSharing=enabled=>{
+    if(enabled&&!canShare)throw new Error('This gateway is configured for loopback only');
+    lan=writeLanSharing(lanFile,enabled,canShare);return lanStatus();
+  };
   const testingFile=testingModeFile(config);let testing=readTestingMode(testingFile);const lanes=new WeakMap(),laneActive={normal:0,test:0};
   const failureCounts={inference:0,model_discovery:0,status:0,other:0},failures=[];
   let closing=false,starting=false,monitor,probe=null,probeGeneration=0;
@@ -111,7 +119,13 @@ export function createDoor(config,{now=Date.now}={}){
     const upstream=http.request({host:'127.0.0.1',port:corePort,path:req.url,method:req.method,headers:headers(req.headers),agent:false},up=>{
       if(settled){up.destroy();return;}
       upstreamResponse=up;state.forwarded++;
-      res.writeHead(up.statusCode,headers(up.headers));up.on('error',responseFailed);up.on('aborted',responseFailed);up.on('end',()=>finish(false));up.pipe(res);
+      res.writeHead(up.statusCode,headers(up.headers));res.flushHeaders();up.on('error',responseFailed);up.on('aborted',responseFailed);up.on('end',()=>finish(false));up.pipe(res);
+    });
+    // Preserve the core's queue heartbeat without inventing final success or
+    // exposing informational headers. SDK response deadlines still belong to
+    // the client; 102 Processing only keeps compatible idle timers alive.
+    upstream.on('information',info=>{
+      if(info.statusCode===102&&!settled&&!res.destroyed&&!res.headersSent)res.writeProcessing();
     });
     upstream.on('error',()=>{if(settled)return;const failure=finish(true);automaticHold('core_connection_failed');if(!res.headersSent)reportUnknownCoreExecution(req,res,failure.failure_id);else res.destroy();});
     req.on('aborted',cancel);req.on('error',cancel);res.on('close',clientClosed);req.pipe(upstream);
@@ -157,6 +171,9 @@ export function createDoor(config,{now=Date.now}={}){
     return current.promise;
   };
   const server=http.createServer((req,res)=>{
+    // Check the actual peer, never forwarded headers. Existing streams and
+    // admitted/held work finish normally; only new remote requests are gated.
+    if(!lan.enabled&&!isLoopback(req.socket.remoteAddress)){req.resume();return reportNotForwarded(req,res,503,'lan_sharing_off','LAN sharing is off; request was not forwarded.');}
     if(req.url==='/continuity/status'&&req.method==='GET'){req.resume();return authorized(req)?json(res,200,status()):report(res,401,'unauthorized','Bearer API key required');}
     if(closing){req.resume();return reportNotForwarded(req,res,503,'continuity_stopping','Continuity door is stopping; request was not forwarded.');}
     const testPath=req.url?.startsWith('/testing/');
@@ -176,12 +193,17 @@ export function createDoor(config,{now=Date.now}={}){
   server.requestTimeout=0;server.timeout=0;server.headersTimeout=60000;server.keepAliveTimeout=5000;server.on('clientError',invalidHttp);
   const control=http.createServer((req,res)=>{
     if(req.method==='GET'&&req.url==='/status')return json(res,200,status());
-    if(req.method!=='POST'||!['/hold','/release','/testing'].includes(req.url))return report(res,404,'not_found','Unknown continuity control action');
+    if(req.method==='GET'&&req.url==='/lan-sharing')return json(res,200,lanStatus());
+    if(req.method!=='POST'||!['/hold','/release','/testing','/set-lan-sharing'].includes(req.url))return report(res,404,'not_found','Unknown continuity control action');
     let body='',ended=false;
     req.on('data',chunk=>{if(ended)return;body+=chunk;if(Buffer.byteLength(body)>4096){ended=true;report(res,413,'control_request_too_large','Continuity control request exceeded 4 KiB');req.resume();}});
     req.on('error',()=>{ended=true;});
     req.on('end',async()=>{if(ended)return;ended=true;try{
       const input=body?JSON.parse(body):{};
+      if(req.url==='/set-lan-sharing'){
+        if(Object.keys(input).join(',')!=='enabled'||typeof input.enabled!=='boolean')return report(res,400,'invalid_lan_request','Only boolean enabled is accepted');
+        return json(res,200,setLanSharing(input.enabled));
+      }
       if(req.url==='/testing'){
         if(Object.keys(input).join(',')!=='enabled'||typeof input.enabled!=='boolean')return report(res,400,'invalid_testing_request','Only boolean enabled is accepted');
         return json(res,200,setTesting(input.enabled));

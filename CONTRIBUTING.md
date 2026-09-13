@@ -1,8 +1,8 @@
-# Contributing to Dwarf Star Gate
+# Contributing to Star Gate
 
-Thank you for helping. Please also read [CREDITS.md](CREDITS.md): the inference
-engine is [Antirez's DwarfStar](https://github.com/antirez/ds4), not this gateway.
-Engine changes should follow [its own contribution guide](https://github.com/antirez/ds4/blob/main/CONTRIBUTING.md).
+Thank you for helping. Please also read [CREDITS.md](CREDITS.md). Star Gate
+coordinates inference engines; changes to an engine belong in its upstream
+project and should follow that project's contribution guide.
 
 ## Start with a small, reproducible change
 

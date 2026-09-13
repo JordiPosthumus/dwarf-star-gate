@@ -3,11 +3,56 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {FleetSpeed,FleetSpeedReader} from './fleet-speed.mjs';
+import {FleetSpeed,FleetSpeedReader,endpointFleetSamples} from './fleet-speed.mjs';
+import {vllmSnapshot} from './endpoint-telemetry.mjs';
 
 const HOUR=3600000,now=48*HOUR,epoch='a'.repeat(64);
 const sample=n=>n.toString(16).padStart(64,'0');
 const row=(n,node,time,kind,extra={})=>({sample_id:sample(n),node,time,kind,backend_epoch:epoch,...extra});
+
+test('endpoint completion histograms persist both phase speeds without treating request durations as wall time',t=>{
+  const raw=(n)=>`vllm:num_requests_running 1\nvllm:generation_tokens_total ${n*100}\nvllm:generation_tokens_created 123\nvllm:request_generation_tokens_sum ${n*100}\nvllm:request_generation_tokens_count ${n}\nvllm:request_decode_time_seconds_sum ${n*5}\nvllm:request_decode_time_seconds_count ${n}\nvllm:request_prefill_kv_computed_tokens_sum ${n*1000}\nvllm:request_prefill_kv_computed_tokens_count ${n}\nvllm:request_prefill_time_seconds_sum ${n*2}\nvllm:request_prefill_time_seconds_count ${n}\n`;
+  const a=vllmSnapshot(raw(1),now-2000),b=vllmSnapshot(raw(3),now,a),rows=endpointFleetSamples('spark',b);
+  assert.equal(rows.length,2);assert.equal(b.completed_decode.requests,2);
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'endpoint-fleet-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  fs.writeFileSync(path.join(dir,'metrics-2026-09-13.jsonl'),[...rows,...rows].map(r=>JSON.stringify(r)).join('\n')+'\n');
+  for(let i=0;i<2;i++){
+    const reader=new FleetSpeedReader(dir);reader.poll(now);const s=reader.snapshot(now,['spark','missing']);
+    for(const window of Object.values(s.windows)){
+      assert.equal(window.prefill.mean_tps,500);assert.equal(window.prefill.active_seconds,4);
+      assert.equal(window.decode.mean_tps,20);assert.equal(window.decode.tokens_observed,200);
+      assert.equal(window.decode.samples,1);assert.equal(window.decode.observed_workers,1);assert.equal(window.decode.activity_lower_bound_pct,null);
+    }
+    assert.equal(reader.snapshot(now+HOUR,['spark']).windows['1h'].decode.mean_tps,null);
+    assert.equal(reader.snapshot(now+HOUR,['spark']).windows['12h'].decode.mean_tps,20);
+  }
+  assert.deepEqual(endpointFleetSamples('spark',a),[],'first poll cannot backfill lifetime counters');
+  assert.deepEqual(endpointFleetSamples('spark',vllmSnapshot(raw(0),now+2000,b)),[],'counter reset cannot create work');
+  assert.deepEqual(endpointFleetSamples('spark',vllmSnapshot(raw(4),now+60000,b)),[],'outage is not bridged');
+  assert.deepEqual(endpointFleetSamples('spark',{...b,connected:false}),[],'stale completions are not repeated');
+});
+
+test('oMLX sampled rates have explicit scope, no fictional token count or occupancy, and do not bridge unknown phases',()=>{
+  const a={source:'omlx',connected:true,live_activity:true,phase:'prefill',at:now-2000,live_prefill_tps:100,uptime_seconds:10};
+  const b={...a,at:now,live_prefill_tps:300,uptime_seconds:12};
+  const rows=endpointFleetSamples('m3',b,a),speed=new FleetSpeed();rows.forEach(row=>speed.accept(row));
+  const phase=speed.snapshot(now,['m3']).windows['1h'].prefill;
+  assert.equal(phase.mean_tps,200);assert.equal(phase.tokens_observed,null);assert.equal(phase.activity_lower_bound_pct,null);assert.equal(phase.includes_sampled_rates,true);
+  assert.deepEqual(endpointFleetSamples('m3',b),[]);
+  for(const previous of [{...a,connected:false},{...a,phase:'working'},{...a,at:now-60000},{...a,uptime_seconds:100}])assert.deepEqual(endpointFleetSamples('m3',b,previous),[]);
+  const zero=endpointFleetSamples('spark',{source:'vllm',connected:true,at:now,completed_prefill:{tokens:0,seconds:1}});zero.forEach(r=>speed.accept(r));
+  assert.equal(speed.snapshot(now,['spark']).windows['1h'].prefill.mean_tps,0,'fully cached prefill is zero computed tokens, not missing evidence');
+});
+
+test('endpoint rows reject malformed scopes and combine means by duration, with worker filtering',()=>{
+  const speed=new FleetSpeed();
+  const add=(node,tokens,seconds)=>endpointFleetSamples(node,{connected:true,source:'vllm',at:now,completed_decode:{tokens,seconds}})[0];
+  const first=add('one',100,5);speed.accept(first);speed.accept(add('two',900,30));
+  assert.equal(speed.snapshot(now,['one','two']).windows['1h'].decode.mean_tps,1000/35);
+  assert.equal(speed.snapshot(now,['one']).windows['1h'].decode.mean_tps,20);
+  for(const [i,extra] of [{seconds:-1},{tokens:Infinity},{basis:'lifetime_average'},{start:now-1000}].entries())speed.accept({...first,...extra,sample_id:sample(900+i)});
+  assert.equal(speed.rejected,4);assert.equal(speed.intervals.length,2);
+});
 
 test('fleet means difference cumulative counters and weight real active seconds, not repeated samples',()=>{
   const speed=new FleetSpeed();

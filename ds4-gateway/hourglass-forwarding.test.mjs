@@ -9,7 +9,7 @@ import {createGateway} from './gateway.mjs';
 import {createDoor} from './door.mjs';
 import {workerControl} from './worker-client.mjs';
 const listen=s=>new Promise(r=>s.listen(0,'127.0.0.1',()=>r(s.address().port)));
-async function setup(t){
+async function setup(t,profiles){
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'hg-forward-')),records=[[],[]],received=[0,0];
  const key=path.join(dir,'backend.key');fs.writeFileSync(key,'backend-secret',{mode:0o600});
  const servers=[0,1].map(i=>http.createServer((req,res)=>{
@@ -25,6 +25,7 @@ async function setup(t){
  }));
  const ports=await Promise.all(servers.map(listen));
  const config={host:'127.0.0.1',port:0,api_key:'ingress-secret',model:'native',context_length:262144,state_file:path.join(dir,'state.json'),control_socket:path.join(dir,'core.sock'),health_interval_ms:100000,model_routes:{spark:['spark'],m3:['m3']},nodes:ports.map((port,i)=>({id:i?'m3':'spark',backend:'openai',url:`http://127.0.0.1:${port}/v1`,api_key_file:key,model_aliases:{reviewed:'native'}}))};
+ if(profiles)config.serving_profiles=profiles;
  const core=createGateway(config);const addr=await core.start();
  const door=createDoor({host:'127.0.0.1',port:0,api_key:'ingress-secret',continuity_door:{enabled:true,core_port:addr.port,control_socket:path.join(dir,'door.sock'),health_interval_ms:60000}});await door.start();
  t.after(async()=>{await door.close();await core.close();for(const s of servers){s.closeAllConnections();await new Promise(r=>s.close(r))}fs.rmSync(dir,{recursive:true,force:true})});
@@ -65,4 +66,19 @@ test('Hourglass pinned route survives pause and shared session history; errors a
  assert.equal(r.records[0][0].body.toString(),body.replace('"model": "reviewed"','"model": "native"'));
  const failure=await r.send(JSON.stringify({...payload,fixture:'error'}),'m3',false,true);assert.equal(failure.status,422);assert.equal(failure.headers['x-ds4-node'],'m3');
  assert.equal(r.records[1].length,1);r.door.setTesting(false);assert.equal((await normal).headers['x-ds4-node'],'spark');
+ });
+
+ test('two opted-in worker profiles supply identical defaults through Door and core',async t=>{
+ const profile={context_window:262144,max_output_tokens:262144,input:['text','image'],reasoning:true,defaults:{temperature:1,top_p:0.95,top_k:20,min_p:0,presence_penalty:0,repetition_penalty:1,chat_template_kwargs:{enable_thinking:true,preserve_thinking:true,reasoning_effort:'xhigh'}}};
+ const r=await setup(t,{spark:profile,m3:profile});
+ for(const [i,route] of ['spark','m3'].entries()){
+  const input={model:'reviewed',messages:[{role:'user',content:'Hello'}],max_tokens:32,stream:true};
+  const reply=await r.send(JSON.stringify(input),route,true);assert.equal(reply.status,200);assert.equal(reply.headers['x-ds4-node'],route);assert.ok(reply.body.includes('[DONE]'));
+  assert.deepEqual(JSON.parse(r.records[i].at(-1).body),{...input,model:'native',...profile.defaults});
+  const custom={...input,temperature:0.7,top_p:0.8,chat_template_kwargs:{enable_thinking:false}};
+  assert.equal((await r.send(JSON.stringify(custom),route)).status,200);
+  const actual=JSON.parse(r.records[i].at(-1).body);assert.equal(actual.temperature,0.7);assert.equal(actual.top_p,0.8);assert.deepEqual(actual.chat_template_kwargs,{enable_thinking:false,preserve_thinking:true});
+  assert.equal((await r.send(JSON.stringify({...input,fixture:'error'}),route)).status,422);
+ }
+ assert.deepEqual(r.core.stats().serving_profiles,{spark:profile,m3:profile});
  });

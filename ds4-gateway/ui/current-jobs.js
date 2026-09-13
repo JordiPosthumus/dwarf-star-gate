@@ -16,7 +16,7 @@ function render(next){
     root.append(row);
   }
   $('jobs-status').textContent=`${root.children.length}${next.jobs_truncated?'+':''} observed requests`;
-  $('jobs-coverage').textContent=`${next.demo?'Synthetic example; no real tasks are connected. ':''}${next.jobs_truncated?'Showing the first 512 requests. ':''}Only DSG requests are shown. Direct activity and work inside an unobserved client remain unknown.`;
+  $('jobs-coverage').textContent=`${next.demo?'Synthetic example; no real tasks are connected. ':''}${next.jobs_truncated?'Showing the first 512 requests. ':''}Only Star Gate requests are shown. Direct activity and work inside an unobserved client remain unknown.`;
 }
 async function load(){
   if(loading)return;loading=true;

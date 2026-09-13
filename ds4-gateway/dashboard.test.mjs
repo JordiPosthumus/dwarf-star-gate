@@ -43,11 +43,11 @@ test('dashboard folds connection and diagnostics into its single identity header
   assert.equal((html.match(/<header\b/g)||[]).length,1);
   const header=html.match(/<header\b[^>]*>[\s\S]*?<\/header>/)[0];
   for(const id of ['connection','control-mode','control-note','model'])assert.ok(header.includes(`id="${id}"`));
-  assert.match(header,/<h1>Dwarf Star Gate<\/h1>/);
+  assert.match(header,/<h1>Star Gate<\/h1>/);
   assert.match(header,/<p class="tagline">Seamless Continuity<\/p>/);
-  assert.match(html,/<title>Dwarf Star Gate · Seamless Continuity<\/title>/);
+  assert.match(html,/<title>Star Gate · Seamless Continuity<\/title>/);
   assert.match(header,/href="\/api\/diagnostics" download/);
-  assert.match(header,/aria-label="Download a DSG debug snapshot"/);
+  assert.match(header,/aria-label="Download a Star Gate debug snapshot"/);
   assert.doesNotMatch(header,/control room|class="brand"/);
 });
 
@@ -78,6 +78,19 @@ test('rate charts compress missing intervals to idle-coloured separators without
   const single=render([{kind:'decode',time:200000,tps:0}]);assert.match(single,/class="chart-point"/);assert.doesNotMatch(single,/NaN|Infinity|<polyline/);
 });
 
+test('chart smoothing uses only the last 20 seconds, preserves zeros and resets across sparse samples or scope changes',()=>{
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const context=vm.createContext({});vm.runInContext(source,context);
+  const samples=[{time:1000,tps:30},{time:3000,tps:0},{time:5000,tps:30},{time:21000,tps:30},{time:60000,tps:5},{time:62000,tps:20,scope:'new'}];
+  context.samples=samples;const before=JSON.stringify(samples);
+  const result=vm.runInContext('smoothRates(samples)',context);
+  assert.deepEqual(Array.from(result,s=>s.tps),[30,15,20,20,5,20]);
+  assert.equal(JSON.stringify(samples),before);
+  assert.ok(result.every((s,i)=>s!==samples[i]));
+  const svg=vm.runInContext("chart([{kind:'decode',time:1000,tps:30},{kind:'decode',time:3000,tps:0},{kind:'decode',time:5000,tps:30}],'decode',5000,40)",context);
+  assert.match(svg,/20-second rolling average/);assert.match(svg,/<polyline points="[^"]*,19.0 [^"]*,35.5 [^"]*,30.0"/);
+});
+
 test('all machine charts share exact historical maxima per phase with zero origin',()=>{
   const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);
@@ -86,7 +99,7 @@ test('all machine charts share exact historical maxima per phase with zero origi
   const fresh=vm.runInContext(`rateScales([{series:[{kind:'prefill',tps:1234.5,time:1000},{kind:'decode',tps:Infinity,time:1000}]}],null,1000)`,context);
   assert.equal(fresh.prefill,1234.5);assert.equal(fresh.decode,1);
   const svg=vm.runInContext(`chart([{kind:'prefill',tps:0,time:1000},{kind:'prefill',tps:999.25,time:2000}],'prefill',2000,999.25)`,context);
-  assert.match(svg,/<polyline points="[^"]*,52.0 [^"]*,8.0"/);
+  assert.match(svg,/<polyline points="[^"]*,52.0 [^"]*,30.0"/);
 });
 
 const logTime = +new Date(2026,8,2,14,0,5);
@@ -278,7 +291,7 @@ test('excluded routing states are explicit; quarantine offers checked readmissio
   const markup=(w,options={})=>vm.runInContext(`routingMarkup(${JSON.stringify(w)},${JSON.stringify(options)})`,context);
   const q={id:'worker-a',is_healthy:false,drained:false,load:0,queued:0,quarantine:{reason:'repeated_inference_failures',at:'2026-01-01T00:00:00Z'}};
   assert.equal(state(q).button,'Verify & readmit');assert.equal(state(q).action,'resume');assert.equal(state(q).blocked,false);
-  assert.match(markup(q),/QUARANTINED · NOT ROUTING/);assert.match(markup(q),/repeated inference failures/);assert.match(markup(q),/recorded by DSG/);
+  assert.match(markup(q),/QUARANTINED · NOT ROUTING/);assert.match(markup(q),/repeated inference failures/);assert.match(markup(q),/recorded by Star Gate/);
   assert.ok(!/data-action="resume"[^>]*disabled/.test(markup(q)),'original UI offered Drain or disabled Enable forever');
   for(const w of [{...q,load:1},{...q,queued:1},{...q,holds:[{owner_id:'test-agent'}]}])assert.ok(state(w).blocked);
   assert.ok(state({...q,quarantine:null,drained:true,maintenance_locks:[{name:'DS4 test'}]}).blocked);
@@ -641,7 +654,7 @@ test('health wire shows Genie-authored findings and recommendations, withholding
   assert.match(news(s,{state:'stale'}).items[0].text,/10 minutes/);
   assert.match(news(s,{state:'changed'}).items[0].text,/changed since/);
   const failed=news(s,{state:'error',provider_attempts:[{provider:'pool_fallback',outcome:'failed',reason:'transport_error'},{provider:'dedicated',outcome:'failed',reason:'transport_error'}]});
-  assert.match(failed.items[0].text,/both the dedicated provider and DSG pool fallback were tried/);assert.match(failed.items[0].text,/gateway is unaffected/);
+  assert.match(failed.items[0].text,/both the dedicated provider and Star Gate pool fallback were tried/);assert.match(failed.items[0].text,/gateway is unaffected/);
 });
 test('health wire cannot hide live quarantine or wasted-capacity evidence behind a stalled Genie',()=>{
   const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
@@ -653,18 +666,18 @@ test('health wire cannot hide live quarantine or wasted-capacity evidence behind
     {id:'m3-studio',is_healthy:false,drained:true,operator_paused:true,holds:[{owner:'agent'}],quarantine:null}],
     recovery:{workers:[{worker_id:'spark2',state:'quarantined',eligible:false,reason:'service_identity_or_profile_unverified'}]}};
   const stalled=news({gateway},{state:'reviewing'});
-  assert.equal(stalled.level,'critical');assert.match(stalled.label,/DSG safety alert · observed gateway evidence/);
+  assert.equal(stalled.level,'critical');assert.match(stalled.label,/Star Gate safety alert · observed gateway evidence/);
   assert.equal(stalled.items.length,1);assert.match(stalled.items[0].text,/Spark 2 is quarantined after accelerator checkpoint failure/);
   assert.match(stalled.items[0].text,/2 of 3 model servers are available/);assert.match(stalled.items[0].text,/2 requests are being held/);
-  assert.match(stalled.items[0].text,/deliberately re-enroll the changed DS4 service profile/);
-  for(const [reason,expected] of [['launchd_registration_absent',/registration is missing.*no bootstrap authority/],['launchd_gui_domain_unavailable',/GUI service domain is unavailable.*does not prove/],['launchd_state_unverified',/inspection could not establish.*absence is not proven/],['launchd_native_disabled',/macOS explicitly disables.*DSG will not enable/],['launchd_disable_state_unverified',/native disable setting could not be verified.*unknown policy is not permission/]]){
+  assert.match(stalled.items[0].text,/deliberately re-enroll the changed model service profile/);
+  for(const [reason,expected] of [['launchd_registration_absent',/registration is missing.*no bootstrap authority/],['launchd_gui_domain_unavailable',/GUI service domain is unavailable.*does not prove/],['launchd_state_unverified',/inspection could not establish.*absence is not proven/],['launchd_native_disabled',/macOS explicitly disables.*Star Gate will not enable/],['launchd_disable_state_unverified',/native disable setting could not be verified.*unknown policy is not permission/]]){
     const specific=news({gateway:{...gateway,recovery:{workers:[{worker_id:'spark2',eligible:false,reason}]}}},{state:'reviewing'});
     assert.equal(specific.level,'critical');assert.match(specific.items[0].text,expected);
     assert.doesNotMatch(specific.items[0].text,/deliberately re-enroll the changed/);
   }
   assert.doesNotMatch(JSON.stringify(stalled),/PRIVATE-REQUEST-ID|m3-studio/,'private evidence and intentional holds stay out of the alert');
   const ready=news({gateway},{state:'ready',evidence_at:1000,entries:[{severity:'info',text:'A separate Genie observation.',recommendation:'Keep watching.'}]});
-  assert.equal(ready.level,'critical');assert.match(ready.label,/DSG safety alert \+ Genie assessment/);assert.equal(ready.items.length,2);
+  assert.equal(ready.level,'critical');assert.match(ready.label,/Star Gate safety alert \+ Genie assessment/);assert.equal(ready.items.length,2);
   assert.match(ready.items[1].text,/A separate Genie observation.*Recommendation: Keep watching/);
 });
 test('long occupied slots explain queue pressure without treating stale engine totals as progress',()=>{
@@ -680,12 +693,12 @@ test('long occupied slots explain queue pressure without treating stale engine t
   snapshot.gateway.workers[0].queued=0;assert.equal(alerts().length,0);
   snapshot.gateway.workers[0].queued=6;snapshot.gateway.workers[0].load=0;assert.equal(alerts().length,0);
 });
-test('Agent Watch warns only when a live client reports waiting but no request reached DSG',()=>{
+test('Agent Watch warns only when a live client reports waiting but no request reached Star Gate',()=>{
   const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);
   const news=run=>vm.runInContext(`healthHeadlines(${JSON.stringify({gateway:{available:1,total:1,workers:[],client_watch:{schema:1,mode:'advisory',runs:[run]}}})},${JSON.stringify({state:'off'})})`,context);
   const base={watch_ref:'abc123def456',client:'pi',state:'waiting_for_model',process_alive:true,fresh:true,last_seen_at:new Date().toISOString(),last_seen_seconds:1,state_seconds:25,request:null};
-  const missing=news({...base,diagnosis:'no_request_reached_dsg'});assert.equal(missing.level,'warn');assert.match(missing.items[0].text,/no matching request reached DSG/);assert.match(missing.items[0].text,/no DS4 fault or frozen process is proven/);
+  const missing=news({...base,diagnosis:'no_request_reached_dsg'});assert.equal(missing.level,'warn');assert.match(missing.items[0].text,/no matching request reached Star Gate/);assert.match(missing.items[0].text,/no model-server fault or frozen process is proven/);
   const failed=news({...base,state:'needs_attention',diagnosis:'client_reported_error',request:{state:'complete',age_seconds:1}});assert.equal(failed.level,'warn');assert.match(failed.items[0].text,/failed turn with no automatic continuation/);assert.match(failed.items[0].text,/not proof that replay is safe/);
   assert.equal(news({...base,state:'needs_attention',diagnosis:'client_reported_error',fresh:false}).level,'unknown');
   for(const diagnosis of ['waiting_inside_dsg','model_response_active','heartbeat_stale_unknown','local_tool_active']){
@@ -762,7 +775,7 @@ test('dashboard names model servers and explains gateway-only concurrency and av
   const { url } = await fixture(t);
   const html = await (await fetch(url)).text();
   const js = await (await fetch(url+'/ui.js')).text();
-  assert.match(html,/AVAILABLE MODEL SERVERS/);assert.match(html,/ACTIVE REQUESTS/);assert.match(html,/WAITING IN DSG/);assert.match(html,/Queues still inside Pi, Hermes or another client/);
+  assert.match(html,/AVAILABLE MODEL SERVERS/);assert.match(html,/ACTIVE REQUESTS/);assert.match(html,/WAITING IN STAR GATE/);assert.match(html,/Queues still inside Pi, Hermes or another client/);
   assert.match(html,/Manage servers/);assert.match(html,/not necessarily one physical machine/);
   assert.match(html,/Direct clients are outside this limit/);
   assert.match(html,/Available means healthy and enabled, including busy servers/);
@@ -781,7 +794,7 @@ test('fleet overview is a dense status band and controls live in one settings ta
   assert.match(html,/id="view-settings"[^>]*>[\s\S]*id="worker-management"/);
   assert.match(js,/fmtWhole\(m\?\.tps\)/);assert.match(js,/class="remaining-estimate/);assert.match(js,/class="performance-lights"/);
   assert.match(css,/\.metric-block\{display:grid;[^}]*grid-template-rows:/);assert.match(css,/\.status-deck\{display:grid;grid-template-columns:/);assert.match(css,/\.workspace-tabs \.settings-tab\{display:inline-flex;[^}]*margin-left:auto/);
-  assert.doesNotMatch(html.split('<nav class="workspace-tabs"')[0],/id="genie-hardening"/);assert.match(html,/Private developer hypotheses distilled from bounded DSG failure evidence/);
+  assert.doesNotMatch(html.split('<nav class="workspace-tabs"')[0],/id="genie-hardening"/);assert.match(html,/Private developer hypotheses distilled from bounded Star Gate failure evidence/);
   assert.match(js,/function renderHardeningNotes/);assert.match(js,/suggestion\.textContent=note\.suggestion/);assert.match(css,/\.genie-hardening\{/);
 });
 test('dashboard uses accessible persistent views instead of one overwhelming vertical page',()=>{
@@ -806,15 +819,15 @@ test('cache evidence health exposes epoch coverage and abstention without claimi
   assert.match(html,/Cache evidence and cost · measured components/);assert.match(html,/id="cache-evidence-status"/);
   assert.match(js,/telemetry-enabled servers have an observed process epoch/);assert.match(js,/Corroborated is still a bounded candidate, not protocol proof or a cache-hit verdict/);
 });
-test('every HTML-referenced asset is served, including a real PNG logo with bounded fallback dimensions', async t => {
+test('every HTML-referenced asset is served, including the Star Gate vector wordmark with bounded fallback dimensions', async t => {
   const { url } = await fixture(t);
   const html = await (await fetch(url)).text();
   const routes = [...new Set([...html.matchAll(/(?:src|href)="(\/[^"#]*)"/g)].map(m=>m[1]))];
-  assert.ok(routes.includes('/logo.png')); assert.ok(routes.includes('/brand.css'));
+  assert.ok(routes.includes('/logo.svg')); assert.ok(routes.includes('/brand.css'));
   for (const route of routes) {
     const r = await fetch(url+route); assert.equal(r.status,200,route);
     const bytes = Buffer.from(await r.arrayBuffer()); assert.ok(bytes.length>0);
-    if (route === '/logo.png') { assert.equal(r.headers.get('content-type'),'image/png'); assert.equal(bytes.subarray(1,4).toString(),'PNG'); }
+    if (route === '/logo.svg') { assert.equal(r.headers.get('content-type'),'image/svg+xml'); assert.match(bytes.toString(),/STAR GATE/); }
   }
   assert.match(html, /class="gate-art"[^>]*width="148" height="111"/);
 });
@@ -880,8 +893,9 @@ test('opt-in worker controls require same origin, JSON and a CSRF token; diagnos
   assert.equal(calls.length,0);
   assert.equal((await post('/api/workers/context','{}',{'content-type':'application/json'})).status,403);
   assert.equal((await post('/api/workers/queue-timeout','{}',{'content-type':'application/json'})).status,403);
-  for(const action of ['add','endpoint','test','drain','resume','lock','unlock','remove','fallbacks','context','queue-timeout','protection','relocate']) assert.equal((await post('/api/workers/'+action,JSON.stringify({id:'fake'}),valid)).status,200);
-  assert.deepEqual(calls.map(x=>x.action),['add','endpoint','test','drain','resume','lock','unlock','remove','fallbacks','context','queue-timeout','protection','relocate']);
+  assert.equal((await post('/api/workers/conversation-turns','{}',{'content-type':'application/json'})).status,403);
+  for(const action of ['add','endpoint','test','drain','resume','lock','unlock','remove','fallbacks','context','queue-timeout','conversation-turns','protection','relocate']) assert.equal((await post('/api/workers/'+action,JSON.stringify({id:'fake'}),valid)).status,200);
+  assert.deepEqual(calls.map(x=>x.action),['add','endpoint','test','drain','resume','lock','unlock','remove','fallbacks','context','queue-timeout','conversation-turns','protection','relocate']);
   assert.ok(!(await(await fetch(url+'/api/diagnostics')).text()).includes(init.csrf_token));
   const plain=await fixture(t);assert.deepEqual(await(await fetch(plain.url+'/api/workers')).json(),{enabled:false});
 });
@@ -1061,7 +1075,7 @@ test('OpenAI evidence cards do not imply DwarfStar telemetry failure or hide ind
  const context=vm.createContext({});vm.runInContext(source,context);
  const d={id:'spark',backend:'openai',connected:false,cache_continuity:{status:'ready',checked_at:99000,workers:{spark:{assessed_pairs:4,reuse_observed:2,partial_reuse:1,last_assessed_at:90000,last_low_reuse_at:90000}}}};
  const render=()=>vm.runInContext(`performanceLightsMarkup(${JSON.stringify(d)},100000,true)`,context);
- const html=render();assert.match(html,/data-level="amber"/);assert.match(html,/completed DSG request usage/);assert.match(html,/comparisons are not available for this OpenAI backend/);assert.doesNotMatch(html,/Live telemetry is stale|History reader unavailable|disk-load spans|Evidence exclusions/);
+ const html=render();assert.match(html,/data-level="amber"/);assert.match(html,/completed Star Gate request usage/);assert.match(html,/comparisons are not available for this OpenAI backend/);assert.doesNotMatch(html,/Live telemetry is stale|History reader unavailable|disk-load spans|Evidence exclusions/);
  d.cache_continuity.status='source_gap';assert.doesNotMatch(render(),/data-level="amber"/);
 });
 
@@ -1073,4 +1087,20 @@ test('endpoint prefill average keeps the same basis across active and idle phase
   const active=render(1,'prefill',1200),idle=render(0,'idle',null);
   for(const html of [active,idle]){assert.match(html,/Average · incl. overhead/);assert.match(html,/rate prefill">500<em>/);assert.match(html,/engine-session average/);}
   assert.match(active,/metric-live-chunk">1,200 live/);assert.doesNotMatch(idle,/metric-live-chunk/);
+});
+
+test('vLLM timeline omits obsolete completion ticks and unavailable phase has no second grey',()=>{
+ const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0],context=vm.createContext({});vm.runInContext(source,context);
+ const html=vm.runInContext(`timeline({endpoint_metrics:{source:'vllm'},activity:[],activity_markers:[{time:1000,phase:'prefill',tokens:100,basis:'poll_interval'}]},2000)`,context);
+ assert.doesNotMatch(html,/prefill-evidence-marker|Blue ticks/);
+ const css=fs.readFileSync(new URL('./ui/brand.css',import.meta.url),'utf8');assert.match(css,/\.phase-unknown\{fill:transparent\}/);
+ const page=fs.readFileSync(new URL('./ui/index.html',import.meta.url),'utf8');assert.match(page,/<summary>Details<\/summary>/);assert.match(page,/Applies immediately; no restart needed/);
+});
+
+test('chat inherits the inline credential only for the exact configured local gateway',async()=>{
+  const {genieChatConfig}=await import('./dashboard.mjs');
+  const config={port:30000,api_key:'example-gateway-key',genie_chat:{url:'http://127.0.0.1:30000/v1',model:'example'}};
+  assert.equal(genieChatConfig(config).api_key,'example-gateway-key');assert.equal(config.genie_chat.api_key,undefined);
+  assert.equal(genieChatConfig({...config,genie_chat:{url:'https://provider.example.invalid/v1'}}).api_key,undefined);
+  assert.equal(genieChatConfig({...config,genie_chat:{...config.genie_chat,api_key:'explicit-example'}}).api_key,'explicit-example');
 });

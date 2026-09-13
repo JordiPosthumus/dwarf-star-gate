@@ -8,7 +8,7 @@ class MetricsHttpError extends Error {
   constructor(status){super('Endpoint metrics unavailable');this.status=status;}
 }
 const canRediscover=error=>error instanceof UnsupportedMetrics||[404,405,415].includes(error.status);
-const validInterval=(now,previous)=>previous&&now>previous.at&&now-previous.at<=30000;
+const validInterval=(now,previous)=>previous&&previous.connected!==false&&now>previous.at&&now-previous.at<=30000;
 const delta=(value,old)=>finite(value)!==null&&finite(old)!==null&&value>=old?value-old:null;
 
 export function prometheusValues(text){
@@ -35,18 +35,65 @@ export function vllmSnapshot(text,now,previous){
   if(computed===null&&get('prompt_tokens_total')!==null&&get('prompt_tokens_cached_total')!==null)
     computed=Math.max(0,get('prompt_tokens_total')-get('prompt_tokens_cached_total'));
   const generationDelta=delta(generated,previous?.generated);
-  const sampleValid=validInterval(now,previous)&&generationDelta!==null;
+  const epoch=get('generation_tokens_created');
+  const sampleValid=validInterval(now,previous)&&generationDelta!==null&&(epoch===null||previous.metrics_epoch===null||previous.metrics_epoch===undefined||epoch===previous.metrics_epoch);
   const prefillDelta=sampleValid?delta(computed,previous?.computed):null;
-  const intervalPhase=sampleValid&&generationDelta>0&&prefillDelta>0?'mixed':sampleValid&&generationDelta>0?'decode':prefillDelta>0?'prefill':null;
   const running=get('num_requests_running'),requests=get('request_generation_tokens_count');
-  const phase=running===0?'idle':intervalPhase??'working';
+  const firstTokens=get('time_to_first_token_seconds_count');
+  const finishedDelta=sampleValid?delta(requests,previous?.requests):null;
+  const firstDelta=sampleValid?delta(firstTokens,previous?.first_tokens):null;
+  // Prompt counters are emitted at first output, not incrementally during
+  // prefill. A whole prompt divided by the scrape interval is NOT its speed.
+  // Track first-token/finish events from an observed idle baseline instead.
+  let decoding=null;
+  if(running===0)decoding=0;
+  else if(sampleValid&&Number.isSafeInteger(firstDelta)&&Number.isSafeInteger(finishedDelta)){
+    if(Number.isSafeInteger(previous?.decoding_requests)){
+      const next=previous.decoding_requests+firstDelta-finishedDelta;
+      if(next>=0&&next<=running)decoding=next;
+    }
+    if(decoding===null&&running===1&&generationDelta>0&&finishedDelta===0)decoding=1;
+  }
+  const phase=running===0?'idle':decoding===null?(generationDelta>0&&running===1&&finishedDelta===0?'decode':'working'):decoding===0?'prefill':decoding===running?'decode':'mixed';
+  const intervalPhase=sampleValid&&generationDelta>0?'decode':null;
+  const prefillSeconds=get('request_prefill_time_seconds_sum');
+  const prefillTokens=get('request_prefill_kv_computed_tokens_sum');
+  const prefillCount=get('request_prefill_time_seconds_count');
+  const computedCount=get('request_prefill_kv_computed_tokens_count');
+  const decodeSeconds=get('request_decode_time_seconds_sum');
+  const decodeCount=get('request_decode_time_seconds_count');
+  const decodeTokens=get('request_generation_tokens_sum');
+  const durationDelta=sampleValid?delta(prefillSeconds,previous?.prefill_seconds):null;
+  const tokensDelta=sampleValid?delta(prefillTokens,previous?.prefill_tokens):null;
+  const timingCountDelta=sampleValid?delta(prefillCount,previous?.prefill_count):null;
+  const computedCountDelta=sampleValid?delta(computedCount,previous?.computed_count):null;
+  const decodeDurationDelta=sampleValid?delta(decodeSeconds,previous?.decode_seconds):null;
+  const decodeCountDelta=sampleValid?delta(decodeCount,previous?.decode_count):null;
+  const decodeTokenDelta=sampleValid?delta(decodeTokens,previous?.decode_tokens):null;
+  const completedDecode=Number.isSafeInteger(finishedDelta)&&finishedDelta>0&&finishedDelta===decodeCountDelta&&decodeDurationDelta>0&&decodeTokenDelta!==null
+    ?{requests:finishedDelta,tokens:decodeTokenDelta,seconds:decodeDurationDelta,tps:decodeTokenDelta/decodeDurationDelta}:null;
+  const measured=Number.isSafeInteger(finishedDelta)&&finishedDelta>0&&finishedDelta===timingCountDelta&&finishedDelta===computedCountDelta&&durationDelta>0&&tokensDelta!==null;
+  const singleSince=running===0?now:sampleValid&&running===1&&previous.running<=1?previous.single_since??(finishedDelta>0&&decoding===0?previous.at:null):null;
+  let completedPrefill=null;
+  if(measured){
+    completedPrefill={requests:finishedDelta,tokens:tokensDelta,seconds:durationDelta,tps:tokensDelta/durationDelta};
+    // Position a single request using its engine prefill/decode durations.
+    // Export/scrape delay limits wall-clock placement to roughly one poll.
+    // Never assign a single interval to concurrent or aggregated completions.
+    const end=now-decodeDurationDelta*1000,start=end-durationDelta*1000;
+    if(finishedDelta===1&&decodeCountDelta===1&&decodeDurationDelta!==null&&previous.single_since!==null&&previous.single_since!==undefined&&previous.running<=1&&running<=1&&start>=previous.single_since-(now-previous.at))
+      Object.assign(completedPrefill,{start,end,uncertainty_ms:now-previous.at});
+  }
   const rate=(tokens,duration)=>get(duration)>0&&get(tokens)!==null?get(tokens)/get(duration):null;
   return {
     source:'vllm',live_rate_scope:'poll_interval_throughput',at:now,connected:true,running,
-    waiting:get('num_requests_waiting'),generated,computed,phase,phase_basis:'observed_token_counters',live_activity:true,
+    waiting:get('num_requests_waiting'),generated,computed,phase,phase_basis:decoding===null?'unresolved':'sampled_request_lifecycle',live_activity:true,
     interval_start:sampleValid?previous.at:null,interval_phase:intervalPhase,
     interval_generated:sampleValid?generationDelta:null,interval_prefill:prefillDelta,
-    live_prefill_tps:prefillDelta!==null?prefillDelta/seconds:null,
+    metrics_epoch:epoch,first_tokens:firstTokens,decoding_requests:decoding,single_since:singleSince,
+    prefill_seconds:prefillSeconds,prefill_tokens:prefillTokens,prefill_count:prefillCount,computed_count:computedCount,decode_seconds:decodeSeconds,decode_count:decodeCount,
+    completed_prefill:completedPrefill,completed_decode:completedDecode,decode_tokens:decodeTokens,prefill_rate_scope:'completed_request_average',
+    live_prefill_tps:null,
     live_decode_tps:sampleValid?generationDelta/seconds:null,
     prefill_tps:rate('request_prefill_kv_computed_tokens_sum','request_prefill_time_seconds_sum'),
     decode_tps:rate('request_generation_tokens_sum','request_decode_time_seconds_sum'),
@@ -172,24 +219,25 @@ export class EndpointTelemetry {
       }
       if(current()){
         this.states.set(worker.id,{...value,url:worker.url,retryAt:Math.max(started+POLL_MS,this.now())});
-        const rows=(before?.source&&before.source!==value.source?[]:this.histories.get(worker.id)??[]).filter(point=>value.at>=point.time&&value.at-point.time<HISTORY_MS&&point.scope===value.live_rate_scope);
+        const rows=(before?.source&&before.source!==value.source?[]:this.histories.get(worker.id)??[]).filter(point=>value.at>=point.time&&value.at-point.time<HISTORY_MS&&point.scope===(point.kind==='prefill'?value.prefill_rate_scope??value.live_rate_scope:value.live_rate_scope));
         for(const kind of ['prefill','decode']){
-          const rate=value['live_'+kind+'_tps'];
-          if(Number.isFinite(rate)&&rate>0)rows.push({time:value.activity_at??value.at,kind,tps:rate,scope:value.live_rate_scope});
+          const completed=kind==='prefill'&&value.source==='vllm'?value.completed_prefill:null;
+          const rate=completed?completed.tps:value['live_'+kind+'_tps'];
+          if(Number.isFinite(rate)&&(completed?rate>=0:rate>0))rows.push({time:value.activity_at??value.at,kind,tps:rate,scope:kind==='prefill'?value.prefill_rate_scope??value.live_rate_scope:value.live_rate_scope});
         }
         this.histories.set(worker.id,rows.slice(-1024));
-        this.notify(worker.id);
+        this.notify(worker.id,before);
       }
     }catch{
       if(current()){
         this.states.set(worker.id,{...before,url:worker.url,connected:false,error:'Endpoint metrics unavailable',retryAt:this.now()+RETRY_MS});
-        this.notify(worker.id);
+        this.notify(worker.id,before);
       }
     }finally{
       if(this.busy.get(worker.id)===pending)this.busy.delete(worker.id);
       if(this.closed||this.identities.get(worker.id)!==key){this.cookies.delete(key);if(!this.identities.has(worker.id))this.activityRetry.delete(worker.id);}
     }
   }
-  notify(id){try{this.onSample(id,this.snapshot(id),this.now());}catch{/* Observation cannot break polling or inference. */}}
+  notify(id,previous){try{this.onSample(id,this.snapshot(id),this.now(),previous);}catch{/* Observation cannot break polling or inference. */}}
   close(){this.closed=true;for(const {controller}of this.busy.values())controller.abort();this.cookies.clear();}
 }

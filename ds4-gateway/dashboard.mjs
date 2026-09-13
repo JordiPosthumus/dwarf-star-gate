@@ -3,6 +3,7 @@ import {doorControl} from './door-client.mjs';
 import http from 'node:http';
 import {EndpointTelemetry} from './endpoint-telemetry.mjs';
 import {MonitoringHistory} from './monitoring-history.mjs';
+import {lanSharingDetails} from './lan-sharing.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -14,12 +15,14 @@ import { workerControl } from './worker-client.mjs';
 import { FileLogReader, telemetryFiles } from './file-telemetry.mjs';
 import { Activity } from './ui/activity.js';
 import { Genie } from './genie.mjs';
+import {GenieChat} from './genie-chat.mjs';
+import {hermesProvider} from './genie-hermes.mjs';
 import {GenieMemory} from './genie-memory.mjs';
 import {GenieProviderLedger} from './genie-provider-ledger.mjs';
 import { genieTunnel } from './genie-tunnel.mjs';
 import { safeQuarantine } from './generation-health.mjs';
 import { RequestHistoryReader } from './request-history.mjs';
-import {FleetSpeedReader} from './fleet-speed.mjs';
+import {FleetSpeedReader,endpointFleetSamples} from './fleet-speed.mjs';
 import {PerformanceReader,performanceProfile,performanceActive} from './performance-lights.mjs';
 import {RatePeaks} from './rate-peaks.mjs';
 import {HardwareTelemetry} from './hardware-telemetry.mjs';
@@ -44,7 +47,10 @@ function safeManagementPath(raw){
 }
 const assets = new Map([['/', ['index.html', 'text/html']], ['/ui.css', ['ui.css', 'text/css']], ['/brand.css', ['brand.css', 'text/css']], ['/ui.js', ['ui.js', 'text/javascript']], ['/logo.png', ['logo.png', 'image/png']]]);
 assets.set('/activity.js',['activity.js','text/javascript']);
+assets.set('/logo.svg',['logo.svg','image/svg+xml']);
 assets.set('/current-jobs.js',['current-jobs.js','text/javascript']);
+assets.set('/genie-chat.js',['genie-chat.js','text/javascript']);
+assets.set('/genie-chat.css',['genie-chat.css','text/css']);
 for(const [route,file,mime] of [
   ['favicon.ico','favicon.ico','image/x-icon'],['favicon-v2.ico','favicon.ico','image/x-icon'],
   ['favicon-v1.svg','favicon-v1.svg','image/svg+xml'],['favicon-v2.svg','favicon-v1.svg','image/svg+xml'],
@@ -58,7 +64,13 @@ export function genieRuntimeConfig(config){
   if(config.genie?.url)return {...config.genie,enabled:config.genie.enabled!==false,fallback:config.genie.fallback??pool};
   return {...pool,enabled:config.genie?.enabled!==false,fallback:pool,default_source:'pool'};
 }
-export function createDashboard(getSnapshot, assetsDirectory = path.join(here, 'ui'), management = null, genie = null, requestHistory = null, currentJobs = null, testing = null) {
+// Reuse the gateway credential only for this installation's exact local pool.
+export function genieChatConfig(config){
+  const chat=config.genie_chat;if(!chat)return null;
+  const local=new URL(chat.url).href===`http://127.0.0.1:${config.port}/v1`;
+  return {...chat,...(local&&chat.api_key===undefined?{api_key:config.api_key}:{})};
+}
+export function createDashboard(getSnapshot, assetsDirectory = path.join(here, 'ui'), management = null, genie = null, requestHistory = null, currentJobs = null, testing = null, lanSharing = null, chat = null) {
   const csrf = randomBytes(32).toString('base64url');
   // Freeze one complete release in memory: edits on disk cannot expose half an
   // update to a live browser. Only the dashboard needs a reload to promote it.
@@ -75,10 +87,48 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
       res.writeHead(403, headers); return res.end(dsgReport('Local same-origin dashboard only'));
     }
     const reply = (status, value) => { if (!res.destroyed && !res.headersSent) { res.writeHead(status,{...headers,'content-type':'application/json'}); res.end(JSON.stringify(status>=400&&typeof value.error==='string'?{...value,error:dsgReport(value.error)}:value)); } };
+    if(req.url==='/api/genie/chat'&&req.method==='GET')return reply(200,{...(chat?.status()??{available:false,conversations:[]}),csrf_token:csrf});
+    if(req.url?.startsWith('/api/genie/chat/')&&req.method==='GET'){
+      try{return reply(200,chat.get(req.url.slice('/api/genie/chat/'.length)));}catch{return reply(404,{error:'Conversation not found.'});}
+    }
+    if(req.url==='/api/genie/chat'&&req.method==='POST'){
+      const token=Buffer.from(req.headers['x-dsg-csrf']??''),expected=Buffer.from(csrf);
+      if(req.headers.origin!==`http://${req.headers.host}`||token.length!==expected.length||!timingSafeEqual(token,expected))return reply(403,{error:'Same-origin chat session required.'});
+      if(!chat)return reply(409,{error:'Conversational Genie is not configured.'});
+      if(req.headers['content-type']!=='application/json')return reply(415,{error:'JSON required.'});
+      req.setEncoding('utf8');
+      let body='',ended=false;
+      const timer=setTimeout(()=>{ended=true;reply(408,{error:'Incomplete chat request.'});},15000);
+      req.on('error',()=>{ended=true;clearTimeout(timer);});req.on('aborted',()=>{ended=true;clearTimeout(timer);});
+      req.on('data',chunk=>{if(ended)return;body+=chunk;if(Buffer.byteLength(body)>160000){ended=true;clearTimeout(timer);reply(413,{error:'Chat message too large.'});}});
+      req.on('end',()=>{clearTimeout(timer);if(ended)return;try{
+        const input=JSON.parse(body);
+        if(input.action==='new')return reply(201,chat.create());
+        if(input.action==='send')return reply(202,chat.submit(input.conversation_id,input.text,input.request_id));
+        return reply(400,{error:'Unknown chat action.'});
+      }catch(e){return reply(400,{error:e instanceof SyntaxError?'Invalid JSON.':e.message});}});return;
+    }
     // Content-bearing previews belong only on this same-origin local surface.
     if(req.url==='/api/current-jobs'&&req.method==='GET'){
       if(!currentJobs)return reply(200,{available:false});
       void currentJobs.read().then(state=>reply(200,{...state,available:true})).catch(()=>reply(503,{error:'Current Jobs core status unavailable'}));return;
+    }
+    if(req.url==='/api/lan-sharing'&&req.method==='GET'){
+      if(!lanSharing)return reply(200,{available:false});
+      void lanSharing.read().then(value=>reply(200,{available:true,...value,csrf_token:csrf})).catch(()=>reply(503,{error:'LAN sharing controls unavailable'}));return;
+    }
+    if(req.url==='/api/lan-sharing'&&req.method==='POST'){
+      if(!lanSharing)return reply(409,{error:'LAN sharing requires the Continuity Door'});
+      const token=Buffer.from(req.headers['x-dsg-csrf']||''),expected=Buffer.from(csrf);
+      if(req.headers.origin!==`http://${req.headers.host}`||token.length!==expected.length||!timingSafeEqual(token,expected))return reply(403,{error:'Same-origin LAN sharing control session required'});
+      if(req.headers['content-type']!=='application/json')return reply(415,{error:'JSON required'});
+      let body='',ended=false;const timer=setTimeout(()=>{ended=true;reply(408,{error:'Incomplete LAN sharing request'});req.destroy();},5000);
+      req.on('error',()=>{ended=true;clearTimeout(timer);});req.on('aborted',()=>{ended=true;clearTimeout(timer);});
+      req.on('data',chunk=>{if(ended)return;body+=chunk;if(Buffer.byteLength(body)>1024){ended=true;clearTimeout(timer);reply(413,{error:'LAN sharing request too large'});req.destroy();}});
+      req.on('end',()=>{clearTimeout(timer);if(ended)return;ended=true;let input;try{input=JSON.parse(body);}catch{return reply(400,{error:'Invalid JSON'});}
+        if(!input||Object.keys(input).join(',')!=='enabled'||typeof input.enabled!=='boolean')return reply(400,{error:'Only boolean enabled is accepted'});
+        void lanSharing.set(input.enabled).then(value=>reply(200,{available:true,...value,csrf_token:csrf})).catch(()=>reply(503,{error:'LAN sharing change could not be confirmed; refresh its status before retrying'}));
+      });return;
     }
     if(req.url==='/api/testing'&&req.method==='GET'){
       if(!testing)return reply(200,{available:false});
@@ -125,7 +175,7 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
       void management.read().then(registry => reply(200,{enabled:true,csrf_token:csrf,...registry})).catch(() => reply(503,{error:'Worker controls unavailable'}));
       return;
     }
-    const actions = { '/api/workers/add':'add', '/api/workers/endpoint':'endpoint', '/api/workers/test':'test', '/api/workers/remove':'remove', '/api/workers/drain':'drain', '/api/workers/resume':'resume','/api/workers/lock':'lock','/api/workers/unlock':'unlock','/api/workers/fallbacks':'fallbacks', '/api/workers/context':'context','/api/workers/queue-timeout':'queue-timeout','/api/workers/protection':'protection','/api/workers/relocate':'relocate', '/api/workers/recover':'recover', '/api/workers/recovery-policy':'recovery-policy','/api/workers/recovery-handback-policy':'recovery-handback-policy','/api/workers/recovery-recheck':'recovery-recheck' };
+    const actions = { '/api/workers/add':'add', '/api/workers/endpoint':'endpoint', '/api/workers/test':'test', '/api/workers/remove':'remove', '/api/workers/drain':'drain', '/api/workers/resume':'resume','/api/workers/lock':'lock','/api/workers/unlock':'unlock','/api/workers/fallbacks':'fallbacks', '/api/workers/context':'context','/api/workers/conversation-turns':'conversation-turns','/api/workers/queue-timeout':'queue-timeout','/api/workers/protection':'protection','/api/workers/relocate':'relocate', '/api/workers/recover':'recover', '/api/workers/recovery-policy':'recovery-policy','/api/workers/recovery-handback-policy':'recovery-handback-policy','/api/workers/recovery-recheck':'recovery-recheck' };
     if (management && req.method === 'POST' && Object.hasOwn(actions,req.url)) {
       const token = Buffer.from(req.headers['x-dsg-csrf'] || ''), expected = Buffer.from(csrf);
       if (req.headers.origin !== `http://${req.headers.host}` || token.length !== expected.length || !timingSafeEqual(token,expected)) return reply(403,{error:'Same-origin worker-control session required; refresh and retry'});
@@ -172,9 +222,10 @@ export async function runDashboard(configPath, port) {
   port ??= dashboardPort(config);
   const fileSources = telemetryFiles(config.telemetry_files);
   const cacheSources=cacheInventoryDirectories(config.cache_directories);
-  const endpointTelemetry=new EndpointTelemetry({onSample:(id,value,now)=>{
+  const endpointTelemetry=new EndpointTelemetry({onSample:(id,value,now,previous)=>{
     const device=devices.get(id),worker=gateway?.workers?.find(row=>row.id===id);
     if(device&&worker)activity.observe({...device,endpoint_metrics:value},worker,now);
+    for(const row of endpointFleetSamples(id,value,previous))appendMetric(row);
   }});
   const devices = new Map(), readers = new Map(),cacheReaders=new Map();
   const activity=new Activity();
@@ -324,7 +375,7 @@ export async function runDashboard(configPath, port) {
       if (!r.ok) throw new Error('Status unavailable');
       const s = await r.json();
       if (s.version !== 1 || !Array.isArray(s.workers)) throw new Error('Unsupported gateway');
-      gateway = { genie_flexible_assignment:s.genie_flexible_assignment===true,genie_admission_version:s.genie_admission_version===1?1:null,model: s.model, context_length: s.context_length,queue_timeout_ms:s.queue_timeout_ms,request_timeout_ms:s.request_timeout_ms, total: s.total, healthy: s.healthy, available: s.available, active: s.active, queued: s.queued, draining: s.draining, dataset:s.dataset,recovery:s.recovery,protections:s.protections,agent_api_version:s.agent_api_version,maintenance_lock_version:s.maintenance_lock_version,client_watch_version:s.client_watch_version,client_watch:clientWatchForDisplay(s.client_watch),
+      gateway = { genie_flexible_assignment:s.genie_flexible_assignment===true,genie_admission_version:s.genie_admission_version===1?1:null,model: s.model, context_length: s.context_length,queue_timeout_ms:s.queue_timeout_ms,conversation_turns:s.conversation_turns,conversation_turn_idle_ms:s.conversation_turn_idle_ms,request_timeout_ms:s.request_timeout_ms, total: s.total, healthy: s.healthy, available: s.available, active: s.active, queued: s.queued, draining: s.draining, dataset:s.dataset,recovery:s.recovery,protections:s.protections,agent_api_version:s.agent_api_version,maintenance_lock_version:s.maintenance_lock_version,client_watch_version:s.client_watch_version,client_watch:clientWatchForDisplay(s.client_watch),
         continuity:continuityForDisplay(s.continuity),
         workers: s.workers.map(w => ({ id: w.id, is_healthy: w.is_healthy, drained: w.drained, quarantine:safeQuarantine(w.quarantine), load: w.load, queued: w.queued, active_seconds: w.active_seconds, completed: w.completed, failed: w.failed, assigned_sessions: w.assigned_sessions,
           gateway_drained:w.gateway_drained,recovery_waiting:Number.isSafeInteger(w.recovery_waiting)?w.recovery_waiting:0,operator_paused:w.operator_paused,holds:Array.isArray(w.holds)?w.holds.slice(0,1024).map(h=>({id:h.id,owner_id:h.owner_id,created_at:h.created_at})):[],maintenance_locks:Array.isArray(w.maintenance_locks)?w.maintenance_locks.slice(0,1024).flatMap(l=>typeof l.id==='string'&&typeof l.name==='string'&&Number.isFinite(l.created_at)?[{id:l.id,name:l.name.slice(0,64),created_at:l.created_at,review_at:Number.isFinite(l.review_at)?l.review_at:null,control_channel:typeof l.control_channel==='string'?l.control_channel:null}]:[]):[],
@@ -348,7 +399,7 @@ export async function runDashboard(configPath, port) {
   const snapshot = () => ({ service:'dwarf-star-gate-dashboard', version: 1, time: Date.now(), started, read_only: !managementEnabled, worker_management:managementEnabled, gateway, gateway_at: gatewayAt, gateway_error: gatewayError, telemetry_error: writeError,monitoring_history:monitoringHistory.snapshot(),
     continuity_door:continuityDoor,continuity_door_error:continuityDoorError,rate_peaks:ratePeaks.snapshot(),cache_continuity:requestHistory.cacheSnapshot(),generation_alerts:requestHistory.generationEvidence.snapshot(),
     performance_lights:performanceHistory.snapshot(Date.now(),[...devices.values()].map(d=>({...d.snapshot(),connected:d.connected&&!gatewayError,active:performanceActive(d,gateway?.workers?.find(w=>w.id===d.id))}))),
-    devices: [...devices.values()].map(d => ({...d.snapshot(),rolling_rates:fleetSpeed.workerRates(d.id),activity:activity.get(d.id),activity_markers:activity.getMarkers(d.id),hardware:hardware.snapshot(d.id),endpoint_metrics:endpointTelemetry.snapshot(d.id)})), events, attribution:attribution.snapshot(), notes: 'DwarfStar rates are engine log measurements; OpenAI endpoint rates have separately labeled scopes. Cache counts cover observed prompt starts, not lifetime requests. Raw prompts and responses are excluded.' });
+    devices: [...devices.values()].map(d => ({...d.snapshot(),rolling_rates:fleetSpeed.workerRates(d.id),activity:activity.get(d.id),activity_markers:activity.getMarkers(d.id),hardware:hardware.snapshot(d.id),endpoint_metrics:endpointTelemetry.snapshot(d.id)})), events, attribution:attribution.snapshot(), notes: 'Engine-log rates are measurements from configured log collectors; OpenAI endpoint rates have separately labeled scopes. Cache counts cover observed prompt starts, not lifetime requests. Raw prompts and responses are excluded.' });
   const memory=new GenieMemory(path.join(path.dirname(config.state_file),'genie','memory'));
   const providerLedger=new GenieProviderLedger(path.join(path.dirname(config.state_file),'genie','actions'));
   const assignmentLedger=new GenieProviderLedger(path.join(path.dirname(config.state_file),'genie','actions'),{kind:'pool_assigned'});
@@ -356,20 +407,25 @@ export async function runDashboard(configPath, port) {
   const runtimeGenie=genieRuntimeConfig(config);
   const genie=new Genie(runtimeGenie,snapshot,{isTesting,memory,providerLedger,assignmentLedger,poolUrl:`http://127.0.0.1:${config.port}/v1`,recover:managementEnabled?input=>workerControl(config.control_socket,'/genie-recover-worker',input,{channel:'gate_genie'}):null,rebalance:managementEnabled?input=>workerControl(config.control_socket,'/genie-relocate-queued',input,{channel:'gate_genie'}):null});
   const stopGenieTunnel=genieTunnel(config.genie);
+  const chatDirectory=path.join(path.dirname(config.state_file),'genie','chat');
+  const chat=config.genie_chat?new GenieChat({directory:chatDirectory,getSnapshot:snapshot,isSuspended:isTesting,provider:hermesProvider(genieChatConfig(config),{directory:chatDirectory})}):null;
   const server = createDashboard(snapshot, path.join(here,'ui'), managementEnabled ? {
     read:()=>workerControl(config.control_socket,'/workers',undefined,{channel:'dashboard'}),
-    act:(action,input)=>workerControl(config.control_socket,({add:'/add-worker',endpoint:'/edit-endpoint',test:'/check-endpoint',remove:'/remove-worker',drain:'/drain-workers',resume:'/resume-workers',lock:'/maintenance-lock',unlock:'/release-maintenance-lock',fallbacks:'/set-ssh-fallbacks',context:'/set-context-limit','queue-timeout':'/set-queue-timeout',protection:'/set-protection',relocate:'/relocate-queued',recover:'/recover-worker','recovery-policy':'/recovery-policy','recovery-handback-policy':'/recovery-handback-policy','recovery-recheck':'/recovery-recheck'})[action],input,{channel:'dashboard'}),
+    act:(action,input)=>workerControl(config.control_socket,({add:'/add-worker',endpoint:'/edit-endpoint',test:'/check-endpoint',remove:'/remove-worker',drain:'/drain-workers',resume:'/resume-workers',lock:'/maintenance-lock',unlock:'/release-maintenance-lock',fallbacks:'/set-ssh-fallbacks',context:'/set-context-limit','conversation-turns':'/set-conversation-turns','queue-timeout':'/set-queue-timeout',protection:'/set-protection',relocate:'/relocate-queued',recover:'/recover-worker','recovery-policy':'/recovery-policy','recovery-handback-policy':'/recovery-handback-policy','recovery-recheck':'/recovery-recheck'})[action],input,{channel:'dashboard'}),
   } : null,genie,()=>({...requestHistory.snapshot(),fleet_speed:fleetSpeed.snapshot(Date.now(),gateway?.workers?.map(worker=>worker.id)??[])}),config.control_socket?{
     read:()=>workerControl(config.control_socket,'/current-jobs',undefined,{channel:'dashboard'}),
   }:null,continuityEnabled(config)?{
     read:async()=>{const value=await doorControl(doorSocket(config),'/status');if(!value.testing)throw new Error('Testing mode not deployed');return {testing:value.testing,genie_draining:genie.busy,endpoint:`http://127.0.0.1:${config.port}/testing/v1`};},
     set:async enabled=>{const value=await doorControl(doorSocket(config),'/testing',{enabled});return {testing:value.testing,genie_draining:genie.busy,endpoint:`http://127.0.0.1:${config.port}/testing/v1`};},
-  }:null);
+  }:null,managementEnabled&&continuityEnabled(config)?{
+    read:async()=>lanSharingDetails(await doorControl(doorSocket(config),'/lan-sharing'),config.port),
+    set:async enabled=>lanSharingDetails(await doorControl(doorSocket(config),'/set-lan-sharing',{enabled}),config.port),
+  }:null,chat);
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
   await poll(); endpointTelemetry.poll(); const interval = setInterval(poll, 2000), endpointTimer=setInterval(()=>endpointTelemetry.poll(),2000), historyTimer=setInterval(()=>monitoringHistory.save(activity,endpointTelemetry),10000), genieTimer=setInterval(()=>genie.tick(),10000);
-  const close = () => { monitoringHistory.save(activity,endpointTelemetry);endpointTelemetry.close(); closed = true; clearInterval(interval);clearInterval(endpointTimer);clearInterval(historyTimer);clearInterval(genieTimer);genie.close();hardware.close();stopGenieTunnel(); for (const t of timers) clearTimeout(t); for (const child of children) child.kill(); server.closeAllConnections(); server.close(); process.removeListener('SIGTERM', close); process.removeListener('SIGINT', close); };
+  const close = () => { monitoringHistory.save(activity,endpointTelemetry);endpointTelemetry.close(); closed = true; clearInterval(interval);clearInterval(endpointTimer);clearInterval(historyTimer);clearInterval(genieTimer);genie.close();chat?.close();hardware.close();stopGenieTunnel(); for (const t of timers) clearTimeout(t); for (const child of children) child.kill(); server.closeAllConnections(); server.close(); process.removeListener('SIGTERM', close); process.removeListener('SIGINT', close); };
   process.once('SIGTERM', close); process.once('SIGINT', close);
-  console.log(`Dwarf Star Gate: http://127.0.0.1:${server.address().port} (${managementEnabled ? 'local worker controls' : 'read-only'})`);
+  console.log(`Star Gate: http://127.0.0.1:${server.address().port} (${managementEnabled ? 'local worker controls' : 'read-only'})`);
   return { server, snapshot, close };
 }
 if (isMain(import.meta.url))

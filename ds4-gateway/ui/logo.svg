@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 150" role="img" aria-labelledby="title">
+  <title id="title">Star Gate</title>
+  <rect width="200" height="150" rx="8" fill="#101514"/>
+  <g transform="translate(53 5) scale(1.47)" fill="#d7efa3">
+    <path d="M18 46V20a14 14 0 0 1 28 0v26l-4-.7V20a10 10 0 0 0-20 0v25.3z"/>
+    <path d="m32 22 1.5 10 3.5-2.5-2.5 4L41 35l-6.5 1.5L37 40l-3.5-2.5L32 45l-1.5-7.5L27 40l2.5-3.5L23 35l6.5-1.5-2.5-4 3.5 2.5z"/>
+    <path d="M2 56q30-20 60 0Q32 46 2 56z"/>
+  </g>
+  <text x="100" y="126" text-anchor="middle" fill="#d7efa3" font-family="system-ui, sans-serif" font-size="23" font-weight="750" letter-spacing="2">STAR GATE</text>
+</svg>

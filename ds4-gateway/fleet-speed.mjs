@@ -3,6 +3,7 @@
 // samples therefore cannot make a long request count more than its token/time.
 import fs from 'node:fs';
 import path from 'node:path';
+import {createHash} from 'node:crypto';
 
 const HOUR=3600000,DAY=24*HOUR,FILE=/^metrics-\d{4}-\d{2}-\d{2}\.jsonl$/;
 const ID=/^[a-zA-Z0-9][\w-]{0,63}$/,SAMPLE=/^[\da-f]{64}$/,EPOCH=/^[\da-f]{64}$/;
@@ -15,6 +16,30 @@ const niceCeiling=value=>{
   const power=10**Math.floor(Math.log10(value)),scaled=value/power;
   return (scaled<=1?1:scaled<=2?2:scaled<=5?5:10)*power;
 };
+
+// Persist only numeric measurements, never endpoints, credentials or requests.
+// vLLM reports phase histograms on completion. Assign the whole observation
+// to its completion window: cumulative request time is not a wall-clock span.
+export function endpointFleetSamples(node,value,previous){
+  if(!ID.test(node??'')||!value?.connected||!Number.isFinite(value.at))return [];
+  const rows=[];
+  for(const phase of ['decode','prefill']){
+    let measurement=value.source==='vllm'?value['completed_'+phase]:null;
+    let basis='completed_request',start=value.at;
+    if(value.source==='omlx'&&previous?.connected&&previous.source==='omlx'&&value.live_activity&&previous.live_activity&&value.at>previous.at&&value.at-previous.at<=30000&&!(value.uptime_seconds<previous.uptime_seconds)){
+      const active=point=>point.phase===phase||point.phase==='mixed';
+      const rate=value['live_'+phase+'_tps'],oldRate=previous['live_'+phase+'_tps'];
+      if(active(value)&&active(previous)&&rate>0&&oldRate>0){
+        start=previous.at;const seconds=(value.at-start)/1000;
+        measurement={tokens:(rate+oldRate)/2*seconds,seconds};basis='sampled_rate';
+      }
+    }
+    if(!measurement||!Number.isFinite(measurement.tokens)||measurement.tokens<0||!(measurement.seconds>0)||!Number.isFinite(measurement.seconds))continue;
+    const row={kind:'endpoint_phase',node,time:value.at,source:value.source,phase,basis,start,tokens:measurement.tokens,seconds:measurement.seconds};
+    rows.push({...row,sample_id:createHash('sha256').update(JSON.stringify(row)).digest('hex')});
+  }
+  return rows;
+}
 
 export class FleetSpeed {
   constructor({maxIntervals=MAX_INTERVALS}={}){
@@ -54,10 +79,18 @@ export class FleetSpeed {
     if(this.energy.length>this.maxIntervals){this.energy.splice(0,this.energy.length-this.maxIntervals);this.evicted++;}
   }
   accept(row){
-    if(!['process_start','start','prefill','prefill_done','decode','finish','hardware'].includes(row?.kind))return;
+    if(!['process_start','start','prefill','prefill_done','decode','finish','hardware','endpoint_phase'].includes(row?.kind))return;
     if(!ID.test(row.node??'')||!SAMPLE.test(row.sample_id??'')||!Number.isFinite(row.time)||row.time<=0){this.rejected++;return;}
     const key=`${row.node}:${row.sample_id}`;if(this.seen.has(key))return;this.seen.add(key);
     if(this.seen.size>400000)this.seen.delete(this.seen.values().next().value);
+    if(row.kind==='endpoint_phase'){
+      const completed=row.source==='vllm'&&row.basis==='completed_request',sampled=row.source==='omlx'&&row.basis==='sampled_rate';
+      const rate=row.tokens/row.seconds;
+      if(!(completed||sampled)||!['decode','prefill'].includes(row.phase)||!Number.isFinite(row.tokens)||row.tokens<0||seconds(row.seconds)===null||row.seconds<=0||!Number.isFinite(rate)||rate>100000||!Number.isFinite(row.start)||row.start<=0||row.start>row.time||(completed&&row.start!==row.time)||(sampled&&(row.time-row.start>30000||Math.abs(row.seconds-(row.time-row.start)/1000)>.001))){this.rejected++;return;}
+      this.intervals.push({node:row.node,kind:row.phase,start:row.start,end:row.time,seconds:row.seconds,tokens:row.tokens,rate,basis:row.basis,source:row.source});
+      if(this.intervals.length>this.maxIntervals){this.intervals.splice(0,this.intervals.length-this.maxIntervals);this.evicted++;}
+      return;
+    }
     const epoch=EPOCH.test(row.backend_epoch??'')?row.backend_epoch:null,state=this.states.get(row.node);
     if(row.kind==='hardware'){
       // A RAM-only or thermal-only sample says nothing about power; it is not
@@ -92,17 +125,22 @@ export class FleetSpeed {
     this.add(row.node,'decode',row.time,{tokens,seconds:elapsed,at:row.time});
   }
   phase(kind,windowMs,now,workers){
-    const from=now-windowMs,allowed=new Set(workers),byWorker=new Map();let tokens=0,active=0,samples=0;
+    const from=now-windowMs,allowed=new Set(workers),byWorker=new Map(),sources=new Set();let tokens=0,active=0,samples=0,completed=false,sampled=false;
     for(const row of this.intervals){
-      if(row.kind!==kind||row.end<=from||row.start>=now||(allowed.size&&!allowed.has(row.node)))continue;
+      if(row.kind!==kind||row.end<=from||(row.basis==='completed_request'?row.end>now:row.start>=now)||(allowed.size&&!allowed.has(row.node)))continue;
+      sources.add(row.source??'engine_log');
+      if(row.basis==='completed_request'){
+        tokens+=row.tokens;active+=row.seconds;samples++;completed=true;byWorker.set(row.node,(byWorker.get(row.node)??0)+row.seconds);continue;
+      }
+      sampled ||= row.basis==='sampled_rate';
       const start=Math.max(row.start,from),end=Math.min(row.end,now),duration=(end-start)/1000;
       if(!(duration>0))continue;
       const share=duration/row.seconds;tokens+=row.tokens*share;active+=duration;samples++;
       byWorker.set(row.node,(byWorker.get(row.node)??0)+duration);
     }
     const workerCount=workers.length,lowerBound=workerCount?100*[...byWorker.values()].reduce((sum,value)=>sum+Math.min(value,windowMs/1000),0)/(workerCount*windowMs/1000):null;
-    return {mean_tps:active>0?tokens/active:null,tokens_observed:active>0?tokens:null,active_seconds:active,samples,observed_workers:byWorker.size,worker_count:workerCount,
-      activity_lower_bound_pct:lowerBound===null?null:Math.min(100,lowerBound)};
+    return {mean_tps:active>0?tokens/active:null,tokens_observed:active>0&&!sampled?tokens:null,active_seconds:active,samples,observed_workers:byWorker.size,workers:[...byWorker.keys()].sort(),worker_count:workerCount,sources:[...sources].sort(),includes_sampled_rates:sampled,includes_completed_requests:completed,
+      activity_lower_bound_pct:completed||sampled||lowerBound===null?null:Math.min(100,lowerBound)};
   }
   energySummary(windowMs,now,workers){
     const from=now-windowMs,allowed=new Set(workers),byWorker=new Map();let measured=0;
@@ -135,7 +173,7 @@ export class FleetSpeed {
       const p95=rates.length?rates[Math.max(0,Math.ceil(rates.length*.95)-1)]:null;
       calibration[kind]={max_tps:niceCeiling(p95===null?null:p95*1.15),basis:'p95_24h_padded',samples:rates.length};
     }
-    return {schema:1,source:'ds4_engine_cumulative_timing_deltas',as_of:now,
+    return {schema:1,source:'engine_and_endpoint_timing',as_of:now,
       windows:Object.fromEntries(Object.entries(WINDOWS).map(([name,ms])=>[name,{window_ms:ms,decode:this.phase('decode',ms,now,ids),prefill:this.phase('prefill',ms,now,ids),energy:this.energySummary(ms,now,ids)}])),
       calibration,intervals:relevant.length,power_intervals:this.energy.filter(row=>!ids.length||ids.includes(row.node)).length,excluded_power_records:this.excludedPower,rejected_records:this.rejected,evicted_intervals:this.evicted,
       oldest_interval_at:relevant.length?relevant.reduce((oldest,row)=>Math.min(oldest,row.start),Infinity):null};

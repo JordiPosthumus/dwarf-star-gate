@@ -6,7 +6,7 @@ import {createHash,randomUUID} from 'node:crypto';
 
 const WINDOW_MS=900000,MAX_BYTES=8*1024*1024;
 const phases=new Set(['prefill','decode','thinking','mixed','working','idle','paused','unavailable','unknown']);
-const scopes=new Set(['poll_interval_throughput','active_request_average']);
+const scopes=new Set(['poll_interval_throughput','active_request_average','completed_request_average']);
 const validId=value=>typeof value==='string'&&/^[\w-]{1,64}$/.test(value);
 const fingerprint=(worker,file)=>createHash('sha256').update(JSON.stringify([
   worker.id,worker.backend??'ds4',worker.url,worker.api_key_file??null,
@@ -50,7 +50,7 @@ export class MonitoringHistory {
       // interval. Do not stretch the last observed phase across downtime.
       const last=entry.phases.at(-1);
       if(last&&last.end<now)entry.phases.push({start:last.end,end:now,phase:'unknown'});
-      activity.history.set(id,entry.phases);activity.markers.set(id,entry.markers);telemetry.histories.set(id,entry.rates);
+      activity.history.set(id,entry.phases);activity.markers.set(id,entry.markers);telemetry.histories.set(id,entry.rates.filter(row=>!(row.kind==='prefill'&&row.scope==='poll_interval_throughput')));
     }
     this.identities=next;
   }

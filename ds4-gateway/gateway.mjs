@@ -1,5 +1,7 @@
 import {outputShape} from './output-shape.mjs';
 import http from 'node:http';
+import {compose} from 'node:stream';
+import {servingProfiles,servingProfileTransform} from './serving-profile.mjs';
 import {modelAliasTransform} from './model-alias.mjs';
 import {MODEL_ROUTE_HEADER,modelRoutes,routeSelection,allowsWorker} from './model-routing.mjs';
 import https from 'node:https';
@@ -71,6 +73,7 @@ export class AffinityStore {
       if (fs.existsSync(filename)) data = JSON.parse(fs.readFileSync(filename, 'utf8'));
       if (data.version !== 1 || !data.sessions || Array.isArray(data.sessions)) throw new Error('Invalid affinity store');
       if (data.pool_context_length !== undefined && !validContext(data.pool_context_length)) throw new Error('Invalid saved pool context limit');
+      if(data.conversation_turns!==undefined&&(!Number.isSafeInteger(data.conversation_turns)||data.conversation_turns<1))throw new Error('Invalid saved conversation turn allowance');
       if(data.queue_timeout_ms!==undefined){if(typeof data.queue_timeout_ms!=='number')throw new Error('Invalid saved queue allowance');queueTimeout(data.queue_timeout_ms);}
       if(data.quarantined!==undefined && (!data.quarantined || typeof data.quarantined!=='object' || Array.isArray(data.quarantined)))throw new Error('Invalid saved quarantine state');
       if(data.protections!==undefined&&(!data.protections||typeof data.protections!=='object'||Array.isArray(data.protections)||Object.keys(data.protections).some(k=>k!=='vision_jpeg')||(data.protections.vision_jpeg!==undefined&&typeof data.protections.vision_jpeg!=='boolean')))throw new Error('Invalid saved protection state');
@@ -241,12 +244,13 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   if (!validContext(config.context_length)) throw new Error('Invalid configured pool context limit');
   if (config.model_agnostic !== undefined && typeof config.model_agnostic !== 'boolean') throw new Error('model_agnostic must be a boolean');
   const configuredQueueTimeout=queueTimeout(config.queue_timeout_ms);
-  const conversationTurns=config.conversation_turns??5;
+  const configuredConversationTurns=config.conversation_turns??5;
   const conversationTurnIdleMs=config.conversation_turn_idle_ms??2000;
-  if(!Number.isSafeInteger(conversationTurns)||conversationTurns<1)throw new Error('conversation_turns must be a positive whole number');
+  if(!Number.isSafeInteger(configuredConversationTurns)||configuredConversationTurns<1)throw new Error('conversation_turns must be a positive whole number');
   if(!Number.isSafeInteger(conversationTurnIdleMs)||conversationTurnIdleMs<0||conversationTurnIdleMs>2147483647)throw new Error('conversation_turn_idle_ms must be a whole millisecond count from 0 to 2147483647');
   const initial = workerConfigs(config.nodes);
   const store = new AffinityStore(config.state_file);
+  const conversationTurns=()=>store.data.conversation_turns??configuredConversationTurns;
   const queueTimeoutMs=()=>store.data.queue_timeout_ms??configuredQueueTimeout;
   // Like registered workers, an explicit UI setting survives process restarts.
   const contextLimit = () => store.data.pool_context_length ?? config.context_length;
@@ -255,6 +259,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   let definitions;
   try { definitions = store.data.workers === undefined ? initial : workerConfigs(store.data.workers); }
   catch (e) { store.close(); throw e; }
+  let profiles;try{profiles=servingProfiles(config.serving_profiles,definitions);}catch(e){store.close();throw e;}
   const nodes = definitions.map(makeNode);
   let routes;try{routes=modelRoutes(config.model_routes,definitions);}catch(e){store.close();throw e;}
   const dataset = new Dataset(path.join(path.dirname(config.state_file),'requests'),{enabled:config.dataset_enabled===true});
@@ -331,7 +336,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   const accepted = new Set(['POST /v1/chat/completions', 'POST /v1/completions', 'POST /v1/responses', 'POST /v1/messages', 'GET /v1/models']);
   const auth = Buffer.from(`Bearer ${config.api_key}`);
   const lastOperatorAction=id=>[...(store.data.operator_actions??[])].reverse().find(action=>action.workers.includes(id))??null;
-  const stats = () => ({ version: 1, conversation_turns:conversationTurns,conversation_turn_idle_ms:conversationTurnIdleMs, model_routes:routes?Object.fromEntries([...routes].map(([name,workers])=>[name,[...workers]])):null, agent_api_version:1, maintenance_lock_version:1,client_watch_version:1,client_watch:clientWatch.snapshot(), model: config.model, context_length: contextLimit(), queue_timeout_ms:queueTimeoutMs(), request_timeout_ms:config.request_timeout_ms??360000000, draining,startup:{...startup}, dataset:dataset.snapshot(), routing_shadow:shadow.snapshot(),recovery:recovery.status(),protections:visionProtection.status(),
+  const stats = () => ({ version: 1, serving_profiles:profiles, conversation_turns:conversationTurns(),conversation_turn_idle_ms:conversationTurnIdleMs, model_routes:routes?Object.fromEntries([...routes].map(([name,workers])=>[name,[...workers]])):null, agent_api_version:1, maintenance_lock_version:1,client_watch_version:1,client_watch:clientWatch.snapshot(), model: config.model, context_length: contextLimit(), queue_timeout_ms:queueTimeoutMs(), request_timeout_ms:config.request_timeout_ms??360000000, draining,startup:{...startup}, dataset:dataset.snapshot(), routing_shadow:shadow.snapshot(),recovery:recovery.status(),protections:visionProtection.status(),
     genie_admission_version:1,genie_flexible_assignment:true,continuity:{schema:1,recent_rejections:rejections.slice(0,20),safe_retry_contract:true,queued_relocation:true,automatic_relocation:true,automatic_relocation_scope:automaticRelocationScope,automatic_affinity_rebalance_min_wait_ms:automaticAffinityWait,patient_wait:true,
       relocation:{completed:relocation.completed,rejected:relocation.rejected,offers:relocationOffers().length,genie_enabled:config.genie_load_balancing!==false,genie_offers:genieRelocationOffers(),diagnostics:relocationDiagnostics(),last:relocation.last},
       waiting:waiting.length,oldest_wait_seconds:waiting.length?Math.max(0,(performance.now()-waiting[0].createdMono)/1000):null,
@@ -341,7 +346,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     workers: nodes.map(n => ({ id: n.id, url: n.url, is_healthy: n.healthy, drained: n.drained, quarantine:n.quarantine, inference_failures:n.inferenceFailures,
       ...agents.pauseStatus(n.id),last_operator_action:lastOperatorAction(n.id),
       gateway_drained: n.drained && !n.active && !n.queue.length, load: Number(!!n.active),
-      turn_allocation:n.turnAllocation?{turns_used:n.turnAllocation.used,remaining:Math.max(0,conversationTurns-n.turnAllocation.used),waiting_for_next_turn:!n.active&&n.turnAllocation.until>performance.now(),idle_remaining_ms:Math.max(0,Math.ceil(n.turnAllocation.until-performance.now()))}:null,
+      turn_allocation:n.turnAllocation?{turns_used:n.turnAllocation.used,remaining:Math.max(0,conversationTurns()-n.turnAllocation.used),waiting_for_next_turn:!n.active&&n.turnAllocation.until>performance.now(),idle_remaining_ms:Math.max(0,Math.ceil(n.turnAllocation.until-performance.now()))}:null,
       queued: n.queue.length, recovery_waiting:parkedFor(n).length, assigned_sessions: store.count(n.id), completed: n.completed, failed: n.failed, protected:n.protected, observation_limited:n.observationLimited,
       oldest_queue_seconds:n.queue.length?Math.max(0,(performance.now()-n.queue[0].createdMono)/1000):null,
       oldest_queue_remaining_seconds:n.queue.length?Math.max(0,(n.queue[0].queueTimeoutMs-(performance.now()-n.queue[0].createdMono))/1000):null,
@@ -577,7 +582,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
       let index=0;
       const allocation=node.turnAllocation;
       if(allocation){
-        if(allocation.used<conversationTurns){
+        if(allocation.used<conversationTurns()){
           const next=node.queue.findIndex(job=>job.key===allocation.key);
           if(next>=0)index=next;
           else if(allocation.until>performance.now())return;
@@ -595,7 +600,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
       if (!node.healthy || node.quarantine || node.recovering) { park(job,node,unavailableReason(node)); continue; }
       job.queueTimer?.cancel();
       clearTimeout(node.turnTimer);node.turnTimer=null;
-      if(conversationTurns>1&&job.key){
+      if(conversationTurns()>1&&job.key){
         if(node.turnAllocation?.key!==job.key)node.turnAllocation={key:job.key,used:0,until:0};
         node.turnAllocation.used++;node.turnAllocation.until=0;
       }else releaseTurns(node);
@@ -608,7 +613,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   function finishTurn(node,outcome){
     const allocation=node.turnAllocation;
     if(outcome!=='complete'||shuttingDown||!allocation){releaseTurns(node);return;}
-    if(allocation.used>=conversationTurns)return;
+    if(allocation.used>=conversationTurns())return;
     allocation.until=performance.now()+conversationTurnIdleMs;
     node.turnTimer=setTimeout(()=>{releaseTurns(node);schedule(node);pumpWaiting();},conversationTurnIdleMs);
     node.turnTimer.unref?.();
@@ -842,7 +847,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
       let gotResponse=false,freshConnectingSocket=false,connected=false;
       const attemptHeaders={...headers};
       if(replacement){delete attemptHeaders['transfer-encoding'];attemptHeaders['content-length']=replacement.length;}
-      if(node.model_aliases)delete attemptHeaders['content-length'];
+      if(node.model_aliases||profiles[node.id])delete attemptHeaders['content-length'];
       const upstream=endpointTransport(target).request(target,{...upstreamOptions(node,target),method:req.method,headers:attemptHeaders},up=>{
         gotResponse=true;
         if(up.statusCode===400&&visionProtection.enabled&&(retry||captureLimit))bufferCandidate(up,retry);
@@ -872,7 +877,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
       });
       upstream.on('close',()=>{if(!settled&&(job.cancelled||!gotResponse))finish(job.cancelled?'client_cancelled':'connection_closed');});
       if(replacement){
-        if(node.model_aliases){const rewrite=modelAliasTransform(node.model_aliases,req.headers['content-encoding']);rewrite.on('error',e=>upstream.destroy(e));rewrite.pipe(upstream);rewrite.end(replacement);}
+        if(node.model_aliases||profiles[node.id]){const rewrite=(profiles[node.id]?compose(servingProfileTransform(profiles[node.id],req.headers['content-encoding'],req.url),modelAliasTransform(node.model_aliases??{},req.headers['content-encoding'])):modelAliasTransform(node.model_aliases,req.headers['content-encoding']));rewrite.on('error',e=>upstream.destroy(e));rewrite.pipe(upstream);rewrite.end(replacement);}
         else upstream.end(replacement);
       }
       return upstream;
@@ -884,7 +889,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     // A queued read-ahead prefix feeds the same observers and upstream once,
     // followed by the still-streaming original upload with backpressure.
     requestBody.on('data',observeBody);requestBody.once('end',bodyEnded);req.once('aborted',bodyAborted);requestBody.once('error',bodyAborted);
-    if(node.model_aliases){const rewrite=modelAliasTransform(node.model_aliases,req.headers['content-encoding']);rewrite.on('error',e=>upstream.destroy(e));upstream.once('close',()=>{requestBody.unpipe(rewrite);rewrite.destroy();});requestBody.pipe(rewrite).pipe(upstream);}
+    if(node.model_aliases||profiles[node.id]){const rewrite=(profiles[node.id]?compose(servingProfileTransform(profiles[node.id],req.headers['content-encoding'],req.url),modelAliasTransform(node.model_aliases??{},req.headers['content-encoding'])):modelAliasTransform(node.model_aliases,req.headers['content-encoding']));rewrite.on('error',e=>upstream.destroy(e));upstream.once('close',()=>{requestBody.unpipe(rewrite);rewrite.destroy();});requestBody.pipe(rewrite).pipe(upstream);}
     else requestBody.pipe(upstream);
   }
 
@@ -948,6 +953,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
             // Explicit per-worker aliases only rewrite the top-level request model.
             for (const model of data.data) {
               model.context_length = contextLimit();
+              if(profiles[node.id]){model.max_output_tokens=profiles[node.id].max_output_tokens;model.input=profiles[node.id].input;model.reasoning=profiles[node.id].reasoning;}
               if (model.max_model_len !== undefined) model.max_model_len = contextLimit();
               if (model.top_provider) model.top_provider = { ...model.top_provider, context_length:contextLimit(),
                 max_completion_tokens: Math.min(model.top_provider.max_completion_tokens ?? contextLimit(), contextLimit()) };
@@ -1082,12 +1088,38 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   const registry = () => ({ model: config.model, minimum_context: contextLimit(), context_limit_control:true,
     genie_admission_version:1,genie_flexible_assignment:true,
     context_limit_source:store.data.pool_context_length === undefined ? 'config' : 'saved',
+    conversation_turns:conversationTurns(),conversation_turn_idle_ms:conversationTurnIdleMs,conversation_turns_control:true,conversation_turns_source:store.data.conversation_turns!==undefined?'saved':config.conversation_turns!==undefined?'config':'default',
     queue_timeout_ms:queueTimeoutMs(),queue_timeout_control:true,queue_timeout_source:store.data.queue_timeout_ms!==undefined?'saved':config.queue_timeout_ms!==undefined?'config':'default',
     recovery:recovery.status(),protections:visionProtection.status(),queued_relocation:{schema:1,automatic:true,automatic_scope:automaticRelocationScope,automatic_affinity_rebalance_min_wait_ms:automaticAffinityWait,offers:relocationOffers(),diagnostics:relocationDiagnostics(),completed:relocation.completed,rejected:relocation.rejected},
     workers: nodes.map(n => ({ ...definition(n), ...stats().workers.find(w => w.id === n.id),...agents.pauseStatus(n.id,{includeReason:true}) })) });
   async function freshProbe(node) {
     while (node.probing) await delay(10);
     await probe(node);
+  }
+  function setConversationTurns(input){
+    if(shuttingDown||draining)throw new Error('Gateway is draining');
+    if(!input||Array.isArray(input)||Object.keys(input).sort().join(',')!=='conversation_turns,expected_conversation_turns'||!Number.isSafeInteger(input.conversation_turns)||input.conversation_turns<1)throw new Error('Specify a positive whole conversation turn allowance and expected current value');
+    if(input.expected_conversation_turns!==conversationTurns())throw new Error('Conversation turn allowance changed; refresh before applying');
+    const before=conversationTurns();
+    if(before===input.conversation_turns&&store.data.conversation_turns!==undefined)return registry();
+    if(fs.existsSync(store.filename)){const backup=`${store.filename}.turns-${Date.now()}-${randomUUID()}.bak`;fs.copyFileSync(store.filename,backup,fs.constants.COPYFILE_EXCL);fs.chmodSync(backup,0o600);}
+    store.save({...store.data,conversation_turns:input.conversation_turns});
+    if(before!==conversationTurns())for(const node of nodes){
+      // An active model call finishes on its original server. Count it when
+      // enabling allocations from FIFO, and preserve used turns otherwise.
+      if(node.active&&!node.turnAllocation&&conversationTurns()>1&&node.active.key)node.turnAllocation={key:node.active.key,used:1,until:0};
+      if(!node.active&&node.turnAllocation){
+        if(node.turnAllocation.used>=before&&conversationTurns()>before)releaseTurns(node);
+        else if(node.turnAllocation.used>=conversationTurns()){
+          // End only the grace timer. Retain the exhausted allocation so the
+          // scheduler still yields to the oldest OTHER conversation.
+          clearTimeout(node.turnTimer);node.turnTimer=null;node.turnAllocation.until=0;
+        }
+      }
+      schedule(node);
+    }
+    log('conversation_turn_allowance_changed',{before,after:conversationTurns(),applies_to:'next_dispatch'});
+    return registry();
   }
   function setQueueTimeout(input){
     if(shuttingDown||draining)throw new Error('Gateway is draining');
@@ -1105,7 +1137,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     if (!input || Object.keys(input).some(k=>!['context_length','expected_context_length'].includes(k)) || !validContext(input.context_length)) throw new Error('Context limit must be a positive whole token count');
     if (input.expected_context_length !== contextLimit()) throw new Error('Pool context changed; refresh before applying');
     const enabled=nodes.filter(n=>!n.drained);
-    if (!enabled.length) throw new Error('Enable at least one DS4 server before changing the pool context');
+    if (!enabled.length) throw new Error('Enable at least one model server before changing the pool context');
     await Promise.all(enabled.map(freshProbe));
     if (shuttingDown || draining) throw new Error('Gateway is draining');
     const incompatible=enabled.filter(n=>!n.modelMatches || !validContext(n.contextLength) || n.contextLength<input.context_length);
@@ -1269,7 +1301,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     if(req.method==='GET'&&req.url==='/agents')return json(res,200,agents.adminStatus());
     if (req.method === 'GET' && req.url === '/current-jobs') return json(res,200,currentJobsStatus());
     if (req.method === 'GET' && req.url === '/workers') return json(res, 200, registry());
-    if (req.method !== 'POST' || !['/drain-workers', '/resume-workers', '/maintenance-lock','/release-maintenance-lock','/maintenance-receipt','/add-worker', '/edit-endpoint', '/check-endpoint', '/remove-worker', '/set-ssh-fallbacks','/set-context-limit','/set-queue-timeout','/set-protection','/relocate-queued','/genie-relocate-queued','/recovery-policy','/recovery-handback-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/grant-agent','/revoke-agent','/release-agent-hold','/agent/v1/drain','/agent/v1/resume','/agent/v1/receipt'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
+    if (req.method !== 'POST' || !['/drain-workers', '/resume-workers', '/maintenance-lock','/release-maintenance-lock','/maintenance-receipt','/add-worker', '/edit-endpoint', '/check-endpoint', '/remove-worker', '/set-ssh-fallbacks','/set-context-limit','/set-conversation-turns','/set-queue-timeout','/set-protection','/relocate-queued','/genie-relocate-queued','/recovery-policy','/recovery-handback-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/grant-agent','/revoke-agent','/release-agent-hold','/agent/v1/drain','/agent/v1/resume','/agent/v1/receipt'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
     let body = '';
     req.on('data', chunk => { body += chunk; if (Buffer.byteLength(body) > 4096) req.destroy(); });
     req.on('error', () => {});
@@ -1296,6 +1328,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
           }
           if(['/recover-worker','/genie-recover-worker','/recovery-canary'].includes(req.url))return json(res,202,recovery.request(input,req.url==='/genie-recover-worker'?'genie':'operator',{canary:req.url==='/recovery-canary'}));
           if (req.url === '/set-context-limit') return json(res,200,await setContextLimit(input));
+          if (req.url === '/set-conversation-turns') return json(res,200,setConversationTurns(input));
           if (req.url === '/set-queue-timeout') return json(res,200,setQueueTimeout(input));
           if (req.url === '/set-protection') return json(res,200,visionProtection.set(input));
           if (req.url === '/relocate-queued') return json(res,200,relocateQueued(input));

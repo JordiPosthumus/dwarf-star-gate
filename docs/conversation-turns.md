@@ -11,7 +11,7 @@ Configuration in `config.local.json`:
 }
 ```
 
-`conversation_turns` is a positive integer. Set it to `1` for the original request FIFO behavior, without a continuation grace period. The idle setting is a nonnegative integer in milliseconds (up to the platform timer limit, 2147483647); `0` permits priority only for continuations already queued. Configuration changes require a coordinated gateway core restart. These effective values are exposed in `/gateway/status`, and each worker's `turn_allocation` reports turns used, remaining allowance and remaining idle grace.
+`conversation_turns` is a positive integer. Set it to `1` for the original request FIFO behavior, without a continuation grace period. The idle setting is a nonnegative integer in milliseconds (up to the platform timer limit, 2147483647); `0` permits priority only for continuations already queued. In **Settings → Conversation scheduling**, edit **Consecutive conversation turns** and click **Apply**. The count applies live at the next scheduling decision and is saved in the gateway state, taking precedence over the configuration value across restarts. The current value and its source are shown beside the control. Active responses finish normally; their already-used turns count toward the new allowance. Lowering an exhausted allowance ends its idle grace and yields to another waiting conversation without replaying or interrupting a response. Conversation affinity, model servers and caches are preserved. The idle-gap setting remains configuration-only and requires a coordinated gateway core restart to change. Each saved count has a timestamped state backup; stale edits are rejected so one browser cannot silently overwrite another. These effective values are exposed in `/gateway/status`, and each worker's `turn_allocation` reports turns used, remaining allowance and remaining idle grace.
 
 ## Scheduling rules
 
@@ -38,3 +38,7 @@ x-session-affinity: hourglass-<unique-attempt-conversation-id>
 In Pi 0.85.1, the OpenAI completion adapter defaults `sendSessionAffinityHeaders` to false. The Hourglass owner can explicitly enable `compat.sendSessionAffinityHeaders` for DSG models so Pi sends its session ID, or attach the header at the existing DSG transport boundary using one stable per-conversation ID. Verify two successive model calls share the header and independent conversations differ. Configure this in the client; DSG cannot infer conversation identity from a worker route.
 
 Use `http://127.0.0.1:30000/testing/v1` while Testing is on. The same scheduler applies to testing and normal inference. Compare N=1 and N=5 using concurrent conversations, recording dispatch order, queue wait and completed work. Cache and throughput improvements require measurements from the actual backend.
+
+Clients must permit long queue waits independently of the turn allowance. See
+[Pi client timeouts](pi-client-timeouts.md) for the existing timeout setting and
+the distinction between queue heartbeats and absolute request deadlines.

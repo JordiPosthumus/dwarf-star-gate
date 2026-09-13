@@ -36,7 +36,18 @@ export class Activity {
     const engine=device?.endpoint_metrics;
     if(!stale&&engine?.connected&&Number.isFinite(engine.at)&&now>=engine.at&&now-engine.at<15000&&this.lastSamples.get(worker.id)!==engine.at){
       this.lastSamples.set(worker.id,engine.at);
-      const tokens=engine.source==='vllm'?engine.interval_prefill:engine.completed_prefill_tokens;
+      const measured=engine.completed_prefill;
+      if(engine.source==='vllm'&&Number.isFinite(measured?.start)&&Number.isFinite(measured?.end)&&measured.end>measured.start){
+        const start=Math.max(now-900000,measured.start),end=Math.min(now,measured.end),corrected=[];
+        for(const row of this.history.get(worker.id)||[]){
+          if(row.end<=start||row.start>=end){corrected.push(row);continue;}
+          if(row.start<start)corrected.push({...row,end:start});
+          if(row.end>end)corrected.push({...row,start:end});
+        }
+        corrected.push({start,end,phase:'prefill'});corrected.sort((a,b)=>a.start-b.start);
+        this.history.set(worker.id,corrected.filter(row=>row.end>now-900000).slice(-1024));
+      }
+      const tokens=engine.source==='vllm'?null:engine.completed_prefill_tokens;
       if(Number.isFinite(tokens)&&tokens>0){
         const markers=this.markers.get(worker.id)||[];
         markers.push({time:engine.at,phase:'prefill',tokens,basis:engine.source==='vllm'?'poll_interval':'completed_request'});

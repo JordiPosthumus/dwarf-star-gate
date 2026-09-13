@@ -1,20 +1,16 @@
-# Dwarf Star Gate
+# Star Gate
 
 **Seamless Continuity**
 
 Keep your agents working across a local inference fleet.
 
-<img src="ds4-gateway/ui/logo.png" alt="Dwarf Star Gate logo" width="240">
+<img src="ds4-gateway/ui/logo.svg" alt="Star Gate logo" width="240">
 
 [MIT licensed](LICENSE) · Created by [Jordi Posthumus](https://github.com/JordiPosthumus).
 
-[DS4](https://github.com/antirez/ds4) by [antirez](https://github.com/antirez) is an
-excellent local inference engine. Running it efficiently across a home fleet
-takes coordination: connecting your applications, preserving useful caches,
-keeping track of queues, and dealing with server failures.
-
-**Dwarf Star Gate is a local gateway for multiple devices running DS4 or other
-OpenAI-compatible servers—DGX Sparks, Macs, or a mix.** It gives your applications one endpoint and you one dashboard,
+**Star Gate is a local gateway for a home fleet of model servers—DGX Sparks,
+Macs, or a mix.** Connect OpenAI-compatible backends such as oMLX, vLLM, SGLang
+or DS4. It gives your applications one endpoint and you one dashboard,
 helping you manage a home inference fleet with less manual effort and make better
 use of your hardware. See which devices are busy or idle, where requests are
 waiting, and how much time is spent processing prompts and generating responses.
@@ -29,9 +25,9 @@ thinking choices and evidence for the Hourglass → DSG → backend chain.
 
 Use [Testing mode](docs/testing-mode.md) for isolated admission through the normal
 gateway machinery. [Conversation turns](docs/conversation-turns.md) explains the
-default five-turn allocation and the client conversation header.
+default five-turn allocation and the client conversation header. Change the allowance live in **Settings → Conversation scheduling → Consecutive conversation turns**, then click **Apply**. Active responses finish normally and the saved value survives gateway restarts.
 
-> Our guiding light: a low-effort DS4 fleet that keeps agents working.
+> Our guiding light: a low-effort inference fleet that keeps agents working.
 > Intelligence should make that dependable foundation better—not become another
 > dependency that can stall it.
 
@@ -39,9 +35,9 @@ Reliable scheduling and client continuity come first. Genie supervises and
 explains; predictive models earn authority through measured improvements, with
 deterministic fallbacks. See the [delivery principles](docs/roadmap.md#delivery-principles).
 
-**Gate Genie is DSG's local fleet assistant, enabled by default once configured.**
+**Gate Genie is Star Gate's local fleet assistant, enabled by default once configured.**
 Point him at a dedicated
-OpenAI-compatible DS4 server—an excellent role for older or slower hardware that
+OpenAI-compatible model server—an excellent role for older or slower hardware that
 can still run a compatible model—or enable DSG pool fallback. If that dedicated
 endpoint fails, he can borrow one available inference slot from the fleet and
 keep watching the show. He reviews fleet evidence, explains problems in the
@@ -51,7 +47,12 @@ inference capacity and never grants unrestricted machine access. See
 [Genie setup and boundaries](docs/observer.md), [memory](docs/genie-memory.md),
 and [service recovery](docs/worker-recovery.md).
 
-**DSG also gives your local agents an easy control surface for managing the
+For a conversation-first interface, the opt-in [conversational Genie](docs/genie-conversation.md)
+adds saved chats and follow-up questions through Hermes. Try the clearly labelled
+example interface with `npm run genie:demo`, then connect your own model using the
+guide. This chat profile explains the observed setup and has no action tools.
+
+**Star Gate also gives your local agents an easy control surface for managing the
 gateway.** Its [scoped API and CLI](docs/agent-api.md) let authorized agents
 inspect the fleet, temporarily take a server out of routing, and return it when
 their work is done—without overriding your pauses or another agent's reservation.
@@ -196,35 +197,20 @@ Its estimates are explicitly unvalidated. Operational evidence also includes a r
 components. The speculative four-path comparator and calibration preflight have
 been retired; these observations do not determine routing.
 
-## The engine is Antirez's. Start there.
+## Engines and credits
 
-**Dwarf Star Gate exists because of [DwarfStar — the original `antirez/ds4`
-project](https://github.com/antirez/ds4), created by
-[Salvatore “antirez” Sanfilippo](https://github.com/antirez) and its contributors.**
-That is the inference engine doing the substantial work: running the models,
-processing prompts, generating tokens, serving requests and managing KV state.
-The engine, not this gateway, deserves the credit for those capabilities.
+Star Gate coordinates model servers; the inference engines and model authors
+provide token generation, kernels, model weights and cache implementations.
+The project began around [DwarfStar / DS4](https://github.com/antirez/ds4), by
+[Salvatore “antirez” Sanfilippo](https://github.com/antirez) and its contributors,
+and now supports other OpenAI-compatible backends as well.
 
-This repository adds a small routing and observation layer around it. We did not
-create DS4, its inference kernels, its quantization work, or its cache engine.
-Thank you, Salvatore, for making such an ambitious local-inference project
-available, understandable and adaptable. **If you find this gateway useful,
-please visit and star [the original project](https://github.com/antirez/ds4).**
+See [full credits and upstream links](CREDITS.md). Engine projects retain their
+own licenses and authorship; Star Gate is an independent gateway.
 
-- **Start upstream:** [DwarfStar repository](https://github.com/antirez/ds4) ·
-  [setup and engine documentation](https://github.com/antirez/ds4/blob/main/README.md).
-- **Read the work:** [HTTP server](https://github.com/antirez/ds4/blob/main/ds4_server.c) ·
-  [KV store](https://github.com/antirez/ds4/blob/main/ds4_kvstore.c) ·
-  [CUDA backend](https://github.com/antirez/ds4/blob/main/ds4_cuda.cu).
-- **Contribute upstream thoughtfully:**
-  [contribution guide](https://github.com/antirez/ds4/blob/main/CONTRIBUTING.md) ·
-  [release QA](https://github.com/antirez/ds4/blob/main/QA_BEFORE_RELEASES.md) ·
-  [MIT license and copyright notices](https://github.com/antirez/ds4/blob/main/LICENSE).
-- **More:** [Antirez's writing](https://antirez.com/) · [full credits](CREDITS.md).
-
-Dwarf Star Gate is an independent companion project, not an official Antirez
-release and not a claim of his endorsement. The similar name is an acknowledgement
-of the engine it was built around, not a claim to its authorship.
+Existing `DSG`, `ds4-gateway`, `dwarf-star-gate` service identifiers, environment
+variables and API headers remain compatible. The rebrand changes the product
+name, not the names an existing installation relies on.
 
 The gateway core, Continuity Door and dashboard use Node.js built-ins only; the optional systemd recovery
 helper uses Python's standard library. No package installation, database, Kubernetes, frontend
@@ -246,7 +232,7 @@ sessions, measured benchmarks or proof of model accuracy. The example fleet mixe
 Sparks and a Mac; all displayed servers, reports and predictions are fictional.
 See [screenshot reproduction and checks](docs/screenshots.md).
 
-![Dwarf Star Gate dashboard with illustrative telemetry](docs/images/dashboard-overview.png)
+![Star Gate dashboard with illustrative telemetry](docs/images/dashboard-overview.png)
 
 <details>
 <summary>Gate Genie, analytics and activity views</summary>
@@ -262,7 +248,7 @@ See [screenshot reproduction and checks](docs/screenshots.md).
 Run `npm run ui:demo` for the isolated screenshot preview on loopback port 30011.
 It does not connect to workers, read local logs or load production configuration.
 The regular dashboard is on port 30010. Artwork lives at
-`ds4-gateway/ui/logo.png`; it can be replaced without touching gateway behavior.
+`ds4-gateway/ui/logo.svg`; it can be replaced without touching gateway behavior.
 
 The dashboard also ships a logo-derived gate/star icon: SVG and 16/32px ICO
 favicons, a 32px PNG, a 180px Apple touch icon, and a monochrome Safari pinned-tab
@@ -293,8 +279,9 @@ a physical machine. Each server may have its own native context and cache settin
   The [queue-wait allowance](docs/queue-wait.md) defaults to **20,000 hours**;
   the separate active-request default remains 100 hours. Explicit private-config
   overrides take precedence. Queued HTTP connections do not survive a gateway restart.
-- Transparent request/stream passthrough: no reasoning, output-limit, sampling or
-  tool-call rewriting. The optional, narrowly scoped [image compatibility
+- Request/stream passthrough by default. Opt-in [serving profiles](docs/serving-profiles.md)
+  fill omitted sampling and thinking fields while preserving explicit client values.
+  Output allowances and tool calls remain client-controlled. The optional, narrowly scoped [image compatibility
   protection](docs/vision-protection.md) handles DS4's proven pre-generation JPEG
   and GIF rejections. It converts JPEGs to PNG and retries once on the same
   server. After DS4's exact 16-image rejection, DSG retries once on the same server only when it
@@ -376,7 +363,7 @@ npm run ui
 No `npm install` is needed for the core. Setup creates an ignored, mode-0600
 `config.local.json` with a random API key and an empty worker list. It never
 overwrites an existing configuration. Omit `--controls` for a read-only dashboard.
-Open **http://127.0.0.1:30010**, expand **Manage DS4 servers**, add existing DS4
+Open **http://127.0.0.1:30010**, expand **Manage servers**, add existing DS4
 endpoints and enable them after the compatibility check. Remote servers need a
 working, host-key-verified OpenSSH alias; local servers use their loopback URL.
 You may give a remote server up to four fallback aliases (for example stable LAN
@@ -615,7 +602,7 @@ complete release. Editing files does not partially update a running dashboard.
 ## Operator controls
 
 Set `"ui_worker_management": true` in your private config and reload the dashboard
-to expose **Manage DS4 servers**. Keep this dashboard on loopback, not behind a public
+to expose **Manage servers**. Keep this dashboard on loopback, not behind a public
 proxy. The controls use the private Unix socket, exact same-origin checks and a
 per-dashboard CSRF token. They do not change inference API authentication.
 
@@ -656,7 +643,7 @@ recovery guards; ordinary worker controls and endpoint registration cannot.
 <details>
 <summary>Worker-management UI (synthetic demo)</summary>
 
-![Register and manage DS4 workers locally](docs/images/worker-management.png)
+![Register and manage model servers locally](docs/images/worker-management.png)
 
 </details>
 
@@ -670,7 +657,7 @@ No per-request token counting or capability-tier routing is implemented.
 
 DSG automatically refreshes each worker's reported context during health probes,
 but **does not automatically raise or lower the pool guarantee**. Change it under
-**Manage DS4 servers → Pool context limit**: DSG checks every enabled server,
+**Settings → Manage servers → Advanced gateway controls → Pool context limit**: DSG checks every enabled server,
 backs up its metadata, saves the explicit setting and applies it immediately.
 No model or gateway restart is required to apply a limit with this control.
 The saved setting survives restart and overrides the startup `context_length`
@@ -785,7 +772,7 @@ Adding the UI does not change any model launch setting.
 
 ## License
 
-Dwarf Star Gate is open source under the [MIT License](LICENSE).
+Star Gate is open source under the [MIT License](LICENSE).
 Copyright © 2026 Jordi Posthumus.
 
 You may use, modify, redistribute, sublicense and sell DSG, including in commercial

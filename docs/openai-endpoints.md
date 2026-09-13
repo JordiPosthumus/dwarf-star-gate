@@ -130,14 +130,11 @@ comparisons rather than being presented as equivalent samples.
 Engine-reported active work can exist without a DSG request (direct clients or
 cleanup); the card shows that separately without inflating DSG admission counts.
 
-Live endpoint rate graphs retain up to 15 minutes in dashboard memory, with a
-maximum of 1,024 points per worker. Only observed live rates enter these graphs;
-engine-session averages do not. Gaps are compressed and are not proof of idle.
-A dashboard restart clears this short live history. vLLM samples describe token
-counter changes over the poll interval; oMLX rates are sums of the active
-requests' reported average rates, not matching wall-clock interval measurements.
-Mixed prefill and generation activity is displayed explicitly. The historical
-fleet gauges remain DwarfStar-only and are labeled **DwarfStar history**.
+Endpoint rate graphs retain up to 15 minutes of bounded numerical history across dashboard restarts. vLLM prefill graph points use the change in completed-request computed-KV tokens divided by the change in completed-request prefill seconds, with matching histogram counts. They exclude cached tokens. The entire prompt count arrives at first output; dividing that count by the scrape interval creates false spikes and is not a prefill speed. Decode still uses generation-token changes over the polling interval. oMLX retains its engine-reported live chunk rates.
+
+The activity strip uses grey for observed idle, blue for prefill, green for generation, and empty gaps for an unavailable phase. vLLM phases follow first-token and completion events from an observed lifecycle baseline; a decode interval with no new tokens does not become idle. Simultaneous changes in prompt and generation totals alone do not imply concurrent phases. A single completed request can refine its historical blue duration using engine prefill/decode timings when single-request tracking is available. Boundaries have approximately one polling interval (normally two seconds) of placement uncertainty, rather than trace-level timestamps. Concurrent or aggregated completions do not receive invented individual intervals. Initial mid-request observations, missing counters, resets and telemetry gaps remain unknown until evidence establishes a phase.
+
+Old vLLM prefill points computed from scrape intervals are excluded from the corrected chart; stored operational request datasets are unchanged. The deployment backup retains the prior monitoring notebook. Unmeasured historical gaps are not fabricated. Historical engine-log fleet gauges remain separate from endpoint measurements.
 
 Chat-template `enable_thinking` and `reasoning_effort` are observed as requested
 settings. The UI does not claim these establish the engine's effective thinking

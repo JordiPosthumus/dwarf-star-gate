@@ -1,18 +1,18 @@
-# Credits: Antirez, DwarfStar, and the work behind the gate
+# Star Gate credits
 
 ## Salvatore “antirez” Sanfilippo and the DwarfStar contributors
 
-The central credit belongs to **[Salvatore “antirez” Sanfilippo](https://github.com/antirez)**
+Star Gate began around the work of **[Salvatore “antirez” Sanfilippo](https://github.com/antirez)**
 and **[DwarfStar, the original `antirez/ds4` project](https://github.com/antirez/ds4)**.
-Dwarf Star Gate is a companion to that work. It would not exist in this form
-without it.
+That work shaped the original gateway. Star Gate now supports other
+OpenAI-compatible inference engines too.
 
 The original project provides the native inference engine and its hardware
 backends, prompt handling, model-serving implementation and cache machinery.
 DSG sends requests to those servers and observes their results; it does
 not create the intelligence or implement their token-generation kernels.
 The performance numbers shown in our UI are measurements of the worker engine,
-not a claim that Dwarf Star Gate invented that performance.
+not a claim that Star Gate invented that performance.
 
 Thank you, Salvatore, for building and sharing the engine, for making its source
 available to study, and for encouraging people to understand and adapt their
@@ -62,11 +62,11 @@ and model artifacts retain their own upstream licenses and notices.
 
 ## What this repository contributes
 
-Dwarf Star Gate is created and maintained by
+Star Gate is created and maintained by
 [Jordi Posthumus](https://github.com/JordiPosthumus) and released under the
 [MIT License](LICENSE). Retain its copyright and license notice when reusing it.
 
-Dwarf Star Gate contributes session-affinity routing, per-worker admission and
+Star Gate contributes session-affinity routing, per-worker admission and
 drain controls, a dashboard with opt-in local routing controls, operational
 telemetry filtering, an optional observer, and tests
 for that gateway layer. Credit for the original inference engine remains with

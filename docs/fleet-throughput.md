@@ -1,82 +1,73 @@
-# Fleet speed and energy pulse
+# Fleet speed and energy history
 
-The compact **Fleet speed** tile in the main status row is a quick feel for the
-value the fleet is delivering. It shows decode and prefill on two calibrated
-semicircular gauges, with a browser-local **1h / 12h / 24h** selector. Twelve
-hours is the default: long enough to smooth one unusual request, short enough to
-notice a real change in the fleet.
+The **Fleet history** tile shows observed decode and prefill speeds for a
+browser-local **1h / 12h / 24h** selection (default 12h). Each gauge is an
+observed, duration-weighted mean, not combined fleet throughput or a benchmark.
 
-The large arc is a duration-weighted **active-phase mean**, not a mean of sampled
-log lines. DSG first differences DS4's cumulative token and elapsed-time
-counters, then divides total observed tokens by total active seconds. A long
-request therefore contributes in proportion to real work instead of dominating
-the metric merely because it emitted more telemetry rows.
+## Measurement sources
 
-The thin outer arc is a conservative activity-coverage indicator: observed phase
-seconds divided by selected wall-clock capacity across the currently registered
-devices. It answers “did the fleet actually spend much of this period doing this
-kind of work?” It is a lower bound because missing telemetry remains unknown,
-never idle.
+- **vLLM:** difference completed-request token and phase-duration histograms.
+  Prefill excludes cached KV tokens. Decode includes thinking and answer tokens.
+  Matching completion counts, monotonic counters, a stable engine epoch and
+  adjacent successful polls are required. The entire observation belongs to the
+  window in which completion was observed, even if the request began earlier.
+  Concurrent completions contribute their summed request-seconds; those seconds
+  must not be mistaken for a wall-clock interval or utilization.
+- **Native engine logs:** difference cumulative token and elapsed-time counters.
+  Clip token/time intervals proportionally at window boundaries.
+- **oMLX:** integrate adjacent reported active-rate samples, only when both
+  samples show the relevant phase. These remain sampled rate estimates, not
+  measured token totals. Prefill uses reported chunk speed; decode uses the
+  reported active-request average. Their scopes differ from vLLM engine timings.
 
-Each gauge is calibrated to a padded 24-hour p95 of its own valid interval speeds,
-rounded to a readable scale. Decode and prefill do not share a scale. The numeric
-tokens/second value is authoritative; the arc is deliberately a feel-at-a-glance
-display, not a hardware benchmark or utilization meter.
+Aggregate speed is total token/time contributions divided by contributing
+seconds. oMLX samples weight reported rates by observed sample duration. It is
+an operational summary of different workloads and measurement scopes, not a
+comparison under identical conditions. Missing history contributes neither
+zero speed nor idle time. A measured zero-token prefill displays **0**, while
+missing measurements display **—**. Empty gauges have no colored zero-dot.
 
-## Tokens, energy and efficiency
+Endpoint measurements are appended as numeric `endpoint_phase` rows to the
+existing daily metric files. History survives dashboard restarts, without
+replaying old completions or importing lifetime averages into a shorter window.
+Endpoint history begins with this collector's activation. Earlier endpoint
+history cannot be reconstructed from the former 15-minute rate-only charts.
 
-The footer reports observed generated tokens for the selected period. Once the
-optional hardware lane supplies sufficiently dense, measured power for **every
-current device**, it also reports:
+Gauge ceilings use the padded, rounded 24-hour 95th percentile of valid rates.
+Thin outer activity arcs apply only to native timing intervals. They are hidden
+for completed-request or sampled-rate evidence, which cannot establish honest
+fleet phase occupancy. The footer counts servers with any valid selected-window
+speed evidence; it does not claim complete coverage. Click it for phase-specific
+server counts, measurement methods and energy details.
 
-- estimated kWh over the selected period;
-- generated tokens per estimated kWh.
+## Energy
 
-This makes additional Sparks legible as fleet value rather than just capacity:
-more work, more energy, and the efficiency relating the two. DSG integrates
-adjacent measured watt samples and refuses to bridge gaps longer than one minute.
-It estimates a full-period total only when every current device has at least 80%
-measured coverage and one consistent measurement scope. The energy footer opens
-a per-worker breakdown with the exact period, sensor/scope, measured subtotal,
-coverage and missing-data status. Before the threshold it shows any measured
-subtotal, clearly distinguished from a complete fleet estimate; without samples
-it says **energy awaiting power data**. System and compute-module measurements
-have different physical boundaries, so their sum is not utility-meter energy.
-Scope or sensor changes break adjacency, and GPU-only readings are excluded.
-Window-boundary clipping integrates the corresponding part of the linear power
-curve. Removing a worker removes its energy from current-fleet totals. It does not
-substitute a device TDP, infer power from token speed, or present missing devices
-as zero watts.
+The compact footer shows estimated kWh only when every current worker has at
+least 80% measured-power coverage with one consistent measurement scope.
+Otherwise **kWh*** means a measured subtotal, explained in the clickable details.
+Without eligible power data it says **Energy unavailable**.
 
-The token total covers observed decode intervals from DS4 engine timing evidence.
-It is distinct from the older completion-time usage counters: unfinished but
-observed generation can contribute here, while missing intervals can undercount.
-Direct traffic appears only if it enters the same allowlisted engine metric lane.
+Adjacent power samples are integrated trapezoidally. Gaps over 60 seconds,
+scope/sensor changes and engine restarts break adjacency. Window boundaries
+clip the linear power curve. GPU-only readings are excluded from whole-device
+energy; system and compute-module readings have different physical boundaries.
+Removing a worker removes its energy from current-fleet totals. No TDP or token
+speed is substituted for measured watts. Incomplete or sampled token evidence
+is not presented as fleet energy efficiency.
 
-The machine cards also have separate [Decode, Prefill and Cache hits indicators](performance-lights.md). Their seven-day comparison reader does not change these fleet gauges or their calibration.
+## Retention, privacy and validation
 
-## Reader and privacy boundaries
+The reader incrementally processes the two newest `metrics-YYYY-MM-DD.jsonl`
+files with bounded lines, bytes and intervals. Rotation or replacement triggers
+a rebuild; duplicate observations are rejected. Endpoint records contain only
+worker ID, source, timing, counts, scope and a hashed sample ID. They contain no
+URL, credential, prompt, response or request identifier. Other metric readers
+ignore the new row kind. Existing native and energy measurements are preserved.
 
-The dashboard reads only the two newest `metrics-YYYY-MM-DD.jsonl` files through
-a bounded, incremental, read-only parser. It accepts a small allowlist of numeric
-DS4 timing/power fields, caps lines and bytes per pass, handles rotation or
-replacement by rebuilding, and publishes aggregates plus current configured
-worker IDs for the explicit energy-coverage breakdown. Session identifiers,
-prompt text, response text, vectors, endpoints and paths do not enter this summary.
+`fleet-speed.test.mjs` exercises histogram differencing, weighted means,
+completion-window boundaries, counter resets, outages, source scopes, duplicate
+replay, restart persistence and energy coverage. `request-history.test.mjs`
+checks the rendered gauge values, zero/missing states and short footer.
 
-Malformed rows, counter regressions, engine-epoch changes, partial history,
-collector gaps and unavailable files fail closed. Dashes or an explicit waiting
-message replace misleading zeroes. The feature changes no model server, routing
-decision, XGB input, Genie permission or client retry behavior.
-
-## Verification and activation
-
-`npm run data:test` covers cumulative-counter differencing, weighted means,
-window boundaries, reader replacement, malformed input, bounded state and the
-per-device measured-power coverage gate. `npm run ui:screenshots` verifies the
-real selector, polling persistence, reload persistence, gauge labels, tooltip and
-energy footer with synthetic data. Public screenshots are not live fleet
-evidence.
-
-Activation needs only a dashboard reload, not a gateway or DS4 restart. The
-fleet pulse itself remains available when hardware collection is off.
+Activation requires only a dashboard reload. Model servers, routing, caches,
+context, concurrency and conversation-turn settings are unchanged.

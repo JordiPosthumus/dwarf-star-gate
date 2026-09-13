@@ -2118,3 +2118,83 @@ test('cancelling active inference releases its unused turns to the waiting conve
   const b=r.request('{}','B');await until(()=>r.gateway.stats().queued===1);req.destroy();
   await until(()=>r.backends[0].records.length===2);assert.equal((await b).status,200);
 });
+
+
+test('live turn allowance preserves an active stream and queued bodies while changing the next yield',async t=>{
+  const r=await rig(t,1,{control_socket:true,conversation_turns:5,conversation_turn_idle_ms:20});
+  const hold=r.request(JSON.stringify({label:'A1',stream:true,fixture_hold_stream:true}),'A');
+  await until(()=>r.backends[0].heldStreams?.length===1);
+  const active=r.gateway.nodes[0].active,pending=[];
+  for(const [label,key] of [['B1','B'],['A2','A'],['A3','A']]){
+    pending.push(r.request(JSON.stringify({label}),key));await until(()=>r.gateway.stats().queued===pending.length);
+  }
+  const queued=[...r.gateway.nodes[0].queue],savedBefore=structuredClone(r.gateway.store.data);
+  const updated=await workerControl(r.config.control_socket,'/set-conversation-turns',{conversation_turns:2,expected_conversation_turns:5});
+  assert.equal(updated.conversation_turns,2);assert.equal(updated.conversation_turns_source,'saved');
+  assert.equal(updated.conversation_turn_idle_ms,20);assert.equal(r.gateway.nodes[0].active,active);
+  assert.deepEqual(r.gateway.nodes[0].queue,queued);assert.equal(r.backends[0].records.length,1);
+  assert.deepEqual(r.gateway.store.data,{...savedBefore,conversation_turns:2});
+  assert.equal(r.gateway.stats().workers[0].turn_allocation.remaining,1);
+  r.backends[0].heldStreams.shift()();
+  assert.ok((await Promise.all([hold,...pending])).every(result=>result.status===200));
+  assert.deepEqual(r.backends[0].records.map(row=>row.payload.label),['A1','A2','B1','A3']);
+  assert.equal(r.backends[0].peak,1);
+  await r.restart();assert.equal(r.gateway.stats().conversation_turns,2);
+  assert.equal(r.gateway.stats().conversation_turn_idle_ms,20);
+  const backups=fs.readdirSync(path.dirname(r.config.state_file)).filter(f=>f.includes('.turns-'));
+  assert.equal(backups.length,1);assert.deepEqual(JSON.parse(fs.readFileSync(path.join(path.dirname(r.config.state_file),backups[0]))),savedBefore);
+  const beforeIdempotent=fs.readFileSync(r.config.state_file,'utf8');
+  await workerControl(r.config.control_socket,'/set-conversation-turns',{conversation_turns:2,expected_conversation_turns:2});
+  assert.equal(fs.readFileSync(r.config.state_file,'utf8'),beforeIdempotent);
+  assert.equal(fs.readdirSync(path.dirname(r.config.state_file)).filter(f=>f.includes('.turns-')).length,1);
+});
+
+test('lowering the allowance during an idle continuation wait immediately gives the competitor its turn',async t=>{
+  const r=await rig(t,1,{control_socket:true,conversation_turns:5,conversation_turn_idle_ms:60000});
+  await r.request('{"label":"A1"}','A');
+  const b=r.request('{"label":"B1"}','B');await until(()=>r.gateway.stats().queued===1);
+  assert.equal(r.gateway.stats().workers[0].turn_allocation.waiting_for_next_turn,true);
+  await workerControl(r.config.control_socket,'/set-conversation-turns',{conversation_turns:1,expected_conversation_turns:5});
+  assert.equal((await b).status,200);
+  assert.deepEqual(r.backends[0].records.map(row=>row.payload.label),['A1','B1']);
+  assert.equal(r.gateway.stats().workers[0].turn_allocation,null);assert.equal(r.gateway.nodes[0].turnTimer,null);
+});
+
+test('raising the live allowance from FIFO counts the in-flight call and preserves conversation FIFO',async t=>{
+  const r=await rig(t,1,{control_socket:true,conversation_turns:1,conversation_turn_idle_ms:20});
+  const hold=r.request(JSON.stringify({label:'A1',stream:true,fixture_hold_stream:true}),'A');
+  await until(()=>r.backends[0].heldStreams?.length===1);
+  const pending=[];
+  for(const [label,key] of [['B1','B'],['A2','A'],['A3','A']]){
+    pending.push(r.request(JSON.stringify({label}),key));await until(()=>r.gateway.stats().queued===pending.length);
+  }
+  await workerControl(r.config.control_socket,'/set-conversation-turns',{conversation_turns:3,expected_conversation_turns:1});
+  assert.equal(r.gateway.stats().workers[0].turn_allocation.turns_used,1);
+  r.backends[0].heldStreams.shift()();await Promise.all([hold,...pending]);
+  assert.deepEqual(r.backends[0].records.map(row=>row.payload.label),['A1','A2','A3','B1']);
+  assert.equal(r.backends[0].peak,1);
+});
+
+test('turn control rejects invalid and stale edits, failed persistence, draining and unauthorized callers',async t=>{
+  const r=await rig(t,1,{control_socket:true,conversation_turns:5});
+  const ctl=input=>workerControl(r.config.control_socket,'/set-conversation-turns',input);
+  for(const value of [0,-1,null,'2',1.5,Number.MAX_SAFE_INTEGER+1])await assert.rejects(ctl({conversation_turns:value,expected_conversation_turns:5}),/positive whole/);
+  await assert.rejects(ctl({conversation_turns:2,expected_conversation_turns:4}),/changed/);
+  await assert.rejects(ctl({conversation_turns:2,expected_conversation_turns:5,conversation_turn_idle_ms:0}),/positive whole/);
+  const save=r.gateway.store.save;r.gateway.store.save=()=>{throw new Error('simulated storage failure');};
+  await assert.rejects(ctl({conversation_turns:2,expected_conversation_turns:5}),/storage failure/);
+  assert.equal(r.gateway.stats().conversation_turns,5);r.gateway.store.save=save;
+  assert.equal((await r.request('{}',null,{path:'/set-conversation-turns'})).status,404);
+  const grant=await workerControl(r.config.control_socket,'/grant-agent',{agent_id:'turn-tester',workers:['spark1']});
+  const forbidden=await new Promise((resolve,reject)=>{const req=http.request({socketPath:r.config.control_socket,path:'/set-conversation-turns',method:'POST',headers:{authorization:`Bearer ${grant.token}`}},res=>{res.resume();res.on('end',()=>resolve(res.statusCode));});req.on('error',reject);req.end(JSON.stringify({conversation_turns:2,expected_conversation_turns:5}));});
+  assert.equal(forbidden,403);assert.equal(r.gateway.stats().conversation_turns,5);
+  r.gateway.drain();await assert.rejects(ctl({conversation_turns:2,expected_conversation_turns:5}),/draining/);
+});
+
+test('corrupt saved turn allowance fails startup without resetting affinity or leaving its lock',async t=>{
+  const r=await rig(t,1);await r.gateway.close();
+  const state={version:1,sessions:{},conversation_turns:0};fs.writeFileSync(r.config.state_file,JSON.stringify(state));
+  assert.throws(()=>createGateway(r.config),/Invalid saved conversation turn allowance/);
+  assert.deepEqual(JSON.parse(fs.readFileSync(r.config.state_file)),state);
+  assert.equal(fs.existsSync(r.config.state_file+'.lock'),false);
+});

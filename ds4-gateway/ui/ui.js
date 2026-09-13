@@ -25,7 +25,7 @@ function thinkingInfo(t) {
   const enabled=t.fields?.['chat_template_kwargs.enable_thinking']??t.fields?.enable_thinking;
   const requestedLabel=requested?`Requested ${requested.toUpperCase()}`:typeof enabled==='boolean'?`Requested ${enabled?'ON':'OFF'}`:'Unknown';
   const mode=t.served?.basis==='ds4_request_rules' && ['high','max','none'].includes(t.served.mode) ? t.served.mode : null;
-  return {label:mode==='none'?'OFF':mode?mode.toUpperCase():requestedLabel,detail:`Requested: ${detail}. ${mode?'Serving mode derived from DS4 request rules and server context; not an engine-reported measurement.':'Effective engine mode is not reported; this is the requested setting only.'}`};
+  return {label:mode==='none'?'OFF':mode?mode.toUpperCase():requestedLabel,detail:`Requested: ${detail}. ${mode?'Serving mode derived from backend request rules and server context; not an engine-reported measurement.':'Effective engine mode is not reported; this is the requested setting only.'}`};
 }
 function thinkingIndicator(w, stale, now) {
   const info = thinkingInfo(w?.load ? w.requested_thinking : w?.last_requested_thinking);
@@ -40,8 +40,19 @@ function rateScales(devices,peaks,now){
     for(const d of devices??[])for(const p of d.series??[])if(p.kind===kind&&Number.isFinite(p.tps)&&p.tps>0&&Number.isFinite(p.time)&&p.time<=now)values.push(p.tps);
     return [kind,values.length?values.reduce((max,value)=>Math.max(max,value),0):1];
   }));
-  scales.detail=`Fleet record scale, seeded from retained DS4 chunk-speed telemetry and preserved across dashboard restarts; deleted history before tracking cannot be reconstructed. Historical scan: ${peaks?.history_status??'unavailable'}.${peaks?.persistence_error?' Peak persistence unavailable; new records may not survive restart.':''}${peaks?.malformed_lines?' Some historical rows could not be read.':''} No samples uses a 0–1 placeholder.`;
+  scales.detail=`Fleet record scale, seeded from retained engine chunk-speed telemetry and preserved across dashboard restarts; deleted history before tracking cannot be reconstructed. Historical scan: ${peaks?.history_status??'unavailable'}.${peaks?.persistence_error?' Peak persistence unavailable; new records may not survive restart.':''}${peaks?.malformed_lines?' Some historical rows could not be read.':''} No samples uses a 0–1 placeholder.`;
   return scales;
+}
+// Display-only trailing mean. Work on copies, retaining every raw observation.
+// Sparse samples expire by timestamp; smoothing never borrows future values.
+function smoothRates(samples) {
+  let start=0,sum=0;
+  return samples.map((sample,index)=>{
+    if(index&&sample.scope!==samples[index-1].scope){start=index;sum=0;}
+    sum+=sample.tps;
+    while(start<index&&samples[start].time<=sample.time-20000)sum-=samples[start++].tps;
+    return {...sample,tps:Math.max(0,sum/(index-start+1))};
+  });
 }
 function chart(series, kind, now, ceiling) {
   const values = (series??[]).filter(s => s?.kind === kind && Number.isFinite(s.time) && Number.isFinite(s.tps) && s.tps>=0 && s.time<=now && now - s.time < 900000).sort((a,b)=>a.time-b.time);
@@ -59,7 +70,8 @@ function chart(series, kind, now, ceiling) {
   // horizontal space; the x axis is deliberately not a shared wall-clock axis.
   if(!first)parts.push(marker(150,900000,'without rate samples'));
   if(leading){parts.push(marker(cursor+gapWidth/2,first.time-(now-900000),'before the first sample'));cursor+=gapWidth;}
-  groups.forEach((group,index)=>{
+  groups.forEach((rawGroup,index)=>{
+    const group=smoothRates(rawGroup);
     if(index){parts.push(marker(cursor+gapWidth/2,group[0].time-groups[index-1].at(-1).time,'between rate measurements'));cursor+=gapWidth;}
     const width=available*durations[index]/total,start=group[0].time;
     const point=s=>`${(cursor+(group.length===1?width/2:(s.time-start)/durations[index]*width)).toFixed(1)},${(52-s.tps/max*44).toFixed(1)}`;
@@ -69,7 +81,7 @@ function chart(series, kind, now, ceiling) {
   });
   if(trailing)parts.push(marker(cursor+gapWidth/2,now-last.time,'since the last sample'));
   else if(lastPoint)parts.push(`<circle class="chart-last" cx="${lastPoint[0]}" cy="${lastPoint[1]}" r="3.2"/>`);
-  return `<svg class="chart ${kind}" viewBox="0 0 300 60" preserveAspectRatio="none" role="img" aria-label="${kind} last 15 minutes, ${Number.isFinite(ceiling)&&ceiling>0?'shared':'sample'} speed scale zero to ${max} tokens per second; gaps collapsed to idle-coloured separators, horizontal positions are not wall-clock aligned"><line class="chart-grid" x1="0" y1="8" x2="300" y2="8"/><line class="chart-grid" x1="0" y1="30" x2="300" y2="30"/><line class="chart-baseline" x1="0" y1="52" x2="300" y2="52"/>${parts.join('')}</svg>`;
+  return `<svg class="chart ${kind}" viewBox="0 0 300 60" preserveAspectRatio="none" role="img" aria-label="${kind} last 15 minutes, 20-second rolling average of samples, ${Number.isFinite(ceiling)&&ceiling>0?'shared':'sample'} speed scale zero to ${max} tokens per second; gaps collapsed to idle-coloured separators, horizontal positions are not wall-clock aligned"><line class="chart-grid" x1="0" y1="8" x2="300" y2="8"/><line class="chart-grid" x1="0" y1="30" x2="300" y2="30"/><line class="chart-baseline" x1="0" y1="52" x2="300" y2="52"/>${parts.join('')}</svg>`;
 }
 function hardwareMiniChart(series,value,ceiling,label,{now,gapMs=60000}={}){
   const rows=(series??[]).map(sample=>({time:sample.time,value:value(sample)})).filter(sample=>Number.isFinite(sample.time)&&Number.isFinite(sample.value)).sort((a,b)=>a.time-b.time),max=Math.max(1,ceiling??0,...rows.map(row=>row.value));
@@ -112,22 +124,25 @@ function renderFleetSpeed(a){
   const speed=a?.fleet_speed,ready=speed?.status==='ready'&&speed?.schema===1,window=ready?speed.windows?.[fleetSpeedWindow]:null;
   if($('fleet-speed-window').value!==fleetSpeedWindow)$('fleet-speed-window').value=fleetSpeedWindow;
   const setGauge=kind=>{
-    const phase=window?.[kind],max=speed?.calibration?.[kind]?.max_tps,value=phase?.mean_tps,valid=Number.isFinite(value)&&Number.isFinite(max)&&max>0;
+    const phase=window?.[kind],value=phase?.mean_tps,max=speed?.calibration?.[kind]?.max_tps??(value===0?1:null),valid=Number.isFinite(value)&&Number.isFinite(max)&&max>0;
     const gauge=$(`fleet-speed-${kind}`),fill=valid?Math.min(100,100*value/max):0,activity=Number.isFinite(phase?.activity_lower_bound_pct)?Math.min(100,phase.activity_lower_bound_pct):0;
-    gauge.style.setProperty('--speed-fill',String(fill));gauge.style.setProperty('--activity-fill',String(activity));$(`fleet-${kind}-speed`).textContent=valid?fmtWhole(value):'—';
-    const label=valid?`${kind} active-phase mean ${fmtWhole(value)} tokens per second over ${fleetSpeedWindow}; gauge calibrated zero to ${fmtWhole(max)}; at least ${fmt(activity)} percent of current configured fleet-hours observed in this phase; ${fmt(phase.samples)} timing intervals across ${fmt(phase.observed_workers)} workers`:`${kind} speed unavailable for ${fleetSpeedWindow}`;
+    gauge.classList.toggle('has-speed',valid&&value>0);gauge.classList.toggle('has-activity',activity>0);gauge.style.setProperty('--speed-fill',String(fill));gauge.style.setProperty('--activity-fill',String(activity));$(`fleet-${kind}-speed`).textContent=valid?fmtWhole(value):'—';
+    const label=valid?`${kind} observed mean ${fmtWhole(value)} tokens per second over ${fleetSpeedWindow}; gauge calibrated zero to ${fmtWhole(max)}; ${Number.isFinite(phase.activity_lower_bound_pct)?'at least '+fmt(activity)+' percent of fleet-hours observed in this phase':'phase occupancy unavailable'}; ${fmt(phase.samples)} timing intervals across ${fmt(phase.observed_workers)} workers`:`${kind} speed unavailable for ${fleetSpeedWindow}`;
     gauge.setAttribute('aria-label',label);
   };
   setGauge('decode');setGauge('prefill');
-  const tokens=window?.decode?.tokens_observed,energy=window?.energy,estimated=energy?.estimated_kwh,efficiency=Number.isFinite(tokens)&&Number.isFinite(estimated)&&estimated>0?tokens/estimated:null;
-  $('fleet-speed-value').textContent=ready?`${Number.isFinite(tokens)?compactValue(tokens)+' tok':'No generation evidence'} · ${Number.isFinite(estimated)?`≈${fmt(estimated)} kWh${Number.isFinite(efficiency)?` · ${compactValue(efficiency)} tok/kWh`:''}`:Number.isFinite(energy?.measured_kwh)&&energy.measured_kwh>0?`${energy.measured_kwh.toFixed(3)} kWh measured subtotal`:'energy awaiting power data'}`:'Timing evidence unavailable';
-  const state=({catching_up:'Loading saved engine timings.',rescanning:'Rebuilding saved engine timings.',waiting:'No saved engine timings yet.',unavailable:'Engine timing history unavailable.'})[speed?.status]||'Engine timing history unavailable.';
-  const partial=!!(speed?.partial_history||speed?.malformed_lines||speed?.rejected_records||speed?.evicted_intervals),power=energy?.status==='estimated_from_measured_power'?`Energy extrapolates ${fmt(energy.measured_kwh)} measured kWh across included workers only after at least 80% measured-power coverage; aggregate coverage ${fmt(energy.coverage_pct)}%.`:energy?.status==='insufficient_power_coverage'?`Power coverage is ${fmt(energy.coverage_pct)}%; no fleet-energy estimate is shown until every current worker reaches 80%.`:'No measured power samples are available, so DSG does not invent an energy estimate.';
-  const detail=ready?`DwarfStar log history only; OpenAI endpoint live rates and graphs are shown on server cards and are not included in these historical gauges. Selected window: ${fleetSpeedWindow}. Each speed is a duration-weighted active mean: total observed token deltas divided by total observed active-phase seconds; repeated cumulative DS4 log lines are differenced first. Gauge ceilings are the padded, rounded 95th percentile of valid 24-hour engine intervals. The thin outer arcs are lower bounds on phase activity across the current configured fleet; missing telemetry and other phases are not called idle. ${power}${partial?' Evidence gaps or bounded-history limits are present.':''}`:state;
+  const energy=window?.energy,estimated=energy?.estimated_kwh;
+  const observed=new Set([...(window?.decode?.workers??[]),...(window?.prefill?.workers??[])]).size,total=window?.decode?.worker_count??0;
+  const coverage=observed?`${observed}/${total} servers`:'Awaiting samples';
+  const energyText=Number.isFinite(estimated)?`≈${fmt(estimated)} kWh`:energy?.measured_kwh>0?`${energy.measured_kwh.toFixed(3)} kWh*`:'Energy unavailable';
+  $('fleet-speed-value').textContent=ready?`${coverage} · ${energyText}`:'Loading history…';
+  const state=({catching_up:'Loading saved measurements.',rescanning:'Rebuilding saved measurements.',waiting:'No saved measurements yet.',unavailable:'Measurement history unavailable.'})[speed?.status]||'Measurement history unavailable.';
+  const partial=!!(speed?.partial_history||speed?.malformed_lines||speed?.rejected_records||speed?.evicted_intervals);
+  const detail=ready?`Observed average speed over ${fleetSpeedWindow}, not combined fleet throughput. vLLM uses total tokens divided by total phase seconds for requests completed within the window; cached prefill tokens are excluded. Native engines use token/time deltas. oMLX uses time-weighted samples of reported active rates; its prefill and decode rate scopes differ from vLLM. Missing history is excluded, not treated as zero. Server counts indicate evidence present, not full-period coverage. Gauge ceilings use the padded 24-hour 95th percentile. Endpoint history starts when this collector was enabled; it is not reconstructed from lifetime averages. ${partial?'Some evidence is incomplete.':''}`:state;
   const energyButton=$('fleet-speed-value');
-  energyButton.dataset.lightTitle=`Energy evidence · ${fleetSpeedWindow}`;
-  energyButton.dataset.lightDetail=energy?`Period ${new Date(energy.window_start).toLocaleString()} to ${new Date(energy.window_end).toLocaleString()}. Measured subtotal ${(energy.measured_kwh??0).toFixed(4)} kWh; fleet estimate ${Number.isFinite(estimated)?estimated.toFixed(4)+' kWh':'unavailable'}. Adjacent power readings are integrated trapezoidally; gaps over 60 seconds are excluded. Each worker needs at least 80% coverage and one measurement scope for extrapolation. System and compute-module measurements have different boundaries; this is not utility-meter energy. GPU-only readings are excluded.\n\n${(energy.workers??[]).map(row=>`${row.worker}: ${row.measured_kwh.toFixed(4)} kWh measured, ${fmt(row.coverage_pct)}% coverage; ${row.scopes.join(', ')||'no eligible scope'}${row.sensors.length?' ('+row.sensors.join(', ')+')':''}; ${row.status.replaceAll('_',' ')}.`).join('\n')}`:state;
-  $('fleet-speed-summary').title=detail;$('fleet-speed-summary').setAttribute?.('aria-label',ready?`DwarfStar historical speed over ${fleetSpeedWindow}. Decode ${fmtWhole(window?.decode?.mean_tps)} tokens per second. Prefill ${fmtWhole(window?.prefill?.mean_tps)} tokens per second. ${Number.isFinite(estimated)?`Estimated energy ${fmt(estimated)} kilowatt hours.`:Number.isFinite(energy?.measured_kwh)&&energy.measured_kwh>0?`Measured energy subtotal ${energy.measured_kwh.toFixed(3)} kilowatt hours. Fleet estimate unavailable.`:'Energy unavailable.'}`:state);
+  energyButton.dataset.lightTitle=`Fleet history · ${fleetSpeedWindow}`;
+  energyButton.dataset.lightDetail=energy?`${detail}\n\nDecode: ${window?.decode?.observed_workers??0}/${total} servers. Prefill: ${window?.prefill?.observed_workers??0}/${total} servers.\n* kWh is the measured subtotal when coverage is incomplete.\n\nPeriod ${new Date(energy.window_start).toLocaleString()} to ${new Date(energy.window_end).toLocaleString()}. Measured subtotal ${(energy.measured_kwh??0).toFixed(4)} kWh; fleet estimate ${Number.isFinite(estimated)?estimated.toFixed(4)+' kWh':'unavailable'}. Adjacent power readings are integrated trapezoidally; gaps over 60 seconds are excluded. Each worker needs at least 80% coverage and one measurement scope for extrapolation. System and compute-module measurements have different boundaries; this is not utility-meter energy. GPU-only readings are excluded.\n\n${(energy.workers??[]).map(row=>`${row.worker}: ${row.measured_kwh.toFixed(4)} kWh measured, ${fmt(row.coverage_pct)}% coverage; ${row.scopes.join(', ')||'no eligible scope'}${row.sensors.length?' ('+row.sensors.join(', ')+')':''}; ${row.status.replaceAll('_',' ')}.`).join('\n')}`:state;
+  $('fleet-speed-summary').title=detail;$('fleet-speed-summary').setAttribute?.('aria-label',ready?`Fleet historical speed over ${fleetSpeedWindow}. Decode ${fmtWhole(window?.decode?.mean_tps)} tokens per second. Prefill ${fmtWhole(window?.prefill?.mean_tps)} tokens per second. ${Number.isFinite(estimated)?`Estimated energy ${fmt(estimated)} kilowatt hours.`:Number.isFinite(energy?.measured_kwh)&&energy.measured_kwh>0?`Measured energy subtotal ${energy.measured_kwh.toFixed(3)} kilowatt hours. Fleet estimate unavailable.`:'Energy unavailable.'}`:state);
 }
 async function loadRequestHistory() {
   if(requestHistoryLoading)return;requestHistoryLoading=true;
@@ -179,7 +194,7 @@ function schedulingExplanation(g,workers,capacity) {
   const route=idle?`${idle} is free; `:'';
   if(row.automatic_reason==='automatic_wait_threshold'){
     const threshold=continuity.automatic_affinity_rebalance_min_wait_ms,remaining=Number.isFinite(threshold)?threshold/1000-row.waiting_seconds:null,wait=compactWait(remaining);
-    return ` ${route}${row.source}'s next queued session keeps its warm home${wait?` for up to ${wait} more`:''}; then the DSG core may hand it over automatically.`;
+    return ` ${route}${row.source}'s next queued session keeps its warm home${wait?` for up to ${wait} more`:''}; then the Star Gate core may hand it over automatically.`;
   }
   if(row.automatic_reason==='affinity_automatic_disabled')return ` ${route}strict affinity keeps ${row.source}'s queued session at home until an exact manual or Genie handover.`;
   if(row.automatic_reason==='automatic_ready')return ` ${route}${row.source}'s queued request is eligible for automatic core handover now.`;
@@ -188,17 +203,17 @@ function schedulingExplanation(g,workers,capacity) {
 function timeline(d,now) {
   const rows=d.activity||[],start=now-900000;
   const band=phase=>phase==='mixed'?'mixed':phase==='prefill'?'prefill':phase==='thinking'||phase==='decode'?'decode':['idle','paused'].includes(phase)?'idle-off':'unknown';
-  return `<svg class="activity-timeline" viewBox="0 0 100 10" preserveAspectRatio="none" role="img" aria-label="Observed activity over the last fifteen minutes: blue is prefill, green is decode or generation, dark grey is idle or off, and dark gaps are unknown telemetry">${rows.map(r=>{
+  return `<svg class="activity-timeline" viewBox="0 0 100 10" preserveAspectRatio="none" role="img" aria-label="Observed activity over the last fifteen minutes: blue is prefill, green is decode or generation, grey is idle or off, and empty gaps mean the phase is unavailable">${rows.map(r=>{
     const left=Math.max(start,r.start),right=Math.min(now,r.end),width=Math.max(0,(right-left)/9000);
-    if(r.phase==='mixed')return `<rect class="phase-prefill" x="${Math.max(0,(left-start)/9000)}" width="${width}" height="5"><title>Concurrent prefill and generation</title></rect><rect class="phase-decode" x="${Math.max(0,(left-start)/9000)}" width="${width}" y="5" height="5"><title>Concurrent prefill and generation</title></rect>`;
+    if(r.phase==='mixed')return `<rect class="phase-prefill" x="${Math.max(0,(left-start)/9000)}" width="${width}" height="5"><title>Prefill and generation observed together</title></rect><rect class="phase-decode" x="${Math.max(0,(left-start)/9000)}" width="${width}" y="5" height="5"><title>Prefill and generation observed together</title></rect>`;
     return `<rect class="phase-${band(r.phase)}" x="${Math.max(0,(left-start)/9000)}" width="${width}" height="10"><title>${esc(r.phase)} · ${Math.round((right-left)/1000)}s</title></rect>`;
-  }).join('')}${(d.activity_markers??[]).filter(row=>Number.isFinite(row.time)&&row.time>=start&&row.time<=now&&row.phase==='prefill').map(row=>`<line class="prefill-evidence-marker" x1="${(row.time-start)/9000}" x2="${(row.time-start)/9000}" y1="0" y2="10"><title>${row.basis==='completed_request'?'Completed request included':'Poll interval included'} ${fmtWhole(row.tokens)} computed prefill tokens. Tick marks observation time; prefill duration is not known.</title></line>`).join('')}</svg>${d.activity_markers?.length?'<div class="timeline-evidence-note">Blue ticks: prefill detected; duration unavailable</div>':''}`;
+  }).join('')}${(d.endpoint_metrics?.source==='vllm'?[]:d.activity_markers??[]).filter(row=>row.basis==='completed_request'&&Number.isFinite(row.time)&&row.time>=start&&row.time<=now&&row.phase==='prefill').map(row=>`<line class="prefill-evidence-marker" x1="${(row.time-start)/9000}" x2="${(row.time-start)/9000}" y1="0" y2="10"><title>${row.basis==='completed_request'?'Completed request included':'Poll interval included'} ${fmtWhole(row.tokens)} computed prefill tokens. Tick marks observation time; prefill duration is not known.</title></line>`).join('')}</svg>${d.endpoint_metrics?.source!=='vllm'&&d.activity_markers?.some(row=>row.basis==='completed_request')?'<div class="timeline-evidence-note">Blue ticks: prefill detected; duration unavailable</div>':''}`;
 }
 function routingInfo(w,{stale=false,recovering=false}={}) {
   if(stale||!w)return {level:'unknown',label:'STATUS UNKNOWN',detail:'Live gateway status is unavailable. Routing controls are disabled until it returns.',action:null};
   const busy=!!w.load||w.queued>0,held=!!w.holds?.length,locked=!!w.maintenance_locks?.length;
   const reasons=[];
-  if(w.quarantine)reasons.push(({repeated_inference_failures:'DSG isolated this server after repeated inference failures.',fatal_accelerator_error:'DSG isolated this server after a fatal accelerator error.',accelerator_checkpoint_failure:'DSG isolated this server after an accelerator checkpoint failure.'})[w.quarantine.reason]||'DSG isolated this server after a generation fault.');
+  if(w.quarantine)reasons.push(({repeated_inference_failures:'Star Gate isolated this server after repeated inference failures.',fatal_accelerator_error:'Star Gate isolated this server after a fatal accelerator error.',accelerator_checkpoint_failure:'Star Gate isolated this server after an accelerator checkpoint failure.'})[w.quarantine.reason]||'Star Gate isolated this server after a generation fault.');
   if(w.operator_paused)reasons.push('An operator paused gateway routing.');
   if(w.last_operator_action){const action=w.last_operator_action,source=action.control_channel.replaceAll('_',' ');reasons.push(`Last local operator control: ${action.action} via ${source} at ${new Date(action.time).toLocaleString()}. The source label identifies the client path, not a human identity.`);}
   if(held)reasons.push(`Reserved by ${w.holds.map(h=>h.owner_id).join(', ')}. The owning agent must release its hold; Resume cannot override it.`);
@@ -217,7 +232,7 @@ function routingInfo(w,{stale=false,recovering=false}={}) {
 function managementDetail(w) {
   const probe={
     ECONNREFUSED:'The last model readiness connection was refused at the configured endpoint. This does not identify whether the listener, tunnel forwarding or another network boundary caused it.',
-    ECONNRESET:'The last model readiness connection was reset. This observation alone does not prove that DS4 crashed or establish the state of an inference request.',
+    ECONNRESET:'The last model readiness connection was reset. This observation alone does not prove that the model server crashed or establish the state of an inference request.',
     PROBE_TIMEOUT:'The last model readiness probe exceeded its deadline; the cause is not established.',
     model_or_context_mismatch:'The endpoint answered, but its model or context did not match the enrolled requirements.',
     invalid_model_response:'The endpoint answered without a valid model-readiness response.'
@@ -228,7 +243,7 @@ function managementPathDetail(w) {
   const m=w?.management_path,reason=m?.reason;
   const reasons={
     adapter_dns_failure:'The SSH management path cannot resolve its configured host alias.',
-    adapter_host_key_failure:'SSH rejected the configured host identity. Review the operator-owned known-host entry; DSG will not bypass host-key checking.',
+    adapter_host_key_failure:'SSH rejected the configured host identity. Review the operator-owned known-host entry; Star Gate will not bypass host-key checking.',
     adapter_auth_failure:'SSH authentication failed for the configured management path.',
     adapter_connect_timeout:'The SSH management path timed out before a verified connection.',
     adapter_connection_refused:'The configured machine refused the SSH connection.',
@@ -239,10 +254,10 @@ function managementPathDetail(w) {
     adapter_output_limit:'The recovery adapter exceeded its bounded output contract.',
     adapter_unreachable:'The SSH management path exited before verification.',
     adapter_check_failed:'The management path answered, but the enrolled recovery helper did not return a valid check.'};
-  const routes=Number.isSafeInteger(m?.route_count)&&m.route_count>1?` DSG is automatically cycling through ${m.route_count} enrolled SSH routes.`:'';
+  const routes=Number.isSafeInteger(m?.route_count)&&m.route_count>1?` Star Gate is automatically cycling through ${m.route_count} enrolled SSH routes.`:'';
   if(reasons[reason])return reasons[reason]+routes;
   if(m?.transport==='ssh_tunnel'&&m.state==='ssh_process_active')return 'The local SSH tunnel process exists, but the model readiness probe is not succeeding; login, forwarding and service health are not yet distinguished.';
-  if(m?.transport==='ssh_tunnel'&&['connecting','retrying','ssh_error','pending'].includes(m.state))return 'The SSH tunnel is not verified; DSG is continuing its configured connection attempts.'+routes;
+  if(m?.transport==='ssh_tunnel'&&['connecting','retrying','ssh_error','pending'].includes(m.state))return 'The SSH tunnel is not verified; Star Gate is continuing its configured connection attempts.'+routes;
   if(m?.transport==='local')return 'The local model endpoint is not passing its readiness check.';
   return 'The server is not passing readiness checks. Check its model process or connection, then try again.';
 }
@@ -252,7 +267,7 @@ function routingMarkup(w,{stale=false,controls=true,recovering=false,busy=worker
   const info=routingInfo(w,{stale,recovering});
   if(!controls||!info.action)return `<span class="worker-routing" data-level="${info.level}" aria-label="${esc(info.label)}"></span>`;
   const name=String(w.id).replace(/^spark/i,'Spark '),at=w?.quarantine?.at;
-  const recorded=at&&Number.isFinite(Date.parse(at))?` Excluded ${new Date(at).toLocaleString()}; recorded by DSG.`:'';
+  const recorded=at&&Number.isFinite(Date.parse(at))?` Excluded ${new Date(at).toLocaleString()}; recorded by Star Gate.`:'';
   const tooltip=`${info.label} for ${name}. ${info.detail}${recorded} ${info.title}`;
   const icon=info.action==='drain'?'<path d="M5 4h4v16H5zM15 4h4v16h-4z"/>':'<path d="M6 4l14 8-14 8z"/>';
   return `<span class="worker-routing" data-level="${info.level}"><button class="routing-toggle" type="button" data-action="${info.action}" data-id="${esc(w.id)}" data-tooltip="${esc(tooltip)}" aria-label="${esc(tooltip)}" ${stale||busy||info.blocked||!workerControlsReady?'disabled':''}><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">${icon}</svg></button></span>`;
@@ -266,7 +281,7 @@ function updateRoutingNode(current,fresh) {
 function renderDevices(devices,workers,now,stale,scales,controls) {
   const viewport={x:window.scrollX,y:window.scrollY};
   const container=$('devices'),existing=new Map([...container.querySelectorAll('.device')].map(el=>[el.dataset.workerId,el]));
-  if(!devices.length){container.innerHTML=`<article class="device onboarding"><h2>Add your first model server</h2><p>Register an already-running local endpoint or an endpoint reached through your existing SSH login. DSG checks model and context, then leaves routing paused until you enable it.</p>${controls?'<button type="button" class="button" data-add-first>Open server setup</button>':'<p class="muted">Enable local server controls in private DSG configuration to register from this dashboard.</p>'}</article>`;return;}
+  if(!devices.length){container.innerHTML=`<article class="device onboarding"><h2>Add your first model server</h2><p>Register an already-running local endpoint or an endpoint reached through your existing SSH login. Star Gate checks model and context, then leaves routing paused until you enable it.</p>${controls?'<button type="button" class="button" data-add-first>Open server setup</button>':'<p class="muted">Enable local server controls in private Star Gate configuration to register from this dashboard.</p>'}</article>`;return;}
   if(!existing.size)container.replaceChildren();
   devices.forEach((d,i)=>{
     const template=document.createElement('template');template.innerHTML=device(d,workers.find(w=>w.id===d.id),now,stale,i+1,scales,controls);
@@ -289,6 +304,7 @@ function renderDevices(devices,workers,now,stale,scales,controls) {
   if(window.scrollX!==viewport.x||window.scrollY!==viewport.y)window.scrollTo(viewport.x,viewport.y);
 }
 function refreshRoutingControls() {
+  const turnsApply=$('conversation-turn-apply');if(turnsApply)turnsApply.disabled=workerBusy||!workerControlsReady||workerUiStale||turnsExpected===null;
   // The fresh-install onboarding tile is not a worker and has no routing node.
   for(const el of $('devices').querySelectorAll('.device[data-worker-id]')){
     const w=visibleWorkers.find(w=>w.id===el.dataset.workerId),template=document.createElement('template');
@@ -298,7 +314,7 @@ function refreshRoutingControls() {
 }
 function serverVerdict(d,w,now,stale=false) {
   if(stale||!w)return {level:'unknown',label:'Status stale',detail:'Live gateway status is unavailable; values are historical.'};
-  if(w.quarantine)return {level:'bad',label:'Quarantined',detail:'DSG isolated this server after a generation fault. Use the recovery/readmission controls only after reviewing the evidence.'};
+  if(w.quarantine)return {level:'bad',label:'Quarantined',detail:'Star Gate isolated this server after a generation fault. Use the recovery/readmission controls only after reviewing the evidence.'};
   if(w.maintenance_locks?.length)return {level:'paused',label:'Maintenance',detail:`Named lock${w.maintenance_locks.length===1?'':'s'} ${w.maintenance_locks.map(lock=>lock.name).join(', ')} prevent all routing and automatic recovery. Review deadlines only warn; they never auto-release.`};
   if(!w.is_healthy)return {level:'bad',label:'Unavailable',detail:managementDetail(w)};
   if(w.drained)return {level:'paused',label:w.load?'Pausing':'Paused',detail:w.load?'No new work is admitted; an already admitted request is still finishing.':'No new gateway requests are admitted to this server.'};
@@ -318,7 +334,7 @@ function cacheLight(d,now,stale) {
   const view=d.cache_continuity,worker=view?.status==='ready'&&Number.isFinite(view.checked_at)&&now-view.checked_at>=0&&now-view.checked_at<=15000?view.workers?.[d.id]:null;
   if(d.backend==='openai'||d.endpoint_metrics){
     const low=worker&&Number.isFinite(worker.last_low_reuse_at)&&now>=worker.last_low_reuse_at&&now-worker.last_low_reuse_at<=30*60000;
-    return {level:low?'amber':'grey',details:`OpenAI cache evidence comes from completed DSG request usage, independently of engine activity. ${fmt(worker?.assessed_pairs)} consecutive request pairs assessed in retained audit history; ${fmt(worker?.reuse_observed)} with substantial reuse and ${fmt(worker?.partial_reuse)} with partial reuse. Checked ${age(view?.checked_at,now)}; latest assessed pair ${age(worker?.last_assessed_at,now)}. ${low?'Recent low reuse needs review.':'No current cache-health verdict is established.'} Direct-client requests are outside this evidence. Exact prefix equality, disk restore time and fault causality are unavailable.`};
+    return {level:low?'amber':'grey',details:`OpenAI cache evidence comes from completed Star Gate request usage, independently of engine activity. ${fmt(worker?.assessed_pairs)} consecutive request pairs assessed in retained audit history; ${fmt(worker?.reuse_observed)} with substantial reuse and ${fmt(worker?.partial_reuse)} with partial reuse. Checked ${age(view?.checked_at,now)}; latest assessed pair ${age(worker?.last_assessed_at,now)}. ${low?'Recent low reuse needs review.':'No current cache-health verdict is established.'} Direct-client requests are outside this evidence. Exact prefix equality, disk restore time and fault causality are unavailable.`};
   }
   const recent=(d.recent??[]).filter(row=>row.kind==='start'&&/^[a-f0-9]{64}$/.test(d.backend_epoch??'')&&row.backend_epoch===d.backend_epoch&&now-row.time>=0&&now-row.time<=30*60000);
   const hits=recent.filter(row=>row.cached>0).length;
@@ -352,7 +368,7 @@ function performanceLightsMarkup(d,now,stale) {
     const value=kind==='cache'?cacheLight(d,now,stale):worker?.[kind];
     const endpoint=d.backend==='openai'||d.endpoint_metrics;
     const level=endpoint?(kind==='cache'?value.level:'grey'):stale?'grey':Object.hasOwn(levels,value?.level)?value.level:'grey';
-    const detail=kind==='cache'?value.details:endpoint?'Matched performance comparisons are not available for this OpenAI backend. Live engine rates and engine-session averages are shown above; they do not establish a slowdown against equivalent workloads. Historical DwarfStar comparisons do not apply to this endpoint.':performanceLightDetail(value,kind,history,now);
+    const detail=kind==='cache'?value.details:endpoint?'Matched performance comparisons are not available for this OpenAI backend. Live engine rates and engine-session averages are shown above; they do not establish a slowdown against equivalent workloads. Historical engine-log comparisons do not apply to this endpoint.':performanceLightDetail(value,kind,history,now);
     const label=kind==='cache'&&level==='green'?'Reuse':levels[level];
     return `<button type="button" class="performance-light" data-light="${kind}" data-level="${level}" data-light-title="${title}" data-light-detail="${esc(detail)}" title="${esc(detail)}" aria-label="${title}: ${label}. Open evidence"><span class="light-dot" aria-hidden="true"></span><span>${title}</span><small>${label}</small></button>`;
   }).join('')}</div>`;
@@ -371,7 +387,7 @@ function device(d, w, now, stale, index = 1, scales={}, controls=false) {
   const engineBusy=!stale&&d.endpoint_metrics?.connected&&now-d.endpoint_metrics.at>=0&&now-d.endpoint_metrics.at<15000&&d.endpoint_metrics.running>0;
   const state = engineBusy&&['prefill','decode','mixed'].includes(d.endpoint_metrics.phase)?d.endpoint_metrics.phase:!w?.load&&engineBusy?'engine busy':phase(d,w,now,stale);
   const bad = stale || !w?.is_healthy;
-  const verdict=!w?.load&&engineBusy?{level:'busy',label:'Engine reports activity',detail:'The endpoint reports active work, but DSG has no dispatched request on this worker. Direct clients and engine cleanup are outside DSG request accounting.'}:serverVerdict(d,w,now,stale);
+  const verdict=!w?.load&&engineBusy?{level:'busy',label:'Engine reports activity',detail:'The endpoint reports active work, but Star Gate has no dispatched request on this worker. Direct clients and engine cleanup are outside Star Gate request accounting.'}:serverVerdict(d,w,now,stale);
   const metric = (kind, title) => {
     const endpoint=d.endpoint_metrics??(d.backend==='openai'?{}:null);
     if(endpoint){
@@ -382,19 +398,19 @@ function device(d, w, now, stale, index = 1, scales={}, controls=false) {
       const showLive=hasLive&&kind!=='prefill';
       const label=showLive?'Live':kind==='prefill'&&endpoint.source==='omlx'?'Average · incl. overhead':'Session average';
       const chunk=kind==='prefill'&&hasLive?`<span class="metric-live-chunk">${fmtWhole(liveRate)} live</span>`:'';
-      return `<div class="metric-block ${live?'':'metric-stale'}"><span class="label">${title}</span><div class="rate ${kind}">${fmtWhole(rate)}<em>t/s</em></div><div class="metric-scope"><span>${label}</span>${chunk}</div>${chart(endpoint.series,kind,now)}<div class="chart-caption">15m · ${kind==='prefill'&&endpoint.source==='omlx'?'chunk speed':'live rates'}</div></div>`;
+      return `<div class="metric-block ${live?'':'metric-stale'}"><span class="label">${title}</span><div class="rate ${kind}">${fmtWhole(rate)}<em>t/s</em></div><div class="metric-scope"><span>${label}</span>${chunk}</div>${chart(endpoint.series,kind,now)}<div class="chart-caption">15m · 20s avg · ${kind==='prefill'?(endpoint.source==='omlx'?'chunk speed':'completed-request prefill speed'):'live rates'}</div></div>`;
     }
 
     const m = d[kind];
     const staleMetric=!Number.isFinite(m?.time)||now-m.time>60000;
-    const explanation=kind==='decode'?'Generation speed measured by DS4, including thinking and answer tokens.':'Prompt-processing speed measured by DS4.';
+    const explanation=kind==='decode'?'Generation speed reported by the engine, including thinking and answer tokens.':'Prompt-processing speed reported by the engine.';
     const measured=`${staleMetric?'Last':'Latest'} measurement: ${age(m?.time,now)}. Values are engine observations, not a promise of current speed.`;
-    return `<div class="metric-block ${staleMetric?'metric-stale':''}"><span class="label" title="${explanation}">${title}</span><div class="rate ${kind}">${fmtWhole(m?.tps)}<em>t/s</em></div><div class="metric-note" title="${esc(measured)}">${rollingRateNote(d.rolling_rates?.[kind])} · ${age(m?.time, now)}</div>${chart(d.series, kind, now,scales[kind])}<div class="chart-caption" title="${esc(scales.detail)} Exact ceiling: ${scales[kind]} t/s. Gaps compressed; not a shared wall-clock axis.">15m · compressed · 0–${fmtWhole(scales[kind])} t/s</div></div>`;
+    return `<div class="metric-block ${staleMetric?'metric-stale':''}"><span class="label" title="${explanation}">${title}</span><div class="rate ${kind}">${fmtWhole(m?.tps)}<em>t/s</em></div><div class="metric-note" title="${esc(measured)}">${rollingRateNote(d.rolling_rates?.[kind])} · ${age(m?.time, now)}</div>${chart(d.series, kind, now,scales[kind])}<div class="chart-caption" title="${esc(scales.detail)} Exact ceiling: ${scales[kind]} t/s. Gaps compressed; not a shared wall-clock axis.">15m · 20s avg · 0–${fmtWhole(scales[kind])} t/s</div></div>`;
   };
   const endpoint=d.endpoint_metrics;
   const metricsFresh=!stale&&endpoint?.connected&&Number.isFinite(endpoint.at)&&now>=endpoint.at&&now-endpoint.at<15000;
-  const metricsInfo=endpoint?`<div class="server-metrics-status"><span>${metricsFresh?'Updated':'Unavailable'} · ${age(endpoint.at,now)}</span><details class="measurement-info"><summary>Metric details</summary><div><p>${esc(endpoint.source??'Endpoint')} · ${fmt(endpoint.running)} active · ${fmt(endpoint.waiting)} waiting · ${fmt(endpoint.requests)} completed</p><p>${endpoint.source==='omlx'?'Prefill is an engine-session average: newly processed tokens divided by time to first token, including setup, waiting and cache work. It is not pure compute speed. Live prefill and its chart show latest-chunk speed.':'Session averages are reported by the engine. Live rates and charts show observed polling intervals.'}</p><p>Decode includes thinking and answer tokens. Charts cover 15 minutes with gaps compressed; missing samples do not prove idle.</p></div></details></div>`:'';
-  const duration=!stale&&w?.load&&Number.isFinite(w.active_seconds)?`<span class="remaining-estimate" title="Elapsed time of the active DSG request; not an estimate">${fmtWhole(Math.floor(w.active_seconds/60))}m active</span>`:'';
+  const metricsInfo=endpoint?`<div class="server-metrics-status"><span>${metricsFresh?'Updated':'Unavailable'} · ${age(endpoint.at,now)}</span><details class="measurement-info"><summary>Metric details</summary><div><p>${esc(endpoint.source??'Endpoint')} · ${fmt(endpoint.running)} active · ${fmt(endpoint.waiting)} waiting · ${fmt(endpoint.requests)} completed</p><p>${endpoint.source==='omlx'?'Prefill is an engine-session average: newly processed tokens divided by time to first token, including setup, waiting and cache work. It is not pure compute speed. Live prefill and its chart show latest-chunk speed.':'Prefill chart points use newly computed KV tokens divided by engine-reported prefill seconds for requests completed since the last sample. Cached tokens are excluded. Blue runs from scheduling to the first generated token; green follows generation. Phases are sampled every 2 seconds; a single completed request refines the blue duration from engine timings, with about one poll of placement uncertainty. Decode rates use token changes over polling intervals.'}</p><p>Decode includes thinking and answer tokens. Chart lines use a trailing 20-second average of samples. Raw measurements and headline speeds are unchanged. Charts cover 15 minutes with gaps compressed; missing samples do not prove idle.</p></div></details></div>`:'';
+  const duration=!stale&&w?.load&&Number.isFinite(w.active_seconds)?`<span class="remaining-estimate" title="Elapsed time of the active Star Gate request; not an estimate">${fmtWhole(Math.floor(w.active_seconds/60))}m active</span>`:'';
   const activityDuration=duration;
   const phaseRedundant=['unavailable','paused'].includes(state);
   return `<article class="device" data-worker-id="${esc(d.id)}"><div class="device-top"><div class="device-identity"><div class="device-name"><span class="device-number">${String(index).padStart(2,'0')}</span><span class="device-name-text">${esc(d.id.replace(/^spark/, 'Spark '))}</span></div>${activityDuration}</div><div class="device-status"><span class="server-verdict" data-level="${verdict.level}" title="${esc(verdict.detail)}">${esc(verdict.label)}</span><span class="badge ${bad ? 'bad' : w?.load ? 'busy' : ''}" title="Current generation phase" ${phaseRedundant?'hidden':''}>${esc(!stale&&w?.quarantine?'quarantined':state==='mixed'?'prefill + generation':state==='decode'?(d.endpoint_metrics?'generating':'answering'):state)}</span>${routingMarkup(w,{stale,controls,recovering:recoveryState?.workers?.some(r=>r.worker_id===w?.id&&r.state==='recovering')})}</div></div><div class="device-readings">${timeline(d,now)}${thinkingIndicator(w,stale,now)}<div class="metrics">${metric('decode','DECODE')}${metric('prefill','PREFILL')}</div>${metricsInfo}${hardwareMarkup(d.hardware,now)}${performanceLightsMarkup(d,now,stale||!(d.performance_history?.workers?.[d.id]?.active??w?.load))}</div></article>`;
@@ -406,30 +422,30 @@ function deterministicHealthAlerts(snapshot) {
   const alerts=[];
   for(const row of snapshot.generation_alerts?.rows??[])alerts.push({severity:'warning',text:`${row.worker}: a request ended at ${clock(row.at)} with ${row.kind==='reasoning_only_final'?'reasoning but no answer or tool output':'no observed answer, reasoning or tool output'}. This describes captured output only; no automatic retry or routing change was made.`});
   const fleet=`${fmt(gateway?.available)} of ${fmt(gateway?.total)} model servers are available`;
-  for(const run of gateway?.client_watch?.runs??[])if(run.fresh&&run.process_alive&&run.diagnosis==='no_request_reached_dsg')alerts.push({severity:'warning',text:`${run.client} run ${run.watch_ref} reports waiting for a model, but no matching request reached DSG after ${fmt(run.state_seconds)}s. Recommendation: Inspect that client's provider transport; no DS4 fault or frozen process is proven.`});
-  for(const run of gateway?.client_watch?.runs??[])if(run.fresh&&run.process_alive&&run.diagnosis==='client_reported_error')alerts.push({severity:'warning',text:`${run.client} run ${run.watch_ref} reports a failed turn with no automatic continuation remaining. Recommendation: Inspect the client before resubmitting; this is not proof that replay is safe or that DS4 failed.`});
+  for(const run of gateway?.client_watch?.runs??[])if(run.fresh&&run.process_alive&&run.diagnosis==='no_request_reached_dsg')alerts.push({severity:'warning',text:`${run.client} run ${run.watch_ref} reports waiting for a model, but no matching request reached Star Gate after ${fmt(run.state_seconds)}s. Recommendation: Inspect that client's provider transport; no model-server fault or frozen process is proven.`});
+  for(const run of gateway?.client_watch?.runs??[])if(run.fresh&&run.process_alive&&run.diagnosis==='client_reported_error')alerts.push({severity:'warning',text:`${run.client} run ${run.watch_ref} reports a failed turn with no automatic continuation remaining. Recommendation: Inspect the client before resubmitting; this is not proof that replay is safe or that the model server failed.`});
   for(const worker of workers) {
     const name=String(worker?.id??'Unknown server').replace(/^spark/i,'Spark '),held=Array.isArray(worker?.holds)&&worker.holds.length>0;
     if(worker?.quarantine) {
       const waiting=Number.isSafeInteger(worker.recovery_waiting)&&worker.recovery_waiting>0?` ${fmt(worker.recovery_waiting)} request${worker.recovery_waiting===1?' is':'s are'} being held for this server.`:' ';
       const recoveryState=recoveryByWorker.get(worker.id),reason=recoveryState?.reason;
       const launchdAdvice={
-        launchd_registration_absent:'The Mac service registration is missing. Ask the operator to inspect the established launcher; kickstart cannot restore a removed job, and DSG has no bootstrap authority.',
-        launchd_gui_domain_unavailable:'The Mac GUI service domain is unavailable. Ask the operator to check the login/session state; this does not prove a DS4 or accelerator fault.',
+        launchd_registration_absent:'The Mac service registration is missing. Ask the operator to inspect the established launcher; kickstart cannot restore a removed job, and Star Gate has no bootstrap authority.',
+        launchd_gui_domain_unavailable:'The Mac GUI service domain is unavailable. Ask the operator to check the login/session state; this does not prove a model-server or accelerator fault.',
         launchd_state_unverified:'Mac service inspection could not establish the state. Check local permissions and service-manager output before taking action; absence is not proven.',
-        launchd_native_disabled:'macOS explicitly disables this service. Respect that stop instruction; ask the operator before changing native service policy. DSG will not enable it.',
+        launchd_native_disabled:'macOS explicitly disables this service. Respect that stop instruction; ask the operator before changing native service policy. Star Gate will not enable it.',
         launchd_disable_state_unverified:'The Mac native disable setting could not be verified. Check the enrolled helper version and launchctl inspection; unknown policy is not permission to start.'
       }[reason];
       const recommendation=launchdAdvice??(reason==='service_identity_or_profile_unverified'
-        ?'Review and deliberately re-enroll the changed DS4 service profile before recovery; simply enabling routing would bypass the safety boundary.'
+        ?'Review and deliberately re-enroll the changed model service profile before recovery; simply enabling routing would bypass the safety boundary.'
         :reason==='profile_handback_confirmation_pending'
-          ?'Leave the server idle while DSG confirms the same changed profile in a second inspection; no action has been authorized yet.'
+          ?'Leave the server idle while Star Gate confirms the same changed profile in a second inspection; no action has been authorized yet.'
           :reason==='profile_handback_disabled'
             ?'Review the changed profile, then enable verified profile hand-back or complete an operator-led enrollment.'
             :reason==='profile_handback_wait_for_admitted_work'
               ?'Wait for admitted work to finish; profile adoption and recovery cannot begin while a request is owned by this server.'
         :recoveryState?.eligible
-          ?'Use the verified recovery control; DSG will restart only the enrolled service and test it before readmission.'
+          ?'Use the verified recovery control; Star Gate will restart only the enrolled service and test it before readmission.'
           :'Inspect the recovery blocker before readmission; do not simply enable routing.');
       alerts.push({severity:'critical',text:`${name} is quarantined after ${String(worker.quarantine.reason||'a generation fault').replaceAll('_',' ')}; ${fleet}.${waiting} Recommendation: ${recommendation}`});
       continue;
@@ -439,9 +455,9 @@ function deterministicHealthAlerts(snapshot) {
       const d=snapshot.devices?.find(device=>device.id===worker.id),decode=d?.decode,now=snapshot.time??Date.now();
       const fresh=d?.connected&&Number.isFinite(decode?.time)&&now-decode.time>=0&&now-decode.time<=15000&&Number.isSafeInteger(decode.generated)&&decode.generated>=0;
       const progress=fresh?` Latest engine sample: ${fmt(decode.generated)} generated tokens${decode.thinking?' (thinking phase)':''}; ${fmtWhole(decode.tps)} t/s.`:' Fresh engine generation progress is unavailable.';
-      alerts.push({severity:'warning',text:`${name}: one DSG request has held its slot for ${fmtWhole(Math.floor(worker.active_seconds/60))}m; ${fmt(worker.queued)} waiting.${progress} Recommendation: Review the long-running client request. Elapsed time alone does not prove a hang or authorize cancellation.`});
+      alerts.push({severity:'warning',text:`${name}: one Star Gate request has held its slot for ${fmtWhole(Math.floor(worker.active_seconds/60))}m; ${fmt(worker.queued)} waiting.${progress} Recommendation: Review the long-running client request. Elapsed time alone does not prove a hang or authorize cancellation.`});
     }
-    if(overdue.length)alerts.push({severity:'warning',text:`${name} remains protected by overdue maintenance lock${overdue.length===1?'':'s'} ${overdue.map(lock=>lock.name).join(', ')}. Recommendation: Confirm the external work is finished, then release the exact lock; DSG will keep routing paused until a separate checked Resume.`});
+    if(overdue.length)alerts.push({severity:'warning',text:`${name} remains protected by overdue maintenance lock${overdue.length===1?'':'s'} ${overdue.map(lock=>lock.name).join(', ')}. Recommendation: Confirm the external work is finished, then release the exact lock; Star Gate will keep routing paused until a separate checked Resume.`});
     // Operator pauses, maintenance locks and scoped agent holds are intentional capacity choices,
     // not faults. They stay explicit on the worker card without becoming alarms.
     if(worker?.drained||held)continue;
@@ -458,14 +474,14 @@ function renderAgentWatch(watch){
   const needsAttention=run=>run.fresh&&['no_request_reached_dsg','client_reported_error'].includes(run.diagnosis);
   const fresh=runs.filter(run=>run.fresh).length,attention=runs.filter(needsAttention).length;
   $('agent-watch-status').textContent=runs.length?`${fmt(runs.length)} enrolled · ${fmt(fresh)} fresh${attention?` · ${fmt(attention)} check`:''}`:'No enrolled clients reporting';
-  const labels={local_tool_active:'tool execution',waiting_inside_dsg:'waiting inside DSG',model_response_active:'model response active',no_request_reached_dsg:'no request reached DSG',waiting_to_reach_dsg:'waiting to reach DSG',client_processing_after_dsg:'client processing after DSG',client_reported_error:'client reports a failed turn',heartbeat_stale_unknown:'heartbeat stale · state unknown',idle:'no local tool reported',done:'done',unknown:'state unknown'};
-  $('agent-watch-items').innerHTML=runs.length?runs.slice(0,24).map(run=>`<li data-activity="${run.fresh&&run.process_alive&&run.state==='local_tool'&&run.diagnosis==='local_tool_active'?'tool':run.fresh&&run.process_alive&&run.state==='idle'?'idle':'unknown'}" data-level="${needsAttention(run)?'attention':run.fresh?'current':'unknown'}"><time>${esc(age(Date.parse(run.last_seen_at),Date.now()))}</time><strong>${esc(run.client)} · ${esc(run.watch_ref)}</strong><span>${esc(labels[run.diagnosis]??'state unknown')}${run.request?` · DSG ${esc(run.request.state.replaceAll('_',' '))}`:''}</span></li>`).join(''):'<li class="muted">No enrolled clients reporting.</li>';
+  const labels={local_tool_active:'tool execution',waiting_inside_dsg:'waiting inside Star Gate',model_response_active:'model response active',no_request_reached_dsg:'no request reached Star Gate',waiting_to_reach_dsg:'waiting to reach Star Gate',client_processing_after_dsg:'client processing after Star Gate',client_reported_error:'client reports a failed turn',heartbeat_stale_unknown:'heartbeat stale · state unknown',idle:'no local tool reported',done:'done',unknown:'state unknown'};
+  $('agent-watch-items').innerHTML=runs.length?runs.slice(0,24).map(run=>`<li data-activity="${run.fresh&&run.process_alive&&run.state==='local_tool'&&run.diagnosis==='local_tool_active'?'tool':run.fresh&&run.process_alive&&run.state==='idle'?'idle':'unknown'}" data-level="${needsAttention(run)?'attention':run.fresh?'current':'unknown'}"><time>${esc(age(Date.parse(run.last_seen_at),Date.now()))}</time><strong>${esc(run.client)} · ${esc(run.watch_ref)}</strong><span>${esc(labels[run.diagnosis]??'state unknown')}${run.request?` · Star Gate ${esc(run.request.state.replaceAll('_',' '))}`:''}</span></li>`).join(''):'<li class="muted">No enrolled clients reporting.</li>';
 }
 function healthHeadlines(snapshot, ticker) {
   if(!snapshot?.gateway || snapshot.gateway_error)return {level:'unknown',items:[{severity:'info',text:'Gateway status unavailable; recommendations withheld until fresh evidence returns.'}]};
   const safety=deterministicHealthAlerts(snapshot),genie=ticker?.state==='ready'&&ticker.entries?.length?ticker.entries.map(e=>({severity:headlineSeverity(e.severity),text:`${e.text}${e.recommendation?` Recommendation: ${e.recommendation}`:''}`})):[];
   if(safety.length||genie.length) {
-    const items=[...safety,...genie],prefix=safety.length?'DSG safety alert'+(genie.length?' + Genie assessment':' · observed gateway evidence'):'Genie assessment';
+    const items=[...safety,...genie],prefix=safety.length?'Star Gate safety alert'+(genie.length?' + Genie assessment':' · observed gateway evidence'):'Genie assessment';
     return {level:items.some(e=>e.severity==='critical')?'critical':items.some(e=>e.severity==='warning')?'warn':items.some(e=>e.severity==='good')?'ok':'info',evidence_at:ticker?.evidence_at,
       label:`${prefix}${genie.length?` · evidence ${clock(ticker.evidence_at)}${ticker.refreshing?' · updating':ticker.review_error?' · latest refresh failed':''}`:''}`,items};
   }
@@ -476,7 +492,7 @@ function healthHeadlines(snapshot, ticker) {
     changed:'Fleet health or membership changed since the last assessment. Request a fresh review before acting on old advice.',
     invalid:'Genie returned no valid ticker entries. Read his assessment below or request another review.',
     error:ticker?.provider_attempts?.length>1
-      ?`The Genie review failed after both the dedicated provider and DSG pool fallback were tried (${ticker.provider_attempts.map(a=>`${String(a.provider).replaceAll('_',' ')}: ${String(a.reason||a.outcome).replaceAll('_',' ')}`).join('; ')}). The gateway is unaffected.`
+      ?`The Genie review failed after both the dedicated provider and Star Gate pool fallback were tried (${ticker.provider_attempts.map(a=>`${String(a.provider).replaceAll('_',' ')}: ${String(a.reason||a.outcome).replaceAll('_',' ')}`).join('; ')}). The gateway is unaffected.`
       :'The Genie review failed. Check his status below; no replacement advice has been invented.',
     unavailable:'Genie status is unavailable. Waiting for a fresh assessment.'};
   return {level:'unknown',label:'Genie status',items:[{severity:'info',text:message[ticker?.state] || 'Connecting to Gate Genie…'}]};
@@ -511,19 +527,19 @@ function render(s) {
   renderAgentWatch(g?.client_watch);
   const rejected=g?.continuity?.recent_rejections??[];
   $('patient-wait-status').hidden=stale||!g?.continuity?.waiting;
-  $('patient-wait-status').textContent=`DSG is holding ${fmt(g?.continuity?.waiting)} undispatched requests for recovery/readiness · oldest wait ${fmt(g?.continuity?.oldest_wait_seconds)}s · ${Object.entries(g?.continuity?.waiting_reasons??{}).map(([reason,n])=>`${fmt(n)} ${reason.replaceAll('_',' ')}`).join(' · ')}. They resume automatically when eligible; pauses remain respected.`;
+  $('patient-wait-status').textContent=`Star Gate is holding ${fmt(g?.continuity?.waiting)} undispatched requests for recovery/readiness · oldest wait ${fmt(g?.continuity?.oldest_wait_seconds)}s · ${Object.entries(g?.continuity?.waiting_reasons??{}).map(([reason,n])=>`${fmt(n)} ${reason.replaceAll('_',' ')}`).join(' · ')}. They resume automatically when eligible; pauses remain respected.`;
   $('continuity-status').textContent=stale?'Historical evidence: gateway unavailable.':!g?.continuity?'This gateway version does not expose continuity receipts.':`${rejected.length} recent rejected attempts in this gateway run. Not dispatched means no inference started for that attempt, not that the client resumed. Long waits are not proof of a stall.`;
   $('continuity-rejections').innerHTML=rejected.slice(0,8).map(r=>`<p><time>${esc(clock(r.time))}</time> · ${esc(r.node||'pool')} · ${esc(r.reason?.replaceAll('_',' '))} · ${r.retry_class==='wait_then_retry'?'compatible client may wait/retry':'operator investigation required'} · <code title="${esc(r.request_id)}">${esc(r.request_id?.slice(0,8))}</code></p>`).join('');
   $('connection').textContent = s.demo ? '◉ Demo telemetry' : stale ? 'Status unavailable' : '● Live telemetry';
   $('warning').hidden = !s.gateway_error && !s.telemetry_error;
   $('warning').textContent = [s.gateway_error,s.telemetry_error].filter(Boolean).join(' · ');
-  $('model').textContent = s.demo ? `${g?.model || 'DS4'} · illustrative data · no real model servers connected` : `${g?.model || 'DS4'} · one active gateway request per model server · session-affinity routing`;
+  $('model').textContent = s.demo ? `${g?.model || 'Model gateway'} · illustrative data · no real model servers connected` : `${g?.model || 'Model gateway'} · one active gateway request per model server · session-affinity routing`;
   const door=s.continuity_door,waiting=knownWaiting(g,door);
   $('available').textContent = g ? `${g.available} / ${g.total}` : '—'; $('active').textContent = fmt(g?.active); $('queued').textContent = g?fmt(waiting.total):'—';
-  $('queued').title=door?.holding?`${fmt(waiting.core)} admitted in the gateway core + ${fmt(waiting.held)} held safely at the Continuity Door. Pi/Hermes work not yet sent to DSG is not visible here.`:'Requests known to DSG and not yet dispatched. Pi/Hermes work not yet sent to DSG is not visible here.';
+  $('queued').title=door?.holding?`${fmt(waiting.core)} admitted in the gateway core + ${fmt(waiting.held)} held safely at the Continuity Door. Pi/Hermes work not yet sent to Star Gate is not visible here.`:'Requests known to Star Gate and not yet dispatched. Pi/Hermes work not yet sent to Star Gate is not visible here.';
   const cap=capacity(g,stale),scales=rateScales(s.devices,s.rate_peaks,now);
   $('capacity-value').textContent=cap?.percent!=null?`${cap.percent}% occupied`:'Unknown';
-  $('capacity-note').textContent=cap?`${cap.occupied} / ${cap.eligible} eligible slots occupied · ${cap.free} immediately free · ${fmt(waiting.total)} waiting in DSG${waiting.held?` (${fmt(waiting.core)} core + ${fmt(waiting.held)} Continuity Door)`:''}`:'Gateway status is unavailable';
+  $('capacity-note').textContent=cap?`${cap.occupied} / ${cap.eligible} eligible slots occupied · ${cap.free} immediately free · ${fmt(waiting.total)} waiting in Star Gate${waiting.held?` (${fmt(waiting.core)} core + ${fmt(waiting.held)} Continuity Door)`:''}`:'Gateway status is unavailable';
   $('capacity-meter').value=cap?.percent||0;$('capacity-meter').hidden=cap?.percent==null;
   $('continuity-door-status').textContent=s.continuity_door_error?`${s.continuity_door_error}.`:!door?'Continuity Door is not enabled.':door.holding?`Continuity Door holding ${fmt(door.held)} new request${door.held===1?'':'s'} while ${door.core_ready?'core dispatch is ready':'core dispatch is not ready (including when every eligible server is paused or unavailable)'}; existing streams remain connected.`:`Continuity Door ready · ${fmt(door.active)} active proxied stream${door.active===1?'':'s'} · no request-body spooling or replay.`;
   visibleWorkers=g?.workers??[];workerUiStale=stale;workerControlsVisible=s.worker_management===true;
@@ -552,6 +568,32 @@ function render(s) {
   renderRequests(s.events);
   renderGenieActionLedger();
   $('updated').textContent = `Gateway checked ${s.gateway_at ? clock(s.gateway_at) : '—'} · dashboard started ${clock(s.started)}`;
+}
+let lanSharingToken=null,lanSharingEnabled=false,lanSharingBusy=false;
+function renderLanSharing(value){
+  const panel=$('lan-sharing-control'),toggle=$('lan-sharing-toggle');if(!panel||!toggle)return;
+  panel.hidden=!value?.available;if(!value?.available)return;
+  lanSharingToken=value.csrf_token;lanSharingEnabled=value.enabled;
+  toggle.disabled=lanSharingBusy;toggle.setAttribute('aria-checked',String(value.enabled));toggle.textContent=value.enabled?'On':'Off';
+  $('lan-sharing-details').hidden=!value.enabled;
+  $('lan-sharing-url').value=value.urls?.[0]??'No LAN address available';
+  $('lan-sharing-key').value=value.api_key??'';
+  $('lan-sharing-fallback').hidden=!value.hostname_url;
+  $('lan-sharing-ip').value=value.ip_urls?.[0]??'';
+}
+async function loadLanSharing(){
+  if(lanSharingBusy)return;
+  try{const response=await fetch('/api/lan-sharing',{signal:AbortSignal.timeout(5000)});if(!response.ok)throw new Error();renderLanSharing(await response.json());}
+  catch{const toggle=$('lan-sharing-toggle');if(toggle)toggle.disabled=true;}
+}
+async function toggleLanSharing(){
+  if(lanSharingBusy||!lanSharingToken)return;lanSharingBusy=true;$('lan-sharing-toggle').disabled=true;$('lan-sharing-message').textContent='';
+  try{
+    const response=await fetch('/api/lan-sharing',{method:'POST',headers:{'content-type':'application/json','x-dsg-csrf':lanSharingToken},body:JSON.stringify({enabled:!lanSharingEnabled}),signal:AbortSignal.timeout(10000)});
+    const value=await response.json();if(!response.ok)throw new Error(value.error||'LAN sharing change failed');renderLanSharing(value);
+    $('lan-sharing-message').textContent=value.enabled?'Sharing on LAN.':'LAN sharing off. Active responses finish normally.';
+  }catch(error){$('lan-sharing-message').textContent=error.message;}
+  finally{lanSharingBusy=false;await loadLanSharing();}
 }
 let testingToken=null,testingEnabled=false,testingBusy=false;
 function renderTesting(value){
@@ -585,6 +627,7 @@ let workerControlsReady=false,workerControlsVisible=false,workerUiStale=true,vis
 let endpointEdit=null, registeredWorkers=[];
 let contextDirty=false, contextExpected=null;
 let queueDirty=false,queueExpected=null;
+let turnsDirty=false,turnsExpected=null;
 let visionProtectionEnabled=false;
 function workerMessage(text, error = false) {
   $('worker-message').textContent = text; $('worker-message').classList.toggle('error',error);
@@ -624,6 +667,12 @@ async function loadWorkers() {
       $('queue-timeout-current').textContent=`Current: ${fmt(data.queue_timeout_ms/3600000)} hours (${data.queue_timeout_source}).`;
       if(!queueDirty){queueExpected=data.queue_timeout_ms;$('queue-timeout-input').value=String(data.queue_timeout_ms/3600000);}
     }
+    $('conversation-turn-control').hidden=!data.conversation_turns_control;
+    if(data.conversation_turns_control){
+      $('conversation-turn-current').textContent=`Up to ${fmt(data.conversation_turns)} consecutive model calls.`;
+      $('conversation-turn-grace').textContent=`Wait up to ${fmt(data.conversation_turn_idle_ms/1000)} seconds for a continuation. Set 1 to use FIFO without this wait.`;
+      if(!turnsDirty){turnsExpected=data.conversation_turns;$('conversation-turn-input').value=String(data.conversation_turns);}
+    }
     const protection=data.protections?.vision_jpeg;
     $('vision-protection-control').hidden=!protection;
     if(protection){
@@ -652,6 +701,8 @@ async function workerAction(action, input) {
   $('worker-form').querySelector('button[type=submit]').disabled=true;
   $('pool-context-form').querySelector('button').disabled=true;
   $('queue-timeout-form').querySelector('button').disabled=true;
+  $('conversation-turn-apply').disabled=true;
+  if(action==='conversation-turns'){$('conversation-turn-message').textContent='Applying conversation turn allowance…';$('conversation-turn-message').classList.remove('error');}
   $('vision-protection-toggle').disabled=true;
   $('worker-rows').querySelectorAll('button').forEach(b=>{b.disabled=true;});
   $('relocation-offers').querySelectorAll('button').forEach(b=>{b.disabled=true;});
@@ -660,14 +711,15 @@ async function workerAction(action, input) {
   try {
     const r=await fetch(`/api/workers/${action}`,{method:'POST',headers:{'content-type':'application/json','x-dsg-csrf':csrfToken},body:JSON.stringify(input),signal:AbortSignal.timeout(35000)});
     const data=await r.json();if(!r.ok)throw new Error(data.error||'Worker control failed');
-    workerMessage(action==='lock'?`${data.result.worker_id}: durable maintenance lock created. Automatic recovery and routing are vetoed until its exact release.`:action==='unlock'?`${data.result.worker_id}: maintenance lock released; routing remains paused until a separate checked Resume.`:action==='recover'?`Recovery accepted: ${data.id}. See executor receipts below.`:action==='recovery-policy'?`Automatic recovery ${data.automatic?'enabled':'disabled'}.`:action==='recovery-handback-policy'?`Verified profile hand-back ${data.profile_handback_automatic?'enabled':'disabled'}. Automatic recovery remains ${data.automatic?'on':'off'}.`:action==='protection'?`Image compatibility protection ${data.vision_jpeg?.enabled?'enabled':'disabled'}. Existing requests and DS4 settings are unchanged.`:action==='context'?`Pool limit saved: ${fmt(data.minimum_context)} tokens. Applied now; model servers and Pi unchanged.`:action==='fallbacks'?`Management fallbacks saved. Active inference was not interrupted; the list applies on the next reconnect.`:action==='add'?'Registered paused. Enable routing when ready.':action==='drain'?'Draining. Admitted requests will finish before removal.':action==='remove'?'Removed from this gateway. Model server left running.':action==='relocate'?`${data.source} → ${data.destination}: undispatched request handed over with its original client and deadline.`:'Routing enabled.');
+    workerMessage(action==='lock'?`${data.result.worker_id}: durable maintenance lock created. Automatic recovery and routing are vetoed until its exact release.`:action==='unlock'?`${data.result.worker_id}: maintenance lock released; routing remains paused until a separate checked Resume.`:action==='recover'?`Recovery accepted: ${data.id}. See executor receipts below.`:action==='recovery-policy'?`Automatic recovery ${data.automatic?'enabled':'disabled'}.`:action==='recovery-handback-policy'?`Verified profile hand-back ${data.profile_handback_automatic?'enabled':'disabled'}. Automatic recovery remains ${data.automatic?'on':'off'}.`:action==='protection'?`Image compatibility protection ${data.vision_jpeg?.enabled?'enabled':'disabled'}. Existing requests and model-server settings are unchanged.`:action==='context'?`Pool limit saved: ${fmt(data.minimum_context)} tokens. Applied now; model servers and Pi unchanged.`:action==='fallbacks'?`Management fallbacks saved. Active inference was not interrupted; the list applies on the next reconnect.`:action==='add'?'Registered paused. Enable routing when ready.':action==='drain'?'Draining. Admitted requests will finish before removal.':action==='remove'?'Removed from this gateway. Model server left running.':action==='relocate'?`${data.source} → ${data.destination}: undispatched request handed over with its original client and deadline.`:'Routing enabled.');
+    if(action==='conversation-turns'){turnsDirty=false;turnsExpected=data.conversation_turns;const message=`Applied: ${fmt(data.conversation_turns)} turns.`;workerMessage('');$('conversation-turn-message').textContent=message;}
     if(action==='context'){contextDirty=false;contextExpected=data.minimum_context;}
     if(action==='queue-timeout'){queueDirty=false;queueExpected=data.queue_timeout_ms;workerMessage(`Queue allowance saved: ${fmt(data.queue_timeout_ms/3600000)} hours for new requests. Existing waits and model servers unchanged.`);}
     if(action==='endpoint'){endpointEdit=null;$('endpoint-edit-form').hidden=true;workerMessage('Endpoint saved. Server remains paused; resume routing when ready.');}
     if(action==='add')$('worker-form').reset();
     if(action==='resume')workerMessage(`${target}: routing enabled after checks passed. Model settings unchanged.`);
     if(action==='drain')workerMessage(`${target}: paused for new work. Admitted requests finish; Resume routing reverses this.`);
-  } catch(e) { workerMessage(`${e.message}. Check the worker list before retrying.`,true); }
+  } catch(e) { workerMessage(`${e.message}. Check the current setting before retrying.`,true);if(action==='conversation-turns'){turnsDirty=false;$('conversation-turn-message').textContent=`${e.message}. Review the refreshed current value before applying again.`;$('conversation-turn-message').classList.add('error');} }
   finally { workerBusy=false;$('worker-form').querySelector('button[type=submit]').disabled=false;$('pool-context-form').querySelector('button').disabled=false;$('queue-timeout-form').querySelector('button').disabled=false;updateConnectionFields();refreshRoutingControls();void loadWorkers(); }
 }
 function updateConnectionFields() {
@@ -701,6 +753,12 @@ function wireWorkerControls() {
   editor.addEventListener('submit',e=>{e.preventDefault();if(!endpointEdit)return;const input={...endpointEdit,url:editor.elements.url.value.trim(),backend:editor.elements.backend.value,...connectionValues(editor.elements)};if(editor.elements.context_length.value)input.context_length=Number(editor.elements.context_length.value);if(input.backend==='openai')input.api_key_file=editor.elements.api_key_file.value.trim();void workerAction('endpoint',input);});
   const form=$('worker-form');form.elements.connection.addEventListener('change',updateConnectionFields);form.elements.backend.addEventListener('change',updateConnectionFields);
   $('pool-context-input').addEventListener('input',()=>{contextDirty=true;});
+  $('conversation-turn-input').addEventListener('input',()=>{turnsDirty=true;$('conversation-turn-message').textContent='';});
+  $('conversation-turn-form').addEventListener('submit',e=>{
+    e.preventDefault();const value=Number($('conversation-turn-input').value);
+    if(!Number.isSafeInteger(value)||value<1){$('conversation-turn-message').textContent='Enter a positive whole number of turns.';return;}
+    void workerAction('conversation-turns',{conversation_turns:value,expected_conversation_turns:turnsExpected});
+  });
   $('queue-timeout-input').addEventListener('input',()=>{queueDirty=true;});
   $('queue-timeout-form').addEventListener('submit',e=>{
     e.preventDefault();const hours=Number($('queue-timeout-input').value),ms=hours*3600000;
@@ -738,8 +796,8 @@ function wireWorkerControls() {
       editor.elements.connection.value=worker.ssh?'ssh':'local';editor.elements.ssh.value=worker.ssh??'';editor.elements.remote_port.value=worker.remote_port??8000;editor.elements.ssh_fallbacks.value=(worker.ssh_fallbacks??[]).join(', ');editConnectionFields();editor.elements.url.value=worker.url;editor.elements.backend.value=worker.backend??'ds4';editor.elements.context_length.value=worker.context_length??'';editor.elements.api_key_file.value=worker.api_key_file??'';editor.hidden=false;editor.scrollIntoView({block:'center',behavior:'smooth'});editor.elements.url.focus();return;
     }
     if(action==='lock'){
-      const name=window.prompt(`Name this maintenance lock for ${id}. It will survive DSG restarts and never auto-expire.`,`maintenance-${id}`);if(name===null)return;
-      const reason=window.prompt(`Why must ${id} stay out of DSG routing? Do not include secrets or conversation text.`,'External DS4 testing in progress');if(reason===null)return;
+      const name=window.prompt(`Name this maintenance lock for ${id}. It will survive Star Gate restarts and never auto-expire.`,`maintenance-${id}`);if(name===null)return;
+      const reason=window.prompt(`Why must ${id} stay out of Star Gate routing? Do not include secrets or conversation text.`,'External model-server testing in progress');if(reason===null)return;
       const review=window.prompt('Review reminder in whole hours (optional). This only warns; it never releases the lock.','24');if(review===null)return;
       const review_after_hours=review.trim()===''?null:Number(review);
       if((review_after_hours!==null)&&(!Number.isSafeInteger(review_after_hours)||review_after_hours<1||review_after_hours>8760)){workerMessage('Review reminder must be blank or 1–8760 whole hours.',true);return;}
@@ -757,7 +815,7 @@ function wireWorkerControls() {
       void workerAction('fallbacks',{id,expected_ssh_fallbacks:before,ssh_fallbacks:fallbacks});return;
     }
     if(action==='remove'&&!window.confirm(`Remove ${id} from the gateway? Its model server and caches will be left running.`))return;
-    if(action==='resume'&&visibleWorkers.find(w=>w.id===id)?.quarantine&&!window.confirm(`Verify and readmit ${id}? DSG will check model/context and generate a small test response. Failed checks keep it quarantined. This does not restart the model server or change its settings.`))return;
+    if(action==='resume'&&visibleWorkers.find(w=>w.id===id)?.quarantine&&!window.confirm(`Verify and readmit ${id}? Star Gate will check model/context and generate a small test response. Failed checks keep it quarantined. This does not restart the model server or change its settings.`))return;
     void workerAction(action,action==='remove'?{id}:{workers:[id]});
   };
   $('worker-rows').addEventListener('click',handleWorkerClick);
@@ -765,7 +823,7 @@ function wireWorkerControls() {
   $('relocation-offers').addEventListener('click',e=>{
     const button=e.target.closest('button[data-relocation]');if(!button||button.disabled)return;
     const offer=JSON.parse(button.dataset.relocation);
-    if(!window.confirm(`Move this undispatched request from ${offer.source} to ${offer.destination}? Its original client connection and deadline stay intact, but DSG cannot prove the destination has its warm cache.`))return;
+    if(!window.confirm(`Move this undispatched request from ${offer.source} to ${offer.destination}? Its original client connection and deadline stay intact, but Star Gate cannot prove the destination has its warm cache.`))return;
     void workerAction('relocate',{request_id:offer.request_id,source:offer.source,destination:offer.destination,evidence_id:offer.evidence_id});
   });
 }
@@ -808,7 +866,7 @@ function genieActionRows(snapshot,genie,analytics) {
   for(const report of genie?.provider_actions??genie?.reports??[])if(['pool_fallback','pool_assigned'].includes(report.served_by)&&Number.isFinite(report.time))rows.push({
     id:`provider:${report.id}`,kind:'provider',at:report.time,level:'good',
     title:`Pool commandeered${report.served_on?` · ${clean(report.served_on)}`:''}`,
-    detail:`${report.served_by==='pool_assigned'?'Pool selected before dispatch':'Dedicated provider unavailable'} · review completed${report.served_on?' on the named DSG server':' on an unpinned DSG slot; exact server unproven'}`
+    detail:`${report.served_by==='pool_assigned'?'Pool selected before dispatch':'Dedicated provider unavailable'} · review completed${report.served_on?' on the named Star Gate server':' on an unpinned Star Gate slot; exact server unproven'}`
   });
   for(const op of snapshot?.gateway?.recovery?.operations??[])if(op.actor==='genie'&&Number.isFinite(op.updated_at??op.created_at)){
     const state=clean(op.state),good=['recovered','verified paused'].includes(state),attention=['failed','reconciliation needed'].includes(state);
@@ -876,6 +934,9 @@ function setupWorkspaceTabs(){
   globalThis.addEventListener?.('hashchange',()=>activateWorkspaceTab(globalThis.location.hash.slice(1)));
 }
 poll();
+$('lan-sharing-toggle')?.addEventListener('click',()=>void toggleLanSharing());
+for(const id of ['lan-sharing-url','lan-sharing-key','lan-sharing-ip'])$(id)?.addEventListener('click',event=>event.currentTarget.select());
+void loadLanSharing();setInterval(()=>{if(!document.hidden)void loadLanSharing();},5000);
 $('testing-toggle')?.addEventListener('click',()=>void toggleTesting());
 $('testing-url')?.addEventListener('click',event=>event.currentTarget.select());
 $('testing-copy')?.addEventListener('click',async()=>{
@@ -958,9 +1019,9 @@ async function genieAction(input) {
 async function loadGenie() {
   try {const r=await fetch('/api/genie',{signal:AbortSignal.timeout(5000)});if(!r.ok)throw new Error();const s=await r.json();genieToken=s.csrf_token;genieState=s;wireState={...s.ticker,provider_attempts:s.provider_attempts};
     if(wireSnapshot)renderHealthWire(wireSnapshot);
-    const now=Date.now(),activeProvider=s.active_provider==='pool_fallback'?'DSG pool fallback':['pool','pool_assigned'].includes(s.active_provider)?'DSG pool':'dedicated provider',providerProgress=s.busy&&s.provider_started_at?`${activeProvider} · ${age(s.provider_started_at,now)} elapsed${s.provider_deadline_at?` · deadline in ${remaining(s.provider_deadline_at,now)}`:''}`:null;
+    const now=Date.now(),activeProvider=s.active_provider==='pool_fallback'?'Star Gate pool fallback':['pool','pool_assigned'].includes(s.active_provider)?'Star Gate pool':'dedicated provider',providerProgress=s.busy&&s.provider_started_at?`${activeProvider} · ${age(s.provider_started_at,now)} elapsed${s.provider_deadline_at?` · deadline in ${remaining(s.provider_deadline_at,now)}`:''}`:null;
     const q=s.question,qtext=q?.state==='queued'?(s.review_kind==='action'?'Your question is queued behind an evidence-gated action review':'Your question is queued; a routine review is being yielded'):q?.state==='answering'?`Answering your question · ${providerProgress??'provider starting…'}`:q?.state==='answered'?`Question answered ${age(q.finished_at,now)}`:['failed','cancelled'].includes(q?.state)?`Question ${q.state}: ${q.error}`:null;
-    const provider=s.last_served_by==='pool_assigned'?' · last review was assigned to free DSG capacity before dispatch':s.last_served_by==='pool_fallback'?' · last review used fallback after a proven connection refusal':s.last_served_by==='pool'?' · last review used the DSG pool':s.last_served_by==='dedicated'?' · last review used the dedicated provider':'';
+    const provider=s.last_served_by==='pool_assigned'?' · last review was assigned to free Star Gate capacity before dispatch':s.last_served_by==='pool_fallback'?' · last review used fallback after a proven connection refusal':s.last_served_by==='pool'?' · last review used the Star Gate pool':s.last_served_by==='dedicated'?' · last review used the dedicated provider':'';
     const attempts=(s.provider_attempts||[]).slice(0,s.error&&s.fallback_available?2:1),attemptText=attempts.length?` · ${attempts.map(attempt=>`${attempt.provider.replaceAll('_',' ')} ${attempt.outcome}${attempt.reason?` (${attempt.reason.replaceAll('_',' ')})`:''}`).join(' · ')}`:'';
     $('genie-status').textContent=s.suspended_for_testing?(s.busy?'Testing · current review finishing':'Suspended for testing'):!s.configured?'Not configured':!s.enabled?'Off · enable Gate Genie before asking':qtext||(s.error?`${s.error}${attemptText}`:(s.busy?`Scheduled fleet review · ${providerProgress??'provider starting…'}`:`Enabled · last review ${age(s.last_check,now)}${provider}${attemptText}`));
     $('genie-mode').textContent=s.action_supervision?'evidence-gated actions':'observation';
@@ -1013,12 +1074,12 @@ function renderRecovery(state) {
 }
 $('recovery-toggle').addEventListener('click',()=>{
   if(!recoveryState?.configured)return;
-  if(!recoveryState.automatic&&!window.confirm('Allow GG and the known-fatal watcher to restart registered DS4 services after identity and fault checks? RAM-resident caches are lost; server settings and disk caches are preserved.'))return;
+  if(!recoveryState.automatic&&!window.confirm('Allow GG and the known-fatal watcher to restart registered model services after identity and fault checks? RAM-resident caches are lost; server settings and disk caches are preserved.'))return;
   void workerAction('recovery-policy',{enabled:!recoveryState.automatic});
 });
 $('recovery-handback-toggle').addEventListener('click',()=>{
   if(!recoveryState?.configured)return;
-  if(!recoveryState.profile_handback_automatic&&!window.confirm('Enable verified profile hand-back? With automatic recovery also on, DSG may adopt a stable changed profile on the same enrolled machine/service after all fixed ownership, fatal/replacement and verification gates pass. Pauses and agent holds still win.'))return;
+  if(!recoveryState.profile_handback_automatic&&!window.confirm('Enable verified profile hand-back? With automatic recovery also on, Star Gate may adopt a stable changed profile on the same enrolled machine/service after all fixed ownership, fatal/replacement and verification gates pass. Pauses and agent holds still win.'))return;
   void workerAction('recovery-handback-policy',{enabled:!recoveryState.profile_handback_automatic});
 });
 $('recovery-workers').addEventListener('click',event=>{

@@ -39,7 +39,7 @@ try {
     await page.setViewportSize({width,height:1100});
     assert.equal(await page.locator('.dashboard-header').evaluate(el=>el.scrollWidth<=el.clientWidth),true,'Unified header must fit without horizontal overflow');
     assert.equal(await page.locator('#connection').isVisible(),true);
-    assert.equal(await page.getByRole('link',{name:'Download a DSG debug snapshot'}).isVisible(),true);
+    assert.equal(await page.getByRole('link',{name:'Download a Star Gate debug snapshot'}).isVisible(),true);
   }
   assert.equal(await page.locator('header').count(),1,'No separate empty branding strip');
   assert.ok((await page.locator('.dashboard-header').boundingBox()).height<180,'Desktop header stays compact');
@@ -47,7 +47,7 @@ try {
   assert.equal(await page.locator('#devices .chart-bridge,#devices .chart-pause-dot').count(),0);
   const pause=page.locator('#devices .chart-gap').first();
   assert.match(await pause.getAttribute('aria-label'),/no interpolated speed/);
-  assert.equal(await pause.locator('.chart-gap-line').evaluate(el=>getComputedStyle(el).stroke),'rgb(196, 135, 135)');
+  assert.equal(await pause.locator('.chart-gap-line').evaluate(el=>getComputedStyle(el).stroke),'rgb(66, 72, 76)');
   assert.equal(await page.locator('.phase-legend').count(),0,'No repeated legend text beneath the activity bars');
   for(const [kind,ceiling] of [['prefill',1250.5],['decode',40.5]]){
     const labels=await page.locator(`#devices .chart.${kind}`).evaluateAll(charts=>charts.map(chart=>chart.getAttribute('aria-label')));
@@ -135,7 +135,7 @@ try {
   assert.equal(await page.locator('#agent-watch').isVisible(),true);
   assert.match(await page.locator('#agent-watch-status').innerText(),/2 enrolled.*2 fresh/);
   await page.locator('#agent-watch summary').click();
-  assert.match(await page.locator('#agent-watch-items').innerText(),/waiting inside DSG.*local tool active/s);
+  assert.match(await page.locator('#agent-watch-items').innerText(),/waiting inside Star Gate.*tool execution/s);
   assert.doesNotMatch(await page.locator('#agent-watch').innerText(),/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i);
   assert.match(await page.locator('#genie-hardening-status').innerText(),/1 suggestion.*1 durable.*newest first/);
   await page.locator('#genie-hardening summary').click();
@@ -149,7 +149,7 @@ try {
   await page.locator('#genie-hardening').screenshot({path:path.join(projectRoot,'docs/images/genie-hardening.png'),animations:'disabled'});
   await page.locator('#genie-hardening summary').click();
   assert.equal(await page.locator('#routing-message').innerText(),'','A successful control read must clear a stale error banner');
-  assert.equal(await page.locator('h1').innerText(),'Dwarf Star Gate');
+  assert.equal(await page.locator('h1').innerText(),'Star Gate');
   assert.match(await page.locator('#connection').innerText(),/Demo/);
   await page.locator('#tab-analytics').click();
   assert.equal(await page.locator('#genie-hardening').isHidden(),true);
@@ -161,9 +161,9 @@ try {
   assert.equal(await page.locator('#fleet-speed-window').inputValue(),'12h');
   assert.equal(await page.locator('#fleet-decode-speed').innerText(),'20');
   assert.equal(await page.locator('#fleet-prefill-speed').innerText(),'680');
-  assert.match(await page.locator('#fleet-speed-value').innerText(),/tok · ≈.* kWh · .* tok\/kWh/);
-  assert.match(await page.locator('#fleet-speed-summary').getAttribute('title'),/duration-weighted active mean/i);
-  assert.match(await page.locator('#fleet-speed-summary').getAttribute('title'),/measured.?power/i);
+  assert.match(await page.locator('#fleet-speed-value').innerText(),/3\/3 servers · ≈.* kWh/);
+  assert.match(await page.locator('#fleet-speed-summary').getAttribute('title'),/Observed average speed over 12h/i);
+  assert.match(await page.locator('#fleet-speed-summary').getAttribute('title'),/Server counts indicate evidence present, not full-period coverage/i);
   assert.equal(await page.locator('.hardware-strip').count(),3);
   assert.equal(await page.locator('.hardware-reading').count(),9);
   assert.match(await page.locator('.hardware-reading.memory').first().getAttribute('title'),/not dedicated GPU RAM/);
@@ -177,13 +177,13 @@ try {
   await page.locator('#fleet-speed-window').selectOption('12h');
   assert.match(await page.locator('#continuity-door-status').innerText(),/Continuity Door ready.*2 active proxied streams.*no request-body spooling or replay/);
   assert.equal(await page.locator('#fleet-summary').count(),0);
-  assert.match(await page.locator('#capacity-note').getAttribute('title'),/mac-ultra is free; sparkA's next queued session keeps its warm home for up to 4m more; then the DSG core may hand it over automatically/);
+  assert.match(await page.locator('#capacity-note').getAttribute('title'),/mac-ultra is free; sparkA's next queued session keeps its warm home for up to 4m more; then the Star Gate core may hand it over automatically/);
   assert.ok(await page.locator('.gate-art').evaluate(img=>img.complete&&img.naturalWidth>0));
   const statusBand=await page.locator('.status-deck').boundingBox(),activityTab=await page.locator('#tab-activity').boundingBox(),settingsTab=await page.locator('#tab-settings').boundingBox();
   assert.ok(statusBand&&statusBand.height<150,`Fleet status band is too tall: ${statusBand?.height}px`);
   assert.ok(activityTab&&settingsTab&&settingsTab.x>activityTab.x+activityTab.width,'Settings must be the far-right workspace tab');
   await page.locator('#tab-settings').click();
-  await page.locator('#queue-timeout-form').waitFor();
+  await page.locator('.endpoint-advanced>summary').click();await page.locator('#queue-timeout-form').waitFor();
   assert.equal(await page.locator('#queue-timeout-input').inputValue(),'20000');
   await page.locator('#queue-timeout-input').fill('21000');
   const queuePoll=await page.locator('#updated').innerText();
@@ -194,7 +194,7 @@ try {
   await page.locator('#queue-timeout-input').fill('20000');page.once('dialog',dialog=>dialog.accept());
   await page.getByRole('button',{name:'Save queue allowance',exact:true}).click();
   await page.waitForFunction(()=>document.getElementById('queue-timeout-current').textContent.includes('20,000'));
-  await page.reload();await page.locator('#queue-timeout-form').waitFor();
+  await page.reload();await page.locator('.endpoint-advanced>summary').click();await page.locator('#queue-timeout-form').waitFor();
   assert.equal(await page.locator('#queue-timeout-input').inputValue(),'20000');
 
   assert.match(await page.locator('#relocation-controls').innerText(),/Safe queued handovers.*configured first-refusal window.*gateway core may move/s);

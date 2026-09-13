@@ -10,7 +10,7 @@ existing interfaces deeply; do not edit DS4 or require a custom server build.
 
 ## Delivery principles
 
-**Seamless Continuity** is Dwarf Star Gate's tagline: keep agents working through
+**Seamless Continuity** is Star Gate's tagline: keep agents working through
 recoverable problems. It is our design direction, not a claim of universal
 failure recovery or permission to bypass the continuity boundaries below.
 
