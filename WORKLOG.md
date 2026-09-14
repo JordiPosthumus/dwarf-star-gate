@@ -1,5 +1,15 @@
 # Star Gate work log
 
+## 2026-09-14 — Native Hourglass aggregate projection (development)
+
+Inspected current Hourglass report generation and a retained aggregate report.
+Current source uses total-points-v1/net-hour-v3; historical AUC-derived scores
+must remain distinct. Added a pure read-only projection with recorded protocol,
+timing and identity metadata, explicit partial/unknown status, and no raw question,
+answer, trace or note payload. Five tests pass; a real historical report retains
+its exact score and older metric. UI/chat wiring, worker/configuration association
+and owner-started runs remain unfinished. No benchmark or infrastructure change.
+
 ## 2026-09-14 — Explicit queue priorities
 
 You can now promote a waiting request directly in Current Jobs. Choose High,

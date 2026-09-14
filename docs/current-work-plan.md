@@ -40,6 +40,10 @@ deployment receipts stay outside this public repository.
   existing mutation path; rollback claims require a retained, proven version.
 - [ ] Integrate owner-started Hourglass runs, initially measuring the chosen
   server directly with recorded configuration and measurement provenance.
+  A native aggregate-report projection is implemented in development; dashboard,
+  chat, worker/revision associations and owner-started execution remain unfinished.
+  Preserve each report's recorded metric and rules; current Hourglass source uses
+  total points, while older reports include incompatible AUC-derived scores.
 - [ ] Add qualified multiple text connections and dedicated media work/results;
   protected media borrowing and measured handback come later.
 - [ ] Complete installation, migration, continuity and failure-path acceptance
