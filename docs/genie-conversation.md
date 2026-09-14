@@ -291,3 +291,33 @@ web-tool inputs, and Genie is instructed never to send notebook prose to those
 tools. The identifier filter is not a general guarantee against a model paraphrasing
 private text; only enable sharing for notes appropriate for this provider and chat.
 No live installation is opted in by installing this code.
+
+
+## Follow-up queue (development)
+
+You can send another question while Genie answers. Each question is saved before
+acceptance and shown as waiting, then answered in conversation order. The next
+answer receives completed earlier turns and a fresh setup snapshot; later queued
+questions are not included prematurely. Other conversations remain independent.
+This reuses the private conversation files and existing dashboard tick.
+
+If an answer fails, later questions stay saved and pause. Review the unfinished
+answer, then use **Continue queued questions**. This continues only the waiting
+questions; it never replays the failed request. A stale or duplicate continuation
+cannot release a newer pause. Testing mode also holds accepted waiting questions
+and resumes them after testing ends. It does not cancel an active answer.
+
+On dashboard restart, a saved reply already marked working becomes interrupted;
+following questions pause for review. Questions saved as queued were never sent
+to the provider and can resume automatically. Failure to save a new question
+is reported as not accepted, and must not detach or discard an answer already
+running. Failed result writes stop further dispatch and retain an explicit error.
+This establishes process-restart behavior, not a power-loss durability guarantee.
+
+Conversation files retain version 1. A waiting reply is saved with the existing
+working state plus an explicit not-dispatched marker. Older readers preserve the
+messages but classify all working replies as interrupted; they cannot continue
+the new queue. Reopening that older reader's saved interruption never replays it.
+Keep the compatible reader for queue continuity, and never replace newly accepted
+messages with old chat backups during rollback.
+No new model/provider, queue priority, native concurrency or server power is added.

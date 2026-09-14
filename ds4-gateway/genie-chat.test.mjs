@@ -24,7 +24,6 @@ test('duplicate transport delivery produces one model call; a conflicting identi
   const chat=new GenieChat({directory:directory(t),provider}),s=chat.create();
   chat.submit(s.id,'Hello','request-duplicate');chat.submit(s.id,'Hello','request-duplicate');await Promise.resolve();
   assert.equal(calls,1);assert.throws(()=>chat.submit(s.id,'Changed','request-duplicate'),/already used/);
-  assert.throws(()=>chat.submit(s.id,'Second','request-another'),/draft has not been sent/);
   finish({text:'Hello back'});await chat.idle();assert.equal(chat.get(s.id).messages.length,2);
 });
 test('failed providers keep the question and partial answer without exposing private error text or replaying',async t=>{
@@ -178,4 +177,58 @@ test('disabled or unavailable notebook does not block chat or reuse earlier note
  const session=chat.create();chat.submit(session.id,'Question while waiting.','notebook-disable');await Promise.resolve();memory.setEnabled(false);release();await chat.idle();
  assert.equal(calls[0].context.operational_notebook.reason,'memory_disabled');assert.doesNotMatch(JSON.stringify(calls[0]),/PRIVATE_OPERATIONAL_NOTE/);
  memory.setEnabled(true);memory.error='PRIVATE_STORAGE_ERROR';chat.submit(session.id,'Still answer.','notebook-error');await chat.idle();assert.equal(calls[1].context.operational_notebook.reason,'notebook_unavailable');assert.doesNotMatch(JSON.stringify(calls[1]),/PRIVATE_STORAGE_ERROR|PRIVATE_OPERATIONAL_NOTE/);assert.equal(chat.get(session.id).messages.at(-1).state,'complete');
+});
+
+test('follow-ups are saved before dispatch and run in order with completed history and fresh context',async t=>{
+ const calls=[];let finish,model='initial';
+ const chat=new GenieChat({directory:directory(t),getSnapshot:()=>({gateway:{model,workers:[]}}),provider:{generate:p=>{calls.push(p);return calls.length===1?new Promise(r=>finish=r):Promise.resolve({text:'Answer '+calls.length});}}});
+ const s=chat.create();chat.submit(s.id,'First','queued-first');await Promise.resolve();
+ const second=chat.submit(s.id,'Second','queued-second');chat.submit(s.id,'Third','queued-third');chat.submit(s.id,'Second','queued-second');
+ assert.equal(second.queued,1);assert.equal(calls.length,1);
+ const disk=JSON.parse(fs.readFileSync(path.join(chat.directory,s.id+'.json')));assert.equal(disk.version,1);assert.deepEqual(disk.messages.filter(m=>m.role==='assistant').map(m=>m.state),['working','working','working']);assert.deepEqual(disk.messages.filter(m=>m.role==='assistant').map(m=>m.pending_dispatch??false),[false,true,true]);
+ model='fresh';finish({text:'First answer'});await chat.idle();
+ assert.deepEqual(calls.map(p=>p.message),['First','Second','Third']);
+ assert.deepEqual(calls[1].history,[{role:'user',content:'First'},{role:'assistant',content:'First answer'}]);
+ assert.deepEqual(calls[2].history.map(m=>m.content),['First','First answer','Second','Answer 2']);
+ assert.equal(calls[1].context.gateway.model,'fresh');assert.equal(chat.get(s.id).queued,0);assert.equal(chat.get(s.id).busy,false);
+});
+
+test('a failed active answer pauses saved follow-ups; explicit continuation never replays it',async t=>{
+ const calls=[];let reject;const chat=new GenieChat({directory:directory(t),provider:{generate:p=>{calls.push(p.message);if(calls.length===1){p.onDelta('Partial evidence');return new Promise((_,r)=>reject=r);}return Promise.resolve({text:'Following answer'});}}});
+ const s=chat.create();chat.submit(s.id,'First','pause-first');await Promise.resolve();chat.submit(s.id,'Follow-up','pause-second');reject(new Error('PRIVATE_BACKEND_ERROR'));await chat.idle();
+ const paused=chat.get(s.id);assert.equal(paused.messages[1].text,'Partial evidence');assert.equal(paused.messages[1].state,'failed');assert.equal(paused.queued,1);assert.equal(paused.queue_paused,paused.messages[1].id);assert.doesNotMatch(JSON.stringify(paused),/PRIVATE_BACKEND_ERROR/);
+ const restored=new GenieChat({directory:chat.directory,provider:{generate:async p=>{calls.push(p.message);return {text:'Following answer'};}}});await restored.idle();assert.deepEqual(calls,['First']);
+ assert.throws(()=>restored.resume(s.id,'stale-reply'),/changed/);restored.resume(s.id,paused.queue_paused);restored.resume(s.id,paused.queue_paused);await restored.idle();
+ assert.deepEqual(calls,['First','Follow-up']);assert.equal(restored.get(s.id).messages[1].state,'failed');assert.equal(restored.get(s.id).queue_paused,undefined);
+});
+
+test('restart recovers undispatched queued work but holds it behind an interrupted answer',async t=>{
+ for(const interrupted of [false,true]){
+  const d=directory(t),calls=[];const chat=new GenieChat({directory:d,provider:{generate:()=>{throw new Error('must not dispatch before close');}}});const s=chat.create();chat.submit(s.id,'Queued','restart-queued');chat.close();await chat.idle();
+  const file=path.join(d,s.id+'.json'),saved=JSON.parse(fs.readFileSync(file));assert.equal(saved.messages[1].state,'working');assert.equal(saved.messages[1].pending_dispatch,true);
+  if(interrupted){saved.messages.unshift({id:'old-user',request_id:'prior-request',role:'user',text:'Earlier',state:'complete'},{id:'old-reply',role:'assistant',text:'Saved partial',state:'working'});fs.writeFileSync(file,JSON.stringify(saved));}
+  const restored=new GenieChat({directory:d,provider:{generate:async p=>{calls.push(p.message);return {text:'Recovered pending answer'};}}});await restored.idle();
+  if(interrupted){assert.deepEqual(calls,[]);assert.equal(restored.get(s.id).messages[1].state,'interrupted');assert.equal(restored.get(s.id).queued,1);assert.equal(restored.get(s.id).queue_paused,'old-reply');restored.resume(s.id,'old-reply');await restored.idle();}
+  assert.deepEqual(calls,['Queued']);
+ }
+});
+
+test('a failed follow-up save cannot detach the active answer or send the unsaved question',async t=>{
+ let finish;const calls=[],chat=new GenieChat({directory:directory(t),provider:{generate:p=>{calls.push(p.message);return new Promise(r=>finish=r);}}});const s=chat.create();chat.submit(s.id,'First','save-first');await Promise.resolve();
+ const save=chat.save.bind(chat);chat.save=()=>{throw new Error('disk full');};assert.throws(()=>chat.submit(s.id,'Unstored','save-unsent'),/Could not save/);chat.save=save;finish({text:'Still saved'});await chat.idle();
+ assert.deepEqual(calls,['First']);assert.equal(chat.get(s.id).messages.length,2);assert.equal(chat.get(s.id).messages[1].text,'Still saved');assert.equal(JSON.parse(fs.readFileSync(path.join(chat.directory,s.id+'.json'))).messages[1].text,'Still saved');
+});
+
+test('testing holds an accepted follow-up without dropping it; the existing tick resumes after testing',async t=>{
+ let suspended=false,finish;const calls=[];const chat=new GenieChat({directory:directory(t),isSuspended:()=>suspended,provider:{generate:p=>{calls.push(p.message);return calls.length===1?new Promise(r=>finish=r):Promise.resolve({text:'Second answer'});}}});const s=chat.create();
+ chat.submit(s.id,'First','testing-first');await Promise.resolve();chat.submit(s.id,'Second','testing-second');suspended=true;finish({text:'First answer'});await chat.idle();chat.tick();assert.deepEqual(calls,['First']);assert.equal(chat.get(s.id).queued,1);
+ suspended=false;chat.tick();await chat.idle();assert.deepEqual(calls,['First','Second']);
+});
+
+test('continuing a paused queue requires same-origin CSRF and exact control fields',async t=>{
+ let reject;const calls=[];const {server,chat}=createChatDemo({directory:directory(t),provider:{generate:p=>{calls.push(p.message);return calls.length===1?new Promise((_,r)=>reject=r):Promise.resolve({text:'Next'});}}});
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));t.after(()=>{server.closeAllConnections();server.close();});const origin=`http://127.0.0.1:${server.address().port}`,url=origin+'/api/genie/chat',state=await(await fetch(url)).json();
+ const s=chat.create();chat.submit(s.id,'First','control-first');await Promise.resolve();chat.submit(s.id,'Second','control-second');reject(new Error('failed'));await chat.idle();const input={action:'continue-queue',conversation_id:s.id,expected_reply_id:chat.get(s.id).queue_paused};
+ const post=(headers,value=input)=>fetch(url,{method:'POST',headers:{'content-type':'application/json',...headers},body:JSON.stringify(value)});
+ assert.equal((await post({})).status,403);const headers={origin,'x-dsg-csrf':state.csrf_token};assert.equal((await post(headers,{...input,authority:'restart'})).status,400);assert.deepEqual(calls,['First']);assert.equal((await post(headers)).status,202);await chat.idle();assert.deepEqual(calls,['First','Second']);
 });

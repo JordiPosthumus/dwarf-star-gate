@@ -3,7 +3,7 @@ const uuid=value=>typeof value==='string'&&/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f
 const date=value=>Number.isSafeInteger(value)&&value>=0&&value<=8640000000000000?new Date(value).toISOString():'unknown';
 export function genieHandoff({status=null,session=null,connected=false,observedAt=null,pendingRequest=null,now=Date.now()}={}){
   const reply=session?.messages?.findLast(m=>m.role==='assistant');
-  const state=['working','complete','failed','interrupted'].includes(reply?.state)?reply.state:'unknown';
+  const state=['queued','working','complete','failed','interrupted'].includes(reply?.state)?reply.state:'unknown';
   const model=typeof status?.model==='string'&&/^[\w./:+-]{1,128}$/.test(status.model)?status.model:'not included';
   const lines=['Please diagnose this Star Gate / Gate Genie chat from the existing installation. Start read-only.',
     '',`Mode: ${status?.mode==='rehearsal'?'synthetic rehearsal; no real model qualification':'installation status'}`,`Handoff captured: ${date(now)}`,`Last successful chat observation: ${date(observedAt)}`,
@@ -14,6 +14,7 @@ export function genieHandoff({status=null,session=null,connected=false,observedA
     `Last assistant state: ${state} (saved status, not proof of current upstream activity)`,
     `Last reply finished: ${date(reply?.finished_at)}`];
   if(['scheduled','manual','action'].includes(reply?.waiting_for_review))lines.push(`Waiting for fleet review: ${reply.waiting_for_review}`);
+  if(session?.queue_paused)lines.push('Conversation queue is paused after an unfinished reply; following questions remain saved.');
   if(pendingRequest)lines.push('A browser submission has no confirmed acknowledgement. Check the saved conversation before submitting anything again.');
   lines.push('',
     'Inspect the local chat status and the identified saved conversation. Correlate any active request with the gateway and Hermes process before acting. A disconnected dashboard or old working status does not prove the model stopped.',

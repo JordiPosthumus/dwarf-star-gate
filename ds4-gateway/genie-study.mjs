@@ -56,7 +56,7 @@ export class GenieStudy {
     }else{
       if(!this.status().available)throw new Error('Connect Genie and web research before starting a study.');
       if(!UUID.test(input.request_id??''))throw new Error('A study request identifier is required.');
-      if(this.status().last_run?.state==='working')throw new Error('A study is already running. Open its conversation.');
+      if(['queued','working'].includes(this.status().last_run?.state))throw new Error('A study is already running. Open its conversation.');
       const conversation=this.chat.create({title:`Setup research · ${new Date(now).toISOString().slice(0,10)}`,purpose:'setup_research'});
       p.last_run={conversation_id:conversation.id,request_id:input.request_id,at:now};
       p.next_due_at=p.interval_days?now+p.interval_days*DAY:null;

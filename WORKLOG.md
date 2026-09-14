@@ -1592,3 +1592,23 @@ Validation: 139 focused chat, notebook, study and dashboard tests; two isolated
 Hermes bridge tests; and five web-tool validation tests passed. The browser
 disclosure showed the synthetic note and its saved revision. Syntax and privacy
 checks passed. This does not demonstrate live model use of the owner’s notes.
+
+
+## Saved conversational follow-ups (development)
+
+Conversations now accept follow-ups while an answer runs. Reuse the private chat
+store, dispatch one answer at a time per conversation, and construct history only
+from earlier completed turns. Waiting questions survive restart; an interrupted
+or failed answer pauses subsequent questions until explicit continuation. That
+control checks the failed reply identity and never replays it. Testing holds
+waiting questions; the existing dashboard tick resumes eligible work. A failed
+follow-up save preserves the live answer's references. No new scheduler service,
+provider, host action or native setting is introduced. The existing version 1
+file remains readable by older releases, which preserve pending messages as
+interrupted rather than replaying them. Rollback must keep the latest data.
+
+Validation: 126 focused tests and nine isolated Hermes integration tests passed.
+Browser checks queued a follow-up behind an active answer, paused it after a
+simulated failure, then continued it without replay. The previous production
+reader preserved both waiting messages as interrupted; returning to the new
+reader made no model calls. Syntax and privacy checks passed.
