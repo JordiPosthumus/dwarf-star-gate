@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-09-14 — Explicit queue priorities
+
+Added explicit high/normal/idle-only request metadata, priority-aware queue
+selection and eligible handover, and local waiting-job controls. Higher priority
+can displace a lower conversation reservation, including flexible Genie work,
+while preserving active streams, request payloads, queue deadlines and dependent
+turn order. Stale/running edits are rejected. The dashboard control uses existing
+local management and CSRF protection.
+
+Validated with 333 gateway, Door, routing, dashboard, scoped-control, lifecycle
+and queued-body tests, plus an isolated real-browser test of promotion, dispatch
+order and a stale running edit. Production activation is recorded separately;
+these checks use synthetic workers and do not qualify engine concurrency.
+
 ## 2026-09-13 — Star Gate branding
 
 Product branding is now Star Gate. Updated dashboard text, browser metadata,

@@ -1104,3 +1104,27 @@ test('chat inherits the inline credential only for the exact configured local ga
   assert.equal(genieChatConfig({...config,genie_chat:{url:'https://provider.example.invalid/v1'}}).api_key,undefined);
   assert.equal(genieChatConfig({...config,genie_chat:{...config.genie_chat,api_key:'explicit-example'}}).api_key,'explicit-example');
 });
+
+test('Current Jobs priority control requires local origin, CSRF and explicit management',async t=>{
+  const changes=[],input={request_id:'queued-request',expected_priority:'normal',priority:'high'};
+  const management={read:async()=>({}),act:async(action,value)=>{changes.push({action,value});return {priority:value.priority};}};
+  const jobs={read:async()=>({schema:1,queue_priority_version:1,jobs:[]})};
+  const server=createDashboard(()=>({version:1,devices:[]}),undefined,management,null,null,jobs);
+  server.listen(0,'127.0.0.1');await once(server,'listening');t.after(()=>{server.closeAllConnections();server.close();});
+  const origin=`http://127.0.0.1:${server.address().port}`,state=await(await fetch(origin+'/api/current-jobs')).json();
+  assert.equal(state.priority_edit_enabled,true);
+  const post=(headers,body=JSON.stringify(input))=>fetch(origin+'/api/current-jobs/priority',{method:'POST',headers,body});
+  const headers={origin,'content-type':'application/json','x-dsg-csrf':state.csrf_token};
+  assert.equal((await post({...headers,origin:'http://other.example'})).status,403);
+  assert.equal((await post({...headers,'x-dsg-csrf':'wrong'})).status,403);
+  assert.equal((await post({...headers,origin:''})).status,403);
+  assert.equal((await post({...headers,'content-type':'text/plain'})).status,415);
+  assert.equal((await post(headers,'broken')).status,400);assert.equal(changes.length,0);
+  assert.equal((await post(headers)).status,200);assert.deepEqual(changes,[{action:'job-priority',value:input}]);
+  const readOnly=createDashboard(()=>({version:1,devices:[]}),undefined,null,null,null,jobs);
+  readOnly.listen(0,'127.0.0.1');await once(readOnly,'listening');t.after(()=>{readOnly.closeAllConnections();readOnly.close();});
+  const readOrigin=`http://127.0.0.1:${readOnly.address().port}`,readState=await(await fetch(readOrigin+'/api/current-jobs')).json();
+  assert.equal(readState.priority_edit_enabled,false);
+  assert.equal((await fetch(readOrigin+'/api/current-jobs/priority',{method:'POST',headers:{origin:readOrigin,'content-type':'application/json','x-dsg-csrf':readState.csrf_token},body:JSON.stringify(input)})).status,405);
+  assert.equal(changes.length,1);
+});

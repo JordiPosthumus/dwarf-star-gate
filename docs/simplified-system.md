@@ -10,9 +10,9 @@ KV caches; clients own their conversations, tools and decisions to start turns.
 | Component | Responsibility |
 | --- | --- |
 | Continuity Door | Keeps the client-facing port available during planned gateway-core maintenance; holds new arrivals while admitted work drains. |
-| Gateway | Checks compatibility, keeps conversation affinity and ordinary FIFO queue order, and respects health, ownership, pauses and maintenance holds. |
+| Gateway | Checks compatibility, keeps conversation affinity and explicit queue priorities, and respects health, ownership, pauses and maintenance holds. |
 | Safe queued handover | Can move eligible work before dispatch under the existing independent checks. It does not replay already-dispatched requests or transfer KV files. |
-| Current Jobs | Shows observed request previews, state, worker placement and waiting/running times in a read-only local view. |
+| Current Jobs | Shows observed request previews, state, worker placement and waiting/running times; allows explicit priority edits for waiting requests. |
 | Operational evidence | Records request outcomes, reported cache reuse, observed cache misses/restores, measured prefill/decode rates and attribution uncertainty. |
 | Hardware telemetry | Shows available memory, activity, measured power, accumulated energy and temperature, with freshness and measurement-scope labels. |
 | Gate Genie | Explains fleet evidence, maintains its existing private notebook/action history, and requests only independently validated, already-enrolled actions. |
@@ -23,10 +23,13 @@ Genie can select compatible free pool capacity for a new review. Provider
 fallback requires proven non-dispatch; an ambiguous dispatched failure is not
 permission to replay it. Normal request dispatch never waits for Genie advice.
 
-## Current Jobs is observational
+## Current Jobs and queue priority
 
 The local dashboard reads `GET /api/current-jobs`, backed by the gateway's local
-control-socket `GET /current-jobs`. The endpoint has no mutation actions. General
+control-socket `GET /current-jobs`. With controls enabled, the separate
+`POST /api/current-jobs/priority` action changes one waiting request’s explicit
+priority through the local control socket. See [queue priority](queue-priority.md).
+General
 inference status, diagnostics, request journals and Genie prompts exclude these
 previews.
 

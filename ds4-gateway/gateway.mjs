@@ -1,3 +1,4 @@
+import {PRIORITY_HEADER,requestPriority,priorityRank,priorityIndex,priorityOrder} from './job-priority.mjs';
 import {outputShape} from './output-shape.mjs';
 import http from 'node:http';
 import {compose} from 'node:stream';
@@ -275,6 +276,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   // This may influence only genuinely new/unaffined work, where no established
   // cache home exists. It still abstains unless every tied worker has fresh
   // forecasts from the deployed, independently validated models.
+  const nextQueued=node=>node?node.queue[priorityIndex(node.queue)]:undefined;
   const queueBound=()=>config.max_queued_per_node??128;
   const waitingBound=()=>Math.max(1,nodes.length)*queueBound();
   // Long affinity-bound waits must not depend on the dashboard/Genie process.
@@ -293,13 +295,30 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   // general status, logs, the request journal, or Genie prompts.
   function currentJobsStatus(){
     const jobs=currentJobs();
-    return {schema:1,queued_body:{buffered_bytes:queuedBodyBudget.used,budget_bytes:queuedBodyBudget.limit},jobs:jobs.slice(0,512).map(job=>({
-      request_id:job.id,chat:job.key??null,title:null,request_preview:job.preview??null,machine:job.node?.id??job.fixedHome?.id??null,
+    return {schema:1,queue_priority_version:1,queued_body:{buffered_bytes:queuedBodyBudget.used,budget_bytes:queuedBodyBudget.limit},jobs:jobs.slice(0,512).map(job=>({
+      request_id:job.id,priority:job.priority,chat:job.key??null,title:null,request_preview:job.preview??null,machine:job.node?.id??job.fixedHome?.id??null,
       state:job.dispatched?'running':job.waitReason||!jobEligible(job)?'blocked':'queued',
       request_reason:job.dispatched?'Request is already running':job.waitReason??(job.node?.drained?'Routing is paused':!jobEligible(job)?'Worker or conversation is not eligible':null),
       waiting_ms:job.dispatched?Math.max(0,job.dispatchedMono-job.createdMono):Math.max(0,performance.now()-job.createdMono),
       running_ms:job.dispatched?Math.max(0,performance.now()-job.dispatchedMono):null
     })),jobs_truncated:jobs.length>512};
+  }
+  function setJobPriority(input){
+    if(!input||Array.isArray(input)||Object.keys(input).sort().join(',')!=='expected_priority,priority,request_id'||typeof input.request_id!=='string'||!input.request_id)
+      throw new Error('Specify request_id, expected_priority and priority only');
+    if(input.priority===undefined||input.expected_priority===undefined)throw new Error('Specify both the current and requested priority');
+    const priority=requestPriority(input.priority),expected=requestPriority(input.expected_priority);
+    const conflict=message=>{throw Object.assign(new Error(message),{status:409,code:'job_priority_conflict'});};
+    const job=currentJobs().find(job=>job.id===input.request_id&&!job.cancelled);
+    if(!job)return conflict('This request has finished or left the queue; refresh Current Jobs');
+    if(job.dispatched||job.upstream)return conflict('This request is already running; its priority was left unchanged');
+    if(job.priority!==expected)return conflict('This request’s priority changed; refresh Current Jobs before retrying');
+    const previous=job.priority;job.priority=priority;
+    if(previous!==priority)log('queued_priority_changed',{request_id:job.id,previous,priority});
+    // Keep body, queue deadline, placement and conversation sequence intact.
+    // Existing admission/dispatch checks still decide which work is eligible.
+    pumpWaiting();for(const node of nodes)schedule(node);
+    return {request_id:job.id,previous,priority,state:job.dispatched?'running':'waiting'};
   }
   function reject(req,res,status,code,message,{id=randomUUID(),callId=validCallId(req.headers[CALL_ID_HEADER]),key=null,node=null,reason}={}){
     const receipt=rejectionReceipt({request_id:id,call_id:callId,session:key,node:node?.id??null,code,reason});
@@ -395,11 +414,10 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   }
   const relocationEvidence=(job,source,destination)=>digest(['queue-relocation-v1',job.id,source.id,destination.id,job.sequence,job.created].join('\0'));
   function relocationDecision(source,idle) {
-    const job=source.queue.find(candidate=>!candidate.cancelled);
+    const job=nextQueued(source);
     if(!job)return null;
     let reason='offer_ready',conflict=null;
     if(!source.active)reason='source_not_active';
-    else if(source.queue[0]!==job)reason='cancelled_queue_head';
     else if(job.upstream||job.dispatched)reason='already_dispatched';
     else if((conflict=conflictingSessionWork(job)))reason=conflict.reason;
     const destination=idle.find(node=>node!==source&&allowsWorker(job.modelRoute,node));
@@ -432,7 +450,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     for(const source of nodes) {
       const decision=relocationDecision(source,idle);if(!decision||decision.reason!=='offer_ready')continue;
       const {job,destination}=decision;
-      offers.push({schema:1,evidence_id:relocationEvidence(job,source,destination),request_id:job.id,source:source.id,destination:destination.id,
+      offers.push({schema:1,evidence_id:relocationEvidence(job,source,destination),request_id:job.id,priority:job.priority,source:source.id,destination:destination.id,
         waiting_seconds:Math.max(0,(performance.now()-job.createdMono)/1000),source_active_seconds:source.active?Math.max(0,(performance.now()-source.active.dispatchedMono)/1000):null,
         affinity:job.affinity,cache_locality:'unknown',destination_immediately_free:true,automatic:false});
     }
@@ -448,7 +466,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     const keys=Object.keys(input??{}).sort().join(',');
     if(keys!=='destination,evidence_id,request_id,source'||!validCallId(input.request_id)||!/^[a-f0-9]{64}$/.test(input.evidence_id)||
       !/^[\w-]{1,64}$/.test(input.source)||!/^[\w-]{1,64}$/.test(input.destination))throw new Error('Specify one current queued-handover offer exactly');
-    const source=nodes.find(n=>n.id===input.source),destination=nodes.find(n=>n.id===input.destination),job=source?.queue[0];
+    const source=nodes.find(n=>n.id===input.source),destination=nodes.find(n=>n.id===input.destination),job=nextQueued(source);
     const rejectMove=message=>{relocation.rejected++;throw new Error(message);};
     if(!source||!destination||source===destination||!job||job.id!==input.request_id)return rejectMove('Queued-handover offer is stale; refresh before retrying');
     if(job.cancelled||job.upstream||job.dispatched||!source.active||(!eligibleDestination(destination)||!allowsWorker(job.modelRoute,destination)))return rejectMove('Queued-handover state changed; request was left in place');
@@ -462,7 +480,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
       log('queue_relocation_persistence_failed',{request_id:job.id,source:source.id,destination:destination.id});
       return rejectMove('Durable handover failed; request remains queued on its original server');
     }
-    source.queue.shift();job.node=destination;job.affinity='rebalanced';destination.queue.push(job);
+    source.queue.splice(source.queue.indexOf(job),1);job.node=destination;job.affinity='rebalanced';destination.queue.push(job);
     const receipt={schema:1,request_id:job.id,source:source.id,destination:destination.id,actor,waiting_ms:performance.now()-job.createdMono,
       dispatch_state:'not_dispatched',body_replayed:false,deadline_preserved:true,cache_locality:'unknown'};
     relocation.completed++;relocation.last={...receipt,time:new Date().toISOString()};
@@ -472,9 +490,9 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   }
   function rebalanceUndispatched() {
     const offer=relocationOffers().filter(candidate=>{
-      const job=nodes.find(node=>node.id===candidate.source)?.queue[0];
+      const job=nextQueued(nodes.find(node=>node.id===candidate.source));
       return job&&(['new','none'].includes(job.affinity)||(automaticAffinityWait!==null&&candidate.waiting_seconds*1000>=automaticAffinityWait));
-    }).sort((a,b)=>b.waiting_seconds-a.waiting_seconds||a.source.localeCompare(b.source))[0];
+    }).sort((a,b)=>priorityRank(b)-priorityRank(a)||b.waiting_seconds-a.waiting_seconds||a.source.localeCompare(b.source))[0];
     if(!offer)return;
     try {relocateQueued({request_id:offer.request_id,source:offer.source,destination:offer.destination,evidence_id:offer.evidence_id},'scheduler');}
     catch{/* Exact-offer revalidation failed; the untouched request remains queued. */}
@@ -534,15 +552,21 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     clientWatch.observeRequest(job.watchId,job.id,'queued');
     evaluateShadow(node,job,wasAdmitted?'worker_free':'admission');schedule(node);
   }
-  const freeGenieNode=(modelRoute)=>nodes.filter(node=>allowsWorker(modelRoute,node)&&node.healthy&&!node.drained&&!node.quarantine&&!node.recovering&&!node.removed&&!node.active&&!node.queue.length&&!parkedFor(node).length).sort((a,b)=>store.count(a.id)-store.count(b.id)||a.id.localeCompare(b.id))[0];
+  const freeGenieNode=(modelRoute,priority='normal')=>nodes.filter(node=>{
+    if(!allowsWorker(modelRoute,node)||!node.healthy||node.drained||node.quarantine||node.recovering||node.removed||node.active)return false;
+    const queued=[...node.queue,...parkedFor(node)].sort((a,b)=>a.sequence-b.sequence),next=priorityIndex(queued);
+    // Flexible work remains unassigned until a worker is free. At that point
+    // an explicit higher class may precede lower waiting work, never a stream.
+    return next<0||priorityRank({priority})>priorityRank(queued[next]);
+  }).sort((a,b)=>store.count(a.id)-store.count(b.id)||a.id.localeCompare(b.id))[0];
   function pumpWaiting() {
     if(shuttingDown)return;
     for(const n of nodes)for(const job of n.queue)heartbeat(job);
     // Retain FIFO within each conversation; independent conversations can proceed.
-    for(const job of [...waiting]){
+    for(const job of priorityOrder(waiting)){
       if(job.cancelled)continue;
       heartbeat(job);
-      if(job.genieFlexible){const free=freeGenieNode(job.modelRoute);if(free)admit(job,free);else job.waitReason='no_ready_worker';continue;}
+      if(job.genieFlexible){const free=freeGenieNode(job.modelRoute,job.priority);if(free)admit(job,free);else job.waitReason='no_ready_worker';continue;}
       if(job.key&&waiting.some(j=>j!==job&&j.sequence<job.sequence&&j.key===job.key)){job.waitReason='same_session_queued';continue;}
       const home=job.key&&store.get(job.key),outstanding=sessionWork(nodes,job.key);
       let node=job.fixedHome??(home&&nodes.find(n=>n.id===home.node));
@@ -558,7 +582,16 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
         if(!node){job.waitReason='no_ready_worker';continue;}
         if(outstanding&&outstanding.node!==node){job.waitReason=outstanding.reason;continue;}
       }
-      if(node.queue.length>=queueBound()){job.waitReason='queue_full';continue;}
+      if(node.queue.length>=queueBound()){
+        const merged=[...node.queue,job].sort((a,b)=>a.sequence-b.sequence),allocation=node.turnAllocation;
+        const reserved=allocation&&(node.queue.find(other=>other.key===allocation.key)??allocation);
+        const takesFreeSlot=!node.active&&merged[priorityIndex(merged)]===job&&
+          (!allocation||allocation.used>=conversationTurns()||job.key===allocation.key||priorityRank(job)>priorityRank(reserved));
+        // Already-accepted waiting work can occupy the newly free active slot;
+        // it need not wait for a lower-priority queued request to consume it.
+        // Admission immediately dispatches this job, so queue capacity is retained.
+        if(!takesFreeSlot){job.waitReason='queue_full';continue;}
+      }
       admit(job,node);
     }
     rebalanceUndispatched();
@@ -579,8 +612,13 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     if(!node.healthy||node.quarantine||node.recovering||shuttingDown)releaseTurns(node);
     node.queue=node.queue.filter(job=>!job.cancelled);
     while (node.queue.length) {
-      let index=0;
-      const allocation=node.turnAllocation;
+      let index=priorityIndex(node.queue);
+      const highest=priorityRank(node.queue[index]);
+      let allocation=node.turnAllocation;
+      if(allocation){
+        const own=node.queue.find(job=>job.key===allocation.key);
+        if(priorityRank(own??allocation)<highest){releaseTurns(node);allocation=null;}
+      }
       if(allocation){
         if(allocation.used<conversationTurns()){
           const next=node.queue.findIndex(job=>job.key===allocation.key);
@@ -590,8 +628,8 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
         }else{
           // Yield to the oldest OTHER conversation even if this one has
           // already pipelined more requests. Preserve FIFO within each key.
-          const next=node.queue.findIndex(job=>job.key!==allocation.key);
-          if(next>=0)index=next;
+          const next=priorityIndex(node.queue.map(job=>job.key===allocation.key?{...job,cancelled:true}:job));
+          if(next>=0&&priorityRank(node.queue[next])===highest)index=next;
           releaseTurns(node);
         }
       }
@@ -601,8 +639,8 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
       job.queueTimer?.cancel();
       clearTimeout(node.turnTimer);node.turnTimer=null;
       if(conversationTurns()>1&&job.key){
-        if(node.turnAllocation?.key!==job.key)node.turnAllocation={key:job.key,used:0,until:0};
-        node.turnAllocation.used++;node.turnAllocation.until=0;
+        if(node.turnAllocation?.key!==job.key)node.turnAllocation={key:job.key,priority:job.priority,used:0,until:0};
+        node.turnAllocation.priority=job.priority;node.turnAllocation.used++;node.turnAllocation.until=0;
       }else releaseTurns(node);
       node.active = job;
       dispatch(node, job);
@@ -615,7 +653,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     if(outcome!=='complete'||shuttingDown||!allocation){releaseTurns(node);return;}
     if(allocation.used>=conversationTurns())return;
     allocation.until=performance.now()+conversationTurnIdleMs;
-    node.turnTimer=setTimeout(()=>{releaseTurns(node);schedule(node);pumpWaiting();},conversationTurnIdleMs);
+    node.turnTimer=setTimeout(()=>{releaseTurns(node);pumpWaiting();schedule(node);},conversationTurnIdleMs);
     node.turnTimer.unref?.();
   }
   function dispatch(node, job) {
@@ -641,6 +679,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     Object.assign(headers, node.upstreamHeaders ?? {});
     delete headers['x-dsg-review-flexible']; // Core-owned undispatched assignment only.
     delete headers['x-dsg-review-no-wait']; // Advisory admission option only.
+    delete headers[PRIORITY_HEADER]; // Queue metadata never becomes an engine option.
     delete headers['x-dsg-priority-intent']; // Strip retired client metadata during upgrades.
     delete headers[CLIENT_METADATA_HEADER]; // DSG hint only; never a DS4 setting.
     delete headers[CALL_ID_HEADER];
@@ -706,8 +745,8 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
       job.upstream=null;job.upstreamResponse=null;
       node.active = null;
       finishTurn(node,outcome);
-      schedule(node);
       pumpWaiting();
+      schedule(node);
       if(shadow.enabled)setImmediate(evaluateWaiting);
     };
     const responseHeaders=up=>{
@@ -911,6 +950,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
       return;
     }
     if (!accepted.has(route)) { req.resume(); return error(res, 404, 'unsupported_route', 'Endpoint is not on the inference allowlist'); }
+    let priority;try{priority=requestPriority(req.headers[PRIORITY_HEADER]);}catch(e){req.resume();return error(res,400,'invalid_priority',e.message);}
     const admissionMetadata=clientMetadata(req.headers[CLIENT_METADATA_HEADER]);
     const keyValue = req.headers['x-session-affinity'] || req.headers['x-ds4-conversation-id'] || req.headers['x-session-id'] || req.headers.session_id;
     const key = keyValue && req.method === 'POST' ? digest(String(keyValue)) : null;
@@ -968,7 +1008,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
       return;
     }
     const genieFlexible=trafficClass==='genie'&&!key&&req.headers['x-dsg-review-flexible']==='1';
-    if(genieFlexible){node=freeGenieNode(modelRoute);waitReason=node?null:'no_ready_worker';}
+    if(genieFlexible){node=freeGenieNode(modelRoute,priority);waitReason=node?null:'no_ready_worker';}
     if(trafficClass==='genie'&&req.headers['x-dsg-review-no-wait']==='1'){
       // Check atomically at admission. A previously free snapshot cannot grant
       // permission to put an advisory review behind user work after a race.
@@ -976,7 +1016,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     }
     if ((node&&node.queue.length+parkedFor(node).length>=queueBound())||(!node&&waiting.length>=waitingBound()))return reject(req,res,429,'queue_full','DSG waiting capacity is full; request was not dispatched. Wait for capacity or use the patient client adapter.',{id:requestId,callId,key,node,reason:'queue_full'});
     const job = { req, res, key, affinity, id:requestId,callId,watchId, sequence:sequence++,admissionMetadata,created: Date.now(), createdMono:performance.now(), cancelled: false,queueTimeoutMs:queueTimeoutMs(),
-      trafficClass,genieFlexible,modelRoute };
+      trafficClass,genieFlexible,modelRoute,priority };
     job.previewFromRequest=req.headers['x-dsg-priority-intent']!=='off'&&trafficClass!=='genie'&&req.url==='/v1/chat/completions';
     const cancel = () => {
       if (res.writableFinished) return;
@@ -1107,7 +1147,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     if(before!==conversationTurns())for(const node of nodes){
       // An active model call finishes on its original server. Count it when
       // enabling allocations from FIFO, and preserve used turns otherwise.
-      if(node.active&&!node.turnAllocation&&conversationTurns()>1&&node.active.key)node.turnAllocation={key:node.active.key,used:1,until:0};
+      if(node.active&&!node.turnAllocation&&conversationTurns()>1&&node.active.key)node.turnAllocation={key:node.active.key,priority:node.active.priority,used:1,until:0};
       if(!node.active&&node.turnAllocation){
         if(node.turnAllocation.used>=before&&conversationTurns()>before)releaseTurns(node);
         else if(node.turnAllocation.used>=conversationTurns()){
@@ -1301,7 +1341,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     if(req.method==='GET'&&req.url==='/agents')return json(res,200,agents.adminStatus());
     if (req.method === 'GET' && req.url === '/current-jobs') return json(res,200,currentJobsStatus());
     if (req.method === 'GET' && req.url === '/workers') return json(res, 200, registry());
-    if (req.method !== 'POST' || !['/drain-workers', '/resume-workers', '/maintenance-lock','/release-maintenance-lock','/maintenance-receipt','/add-worker', '/edit-endpoint', '/check-endpoint', '/remove-worker', '/set-ssh-fallbacks','/set-context-limit','/set-conversation-turns','/set-queue-timeout','/set-protection','/relocate-queued','/genie-relocate-queued','/recovery-policy','/recovery-handback-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/grant-agent','/revoke-agent','/release-agent-hold','/agent/v1/drain','/agent/v1/resume','/agent/v1/receipt'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
+    if (req.method !== 'POST' || !['/drain-workers', '/resume-workers', '/maintenance-lock','/release-maintenance-lock','/maintenance-receipt','/add-worker', '/edit-endpoint', '/check-endpoint', '/remove-worker', '/set-ssh-fallbacks','/set-context-limit','/set-conversation-turns','/set-queue-timeout','/set-protection','/set-job-priority','/relocate-queued','/genie-relocate-queued','/recovery-policy','/recovery-handback-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/grant-agent','/revoke-agent','/release-agent-hold','/agent/v1/drain','/agent/v1/resume','/agent/v1/receipt'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
     let body = '';
     req.on('data', chunk => { body += chunk; if (Buffer.byteLength(body) > 4096) req.destroy(); });
     req.on('error', () => {});
@@ -1331,6 +1371,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
           if (req.url === '/set-conversation-turns') return json(res,200,setConversationTurns(input));
           if (req.url === '/set-queue-timeout') return json(res,200,setQueueTimeout(input));
           if (req.url === '/set-protection') return json(res,200,visionProtection.set(input));
+          if (req.url === '/set-job-priority') return json(res,200,setJobPriority(input));
           if (req.url === '/relocate-queued') return json(res,200,relocateQueued(input));
           if (req.url === '/genie-relocate-queued') {
             if(config.genie_load_balancing===false||!genieRelocationOffers().some(offer=>['request_id','source','destination','evidence_id'].every(key=>offer[key]===input?.[key])))throw new Error('Genie relocation evidence or policy changed; request was left in place');

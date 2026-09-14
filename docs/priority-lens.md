@@ -5,9 +5,10 @@ request. Their classifiers, preferences, weighted scheduling, continuation
 reviewers and enrollment adapters are no longer part of DSG. Earlier designs
 and source remain in Git history.
 
-The dashboard retains a read-only Current Jobs view with bounded request
-previews, state, placement and timing. It does not classify or reprioritize work.
-Requests retain ordinary queue order subject to compatibility, affinity and
-ownership safeguards. The optional continuity adapter and
-[Agent Watch](agent-watch.md) remain separate capabilities; neither starts new
-user turns. Normal Pi provider, model and retry settings are unchanged.
+The dashboard's Current Jobs view now supports a separate, explicit
+[queue priority control](queue-priority.md): high, normal or idle-only. There is
+no content classifier, weighted policy, saved preference system or automatic
+continuation. Active requests finish and conversation order is preserved.
+The optional continuity adapter and [Agent Watch](agent-watch.md) remain separate
+capabilities; neither starts new user turns. Normal Pi provider, model and retry
+settings are unchanged.

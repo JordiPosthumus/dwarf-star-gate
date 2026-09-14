@@ -1830,7 +1830,7 @@ test('stock requests get local queued previews without backend dispatch',{timeou
   assert.equal(r.backends[0].records.length,1);
   try{
     const row=r.gateway.currentJobsStatus().jobs.find(j=>j.state==='queued');
-    assert.equal(row.title,null);assert.equal(row.priority,undefined);
+    assert.equal(row.title,null);assert.equal(row.priority,'normal');
     assert.equal(row.request_preview.text,'Repair CSV export formatting.');
     assert.equal(r.backends[0].records.length,1,'reading the jobs view never dispatches inference');
   }finally{r.backends[0].heldStreams.shift()();await hold;await queued;}
@@ -1876,7 +1876,7 @@ test('Current Jobs previews stay private and retire with the request',{timeout:1
   try{
     const state=await workerControl(r.config.control_socket,'/current-jobs');
     assert.deepEqual(state.jobs[0].request_preview,{text:'Repair CSV export formatting today.',previous_observation:false});
-    assert.equal(state.jobs[0].priority,undefined);
+    assert.equal(state.jobs[0].priority,'normal');
     assert.doesNotMatch(JSON.stringify(state),/PRIVATE_/);
     assert.doesNotMatch(JSON.stringify(r.gateway.stats()),/Repair CSV|PRIVATE_/);
     assert.equal(r.backends[0].records[0].body.toString(),body);
@@ -2197,4 +2197,115 @@ test('corrupt saved turn allowance fails startup without resetting affinity or l
   assert.throws(()=>createGateway(r.config),/Invalid saved conversation turn allowance/);
   assert.deepEqual(JSON.parse(fs.readFileSync(r.config.state_file)),state);
   assert.equal(fs.existsSync(r.config.state_file+'.lock'),false);
+});
+
+test('explicit queue priority never interrupts active work and preserves exact engine payloads',async t=>{
+  const r=await rig(t,1),b=r.backends[0];
+  const hold=r.request(JSON.stringify({label:'active',stream:true,fixture_hold_stream:true}),'active',{headers:{'x-dsg-priority':'idle-only'}});
+  await until(()=>b.heldStreams?.length===1);const active=r.gateway.nodes[0].active,pending=[],bodies=[];
+  for(const [label,priority]of [['low','idle-only'],['normal','normal'],['urgent','high']]){
+    const body=JSON.stringify({label,messages:[{role:'user',content:'Unchanged request'}],max_tokens:12000,reasoning_effort:'xhigh'});bodies.push(body);
+    pending.push(r.request(body,label,{headers:{'x-dsg-priority':priority}}));await until(()=>r.gateway.stats().queued===pending.length);
+  }
+  assert.equal(r.gateway.nodes[0].active,active);assert.equal(b.records.length,1);assert.equal(b.aborts,0);
+  b.heldStreams.shift()();assert.ok((await Promise.all([hold,...pending])).every(x=>x.status===200));
+  assert.deepEqual(b.records.map(x=>x.payload.label),['active','urgent','normal','low']);assert.equal(b.peak,1);assert.equal(b.aborts,0);
+  for(const row of b.records.slice(1)){assert.ok(bodies.includes(row.body.toString()));assert.equal(row.headers['x-dsg-priority'],undefined);}
+});
+
+test('queued high priority takes precedence over a lower-priority conversation turn reservation',async t=>{
+  const r=await rig(t,1,{conversation_turns:5,conversation_turn_idle_ms:20}),b=r.backends[0];
+  const hold=r.request(JSON.stringify({label:'A1',stream:true,fixture_hold_stream:true}),'A');await until(()=>b.heldStreams?.length===1);
+  const continuation=r.request(JSON.stringify({label:'A2'}),'A');await until(()=>r.gateway.stats().queued===1);
+  const high=r.request(JSON.stringify({label:'B-high'}),'B',{headers:{'x-dsg-priority':'high'}});await until(()=>r.gateway.stats().queued===2);
+  b.heldStreams.shift()();await Promise.all([hold,continuation,high]);assert.deepEqual(b.records.map(x=>x.payload.label),['A1','B-high','A2']);assert.equal(b.aborts,0);
+});
+
+test('priority cannot reverse dependent requests in the same conversation',async t=>{
+  const r=await rig(t,1),b=r.backends[0];const hold=r.request(JSON.stringify({label:'active',stream:true,fixture_hold_stream:true}),'active');await until(()=>b.heldStreams?.length===1);
+  const pending=[];
+  for(const [label,key,priority]of [['A1','A','normal'],['A2','A','high'],['B1','B','high']]){pending.push(r.request(JSON.stringify({label}),key,{headers:{'x-dsg-priority':priority}}));await until(()=>r.gateway.stats().queued===pending.length);}
+  b.heldStreams.shift()();await Promise.all([hold,...pending]);assert.deepEqual(b.records.map(x=>x.payload.label),['active','B1','A1','A2']);
+});
+
+test('unknown priority is rejected before dispatch rather than guessed from content',async t=>{
+  const r=await rig(t,1);const reply=await r.request(JSON.stringify({messages:[{role:'user',content:'Urgent emergency, please hurry.'}]}),'test',{headers:{'x-dsg-priority':'urgent'}});
+  assert.equal(reply.status,400);assert.equal(r.backends[0].records.length,0);assert.match(reply.body,/invalid_priority/);
+});
+
+test('handover offers prefer eligible high-priority work and reject a superseded lower offer',async t=>{
+  const r=await rig(t,2,{control_socket:true,automatic_affinity_rebalance_min_wait_ms:false});
+  for(const key of ['a','b','c','d','e'])await r.request('{}',key);
+  const active=r.request(JSON.stringify({label:'active',stream:true,fixture_hold_stream:true}),'c');await until(()=>r.backends[0].heldStreams?.length===1);
+  const low=r.request(JSON.stringify({label:'low'}),'a',{headers:{'x-dsg-priority':'idle-only'}});await until(()=>r.gateway.nodes[0].queue.length===1);
+  const old=(await workerControl(r.config.control_socket,'/workers')).queued_relocation.offers[0];
+  const body=JSON.stringify({label:'high',max_tokens:262144,reasoning_effort:'xhigh'}),high=r.request(body,'e',{headers:{'x-dsg-priority':'high'}});await until(()=>r.gateway.nodes[0].queue.length===2);
+  const exact=o=>({request_id:o.request_id,source:o.source,destination:o.destination,evidence_id:o.evidence_id});
+  await assert.rejects(workerControl(r.config.control_socket,'/relocate-queued',exact(old)),/stale/);
+  const offer=(await workerControl(r.config.control_socket,'/workers')).queued_relocation.offers[0];assert.equal(offer.priority,'high');
+  await workerControl(r.config.control_socket,'/relocate-queued',exact(offer));assert.equal((await high).headers['x-ds4-node'],'spark2');assert.equal(r.backends[1].records.at(-1).body.toString(),body);assert.equal(r.backends[0].heldStreams.length,1);assert.equal(r.backends[0].aborts,0);
+  r.backends[0].heldStreams.shift()();await Promise.all([active,low]);assert.equal(r.backends[0].records.at(-1).payload.label,'low');
+});
+
+test('operator priority edits affect waiting order only and preserve the request deadline and contents',async t=>{
+  const r=await rig(t,1,{control_socket:true}),b=r.backends[0];
+  const held=r.request(JSON.stringify({label:'active',stream:true,fixture_hold_stream:true}),'active');await until(()=>b.heldStreams?.length===1);
+  const first=r.request(JSON.stringify({label:'first'}),'first');await until(()=>r.gateway.stats().queued===1);
+  const body=JSON.stringify({label:'promoted',stream:true,fixture_hold_stream:true,max_tokens:153600,reasoning_effort:'xhigh'});
+  const promoted=r.request(body,'promoted');await until(()=>r.gateway.stats().queued===2);
+  const job=r.gateway.nodes[0].queue[1],deadline=job.queueTimer,created=job.createdMono,sequence=job.sequence;
+  const input={request_id:job.id,expected_priority:'normal',priority:'high'};
+  const result=await workerControl(r.config.control_socket,'/set-job-priority',input,{channel:'dashboard'});
+  assert.equal(result.priority,'high');assert.equal(job.queueTimer,deadline);assert.equal(job.createdMono,created);assert.equal(job.sequence,sequence);
+  assert.equal(b.records.length,1);assert.equal(b.aborts,0);
+  await assert.rejects(workerControl(r.config.control_socket,'/set-job-priority',{...input,priority:'idle-only'}),/priority changed/);
+  assert.equal(job.priority,'high');
+  b.heldStreams.shift()();await until(()=>b.heldStreams?.length===1);
+  await assert.rejects(workerControl(r.config.control_socket,'/set-job-priority',{...input,expected_priority:'high',priority:'idle-only'}),/already running/);
+  assert.equal(job.priority,'high');assert.equal(b.records.at(-1).body.toString(),body);assert.equal(b.aborts,0);
+  b.heldStreams.shift()();await Promise.all([held,promoted,first]);
+  assert.deepEqual(b.records.map(row=>row.payload.label),['active','promoted','first']);
+  await assert.rejects(workerControl(r.config.control_socket,'/set-job-priority',{...input,expected_priority:'high',priority:'normal'}),/finished or left/);
+});
+
+test('priority edits reject malformed input and cannot mutate jobs through the public ingress',async t=>{
+  const r=await rig(t,1,{control_socket:true}),b=r.backends[0];
+  const held=r.request(JSON.stringify({stream:true,fixture_hold_stream:true}),'active');await until(()=>b.heldStreams?.length===1);
+  const waiting=r.request('{}','waiting');await until(()=>r.gateway.stats().queued===1);
+  const job=r.gateway.nodes[0].queue[0],valid={request_id:job.id,expected_priority:'normal',priority:'high'};
+  for(const input of [null,[],{}, {...valid,priority:'urgent'},{...valid,priority:null},{...valid,extra:true},{request_id:job.id,priority:'high'}]){
+    await assert.rejects(workerControl(r.config.control_socket,'/set-job-priority',input));assert.equal(job.priority,'normal');
+  }
+  assert.equal((await r.request(JSON.stringify(valid),null,{path:'/set-job-priority'})).status,404);
+  b.heldStreams.shift()();await Promise.all([held,waiting]);assert.equal(b.aborts,0);
+});
+
+test('priority edit applies to parked work without overriding its unavailable worker',async t=>{
+  const r=await rig(t,1,{control_socket:true}),b=r.backends[0];
+  r.gateway.drainNodes(['spark1'],true);
+  const waiting=r.request('{}','parked');await until(()=>r.gateway.currentJobsStatus().jobs.length===1);
+  const before=r.gateway.currentJobsStatus().jobs[0];assert.equal(before.state,'blocked');
+  await workerControl(r.config.control_socket,'/set-job-priority',{request_id:before.request_id,expected_priority:'normal',priority:'high'});
+  const after=r.gateway.currentJobsStatus().jobs[0];assert.equal(after.priority,'high');assert.equal(after.state,'blocked');assert.equal(b.records.length,0);
+  r.gateway.drainNodes(['spark1'],false);assert.equal((await waiting).status,200);
+});
+
+test('a high-priority flexible Genie request gets the next free worker ahead of lower queued work',async t=>{
+  const r=await rig(t,1),b=r.backends[0];
+  const held=r.request(JSON.stringify({label:'active',stream:true,fixture_hold_stream:true}),'active');await until(()=>b.heldStreams?.length===1);
+  const lower=r.request(JSON.stringify({label:'normal'}),'normal');await until(()=>r.gateway.stats().queued===1);
+  const genie=r.request(JSON.stringify({label:'genie'}),null,{headers:{'x-dsg-observer':'gate-genie','x-dsg-review-flexible':'1','x-dsg-priority':'high'}});
+  await until(()=>r.gateway.currentJobsStatus().jobs.length===3);assert.equal(b.aborts,0);
+  b.heldStreams.shift()();await Promise.all([held,lower,genie]);
+  assert.deepEqual(b.records.map(row=>row.payload.label),['active','genie','normal']);assert.equal(b.aborts,0);
+});
+
+test('a full worker queue does not let lower work take the newly free slot before accepted high-priority waiting work',async t=>{
+  const r=await rig(t,1,{max_queued_per_node:1}),b=r.backends[0];
+  const active=r.request(JSON.stringify({label:'active',stream:true,fixture_hold_stream:true}),'active');await until(()=>b.heldStreams?.length===1);
+  const lower=r.request(JSON.stringify({label:'normal'}),'normal');await until(()=>r.gateway.stats().queued===1);
+  r.gateway.drainNodes(['spark1'],true);
+  const high=r.request(JSON.stringify({label:'high'}),'high',{headers:{'x-dsg-priority':'high'}});await until(()=>r.gateway.currentJobsStatus().jobs.length===3);
+  r.gateway.drainNodes(['spark1'],false);b.heldStreams.shift()();await Promise.all([active,lower,high]);
+  assert.deepEqual(b.records.map(row=>row.payload.label),['active','high','normal']);assert.equal(b.peak,1);assert.equal(b.aborts,0);
 });

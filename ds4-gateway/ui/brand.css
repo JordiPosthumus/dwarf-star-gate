@@ -104,8 +104,9 @@ button:disabled{opacity:.4;cursor:default}input:focus-visible,select:focus-visib
 .jobs-work{width:100%;min-width:980px;table-layout:fixed;border-collapse:collapse;font-size:13px;line-height:1.5;text-align:left;white-space:normal}
 .jobs-work th,.jobs-work td{padding:12px 14px;border-bottom:1px solid #343936;vertical-align:top;white-space:normal;overflow-wrap:anywhere}
 .jobs-work th{color:#b5beb8;position:sticky;top:0;z-index:1;background:var(--bg)}
-.jobs-work th:first-child{width:35%}.jobs-work th:nth-child(2){width:10%}.jobs-work th:nth-child(3){width:12%}.jobs-work th:nth-child(4){width:18%}.jobs-work th:nth-child(5){width:25%}
-.jobs-work td:nth-child(4),.jobs-work td:nth-child(5){white-space:pre-line}.jobs-work td:nth-child(5){color:var(--muted)}
+.jobs-work th:first-child{width:28%}.jobs-work th:nth-child(2){width:9%}.jobs-work th:nth-child(3){width:13%}.jobs-work th:nth-child(4){width:11%}.jobs-work th:nth-child(5){width:17%}.jobs-work th:nth-child(6){width:22%}
+.jobs-work td:nth-child(5),.jobs-work td:nth-child(6){white-space:pre-line}.jobs-work td:nth-child(6){color:var(--muted)}
+.jobs-work select{width:100%;padding:6px;border:1px solid var(--line);border-radius:4px;background:var(--bg);color:inherit;font:inherit}
 @media(max-width:600px){.current-jobs{padding:12px}.jobs-work th,.jobs-work td{padding:8px 6px}}
 
 #endpoint-edit-form{padding:18px;border:1px solid var(--line);border-radius:9px;background:var(--panel)}

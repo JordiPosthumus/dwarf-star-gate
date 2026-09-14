@@ -53,7 +53,7 @@ The [current work plan](current-work-plan.md) records acceptance details. The
 operator retired XGB and embeddings, including all model data, on 2026-09-07.
 Training, learned placement, predicted remaining time and promotion are no longer
 roadmap dependencies. Priority Lens and Proactive Resume were also retired on
-2026-09-07; the read-only Current Jobs view remains. The remaining delivery order is:
+2026-09-07; Current Jobs remains, now with explicit queue priority controls. The remaining delivery order is:
 
 1. Fast Genie assignment: use eligible capacity promptly and validate provider
    failure boundaries without replaying ambiguous dispatched work.
@@ -190,11 +190,13 @@ preflight were retired on 2026-09-07. Existing safe queued handover remains;
 see the [current load-balancing rules](simplified-system.md#load-balancing).
 Historical designs do not authorize further experiments.
 
-## Current Jobs — read-only request visibility
+## Current Jobs — request visibility and explicit priority
 
 Priority Lens and Proactive Resume were retired on 2026-09-07. Current Jobs
 retains transient request previews, worker placement, state and timing without
 classification, weighted scheduling, saved preferences or automatic new turns.
+Its separate [queue priority control](queue-priority.md) accepts explicit
+high/normal/idle-only choices and never interrupts active requests.
 
 ## Lightweight hardware telemetry — first adapters implemented
 

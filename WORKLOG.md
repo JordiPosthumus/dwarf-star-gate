@@ -1,5 +1,12 @@
 # Star Gate work log
 
+## 2026-09-14 — Explicit queue priorities
+
+You can now promote a waiting request directly in Current Jobs. Choose High,
+Normal or Idle only; running work finishes and conversation turns stay in order.
+Clients can supply the same priority explicitly. No model calls or content
+classification decide urgency. Model server settings and concurrency are unchanged.
+
 ## 2026-09-13 — Star Gate branding
 
 - Renamed the product to Star Gate, with an updated wordmark, dashboard and

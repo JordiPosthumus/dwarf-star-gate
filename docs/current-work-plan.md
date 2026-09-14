@@ -12,7 +12,7 @@ Private deployment receipts and measurements stay outside this public repository
 - [x] Retire XGB, embeddings, training, prediction, promotion and model data.
 - [x] Retire Priority Lens classification, preferences and weighted scheduling.
 - [x] Retire Proactive Resume and its optional Pi continuation adapters.
-- [x] Keep read-only Current Jobs with bounded private previews, state,
+- [x] Keep Current Jobs with bounded private previews, state,
   worker placement and timing.
 - [x] Preserve Door continuity, ordinary FIFO, affinity, ownership/holds,
   safe queued handover and certified pre-dispatch retry.
@@ -39,3 +39,10 @@ release does not create a new open-ended development goal.
 Future experiments, additional client automation, cache transfer or deliberate
 calibration require a new decision. No retired milestone remains on the active
 checklist. Preserve unrelated work and existing operational history.
+
+## Explicit queue priorities
+
+High/normal/idle-only classes and waiting-job edits are implemented separately
+from the retired classifier. See [queue priority](queue-priority.md). Qualified
+concurrent dispatch remains a separate unfinished implementation step; this
+queue increment preserves the existing one-active-request-per-worker setting.

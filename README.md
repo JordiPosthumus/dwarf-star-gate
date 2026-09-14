@@ -64,10 +64,13 @@ An optional [Agent Watch](docs/agent-watch.md) heartbeat also lets DSG and Genie
 tell local tool work, waiting inside DSG, and “the client says it is waiting but
 no request reached this gateway” apart—without sending task or conversation text.
 
-**Current Jobs** is a read-only local view of observed requests, with short user
-request previews, worker placement, state and waiting/running times. Previews
-remain transient and do not trigger model calls or affect scheduling. Priority
-Lens and Proactive Resume were retired on 2026-09-07. Agent Watch and certified
+**Current Jobs** shows local request previews, worker placement, state, priority
+and waiting/running times. With controls enabled, choose **High**, **Normal** or
+**Idle only** for a waiting request. Running work finishes and turns in the same
+conversation stay in order. Clients can also set the explicit
+[`x-dsg-priority` header](docs/queue-priority.md). Previews remain transient and
+do not trigger model calls or determine priority. The retired Priority Lens
+classifier and Proactive Resume remain retired. Agent Watch and certified
 pre-dispatch continuity remain available.
 
 **[Read the simplified system overview](docs/simplified-system.md).**
