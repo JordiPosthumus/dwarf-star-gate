@@ -421,3 +421,15 @@ during the query are reported distinctly from successful evidence. Docker image
 RepoDigests are reported separately; an empty local list does not prove that an
 image is unavailable elsewhere. Neither labels nor package versions establish
 build ancestry or complete source integrity.
+
+When chat uses this installation's exact local gateway URL, each reply carries
+a private correlation ID in the existing call-ID header. The chat view can then
+show the gateway's observed queued, blocked or running request and worker. It
+keeps this distinct from actual model/tool activity. The correlation is not sent
+to external providers by normal setup. Raw Current Jobs previews and unrelated
+requests do not enter chat context or saved progress evidence.
+
+Older cores, missing matches, ambiguous matches and stale/unavailable snapshots
+remain unknown; a missing request can simply mean Hermes is between model calls.
+This does not cancel, replay, reprioritize or shorten any request. A slow progress
+lookup cannot block chat indefinitely.

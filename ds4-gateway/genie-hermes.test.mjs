@@ -14,10 +14,11 @@ test('actual Hermes preserves two-turn chat and handles provider rejection witho
   skip:!process.env.DSG_TEST_HERMES_SOURCE||!process.env.DSG_TEST_HERMES_PYTHON,timeout:120000,
 },async t=>{
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-hermes-'));
-  const requests=[];
+  const requests=[],callIds=[];
   const server=http.createServer((req,res)=>{
     if(req.method==='GET'){res.setHeader('content-type','application/json');res.end(JSON.stringify({object:'list',data:[{id:'example-model',context_length:131072}]}));return;}
     assert.equal(req.headers['x-dsg-observer'],'gate-genie');
+    callIds.push(req.headers['x-dsg-call-id']);
     let body='';req.on('data',c=>body+=c);req.on('end',()=>{
       const p=JSON.parse(body);requests.push(p);
       const users=p.messages.filter(m=>m.role==='user').map(m=>m.content);
@@ -37,7 +38,7 @@ test('actual Hermes preserves two-turn chat and handles provider rejection witho
     });
   });
   await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});
-  const provider=hermesProvider({python:process.env.DSG_TEST_HERMES_PYTHON,source:process.env.DSG_TEST_HERMES_SOURCE,url:`http://127.0.0.1:${server.address().port}/v1`,model:'example-model'},{directory});
+  const provider=hermesProvider({python:process.env.DSG_TEST_HERMES_PYTHON,source:process.env.DSG_TEST_HERMES_SOURCE,url:`http://127.0.0.1:${server.address().port}/v1`,model:'example-model',gateway_tracking:true},{directory});
   t.after(()=>{provider.close();server.closeAllConnections();server.close();fs.rmSync(directory,{recursive:true,force:true});});
   const notebook=new GenieMemory(path.join(fs.realpathSync(directory),'memory'));notebook.setEnabled(true);
   notebook.saveOperatorNote({text:'SYNTHETIC_NOTEBOOK_MARKER: prefer the recorded setup.'},{gateway:{workers:[]}});
@@ -47,6 +48,7 @@ test('actual Hermes preserves two-turn chat and handles provider rejection witho
   assert.ok(chat.get(s.id).messages[1].progress?.step >= 1, 'Native Hermes step callback must reach saved chat');
   chat.submit(s.id,'What is my name?','hermes-second');await chat.idle();
   assert.match(chat.get(s.id).messages[3].text,/Ada/);
+  assert.equal(callIds[0],chat.get(s.id).messages[1].id);assert.equal(callIds[1],chat.get(s.id).messages[3].id);assert.notEqual(callIds[0],callIds[1]);
   assert.equal(requests.length,2);assert.equal(requests[1].messages.filter(m=>m.role==='user').length,2);
   assert.match(JSON.stringify(requests[0].messages),/example-one/);
   assert.match(requests[0].messages[0].content,/You are a genie who lives in Star Gate/);

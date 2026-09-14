@@ -296,8 +296,8 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   // general status, logs, the request journal, or Genie prompts.
   function currentJobsStatus(){
     const jobs=currentJobs();
-    return {schema:1,queue_priority_version:1,queued_body:{buffered_bytes:queuedBodyBudget.used,budget_bytes:queuedBodyBudget.limit},jobs:jobs.slice(0,512).map(job=>({
-      request_id:job.id,priority:job.priority,chat:job.key??null,title:null,request_preview:job.preview??null,machine:job.node?.id??job.fixedHome?.id??null,
+    return {schema:1,queue_priority_version:1,genie_progress_version:1,observed_at:Date.now(),queued_body:{buffered_bytes:queuedBodyBudget.used,budget_bytes:queuedBodyBudget.limit},jobs:jobs.slice(0,512).map(job=>({
+      request_id:job.id,call_id:job.trafficClass==='genie'?job.callId:null,traffic_class:job.trafficClass,priority:job.priority,chat:job.key??null,title:null,request_preview:job.preview??null,machine:job.node?.id??job.fixedHome?.id??null,
       state:job.dispatched?'running':job.waitReason||!jobEligible(job)?'blocked':'queued',
       request_reason:job.dispatched?'Request is already running':job.waitReason??(job.node?.drained?'Routing is paused':!jobEligible(job)?'Worker or conversation is not eligible':null),
       waiting_ms:job.dispatched?Math.max(0,job.dispatchedMono-job.createdMono):Math.max(0,performance.now()-job.createdMono),

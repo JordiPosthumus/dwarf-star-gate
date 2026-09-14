@@ -6,6 +6,7 @@ This conversational profile has no action tools. It does not alter other profile
 import contextlib
 import json
 import os
+import re
 from pathlib import Path
 import sys
 from threading import Lock
@@ -69,6 +70,10 @@ def main():
                 progress["reasoning_chars"] += len(delta)
                 report("reasoning")
         report("starting", True)
+        headers={"x-dsg-observer": "gate-genie"}
+        call_id=request.get("call_id")
+        if not review and isinstance(call_id,str) and re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._:-]{7,127}",call_id):
+            headers["x-dsg-call-id"]=call_id
         agent = AIAgent(
             base_url=p["url"], api_key=p["api_key"] or "local-provider",
             provider="custom", api_mode="chat_completions", model=p["model"],
@@ -77,7 +82,7 @@ def main():
             load_soul_identity=True, session_id=request["session_id"],
             max_tokens=p["max_tokens"], reasoning_config={"effort": p["reasoning_effort"]} if p["reasoning_effort"] is not None else {},
             step_callback=None if review else step, reasoning_callback=None if review else reasoning,
-            request_overrides={"extra_headers": {"x-dsg-observer": "gate-genie"}},
+            request_overrides={"extra_headers": headers},
         )
         actual_tools = {t.get("function", t).get("name") for t in agent.tools}
         if inspection:
