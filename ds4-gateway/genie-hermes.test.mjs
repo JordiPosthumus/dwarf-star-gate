@@ -44,6 +44,7 @@ test('actual Hermes preserves two-turn chat and handles provider rejection witho
   const chat=new GenieChat({directory:path.join(directory,'conversations'),provider,notebook,getSnapshot:()=>({time:Date.now(),demo:true,gateway:{model:'example-model',workers:[{id:'example-one',context_length:131072}]}})});
   const s=chat.create();chat.submit(s.id,'My name is Ada. What setup can you see?','hermes-first');await chat.idle();
   assert.equal(chat.get(s.id).messages[1].state,'complete',JSON.stringify(chat.get(s.id).messages[1]));
+  assert.ok(chat.get(s.id).messages[1].progress?.step >= 1, 'Native Hermes step callback must reach saved chat');
   chat.submit(s.id,'What is my name?','hermes-second');await chat.idle();
   assert.match(chat.get(s.id).messages[3].text,/Ada/);
   assert.equal(requests.length,2);assert.equal(requests[1].messages.filter(m=>m.role==='user').length,2);
@@ -82,4 +83,13 @@ test('an explicit turn deadline releases a hung bridge without replaying the que
   chat.submit(s.id,'Keep this question.','deadline-test');await chat.idle();
   assert.equal(chat.get(s.id).busy,false);assert.equal(chat.get(s.id).messages[1].state,'failed');assert.match(chat.get(s.id).messages[1].error,/waiting allowance/);
   assert.equal(chat.get(s.id).messages[0].text,'Keep this question.');assert.equal(chat.get(s.id).messages.length,2);
+});
+
+test('bridge exposes progress counts without reasoning content or provider metadata',async t=>{
+ const {execFileSync}=await import('node:child_process');const python=execFileSync('which',['python3'],{encoding:'utf8'}).trim();
+ const directory=fs.mkdtempSync(path.join(os.tmpdir(),'sg-progress-')),source=path.join(directory,'source');fs.mkdirSync(source);
+ fs.writeFileSync(path.join(source,'run_agent.py'),`class AIAgent:\n def __init__(self, **kwargs): self.tools=[]; self.kw=kwargs\n def run_conversation(self, *args, **kwargs):\n  self.kw['step_callback'](1, [{'secret': 'PRIVATE_TOOL_METADATA'}])\n  self.kw['reasoning_callback']('PRIVATE_REASONING_TEXT')\n  self.kw['step_callback'](2, [])\n  return {'final_response':'Visible answer','completed':True}\n`);
+ const provider=hermesProvider({python,source,url:'http://127.0.0.1:1/v1',model:'example-model'},{directory});t.after(()=>{provider.close();fs.rmSync(directory,{recursive:true,force:true});});
+ const chat=new GenieChat({directory:path.join(directory,'chats'),provider});const c=chat.create();chat.submit(c.id,'Show progress.','progress-test');await chat.idle();const s=chat.get(c.id);
+ assert.equal(s.messages[1].state,'complete');assert.equal(s.messages[1].progress.step,2);assert.equal(s.messages[1].progress.reasoning_chars,22);assert.doesNotMatch(JSON.stringify(s),/PRIVATE_REASONING_TEXT|PRIVATE_TOOL_METADATA/);
 });

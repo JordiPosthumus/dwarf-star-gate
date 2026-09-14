@@ -55,7 +55,7 @@ export function hermesProvider(config,{directory,review=false}) {
       child.stdout.on('data',chunk=>{
         bytes+=Buffer.byteLength(chunk);if(bytes>16*1024*1024){failed=chatError('bridge');child.kill();return;}
         pending+=chunk;let n;
-        while((n=pending.indexOf('\n'))>=0){const line=pending.slice(0,n);pending=pending.slice(n+1);try{const event=JSON.parse(line);if(event.type==='delta')input.onDelta(event.text);else if(event.type==='research')input.onResearch?.(event.event);else if(event.type==='done')final=event;else if(event.type==='error')failed=chatError(event.code);}catch{failed=chatError('bridge');}}
+        while((n=pending.indexOf('\n'))>=0){const line=pending.slice(0,n);pending=pending.slice(n+1);try{const event=JSON.parse(line);if(event.type==='delta')input.onDelta(event.text);else if(event.type==='research')input.onResearch?.(event.event);else if(event.type==='progress')input.onProgress?.(event.event);else if(event.type==='done')final=event;else if(event.type==='error')failed=chatError(event.code);}catch{failed=chatError('bridge');}}
       });
       // Never relay library logs, provider bodies or credentials into browser errors.
       child.stderr.resume();child.stdin.on('error',()=>{});

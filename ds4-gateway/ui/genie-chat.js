@@ -1,3 +1,4 @@
+import {chatProgress} from './genie-progress.js';
 import {genieHandoff} from './genie-handoff.js';
 const panel=document.getElementById('conversation-shell');
 if(panel){
@@ -22,8 +23,9 @@ if(panel){
     return fragment;
   }
   function render(session){
-    const key=JSON.stringify([session,status?.available,status?.suspended,status?.research_available,status?.notebook_access,sending,creating]);if(key===signature)return;signature=key;
+    const key=JSON.stringify([session,status?.available,status?.suspended,status?.research_available,status?.notebook_access,sending,creating,connectionError,session?.busy?Math.floor(Date.now()/1000):null]);if(key===signature)return;signature=key;
     const list=$('conversation-messages'),scrollTop=list.scrollTop,nearBottom=list.scrollHeight-list.scrollTop-list.clientHeight<90;
+    const openDetails=new Set([...list.querySelectorAll('details[open]')].map(d=>`${d.closest('[data-message-id]')?.dataset.messageId}:${d.querySelector('summary')?.textContent}`));
     list.replaceChildren();
     if(!session?.messages.length){
       const empty=text('div','','conversation-empty');empty.append(text('h3','Let’s make sense of your setup.'),text('p','Ask a question, then follow it up. Genie keeps this conversation and uses the setup information available to this dashboard.'));
@@ -35,12 +37,12 @@ if(panel){
       const article=text('article','','conversation-message');article.dataset.role=m.role;article.dataset.messageId=m.id;
       article.append(text('p',m.role==='user'?'You':'Genie','conversation-author'));
       const body=text('div','','conversation-text');body.append(format(m.text));article.append(body);
-      if(m.state==='queued')article.append(text('p','Saved · waiting for earlier answers','conversation-thinking'));
-      if(m.state==='working'&&!m.text)article.append(text('p',m.waiting_for_review==='scheduled'?'Genie is yielding his routine review…':m.waiting_for_review?'Waiting for Genie’s current review to finish…':'Waiting for the model','conversation-thinking'));
+      const progress=chatProgress(m,{connected:!connectionError,suspended:status?.suspended});
+      if(progress){const box=text('div','','conversation-progress');box.append(text('p',progress.label,'conversation-progress-label'),text('p',progress.detail));if(progress.activity)box.append(text('p',progress.activity));article.append(box);}
       if(m.error)article.append(text('p',m.error,'conversation-error'));
       if(m.role==='assistant'&&m.research?.events?.length){
         const events=m.research.events??[],last=events.at(-1);
-        if(m.state==='working'&&last?.state==='reading')article.append(text('p','Reading public sources…','conversation-thinking'));
+
         const d=text('details','','conversation-sources');d.append(text('summary','Web research sources'));
         d.append(text('p',`Public sources checked · ${new Date(events[0].at).toLocaleString()}`));
         const sources=new Map();for(const e of events){for(const s of e.sources??[]){const prior=sources.get(s.url);if(!prior||e.kind==='read')sources.set(s.url,{...s,title:s.title||prior?.title,kind:e.kind,at:e.at});}if(e.error)d.append(text('p',e.error));}
@@ -49,6 +51,7 @@ if(panel){
       if(m.context){const d=document.createElement('details');d.append(text('summary','Setup used for this answer'));const c=m.context;d.append(text('p',`${c.source}\n${c.observed_at?new Date(c.observed_at).toLocaleString():'Observation time unavailable'}\n${c.unavailable?'Current setup unavailable':`${c.servers.length} servers in this snapshot`}\n${c.servers.map(w=>`${w.id}: ${w.is_healthy===true?'healthy':w.is_healthy===false?'not healthy':'health unknown'}; context ${w.context_length??'unknown'}`).join('\n')}`));if(c.operational_activity){const a=c.operational_activity;d.append(text('p',a.available?`Operational history: ${a.reviews.length} recent review records; ${a.actions.length} action receipts${a.truncated?' (limited selection)':''}. Historical evidence, not proof of current health. ${c.operational_notebook?.included?'Notebook context is listed below.':'Private notebook prose is not included.'}`:'Operational history was not available for this answer.'));}if(c.hourglass_reports?.configured){d.append(text('p',`Hourglass: ${c.hourglass_reports.reports.length} saved reports used; ${c.hourglass_reports.unavailable_count} unavailable. Historical measurements, not current configuration or upgrade proof.`));for(const row of c.hourglass_reports.reports)d.append(text('p',`${row.summary.model} · ${row.summary.score.value??'score unavailable'} · ${row.summary.score.version??'metric unknown'} · ${row.summary.state}\nReport revision: ${row.report_revision??'unknown'}`));}if(c.operational_notebook){const n=c.operational_notebook;d.append(text('p',n.included?`Operational notebook: ${n.notes.length} record${n.notes.length===1?'':'s'} used${n.truncated?' (limited selection)':''}. Historical context, not approval or current health proof.`:n.configured?`Operational notebook not used: ${n.reason==='memory_disabled'?'memory was off':'notebook was unavailable'}.`:'Operational notebook access was off for this answer.'));for(const note of n.notes??[]){const detail=text('details','');detail.append(text('summary',`${note.kind} · ${note.id} · revision ${note.revision}`),text('p',JSON.stringify(note.data,null,2)));d.append(detail);}}if(c.study_brief)d.append(text('p',`Research brief: ${c.study_brief}`));for(const row of c.configuration_records?.records??[])for(const kind of ['approved','observed','proposed']){const r=row[kind];if(r)d.append(text('p',`${row.worker_id} · ${kind} · ${r.runtime?.name??'runtime unknown'} ${r.runtime?.version??''}\nConfiguration revision: ${r.revision??'unavailable'}`));}article.append(d);}
       list.append(article);
     }
+    for(const d of list.querySelectorAll('details'))if(openDetails.has(`${d.closest('[data-message-id]')?.dataset.messageId}:${d.querySelector('summary')?.textContent}`))d.open=true;
     if(session?.queue_paused){const paused=text('div','','conversation-error');paused.append(text('p','An earlier reply did not finish. Queued questions are saved and paused. Continue after reviewing it; the failed question will not be replayed.'));const resume=text('button','Continue queued questions','button');resume.type='button';resume.disabled=sending||!status?.available;resume.addEventListener('click',async()=>{resume.disabled=true;try{await api('/api/genie/chat',{action:'continue-queue',conversation_id:session.id,expected_reply_id:session.queue_paused});await refresh();}catch(e){error(e.message);resume.disabled=false;}});list.append(paused);paused.append(resume);}
     $('conversation-send').disabled=sending||creating||!status?.available;
     $('conversation-web-status').textContent=status?.research_available?'Genie can search public sources when useful.':'Web search is not configured for this installation.';
@@ -100,7 +103,7 @@ if(panel){
     const session=id?(changed?await api(`/api/genie/chat/${id}`):cachedSession):null;if(id===current){cachedSession=session;render(session);}
     if(connectionError&&$('conversation-error').textContent===connectionError)error();connectionError=null;lastObservedAt=Date.now();
     if(status.unreadable_conversations?.length)error(`${status.unreadable_conversations.length} saved conversation file(s) could not be read and were preserved. Other chats still work.`);
-  }catch(e){connectionError=`Connection unavailable. Your draft is kept. ${e.message}`;error(connectionError);signature='';$('conversation-send').disabled=true;}finally{fetching=false;}}
+  }catch(e){connectionError=`Connection unavailable. Your draft is kept. ${e.message}`;error(connectionError);signature='';if(cachedSession)render(cachedSession);$('conversation-send').disabled=true;}finally{fetching=false;}}
   $('conversation-new').addEventListener('click',async()=>{if(sending||creating)return;creating=true;$('conversation-input').disabled=true;$('conversation-new').disabled=true;$('conversation-send').disabled=true;try{const s=await api('/api/genie/chat',{action:'new'});await refresh();await select(s.id);}catch(e){error(e.message);}finally{creating=false;$('conversation-input').disabled=false;$('conversation-new').disabled=false;signature='';await refresh();$('conversation-input').focus();}});
   $('conversation-input').addEventListener('input',()=>draft.write(current,$('conversation-input').value));
   $('conversation-input').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();$('conversation-form').requestSubmit();}});

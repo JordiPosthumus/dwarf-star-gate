@@ -321,3 +321,18 @@ the new queue. Reopening that older reader's saved interruption never replays it
 Keep the compatible reader for queue continuity, and never replace newly accepted
 messages with old chat backups during rollback.
 No new model/provider, queue priority, native concurrency or server power is added.
+
+### Activity while waiting
+
+Each unfinished answer shows elapsed time, the latest model step or research
+activity, and time since the last reported activity. Hermes reasoning callbacks
+provide a character count, never reasoning text. Search queries and page links
+remain visible while the answer is pending. An open sources panel stays open
+through refreshes. A lost dashboard connection is labelled as unknown progress;
+quiet time is not presented as proof of either a stall or continued generation.
+
+A follow-up queued inside a conversation is distinguished from a request already
+sent to the provider. Provider queue position is not available through this
+progress channel. Providers that buffer their responses may produce no reasoning
+activity until they return; the display states that limitation. Older saved
+requests still show elapsed time and any recorded research activity.
