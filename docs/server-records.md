@@ -82,3 +82,8 @@ checks do not authenticate content or make concurrent edits atomic; it is not a 
 library path operator-controlled. Files larger than 1 MiB are rejected. This
 feature does not change recovery enrollment, schedule inspections, or establish
 restore readiness by itself.
+
+For an example of a public settings reference derived from inspected records, see
+[Qwen3.8 NVFP4](qwen38-vllm-reference.md). It omits private identities and keeps
+unresolved build dependencies explicit; it is not a replacement for the private
+configuration and its approval/restore evidence.
