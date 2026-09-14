@@ -96,6 +96,17 @@ if(panel){
   async function refresh(){if(fetching)return;fetching=true;try{
     status=await api('/api/genie/chat');token=status.csrf_token;renderStudy();
     $('conversation-provider').textContent=status.suspended?'Paused for testing':status.mode==='rehearsal'?'Rehearsal · example answers':status.available?`Hermes · ${status.model}`:'Hermes not configured';
+    let installation=$('conversation-installation');
+    if(!installation){installation=text('details');installation.id='conversation-installation';$('conversation-provider').after(installation);}
+    const wasOpen=installation.open;installation.replaceChildren(text('summary','Genie installation'));
+    for(const file of status.identity??[])installation.append(text('p',`${file.name}: ${file.state==='matches_bundle'?'matches bundled default':file.state==='missing'?'missing':'differs from bundled default; installed edits preserved'}`));
+    const runtime=status.runtime_provenance;
+    if(runtime){installation.append(text('p',`Expected Hermes: ${runtime.expected_revision}`));
+      installation.append(text('p',runtime.own_git?`Own Git revision: ${runtime.git_revision??'unknown'} · tracked changes: ${runtime.tracked_changes??'unknown'}`:'Archive installation; no Hermes Git repository.'));
+      const check=runtime.last_source_check;
+      installation.append(text('p',check?`Source comparison ${new Date(check.checked_at).toLocaleString()}: ${check.tracked_files} files; ${check.changed_files} differences (${check.line_ending_only_files} line endings only), ${check.missing_files} missing, ${check.extra_code_files} extra code files. ${check.scope}`:'No recorded source-content comparison. A revision marker alone is not verification.'));
+    }
+    installation.open=wasOpen;
     $('conversation-badge').textContent=status.mode==='rehearsal'?'Example setup':'No server changes';
     if(current&&!sending&&!creating&&!status.conversations.some(s=>s.id===current)){draft.write(current,$('conversation-input').value);current=null;signature='';$('conversation-input').value=draft.read(null);}
     if(!current&&status.conversations.length){let saved;try{saved=localStorage.getItem('dsg-genie-conversation');}catch{}current=status.conversations.some(s=>s.id===saved)?saved:status.conversations[0].id;$('conversation-input').value=draft.read(current);}
