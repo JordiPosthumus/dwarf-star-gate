@@ -2360,6 +2360,20 @@ test('configured concurrency above the old HTTP socket pool reaches the backend 
   assert.ok((await Promise.all(calls)).every(reply=>reply.status===200));assert.equal(r.backends[0].peak,17);assert.equal(r.backends[0].aborts,0);
 });
 
+test('health probes reach a responsive backend while every concurrent inference socket is occupied',async t=>{
+  const r=await rig(t,1,{workerConcurrency:17,health_interval_ms:100,health_timeout_ms:100,health_failures:1}),b=r.backends[0];
+  const calls=Array.from({length:17},(_,i)=>r.request('{"wait_for_release":true}','busy-'+i));
+  try{
+    await until(()=>b.active===17);
+    const checked=r.gateway.nodes[0].lastProbe,received=b.modelHeaders.length;
+    await until(()=>r.gateway.nodes[0].lastProbe!==checked);
+    assert.ok(b.modelHeaders.length>received,'the health request must reach the backend, not wait behind inference');
+    assert.equal(r.gateway.stats().healthy,1);assert.equal(r.gateway.stats().active,17);
+    assert.equal(r.gateway.nodes[0].probeError,undefined);
+  }finally{b.releases?.splice(0).forEach(release=>release());await Promise.all(calls);}
+  assert.equal(b.aborts,0);
+});
+
 test('cancelling one concurrent stream preserves the other stream and its ownership',async t=>{
   const r=await rig(t,1,{workerConcurrency:2});const controller=new AbortController();
   const response=await fetch(`http://127.0.0.1:${r.address.port}/v1/chat/completions`,{method:'POST',headers:{authorization:'Bearer none','content-type':'application/json','x-session-affinity':'cancel-me'},body:'{"stream":true,"delay":500}',signal:controller.signal});

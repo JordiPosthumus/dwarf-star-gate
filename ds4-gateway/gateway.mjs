@@ -1117,7 +1117,9 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
       try { node.upstreamHeaders = endpointHeaders(node); }
       catch { finish(false, 'endpoint_credentials_unavailable'); return; }
       const modelsUrl = endpointUrl(node, '/v1/models');
-      const p = endpointTransport(modelsUrl).get(modelsUrl, upstreamOptions(node,modelsUrl), res => {
+      // A full inference connection pool must not delay the health request and
+      // manufacture a timeout before the backend even receives it.
+      const p = endpointTransport(modelsUrl).get(modelsUrl, {...upstreamOptions(node,modelsUrl),agent:false}, res => {
         let body = '';
         res.on('data', chunk => { body += chunk; if (body.length > 1048576) p.destroy(); });
         res.on('error', e => finish(false, e.code));
