@@ -38,8 +38,9 @@ preference. A retry submitted as a new request uses its supplied header again.
 - An uninterrupted stream of higher-priority work can delay lower-priority work.
   There is no hidden automatic promotion or content classifier.
 
-This increment retains one active request per worker. It neither changes engine
-concurrency nor claims that concurrent generation has been qualified.
+Each worker defaults to one active request. [Explicit concurrent capacity](concurrency.md)
+can serve independent conversations in separate slots after qualification.
+Priority itself does not change engine concurrency or qualify a server.
 
 ## Local control API
 

@@ -62,6 +62,16 @@ answer, trace or note payload. Five tests pass; a real historical report retains
 its exact score and older metric. UI/chat wiring, worker/configuration association
 and owner-started runs remain unfinished. No benchmark or infrastructure change.
 
+## 2026-09-14 — Concurrent gateway slots
+
+Added explicit per-worker capacity with independent slots, ordered conversation
+turns and the existing priority rules. Settings can change capacity only after a
+worker is paused and idle; stale edits are rejected and saved state is backed up.
+Synthetic tests cover two overlapping conversations, seventeen simultaneous
+requests, cancellation isolation, drain accounting and preserved payloads. The
+browser verified capacity editing, slot counts, busy/stale rejection and mobile
+layout. Model server settings remain separate and require real qualification.
+
 ## 2026-09-14 — Explicit queue priorities
 
 You can now promote a waiting request directly in Current Jobs. Choose High,

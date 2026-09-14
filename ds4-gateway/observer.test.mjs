@@ -423,3 +423,8 @@ test('queue pressure wakes one assessment even without a legal move and never in
   s.gateway.continuity.relocation.diagnostics.sources[0].genie_pressure=true;g.tick();assert.equal(calls,2,'new pressure after clearance wakes another assessment');
   finish();while(g.busy)await new Promise(r=>setImmediate(r));g.close();
 });
+
+test('capacity counts configured concurrent slots and retains serial defaults',()=>{
+  const g={workers:[{is_healthy:true,load:2,queued:0,max_concurrent_requests:4},{is_healthy:true,load:1,queued:0},{is_healthy:true,drained:true,load:2,max_concurrent_requests:8}]};
+  assert.deepEqual(capacity(g),{eligible:5,occupied:3,free:2,percent:60});g.workers[0].queued=1;assert.equal(capacity(g).free,0);
+});

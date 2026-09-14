@@ -20,7 +20,7 @@ export function chatContext(snapshot={}) {
     source:snapshot.demo?'example setup':'dashboard observation',
     unavailable:!g||Boolean(snapshot.gateway_error),
     gateway:take(g,['model','context_length','request_timeout_ms','queue_timeout_ms','healthy','total','active','queued','available','draining']),
-    servers:(g?.workers??[]).map(w=>take(w,['id','model','backend','context_length','is_healthy','drained','load','queued','active_seconds','quarantine','model_aliases'])),
+    servers:(g?.workers??[]).map(w=>take(w,['id','model','backend','context_length','is_healthy','drained','load','max_concurrent_requests','queued','active_seconds','quarantine','model_aliases'])),
     configuration_records:recordsForChat(snapshot.server_records),
     hourglass_reports:hourglassForChat(snapshot.hourglass_reports),
     hourglass_measurements:hourglassRunsForChat(snapshot.hourglass_measurements),

@@ -1,3 +1,4 @@
+import {activeJobs,activeCount,hasCapacity,requestCapacity,oldestActive} from './worker-activity.mjs';
 import {PRIORITY_HEADER,requestPriority,priorityRank,priorityIndex,priorityOrder} from './job-priority.mjs';
 import {outputShape} from './output-shape.mjs';
 import http from 'node:http';
@@ -255,7 +256,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   const queueTimeoutMs=()=>store.data.queue_timeout_ms??configuredQueueTimeout;
   // Like registered workers, an explicit UI setting survives process restarts.
   const contextLimit = () => store.data.pool_context_length ?? config.context_length;
-  const makeNode = n => ({ ...n, drained: store.data.drained?.[n.id] === true, quarantine:store.data.quarantined?.[n.id] ?? null, inferenceFailures:0, healthy: false, failures: 0, active: null, queue: [], completed: 0, failed: 0, protected:0, observationLimited:0, probing: false, healthProbeDeferred:0,
+  const makeNode = n => ({ ...n, drained: store.data.drained?.[n.id] === true, quarantine:store.data.quarantined?.[n.id] ?? null, inferenceFailures:0, healthy: false, failures: 0, slots: [{}], get active(){return oldestActive(this);}, queue: [], completed: 0, failed: 0, protected:0, observationLimited:0, probing: false, healthProbeDeferred:0,
     managementPath:n.ssh?{transport:'ssh_tunnel',state:'pending',reason:null,attempts:0,route_count:sshTargets(n).length,changed_at:new Date().toISOString(),last_verified_at:null}:{transport:'local',state:'local',reason:null,attempts:0,route_count:0,changed_at:new Date().toISOString(),last_verified_at:null} });
   let definitions;
   try { definitions = store.data.workers === undefined ? initial : workerConfigs(store.data.workers); }
@@ -289,8 +290,8 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   const rejections=[];
   const clientWatch=new ClientWatch();
   const queuedBodyBudget=new QueuedBodyBudget();
-  const currentJobs=()=>[...nodes.flatMap(node=>[...(node.active?[node.active]:[]),...node.queue]),...waiting];
-  const jobEligible=job=>!draining&&!shuttingDown&&job.node?.healthy&&!job.node.drained&&!job.node.quarantine&&!job.node.recovering&&!job.node.removed&&!job.waitReason&&(!job.key||!nodes.some(node=>node.active?.key===job.key));
+  const currentJobs=()=>[...nodes.flatMap(node=>[...activeJobs(node),...node.queue]),...waiting];
+  const jobEligible=job=>!draining&&!shuttingDown&&job.node?.healthy&&!job.node.drained&&!job.node.quarantine&&!job.node.recovering&&!job.node.removed&&!job.waitReason&&(!job.key||!nodes.some(node=>activeJobs(node).some(active=>active.key===job.key)));
   // Request previews are local, transient UI data. They never enter scheduling,
   // general status, logs, the request journal, or Genie prompts.
   function currentJobsStatus(){
@@ -349,29 +350,33 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     if(shuttingDown||draining||n.recovering||n.quarantine||n.probeError||!n.modelMatches||!validContext(n.contextLength)||n.contextLength<contextLimit())throw new Error('Fresh compatible worker readiness required; hold retained');
   }});}catch(e){store.close();throw e;}
   const visionProtection=new VisionProtection(config.vision_compatibility,store,path.dirname(config.state_file),visionTranscode?{transcode:visionTranscode}:undefined);
-  const agent = new http.Agent({ keepAlive: true, maxSockets: 16 });
-  const tlsAgent = new https.Agent({ keepAlive: true, maxSockets: 16 });
+  const agent = new http.Agent({ keepAlive: true, maxSockets: Math.max(16,definitions.reduce((sum,node)=>sum+requestCapacity(node),0)) });
+  const tlsAgent = new https.Agent({ keepAlive: true, maxSockets: Math.max(16,definitions.reduce((sum,node)=>sum+requestCapacity(node),0)) });
   const upstreamOptions = (node, url) => ({ agent: url.protocol === 'https:' ? tlsAgent : agent, headers: node.upstreamHeaders ?? {} });
   const accepted = new Set(['POST /v1/chat/completions', 'POST /v1/completions', 'POST /v1/responses', 'POST /v1/messages', 'GET /v1/models']);
   const auth = Buffer.from(`Bearer ${config.api_key}`);
   const lastOperatorAction=id=>[...(store.data.operator_actions??[])].reverse().find(action=>action.workers.includes(id))??null;
   const oldestQueued=queue=>queue.reduce((oldest,job)=>!oldest||job.createdMono<oldest.createdMono?job:oldest,null);
+
+  const allocationStatus=slot=>slot.turnAllocation?{turns_used:slot.turnAllocation.used,remaining:Math.max(0,conversationTurns()-slot.turnAllocation.used),waiting_for_next_turn:!slot.active&&slot.turnAllocation.until>performance.now(),idle_remaining_ms:Math.max(0,Math.ceil(slot.turnAllocation.until-performance.now()))}:null;
   const stats = () => ({ version: 1, serving_profiles:profiles, conversation_turns:conversationTurns(),conversation_turn_idle_ms:conversationTurnIdleMs, model_routes:routes?Object.fromEntries([...routes].map(([name,workers])=>[name,[...workers]])):null, agent_api_version:1, maintenance_lock_version:1,client_watch_version:1,client_watch:clientWatch.snapshot(), model: config.model, context_length: contextLimit(), queue_timeout_ms:queueTimeoutMs(), request_timeout_ms:config.request_timeout_ms??360000000, draining,startup:{...startup}, dataset:dataset.snapshot(), routing_shadow:shadow.snapshot(),recovery:recovery.status(),protections:visionProtection.status(),
     genie_admission_version:1,genie_flexible_assignment:true,continuity:{schema:1,recent_rejections:rejections.slice(0,20),safe_retry_contract:true,queued_relocation:true,automatic_relocation:true,automatic_relocation_scope:automaticRelocationScope,automatic_affinity_rebalance_min_wait_ms:automaticAffinityWait,patient_wait:true,
       relocation:{completed:relocation.completed,rejected:relocation.rejected,offers:relocationOffers().length,genie_enabled:config.genie_load_balancing!==false,genie_offers:genieRelocationOffers(),diagnostics:relocationDiagnostics(),last:relocation.last},
       waiting:waiting.length,oldest_wait_seconds:waiting.length?Math.max(0,(performance.now()-oldestQueued(waiting).createdMono)/1000):null,
       waiting_reasons:Object.fromEntries([...new Set(waiting.map(j=>j.waitReason))].map(reason=>[reason,waiting.filter(j=>j.waitReason===reason).length]))},
     total: nodes.length, healthy: nodes.filter(n => n.healthy).length, available: nodes.filter(n => n.healthy && !n.drained).length,
-    active: nodes.filter(n => n.active).length, queued: waiting.length+nodes.reduce((s, n) => s + n.queue.length, 0),
+    active: nodes.reduce((sum,n)=>sum+activeCount(n),0), queued: waiting.length+nodes.reduce((s, n) => s + n.queue.length, 0),
     workers: nodes.map(n => ({ id: n.id, url: n.url, is_healthy: n.healthy, drained: n.drained, quarantine:n.quarantine, inference_failures:n.inferenceFailures,
       ...agents.pauseStatus(n.id),last_operator_action:lastOperatorAction(n.id),
-      gateway_drained: n.drained && !n.active && !n.queue.length, load: Number(!!n.active),
-      turn_allocation:n.turnAllocation?{turns_used:n.turnAllocation.used,remaining:Math.max(0,conversationTurns()-n.turnAllocation.used),waiting_for_next_turn:!n.active&&n.turnAllocation.until>performance.now(),idle_remaining_ms:Math.max(0,Math.ceil(n.turnAllocation.until-performance.now()))}:null,
+      gateway_drained: n.drained && !n.active && !n.queue.length, load: activeCount(n),
+      max_concurrent_requests:requestCapacity(n),
+      turn_allocation:requestCapacity(n)===1?allocationStatus(n.slots[0]):null,
+      turn_allocations:n.slots.map(allocationStatus).filter(Boolean),
       queued: n.queue.length, recovery_waiting:parkedFor(n).length, assigned_sessions: store.count(n.id), completed: n.completed, failed: n.failed, protected:n.protected, observation_limited:n.observationLimited,
       oldest_queue_seconds:n.queue.length?Math.max(0,(performance.now()-oldestQueued(n.queue).createdMono)/1000):null,
       oldest_queue_remaining_seconds:n.queue.length?Math.max(0,(oldestQueued(n.queue).queueTimeoutMs-(performance.now()-oldestQueued(n.queue).createdMono))/1000):null,
       active_seconds: n.active ? Math.round((Date.now() - n.active.dispatched) / 1000) : 0,
-      requested_thinking: n.active?.thinking?.result ?? null,
+      requested_thinking: activeCount(n)===1?n.active.thinking?.result??null:null,
       last_requested_thinking: n.lastThinking ?? null, last_request_finished_at: n.lastFinishedAt ?? null,
       context_length: n.contextLength ?? null,
       health_probe_deferred:n.healthProbeDeferred,
@@ -381,15 +386,15 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
 
   const briefJob = j => ({key:j.key,route:j.req.url,trafficClass:j.trafficClass});
   function candidate(n,key) {
-    return {node:n.id,healthy:n.healthy,paused:n.drained,active:Number(!!n.active),queued:n.queue.length,
+    return {node:n.id,healthy:n.healthy,paused:n.drained,active:activeCount(n),max_concurrent_requests:requestCapacity(n),queued:n.queue.length,
       assigned_sessions:store.count(n.id),context_length:n.contextLength,
-      profile:digest(JSON.stringify({id:n.id,url:n.url,model:config.model,context:n.contextLength})),
-      ...(observe(()=>({...shadow.timing(n.id,key,n.active),active_request_id:n.active?.id??null}))??{})};
+      profile:digest(JSON.stringify({id:n.id,url:n.url,model:config.model,context:n.contextLength,...(requestCapacity(n)>1?{max_concurrent_requests:requestCapacity(n)}:{})})),
+      ...(observe(()=>({...shadow.timing(n.id,key,n.active),active_request_id:activeCount(n)===1?n.active.id:null}))??{})};
   }
   function evaluateShadow(node,job,reason) {
     observe(()=>{
       if(job.cancelled || job.upstream)return;
-      const sessionBusy=!!job.key && nodes.some(n=>n.active?.key===job.key || n.queue.some(j=>j!==job && j.key===job.key && !j.cancelled));
+      const sessionBusy=!!job.key && nodes.some(n=>activeJobs(n).some(active=>active.key===job.key) || n.queue.some(j=>j!==job && j.key===job.key && !j.cancelled));
       const ordered=priorityOrder(node.queue);
       const candidates=nodes.slice(0,128).map(n=>({...candidate(n,job.key),active_job:n.active?briefJob(n.active):null,
         ahead_jobs:n===node?ordered.slice(0,ordered.indexOf(job)).map(briefJob):[]}));
@@ -410,7 +415,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   const eligibleDestination=n=>n.healthy&&!n.drained&&!n.quarantine&&!n.recovering&&!n.removed&&!n.active&&n.queue.length===0;
   function conflictingSessionWork(job) {
     if(!job.key)return null;
-    for(const node of nodes)if(node.active?.key===job.key)return {node,reason:'same_session_active'};
+    for(const node of nodes)if(activeJobs(node).some(active=>active.key===job.key))return {node,reason:'same_session_active'};
     for(const node of nodes)if(node.queue.some(other=>other!==job&&!other.cancelled&&other.key===job.key))return {node,reason:'same_session_queued'};
     if(waiting.some(other=>other!==job&&!other.cancelled&&other.key===job.key))return {node:null,reason:'same_session_waiting'};
     return null;
@@ -516,7 +521,8 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
 
   function pick(exclude,modelRoute) {
     return nodes.filter(n => n.healthy && !n.drained && n.id !== exclude && allowsWorker(modelRoute,n)).sort((a, b) =>
-      (Number(!!a.active) + a.queue.length) - (Number(!!b.active) + b.queue.length) ||
+      Number(!hasCapacity(a))-Number(!hasCapacity(b)) ||
+      (activeCount(a)+a.queue.length)/requestCapacity(a)-(activeCount(b)+b.queue.length)/requestCapacity(b) ||
       store.count(a.id) - store.count(b.id) || a.id.localeCompare(b.id))[0];
   }
   function detach(job) {
@@ -559,11 +565,9 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     evaluateShadow(node,job,wasAdmitted?'worker_free':'admission');schedule(node);
   }
   const freeGenieNode=(modelRoute,priority='normal')=>nodes.filter(node=>{
-    if(!allowsWorker(modelRoute,node)||!node.healthy||node.drained||node.quarantine||node.recovering||node.removed||node.active)return false;
-    const queued=[...node.queue,...parkedFor(node)].sort((a,b)=>a.sequence-b.sequence),next=priorityIndex(queued);
-    // Flexible work remains unassigned until a worker is free. At that point
-    // an explicit higher class may precede lower waiting work, never a stream.
-    return next<0||priorityRank({priority})>priorityRank(queued[next]);
+    if(!allowsWorker(modelRoute,node)||!node.healthy||node.drained||node.quarantine||node.recovering||node.removed||!hasCapacity(node))return false;
+    const candidate={key:null,priority,sequence:Number.MAX_SAFE_INTEGER};
+    return canStartNow(node,candidate,[...node.queue,...parkedFor(node),candidate]);
   }).sort((a,b)=>store.count(a.id)-store.count(b.id)||a.id.localeCompare(b.id))[0];
   function pumpWaiting() {
     if(shuttingDown)return;
@@ -589,10 +593,8 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
         if(outstanding&&outstanding.node!==node){job.waitReason=outstanding.reason;continue;}
       }
       if(node.queue.length>=queueBound()){
-        const merged=[...node.queue,job].sort((a,b)=>a.sequence-b.sequence),allocation=node.turnAllocation;
-        const reserved=allocation&&(node.queue.find(other=>other.key===allocation.key)??allocation);
-        const takesFreeSlot=!node.active&&merged[priorityIndex(merged)]===job&&
-          (!allocation||allocation.used>=conversationTurns()||job.key===allocation.key||priorityRank(job)>priorityRank(reserved));
+        const merged=[...node.queue,job].sort((a,b)=>a.sequence-b.sequence);
+        const takesFreeSlot=canStartNow(node,job,merged);
         // Already-accepted waiting work can occupy the newly free active slot;
         // it need not wait for a lower-priority queued request to consume it.
         // Admission immediately dispatches this job, so queue capacity is retained.
@@ -612,55 +614,74 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     job.lastHeartbeat=now;
     try{job.res.writeProcessing();}catch{job.res.destroy();}
   }
-  function schedule(node) {
-    if (node.active) return;
-    if(node.turnAllocation?.until&&node.turnAllocation.until<=performance.now())releaseTurns(node);
-    if(!node.healthy||node.quarantine||node.recovering||shuttingDown)releaseTurns(node);
-    node.queue=node.queue.filter(job=>!job.cancelled);
-    while (node.queue.length) {
-      let index=priorityIndex(node.queue);
-      const highest=priorityRank(node.queue[index]);
-      let allocation=node.turnAllocation;
-      if(allocation){
-        const own=node.queue.find(job=>job.key===allocation.key);
-        if(priorityRank(own??allocation)<highest){releaseTurns(node);allocation=null;}
+  function queuedChoice(node,slot,queue){
+    if(slot.turnAllocation?.until&&slot.turnAllocation.until<=performance.now())releaseTurns(node,slot);
+    if(!node.healthy||node.quarantine||node.recovering||shuttingDown)releaseTurns(node,slot);
+    const eligible=queue.filter(job=>!job.cancelled&&(!job.key||(
+      !nodes.some(n=>activeJobs(n).some(active=>active.key===job.key))&&
+      !node.slots.some(other=>other!==slot&&other.turnAllocation?.key===job.key&&other.turnAllocation.used<conversationTurns())
+    )));
+    let index=priorityIndex(eligible);if(index<0)return null;
+    const highest=priorityRank(eligible[index]);let allocation=slot.turnAllocation;
+    if(allocation&&priorityRank(eligible.find(job=>job.key===allocation.key)??allocation)<highest){releaseTurns(node,slot);allocation=null;}
+    if(allocation){
+      if(allocation.used<conversationTurns()){
+        const next=eligible.findIndex(job=>job.key===allocation.key);
+        if(next>=0)index=next;
+        else if(allocation.until>performance.now())return null;
+        else releaseTurns(node,slot);
+      }else{
+        const next=priorityIndex(eligible.map(job=>job.key===allocation.key?{...job,cancelled:true}:job));
+        if(next>=0&&priorityRank(eligible[next])===highest)index=next;
+        releaseTurns(node,slot);
       }
-      if(allocation){
-        if(allocation.used<conversationTurns()){
-          const next=node.queue.findIndex(job=>job.key===allocation.key);
-          if(next>=0)index=next;
-          else if(allocation.until>performance.now())return;
-          else releaseTurns(node);
-        }else{
-          // Yield to the oldest OTHER conversation even if this one has
-          // already pipelined more requests. Preserve FIFO within each key.
-          const next=priorityIndex(node.queue.map(job=>job.key===allocation.key?{...job,cancelled:true}:job));
-          if(next>=0&&priorityRank(node.queue[next])===highest)index=next;
-          releaseTurns(node);
-        }
-      }
-      const [job] = node.queue.splice(index,1);
-      if (job.cancelled) continue;
-      if (!node.healthy || node.quarantine || node.recovering) { park(job,node,unavailableReason(node)); continue; }
-      job.queueTimer?.cancel();
-      clearTimeout(node.turnTimer);node.turnTimer=null;
-      if(conversationTurns()>1&&job.key){
-        if(node.turnAllocation?.key!==job.key)node.turnAllocation={key:job.key,priority:job.priority,used:0,until:0};
-        node.turnAllocation.priority=job.priority;node.turnAllocation.used++;node.turnAllocation.until=0;
-      }else releaseTurns(node);
-      node.active = job;
-      dispatch(node, job);
-      return;
     }
+    return eligible[index];
   }
-  function releaseTurns(node){clearTimeout(node.turnTimer);node.turnTimer=null;node.turnAllocation=null;}
-  function finishTurn(node,outcome){
-    const allocation=node.turnAllocation;
-    if(outcome!=='complete'||shuttingDown||!allocation){releaseTurns(node);return;}
+  function canStartNow(node,job,queue){
+    if(!hasCapacity(node))return false;
+    // Preview reservation changes without clearing real timers or assigning a
+    // flexible request to a worker whose free slot belongs to another turn.
+    const slots=node.slots.map(slot=>({...slot,turnTimer:null,turnAllocation:slot.turnAllocation?{...slot.turnAllocation}:null}));
+    if(slots.length<requestCapacity(node))slots.push({});
+    const preview={...node,slots},pending=[...queue].sort((a,b)=>a.sequence-b.sequence);
+    return slots.some(slot=>!slot.active&&queuedChoice(preview,slot,pending)===job);
+  }
+  function schedule(node) {
+    if(node.scheduling||!hasCapacity(node))return;
+    node.scheduling=true;
+    try{
+      node.queue=node.queue.filter(job=>!job.cancelled);
+      // Allocate additional slots only as work needs them; capacity is explicit.
+      for(let i=0;i<requestCapacity(node)&&node.queue.length;i++){
+        const slot=node.slots[i]??(node.slots[i]={});if(slot.active)continue;
+        let job;
+        while((job=queuedChoice(node,slot,node.queue))){
+          node.queue.splice(node.queue.indexOf(job),1);
+          if(!node.healthy||node.quarantine||node.recovering){park(job,node,unavailableReason(node));continue;}
+          job.queueTimer?.cancel();clearTimeout(slot.turnTimer);slot.turnTimer=null;
+          if(conversationTurns()>1&&job.key){
+            if(slot.turnAllocation?.key!==job.key)slot.turnAllocation={key:job.key,priority:job.priority,used:0,until:0};
+            slot.turnAllocation.priority=job.priority;slot.turnAllocation.used++;slot.turnAllocation.until=0;
+          }else releaseTurns(node,slot);
+          slot.active=job;job.slot=slot;dispatch(node,job);if(slot.active)break;
+        }
+        // No unallocated slot can help if all queued conversations are active
+        // or reserved in a slot already visited.
+        if(!job&&i>=node.slots.length-1&&!queuedChoice(node,{},node.queue))break;
+      }
+    }finally{node.scheduling=false;}
+  }
+  function releaseTurns(node,slot){
+    for(const target of slot?[slot]:node.slots){clearTimeout(target.turnTimer);target.turnTimer=null;target.turnAllocation=null;}
+  }
+  function finishTurn(node,slot,outcome){
+    const allocation=slot.turnAllocation;
+    if(outcome!=='complete'||shuttingDown||!allocation){releaseTurns(node,slot);return;}
     if(allocation.used>=conversationTurns())return;
     allocation.until=performance.now()+conversationTurnIdleMs;
-    node.turnTimer=setTimeout(()=>{releaseTurns(node);pumpWaiting();schedule(node);},conversationTurnIdleMs);
-    node.turnTimer.unref?.();
+    slot.turnTimer=setTimeout(()=>{releaseTurns(node,slot);pumpWaiting();schedule(node);},conversationTurnIdleMs);
+    slot.turnTimer.unref?.();
   }
   function dispatch(node, job) {
     const { req, res } = job;
@@ -746,11 +767,11 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
         request_bytes:requestBytes,usage:observer.usage,finish_reason:observer.finish_reason,stream_end:streamEnd,requested_thinking:job.thinking.result,
         generation:jsonMetadata?.generation??(responseFormat==='sse'&&!responseEncoded?{thinking_characters:observer.thinkingCharacters,answer_characters:observer.answerCharacters,tool_characters:observer.toolCharacters,output_present:observer.outputPresent,observation_complete:observer.shapeComplete&&!observer.limited&&!observer.reasonEofAmbiguous&&observer.singleChoiceFinish,first_semantic_ms:observer.firstSemanticAt===null?null:observer.firstSemanticAt-job.dispatchedMono}:null)});
       observe(()=>shadow.finished(node.id,job.key,{outcome,finish_reason:observer.finish_reason,
-        service_ms:performance.now()-job.dispatchedMono,usage:observer.usage,route:req.url,traffic_class:job.trafficClass}));
+        service_ms:performance.now()-job.dispatchedMono,usage:observer.usage,route:req.url,traffic_class:job.trafficClass,remaining_active:activeCount(node)-1}));
       job.cleanup();
       job.upstream=null;job.upstreamResponse=null;
-      node.active = null;
-      finishTurn(node,outcome);
+      job.slot.active = null;
+      finishTurn(node,job.slot,outcome);
       pumpWaiting();
       schedule(node);
       if(shadow.enabled)setImmediate(evaluateWaiting);
@@ -1018,7 +1039,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     if(trafficClass==='genie'&&req.headers['x-dsg-review-no-wait']==='1'){
       // Check atomically at admission. A previously free snapshot cannot grant
       // permission to put an advisory review behind user work after a race.
-      if(key||waitReason||!node||node.active||node.queue.length||parkedFor(node).length||node.quarantine||node.recovering||node.removed)return reject(req,res,503,'no_healthy_workers','No compatible worker is immediately free for this advisory review',{id:requestId,callId,key,reason:'no_ready_worker'});
+      if(key||waitReason||!node||!hasCapacity(node)||node.queue.length||parkedFor(node).length||node.quarantine||node.recovering||node.removed)return reject(req,res,503,'no_healthy_workers','No compatible worker is immediately free for this advisory review',{id:requestId,callId,key,reason:'no_ready_worker'});
     }
     if ((node&&node.queue.length+parkedFor(node).length>=queueBound())||(!node&&waiting.length>=waitingBound()))return reject(req,res,429,'queue_full','DSG waiting capacity is full; request was not dispatched. Wait for capacity or use the patient client adapter.',{id:requestId,callId,key,node,reason:'queue_full'});
     const job = { req, res, key, affinity, id:requestId,callId,watchId, sequence:sequence++,admissionMetadata,created: Date.now(), createdMono:performance.now(), cancelled: false,queueTimeoutMs:queueTimeoutMs(),
@@ -1070,7 +1091,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     if(node.endpointEditing&&!force)return;
     if (node.probing) return;
     node.probing = true;
-    const activeAtStart=node.active;
+    const activeAtStart=activeJobs(node);
     await new Promise(resolve => {
       let settled = false, deadline;
       const finish = (ok, reason) => {
@@ -1080,9 +1101,9 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
         // A model-list timeout alone cannot contradict contemporaneous bytes
         // from the live inference stream. Merely being active is NOT enough:
         // silent prefill, a stuck socket and real network loss still fail probes.
-        const inference=node.active??activeAtStart;
-        if(!ok&&reason==='PROBE_TIMEOUT'&&inference?.lastUpstreamByteMono!==undefined&&
-          performance.now()-inference.lastUpstreamByteMono<(config.health_timeout_ms??5000)){
+        const inference=[...activeJobs(node),...activeAtStart];
+        if(!ok&&reason==='PROBE_TIMEOUT'&&inference.some(job=>job.lastUpstreamByteMono!==undefined&&
+          performance.now()-job.lastUpstreamByteMono<(config.health_timeout_ms??5000))){
           node.healthProbeDeferred++;
           node.probeError='busy_probe_deferred';
           resolve();return;
@@ -1131,7 +1152,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   const startTunnel = node => {
     if (node.ssh) node.stopTunnel = tunnelFactory(node, () => shuttingDown || node.removed);
   };
-  const registry = () => ({ model: config.model, minimum_context: contextLimit(), context_limit_control:true,
+  const registry = () => ({ model: config.model, minimum_context: contextLimit(), context_limit_control:true,concurrency_control_version:1,
     genie_admission_version:1,genie_flexible_assignment:true,
     context_limit_source:store.data.pool_context_length === undefined ? 'config' : 'saved',
     conversation_turns:conversationTurns(),conversation_turn_idle_ms:conversationTurnIdleMs,conversation_turns_control:true,conversation_turns_source:store.data.conversation_turns!==undefined?'saved':config.conversation_turns!==undefined?'config':'default',
@@ -1153,18 +1174,38 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     if(before!==conversationTurns())for(const node of nodes){
       // An active model call finishes on its original server. Count it when
       // enabling allocations from FIFO, and preserve used turns otherwise.
-      if(node.active&&!node.turnAllocation&&conversationTurns()>1&&node.active.key)node.turnAllocation={key:node.active.key,priority:node.active.priority,used:1,until:0};
-      if(!node.active&&node.turnAllocation){
-        if(node.turnAllocation.used>=before&&conversationTurns()>before)releaseTurns(node);
-        else if(node.turnAllocation.used>=conversationTurns()){
+      for(const slot of node.slots){
+      if(slot.active&&!slot.turnAllocation&&conversationTurns()>1&&slot.active.key)slot.turnAllocation={key:slot.active.key,priority:slot.active.priority,used:1,until:0};
+      if(!slot.active&&slot.turnAllocation){
+        if(slot.turnAllocation.used>=before&&conversationTurns()>before)releaseTurns(node,slot);
+        else if(slot.turnAllocation.used>=conversationTurns()){
           // End only the grace timer. Retain the exhausted allocation so the
           // scheduler still yields to the oldest OTHER conversation.
-          clearTimeout(node.turnTimer);node.turnTimer=null;node.turnAllocation.until=0;
+          clearTimeout(slot.turnTimer);slot.turnTimer=null;slot.turnAllocation.until=0;
         }
+      }
       }
       schedule(node);
     }
     log('conversation_turn_allowance_changed',{before,after:conversationTurns(),applies_to:'next_dispatch'});
+    return registry();
+  }
+  function setWorkerConcurrency(input){
+    if(shuttingDown||draining)throw new Error('Gateway is draining');
+    if(!input||Array.isArray(input)||Object.keys(input).sort().join(',')!=='expected_max_concurrent_requests,id,max_concurrent_requests')throw new Error('Specify worker ID, current capacity and replacement capacity only');
+    const node=nodes.find(n=>n.id===input.id);if(!node)throw new Error('Unknown worker');
+    const before=requestCapacity(node);
+    if(input.expected_max_concurrent_requests!==before)throw new Error('Worker capacity changed; refresh before saving');
+    if(!node.drained||activeCount(node)||node.queue.length||parkedFor(node).length||node.recovering)throw new Error('Pause this worker and wait for all admitted requests to finish before changing its capacity');
+    const settings=workerConfig({...definition(node),max_concurrent_requests:input.max_concurrent_requests});
+    if(settings.max_concurrent_requests===before)return registry();
+    if(fs.existsSync(store.filename)){const backup=`${store.filename}.capacity-${Date.now()}-${randomUUID()}.bak`;fs.copyFileSync(store.filename,backup,fs.constants.COPYFILE_EXCL);fs.chmodSync(backup,0o600);}
+    store.save({...store.data,workers:nodes.map(n=>n===node?settings:definition(n))});
+    node.max_concurrent_requests=settings.max_concurrent_requests;
+    if(node.slots.length>requestCapacity(node)){for(const slot of node.slots.slice(requestCapacity(node)))releaseTurns(node,slot);node.slots.length=requestCapacity(node);}
+    agent.maxSockets=tlsAgent.maxSockets=Math.max(16,nodes.reduce((sum,worker)=>sum+requestCapacity(worker),0));
+    observe(()=>shadow.reset(node.id));
+    log('worker_request_capacity_changed',{node:node.id,before,after:requestCapacity(node),drained:true,engine_settings_changed:false});
     return registry();
   }
   function setQueueTimeout(input){
@@ -1232,6 +1273,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
       if (!compatible()) throw new Error(`Compatibility check failed (${node.probeError || 'unavailable'}). Required ${config.model_agnostic || node.backend === 'openai' ? 'available endpoint' : `model ${config.model}`}, context at least ${contextLimit()}; observed context ${node.contextLength ?? 'unknown'}.`);
       store.setWorkers([...nodes.map(definition), settings], { ...store.data.drained, [node.id]: true });
       nodes.push(node);
+      agent.maxSockets=tlsAgent.maxSockets=Math.max(16,nodes.reduce((sum,worker)=>sum+requestCapacity(worker),0));
       log('worker_registered', { node: node.id, context_length: node.contextLength, drained: true });
       return registry();
     } catch (e) { node.removed = true; node.probeRequest?.destroy(); node.stopTunnel?.(); throw e; }
@@ -1347,7 +1389,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     if(req.method==='GET'&&req.url==='/agents')return json(res,200,agents.adminStatus());
     if (req.method === 'GET' && req.url === '/current-jobs') return json(res,200,currentJobsStatus());
     if (req.method === 'GET' && req.url === '/workers') return json(res, 200, registry());
-    if (req.method !== 'POST' || !['/drain-workers', '/resume-workers', '/maintenance-lock','/release-maintenance-lock','/maintenance-receipt','/add-worker', '/edit-endpoint', '/check-endpoint', '/remove-worker', '/set-ssh-fallbacks','/set-context-limit','/set-conversation-turns','/set-queue-timeout','/set-protection','/set-job-priority','/relocate-queued','/genie-relocate-queued','/recovery-policy','/recovery-handback-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/grant-agent','/revoke-agent','/release-agent-hold','/agent/v1/drain','/agent/v1/resume','/agent/v1/receipt'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
+    if (req.method !== 'POST' || !['/drain-workers', '/resume-workers', '/maintenance-lock','/release-maintenance-lock','/maintenance-receipt','/add-worker', '/edit-endpoint', '/check-endpoint', '/remove-worker', '/set-ssh-fallbacks','/set-context-limit','/set-conversation-turns','/set-queue-timeout','/set-protection','/set-job-priority','/set-worker-concurrency','/relocate-queued','/genie-relocate-queued','/recovery-policy','/recovery-handback-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/grant-agent','/revoke-agent','/release-agent-hold','/agent/v1/drain','/agent/v1/resume','/agent/v1/receipt'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
     let body = '';
     req.on('data', chunk => { body += chunk; if (Buffer.byteLength(body) > 4096) req.destroy(); });
     req.on('error', () => {});
@@ -1387,6 +1429,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
           if (req.url === '/edit-endpoint') return json(res, 200, await editEndpoint(input));
           if (req.url === '/add-worker') return json(res, 201, await addWorker(input.worker));
           if (req.url === '/set-ssh-fallbacks') return json(res, 200, setSshFallbacks(input));
+          if (req.url === '/set-worker-concurrency') return json(res,200,setWorkerConcurrency(input));
           if (req.url === '/remove-worker') return json(res, 200, removeWorker(input.id));
           if (req.url === '/resume-workers') {
             if (!Array.isArray(input.workers) || !input.workers.length || input.workers.some(id=>!nodes.some(n=>n.id===id))) throw new Error('Specify known worker IDs');

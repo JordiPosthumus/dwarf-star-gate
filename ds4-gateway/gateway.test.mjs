@@ -47,6 +47,7 @@ async function backend(id) {
         const timer=setTimeout(()=>{ended=true;res.end(JSON.stringify({choices:[{finish_reason:'stop',message:{content:b.recoveryFails?'NO':'DSG_RECOVERY_OK'}}]}));},b.recoveryDelay??0);
         res.once('close',()=>clearTimeout(timer));return;
       }
+      if(p.wait_for_release){(b.releases??=[]).push(()=>{ended=true;res.end(JSON.stringify({ok:true}));});return;}
       if(p.fatal_error) {
         const finish=()=>{ended=true;res.end(JSON.stringify({error:{message:'cuda prefill state reset failed',type:'invalid_request_error'}}));};
         res.writeHead(500,{'content-type':'application/json'});setTimeout(finish,p.delay??0);return;
@@ -149,9 +150,9 @@ test('remote workers accept bounded verified SSH alias fallbacks, never options 
 async function rig(t, count = 2, overrides = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ds4-gateway-test-'));
   const backends = await Promise.all(Array.from({ length: count }, (_, i) => backend(`spark${i + 1}`)));
-  const {visionTranscode,tunnelFactory,...configOverrides}=overrides;
+  const {visionTranscode,tunnelFactory,workerConcurrency,...configOverrides}=overrides;
   const config = { host: '127.0.0.1', port: 0, api_key: 'none', model: 'deepseek-v4-flash', context_length: 153600,
-    conversation_turns:1, state_file: path.join(dir, 'affinity.json'), health_interval_ms: 100000, nodes: backends.map(b => ({ id: b.id, url: b.url })), ...configOverrides };
+    conversation_turns:1, state_file: path.join(dir, 'affinity.json'), health_interval_ms: 100000, nodes: backends.map((b,i) => ({ id: b.id, url: b.url, ...(workerConcurrency?{max_concurrent_requests:Array.isArray(workerConcurrency)?workerConcurrency[i]:workerConcurrency}:{}) })), ...configOverrides };
   if (config.control_socket === true) config.control_socket = path.join(dir, 'control.sock');
   const gatewayOptions={visionTranscode,tunnelFactory};
   const r = { config, backends, gateway: createGateway(config,gatewayOptions) };
@@ -2159,7 +2160,7 @@ test('lowering the allowance during an idle continuation wait immediately gives 
   await workerControl(r.config.control_socket,'/set-conversation-turns',{conversation_turns:1,expected_conversation_turns:5});
   assert.equal((await b).status,200);
   assert.deepEqual(r.backends[0].records.map(row=>row.payload.label),['A1','B1']);
-  assert.equal(r.gateway.stats().workers[0].turn_allocation,null);assert.equal(r.gateway.nodes[0].turnTimer,null);
+  assert.equal(r.gateway.stats().workers[0].turn_allocation,null);assert.equal(r.gateway.nodes[0].slots[0].turnTimer,null);
 });
 
 test('raising the live allowance from FIFO counts the in-flight call and preserves conversation FIFO',async t=>{
@@ -2392,4 +2393,102 @@ test('queue pressure respects maintenance and same-session work, and stale press
     assert.equal(d.diagnostics.sources[0].source_queued,1);assert.equal(d.diagnostics.sources[0].genie_pressure,false);assert.equal(d.genie_offers.length,0);
     r.gateway.nodes[0].queue[1].cancelled=false;
   }finally{r.backends[0].heldStreams.shift()();await Promise.all([active,first,second]);}
+});
+
+test('concurrent slots preserve bodies, dependent order and busy status until the final active request finishes',async t=>{
+  const r=await rig(t,1,{workerConcurrency:2,control_socket:true});
+  const aBody=JSON.stringify({stream:true,delay:120,reasoning_effort:'xhigh',max_tokens:153600,messages:[{role:'user',content:'first independent turn'}]});
+  const bBody=JSON.stringify({stream:true,delay:450,reasoning_effort:'xhigh',max_tokens:153600,messages:[{role:'user',content:'second independent turn'}]});
+  const a=r.request(aBody,'a');await until(()=>r.backends[0].active===1);
+  const b=r.request(bBody,'b');await until(()=>r.backends[0].active===2);
+  assert.equal(r.gateway.stats().active,2);assert.equal(r.gateway.stats().workers[0].load,2);
+  assert.equal(r.gateway.stats().workers[0].max_concurrent_requests,2);
+  const bNext=r.request('{"label":"dependent-b"}','b',{headers:{'x-dsg-priority':'high'}});
+  const independent=r.request('{"label":"independent-c","delay":40}','c');
+  await until(()=>r.gateway.stats().queued===2);assert.equal(r.gateway.currentJobsStatus().jobs.filter(j=>j.state==='running').length,2);
+  assert.equal((await a).status,200);assert.equal((await independent).status,200);
+  assert.equal(r.backends[0].records[2].payload.label,'independent-c');
+  assert.equal(r.gateway.stats().workers[0].load,1);assert.equal(r.gateway.currentJobsStatus().jobs.filter(j=>j.state==='running').length,1);
+  r.gateway.drainNodes(['spark1'],true);assert.equal(r.gateway.stats().workers[0].gateway_drained,false);
+  await assert.rejects(workerControl(r.config.control_socket,'/remove-worker',{id:'spark1'}),/finish/);
+  assert.equal((await b).status,200);assert.equal((await bNext).status,200);
+  await until(()=>r.gateway.stats().active===0);assert.equal(r.gateway.stats().workers[0].gateway_drained,true);
+  assert.equal(r.backends[0].records[0].body.toString(),aBody);assert.equal(r.backends[0].records[1].body.toString(),bBody);
+  assert.equal(r.backends[0].records[3].payload.label,'dependent-b');assert.equal(r.backends[0].peak,2);assert.equal(r.backends[0].aborts,0);
+});
+
+test('concurrent slots keep conversation reservations without leaving unrelated capacity unused',async t=>{
+  const r=await rig(t,1,{workerConcurrency:2,conversation_turns:3,conversation_turn_idle_ms:200});
+  await r.request('{"label":"a1"}','a');
+  const b=r.request('{"label":"b1","delay":220}','b');await until(()=>r.backends[0].active===1);
+  const a=r.request('{"label":"a2","delay":120}','a');await until(()=>r.backends[0].active===2);
+  const normal=r.request('{"label":"normal"}','normal');
+  const high=r.request('{"label":"high"}','high',{headers:{'x-dsg-priority':'high'}});
+  await until(()=>r.gateway.stats().queued===2);await a;
+  assert.equal((await high).status,200);assert.equal(r.backends[0].records[3].payload.label,'high');
+  await Promise.all([b,normal]);assert.equal(r.backends[0].peak,2);assert.equal(r.backends[0].aborts,0);
+});
+
+test('worker concurrency is explicit, survives registration data and rejects invalid capacities',()=>{
+  const raw={id:'capacity-test',url:'http://127.0.0.1:8000'};
+  assert.equal(workerConfig(raw).max_concurrent_requests,undefined);
+  for(const capacity of [1,2,17])assert.equal(workerConfig({...raw,max_concurrent_requests:capacity}).max_concurrent_requests,capacity);
+  for(const capacity of [0,-1,1.5,'2',null,Infinity])assert.throws(()=>workerConfig({...raw,max_concurrent_requests:capacity}),/capacity/);
+});
+
+test('configured concurrency above the old HTTP socket pool reaches the backend without a hidden lower cap',async t=>{
+  const r=await rig(t,1,{workerConcurrency:17});
+  const calls=Array.from({length:17},(_,i)=>r.request(JSON.stringify({wait_for_release:true,label:'job-'+i}),String(i)));
+  try{await until(()=>r.backends[0].active===17);assert.equal(r.gateway.stats().active,17);assert.equal(r.gateway.stats().queued,0);}
+  finally{r.backends[0].releases?.forEach(release=>release());}
+  assert.ok((await Promise.all(calls)).every(reply=>reply.status===200));assert.equal(r.backends[0].peak,17);assert.equal(r.backends[0].aborts,0);
+});
+
+test('cancelling one concurrent stream preserves the other stream and its ownership',async t=>{
+  const r=await rig(t,1,{workerConcurrency:2});const controller=new AbortController();
+  const response=await fetch(`http://127.0.0.1:${r.address.port}/v1/chat/completions`,{method:'POST',headers:{authorization:'Bearer none','content-type':'application/json','x-session-affinity':'cancel-me'},body:'{"stream":true,"delay":500}',signal:controller.signal});
+  const body=response.text().catch(()=>null);
+  const survivor=r.request('{"stream":true,"delay":200}','keep-me');await until(()=>r.backends[0].active===2);
+  controller.abort();await body;await until(()=>r.gateway.stats().active===1);
+  assert.equal(r.gateway.currentJobsStatus().jobs.filter(j=>j.state==='running').length,1);
+  const result=await survivor;assert.equal(result.status,200);assert.match(result.body,/\[DONE\]/);
+  assert.equal(r.backends[0].aborts,1);assert.equal(r.gateway.stats().workers[0].completed,1);
+});
+
+test('new independent work uses spare concurrent capacity before queueing behind a full worker',async t=>{
+  const r=await rig(t,2,{workerConcurrency:[2,1]});
+  const a=r.request('{"wait_for_release":true}','first');await until(()=>r.backends[0].active===1);
+  const b=r.request('{"wait_for_release":true}','second');await until(()=>r.backends[1].active===1);
+  const c=r.request('{"wait_for_release":true}','third');
+  try{await until(()=>r.backends[0].active===2);assert.equal(r.gateway.stats().queued,0);assert.equal(r.backends[1].active,1);}
+  finally{r.backends.forEach(b=>b.releases?.forEach(release=>release()));}
+  assert.ok((await Promise.all([a,b,c])).every(reply=>reply.status===200));
+});
+
+test('worker capacity edits require idle pause, reject stale values and preserve state across restart',async t=>{
+  const r=await rig(t,1,{control_socket:true}),input={id:'spark1',expected_max_concurrent_requests:1,max_concurrent_requests:2};
+  const edit=value=>workerControl(r.config.control_socket,'/set-worker-concurrency',value);
+  await assert.rejects(edit(input),/Pause/);
+  const running=r.request('{"delay":120}','preserve-session');await until(()=>r.gateway.stats().active===1);r.gateway.drainNodes(['spark1'],true);
+  await assert.rejects(edit(input),/finish/);assert.equal((await running).status,200);
+  const before=structuredClone(r.gateway.store.data),settings=workerConfig(r.config.nodes[0]);
+  await assert.rejects(edit({...input,expected_max_concurrent_requests:3}),/changed/);
+  await assert.rejects(edit({...input,max_concurrent_requests:0}),/capacity/);
+  const updated=await edit(input);assert.equal(updated.concurrency_control_version,1);assert.equal(updated.workers[0].max_concurrent_requests,2);assert.equal(updated.workers[0].drained,true);
+  assert.deepEqual(r.gateway.store.data.sessions,before.sessions);assert.deepEqual(r.gateway.store.data.drained,before.drained);
+  assert.deepEqual(r.gateway.store.data.workers,[{...settings,max_concurrent_requests:2}]);
+  const backups=fs.readdirSync(path.dirname(r.config.state_file)).filter(name=>name.includes('.capacity-'));assert.equal(backups.length,1);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(path.dirname(r.config.state_file),backups[0]))),before);
+  await assert.rejects(edit(input),/changed/);await r.restart();assert.equal(r.gateway.stats().workers[0].max_concurrent_requests,2);
+  const changed=await edit({...input,expected_max_concurrent_requests:2,max_concurrent_requests:1});assert.equal(changed.workers[0].max_concurrent_requests,1);assert.equal(changed.workers[0].drained,true);
+});
+
+test('flexible Genie can use a spare slot while an earlier dependent turn waits for its active conversation',async t=>{
+  const r=await rig(t,1,{workerConcurrency:2}),b=r.backends[0];
+  const active=r.request('{"wait_for_release":true}','same');await until(()=>b.releases?.length===1);
+  const dependent=r.request('{"label":"next"}','same');await until(()=>r.gateway.stats().queued===1);
+  const genie=r.request('{"wait_for_release":true}',null,{headers:{'x-dsg-observer':'gate-genie','x-dsg-review-flexible':'1'}});
+  try{await until(()=>b.active===2);assert.equal(r.gateway.stats().queued,1);assert.equal(b.records.length,2);}
+  finally{b.releases?.splice(0).forEach(release=>release());}
+  assert.ok((await Promise.all([active,dependent,genie])).every(reply=>reply.status===200));assert.equal(b.peak,2);assert.equal(b.aborts,0);
 });

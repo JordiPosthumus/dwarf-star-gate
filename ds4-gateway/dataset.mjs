@@ -59,6 +59,7 @@ export function evidence(kind, raw) {
     row.candidates=raw.candidates.slice(0,128).map(w=>({node:id(w.node), healthy:w.healthy===true, paused:w.paused===true,
       active:number(w.active), queued:number(w.queued), assigned_sessions:number(w.assigned_sessions), context_length:number(w.context_length),
       profile:/^[a-f0-9]{64}$/.test(w.profile)?w.profile:null,
+      ...(Number.isSafeInteger(w.max_concurrent_requests)&&w.max_concurrent_requests>0?{max_concurrent_requests:w.max_concurrent_requests}:{}),
       ...('worker_idle_ms' in w?Object.fromEntries(timingKeys.map(k=>[k,number(w[k])])):{}),
       ...('worker_idle_ms' in w?{cache_residence:'unknown',backend_epoch:null,
         active_request_id:/^[a-f0-9-]{36}$/.test(w.active_request_id)?w.active_request_id:null}:{}),

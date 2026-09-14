@@ -78,3 +78,11 @@ test('shadow evidence strips arbitrary payloads and cannot persist job objects o
   assert.ok(!JSON.stringify(row).includes('PRIVATE'));assert.equal(row.candidates[0].session_last_used_ms,null);
   assert.equal(row.candidates[0].backend_epoch,null);assert.equal(row.candidates[0].cache_residence,'unknown');
 });
+
+test('concurrent observations retain activity and abstain from serial completion estimates',()=>{
+  const {shadow:s,advance}=setup();seed(s,'a');seed(s,'b');s.started('a','one');s.started('a','two');
+  s.finished('a','one',done(1000,{remaining_active:1}));assert.equal(s.workers.get('a').idleAt,null);
+  advance(500);s.finished('a','two',done());assert.equal(s.workers.get('a').idleAt,500);
+  const result=s.assess({job:job('conversation'),home:'a',reason:'admission',waiting_ms:0,session_busy:false,candidates:[candidate('a',{max_concurrent_requests:2,active:2,active_job:job('one')}),candidate('b')]});
+  assert.equal(result.candidates[0].remaining_ms,null);assert.equal(result.candidates[0].completion_ms,null);assert.equal(result.verdict,'insufficient_evidence');
+});

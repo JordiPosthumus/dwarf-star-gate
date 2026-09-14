@@ -7,7 +7,7 @@ export function freeGeniePool(snapshot,endpoint,poolUrl,now=Date.now()){
   return same(endpoint?.url,poolUrl)&&gateway?.genie_admission_version===1&&
     (endpoint.model||'deepseek-v4-flash')===gateway.model&&!snapshot.gateway_error&&
     Number.isFinite(snapshot.gateway_at)&&now-snapshot.gateway_at>=0&&now-snapshot.gateway_at<=6000&&!gateway.draining&&
-    gateway.workers?.some(worker=>worker.is_healthy===true&&worker.load===0&&worker.queued===0&&!worker.drained&&!worker.quarantine&&!worker.recovery_waiting&&!worker.holds?.length&&!worker.maintenance_locks?.length)===true;
+    gateway.workers?.some(worker=>worker.is_healthy===true&&Number.isSafeInteger(worker.load)&&worker.load>=0&&worker.load<(worker.max_concurrent_requests??1)&&worker.queued===0&&!worker.drained&&!worker.quarantine&&!worker.recovery_waiting&&!worker.holds?.length&&!worker.maintenance_locks?.length)===true;
 }
 export function fastGenieAssignment({config,source,history=[],snapshot,poolUrl,now=Date.now()}={}){
   const primaryPool=same(config?.url,poolUrl);

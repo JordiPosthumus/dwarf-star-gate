@@ -1,3 +1,4 @@
+import {activeCount} from './worker-activity.mjs';
 // Scoped agent ingress to the existing gateway executor. This is not a sandbox
 // against processes that already possess the operator's OS account/socket.
 import {createHash,randomBytes,randomUUID,timingSafeEqual} from 'node:crypto';
@@ -81,7 +82,7 @@ export class AgentControl {
     const a=this.agent(actor);
     return {schema:1,observed_at:this.now(),agent:publicAgent(a),allowed_actions:['status','drain','resume_own_holds','receipt'],workers:this.nodes.map(n=>({
       id:n.id,can_manage:a.workers.includes(n.id),is_healthy:n.healthy,drained:n.drained,
-      gateway_drained:n.drained&&!n.active&&!n.queue.length,load:Number(!!n.active),queued:n.queue.length,
+      gateway_drained:n.drained&&!n.active&&!n.queue.length,load:activeCount(n),queued:n.queue.length,
       quarantined:!!n.quarantine,recovering:!!n.recovering,context_length:n.contextLength??null,
       ...this.pauseStatus(n.id,{includeReason:true})})),operations:this.state.operations.filter(o=>o.actor_id===actor).slice(-20).map(({fingerprint,...o})=>o)};
   }

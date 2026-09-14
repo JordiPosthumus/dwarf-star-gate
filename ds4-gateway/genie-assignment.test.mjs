@@ -25,3 +25,10 @@ test('explicit pool selection keeps the original request pending for flexible as
   snapshot.gateway.workers[0].load=0;assert.equal(fastGenieAssignment({config,source:'pool',snapshot,poolUrl,now}).flexible,true);
   assert.equal(fastGenieAssignment({config:{...config,url:poolUrl},source:'primary',snapshot,poolUrl,now}).servedBy,'pool');
 });
+
+test('Genie sees an explicit free concurrent slot without treating a full worker as free',()=>{
+  const s=evidence(),endpoint={url:poolUrl,model:'deepseek-v4-flash'};
+  s.gateway.workers[0].max_concurrent_requests=2;s.gateway.workers[0].load=1;
+  assert.equal(freeGeniePool(s,endpoint,poolUrl,now),true);
+  s.gateway.workers[0].load=2;assert.equal(freeGeniePool(s,endpoint,poolUrl,now),false);
+});
