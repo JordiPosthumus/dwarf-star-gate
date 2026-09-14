@@ -40,7 +40,7 @@ test('startup preserves interrupted acceptance and never silently retries',t=>{
 });
 test('setup projection excludes credentials, private endpoints and request bodies, labels missing evidence',()=>{
   const context=chatContext({gateway:{api_key:'SECRET',workers:[{id:'example',url:'http://private.invalid',api_key_file:'/private/secret',context_length:65536,body:'PROMPT'}]}});
-  assert.doesNotMatch(JSON.stringify(context),/SECRET|private|PROMPT/);assert.equal(context.servers[0].context_length,65536);assert.equal(chatContext({}).unavailable,true);
+  assert.doesNotMatch(JSON.stringify(context),/SECRET|private\.invalid|api_key|PROMPT/);assert.equal(context.servers[0].context_length,65536);assert.equal(chatContext({}).unavailable,true);
 });
 test('testing pauses new questions without cancelling a reply, and the next question gets fresh setup',async t=>{
   let suspended=false,model='example-before',finish;
@@ -122,4 +122,30 @@ test('active chat defers routine reviews without blocking urgent action offers o
  g.getSnapshot=()=>({gateway:{recovery:{automatic:true,workers:[{worker_id:'example',eligible:true,evidence_id:'offered-proof'}]}}});g.tick();assert.deepEqual(asked,['action']);
  finish('done');await question;assert.equal(g.chatQuestions,0);g.getSnapshot=()=>({gateway:{workers:[]}});g.attempt=0;g.tick();assert.deepEqual(asked,['action','scheduled']);
  g.setEnabled(false);assert.equal(await g.answerChat(async()=> 'Chat remains available'),'Chat remains available');assert.equal(g.enabled,false);
+});
+
+import {activityForChat} from './genie-chat-activity.mjs';
+const activityId='11111111-1111-4111-8111-111111111111';
+function activityFixture(){return {time:2000,gateway:{workers:[],recovery:{operations:[{id:activityId,worker_id:'worker-a',updated_at:1500,actor:'operator',state:'verified_paused',service_action:'restart',service_action_issued:true,proof:{secret:'PRIVATE_PROOF'},command:'PRIVATE_COMMAND',api_key:'SECRET'}]}},
+ genie:{busy:false,reports:[{id:activityId,time:1400,evidence_at:1200,served_by:'dedicated',served_on:null,ticker_error:null,ticker:[{text:'PRIVATE_HEADLINE'}],text:'PRIVATE_REVIEW',actions_taken:[{shell:'PRIVATE_COMMAND'}]}],provider_actions:[{id:activityId,time:1300,served_by:'pool_fallback',served_on:'worker-b',text:'PRIVATE_TEXT'}],memory:{enabled:true,notes:[{text:'PRIVATE_NOTE'}]},provider_action_storage:{available:true},provider_assignment_storage:{available:true}},
+ genie_handovers:{rows:[{actor:'genie',source:'worker-a',destination:'worker-b',at:1600,service_state:'complete',waiting_before_move_ms:50,prompt:'PRIVATE_PROMPT',request_id:'PRIVATE_REQUEST'}]}};}
+test('chat operational evidence shares only attributed receipt fields, never notebook or report prose',()=>{
+ const a=activityForChat(activityFixture());assert.equal(a.available,true);assert.equal(a.reviews.length,1);assert.equal(a.reviews[0].retention,'dashboard_session');assert.equal(a.reviews[0].valid_assessment,true);
+ assert.deepEqual(a.actions.map(r=>r.kind),['queue_move','recovery','review_placement']);assert.equal(a.actions[1].actor,'operator');assert.equal(a.actions[1].state,'verified_paused');assert.equal(a.actions[2].placement,'pool_fallback');
+ assert.equal(a.storage.notebook_enabled,true);assert.equal(a.storage.notebook_included,false);assert.doesNotMatch(JSON.stringify(a),/PRIVATE_|SECRET|shell|api_key/);assert.match(a.scope,/not.*current health/);
+});
+test('operational projection preserves failures and missing evidence instead of inventing success',()=>{
+ const s=activityFixture();s.genie.reports[0].ticker_error='invalid_structured_review';s.gateway.recovery.operations[0].state='failed';s.genie.provider_action_storage.available=false;
+ const a=activityForChat(s);assert.equal(a.reviews[0].valid_assessment,false);assert.equal(a.actions[1].state,'failed');assert.equal(a.storage.pool_receipts_available,false);
+ assert.equal(activityForChat({}).available,false);assert.match(activityForChat({}).scope,/do not infer/);
+ s.gateway.recovery.operations[0].state='PRIVATE_STATE';s.genie_handovers.rows[0].source='/private/path';s.genie.provider_actions[0].served_on='http://private.invalid';const clean=activityForChat(s);assert.equal(clean.actions.length,1);assert.equal(clean.actions[0].worker,null);
+});
+test('chat activity keeps the newest bounded receipts and attributes automatic actions accurately',()=>{
+ const s=activityFixture();s.genie.provider_actions=Array.from({length:40},(_,n)=>({id:activityId,time:n,served_by:'pool_assigned',served_on:'worker-a'}));s.gateway.recovery.operations[0].actor='detector';s.genie_handovers.rows[0].actor='scheduler';
+ const a=activityForChat(s);assert.equal(a.actions.length,30);assert.equal(a.truncated,true);assert.equal(a.actions[0].actor,'scheduler');assert.equal(a.actions[1].actor,'detector');assert.equal(a.actions[2].at,39);
+});
+test('the exact operational evidence supplied to a chat answer survives conversation reload',async t=>{
+ let received;const d=directory(t),s=activityFixture(),chat=new GenieChat({directory:d,getSnapshot:()=>s,provider:{generate:async input=>{received=input;return {text:'The operator recovery remained paused.'};}}}),c=chat.create();
+ chat.submit(c.id,'What happened?','activity-question');await chat.idle();const saved=new GenieChat({directory:d}).get(c.id);
+ assert.deepEqual(saved.messages[1].context.operational_activity,received.context.operational_activity);assert.equal(received.context.operational_activity.actions[1].state,'verified_paused');assert.doesNotMatch(JSON.stringify(received),/PRIVATE_|SECRET/);
 });

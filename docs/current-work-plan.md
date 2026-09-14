@@ -31,7 +31,10 @@ deployment receipts stay outside this public repository.
   reviews, preserving provider and guarded-action contracts.
 - [x] Connect conversational questions to the existing exception for yielding
   Genie's own routine review, retaining action reviews and unrelated work.
-- [ ] Unify conversational and background memory/activity presentation.
+- [x] Supply chat with attributed operational receipts and review metadata from
+  existing stores; retain the exact evidence with each answer.
+- [ ] Finish shared operational notebook access and memory/activity presentation,
+  preserving the installation's notebook-to-provider permission boundary.
 - [ ] Reconcile recovery enrollment with approved records and demonstrated
   restoration. Add approved drain/apply/verify/return workflows through the
   existing mutation path; rollback claims require a retained, proven version.
