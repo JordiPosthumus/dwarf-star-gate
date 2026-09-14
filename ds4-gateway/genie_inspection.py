@@ -23,7 +23,7 @@ if p.get('selected_image'):
  inspected=subprocess.run(['docker','image','inspect','--',image_id],text=True,capture_output=True,timeout=20)
  if inspected.returncode:
   if 'No such image:' not in inspected.stderr:raise ValueError('Image inspection unavailable')
-  print(json.dumps({'observed_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'selected_image':image_id,'image_present':False,'retained_containers':[],'scope':'The exact selected image was not found by Docker on this host. No image pulled, container created or server changed.'}));sys.exit(0)
+  print(json.dumps({'observed_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'selected_image':image_id,'image_present':False,'retained_containers':[],'retained_containers_checked':False,'scope':'The exact selected image was not found by Docker on this host. Retained containers were not queried; the empty list does not establish their absence. No image pulled, container created or server changed.'}));sys.exit(0)
  image=json.loads(inspected.stdout)[0]
  if image['Id']!=image_id:raise ValueError('Selected image identity changed')
  def clean(value):
@@ -40,7 +40,7 @@ if p.get('selected_image'):
  containers=json.loads(run('docker','inspect','--type','container','--',*ids)) if ids else []
  # Docker's ancestor filter also matches derived images. Keep exact image matches only.
  recipes=[{'id':c['Id'],'name':c['Name'],'image_id':c['Image'],'created_at':c['Created'],'running':c['State']['Running'],'started_at':c['State']['StartedAt'],'config':clean(c['Config']),'host_config':clean(c['HostConfig']),'mounts':clean(c['Mounts'])} for c in containers if c['Image']==image_id]
- print(json.dumps({'observed_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'selected_image':image_id,'image_present':True,'image':{'id':image['Id'],'created_at':image['Created'],'tags':image.get('RepoTags',[]),'repo_digests':image.get('RepoDigests',[]),'config':clean(image['Config'])},'retained_containers':recipes,'scope':'Read-only metadata for the exact owner-selected image and retained containers using that image. No container execution, image pull, restart, benchmark or file-content verification. A retained recipe is evidence, not proof it served the selected historical run or is ready to deploy.'}));sys.exit(0)
+ print(json.dumps({'observed_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'selected_image':image_id,'image_present':True,'image':{'id':image['Id'],'created_at':image['Created'],'tags':image.get('RepoTags',[]),'repo_digests':image.get('RepoDigests',[]),'config':clean(image['Config'])},'retained_containers':recipes,'retained_containers_checked':True,'scope':'Read-only metadata for the exact owner-selected image and retained containers using that image. No container execution, image pull, restart, benchmark or file-content verification. A retained recipe is evidence, not proof it served the selected historical run or is ready to deploy.'}));sys.exit(0)
 c=json.loads(run('docker','inspect','--type','container','--',p['container']))[0]
 i=json.loads(run('docker','image','inspect','--',c['Image']))[0]
 config=c['Config']

@@ -111,8 +111,8 @@ class SelectedCollector(unittest.TestCase):
    except SystemExit as e:self.assertEqual(e.code,0)
   return json.loads(output.getvalue()),calls
  def test_exact_image_and_retained_recipe_without_descendant_or_mutation(self):
-  result,calls=self.collect();self.assertTrue(result['image_present']);self.assertEqual(len(result['retained_containers']),1);self.assertFalse(result['retained_containers'][0]['running']);self.assertEqual(result['retained_containers'][0]['host_config']['ShmSize'],17179869184);self.assertNotIn('PRIVATE_',json.dumps(result));self.assertTrue(all(c[1] in ['image','ps','inspect'] for c in calls))
+  result,calls=self.collect();self.assertTrue(result['image_present']);self.assertTrue(result['retained_containers_checked']);self.assertEqual(len(result['retained_containers']),1);self.assertFalse(result['retained_containers'][0]['running']);self.assertEqual(result['retained_containers'][0]['host_config']['ShmSize'],17179869184);self.assertNotIn('PRIVATE_',json.dumps(result));self.assertTrue(all(c[1] in ['image','ps','inspect'] for c in calls))
  def test_absent_is_distinct_from_daemon_failure(self):
-  result,calls=self.collect('absent');self.assertFalse(result['image_present']);self.assertEqual(len(calls),1)
+  result,calls=self.collect('absent');self.assertFalse(result['image_present']);self.assertFalse(result['retained_containers_checked']);self.assertIn('were not queried',result['scope']);self.assertEqual(len(calls),1)
   with self.assertRaisesRegex(ValueError,'unavailable'):self.collect('failed')
 if __name__=='__main__':unittest.main()
