@@ -1,5 +1,16 @@
 # Star Gate work log
 
+## 2026-09-14 — Native Hourglass start adapter (development)
+
+Prepared a local console adapter using Hourglass's own model, full-bank and
+hardware revision guards. Explicit starts submit once, preserve native settings
+and distinguish uncertain acceptance from rejection. Five synthetic tests pass,
+including loopback transport and redirect checks. The exact generated payload
+also passed native enqueue checks in a temporary workspace: unchanged settings
+accepted; changed model, bank and hardware rejected. No benchmark worker started.
+The UI, durable start receipts and observation/result collection remain unfinished;
+this adapter is not enabled in production. Hourglass source was not changed.
+
 ## 2026-09-14 — Optional saved Hourglass report support
 
 Prepared this release from production main with only the Hourglass projection

@@ -88,3 +88,35 @@ identifier filtering. Browser and native Hermes checks use synthetic reports and
 a scripted model provider; they prove wiring, not model performance. Running a
 benchmark, measuring contention and approving a server configuration remain
 separate unfinished parts of the plan.
+
+## Native console adapter (development only)
+
+`hourglass-console.mjs` prepares a start against an explicitly connected local
+Hourglass console. It reads the saved model catalogue and full-bank revision
+metadata, then submits the native `models_revision`, `hardware_revision` and
+`task_bundles` preconditions. It sends no model-setting overrides, starts no
+shell/server process and leaves Hourglass's clock, warm-up and round rules intact.
+The console origin must be an explicit `http://127.0.0.1:PORT` URL. Responses are
+bounded to 64 MiB and requests use a 15-second observation timeout, with redirects
+and automatic retries disabled. A start timeout does not cancel Hourglass work.
+
+Preparation does not start a run. Submission requires the exact prepared ID and
+an explicit owner-confirmed free measurement window. The review can submit once;
+connection loss or an invalid acknowledgement is an uncertain outcome, never
+permission to replay. Native validation rejection is reported without exposing
+its error body. The visible settings are a limited summary; the full native
+Hourglass entry, including its existing overrides, remains authoritative.
+
+This adapter is not yet connected to a dashboard start button. Before exposing
+it, the dashboard must durably record intent before submission, retain the native
+job receipt and provenance, recover observation after a dashboard restart, and
+make an uncertain acceptance visible for reconciliation in Hourglass. It must
+not infer cancellation, restart an uncertain run, or create periodic execution.
+The one-use in-memory review ID is not a replacement for that durable receipt.
+
+The inspected local Hourglass working tree supports API version 2 with these
+revision guards. Native enqueue checks in a temporary synthetic workspace
+accepted the adapter's exact request and rejected changed model, bank and hardware
+revisions without queuing work. That checkout contains other uncommitted changes;
+this does not establish compatibility with every GitHub version of Hourglass.
+No files in the Hourglass checkout were edited and no benchmark worker started.
