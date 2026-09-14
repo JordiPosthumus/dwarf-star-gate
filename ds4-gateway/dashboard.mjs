@@ -62,8 +62,15 @@ for(const [route,file,mime] of [
 export function genieRuntimeConfig(config){
   if(config.genie===false)return null;
   const pool={url:`http://127.0.0.1:${config.port}/v1`,model:config.model,api_key:config.api_key};
-  if(config.genie?.url)return {...config.genie,enabled:config.genie.enabled!==false,fallback:config.genie.fallback??pool};
-  return {...pool,enabled:config.genie?.enabled!==false,fallback:pool,default_source:'pool'};
+  const thinking=endpoint=>{
+    const chat=config.genie_chat;
+    if(Object.hasOwn(endpoint,'reasoning_effort')||!chat||!Object.hasOwn(chat,'reasoning_effort')||chat.model!==endpoint.model||chat.url?.replace(/\/$/,'')!==endpoint.url?.replace(/\/$/,''))return endpoint;
+    // The same configured connection must use its working reasoning contract.
+    // A separate provider or an explicit reviewer choice keeps its own setting.
+    return {...endpoint,reasoning_effort:chat.reasoning_effort};
+  };
+  if(config.genie?.url)return {...thinking(config.genie),enabled:config.genie.enabled!==false,fallback:thinking(config.genie.fallback??pool)};
+  return {...thinking(pool),enabled:config.genie?.enabled!==false,fallback:thinking(pool),default_source:'pool'};
 }
 // Reuse the gateway credential only for this installation's exact local pool.
 export function genieChatConfig(config){

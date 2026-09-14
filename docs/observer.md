@@ -314,3 +314,17 @@ Image-recovery cancellation remains a cancelled request: cancelled normalized
 retries do not increment visual failures, and a converter error arriving after
 client cancellation cannot create a guidance receipt. Existing historical
 counters remain unchanged. These source changes require a separate rollout.
+
+### Reviewer thinking configuration
+
+When the fleet reviewer and conversational Genie use the same model and endpoint,
+the reviewer inherits the chat connection's configured `reasoning_effort`. An
+explicit reviewer or fallback endpoint setting takes precedence. A null value
+omits the field and uses the model's native default; independent providers retain
+the legacy `high` default when no choice is configured. No server setting or review
+output allowance is changed. This avoids sending a hard-coded `high` value to a
+Qwen connection configured for `xhigh`.
+
+When generated banner advice is unavailable, the banner can still show observed
+fleet counts and the review status. Model HTTP failures show their status code;
+these live counts are not presented as a successful Genie assessment.

@@ -392,3 +392,18 @@ test('a new Genie review uses fresh free compatible pool capacity after measured
   assert.equal(g.status().last_served_by,'pool_assigned');assert.equal(g.status().assignment.reason,'recent_dedicated_delay');assert.equal(g.status().primary_timeout_ms,7200000);assert.equal(g.status().fallback_timeout_ms,7200000);
   assert.equal(g.status().provider_actions[0].served_by,'pool_assigned');assert.equal(JSON.parse(calls[1].options.body).max_tokens,8192);g.close();
 });
+
+test('reviewer sends the configured reasoning contract and respects native default without lowering output allowance',async()=>{
+ for(const effort of ['xhigh',null]){
+  let sent;const g=new Genie({url:'http://127.0.0.1:9001/v1',reasoning_effort:effort},snapshot,{fetchImpl:async(_url,options)=>{
+   sent=JSON.parse(options.body);if(sent.reasoning_effort==='high')return Response.json({error:{message:'Unsupported reasoning effort'}},{status:400});
+   return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(authoredReview())}}]});
+  }});
+  await g.ask();assert.equal(sent.reasoning_effort,effort===null?undefined:effort);assert.equal(sent.max_tokens,8192);assert.equal(g.status().ticker.state,'ready');g.close();
+ }
+});
+
+test('failed ticker exposes only a validated HTTP status without arbitrary provider error text',()=>{
+ const s=snapshot();assert.equal(tickerStatus(null,s,{error:'Model HTTP 400'}).model_http_status,400);
+ for(const error of ['Model HTTP 400 PRIVATE','PRIVATE_ERROR','Model HTTP 999'])assert.equal(tickerStatus(null,s,{error}).model_http_status,undefined);
+});

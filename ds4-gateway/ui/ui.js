@@ -491,11 +491,15 @@ function healthHeadlines(snapshot, ticker) {
     stale:'The last assessment is over 10 minutes old or has no valid evidence time. Request a fresh review below.',
     changed:'Fleet health or membership changed since the last assessment. Request a fresh review before acting on old advice.',
     invalid:'Genie returned no valid ticker entries. Read his assessment below or request another review.',
-    error:ticker?.provider_attempts?.length>1
+    error:Number.isInteger(ticker?.model_http_status)&&ticker.model_http_status>=400&&ticker.model_http_status<600
+      ?`Genie's model rejected the review (HTTP ${ticker.model_http_status}). Check the reviewer's model and request settings. Gateway status is still live.`
+      :ticker?.provider_attempts?.length>1
       ?`The Genie review failed after both the dedicated provider and Star Gate pool fallback were tried (${ticker.provider_attempts.map(a=>`${String(a.provider).replaceAll('_',' ')}: ${String(a.reason||a.outcome).replaceAll('_',' ')}`).join('; ')}). The gateway is unaffected.`
-      :'The Genie review failed. Check his status below; no replacement advice has been invented.',
+      :'Genie could not complete the latest review. Check his status below. Gateway status is still live.',
     unavailable:'Genie status is unavailable. Waiting for a fresh assessment.'};
-  return {level:'unknown',label:'Genie status',items:[{severity:'info',text:message[ticker?.state] || 'Connecting to Gate Genie…'}]};
+  const g=snapshot.gateway,counts=[g.healthy,g.total,g.active,g.queued];
+  const observed=counts.every(n=>Number.isSafeInteger(n)&&n>=0)?`Fleet: ${g.healthy}/${g.total} servers healthy; ${g.active} running; ${g.queued} waiting. `:'';
+  return {level:'unknown',label:observed?'Live fleet status · Genie status':'Genie status',items:[{severity:'info',text:observed+(message[ticker?.state] || 'Connecting to Gate Genie…')}]};
 }
 let wireSnapshot=null,wireSignature=null,wireState=null,requestFilter='all';
 function renderRequests(events) {
