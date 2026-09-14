@@ -429,6 +429,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     if(reason==='offer_ready'&&job.key&&home?.node!==source.id)reason='durable_home_mismatch';
     return {source,job,destination:reason==='offer_ready'?destination:null,reason,conflict};
   }
+  const queuedCount=source=>source.queue.filter(job=>!job.cancelled).length;
   function relocationDiagnostics() {
     const idle=nodes.filter(eligibleDestination).sort((a,b)=>store.count(a.id)-store.count(b.id)||a.id.localeCompare(b.id));
     const gateway_reason=shuttingDown?'gateway_stopping':draining?'gateway_draining':null;
@@ -438,8 +439,9 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
       const {job,destination,reason,conflict}=decision,waiting_seconds=Math.max(0,(performance.now()-job.createdMono)/1000);
       const automatic_reason=gateway_reason??(reason!=='offer_ready'?reason:['new','none'].includes(job.affinity)?'automatic_ready':automaticAffinityWait===null?'affinity_automatic_disabled':waiting_seconds<automaticAffinityWait/1000?'automatic_wait_threshold':'automatic_ready');
       const minimum=(config.genie_rebalance_min_wait_ms??60000)/1000;
-      const genie_reason=gateway_reason??(reason!=='offer_ready'?reason:config.genie_load_balancing===false?'genie_disabled':waiting_seconds<minimum?'genie_wait_threshold':'genie_offer_ready');
-      sources.push({source:source.id,request_id:job.id,affinity:job.affinity,waiting_seconds,reason:gateway_reason??reason,
+      const source_queued=queuedCount(source),genie_pressure=!gateway_reason&&config.genie_load_balancing!==false&&source_queued>=2&&idle.some(node=>node!==source&&allowsWorker(job.modelRoute,node));
+      const genie_reason=gateway_reason??(reason!=='offer_ready'?reason:config.genie_load_balancing===false?'genie_disabled':!genie_pressure&&waiting_seconds<minimum?'genie_wait_threshold':'genie_offer_ready');
+      sources.push({source:source.id,source_queued,genie_pressure,request_id:job.id,affinity:job.affinity,waiting_seconds,reason:gateway_reason??reason,
         destination:gateway_reason?null:destination?.id??null,conflicting_worker:conflict?.node?.id??null,automatic_reason,genie_reason});
       if(sources.length>=32)break;
     }
@@ -454,7 +456,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
       const decision=relocationDecision(source,idle);if(!decision||decision.reason!=='offer_ready')continue;
       const {job,destination}=decision;
       offers.push({schema:1,evidence_id:relocationEvidence(job,source,destination),request_id:job.id,priority:job.priority,source:source.id,destination:destination.id,
-        waiting_seconds:Math.max(0,(performance.now()-job.createdMono)/1000),source_active_seconds:source.active?Math.max(0,(performance.now()-source.active.dispatchedMono)/1000):null,
+        source_queued:queuedCount(source),waiting_seconds:Math.max(0,(performance.now()-job.createdMono)/1000),source_active_seconds:source.active?Math.max(0,(performance.now()-source.active.dispatchedMono)/1000):null,
         affinity:job.affinity,cache_locality:'unknown',destination_immediately_free:true,automatic:false});
     }
     return offers.slice(0,32);
@@ -463,7 +465,8 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     if(config.genie_load_balancing===false)return [];
     const minimum=(config.genie_rebalance_min_wait_ms??60000)/1000;
     if(!Number.isFinite(minimum)||minimum<0)throw new Error('genie_rebalance_min_wait_ms must be non-negative');
-    return relocationOffers().filter(offer=>offer.waiting_seconds>=minimum).slice(0,8);
+    return relocationOffers().filter(offer=>offer.source_queued>=2||offer.waiting_seconds>=minimum).slice(0,8)
+      .map(offer=>({...offer,trigger:offer.source_queued>=2?'queue_pressure':'wait_threshold'}));
   }
   function relocateQueued(input,actor='operator') {
     const keys=Object.keys(input??{}).sort().join(',');

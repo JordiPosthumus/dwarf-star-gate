@@ -407,3 +407,19 @@ test('failed ticker exposes only a validated HTTP status without arbitrary provi
  const s=snapshot();assert.equal(tickerStatus(null,s,{error:'Model HTTP 400'}).model_http_status,400);
  for(const error of ['Model HTTP 400 PRIVATE','PRIVATE_ERROR','Model HTTP 999'])assert.equal(tickerStatus(null,s,{error}).model_http_status,undefined);
 });
+
+
+test('queue pressure wakes one assessment even without a legal move and never interrupts a busy review',async()=>{
+  const s=snapshot();s.gateway.continuity={schema:1,relocation:{genie_enabled:true,genie_offers:[],diagnostics:{schema:1,idle_destinations:['studio'],sources:[{source:'spark1',source_queued:2,genie_pressure:true,request_id:'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',reason:'same_session_queued',affinity:'existing',waiting_seconds:1,genie_reason:'same_session_queued'}]}}};
+  s.gateway.continuity=continuityForDisplay(s.gateway.continuity);
+  let calls=0,moves=0,finish;
+  const g=new Genie({url:'http://127.0.0.1:9001/v1'},()=>s,{rebalance:async()=>{moves++;},fetchImpl:async()=>{calls++;await new Promise(resolve=>{finish=resolve;});return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(authoredReview())}}]});}});
+  g.attempt=Date.now();g.tick();assert.equal(calls,1);assert.equal(g.busyKind,'action');
+  g.tick();assert.equal(calls,1);assert.equal(g.abort.signal.aborted,false);
+  finish();while(g.busy)await new Promise(r=>setImmediate(r));
+  g.tick();assert.equal(calls,1,'unchanged pressure is not repeatedly reviewed');assert.equal(moves,0);
+  assert.equal(g.status().reports.length,1);
+  s.gateway.continuity.relocation.diagnostics.sources[0].genie_pressure=false;g.tick();
+  s.gateway.continuity.relocation.diagnostics.sources[0].genie_pressure=true;g.tick();assert.equal(calls,2,'new pressure after clearance wakes another assessment');
+  finish();while(g.busy)await new Promise(r=>setImmediate(r));g.close();
+});

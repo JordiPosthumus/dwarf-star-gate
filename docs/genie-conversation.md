@@ -433,3 +433,7 @@ Older cores, missing matches, ambiguous matches and stale/unavailable snapshots
 remain unknown; a missing request can simply mean Hermes is between model calls.
 This does not cancel, replay, reprioritize or shorten any request. A slow progress
 lookup cannot block chat indefinitely.
+
+### Queue-pressure reviews
+
+When at least two live jobs are waiting on one worker and another compatible, healthy worker is idle and available for routing, the fleet reviewer wakes on its next 10-second check. It can assess this pressure immediately, without the usual 60-second eligibility wait. It weighs the backlog against potential cache reuse and may request one eligible queued-job move. Session ordering, maintenance holds, model compatibility and active jobs remain protected; a blocked move is explained, not forced. A busy reviewer finishes its current work first. An unchanged pressure signal is reconsidered at most once per minute. The existing wait-based trigger still covers a single waiting job.

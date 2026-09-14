@@ -20,6 +20,8 @@ import {workerConfig,sshTargets,assertUniqueWorker,replaceSshFallbacks} from './
 import {createContinuityFetch} from './continuity-client.mjs';
 import {safeGatewayEvent} from './telemetry.mjs';
 import {evidence} from './dataset.mjs';
+import {Genie} from './genie.mjs';
+import {continuityForDisplay} from './continuity.mjs';
 
 async function until(fn, timeout = 3000) {
   const end = Date.now() + timeout;
@@ -2337,4 +2339,57 @@ test('oldest queue telemetry follows creation time while shadow follows priority
   const row=read().find(row=>row.kind==='routing_shadow'&&row.reason==='worker_free');
   assert.equal(row.request_id,highJob.id);assert.equal(r.backends[0].aborts,0);
   r.backends[0].heldStreams.shift()();await Promise.all([home,low,high]);
+});
+
+
+test('two waiting jobs wake Genie before the timer and an exact move preserves running work',async t=>{
+  const r=await rig(t,2,{control_socket:true,automatic_affinity_rebalance_min_wait_ms:false});
+  for(const key of ['a','b','c','d','e'])await r.request('{}',key);
+  const active=r.request('{"stream":true,"fixture_hold_stream":true}','c');
+  await until(()=>r.backends[0].heldStreams?.length===1);
+  const body='{"queued":"a","reasoning_effort":"xhigh","max_tokens":262144}';
+  const first=r.request(body,'a');await until(()=>r.gateway.nodes[0].queue.length===1);
+  assert.equal(r.gateway.stats().continuity.relocation.genie_offers.length,0,'one waiting job still uses the timer');
+  const second=r.request('{"queued":"e"}','e');await until(()=>r.gateway.nodes[0].queue.length===2);
+  let calls=0,actions=0;
+  const g=new Genie({url:'http://127.0.0.1:9001/v1'},()=>({gateway:{...r.gateway.stats(),continuity:continuityForDisplay(r.gateway.stats().continuity)},devices:[],events:[]}),{
+    rebalance:async input=>{actions++;return workerControl(r.config.control_socket,'/genie-relocate-queued',input);},
+    fetchImpl:async(_url,options)=>{
+      calls++;const {evidence}=JSON.parse(JSON.parse(options.body).messages[1].content);
+      const offer=evidence.continuity.relocation.genie_offers[0];
+      assert.equal(offer.trigger,'queue_pressure');assert.equal(offer.source_queued,2);assert.ok(offer.waiting_seconds<60);
+      assert.equal(evidence.continuity.relocation.diagnostics.sources[0].genie_pressure,true);
+      return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify({assessment:'Use the idle worker for the waiting job.',ticker:[{severity:'info',text:'Queue pressure warrants one move.',recommendation:null,evidence_refs:['fleet']}],relocation_requests:[Object.fromEntries(['request_id','source','destination','evidence_id'].map(k=>[k,offer[k]]))]})}}]});
+    }
+  });
+  try{
+    g.attempt=Date.now();g.tick();await until(()=>!g.busy);
+    assert.equal(calls,1);assert.equal(actions,1);assert.equal(g.status().reports[0].actions_taken[0].state,'relocated');
+    assert.equal((await first).headers['x-ds4-node'],'spark2');assert.equal(r.backends[1].records.at(-1).body.toString(),body);
+    assert.equal(r.gateway.nodes[0].active.key,createHash('sha256').update('c').digest('hex'));
+    assert.equal(r.backends[0].aborts,0);assert.equal(r.gateway.nodes[0].queue.length,1);
+    assert.equal(r.gateway.stats().continuity.relocation.genie_offers.length,0,'pressure bypass disappears when queue drops below two');
+  }finally{g.close();r.backends[0].heldStreams.shift()();await Promise.all([active,first,second]);}
+});
+
+test('queue pressure respects maintenance and same-session work, and stale pressure cannot authorize a move',async t=>{
+  const r=await rig(t,2,{control_socket:true,automatic_affinity_rebalance_min_wait_ms:false});
+  for(const key of ['a','b','c'])await r.request('{}',key);
+  const active=r.request('{"stream":true,"fixture_hold_stream":true}','c');await until(()=>r.backends[0].heldStreams?.length===1);
+  const first=r.request('{"queued":1}','a'),second=r.request('{"queued":2}','a');await until(()=>r.gateway.nodes[0].queue.length===2);
+  try{
+    let d=r.gateway.stats().continuity.relocation;
+    assert.equal(d.diagnostics.sources[0].genie_pressure,true);assert.equal(d.diagnostics.sources[0].reason,'same_session_queued');assert.equal(d.genie_offers.length,0);
+    const ctl=(route,body)=>workerControl(r.config.control_socket,route,body,{channel:'dashboard'});
+    const locked=await ctl('/maintenance-lock',{worker_id:'spark2',name:'research',reason:'Fixture maintenance',review_after_hours:2,request_id:randomUUID()});
+    assert.equal(r.gateway.stats().continuity.relocation.diagnostics.sources[0].genie_pressure,false);
+    await ctl('/release-maintenance-lock',{lock_id:locked.result.lock_id,reason:'Fixture finished',request_id:randomUUID()});
+    assert.equal(r.gateway.stats().continuity.relocation.diagnostics.sources[0].genie_pressure,false,'release alone does not resume routing');
+    await ctl('/resume-workers',{workers:['spark2']});
+    // Cancelled entries must not create pressure or action authority.
+    r.gateway.nodes[0].queue[1].cancelled=true;
+    d=r.gateway.stats().continuity.relocation;
+    assert.equal(d.diagnostics.sources[0].source_queued,1);assert.equal(d.diagnostics.sources[0].genie_pressure,false);assert.equal(d.genie_offers.length,0);
+    r.gateway.nodes[0].queue[1].cancelled=false;
+  }finally{r.backends[0].heldStreams.shift()();await Promise.all([active,first,second]);}
 });
