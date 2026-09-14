@@ -537,6 +537,33 @@ function configurationRows(row){
     ['Min-p','serving_contract.generation_defaults.min_p'],['Repetition penalty','serving_contract.generation_defaults.repetition_penalty'],['Generation output default','serving_contract.generation_defaults.max_new_tokens']];
   return fields.map(([label,key])=>({label,values:['observed','approved','proposed'].map(kind=>{const record=row[kind];if(!record)return {present:false,value:null};return {present:true,value:key.split('.').reduce((v,k)=>v?.[k],record)??null};})})).filter(r=>r.values.some(v=>v.value!==null));
 }
+function hourglassReportLines(row){
+  const s=row.summary,a=row.association,score=s.score;
+  const lines=[`Run: ${s.run_date?new Date(s.run_date).toLocaleString():'date unknown'} · Reported state: ${s.state}`,
+    `Metric: ${score.version??'unknown'} · Hourglass ${s.benchmark_version??'version unknown'} · Scoring: ${s.scoring_policy??'unknown'}`,
+    `Active seconds: ${s.active_seconds??'unknown'} / window ${s.window_seconds??'unknown'} · Clock adjustment: ${s.clock_adjustment_seconds??'unknown'}s`,
+    `Hardware: ${s.hardware.label??'unknown'} (${s.hardware.source??'source unknown'})`,
+    `Worker: ${a.worker_id??'not linked'} · Route: ${a.route} · Contention: ${a.contention} (operator supplied)`,
+    `Associated configuration revision: ${a.approved_configuration_revision??'not linked'} (operator supplied; not verified by the report)`,
+    `Bank fingerprint: ${s.bank_fingerprint??'unknown'} · Hourglass configuration key: ${s.configuration_key??'unknown'}`,
+    `Timing policy: ${s.timing_policy??'unknown'} · Question timeout policy: ${s.question_timeout_policy??'unknown'}`,
+    `Execution: timeout ${s.execution.question_timeout_s??'unknown'}s; repeats ${s.execution.repeat??'unknown'}; wrong-answer stop ${s.execution.stop_after_wrong??'unknown'}; rounds ${s.execution.round_policy??'unknown'}`,
+    `Report created: ${s.report_created_at?new Date(s.report_created_at).toLocaleString():'unknown'} · Report revision: ${row.report_revision??'unknown'}`];
+  if(s.repaired)lines.push('The report records a repaired run.');
+  for(const c of s.caveats)lines.push(`Caveat: ${c.label??'unlabelled'} · affected attempts ${c.attempts??'unknown'}`);
+  return {title:`${s.model} · ${score.value===null?'Score not reported':String(score.value)+' '+(score.unit??'reported score (unknown metric)')} · ${s.state}`,lines};
+}
+function renderHourglassReports(value){
+  const panel=$('hourglass-reports');if(!panel)return;panel.hidden=!value?.configured;
+  const items=$('hourglass-report-items');if(!value?.configured){items.replaceChildren();return;}
+  const signature=JSON.stringify(value);if(items.dataset.signature===signature)return;items.dataset.signature=signature;items.replaceChildren();
+  $('hourglass-report-status').textContent=`${value.reports.length} saved reports · ${value.unavailable.length} unavailable. Different metrics and conditions are not automatically comparable.`;
+  for(const row of value.reports){
+    const item=hourglassReportLines(row),entry=document.createElement('details'),heading=document.createElement('summary');
+    entry.style.overflowWrap='anywhere';entry.style.whiteSpace='normal';heading.textContent=item.title;entry.append(heading);
+    for(const line of item.lines){const p=document.createElement('p');p.textContent=line;entry.append(p);}items.append(entry);
+  }
+}
 function renderServerRecords(value){
   const panel=$('server-records');if(!panel)return;panel.hidden=!value?.configured;
   const items=$('server-record-items');if(!value?.configured){items.replaceChildren();return;}
@@ -564,6 +591,7 @@ function renderServerRecords(value){
 }
 function render(s) {
   renderServerRecords(s.server_records);
+  renderHourglassReports(s.hourglass_reports);
   const g = s.gateway, now = s.time, stale = !!s.gateway_error;
   renderHealthWire(s);
   renderAgentWatch(g?.client_watch);

@@ -8,8 +8,9 @@ setup and time window. The benchmark itself remains Hourglass.
 The first data component, `hourglassReportSummary`, reads Hourglass's existing
 `hourglass-public-report-v1` aggregate object. It does not read the private bank,
 calculate a score, scan directories, make network calls or launch an evaluation.
-Dashboard/chat wiring and explicit association with a Star Gate worker and
-approved configuration revision remain to be implemented.
+The development dashboard displays explicitly selected reports under Evidence →
+Hourglass results, and conversational Genie receives the same bounded summaries.
+Each answer saves the report revision and supplied associations with its evidence.
 
 ## Preserve the recorded methodology
 
@@ -44,3 +45,46 @@ The projection has offline tests for native and historical metric separation,
 missing/partial evidence, optional metadata, preservation of values and omission
 of private payloads. These prove data handling, not benchmark validity, current
 model performance or completion of the owner-started workflow.
+
+## Select saved reports
+
+Add explicit aggregate report references to your private Star Gate configuration:
+
+```json
+"hourglass_reports": [
+  {
+    "file": "./benchmarks/report.json",
+    "worker_id": "example-worker",
+    "route": "direct",
+    "contention": "owner-confirmed-idle"
+  }
+]
+```
+
+Paths resolve beside the configuration file. Only `file` is required. Optional
+`approved_configuration_revision` accepts a full 64-character lowercase SHA-256
+revision from an existing approved Star Gate record. Supplying it associates the
+report; it does not create, approve or verify a configuration. Worker, revision,
+route and contention are explicitly labelled operator supplied. Missing values
+remain unknown. Routes accept `direct`, `gateway`, `testing-door` or `unknown`;
+contention accepts `owner-confirmed-idle`, `observed-contention` or `unknown`.
+
+No configuration means no report panel or report reads. Up to 50 explicit regular
+files of at most 1 MiB each are supported. Symlinks and named pipes are rejected.
+Unchanged summaries are cached; changed files get a new content revision. A missing,
+invalid or unreadable file is unavailable, never a cached earlier result or an
+invented zero. Files and their parent directories should be operator controlled.
+The dashboard serves the summaries, not the source files or their paths.
+
+Selected summaries are included in the configured chat model's context and saved
+with its answer in private chat history. Raw benchmark questions, answers, notes
+and traces are excluded. Run, machine, configuration, bank and report identifiers
+are blocked from public web-tool inputs. This does not make report labels verified
+facts or change the installation's existing model-provider privacy boundary.
+
+Validation covers file replacement/failure handling, bounded reads, optional
+associations, normal dashboard startup, preserved answer evidence and research
+identifier filtering. Browser and native Hermes checks use synthetic reports and
+a scripted model provider; they prove wiring, not model performance. Running a
+benchmark, measuring contention and approving a server configuration remain
+separate unfinished parts of the plan.

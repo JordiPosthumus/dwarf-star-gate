@@ -46,6 +46,16 @@ class ResearchValidation(unittest.TestCase):
         self.assertEqual(self.network.call_count, 1)
         self.assertEqual(self.events[-1]["state"], "failed")
 
+    def test_hourglass_run_and_private_association_identifiers_stay_out_of_search(self):
+        identifiers = ['private-report', 'benchmark-worker', 'private-approval', 'private-run', 'private-config', 'private-machine', 'private-bank']
+        row = {'report_revision': identifiers[0], 'association': {'worker_id': identifiers[1], 'approved_configuration_revision': identifiers[2]},
+               'summary': dict(zip(('run_key', 'configuration_key', 'machine_key', 'bank_fingerprint'), identifiers[3:]))}
+        register_research({'search_url': 'http://example.invalid', 'extract_url': 'http://example.invalid'},
+                          {'hourglass_reports': {'reports': [row]}}, lambda _, **kw: self.events.append(kw['event']))
+        for value in identifiers:
+            self.assertIn('"error"', self.handlers['web_search']({'query': 'compare ' + value}))
+        self.network.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
