@@ -13,7 +13,7 @@ test('real Pi custom continuation preserves history/tools but is not an idempote
 },async t=>{
   const root=process.env.DSG_PI_ROOT,load=relative=>import(pathToFileURL(path.join(root,relative)));
   const version=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8')).version;
-  assert.equal(version,'0.84.4','New Pi versions need an explicit contract review, not an assumed rescue capability');
+  assert.ok(['0.84.4','0.85.1'].includes(version),'New Pi versions need an explicit contract review, not an assumed rescue capability');
   const [{createAgentSession},{ModelRuntime},{SessionManager},{SettingsManager},{DefaultResourceLoader}]=await Promise.all([
     load('dist/core/sdk.js'),load('dist/core/model-runtime.js'),load('dist/core/session-manager.js'),load('dist/core/settings-manager.js'),load('dist/core/resource-loader.js')]);
   const dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'dsg-pi-rescue-contract-')));

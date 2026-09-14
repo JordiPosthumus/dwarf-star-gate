@@ -1,5 +1,13 @@
 # Star Gate work log
 
+## 2026-09-14 — Installed Pi contract fixtures refreshed
+
+Rechecked Pi 0.85.1 retry, settled-event and custom-message behavior against the
+installed source and real SDK with disposable providers. All 60 continuity checks
+pass with no skips. The known-version checks retain 0.84.4 and now include the
+verified 0.85.1; progress fixtures read the current requests evidence directory.
+No production client, retry policy or gateway runtime behavior changed.
+
 ## 2026-09-14 — Concurrency integrated with current queue and chat behavior
 
 Merged the bounded concurrency changes with the current queue-pressure trigger,

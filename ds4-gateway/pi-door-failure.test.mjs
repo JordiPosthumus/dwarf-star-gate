@@ -12,7 +12,7 @@ import {registerPiContinuity} from './continuity-client.mjs';
 
 for(const retryEnabled of [false,true])test(`real Pi ${retryEnabled?'can retry':'can stop on'} an explicitly unknown Door outcome`,{skip:!process.env.DSG_PI_ROOT,timeout:30000},async t=>{
   const root=process.env.DSG_PI_ROOT;
-  assert.equal(JSON.parse(fs.readFileSync(path.join(root,'package.json'))).version,'0.84.4','Reinspect the native retry contract before updating this fixture');
+  assert.ok(['0.84.4','0.85.1'].includes(JSON.parse(fs.readFileSync(path.join(root,'package.json'))).version),'Reinspect the native retry contract before updating this fixture');
   const load=relative=>import(pathToFileURL(path.join(root,relative)));
   const [{createAgentSession},{ModelRuntime},{SessionManager},{SettingsManager},{DefaultResourceLoader},{streamSimple}]=await Promise.all([
     load('dist/core/sdk.js'),load('dist/core/model-runtime.js'),load('dist/core/session-manager.js'),load('dist/core/settings-manager.js'),

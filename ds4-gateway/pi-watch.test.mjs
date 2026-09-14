@@ -54,7 +54,7 @@ for(const recover of [false,true])test(`real Pi settled outcome reports ${recove
   assert.equal(run.request.state,'complete','transport completion must not erase client failure');
   assert.ok(heartbeats.every(row=>Object.keys(row).sort().join(',')==='client,process_alive,schema,sequence,state,watch_id'));
   assert.equal(heartbeats.filter(row=>row.state==='needs_attention').length>0,!recover);
-  const read=()=>fs.readdirSync(path.join(dir,'training')).filter(name=>/^routing-.*\.jsonl$/.test(name)).flatMap(name=>fs.readFileSync(path.join(dir,'training',name),'utf8').trim().split('\n').filter(Boolean).map(JSON.parse));
+  const read=()=>fs.readdirSync(path.join(dir,'requests')).filter(name=>/^routing-.*\.jsonl$/.test(name)).flatMap(name=>fs.readFileSync(path.join(dir,'requests',name),'utf8').trim().split('\n').filter(Boolean).map(JSON.parse));
   for(let i=0;i<30&&read().filter(row=>row.kind==='decision').length<requests;i++)await delay(100);
   const decisions=read().filter(row=>row.kind==='decision');assert.equal(decisions.length,requests);
   assert.deepEqual(decisions.map(row=>row.client_metadata.turn_index),recover?[0,1,1]:[0,1,1,1]);
