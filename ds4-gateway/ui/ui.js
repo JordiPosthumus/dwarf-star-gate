@@ -486,6 +486,7 @@ function healthHeadlines(snapshot, ticker) {
     return {level:items.some(e=>e.severity==='critical')?'critical':items.some(e=>e.severity==='warning')?'warn':items.some(e=>e.severity==='good')?'ok':'info',evidence_at:ticker?.evidence_at,
       label:`${prefix}${genie.length?` · evidence ${clock(ticker.evidence_at)}${ticker.refreshing?' · updating':ticker.review_error?' · latest refresh failed':''}`:''}`,items};
   }
+  const updating=ticker?.refreshing && !['off','unavailable'].includes(ticker?.state);
   const message={off:'Gate Genie is off. Enable him below for generated health observations.',
     reviewing:'Gate Genie is reviewing fleet evidence. His observations and recommendations will appear here.',
     pending:'Waiting for a Genie assessment from the selected server.',
@@ -500,7 +501,7 @@ function healthHeadlines(snapshot, ticker) {
     unavailable:'Genie status is unavailable. Waiting for a fresh assessment.'};
   const g=snapshot.gateway,counts=[g.healthy,g.total,g.active,g.queued];
   const observed=counts.every(n=>Number.isSafeInteger(n)&&n>=0)?`Fleet: ${g.healthy}/${g.total} servers healthy; ${g.active} running; ${g.queued} waiting. `:'';
-  return {level:'unknown',label:observed?'Live fleet status · Genie status':'Genie status',items:[{severity:'info',text:observed+(message[ticker?.state] || 'Connecting to Gate Genie…')}]};
+  return {level:'unknown',label:observed?'Live fleet status · Genie status':'Genie status',items:[{severity:'info',text:observed+(updating?'Genie is preparing a fresh assessment. The banner will update when it finishes.':message[ticker?.state] || 'Connecting to Gate Genie…')}]};
 }
 let wireSnapshot=null,wireSignature=null,wireState=null,requestFilter='all';
 function renderRequests(events) {
@@ -1057,7 +1058,7 @@ async function genieAction(input) {
   } catch(e){$('genie-status').textContent=e.name==='TimeoutError'?'Genie chat request timed out before it was accepted; no question receipt was created.':e.message;return null;}
 }
 async function loadGenie() {
-  try {const r=await fetch('/api/genie',{signal:AbortSignal.timeout(5000)});if(!r.ok)throw new Error();const s=await r.json();genieToken=s.csrf_token;genieState=s;wireState={...s.ticker,provider_attempts:s.provider_attempts};
+  try {const r=await fetch('/api/genie',{signal:AbortSignal.timeout(5000)});if(!r.ok)throw new Error();const s=await r.json();genieToken=s.csrf_token;genieState=s;wireState={...s.ticker,refreshing:!!s.busy&&!!s.enabled,provider_attempts:s.provider_attempts};
     if(wireSnapshot)renderHealthWire(wireSnapshot);
     const now=Date.now(),activeProvider=s.active_provider==='pool_fallback'?'Star Gate pool fallback':['pool','pool_assigned'].includes(s.active_provider)?'Star Gate pool':'dedicated provider',providerProgress=s.busy&&s.provider_started_at?`${activeProvider} · ${age(s.provider_started_at,now)} elapsed${s.provider_deadline_at?` · deadline in ${remaining(s.provider_deadline_at,now)}`:''}`:null;
     const q=s.question,qtext=q?.state==='queued'?(s.review_kind==='action'?'Your question is queued behind an evidence-gated action review':'Your question is queued; a routine review is being yielded'):q?.state==='answering'?`Answering your question · ${providerProgress??'provider starting…'}`:q?.state==='answered'?`Question answered ${age(q.finished_at,now)}`:['failed','cancelled'].includes(q?.state)?`Question ${q.state}: ${q.error}`:null;
