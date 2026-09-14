@@ -3,6 +3,7 @@ import {deadlineTimer,DEFAULT_QUEUE_TIMEOUT_MS,queueTimeout} from './deadline.mj
 import path from 'node:path';
 import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
+import {identityStatus,runtimeProvenance} from './genie-installation.mjs';
 import {seedGenieHome} from './genie-identity.mjs';
 
 const bridge=fileURLToPath(new URL('./genie_hermes.py',import.meta.url));
@@ -29,9 +30,9 @@ export function hermesProvider(config,{directory,review=false}) {
   if(config.timeout_ms!==undefined)queueTimeout(config.timeout_ms);
   if(review&&(!Number.isSafeInteger(config.timeout_ms)||config.timeout_ms<=0))throw new Error('A review needs its existing provider deadline.');
   if(config.research){for(const key of ['search_url','extract_url']){const u=new URL(config.research[key]);if(!['http:','https:'].includes(u.protocol)||u.username||u.password||u.search||u.hash)throw new Error('Use explicit research service URLs without credentials or query parameters.');}}
-  const children=new Set();
+  const children=new Set(),runtime=runtimeProvenance(config.source);
   return {
-    info:{engine:'Hermes',model:config.model,mode:'provider',can_act:false,research_available:Boolean(config.research),inspection_available:Boolean(config.inspection)},
+    get info(){return {identity:identityStatus(home),runtime_provenance:runtime,engine:'Hermes',model:config.model,mode:'provider',can_act:false,research_available:Boolean(config.research),inspection_available:Boolean(config.inspection)};},
     generate(input){return new Promise((resolve,reject)=>{
       const env={PATH:process.env.PATH??'',HOME:home,HERMES_HOME:home,HERMES_WRITE_SAFE_ROOT:home,HERMES_DISABLE_LAZY_INSTALLS:'1',PYTHONDONTWRITEBYTECODE:'1',PYTHONUNBUFFERED:'1',PYTHONIOENCODING:'utf-8',LANG:'en_US.UTF-8'};
       if(input.signal?.aborted){reject(new DOMException('Aborted','AbortError'));return;}
