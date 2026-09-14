@@ -1,7 +1,7 @@
 # Hourglass integration status
 
-The owner-started workflow is implemented in development; real-run qualification
-and production connection remain unfinished. Do not start a run,
+This release includes optional owner-started controls, durable receipts and report
+collection. Real-run qualification and production connection remain unfinished. Do not start a run,
 drain a worker, alter benchmark routes or configure a recurring benchmark merely
 because a report is available. Initial runs use the owner's chosen direct-server
 setup and time window. The benchmark itself remains Hourglass.
@@ -89,7 +89,7 @@ identifier filtering. Browser and native Hermes checks use synthetic reports and
 a scripted model provider; they prove wiring, not model performance. Real-run qualification, measured contention and approving a server configuration
 remain separate unfinished parts of the plan.
 
-## Native console adapter (development only)
+## Native console adapter
 
 `hourglass-console.mjs` prepares a start against an explicitly connected local
 Hourglass console. It reads the saved model catalogue and full-bank revision
@@ -107,7 +107,7 @@ permission to replay. Native validation rejection is reported without exposing
 its error body. The visible settings are a limited summary; the full native
 Hourglass entry, including its existing overrides, remains authoritative.
 
-The development Evidence tab now provides Review measurement, a free-window
+With a configured console, the Evidence tab provides Review measurement, a free-window
 confirmation and Start one-hour measurement. Start intent is flushed to private
 `runtime/hourglass/runs.json` before submission; the native job receipt is saved
 before success is shown. Duplicate submissions return the existing receipt.
@@ -150,9 +150,13 @@ Hourglass model declarations or gateway routes. No configuration means the contr
 are absent and no Hourglass service is contacted. Hourglass must already be running;
 Star Gate does not install or start its separate application.
 
-The inspected local Hourglass working tree supports API version 2 with these
-revision guards. Native enqueue checks in a temporary synthetic workspace
-accepted the adapter's exact request and rejected changed model, bank and hardware
-revisions without queuing work. That checkout contains other uncommitted changes;
-this does not establish compatibility with every GitHub version of Hourglass.
-No files in the Hourglass checkout were edited and no benchmark worker started.
+Native compatibility was also checked using an isolated copy of the inspected
+committed Hourglass 3.0.0 source, independently of its uncommitted 4.0.0 changes.
+Through the real native HTTP handlers, preparation preserved the 3.0.0 AUC metric,
+submission froze the saved model unchanged, observation found the pending receipt,
+and native preview/report retrieval preserved the legacy score and protocol.
+Separate native enqueue checks rejected changed model, bank and hardware revisions.
+The fixture used a synthetic bank and injected completion timestamps; no benchmark
+worker or model request ran. This proves the tested API contract, not an actual
+one-hour measurement or compatibility with every Hourglass release. The normal
+console must be running and its configured target reviewed before a real run.
