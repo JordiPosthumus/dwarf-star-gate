@@ -83,7 +83,7 @@ export function genieChatConfig(config){
   const chat=config.genie_chat;if(!chat)return null;
   if(chat.operational_notebook!==undefined&&typeof chat.operational_notebook!=='boolean')throw new Error('genie_chat.operational_notebook must be boolean.');
   const local=new URL(chat.url).href===`http://127.0.0.1:${config.port}/v1`;
-  return {...chat,...(local&&chat.api_key===undefined?{api_key:config.api_key}:{})};
+  return {...chat,...(chat.inspection?{inspection:{...chat.inspection,records_directory:config.server_records_directory}}:{}),...(local&&chat.api_key===undefined?{api_key:config.api_key}:{})};
 }
 export function createDashboard(getSnapshot, assetsDirectory = path.join(here, 'ui'), management = null, genie = null, requestHistory = null, currentJobs = null, testing = null, lanSharing = null, chat = null, hourglass = null) {
   const csrf = randomBytes(32).toString('base64url');
