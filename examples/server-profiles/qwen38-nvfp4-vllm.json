@@ -2,7 +2,7 @@
   "title": "Qwen3.8-Flash-Next NVFP4 + MTP settings reference for a custom vLLM image",
   "status": "Reusable settings reference. Documentation only; not an installation recipe or an automatically applied default.",
   "evidence_basis": {
-    "scope": "Dated container and launcher metadata. Package versions come from the record; installed packages and physical hardware were not independently queried by this inspection."
+    "scope": "Original configuration captured by Gate Genie and independently compared with full Docker metadata. A subsequent deployment of the selected repaired image was checked through actual APIs, installed package queries and resource hashes; measurements are summarized below. No public image-build reproducibility claim."
   },
   "checkpoint": {
     "repository": "RadixArk/Qwen3.8-Flash-Next-NVFP4",
@@ -11,7 +11,7 @@
     "served_model_name": "qwen3.8-flash-next"
   },
   "runtime_dependency_inventory": {
-    "image": "Custom local image. Inherited VLLM_IMAGE_TAG declares vllm/vllm-openai:v0.29.0; this label does not establish build ancestry. Dated private metadata records vLLM 0.29.0, torch 2.13.0+cu130 and transformers 5.16.1; this inspection did not query installed packages. CUDA_VERSION declares 13.0.2 and NVARCH declares sbsa. Exact build recipe and source modifications were not established by this inspection; stock compatibility is unproven.",
+    "image": "Custom repaired local image. Installed packages queried during selected-image qualification: vLLM 0.29.0, torch 2.13.0+cu130 and transformers 5.16.1. CUDA_VERSION declares 13.0.2 and NVARCH declares sbsa; inherited labels alone do not establish build ancestry. The complete public build recipe remains unavailable here; stock vLLM compatibility is unproven.",
     "custom_artifacts_required": [
       {
         "artifact": "<CUSTOM_DETERMINISM_KERNEL>/_C_det.so",
@@ -127,19 +127,63 @@
     "Exact image build recipe and custom source modifications were not established by this inspection; stock vLLM compatibility is not certified.",
     "PLE mmap table generation/provenance and the exact patch set naming the qwen4_exp_*/ple/qsa ops: undocumented here.",
     "Current weight integrity was not established by a fresh hash pass.",
-    "Functional endpoint behavior (generation, thinking/no-thinking, tool calls, prefix-cache accounting, MTP accept rate) was not probed."
+    "Actual text, tools, vision, cold-to-warm cache reuse, context boundary and reasoning EOS checks passed on the selected image. Sustained work, exhaustive maximum-length output, MTP performance and fresh-machine recreation remain unqualified."
   ],
   "evaluation_gaps": [
-    "A benchmark or evaluation baseline was not established by this inspection.",
-    "Effectiveness of MTP, prefix caching and draft-vocabulary restriction was not measured by this inspection."
+    "No new matched Hourglass benchmark was run during this deployment qualification.",
+    "Positive prefix-cache reuse was measured; comparative MTP speed/quality and draft-vocabulary tradeoffs were not benchmarked."
   ],
   "restoration_note": "Keep your working image, container and configuration. Prepared recreation arguments are not evidence of a completed restore. This reference includes no restore guarantee.",
   "uncertainty_flags": [
-    "Package versions are dated metadata; installed packages were not queried.",
+    "Installed package versions were queried; version labels alone do not reproduce the custom image or certify stock compatibility.",
     "Hardware class comes from launcher text; hardware and driver requirements were not measured.",
     "A reusable reference does not certify an installation-specific gateway route or recovery binding.",
     "max_new_tokens=262144 is pinned natively via --override-generation-config; no separate gateway-level output cap is established."
   ],
   "environment_scope": "Four inherited image build metadata entries are omitted from this reference. The complete image environment and build recipe are required for recreation; this JSON is a settings reference.",
-  "review_note": "Prepared by Gate Genie and independently compared with captured command/environment by Codex; editorial corrections clarify evidence and dependencies."
+  "review_note": "Original profile prepared by Gate Genie; source metadata and subsequent selected-image deployment evidence independently checked by Codex. Public summary omits installation identifiers. Existing command and environment defaults are preserved.",
+  "qualification": {
+    "scope": "Two deployments of the same selected image, independently checked through actual endpoints and runtime metadata. Installation-specific identities and complete receipts remain private.",
+    "checks": [
+      "Text generation",
+      "Structured tool call and follow-up",
+      "Synthetic image recognition",
+      "Two interleaved cold-to-warm conversations",
+      "262143 input tokens plus 1 output token at the 262144 context boundary",
+      "Expected rejection when input leaves no output space",
+      "Constrained reasoning EOS suppression and normal content EOS stopping"
+    ],
+    "cache_samples": [
+      {
+        "cold_prompt_tokens": 7488,
+        "cold_cached_tokens": 0,
+        "warm_prompt_tokens": 7572,
+        "warm_cached_tokens": 4800
+      },
+      {
+        "cold_prompt_tokens": 7488,
+        "cold_cached_tokens": 0,
+        "warm_prompt_tokens": 7588,
+        "warm_cached_tokens": 4800
+      },
+      {
+        "cold_prompt_tokens": 7491,
+        "cold_cached_tokens": 0,
+        "warm_prompt_tokens": 7623,
+        "warm_cached_tokens": 4800
+      },
+      {
+        "cold_prompt_tokens": 7491,
+        "cold_cached_tokens": 0,
+        "warm_prompt_tokens": 7529,
+        "warm_cached_tokens": 4800
+      }
+    ],
+    "limits": [
+      "No new benchmark score or universal speed/reliability guarantee.",
+      "No exhaustive 262144-token output generation.",
+      "No fresh full weight rehash or fresh-machine rebuild.",
+      "No automatic recovery authority granted by this reference."
+    ]
+  }
 }

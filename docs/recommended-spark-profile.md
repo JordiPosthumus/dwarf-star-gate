@@ -1,7 +1,8 @@
-# Recommended DGX Spark configuration
+# Earlier DeepSeek DGX Spark configuration
 
-**Experimental recommended baseline.** These exact settings remain this project's
-Spark recommendation until explicitly superseded by a newly tested profile.
+**Retained experimental DeepSeek baseline.** The current Qwen setup is documented
+in the [Qwen Spark settings reference](qwen-spark-profile.md). These older settings
+remain available for installations using this engine and model.
 Following a moving engine branch or swapping weights is not the same profile.
 This is reusable configuration guidance, not a description of a particular fleet,
 a claim of universal optimality or an upstream certification.

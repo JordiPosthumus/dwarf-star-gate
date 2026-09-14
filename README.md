@@ -343,22 +343,19 @@ are scheduled independently—DSG does not coordinate their shared RAM/GPU capac
 
 ## Quick start
 
-**Using DGX Sparks? The [recommended Spark configuration](docs/recommended-spark-profile.md)
-specifies this experimental baseline:** Vision-Exp IQ2/Q2 with
-vision enabled, 262,144-token context/output allowance, two hot sessions, one active
-request per Spark, a 349,525 MiB disk-KV budget and the full acceleration cache.
-The guide pins the engine and weights and describes acceptance checks and limits.
-It remains our recommendation until explicitly superseded; it is not an upstream
-endorsement or a profile automatically applied to Macs or registered servers.
-**Known reliability limits:** CUDA faults and OOM conditions remain unresolved
-risks. The exact settings are preserved; they are not a long-context stability
-guarantee. Read the profile's caveats before adoption.
+**Using DGX Sparks? The current [Qwen Spark settings reference](docs/qwen-spark-profile.md)**
+describes Qwen3.8-Flash-Next NVFP4, a custom repaired vLLM 0.29 build, MTP 2,
+262,144-token context/output allowances and one active request per server.
+The custom engine image is not distributed by this repository; the reference
+explains what has been checked and what a fresh machine still needs.
+The [earlier DeepSeek profile](docs/recommended-spark-profile.md) remains available
+with its original settings and reliability caveats.
 
-Requires Node **22.22.2+**, running DS4 servers, and SSH for remote workers. Gateway runs on macOS or
+Requires Node **22.22.2+**, compatible running model servers, and SSH for remote workers. Gateway runs on macOS or
 Linux. The optional click-to-open service scripts use macOS LaunchAgents.
-Install and understand the worker engine using
-[Antirez's upstream instructions](https://github.com/antirez/ds4/blob/main/README.md)
-first; this repository does not replace them or distribute the engine/model weights.
+Install and understand your chosen worker engine first. For DS4, use
+[Antirez's upstream instructions](https://github.com/antirez/ds4/blob/main/README.md).
+This repository does not replace engine installation or distribute model weights.
 
 ```sh
 git clone https://github.com/JordiPosthumus/dwarf-star-gate.git ~/DSG
