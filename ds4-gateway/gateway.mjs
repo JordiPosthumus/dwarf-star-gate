@@ -355,10 +355,11 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   const accepted = new Set(['POST /v1/chat/completions', 'POST /v1/completions', 'POST /v1/responses', 'POST /v1/messages', 'GET /v1/models']);
   const auth = Buffer.from(`Bearer ${config.api_key}`);
   const lastOperatorAction=id=>[...(store.data.operator_actions??[])].reverse().find(action=>action.workers.includes(id))??null;
+  const oldestQueued=queue=>queue.reduce((oldest,job)=>!oldest||job.createdMono<oldest.createdMono?job:oldest,null);
   const stats = () => ({ version: 1, serving_profiles:profiles, conversation_turns:conversationTurns(),conversation_turn_idle_ms:conversationTurnIdleMs, model_routes:routes?Object.fromEntries([...routes].map(([name,workers])=>[name,[...workers]])):null, agent_api_version:1, maintenance_lock_version:1,client_watch_version:1,client_watch:clientWatch.snapshot(), model: config.model, context_length: contextLimit(), queue_timeout_ms:queueTimeoutMs(), request_timeout_ms:config.request_timeout_ms??360000000, draining,startup:{...startup}, dataset:dataset.snapshot(), routing_shadow:shadow.snapshot(),recovery:recovery.status(),protections:visionProtection.status(),
     genie_admission_version:1,genie_flexible_assignment:true,continuity:{schema:1,recent_rejections:rejections.slice(0,20),safe_retry_contract:true,queued_relocation:true,automatic_relocation:true,automatic_relocation_scope:automaticRelocationScope,automatic_affinity_rebalance_min_wait_ms:automaticAffinityWait,patient_wait:true,
       relocation:{completed:relocation.completed,rejected:relocation.rejected,offers:relocationOffers().length,genie_enabled:config.genie_load_balancing!==false,genie_offers:genieRelocationOffers(),diagnostics:relocationDiagnostics(),last:relocation.last},
-      waiting:waiting.length,oldest_wait_seconds:waiting.length?Math.max(0,(performance.now()-waiting[0].createdMono)/1000):null,
+      waiting:waiting.length,oldest_wait_seconds:waiting.length?Math.max(0,(performance.now()-oldestQueued(waiting).createdMono)/1000):null,
       waiting_reasons:Object.fromEntries([...new Set(waiting.map(j=>j.waitReason))].map(reason=>[reason,waiting.filter(j=>j.waitReason===reason).length]))},
     total: nodes.length, healthy: nodes.filter(n => n.healthy).length, available: nodes.filter(n => n.healthy && !n.drained).length,
     active: nodes.filter(n => n.active).length, queued: waiting.length+nodes.reduce((s, n) => s + n.queue.length, 0),
@@ -367,8 +368,8 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
       gateway_drained: n.drained && !n.active && !n.queue.length, load: Number(!!n.active),
       turn_allocation:n.turnAllocation?{turns_used:n.turnAllocation.used,remaining:Math.max(0,conversationTurns()-n.turnAllocation.used),waiting_for_next_turn:!n.active&&n.turnAllocation.until>performance.now(),idle_remaining_ms:Math.max(0,Math.ceil(n.turnAllocation.until-performance.now()))}:null,
       queued: n.queue.length, recovery_waiting:parkedFor(n).length, assigned_sessions: store.count(n.id), completed: n.completed, failed: n.failed, protected:n.protected, observation_limited:n.observationLimited,
-      oldest_queue_seconds:n.queue.length?Math.max(0,(performance.now()-n.queue[0].createdMono)/1000):null,
-      oldest_queue_remaining_seconds:n.queue.length?Math.max(0,(n.queue[0].queueTimeoutMs-(performance.now()-n.queue[0].createdMono))/1000):null,
+      oldest_queue_seconds:n.queue.length?Math.max(0,(performance.now()-oldestQueued(n.queue).createdMono)/1000):null,
+      oldest_queue_remaining_seconds:n.queue.length?Math.max(0,(oldestQueued(n.queue).queueTimeoutMs-(performance.now()-oldestQueued(n.queue).createdMono))/1000):null,
       active_seconds: n.active ? Math.round((Date.now() - n.active.dispatched) / 1000) : 0,
       requested_thinking: n.active?.thinking?.result ?? null,
       last_requested_thinking: n.lastThinking ?? null, last_request_finished_at: n.lastFinishedAt ?? null,
@@ -389,19 +390,21 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     observe(()=>{
       if(job.cancelled || job.upstream)return;
       const sessionBusy=!!job.key && nodes.some(n=>n.active?.key===job.key || n.queue.some(j=>j!==job && j.key===job.key && !j.cancelled));
+      const ordered=priorityOrder(node.queue);
       const candidates=nodes.slice(0,128).map(n=>({...candidate(n,job.key),active_job:n.active?briefJob(n.active):null,
-        ahead_jobs:n===node?n.queue.slice(0,n.queue.indexOf(job)).filter(j=>!j.cancelled).map(briefJob):[]}));
+        ahead_jobs:n===node?ordered.slice(0,ordered.indexOf(job)).map(briefJob):[]}));
       const result=shadow.assess({job:briefJob(job),home:node.id,candidates,reason,
         waiting_ms:performance.now()-job.createdMono,session_busy:sessionBusy});
       dataset.record('routing_shadow',{request_id:job.id,node:node.id,session:job.key,...result,candidates_truncated:nodes.length>128});
     });
   }
   function evaluateWaiting() {
-    // At most one head-of-line request per worker, 32 workers per free event.
+    // Sample the next priority-eligible request, not the oldest telemetry subject.
+    // At most one request per worker, 32 workers per free event.
     // This callback never reads/consumes queued uploads or changes ownership.
     if(shuttingDown)return;
     let count=0;
-    for(const n of nodes)if(n.queue.length){if(count++>=32){shadow.state.skipped++;continue;}evaluateShadow(n,n.queue[0],'worker_free');}
+    for(const n of nodes)if(n.queue.length){if(count++>=32){shadow.state.skipped++;continue;}const next=nextQueued(n);if(next)evaluateShadow(n,next,'worker_free');}
   }
 
   const eligibleDestination=n=>n.healthy&&!n.drained&&!n.quarantine&&!n.recovering&&!n.removed&&!n.active&&n.queue.length===0;
