@@ -78,3 +78,48 @@ test('one corrupt conversation is preserved without taking healthy chats offline
   assert.deepEqual(next.status().unreadable_conversations,[bad]);assert.equal(fs.readFileSync(path.join(d,bad),'utf8'),'{truncated');
   assert.ok(next.create().id);
 });
+
+// Exercise the actual chat acceptance path against the existing fleet reviewer.
+import {Genie} from './genie.mjs';
+const reviewReply=()=>Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify({assessment:'Synthetic healthy fleet.',ticker:[{severity:'info',text:'Synthetic observation.',evidence_refs:['fleet']}]})}}]});
+const nextTurn=()=>new Promise(resolve=>setImmediate(resolve));
+function chatReviewer(t,fetchImpl){const g=new Genie({url:'http://127.0.0.1:9001/v1'},()=>({time:Date.now(),gateway:{workers:[]}}),{fetchImpl});t.after(()=>g.close());return g;}
+test('accepted conversational questions yield only the routine review; duplicate and rejected messages do nothing',async t=>{
+ let aborts=0,answers=0;
+ const g=chatReviewer(t,(_url,{signal})=>new Promise((_resolve,reject)=>signal.addEventListener('abort',()=>{aborts++;reject(new DOMException('Aborted','AbortError'));},{once:true})));
+ const chat=new GenieChat({directory:directory(t),runQuestion:(answer,wait)=>g.answerChat(answer,wait),provider:{generate:async()=>{answers++;return {text:'Owner answer'};}}});
+ const s=chat.create(),routine=g.ask(undefined,{kind:'scheduled'});
+ assert.throws(()=>chat.submit(s.id,'','request-rejected'),/Enter a message/);assert.equal(aborts,0);
+ const originalSave=chat.save.bind(chat);chat.save=()=>{throw new Error('disk unavailable');};assert.throws(()=>chat.submit(s.id,'Not saved','request-unsaved'),/Could not save/);assert.equal(aborts,0);chat.save=originalSave;
+ chat.submit(s.id,'Hello','request-accepted');chat.submit(s.id,'Hello','request-accepted');await routine;await chat.idle();
+ assert.equal(aborts,1);assert.equal(answers,1);assert.equal(g.error,null);assert.equal(g.chatQuestions,0);assert.equal(chat.get(s.id).messages[1].state,'complete');
+});
+test('chat waits for an action review, then uses fresh setup; another conversation remains active',async t=>{
+ let finishReview,signal,finishOther,questionInput;
+ const g=chatReviewer(t,(_url,opts)=>{signal=opts.signal;return new Promise(r=>finishReview=()=>r(reviewReply()));});
+ let model='before';
+ const chat=new GenieChat({directory:directory(t),getSnapshot:()=>({gateway:{model,workers:[]}}),runQuestion:(answer,wait)=>g.answerChat(answer,wait),provider:{generate:input=>input.message==='Other conversation'?new Promise(r=>finishOther=r):(questionInput=input,Promise.resolve({text:'Fresh answer'}))}});
+ const other=chat.create(),s=chat.create();chat.submit(other.id,'Other conversation','request-other');await nextTurn();
+ const action=g.ask('Review action offers',{kind:'action'});chat.submit(s.id,'What happened?','request-question');await nextTurn();
+ assert.equal(signal.aborted,false);assert.equal(questionInput,undefined);assert.equal(chat.get(s.id).messages[1].waiting_for_review,'action');assert.equal(chat.get(other.id).busy,true);
+ model='after';finishReview();await action;await nextTurn();assert.equal(questionInput.context.gateway.model,'after');assert.equal(chat.get(s.id).messages[1].state,'complete');assert.equal(chat.get(other.id).busy,true);
+ finishOther({text:'Other answer'});await chat.idle();assert.equal(g.chatQuestions,0);assert.equal(chat.get(s.id).messages[1].waiting_for_review,undefined);
+});
+test('chat waiting behind a review cannot dispatch after shutdown or testing begins',async t=>{
+ for(const stop of ['close','testing']){
+  let finishReview,calls=0,suspended=false;
+  const g=chatReviewer(t,()=>new Promise(r=>finishReview=()=>r(reviewReply())));
+  const chat=new GenieChat({directory:directory(t),isSuspended:()=>suspended,runQuestion:(answer,wait)=>g.answerChat(answer,wait),provider:{generate:async()=>{calls++;return {text:'Unexpected'};}}}),s=chat.create();
+  const action=g.ask('Action review',{kind:'action'});chat.submit(s.id,'Wait','request-waiting');await nextTurn();
+  if(stop==='close')chat.close();else suspended=true;
+  finishReview();await action;await chat.idle();assert.equal(calls,0);assert.equal(g.chatQuestions,0);assert.equal(chat.get(s.id).messages[1].state,'failed');
+ }
+});
+test('active chat defers routine reviews without blocking urgent action offers or changing a disabled reviewer',async t=>{
+ let finish;const g=chatReviewer(t,async()=>reviewReply());
+ const question=g.answerChat(()=>new Promise(r=>finish=r));const asked=[];g.ask=async(_question,{kind})=>{asked.push(kind);};
+ g.attempt=0;g.tick();assert.deepEqual(asked,[]);
+ g.getSnapshot=()=>({gateway:{recovery:{automatic:true,workers:[{worker_id:'example',eligible:true,evidence_id:'offered-proof'}]}}});g.tick();assert.deepEqual(asked,['action']);
+ finish('done');await question;assert.equal(g.chatQuestions,0);g.getSnapshot=()=>({gateway:{workers:[]}});g.attempt=0;g.tick();assert.deepEqual(asked,['action','scheduled']);
+ g.setEnabled(false);assert.equal(await g.answerChat(async()=> 'Chat remains available'),'Chat remains available');assert.equal(g.enabled,false);
+});

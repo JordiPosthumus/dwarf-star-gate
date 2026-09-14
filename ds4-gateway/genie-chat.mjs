@@ -24,9 +24,9 @@ export function chatContext(snapshot={}) {
 }
 
 export class GenieChat {
-  constructor({directory,provider,getSnapshot=()=>({}),isSuspended=()=>false,now=Date.now}) {
+  constructor({directory,provider,getSnapshot=()=>({}),isSuspended=()=>false,now=Date.now,runQuestion=answer=>answer()}) {
     this.directory=path.resolve(directory);this.provider=provider;this.getSnapshot=getSnapshot;this.now=now;
-    this.loadErrors=[];this.sessions=new Map();this.jobs=new Map();this.closed=false;this.isSuspended=isSuspended;
+    this.loadErrors=[];this.sessions=new Map();this.jobs=new Map();this.closed=false;this.isSuspended=isSuspended;this.runQuestion=runQuestion;
     fs.mkdirSync(this.directory,{recursive:true,mode:0o700});
     for(const name of fs.readdirSync(this.directory)) {
       if(!/^[a-f0-9-]{36}\.json$/.test(name))continue;
@@ -85,11 +85,18 @@ export class GenieChat {
     // Yield before generation, ensuring busy and the accepted receipt exist first.
     const job=Promise.resolve().then(async()=>{
       try{
-        const result=await this.provider.generate({message:context.study_brief?`${user.text}\n\nResearch brief: ${context.study_brief}`:user.text,history,context,sessionId:id,research,onResearch:event=>{if(research&&validResearchEvent(event)){reply.research.events.push(event);this.save(s);}},onDelta:delta=>{if(typeof delta==='string')reply.text+=delta;}});
+        const result=await this.runQuestion(()=>{
+          if(this.closed||this.isSuspended())throw new Error('Chat stopped or paused before dispatch');
+          // An action review may have changed the setup while this reply waited.
+          Object.assign(context,chatContext(this.getSnapshot()));delete reply.waiting_for_review;
+          this.save(s);
+          return this.provider.generate({message:context.study_brief?`${user.text}\n\nResearch brief: ${context.study_brief}`:user.text,history,context,sessionId:id,research,onResearch:event=>{if(research&&validResearchEvent(event)){reply.research.events.push(event);this.save(s);}},onDelta:delta=>{if(typeof delta==='string')reply.text+=delta;}});
+        },kind=>{reply.waiting_for_review=kind;this.save(s);});
         if(typeof result?.text!=='string'||!result.text.trim())throw new Error('Hermes returned no answer.');
         reply.text=result.text;reply.state='complete';
       }catch(e){reply.state='failed';reply.error=e.publicMessage??'Genie could not finish this reply. Your conversation is saved; you can ask again.';}
       finally{
+        delete reply.waiting_for_review;
         s.updated_at=this.now();reply.finished_at=this.now();
         try{this.save(s);}catch{reply.state='failed';reply.error='This reply could not be saved. Copy it before leaving this page; your earlier conversation remains on disk.';}
         this.jobs.delete(id);
