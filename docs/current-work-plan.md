@@ -19,9 +19,10 @@ deployment receipts stay outside this public repository.
   Settings. Per-installation approval, retained recipes and a controlled restore
   drill remain required before a deployment claims restoration is proven.
 - [x] Explicit high/normal/idle-only queue classes and waiting-job edits.
-- [ ] Promote and qualify the concurrent-dispatch implementation currently on
-  the development branch. It is not included in this production release; existing
-  workers keep their established capacity.
+- [x] Integrate explicit concurrent gateway slots, per-worker capacity controls,
+  independent health probes and per-reply progress. Synthetic qualification
+  covers scheduling and continuity; existing workers retain their capacity.
+  Production activation is verified in the installation deployment receipt.
 - [ ] Qualify real model-server concurrency with established context, output,
   thinking and cache behavior preserved, then activate per qualified worker.
 - [x] Build setup research through existing chat, with opt-in reminder cadence,

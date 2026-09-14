@@ -1,5 +1,16 @@
 # Star Gate work log
 
+## 2026-09-14 — Concurrency integrated with current queue and chat behavior
+
+Merged the bounded concurrency changes with the current queue-pressure trigger,
+oldest-age telemetry, per-reply progress and manual stop control. The full suite
+passed 801 checks (five optional checks skipped); separate installed-Hermes and
+client-continuity checks supplement that result. Browser review found and fixed
+a post-save handler that would report an error after saving capacity. The actual
+UI now sends one edit, shows success, remains paused and retains the displayed
+value after reload. This validates gateway controls, not higher engine capacity.
+Deployment and native qualification remain separately recorded.
+
 ## 2026-09-14 — Owner-started Hourglass workflow (development)
 
 Evidence now offers an explicit review/start flow for configured native Hourglass

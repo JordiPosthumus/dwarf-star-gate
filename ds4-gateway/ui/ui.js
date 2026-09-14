@@ -785,13 +785,7 @@ async function workerAction(action, input) {
     if(action==='conversation-turns'){turnsDirty=false;turnsExpected=data.conversation_turns;const message=`Applied: ${fmt(data.conversation_turns)} turns.`;workerMessage('');$('conversation-turn-message').textContent=message;}
     if(action==='context'){contextDirty=false;contextExpected=data.minimum_context;}
     if(action==='queue-timeout'){queueDirty=false;queueExpected=data.queue_timeout_ms;workerMessage(`Queue allowance saved: ${fmt(data.queue_timeout_ms/3600000)} hours for new requests. Existing waits and model servers unchanged.`);}
-    if(action==='concurrency'){
-      const worker=registeredWorkers.find(w=>w.id===id);if(!worker)return;
-      const before=worker.max_concurrent_requests??1;
-      const answer=window.prompt(`Concurrent gateway requests for ${id}. Use a capacity already tested with this model server. The server stays paused after saving.`,String(before));if(answer===null)return;
-      const value=Number(answer);if(!Number.isSafeInteger(value)||value<1){workerMessage('Enter a positive whole request capacity.',true);return;}
-      void workerAction('concurrency',{id,expected_max_concurrent_requests:before,max_concurrent_requests:value});return;
-    }
+    if(action==='concurrency')workerMessage(`${input.id}: capacity saved as ${fmt(data.workers?.find(w=>w.id===input.id)?.max_concurrent_requests??input.max_concurrent_requests)}. Routing remains paused.`);
     if(action==='endpoint'){endpointEdit=null;$('endpoint-edit-form').hidden=true;workerMessage('Endpoint saved. Server remains paused; resume routing when ready.');}
     if(action==='add')$('worker-form').reset();
     if(action==='resume')workerMessage(`${target}: routing enabled after checks passed. Model settings unchanged.`);

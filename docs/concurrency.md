@@ -51,7 +51,7 @@ limit. This establishes gateway behavior, not a model server's capacity.
 Before enabling additional capacity on a real worker, verify its actual engine
 configuration and ability to handle the overlapping requests with established
 context, output, thinking and cache behavior preserved. Retain the approved
-configuration and the required restoration evidence before changing an engine.
+configuration and a rollback path before changing an engine.
 No real worker has been qualified or enabled by these synthetic tests.
 
 The existing passive serial timing estimator retains observations but does not
