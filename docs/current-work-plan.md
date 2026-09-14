@@ -26,8 +26,10 @@ deployment receipts stay outside this public repository.
 - [x] Build setup research through existing chat, with opt-in reminder cadence,
   explicit start, skip, postpone and run-early controls. Research does not approve
   its recommendations. Exact production promotion is tracked per release.
-- [ ] Unify conversational and background Genie duties, memory and activity;
-  retain the owner's question-priority exception for Genie's own routine review.
+- [x] Use the configured Hermes runtime and current Genie identity for fleet
+  reviews, preserving provider and guarded-action contracts.
+- [ ] Unify conversational and background memory/activity presentation; retain
+  the owner's question-priority exception for Genie's own routine review.
 - [ ] Reconcile recovery enrollment with approved records and demonstrated
   restoration. Add approved drain/apply/verify/return workflows through the
   existing mutation path; rollback claims require a retained, proven version.

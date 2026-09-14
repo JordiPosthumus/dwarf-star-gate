@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-09-14 — Hermes fleet reviews share Genie’s identity
+
+When conversational Genie is configured, routine and action-offer reviews now
+use its pinned Hermes runtime and current SOUL/operating instructions. Existing
+provider selection, reasoning and output allowances, queueing, deadlines,
+pre-dispatch fallback proof and guarded action executors remain in force.
+A private per-review adapter prevents a library retry from replaying inference.
+The owner-question exception still applies only to Genie’s own routine review.
+Chat configuration and personal Hermes installations are unchanged.
+
+
 ## 2026-09-14 — Setup research in Genie chat
 
 The Genie tab can start a setup study, open its saved conversation, and offer

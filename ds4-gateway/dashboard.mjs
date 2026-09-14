@@ -18,6 +18,7 @@ import { Genie } from './genie.mjs';
 import {GenieChat} from './genie-chat.mjs';
 import {ServerRecords} from './server-records.mjs';
 import {hermesProvider} from './genie-hermes.mjs';
+import {hermesReviewFetch} from './genie-hermes-review.mjs';
 import {GenieMemory} from './genie-memory.mjs';
 import {GenieProviderLedger} from './genie-provider-ledger.mjs';
 import { genieTunnel } from './genie-tunnel.mjs';
@@ -414,10 +415,11 @@ export async function runDashboard(configPath, port) {
   const providerLedger=new GenieProviderLedger(path.join(path.dirname(config.state_file),'genie','actions'));
   const assignmentLedger=new GenieProviderLedger(path.join(path.dirname(config.state_file),'genie','actions'),{kind:'pool_assigned'});
   const isTesting=()=>continuityEnabled(config)&&testingSuspended(testingModeFile(config));
-  const runtimeGenie=genieRuntimeConfig(config);
-  const genie=new Genie(runtimeGenie,snapshot,{isTesting,memory,providerLedger,assignmentLedger,poolUrl:`http://127.0.0.1:${config.port}/v1`,recover:managementEnabled?input=>workerControl(config.control_socket,'/genie-recover-worker',input,{channel:'gate_genie'}):null,rebalance:managementEnabled?input=>workerControl(config.control_socket,'/genie-relocate-queued',input,{channel:'gate_genie'}):null});
-  const stopGenieTunnel=genieTunnel(config.genie);
   const chatDirectory=path.join(path.dirname(config.state_file),'genie','chat');
+  const runtimeGenie=genieRuntimeConfig(config);
+  const reviewer=config.genie_chat?hermesReviewFetch(config.genie_chat,{directory:chatDirectory}):undefined;
+  const genie=new Genie(runtimeGenie,snapshot,{fetchImpl:reviewer,isTesting,memory,providerLedger,assignmentLedger,poolUrl:`http://127.0.0.1:${config.port}/v1`,recover:managementEnabled?input=>workerControl(config.control_socket,'/genie-recover-worker',input,{channel:'gate_genie'}):null,rebalance:managementEnabled?input=>workerControl(config.control_socket,'/genie-relocate-queued',input,{channel:'gate_genie'}):null});
+  const stopGenieTunnel=genieTunnel(config.genie);
   const chat=config.genie_chat?new GenieChat({directory:chatDirectory,getSnapshot:snapshot,isSuspended:isTesting,provider:hermesProvider(genieChatConfig(config),{directory:chatDirectory})}):null;
   const server = createDashboard(snapshot, path.join(here,'ui'), managementEnabled ? {
     read:()=>workerControl(config.control_socket,'/workers',undefined,{channel:'dashboard'}),

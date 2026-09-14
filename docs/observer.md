@@ -1,5 +1,29 @@
 # Evidence collector and Gate Genie (experimental first slice)
 
+When conversational Genie is configured, fleet reviews use the same pinned Hermes
+runtime and a fresh snapshot of its current `SOUL.md` and `AGENTS.md`. There is no
+second personality file to maintain. A temporary review home isolates the
+review-specific retry/deadline settings from ordinary chat and is removed when
+the review exits. Review results and operational notes remain in their existing
+stores; conversational history is not injected into scheduled reviews.
+
+The model still selects only from existing evidence-gated action offers. It has
+no shell or server-control tools in Hermes. The gateway's original parser and
+executor validate proposed actions afterward. Provider choice, flexible pool
+assignment, configured deadlines, reasoning and the 8,192-token review allowance
+are preserved. A private loopback adapter permits only one upstream inference
+attempt, so a Hermes retry cannot replay a possibly dispatched request. Witnessed
+connection refusal retains the existing dedicated-provider fallback proof.
+An owner question can replace Genie's own routine review; action-offer reviews
+finish first and other running gateway work is never cancelled by priority.
+
+Installations without conversational Hermes configuration retain the existing
+direct-provider reviewer. Configured Hermes identity/runtime failures are surfaced;
+they do not silently substitute a different assistant. This runtime integration
+does not yet merge the chat and operational notebook histories or change review
+queue priority, research reminders, or server-change permissions.
+
+
 ## Collector
 
 See the [exact field-by-field schema](collector-schema.md) for what is and is not

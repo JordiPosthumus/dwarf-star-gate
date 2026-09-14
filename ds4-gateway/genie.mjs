@@ -307,7 +307,7 @@ export class Genie {
     }
     const hardening=[...byCandidate.values()];
     hardening.sort((a,b)=>b.at-a.at||a.candidate_id.localeCompare(b.candidate_id));
-    return {configured:!!this.config,enabled:this.enabled,suspended_for_testing:this.testing,busy:this.busy,review_kind:this.busyKind,action_supervision:actionSupervision,mode:actionSupervision?'evidence-gated-actions':'observation-only',source:this.source,fallback_available:!!this.config?.fallback,last_served_by:this.reports[0]?.served_by??null,primary_timeout_ms:this.config?(this.config.timeout_ms??DEFAULT_GENIE_TIMEOUT_MS):null,fallback_timeout_ms:this.config?.fallback?(this.config.fallback.timeout_ms??DEFAULT_POOL_TIMEOUT_MS):null,active_provider:this.busy?this.activeProvider:null,provider_started_at:this.busy?this.providerStartedAt:null,provider_deadline_at:this.busy?this.providerDeadlineAt:null,review_finished_at:this.reviewFinishedAt,consecutive_failures:this.consecutiveFailures,provider_attempts:this.providerAttempts,assignment:this.assignment,last_check:this.last,error:this.error,question:this.publicQuestion(),reports:this.reports,provider_actions:this.providerActions,hardening_notes:hardening.slice(0,24),
+    return {configured:!!this.config,engine:this.fetch.engine??'direct-provider',enabled:this.enabled,suspended_for_testing:this.testing,busy:this.busy,review_kind:this.busyKind,action_supervision:actionSupervision,mode:actionSupervision?'evidence-gated-actions':'observation-only',source:this.source,fallback_available:!!this.config?.fallback,last_served_by:this.reports[0]?.served_by??null,primary_timeout_ms:this.config?(this.config.timeout_ms??DEFAULT_GENIE_TIMEOUT_MS):null,fallback_timeout_ms:this.config?.fallback?(this.config.fallback.timeout_ms??DEFAULT_POOL_TIMEOUT_MS):null,active_provider:this.busy?this.activeProvider:null,provider_started_at:this.busy?this.providerStartedAt:null,provider_deadline_at:this.busy?this.providerDeadlineAt:null,review_finished_at:this.reviewFinishedAt,consecutive_failures:this.consecutiveFailures,provider_attempts:this.providerAttempts,assignment:this.assignment,last_check:this.last,error:this.error,question:this.publicQuestion(),reports:this.reports,provider_actions:this.providerActions,hardening_notes:hardening.slice(0,24),
     ticker:tickerStatus(this.reports[0],snapshot,{...this,enabled:this.enabled&&!this.testing}),memory,provider_action_storage:this.providerLedger?.status()??null,provider_assignment_storage:this.assignmentLedger?.status()??null};}
   recordProviderAction(report) {
     if(!['pool_fallback','pool_assigned'].includes(report.served_by))return;
@@ -362,7 +362,7 @@ export class Genie {
     this.activeProvider=servedBy;this.providerStartedAt=Date.now();this.providerDeadlineAt=this.providerStartedAt+timeoutMs;
     const timer=setTimeout(()=>{timedOut=true;attempt.abort();},timeoutMs);
     try {
-      response=await this.fetch(`${endpoint.url.replace(/\/$/,'')}/chat/completions`,{method:'POST',redirect:'error',signal:attempt.signal,
+      response=await this.fetch(`${endpoint.url.replace(/\/$/,'')}/chat/completions`,{method:'POST',redirect:'error',signal:attempt.signal,timeoutMs,
         // Pool failover has no affinity key: each review carries its complete
         // bounded live evidence, so any immediately free DSG slot may serve it.
         headers:{'content-type':'application/json','x-dsg-observer':'gate-genie',...(flexible?{'x-dsg-review-flexible':'1'}:{}),...(endpoint.api_key?{authorization:`Bearer ${endpoint.api_key}`}:{})},

@@ -1452,3 +1452,23 @@ Browser checks covered due/skip/postpone, early start, settings save, source/cha
 persistence on reload, readable study title/brief, no browser errors and mobile
 width without horizontal page overflow. Real-world recommendation quality and
 native server qualification remain outside that synthetic proof.
+
+## 2026-09-14 — Native Hermes fleet-review profile
+
+The configured conversational Hermes runtime now also runs fleet reviews with a
+snapshot of the current Genie SOUL and operating instructions. An isolated
+per-review profile preserves the existing deadline and non-streaming behavior;
+ordinary chat settings and personal Hermes remain untouched. The existing Node
+transport permits one upstream inference attempt, keeps exact serving parameters
+and routing headers, and retains witnessed refusal proof for fallback. Existing
+parsing, action-offer validation, guarded executors and the routine-review
+owner-question exception remain in place. Missing identity cannot silently become
+a default personality.
+
+Validation covers installed Hermes with synthetic providers, single dispatch after
+ambiguous disconnect, original request envelope, HTTP/output-limit rejection,
+worker attribution, cancellation and owner-question handling. Chat, research,
+studies, assignment, testing and dashboard regressions are retained. Real-model
+review receipts and production promotion are tracked privately. This integrates
+runtime/identity; shared chat/notebook history and activity presentation remain
+separate work.
