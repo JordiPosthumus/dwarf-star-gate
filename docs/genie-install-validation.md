@@ -2,6 +2,16 @@
 
 Verified during development on 2026-09-14 (UTC), by Codex.
 
+- **Current release recheck, macOS ARM64:** the public `27ecea4` source plus
+  the test corrections described below was exported into a new checkout with an
+  empty home. Setup downloaded the pinned Hermes runtime and private Python,
+  verified the scripted model connection and passed `doctor`. Two chat turns
+  used the native, locally edited SOUL and preserved history across a dashboard
+  restart. Repeating setup preserved configuration, soul edits and a separate
+  personal Hermes. The test uses separate TCP ports and the normal relative
+  control socket paths; it checks the dashboard's gateway view and the public
+  Door's connection to the empty gateway. This is a real runtime installation
+  with a scripted provider, not a new real-model quality assessment.
 - **macOS ARM64:** exported public source into a separate checkout and used an
   empty home, without reading the owner's private configuration or reusing an
   installed Hermes, uv or Python. Setup downloaded its dedicated dependencies
@@ -32,6 +42,14 @@ The initial macOS development run exposed conflicting uv flags; that was correct
 before the successful installation and fresh Linux runs. A scripted-provider test
 also needed to return 404 for Hermes's optional `/api/show` discovery probe rather
 than treating every POST as a chat request.
+
+The current recheck initially failed a test assertion after setup had succeeded:
+macOS exposed the fixture under `/var`, while setup correctly recorded its
+canonical `/private/var` path. The test now resolves the fixture and both runtime
+paths before checking that Hermes and Python belong to the installation. It uses
+a short macOS temporary directory so the default Unix socket paths fit the OS
+limit, and runs `doctor` before starting services. This corrects the test; it does
+not change the installer or remove the OS limit on long installation paths.
 
 Run the download/integration proof explicitly from committed or staged source:
 
