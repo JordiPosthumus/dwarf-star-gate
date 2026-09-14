@@ -20,7 +20,8 @@ deployment receipts stay outside this public repository.
   drill remain required before a deployment claims restoration is proven.
 - [x] Explicit high/normal/idle-only queue classes and waiting-job edits.
 - [x] Implement and synthetically test per-worker concurrent dispatch, capacity
-  controls and correct slot/ownership accounting. Existing workers default to one.
+  controls and correct slot/ownership accounting on this development branch.
+  This code is not yet deployed; existing production workers retain one slot.
 - [ ] Qualify real model-server concurrency with established context, output,
   thinking and cache behavior preserved, then activate per qualified worker.
 - [x] Build setup research through existing chat, with opt-in reminder cadence,
