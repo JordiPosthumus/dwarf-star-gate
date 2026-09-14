@@ -650,6 +650,13 @@ test('health wire shows Genie-authored findings and recommendations, withholding
     const value=news(s,{...ticker,state});assert.equal(value.level,'unknown');assert.equal(value.items.length,1);
     assert.equal(value.items[0].severity,'info');assert.doesNotMatch(value.items[0].text,/Server B|Nine requests|Recommendation:/);
   }
+  for(const state of ['pending','stale','changed','invalid','error']) {
+    const updating=news(s,{state,refreshing:true}).items[0].text;
+    assert.match(updating,/preparing a fresh assessment/);
+    assert.doesNotMatch(updating,/Request a fresh review|failed|rejected/);
+  }
+  assert.match(news(s,{state:'off',refreshing:true}).items[0].text,/Enable him/);
+  assert.match(news(s,{state:'unavailable',refreshing:true}).items[0].text,/unavailable/);
   assert.match(news(s,{state:'off'}).items[0].text,/Enable him/);
   assert.match(news(s,{state:'stale'}).items[0].text,/10 minutes/);
   assert.match(news(s,{state:'changed'}).items[0].text,/changed since/);
