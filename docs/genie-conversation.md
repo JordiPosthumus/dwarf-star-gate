@@ -1,6 +1,6 @@
 # Conversational Genie
 
-This opt-in addition puts a persistent conversation in the gateway's Genie tab.
+Normal Star Gate setup includes a persistent conversation in the gateway's Genie tab.
 Follow-up questions carry their conversation history, and each answer receives a
 fresh, selected dashboard setup snapshot. The chat has no server-changing tools.
 Existing background reviews and their handling of direct questions are unchanged.
@@ -18,47 +18,66 @@ labelled rehearsal data. They exercise the interface; they do not demonstrate
 model intelligence or inspect an actual installation. The demo never discovers
 your gateway configuration or contacts an engine.
 
-## Connect a dedicated Hermes runtime
+## Install and connect Genie
 
-Use a dedicated Hermes checkout/environment, not your personal bot's home. The
-bridge uses the supported [Hermes Python library API](https://hermes-agent.nousresearch.com/docs/guides/python-library/):
-`AIAgent.run_conversation()` with prior message history. The tested source revision
-is `2237be355906fbe6065ce1815711eee52b2d646e`; changes to that API need a smoke test.
-Hermes retains its own upstream license; it is not vendored by this change.
+Run `npm run setup -- --controls` from a fresh checkout. Setup asks for an
+OpenAI-compatible model API URL and, if needed, a key and model name. It installs
+Star Gate's own Hermes, Python and dependencies, then checks a real reply before
+saving the completed configuration. You do not need Hermes, Python or uv installed
+already. You do need Node 22.22.2+, Git, tar, internet access and a reachable model;
+Star Gate does not download model weights or provision a model server.
 
-For a new dedicated checkout, follow Hermes' supported installation instructions
-and check out the chosen revision. Use its Python environment. Do not upgrade or
-modify an established personal runtime for this feature.
+The dedicated runtime uses Hermes revision
+`2237be355906fbe6065ce1815711eee52b2d646e` and its frozen dependency lock.
+A checksum-verified uv 0.11.8 installs managed Python 3.12 inside the ignored
+`runtime/genie-runtime/` directory. No personal Hermes, shell startup file,
+global Python environment or globally installed uv is modified. Hermes retains
+its upstream license. Supported installer targets are macOS and glibc Linux,
+on ARM64 and x64; release evidence must identify which were actually exercised.
 
-Create an **ignored private** configuration, for example `runtime/genie-chat.local.json`:
+For unattended setup:
 
-```json
-{
-  "python": "/absolute/path/to/dedicated-hermes/.venv/bin/python",
-  "source": "/absolute/path/to/dedicated-hermes",
-  "url": "http://127.0.0.1:YOUR_GATEWAY_PORT/v1",
-  "model": "YOUR_APPROVED_MODEL_ID",
-  "max_tokens": 8192,
-  "reasoning_effort": "xhigh"
-}
+```sh
+npm run setup -- --controls --model-url http://localhost:8000/v1 --model YOUR_MODEL
 ```
 
-Use the actual approved provider settings. Optional `api_key` belongs only in
-that private file, with restricted filesystem permissions. Never put a token in
-the provider URL. No cloud or alternate-provider fallback is configured here.
-Reasoning names vary between models: select a value that your model supports.
-An unsupported value is reported as a configuration error, not silently replaced
-with a lower setting. The default is `xhigh`; set an explicit supported value for
-a different model.
+For an authenticated provider, pass `--connection /path/to/private-connection.json`
+with `url`, `model` and `api_key` fields. Keep that file private; do not put keys
+in shell arguments or URLs. Interactive keys are hidden. Optional `--reasoning`
+and `--max-tokens` select the provider's supported request settings. Fresh setup
+uses the model's default reasoning behavior and an 8192-token reply allowance;
+it does not modify any engine settings. Existing chat configurations retain their
+explicit settings, including the earlier default `xhigh`.
+
+Setup preserves an existing configured Genie. When adding Genie to an existing
+gateway, it backs up the private config and adds only `genie_chat` after a successful
+connection check. It never starts or restarts existing services. A failed download
+or connection check does not claim setup completed; rerun setup to retry.
+`--gateway-only` explicitly skips Genie for installations that want routing alone.
+
+### Genie's soul
+
+The versioned [SOUL.md](../genie/SOUL.md) defines Genie's identity, including its
+loving prime directive: the smooth operation of Star Gate. [AGENTS.md](../genie/AGENTS.md)
+contains the separate operating instructions. Setup seeds both into this installation's
+private `runtime/genie/chat/hermes-home/` (relative to its configured state directory).
+Existing identity files are never overwritten. Edit the private SOUL.md to personalize
+Genie; the next message loads it through Hermes's native primary identity slot.
+An empty soul fails the chat rather than silently becoming a different assistant.
+
+Ordinary unrelated working-directory instruction files and personal Hermes homes
+are excluded. The explicit installation AGENTS.md supplies operational guidance;
+tools and per-question authorization enforce available capabilities separately.
+This does not yet enable the separate planned long-term memory system.
+
+For a standalone preview, provide the installed `source` and `python` paths from
+private `genie_chat` configuration, plus `url` and `model`, to:
 
 ```sh
 npm run genie:demo -- runtime/genie-chat.local.json
 ```
 
-This runs **real Hermes/model conversation against an example fleet**. It still
-does not read actual gateway telemetry. The first message makes an inference
-request to the provider you explicitly configured; ordinary provider/gateway
-budgets apply. It is not a load benchmark.
+This runs real Hermes against your selected model with an example fleet.
 
 ### Preview against your actual local gateway
 

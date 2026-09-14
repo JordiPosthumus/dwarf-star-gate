@@ -97,9 +97,9 @@ test('clean checkout: initialize, doctor, UI registration, exact forwarding, CLI
     const help=execFileSync(path.join(checkout,launcher),['--help'],{cwd:elsewhere,env,encoding:'utf8',timeout:10000});
     assert.ok(help.includes('DS4 servers are never stopped.'));
   }
-  const initialized=await cli('scripts/setup.mjs',['--controls']),configFile=path.join(checkout,'config.local.json');
+  const initialized=await cli('scripts/setup.mjs',['--controls','--gateway-only']),configFile=path.join(checkout,'config.local.json');
   const c=JSON.parse(fs.readFileSync(configFile));assert.equal(fs.statSync(configFile).mode&0o777,0o600);assert.equal(c.nodes.length,0);assert.ok(!initialized.stdout.includes(c.api_key));
-  await assert.rejects(cli('scripts/setup.mjs',['--controls']),/nothing overwritten/);assert.deepEqual(JSON.parse(fs.readFileSync(configFile)),c);
+  await assert.rejects(cli('scripts/setup.mjs',['--controls','--gateway-only']),/nothing overwritten/);assert.deepEqual(JSON.parse(fs.readFileSync(configFile)),c);
   const ports=new Set;while(ports.size<3)ports.add(await port());[c.port,c.continuity_door.core_port,c.ui_port]=ports;
   fs.writeFileSync(configFile,JSON.stringify(c));const checked=JSON.parse((await cli('scripts/doctor.mjs')).stdout);assert.ok(checked.ok);assert.equal(checked.workers,0);assert.ok(!fs.existsSync(path.join(checkout,'runtime')),'doctor must not create state');
   const backend=http.createServer((req,res)=>{if(req.url==='/v1/models')return res.end(JSON.stringify({data:[{id:c.model,context_length:c.context_length}]}));const chunks=[];req.on('data',x=>chunks.push(x));req.on('end',()=>{received=Buffer.concat(chunks).toString();res.writeHead(200,{'content-type':'text/event-stream'});res.end('data: {"choices":[{"delta":{"content":"OK"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');});});

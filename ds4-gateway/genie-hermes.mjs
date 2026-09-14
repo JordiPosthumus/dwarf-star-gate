@@ -3,11 +3,13 @@ import {deadlineTimer,DEFAULT_QUEUE_TIMEOUT_MS,queueTimeout} from './deadline.mj
 import path from 'node:path';
 import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
+import {seedGenieHome} from './genie-identity.mjs';
 
 const bridge=fileURLToPath(new URL('./genie_hermes.py',import.meta.url));
 function chatError(code){
   const messages={
     timeout:'This reply reached its configured waiting allowance. Your conversation was kept; the request was not replayed.',
+    identity:'Gate Genie could not load its SOUL.md or operating instructions. Check its private identity files. Your question was kept.',
     runtime:'Hermes could not start. Check the dedicated Python environment and source checkout. Your question was kept.',
     reasoning:'This model rejected Genie’s reasoning setting. Check the private chat configuration for a supported setting. Your question was kept.',
     incomplete:'Hermes reported an unfinished reply. Your conversation was kept. Check the model connection or its available context before asking again.',
@@ -21,7 +23,7 @@ export function hermesProvider(config,{directory}) {
   const url=new URL(config.url);
   if(!['http:','https:'].includes(url.protocol)||url.username||url.password)throw new Error('Use a provider URL without embedded credentials.');
   if(!path.isAbsolute(config.python)||!path.isAbsolute(config.source))throw new Error('Hermes interpreter and source paths must be absolute.');
-  const home=path.resolve(directory,'hermes-home');fs.mkdirSync(home,{recursive:true,mode:0o700});
+  const home=seedGenieHome(directory);
   // A dedicated clean library checkout cannot import a personal project .env.
   if(fs.existsSync(path.join(config.source,'.env')))throw new Error('Use a dedicated Hermes checkout without a project .env file.');
   if(config.timeout_ms!==undefined)queueTimeout(config.timeout_ms);
@@ -49,7 +51,7 @@ export function hermesProvider(config,{directory}) {
       child.on('close',code=>{cleanup();if(failed||code!==0||!final)reject(failed??chatError('bridge'));else resolve({text:final.text});});
       child.stdin.end(JSON.stringify({message:input.message,history:input.history,context:input.context,session_id:input.sessionId,
         research:input.research&&config.research?{search_url:config.research.search_url,extract_url:config.research.extract_url,requested_at:new Date().toISOString()}:null,
-        provider:{url:config.url,model:config.model,api_key:config.api_key??'',max_tokens:config.max_tokens??8192,reasoning_effort:config.reasoning_effort??'xhigh'}}));
+        provider:{url:config.url,model:config.model,api_key:config.api_key??'',max_tokens:config.max_tokens??8192,reasoning_effort:config.reasoning_effort===null?null:config.reasoning_effort??'xhigh'}}));
     });},
     close(){for(const child of children)child.kill();},
   };

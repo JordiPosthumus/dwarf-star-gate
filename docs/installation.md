@@ -26,8 +26,16 @@ preparation from DSG registration and gives acceptance and rollback steps.
 Follow the [README quick start](../README.md). Node 22.22.2+ is required; the core
 has no package dependencies. `npm run setup -- --controls` creates an empty fleet
 with local UI management enabled. Without that explicit flag the UI is read-only.
-Setup uses a random inference key and exclusive mode-0600 file creation: an
-existing config is an error, not permission to regenerate it. No servers start.
+Normal setup installs a dedicated pinned Hermes runtime and its own Python,
+guides the model connection and checks a real Genie reply. It requires Git, tar,
+internet access and a reachable OpenAI-compatible model API. No prior Hermes or
+Python installation is needed. Personal Hermes and existing services are untouched.
+See [Genie setup and SOUL.md](genie-conversation.md).
+
+Setup uses a random inference key and mode-0600 configuration. Existing settings
+are never regenerated. Adding Genie to an existing gateway creates a timestamped
+private backup and adds only its chat configuration after the connection check.
+`--gateway-only` explicitly skips Genie. No servers start.
 
 `npm run doctor` checks local config, ports, paths, worker/recovery definitions,
 existing durable registry and optional encoder files. If a durable worker endpoint

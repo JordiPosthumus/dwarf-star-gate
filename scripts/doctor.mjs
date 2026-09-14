@@ -21,6 +21,15 @@ try {
   const cacheDirectories=cacheInventoryDirectories(c.cache_directories);
   const hardware=hardwareTelemetryConfig(c.hardware_telemetry);
   const warnings=[];
+  const chat=c.genie_chat;
+  const genie={configured:Boolean(chat),runtime_files_present:false,soul_present:false};
+  if(chat){
+    genie.runtime_files_present=Boolean(chat.python&&chat.source&&fs.existsSync(chat.python)&&fs.existsSync(path.join(chat.source,'run_agent.py')));
+    const soul=path.join(path.dirname(c.state_file),'genie/chat/hermes-home/SOUL.md');
+    genie.soul_present=fs.existsSync(soul)&&Boolean(fs.readFileSync(soul,'utf8').trim());
+    if(!genie.runtime_files_present)warnings.push('Genie runtime files are missing. Check its dedicated installation before using chat.');
+    if(!genie.soul_present)warnings.push('Genie has no nonempty private SOUL.md. Setup or first chat startup seeds a missing file; an empty file needs an explicit edit.');
+  }else warnings.push('Conversational Genie is not configured. Run npm run setup to install its dedicated runtime and connect a model.');
   const registry={present:false,configured_workers:configuredNodes.length,durable_workers:null,configured_workers_missing:0,recovery_bindings_differ:0};
   if(fs.existsSync(c.state_file)){
     const state=JSON.parse(fs.readFileSync(c.state_file,'utf8'));
@@ -61,5 +70,5 @@ try {
     if(source.adapter==='nvidia-linux'&&!node?.ssh)warnings.push('An NVIDIA Linux hardware adapter has no enrolled SSH transport; its metrics will remain unavailable.');
     if(source.adapter==='jsonl-file')try{const stat=fs.lstatSync(source.path);if(!stat.isFile()||stat.isSymbolicLink())throw new Error();fs.accessSync(source.path,fs.constants.R_OK);}catch{warnings.push('A configured hardware telemetry file is missing, unreadable or not a regular file; its metrics will remain unavailable.');}
   }
-  console.log(JSON.stringify({ok:true,read_only:true,config:filename,workers:nodes.length,worker_registry:registry,gateway_port:c.port,gateway_core_port:core,continuity_door:continuityEnabled(c),dashboard_port:ui,context_length:c.context_length,warnings},null,2));
+  console.log(JSON.stringify({ok:true,read_only:true,config:filename,workers:nodes.length,worker_registry:registry,genie,gateway_port:c.port,gateway_core_port:core,continuity_door:continuityEnabled(c),dashboard_port:ui,context_length:c.context_length,warnings},null,2));
 }catch(error){console.error(error.message);process.exitCode=1;}

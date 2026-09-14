@@ -33,6 +33,8 @@
     "genie:demo": "node examples/genie-chat-demo.mjs",
     "genie:test": "node --test ds4-gateway/genie-research.test.mjs ds4-gateway/genie-chat.test.mjs ds4-gateway/genie-hermes.test.mjs examples/genie-chat-local.test.mjs",
     "genie:browser": "node scripts/capture-genie-chat.mjs",
-    "genie:research-test": "python3 -m unittest discover -s ds4-gateway -p 'genie_research_test.py' -v"
+    "genie:research-test": "python3 -m unittest discover -s ds4-gateway -p 'genie_research_test.py' -v",
+    "setup:test": "node --test scripts/setup.test.mjs",
+    "genie:install-test": "node --test scripts/first-install.test.mjs"
   }
 }

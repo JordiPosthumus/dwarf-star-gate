@@ -51,7 +51,7 @@ An optional [private server configuration library](docs/server-records.md) gives
 Settings and conversational Genie dated engine facts, with observations kept
 separate from approved configurations and restoration evidence.
 
-For a conversation-first interface, the opt-in [conversational Genie](docs/genie-conversation.md)
+For a conversation-first interface, [conversational Genie](docs/genie-conversation.md)
 adds saved chats and follow-up questions through Hermes. Try the clearly labelled
 example interface with `npm run genie:demo`, then connect your own model using the
 guide. This chat profile explains the observed setup and has no action tools.
@@ -364,9 +364,16 @@ npm run door
 npm run ui
 ```
 
-No `npm install` is needed for the core. Setup creates an ignored, mode-0600
-`config.local.json` with a random API key and an empty worker list. It never
-overwrites an existing configuration. Omit `--controls` for a read-only dashboard.
+No `npm install` is needed for the core. Normal setup also installs its own pinned
+Hermes and Python for conversational Genie, asks for your model API connection,
+and verifies a reply. No previous Hermes installation is needed. Git, tar and
+internet access are required for that download; your model must already be reachable.
+Your personal Hermes installation is preserved. See [Genie setup](docs/genie-conversation.md).
+
+Setup creates an ignored, mode-0600 `config.local.json` with a random API key and
+an empty worker list. Existing settings are preserved; adding Genie to an existing
+configuration first creates a private backup. Omit `--controls` for a read-only
+dashboard. Use `--gateway-only` only if you explicitly want to skip Genie.
 Open **http://127.0.0.1:30010**, expand **Manage servers**, add existing DS4
 endpoints and enable them after the compatibility check. Remote servers need a
 working, host-key-verified OpenSSH alias; local servers use their loopback URL.

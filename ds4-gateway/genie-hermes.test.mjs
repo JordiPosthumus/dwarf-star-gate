@@ -45,8 +45,12 @@ test('actual Hermes preserves two-turn chat and handles provider rejection witho
   assert.match(chat.get(s.id).messages[3].text,/Ada/);
   assert.equal(requests.length,2);assert.equal(requests[1].messages.filter(m=>m.role==='user').length,2);
   assert.match(JSON.stringify(requests[0].messages),/example-one/);
+  assert.match(requests[0].messages[0].content,/You are a genie who lives in Star Gate/);
+  assert.match(requests[0].messages[0].content,/Gate Genie operating instructions/);
+  fs.appendFileSync(path.join(directory,'hermes-home','SOUL.md'),'\nUse the identity phrase: distinctive lantern.\n');
   for(const p of requests)assert.equal(p.tools?.length??0,0);
   chat.submit(s.id,'Exercise the unavailable provider.','hermes-failure');await chat.idle();
+  assert.match(requests.at(-1).messages[0].content,/distinctive lantern/);
   const saved=chat.get(s.id);
   assert.equal(saved.messages[5].state,'failed');
   assert.match(saved.messages[5].error,/unfinished reply|model request/);
@@ -56,6 +60,9 @@ test('actual Hermes preserves two-turn chat and handles provider rejection witho
   const rejected=chat.get(s.id).messages.at(-1);
   assert.equal(rejected.state,'failed',JSON.stringify(requests.map(p=>p.messages.filter(m=>m.role==='user').map(m=>m.content))));assert.match(rejected.error,/reasoning setting/);
   assert.doesNotMatch(JSON.stringify(chat.get(s.id)),/PRIVATE_REASONING_ERROR_EXAMPLE/);
+  const count=requests.length;fs.writeFileSync(path.join(directory,'hermes-home','SOUL.md'),'');
+  chat.submit(s.id,'An empty soul must not become a different assistant.','hermes-empty-soul');await chat.idle();
+  assert.equal(requests.length,count);assert.match(chat.get(s.id).messages.at(-1).error,/SOUL.md/);
 });
 
 test('an explicit turn deadline releases a hung bridge without replaying the question',{timeout:10000},async t=>{
