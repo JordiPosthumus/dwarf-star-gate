@@ -8,7 +8,7 @@ import { once } from 'node:events';
 import vm from 'node:vm';
 import { setTimeout as delay } from 'node:timers/promises';
 import { parseTiming, safeGatewayEvent, DeviceTelemetry, JournalReader, journalProcessEpoch } from './telemetry.mjs';
-import { createDashboard, runDashboard } from './dashboard.mjs';
+import { createDashboard, runDashboard, genieRuntimeConfig } from './dashboard.mjs';
 import { FileLogReader, parseLocalProcessStart, parseLocalTiming, telemetryFiles } from './file-telemetry.mjs';
 import {cacheInventoryDirectories} from './cache-inventory.mjs';
 import {GenieProviderLedger} from './genie-provider-ledger.mjs';
@@ -655,6 +655,10 @@ test('health wire shows Genie-authored findings and recommendations, withholding
   assert.match(news(s,{state:'changed'}).items[0].text,/changed since/);
   const failed=news(s,{state:'error',provider_attempts:[{provider:'pool_fallback',outcome:'failed',reason:'transport_error'},{provider:'dedicated',outcome:'failed',reason:'transport_error'}]});
   assert.match(failed.items[0].text,/both the dedicated provider and Star Gate pool fallback were tried/);assert.match(failed.items[0].text,/gateway is unaffected/);
+  const rejected=news({...s,gateway:{...s.gateway,healthy:3,total:3,active:2,queued:4}},{state:'error',model_http_status:400});
+  assert.match(rejected.items[0].text,/Fleet: 3\/3 servers healthy; 2 running; 4 waiting/);assert.match(rejected.items[0].text,/HTTP 400/);
+  assert.doesNotMatch(rejected.items[0].text,/no replacement advice/);assert.equal(rejected.level,'unknown');
+
 });
 test('health wire cannot hide live quarantine or wasted-capacity evidence behind a stalled Genie',()=>{
   const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
@@ -1103,4 +1107,15 @@ test('chat inherits the inline credential only for the exact configured local ga
   assert.equal(genieChatConfig(config).api_key,'example-gateway-key');assert.equal(config.genie_chat.api_key,undefined);
   assert.equal(genieChatConfig({...config,genie_chat:{url:'https://provider.example.invalid/v1'}}).api_key,undefined);
   assert.equal(genieChatConfig({...config,genie_chat:{...config.genie_chat,api_key:'explicit-example'}}).api_key,'explicit-example');
+});
+
+test('fleet reviewer reuses matching chat reasoning and preserves independent provider choices',()=>{
+ const config={port:30000,model:'qwen-example',api_key:'local',genie_chat:{url:'http://127.0.0.1:30000/v1',model:'qwen-example',reasoning_effort:'xhigh'}};
+ let runtime=genieRuntimeConfig(config);assert.equal(runtime.reasoning_effort,'xhigh');assert.equal(runtime.fallback.reasoning_effort,'xhigh');
+ config.genie={url:config.genie_chat.url,model:config.model,fallback:{url:config.genie_chat.url,model:config.model}};
+ runtime=genieRuntimeConfig(config);assert.equal(runtime.reasoning_effort,'xhigh');assert.equal(runtime.fallback.reasoning_effort,'xhigh');
+ config.genie.reasoning_effort='medium';assert.equal(genieRuntimeConfig(config).reasoning_effort,'medium');
+ delete config.genie.reasoning_effort;config.genie_chat.reasoning_effort=null;assert.equal(genieRuntimeConfig(config).reasoning_effort,null);
+ config.genie_chat.model='another-model';assert.equal(genieRuntimeConfig(config).reasoning_effort,undefined);
+ config.genie_chat.model=config.model;config.genie_chat.url='http://127.0.0.1:9001/v1';assert.equal(genieRuntimeConfig(config).reasoning_effort,undefined);
 });
