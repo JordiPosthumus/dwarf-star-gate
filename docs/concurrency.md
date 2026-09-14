@@ -58,3 +58,8 @@ The existing passive serial timing estimator retains observations but does not
 invent a completion-time estimate for concurrent workers. Model/engine metrics
 still need evidence of their scope: a single observed token rate is not a
 per-request measurement when requests overlap. No new predictor is added here.
+
+The integrated request-progress checks also cover two running Genie replies and
+one queued reply on a two-slot synthetic worker. Each reply keeps its own gateway
+request identity as a slot becomes free. These checks exercise gateway scheduling
+and observation; they do not qualify a real model server for concurrent inference.

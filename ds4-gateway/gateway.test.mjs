@@ -2451,3 +2451,12 @@ test('oldest queue telemetry follows creation time while shadow follows priority
   assert.equal(row.request_id,highJob.id);assert.equal(r.backends[0].aborts,0);
   r.backends[0].heldStreams.shift()();await Promise.all([home,low,high]);
 });
+
+test('concurrent Genie replies retain independent running and queued progress identities',{timeout:10000},async t=>{
+ const r=await rig(t,1,{workerConcurrency:2}),b=r.backends[0],ids=[randomUUID(),randomUUID(),randomUUID()];
+ const send=i=>r.request('{"wait_for_release":true}','genie-'+i,{headers:{'x-dsg-observer':'gate-genie','x-dsg-call-id':ids[i]}});
+ const a=send(0);await until(()=>b.active===1);const c=send(1);await until(()=>b.active===2);const queued=send(2);await until(()=>r.gateway.stats().queued===1);
+ const before=r.gateway.currentJobsStatus();assert.equal(before.jobs.length,3);assert.deepEqual(ids.map(id=>before.jobs.find(j=>j.call_id===id).state),['running','running','queued']);assert.equal(new Set(before.jobs.map(j=>j.request_id)).size,3);
+ b.releases.shift()();await a;await until(()=>b.releases.length===2);const after=r.gateway.currentJobsStatus();assert.equal(after.jobs.some(j=>j.call_id===ids[0]),false);assert.deepEqual(ids.slice(1).map(id=>after.jobs.find(j=>j.call_id===id).state),['running','running']);assert.equal(r.gateway.stats().active,2);
+ b.releases.splice(0).forEach(release=>release());await Promise.all([c,queued]);assert.equal(b.aborts,0);assert.equal(r.gateway.stats().active,0);
+});
