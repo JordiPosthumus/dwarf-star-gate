@@ -28,6 +28,11 @@ def register_research(config, context, emit):
     from tools.url_safety import is_safe_url, sensitive_query_param_name, create_ssrf_safe_client
 
     private_names = [s["id"].lower() for s in context.get("servers", []) if s.get("id")]
+    # Historical receipts can name workers no longer in the current fleet.
+    activity = context.get("operational_activity", {})
+    for row in activity.get("reviews", []) + activity.get("actions", []):
+        private_names.extend(row[key].lower() for key in ("worker", "source", "destination", "id")
+                             if isinstance(row.get(key), str) and row[key])
 
     def public_input(value):
         if not isinstance(value, str) or not value.strip() or len(value) > 2000:

@@ -20,11 +20,11 @@ class ResearchValidation(unittest.TestCase):
         self.modules.start()
         self.addCleanup(self.modules.stop)
         self.events = []
-        register_research({"search_url": "http://example.invalid", "extract_url": "http://example.invalid"}, {"servers": [{"id": "private-worker"}]}, lambda _, **kw: self.events.append(kw["event"]))
+        register_research({"search_url": "http://example.invalid", "extract_url": "http://example.invalid"}, {"servers": [{"id": "private-worker"}], "operational_activity": {"reviews": [{"worker": "retired-worker", "id": "private-review-id"}], "actions": [{"source": "old-source", "destination": "old-destination"}]}}, lambda _, **kw: self.events.append(kw["event"]))
 
     def test_private_query_details_never_reach_search(self):
         synthetic_home = str(PurePosixPath("/", "Users", "example", "settings"))
-        for query in ["private-worker runtime", "read " + synthetic_home, "api_key=PRIVATE_VALUE", "password=PRIVATE_VALUE", "", 3]:
+        for query in ["private-worker runtime", "retired-worker runtime", "private-review-id", "old-source", "old-destination", "read " + synthetic_home, "api_key=PRIVATE_VALUE", "password=PRIVATE_VALUE", "", 3]:
             with self.subTest(query=query):
                 result = self.handlers["web_search"]({"query": query})
                 self.assertIn('"error"', result)
