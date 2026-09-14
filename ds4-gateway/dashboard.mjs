@@ -148,6 +148,7 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
         const input=JSON.parse(body);
         if(input.action?.startsWith('study-'))return reply(200,chat.study.change(input));
         if(input.action==='new')return reply(201,chat.create());
+        if(input.action==='stop-reply'){if(Object.keys(input).sort().join(',')!=='action,conversation_id,reply_id')throw new Error('Invalid reply control.');return reply(202,chat.stop(input.conversation_id,input.reply_id));}
         if(input.action==='continue-queue'){if(Object.keys(input).sort().join(',')!=='action,conversation_id,expected_reply_id')throw new Error('Invalid queue control.');return reply(202,chat.resume(input.conversation_id,input.expected_reply_id));}
         if(input.action==='send')return reply(202,chat.submit(input.conversation_id,input.text,input.request_id,{research:input.research}));
         return reply(400,{error:'Unknown chat action.'});

@@ -32,7 +32,7 @@ export function chatContext(snapshot={}) {
 export class GenieChat {
   constructor({directory,provider,getSnapshot=()=>({}),isSuspended=()=>false,now=Date.now,runQuestion=answer=>answer(),notebook=null}) {
     this.directory=path.resolve(directory);this.provider=provider;this.getSnapshot=getSnapshot;this.now=now;this.notebook=notebook;
-    this.loadErrors=[];this.sessions=new Map();this.jobs=new Map();this.closed=false;this.isSuspended=isSuspended;this.runQuestion=runQuestion;
+    this.loadErrors=[];this.sessions=new Map();this.jobs=new Map();this.controllers=new Map();this.closed=false;this.isSuspended=isSuspended;this.runQuestion=runQuestion;
     fs.mkdirSync(this.directory,{recursive:true,mode:0o700});
     for(const name of fs.readdirSync(this.directory)) {
       if(!/^[a-f0-9-]{36}\.json$/.test(name))continue;
@@ -78,7 +78,7 @@ export class GenieChat {
     finally{if(fs.existsSync(temp))fs.unlinkSync(temp);}
   }
   status() {
-    return {notebook_access:Boolean(this.notebook),available:Boolean(this.provider)&&!this.closed&&!this.isSuspended(),suspended:this.isSuspended(),...(this.provider?.info??{}),
+    return {stop_reply_supported:true,notebook_access:Boolean(this.notebook),available:Boolean(this.provider)&&!this.closed&&!this.isSuspended(),suspended:this.isSuspended(),...(this.provider?.info??{}),
       study:this.study.status(),unreadable_conversations:[...this.loadErrors],conversations:[...this.sessions.values()].sort((a,b)=>b.updated_at-a.updated_at).map(s=>({id:s.id,title:s.title,updated_at:s.updated_at,busy:this.jobs.has(s.id),queued:s.messages.filter(m=>m.state==='queued').length,queue_paused:s.queue_paused??null}))};
   }
   create({title='New conversation',purpose=null}={}) {
@@ -122,6 +122,21 @@ export class GenieChat {
     try{this.save(s);}catch{s.queue_paused=paused;s.updated_at=updated;throw new Error('Could not save the queue decision. Nothing was sent.');}
     this.start(s);return this.get(id);
   }
+  stop(id,replyId){
+    const s=this.sessions.get(id);if(!s)throw new Error('Conversation not found.');
+    if(typeof replyId!=='string'||!replyId)throw new Error('A reply identifier is required.');
+    const reply=s.messages.find(m=>m.id===replyId&&m.role==='assistant');if(!reply)throw new Error('Reply not found in this conversation.');
+    if(!['working','queued'].includes(reply.state))return this.get(id);
+    const before=structuredClone(reply),paused=s.queue_paused,updated=s.updated_at;
+    reply.state='interrupted';reply.stop_requested_at=this.now();reply.finished_at=this.now();
+    reply.error='You stopped this reply. Your question and partial answer were kept.';
+    delete reply.waiting_for_review;
+    if(s.messages.some(m=>m.state==='queued'))s.queue_paused=reply.id;else delete s.queue_paused;
+    s.updated_at=this.now();
+    try{this.save(s);}catch{for(const k of Object.keys(reply))delete reply[k];Object.assign(reply,before);if(paused===undefined)delete s.queue_paused;else s.queue_paused=paused;s.updated_at=updated;throw new Error('Could not save the stop decision. The reply is still running.');}
+    // Save the explicit owner decision before signalling only this turn's bridge.
+    this.controllers.get(reply.id)?.abort();return this.get(id);
+  }
   start(s){
     const id=s.id;
     if(this.closed||!this.provider||this.isSuspended()||s.queue_paused||this.jobs.has(id)||!s.messages.some(m=>m.state==='queued'))return;
@@ -130,22 +145,24 @@ export class GenieChat {
       while(!this.closed&&!this.isSuspended()&&!s.queue_paused){
       const index=s.messages.findIndex(m=>m.state==='queued');if(index<0)break;
       const reply=s.messages[index],user=s.messages[index-1],context=reply.context,research=Boolean(user.research);
-      const history=s.messages.slice(0,index-1).filter(m=>m.state==='complete').map(m=>({role:m.role,content:m.text}));
+      const history=s.messages.slice(0,index-1).filter(m=>m.state==='complete'||(m.role==='assistant'&&m.stop_requested_at!==undefined&&m.text.trim())).map(m=>({role:m.role,content:m.text+(m.role==='assistant'&&m.stop_requested_at!==undefined?'\n[This partial reply was stopped by the user.]':'')}));
+      const controller=new AbortController();this.controllers.set(reply.id,controller);const accepting=()=>!controller.signal.aborted&&reply.state==='working';
       try{
         reply.state='working';this.save(s);
         const result=await this.runQuestion(()=>{
-          if(this.closed||this.isSuspended())throw new Error('Chat stopped or paused before dispatch');
+          if(this.closed||this.isSuspended()||controller.signal.aborted)throw new Error('Chat stopped or paused before dispatch');
           // An action review may have changed the setup while this reply waited.
           Object.assign(context,this.context());delete reply.waiting_for_review;
           if(this.provider.info?.gateway_tracking)reply.gateway_call_id=reply.id;
           this.save(s);
-          return this.provider.generate({message:context.study_brief?`${user.text}\n\nResearch brief: ${context.study_brief}`:user.text,history,context,sessionId:id,callId:reply.gateway_call_id,research,onInspection:event=>{if(event&&['records','live'].includes(event.kind)&&['reading','complete','failed'].includes(event.state)&&typeof event.worker_id==='string'&&typeof event.at==='string'){reply.inspection??={events:[]};reply.inspection.events.push(event);this.save(s);}},onProgress:event=>{if(event&&['starting','model_wait','reasoning'].includes(event.phase)&&Number.isSafeInteger(event.step)&&event.step>=0&&Number.isSafeInteger(event.reasoning_chars)&&event.reasoning_chars>=0){reply.progress={phase:event.phase,step:event.step,reasoning_chars:event.reasoning_chars,at:this.now()};this.save(s);}},onResearch:event=>{if(research&&validResearchEvent(event)){reply.research.events.push(event);this.save(s);}},onDelta:delta=>{if(typeof delta==='string'&&delta){reply.text+=delta;reply.progress={step:reply.progress?.step??0,reasoning_chars:reply.progress?.reasoning_chars??0,phase:'answer',at:this.now()};}}});
-        },kind=>{reply.waiting_for_review=kind;this.save(s);});
+          return this.provider.generate({signal:controller.signal,message:context.study_brief?`${user.text}\n\nResearch brief: ${context.study_brief}`:user.text,history,context,sessionId:id,callId:reply.gateway_call_id,research,onInspection:event=>{if(accepting()&&event&&['records','live'].includes(event.kind)&&['reading','complete','failed'].includes(event.state)&&typeof event.worker_id==='string'&&typeof event.at==='string'){reply.inspection??={events:[]};reply.inspection.events.push(event);this.save(s);}},onProgress:event=>{if(accepting()&&event&&['starting','model_wait','reasoning'].includes(event.phase)&&Number.isSafeInteger(event.step)&&event.step>=0&&Number.isSafeInteger(event.reasoning_chars)&&event.reasoning_chars>=0){reply.progress={phase:event.phase,step:event.step,reasoning_chars:event.reasoning_chars,at:this.now()};this.save(s);}},onResearch:event=>{if(accepting()&&research&&validResearchEvent(event)){reply.research.events.push(event);this.save(s);}},onDelta:delta=>{if(accepting()&&typeof delta==='string'&&delta){reply.text+=delta;reply.progress={step:reply.progress?.step??0,reasoning_chars:reply.progress?.reasoning_chars??0,phase:'answer',at:this.now()};}}});
+        },kind=>{if(accepting()){reply.waiting_for_review=kind;this.save(s);}});
+        if(controller.signal.aborted)throw new DOMException('Aborted','AbortError');
         if(typeof result?.text!=='string'||!result.text.trim())throw new Error('Hermes returned no answer.');
         reply.text=result.text;reply.state='complete';
-      }catch(e){reply.state='failed';if(s.messages.some(m=>m.state==='queued'))s.queue_paused=reply.id;reply.error=e.publicMessage??'Genie could not finish this reply. Your conversation is saved; you can ask again.';}
+      }catch(e){if(reply.stop_requested_at!==undefined){reply.state='interrupted';}else{reply.state='failed';if(s.messages.some(m=>m.state==='queued'))s.queue_paused=reply.id;reply.error=e.publicMessage??'Genie could not finish this reply. Your conversation is saved; you can ask again.';}}
       finally{
-        delete reply.waiting_for_review;
+        this.controllers.delete(reply.id);delete reply.waiting_for_review;
         s.updated_at=this.now();reply.finished_at=this.now();
         try{this.save(s);}catch{reply.state='failed';s.queue_paused=reply.id;reply.error='This reply could not be saved. Copy it before leaving this page; your earlier conversation remains on disk.';}
       }

@@ -4,6 +4,7 @@ const panel=document.getElementById('conversation-shell');
 if(panel){
   const $=id=>document.getElementById(id);
   let token=null,current=null,status=null,signature='',fetching=false,sending=false,creating=false,request=null,connectionError=null,cachedSession=null,lastObservedAt=null;
+  const stopping=new Set();
   const draftKey=id=>`dsg-genie-draft:${id??'new'}`;
   const draft={read:id=>{try{return sessionStorage.getItem(draftKey(id))??'';}catch{return '';}},write:(id,text)=>{try{sessionStorage.setItem(draftKey(id),text);}catch{}}};
   function text(tag,content,className){const e=document.createElement(tag);e.textContent=content;if(className)e.className=className;return e;}
@@ -23,7 +24,7 @@ if(panel){
     return fragment;
   }
   function render(session){
-    const key=JSON.stringify([session,status?.available,status?.suspended,status?.research_available,status?.notebook_access,sending,creating,connectionError,session?.busy?Math.floor(Date.now()/1000):null]);if(key===signature)return;signature=key;
+    const key=JSON.stringify([session,status?.stop_reply_supported,[...stopping],status?.available,status?.suspended,status?.research_available,status?.notebook_access,sending,creating,connectionError,session?.busy?Math.floor(Date.now()/1000):null]);if(key===signature)return;signature=key;
     const list=$('conversation-messages'),scrollTop=list.scrollTop,nearBottom=list.scrollHeight-list.scrollTop-list.clientHeight<90;
     const openDetails=new Set([...list.querySelectorAll('details[open]')].map(d=>`${d.closest('[data-message-id]')?.dataset.messageId}:${d.querySelector('summary')?.textContent}`));
     list.replaceChildren();
@@ -37,9 +38,13 @@ if(panel){
       const article=text('article','','conversation-message');article.dataset.role=m.role;article.dataset.messageId=m.id;
       article.append(text('p',m.role==='user'?'You':'Genie','conversation-author'));
       const body=text('div','','conversation-text');body.append(format(m.text));article.append(body);
-      const progress=chatProgress(m,{connected:!connectionError,suspended:status?.suspended});
+      const progress=chatProgress(m,{connected:!connectionError,suspended:status?.suspended,paused:Boolean(session.queue_paused)});
       if(progress){const box=text('div','','conversation-progress');box.append(text('p',progress.label,'conversation-progress-label'),text('p',progress.detail));if(progress.activity)box.append(text('p',progress.activity));article.append(box);}
       if(m.error)article.append(text('p',m.error,'conversation-error'));
+      if(status?.stop_reply_supported&&m.role==='assistant'&&['working','queued'].includes(m.state)){
+        const stop=text('button',stopping.has(m.id)?'Stopping…':'Stop waiting for this reply','button');stop.type='button';stop.disabled=stopping.has(m.id)||!!connectionError;stop.title='Keep the partial answer and pause questions already queued behind it.';
+        stop.addEventListener('click',async()=>{stopping.add(m.id);error();render(cachedSession);try{const updated=await api('/api/genie/chat',{action:'stop-reply',conversation_id:session.id,reply_id:m.id});if(current===session.id){cachedSession=updated;render(updated);}}catch(e){error(e.message);}finally{stopping.delete(m.id);signature='';await refresh();}});article.append(stop);
+      }
       if(m.role==='assistant'&&m.research?.events?.length){
         const events=m.research.events??[],last=events.at(-1);
 
@@ -53,7 +58,7 @@ if(panel){
       list.append(article);
     }
     for(const d of list.querySelectorAll('details'))if(openDetails.has(`${d.closest('[data-message-id]')?.dataset.messageId}:${d.querySelector('summary')?.textContent}`))d.open=true;
-    if(session?.queue_paused){const paused=text('div','','conversation-error');paused.append(text('p','An earlier reply did not finish. Queued questions are saved and paused. Continue after reviewing it; the failed question will not be replayed.'));const resume=text('button','Continue queued questions','button');resume.type='button';resume.disabled=sending||!status?.available;resume.addEventListener('click',async()=>{resume.disabled=true;try{await api('/api/genie/chat',{action:'continue-queue',conversation_id:session.id,expected_reply_id:session.queue_paused});await refresh();}catch(e){error(e.message);resume.disabled=false;}});list.append(paused);paused.append(resume);}
+    if(session?.queue_paused){const paused=text('div','','conversation-error');paused.append(text('p','An earlier reply did not finish. Queued questions are saved and paused. Continue after reviewing it; the earlier question will not be replayed.'));const resume=text('button','Continue queued questions','button');resume.type='button';resume.disabled=sending||!status?.available;resume.addEventListener('click',async()=>{resume.disabled=true;try{await api('/api/genie/chat',{action:'continue-queue',conversation_id:session.id,expected_reply_id:session.queue_paused});await refresh();}catch(e){error(e.message);resume.disabled=false;}});list.append(paused);paused.append(resume);}
     $('conversation-send').disabled=sending||creating||!status?.available;
     $('conversation-web-status').textContent=status?.research_available?'Genie can search public sources when useful.':'Web search is not configured for this installation.';
     $('conversation-web-status').textContent+=status?.notebook_access?' Operational notebook access is enabled for this chat.':' The operational notebook is not shared with this chat.';

@@ -23,3 +23,5 @@ test('gateway queue/running evidence is separate from model activity and becomes
  assert.match(chatProgress(m,{now:80000}).activity,/unavailable or stale/);assert.doesNotMatch(chatProgress(m,{now:80000}).label,/Running/);
  m.gateway_execution={state:'not_observed',observed_at:79000};assert.match(chatProgress(m,{now:80000}).activity,/between model calls/);assert.match(chatProgress(m,{now:80000,connected:false}).label,/progress unknown/);
 });
+
+test('a manually paused chat queue is shown as paused, not an advancing answer',()=>{assert.equal(chatProgress({state:'queued',at:0},{now:1000,paused:true}).label,'Saved · paused for your review');});

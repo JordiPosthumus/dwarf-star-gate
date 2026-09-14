@@ -1,11 +1,11 @@
 // Evidence-based activity only. A ticking clock is not proof the model is advancing.
 const age=(at,now)=>Math.max(0,Math.floor((now-at)/1000));
 const duration=n=>n<60?`${n}s`:`${Math.floor(n/60)}m ${n%60}s`;
-export function chatProgress(message,{now=Date.now(),connected=true,suspended=false}={}){
+export function chatProgress(message,{now=Date.now(),connected=true,suspended=false,paused=false}={}){
   if(!['working','queued'].includes(message.state))return null;
   const elapsed=duration(age(message.at,now));
   if(!connected)return {label:'Connection lost · progress unknown',detail:`${elapsed} since submission. Reconnecting to the dashboard; the saved request has not been replayed.`};
-  if(message.state==='queued')return {label:suspended?'Saved · paused for testing':'Saved · queued behind the earlier answer',detail:`Waiting ${elapsed}. This question has not been sent to the model yet.`};
+  if(message.state==='queued')return {label:paused?'Saved · paused for your review':suspended?'Saved · paused for testing':'Saved · queued behind the earlier answer',detail:`Waiting ${elapsed}. This question has not been sent to the model yet.`};
   if(message.waiting_for_review)return {label:message.waiting_for_review==='scheduled'?'Yielding Genie’s routine review':'Waiting for Genie’s current review',detail:`${elapsed} since submission.`};
   const events=[...(message.research?.events??[]),...(message.inspection?.events??[])].sort((a,b)=>Date.parse(a.finished_at??a.at)-Date.parse(b.finished_at??b.at)),latest=events.at(-1),p=message.progress;
   const latestAt=latest?Date.parse(latest.finished_at??latest.at):NaN;
