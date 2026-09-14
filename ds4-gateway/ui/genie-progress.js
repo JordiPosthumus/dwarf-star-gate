@@ -12,7 +12,7 @@ export function chatProgress(message,{now=Date.now(),connected=true,suspended=fa
   const updateAt=Math.max(Number.isFinite(p?.at)?p.at:message.at,Number.isFinite(latestAt)?latestAt:message.at);
   const silent=duration(age(updateAt,now));
   const completed=events.filter(e=>e.state==='complete').length;
-  let label=message.text?'Writing the answer':p?.phase==='reasoning'?'Reasoning activity received':p?.phase==='starting'?'Starting Hermes':'Waiting for the model response';
+  let label=p?.phase==='reasoning'?'Reasoning activity received':p?.phase==='starting'?'Starting Hermes':p?.phase==='model_wait'?'Waiting for the model response':p?.phase==='answer'||(!p&&message.text)?'Writing the answer':'Waiting for the model response';
   if(latest&&latestAt>=(p?.at??0))label=latest.state==='reading'?(latest.kind==='search'?'Searching public sources':'Reading a public page'):latest.state==='failed'?'Web request failed · waiting for Genie': 'Sources returned · waiting for Genie’s next step';
   if(latest&&['records','live'].includes(latest.kind)&&latestAt>=(p?.at??0))label=latest.state==='reading'?`Inspecting ${latest.worker_id}`:latest.state==='complete'?`Inspection returned · ${latest.worker_id}`:`Inspection unavailable · ${latest.worker_id}`;
   const detail=`${elapsed} elapsed · ${p?.step?`model step ${p.step} · `:''}${completed} tool call${completed===1?'':'s'} completed. ${age(updateAt,now)>=30?`No new activity for ${silent}; this alone does not prove a stall.`:`Activity received ${silent} ago.`}`;

@@ -232,3 +232,12 @@ test('continuing a paused queue requires same-origin CSRF and exact control fiel
  const post=(headers,value=input)=>fetch(url,{method:'POST',headers:{'content-type':'application/json',...headers},body:JSON.stringify(value)});
  assert.equal((await post({})).status,403);const headers={origin,'x-dsg-csrf':state.csrf_token};assert.equal((await post(headers,{...input,authority:'restart'})).status,400);assert.deepEqual(calls,['First']);assert.equal((await post(headers)).status,202);await chat.idle();assert.deepEqual(calls,['First','Second']);
 });
+
+test('actual streamed answer chunks refresh activity and later reasoning can supersede them',async t=>{
+ let now=1000,call,finish;const chat=new GenieChat({directory:directory(t),now:()=>now,provider:{generate:p=>{call=p;return new Promise(r=>finish=r);}}}),s=chat.create();
+ chat.submit(s.id,'Hello','stream-activity');await Promise.resolve();
+ call.onProgress({phase:'reasoning',step:3,reasoning_chars:100});now=40000;call.onDelta('Partial answer');
+ let m=chat.get(s.id).messages[1];assert.equal(m.progress.at,40000);assert.equal(m.progress.phase,'answer');assert.equal(m.progress.step,3);
+ now=42000;call.onProgress({phase:'reasoning',step:4,reasoning_chars:120});m=chat.get(s.id).messages[1];assert.equal(m.progress.phase,'reasoning');assert.equal(m.text,'Partial answer');
+ finish({text:'Complete answer'});await chat.idle();
+});

@@ -9,3 +9,10 @@ test('real reasoning, tool progress, queue and quiet periods have distinct statu
  m.progress={...m.progress,phase:'model_wait',step:3,at:11000};assert.match(chatProgress(m,{now:12000}).label,/Waiting/);
  assert.match(chatProgress({...m,state:'queued'},{now:12000}).detail,/not been sent/);assert.match(chatProgress({...m,state:'queued'},{suspended:true}).label,/testing/);
 });
+
+test('earlier answer text does not hide current reasoning or model wait',()=>{
+ const m={state:'working',at:0,text:'An earlier partial answer',progress:{phase:'reasoning',step:4,reasoning_chars:400,at:9000}};
+ assert.match(chatProgress(m,{now:10000}).label,/Reasoning/);
+ m.progress.phase='model_wait';assert.match(chatProgress(m,{now:10000}).label,/Waiting/);
+ m.progress.phase='answer';assert.match(chatProgress(m,{now:10000}).label,/Writing/);
+});
