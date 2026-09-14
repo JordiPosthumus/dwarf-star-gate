@@ -97,7 +97,10 @@ def register_inspection(config, context, emit):
         event_kind='records' if kind=='artifact' else kind
         operation={'records':'read_server_configuration','live':'inspect_server','artifact':'read_server_artifact'}[kind]
         if not isinstance(worker,str) or worker not in known or not re.fullmatch(r'[a-zA-Z0-9][\w-]{0,63}',worker):return json.dumps({'error':'Unknown configured worker.'})
-        emit('inspection',event={'kind':event_kind,'operation':operation,'worker_id':worker,'state':'reading','at':at})
+        details={}
+        if kind=='artifact':
+            details={key:value for key,value,allowed in [('artifact',args.get('artifact'),['baseline_reconciliation','recreation_capture']),('record_kind',args.get('record_kind','proposed'),['observed','approved','proposed'])] if value in allowed}
+        emit('inspection',event={'kind':event_kind,'operation':operation,'worker_id':worker,**details,'state':'reading','at':at})
         try:
             if kind=='records':
                 directory=config.get('records_directory')
@@ -156,13 +159,13 @@ def register_inspection(config, context, emit):
                 result={'worker_id':worker,**result}
             remember(result)
             encoded=json.dumps(result);revision=hashlib.sha256(encoded.encode()).hexdigest()
-            emit('inspection',event={'kind':event_kind,'operation':operation,'worker_id':worker,'state':'complete','at':at,'finished_at':datetime.now(timezone.utc).isoformat(),'revision':revision,'result':result})
+            emit('inspection',event={'kind':event_kind,'operation':operation,'worker_id':worker,**details,'state':'complete','at':at,'finished_at':datetime.now(timezone.utc).isoformat(),'revision':revision,'result':result})
             return encoded
         except Exception:
             message='Saved artifact unavailable or different from its recorded hash. Existing files were preserved; do not treat this as verified evidence.' if kind=='artifact' else 'Read-only inspection unavailable. No server changes were made; ask the operator to check the configured record or SSH target.'
-            emit('inspection',event={'kind':event_kind,'operation':operation,'worker_id':worker,'state':'failed','at':at,'finished_at':datetime.now(timezone.utc).isoformat(),'error':message})
+            emit('inspection',event={'kind':event_kind,'operation':operation,'worker_id':worker,**details,'state':'failed','at':at,'finished_at':datetime.now(timezone.utc).isoformat(),'error':message})
             return json.dumps({'error':message})
-    for name,kind,description in [('read_server_configuration','records','Read the full private recorded configuration, launch recipe and artifact references for a configured worker. Dated records are not live evidence. Never publish private fields.'),('inspect_server','live','Inspect the configured worker container and launcher now using a fixed read-only collector. No service changes. Compare with its records; report missing evidence instead of guessing. Currently configured Docker workers only.'),('read_server_artifact','artifact','Read a saved baseline_reconciliation manifest or recreation_capture referenced by a worker record. Requires its recorded hash to match. Read the small baseline manifest first for model revision and existing verification evidence; only request the larger recreation capture when needed. Dated evidence, not new approval or live verification.')]:
+    for name,kind,description in [('read_server_configuration','records','Read the full private recorded configuration, launch recipe and artifact references for a configured worker. Dated records are not live evidence. Never publish private fields.'),('inspect_server','live','Inspect the configured worker container and launcher now using a fixed read-only collector. No service changes. Compare with its records; report missing evidence instead of guessing. Currently configured Docker workers only.'),('read_server_artifact','artifact','Read a saved baseline_reconciliation manifest or recreation_capture referenced by a worker record. Requires its recorded hash to match. Read the worker configuration first and use the actual record_kind and artifact reference it contains. Do not assume a proposed record or baseline manifest exists. Prefer the small baseline manifest when available; request the larger recreation capture when needed. Dated evidence, not new approval or live verification.')]:
         properties={'worker_id':{'type':'string'}}
         if kind=='artifact':properties.update({'artifact':{'type':'string','enum':['baseline_reconciliation','recreation_capture']},'record_kind':{'type':'string','enum':['observed','approved','proposed'],'default':'proposed'}})
         registry.register(name=name,toolset=TOOLSET,schema={'name':name,'description':description,'parameters':{'type':'object','properties':properties,'required':['worker_id','artifact'] if kind=='artifact' else ['worker_id'],'additionalProperties':False}},handler=lambda args,_kind=kind,**kw:run(_kind,args),max_result_size_chars=512000)

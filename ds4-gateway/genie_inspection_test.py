@@ -14,6 +14,15 @@ class Inspection(unittest.TestCase):
   (self.root/'observed').mkdir();(self.root/'observed/example.json').write_text(json.dumps({'schema':1,'worker_id':'example','kind':'observed','configuration':{'api_key':'PRIVATE_SECRET','context':262144},'runtime':{'build':'a'*64}}));self.register()
   result=self.call('read_server_configuration',{'worker_id':'example'});self.assertNotIn('PRIVATE_SECRET',json.dumps(result));self.assertEqual(result['records']['observed']['configuration']['context'],262144);self.assertIsNone(result['records']['approved']);self.assertIn('a'*64,self.context['inspection_private_values'])
   self.assertIn('error',self.call('read_server_configuration',{'worker_id':'../../outside'}))
+ def test_failed_artifact_receipt_identifies_requested_reference_without_untrusted_fields(self):
+  self.register()
+  self.call('read_server_artifact',{'worker_id':'example','artifact':'recreation_capture','record_kind':'observed'})
+  for _,data in self.events:
+   event=data['event'];self.assertEqual(event['artifact'],'recreation_capture');self.assertEqual(event['record_kind'],'observed')
+  self.assertEqual(self.events[-1][1]['event']['state'],'failed')
+  self.events.clear()
+  self.call('read_server_artifact',{'worker_id':'example','artifact':'PRIVATE_INPUT','record_kind':'PRIVATE_KIND'})
+  self.assertNotIn('PRIVATE_',json.dumps(self.events));self.assertEqual(self.events[-1][1]['event']['state'],'failed')
  def test_symlink_record_rejected(self):
   (self.root/'observed').mkdir();(self.root/'sensitive.json').write_text('{"key":"NEVER_READ"}');(self.root/'observed/example.json').symlink_to(self.root/'sensitive.json');self.register();self.assertIn('error',self.call('read_server_configuration',{'worker_id':'example'}))
  def test_fixed_collector_fallback_and_evidence(self):
