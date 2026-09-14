@@ -20,6 +20,29 @@ def run(*a):return subprocess.check_output(a,text=True,timeout=20)
 c=json.loads(run('docker','inspect','--type','container','--',p['container']))[0]
 i=json.loads(run('docker','image','inspect','--',c['Image']))[0]
 config=c['Config']
+# Query distribution metadata without importing the inference framework or writing bytecode.
+# The immutable inspected container ID prevents a reused name selecting another container.
+package_query = """import json,importlib.metadata as m
+result={}
+for name in ['vllm','torch','transformers']:
+ try:result[name]={'status':'installed','version':m.version(name)}
+ except m.PackageNotFoundError:result[name]={'status':'not_found'}
+print(json.dumps(result))
+"""
+packages={'status':'unavailable','reason':'container_not_running'}
+if c['State']['Running']:
+ try:
+  queried=json.loads(run('docker','exec',c['Id'],'python3','-B','-c',package_query))
+  if set(queried)!= {'vllm','torch','transformers'}:raise ValueError('Unexpected package result')
+  for value in queried.values():
+   if value.get('status') not in ['installed','not_found']:raise ValueError('Invalid package status')
+   if value['status']=='installed' and (not isinstance(value.get('version'),str) or not 0<len(value['version'])<=128):raise ValueError('Invalid version')
+  check=json.loads(run('docker','inspect','--type','container','--',c['Id']))[0]
+  if not check['State']['Running'] or check['State']['StartedAt']!=c['State']['StartedAt']:
+   packages={'status':'unavailable','reason':'container_changed_during_query'}
+  else:packages={'status':'queried','method':'importlib.metadata in inspected container; frameworks not imported','values':queried}
+ except Exception:
+  packages={'status':'unavailable','reason':'package_query_failed'}
 env=[s.partition('=')[0]+'=<redacted>' if secret.search(s.partition('=')[0]) else s for s in config.get('Env',[])]
 cmd=config.get('Cmd',[])
 if any(secret.search(s.split('=')[0]) for s in cmd if s.startswith('--')):raise ValueError('Credential-bearing command requires private review')
@@ -30,7 +53,7 @@ if p.get('launcher'):
  data=f.read_bytes()
  if re.search(rb'(?i)(?:api[_-]?key|access[_-]?token|secret|password|hf_token|hugging_face_hub_token)\s*=',data):raise ValueError('Launcher requires credential redaction')
  launcher={'text':data.decode(),'sha256':hashlib.sha256(data).hexdigest()}
-print(json.dumps({'observed_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'container':{'id':c['Id'],'image_id':c['Image'],'running':c['State']['Running'],'started_at':c['State']['StartedAt'],'entrypoint':config.get('Entrypoint'),'command':cmd,'environment':env,'mounts':c['Mounts'],'port_bindings':c['HostConfig'].get('PortBindings'),'restart_policy':c['HostConfig'].get('RestartPolicy'),'ipc_mode':c['HostConfig'].get('IpcMode'),'shm_size':c['HostConfig'].get('ShmSize'),'device_requests':c['HostConfig'].get('DeviceRequests')},'image':{'id':i['Id'],'created':i['Created']},'launcher':launcher,'scope':'Live Docker metadata and launcher bytes. No inference, restart, weight hash or restoration test. Launch settings do not independently prove effective API behavior.'}))
+print(json.dumps({'observed_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'container':{'id':c['Id'],'image_id':c['Image'],'running':c['State']['Running'],'started_at':c['State']['StartedAt'],'entrypoint':config.get('Entrypoint'),'command':cmd,'environment':env,'mounts':c['Mounts'],'port_bindings':c['HostConfig'].get('PortBindings'),'restart_policy':c['HostConfig'].get('RestartPolicy'),'ipc_mode':c['HostConfig'].get('IpcMode'),'shm_size':c['HostConfig'].get('ShmSize'),'device_requests':c['HostConfig'].get('DeviceRequests')},'image':{'id':i['Id'],'created':i['Created'],'repo_digests':i.get('RepoDigests',[])},'packages':packages,'launcher':launcher,'scope':'Live Docker metadata, launcher bytes and separately labelled installed distribution metadata. Package versions do not prove build ancestry or custom source integrity. No inference, restart, weight hash or restoration test. Launch settings do not independently prove effective API behavior.'}))
 '''
 
 def read_json(file, expected_sha256=None):
