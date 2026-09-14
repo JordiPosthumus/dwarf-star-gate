@@ -40,7 +40,7 @@ deployment receipts stay outside this public repository.
   existing mutation path; rollback claims require a retained, proven version.
 - [ ] Integrate owner-started Hourglass runs, initially measuring the chosen
   server directly with recorded configuration and measurement provenance.
-  Saved aggregate reports are wired into the development dashboard and chat,
+  Saved aggregate reports are wired into the dashboard and chat,
   with explicit operator-supplied worker/revision associations. Owner-started
   execution and fresh measurement remain unfinished.
   Preserve each report's recorded metric and rules; current Hourglass source uses

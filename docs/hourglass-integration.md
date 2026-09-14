@@ -8,7 +8,7 @@ setup and time window. The benchmark itself remains Hourglass.
 The first data component, `hourglassReportSummary`, reads Hourglass's existing
 `hourglass-public-report-v1` aggregate object. It does not read the private bank,
 calculate a score, scan directories, make network calls or launch an evaluation.
-The development dashboard displays explicitly selected reports under Evidence →
+The dashboard displays explicitly selected reports under Evidence →
 Hourglass results, and conversational Genie receives the same bounded summaries.
 Each answer saves the report revision and supplied associations with its evidence.
 

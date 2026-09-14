@@ -1,5 +1,13 @@
 # Star Gate work log
 
+## 2026-09-14 — Optional saved Hourglass report support
+
+Prepared this release from production main with only the Hourglass projection
+and display/chat changes. The exact release passed 742 tests, zero failed, with
+three optional native Hermes tests skipped. Report selection remains explicit
+private configuration; installing this support does not select local files or
+start a benchmark. See docs/hourglass-integration.md for setup and limitations.
+
 ## 2026-09-14 — Saved Hourglass results in Evidence and chat (development)
 
 Explicit private report references now supply bounded summaries to the Evidence
