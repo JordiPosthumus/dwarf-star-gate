@@ -1,6 +1,7 @@
 // Adapter to Hourglass's own console. It never launches a shell or model server.
 // UI integration must durably record start intent before calling submit().
-import {randomUUID} from 'node:crypto';
+import {randomUUID,createHash} from 'node:crypto';
+import {hourglassReportSummary} from './hourglass-report.mjs';
 
 const digest=value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
 const label=value=>typeof value==='string'&&value.length>0&&value.length<=256&&!/[\r\n\0]/.test(value);
@@ -41,6 +42,23 @@ export class HourglassConsole {
     const {state}=await this.read();
     return {models:state.model_configs.filter(m=>label(m?.name)).map(m=>({name:m.name})),benchmark_version:state.benchmark_version,
       window_seconds:state.score_policy?.window_s,metric:state.score_policy?.metric};
+  }
+  async observe(jobId,modelName){
+    if(!/^[a-f0-9]{32}$/.test(jobId))throw new HourglassConsoleError('Invalid Hourglass job receipt.');
+    const {state}=await this.read();
+    const jobs=['running','pending','done'].flatMap(k=>Array.isArray(state.jobs?.[k])?state.jobs[k]:[]);
+    const job=jobs.find(j=>j.id===jobId);
+    if(!job||job.model!==modelName)throw new HourglassConsoleError('The recorded run is not available from this Hourglass console.');
+    return {state:['pending','running','completed','stopped','error','cancelled'].includes(job.state)?job.state:'unknown',
+      started:typeof job.started==='number'?job.started:null,ended:typeof job.ended==='number'?job.ended:null};
+  }
+  async report(jobId){
+    if(!/^[a-f0-9]{32}$/.test(jobId))throw new HourglassConsoleError('Invalid Hourglass job receipt.');
+    const preview=await this.request('/scores/api/preview?job='+jobId+'&scope=same');
+    if(typeof preview.token!=='string'||!/^[a-f0-9]{24}$/.test(preview.token))throw new HourglassConsoleError('Hourglass report preview is unavailable.');
+    const report=await this.request('/scores/file/'+preview.token+'/report.json');
+    if(report.run_key!==createHash('sha256').update(jobId).digest('hex').slice(0,24))throw new HourglassConsoleError('Hourglass returned a report for another run.');
+    return {report_revision:createHash('sha256').update(JSON.stringify(report)).digest('hex'),summary:hourglassReportSummary(report)};
   }
   async prepare(modelName){
     this.prepared=null;

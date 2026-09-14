@@ -38,6 +38,8 @@ def register_research(config, context, emit):
                              (row.get("association", {}), ("worker_id", "approved_configuration_revision")),
                              (row.get("summary", {}), ("run_key", "configuration_key", "machine_key", "bank_fingerprint"))]:
             private_names.extend(fields[key].lower() for key in keys if isinstance(fields.get(key), str) and fields[key])
+    for row in context.get("hourglass_measurements", {}).get("runs", []):
+        private_names.extend(row[key].lower() for key in ("id", "worker_id") if isinstance(row.get(key), str) and row[key])
 
     def public_input(value):
         if not isinstance(value, str) or not value.strip() or len(value) > 2000:

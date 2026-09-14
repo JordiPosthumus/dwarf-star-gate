@@ -1,5 +1,20 @@
 # Star Gate work log
 
+## 2026-09-14 — Owner-started Hourglass workflow (development)
+
+Evidence now offers an explicit review/start flow for configured native Hourglass
+targets. Persist intent before dispatch and retain the native receipt, measured
+report and supplied worker/configuration association. Dashboard restarts observe
+existing work; ambiguous starts require an owner check in the native console and
+are never replayed. Collected reports and bounded run state reach Genie context.
+No periodic starts, benchmark cancellation or model-server changes were added.
+Browser validation used a scripted native console, and a real dashboard restart
+kept the same synthetic run without a second submission. Real Hourglass execution
+and production connection remain unqualified; this source is development only.
+Validation: 767 full-suite tests passed with zero failures and three optional
+native Hermes skips; all 13 focused Hourglass tests and four Python research
+checks passed. Syntax checks passed. No real benchmark was started.
+
 ## 2026-09-14 — Native Hourglass start adapter (development)
 
 Prepared a local console adapter using Hourglass's own model, full-bank and
