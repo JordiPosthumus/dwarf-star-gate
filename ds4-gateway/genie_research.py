@@ -52,7 +52,7 @@ def register_research(config, context, emit):
     def public_input(value):
         if not isinstance(value, str) or not value.strip() or len(value) > 2000:
             raise ValueError("Use a short public topic or URL.")
-        if any(re.search(r"(?<![\w-])" + re.escape(name) + r"(?![\w-])", value.lower()) for name in private_names):
+        if any(re.search(r"(?<![\w-])" + re.escape(name) + r"(?![\w-])", value.lower()) for name in [*private_names,*context.get("inspection_private_values",[])]):
             raise ValueError("Use public software/model names, not private worker names.")
         if re.search(r"/Users/|/home/|(?:api[_-]?key|access_token|password)\s*[=:]", value, re.I):
             raise ValueError("Do not send private paths or credentials to web services.")

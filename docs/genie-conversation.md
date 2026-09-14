@@ -336,3 +336,50 @@ sent to the provider. Provider queue position is not available through this
 progress channel. Providers that buffer their responses may produce no reasoning
 activity until they return; the display states that limitation. Older saved
 requests still show elapsed time and any recorded research activity.
+
+### Let Genie inspect server configurations
+
+Genie can read the full private configuration library and inspect configured
+Docker workers himself. Enable this in the installation's private configuration:
+
+```json
+{
+  "server_records_directory": "runtime/server-records",
+  "genie_chat": {
+    "inspection": {
+      "workers": {
+        "example": {
+          "ssh": ["example-host", "example-fallback"],
+          "container": "example-engine",
+          "launcher": "/srv/inference/launch.sh"
+        }
+      }
+    }
+  }
+}
+```
+
+Merge the example into the existing model connection; keep its other fields.
+The worker must already appear in the gateway. The SSH aliases use the operator's
+existing OpenSSH configuration and keys. The host needs Python 3 and Docker access.
+`launcher` is optional. Use an empty `workers` object for record access alone.
+
+The tools accept a worker ID, never a shell command or file path from the model.
+They read the observed/proposed/approved records and a fixed live collector reads
+Docker metadata and the selected launcher. No launcher is executed. Configured
+SSH fallback is used for connection failures. Unsupported server types report
+that inspection is unavailable. These tools do not run inference, hash weights,
+restart a server, approve a record, perform a restore drill or publish anything.
+
+Enabling inspection shares full private configuration evidence with the configured
+Genie model, including paths and local artifact identities. Review that provider
+choice. Credential fields are withheld; launchers with detected credential
+assignments and commands with credential options are refused. Keep secrets in
+separate credential files. This filtering is not general data-loss prevention.
+Private identifiers learned from inspection are also checked before web queries;
+Genie must still prepare and review a separate sanitized public reference.
+
+Each inspection's time, result and content revision remain with the answer under
+**Server inspection evidence**. Compare an inspection with dated records before
+accepting a baseline. Current launch arguments are evidence of the launch setup,
+not proof that every advertised runtime feature or restoration path works.

@@ -68,6 +68,14 @@ class ResearchValidation(unittest.TestCase):
             self.assertIn('"error"', self.handlers['web_extract']({'url': 'https://example.invalid/' + value}))
         self.network.assert_not_called()
 
+    def test_new_inspection_identifiers_are_blocked_after_research_registration(self):
+        context = {"servers": []}
+        register_research({"search_url": "http://example.invalid", "extract_url": "http://example.invalid"},
+                          context, lambda _, **kw: self.events.append(kw['event']))
+        context['inspection_private_values'] = ['a' * 64]
+        self.assertIn('"error"', self.handlers['web_search']({'query': 'compare ' + 'a' * 64}))
+        self.network.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
