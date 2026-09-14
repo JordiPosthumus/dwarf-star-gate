@@ -1,5 +1,6 @@
 import {testingModeFile,testingSuspended} from './testing-mode.mjs';
 import {HourglassReports} from './hourglass-reports.mjs';
+import {HourglassRuns} from './hourglass-runs.mjs';
 import {doorControl} from './door-client.mjs';
 import http from 'node:http';
 import {EndpointTelemetry} from './endpoint-telemetry.mjs';
@@ -49,6 +50,7 @@ function safeManagementPath(raw){
     last_verified_at:typeof raw.last_verified_at==='string'&&Number.isFinite(Date.parse(raw.last_verified_at))?raw.last_verified_at:null};
 }
 const assets = new Map([['/', ['index.html', 'text/html']], ['/ui.css', ['ui.css', 'text/css']], ['/brand.css', ['brand.css', 'text/css']], ['/ui.js', ['ui.js', 'text/javascript']], ['/logo.png', ['logo.png', 'image/png']]]);
+assets.set('/hourglass.js',['hourglass.js','text/javascript']);
 assets.set('/activity.js',['activity.js','text/javascript']);
 assets.set('/logo.svg',['logo.svg','image/svg+xml']);
 assets.set('/current-jobs.js',['current-jobs.js','text/javascript']);
@@ -80,7 +82,7 @@ export function genieChatConfig(config){
   const local=new URL(chat.url).href===`http://127.0.0.1:${config.port}/v1`;
   return {...chat,...(local&&chat.api_key===undefined?{api_key:config.api_key}:{})};
 }
-export function createDashboard(getSnapshot, assetsDirectory = path.join(here, 'ui'), management = null, genie = null, requestHistory = null, currentJobs = null, testing = null, lanSharing = null, chat = null) {
+export function createDashboard(getSnapshot, assetsDirectory = path.join(here, 'ui'), management = null, genie = null, requestHistory = null, currentJobs = null, testing = null, lanSharing = null, chat = null, hourglass = null) {
   const csrf = randomBytes(32).toString('base64url');
   // Freeze one complete release in memory: edits on disk cannot expose half an
   // update to a live browser. Only the dashboard needs a reload to promote it.
@@ -97,6 +99,19 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
       res.writeHead(403, headers); return res.end(dsgReport('Local same-origin dashboard only'));
     }
     const reply = (status, value) => { if (!res.destroyed && !res.headersSent) { res.writeHead(status,{...headers,'content-type':'application/json'}); res.end(JSON.stringify(status>=400&&typeof value.error==='string'?{...value,error:dsgReport(value.error)}:value)); } };
+    if(req.url==='/api/hourglass'&&req.method==='GET')return reply(200,{...(hourglass?.status()??{configured:false}),csrf_token:csrf});
+    if(req.url==='/api/hourglass'&&req.method==='POST'){
+      const token=Buffer.from(req.headers['x-dsg-csrf']??''),expected=Buffer.from(csrf);
+      if(req.headers.origin!==`http://${req.headers.host}`||token.length!==expected.length||!timingSafeEqual(token,expected))return reply(403,{error:'Same-origin Hourglass session required.'});
+      if(!hourglass)return reply(409,{error:'Hourglass console is not configured.'});
+      if(req.headers['content-type']!=='application/json')return reply(415,{error:'JSON required.'});
+      let body='',ended=false;req.setEncoding('utf8');
+      const timer=setTimeout(()=>{ended=true;reply(408,{error:'Incomplete Hourglass request.'});},5000);
+      req.on('error',()=>{ended=true;clearTimeout(timer);});req.on('aborted',()=>{ended=true;clearTimeout(timer);});
+      req.on('data',chunk=>{if(ended)return;body+=chunk;if(Buffer.byteLength(body)>2048){ended=true;clearTimeout(timer);reply(413,{error:'Hourglass request too large.'});}});
+      req.on('end',()=>{clearTimeout(timer);if(ended)return;ended=true;let input;try{input=JSON.parse(body);}catch{return reply(400,{error:'Invalid JSON.'});}
+        void hourglass.change(input).then(()=>reply(200,hourglass.status())).catch(e=>reply(409,{error:e.message}));});return;
+    }
     if(req.url==='/api/genie/chat'&&req.method==='GET')return reply(200,{...(chat?.status()??{available:false,conversations:[]}),csrf_token:csrf});
     if(req.url?.startsWith('/api/genie/chat/')&&req.method==='GET'){
       try{return reply(200,chat.get(req.url.slice('/api/genie/chat/'.length)));}catch{return reply(404,{error:'Conversation not found.'});}
@@ -231,6 +246,7 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
 export async function runDashboard(configPath, port) {
   const {config} = loadConfig(configPath);
   const hourglassReports=new HourglassReports(config.hourglass_reports);
+  const hourglass=config.hourglass_console?new HourglassRuns(config.hourglass_console,path.join(path.dirname(config.state_file),'hourglass'),{records:()=>serverRecords.snapshot(gateway?.workers?.map(w=>w.id)??[])}):null;
   port ??= dashboardPort(config);
   const fileSources = telemetryFiles(config.telemetry_files);
   const cacheSources=cacheInventoryDirectories(config.cache_directories);
@@ -409,7 +425,8 @@ export async function runDashboard(configPath, port) {
   const started = Date.now();
   const managementEnabled = config.ui_worker_management === true && !!config.control_socket;
   const serverRecords=new ServerRecords(config.server_records_directory);
-  const snapshot = () => ({ hourglass_reports:hourglassReports.snapshot(),server_records:serverRecords.snapshot(gateway?.workers?.map(w=>w.id)??[]),service:'dwarf-star-gate-dashboard', version: 1, time: Date.now(), started, read_only: !managementEnabled, worker_management:managementEnabled, gateway, gateway_at: gatewayAt, gateway_error: gatewayError, telemetry_error: writeError,monitoring_history:monitoringHistory.snapshot(),
+  const combinedHourglass=()=>{const saved=hourglassReports.snapshot(),runs=hourglass?.reportSnapshot();return runs?{...saved,configured:true,reports:[...saved.reports,...runs.reports],unavailable:[...saved.unavailable,...runs.unavailable]}:saved;};
+  const snapshot = () => ({ hourglass_measurements:hourglass?.status()??{configured:false},hourglass_reports:combinedHourglass(),server_records:serverRecords.snapshot(gateway?.workers?.map(w=>w.id)??[]),service:'dwarf-star-gate-dashboard', version: 1, time: Date.now(), started, read_only: !managementEnabled, worker_management:managementEnabled, gateway, gateway_at: gatewayAt, gateway_error: gatewayError, telemetry_error: writeError,monitoring_history:monitoringHistory.snapshot(),
     continuity_door:continuityDoor,continuity_door_error:continuityDoorError,rate_peaks:ratePeaks.snapshot(),cache_continuity:requestHistory.cacheSnapshot(),generation_alerts:requestHistory.generationEvidence.snapshot(),
     performance_lights:performanceHistory.snapshot(Date.now(),[...devices.values()].map(d=>({...d.snapshot(),connected:d.connected&&!gatewayError,active:performanceActive(d,gateway?.workers?.find(w=>w.id===d.id))}))),
     devices: [...devices.values()].map(d => ({...d.snapshot(),rolling_rates:fleetSpeed.workerRates(d.id),activity:activity.get(d.id),activity_markers:activity.getMarkers(d.id),hardware:hardware.snapshot(d.id),endpoint_metrics:endpointTelemetry.snapshot(d.id)})), events, attribution:attribution.snapshot(), notes: 'Engine-log rates are measurements from configured log collectors; OpenAI endpoint rates have separately labeled scopes. Cache counts cover observed prompt starts, not lifetime requests. Raw prompts and responses are excluded.' });
@@ -434,10 +451,11 @@ export async function runDashboard(configPath, port) {
   }:null,managementEnabled&&continuityEnabled(config)?{
     read:async()=>lanSharingDetails(await doorControl(doorSocket(config),'/lan-sharing'),config.port),
     set:async enabled=>lanSharingDetails(await doorControl(doorSocket(config),'/set-lan-sharing',{enabled}),config.port),
-  }:null,chat);
+  }:null,chat,hourglass);
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
+  hourglass?.startObserving();
   await poll(); endpointTelemetry.poll(); const interval = setInterval(poll, 2000), endpointTimer=setInterval(()=>endpointTelemetry.poll(),2000), historyTimer=setInterval(()=>monitoringHistory.save(activity,endpointTelemetry),10000), genieTimer=setInterval(()=>genie.tick(),10000);
-  const close = () => { monitoringHistory.save(activity,endpointTelemetry);endpointTelemetry.close(); closed = true; clearInterval(interval);clearInterval(endpointTimer);clearInterval(historyTimer);clearInterval(genieTimer);genie.close();chat?.close();hardware.close();stopGenieTunnel(); for (const t of timers) clearTimeout(t); for (const child of children) child.kill(); server.closeAllConnections(); server.close(); process.removeListener('SIGTERM', close); process.removeListener('SIGINT', close); };
+  const close = () => { monitoringHistory.save(activity,endpointTelemetry);endpointTelemetry.close(); closed = true; clearInterval(interval);clearInterval(endpointTimer);clearInterval(historyTimer);clearInterval(genieTimer);genie.close();chat?.close();hourglass?.close();hardware.close();stopGenieTunnel(); for (const t of timers) clearTimeout(t); for (const child of children) child.kill(); server.closeAllConnections(); server.close(); process.removeListener('SIGTERM', close); process.removeListener('SIGINT', close); };
   process.once('SIGTERM', close); process.once('SIGINT', close);
   console.log(`Star Gate: http://127.0.0.1:${server.address().port} (${managementEnabled ? 'local worker controls' : 'read-only'})`);
   return { server, snapshot, close };

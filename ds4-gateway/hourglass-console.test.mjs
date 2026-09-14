@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import {once} from 'node:events';
+import {createHash} from 'node:crypto';
 import {HourglassConsole} from './hourglass-console.mjs';
 
 const credentialUrl=()=>{const u=new URL('http://127.0.0.1:4534');u.username='synthetic-user';u.password='synthetic-password';return u.href;};
@@ -62,4 +63,19 @@ test('transport is loopback-only, bounded and refuses redirects without contacti
   const c=new HourglassConsole(`http://127.0.0.1:${server.address().port}`);await assert.rejects(c.catalogue(),/unavailable/);assert.equal(requests,1);
   const oversized=new HourglassConsole('http://127.0.0.1:4534',{maxBytes:5,fetchImpl:async()=>Response.json(health())});
   await assert.rejects(oversized.catalogue(),/unavailable/);
+});
+
+test('observation follows the exact native job and report retrieval excludes raw payloads',async()=>{
+  const job='d'.repeat(32),calls=[],s=state();s.jobs.done=[{id:job,model:'example',state:'completed',started:1,ended:3601,error:'PRIVATE_ERROR',answers:'PRIVATE_ANSWER'}];
+  let wrong=false;
+  const client=new HourglassConsole('http://127.0.0.1:4534',{fetchImpl:async(u,o)=>{
+    calls.push({u,o});if(u.endsWith('/api/health'))return Response.json(health());if(u.endsWith('/api/state'))return Response.json(s);
+    if(u.includes('/scores/api/preview?'))return Response.json({token:'e'.repeat(24)});
+    return Response.json({format:'hourglass-public-report-v1',model:'Example',run_key:wrong?'another-run':createHash('sha256').update(job).digest('hex').slice(0,24),
+      state:'final',score_version:'total-points-v1',hourglass_score:0,notes:'PRIVATE_NOTES',questions:'PRIVATE_QUESTION'});
+  }});
+  assert.deepEqual(await client.observe(job,'example'),{state:'completed',started:1,ended:3601});
+  const report=await client.report(job);assert.equal(report.summary.score.value,0);assert.doesNotMatch(JSON.stringify(report),/PRIVATE_/);
+  wrong=true;await assert.rejects(client.report(job),/another run/);await assert.rejects(client.observe(job,'different-model'),/not available/);
+  assert.ok(calls.every(c=>c.o.method==='GET'));assert.ok(calls.some(c=>c.u.includes('scope=same')));
 });

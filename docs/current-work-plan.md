@@ -42,7 +42,9 @@ deployment receipts stay outside this public repository.
   server directly with recorded configuration and measurement provenance.
   Saved aggregate reports are wired into the dashboard and chat,
   with explicit operator-supplied worker/revision associations. Owner-started
-  execution and fresh measurement remain unfinished.
+  start controls, durable receipts, restart observation and result collection are
+  implemented in development. Real-run qualification and production connection
+  remain unfinished.
   Preserve each report's recorded metric and rules; current Hourglass source uses
   total points, while older reports include incompatible AUC-derived scores.
 - [ ] Add qualified multiple text connections and dedicated media work/results;

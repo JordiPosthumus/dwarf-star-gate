@@ -1,6 +1,7 @@
 # Hourglass integration status
 
-The owner-started benchmark workflow remains unfinished. Do not start a run,
+The owner-started workflow is implemented in development; real-run qualification
+and production connection remain unfinished. Do not start a run,
 drain a worker, alter benchmark routes or configure a recurring benchmark merely
 because a report is available. Initial runs use the owner's chosen direct-server
 setup and time window. The benchmark itself remains Hourglass.
@@ -85,9 +86,8 @@ facts or change the installation's existing model-provider privacy boundary.
 Validation covers file replacement/failure handling, bounded reads, optional
 associations, normal dashboard startup, preserved answer evidence and research
 identifier filtering. Browser and native Hermes checks use synthetic reports and
-a scripted model provider; they prove wiring, not model performance. Running a
-benchmark, measuring contention and approving a server configuration remain
-separate unfinished parts of the plan.
+a scripted model provider; they prove wiring, not model performance. Real-run qualification, measured contention and approving a server configuration
+remain separate unfinished parts of the plan.
 
 ## Native console adapter (development only)
 
@@ -107,12 +107,48 @@ permission to replay. Native validation rejection is reported without exposing
 its error body. The visible settings are a limited summary; the full native
 Hourglass entry, including its existing overrides, remains authoritative.
 
-This adapter is not yet connected to a dashboard start button. Before exposing
-it, the dashboard must durably record intent before submission, retain the native
-job receipt and provenance, recover observation after a dashboard restart, and
-make an uncertain acceptance visible for reconciliation in Hourglass. It must
-not infer cancellation, restart an uncertain run, or create periodic execution.
-The one-use in-memory review ID is not a replacement for that durable receipt.
+The development Evidence tab now provides Review measurement, a free-window
+confirmation and Start one-hour measurement. Start intent is flushed to private
+`runtime/hourglass/runs.json` before submission; the native job receipt is saved
+before success is shown. Duplicate submissions return the existing receipt.
+Dashboard restart resumes observation of known jobs without submitting them again.
+An interrupted submission remains uncertain. The owner can check the native
+console and record that no related work remains active; this is an explicit owner
+statement, never reconstructed acceptance or automatic cancellation.
+
+While an owned run needs observation or a terminal report is missing, the existing
+dashboard reads its status every 15 seconds. This timer cannot start a run. Native
+aggregate previews are projected through the existing report allowlist, saved
+with the run and shown in Evidence and Genie context. Result collection neither
+publishes to GitHub nor reads question/answer details into Genie. Measurement
+receipts give chat the worker, state, dates and attention flag; endpoint settings,
+raw errors and native task data are excluded from that chat projection.
+
+Private history is retained, with the latest 20 runs displayed and up to 50 saved
+run summaries supplied alongside explicitly selected reports. The single-dashboard
+history file is bounded at 4 MiB; reaching the bound stops new writes/starts rather
+than discarding earlier measurements. Preserve it when moving the installation.
+A missing native job or unavailable console preserves the receipt and its last
+observation, with an attention message. Nothing is automatically resumed or stopped.
+
+Configure explicitly in private Star Gate settings:
+
+```json
+"hourglass_console": {
+  "url": "http://127.0.0.1:4534",
+  "targets": [
+    {"model": "A saved Hourglass model name", "worker_id": "example-worker", "route": "direct"}
+  ]
+}
+```
+
+The target name must match a saved Hourglass entry. The worker and route are
+operator-supplied associations, not inferred topology or traffic isolation. The
+review links the current approved Star Gate record if one exists and says when
+none exists. Existing native overrides remain in effect; Star Gate does not edit
+Hourglass model declarations or gateway routes. No configuration means the controls
+are absent and no Hourglass service is contacted. Hourglass must already be running;
+Star Gate does not install or start its separate application.
 
 The inspected local Hourglass working tree supports API version 2 with these
 revision guards. Native enqueue checks in a temporary synthetic workspace

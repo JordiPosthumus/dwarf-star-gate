@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import {activityForChat} from './genie-chat-activity.mjs';
 import {recordsForChat} from './server-records.mjs';
 import {hourglassForChat} from './hourglass-reports.mjs';
+import {hourglassRunsForChat} from './hourglass-runs.mjs';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {GenieStudy,STUDY_INSTRUCTIONS} from './genie-study.mjs';
@@ -22,6 +23,7 @@ export function chatContext(snapshot={}) {
     servers:(g?.workers??[]).map(w=>take(w,['id','model','backend','context_length','is_healthy','drained','load','queued','active_seconds','quarantine','model_aliases'])),
     configuration_records:recordsForChat(snapshot.server_records),
     hourglass_reports:hourglassForChat(snapshot.hourglass_reports),
+    hourglass_measurements:hourglassRunsForChat(snapshot.hourglass_measurements),
     operational_activity:activityForChat(snapshot),
     scope:'Observed setup only. Missing fields are unknown. No credentials, raw requests or server-control tools are available in this chat.',
   };

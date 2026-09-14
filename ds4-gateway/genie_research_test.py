@@ -51,8 +51,8 @@ class ResearchValidation(unittest.TestCase):
         row = {'report_revision': identifiers[0], 'association': {'worker_id': identifiers[1], 'approved_configuration_revision': identifiers[2]},
                'summary': dict(zip(('run_key', 'configuration_key', 'machine_key', 'bank_fingerprint'), identifiers[3:]))}
         register_research({'search_url': 'http://example.invalid', 'extract_url': 'http://example.invalid'},
-                          {'hourglass_reports': {'reports': [row]}}, lambda _, **kw: self.events.append(kw['event']))
-        for value in identifiers:
+                          {'hourglass_reports': {'reports': [row]}, 'hourglass_measurements': {'runs': [{'id': 'private-measurement', 'worker_id': 'measurement-worker'}]}}, lambda _, **kw: self.events.append(kw['event']))
+        for value in identifiers + ['private-measurement', 'measurement-worker']:
             self.assertIn('"error"', self.handlers['web_search']({'query': 'compare ' + value}))
         self.network.assert_not_called()
 
