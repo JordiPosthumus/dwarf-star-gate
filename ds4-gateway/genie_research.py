@@ -33,6 +33,11 @@ def register_research(config, context, emit):
     for row in activity.get("reviews", []) + activity.get("actions", []):
         private_names.extend(row[key].lower() for key in ("worker", "source", "destination", "id")
                              if isinstance(row.get(key), str) and row[key])
+    for row in context.get("hourglass_reports", {}).get("reports", []):
+        for fields, keys in [(row, ("report_revision",)),
+                             (row.get("association", {}), ("worker_id", "approved_configuration_revision")),
+                             (row.get("summary", {}), ("run_key", "configuration_key", "machine_key", "bank_fingerprint"))]:
+            private_names.extend(fields[key].lower() for key in keys if isinstance(fields.get(key), str) and fields[key])
 
     def public_input(value):
         if not isinstance(value, str) or not value.strip() or len(value) > 2000:

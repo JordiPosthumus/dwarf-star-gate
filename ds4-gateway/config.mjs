@@ -20,6 +20,10 @@ export function loadConfig(explicit,options) {
   };
   config.state_file=local(config.state_file,'state_file');
   if(config.server_records_directory!=null)config.server_records_directory=local(config.server_records_directory,'server_records_directory');
+  if(config.hourglass_reports!==undefined){
+    if(!Array.isArray(config.hourglass_reports))throw new Error('hourglass_reports must be an array');
+    config.hourglass_reports=config.hourglass_reports.map(entry=>({...entry,file:local(entry?.file,'hourglass_reports.file')}));
+  }
   if(config.control_socket!=null)config.control_socket=local(config.control_socket,'control_socket');
   if(config.continuity_door?.control_socket!=null)config.continuity_door.control_socket=local(config.continuity_door.control_socket,'continuity_door.control_socket');
   if(config.telemetry_files && typeof config.telemetry_files==='object'&&!Array.isArray(config.telemetry_files))

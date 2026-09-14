@@ -1,5 +1,23 @@
 # Star Gate work log
 
+## 2026-09-14 — Saved Hourglass results in Evidence and chat (development)
+
+Explicit private report references now supply bounded summaries to the Evidence
+panel and conversational Genie. Preserve exact score/metric, dates, partial state,
+protocol and timing metadata; associations are operator supplied, never inferred
+approval or live configuration proof. Answers retain their report content revision
+and evidence after a report changes. Missing/broken files cannot reuse stale data.
+Raw reports and paths are not served; research inputs exclude private report IDs.
+Owner-started benchmark execution remains unfinished. No production settings,
+benchmark jobs or model-server capabilities changed.
+
+Validation: 754 full-suite tests passed, zero failed, three optional native Hermes
+tests skipped; four Python research checks and syntax checks passed. A separate
+browser check using the installed pinned Hermes runtime and scripted streaming
+provider completed a chat, exposed both metric versions and supplied conditions,
+and retained two report revisions plus one unavailable report in answer evidence.
+The source notes and file paths were absent from the actual provider request.
+
 ## 2026-09-14 — Native Hourglass aggregate projection (development)
 
 Inspected current Hourglass report generation and a retained aggregate report.
