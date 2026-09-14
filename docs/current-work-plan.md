@@ -29,8 +29,9 @@ deployment receipts stay outside this public repository.
   its recommendations. Exact production promotion is tracked per release.
 - [x] Use the configured Hermes runtime and current Genie identity for fleet
   reviews, preserving provider and guarded-action contracts.
-- [ ] Unify conversational and background memory/activity presentation; retain
-  the owner's question-priority exception for Genie's own routine review.
+- [x] Connect conversational questions to the existing exception for yielding
+  Genie's own routine review, retaining action reviews and unrelated work.
+- [ ] Unify conversational and background memory/activity presentation.
 - [ ] Reconcile recovery enrollment with approved records and demonstrated
   restoration. Add approved drain/apply/verify/return workflows through the
   existing mutation path; rollback claims require a retained, proven version.

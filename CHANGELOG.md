@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-09-14 — Chat questions take precedence over routine reviews
+
+The normal Genie chat now uses the existing owner-question exception. Accepted,
+saved questions yield only Genie's own routine review; action and manual reviews
+finish first. Waiting replies say so and use a fresh setup snapshot when they
+start. Routine reviews wait while chat is active; urgent action offers retain
+their existing eligibility. Other conversations and gateway requests continue.
+
 ## 2026-09-14 — Hermes fleet reviews share Genie’s identity
 
 When conversational Genie is configured, routine and action-offer reviews now

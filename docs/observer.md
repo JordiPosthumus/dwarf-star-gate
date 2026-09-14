@@ -14,8 +14,13 @@ assignment, configured deadlines, reasoning and the 8,192-token review allowance
 are preserved. A private loopback adapter permits only one upstream inference
 attempt, so a Hermes retry cannot replay a possibly dispatched request. Witnessed
 connection refusal retains the existing dedicated-provider fallback proof.
-An owner question can replace Genie's own routine review; action-offer reviews
-finish first and other running gateway work is never cancelled by priority.
+Both normal conversational chat and the older fleet Ask control preserve the
+owner-question exception. A saved chat question can replace Genie's own routine
+review. An action-offer or manual review finishes before the waiting chat starts;
+its answer then receives a fresh setup snapshot. Routine reviews wait while chat
+is active, but urgent action offers remain eligible. Other conversations and
+running gateway requests are never cancelled by this exception. Duplicate,
+invalid or unsaved chat submissions do not interrupt a review.
 
 Installations without conversational Hermes configuration retain the existing
 direct-provider reviewer. Configured Hermes identity/runtime failures are surfaced;

@@ -1472,3 +1472,16 @@ studies, assignment, testing and dashboard regressions are retained. Real-model
 review receipts and production promotion are tracked privately. This integrates
 runtime/identity; shared chat/notebook history and activity presentation remain
 separate work.
+
+
+## Conversational owner-question coordination
+
+Connected the persisted chat submission path to the existing fleet reviewer.
+Only an accepted question can yield a scheduled review; action/manual review
+completion is awaited. No new queue or cancellation authority. The chat retains
+its saved acceptance, displays its wait, refreshes setup before dispatch and
+rechecks shutdown/testing. Concurrent chats keep running. Routine ticks defer
+while questions are active; urgent action offers keep their existing path.
+Regression coverage includes duplicate/rejected/unsaved submissions, action
+waiting, independent conversations, fresh context, shutdown/testing and routine
+versus urgent tick behavior. Ordinary request settings and tools are unchanged.

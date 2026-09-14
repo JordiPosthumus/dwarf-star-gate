@@ -34,7 +34,7 @@ if(panel){
       const article=text('article','','conversation-message');article.dataset.role=m.role;article.dataset.messageId=m.id;
       article.append(text('p',m.role==='user'?'You':'Genie','conversation-author'));
       const body=text('div','','conversation-text');body.append(format(m.text));article.append(body);
-      if(m.state==='working'&&!m.text)article.append(text('p','Waiting for the model','conversation-thinking'));
+      if(m.state==='working'&&!m.text)article.append(text('p',m.waiting_for_review==='scheduled'?'Genie is yielding his routine review…':m.waiting_for_review?'Waiting for Genie’s current review to finish…':'Waiting for the model','conversation-thinking'));
       if(m.error)article.append(text('p',m.error,'conversation-error'));
       if(m.role==='assistant'&&m.research?.events?.length){
         const events=m.research.events??[],last=events.at(-1);
