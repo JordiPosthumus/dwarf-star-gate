@@ -1498,3 +1498,15 @@ commands are not included. The chat answer saves the exact projection alongside
 its existing setup context; the setup disclosure gives record counts. No new
 journal or model call is added. Tests cover private-field omission, partial and
 failed records, source attribution, bounded selection and reload persistence.
+
+
+## Configuration review and nonblocking record reads
+
+Added a read-only comparison to the existing per-worker Settings disclosure.
+Recorded generation/thinking fields now pass through the same explicit allowlist
+to the UI and chat. Zero, off, missing records and unknown values stay distinct.
+No approval, record mutation, restore action or engine setting change is included.
+The reader now opens nonblocking, verifies a regular file, reads only the checked
+length and rejects detected size/timestamp changes. A disposable FIFO reproduced
+the original blocking behavior; fixed code rejected it promptly and preserved it.
+This is not authentication of a hostile or concurrently rewritten record.

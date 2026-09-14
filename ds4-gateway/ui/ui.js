@@ -527,6 +527,16 @@ function renderHealthWire(snapshot) {
   // Polling preserves the animated track rather than restarting its animation.
   $('health-wire-track').style.animationDuration=`${Math.max(12,$('health-wire-text').getBoundingClientRect().width/52)}s`;
 }
+function configurationRows(row){
+  const fields=[['Runtime','runtime.name'],['Runtime version','runtime.version'],['Build','runtime.build'],['Model','model.name'],['Quantization','model.quantization'],
+    ['Context tokens','settings.context_length'],['Maximum output tokens','settings.max_output_tokens'],['Server concurrency','settings.server_concurrency'],['Prefill batch tokens','settings.prefill_batch_tokens'],
+    ['KV cache precision','settings.kv_cache_dtype'],['Prefix caching','settings.prefix_caching'],['Speculative method','settings.speculative_decoding.method'],['Speculative tokens','settings.speculative_decoding.tokens'],
+    ['Thinking enabled','serving_contract.chat_template_defaults.enable_thinking'],['Thinking preserved','serving_contract.chat_template_defaults.preserve_thinking'],['Reasoning effort','serving_contract.chat_template_defaults.reasoning_effort'],
+    ['Suppress EOS during reasoning','serving_contract.reasoning.suppress_eos_in_reasoning'],['GPU memory fraction','serving_contract.gpu_memory_utilization'],
+    ['Temperature','serving_contract.generation_defaults.temperature'],['Top-p','serving_contract.generation_defaults.top_p'],['Top-k','serving_contract.generation_defaults.top_k'],
+    ['Min-p','serving_contract.generation_defaults.min_p'],['Repetition penalty','serving_contract.generation_defaults.repetition_penalty'],['Generation output default','serving_contract.generation_defaults.max_new_tokens']];
+  return fields.map(([label,key])=>({label,values:['observed','approved','proposed'].map(kind=>{const record=row[kind];if(!record)return {present:false,value:null};return {present:true,value:key.split('.').reduce((v,k)=>v?.[k],record)??null};})})).filter(r=>r.values.some(v=>v.value!==null));
+}
 function renderServerRecords(value){
   const panel=$('server-records');if(!panel)return;panel.hidden=!value?.configured;
   const items=$('server-record-items');if(!value?.configured){items.replaceChildren();return;}
@@ -540,9 +550,14 @@ function renderServerRecords(value){
       if(settings.context_length!==undefined)parts.push(`context ${settings.context_length?.toLocaleString()??'unknown'}`);
       if(settings.server_concurrency!==undefined)parts.push(`server concurrency ${settings.server_concurrency??'unknown'}`);
       p.textContent=`${kind[0].toUpperCase()+kind.slice(1)} · ${new Date(record.recorded_at).toLocaleString()} · ${parts.join(' · ')}`;entry.append(p);
-      const proof=document.createElement('p');proof.className='muted';proof.textContent=`Revision ${record.revision.slice(0,12)} · restore ${record.restoration.drill.status==='restored-in-drill'?'demonstrated in a recorded drill':'unproven'}`;entry.append(proof);
+      const proof=document.createElement('p');proof.className='muted';proof.textContent=`Revision ${record.revision?.slice(0,12)??'unavailable'} · restore ${record.restoration.drill.status==='restored-in-drill'?'demonstrated in a recorded drill':'unproven'}`;entry.append(proof);
       if(record.discrepancies.length){const warning=document.createElement('p');warning.textContent='Differences to review: '+record.discrepancies.map(v=>({configured_route_differs:'startup route differs from the saved live route',recovery_binding_differs:'recovery enrollment uses a different route',launcher_differs:'launcher differs from the inspected process',source_has_local_changes:'runtime source has local modifications',runtime_settings_unverified:'some running settings remain unverified'})[v]).join('; ');entry.append(warning);}
     }
+    const comparison=document.createElement('details'),label=document.createElement('summary');label.textContent='Compare recorded settings';comparison.append(label);
+    const scope=document.createElement('p');scope.className='muted';scope.textContent='Recorded values only. Unknown is not a default, and a proposed value is not approval to apply it.';comparison.append(scope);
+    const table=document.createElement('table'),head=document.createElement('thead'),header=document.createElement('tr');
+    for(const title of ['Setting','Observed','Approved','Proposed']){const th=document.createElement('th');th.textContent=title;header.append(th);}head.append(header);table.append(head);
+    const body=document.createElement('tbody');for(const r of configurationRows(row)){const tr=document.createElement('tr'),name=document.createElement('th');name.scope='row';name.textContent=r.label;tr.append(name);for(const cell of r.values){const td=document.createElement('td');td.style.overflowWrap='anywhere';td.textContent=!cell.present?'No record':cell.value===null?'Unknown':typeof cell.value==='boolean'?(cell.value?'On':'Off'):String(cell.value);tr.append(td);}body.append(tr);}table.append(body);const wrap=document.createElement('div');wrap.className='table-wrap';wrap.tabIndex=0;wrap.setAttribute('role','region');wrap.setAttribute('aria-label',`Configuration comparison for ${row.worker_id}`);wrap.append(table);comparison.append(wrap);entry.append(comparison);
     items.append(entry);
   }
   if(value.unavailable?.length){const p=document.createElement('p');p.textContent='Some configuration records could not be read. Existing files were preserved.';items.append(p);}

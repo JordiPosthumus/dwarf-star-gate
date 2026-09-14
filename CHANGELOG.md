@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-09-14 — Compare recorded server configurations
+
+Settings can compare observed, approved and proposed records side by side,
+including recorded generation, thinking, cache, output and concurrency settings.
+Unknown values remain explicit; viewing a proposal never approves or applies it.
+Record reads also reject named pipes promptly instead of blocking the dashboard,
+and reject detected changes during a bounded file read. Existing files are preserved.
+
 ## 2026-09-14 — Genie chat can explain operational receipts
 
 Chat now receives bounded review metadata, pool-placement receipts, recovery

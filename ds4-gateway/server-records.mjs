@@ -13,7 +13,9 @@ const pick=(v,fields,convert)=>Object.fromEntries(fields.filter(k=>v?.[k]!==unde
 export function recordSummary(record,kind,workerId,revision){
   if(record?.schema!==1||record.worker_id!==workerId||record.kind!==kind||!date(record.recorded_at)||!object(record.runtime)||!object(record.model))throw new Error('Invalid configuration record');
   if(kind==='approved'&&(!date(record.approval?.at)||!text(record.approval?.reference)))throw new Error('Approval receipt missing');
-  return safeSummary({...record,revision,restoration:{...record.restoration,drill:{...record.restoration?.drill,
+  return safeSummary({...record,revision,serving_contract:{generation_defaults:record.configuration?.generation_defaults,
+    chat_template_defaults:record.configuration?.chat_template_defaults,reasoning:record.configuration?.reasoning_config,
+    gpu_memory_utilization:record.configuration?.gpu_memory_utilization},restoration:{...record.restoration,drill:{...record.restoration?.drill,
     receipt_revision:text(record.restoration?.drill?.receipt)?createHash('sha256').update(record.restoration.drill.receipt).digest('hex'):null}}});
 }
 function safeSummary(record){
@@ -26,6 +28,13 @@ function safeSummary(record){
       ...pick(record.settings,['kv_cache_dtype'],text),
       ...(typeof record.settings?.prefix_caching==='boolean'?{prefix_caching:record.settings.prefix_caching}:{}),
       ...(object(record.settings?.speculative_decoding)?{speculative_decoding:{method:text(record.settings.speculative_decoding.method),tokens:number(record.settings.speculative_decoding.tokens)}}:{})},
+    serving_contract:{
+      generation_defaults:pick(record.serving_contract?.generation_defaults,['temperature','top_p','top_k','repetition_penalty','max_new_tokens','min_p'],v=>Number.isFinite(v)?v:null),
+      chat_template_defaults:{...pick(record.serving_contract?.chat_template_defaults,['enable_thinking','preserve_thinking'],v=>typeof v==='boolean'?v:null),
+        ...pick(record.serving_contract?.chat_template_defaults,['reasoning_effort'],text)},
+      reasoning:pick(record.serving_contract?.reasoning,['suppress_eos_in_reasoning'],v=>typeof v==='boolean'?v:null),
+      ...pick(record.serving_contract,['gpu_memory_utilization'],number),
+    },
     approval:kind==='approved'?{at:record.approval.at}:null,
     restoration:{previous_approved_revision:text(record.restoration?.previous_approved_revision),
       retention:['retained','not_retained','unverified'].includes(record.restoration?.retention)?record.restoration.retention:'unverified',
@@ -54,9 +63,13 @@ export class ServerRecords {
           const folder=path.join(this.directory,kind),file=path.join(folder,id+'.json');
           // No symlink traversal into a credential file or unrelated directory.
           if(fs.lstatSync(this.directory).isSymbolicLink()||fs.lstatSync(folder).isSymbolicLink())throw new Error();
-          fd=fs.openSync(file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);const stat=fs.fstatSync(fd);
+          fd=fs.openSync(file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK);const stat=fs.fstatSync(fd);
           if(!stat.isFile()||stat.size>1024*1024)throw new Error();
-          const bytes=fs.readFileSync(fd),value=JSON.parse(bytes);
+          // Read only the checked length; never wait on a FIFO or follow growth.
+          const bytes=Buffer.alloc(stat.size);let offset=0;
+          while(offset<bytes.length){const n=fs.readSync(fd,bytes,offset,bytes.length-offset,offset);if(n<=0)throw new Error();offset+=n;}
+          const after=fs.fstatSync(fd);if(after.size!==stat.size||after.mtimeMs!==stat.mtimeMs||after.ctimeMs!==stat.ctimeMs)throw new Error();
+          const value=JSON.parse(bytes);
           row[kind]=recordSummary(value,kind,id,createHash('sha256').update(bytes).digest('hex'));
         }catch(error){if(error.code!=='ENOENT')unavailable.push({worker_id:id,kind});}
         finally{if(fd!==undefined)fs.closeSync(fd);}

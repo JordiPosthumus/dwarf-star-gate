@@ -1150,3 +1150,9 @@ test('fleet reviewer reuses matching chat reasoning and preserves independent pr
  config.genie_chat.model='another-model';assert.equal(genieRuntimeConfig(config).reasoning_effort,undefined);
  config.genie_chat.model=config.model;config.genie_chat.url='http://127.0.0.1:9001/v1';assert.equal(genieRuntimeConfig(config).reasoning_effort,undefined);
 });
+
+test('configuration comparison preserves zero/off and distinguishes missing records from unknown settings',()=>{
+ const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0],context=vm.createContext({});vm.runInContext(source,context);
+ const rows=JSON.parse(vm.runInContext(`JSON.stringify(configurationRows({observed:{settings:{context_length:262144}},approved:null,proposed:{settings:{context_length:262144},serving_contract:{generation_defaults:{temperature:0,top_k:20},chat_template_defaults:{enable_thinking:false,reasoning_effort:'xhigh'}}}}))`,context));
+ assert.deepEqual(rows.find(r=>r.label==='Temperature').values,[{present:true,value:null},{present:false,value:null},{present:true,value:0}]);assert.equal(rows.find(r=>r.label==='Thinking enabled').values[2].value,false);assert.equal(rows.find(r=>r.label==='Top-k').values[2].value,20);assert.equal(rows.find(r=>r.label==='Reasoning effort').values[2].value,'xhigh');
+});
