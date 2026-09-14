@@ -44,3 +44,20 @@ test('alternate snapshot suppliers still pass through the chat allowlist',()=>{
  const s={configured:true,records:[{worker_id:'example',observed:{...record(),revision:'a'.repeat(64),api_key:'PRIVATE_TOKEN'}}],extra:'PRIVATE_CONFIG'};
  assert.doesNotMatch(JSON.stringify(recordsForChat(s)),/PRIVATE_TOKEN|PRIVATE_CONFIG|PRIVATE_COMMAND/);
 });
+
+test('recorded generation and thinking settings survive both projections without exposing recipes',t=>{
+ const {reader,write}=fixture(t);const r=record('proposed');r.configuration={...r.configuration,generation_defaults:{temperature:0,top_p:.95,top_k:-1,min_p:0,max_new_tokens:262144,repetition_penalty:1,private_note:'PRIVATE_DEFAULT'},chat_template_defaults:{enable_thinking:true,preserve_thinking:false,reasoning_effort:'xhigh',template:'PRIVATE_TEMPLATE'},reasoning_config:{suppress_eos_in_reasoning:true,command:'PRIVATE_COMMAND'},gpu_memory_utilization:.8};write(r);
+ const s=reader.snapshot(['example']),value=s.records[0].proposed.serving_contract,chat=recordsForChat(s).records[0].proposed;
+ assert.equal(value.generation_defaults.temperature,0);assert.equal(value.generation_defaults.top_k,-1);assert.equal(value.chat_template_defaults.preserve_thinking,false);assert.equal(value.chat_template_defaults.reasoning_effort,'xhigh');assert.equal(value.reasoning.suppress_eos_in_reasoning,true);assert.equal(value.gpu_memory_utilization,.8);assert.deepEqual(chat.serving_contract,value);assert.doesNotMatch(JSON.stringify(chat),/PRIVATE_|credential_reference|private\/example/);
+});
+test('missing serving fields remain unknown instead of becoming invented defaults',t=>{
+ const {reader,write}=fixture(t);write(record());const c=reader.snapshot(['example']).records[0].observed.serving_contract;
+ assert.deepEqual(c.generation_defaults,{});assert.deepEqual(c.chat_template_defaults,{});assert.equal(c.gpu_memory_utilization,undefined);
+});
+import {execFileSync,spawnSync} from 'node:child_process';
+test('a named pipe record is rejected promptly without waiting for a writer or replacing it',t=>{
+ const {root}=fixture(t),file=path.join(root,'proposed/example.json');execFileSync('mkfifo',[file]);
+ const module=new URL('./server-records.mjs',import.meta.url).href;
+ const child=spawnSync(process.execPath,['--input-type=module','-e',`import {ServerRecords} from ${JSON.stringify(module)};console.log(JSON.stringify(new ServerRecords(${JSON.stringify(root)}).snapshot(['example'])));`],{encoding:'utf8',timeout:2000});
+ assert.equal(child.error,undefined);assert.equal(child.status,0);assert.deepEqual(JSON.parse(child.stdout).unavailable,[{worker_id:'example',kind:'proposed'}]);assert.equal(fs.lstatSync(file).isFIFO(),true);
+});

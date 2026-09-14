@@ -29,6 +29,18 @@ Minimal synthetic observation:
 }
 ```
 
+In Settings, expand a worker and choose **Compare recorded settings** for an
+observed/approved/proposed comparison. Zero and off remain explicit values;
+missing records and unknown settings remain distinct. The comparison does not
+approve or apply anything.
+
+The allowlisted serving contract can also expose recorded
+`configuration.generation_defaults` (temperature, top-p, top-k, min-p, repetition
+penalty and output default), `chat_template_defaults` (thinking enabled/preserved
+and reasoning effort), `reasoning_config.suppress_eos_in_reasoning` and
+`gpu_memory_utilization`. These are copied as recorded; no defaults are inferred
+from omitted fields, and no launch commands or template bodies are exposed.
+
 Record only demonstrated settings; omit unknown values. Distinguish settings read
 from a launcher or saved file from effective running settings. Use `configuration`
 and `evidence` for private launch commands, environment requirements, paths,
@@ -64,7 +76,9 @@ choose that provider accordingly.
 
 Invalid records are reported without rewriting them or preventing other records
 from loading. The reader rejects symlink library/category entries and symlink
-files; it is not a sandbox for a hostile filesystem administrator. Keep the entire
+files, rejects named pipes without waiting for a writer, and reads only the
+checked file length. A detected size/timestamp change rejects that read. These
+checks do not authenticate content or make concurrent edits atomic; it is not a sandbox for a hostile filesystem administrator. Keep the entire
 library path operator-controlled. Files larger than 1 MiB are rejected. This
 feature does not change recovery enrollment, schedule inspections, or establish
 restore readiness by itself.
