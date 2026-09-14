@@ -61,6 +61,15 @@ timing and identity metadata, explicit partial/unknown status, and no raw questi
 answer, trace or note payload. Five tests pass; a real historical report retains
 its exact score and older metric. UI/chat wiring, worker/configuration association
 and owner-started runs remain unfinished. No benchmark or infrastructure change.
+## 2026-09-14 — Concurrent inference cannot starve health probes (development)
+
+A synthetic worker with all 17 configured inference connections occupied exposed
+a false unhealthy transition: its model-list probe timed out in the gateway's
+HTTP agent queue without reaching the responsive backend. Health probes now use
+their own connection while preserving authentication, deadlines and model/context
+checks. The regression verifies the probe reaches the backend with all requests
+still active and no cancellations. This remains on the concurrency development
+branch; it neither qualifies nor enables extra capacity on a real model server.
 
 ## 2026-09-14 — Concurrent gateway slots
 

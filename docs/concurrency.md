@@ -14,6 +14,10 @@ active stream. Drain, recovery and removal checks account for every active
 request. The dashboard counts request slots rather than treating each worker
 as exactly one slot.
 
+Health probes use a separate HTTP connection, so occupied inference connections
+cannot prevent a responsive backend from receiving its health check. Existing
+health deadlines and compatibility checks still apply.
+
 For a newly registered or file-configured worker, the capacity is an optional
 worker field. Saved worker registrations take precedence over initial config.
 For an existing worker, pause it, let all admitted work finish, and use
