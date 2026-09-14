@@ -35,9 +35,10 @@ deployment receipts stay outside this public repository.
   existing stores; retain the exact evidence with each answer.
 - [x] Optional shared operational notebook context with exact saved revisions;
   activation remains an installation-specific provider-sharing decision.
-- [x] Development: accept saved follow-ups while Genie answers, preserve their
-  order and pause them after an unfinished answer. Real release promotion and
-  the full later inbox/demand contract remain separate qualification steps.
+- [x] Accept saved follow-ups while Genie answers, preserve their order and
+  pause them after an unfinished answer. A real two-turn chat verified queued
+  dispatch and follow-up context; the full later inbox/demand contract remains
+  separate work.
 - [ ] Reconcile recovery enrollment with approved records and demonstrated
   restoration. Add approved drain/apply/verify/return workflows through the
   existing mutation path; rollback claims require a retained, proven version.

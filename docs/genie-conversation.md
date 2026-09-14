@@ -293,7 +293,7 @@ private text; only enable sharing for notes appropriate for this provider and ch
 No live installation is opted in by installing this code.
 
 
-## Follow-up queue (development)
+## Follow-up queue
 
 You can send another question while Genie answers. Each question is saved before
 acceptance and shown as waiting, then answered in conversation order. The next
