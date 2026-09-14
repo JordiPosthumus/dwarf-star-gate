@@ -56,6 +56,18 @@ class ResearchValidation(unittest.TestCase):
             self.assertIn('"error"', self.handlers['web_search']({'query': 'compare ' + value}))
         self.network.assert_not_called()
 
+    def test_notebook_reference_identifiers_are_withheld_from_public_tools(self):
+        identifiers = ['private-note', 'private-note-digest', 'former-worker', 'private-operation', 'private-request', 'private-candidate', 'private-transition']
+        note = {'id': identifiers[0], 'source_digest': identifiers[1],
+                'data': dict(zip(('worker', 'operation_id', 'request_id', 'candidate_id'), identifiers[2:6])),
+                'recent_transitions': [{'source_digest': identifiers[6]}]}
+        register_research({'search_url': 'http://example.invalid', 'extract_url': 'http://example.invalid'},
+                          {'operational_notebook': {'notes': [note]}}, lambda _, **kw: self.events.append(kw['event']))
+        for value in identifiers:
+            self.assertIn('"error"', self.handlers['web_search']({'query': 'research ' + value}))
+            self.assertIn('"error"', self.handlers['web_extract']({'url': 'https://example.invalid/' + value}))
+        self.network.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

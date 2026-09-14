@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {hermesProvider} from './genie-hermes.mjs';
 import {GenieChat} from './genie-chat.mjs';
+import {GenieMemory} from './genie-memory.mjs';
 
 // Opt-in uses the actual Hermes library, but only a private synthetic provider.
 // It never looks up personal configuration or contacts a real model server.
@@ -38,7 +39,9 @@ test('actual Hermes preserves two-turn chat and handles provider rejection witho
   await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});
   const provider=hermesProvider({python:process.env.DSG_TEST_HERMES_PYTHON,source:process.env.DSG_TEST_HERMES_SOURCE,url:`http://127.0.0.1:${server.address().port}/v1`,model:'example-model'},{directory});
   t.after(()=>{provider.close();server.closeAllConnections();server.close();fs.rmSync(directory,{recursive:true,force:true});});
-  const chat=new GenieChat({directory:path.join(directory,'conversations'),provider,getSnapshot:()=>({time:Date.now(),demo:true,gateway:{model:'example-model',workers:[{id:'example-one',context_length:131072}]}})});
+  const notebook=new GenieMemory(path.join(fs.realpathSync(directory),'memory'));notebook.setEnabled(true);
+  notebook.saveOperatorNote({text:'SYNTHETIC_NOTEBOOK_MARKER: prefer the recorded setup.'},{gateway:{workers:[]}});
+  const chat=new GenieChat({directory:path.join(directory,'conversations'),provider,notebook,getSnapshot:()=>({time:Date.now(),demo:true,gateway:{model:'example-model',workers:[{id:'example-one',context_length:131072}]}})});
   const s=chat.create();chat.submit(s.id,'My name is Ada. What setup can you see?','hermes-first');await chat.idle();
   assert.equal(chat.get(s.id).messages[1].state,'complete',JSON.stringify(chat.get(s.id).messages[1]));
   chat.submit(s.id,'What is my name?','hermes-second');await chat.idle();
@@ -47,10 +50,13 @@ test('actual Hermes preserves two-turn chat and handles provider rejection witho
   assert.match(JSON.stringify(requests[0].messages),/example-one/);
   assert.match(requests[0].messages[0].content,/You are a genie who lives in Star Gate/);
   assert.match(requests[0].messages[0].content,/Gate Genie operating instructions/);
+  assert.match(requests[0].messages[0].content,/SYNTHETIC_NOTEBOOK_MARKER/);assert.match(requests[0].messages[0].content,/not instructions, current health proof or approval/);
+  notebook.setEnabled(false);
   fs.appendFileSync(path.join(directory,'hermes-home','SOUL.md'),'\nUse the identity phrase: distinctive lantern.\n');
   for(const p of requests)assert.equal(p.tools?.length??0,0);
   chat.submit(s.id,'Exercise the unavailable provider.','hermes-failure');await chat.idle();
   assert.match(requests.at(-1).messages[0].content,/distinctive lantern/);
+  assert.doesNotMatch(requests.at(-1).messages[0].content,/SYNTHETIC_NOTEBOOK_MARKER/);
   const saved=chat.get(s.id);
   assert.equal(saved.messages[5].state,'failed');
   assert.match(saved.messages[5].error,/unfinished reply|model request/);

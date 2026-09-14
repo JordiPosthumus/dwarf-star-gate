@@ -149,3 +149,33 @@ test('the exact operational evidence supplied to a chat answer survives conversa
  chat.submit(c.id,'What happened?','activity-question');await chat.idle();const saved=new GenieChat({directory:d}).get(c.id);
  assert.deepEqual(saved.messages[1].context.operational_activity,received.context.operational_activity);assert.equal(received.context.operational_activity.actions[1].state,'verified_paused');assert.doesNotMatch(JSON.stringify(received),/PRIVATE_|SECRET/);
 });
+
+import {GenieMemory} from './genie-memory.mjs';
+function notebookFixture(t){const memory=new GenieMemory(path.join(fs.realpathSync(directory(t)),'memory'));memory.setEnabled(true);const snapshot={time:1000,gateway:{workers:[{id:'worker-a'}]},genie:{memory:{enabled:true}}};const note=memory.saveOperatorNote({worker:'worker-a',text:'PRIVATE_OPERATIONAL_NOTE: preserve the existing configuration.'},snapshot);return {memory,snapshot,note};}
+test('chat notebook access is explicit, shared between conversations, bounded, and saved with exact revisions',async t=>{
+ const {memory,snapshot,note}=notebookFixture(t),calls=[];snapshot.genie.memory.notes=memory.retrieve(snapshot).notes;
+ const provider={generate:async input=>{calls.push(input);return {text:'Historical context received.'};}};
+ const disabled=new GenieChat({directory:directory(t),provider,getSnapshot:()=>snapshot});const off=disabled.create();disabled.submit(off.id,'What do you remember?','notebook-off');await disabled.idle();
+ assert.equal(disabled.status().notebook_access,false);assert.doesNotMatch(JSON.stringify(calls[0]),/PRIVATE_OPERATIONAL_NOTE/);
+ for(let i=0;i<15;i++)memory.saveOperatorNote({text:'Synthetic fleet preference '+i},snapshot);
+ const before=fs.readFileSync(memory.file),chat=new GenieChat({directory:directory(t),provider,getSnapshot:()=>snapshot,notebook:memory});
+ for(let i=0;i<2;i++){const session=chat.create();chat.submit(session.id,'What is recorded?','notebook-'+i);await chat.idle();const supplied=calls.at(-1).context.operational_notebook;assert.equal(supplied.included,true);assert.equal(supplied.truncated,true);assert.equal(supplied.notes.length,12);assert.ok(Buffer.byteLength(JSON.stringify(supplied.notes))<16384+24);assert.equal(calls.at(-1).context.operational_activity.storage.notebook_included,true);const reloaded=new GenieChat({directory:chat.directory,provider,notebook:memory});assert.deepEqual(reloaded.get(session.id).messages[1].context.operational_notebook,supplied);}
+ assert.ok(fs.readFileSync(memory.file).equals(before));assert.equal(memory.notes.get(note.id).revision,1);
+});
+test('a queued chat uses corrected notebook revisions at dispatch and keeps earlier answer evidence',async t=>{
+ const {memory,snapshot,note}=notebookFixture(t);let release;const gate=new Promise(r=>release=r),calls=[];
+ const chat=new GenieChat({directory:directory(t),getSnapshot:()=>snapshot,notebook:memory,runQuestion:async answer=>{await gate;return answer();},provider:{generate:async input=>{calls.push(input);return {text:'A recorded preference.'};}}});
+ const session=chat.create();chat.submit(session.id,'Check the current note.','notebook-wait');await Promise.resolve();
+ memory.saveOperatorNote({id:note.id,expected_revision:1,worker:'worker-a',text:'Corrected synthetic preference.'},snapshot);release();await chat.idle();
+ assert.equal(calls[0].context.operational_notebook.notes[0].revision,2);assert.equal(calls[0].context.operational_notebook.notes[0].verification,'operator_intent_not_authority');
+ memory.saveOperatorNote({id:note.id,expected_revision:2,worker:'worker-a',text:'Corrected synthetic preference.',state:'archived'},snapshot);
+ chat.submit(session.id,'Check again.','notebook-archived');await chat.idle();assert.deepEqual(calls[1].context.operational_notebook.notes,[]);assert.equal(chat.get(session.id).messages[1].context.operational_notebook.notes[0].revision,2);
+ assert.ok(!JSON.stringify(calls[1].history).includes('Corrected synthetic preference'));
+});
+test('disabled or unavailable notebook does not block chat or reuse earlier notebook context',async t=>{
+ const {memory,snapshot}=notebookFixture(t);let release;const gate=new Promise(r=>release=r),calls=[];
+ const chat=new GenieChat({directory:directory(t),getSnapshot:()=>snapshot,notebook:memory,runQuestion:async answer=>{await gate;return answer();},provider:{generate:async input=>{calls.push(input);return {text:'Available without notebook.'};}}});
+ const session=chat.create();chat.submit(session.id,'Question while waiting.','notebook-disable');await Promise.resolve();memory.setEnabled(false);release();await chat.idle();
+ assert.equal(calls[0].context.operational_notebook.reason,'memory_disabled');assert.doesNotMatch(JSON.stringify(calls[0]),/PRIVATE_OPERATIONAL_NOTE/);
+ memory.setEnabled(true);memory.error='PRIVATE_STORAGE_ERROR';chat.submit(session.id,'Still answer.','notebook-error');await chat.idle();assert.equal(calls[1].context.operational_notebook.reason,'notebook_unavailable');assert.doesNotMatch(JSON.stringify(calls[1]),/PRIVATE_STORAGE_ERROR|PRIVATE_OPERATIONAL_NOTE/);assert.equal(chat.get(session.id).messages.at(-1).state,'complete');
+});

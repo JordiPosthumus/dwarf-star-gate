@@ -8,7 +8,7 @@ import { once } from 'node:events';
 import vm from 'node:vm';
 import { setTimeout as delay } from 'node:timers/promises';
 import { parseTiming, safeGatewayEvent, DeviceTelemetry, JournalReader, journalProcessEpoch } from './telemetry.mjs';
-import { createDashboard, runDashboard, genieRuntimeConfig } from './dashboard.mjs';
+import { createDashboard, runDashboard, genieRuntimeConfig, genieChatConfig } from './dashboard.mjs';
 import { FileLogReader, parseLocalProcessStart, parseLocalTiming, telemetryFiles } from './file-telemetry.mjs';
 import {cacheInventoryDirectories} from './cache-inventory.mjs';
 import {GenieProviderLedger} from './genie-provider-ledger.mjs';
@@ -1155,4 +1155,28 @@ test('configuration comparison preserves zero/off and distinguishes missing reco
  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0],context=vm.createContext({});vm.runInContext(source,context);
  const rows=JSON.parse(vm.runInContext(`JSON.stringify(configurationRows({observed:{settings:{context_length:262144}},approved:null,proposed:{settings:{context_length:262144},serving_contract:{generation_defaults:{temperature:0,top_k:20},chat_template_defaults:{enable_thinking:false,reasoning_effort:'xhigh'}}}}))`,context));
  assert.deepEqual(rows.find(r=>r.label==='Temperature').values,[{present:true,value:null},{present:false,value:null},{present:true,value:0}]);assert.equal(rows.find(r=>r.label==='Thinking enabled').values[2].value,false);assert.equal(rows.find(r=>r.label==='Top-k').values[2].value,20);assert.equal(rows.find(r=>r.label==='Reasoning effort').values[2].value,'xhigh');
+});
+
+
+test('chat notebook access requires an explicit boolean installation setting',()=>{
+ const config={port:30000,genie_chat:{url:'http://127.0.0.1:30000/v1'}};
+ assert.equal(genieChatConfig(config).operational_notebook,undefined);
+ for(const value of [true,false])assert.equal(genieChatConfig({...config,genie_chat:{...config.genie_chat,operational_notebook:value}}).operational_notebook,value);
+ for(const value of ['true',1,null])assert.throws(()=>genieChatConfig({...config,genie_chat:{...config.genie_chat,operational_notebook:value}}),/must be boolean/);
+});
+
+
+test('real dashboard wires only explicit chat notebook access and keeps notes out of general status',async t=>{
+ const {GenieMemory}=await import('./genie-memory.mjs');
+ const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'sg-notebook-wiring-')));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ const memory=new GenieMemory(path.join(root,'runtime/genie/memory'));memory.setEnabled(true);memory.saveOperatorNote({text:'PRIVATE_WIRING_NOTE'},{gateway:{workers:[]}});const before=fs.readFileSync(memory.file);
+ const core=http.createServer((_req,res)=>res.end(JSON.stringify({version:1,model:'example',workers:[],healthy:0,total:0,active:0,queued:0})));core.listen(0,'127.0.0.1');await once(core,'listening');t.after(()=>{core.closeAllConnections();core.close();});
+ const source=path.join(root,'hermes-source');fs.mkdirSync(source);
+ for(const enabled of [undefined,true,false]){
+  const file=path.join(root,'config.json');fs.writeFileSync(file,JSON.stringify({port:core.address().port,api_key:'synthetic',nodes:[],genie:false,state_file:path.join(root,'runtime/state.json'),genie_chat:{source,python:'/usr/bin/python3',url:'http://example.invalid/v1',model:'example',...(enabled===undefined?{}:{operational_notebook:enabled})}}));
+  const app=await runDashboard(file,0);
+  try{const origin='http://127.0.0.1:'+app.server.address().port;const state=await(await fetch(origin+'/api/genie/chat')).json();assert.equal(state.notebook_access,enabled===true);for(const route of ['/api/status','/api/diagnostics'])assert.doesNotMatch(await(await fetch(origin+route)).text(),/PRIVATE_WIRING_NOTE/);}
+  finally{app.close();}
+ }
+ assert.ok(fs.readFileSync(memory.file).equals(before));
 });

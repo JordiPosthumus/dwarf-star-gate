@@ -41,6 +41,14 @@ def register_research(config, context, emit):
     for row in context.get("hourglass_measurements", {}).get("runs", []):
         private_names.extend(row[key].lower() for key in ("id", "worker_id") if isinstance(row.get(key), str) and row[key])
 
+    for note in context.get("operational_notebook", {}).get("notes", []):
+        for fields, keys in [(note, ("id", "source_digest")),
+                             (note.get("data", {}), ("worker", "operation_id", "request_id", "candidate_id"))]:
+            private_names.extend(fields[key].lower() for key in keys if isinstance(fields.get(key), str) and fields[key])
+        for transition in note.get("recent_transitions", []):
+            if isinstance(transition.get("source_digest"), str):
+                private_names.append(transition["source_digest"].lower())
+
     def public_input(value):
         if not isinstance(value, str) or not value.strip() or len(value) > 2000:
             raise ValueError("Use a short public topic or URL.")
