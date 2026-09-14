@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import sys
 from threading import Lock
+import time
 
 WIRE = sys.stdout
 WIRE_LOCK = Lock()
@@ -45,6 +46,22 @@ def main():
         if research:
             from genie_research import register_research, TOOLSET
             expected_tools = register_research(research, request["context"], emit)
+        # Only fixed phases and counts leave this callback. Never relay reasoning text.
+        progress = {"step": 0, "reasoning_chars": 0}
+        last_emit = [0.0]
+        def report(phase, force=False):
+            now = time.monotonic()
+            if not review and (force or now - last_emit[0] >= 1):
+                last_emit[0] = now
+                emit("progress", event={"phase": phase, **progress})
+        def step(number, _previous_tools):
+            progress["step"] = number
+            report("model_wait", True)
+        def reasoning(delta):
+            if isinstance(delta, str) and delta:
+                progress["reasoning_chars"] += len(delta)
+                report("reasoning")
+        report("starting", True)
         agent = AIAgent(
             base_url=p["url"], api_key=p["api_key"] or "local-provider",
             provider="custom", api_mode="chat_completions", model=p["model"],
@@ -52,6 +69,7 @@ def main():
             skip_context_files=True, skip_memory=True, skip_background_review=True,
             load_soul_identity=True, session_id=request["session_id"],
             max_tokens=p["max_tokens"], reasoning_config={"effort": p["reasoning_effort"]} if p["reasoning_effort"] is not None else {},
+            step_callback=None if review else step, reasoning_callback=None if review else reasoning,
             request_overrides={"extra_headers": {"x-dsg-observer": "gate-genie"}},
         )
         if {t.get("function", t).get("name") for t in agent.tools} != expected_tools:
