@@ -47,10 +47,10 @@ export class RoutingShadow {
     this.sessions.set(key,{...previous,node,started:this.now(),sequence:w.sequence});
     if(this.sessions.size>this.maxSessions)this.sessions.delete(this.sessions.keys().next().value);
   }
-  finished(node,session,{outcome,finish_reason,service_ms,usage,route,traffic_class}) {
+  finished(node,session,{outcome,finish_reason,service_ms,usage,route,traffic_class,remaining_active=0}) {
     if(!this.enabled)return;
     const w=this.worker(node);if(!w)return;
-    const now=this.now();w.idleAt=now;
+    const now=this.now();w.idleAt=remaining_active>0?null:now;
     const valid=outcome==='complete' && ['stop','tool_calls','function_call'].includes(finish_reason) &&
       finite(service_ms) && service_ms>0 && routes.has(route) && traffic_class!=='genie';
     const old=this.entry(node,session);
@@ -91,9 +91,10 @@ export class RoutingShadow {
   assess({job,home,candidates,reason,waiting_ms,session_busy}) {
     if(!this.enabled)return null;
     const estimates=candidates.map(c=>{
-      const values=this.durations(c.node,job),service_ms=values.length>=5?median(values):null;
+      const concurrent=(c.max_concurrent_requests??1)>1;
+      const values=this.durations(c.node,job),service_ms=!concurrent&&values.length>=5?median(values):null;
       const activeValues=c.active_job?this.durations(c.node,c.active_job):[];
-      const remaining_ms=c.active_job?conditionalRemaining(activeValues,c.active_elapsed_ms):0;
+      const remaining_ms=concurrent?null:c.active_job?conditionalRemaining(activeValues,c.active_elapsed_ms):0;
       // Only the home queue or a genuinely idle alternative can be compared in
       // this slice. Do not estimate arbitrary other queues on the request path.
       const ahead=c.node===home?c.ahead_jobs.map(j=>this.service(c.node,j)):c.queued?[null]:[];

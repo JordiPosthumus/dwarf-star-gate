@@ -278,8 +278,9 @@ a physical machine. Each server may have its own native context and cache settin
   configurable first-refusal window, then an eligible queue head may take a
   completely idle server under the exact [pre-dispatch handover](docs/queued-handover.md)
   safety contract.
-- Load-aware placement of **new** conversations; at most one active upstream request
-  through DSG per registered DS4 server. Extra requests wait in bounded FIFO queues.
+- Load-aware placement of **new** conversations using each worker’s explicit
+  request capacity (one by default). Extra requests wait in bounded queues with
+  explicit priority classes and ordered conversation turns.
   If a first DSG request was queued behind work and another server becomes free,
   DSG atomically hands that untouched request to the free server. It keeps the
   original client socket and deadline and never replays a body.
@@ -321,8 +322,10 @@ memory pressure. DS4 owns cache validity and GPU concurrency. Draining here does
 not prove a worker has no direct clients; verify those before stopping it.
 
 **Concurrency and dashboard counts:** one active request includes prefill, thinking
-and decode, for both streaming and non-streaming responses. Three healthy, enabled
-servers can handle up to three active gateway requests, one each; established
+and decode, for both streaming and non-streaming responses. Each worker has a configured gateway request capacity, defaulting to one.
+See [per-worker concurrency](docs/concurrency.md) for qualification and controls.
+With default capacities, three healthy, enabled servers handle up to three active
+gateway requests; established
 session affinity may still queue requests at a busy home while another server is
 idle during its warm-home first-refusal window. First/unaffined requests can take
 a newly free server immediately; established sessions become eligible after the

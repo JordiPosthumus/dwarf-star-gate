@@ -407,3 +407,8 @@ test('failed ticker exposes only a validated HTTP status without arbitrary provi
  const s=snapshot();assert.equal(tickerStatus(null,s,{error:'Model HTTP 400'}).model_http_status,400);
  for(const error of ['Model HTTP 400 PRIVATE','PRIVATE_ERROR','Model HTTP 999'])assert.equal(tickerStatus(null,s,{error}).model_http_status,undefined);
 });
+
+test('capacity counts configured concurrent slots and retains serial defaults',()=>{
+  const g={workers:[{is_healthy:true,load:2,queued:0,max_concurrent_requests:4},{is_healthy:true,load:1,queued:0},{is_healthy:true,drained:true,load:2,max_concurrent_requests:8}]};
+  assert.deepEqual(capacity(g),{eligible:5,occupied:3,free:2,percent:60});g.workers[0].queued=1;assert.equal(capacity(g).free,0);
+});

@@ -1,6 +1,6 @@
 // Operator-supplied routing endpoints only. No model launch commands or settings.
 import path from 'node:path';
-export const workerFields = ['id', 'url', 'ssh', 'ssh_fallbacks', 'remote_port', 'telemetry_service', 'backend', 'context_length', 'api_key_file', 'model_aliases'];
+export const workerFields = ['id', 'url', 'ssh', 'ssh_fallbacks', 'remote_port', 'telemetry_service', 'backend', 'context_length', 'api_key_file', 'model_aliases', 'max_concurrent_requests'];
 const keys = new Set(workerFields);
 const validSshAlias=value=>typeof value==='string'&&/^[a-zA-Z0-9][\w.@-]{0,252}$/.test(value);
 const fallbackList=(value,primary)=>{
@@ -22,6 +22,10 @@ export function workerConfig(raw, { registration = false } = {}) {
   if ((raw.backend !== 'openai' || raw.ssh) && (!local || !['/', '/v1', '/v1/'].includes(u.pathname))) throw new Error('Use a local HTTP endpoint or an SSH tunnel to a local port');
   const result = { id: raw.id, url: raw.backend === 'openai' ? `${u.origin}${u.pathname === '/' ? '/v1' : u.pathname.replace(/\/$/, '')}` : `http://127.0.0.1:${u.port}` };
   if (raw.backend !== undefined) result.backend = raw.backend;
+  if(raw.max_concurrent_requests!==undefined){
+    if(!Number.isSafeInteger(raw.max_concurrent_requests)||raw.max_concurrent_requests<1)throw new Error('Worker concurrent request capacity must be a positive whole number');
+    result.max_concurrent_requests=raw.max_concurrent_requests;
+  }
   if (raw.context_length !== undefined) {
     if (!Number.isSafeInteger(raw.context_length) || raw.context_length < 1) throw new Error('Worker context length must be a positive whole token count');
     result.context_length = raw.context_length;

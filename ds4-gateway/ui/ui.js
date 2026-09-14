@@ -28,6 +28,7 @@ function thinkingInfo(t) {
   return {label:mode==='none'?'OFF':mode?mode.toUpperCase():requestedLabel,detail:`Requested: ${detail}. ${mode?'Serving mode derived from backend request rules and server context; not an engine-reported measurement.':'Effective engine mode is not reported; this is the requested setting only.'}`};
 }
 function thinkingIndicator(w, stale, now) {
+  if(w?.load>1)return `<div class="requested-thinking" title="Each concurrent request retains its own requested thinking settings."><span class="label">Thinking</span><strong>${fmt(w.load)} active requests</strong>${stale?'<span class="thinking-scope">Stale</span>':''}</div>`;
   const info = thinkingInfo(w?.load ? w.requested_thinking : w?.last_requested_thinking);
   const scope = stale ? 'Historical snapshot' : w?.load ? 'Current request' : w?.last_request_finished_at ? `Last request · ${age(Date.parse(w.last_request_finished_at),now)}` : 'No active request';
   const qualifier=stale?'Stale':!w?.load&&w?.last_request_finished_at?'Last':'';
@@ -558,7 +559,7 @@ function render(s) {
   $('connection').textContent = s.demo ? '◉ Demo telemetry' : stale ? 'Status unavailable' : '● Live telemetry';
   $('warning').hidden = !s.gateway_error && !s.telemetry_error;
   $('warning').textContent = [s.gateway_error,s.telemetry_error].filter(Boolean).join(' · ');
-  $('model').textContent = s.demo ? `${g?.model || 'Model gateway'} · illustrative data · no real model servers connected` : `${g?.model || 'Model gateway'} · one active gateway request per model server · session-affinity routing`;
+  $('model').textContent = s.demo ? `${g?.model || 'Model gateway'} · illustrative data · no real model servers connected` : `${g?.model || 'Model gateway'} · ${g?.workers?.some(w=>(w.max_concurrent_requests??1)>1)?'configured concurrent request capacity':'one active gateway request per model server'} · session-affinity routing`;
   const door=s.continuity_door,waiting=knownWaiting(g,door);
   $('available').textContent = g ? `${g.available} / ${g.total}` : '—'; $('active').textContent = fmt(g?.active); $('queued').textContent = g?fmt(waiting.total):'—';
   $('queued').title=door?.holding?`${fmt(waiting.core)} admitted in the gateway core + ${fmt(waiting.held)} held safely at the Continuity Door. Pi/Hermes work not yet sent to Star Gate is not visible here.`:'Requests known to Star Gate and not yet dispatched. Pi/Hermes work not yet sent to Star Gate is not visible here.';
@@ -668,7 +669,7 @@ function workerRows(workers) {
     const ownership=`${w.operator_paused?'<br><small>Operator pause</small>':''}${holds.map(h=>`<br><small>Held by ${esc(h.owner_id)}${h.reason?`: ${esc(h.reason)}`:''}</small>`).join('')}${locks.map(lock=>`<br><small class="maintenance-lock${Number.isFinite(lock.review_at)&&lock.review_at<=Date.now()?' overdue':''}">Maintenance: ${esc(lock.name)}${lock.reason?` · ${esc(lock.reason)}`:''}${Number.isFinite(lock.review_at)?` · review ${lock.review_at<=Date.now()?'overdue':`in ${remaining(lock.review_at,Date.now())}`}`:' · no automatic expiry'}</small>`).join('')}`;
     const routes=w.ssh?`<button class="button" title="Edit only the host-key-verified SSH fallback aliases. The current inference stream and primary route are not interrupted; the new list applies on the next reconnect." data-action="fallbacks" data-id="${id}" ${workerBusy?'disabled':''}>Routes ${fmt(1+(w.ssh_fallbacks?.length??0))}</button>`:'';
     const lockActions=locks.map(lock=>`<button class="button" title="Release only ${esc(lock.name)}. The server stays paused until a separate checked Resume." data-action="unlock" data-id="${id}" data-lock-id="${esc(lock.id)}" ${workerBusy?'disabled':''}>Release ${esc(lock.name)}</button>`).join('');
-    return `<tr><td>${id}<br><small class="muted">${esc(w.url??'')}</small>${Object.entries(w.model_aliases??{}).map(([alias,id])=>`<br><small>Model: ${esc(alias)} → ${esc(id)}</small>`).join('')}</td><td>${fmt(w.context_length)}</td><td title="${esc(info.detail)}">${routing}${ownership}</td><td>${fmt(w.load)} / ${fmt(w.queued)}</td><td class="worker-actions"><button class="button" title="${esc(info.title)}" data-action="${info.action}" data-id="${id}" ${workerBusy||info.blocked?'disabled':''}>${info.button}</button><button class="button" title="Create a named durable maintenance lock. It immediately stops new admission and never auto-expires." data-action="lock" data-id="${id}" ${workerBusy?'disabled':''}>Maintenance lock</button>${lockActions}${held&&!w.operator_paused?`<button class="button" title="Keep an operator pause even after all agents release their holds." data-action="drain" data-id="${id}" ${workerBusy?'disabled':''}>Keep paused</button>`:''}${routes}<button class="button" data-action="endpoint" data-id="${id}" ${workerBusy?'disabled':''}>Edit endpoint</button><button class="button" title="Remove registration only after draining and releasing all holds and maintenance locks. Does not stop the model server." data-action="remove" data-id="${id}" ${workerBusy||!w.drained||busy||held||locked?'disabled':''}>Remove</button></td></tr>`;
+    return `<tr><td>${id}<br><small class="muted">${esc(w.url??'')}</small>${Object.entries(w.model_aliases??{}).map(([alias,id])=>`<br><small>Model: ${esc(alias)} → ${esc(id)}</small>`).join('')}</td><td>${fmt(w.context_length)}</td><td title="${esc(info.detail)}">${routing}${ownership}</td><td>${fmt(w.load)} / ${fmt(w.queued)}</td><td class="worker-actions"><button class="button" title="${esc(info.title)}" data-action="${info.action}" data-id="${id}" ${workerBusy||info.blocked?'disabled':''}>${info.button}</button><button class="button" title="Create a named durable maintenance lock. It immediately stops new admission and never auto-expires." data-action="lock" data-id="${id}" ${workerBusy?'disabled':''}>Maintenance lock</button>${lockActions}${held&&!w.operator_paused?`<button class="button" title="Keep an operator pause even after all agents release their holds." data-action="drain" data-id="${id}" ${workerBusy?'disabled':''}>Keep paused</button>`:''}${routes}<button class="button" data-action="concurrency" data-id="${id}" title="Change gateway request capacity after this worker is paused and idle. Use capacity qualified for its model server." ${workerBusy||!w.drained||busy||w.recovery_waiting||!Number.isSafeInteger(w.max_concurrent_requests)?'disabled':''}>Capacity ${fmt(w.max_concurrent_requests??1)}</button><button class="button" data-action="endpoint" data-id="${id}" ${workerBusy?'disabled':''}>Edit endpoint</button><button class="button" title="Remove registration only after draining and releasing all holds and maintenance locks. Does not stop the model server." data-action="remove" data-id="${id}" ${workerBusy||!w.drained||busy||held||locked?'disabled':''}>Remove</button></td></tr>`;
   }).join('') || '<tr><td colspan="5">No workers registered.</td></tr>';
 }
 async function loadWorkers() {
@@ -740,6 +741,13 @@ async function workerAction(action, input) {
     if(action==='conversation-turns'){turnsDirty=false;turnsExpected=data.conversation_turns;const message=`Applied: ${fmt(data.conversation_turns)} turns.`;workerMessage('');$('conversation-turn-message').textContent=message;}
     if(action==='context'){contextDirty=false;contextExpected=data.minimum_context;}
     if(action==='queue-timeout'){queueDirty=false;queueExpected=data.queue_timeout_ms;workerMessage(`Queue allowance saved: ${fmt(data.queue_timeout_ms/3600000)} hours for new requests. Existing waits and model servers unchanged.`);}
+    if(action==='concurrency'){
+      const worker=registeredWorkers.find(w=>w.id===id);if(!worker)return;
+      const before=worker.max_concurrent_requests??1;
+      const answer=window.prompt(`Concurrent gateway requests for ${id}. Use a capacity already tested with this model server. The server stays paused after saving.`,String(before));if(answer===null)return;
+      const value=Number(answer);if(!Number.isSafeInteger(value)||value<1){workerMessage('Enter a positive whole request capacity.',true);return;}
+      void workerAction('concurrency',{id,expected_max_concurrent_requests:before,max_concurrent_requests:value});return;
+    }
     if(action==='endpoint'){endpointEdit=null;$('endpoint-edit-form').hidden=true;workerMessage('Endpoint saved. Server remains paused; resume routing when ready.');}
     if(action==='add')$('worker-form').reset();
     if(action==='resume')workerMessage(`${target}: routing enabled after checks passed. Model settings unchanged.`);
@@ -814,6 +822,13 @@ function wireWorkerControls() {
   const handleWorkerClick=e=>{
     const button=e.target.closest('button[data-action]');if(!button||button.disabled)return;
     const {action,id}=button.dataset;
+    if(action==='concurrency'){
+      const worker=registeredWorkers.find(w=>w.id===id);if(!worker)return;
+      const before=worker.max_concurrent_requests??1;
+      const answer=window.prompt(`Concurrent gateway requests for ${id}. Use a capacity already tested with this model server. The server stays paused after saving.`,String(before));if(answer===null)return;
+      const value=Number(answer);if(!Number.isSafeInteger(value)||value<1){workerMessage('Enter a positive whole request capacity.',true);return;}
+      void workerAction('concurrency',{id,expected_max_concurrent_requests:before,max_concurrent_requests:value});return;
+    }
     if(action==='endpoint'){
       const worker=registeredWorkers.find(w=>w.id===id);if(!worker)return;
       endpointEdit={id,expected_url:worker.url};$('endpoint-test-result').textContent='';

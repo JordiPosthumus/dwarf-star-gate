@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-09-14 — Explicit per-worker concurrent capacity
+
+Independent conversations can use separate gateway slots while dependent turns
+retain their order, priorities and conversation allowances. Capacity defaults to
+one; a local Settings control requires a paused, idle worker and rejects stale
+edits. It backs up and preserves state, leaves routing paused, and changes no
+engine settings. Drain and ownership checks count all active requests. The UI
+shows configured slot occupancy and avoids presenting one request’s thinking
+settings as representative of several requests.
+
+Synthetic tests and browser checks prove the gateway behavior. Real engine
+qualification remains required; see [concurrency](docs/concurrency.md). Production
+activation is recorded separately.
+
 ## 2026-09-14 — Explicit queue priorities
 
 Added explicit high/normal/idle-only request metadata, priority-aware queue

@@ -1,3 +1,4 @@
+import {activeJobs} from './worker-activity.mjs';
 // Versioned pre-dispatch receipts. Never infer safe replay from an HTTP code alone.
 export const CALL_ID_HEADER='x-dsg-call-id';
 export const DISPATCH_HEADER='x-dsg-dispatch-state';
@@ -56,7 +57,7 @@ export const rejectionReasons=new Set(['gateway_draining','same_session_active',
 export function unavailableReason(node){return node.quarantine?'worker_quarantined':node.drained?'worker_paused':'worker_unhealthy';}
 export function sessionWork(nodes,key){
   if(!key)return null;
-  for(const node of nodes)if(node.active?.key===key)return {node,reason:'same_session_active'};
+  for(const node of nodes)if(activeJobs(node).some(job=>job.key===key))return {node,reason:'same_session_active'};
   for(const node of nodes)if(node.queue.some(job=>job.key===key&&!job.cancelled))return {node,reason:'same_session_queued'};
   return null;
 }

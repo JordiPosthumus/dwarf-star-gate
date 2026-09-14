@@ -43,6 +43,8 @@ checklist. Preserve unrelated work and existing operational history.
 ## Explicit queue priorities
 
 High/normal/idle-only classes and waiting-job edits are implemented separately
-from the retired classifier. See [queue priority](queue-priority.md). Qualified
-concurrent dispatch remains a separate unfinished implementation step; this
-queue increment preserves the existing one-active-request-per-worker setting.
+from the retired classifier. See [queue priority](queue-priority.md). Per-worker
+[concurrent dispatch](concurrency.md), idle capacity edits and slot accounting are
+implemented and tested with synthetic workers. Production activation and real
+engine qualification are separate; no real server capacity is certified by those
+tests. Existing workers default to one active request.
