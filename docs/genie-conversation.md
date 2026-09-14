@@ -407,3 +407,8 @@ the recorded SHA-256; symlinks and changed files are refused. The small baseline
 manifest is the first place to check existing model-revision and verification
 facts. Artifact contents are dated evidence, not fresh inspection or approval.
 This does not grant arbitrary file access or permission to execute a recipe.
+
+For self-hosted public research, see the [fetch-protection integration reference](../examples/firecrawl/README.md).
+The Gate Genie installer does not automatically patch an independently installed
+scraper. A working model connection and a correctly configured research service
+are separate setup facts.
