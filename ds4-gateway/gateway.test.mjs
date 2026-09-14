@@ -2317,3 +2317,24 @@ test('Genie progress correlates queued and dispatched requests without exposing 
  const before=r.gateway.currentJobsStatus();assert.equal(before.genie_progress_version,1);assert.ok(Number.isFinite(before.observed_at));const queued=before.jobs.find(j=>j.call_id===genieCall);assert.equal(queued.state,'queued');assert.equal(queued.traffic_class,'genie');assert.equal(queued.request_preview,null);assert.equal(before.jobs.find(j=>j.traffic_class==='unclassified').call_id,null);
  await normal;await until(()=>r.gateway.currentJobsStatus().jobs.some(j=>j.call_id===genieCall&&j.state==='running'));const running=r.gateway.currentJobsStatus().jobs.find(j=>j.call_id===genieCall);assert.equal(running.request_id,queued.request_id);assert.equal(running.machine,'spark1');assert.equal(r.backends[0].records.at(-1).headers['x-dsg-call-id'],undefined);await genie;assert.equal(r.backends[0].aborts,0);assert.equal(r.gateway.currentJobsStatus().jobs.length,0);
 });
+
+test('oldest queue telemetry follows creation time while shadow follows priority eligibility',async t=>{
+  const r=await rig(t,2,{dataset_enabled:true,routing_shadow_enabled:true});
+  const home=r.request('{"stream":true,"fixture_hold_stream":true}','home');await until(()=>r.backends[0].heldStreams?.length===1);
+  const other=r.request('{"stream":true,"fixture_hold_stream":true}','other');await until(()=>r.backends[1].heldStreams?.length===1);
+  const low=r.request('{"label":"low"}','home');await until(()=>r.gateway.stats().queued===1);
+  const high=r.request('{"label":"high"}','home',{headers:{'x-dsg-priority':'high'}});await until(()=>r.gateway.stats().queued===2);
+  const queue=r.gateway.nodes[0].queue;assert.equal(queue.length,2);
+  const lowJob=queue[0],highJob=queue[1];highJob.key=null;
+  // Deliberately separate creation order from storage order and priority.
+  lowJob.createdMono=performance.now()-9000;highJob.createdMono=performance.now()-1000;
+  queue.reverse();const stats=r.gateway.stats().workers[0];
+  assert.ok(stats.oldest_queue_seconds>=9&&stats.oldest_queue_seconds<10);
+  assert.ok(Math.abs(stats.oldest_queue_remaining_seconds-(lowJob.queueTimeoutMs/1000-9))<1);
+  queue.reverse();
+  const read=()=>{const dir=path.join(path.dirname(r.config.state_file),'requests');return fs.existsSync(dir)?fs.readdirSync(dir).flatMap(f=>fs.readFileSync(path.join(dir,f),'utf8').trim().split('\n').filter(Boolean).map(JSON.parse)):[];};
+  r.backends[1].heldStreams.shift()();await other;await until(()=>read().some(row=>row.kind==='routing_shadow'&&row.reason==='worker_free'));
+  const row=read().find(row=>row.kind==='routing_shadow'&&row.reason==='worker_free');
+  assert.equal(row.request_id,highJob.id);assert.equal(r.backends[0].aborts,0);
+  r.backends[0].heldStreams.shift()();await Promise.all([home,low,high]);
+});
