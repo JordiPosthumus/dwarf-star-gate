@@ -30,4 +30,12 @@ class Inspection(unittest.TestCase):
  def test_injection_target_cannot_launch_a_command(self):
   self.register({'example':{'ssh':['example-host'],'container':'--privileged; touch /tmp/bad'}})
   with patch.object(m.subprocess,'run') as run:self.assertIn('error',self.call('inspect_server',{'worker_id':'example'}));run.assert_not_called()
+ def test_artifact_hash_and_boundaries(self):
+  (self.root/'proposed').mkdir();(self.root/'artifacts').mkdir();file=self.root/'artifacts/manifest.json'
+  file.write_text(json.dumps({'model_revision':'public-revision','api_key':'PRIVATE_SECRET','environment':['API_KEY=PRIVATE_ENV','VISIBLE=ok']}));digest=m.hashlib.sha256(file.read_bytes()).hexdigest()
+  record={'schema':1,'worker_id':'example','kind':'proposed','configuration':{'baseline_reconciliation':{'path':str(file),'sha256':digest}}};record_file=self.root/'proposed/example.json';record_file.write_text(json.dumps(record));self.register()
+  result=self.call('read_server_artifact',{'worker_id':'example','artifact':'baseline_reconciliation'});self.assertTrue(result['hash_matches_record']);self.assertEqual(result['content']['model_revision'],'public-revision');self.assertNotIn('PRIVATE_',json.dumps(result));self.assertIn('VISIBLE=ok',json.dumps(result))
+  file.write_text('{"model_revision":"changed"}');self.assertIn('error',self.call('read_server_artifact',{'worker_id':'example','artifact':'baseline_reconciliation'}));self.assertEqual(file.read_text(),'{"model_revision":"changed"}')
+  external=self.root/'outside.json';external.write_text('{}');record['configuration']['baseline_reconciliation']={'path':str(external),'sha256':m.hashlib.sha256(external.read_bytes()).hexdigest()};record_file.write_text(json.dumps(record));self.assertIn('error',self.call('read_server_artifact',{'worker_id':'example','artifact':'baseline_reconciliation'}))
+  file.unlink();file.symlink_to(external);record['configuration']['baseline_reconciliation']['path']=str(file);record_file.write_text(json.dumps(record));self.assertIn('error',self.call('read_server_artifact',{'worker_id':'example','artifact':'baseline_reconciliation'}))
 if __name__=='__main__':unittest.main()

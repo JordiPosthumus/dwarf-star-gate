@@ -399,3 +399,11 @@ Setup refuses to reuse a dedicated checkout whose tracked source was edited.
 The progress display reports elapsed time and the last actual model/tool activity.
 A quiet period is not proof of a stalled model. Existing queue/request deadlines
 are preserved; this interface introduces no shorter cancellation limit.
+
+Genie can open the `baseline_reconciliation` or `recreation_capture` JSON artifact
+referenced by a worker's observed, proposed or approved record. The file must be
+inside that installation's configuration-library artifacts directory and match
+the recorded SHA-256; symlinks and changed files are refused. The small baseline
+manifest is the first place to check existing model-revision and verification
+facts. Artifact contents are dated evidence, not fresh inspection or approval.
+This does not grant arbitrary file access or permission to execute a recipe.
