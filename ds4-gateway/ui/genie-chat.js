@@ -6,7 +6,7 @@ if(panel){
   const draft={read:id=>{try{return sessionStorage.getItem(draftKey(id))??'';}catch{return '';}},write:(id,text)=>{try{sessionStorage.setItem(draftKey(id),text);}catch{}}};
   function text(tag,content,className){const e=document.createElement(tag);e.textContent=content;if(className)e.className=className;return e;}
   function sourceLink(label,url){try{const u=new URL(url);if(u.protocol!=='https:'||u.username||u.password)throw new Error();const a=text('a',label||u.hostname);a.href=u.href;a.target='_blank';a.rel='noopener noreferrer';return a;}catch{return document.createTextNode(label||url||'Source unavailable');}}
-  async function api(url,body){const r=await fetch(url,body?{method:'POST',headers:{'content-type':'application/json','x-dsg-csrf':token},body:JSON.stringify(body)}:{});const value=await r.json();if(!r.ok)throw new Error(value.error??'Chat request failed.');return value;}
+  async function api(url,body){const r=await fetch(url,body?{method:'POST',headers:{'content-type':'application/json','x-dsg-csrf':token},body:JSON.stringify(body)}:{});const value=await r.json();if(!r.ok){const e=new Error(value.error??'Chat request failed.');e.status=r.status;throw e;}return value;}
   function error(message){$('conversation-error').textContent=message??'';}
   function format(body){
     const fragment=document.createDocumentFragment();
@@ -44,7 +44,7 @@ if(panel){
         const sources=new Map();for(const e of events){for(const s of e.sources??[]){const prior=sources.get(s.url);if(!prior||e.kind==='read')sources.set(s.url,{...s,title:s.title||prior?.title,kind:e.kind,at:e.at});}if(e.error)d.append(text('p',e.error));}
         for(const s of sources.values()){const p=text('p','');p.append(sourceLink(s.title,s.url),document.createTextNode(` · ${s.kind==='read'?'read':'search result'} · ${new Date(s.at).toLocaleString()}`));d.append(p);}article.append(d);
       }
-      if(m.context){const d=document.createElement('details');d.append(text('summary','Setup used for this answer'));const c=m.context;d.append(text('p',`${c.source}\n${c.observed_at?new Date(c.observed_at).toLocaleString():'Observation time unavailable'}\n${c.unavailable?'Current setup unavailable':`${c.servers.length} servers in this snapshot`}\n${c.servers.map(w=>`${w.id}: ${w.is_healthy===true?'healthy':w.is_healthy===false?'not healthy':'health unknown'}; context ${w.context_length??'unknown'}`).join('\n')}`));article.append(d);}
+      if(m.context){const d=document.createElement('details');d.append(text('summary','Setup used for this answer'));const c=m.context;d.append(text('p',`${c.source}\n${c.observed_at?new Date(c.observed_at).toLocaleString():'Observation time unavailable'}\n${c.unavailable?'Current setup unavailable':`${c.servers.length} servers in this snapshot`}\n${c.servers.map(w=>`${w.id}: ${w.is_healthy===true?'healthy':w.is_healthy===false?'not healthy':'health unknown'}; context ${w.context_length??'unknown'}`).join('\n')}`));if(c.study_brief)d.append(text('p',`Research brief: ${c.study_brief}`));for(const row of c.configuration_records?.records??[])for(const kind of ['approved','observed','proposed']){const r=row[kind];if(r)d.append(text('p',`${row.worker_id} · ${kind} · ${r.runtime?.name??'runtime unknown'} ${r.runtime?.version??''}\nConfiguration revision: ${r.revision??'unavailable'}`));}article.append(d);}
       list.append(article);
     }
     $('conversation-send').disabled=sending||creating||Boolean(session?.busy)||!status?.available;
@@ -54,8 +54,39 @@ if(panel){
   }
   async function select(id){if(sending)return;draft.write(current,$('conversation-input').value);current=id;try{localStorage.setItem('dsg-genie-conversation',id);}catch{}$('conversation-input').value=draft.read(id);signature='';error();const session=await api(`/api/genie/chat/${id}`);if(current===id){cachedSession=session;render(session);}renderList();}
   function renderList(){const list=$('conversation-list');list.replaceChildren();for(const s of status?.conversations??[]){const b=text('button',s.title);b.type='button';b.setAttribute('aria-current',String(s.id===current));b.addEventListener('click',()=>select(s.id).catch(e=>error(e.message)));list.append(b);}}
+  let studyBusy=false,studyRequest=null,studyDue=false;
+  function renderStudy(){
+    const s=status?.study,box=$('genie-study');if(!box)return;box.hidden=!s;if(!s)return;
+    if(s.due&&!studyDue)box.open=true;studyDue=s.due;
+    const busy=s.last_run?.state==='working';
+    $('study-summary').textContent=busy?'· studying':s.due?'· ready when you are':s.interval_days?'· reminder set':'· on your request';
+    $('study-status').textContent=s.error??(busy?'Genie is studying your setup. Follow his sources and answer in the study conversation.':s.due?'Would you like Genie to look for worthwhile improvements?':s.next_due_at?`Next reminder: ${new Date(s.next_due_at).toLocaleString()}`:'Start a study whenever you want, or choose a reminder interval below.');
+    if(!s.available&&!s.error&&!busy)$('study-status').textContent+=' Connect Genie and web search to start; testing mode must be off.';
+    if(['failed','interrupted','not_started'].includes(s.last_run?.state))$('study-status').textContent+=' The last study did not finish. Open it to inspect what was saved; it will not restart automatically.';
+    $('study-start').textContent=s.due?'Start study':'Research now';$('study-start').disabled=studyBusy||busy||!s.available||sending||creating;
+    for(const id of ['study-postpone','study-skip']){$(id).hidden=!s.due;$(id).disabled=studyBusy||!!s.error;}
+    $('study-open').hidden=!s.last_run;$('study-open').disabled=sending||creating;
+    $('study-save').disabled=studyBusy||!!s.error;
+    if(document.activeElement!==$('study-interval')&&!$('study-interval').dataset.edited)$('study-interval').value=String(s.interval_days);
+  }
+  async function studyChange(action,extra={}){
+    if(studyBusy)return;studyBusy=true;$('study-error').textContent='';renderStudy();
+    try{
+      const input=action==='study-start'?(studyRequest??={action,expected_revision:status.study.revision,request_id:crypto.randomUUID()}):{action,expected_revision:status.study.revision,...extra};
+      const result=await api('/api/genie/chat',input);status.study=result;
+      if(action==='study-start'){studyRequest=null;await refresh();await select(result.last_run.conversation_id);}
+      if(action==='study-schedule')delete $('study-interval').dataset.edited;
+    }catch(e){if(e.status>=400&&e.status<500)studyRequest=null;$('study-error').textContent=e.message;}
+    finally{studyBusy=false;await refresh();renderStudy();}
+  }
+  $('study-interval')?.addEventListener('change',()=>{$('study-interval').dataset.edited='true';});
+  $('study-schedule-form')?.addEventListener('submit',e=>{e.preventDefault();studyChange('study-schedule',{interval_days:Number($('study-interval').value)});});
+  $('study-start')?.addEventListener('click',()=>studyChange('study-start'));
+  $('study-postpone')?.addEventListener('click',()=>studyChange('study-postpone'));
+  $('study-skip')?.addEventListener('click',()=>studyChange('study-skip'));
+  $('study-open')?.addEventListener('click',()=>{if(status?.study?.last_run)select(status.study.last_run.conversation_id).catch(e=>{$('study-error').textContent=e.message;});});
   async function refresh(){if(fetching)return;fetching=true;try{
-    status=await api('/api/genie/chat');token=status.csrf_token;
+    status=await api('/api/genie/chat');token=status.csrf_token;renderStudy();
     $('conversation-provider').textContent=status.suspended?'Paused for testing':status.mode==='rehearsal'?'Rehearsal · example answers':status.available?`Hermes · ${status.model}`:'Hermes not configured';
     $('conversation-badge').textContent=status.mode==='rehearsal'?'Example setup':'No server changes';
     if(current&&!sending&&!creating&&!status.conversations.some(s=>s.id===current)){draft.write(current,$('conversation-input').value);current=null;signature='';$('conversation-input').value=draft.read(null);}

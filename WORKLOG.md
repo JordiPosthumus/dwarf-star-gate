@@ -1426,3 +1426,19 @@ The final isolated rebuild passes five installed scenarios, including a simulate
 The source regression set now passes 109 cases, with 36 journal/admission and 42
 portable cases also passing. Prior archives and source hashes are preserved.
 Real-model and real-outage validation remain outstanding.
+
+## 2026-09-14 — Owner-started setup research and reminders
+
+Added a small private reminder record alongside the existing Genie conversations.
+The Genie tab offers start now, open last study, skip, postpone one day and an
+explicitly selected reminder interval (off by default). Due reminders make no
+model call. A study uses the existing Hermes/SOUL/web-tool pipeline, saves its
+configuration context and source evidence, and asks for one supported proposal.
+No server changes or unattended research authority were added.
+
+Validation: 126 chat, study, record, dashboard, testing and research tests passed,
+including installed Hermes against synthetic model/search/extraction services.
+Browser checks covered due/skip/postpone, early start, settings save, source/chat
+persistence on reload, readable study title/brief, no browser errors and mobile
+width without horizontal page overflow. Real-world recommendation quality and
+native server qualification remain outside that synthetic proof.

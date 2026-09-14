@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {randomUUID} from 'node:crypto';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import http from 'node:http';
 import {GenieChat} from './genie-chat.mjs';
@@ -37,6 +38,7 @@ test('installed Hermes uses only the two research tools and records actual searc
  const provider=hermesProvider({python:process.env.DSG_TEST_HERMES_PYTHON,source:process.env.DSG_TEST_HERMES_SOURCE,url:base+'/v1',model:'example-model',research:{search_url:base,extract_url:base}},{directory:d});t.after(()=>provider.close());
  const chat=new GenieChat({directory:path.join(d,'chats'),provider,getSnapshot:()=>({gateway:{workers:[{id:'private-worker'}]}})}),s=chat.create();chat.submit(s.id,'Research the example release','research-hermes');await chat.idle();
  const answer=chat.get(s.id).messages.at(-1);assert.equal(answer.state,'complete',JSON.stringify(answer));assert.match(answer.text,/synthetic release/);assert.equal(searches,1);assert.equal(reads,1);assert.equal(modelRequests.length,3);assert.equal(answer.research.events.filter(e=>e.state==='complete').length,2);assert.ok(answer.research.events.some(e=>e.content_sha256));
+ const study=chat.study.change({action:'study-start',expected_revision:0,request_id:randomUUID()});await chat.idle();const studied=chat.get(study.last_run.conversation_id);assert.match(studied.title,/Setup research/);assert.equal(studied.messages.at(-1).state,'complete');assert.equal(searches,2);assert.equal(reads,2);assert.equal(modelRequests.length,6);assert.equal(studied.messages.at(-1).research.events.filter(e=>e.state==='complete').length,2);
 });
 
 test('ordinary chat works without web services and accepted retries survive a changed default',async t=>{

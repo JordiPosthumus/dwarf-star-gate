@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-09-14 — Setup research in Genie chat
+
+The Genie tab can start a setup study, open its saved conversation, and offer
+reminders with start, skip and postpone controls. Reminders stay off until the
+owner selects an interval; becoming due never starts a model call. Studies reuse
+Hermes, SOUL, existing public web tools and saved source evidence. The research
+brief asks for one supported recommendation tied to configuration revisions,
+and grants no server-changing authority. Accepted submissions survive retries
+without duplicate studies; interrupted work is never automatically replayed.
+
+
+
 ## 2026-09-14 — Explicit queue priorities
 
 Added explicit high/normal/idle-only request metadata, priority-aware queue

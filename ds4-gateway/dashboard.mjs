@@ -111,6 +111,7 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
       req.on('data',chunk=>{if(ended)return;body+=chunk;if(Buffer.byteLength(body)>160000){ended=true;clearTimeout(timer);reply(413,{error:'Chat message too large.'});}});
       req.on('end',()=>{clearTimeout(timer);if(ended)return;try{
         const input=JSON.parse(body);
+        if(input.action?.startsWith('study-'))return reply(200,chat.study.change(input));
         if(input.action==='new')return reply(201,chat.create());
         if(input.action==='send')return reply(202,chat.submit(input.conversation_id,input.text,input.request_id,{research:input.research}));
         return reply(400,{error:'Unknown chat action.'});
