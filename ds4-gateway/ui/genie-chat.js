@@ -36,11 +36,11 @@ if(panel){
       const body=text('div','','conversation-text');body.append(format(m.text));article.append(body);
       if(m.state==='working'&&!m.text)article.append(text('p','Waiting for the model','conversation-thinking'));
       if(m.error)article.append(text('p',m.error,'conversation-error'));
-      if(m.role==='assistant'&&m.research){
+      if(m.role==='assistant'&&m.research?.events?.length){
         const events=m.research.events??[],last=events.at(-1);
         if(m.state==='working'&&last?.state==='reading')article.append(text('p','Reading public sources…','conversation-thinking'));
         const d=text('details','','conversation-sources');d.append(text('summary','Web research sources'));
-        d.append(text('p',`Web access authorized for this question · ${new Date(m.research.authorized_at).toLocaleString()}`));
+        d.append(text('p',`Public sources checked · ${new Date(events[0].at).toLocaleString()}`));
         const sources=new Map();for(const e of events){for(const s of e.sources??[]){const prior=sources.get(s.url);if(!prior||e.kind==='read')sources.set(s.url,{...s,title:s.title||prior?.title,kind:e.kind,at:e.at});}if(e.error)d.append(text('p',e.error));}
         for(const s of sources.values()){const p=text('p','');p.append(sourceLink(s.title,s.url),document.createTextNode(` · ${s.kind==='read'?'read':'search result'} · ${new Date(s.at).toLocaleString()}`));d.append(p);}article.append(d);
       }
@@ -48,8 +48,7 @@ if(panel){
       list.append(article);
     }
     $('conversation-send').disabled=sending||creating||Boolean(session?.busy)||!status?.available;
-    $('conversation-research').disabled=sending||creating||!status?.research_available;
-    $('conversation-research').title=status?.research_available?'Allow public web research for this message. This does not authorize server changes.':'Web research is not configured for this installation.';
+    $('conversation-web-status').textContent=status?.research_available?'Genie can search public sources when useful.':'Web search is not configured for this installation.';
     $('conversation-activity').textContent=session?.busy?'Waiting for Genie’s reply. You can write your next question below.':status?.suspended?'New questions are paused while testing mode is active.':status?.available?'Ready for your next question.':'Chat is not connected to Hermes yet.';
     if(nearBottom)list.scrollTop=list.scrollHeight;else list.scrollTop=scrollTop;
   }
@@ -72,9 +71,8 @@ if(panel){
   $('conversation-input').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();$('conversation-form').requestSubmit();}});
   $('conversation-form').addEventListener('submit',async e=>{e.preventDefault();const message=$('conversation-input').value.trim();if(!message||sending||$('conversation-send').disabled)return;sending=true;$('conversation-send').disabled=true;$('conversation-input').disabled=true;$('conversation-new').disabled=true;error();try{
     if(!current){const s=await api('/api/genie/chat',{action:'new'});current=s.id;}
-    const research=$('conversation-research').checked;
-    if(!request||request.text!==message||request.conversation_id!==current||request.research!==research)request={action:'send',conversation_id:current,text:message,request_id:crypto.randomUUID(),research};
-    const s=await api('/api/genie/chat',request);request=null;$('conversation-research').checked=false;$('conversation-input').value='';draft.write(current,'');signature='';render(s);$('conversation-messages').scrollTop=$('conversation-messages').scrollHeight;
+    if(!request||request.text!==message||request.conversation_id!==current)request={action:'send',conversation_id:current,text:message,request_id:crypto.randomUUID()};
+    const s=await api('/api/genie/chat',request);request=null;$('conversation-input').value='';draft.write(current,'');signature='';render(s);$('conversation-messages').scrollTop=$('conversation-messages').scrollHeight;
   }catch(e){error(e.message);}finally{sending=false;$('conversation-input').disabled=false;$('conversation-new').disabled=false;await refresh();$('conversation-input').focus();}});
   $('conversation-input').value=draft.read(null);refresh();setInterval(()=>{if(!document.hidden)refresh();},750);
 }

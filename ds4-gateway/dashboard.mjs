@@ -105,7 +105,7 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
       req.on('end',()=>{clearTimeout(timer);if(ended)return;try{
         const input=JSON.parse(body);
         if(input.action==='new')return reply(201,chat.create());
-        if(input.action==='send')return reply(202,chat.submit(input.conversation_id,input.text,input.request_id,{research:input.research??false}));
+        if(input.action==='send')return reply(202,chat.submit(input.conversation_id,input.text,input.request_id,{research:input.research}));
         return reply(400,{error:'Unknown chat action.'});
       }catch(e){return reply(400,{error:e instanceof SyntaxError?'Invalid JSON.':e.message});}});return;
     }
