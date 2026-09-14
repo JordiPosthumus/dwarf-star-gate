@@ -100,6 +100,12 @@ before returning it to the pool. No hidden exclusion toggle or blind fault reset
 adapt to verified capabilities, and keep unknowns explicit. No custom DS4 patch
 or rebuild is required. See the [integration boundary](docs/ds4-integration.md).
 
+Setup research is available from the **Gate Genie → Setup research** panel.
+Start a study when you want, or select a reminder interval. Each reminder asks
+before starting; **Ask tomorrow** and **Skip this time** make no model call.
+See [research studies](docs/genie-studies.md) for configuration, saved evidence
+and permission boundaries.
+
 ## What DSG adds
 
 **Agent-friendly fleet management:** give a local coding agent a task such as

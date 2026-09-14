@@ -11,3 +11,5 @@
 @media(prefers-reduced-motion:reduce){.conversation-thinking::after{animation:none}.conversation-messages{scroll-behavior:auto}}
 
 .conversation-research{display:flex;align-items:center;gap:8px;font-size:13px;margin:12px 0;color:#bdcfc0}.conversation-research input{width:auto}.conversation-sources a,.conversation-text a{color:#c3e3ae;overflow-wrap:anywhere}
+
+.genie-study{flex-shrink:0;padding:12px 24px;border-bottom:1px solid #293b31;background:#101d17}.genie-study summary{cursor:pointer;font-weight:650}.genie-study summary span{font-weight:400;color:#aac5ad}.genie-study p{font-size:13px;line-height:1.5;margin:10px 0}.study-actions,.genie-study form{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.genie-study form{margin-top:12px}.genie-study label{font-size:13px}.genie-study select{max-width:100%;min-width:0;padding:8px;background:#101d17;color:inherit;border:1px solid #465d49;border-radius:6px}.genie-study [hidden]{display:none}

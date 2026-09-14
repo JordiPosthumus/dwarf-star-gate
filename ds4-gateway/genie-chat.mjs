@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import {recordsForChat} from './server-records.mjs';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
+import {GenieStudy,STUDY_INSTRUCTIONS} from './genie-study.mjs';
 
 function validResearchEvent(e){return e&&['search','read'].includes(e.kind)&&['reading','complete','failed'].includes(e.state)&&typeof e.at==='string'&&(e.sources===undefined||(Array.isArray(e.sources)&&e.sources.every(s=>s&&typeof s.url==='string'&&(s.title===undefined||typeof s.title==='string'))));}
 function validResearch(m){return m.research===undefined||(m.role==='user'?typeof m.research==='boolean':m.research&&Number.isFinite(m.research.authorized_at)&&Array.isArray(m.research.events)&&m.research.events.every(validResearchEvent));}
@@ -39,6 +40,7 @@ export class GenieChat {
       if(changed)this.save(s);this.sessions.set(s.id,s);
       } catch {this.loadErrors.push(name);} // Preserve unreadable files verbatim; other chats remain usable.
     }
+    this.study=new GenieStudy(this,{now});
   }
   save(s) {
     const file=path.join(this.directory,`${s.id}.json`),temp=`${file}.${randomUUID()}.tmp`;
@@ -47,10 +49,11 @@ export class GenieChat {
   }
   status() {
     return {available:Boolean(this.provider)&&!this.closed&&!this.isSuspended(),suspended:this.isSuspended(),...(this.provider?.info??{}),
-      unreadable_conversations:[...this.loadErrors],conversations:[...this.sessions.values()].sort((a,b)=>b.updated_at-a.updated_at).map(s=>({id:s.id,title:s.title,updated_at:s.updated_at,busy:this.jobs.has(s.id)}))};
+      study:this.study.status(),unreadable_conversations:[...this.loadErrors],conversations:[...this.sessions.values()].sort((a,b)=>b.updated_at-a.updated_at).map(s=>({id:s.id,title:s.title,updated_at:s.updated_at,busy:this.jobs.has(s.id)}))};
   }
-  create() {
-    const s={version:1,id:randomUUID(),title:'New conversation',created_at:this.now(),updated_at:this.now(),messages:[]};
+  create({title='New conversation',purpose=null}={}) {
+    if((purpose!==null&&purpose!=='setup_research')||typeof title!=='string'||!title.trim()||title.length>100)throw new Error('Invalid conversation title.');
+    const s={version:1,id:randomUUID(),title,...(purpose?{purpose}:{}),created_at:this.now(),updated_at:this.now(),messages:[]};
     this.save(s);this.sessions.set(s.id,s);return this.get(s.id);
   }
   get(id) {
@@ -73,15 +76,16 @@ export class GenieChat {
     const previous=structuredClone(s);
     const history=s.messages.filter(m=>m.state==='complete').map(m=>({role:m.role,content:m.text}));
     const context=chatContext(this.getSnapshot());
+    if(s.purpose==='setup_research')context.study_brief=STUDY_INSTRUCTIONS;
     const user={id:randomUUID(),request_id:requestId,role:'user',text:text.trim(),state:'complete',at:this.now(),...(research?{research:true}:{})};
     const reply={id:randomUUID(),role:'assistant',text:'',state:'working',at:this.now(),context};
     if(research)reply.research={authorized_at:this.now(),mode:automaticResearch?'automatic':'explicit',events:[]};
-    s.messages.push(user,reply);s.updated_at=this.now();if(s.messages.length===2)s.title=user.text.slice(0,64);
+    s.messages.push(user,reply);s.updated_at=this.now();if(s.messages.length===2&&s.title==='New conversation')s.title=user.text.slice(0,64);
     try{this.save(s);}catch{this.sessions.set(id,previous);throw new Error('Could not save your message. Nothing was sent to the model.');}
     // Yield before generation, ensuring busy and the accepted receipt exist first.
     const job=Promise.resolve().then(async()=>{
       try{
-        const result=await this.provider.generate({message:user.text,history,context,sessionId:id,research,onResearch:event=>{if(research&&validResearchEvent(event)){reply.research.events.push(event);this.save(s);}},onDelta:delta=>{if(typeof delta==='string')reply.text+=delta;}});
+        const result=await this.provider.generate({message:context.study_brief?`${user.text}\n\nResearch brief: ${context.study_brief}`:user.text,history,context,sessionId:id,research,onResearch:event=>{if(research&&validResearchEvent(event)){reply.research.events.push(event);this.save(s);}},onDelta:delta=>{if(typeof delta==='string')reply.text+=delta;}});
         if(typeof result?.text!=='string'||!result.text.trim())throw new Error('Hermes returned no answer.');
         reply.text=result.text;reply.state='complete';
       }catch(e){reply.state='failed';reply.error=e.publicMessage??'Genie could not finish this reply. Your conversation is saved; you can ask again.';}
