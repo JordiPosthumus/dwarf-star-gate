@@ -43,7 +43,7 @@ deployment receipts stay outside this public repository.
   Saved aggregate reports are wired into the dashboard and chat,
   with explicit operator-supplied worker/revision associations. Owner-started
   start controls, durable receipts, restart observation and result collection are
-  implemented in development. Real-run qualification and production connection
+  included as optional support in this release. Real-run qualification and connection
   remain unfinished.
   Preserve each report's recorded metric and rules; current Hourglass source uses
   total points, while older reports include incompatible AUC-derived scores.
