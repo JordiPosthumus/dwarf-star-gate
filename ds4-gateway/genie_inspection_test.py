@@ -47,6 +47,22 @@ class Inspection(unittest.TestCase):
   file.write_text('{"model_revision":"changed"}');self.assertIn('error',self.call('read_server_artifact',{'worker_id':'example','artifact':'baseline_reconciliation'}));self.assertEqual(file.read_text(),'{"model_revision":"changed"}')
   external=self.root/'outside.json';external.write_text('{}');record['configuration']['baseline_reconciliation']={'path':str(external),'sha256':m.hashlib.sha256(external.read_bytes()).hexdigest()};record_file.write_text(json.dumps(record));self.assertIn('error',self.call('read_server_artifact',{'worker_id':'example','artifact':'baseline_reconciliation'}))
   file.unlink();file.symlink_to(external);record['configuration']['baseline_reconciliation']['path']=str(file);record_file.write_text(json.dumps(record));self.assertIn('error',self.call('read_server_artifact',{'worker_id':'example','artifact':'baseline_reconciliation'}))
+ def test_selected_default_and_receipt_are_read_without_other_workers_or_secrets(self):
+  (self.root/'defaults').mkdir();(self.root/'artifacts').mkdir();receipt=self.root/'artifacts/selection.json';receipt.write_text(json.dumps({'run_key':'selected-run','recorded_build':{'context_limit':262144},'api_key':'PRIVATE_SECRET'}))
+  ref={'path':'artifacts/selection.json','sha256':m.hashlib.sha256(receipt.read_bytes()).hexdigest()}
+  record={'schema':1,'workers':['example'],'selected_image':'sha256:'+'a'*64,'selection_receipt_reference':ref}
+  (self.root/'defaults/shared.json').write_text(json.dumps(record));(self.root/'defaults/other.json').write_text(json.dumps({'schema':1,'workers':['other'],'private_note':'OTHER_WORKER'}));self.register()
+  result=self.call('read_server_configuration',{'worker_id':'example'});selected=result['selected_defaults']['entries'];self.assertEqual(len(selected),1);self.assertEqual(selected[0]['selection_receipt']['status'],'verified');self.assertEqual(selected[0]['selection_receipt']['content']['run_key'],'selected-run');self.assertNotIn('PRIVATE_SECRET',json.dumps(result));self.assertNotIn('OTHER_WORKER',json.dumps(result))
+  receipt.write_text('{}');result=self.call('read_server_configuration',{'worker_id':'example'});self.assertEqual(result['selected_defaults']['entries'][0]['selection_receipt']['status'],'unavailable');self.assertIn('records',result)
+  receipt.unlink();receipt.symlink_to(self.root/'defaults/other.json');self.assertEqual(self.call('read_server_configuration',{'worker_id':'example'})['selected_defaults']['entries'][0]['selection_receipt']['status'],'unavailable')
+ def test_selected_image_comes_only_from_unique_library_default(self):
+  (self.root/'defaults').mkdir();record={'schema':1,'workers':['example'],'selected_image':'sha256:'+'a'*64};(self.root/'defaults/shared.json').write_text(json.dumps(record));self.register({'example':{'ssh':['example-host'],'container':'live-container'}})
+  with patch.object(m.subprocess,'run',return_value=types.SimpleNamespace(returncode=0,stdout=json.dumps({'selected_image':record['selected_image'],'image_present':True,'retained_containers':[]}),stderr='')) as run:
+   result=self.call('inspect_server',{'worker_id':'example','selected_default':True,'selected_image':'sha256:'+'b'*64});self.assertEqual(result['selected_image'],record['selected_image']);payload=json.loads(run.call_args.kwargs['input'].split('\n',1)[0]);self.assertEqual(payload,{'selected_image':record['selected_image']});self.assertTrue(self.events[-1][1]['event']['selected_default'])
+  (self.root/'defaults/second.json').write_text(json.dumps(record))
+  with patch.object(m.subprocess,'run') as run:self.assertIn('error',self.call('inspect_server',{'worker_id':'example','selected_default':True}));run.assert_not_called()
+  (self.root/'defaults/second.json').unlink();record['selected_image']='--bad; command';(self.root/'defaults/shared.json').write_text(json.dumps(record))
+  with patch.object(m.subprocess,'run') as run:self.assertIn('error',self.call('inspect_server',{'worker_id':'example','selected_default':True}));run.assert_not_called()
 class Collector(unittest.TestCase):
  def collect(self, mode='ok'):
   import io,contextlib,copy
@@ -73,4 +89,30 @@ class Collector(unittest.TestCase):
   result,calls=self.collect('failed');self.assertEqual(result['packages'],{'status':'unavailable','reason':'package_query_failed'});self.assertEqual(result['container']['id'],'exact-container-id');self.assertNotIn('TimeoutExpired',json.dumps(result));self.assertEqual(len(calls),3)
  def test_restart_during_query_is_not_current_package_evidence(self):
   result,calls=self.collect('changed');self.assertEqual(result['packages'],{'status':'unavailable','reason':'container_changed_during_query'});self.assertNotIn('values',result['packages'])
+class SelectedCollector(unittest.TestCase):
+ def collect(self,mode='present'):
+  import io,contextlib
+  image_id='sha256:'+'a'*64;ids=['b'*64,'c'*64];calls=[]
+  image={'Id':image_id,'Created':'image-created','RepoTags':['example:selected'],'Config':{'Env':['API_KEY=PRIVATE_SECRET','VISIBLE=yes']}}
+  def inspected(argv,**kwargs):
+   calls.append(argv);self.assertEqual(argv,['docker','image','inspect','--',image_id])
+   if mode=='absent':return types.SimpleNamespace(returncode=1,stdout='[]',stderr='Error response from daemon: No such image: '+image_id)
+   if mode=='failed':return types.SimpleNamespace(returncode=1,stdout='',stderr='Permission denied')
+   return types.SimpleNamespace(returncode=0,stdout=json.dumps([image]),stderr='')
+  def read(argv,**kwargs):
+   calls.append(argv)
+   if argv[1]=='ps':return '\n'.join(ids)
+   self.assertEqual(argv[:5],('docker','inspect','--type','container','--'))
+   base={'Name':'retained','Created':'container-created','State':{'Running':False,'StartedAt':'historical'},'Config':{'Cmd':['--api-key','PRIVATE_ARG','--max-model-len','262144']},'HostConfig':{'IpcMode':'host','ShmSize':17179869184},'Mounts':[{'Destination':'/models','RW':False}]}
+   return json.dumps([{**base,'Id':ids[0],'Image':image_id},{**base,'Id':ids[1],'Image':'sha256:'+'d'*64}])
+  output=io.StringIO()
+  with patch('subprocess.run',side_effect=inspected),patch('subprocess.check_output',side_effect=read),patch('sys.stdin',io.StringIO(json.dumps({'selected_image':image_id}))),contextlib.redirect_stdout(output):
+   try:exec(compile(m.COLLECTOR,'selected-collector','exec'),{})
+   except SystemExit as e:self.assertEqual(e.code,0)
+  return json.loads(output.getvalue()),calls
+ def test_exact_image_and_retained_recipe_without_descendant_or_mutation(self):
+  result,calls=self.collect();self.assertTrue(result['image_present']);self.assertEqual(len(result['retained_containers']),1);self.assertFalse(result['retained_containers'][0]['running']);self.assertEqual(result['retained_containers'][0]['host_config']['ShmSize'],17179869184);self.assertNotIn('PRIVATE_',json.dumps(result));self.assertTrue(all(c[1] in ['image','ps','inspect'] for c in calls))
+ def test_absent_is_distinct_from_daemon_failure(self):
+  result,calls=self.collect('absent');self.assertFalse(result['image_present']);self.assertEqual(len(calls),1)
+  with self.assertRaisesRegex(ValueError,'unavailable'):self.collect('failed')
 if __name__=='__main__':unittest.main()
