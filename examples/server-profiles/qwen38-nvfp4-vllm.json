@@ -1,0 +1,145 @@
+{
+  "title": "Qwen3.8-Flash-Next NVFP4 + MTP settings reference for a custom vLLM image",
+  "status": "Reusable settings reference. Documentation only; not an installation recipe or an automatically applied default.",
+  "evidence_basis": {
+    "scope": "Dated container and launcher metadata. Package versions come from the record; installed packages and physical hardware were not independently queried by this inspection."
+  },
+  "checkpoint": {
+    "repository": "RadixArk/Qwen3.8-Flash-Next-NVFP4",
+    "recorded_public_revision": "7b719225242aacd3dbd3f9407468c2ee9a9d2594",
+    "verification_history": "Historical model verification is recorded; the later capture compared file sizes without recomputing hashes. Verify weights in your own installation.",
+    "served_model_name": "qwen3.8-flash-next"
+  },
+  "runtime_dependency_inventory": {
+    "image": "Custom local image. Inherited VLLM_IMAGE_TAG declares vllm/vllm-openai:v0.29.0; this label does not establish build ancestry. Dated private metadata records vLLM 0.29.0, torch 2.13.0+cu130 and transformers 5.16.1; this inspection did not query installed packages. CUDA_VERSION declares 13.0.2 and NVARCH declares sbsa. Exact build recipe and source modifications were not established by this inspection; stock compatibility is unproven.",
+    "custom_artifacts_required": [
+      {
+        "artifact": "<CUSTOM_DETERMINISM_KERNEL>/_C_det.so",
+        "purpose_recorded": "deterministic top-k selection kernel used by QSA/sparse-indexer paths"
+      },
+      {
+        "artifact": "<CUSTOM_ASSETS>/draft_vocab_65536.npy",
+        "purpose_recorded": "restricted 65,536-token vocabulary file for the MTP draft path"
+      },
+      {
+        "artifact": "PLE mmap table (resolved location and generation procedure not established)",
+        "purpose_recorded": "Launcher describes a disk-mapped PLE table; only model and cache mounts were inspected. A distinct table mount is not established."
+      }
+    ],
+    "hardware_class_declared": "Launcher describes a single DGX Spark / GB10 with a 128 GB pool. Physical hardware and required driver were not measured."
+  },
+  "container_runtime_settings": {
+    "gpus": "all",
+    "ipc": "host",
+    "shm_size": "16g",
+    "network_mode": "bridge",
+    "security_opt": [
+      "label=disable"
+    ],
+    "restart_policy": "unless-stopped",
+    "port_publish": "127.0.0.1:<LOOPBACK_PORT>:8000/tcp",
+    "mounts": [
+      "<HOST_MODEL_DIR>:/models/qwen38:ro",
+      "<HOST_CACHE_DIR>:/root/.cache:rw"
+    ]
+  },
+  "server_command": {
+    "entrypoint": "vllm serve",
+    "model_path_argument": "/models/qwen38",
+    "flags": {
+      "--served-model-name": "qwen3.8-flash-next",
+      "--host": "0.0.0.0",
+      "--port": "8000",
+      "--load-format": "safetensors",
+      "--max-model-len": 262144,
+      "--max-num-seqs": 1,
+      "--gpu-memory-utilization": 0.8,
+      "--override-generation-config": {
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "top_k": 20,
+        "repetition_penalty": 1.0,
+        "max_new_tokens": 262144,
+        "min_p": 0.0
+      },
+      "--default-chat-template-kwargs": {
+        "enable_thinking": true,
+        "preserve_thinking": true,
+        "reasoning_effort": "xhigh"
+      },
+      "--reasoning-config": {
+        "suppress_eos_in_reasoning": true
+      },
+      "--enable-prompt-tokens-details": true,
+      "--mamba-cache-mode": "align",
+      "--enable-prefix-caching": true,
+      "--enable-chunked-prefill": true,
+      "--max-num-batched-tokens": 8192,
+      "-cc.cudagraph_mode": "PIECEWISE",
+      "-cc.splitting_ops": [
+        "vllm::unified_attention_with_output",
+        "vllm::unified_mla_attention_with_output",
+        "vllm::mamba_mixer2",
+        "vllm::mamba_mixer",
+        "vllm::short_conv",
+        "vllm::qwen4_exp_compute_ple_ngram_ids",
+        "vllm::qwen4_exp_ple_short_conv",
+        "vllm::qwen4_exp_qsa_with_output",
+        "vllm::linear_attention",
+        "vllm::qwen_gdn_attention_core",
+        "vllm::qwen_gdn_attention_core_fused_norm_packed",
+        "vllm::sparse_attn_indexer",
+        "vllm::ple_mmap_lookup_ids"
+      ],
+      "--no-enable-flashinfer-autotune": true,
+      "--kv-cache-dtype": "auto",
+      "--enable-auto-tool-choice": true,
+      "--tool-call-parser": "qwen3_coder",
+      "--reasoning-parser": "qwen3",
+      "--speculative-config": {
+        "method": "mtp",
+        "num_speculative_tokens": 2
+      }
+    }
+  },
+  "container_environment": {
+    "TRANSFORMERS_OFFLINE": "1",
+    "HF_HUB_OFFLINE": "1",
+    "VLLM_ENGINE_READY_TIMEOUT_S": "3600",
+    "VLLM_PLE_MMAP": "1",
+    "VLLM_PLE_MMAP_WORKERS": "32",
+    "VLLM_PLE_MMAP_PREWARM": "0",
+    "VLLM_PLE_MMAP_MADVISE": "random",
+    "VLLM_QSA_DET_TOPK": "1",
+    "VLLM_QSA_EXACT_TOPK": "0",
+    "VLLM_QSA_DET_LIB": "<CUSTOM_DETERMINISM_KERNEL>/_C_det.so",
+    "VLLM_MTP_DRAFT_VOCAB": "<CUSTOM_ASSETS>/draft_vocab_65536.npy",
+    "VLLM_FP8_PAD_M4": "0",
+    "VLLM_USE_FLASHINFER_SAMPLER": "1",
+    "VLLM_ALLOW_LONG_MAX_MODEL_LEN": "0",
+    "VLLM_ENABLE_CUDA_COMPATIBILITY": "0",
+    "VLLM_USAGE_SOURCE": "production-docker-image"
+  },
+  "not_active_but_supported_by_launcher": {
+    "YaRN rope-scaling override": "available via launcher toggle; disabled in this deployment"
+  },
+  "recreation_gaps": [
+    "Exact image build recipe and custom source modifications were not established by this inspection; stock vLLM compatibility is not certified.",
+    "PLE mmap table generation/provenance and the exact patch set naming the qwen4_exp_*/ple/qsa ops: undocumented here.",
+    "Current weight integrity was not established by a fresh hash pass.",
+    "Functional endpoint behavior (generation, thinking/no-thinking, tool calls, prefix-cache accounting, MTP accept rate) was not probed."
+  ],
+  "evaluation_gaps": [
+    "A benchmark or evaluation baseline was not established by this inspection.",
+    "Effectiveness of MTP, prefix caching and draft-vocabulary restriction was not measured by this inspection."
+  ],
+  "restoration_note": "Keep your working image, container and configuration. Prepared recreation arguments are not evidence of a completed restore. This reference includes no restore guarantee.",
+  "uncertainty_flags": [
+    "Package versions are dated metadata; installed packages were not queried.",
+    "Hardware class comes from launcher text; hardware and driver requirements were not measured.",
+    "A reusable reference does not certify an installation-specific gateway route or recovery binding.",
+    "max_new_tokens=262144 is pinned natively via --override-generation-config; no separate gateway-level output cap is established."
+  ],
+  "environment_scope": "Four inherited image build metadata entries are omitted from this reference. The complete image environment and build recipe are required for recreation; this JSON is a settings reference.",
+  "review_note": "Prepared by Gate Genie and independently compared with captured command/environment by Codex; editorial corrections clarify evidence and dependencies."
+}
