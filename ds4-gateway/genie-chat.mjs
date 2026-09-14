@@ -57,15 +57,17 @@ export class GenieChat {
     const s=this.sessions.get(id);if(!s)throw new Error('Conversation not found.');
     return structuredClone({...s,busy:this.jobs.has(id)});
   }
-  submit(id,text,requestId,{research=false}={}) {
+  submit(id,text,requestId,{research}={}) {
     if(this.closed||!this.provider)throw new Error('Hermes chat is not configured.');
     if(this.isSuspended())throw new Error('New Genie questions are paused while testing mode is active. Your draft has not been sent.');
     if(typeof text!=='string'||!text.trim()||text.length>32000)throw new Error('Enter a message of up to 32,000 characters.');
     if(typeof requestId!=='string'||!/^[a-zA-Z0-9-]{8,80}$/.test(requestId))throw new Error('A message identifier is required.');
-    if(typeof research!=='boolean')throw new Error('Research permission must be explicit.');
+    if(research!==undefined&&typeof research!=='boolean')throw new Error('Research option must be boolean.');
     const s=this.sessions.get(id);if(!s)throw new Error('Conversation not found.');
     const existing=s.messages.find(m=>m.role==='user'&&m.request_id===requestId);
-    if(existing){if(existing.text!==text.trim()||Boolean(existing.research)!==research)throw new Error('That message identifier was already used.');return this.get(id);}
+    if(existing){if(existing.text!==text.trim()||(research!==undefined&&Boolean(existing.research)!==research))throw new Error('That message identifier was already used.');return this.get(id);}
+    const automaticResearch=research===undefined;
+    research??=this.provider.info?.research_available===true;
     if(research&&!this.provider.info?.research_available)throw new Error('Web research is not configured for this installation.');
     if(this.jobs.has(id))throw new Error('Genie is answering in this conversation. Your draft has not been sent.');
     const previous=structuredClone(s);
@@ -73,7 +75,7 @@ export class GenieChat {
     const context=chatContext(this.getSnapshot());
     const user={id:randomUUID(),request_id:requestId,role:'user',text:text.trim(),state:'complete',at:this.now(),...(research?{research:true}:{})};
     const reply={id:randomUUID(),role:'assistant',text:'',state:'working',at:this.now(),context};
-    if(research)reply.research={authorized_at:this.now(),events:[]};
+    if(research)reply.research={authorized_at:this.now(),mode:automaticResearch?'automatic':'explicit',events:[]};
     s.messages.push(user,reply);s.updated_at=this.now();if(s.messages.length===2)s.title=user.text.slice(0,64);
     try{this.save(s);}catch{this.sessions.set(id,previous);throw new Error('Could not save your message. Nothing was sent to the model.');}
     // Yield before generation, ensuring busy and the accepted receipt exist first.

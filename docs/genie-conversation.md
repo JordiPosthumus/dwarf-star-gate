@@ -67,7 +67,7 @@ An empty soul fails the chat rather than silently becoming a different assistant
 
 Ordinary unrelated working-directory instruction files and personal Hermes homes
 are excluded. The explicit installation AGENTS.md supplies operational guidance;
-tools and per-question authorization enforce available capabilities separately.
+tools enforce available capabilities separately; public web reading has standing permission.
 This does not yet enable the separate planned long-term memory system.
 
 For a standalone preview, provide the installed `source` and `python` paths from
@@ -125,10 +125,10 @@ Merely editing a configuration does not deploy this worktree.
 - A dedicated `hermes-home` lives beneath that private directory. Personal Hermes
   config, memory, environment variables and plugins are not imported intentionally.
   Use a source checkout without a project `.env` file; the bridge refuses one.
-- Ordinary messages expose no tools. An explicitly authorized research message
-  exposes only the two web-reading tools, verified before inference. Neither
-  profile has server-changing tools. Other Hermes profiles and the existing Genie
-  are unchanged.
+- When research services are configured, Genie has standing permission to use
+  the two web-reading tools whenever useful. Their exact tool set is verified
+  before inference. Without those services, chat still works without web tools.
+  No server-changing tools are exposed. Other Hermes profiles are unchanged.
 - Model errors do not cause automatic replay. An interrupted reply is marked as
   such; the saved user message remains. The user can ask again explicitly.
 - Partial replies are visible during generation. Completed replies are saved;
@@ -144,10 +144,11 @@ Firecrawl services, using `search_url` and `extract_url` respectively. Configure
 their base URLs without credentials or query parameters. Star Gate adds no cloud
 fallback and does not install or modify either service.
 
-Check **Research web for this question** beside Send to authorize web access for
-that message. It resets after acceptance. Requests without that permission cannot
-use web tools, even if the model asks for them. The same-origin API uses an explicit
-boolean `research` field; changing it requires a new message identifier.
+Genie can search and read public sources when they help answer a question, without
+asking first or requiring a checkbox. Ordinary conversation does not require a
+search. The optional API `research: false` field can suppress web tools for a
+specific request; omitted uses the installation's available research services.
+Reusing an accepted message identifier never starts another model call.
 
 Research uses Hermes' existing web tool names with two small installation-specific
 backends: SearXNG JSON search and Firecrawl page extraction. Public GitHub API GETs
@@ -162,15 +163,17 @@ guard, not a general data-loss prevention system. Private configuration recipes
 and raw requests are not supplied to these tools. Selected server observations
 still go to the configured chat model as described above.
 
-The conversation keeps web authorization, source links, access times, fetch hashes
+The conversation keeps the web-access mode, source links, access times, fetch hashes
 and tool failures with the answer. Search hits are labelled separately from pages
 actually read. Page excerpts above 60,000 characters are explicitly marked truncated;
 conversation history is not trimmed by this feature. Source text is untrusted data,
 and no tool executes commands or applies a recommendation.
 
-This increment provides on-demand research. Periodic reminders and their
-approve/skip/postpone controls remain separate work; enabling these services does
-not start scheduled research or approve benchmarks, installations or server changes.
+This increment provides research during conversations. Public web reading has
+standing permission, including for future background research once that is
+implemented. It does not by itself create a schedule. Background work tied to the
+new conversational Genie, its cadence and run-now/postpone controls remain work
+to do. Benchmarks, installations and server changes retain their separate rules.
 
 The UI is the existing same-origin loopback dashboard. This feature does not
 introduce a public chat service, authentication platform or separate database.

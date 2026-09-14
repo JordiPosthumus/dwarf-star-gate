@@ -5,11 +5,11 @@ import {GenieChat} from './genie-chat.mjs';
 import {hermesProvider} from './genie-hermes.mjs';
 
 function directory(t){const d=fs.mkdtempSync(path.join(os.tmpdir(),'genie-research-'));t.after(()=>fs.rmSync(d,{recursive:true,force:true}));return d;}
-test('web permission is per message, bound to deduplication and saved before work starts',async t=>{
+test('web tools are available by default, with evidence and retry deduplication preserved',async t=>{
  const calls=[],d=directory(t),chat=new GenieChat({directory:d,provider:{info:{research_available:true},generate:async p=>{calls.push(p.research);assert.equal(JSON.parse(fs.readFileSync(path.join(d,p.sessionId+'.json'))).messages.at(-2).research,p.research||undefined);p.onResearch({kind:'read',state:'complete',at:new Date().toISOString(),sources:[{url:'https://example.org/source'}]});return {text:'Answer'};}}});
- const s=chat.create();chat.submit(s.id,'Check updates','research-on',{research:true});assert.throws(()=>chat.submit(s.id,'Check updates','research-on',{research:false}),/already used/);await chat.idle();
- chat.submit(s.id,'Explain that','research-off');await chat.idle();assert.deepEqual(calls,[true,false]);const saved=chat.get(s.id);assert.equal(saved.messages[1].research.events.length,1);assert.equal(saved.messages[3].research,undefined);assert.equal(new GenieChat({directory:d}).get(s.id).messages[1].research.events.length,1);
- assert.throws(()=>chat.submit(s.id,'Check','invalid-permission',{research:'true'}),/explicit/);
+ const s=chat.create();chat.submit(s.id,'Check updates','research-on');assert.throws(()=>chat.submit(s.id,'Check updates','research-on',{research:false}),/already used/);await chat.idle();
+ chat.submit(s.id,'Explain that','research-off',{research:false});await chat.idle();assert.deepEqual(calls,[true,false]);const saved=chat.get(s.id);assert.equal(saved.messages[1].research.events.length,1);assert.equal(saved.messages[3].research,undefined);assert.equal(new GenieChat({directory:d}).get(s.id).messages[1].research.events.length,1);
+ assert.throws(()=>chat.submit(s.id,'Check','invalid-permission',{research:'true'}),/boolean/);
 });
 test('missing research setup cannot silently execute a requested study',t=>{
  const chat=new GenieChat({directory:directory(t),provider:{generate:()=>assert.fail('must not call model')}}),s=chat.create();assert.throws(()=>chat.submit(s.id,'Check','no-research-config',{research:true}),/not configured/);assert.equal(chat.get(s.id).messages.length,0);
@@ -35,6 +35,16 @@ test('installed Hermes uses only the two research tools and records actual searc
  });
  await new Promise(r=>server.listen(0,'127.0.0.1',r));t.after(()=>{server.closeAllConnections();server.close();});const base=`http://127.0.0.1:${server.address().port}`,d=directory(t);
  const provider=hermesProvider({python:process.env.DSG_TEST_HERMES_PYTHON,source:process.env.DSG_TEST_HERMES_SOURCE,url:base+'/v1',model:'example-model',research:{search_url:base,extract_url:base}},{directory:d});t.after(()=>provider.close());
- const chat=new GenieChat({directory:path.join(d,'chats'),provider,getSnapshot:()=>({gateway:{workers:[{id:'private-worker'}]}})}),s=chat.create();chat.submit(s.id,'Research the example release','research-hermes',{research:true});await chat.idle();
+ const chat=new GenieChat({directory:path.join(d,'chats'),provider,getSnapshot:()=>({gateway:{workers:[{id:'private-worker'}]}})}),s=chat.create();chat.submit(s.id,'Research the example release','research-hermes');await chat.idle();
  const answer=chat.get(s.id).messages.at(-1);assert.equal(answer.state,'complete',JSON.stringify(answer));assert.match(answer.text,/synthetic release/);assert.equal(searches,1);assert.equal(reads,1);assert.equal(modelRequests.length,3);assert.equal(answer.research.events.filter(e=>e.state==='complete').length,2);assert.ok(answer.research.events.some(e=>e.content_sha256));
+});
+
+test('ordinary chat works without web services and accepted retries survive a changed default',async t=>{
+ const calls=[],provider={info:{research_available:false},generate:async p=>{calls.push(p.research);return {text:'Hello'};}};
+ const chat=new GenieChat({directory:directory(t),provider}),s=chat.create();
+ chat.submit(s.id,'Hello','default-before');await chat.idle();assert.deepEqual(calls,[false]);
+ provider.info.research_available=true;
+ chat.submit(s.id,'Hello','default-before');await chat.idle();assert.deepEqual(calls,[false],'accepted request is not replayed');
+ chat.submit(s.id,'What changed?','default-after');await chat.idle();assert.deepEqual(calls,[false,true]);
+ assert.equal(chat.get(s.id).messages.at(-1).research.mode,'automatic');
 });
