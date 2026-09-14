@@ -54,6 +54,7 @@ assets.set('/hourglass.js',['hourglass.js','text/javascript']);
 assets.set('/activity.js',['activity.js','text/javascript']);
 assets.set('/logo.svg',['logo.svg','image/svg+xml']);
 assets.set('/current-jobs.js',['current-jobs.js','text/javascript']);
+assets.set('/genie-handoff.js',['genie-handoff.js','text/javascript']);
 assets.set('/genie-chat.js',['genie-chat.js','text/javascript']);
 assets.set('/genie-chat.css',['genie-chat.css','text/css']);
 for(const [route,file,mime] of [
