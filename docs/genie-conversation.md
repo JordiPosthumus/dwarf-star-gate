@@ -255,3 +255,39 @@ capture a newer snapshot. Clipboard failure selects the text for manual copying.
 The handoff asks the receiving agent to inspect the saved receipt and actual
 request/process state, preserve current capabilities/history, avoid ambiguous
 replay, and verify the smallest repair. It does not grant new server authority.
+
+
+## Share the operational notebook with chat (explicit opt-in)
+
+The existing notebook can supply conversation context when both its memory toggle
+and the private `genie_chat.operational_notebook` setting are enabled. The latter
+defaults to off. Enabling it authorizes sending the selected notebook records,
+including operator-note prose, to the configured chat model provider. If that
+connection uses the gateway pool, its eligible model workers may receive them.
+Choose the provider accordingly; this is separate from enabling notebook storage.
+
+After deciding that sharing is appropriate, add `"operational_notebook": true`
+inside the existing private `genie_chat` object. Preserve every other connection
+setting. Restart only the dashboard after its chat/review work is idle. The chat
+footnote shows access, and each answer's **Setup used for this answer** disclosure
+lists the exact records and revisions supplied. The ordinary notebook controls
+still provide correction and archiving. This adds no model-driven notebook writer.
+
+Retrieval reuses the notebook's existing maximum of 12 records / 16 KiB, prioritizes
+operator notes, and selects current workers plus fleet notes. It refreshes after
+a queued question's review wait. Unavailable or disabled memory is explicitly
+reported and does not block chat. Notes remain historical evidence and hypotheses,
+never approval or current health proof. The snapshot used for an answer is saved
+with that answer; later notebook edits do not rewrite earlier evidence.
+
+Set the option to false to stop adding notebook context after the idle dashboard
+restart. Turning off the existing memory toggle also removes it from subsequent
+dispatches. Neither operation cancels a dispatched request or erases saved chats.
+Earlier answers may quote notes and remain part of conversation history.
+
+Notebook content stays out of general status, diagnostics and Copy handoff.
+Attached notebook IDs, digests and worker/action references are blocked from public
+web-tool inputs, and Genie is instructed never to send notebook prose to those
+tools. The identifier filter is not a general guarantee against a model paraphrasing
+private text; only enable sharing for notes appropriate for this provider and chat.
+No live installation is opted in by installing this code.

@@ -80,6 +80,7 @@ export function genieRuntimeConfig(config){
 // Reuse the gateway credential only for this installation's exact local pool.
 export function genieChatConfig(config){
   const chat=config.genie_chat;if(!chat)return null;
+  if(chat.operational_notebook!==undefined&&typeof chat.operational_notebook!=='boolean')throw new Error('genie_chat.operational_notebook must be boolean.');
   const local=new URL(chat.url).href===`http://127.0.0.1:${config.port}/v1`;
   return {...chat,...(local&&chat.api_key===undefined?{api_key:config.api_key}:{})};
 }
@@ -440,7 +441,7 @@ export async function runDashboard(configPath, port) {
   const reviewer=config.genie_chat?hermesReviewFetch(config.genie_chat,{directory:chatDirectory}):undefined;
   const genie=new Genie(runtimeGenie,snapshot,{fetchImpl:reviewer,isTesting,memory,providerLedger,assignmentLedger,poolUrl:`http://127.0.0.1:${config.port}/v1`,recover:managementEnabled?input=>workerControl(config.control_socket,'/genie-recover-worker',input,{channel:'gate_genie'}):null,rebalance:managementEnabled?input=>workerControl(config.control_socket,'/genie-relocate-queued',input,{channel:'gate_genie'}):null});
   const stopGenieTunnel=genieTunnel(config.genie);
-  const chat=config.genie_chat?new GenieChat({directory:chatDirectory,getSnapshot:()=>({...snapshot(),genie:genie.status(),genie_handovers:requestHistory.snapshot().handovers}),isSuspended:isTesting,runQuestion:(answer,onWait)=>genie.answerChat(answer,onWait),provider:hermesProvider(genieChatConfig(config),{directory:chatDirectory})}):null;
+  const chat=config.genie_chat?new GenieChat({directory:chatDirectory,notebook:config.genie_chat.operational_notebook===true?memory:null,getSnapshot:()=>({...snapshot(),genie:genie.status(),genie_handovers:requestHistory.snapshot().handovers}),isSuspended:isTesting,runQuestion:(answer,onWait)=>genie.answerChat(answer,onWait),provider:hermesProvider(genieChatConfig(config),{directory:chatDirectory})}):null;
   const server = createDashboard(snapshot, path.join(here,'ui'), managementEnabled ? {
     read:()=>workerControl(config.control_socket,'/workers',undefined,{channel:'dashboard'}),
     act:(action,input)=>workerControl(config.control_socket,({'job-priority':'/set-job-priority',concurrency:'/set-worker-concurrency',add:'/add-worker',endpoint:'/edit-endpoint',test:'/check-endpoint',remove:'/remove-worker',drain:'/drain-workers',resume:'/resume-workers',lock:'/maintenance-lock',unlock:'/release-maintenance-lock',fallbacks:'/set-ssh-fallbacks',context:'/set-context-limit','conversation-turns':'/set-conversation-turns','queue-timeout':'/set-queue-timeout',protection:'/set-protection',relocate:'/relocate-queued',recover:'/recover-worker','recovery-policy':'/recovery-policy','recovery-handback-policy':'/recovery-handback-policy','recovery-recheck':'/recovery-recheck'})[action],input,{channel:'dashboard'}),

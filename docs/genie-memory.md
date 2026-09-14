@@ -97,6 +97,10 @@ Records older than seven days are labelled review-due, never silently deleted.
 Reports show the IDs/revisions supplied to the model. They are context, not action
 offers; executor permissions and current evidence still govern every action.
 
+Conversational Genie can also read the same notebook through the explicit
+[chat notebook opt-in](genie-conversation.md#share-the-operational-notebook-with-chat-explicit-opt-in).
+It is off by default and does not change the dedicated/pool review policy below.
+
 Notebook contents never enter diagnostic exports. Do not save
 secrets, inference content or raw logs in operator notes. Dedicated Genie reviews
 may receive bounded notebook history, including operator notes; choose that

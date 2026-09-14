@@ -1594,3 +1594,21 @@ preserve capabilities/history and avoid ambiguous replay. Focused chat/dashboard
 and privacy tests pass. Browser checks verified the final themed preview,
 offline copying and a narrow layout without page overflow. A disconnected page
 retains saved messages and disables Send while the handoff remains usable.
+
+
+## Shared operational notebook context (development)
+
+Added explicit `genie_chat.operational_notebook` opt-in to reuse the existing
+notebook for conversation context. Default behavior is unchanged. Retrieval,
+revisioned operator edits and archive rules remain in the existing notebook;
+chat adds no writer. Context refreshes at dispatch and exact notes/revisions are
+saved with the answer. Disabled/unavailable memory stays visible without stopping
+chat. Provider-facing instructions distinguish history/hypotheses from authority;
+web tools reject attached private reference identifiers. General diagnostics and
+Copy handoff still exclude notebook prose. Activation in a live installation
+requires its separate provider-sharing decision; this source change grants none.
+
+Validation: 139 focused chat, notebook, study and dashboard tests; two isolated
+Hermes bridge tests; and five web-tool validation tests passed. The browser
+disclosure showed the synthetic note and its saved revision. Syntax and privacy
+checks passed. This does not demonstrate live model use of the owner’s notes.
