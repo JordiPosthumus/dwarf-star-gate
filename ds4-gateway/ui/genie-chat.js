@@ -5,19 +5,23 @@ if(panel){
   const draftKey=id=>`dsg-genie-draft:${id??'new'}`;
   const draft={read:id=>{try{return sessionStorage.getItem(draftKey(id))??'';}catch{return '';}},write:(id,text)=>{try{sessionStorage.setItem(draftKey(id),text);}catch{}}};
   function text(tag,content,className){const e=document.createElement(tag);e.textContent=content;if(className)e.className=className;return e;}
+  function sourceLink(label,url){try{const u=new URL(url);if(u.protocol!=='https:'||u.username||u.password)throw new Error();const a=text('a',label||u.hostname);a.href=u.href;a.target='_blank';a.rel='noopener noreferrer';return a;}catch{return document.createTextNode(label||url||'Source unavailable');}}
   async function api(url,body){const r=await fetch(url,body?{method:'POST',headers:{'content-type':'application/json','x-dsg-csrf':token},body:JSON.stringify(body)}:{});const value=await r.json();if(!r.ok)throw new Error(value.error??'Chat request failed.');return value;}
   function error(message){$('conversation-error').textContent=message??'';}
   function format(body){
     const fragment=document.createDocumentFragment();
     for(const [i,part]of body.split(/```[^\n]*\n?/).entries()){
       if(i%2){fragment.append(text('pre',part));continue;}
-      // Render only emphasis; all other model text remains inert text, never HTML.
-      for(const [j,piece]of part.split(/\*\*([^*]+)\*\*/).entries())fragment.append(j%2?text('strong',piece):document.createTextNode(piece));
+      // A small text-node renderer: emphasis, inline code and HTTPS citations. Never HTML.
+      for(const [j,piece]of part.split(/\*\*([^*]+)\*\*/).entries()){
+        if(j%2){fragment.append(text('strong',piece));continue;}
+        let end=0;for(const m of piece.matchAll(/\[([^\]\n]+)\]\((https:\/\/[^\s)]+)\)|`([^`\n]+)`/g)){fragment.append(document.createTextNode(piece.slice(end,m.index)),m[3]!==undefined?text('code',m[3]):sourceLink(m[1],m[2]));end=m.index+m[0].length;}fragment.append(document.createTextNode(piece.slice(end)));
+      }
     }
     return fragment;
   }
   function render(session){
-    const key=JSON.stringify([session,status?.available,status?.suspended,sending,creating]);if(key===signature)return;signature=key;
+    const key=JSON.stringify([session,status?.available,status?.suspended,status?.research_available,sending,creating]);if(key===signature)return;signature=key;
     const list=$('conversation-messages'),scrollTop=list.scrollTop,nearBottom=list.scrollHeight-list.scrollTop-list.clientHeight<90;
     list.replaceChildren();
     if(!session?.messages.length){
@@ -32,10 +36,20 @@ if(panel){
       const body=text('div','','conversation-text');body.append(format(m.text));article.append(body);
       if(m.state==='working'&&!m.text)article.append(text('p','Waiting for the model','conversation-thinking'));
       if(m.error)article.append(text('p',m.error,'conversation-error'));
+      if(m.role==='assistant'&&m.research){
+        const events=m.research.events??[],last=events.at(-1);
+        if(m.state==='working'&&last?.state==='reading')article.append(text('p','Reading public sources…','conversation-thinking'));
+        const d=text('details','','conversation-sources');d.append(text('summary','Web research sources'));
+        d.append(text('p',`Web access authorized for this question · ${new Date(m.research.authorized_at).toLocaleString()}`));
+        const sources=new Map();for(const e of events){for(const s of e.sources??[]){const prior=sources.get(s.url);if(!prior||e.kind==='read')sources.set(s.url,{...s,title:s.title||prior?.title,kind:e.kind,at:e.at});}if(e.error)d.append(text('p',e.error));}
+        for(const s of sources.values()){const p=text('p','');p.append(sourceLink(s.title,s.url),document.createTextNode(` · ${s.kind==='read'?'read':'search result'} · ${new Date(s.at).toLocaleString()}`));d.append(p);}article.append(d);
+      }
       if(m.context){const d=document.createElement('details');d.append(text('summary','Setup used for this answer'));const c=m.context;d.append(text('p',`${c.source}\n${c.observed_at?new Date(c.observed_at).toLocaleString():'Observation time unavailable'}\n${c.unavailable?'Current setup unavailable':`${c.servers.length} servers in this snapshot`}\n${c.servers.map(w=>`${w.id}: ${w.is_healthy===true?'healthy':w.is_healthy===false?'not healthy':'health unknown'}; context ${w.context_length??'unknown'}`).join('\n')}`));article.append(d);}
       list.append(article);
     }
     $('conversation-send').disabled=sending||creating||Boolean(session?.busy)||!status?.available;
+    $('conversation-research').disabled=sending||creating||!status?.research_available;
+    $('conversation-research').title=status?.research_available?'Allow public web research for this message. This does not authorize server changes.':'Web research is not configured for this installation.';
     $('conversation-activity').textContent=session?.busy?'Waiting for Genie’s reply. You can write your next question below.':status?.suspended?'New questions are paused while testing mode is active.':status?.available?'Ready for your next question.':'Chat is not connected to Hermes yet.';
     if(nearBottom)list.scrollTop=list.scrollHeight;else list.scrollTop=scrollTop;
   }
@@ -44,7 +58,7 @@ if(panel){
   async function refresh(){if(fetching)return;fetching=true;try{
     status=await api('/api/genie/chat');token=status.csrf_token;
     $('conversation-provider').textContent=status.suspended?'Paused for testing':status.mode==='rehearsal'?'Rehearsal · example answers':status.available?`Hermes · ${status.model}`:'Hermes not configured';
-    $('conversation-badge').textContent=status.mode==='rehearsal'?'Example setup':'Conversation only';
+    $('conversation-badge').textContent=status.mode==='rehearsal'?'Example setup':'No server changes';
     if(current&&!sending&&!creating&&!status.conversations.some(s=>s.id===current)){draft.write(current,$('conversation-input').value);current=null;signature='';$('conversation-input').value=draft.read(null);}
     if(!current&&status.conversations.length){let saved;try{saved=localStorage.getItem('dsg-genie-conversation');}catch{}current=status.conversations.some(s=>s.id===saved)?saved:status.conversations[0].id;$('conversation-input').value=draft.read(current);}
     renderList();const id=current,row=status.conversations.find(s=>s.id===id);
@@ -58,8 +72,9 @@ if(panel){
   $('conversation-input').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();$('conversation-form').requestSubmit();}});
   $('conversation-form').addEventListener('submit',async e=>{e.preventDefault();const message=$('conversation-input').value.trim();if(!message||sending||$('conversation-send').disabled)return;sending=true;$('conversation-send').disabled=true;$('conversation-input').disabled=true;$('conversation-new').disabled=true;error();try{
     if(!current){const s=await api('/api/genie/chat',{action:'new'});current=s.id;}
-    if(!request||request.text!==message||request.conversation_id!==current)request={action:'send',conversation_id:current,text:message,request_id:crypto.randomUUID()};
-    const s=await api('/api/genie/chat',request);request=null;$('conversation-input').value='';draft.write(current,'');signature='';render(s);$('conversation-messages').scrollTop=$('conversation-messages').scrollHeight;
+    const research=$('conversation-research').checked;
+    if(!request||request.text!==message||request.conversation_id!==current||request.research!==research)request={action:'send',conversation_id:current,text:message,request_id:crypto.randomUUID(),research};
+    const s=await api('/api/genie/chat',request);request=null;$('conversation-research').checked=false;$('conversation-input').value='';draft.write(current,'');signature='';render(s);$('conversation-messages').scrollTop=$('conversation-messages').scrollHeight;
   }catch(e){error(e.message);}finally{sending=false;$('conversation-input').disabled=false;$('conversation-new').disabled=false;await refresh();$('conversation-input').focus();}});
   $('conversation-input').value=draft.read(null);refresh();setInterval(()=>{if(!document.hidden)refresh();},750);
 }

@@ -3,6 +3,9 @@ import {recordsForChat} from './server-records.mjs';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 
+function validResearchEvent(e){return e&&['search','read'].includes(e.kind)&&['reading','complete','failed'].includes(e.state)&&typeof e.at==='string'&&(e.sources===undefined||(Array.isArray(e.sources)&&e.sources.every(s=>s&&typeof s.url==='string'&&(s.title===undefined||typeof s.title==='string'))));}
+function validResearch(m){return m.research===undefined||(m.role==='user'?typeof m.research==='boolean':m.research&&Number.isFinite(m.research.authorized_at)&&Array.isArray(m.research.events)&&m.research.events.every(validResearchEvent));}
+
 // The conversation store is private runtime data, never the operational notebook
 // or the model's authority to change a server. No background model calls here.
 export function chatContext(snapshot={}) {
@@ -29,7 +32,7 @@ export class GenieChat {
       const file=path.join(this.directory,name);
       try {
       const s=JSON.parse(fs.readFileSync(file,'utf8'));
-      if(s.version!==1||name!==`${s.id}.json`||!Array.isArray(s.messages)||s.messages.some(m=>!m||!['user','assistant'].includes(m.role)||typeof m.text!=='string'||!['working','complete','failed','interrupted'].includes(m.state)||(m.context&&!Array.isArray(m.context.servers))))throw new Error('Invalid Genie conversation file; existing data was preserved.');
+      if(s.version!==1||name!==`${s.id}.json`||!Array.isArray(s.messages)||s.messages.some(m=>!m||!['user','assistant'].includes(m.role)||typeof m.text!=='string'||!['working','complete','failed','interrupted'].includes(m.state)||(m.context&&!Array.isArray(m.context.servers))||!validResearch(m)))throw new Error('Invalid Genie conversation file; existing data was preserved.');
       // A server restart is not permission to replay an uncertain request.
       let changed=false;
       for(const m of s.messages)if(m.state==='working'){m.state='interrupted';m.error='The chat service restarted before this reply finished. Your message was kept; unsaved partial output may be missing.';changed=true;}
@@ -54,26 +57,29 @@ export class GenieChat {
     const s=this.sessions.get(id);if(!s)throw new Error('Conversation not found.');
     return structuredClone({...s,busy:this.jobs.has(id)});
   }
-  submit(id,text,requestId) {
+  submit(id,text,requestId,{research=false}={}) {
     if(this.closed||!this.provider)throw new Error('Hermes chat is not configured.');
     if(this.isSuspended())throw new Error('New Genie questions are paused while testing mode is active. Your draft has not been sent.');
     if(typeof text!=='string'||!text.trim()||text.length>32000)throw new Error('Enter a message of up to 32,000 characters.');
     if(typeof requestId!=='string'||!/^[a-zA-Z0-9-]{8,80}$/.test(requestId))throw new Error('A message identifier is required.');
+    if(typeof research!=='boolean')throw new Error('Research permission must be explicit.');
     const s=this.sessions.get(id);if(!s)throw new Error('Conversation not found.');
     const existing=s.messages.find(m=>m.role==='user'&&m.request_id===requestId);
-    if(existing){if(existing.text!==text.trim())throw new Error('That message identifier was already used.');return this.get(id);}
+    if(existing){if(existing.text!==text.trim()||Boolean(existing.research)!==research)throw new Error('That message identifier was already used.');return this.get(id);}
+    if(research&&!this.provider.info?.research_available)throw new Error('Web research is not configured for this installation.');
     if(this.jobs.has(id))throw new Error('Genie is answering in this conversation. Your draft has not been sent.');
     const previous=structuredClone(s);
     const history=s.messages.filter(m=>m.state==='complete').map(m=>({role:m.role,content:m.text}));
     const context=chatContext(this.getSnapshot());
-    const user={id:randomUUID(),request_id:requestId,role:'user',text:text.trim(),state:'complete',at:this.now()};
+    const user={id:randomUUID(),request_id:requestId,role:'user',text:text.trim(),state:'complete',at:this.now(),...(research?{research:true}:{})};
     const reply={id:randomUUID(),role:'assistant',text:'',state:'working',at:this.now(),context};
+    if(research)reply.research={authorized_at:this.now(),events:[]};
     s.messages.push(user,reply);s.updated_at=this.now();if(s.messages.length===2)s.title=user.text.slice(0,64);
     try{this.save(s);}catch{this.sessions.set(id,previous);throw new Error('Could not save your message. Nothing was sent to the model.');}
     // Yield before generation, ensuring busy and the accepted receipt exist first.
     const job=Promise.resolve().then(async()=>{
       try{
-        const result=await this.provider.generate({message:user.text,history,context,sessionId:id,onDelta:delta=>{if(typeof delta==='string')reply.text+=delta;}});
+        const result=await this.provider.generate({message:user.text,history,context,sessionId:id,research,onResearch:event=>{if(research&&validResearchEvent(event)){reply.research.events.push(event);this.save(s);}},onDelta:delta=>{if(typeof delta==='string')reply.text+=delta;}});
         if(typeof result?.text!=='string'||!result.text.trim())throw new Error('Hermes returned no answer.');
         reply.text=result.text;reply.state='complete';
       }catch(e){reply.state='failed';reply.error=e.publicMessage??'Genie could not finish this reply. Your conversation is saved; you can ask again.';}

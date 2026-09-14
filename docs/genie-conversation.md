@@ -106,9 +106,10 @@ Merely editing a configuration does not deploy this worktree.
 - A dedicated `hermes-home` lives beneath that private directory. Personal Hermes
   config, memory, environment variables and plugins are not imported intentionally.
   Use a source checkout without a project `.env` file; the bridge refuses one.
-- The new conversational profile exposes no action tools. It uses explicit
-  `enabled_toolsets=[]` and verifies the resulting tool list before inference.
-  This does not change any other Hermes profile or the existing Genie.
+- Ordinary messages expose no tools. An explicitly authorized research message
+  exposes only the two web-reading tools, verified before inference. Neither
+  profile has server-changing tools. Other Hermes profiles and the existing Genie
+  are unchanged.
 - Model errors do not cause automatic replay. An interrupted reply is marked as
   such; the saved user message remains. The user can ask again explicitly.
 - Partial replies are visible during generation. Completed replies are saved;
@@ -116,6 +117,41 @@ Merely editing a configuration does not deploy this worktree.
 - Drafts live in the browser's session storage. Transcript files and setup
   snapshots are private, contain potentially sensitive discussion, and are never
   included in general diagnostics or the operational notebook.
+
+### Research public developments
+
+Optional `genie_chat.research` configuration selects your existing SearXNG and
+Firecrawl services, using `search_url` and `extract_url` respectively. Configure
+their base URLs without credentials or query parameters. Star Gate adds no cloud
+fallback and does not install or modify either service.
+
+Check **Research web for this question** beside Send to authorize web access for
+that message. It resets after acceptance. Requests without that permission cannot
+use web tools, even if the model asks for them. The same-origin API uses an explicit
+boolean `research` field; changing it requires a new message identifier.
+
+Research uses Hermes' existing web tool names with two small installation-specific
+backends: SearXNG JSON search and Firecrawl page extraction. Public GitHub API GETs
+are read directly through Hermes' URL-safe HTTP client so PR creation, update and
+merge dates can be inspected. Search services can lag and a new upstream change
+may already be included in local patches; the answer must state those limits.
+
+Search queries and source URLs necessarily leave the installation for upstream
+search engines and websites. Use public software topics. Credentials, local paths
+and known private worker names are rejected in tool inputs; this is a practical
+guard, not a general data-loss prevention system. Private configuration recipes
+and raw requests are not supplied to these tools. Selected server observations
+still go to the configured chat model as described above.
+
+The conversation keeps web authorization, source links, access times, fetch hashes
+and tool failures with the answer. Search hits are labelled separately from pages
+actually read. Page excerpts above 60,000 characters are explicitly marked truncated;
+conversation history is not trimmed by this feature. Source text is untrusted data,
+and no tool executes commands or applies a recommendation.
+
+This increment provides on-demand research. Periodic reminders and their
+approve/skip/postpone controls remain separate work; enabling these services does
+not start scheduled research or approve benchmarks, installations or server changes.
 
 The UI is the existing same-origin loopback dashboard. This feature does not
 introduce a public chat service, authentication platform or separate database.

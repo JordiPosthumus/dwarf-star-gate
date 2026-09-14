@@ -25,9 +25,10 @@ export function hermesProvider(config,{directory}) {
   // A dedicated clean library checkout cannot import a personal project .env.
   if(fs.existsSync(path.join(config.source,'.env')))throw new Error('Use a dedicated Hermes checkout without a project .env file.');
   if(config.timeout_ms!==undefined)queueTimeout(config.timeout_ms);
+  if(config.research){for(const key of ['search_url','extract_url']){const u=new URL(config.research[key]);if(!['http:','https:'].includes(u.protocol)||u.username||u.password||u.search||u.hash)throw new Error('Use explicit research service URLs without credentials or query parameters.');}}
   const children=new Set();
   return {
-    info:{engine:'Hermes',model:config.model,mode:'provider',can_act:false},
+    info:{engine:'Hermes',model:config.model,mode:'provider',can_act:false,research_available:Boolean(config.research)},
     generate(input){return new Promise((resolve,reject)=>{
       const env={PATH:process.env.PATH??'',HOME:home,HERMES_HOME:home,HERMES_WRITE_SAFE_ROOT:home,HERMES_DISABLE_LAZY_INSTALLS:'1',PYTHONDONTWRITEBYTECODE:'1',PYTHONUNBUFFERED:'1',PYTHONIOENCODING:'utf-8',LANG:'en_US.UTF-8'};
       const child=spawn(config.python,['-B',bridge,config.source],{cwd:home,env,stdio:['pipe','pipe','pipe']});children.add(child);
@@ -40,13 +41,14 @@ export function hermesProvider(config,{directory}) {
       child.stdout.on('data',chunk=>{
         bytes+=Buffer.byteLength(chunk);if(bytes>16*1024*1024){failed=chatError('bridge');child.kill();return;}
         pending+=chunk;let n;
-        while((n=pending.indexOf('\n'))>=0){const line=pending.slice(0,n);pending=pending.slice(n+1);try{const event=JSON.parse(line);if(event.type==='delta')input.onDelta(event.text);else if(event.type==='done')final=event;else if(event.type==='error')failed=chatError(event.code);}catch{failed=chatError('bridge');}}
+        while((n=pending.indexOf('\n'))>=0){const line=pending.slice(0,n);pending=pending.slice(n+1);try{const event=JSON.parse(line);if(event.type==='delta')input.onDelta(event.text);else if(event.type==='research')input.onResearch?.(event.event);else if(event.type==='done')final=event;else if(event.type==='error')failed=chatError(event.code);}catch{failed=chatError('bridge');}}
       });
       // Never relay library logs, provider bodies or credentials into browser errors.
       child.stderr.resume();child.stdin.on('error',()=>{});
       child.on('error',()=>{cleanup();reject(chatError('runtime'));});
       child.on('close',code=>{cleanup();if(failed||code!==0||!final)reject(failed??chatError('bridge'));else resolve({text:final.text});});
       child.stdin.end(JSON.stringify({message:input.message,history:input.history,context:input.context,session_id:input.sessionId,
+        research:input.research&&config.research?{search_url:config.research.search_url,extract_url:config.research.extract_url,requested_at:new Date().toISOString()}:null,
         provider:{url:config.url,model:config.model,api_key:config.api_key??'',max_tokens:config.max_tokens??8192,reasoning_effort:config.reasoning_effort??'xhigh'}}));
     });},
     close(){for(const child of children)child.kill();},
