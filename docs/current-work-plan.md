@@ -1,13 +1,57 @@
 # Current work plan
 
-Reconciled 2026-09-07. The current scope is to finish and document the simplified
-DSG system. This replaces the previous broad milestone list; older roadmaps and
-experiments are historical context, not an instruction to resume them.
+Updated 14 September 2026. The current goal is the incremental Star Gate plan:
+a conversational Hermes Genie, configuration records and proven restoration,
+queue priorities and qualified concurrency, useful research and approved
+operations, then benchmarking and later media support. Keep the small gateway
+available and preserve established serving capabilities while delivering it.
 
-The authoritative overview is [The simplified DSG system](simplified-system.md).
-Private deployment receipts and measurements stay outside this public repository.
+The earlier simplification release below is completed history. Its retired
+classifiers and speculative optimizers remain retired; it does not supersede the
+new owner-requested capabilities. Private decisions, configuration records and
+deployment receipts stay outside this public repository.
 
-## Simplification release
+## Incremental delivery
+
+- [x] Conversational Genie with a dedicated pinned Hermes installation, native
+  SOUL, private saved chats, public web tools and source evidence.
+- [x] Read-only observed/proposed/approved configuration projections in chat and
+  Settings. Per-installation approval, retained recipes and a controlled restore
+  drill remain required before a deployment claims restoration is proven.
+- [x] Explicit high/normal/idle-only queue classes and waiting-job edits.
+- [x] Implement and synthetically test per-worker concurrent dispatch, capacity
+  controls and correct slot/ownership accounting. Existing workers default to one.
+- [ ] Qualify real model-server concurrency with established context, output,
+  thinking and cache behavior preserved, then activate per qualified worker.
+- [x] Build setup research through existing chat, with opt-in reminder cadence,
+  explicit start, skip, postpone and run-early controls. Research does not approve
+  its recommendations. Exact production promotion is tracked per release.
+- [ ] Unify conversational and background Genie duties, memory and activity;
+  retain the owner's question-priority exception for Genie's own routine review.
+- [ ] Reconcile recovery enrollment with approved records and demonstrated
+  restoration. Add approved drain/apply/verify/return workflows through the
+  existing mutation path; rollback claims require a retained, proven version.
+- [ ] Integrate owner-started Hourglass runs, initially measuring the chosen
+  server directly with recorded configuration and measurement provenance.
+- [ ] Add qualified multiple text connections and dedicated media work/results;
+  protected media borrowing and measured handback come later.
+- [ ] Complete installation, migration, continuity and failure-path acceptance
+  against the full plan. A working chat or a passing unit suite is not completion.
+
+## Release discipline
+
+Use small, reversible increments and the existing gateway controls. Back up
+changed operational state, wait for affected work to finish, preserve unrelated
+settings and history, verify live behavior and publish only reviewed reusable
+source. Production promotion and native model qualification are separate from
+synthetic tests. Ask for unresolved owner decisions or reductions in established
+capability; do not infer approval from a reminder, record or passing parser.
+
+See [queue priorities](queue-priority.md), [concurrency](concurrency.md),
+[research studies](genie-studies.md) and the historical
+[simplified-system overview](simplified-system.md).
+
+## Completed foundation
 
 - [x] Retire XGB, embeddings, training, prediction, promotion and model data.
 - [x] Retire Priority Lens classification, preferences and weighted scheduling.
@@ -28,23 +72,3 @@ The power and fleet-energy requirements from the earlier draft are retained in
 the implemented hardware visibility: measured watts and freshness, an explicit
 accumulation period, included workers, missing coverage and measurement scope.
 Do not substitute rated power or claim GPU-only measurements cover a whole host.
-
-## Completion boundary
-
-Publish the reviewed source and documentation; activate only the changed gateway
-and dashboard after their work is idle; verify the live interface and retained
-worker/settings/cache continuity; record deployment evidence privately. This
-release does not create a new open-ended development goal.
-
-Future experiments, additional client automation, cache transfer or deliberate
-calibration require a new decision. No retired milestone remains on the active
-checklist. Preserve unrelated work and existing operational history.
-
-## Explicit queue priorities
-
-High/normal/idle-only classes and waiting-job edits are implemented separately
-from the retired classifier. See [queue priority](queue-priority.md). Per-worker
-[concurrent dispatch](concurrency.md), idle capacity edits and slot accounting are
-implemented and tested with synthetic workers. Production activation and real
-engine qualification are separate; no real server capacity is certified by those
-tests. Existing workers default to one active request.
