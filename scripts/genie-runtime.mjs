@@ -34,7 +34,10 @@ export async function installHermes(root,{log=console.log}={}){
   const receipt=path.join(source,'star-gate-install.json');
   if(fs.existsSync(receipt)){
     const saved=JSON.parse(fs.readFileSync(receipt));
-    if(saved.revision!==HERMES_REVISION||await run('git',['rev-parse','HEAD'],{cwd:source,env})!==HERMES_REVISION)
+    if(saved.revision!==HERMES_REVISION||!fs.existsSync(path.join(source,'.git'))||
+      fs.realpathSync(await run('git',['rev-parse','--show-toplevel'],{cwd:source,env}))!==fs.realpathSync(source)||
+      await run('git',['rev-parse','HEAD'],{cwd:source,env})!==HERMES_REVISION||
+      await run('git',['status','--porcelain','--untracked-files=no'],{cwd:source,env})!=='')
       throw new Error('The dedicated Hermes runtime differs from its installation record; nothing replaced.');
     await run(python,['-I','-c','import sys; sys.path.insert(0,sys.argv[1]); from run_agent import AIAgent',source],{cwd:source,env});
     return {source,python};

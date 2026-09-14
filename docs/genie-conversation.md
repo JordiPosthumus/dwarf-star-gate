@@ -383,3 +383,19 @@ Each inspection's time, result and content revision remain with the answer under
 **Server inspection evidence**. Compare an inspection with dated records before
 accepting a baseline. Current launch arguments are evidence of the launch setup,
 not proof that every advertised runtime feature or restoration path works.
+
+### Installation visibility
+
+The chat's **Genie installation** disclosure reports whether installed `SOUL.md`
+and `AGENTS.md` match the bundled defaults. Differences are preserved, including
+personal edits; reporting a difference does not authorize an overwrite.
+
+Hermes provenance separates the expected pin, a source marker, an installation
+receipt and the runtime's own Git repository. An enclosing Star Gate repository
+is never treated as Hermes. A locally recorded source comparison, when present,
+is shown with its date and scope; it does not certify later edits or dependencies.
+Setup refuses to reuse a dedicated checkout whose tracked source was edited.
+
+The progress display reports elapsed time and the last actual model/tool activity.
+A quiet period is not proof of a stalled model. Existing queue/request deadlines
+are preserved; this interface introduces no shorter cancellation limit.
