@@ -33,8 +33,11 @@ deployment receipts stay outside this public repository.
   Genie's own routine review, retaining action reviews and unrelated work.
 - [x] Supply chat with attributed operational receipts and review metadata from
   existing stores; retain the exact evidence with each answer.
-- [ ] Finish shared operational notebook access and memory/activity presentation,
-  preserving the installation's notebook-to-provider permission boundary.
+- [x] Optional shared operational notebook context with exact saved revisions;
+  activation remains an installation-specific provider-sharing decision.
+- [x] Development: accept saved follow-ups while Genie answers, preserve their
+  order and pause them after an unfinished answer. Real release promotion and
+  the full later inbox/demand contract remain separate qualification steps.
 - [ ] Reconcile recovery enrollment with approved records and demonstrated
   restoration. Add approved drain/apply/verify/return workflows through the
   existing mutation path; rollback claims require a retained, proven version.

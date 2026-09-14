@@ -11,7 +11,7 @@ function validResearchEvent(e){return e&&['search','read'].includes(e.kind)&&['r
 function validResearch(m){return m.research===undefined||(m.role==='user'?typeof m.research==='boolean':m.research&&Number.isFinite(m.research.authorized_at)&&Array.isArray(m.research.events)&&m.research.events.every(validResearchEvent));}
 
 // The conversation store is private runtime data, never the operational notebook
-// or the model's authority to change a server. No background model calls here.
+// or the model's authority to change a server. Only accepted user work is dispatched.
 export function chatContext(snapshot={}) {
   const g=snapshot.gateway;
   const take=(value,keys)=>Object.fromEntries(keys.filter(k=>value?.[k]!==undefined).map(k=>[k,value[k]]));
@@ -40,13 +40,17 @@ export class GenieChat {
       try {
       const s=JSON.parse(fs.readFileSync(file,'utf8'));
       if(s.version!==1||name!==`${s.id}.json`||!Array.isArray(s.messages)||s.messages.some(m=>!m||!['user','assistant'].includes(m.role)||typeof m.text!=='string'||!['working','complete','failed','interrupted'].includes(m.state)||(m.context&&!Array.isArray(m.context.servers))||!validResearch(m)))throw new Error('Invalid Genie conversation file; existing data was preserved.');
+      for(const m of s.messages){if(m.pending_dispatch!==undefined&&typeof m.pending_dispatch!=='boolean')throw new Error('Invalid dispatch marker.');if(m.state==='working'&&m.pending_dispatch===true)m.state='queued';delete m.pending_dispatch;}
+      if(s.messages.some((m,i)=>m.state==='queued'&&(m.role!=='assistant'||!m.context||typeof m.id!=='string'||s.messages[i-1]?.role!=='user'||typeof s.messages[i-1].request_id!=='string')))throw new Error('Invalid queued message.');
+      if(s.queue_paused!==undefined&&(typeof s.queue_paused!=='string'||!s.messages.some(m=>m.id===s.queue_paused&&['failed','interrupted'].includes(m.state))))throw new Error('Invalid paused queue.');
       // A server restart is not permission to replay an uncertain request.
       let changed=false;
-      for(const m of s.messages)if(m.state==='working'){m.state='interrupted';m.error='The chat service restarted before this reply finished. Your message was kept; unsaved partial output may be missing.';changed=true;}
+      for(const m of s.messages)if(m.state==='working'){m.state='interrupted';if(s.messages.some(x=>x.state==='queued'))s.queue_paused=m.id;m.error='The chat service restarted before this reply finished. Your message was kept; unsaved partial output may be missing.';changed=true;}
       if(changed)this.save(s);this.sessions.set(s.id,s);
       } catch {this.loadErrors.push(name);} // Preserve unreadable files verbatim; other chats remain usable.
     }
     this.study=new GenieStudy(this,{now});
+    this.tick();
   }
   context() {
     const snapshot=this.getSnapshot(),context=chatContext(snapshot);
@@ -68,12 +72,14 @@ export class GenieChat {
   }
   save(s) {
     const file=path.join(this.directory,`${s.id}.json`),temp=`${file}.${randomUUID()}.tmp`;
-    try{fs.writeFileSync(temp,JSON.stringify(s),{mode:0o600,flag:'wx'});fs.renameSync(temp,file);}
+    // Older readers preserve pending work as interrupted; clear the marker before dispatch.
+    const stored={...s,messages:s.messages.map(m=>m.state==='queued'?{...m,state:'working',pending_dispatch:true}:m)};
+    try{fs.writeFileSync(temp,JSON.stringify(stored),{mode:0o600,flag:'wx'});fs.renameSync(temp,file);}
     finally{if(fs.existsSync(temp))fs.unlinkSync(temp);}
   }
   status() {
     return {notebook_access:Boolean(this.notebook),available:Boolean(this.provider)&&!this.closed&&!this.isSuspended(),suspended:this.isSuspended(),...(this.provider?.info??{}),
-      study:this.study.status(),unreadable_conversations:[...this.loadErrors],conversations:[...this.sessions.values()].sort((a,b)=>b.updated_at-a.updated_at).map(s=>({id:s.id,title:s.title,updated_at:s.updated_at,busy:this.jobs.has(s.id)}))};
+      study:this.study.status(),unreadable_conversations:[...this.loadErrors],conversations:[...this.sessions.values()].sort((a,b)=>b.updated_at-a.updated_at).map(s=>({id:s.id,title:s.title,updated_at:s.updated_at,busy:this.jobs.has(s.id),queued:s.messages.filter(m=>m.state==='queued').length,queue_paused:s.queue_paused??null}))};
   }
   create({title='New conversation',purpose=null}={}) {
     if((purpose!==null&&purpose!=='setup_research')||typeof title!=='string'||!title.trim()||title.length>100)throw new Error('Invalid conversation title.');
@@ -82,7 +88,7 @@ export class GenieChat {
   }
   get(id) {
     const s=this.sessions.get(id);if(!s)throw new Error('Conversation not found.');
-    return structuredClone({...s,busy:this.jobs.has(id)});
+    return structuredClone({...s,busy:this.jobs.has(id),queued:s.messages.filter(m=>m.state==='queued').length});
   }
   submit(id,text,requestId,{research}={}) {
     if(this.closed||!this.provider)throw new Error('Hermes chat is not configured.');
@@ -96,19 +102,37 @@ export class GenieChat {
     const automaticResearch=research===undefined;
     research??=this.provider.info?.research_available===true;
     if(research&&!this.provider.info?.research_available)throw new Error('Web research is not configured for this installation.');
-    if(this.jobs.has(id))throw new Error('Genie is answering in this conversation. Your draft has not been sent.');
-    const previous=structuredClone(s);
-    const history=s.messages.filter(m=>m.state==='complete').map(m=>({role:m.role,content:m.text}));
+    const previous={length:s.messages.length,title:s.title,updated_at:s.updated_at};
     const context=this.context();
     if(s.purpose==='setup_research')context.study_brief=STUDY_INSTRUCTIONS;
     const user={id:randomUUID(),request_id:requestId,role:'user',text:text.trim(),state:'complete',at:this.now(),...(research?{research:true}:{})};
-    const reply={id:randomUUID(),role:'assistant',text:'',state:'working',at:this.now(),context};
+    const reply={id:randomUUID(),role:'assistant',text:'',state:'queued',at:this.now(),context};
     if(research)reply.research={authorized_at:this.now(),mode:automaticResearch?'automatic':'explicit',events:[]};
     s.messages.push(user,reply);s.updated_at=this.now();if(s.messages.length===2&&s.title==='New conversation')s.title=user.text.slice(0,64);
-    try{this.save(s);}catch{this.sessions.set(id,previous);throw new Error('Could not save your message. Nothing was sent to the model.');}
+    try{this.save(s);}catch{s.messages.splice(previous.length);s.title=previous.title;s.updated_at=previous.updated_at;throw new Error('Could not save your message. Nothing was sent to the model.');}
+    this.start(s);return this.get(id);
+  }
+  tick(){for(const s of this.sessions.values())this.start(s);}
+  resume(id,expectedReplyId){
+    const s=this.sessions.get(id);if(!s)throw new Error('Conversation not found.');
+    if(!s.queue_paused)return this.get(id);
+    if(s.queue_paused!==expectedReplyId)throw new Error('The paused queue changed. Review the latest reply first.');
+    if(this.closed||!this.provider||this.isSuspended())throw new Error('Chat is not ready to continue queued questions.');
+    const paused=s.queue_paused,updated=s.updated_at;delete s.queue_paused;s.updated_at=this.now();
+    try{this.save(s);}catch{s.queue_paused=paused;s.updated_at=updated;throw new Error('Could not save the queue decision. Nothing was sent.');}
+    this.start(s);return this.get(id);
+  }
+  start(s){
+    const id=s.id;
+    if(this.closed||!this.provider||this.isSuspended()||s.queue_paused||this.jobs.has(id)||!s.messages.some(m=>m.state==='queued'))return;
     // Yield before generation, ensuring busy and the accepted receipt exist first.
     const job=Promise.resolve().then(async()=>{
+      while(!this.closed&&!this.isSuspended()&&!s.queue_paused){
+      const index=s.messages.findIndex(m=>m.state==='queued');if(index<0)break;
+      const reply=s.messages[index],user=s.messages[index-1],context=reply.context,research=Boolean(user.research);
+      const history=s.messages.slice(0,index-1).filter(m=>m.state==='complete').map(m=>({role:m.role,content:m.text}));
       try{
+        reply.state='working';this.save(s);
         const result=await this.runQuestion(()=>{
           if(this.closed||this.isSuspended())throw new Error('Chat stopped or paused before dispatch');
           // An action review may have changed the setup while this reply waited.
@@ -118,15 +142,15 @@ export class GenieChat {
         },kind=>{reply.waiting_for_review=kind;this.save(s);});
         if(typeof result?.text!=='string'||!result.text.trim())throw new Error('Hermes returned no answer.');
         reply.text=result.text;reply.state='complete';
-      }catch(e){reply.state='failed';reply.error=e.publicMessage??'Genie could not finish this reply. Your conversation is saved; you can ask again.';}
+      }catch(e){reply.state='failed';if(s.messages.some(m=>m.state==='queued'))s.queue_paused=reply.id;reply.error=e.publicMessage??'Genie could not finish this reply. Your conversation is saved; you can ask again.';}
       finally{
         delete reply.waiting_for_review;
         s.updated_at=this.now();reply.finished_at=this.now();
-        try{this.save(s);}catch{reply.state='failed';reply.error='This reply could not be saved. Copy it before leaving this page; your earlier conversation remains on disk.';}
-        this.jobs.delete(id);
+        try{this.save(s);}catch{reply.state='failed';s.queue_paused=reply.id;reply.error='This reply could not be saved. Copy it before leaving this page; your earlier conversation remains on disk.';}
       }
-    });
-    this.jobs.set(id,job);return this.get(id);
+      }
+    }).finally(()=>this.jobs.delete(id));
+    this.jobs.set(id,job);
   }
   async idle(){await Promise.all([...this.jobs.values()]);}
   close(){this.closed=true;this.provider?.close?.();}

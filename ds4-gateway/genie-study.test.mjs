@@ -26,7 +26,7 @@ test('reminders remain off until selected; due/skip/postpone/reload never call a
 });
 test('an explicitly started study uses native chat, keeps source evidence and is idempotent after reload',async t=>{
   const r=rig(t),id=randomUUID(),input={action:'study-start',expected_revision:0,request_id:id};
-  const accepted=r.chat.study.change(input);assert.equal(accepted.last_run.state,'working');
+  const accepted=r.chat.study.change(input);assert.equal(accepted.last_run.state,'queued');
   assert.deepEqual(r.chat.study.change(input),accepted);await r.chat.idle();assert.equal(r.calls.length,1);
   const call=r.calls[0];assert.equal(call.research,true);assert.match(call.message,/exact configuration revisions/);assert.match(call.message,/one short/);assert.match(call.message,/unapproved/);assert.match(call.message,/does not authorize benchmarks/);
   const conversation=r.chat.get(accepted.last_run.conversation_id);assert.equal(conversation.messages[1].research.events[0].sources[0].url,'https://example.com/docs');assert.ok(conversation.messages[1].context.configuration_records);
