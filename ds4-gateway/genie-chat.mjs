@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import {activityForChat} from './genie-chat-activity.mjs';
 import {recordsForChat} from './server-records.mjs';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
@@ -19,6 +20,7 @@ export function chatContext(snapshot={}) {
     gateway:take(g,['model','context_length','request_timeout_ms','queue_timeout_ms','healthy','total','active','queued','available','draining']),
     servers:(g?.workers??[]).map(w=>take(w,['id','model','backend','context_length','is_healthy','drained','load','queued','active_seconds','quarantine','model_aliases'])),
     configuration_records:recordsForChat(snapshot.server_records),
+    operational_activity:activityForChat(snapshot),
     scope:'Observed setup only. Missing fields are unknown. No credentials, raw requests or server-control tools are available in this chat.',
   };
 }

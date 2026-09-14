@@ -25,8 +25,19 @@ invalid or unsaved chat submissions do not interrupt a review.
 Installations without conversational Hermes configuration retain the existing
 direct-provider reviewer. Configured Hermes identity/runtime failures are surfaced;
 they do not silently substitute a different assistant. This runtime integration
-does not yet merge the chat and operational notebook histories or change review
-queue priority, research reminders, or server-change permissions.
+does not merge private notebook prose into chat or change review queue priority,
+research reminders, or server-change permissions.
+
+Conversational chat can explain the existing operational receipts: recent review
+metadata, completed pool placements, attributed recovery states and observed queue
+moves. The projection retains at most 12 review records and 30 newest action
+receipts, and explicitly labels partial history. Full review prose and private
+notebook records are excluded. Recovery state `verified_paused` means verification
+finished while the worker remained paused; neither that nor an old `recovered`
+receipt proves current fleet health. The exact bounded evidence is retained with
+each chat answer, including across dashboard restarts. Recent full assessments
+still use their existing dashboard-session lifetime; durable provider and recovery
+receipts keep their existing stores.
 
 
 ## Collector

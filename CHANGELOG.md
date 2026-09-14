@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-09-14 — Genie chat can explain operational receipts
+
+Chat now receives bounded review metadata, pool-placement receipts, recovery
+outcomes and queue moves from the existing records. Actors and timestamps remain
+explicit; historical receipts do not prove current health or successful upgrades.
+The exact evidence is saved with the answer and summarized in its setup details.
+Private notebook content, full assessment prose, commands and credentials remain
+excluded. No new collection store or action authority is introduced.
+
 ## 2026-09-14 — Chat questions take precedence over routine reviews
 
 The normal Genie chat now uses the existing owner-question exception. Accepted,

@@ -1475,3 +1475,16 @@ while questions are active; urgent action offers keep their existing path.
 Regression coverage includes duplicate/rejected/unsaved submissions, action
 waiting, independent conversations, fresh context, shutdown/testing and routine
 versus urgent tick behavior. Ordinary request settings and tools are unchanged.
+
+
+## Operational evidence in conversational chat
+
+Added a read-only projection of existing review metadata, durable pool placement
+receipts, recovery operations and applied queue moves. Explicit actor/state/time
+fields prevent calling an operator action Genie's action or a paused/failed restore
+a successful return. Pool receipt availability and bounded-history scope are
+explicit. Notebook prose, assessment text, credentials, arbitrary logs and control
+commands are not included. The chat answer saves the exact projection alongside
+its existing setup context; the setup disclosure gives record counts. No new
+journal or model call is added. Tests cover private-field omission, partial and
+failed records, source attribution, bounded selection and reload persistence.
