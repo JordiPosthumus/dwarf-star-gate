@@ -2309,3 +2309,11 @@ test('a full worker queue does not let lower work take the newly free slot befor
   r.gateway.drainNodes(['spark1'],false);b.heldStreams.shift()();await Promise.all([active,lower,high]);
   assert.deepEqual(b.records.map(row=>row.payload.label),['active','high','normal']);assert.equal(b.peak,1);assert.equal(b.aborts,0);
 });
+
+test('Genie progress correlates queued and dispatched requests without exposing other call IDs',{timeout:10000},async t=>{
+ const r=await rig(t,1),normalCall=randomUUID(),genieCall=randomUUID();
+ const normal=r.request(JSON.stringify({delay:250}),'normal',{headers:{'x-dsg-call-id':normalCall}});await until(()=>r.backends[0].active===1);
+ const genie=r.request(JSON.stringify({delay:250}),'genie',{headers:{'x-dsg-observer':'gate-genie','x-dsg-call-id':genieCall}});await until(()=>r.gateway.currentJobsStatus().jobs.length===2);
+ const before=r.gateway.currentJobsStatus();assert.equal(before.genie_progress_version,1);assert.ok(Number.isFinite(before.observed_at));const queued=before.jobs.find(j=>j.call_id===genieCall);assert.equal(queued.state,'queued');assert.equal(queued.traffic_class,'genie');assert.equal(queued.request_preview,null);assert.equal(before.jobs.find(j=>j.traffic_class==='unclassified').call_id,null);
+ await normal;await until(()=>r.gateway.currentJobsStatus().jobs.some(j=>j.call_id===genieCall&&j.state==='running'));const running=r.gateway.currentJobsStatus().jobs.find(j=>j.call_id===genieCall);assert.equal(running.request_id,queued.request_id);assert.equal(running.machine,'spark1');assert.equal(r.backends[0].records.at(-1).headers['x-dsg-call-id'],undefined);await genie;assert.equal(r.backends[0].aborts,0);assert.equal(r.gateway.currentJobsStatus().jobs.length,0);
+});

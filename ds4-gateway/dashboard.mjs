@@ -7,6 +7,7 @@ import {EndpointTelemetry} from './endpoint-telemetry.mjs';
 import {MonitoringHistory} from './monitoring-history.mjs';
 import {lanSharingDetails} from './lan-sharing.mjs';
 import fs from 'node:fs';
+import {withGatewayProgress} from './genie-request-progress.mjs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
@@ -83,7 +84,7 @@ export function genieChatConfig(config){
   const chat=config.genie_chat;if(!chat)return null;
   if(chat.operational_notebook!==undefined&&typeof chat.operational_notebook!=='boolean')throw new Error('genie_chat.operational_notebook must be boolean.');
   const local=new URL(chat.url).href===`http://127.0.0.1:${config.port}/v1`;
-  return {...chat,...(chat.inspection?{inspection:{...chat.inspection,records_directory:config.server_records_directory}}:{}),...(local&&chat.api_key===undefined?{api_key:config.api_key}:{})};
+  return {...chat,gateway_tracking:local,...(chat.inspection?{inspection:{...chat.inspection,records_directory:config.server_records_directory}}:{}),...(local&&chat.api_key===undefined?{api_key:config.api_key}:{})};
 }
 export function createDashboard(getSnapshot, assetsDirectory = path.join(here, 'ui'), management = null, genie = null, requestHistory = null, currentJobs = null, testing = null, lanSharing = null, chat = null, hourglass = null) {
   const csrf = randomBytes(32).toString('base64url');
@@ -92,6 +93,15 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
   const bundle = new Map([...assets].map(([route, [file, mime]]) => [route, { bytes:fs.readFileSync(path.join(assetsDirectory,file)), mime }]));
   for (const match of bundle.get('/').bytes.toString('utf8').matchAll(/(?:src|href)="(\/[^"#]*)"/g))
     if (!bundle.has(match[1]) && !['/api/status', '/api/diagnostics'].includes(match[1])) throw new Error(`Unserved dashboard asset: ${match[1]}`);
+  // Share a single in-flight read; a slow core must not stall chat or multiply polls.
+  let progressRead=null;
+  const readProgress=async()=>{
+    if(!currentJobs)return null;
+    progressRead??=Promise.resolve().then(()=>currentJobs.read()).catch(()=>null).finally(()=>{progressRead=null;});
+    let timer;
+    try{return await Promise.race([progressRead,new Promise(resolve=>{timer=setTimeout(()=>resolve(null),1500);})]);}
+    finally{clearTimeout(timer);}
+  };
   return http.createServer((req, res) => {
     const port = res.socket.localPort;
     const hosts = [`127.0.0.1:${port}`, `localhost:${port}`];
@@ -117,7 +127,12 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
     }
     if(req.url==='/api/genie/chat'&&req.method==='GET')return reply(200,{...(chat?.status()??{available:false,conversations:[]}),csrf_token:csrf});
     if(req.url?.startsWith('/api/genie/chat/')&&req.method==='GET'){
-      try{return reply(200,chat.get(req.url.slice('/api/genie/chat/'.length)));}catch{return reply(404,{error:'Conversation not found.'});}
+      const id=req.url.slice('/api/genie/chat/'.length);
+      try{
+        const conversation=chat.get(id);
+        if(!conversation.messages.some(m=>m.state==='working'&&m.gateway_call_id))return reply(200,conversation);
+        void readProgress().then(state=>reply(200,withGatewayProgress(chat.get(id),state))).catch(()=>reply(200,conversation));return;
+      }catch{return reply(404,{error:'Conversation not found.'});}
     }
     if(req.url==='/api/genie/chat'&&req.method==='POST'){
       const token=Buffer.from(req.headers['x-dsg-csrf']??''),expected=Buffer.from(csrf);

@@ -16,3 +16,10 @@ test('earlier answer text does not hide current reasoning or model wait',()=>{
  m.progress.phase='model_wait';assert.match(chatProgress(m,{now:10000}).label,/Waiting/);
  m.progress.phase='answer';assert.match(chatProgress(m,{now:10000}).label,/Writing/);
 });
+
+test('gateway queue/running evidence is separate from model activity and becomes unknown when stale',()=>{
+ const m={state:'working',at:0,text:'',progress:{phase:'model_wait',step:2,reasoning_chars:0,at:1000},gateway_execution:{state:'queued',observed_at:59000,machine:'example'}};
+ const p=chatProgress(m,{now:60000});assert.equal(p.label,'Queued on example');assert.match(p.detail,/No new activity/);m.gateway_execution.state='running';assert.equal(chatProgress(m,{now:60000}).label,'Running on example');
+ assert.match(chatProgress(m,{now:80000}).activity,/unavailable or stale/);assert.doesNotMatch(chatProgress(m,{now:80000}).label,/Running/);
+ m.gateway_execution={state:'not_observed',observed_at:79000};assert.match(chatProgress(m,{now:80000}).activity,/between model calls/);assert.match(chatProgress(m,{now:80000,connected:false}).label,/progress unknown/);
+});
