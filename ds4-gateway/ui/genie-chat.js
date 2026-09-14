@@ -1,7 +1,8 @@
+import {genieHandoff} from './genie-handoff.js';
 const panel=document.getElementById('conversation-shell');
 if(panel){
   const $=id=>document.getElementById(id);
-  let token=null,current=null,status=null,signature='',fetching=false,sending=false,creating=false,request=null,connectionError=null,cachedSession=null;
+  let token=null,current=null,status=null,signature='',fetching=false,sending=false,creating=false,request=null,connectionError=null,cachedSession=null,lastObservedAt=null;
   const draftKey=id=>`dsg-genie-draft:${id??'new'}`;
   const draft={read:id=>{try{return sessionStorage.getItem(draftKey(id))??'';}catch{return '';}},write:(id,text)=>{try{sessionStorage.setItem(draftKey(id),text);}catch{}}};
   function text(tag,content,className){const e=document.createElement(tag);e.textContent=content;if(className)e.className=className;return e;}
@@ -94,7 +95,7 @@ if(panel){
     renderList();const id=current,row=status.conversations.find(s=>s.id===id);
     const changed=id&&(cachedSession?.id!==id||row?.busy||cachedSession?.busy||cachedSession?.updated_at!==row?.updated_at);
     const session=id?(changed?await api(`/api/genie/chat/${id}`):cachedSession):null;if(id===current){cachedSession=session;render(session);}
-    if(connectionError&&$('conversation-error').textContent===connectionError)error();connectionError=null;
+    if(connectionError&&$('conversation-error').textContent===connectionError)error();connectionError=null;lastObservedAt=Date.now();
     if(status.unreadable_conversations?.length)error(`${status.unreadable_conversations.length} saved conversation file(s) could not be read and were preserved. Other chats still work.`);
   }catch(e){connectionError=`Connection unavailable. Your draft is kept. ${e.message}`;error(connectionError);signature='';$('conversation-send').disabled=true;}finally{fetching=false;}}
   $('conversation-new').addEventListener('click',async()=>{if(sending||creating)return;creating=true;$('conversation-input').disabled=true;$('conversation-new').disabled=true;$('conversation-send').disabled=true;try{const s=await api('/api/genie/chat',{action:'new'});await refresh();await select(s.id);}catch(e){error(e.message);}finally{creating=false;$('conversation-input').disabled=false;$('conversation-new').disabled=false;signature='';await refresh();$('conversation-input').focus();}});
@@ -105,5 +106,15 @@ if(panel){
     if(!request||request.text!==message||request.conversation_id!==current)request={action:'send',conversation_id:current,text:message,request_id:crypto.randomUUID()};
     const s=await api('/api/genie/chat',request);request=null;$('conversation-input').value='';draft.write(current,'');signature='';render(s);$('conversation-messages').scrollTop=$('conversation-messages').scrollHeight;
   }catch(e){error(e.message);}finally{sending=false;$('conversation-input').disabled=false;$('conversation-new').disabled=false;await refresh();$('conversation-input').focus();}});
+  const handoff=$('conversation-handoff');
+  handoff?.addEventListener('toggle',()=>{if(handoff.open){
+    $('conversation-handoff-text').value=genieHandoff({status,session:cachedSession?.id===current?cachedSession:null,connected:!connectionError&&lastObservedAt!==null,observedAt:lastObservedAt,pendingRequest:Boolean(request)});
+    $('conversation-handoff-result').textContent='Review this status snapshot before sharing. It contains no conversation text.';
+  }});
+  $('conversation-handoff-copy')?.addEventListener('click',async()=>{
+    const field=$('conversation-handoff-text'),result=$('conversation-handoff-result');
+    try{await navigator.clipboard.writeText(field.value);result.textContent='Copied. Paste it into your other agent when ready.';}
+    catch{field.focus();field.select();result.textContent='Text selected — press Ctrl+C or ⌘C to copy.';}
+  });
   $('conversation-input').value=draft.read(null);refresh();setInterval(()=>{if(!document.hidden)refresh();},750);
 }

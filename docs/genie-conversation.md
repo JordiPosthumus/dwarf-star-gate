@@ -233,3 +233,25 @@ Share the code, this guide and synthetic tests. Do not commit configuration,
 conversation files, Hermes homes, real setup captures or screenshots of private
 conversations. Run the repository's privacy checks and review the exact staged
 files before publication. GitHub publication is a separate owner-approved step.
+
+
+## Handoff when chat needs help
+
+Open **Handoff to another agent** below the chat composer, review the status
+snapshot, and choose **Copy handoff**. Paste it into the agent you want to help.
+Opening or copying it makes no model call, sends nothing to another agent and
+does not retry, cancel or restart anything. It remains usable with the last
+observed state when the dashboard connection fails.
+
+The snapshot includes capture/observation times, configured model when it has a
+simple identifier, local conversation/reply IDs, saved reply state and an
+unacknowledged-submission warning when applicable. It excludes conversation
+text, drafts, arbitrary error bodies, endpoints, credentials and notebook prose.
+Local reference IDs are still private installation metadata; review before sharing.
+The configured model is not proof of the worker used, and cached working state is
+not proof that inference is still running. Close and reopen the disclosure to
+capture a newer snapshot. Clipboard failure selects the text for manual copying.
+
+The handoff asks the receiving agent to inspect the saved receipt and actual
+request/process state, preserve current capabilities/history, avoid ambiguous
+replay, and verify the smallest repair. It does not grant new server authority.

@@ -1562,3 +1562,14 @@ The reader now opens nonblocking, verifies a regular file, reads only the checke
 length and rejects detected size/timestamp changes. A disposable FIFO reproduced
 the original blocking behavior; fixed code rejected it promptly and preserved it.
 This is not authentication of a hostile or concurrently rewritten record.
+
+## Conversational repair handoff (development)
+
+Added a local, reviewable Copy handoff disclosure below the chat composer. It
+uses existing saved status and diagnostic reference IDs, including stale-connection
+and uncertain-submission wording, without copying messages, drafts, arbitrary
+errors or private configuration. No model call, new API action or message delivery
+is introduced. The recipient is asked to correlate current process/request state,
+preserve capabilities/history and avoid ambiguous replay. Focused chat/dashboard
+and privacy tests pass. Initial browser preview/copy succeeded; final stylesheet
+recheck is pending after browser-control timeouts. Not yet promoted to production.
