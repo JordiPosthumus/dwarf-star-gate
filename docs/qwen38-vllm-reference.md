@@ -24,7 +24,23 @@ The JSON flag map documents arguments; it is not an executable Docker command.
 Do not omit required custom dependencies or silently substitute a stock image.
 Installing Star Gate neither downloads this model nor applies these settings.
 
-The inspection did not test effective generation limits, benchmark performance,
-fresh weight hashes or restoration. A 262,144 output default is still bounded by
-remaining context. Record and validate those properties on the intended build
-before relying on them. Preserve the existing working setup during evaluation.
+A subsequent restore check gracefully stopped and restarted the same retained
+container. Its image, command, environment, mounts and launcher remained unchanged.
+The actual runtime reported vLLM 0.29.0, PyTorch 2.13.0+cu130 and Transformers
+5.16.1. These package versions still do not establish the custom build's ancestry.
+
+The restarted server passed synthetic text, a structured tool call and follow-up,
+a solid-color image question, and two independent cold-to-warm conversations.
+Both cold requests reported zero cached tokens; both follow-ups demonstrated
+substantial measured prefix reuse with their actual assistant histories preserved.
+The context boundary accepted 262,143 input tokens plus one output token; an input
+occupying all 262,144 tokens correctly rejected a request for another output token.
+
+This establishes restoration of that retained container and its tested behavior.
+It does not establish fresh-machine recreation, reconstruction from the base image
+alone, a performance recommendation, fresh weight hashes, or an off-host backup.
+The 262,144 output allowance was preserved and accepted; exhaustive generation of
+that many output tokens was not tested, and output remains bounded by available
+context. The check changed no recovery enrollment or automatic-recovery authority.
+Validate the intended build before relying on it, preserving the existing working
+setup during evaluation.
