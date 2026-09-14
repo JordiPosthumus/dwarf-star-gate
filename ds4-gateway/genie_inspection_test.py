@@ -38,4 +38,30 @@ class Inspection(unittest.TestCase):
   file.write_text('{"model_revision":"changed"}');self.assertIn('error',self.call('read_server_artifact',{'worker_id':'example','artifact':'baseline_reconciliation'}));self.assertEqual(file.read_text(),'{"model_revision":"changed"}')
   external=self.root/'outside.json';external.write_text('{}');record['configuration']['baseline_reconciliation']={'path':str(external),'sha256':m.hashlib.sha256(external.read_bytes()).hexdigest()};record_file.write_text(json.dumps(record));self.assertIn('error',self.call('read_server_artifact',{'worker_id':'example','artifact':'baseline_reconciliation'}))
   file.unlink();file.symlink_to(external);record['configuration']['baseline_reconciliation']['path']=str(file);record_file.write_text(json.dumps(record));self.assertIn('error',self.call('read_server_artifact',{'worker_id':'example','artifact':'baseline_reconciliation'}))
+class Collector(unittest.TestCase):
+ def collect(self, mode='ok'):
+  import io,contextlib,copy
+  c={'Id':'exact-container-id','Image':'image-id','State':{'Running':True,'StartedAt':'before'},'Config':{'Cmd':[],'Env':[]},'Mounts':[],'HostConfig':{}}
+  calls=[]
+  def run(argv,**kwargs):
+   calls.append(argv)
+   if argv[:3]==('docker','image','inspect'):return json.dumps([{'Id':'image-id','Created':'dated','RepoDigests':['example.invalid/image@sha256:'+'a'*64]}])
+   if argv[:2]==('docker','exec'):
+    self.assertEqual(argv[2:6],('exact-container-id','python3','-B','-c'))
+    self.assertIn('importlib.metadata',argv[6]);self.assertNotIn('import torch',argv[6])
+    if mode=='failed':raise subprocess.TimeoutExpired(argv,20)
+    return json.dumps({'vllm':{'status':'installed','version':'0.29.0'},'torch':{'status':'installed','version':'2.13.0+cu130'},'transformers':{'status':'not_found'}})
+   value=copy.deepcopy(c)
+   if len(calls)>3 and mode=='changed':value['State']['StartedAt']='after'
+   return json.dumps([value])
+  import subprocess
+  output=io.StringIO()
+  with patch('subprocess.check_output',side_effect=run),patch('sys.stdin',io.StringIO(json.dumps({'container':'mutable-name'}))),contextlib.redirect_stdout(output):exec(compile(m.COLLECTOR,'collector','exec'),{})
+  return json.loads(output.getvalue()),calls
+ def test_queries_exact_container_packages_separate_from_image_labels(self):
+  result,calls=self.collect();self.assertEqual(result['packages']['status'],'queried');self.assertEqual(result['packages']['values']['transformers']['status'],'not_found');self.assertEqual(result['packages']['values']['vllm']['version'],'0.29.0');self.assertEqual(len(result['image']['repo_digests']),1);self.assertEqual(calls[-1][-1],'exact-container-id')
+ def test_package_failure_preserves_other_metadata_without_raw_errors(self):
+  result,calls=self.collect('failed');self.assertEqual(result['packages'],{'status':'unavailable','reason':'package_query_failed'});self.assertEqual(result['container']['id'],'exact-container-id');self.assertNotIn('TimeoutExpired',json.dumps(result));self.assertEqual(len(calls),3)
+ def test_restart_during_query_is_not_current_package_evidence(self):
+  result,calls=self.collect('changed');self.assertEqual(result['packages'],{'status':'unavailable','reason':'container_changed_during_query'});self.assertNotIn('values',result['packages'])
 if __name__=='__main__':unittest.main()

@@ -412,3 +412,12 @@ For self-hosted public research, see the [fetch-protection integration reference
 The Gate Genie installer does not automatically patch an independently installed
 scraper. A working model connection and a correctly configured research service
 are separate setup facts.
+
+For configured Docker workers, `inspect_server` also queries the installed
+`vllm`, `torch` and `transformers` distribution versions using Python metadata
+inside the exact inspected container ID. It does not import those frameworks or
+run inference. Missing packages, a failed query and a container that changed
+during the query are reported distinctly from successful evidence. Docker image
+RepoDigests are reported separately; an empty local list does not prove that an
+image is unavailable elsewhere. Neither labels nor package versions establish
+build ancestry or complete source integrity.
