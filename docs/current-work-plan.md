@@ -88,7 +88,11 @@ deployment receipts stay outside this public repository.
   preservation. An actual Docker/SSH/controller fixture completed one restart,
   verification and readmission using synthetic model/cache responses. Actual
   model recovery qualification and installation enrollment remain unfinished;
-  the fixture does not prove production recovery.
+  the fixture does not prove production recovery. The Qwen model/cache verifier
+  separately passed four real requests on each of two unchanged running workers,
+  with zero cached tokens on both cold calls and 4,800 reused on both follow-ups
+  on each worker. These non-restarting checks do not establish recovery after
+  a restart.
 - [ ] Integrate owner-started Hourglass runs, initially measuring the chosen
   server directly with recorded configuration and measurement provenance.
   Saved aggregate reports are wired into the dashboard and chat,
