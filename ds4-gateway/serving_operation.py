@@ -7,6 +7,7 @@ changed by an approved plan or configuration record.
 """
 import hashlib
 import json
+import math
 from datetime import datetime
 from pathlib import Path
 from serving_qualification import compare_cache_capacity
@@ -21,6 +22,16 @@ def dated(value):
         return isinstance(value, str) and bool(datetime.fromisoformat(value.replace('Z', '+00:00')))
     except ValueError:
         return False
+
+
+def cache_policy(value=None):
+    policy = {'max_loss_percent': 0} if value is None else value
+    if not isinstance(policy, dict) or set(policy) != {'max_loss_percent'}:
+        raise ValueError('Specify the reviewed cache max_loss_percent')
+    loss = policy['max_loss_percent']
+    if type(loss) not in (int, float) or not math.isfinite(loss) or not 0 <= loss < 100:
+        raise ValueError('Cache max_loss_percent must be a finite number from zero to less than 100')
+    return dict(policy)
 
 
 def restoration_authority(record, profile, root):
@@ -73,6 +84,7 @@ class ServingOperation:
         self.publish, self.progress, self.sleep = publish, progress, sleep
         self.id, self.profile = self.folder.name, plan['profile']
         self.binding = digest(self.profile)
+        self.cache_policy = cache_policy(plan.get('cache_capacity_policy'))
         if (self.maintenance.operation_id != self.id or self.maintenance.worker_id != plan['worker_id']
                 or self.profile['record_revision'] != plan['record_revision']):
             raise ValueError('Maintenance, profile and approved record must identify the same operation')
@@ -145,11 +157,24 @@ class ServingOperation:
         if saved != result:
             raise RuntimeError('Qualification result was not durably recorded')
         baseline=read(self.folder / 'baseline-cache' / 'result.json')
+        comparison = {'state': 'unavailable'}
         if baseline:
             capacity=result.get('cache_capacity',{})
             sample='after' if capacity.get('after',{}).get('state')=='observed' else 'before'
             comparison=compare_cache_capacity(baseline['observation'],capacity.get(sample,{'state':'unavailable','reason':'not_observed'}))
             save(self.folder,'cache-comparison-'+which+'.json',{'at':time.time(),'current_sample':sample,**comparison})
+        # A failed candidate returns to the retained original. Its capacity is
+        # still reported, but startup allocation differences must not veto that
+        # recovery after its existing native checks pass.
+        acceptance = {'policy': self.cache_policy, 'state': 'reported_only',
+                      'scope': 'Returning the retained original; candidate capacity allowance does not restrict restoration.'}
+        if which == 'candidate':
+            observed = (comparison['state'] != 'unavailable' and sample == 'after')
+            accepted = (observed
+                        and comparison['delta_percent'] >= -self.cache_policy['max_loss_percent'])
+            acceptance = {'policy': self.cache_policy, 'state': 'passed' if accepted else 'failed',
+                          'reason': 'capacity_unavailable' if not observed else
+                                    'within_reviewed_allowance' if accepted else 'exceeds_reviewed_allowance'}
         if stopped(): return False
         after = self.current(which)
         if signature(before) != signature(after) or after['State']['StartedAt'] != started:
@@ -160,10 +185,11 @@ class ServingOperation:
             raise RuntimeError('Serving identity changed while waiting for native work to finish')
         requirements = self.check_record()
         missing = sorted({check for rule in requirements for check in rule['success_checks']} - (set(result.get('checks_passed', [])) | self.runtime_checks))
-        passed = result['state'] == 'passed' and not missing
+        passed = result['state'] == 'passed' and not missing and acceptance['state'] != 'failed'
         save(self.folder, 'qualified-' + which + '.json', {'at': time.time(), 'container_id': after['Id'],
              'started_at': started, 'signature_sha256': digest(signature(after)),
-             'result_sha256': hashlib.sha256(read_bytes(folder / 'result.json')).hexdigest(), 'state': 'passed' if passed else 'failed', 'missing_checks': missing})
+             'result_sha256': hashlib.sha256(read_bytes(folder / 'result.json')).hexdigest(), 'state': 'passed' if passed else 'failed', 'missing_checks': missing,
+             'cache_capacity_acceptance': acceptance})
         return passed
 
     def finish(self, which, state):
@@ -239,6 +265,12 @@ class ServingOperation:
             self.check_record()
             self.progress('observing_cache', 'Recording the original server’s reported KV-cache capacity before applying the change.')
             self.qualifiers['previous'].observe_cache(self.folder / 'baseline-cache')
+            baseline = read(self.folder / 'baseline-cache' / 'result.json')
+            if not baseline or baseline.get('observation', {}).get('state') != 'observed':
+                save(self.folder, 'cache-preflight.json', {'state': 'failed', 'reason': 'baseline_capacity_unavailable',
+                     'policy': self.cache_policy, 'scope': 'No serving change was applied.'})
+                self.progress('cache_unavailable', 'Original cache capacity could not be measured; returning the unchanged server.')
+                raise RuntimeError('Original cache capacity is unavailable')
             self.progress('applying', 'Applying the exact approved recipe while retaining the previous container.')
             self.driver.apply(self.id, self.profile, self.binding)
             if self.qualify('candidate'):

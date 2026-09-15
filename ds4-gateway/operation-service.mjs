@@ -42,7 +42,8 @@ export function createOperationService(config,{directory,isTesting=()=>false,pre
     const inspection=config.genie_chat.inspection?.workers?.[id];
     if(!ID.test(id)||!inspection?.container||!Array.isArray(inspection.ssh)||!inspection.ssh.length||!value?.native_url||!value.qualification)throw new Error('Operation enrollment must reuse an existing inspected gateway worker and explicit native qualification.');
     targets[id]={worker_id:id,ssh:inspection.ssh[0],container:inspection.container,docker_socket:value.docker_socket??'/var/run/docker.sock',
-      gateway_socket:config.control_socket,records_directory:config.server_records_directory,native_url:value.native_url,qualification:structuredClone(value.qualification)};
+      gateway_socket:config.control_socket,records_directory:config.server_records_directory,native_url:value.native_url,qualification:structuredClone(value.qualification),
+      cache_capacity_policy:structuredClone(value.cache_capacity_policy??{max_loss_percent:0})};
   }
   const runtime=runner??operationRunner({python:config.genie_chat.python,directory});
   const store=new ServerOperations({directory,workers:Object.keys(targets),...runtime,

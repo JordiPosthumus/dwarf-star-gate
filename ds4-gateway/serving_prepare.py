@@ -15,7 +15,7 @@ from docker_profile import RetainedProfile, digest
 from docker_profile_remote import SSHDocker
 from operation_runner import read_bytes
 from serving_bundle import build_executor
-from serving_operation import dated, restoration_authority
+from serving_operation import cache_policy, dated, restoration_authority
 from serving_qualification import NativeQualification
 from serving_records import ServingRecordPublisher
 
@@ -83,6 +83,7 @@ def candidate_record(old, profile, contract):
 
 def prepare(proposal, enrollment, folder, record_revision, *, docker=None):
     folder = Path(folder).resolve()
+    capacity_policy = cache_policy(enrollment.get('cache_capacity_policy'))
     worker = proposal.get('worker_id')
     if (not re.fullmatch(r'[a-zA-Z0-9][\w-]{0,63}', worker or '')
             or enrollment.get('worker_id') != worker or proposal.get('id') != folder.name
@@ -117,12 +118,14 @@ def prepare(proposal, enrollment, folder, record_revision, *, docker=None):
     previous_record = candidate_record(old,before_profile,contracts['previous'])
     execution = build_executor(folder)
     plan = {'worker_id':worker,'record_file':str(record_file),'record_revision':record_revision,
-        'target':target,'profile':profile,'qualification':contracts,'candidate_record':record,'execution':execution}
+        'target':target,'profile':profile,'qualification':contracts,'candidate_record':record,'execution':execution,
+        'cache_capacity_policy':capacity_policy}
     return {'plan':plan,'review':{'at':datetime.now(timezone.utc).isoformat(),'worker_id':worker,
         'before':{'image':profile['before']['Image'],'command':profile['before']['Config']['Cmd']},
         'after':{'image':proposal['image'],'command':proposal['command']},
         'checks':sorted(set.union(*(set(q.checks_supported) for q in qualifiers.values())) | {'runtime_identity','native_idle'}),'restoration':restoration,
         'qualification_by_version':{which:sorted(q.checks_supported) for which,q in qualifiers.items()},
+        'cache_capacity_policy':copy.deepcopy(capacity_policy),
         'settings':{'current':previous_record['settings'],'proposed':record['settings'],
             'current_thinking':previous_record['configuration']['chat_template_defaults'],
             'proposed_thinking':record['configuration']['chat_template_defaults']},

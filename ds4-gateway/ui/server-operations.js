@@ -15,6 +15,11 @@ export function operationChanges(review){
   if(JSON.stringify(review?.settings?.current_thinking)!==JSON.stringify(review?.settings?.proposed_thinking))changes.push(`Thinking defaults: ${show(review?.settings?.current_thinking)} → ${show(review?.settings?.proposed_thinking)} — review the reasoning change`);
   if(review?.before?.image!==review?.after?.image)changes.push('Serving image changes; the exact image IDs are in the review below.');
   if(!changes.length&&JSON.stringify(review?.before?.command)!==JSON.stringify(review?.after?.command))changes.push('Serving arguments change; review the complete recipe below.');
+  if(review?.cache_capacity_policy){
+    const loss=review.cache_capacity_policy.max_loss_percent;
+    changes.push(loss===0?'KV cache capacity: no reduction allowed.':`KV cache capacity: approving this change permits up to ${loss}% fewer cached tokens — less room for cached context.`);
+    changes.push('Capacity is measured before changing the server and after candidate checks. Missing measurements prevent adoption. Returning the retained original keeps its existing qualification rules.');
+  }
   return changes;
 }
 export function operationProgress(row,now=Date.now()){

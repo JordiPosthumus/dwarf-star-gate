@@ -333,7 +333,27 @@ Missing, malformed or multiple engine rows remain unavailable.
 The published evidence index links a dated baseline and comparison for the
 qualified version. It reports the token difference and percentage separately
 from precision settings, cache hits and inference timings. Raw baseline hashes
-are checked before publication. The comparison is descriptive; it does not grant
-approval for a reduction or add a silent threshold. Native startup memory
+are checked before publication. The comparison alone does not grant approval
+for a reduction. Native startup memory
 availability can also affect allocation, so different historical startups are
 not automatically a controlled concurrency comparison.
+
+Newly prepared serving plans freeze `cache_capacity_policy.max_loss_percent`
+from the worker's installation enrollment, with a default of zero. Genie cannot
+set this allowance through a proposal. The owner review explicitly displays any
+permitted percentage reduction, and approving the exact plan covers that value.
+No production allowance is inferred from an unanswered request.
+
+The executor requires an observed baseline before changing the serving process.
+If it cannot measure one, it returns the demonstrably unchanged server through
+the existing conditional readmission path. Candidate adoption requires a final
+capacity measurement within the reviewed allowance, alongside all existing
+qualification checks. A missing final measurement or excessive loss fails the
+candidate and uses its approved retained-original restoration path. The original
+must still pass its native qualification; its capacity comparison is reported
+without letting startup allocation variation veto that restoration. The verdict,
+policy and measurements remain in the operation's archived evidence.
+
+Existing frozen proposals and generic recovery paths are unchanged. These checks
+are tested with synthetic serving fixtures; they do not establish a production
+allowance or qualify an actual candidate image.

@@ -108,6 +108,7 @@ class PublicationTest(unittest.TestCase):
 
     def test_published_cache_comparison_is_reachable_and_preserves_baseline_bytes(self):
         f=self.fixture;f.apis['previous'].cache_tokens=500000;f.apis['candidate'].cache_tokens=480000
+        f.plan['cache_capacity_policy']={'max_loss_percent':4};self.approve()
         result=f.execute();self.assertEqual(result['state'],'completed')
         record=json.loads(f.record_file.read_bytes())
         index=read_artifact_reference(self.library,record['evidence'][-1])
@@ -118,7 +119,10 @@ class PublicationTest(unittest.TestCase):
         raw=(artifact/'baseline-cache'/baseline['raw_reference']['file']).read_bytes()
         self.assertEqual(raw,(f.folder/'baseline-cache/metrics.response.bin').read_bytes())
         self.assertEqual(hashlib.sha256(raw).hexdigest(),baseline['raw_reference']['sha256'])
-        # This is an observation, not a new pass/fail threshold or permission.
+        proof=json.loads((artifact/'qualified-candidate.json').read_text())
+        self.assertEqual(proof['cache_capacity_acceptance']['policy'],{'max_loss_percent':4})
+        self.assertEqual(proof['cache_capacity_acceptance']['state'],'passed')
+        # The comparison remains evidence; the separate reviewed policy grants the allowance.
         self.assertIn('not cache hits',comparison['scope'])
 
     def test_uncommitted_owner_record_stops_publication_without_overwriting_it(self):

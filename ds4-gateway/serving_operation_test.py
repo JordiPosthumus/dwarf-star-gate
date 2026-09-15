@@ -38,6 +38,7 @@ class OperationTest(unittest.TestCase):
         revision = hashlib.sha256(self.record_file.read_bytes()).hexdigest(); profile['record_revision'] = revision
         self.plan = {'worker_id': 'fixture', 'record_file': str(self.record_file), 'record_revision': revision, 'profile': profile}
         self.apis = {'candidate': API(), 'previous': API()}
+        for api in self.apis.values(): api.cache_tokens = 500000
         self.qualifiers = {key: NativeQualification(value, profile['native_url'], copy.deepcopy(CONTRACT)) for key, value in self.apis.items()}
         self.publisher = self.publish
 
@@ -65,6 +66,57 @@ class OperationTest(unittest.TestCase):
         self.assertEqual(result['state'], 'restored'); self.assertEqual(self.published, ['previous'])
         self.assertTrue(self.docker.old['State']['Running']); self.assertFalse(self.docker.containers[NEW]['State']['Running'])
         self.assertFalse(self.control.worker['drained']); self.assertEqual(signature(self.docker.old), self.plan['profile']['before'])
+
+    def test_cache_loss_restores_original_even_when_original_startup_capacity_varies(self):
+        self.apis['candidate'].cache_tokens = 499999
+        restore = self.driver.restore
+        def restore_with_less_cache(*args):
+            restore(*args)
+            self.apis['previous'].cache_tokens = 480000
+        self.driver.restore = restore_with_less_cache
+        result = self.execute()
+        self.assertEqual(result['state'], 'restored'); self.assertEqual(self.published, ['previous'])
+        self.assertFalse(self.control.worker['drained'])
+        proof = json.loads((self.folder / 'qualified-candidate.json').read_text())
+        self.assertEqual(proof['cache_capacity_acceptance']['reason'], 'exceeds_reviewed_allowance')
+        comparison = json.loads((self.folder / 'cache-comparison-previous.json').read_text())
+        self.assertEqual(comparison['delta_tokens'], -20000)
+
+    def test_explicit_reviewed_allowance_accepts_exact_boundary(self):
+        self.plan['cache_capacity_policy'] = {'max_loss_percent': 4}
+        self.apis['candidate'].cache_tokens = 480000
+        self.assertEqual(self.execute()['state'], 'completed')
+
+    def test_loss_beyond_reviewed_allowance_restores(self):
+        self.plan['cache_capacity_policy'] = {'max_loss_percent': 4}
+        self.apis['candidate'].cache_tokens = 479999
+        self.assertEqual(self.execute()['state'], 'restored')
+
+    def test_missing_baseline_returns_unchanged_without_docker_mutations(self):
+        self.apis['previous'].cache_tokens = None
+        self.assertEqual(self.execute()['state'], 'failed_unchanged')
+        self.assertEqual(self.docker.calls, []); self.assertFalse(self.control.worker['drained'])
+        self.assertEqual(json.loads((self.folder / 'cache-preflight.json').read_text())['reason'], 'baseline_capacity_unavailable')
+
+    def test_missing_candidate_measurement_restores_even_with_allowance(self):
+        self.plan['cache_capacity_policy'] = {'max_loss_percent': 4}
+        self.apis['candidate'].cache_tokens = None
+        self.assertEqual(self.execute()['state'], 'restored')
+
+    def test_missing_final_capacity_cannot_use_an_earlier_sample_to_adopt(self):
+        def lose_final_metric(route, body, result):
+            if route == '/v1/chat/completions': self.apis['candidate'].cache_tokens = None
+            return result
+        self.apis['candidate'].mutate = lose_final_metric
+        self.assertEqual(self.execute()['state'], 'restored')
+        proof = json.loads((self.folder / 'qualified-candidate.json').read_text())
+        self.assertEqual(proof['cache_capacity_acceptance']['reason'], 'capacity_unavailable')
+
+    def test_invalid_allowances_fail_before_drain(self):
+        for loss in (True, -1, 100, float('nan'), float('inf'), '4'):
+            self.plan['cache_capacity_policy'] = {'max_loss_percent': loss}
+            with self.assertRaises(ValueError): self.execute()
+        self.assertEqual(self.control.calls, []); self.assertEqual(self.docker.calls, [])
 
     def test_acknowledged_candidate_startup_failure_restores_without_waiting_for_a_dead_api(self):
         start = self.docker.start
@@ -134,7 +186,7 @@ class OperationTest(unittest.TestCase):
 
     def test_enrolled_two_request_candidate_runs_full_checks_before_readmission(self):
         self.plan['profile']['create']['Cmd'][3]='2'
-        api=ParallelAPI()
+        api=ParallelAPI();api.cache_tokens=500000
         self.qualifiers['candidate']=NativeQualification(api,self.plan['profile']['native_url'],{**CONTRACT,'concurrency':2})
         result=self.execute()
         self.assertEqual(result['state'],'completed');self.assertEqual(self.published,['candidate'])

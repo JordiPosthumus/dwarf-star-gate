@@ -25,7 +25,7 @@ async function rig(t){
     genie_chat:{python,inspection:{workers:{fixture:{ssh:['fixture.invalid'],container:'fixture-container'}}}},
     server_operations:{enabled:true,workers:{fixture:{native_url:'http://127.0.0.1:8001',qualification:{}}}}};
   const service=createOperationService(config,{directory,isTesting:()=>testing,prepare:async(_python,input)=>{
-    preparations++;assert.equal(input.enrollment.ssh,'fixture.invalid');
+    preparations++;assert.equal(input.enrollment.ssh,'fixture.invalid');assert.deepEqual(input.enrollment.cache_capacity_policy,{max_loss_percent:0});
     return {plan:{worker_id:'fixture',record_file:record,record_revision:input.record_revision,execution:{path:executor,sha256:hash(fs.readFileSync(executor))}},
       review:{before:{image:'retained',command:['PRIVATE_COMMAND']},after:{image:input.proposal.image,command:input.proposal.command},checks:['fixture only'],scope:'Disposable fixture, not serving qualification'}};
   }});
@@ -132,4 +132,10 @@ test('review identifies reductions, cache cost and unknown defaults without inve
   assert.ok(changes.some(v=>v.includes('Thinking defaults:')&&v.includes('unknown')));
   assert.ok(changes.some(v=>v.includes('Serving image changes')));
   assert.deepEqual(operationChanges({settings:{current:{context_length:262144},proposed:{context_length:262144}},before:{image:'same',command:['same']},after:{image:'same',command:['same']}}),[]);
+});
+
+test('review displays the exact cache allowance and leaves older reviews unchanged',()=>{
+  assert.ok(operationChanges({cache_capacity_policy:{max_loss_percent:0}}).some(v=>v.includes('no reduction allowed')));
+  assert.ok(operationChanges({cache_capacity_policy:{max_loss_percent:4}}).some(v=>v.includes('permits up to 4% fewer cached tokens')));
+  assert.deepEqual(operationChanges({}),[]);
 });

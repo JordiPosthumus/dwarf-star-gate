@@ -62,13 +62,15 @@ class EntryTest(unittest.TestCase):
         command = f.plan['profile']['create']['Cmd'] + ['--override-generation-config',
             '{"temperature":0.8,"max_new_tokens":16384}', '--default-chat-template-kwargs', '{"enable_thinking":true}']
         proposal = {'id':f.folder.name,'worker_id':'fixture','image':f.plan['profile']['create']['Image'],'command':command,
-            'target':{'ssh':'untrusted.invalid'}}
+            'target':{'ssh':'untrusted.invalid'}, 'cache_capacity_policy':{'max_loss_percent':99}}
         enrollment = {**f.plan['target'],'worker_id':'fixture','container':'engine','native_url':f.plan['profile']['native_url'],
             'records_directory':str(self.rig.library),'qualification':f.plan['qualification']}
         approval_before = (f.folder / 'approved.json').read_bytes()
         result = prepare(proposal,enrollment,f.folder,f.plan['record_revision'],docker=f.docker)
         self.assertEqual(f.docker.calls,[]); self.assertEqual(f.control.calls,[])
         self.assertEqual(result['plan']['target']['ssh'],'fixture.invalid')
+        self.assertEqual(result['plan']['cache_capacity_policy'], {'max_loss_percent':0})
+        self.assertEqual(result['review']['cache_capacity_policy'], {'max_loss_percent':0})
         self.assertEqual((f.folder / 'approved.json').read_bytes(),approval_before)
         self.assertFalse((f.folder / 'runner-started.json').exists())
         f.plan = result['plan']; self.rig.approve()
@@ -95,6 +97,19 @@ class EntryTest(unittest.TestCase):
         self.assertEqual(f.docker.calls,[]); self.assertEqual(f.control.calls,[])
         self.assertFalse((f.folder / 'executor.py').exists())
 
+    def test_preparation_freezes_enrolled_allowance_for_owner_review(self):
+        f = self.f; f.docker.native_request = lambda *args: None
+        proposal = {'id':f.folder.name,'worker_id':'fixture','image':f.plan['profile']['create']['Image'],
+                    'command':f.plan['profile']['create']['Cmd'],'cache_capacity_policy':{'max_loss_percent':99}}
+        enrollment = {**f.plan['target'],'worker_id':'fixture','container':'engine','native_url':f.plan['profile']['native_url'],
+            'records_directory':str(self.rig.library),'qualification':f.plan['qualification'],
+            'cache_capacity_policy':{'max_loss_percent':4}}
+        result = prepare(proposal,enrollment,f.folder,f.plan['record_revision'],docker=f.docker)
+        enrollment['cache_capacity_policy']['max_loss_percent'] = 9
+        self.assertEqual(result['plan']['cache_capacity_policy'], {'max_loss_percent':4})
+        self.assertEqual(result['review']['cache_capacity_policy'], {'max_loss_percent':4})
+        self.assertEqual(f.docker.calls,[]); self.assertEqual(f.control.calls,[])
+
     def test_prepared_concurrency_contract_reaches_qualification_and_private_record(self):
         import json
         f=self.f;f.docker.native_request=lambda *args:None
@@ -109,7 +124,7 @@ class EntryTest(unittest.TestCase):
         self.assertNotIn('native_concurrency',result['review']['qualification_by_version']['previous'])
         self.assertEqual(result['review']['settings']['current']['server_concurrency'],1)
         self.assertEqual(result['review']['settings']['proposed']['server_concurrency'],2)
-        f.plan=result['plan'];self.rig.approve();f.apis['candidate']=ParallelAPI()
+        f.plan=result['plan'];self.rig.approve();f.apis['candidate']=ParallelAPI();f.apis['candidate'].cache_tokens=500000
         finished=self.execute();self.assertEqual(finished['state'],'completed')
         record=json.loads(f.record_file.read_text());self.assertEqual(record['settings']['server_concurrency'],2)
         artifact=self.rig.library/finished['publication']['artifact']
