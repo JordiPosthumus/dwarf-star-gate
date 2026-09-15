@@ -160,3 +160,30 @@ The fixture used a synthetic bank and injected completion timestamps; no benchma
 worker or model request ran. This proves the tested API contract, not an actual
 one-hour measurement or compatibility with every Hourglass release. The normal
 console must be running and its configured target reviewed before a real run.
+
+The same native HTTP workflow also passed against a source snapshot reporting
+Hourglass 4.1.0 on 15 September 2026, preserving `total-points-v1`. Native enqueue
+rejected changed model, question-bank and hardware revisions without creating a
+second evaluation. This used a disposable source copy, synthetic question and
+synthetic completion; no model worker ran. It proves compatibility with those
+tested source bytes, not a released version or a completed real benchmark.
+
+Run that opt-in check against a trusted Hourglass checkout with:
+
+```sh
+python3 scripts/hourglass-native-integration.py --source /path/to/Hourglass
+```
+
+Use `--node /path/to/node` if Node 22+ is not on PATH. The fixture copies only
+top-level Python source into a temporary directory, creates its own model and
+question, and starts only an HTTP handler on an ephemeral loopback port. It does
+not import the live checkout, launch its worker or copy its configuration,
+history or bank. Output identifies the copied source hashes and explicitly labels
+the synthetic completion. A source change during verification fails the check.
+
+Check the **running** console's `/api/health`, not just the files on disk. A legacy
+JordiBench process can continue serving older code after its checkout is updated.
+A missing health API now produces a version/port diagnostic; Star Gate does not
+automatically restart or upgrade that process. Starting a newer native console
+may reconcile saved evaluation history, so a second console against the same
+working directory is not an appropriate compatibility test.

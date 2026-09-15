@@ -32,7 +32,12 @@ export class HourglassConsole {
     }catch(e){if(e instanceof HourglassConsoleError)throw e;throw new HourglassConsoleError(mutation?'Hourglass start could not be confirmed. Check its console before attempting another run.':'Hourglass console is unavailable or returned an unreadable response.',{uncertain:mutation});}
   }
   async read(){
-    const health=await this.request('/api/health');
+    let health;
+    try{health=await this.request('/api/health');}
+    catch(e){
+      if(e instanceof HourglassConsoleError&&e.status===404)throw new HourglassConsoleError('This console does not provide the required Hourglass health API. Check its running version and port; this check did not start a run.',{status:404});
+      throw e;
+    }
     if(health.app!=='Hourglass'||health.version!==2||!label(health.controller_instance)||health.shutting_down)throw new HourglassConsoleError('Connect a running compatible Hourglass console.');
     const state=await this.request('/api/state');
     if(state.app!=='Hourglass'||state.version!==2||!Array.isArray(state.model_configs)||!Array.isArray(state.tasks))throw new HourglassConsoleError('Hourglass returned an unsupported run catalogue.');

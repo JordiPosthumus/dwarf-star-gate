@@ -26,6 +26,18 @@ test('catalogue and preparation do not start work or expose raw model documents 
   assert.doesNotMatch(JSON.stringify(p),/PRIVATE_|question-one|api_key|task_bundle/);assert.ok(calls.every(c=>c.options.method==='GET'));
 });
 
+test('legacy console health 404 explains the running-version gap without reading its bank or starting work',async()=>{
+  const calls=[];
+  const client=new HourglassConsole('http://127.0.0.1:4534',{fetchImpl:async(url,options)=>{
+    calls.push({url,method:options.method});return Response.json({error:'PRIVATE_NATIVE_ERROR'},{status:404});
+  }});
+  await assert.rejects(client.catalogue(),e=>{
+    assert.equal(e.status,404);assert.equal(e.uncertain,false);
+    assert.match(e.message,/running version and port/);assert.doesNotMatch(e.message,/PRIVATE_/);return true;
+  });
+  assert.deepEqual(calls,[{url:'http://127.0.0.1:4534/api/health',method:'GET'}]);
+});
+
 test('explicit start sends the full reviewed native contract once and never rewrites model settings',async()=>{
   const {client,calls}=fixture();const p=await client.prepare('example');p.models_revision='edited-client-value';p.settings.max_tokens=1;
   await assert.rejects(client.submit(p.id),/explicitly/);assert.equal(calls.filter(c=>c.options.method==='POST').length,0);
