@@ -1,6 +1,6 @@
 # Genie first-install validation
 
-Verified during development on 2026-09-14 (UTC), by Codex.
+Verified during development on 2026-09-14 and 2026-09-15 (UTC), by Codex.
 
 - **Current release recheck, macOS ARM64:** the public `27ecea4` source plus
   the test corrections described below was exported into a new checkout with an
@@ -31,6 +31,17 @@ Verified during development on 2026-09-14 (UTC), by Codex.
   preservation of personal Hermes and soul edits, all three services, two-turn
   conversation and history after dashboard restart. This proves installation and
   integration, not the intelligence of the scripted model.
+- **Linux x64, 2026-09-15:** a fresh Debian Bookworm container running
+  Node 22.22.2 as Linux x64 under Docker Desktop's Rosetta emulation fetched public
+  source `89f7b49`. Only the test's interpreter-baseline correction below was
+  staged; application/installer code was unchanged. No host files, personal
+  configuration, Hermes, Python or uv were supplied. Actual dependency installation,
+  scripted connection check, doctor, three services, two chat turns, edited SOUL,
+  personal Hermes preservation and history after dashboard restart all passed.
+  The installed Hermes's own Git HEAD and installation receipt both named
+  `2237be355906fbe6065ce1815711eee52b2d646e`. This proves the x64 Linux binaries and
+  installation flow under emulation; it is not native x64 hardware performance
+  or a real-model quality result.
 - **Existing-installation checks:** ordinary gateway installation and forwarding
   regressions passed; setup preserves an already configured Genie, does not overwrite
   unrelated settings on invalid input, and does not echo malformed private JSON.
@@ -51,6 +62,14 @@ a short macOS temporary directory so the default Unix socket paths fit the OS
 limit, and runs `doctor` before starting services. This corrects the test; it does
 not change the installer or remove the OS limit on long installation paths.
 
+The x64 run initially failed after successful setup because Rosetta created an
+empty `.cache/rosetta` in the fixture's user home. A separate Node-only container
+reproduced this without loading Star Gate or installing Hermes. The test now
+launches the same interpreter once before setup and snapshots that baseline;
+setup must preserve its paths, modes and file hashes. It does not ignore arbitrary
+cache changes or weaken the separate personal-Hermes and SOUL preservation checks.
+The failed and successful environments were distinct, initially clean containers.
+
 Run the download/integration proof explicitly from committed or staged source:
 
 ```sh
@@ -63,7 +82,8 @@ internet access and may take several minutes. Standard unit tests do not silentl
 install dependencies. Set `SG_KEEP_INSTALL_TEST=1` to retain its private fixture for
 inspection; never publish that fixture's generated configuration or conversations.
 
-Not established by these checks: x64 platform execution, native Windows support,
+Not established by these checks: macOS x64 execution, native x64 hardware testing,
+native Windows support,
 model installation, automatic web-service installation, long-term Genie memory,
 server-changing authority or the remaining DSG v6 scheduling features. Users still
 supply a reachable model API; Star Gate now supplies the dedicated Hermes runtime.

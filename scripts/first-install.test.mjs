@@ -9,10 +9,17 @@ import http from 'node:http';
 import {spawn,execFile,execFileSync} from 'node:child_process';
 import {promisify} from 'node:util';
 import {once} from 'node:events';
+import {createHash} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
 import {projectRoot} from '../ds4-gateway/config.mjs';
 const exec=promisify(execFile);
 async function until(fn){const end=Date.now()+120000;while(Date.now()<end){const result=await fn();if(result)return result;await delay(100);}throw new Error('Integration observation deadline exceeded.');}
+function homeSnapshot(home){
+  return fs.readdirSync(home,{recursive:true}).sort().map(name=>{
+    const file=path.join(home,name),stat=fs.lstatSync(file);
+    return {name,mode:stat.mode,...(stat.isFile()?{sha256:createHash('sha256').update(fs.readFileSync(file)).digest('hex')}:stat.isSymbolicLink()?{target:fs.readlinkSync(file)}:{})};
+  });
+}
 test('fresh setup installs Hermes, loads its soul, chats and preserves history and personal Hermes',{timeout:900000},async t=>{
   // macOS's normal temp path exceeds the Unix socket limit for a full checkout.
   // Resolve its /tmp alias too: setup records canonical installation paths.
@@ -20,6 +27,11 @@ test('fresh setup installs Hermes, loads its soul, chats and preserves history a
   execFileSync('git',['checkout-index','--all',`--prefix=${root}/`],{cwd:projectRoot});
   const env={PATH:path.dirname(process.execPath)+':/usr/bin:/bin',HOME:home,LANG:'en_US.UTF-8'};
   assert.equal(fs.existsSync(path.join(root,'config.local.json')),false);assert.equal(fs.existsSync(path.join(root,'runtime')),false);assert.deepEqual(fs.readdirSync(home),[]);
+  // Rosetta can create an empty ~/.cache/rosetta when any x64 Node child starts.
+  // Establish the interpreter-only baseline; do not allow arbitrary cache changes
+  // or mistake emulator housekeeping for Star Gate touching a personal home.
+  await exec(process.execPath,['-e','process.exit(0)'],{env});
+  const untouchedHome=homeSnapshot(home);
   const requests=[],provider=http.createServer((req,res)=>{
     if(req.method==='GET'){res.setHeader('content-type','application/json');return res.end(JSON.stringify({data:[{id:'example-model'}]}));}
     let body='';req.on('data',c=>body+=c);req.on('end',()=>{const p=JSON.parse(body);if(!Array.isArray(p.messages)){console.log('Provider capability probe: '+req.url+' '+Object.keys(p).join(','));res.writeHead(404);res.end();return;}requests.push(p);const users=p.messages.filter(m=>m.role==='user');const answer=users.length>1?'Your name is Ada.':'I am Gate Genie. Hello Ada.';
@@ -34,7 +46,7 @@ test('fresh setup installs Hermes, loads its soul, chats and preserves history a
   assert.match(setup.stdout,/Genie connection verified/);const filename=path.join(root,'config.local.json'),config=JSON.parse(fs.readFileSync(filename));
   for(const runtimePath of [config.genie_chat.source,config.genie_chat.python])assert.ok(fs.realpathSync(runtimePath).startsWith(path.join(root,'runtime')+path.sep));assert.equal(config.genie_chat.reasoning_effort,null);
   assert.match(requests[0].messages[0].content,/loving prime directive/);assert.equal(requests[0].tools?.length??0,0);assert.equal(requests[0].reasoning_effort,undefined);
-  assert.doesNotMatch(setup.stdout,new RegExp(config.api_key));assert.equal(fs.statSync(filename).mode&0o777,0o600);assert.deepEqual(fs.readdirSync(home),[]);
+  assert.doesNotMatch(setup.stdout,new RegExp(config.api_key));assert.equal(fs.statSync(filename).mode&0o777,0o600);assert.deepEqual(homeSnapshot(home),untouchedHome);
   const personal=path.join(home,'.hermes');fs.mkdirSync(personal);fs.writeFileSync(path.join(personal,'SOUL.md'),'Personal Hermes must stay exactly this way.');
   const soul=path.join(root,'runtime/genie/chat/hermes-home/SOUL.md');fs.appendFileSync(soul,'\nMy private identity marker: silver compass.\n');const savedSoul=fs.readFileSync(soul),savedConfig=fs.readFileSync(filename);
   await exec(process.execPath,['scripts/setup.mjs'],{cwd:root,env});assert.deepEqual(fs.readFileSync(filename),savedConfig);assert.deepEqual(fs.readFileSync(soul),savedSoul);assert.equal(fs.readFileSync(path.join(personal,'SOUL.md'),'utf8'),'Personal Hermes must stay exactly this way.');
