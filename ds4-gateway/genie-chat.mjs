@@ -116,7 +116,7 @@ export class GenieChat {
     if(research&&!this.provider.info?.research_available)throw new Error('Web research is not configured for this installation.');
     const previous={length:s.messages.length,title:s.title,updated_at:s.updated_at};
     const context=this.context();
-    if(s.purpose==='setup_research')context.study_brief=STUDY_INSTRUCTIONS;
+    if(s.purpose==='setup_research'){context.study_brief=STUDY_INSTRUCTIONS;context.previous_study=this.study.previousStudy(id);}
     const user={id:randomUUID(),request_id:requestId,role:'user',text:text.trim(),state:'complete',at:this.now(),...(research?{research:true}:{})};
     const reply={id:randomUUID(),role:'assistant',text:'',state:'queued',at:this.now(),context};
     if(research)reply.research={authorized_at:this.now(),mode:automaticResearch?'automatic':'explicit',events:[]};

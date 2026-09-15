@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
+import {studyEvidence} from './genie-study.mjs';
 import {GenieChat} from './genie-chat.mjs';
 import {createDashboard} from './dashboard.mjs';
 const DAY=86400000;
@@ -62,4 +63,27 @@ test('study controls use existing same-origin CSRF checks and reject extra autho
   assert.equal((await post(input)).status,403);assert.equal(r.calls.length,0);
   const headers={origin:base,'x-dsg-csrf':status.csrf_token};assert.equal((await post({...input,approve_server_changes:true},headers)).status,400);assert.equal(r.calls.length,0);
   assert.equal((await post(input,headers)).status,200);await r.chat.idle();assert.equal(r.calls.length,1);
+});
+
+
+test('study receipts distinguish inspected files, missing paths, failures and public page reads',()=>{
+ const at='2026-01-01T00:00:00Z',reply={inspection:{events:[
+  {operation:'read_server_configuration',state:'complete',worker_id:'example',at,result:{read_at:at}},
+  {operation:'inspect_server',state:'complete',worker_id:'selected-only',at,selected_default:true,result:{}},
+  {operation:'inspect_server',state:'complete',worker_id:'example',at,result:{observed_at:at,sources:{status:'read',files:[{path:'vllm/a.py',status:'read',sha256:'a'.repeat(64)},{path:'vllm/b.py',status:'not_found'}]}}},
+  {operation:'inspect_server',state:'failed',worker_id:'offline',at},
+  {operation:'inspect_server',state:'complete',worker_id:'no-source',at,result:{sources:{status:'unavailable'}}}
+ ]},research:{events:[{kind:'search',state:'complete',at,sources:[{url:'https://example.org/search-only'}]},{kind:'read',state:'complete',at,sources:[{url:'https://example.org/read'}]},{kind:'read',state:'complete',at,sources:[{url:'https://example.org/read'}]},{kind:'read',state:'failed',at}]}};
+ const result=studyEvidence(reply);assert.deepEqual(result.workers.map(w=>w.worker_id),['example','no-source']);assert.equal(result.workers[0].source_files.length,2);assert.equal(result.workers[0].source_files[1].status,'not_found');assert.equal(result.workers[0].record_read_at,at);assert.deepEqual(result.pages_read,['https://example.org/read']);assert.equal(result.failures.length,3);
+ assert.deepEqual(studyEvidence({text:'I inspected everything'}).workers,[]);
+});
+
+test('later studies receive actual previous-study receipts across reload, ordinary chat does not',async t=>{
+ const r=rig(t),at='2026-01-01T00:00:00Z';r.chat.provider.generate=async input=>{r.calls.push(input);input.onInspection({kind:'live',operation:'inspect_server',state:'complete',worker_id:'example',at,result:{observed_at:at,sources:{status:'read',files:[{path:'vllm/a.py',status:'read',sha256:'b'.repeat(64)}]}}});return {text:'One supported finding'};};
+ const first=r.change('study-start',{request_id:randomUUID()});await r.chat.idle();assert.equal(r.calls[0].context.previous_study,null);
+ assert.equal(r.chat.study.status().last_run.evidence.workers[0].source_files[0].sha256,'b'.repeat(64));
+ r.advance(DAY);const restored=new GenieChat(r.options);t.after(()=>restored.close());const second=restored.study.change({action:'study-start',expected_revision:restored.study.status().revision,request_id:randomUUID()});await restored.idle();
+ assert.equal(r.calls[1].context.previous_study.conversation_id,first.last_run.conversation_id);assert.equal(r.calls[1].context.previous_study.evidence.workers[0].worker_id,'example');assert.match(r.calls[1].message,/source_files/);assert.match(r.calls[1].message,/build dates alone/);
+ const saved=restored.get(second.last_run.conversation_id).messages[1];assert.deepEqual(saved.context.previous_study,r.calls[1].context.previous_study);
+ const ordinary=restored.create();restored.submit(ordinary.id,'Hi','ordinary-after-studies');await restored.idle();assert.equal(r.calls[2].context.previous_study,undefined);
 });

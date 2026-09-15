@@ -49,6 +49,14 @@ def register_research(config, context, emit):
             if isinstance(transition.get("source_digest"), str):
                 private_names.append(transition["source_digest"].lower())
 
+    previous = context.get("previous_study") or {}
+    if isinstance(previous.get("conversation_id"), str):private_names.append(previous["conversation_id"].lower())
+    for row in previous.get("configuration_snapshot_revisions", []):
+        private_names.extend(row[k].lower() for k in ("worker_id", "approved", "observed") if isinstance(row.get(k), str) and row[k])
+    for worker in previous.get("evidence", {}).get("workers", []):
+        if isinstance(worker.get("worker_id"), str):private_names.append(worker["worker_id"].lower())
+        private_names.extend(f["sha256"].lower() for f in worker.get("source_files", []) if isinstance(f.get("sha256"), str) and f["sha256"])
+
     def public_input(value):
         if not isinstance(value, str) or not value.strip() or len(value) > 2000:
             raise ValueError("Use a short public topic or URL.")

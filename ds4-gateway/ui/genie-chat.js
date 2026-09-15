@@ -82,6 +82,8 @@ if(panel){
     if(['failed','interrupted','not_started'].includes(s.last_run?.state))$('study-status').textContent+=' The last study did not finish. Open it to inspect what was saved; it will not restart automatically.';
     $('study-start').textContent=s.due?'Start study':'Research now';$('study-start').disabled=studyBusy||busy||!s.available||sending||creating;
     for(const id of ['study-postpone','study-skip']){$(id).hidden=!s.due;$(id).disabled=studyBusy||!!s.error;}
+    const evidence=s.last_run?.evidence,detail=$('study-evidence');detail.hidden=!s.last_run;
+    if(s.last_run){const inspected=(evidence?.workers??[]).filter(w=>w.live_read_at).map(w=>w.worker_id),files=(evidence?.workers??[]).flatMap(w=>w.source_files??[]);detail.textContent=`Last study evidence: ${inspected.length?'live checks on '+inspected.join(', '):'no live server checks recorded'}; source files read: ${files.filter(f=>f.status==='read').length}; missing paths: ${files.filter(f=>f.status==='not_found').length}; public pages read: ${evidence?.pages_read?.length??0}.${evidence?.failures?.length?' Failed checks: '+evidence.failures.length+' — open the study for details.':''} These checks do not measure improvement.`;}
     $('study-open').hidden=!s.last_run;$('study-open').disabled=sending||creating;
     $('study-save').disabled=studyBusy||!!s.error;
     if(document.activeElement!==$('study-interval')&&!$('study-interval').dataset.edited)$('study-interval').value=String(s.interval_days);

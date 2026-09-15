@@ -30,6 +30,24 @@ its configuration snapshot and source events. Expand **Setup used for this answe
 for record revisions and the research brief, or **Web research sources** for links.
 Recommendations still need judgment; the UI cannot certify the model's claims.
 
+A study now asks Genie to read full records and inspect the relevant running
+servers before forming an upstream recommendation. Where supported, he compares
+a candidate's affected source paths with installed source; build dates alone do
+not establish whether a patch is present. Missing inspection/source support must
+be reported rather than filled in by inference.
+
+The next study receives a compact summary of the previous completed study's actual
+inspection receipts, source hashes, public pages read and dated configuration
+snapshot revisions. It uses those as historical evidence and checks the current
+setup again. Ordinary chats do not receive this additional study context.
+The Setup research panel shows recorded live checks, source reads, missing paths,
+public pages read and failed checks for the last study. Search results are not
+counted as pages read, and selected-image inspection is not a current-server
+check. Counts do not certify a recommendation or measured benefit. These summaries
+are derived from existing private conversations; no extra database or scheduler
+is introduced. Existing reminder and operation permissions remain unchanged.
+
+
 Studies use the configured conversational toolset, including read-only server
 inspection when connected. The study brief authorizes research, not benchmarking,
 installation or server changes; the existing capability switches and action

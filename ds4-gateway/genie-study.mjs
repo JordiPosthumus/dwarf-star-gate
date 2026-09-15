@@ -4,7 +4,33 @@ import {randomUUID} from 'node:crypto';
 
 const DAY=86400000,UUID=/^[a-f0-9-]{36}$/;
 export const STUDY_PROMPT='Look for worthwhile improvements to my setup. Give me your best recommendation, with sources, the configuration you studied, and any tradeoffs.';
-export const STUDY_INSTRUCTIONS='For this setup research, use current public documentation and upstream changes. Start from approved configuration records; where approval is missing, explicitly label observations as unapproved. Cite exact configuration revisions and dated public sources. Present one short, best-supported recommendation at a time: exact change, reason, expected benefit, tradeoff and verification. Separate published measurements from hypotheses; do not invent gains. Say when nothing is sufficiently supported. Research permission does not authorize benchmarks, installations, draining, restarting or server changes.';
+export const STUDY_INSTRUCTIONS='For this setup research, use current public documentation and upstream changes. Read the full configuration records and inspect the current setup for the relevant servers using the available inspection tools; do not substitute a dashboard snapshot for live inspection. Compare observed setup against approved configuration records; where approval is missing, explicitly label observations as unapproved. Cite exact configuration revisions and dated public sources. Use previous_study as dated evidence of what was already checked, not current truth. Focus on relevant upstream changes since that study and any changed setup. Before claiming a patch present or absent, compare its relevant source_files with the installed source when supported; build dates alone cannot settle this. If a source read or inspection is unavailable, say exactly what remains unknown. Present one short, best-supported recommendation at a time: exact change, reason, expected benefit, tradeoff and verification. Separate published measurements from hypotheses; do not invent gains. Say when nothing is sufficiently supported. Research permission does not authorize benchmarks, installations, draining, restarting or server changes.';
+
+// Derived from saved tool receipts, never from the model's claims or a new store.
+export function studyEvidence(reply){
+  const workers=new Map(),pages=new Set(),failures=[];
+  for(const e of reply?.inspection?.events??[]){
+    if(e.state==='failed'){failures.push({tool:e.operation,worker_id:e.worker_id,at:e.at});continue;}
+    if(e.state!=='complete'||!e.result)continue;
+    if(e.operation!=='read_server_configuration'&&(e.operation!=='inspect_server'||e.selected_default===true))continue;
+    const worker=workers.get(e.worker_id)??{worker_id:e.worker_id,record_read_at:null,live_read_at:null,source_files:[]};workers.set(e.worker_id,worker);
+    if(e.operation==='read_server_configuration')worker.record_read_at=e.result.read_at??e.at;
+    else {
+      worker.live_read_at=e.result.observed_at??e.at;
+      if(e.result.sources?.status==='read')for(const f of e.result.sources.files??[]){
+        if(!['read','not_found'].includes(f.status))continue;
+        const row={path:f.path,status:f.status,...(f.sha256?{sha256:f.sha256}:{})};
+        const index=worker.source_files.findIndex(x=>x.path===f.path);if(index<0)worker.source_files.push(row);else worker.source_files[index]=row;
+      }
+      if(e.result.sources?.status==='unavailable')failures.push({tool:'source_files',worker_id:e.worker_id,at:e.at});
+    }
+  }
+  for(const e of reply?.research?.events??[]){
+    if(e.state==='failed')failures.push({tool:e.kind==='search'?'web_search':'web_extract',at:e.at});
+    if(e.state==='complete'&&e.kind==='read')for(const source of e.sources??[])pages.add(source.url);
+  }
+  return {workers:[...workers.values()],pages_read:[...pages],failures,scope:'Dated tool receipts. A completed answer is not proof of a complete study, a correct recommendation or measured improvement. Source hashes identify bytes on disk, not loaded code.'};
+}
 
 // One private reminder record; existing chat owns execution and history.
 // Reading a due reminder never invokes a model. Each study needs a UI action.
@@ -30,10 +56,15 @@ export class GenieStudy {
     if(p.last_run){
       let conversation;try{conversation=this.chat.get(p.last_run.conversation_id);}catch{}
       const reply=conversation?.messages.find((m,i)=>m.role==='assistant'&&conversation.messages[i-1]?.request_id===p.last_run.request_id);
-      last={conversation_id:p.last_run.conversation_id,request_id:p.last_run.request_id,at:p.last_run.at,state:reply?.state??'not_started'};
+      last={conversation_id:p.last_run.conversation_id,request_id:p.last_run.request_id,at:p.last_run.at,state:reply?.state??'not_started',evidence:studyEvidence(reply)};
     }
     return {version:1,revision:p.revision,interval_days:p.interval_days,next_due_at:p.next_due_at,last_run:last,due:p.interval_days>0&&p.next_due_at<=this.now(),error:this.error,
       available:!this.error&&!!this.chat.provider?.info?.research_available&&!this.chat.closed&&!this.chat.isSuspended()};
+  }
+  previousStudy(excludeId){
+    const studies=[...this.chat.sessions.values()].filter(s=>s.purpose==='setup_research'&&s.id!==excludeId&&s.messages[1]?.role==='assistant'&&s.messages[1].state==='complete').sort((a,b)=>b.created_at-a.created_at);
+    const last=studies[0];if(!last)return null;
+    return {conversation_id:last.id,at:last.messages[1].at,evidence:studyEvidence(last.messages[1]),configuration_snapshot_revisions:(last.messages[1].context?.configuration_records?.records??[]).map(r=>({worker_id:r.worker_id,approved:r.approved?.revision??null,observed:r.observed?.revision??null}))};
   }
   save(plan){
     const temp=`${this.file}.${randomUUID()}.tmp`;

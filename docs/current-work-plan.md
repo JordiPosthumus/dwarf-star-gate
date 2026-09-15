@@ -74,6 +74,10 @@ deployment receipts stay outside this public repository.
   missing-file results. This supports independent source comparison without
   operator-prepared artifacts. It does not establish loaded code or measured
   performance; other runtimes and the complete study/trial loop remain separate.
+  Normal setup studies now request those live/source checks and receive the prior
+  completed study's tool evidence and dated configuration snapshot revisions.
+  The UI reports actual checks and failures from saved receipts, without treating
+  model narration as proof. Periodic reminders still require a start action.
 - [x] Use the configured Hermes runtime and current Genie identity for fleet
   reviews, preserving provider and guarded-action contracts.
 - [x] Connect conversational questions to the existing exception for yielding
