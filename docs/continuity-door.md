@@ -34,6 +34,21 @@ still pass through and can return a 503 during core downtime. Authenticated
 Only a running Door reporting `model_discovery_hold: true` has this protection;
 syncing source or restarting only the core does not activate it.
 
+The core also accepts query parameters on the exact `GET /v1/models` path and
+preserves them when requesting worker metadata. Alternate paths and methods
+remain outside the allowlist. This closes a mismatch where the Door successfully
+held a query-bearing discovery request but the core subsequently returned 404.
+
+The opt-in Hermes acceptance test in `npm run continuity:test` needs
+`DSG_TEST_HERMES_SOURCE` and `DSG_TEST_HERMES_PYTHON` pointing to an installed
+runtime. It uses an isolated identity and scripted local model/tool endpoints.
+An existing streaming response finishes while the real Door holds another
+conversation, model discovery and the first conversation's tool continuation.
+The actual restart coordinator replaces a disposable gateway child process;
+both chats must complete with one tool execution and three model requests.
+This tests Hermes/core continuity, not a real model's output or platform service
+manager migration. It never reads personal configuration or restarts the fleet.
+
 The Door's `failed` count describes proxy transport failures, not every non-200
 model response. Client cancellation must settle before socket destruction so it
 does not count as a core failure or hold unrelated arrivals. Late error events

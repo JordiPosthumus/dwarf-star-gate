@@ -82,6 +82,10 @@ deployment receipts stay outside this public repository.
   protected media borrowing and measured handback come later.
 - [ ] Complete installation, migration, continuity and failure-path acceptance
   against the full plan. A working chat or a passing unit suite is not completion.
+  An installed-Hermes acceptance fixture now covers an actual gateway child
+  replacement through the Door and restart coordinator, with active streaming,
+  held discovery, a second chat and one tool continuation. Model and tool replies
+  are synthetic; real model and platform service-manager acceptance remain separate.
 
 ## Release discipline
 

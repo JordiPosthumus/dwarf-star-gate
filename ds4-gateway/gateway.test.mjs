@@ -28,10 +28,11 @@ async function until(fn, timeout = 3000) {
   while (!fn()) { if (Date.now() > end) throw new Error('Condition timed out'); await delay(10); }
 }
 async function backend(id) {
-  const b = { id, records: [], modelHeaders:[], active: 0, peak: 0, aborts: 0, health: true, receivedBytes: 0, context_length:153600 };
+  const b = { id, records: [], modelHeaders:[], modelUrls:[], active: 0, peak: 0, aborts: 0, health: true, receivedBytes: 0, context_length:153600 };
   b.server = http.createServer((req, res) => {
-    if (req.url === '/v1/models') {
+    if (req.url === '/v1/models' || req.url.startsWith('/v1/models?')) {
       b.modelHeaders.push(req.headers);
+      b.modelUrls.push(req.url);
       if(b.blockHealthWhileActive&&b.active){res.on('close',()=>{});return;}
       return res.end(JSON.stringify({ data: [{ id: b.health ? 'deepseek-v4-flash' : 'wrong-model', context_length: b.context_length, top_provider:{context_length:b.context_length,max_completion_tokens:b.context_length} }] }));
     }
@@ -109,6 +110,20 @@ test('DSG ingress credentials never cross the unauthenticated stock-DS4 boundary
   assert.equal(models.status,200);
   assert.ok(r.backends[0].modelHeaders.length>=2,'startup probe and proxied model-list request were observed');
   assert.ok(r.backends[0].modelHeaders.every(headers=>headers.authorization===undefined));
+});
+
+test('model discovery preserves query bytes without admitting alternate paths or methods',async t=>{
+  const r=await rig(t,1),route='/v1/models?cursor=a%2Fb&tag=one&tag=two';
+  const models=await r.request('',null,{method:'GET',path:route});
+  assert.equal(models.status,200);assert.equal(r.backends[0].modelUrls.at(-1),route);
+  assert.equal(r.backends[0].modelHeaders.at(-1).authorization,undefined);
+  assert.equal((await r.request('',null,{method:'GET',path:route,headers:{authorization:'Bearer wrong'}})).status,401);
+  const count=r.backends[0].modelUrls.length;
+  for(const path of ['/v1/models/','/v1/%6dodels?x=1','/v1/models/../models?x=1','/v1/models#fragment']){
+    assert.equal((await r.request('',null,{method:'GET',path})).status,404,path);
+  }
+  assert.equal((await r.request('{}',null,{method:'POST',path:route})).status,404);
+  assert.equal(r.backends[0].modelUrls.length,count);
 });
 
 test('Agent Watch is an authenticated bounded advisory lane and never reaches DS4',async t=>{

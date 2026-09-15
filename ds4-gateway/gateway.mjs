@@ -965,7 +965,8 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     const credential = Buffer.from(req.headers.authorization || '');
     if (credential.length !== auth.length || !timingSafeEqual(credential, auth)) { req.resume(); return error(res, 401, 'unauthorized', 'Bearer API key required'); }
     // Reject absolute URLs and encoded/normalized alternate routes; no admin forwarding.
-    const route = `${req.method} ${req.url}`;
+    const discovery = req.method === 'GET' && /^\/v1\/models(?:\?[^#]*)?$/.test(req.url);
+    const route = discovery ? 'GET /v1/models' : `${req.method} ${req.url}`;
     if (route === 'GET /gateway/status' || route === 'GET /workers') return json(res, 200, stats());
     if (route === 'GET /health') {const ready=!draining&&nodes.some(n=>n.healthy&&!n.drained);return json(res,ready?200:503,{...stats(),...(!ready?{error:{type:'gateway_error',code:'not_ready',message:dsgReport('Gateway is draining or no DS4 server is ready.')}}:{})});}
     if(route===`POST ${CLIENT_WATCH_ROUTE}`){
