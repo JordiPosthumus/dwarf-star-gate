@@ -42,6 +42,15 @@ class ToolsTest(unittest.TestCase):
         self.assertEqual(result['state'],'preparing')
         self.assertEqual([e[1]['event']['state'] for e in self.events],['reading','complete'])
         self.assertNotIn('fixture-token',json.dumps(self.events));self.assertNotIn('approve',self.catalog)
+        self.assertEqual(self.events[0][1]['event']['request'],proposal)
+
+    def test_attempt_arguments_are_kept_with_existing_credential_scrubbing(self):
+        proposal={'id':'fixture-id','command':['serve','--api-key','PRIVATE_SECRET','--max-num-seqs','2']}
+        self.catalog['propose_server_change']['handler'](proposal)
+        recorded=self.events[0][1]['event']['request']
+        self.assertNotIn('PRIVATE_SECRET',json.dumps(recorded))
+        self.assertEqual(recorded['command'][-2:],['--max-num-seqs','2'])
+        self.assertEqual(self.calls[0][2]['proposal'],proposal)
 
     def test_redirect_is_not_followed_and_uncertain_proposal_is_not_repeated(self):
         self.redirect=True

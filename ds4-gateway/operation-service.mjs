@@ -61,9 +61,20 @@ export function createOperationService(config,{directory,isTesting=()=>false,pre
     tool:async input=>{
       if(input?.action==='propose'&&['action,proposal','action,origin,proposal'].includes(Object.keys(input).sort().join(','))){
         if(isTesting())throw new Error('Operation preparation is paused while testing mode is active.');
-        return operationToolView(store.propose(input.proposal,input.origin??{}));
+        try{return operationToolView(store.propose(input.proposal,input.origin??{}));}
+        catch(error){
+          // These validation errors occur before creating any proposal. Other
+          // errors may follow a write and must keep their uncertain outcome.
+          if(error.message==='Specify a configured worker, exact image, complete command and reason.')return {
+            state:'rejected',error:'This request was not accepted. Supply exactly id (UUID), worker_id (enrolled worker), image (sha256 plus 64 lowercase hex digits), command (complete array of strings, at most 65536 JSON bytes), and reason (1–2000 characters). This request did not start preparation or a serving operation. Check the same ID for any earlier submission before revising it.'};
+          if(error.message==='Invalid originating conversation.')return {state:'rejected',error:'This request was not accepted because its originating conversation is invalid. Report the integration problem; this request did not start preparation or a serving operation. Earlier submissions must still be observed.'};
+          throw error;
+        }
       }
-      if(input?.action==='status'&&Object.keys(input).sort().join(',')==='action,id')return operationToolView(await present(store.status(input.id)));
+      if(input?.action==='status'&&Object.keys(input).sort().join(',')==='action,id'){
+        try{return operationToolView(await present(store.status(input.id)));}
+        catch(error){if(error.message==='Operation not found.')return {id:input.id,state:'not_found',scope:'No saved proposal exists for this ID in this operation store. This lookup did not submit or repeat anything.'};throw error;}
+      }
       if(input?.action==='list'&&Object.keys(input).join(',')==='action')return {operations:await Promise.all(store.list().map(async row=>operationToolView(await present(row))))};
       throw new Error('This tool can only propose changes or inspect their status.');
     },

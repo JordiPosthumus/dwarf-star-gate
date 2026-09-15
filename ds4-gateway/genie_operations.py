@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import urllib.error
 import urllib.parse
 import urllib.request
+from genie_inspection import scrub
 
 TOOLSET = 'stargate_operations'
 NAMES = {'propose_server_change','server_change_status'}
@@ -21,7 +22,7 @@ def register_operations(config, emit):
     def run(name,args):
         at=datetime.now(timezone.utc).isoformat()
         event={'tool':name,'id':args.get('id'),'at':at}
-        emit('operation',event={**event,'state':'reading'})
+        emit('operation',event={**event,'state':'reading','request':scrub(args)})
         try:
             payload = {'action':'propose','proposal':args,'origin':config.get('origin',{})} if name == 'propose_server_change' else ({'action':'status','id':args['id']} if args.get('id') else {'action':'list'})
             request = urllib.request.Request(config['url'],data=json.dumps(payload).encode(),headers={
@@ -38,7 +39,7 @@ def register_operations(config, emit):
             return json.dumps({'error':'Operation request could not be confirmed. Check server_change_status using the same operation ID before proposing anything again. No approval was granted by this tool.'})
     proposal={'type':'object','properties':{'id':{'type':'string','description':'A new UUID for this exact proposal. Reuse it when checking an uncertain submission.'},
         'worker_id':{'type':'string','enum':config['workers']},'image':{'type':'string','pattern':'^sha256:[a-f0-9]{64}$'},
-        'command':{'type':'array','items':{'type':'string'},'description':'Complete reviewed serving arguments; preserve unrelated settings.'},'reason':{'type':'string'}},
+        'command':{'type':'array','items':{'type':'string'},'description':'Complete reviewed serving arguments as separate strings, at most 65536 JSON bytes; preserve unrelated settings.'},'reason':{'type':'string','minLength':1,'maxLength':2000}},
         'required':['id','worker_id','image','command','reason'],'additionalProperties':False}
     for name,description,parameters in [
         ('propose_server_change','Prepare a serving change for owner review. First inspect the current full configuration and available image. This never approves, drains or starts a server. The owner approves the exact prepared plan in the gateway UI.',proposal),

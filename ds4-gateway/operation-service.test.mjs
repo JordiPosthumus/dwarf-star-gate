@@ -75,6 +75,18 @@ test('testing mode preserves the saved proposal without starting it',async t=>{
   await r.service.change({action:'decline',id:r.id,plan_revision:r.service.store.status(r.id).plan_revision});assert.equal(r.service.store.status(r.id).state,'declined');
 });
 
+test('rejected inputs and missing proposals have definite feedback; uncertain writes remain uncertain',async t=>{
+  const r=await rig(t);
+  const rejected=await r.service.tool({action:'propose',proposal:{...r.proposal,reason:'x'.repeat(2001)}});
+  assert.equal(rejected.state,'rejected');assert.match(rejected.error,/1–2000/);
+  assert.equal(r.preparations(),0);assert.equal(fs.existsSync(r.folder),false);
+  assert.equal((await r.service.tool({action:'status',id:r.id})).state,'not_found');
+  // An unexpected filesystem/transport failure is not proof of rejection.
+  const original=r.service.store.propose;r.service.store.propose=()=>{throw new Error('Uncertain write');};
+  await assert.rejects(r.service.tool({action:'propose',proposal:r.proposal}),/Uncertain write/);
+  r.service.store.propose=original;
+});
+
 test('progress distinguishes heartbeat from completion and never renders a missing time as NaN',()=>{
   const row={state:'submitted',runner:{state:'running',process_alive:true,progress:{phase:'waiting',detail:'Waiting for model',heartbeat_at:100}}};
   assert.equal(operationLabel(row),'Working');assert.match(operationProgress(row,140000),/40s ago/);

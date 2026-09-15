@@ -1928,3 +1928,28 @@ Unrelated staged work and original record annotations remain preserved. This is
 development code; no production restart, enrollment or serving change occurred.
 The current work plan now distinguishes the completed retained-evidence
 enrollment from the still-unfinished actual native operation.
+
+
+### Actual Genie proposal exercised; rejection feedback repaired
+
+A real model-driven proposal exposed a gap hidden by the synthetic fixture:
+invalid input and a missing proposal ID both looked like uncertain submissions.
+Known validation failures now explicitly reject the request before any write;
+other failures remain uncertain. Status reports a missing ID without pretending
+an operation completed. Private attempted arguments are retained with credential
+scrubbing, and the tool schema describes the reason-size limit.
+
+The same actual conversation and proposal ID then produced an awaiting-approval
+plan. Independent read-only Docker checks matched its exact image, all40command
+arguments except the requested1-to2 value, and other Docker/host settings. Record
+and frozen-executor hashes matched, and the two linked restoration artifacts
+matched their actual contents. No approval, drain or server change occurred.
+The initial rejected payload was not retained by the old tool, so its exact
+validation failure is unknown; the first answer also misstated the abbreviated
+image ending. The corrected proposal/answer used the exact current image.
+
+22Node tests passed with installed Hermes and synthetic HTTP/process fixtures,
+with no skips;4Python tool tests passed. The browser showed separate checks for
+the proposed and restored versions and actual restoration references. Initial
+sandbox listener failures passed after permitted fixture runs. Actual execution,
+native-two qualification and an explicit cache-budget comparison remain open.

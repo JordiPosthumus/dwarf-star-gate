@@ -302,3 +302,20 @@ binding mismatch does not imply that the global automatic-recovery switch is
 off. The existing read-only artifact tool can open `serving_flags_restoration`
 using that class’s exact hashed drill reference, independently of the original
 `restoration_drill` receipt. This adds evidence access, not mutation authority.
+
+
+Proposal tooling distinguishes known input rejection before any proposal write
+from uncertain transport or storage failures. A missing saved ID has an explicit
+`not_found` status. Neither observation automatically retries or approves a
+request. Attempted arguments are saved with the private chat's operation event,
+using existing credential scrubbing; this makes rejected requests auditable.
+The review card shows candidate and restored-original checks separately, with
+the recorded restoration proof references inside the detailed review.
+
+A real installed Genie and model connection have now prepared one actual serving
+proposal in an isolated read-only preview. Independent Docker/record/source
+checks confirmed the exact image and all command arguments except the single
+requested concurrency value, plus unchanged other Docker settings. The first
+attempt's opaque rejection remains in the audit; the corrected conversation
+prepared successfully without approval, a restart or a serving operation. This
+proves real proposal preparation, not native-two qualification or execution.

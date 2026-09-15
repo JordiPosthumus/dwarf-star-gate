@@ -57,7 +57,17 @@ if(panel){
         details.append(text('summary','Review the exact change and checks'));
         if(row.review.settings)details.append(text('pre',JSON.stringify(row.review.settings,null,2)));
         for(const key of ['before','after']){details.append(text('h4',key==='before'?'Current recipe':'Proposed recipe'));details.append(text('pre',JSON.stringify(row.review[key],null,2)));}
-        details.append(text('p',row.review.scope));details.append(text('p',`Checks: ${(row.review.checks??[]).join(', ')}`));
+        details.append(text('p',row.review.scope));
+        if(row.review.qualification_by_version){
+          details.append(text('h4','Checks for each version'));
+          for(const [version,checks] of Object.entries(row.review.qualification_by_version))details.append(text('p',`${version==='candidate'?'Proposed version':version==='previous'?'Restored original':version}: ${checks.join(', ')}`));
+          details.append(text('p','Container identity and idle-state checks also apply before returning the server to traffic.'));
+        }else details.append(text('p',`Checks: ${(row.review.checks??[]).join(', ')}`));
+        if(row.review.restoration?.length){
+          details.append(text('h4','Recorded restoration evidence'));
+          details.append(text('p','A confirmed qualification failure uses the retained original and checks it again. An uncertain operation needs reconciliation; this evidence does not promise recovery from every failure.'));
+          details.append(text('pre',JSON.stringify(row.review.restoration,null,2)));
+        }
         details.append(text('small',`Plan ${row.plan_revision}`));card.append(details);
       }
       if(['awaiting_approval','approved_unsubmitted'].includes(row.state)){
