@@ -6,7 +6,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from serving_qualification import NativeQualification
+from serving_qualification import NativeQualification,cache_capacity,compare_cache_capacity
 
 CONTRACT = {'kind': 'qwen_vllm', 'model': 'fixture-model', 'context_length': 16384,
             'reasoning_eos': {'eos_token_ids': [248044, 248046], 'ordinary_token_id': 760}}
@@ -19,12 +19,14 @@ class API:
         self.mutate = lambda route, body, result: result
         self.fail = None
         self.context = CONTRACT['context_length']
+        self.cache_tokens = None
 
     def __call__(self, url, route, body=None):
         self.calls.append((route, copy.deepcopy(body)))
         if self.fail == route: raise OSError('fixture connection lost')
         if route == '/metrics':
             text = 'vllm:num_preemptions_total{engine="0"} 0\nvllm:request_success_total{engine="0",finished_reason="abort"} 0\nvllm:request_success_total{engine="0",finished_reason="error"} 0\n'
+            if self.cache_tokens is not None:text+=f'vllm:cache_config_info{{engine="0",kv_cache_size_tokens="{self.cache_tokens}",block_size="8",num_gpu_blocks="340",cache_dtype="auto",enable_prefix_caching="True"}} 1.0\n'
             result = {'status': 200, 'body_base64': base64.b64encode(text.encode()).decode()}
         else:
             status = 200
@@ -225,5 +227,49 @@ class ConcurrencyQualificationTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'match'):NativeQualification(self.api,'http://127.0.0.1',self.contract).validate_profile(profile,'previous')
         for value in [1,3,True,'2',2.0]:
             with self.assertRaises(ValueError):NativeQualification(self.api,'http://127.0.0.1',{**CONTRACT,'concurrency':value})
+
+class CacheCapacityTest(unittest.TestCase):
+    def test_uses_explicit_capacity_instead_of_mamba_block_arithmetic(self):
+        raw=b'vllm:cache_config_info{engine="0",kv_cache_size_tokens="492425",block_size="8",num_gpu_blocks="340",mamba_block_size="1600"} 1.0\n'
+        value=cache_capacity(raw)
+        self.assertEqual(value['kv_cache_size_tokens'],492425)
+        self.assertNotEqual(value['kv_cache_size_tokens'],340*8)
+        self.assertEqual(cache_capacity(raw+raw)['state'],'unavailable')
+        self.assertEqual(cache_capacity(raw.replace(b'kv_cache_size_tokens="492425",',b''))['state'],'unavailable')
+        self.assertEqual(cache_capacity(raw.replace(b'492425',b'None'))['state'],'unavailable')
+        self.assertEqual(cache_capacity(raw.replace(b'492425',b'-1'))['state'],'unavailable')
+        self.assertEqual(cache_capacity(raw.replace(b'engine="0",',b'engine="0",broken,'))['state'],'unavailable')
+
+    def test_comparison_distinguishes_loss_equality_and_unknown(self):
+        before={'state':'observed','kv_cache_size_tokens':500000}
+        result=compare_cache_capacity(before,{**before,'kv_cache_size_tokens':480000})
+        self.assertEqual((result['state'],result['delta_tokens'],result['delta_percent']),('decreased',-20000,-4.0))
+        self.assertEqual(compare_cache_capacity(before,before)['state'],'equal')
+        self.assertEqual(compare_cache_capacity(before,{'state':'unavailable'})['state'],'unavailable')
+
+    def test_failed_inference_retains_precheck_capacity_and_does_not_invent_after(self):
+        api=API();api.cache_tokens=492425;api.fail='/v1/chat/completions'
+        with tempfile.TemporaryDirectory() as directory:
+            result=NativeQualification(api,'http://127.0.0.1:8001',CONTRACT).verify(Path(directory)/'failed')
+        self.assertEqual(result['state'],'failed')
+        self.assertEqual(result['cache_capacity']['before']['kv_cache_size_tokens'],492425)
+        self.assertEqual(result['cache_capacity']['after']['state'],'unavailable')
+
+    def test_baseline_only_observes_metrics_once_and_keeps_raw_evidence(self):
+        api=API();api.cache_tokens=492425
+        with tempfile.TemporaryDirectory() as directory:
+            folder=Path(directory)/'baseline'
+            result=NativeQualification(api,'http://127.0.0.1:8001',CONTRACT).observe_cache(folder)
+            raw=(folder/result['raw_reference']['file']).read_bytes()
+            self.assertEqual(hashlib.sha256(raw).hexdigest(),result['raw_reference']['sha256'])
+            self.assertEqual(result['observation'],cache_capacity(raw))
+        self.assertEqual([route for route,_ in api.calls],['/metrics'])
+
+    def test_unavailable_baseline_is_unknown_without_a_retry(self):
+        api=API();api.fail='/metrics'
+        with tempfile.TemporaryDirectory() as directory:
+            result=NativeQualification(api,'http://127.0.0.1:8001',CONTRACT).observe_cache(Path(directory)/'baseline')
+        self.assertEqual(result['observation']['state'],'unavailable')
+        self.assertNotIn('raw_reference',result);self.assertEqual(len(api.calls),1)
 
 if __name__ == '__main__': unittest.main()

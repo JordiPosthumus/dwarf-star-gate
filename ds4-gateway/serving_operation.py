@@ -9,6 +9,7 @@ import hashlib
 import json
 from datetime import datetime
 from pathlib import Path
+from serving_qualification import compare_cache_capacity
 import time
 
 from docker_profile import digest, signature
@@ -143,6 +144,12 @@ class ServingOperation:
         saved = read(folder / 'result.json')
         if saved != result:
             raise RuntimeError('Qualification result was not durably recorded')
+        baseline=read(self.folder / 'baseline-cache' / 'result.json')
+        if baseline:
+            capacity=result.get('cache_capacity',{})
+            sample='after' if capacity.get('after',{}).get('state')=='observed' else 'before'
+            comparison=compare_cache_capacity(baseline['observation'],capacity.get(sample,{'state':'unavailable','reason':'not_observed'}))
+            save(self.folder,'cache-comparison-'+which+'.json',{'at':time.time(),'current_sample':sample,**comparison})
         if stopped(): return False
         after = self.current(which)
         if signature(before) != signature(after) or after['State']['StartedAt'] != started:
@@ -230,6 +237,8 @@ class ServingOperation:
             self.maintenance.acquire()
             self.maintenance.wait_idle(lambda: self.driver.idle(self.profile['native_url']))
             self.check_record()
+            self.progress('observing_cache', 'Recording the original server’s reported KV-cache capacity before applying the change.')
+            self.qualifiers['previous'].observe_cache(self.folder / 'baseline-cache')
             self.progress('applying', 'Applying the exact approved recipe while retaining the previous container.')
             self.driver.apply(self.id, self.profile, self.binding)
             if self.qualify('candidate'):

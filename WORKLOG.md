@@ -1953,3 +1953,20 @@ with no skips;4Python tool tests passed. The browser showed separate checks for
 the proposed and restored versions and actual restoration references. Initial
 sandbox listener failures passed after permitted fixture runs. Actual execution,
 native-two qualification and an explicit cache-budget comparison remain open.
+
+
+### Native cache capacity recorded separately from cache settings
+
+Serving operations now retain a read-only native cache observation before the
+change and expose explicit token capacity during qualification. Published
+evidence links the baseline and the qualified version's comparison, including
+any measured decrease. Unknown/multiple-engine observations stay unknown; block
+counts are not used to invent token capacity. A failed inference retains the
+initial observation, and raw baseline hashes are verified before publication.
+This adds evidence, not a new cache threshold or permission for reductions.
+
+The reader was exercised against the actual unchanged Spark without inference,
+a hold or a restart. Historical candidate allocation and the current restored
+baseline differ; the dates and source types are retained rather than presenting
+them as a controlled causal comparison. An explicit owner decision about an
+acceptable cache tradeoff remains separate from successful API checks.

@@ -141,6 +141,17 @@ class ServingRecordPublisher:
         destination.mkdir(mode=0o700)
         for item in sorted(source.iterdir()):
             self.copy_file(item, destination / item.name)
+        baseline=folder / 'baseline-cache'
+        if baseline.exists():
+            (artifact / 'baseline-cache').mkdir(mode=0o700)
+            for item in sorted(baseline.iterdir()):
+                self.copy_file(item,artifact / 'baseline-cache' / item.name)
+            reference=read(artifact / 'baseline-cache' / 'result.json').get('raw_reference')
+            if reference and (reference.get('file')!='metrics.response.bin' or
+                    self.file_digest(artifact / 'baseline-cache' / 'metrics.response.bin')!=reference.get('sha256')):
+                raise ValueError('Baseline cache metrics no longer match their receipt')
+        comparison_file=folder / ('cache-comparison-'+which+'.json')
+        if comparison_file.exists():self.copy_file(comparison_file,artifact / comparison_file.name)
         # Verify copied raw responses against the qualification's recorded
         # hashes before giving these files a durable library reference.
         if read_bytes(destination / 'result.json') != read_bytes(result_file):
@@ -176,6 +187,8 @@ class ServingRecordPublisher:
             evidence.append(entry)
         save(artifact, 'qualification-evidence.json', {
             'result': linked(destination / 'result.json'), 'cases': evidence,
+            **({'cache_baseline':linked(artifact / 'baseline-cache' / 'result.json')} if baseline.exists() else {}),
+            **({'cache_comparison':linked(artifact / comparison_file.name)} if comparison_file.exists() else {}),
             'scope': 'Exact archived evidence for the qualified version. Responses include JSON, metrics and event streams; the JSON artifact reader cannot read non-JSON bodies. Hashes establish bytes, not correctness.'})
         record['recorded_at'] = record['evidence_updated_at'] = at
         record.setdefault('configuration', {})['qualified_container_reference'] = {

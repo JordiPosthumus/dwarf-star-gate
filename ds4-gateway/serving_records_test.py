@@ -106,6 +106,21 @@ class PublicationTest(unittest.TestCase):
         self.assertIn('/qualification-previous/', index['result']['path'])
         self.assertEqual(read_artifact_reference(self.library, index['result'])['state'], 'passed')
 
+    def test_published_cache_comparison_is_reachable_and_preserves_baseline_bytes(self):
+        f=self.fixture;f.apis['previous'].cache_tokens=500000;f.apis['candidate'].cache_tokens=480000
+        result=f.execute();self.assertEqual(result['state'],'completed')
+        record=json.loads(f.record_file.read_bytes())
+        index=read_artifact_reference(self.library,record['evidence'][-1])
+        comparison=read_artifact_reference(self.library,index['cache_comparison'])
+        self.assertEqual(comparison['state'],'decreased');self.assertEqual(comparison['delta_tokens'],-20000)
+        baseline=read_artifact_reference(self.library,index['cache_baseline'])
+        artifact=self.library/result['publication']['artifact']
+        raw=(artifact/'baseline-cache'/baseline['raw_reference']['file']).read_bytes()
+        self.assertEqual(raw,(f.folder/'baseline-cache/metrics.response.bin').read_bytes())
+        self.assertEqual(hashlib.sha256(raw).hexdigest(),baseline['raw_reference']['sha256'])
+        # This is an observation, not a new pass/fail threshold or permission.
+        self.assertIn('not cache hits',comparison['scope'])
+
     def test_uncommitted_owner_record_stops_publication_without_overwriting_it(self):
         f = self.fixture
         # Same bytes as prepared but not the Git version: preparing/approving a
@@ -161,6 +176,16 @@ class PublicationTest(unittest.TestCase):
         self.assertEqual(f.record_file.read_bytes(), self.old_bytes)
         self.assertEqual(self.git('rev-parse', 'HEAD'), self.before)
         self.assertTrue(f.control.worker['drained'])
+
+    def test_changed_raw_baseline_is_not_published_as_original_evidence(self):
+        f=self.fixture;publisher=f.publisher
+        def tamper(plan,folder,which,current):
+            (folder/'baseline-cache/metrics.response.bin').write_bytes(b'Changed baseline')
+            return publisher(plan,folder,which,current)
+        f.publisher=tamper
+        self.assertEqual(f.execute()['state'],'requires_reconciliation')
+        self.assertEqual(f.record_file.read_bytes(),self.old_bytes)
+        self.assertEqual(self.git('rev-parse','HEAD'),self.before)
 
 
 if __name__ == '__main__':

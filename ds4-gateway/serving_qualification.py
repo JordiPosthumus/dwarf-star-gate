@@ -7,6 +7,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import struct
 import time
@@ -165,6 +166,38 @@ def native_load(raw):
     return result
 
 
+def cache_capacity(raw):
+    """Use the engine's explicit token capacity, not block-count arithmetic."""
+    try:
+        rows=[line for line in raw.decode().splitlines() if line.startswith('vllm:cache_config_info{')]
+        if len(rows)!=1:
+            return {'state':'unavailable','reason':'missing' if not rows else 'multiple_engine_rows'}
+        match=re.fullmatch(r'vllm:cache_config_info\{(.*)\}\s+1(?:\.0+)?',rows[0])
+        if not match:raise ValueError('Invalid metric')
+        labels={};position=0
+        for item in re.finditer(r'([a-zA-Z_][a-zA-Z0-9_]*)="((?:[^"\\]|\\.)*)"(?:,|$)',match[1]):
+            if item.start()!=position or item[1] in labels:raise ValueError('Invalid labels')
+            labels[item[1]]=json.loads('"'+item[2]+'"');position=item.end()
+        if position!=len(match[1]):raise ValueError('Invalid labels')
+        tokens=labels.get('kv_cache_size_tokens','')
+        if not tokens.isascii() or not tokens.isdigit() or int(tokens)<=0:
+            return {'state':'unavailable','reason':'no_explicit_token_capacity'}
+        return {'state':'observed','kv_cache_size_tokens':int(tokens),
+                'reported_settings':{key:labels[key] for key in ['engine','cache_dtype','enable_prefix_caching','gpu_memory_utilization','block_size','mamba_block_size','num_gpu_blocks'] if key in labels}}
+    except (ValueError,UnicodeError):
+        return {'state':'unavailable','reason':'invalid_metric'}
+
+
+def compare_cache_capacity(baseline, current):
+    result={'baseline':baseline,'current':current,
+            'scope':'Reported KV token capacity across these observations, not cache hits, latency, quality or approval of a reduction. Startup memory availability can also affect capacity.'}
+    if baseline.get('state')!='observed' or current.get('state')!='observed':
+        return {**result,'state':'unavailable'}
+    delta=current['kv_cache_size_tokens']-baseline['kv_cache_size_tokens']
+    return {**result,'state':'decreased' if delta<0 else 'increased' if delta>0 else 'equal',
+            'delta_tokens':delta,'delta_percent':100*delta/baseline['kv_cache_size_tokens']}
+
+
 def concurrency_checks(request, nonce, contract):
     before=native_load(request('concurrency-idle','/metrics',raw=True))
     require(not any(before.values()),'Native work was already present before the concurrency probe')
@@ -272,12 +305,17 @@ class NativeQualification:
             require(value['status'] == expected, name + ': unexpected HTTP status')
             return data if raw else json.loads(data)
 
+        capacity={'before':{'state':'unavailable','reason':'not_observed'},'after':{'state':'unavailable','reason':'not_observed'}}
         try:
-            before_metrics = failure_metrics(request('native-metrics-before', '/metrics', raw=True))
+            raw_before=request('native-metrics-before', '/metrics', raw=True)
+            capacity['before']=cache_capacity(raw_before)
+            before_metrics = failure_metrics(raw_before)
             concurrent=concurrency_checks(request,nonce,self.contract) if self.contract.get('concurrency')==2 else None
             api = concurrent['flows'][0]['api'] if concurrent else api_checks(request, nonce, self.contract)
             eos = concurrent['flows'][0]['eos'] if concurrent else eos_checks(request, self.contract)
-            after_metrics = failure_metrics(request('native-metrics-after', '/metrics', raw=True))
+            raw_after=request('native-metrics-after', '/metrics', raw=True)
+            capacity['after']=cache_capacity(raw_after)
+            after_metrics = failure_metrics(raw_after)
             require(before_metrics == after_metrics, 'Native error, abort or preemption counters changed during qualification')
             result = {'state': 'passed', 'at': time.time(), 'contract': self.contract,
                       'checks_passed': sorted(self.checks_supported),
@@ -287,7 +325,24 @@ class NativeQualification:
         except Exception:
             result = {'state': 'failed', 'at': time.time(), 'contract': self.contract, 'cases': cases,
                       'error': 'A native qualification check did not complete successfully. Inspect the saved request and response evidence; no inference was retried.'}
+        result['cache_capacity']=capacity
         save(folder, 'result.json', result)
+        return result
+
+    def observe_cache(self, directory):
+        folder=Path(directory);folder.mkdir(mode=0o700,parents=True,exist_ok=False)
+        result={'at':time.time(),'observation':{'state':'unavailable','reason':'metrics_unavailable'}}
+        try:
+            response=self.transport(self.url,'/metrics')
+            raw=base64.b64decode(response['body_base64'],validate=True)
+            file=folder/'metrics.response.bin'
+            with file.open('xb') as stream:
+                os.chmod(file,0o600);stream.write(raw);stream.flush();os.fsync(stream.fileno())
+            result['raw_reference']={'file':file.name,'sha256':hashlib.sha256(raw).hexdigest()}
+            if response['status']==200:result['observation']=cache_capacity(raw)
+        except (OSError,RuntimeError,ValueError):
+            pass  # A missing measurement is explicit, not an invented capacity.
+        save(folder,'result.json',result)
         return result
 
 

@@ -319,3 +319,21 @@ requested concurrency value, plus unchanged other Docker settings. The first
 attempt's opaque rejection remains in the audit; the corrected conversation
 prepared successfully without approval, a restart or a serving operation. This
 proves real proposal preparation, not native-two qualification or execution.
+
+
+### Measured KV-cache capacity
+
+The serving sequence observes `/metrics` after existing work drains and before
+applying the change, retaining the original raw response. Qualification also
+extracts the engine's explicit `kv_cache_size_tokens` before and after its checks,
+including the initial value when an inference check fails. It does not multiply
+block counts: hybrid attention/Mamba allocation makes that an unsafe estimate.
+Missing, malformed or multiple engine rows remain unavailable.
+
+The published evidence index links a dated baseline and comparison for the
+qualified version. It reports the token difference and percentage separately
+from precision settings, cache hits and inference timings. Raw baseline hashes
+are checked before publication. The comparison is descriptive; it does not grant
+approval for a reduction or add a silent threshold. Native startup memory
+availability can also affect allocation, so different historical startups are
+not automatically a controlled concurrency comparison.
