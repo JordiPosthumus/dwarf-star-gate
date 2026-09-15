@@ -44,8 +44,11 @@ label such as `vLLM 0.29.0` does not establish equivalence with that image.
 
 Before provisioning another Spark, obtain the exact qualified image and its
 custom resources, retain its immutable identity privately, prepare the model
-and cache locations, and validate the new machine. A source/build recipe that
-reproduces this custom image from a clean public checkout remains unfinished.
+and cache locations, and validate the new machine. A [source preparation recipe](../examples/spark-build/qwen38-repaired/README.md)
+now combines verified pinned upstream inputs with the twelve retained repair
+files, all matched to their installed counterparts. Preparing that context from
+public sources has been tested. A clean GPU rebuild and fresh-machine qualification
+remain unfinished; a rebuilt image requires its own identity and evidence.
 The JSON reference is documentation, not an automatically applied configuration.
 
 ## Rolling adoption

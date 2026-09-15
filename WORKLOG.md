@@ -2046,3 +2046,23 @@ exercised both return controls. It exposed and corrected a redundant return butt
 on an already-completed run whose report observation failed; the corrected UI
 retains that observation error without offering another return. Production remains
 unenrolled, and the first real owned measurement remains outstanding.
+
+
+### Selected Spark build inputs made reproducible as a source context
+
+The selected image's twelve retained reasoning/parser repair files were captured
+read-only and matched byte for byte with their installed counterparts. The needed
+upstream patch sources and draft vocabulary match a pinned public commit; the
+retained upstream Dockerfile differs only by pinning its base image digest.
+A standalone standard-library preparation script now downloads and verifies those
+inputs and copies the exact repair bytes into a new build context. It refuses
+existing destinations and writes completion evidence only after all inputs pass.
+Upstream attribution and the Apache license accompany the sources.
+
+Three focused tests passed, covering exact repair preservation, base pinning,
+refusal to overwrite an existing directory, and missing completion receipts after
+download/local-source hash mismatches. The actual public-source preparation was
+also exercised separately. No downloaded source was executed, no GPU image was
+built, no weights were fetched and no production server was changed. A clean GPU
+build, new-Spark serving qualification and its own benchmark evidence remain
+required; this source context does not inherit the selected image's score.

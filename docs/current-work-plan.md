@@ -71,6 +71,10 @@ deployment receipts stay outside this public repository.
   remain unfinished.
   Preserve each report's recorded metric and rules; current Hourglass source uses
   total points, while older reports include incompatible AUC-derived scores.
+- [ ] Qualify a fresh Spark image build and installation. The selected-image
+  [source recipe](../examples/spark-build/qwen38-repaired/README.md) now prepares
+  verified upstream inputs and the retained repair bytes from a public checkout.
+  This does not yet prove a GPU rebuild or a new machine's serving behavior.
 - [ ] Add qualified multiple text connections and dedicated media work/results;
   protected media borrowing and measured handback come later.
 - [ ] Complete installation, migration, continuity and failure-path acceptance

@@ -1,0 +1,110 @@
+{
+  "schema": 1,
+  "name": "Qwen Spark selected repaired v0.29 MTP 2 build inputs",
+  "scope": "Verified source inputs and retained repair bytes. A fresh GPU build and its behavior remain unqualified; this is not automatic server enrollment.",
+  "upstream": {
+    "repository": "https://github.com/blazux/qwen3.8-Flash-DGX",
+    "revision": "c57881509af3dad83a28e59662fe3c4d29381628",
+    "files": [
+      {
+        "path": "Dockerfile.v0.29",
+        "sha256": "71ac29ae17201ca64fe941dc3521ac48e825303e5d65d11f3aa8e7c0687509fb"
+      },
+      {
+        "path": "LICENSE",
+        "sha256": "4245ba4f6cce24ce10840b4db586ef4fbd361248250a15e1e5c22feb2ac4fc18"
+      },
+      {
+        "path": "src/vllm_ple_mmap.py",
+        "sha256": "b6c7ec60db0f3de602061c15d0892907b7536f2b6af0e3418131ce1742a5529d"
+      },
+      {
+        "path": "src/patch_mamba_block_size.py",
+        "sha256": "bcf59adbe3e317bc6300f6eecd01d2dcdb6388b7341449c74bdcee8c949b1f11"
+      },
+      {
+        "path": "src/patch_qsa_exact_topk.py",
+        "sha256": "802f6564e514fe5a228738873570f9ce94c230f40d3a7c932cc5893e2147a010"
+      },
+      {
+        "path": "src/vllm_fp8_hybrid_modelopt.py",
+        "sha256": "4a3dfefa44666ac552046807430e47b0405d58e79a13da69cd1a297c230551b8"
+      },
+      {
+        "path": "src/patch_mtp_draft_vocab.py",
+        "sha256": "209ddfba7ff2e6b434a4442b9b9176bd478d9d17ded94ff46a0c04a8ae42ed0e"
+      },
+      {
+        "path": "src/draft_vocab_65536.npy",
+        "sha256": "6459e0fdc8df30e0c1d1f45be7c1b6bef0d68b0e73c073a82c52ea2a7f4b26d4"
+      }
+    ]
+  },
+  "base_image": "vllm/vllm-openai:v0.29.0@sha256:18372a7224938643461b846fb64c5c9d3d6e9727e82caf2dc3043e620c9d4d7a",
+  "upstream_base_line": "FROM vllm/vllm-openai:v0.29.0",
+  "repair_files": [
+    {
+      "path": "vllm/config/reasoning.py",
+      "sha256": "abf0285b47b06d72977bb13eca56de9be58ed4fd09112ff288915a9befed4c26"
+    },
+    {
+      "path": "vllm/v1/sample/thinking_budget_state.py",
+      "sha256": "ebaaf322486d654d8438a3de9eba07cdf8724c5688199d1abaf40619fe0e03f9"
+    },
+    {
+      "path": "vllm/parser/engine/parser_engine_config.py",
+      "sha256": "61b1305bc038fec7d21ce77a73d04d3f83949bc6cbab10736358bb6d97a7cf8c"
+    },
+    {
+      "path": "vllm/parser/engine/streaming_parser_engine.py",
+      "sha256": "0ea6f2ad10af6829bc19605e44f0fe287ce7958fdf7d4c0b604e4e4217767f6a"
+    },
+    {
+      "path": "vllm/parser/qwen3.py",
+      "sha256": "109c64601ae43224e0b86ee7c6322ca02b4f3a3fe32e70e5fa88f5f3562c5a51"
+    },
+    {
+      "path": "vllm/parser/nemotron_v3.py",
+      "sha256": "e77d7cd4972d5e82dbf4c119d2345ba431fcf9f5339b9eff4c26a1a827e079c3"
+    },
+    {
+      "path": "vllm/renderers/params.py",
+      "sha256": "dcaf46501b3053e43de34c7243d5ef6d839ceacb8a0f864a67daa014b2154eac"
+    },
+    {
+      "path": "vllm/entrypoints/serve/utils/api_utils.py",
+      "sha256": "fe903b2eb8ab9fa61b6c4f0deca391bc0fc3042b67526c32a312b91f962ec822"
+    },
+    {
+      "path": "vllm/entrypoints/openai/chat_completion/protocol.py",
+      "sha256": "faa4c71bd58dded17f453bc5f4ef5ebad689a7b046901013efe2c737f3b58433"
+    },
+    {
+      "path": "vllm/entrypoints/openai/chat_completion/qwen_contract.py",
+      "sha256": "71ce3f6106b30bf03f6d7d3e5c9908b65734f4d5eb12199bd50e2fc8b01b69f8"
+    },
+    {
+      "path": "vllm/v1/worker/gpu/sample/reasoning_eos.py",
+      "sha256": "329101786030cf784207557e74ac3ea1823fa2c9a3f34832a12ff9409ecaf016"
+    },
+    {
+      "path": "vllm/v1/worker/gpu/sample/sampler.py",
+      "sha256": "4e2b943aab57ec0141dde1449751a0d4efbcf270729782aca5e2eca69452eb7c"
+    }
+  ],
+  "repair_origin": {
+    "project": "vLLM and local reasoning/parser repair",
+    "upstream_revision": "98dff2a81d747d1dba01a47f939f48c3526d4206",
+    "license": "Apache-2.0",
+    "verification": "All twelve retained repair files matched their installed counterparts in the selected image. This verifies these files, not the complete image ancestry."
+  },
+  "platform": "linux/arm64",
+  "cuda_architecture": "121a",
+  "does_not_include": [
+    "Model weights",
+    "NVIDIA driver installation",
+    "Personal server paths or credentials",
+    "A ready-made qualified image",
+    "An automatic service launcher or gateway configuration change"
+  ]
+}
