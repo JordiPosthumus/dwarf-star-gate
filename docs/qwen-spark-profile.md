@@ -47,8 +47,11 @@ custom resources, retain its immutable identity privately, prepare the model
 and cache locations, and validate the new machine. A [source preparation recipe](../examples/spark-build/qwen38-repaired/README.md)
 now combines verified pinned upstream inputs with the twelve retained repair
 files, all matched to their installed counterparts. Preparing that context from
-public sources has been tested. A clean GPU rebuild and fresh-machine qualification
-remain unfinished; a rebuilt image requires its own identity and evidence.
+public sources and an uncached Docker build on an existing ARM64/GB10 host have
+passed. All 2,518 compared source/resource files matched the selected installation,
+and the rebuilt kernel loaded in an isolated container. Serving the model from
+that rebuilt image and fresh-machine qualification remain unfinished; the image
+requires its own identity and runtime evidence.
 The JSON reference is documentation, not an automatically applied configuration.
 
 ## Rolling adoption

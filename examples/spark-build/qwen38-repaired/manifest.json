@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "name": "Qwen Spark selected repaired v0.29 MTP 2 build inputs",
-  "scope": "Verified source inputs and retained repair bytes. A fresh GPU build and its behavior remain unqualified; this is not automatic server enrollment.",
+  "scope": "Verified source inputs, retained repair bytes and an uncached Docker build on an existing ARM64/GB10 host. Rebuilt-image model serving and fresh-machine qualification remain unverified; this is not automatic server enrollment.",
   "upstream": {
     "repository": "https://github.com/blazux/qwen3.8-Flash-DGX",
     "revision": "c57881509af3dad83a28e59662fe3c4d29381628",

@@ -2066,3 +2066,24 @@ also exercised separately. No downloaded source was executed, no GPU image was
 built, no weights were fetched and no production server was changed. A clean GPU
 build, new-Spark serving qualification and its own benchmark evidence remain
 required; this source context does not inherit the selected image's score.
+
+
+### Selected Spark recipe rebuilt and compared on ARM64
+
+The public context built successfully on an existing GB10 host. The first build
+used cached steps; a second --no-cache build compiled the custom kernel and
+finished successfully. Both images remain separately tagged; neither replaced
+the running model container. All 2,518 compared source/resource files matched the
+selected running installation, including the custom kernel and draft vocabulary.
+Package versions matched, and the rebuilt kernel loaded/registered in a temporary
+container without model mounts or GPU access. This is build and file evidence,
+not a native inference result or blank-machine acceptance.
+
+An owned hold excluded new gateway work while gateway and native active-request
+counts were allowed to reach zero.
+Afterward the original container identity, startup time, settings and mounts,
+gateway configuration bytes and native health were checked before releasing only
+that hold and conditionally returning the worker. Docker changed only the ordering
+of its mount listing. No serving container was restarted, replaced or reconfigured.
+The original image and both new builds are retained. Native model qualification
+of the rebuilt image, a new-machine installation and its own benchmark remain.

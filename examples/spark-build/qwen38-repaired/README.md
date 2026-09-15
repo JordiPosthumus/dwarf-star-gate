@@ -7,10 +7,21 @@ twelve retained repair files. Those twelve files were compared byte for byte
 with the installed selected image. The upstream patch sources and draft
 vocabulary were also compared with the public commit.
 
-**Source preparation has been verified. A clean GPU image rebuild and new-Spark
-qualification have not.** A new image will have its own identity; neither the
+**Source preparation and a Docker `--no-cache` build have passed on an existing
+ARM64 / GB10 host. Model serving from the rebuilt image and new-Spark qualification
+have not.** A new image will have its own identity; neither the
 version label nor this recipe grants it the old image's qualification or score.
 Keep the existing working image, container, launcher and cache.
+
+The uncached build actually compiled the determinism kernel. All 2,518 compared
+files matched the selected running installation: vLLM Python sources, the two
+custom Python helpers, draft vocabulary and compiled kernel. vLLM, PyTorch and
+Transformers versions also matched. The rebuilt kernel loaded and registered
+its operation in a temporary container without model mounts or GPU access.
+The existing model container was neither restarted nor replaced. These checks
+establish build/file evidence, not a new inference or performance result. Base
+image layers and checksum-pinned downloads remained locally available; this was
+not a blank-machine installation test.
 
 ## Prepare a separate directory
 

@@ -74,7 +74,10 @@ deployment receipts stay outside this public repository.
 - [ ] Qualify a fresh Spark image build and installation. The selected-image
   [source recipe](../examples/spark-build/qwen38-repaired/README.md) now prepares
   verified upstream inputs and the retained repair bytes from a public checkout.
-  This does not yet prove a GPU rebuild or a new machine's serving behavior.
+  An uncached build on an existing ARM64/GB10 host passed; compared source/resource
+  files and package versions match the selected installation. The rebuilt kernel
+  loaded in an isolated container. Model serving from the rebuild and a new
+  machine's behavior remain unverified.
 - [ ] Add qualified multiple text connections and dedicated media work/results;
   protected media borrowing and measured handback come later.
 - [ ] Complete installation, migration, continuity and failure-path acceptance

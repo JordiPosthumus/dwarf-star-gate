@@ -11,7 +11,7 @@
     "served_model_name": "qwen3.8-flash-next"
   },
   "runtime_dependency_inventory": {
-    "image": "Custom repaired local image. Installed packages queried during selected-image qualification: vLLM 0.29.0, torch 2.13.0+cu130 and transformers 5.16.1. CUDA_VERSION declares 13.0.2 and NVARCH declares sbsa; inherited labels alone do not establish build ancestry. A source preparation recipe is available at examples/spark-build/qwen38-repaired; its pinned upstream inputs and retained repair bytes are verified. A clean GPU rebuild remains unqualified; stock vLLM compatibility is unproven.",
+    "image": "Custom repaired local image. Installed packages queried during selected-image qualification: vLLM 0.29.0, torch 2.13.0+cu130 and transformers 5.16.1. CUDA_VERSION declares 13.0.2 and NVARCH declares sbsa; inherited labels alone do not establish build ancestry. A source preparation recipe is available at examples/spark-build/qwen38-repaired; its pinned upstream inputs and retained repair bytes are verified. An uncached Docker build on an existing ARM64/GB10 host passed, with 2518 compared files matching the selected installation and successful isolated kernel loading. Rebuilt-image model serving and fresh-machine qualification remain unverified; stock vLLM compatibility is unproven.",
     "custom_artifacts_required": [
       {
         "artifact": "<CUSTOM_DETERMINISM_KERNEL>/_C_det.so",
@@ -124,8 +124,8 @@
     "YaRN rope-scaling override": "available via launcher toggle; disabled in this deployment"
   },
   "recreation_gaps": [
-    "The public recipe prepares the pinned upstream sources and twelve retained reasoning/parser repair files. All twelve match their installed counterparts. A clean GPU rebuild, complete image equivalence and fresh-machine serving qualification remain unfinished.",
-    "The recipe now identifies the PLE/QSA patches, checksum-pinned determinism kernel sources and draft vocabulary. Its build and runtime-generated PLE/cache resources still require qualification on the new machine.",
+    "The public recipe prepares the pinned upstream sources and twelve retained reasoning/parser repair files. An uncached Docker build succeeded on an existing ARM64/GB10 host; all 2518 compared source/resource files matched the selected installation. This does not prove complete image equivalence, native serving from the rebuild or a blank-machine installation.",
+    "The PLE/QSA patches, pinned determinism-kernel sources and draft vocabulary are identified and their build succeeded. Runtime-generated PLE/cache resources and native behavior still require qualification when the rebuilt image serves a model.",
     "Current weight integrity was not established by a fresh hash pass.",
     "Actual text, tools, vision, cold-to-warm cache reuse, context boundary and reasoning EOS checks passed on the selected image. Sustained work, exhaustive maximum-length output, MTP performance and fresh-machine recreation remain unqualified."
   ],
