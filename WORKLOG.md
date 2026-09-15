@@ -1,5 +1,26 @@
 # Star Gate work log
 
+## 2026-09-15 — Approval and independent operation runner (development)
+
+Added saved proposal/approval handling and an independent Python runner. Exact
+plan, record and executor bytes are checked before execution. Durable claims
+prevent duplicate attempts; observation uses an operation-specific kernel lock,
+not an old PID. Progress separates a phase change from the process heartbeat.
+The SSH adapter sends Docker requests as JSON to a fixed bootstrap and never
+retries uncertain mutations or imposes a graceful-stop kill deadline.
+
+Validation: 29 Node checks passed, including a real dashboard process exiting
+while its approved synthetic operation continues, duplicate submission, a killed
+fixture runner and a concurrent observer. Twenty-six Python checks passed; the
+optional disposable-Docker test was not rerun in this increment. Actual read-only
+SSH preparation against enrolled servers preserved their observed identities.
+An initial test cleanup-order error was fixed before the final passing run.
+
+These are development components. The trusted serving workflow still needs its
+maintenance, qualification, restoration and readmission integration, followed by
+the Genie tools and approval UI. No production service or server setting changed,
+and this work does not grant Genie new mutation authority.
+
 ## 2026-09-15 — Retained Docker profile executor (development)
 
 Added the executor component for approved serving changes. It preserves the

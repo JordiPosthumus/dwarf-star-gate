@@ -1,9 +1,50 @@
 # Approved serving changes — development
 
-The conversational Genie does not yet execute this workflow. The first executor
-component is implemented and tested; connecting explicit approval, durable
-operation supervision, model qualification and readmission remains unfinished.
-Existing recovery and maintenance behavior is unchanged.
+The conversational Genie does not yet execute this workflow. The retained
+container executor, approval store, independent runner and SSH transport are
+implemented and tested as components. Connecting the chat and approval UI to
+the complete maintenance, model qualification and readmission workflow remains
+unfinished. Existing recovery and maintenance behavior is unchanged.
+
+## Approval and independent execution
+
+`server-operations.mjs` saves a proposed change, its prepared plan and the
+approved configuration's revision. Preparing a proposal never launches it.
+Approval must refer to the exact saved plan; a changed record or plan requires a
+new proposal. The future dashboard endpoint must require an explicit owner
+action and the same origin/CSRF checks as existing controls. The approval method
+is not a Genie tool.
+
+The store records launch intent before calling `operation-runner.mjs`. That
+adapter starts a detached Python process, so closing the chat or dashboard does
+not stop the operation. `operation_runner.py` independently checks the approval,
+plan, configuration record and exact executor source bytes before executing.
+The trusted preparation adapter supplies the executor's absolute path and hash;
+neither comes from the model's proposal. This hash binds that entry-point file,
+not arbitrary dependencies it imports. A complete serving adapter must also
+verify its required implementation and qualification artifacts.
+
+An exclusive durable claim prevents duplicate execution. A kernel-held file lock
+establishes process liveness without trusting an old PID. Observation after a
+crash does not restart the operation. Approval saved before any launch intent
+can finish its original submission; an uncertain launch is only observed.
+Records of declined, failed and interrupted operations are preserved.
+
+Progress records separate the last phase change from a process heartbeat. A
+heartbeat means the runner is alive; it does not mean the model is progressing.
+An executor exception leaves an explicit reconciliation state, never an invented
+success or claim that the server was unchanged. The enrolled serving executor
+must perform and record the actual maintenance and qualification checks before
+returning a successful outcome. The process supervisor does not provide those
+checks itself.
+
+Tests use a real separate dashboard process and synthetic Python executor: the
+dashboard exits, its approved operation continues, and a replacement observes
+the same operation. They also cover an abruptly lost fixture process, changed
+approval/record/executor bytes, duplicate submission and heartbeat semantics.
+These tests prove process behavior, not a qualified model-server upgrade.
+
+## Retained container and SSH transport
 
 `ds4-gateway/docker_profile.py` provides `RetainedProfile` for changing a Docker
 serving image and command while retaining the previous container. It accepts
@@ -19,6 +60,13 @@ the container and has no running or waiting requests. It rechecks ownership and
 identity before stopping anything, writes each intent before issuing its action,
 and keeps both versions. Duplicate calls observe the saved operation without
 replaying uncertain mutations.
+
+`docker_profile_remote.py` carries this executor's Docker requests over the
+already-enrolled SSH connection. A fixed Python bootstrap receives JSON on stdin;
+model-supplied arguments never enter a shell command. It installs nothing on the
+host. Observation has bounded transport waits, while graceful stop has no new
+kill deadline. A failed mutation response is uncertain and is never retried by
+the transport. Host aliases and the Docker socket must come from enrollment.
 
 Apply returns `started_unverified`; restoration returns `restored_unverified`.
 Neither state authorizes routing. The complete workflow must check the actual
@@ -44,3 +92,4 @@ or the unfinished gateway approval workflow.
 Run the unit checks with `python3 ds4-gateway/docker_profile_test.py`. The native
 test's module docstring describes its explicit Docker socket, cached image ID and
 new evidence-directory inputs; it never pulls an image or discovers fleet targets.
+Run the approval, real-process and transport checks with `npm run operations:test`.
