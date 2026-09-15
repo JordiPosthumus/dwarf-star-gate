@@ -5,9 +5,10 @@ container executor, approval store, independent runner, SSH transport and owned
 gateway maintenance adapter, serving sequence and native qualifier are
 implemented and tested as components. Connecting the chat and approval UI to
 the complete maintenance, model qualification and readmission workflow remains
-unfinished, including the enrolled serving entry point and reviewed record
-preparation. A versioned record publisher is now exercised with a real private
-Git fixture. Existing production recovery and maintenance behavior is unchanged.
+unfinished. The serving entry point, frozen-source bundle and reviewed record
+preparation are implemented as components; installation enrollment, dashboard
+transport, approval UI and whole-operation native qualification remain to connect.
+Existing production recovery and maintenance behavior is unchanged.
 
 ## Approval and independent execution
 
@@ -23,9 +24,28 @@ adapter starts a detached Python process, so closing the chat or dashboard does
 not stop the operation. `operation_runner.py` independently checks the approval,
 plan, configuration record and exact executor source bytes before executing.
 The trusted preparation adapter supplies the executor's absolute path and hash;
-neither comes from the model's proposal. This hash binds that entry-point file,
-not arbitrary dependencies it imports. A complete serving adapter must also
-verify its required implementation and qualification artifacts.
+neither comes from the model's proposal. `serving_bundle.py` embeds the known
+serving modules into that one approved source file, including the exact Docker
+transport source sent over SSH. `serving_executor.py` joins the enrolled gateway,
+Docker, qualification and record components using the saved plan. It does not
+reread mutable installation settings while executing. The installed Python
+standard library, operation supervisor, gateway and host software remain outside
+this serving-code snapshot; it is not a snapshot of the whole installation.
+
+`serving_prepare.py` prepares from installation-owned connection and qualification
+enrollment plus the proposed image/complete command. It observes Docker, checks
+the approved record and applicable restoration proof, builds the candidate record
+and freezes the executor. It never approves, launches or drains. The candidate
+record reflects explicit generation/thinking settings and labels unverified engine
+defaults as unknown. Historical container/package captures are not relabelled as
+fresh observations. Changing the container does not rewrite launcher files or
+recovery bindings; the review explicitly states this boundary.
+
+A separate-process fixture executes frozen imports and transport source after
+all copied checkout modules change, rejects a changed approved bundle before any
+effect, and observes a duplicate without another effect. Preparation-to-entry
+tests use synthetic external Docker/gateway/model responses and a real disposable
+Git library. These are component-integration checks, not a real fleet operation.
 
 An exclusive durable claim prevents duplicate execution. A kernel-held file lock
 establishes process liveness without trusting an old PID. Observation after a
@@ -130,8 +150,9 @@ only its record and operation artifacts, runs ordinary Git hooks, preserves
 unrelated staged work and never pushes the private repository. Existing edits
 to the target record fail preflight before draining. A failed or uncertain commit
 preserves files and the hold for reconciliation; the operation does not repeat it.
-The serving entry point and trusted candidate-record preparation are not yet
-enrolled in the independent runner or Genie.
+The publisher also retains the frozen executable and exposes the new Docker
+capture through Genie's existing recreation-artifact reader. Installation
+enrollment and Genie/dashboard integration are not yet active in production.
 
 The record's `restoration.change_classes` maps `serving_flags` and/or
 `engine_image` to retained restoration data: automatic mode, retained container

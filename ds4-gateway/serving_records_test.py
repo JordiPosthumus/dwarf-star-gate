@@ -101,6 +101,19 @@ class PublicationTest(unittest.TestCase):
         self.assertEqual(self.fixture.execute()['state'], 'requires_reconciliation')
         self.assertIn('other.txt', self.git('diff', '--cached', '--name-only'))
 
+    def test_git_assume_unchanged_cannot_hide_an_uncommitted_record(self):
+        f = self.fixture
+        self.git('update-index','--assume-unchanged','--','records/approved/fixture.json')
+        f.record['configuration']['owner_note'] = 'Hidden uncommitted owner edit'
+        raw = json.dumps(f.record).encode(); f.record_file.write_bytes(raw)
+        f.plan['record_revision'] = f.plan['profile']['record_revision'] = hashlib.sha256(raw).hexdigest()
+        f.plan['candidate_record']['restoration']['previous_approved_revision'] = f.plan['record_revision']
+        self.approve()
+        self.assertEqual(self.git('status','--porcelain','--','records/approved/fixture.json'),'')
+        with self.assertRaisesRegex(ValueError,'existing edits'): f.execute()
+        self.assertEqual(f.docker.calls,[]); self.assertEqual(f.control.calls,[])
+        self.assertEqual(f.record_file.read_bytes(),raw)
+
     def test_unreviewed_candidate_record_never_publishes(self):
         f = self.fixture; f.plan['candidate_record']['configuration']['planned_recipe_sha256'] = '0' * 64
         self.approve()

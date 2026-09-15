@@ -29,13 +29,21 @@ class ServingRecordPublisher:
             raise RuntimeError('Configuration-library Git operation failed; inspect the retained operation evidence and repository before retrying')
         return result.stdout.decode().strip()
 
+    def require_committed_record(self, record_file, expected):
+        path = str(record_file.relative_to(self.library))
+        # status alone can hide ignored/untracked files or assume-unchanged
+        # edits. A versioned prior record must actually exist in the commit.
+        prefix = self.git('rev-parse', '--show-prefix')
+        result = subprocess.run(['git', '-C', str(self.library), 'show', 'HEAD:' + prefix + path], capture_output=True)
+        if result.returncode or result.stdout != expected or self.git('status', '--porcelain', '--', path):
+            raise ValueError('Commit or reconcile existing edits to this record before publication')
+
     def preflight(self, plan, folder):
         record_file = self.library / 'approved' / (plan['worker_id'] + '.json')
         raw = read_bytes(record_file)
         if hashlib.sha256(raw).hexdigest() != plan['record_revision']:
             raise ValueError('The approved record changed before publication')
-        if self.git('status', '--porcelain', '--', str(record_file.relative_to(self.library))):
-            raise ValueError('Commit or reconcile existing edits to this record before publication')
+        self.require_committed_record(record_file,raw)
         candidate = plan.get('candidate_record')
         expected = {'previous_approved_revision': plan['record_revision'], 'retention': 'retained', 'drill': {'status': 'unproven'}}
         if (not isinstance(candidate, dict) or candidate.get('schema') != 1 or candidate.get('kind') != 'approved'
@@ -75,8 +83,7 @@ class ServingRecordPublisher:
         if hashlib.sha256(old_bytes).hexdigest() != plan['record_revision']:
             raise ValueError('The approved record changed before publication')
         record_path = str(record_file.relative_to(self.library))
-        if self.git('status', '--porcelain', '--', record_path):
-            raise ValueError('Commit or reconcile existing edits to this record before publication')
+        self.require_committed_record(record_file,old_bytes)
         old = json.loads(old_bytes)
         proof_file = folder / ('qualified-' + which + '.json')
         proof = read(proof_file)
@@ -119,6 +126,16 @@ class ServingRecordPublisher:
         self.copy_file(record_file, artifact / 'previous-approved.json')
         for name in ('plan.json', 'approved.json', 'qualified-' + which + '.json'):
             self.copy_file(folder / name, artifact / name)
+        execution = plan.get('execution')
+        if execution is not None:
+            if set(execution) != {'path', 'sha256'}:
+                raise ValueError('Invalid approved executor reference')
+            source_bytes = read_bytes(execution['path'])
+            if hashlib.sha256(source_bytes).hexdigest() != execution['sha256']:
+                raise ValueError('Approved executor artifact changed before archival')
+            with (artifact / 'executor.py').open('xb') as stream:
+                os.chmod(stream.name, 0o600)
+                stream.write(source_bytes); stream.flush(); os.fsync(stream.fileno())
         source = folder / ('qualification-' + which)
         destination = artifact / source.name
         destination.mkdir(mode=0o700)
@@ -147,6 +164,8 @@ class ServingRecordPublisher:
             'path': reference + '/container.json', 'sha256': hashlib.sha256(read_bytes(artifact / 'container.json')).hexdigest(),
             'container_id': current['Id'], 'started_at': current['State']['StartedAt'], 'image_id': current['Image'],
             'scope': 'Actual Docker recipe and startup identity at qualification; package versions require separate inspection.'}
+        # Keep the new capture reachable through Genie's existing artifact tool.
+        record['configuration']['recreation_capture'] = copy.deepcopy(record['configuration']['qualified_container_reference'])
         record.setdefault('evidence', []).append({'path': reference + '/' + source.name + '/result.json',
             'sha256': hashlib.sha256(read_bytes(result_file)).hexdigest(), 'captured_at': at,
             'scope': 'Recorded native checks for this startup; not a benchmark or fresh-machine installation.'})

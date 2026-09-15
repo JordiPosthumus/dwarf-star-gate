@@ -51,9 +51,10 @@ deployment receipts stay outside this public repository.
   sequence now joins apply, native checks, record publication and restoration in
   component tests. Record publication retains prior bytes and qualification evidence
   in a real disposable Git library while preserving unrelated staged work. The
-  enrolled entry point, trusted candidate-record preparation, applicable private
-  restoration enrollment, fresh native-model qualification
-  and chat/approval UI remain in development.
+  entry point and trusted preparation now bind enrolled connections, model
+  contracts, the reviewed record and frozen serving code. Applicable private
+  restoration enrollment, dashboard/Genie integration, fresh whole-operation
+  native-model qualification and chat/approval UI remain in development.
 - [ ] Integrate owner-started Hourglass runs, initially measuring the chosen
   server directly with recorded configuration and measurement provenance.
   Saved aggregate reports are wired into the dashboard and chat,

@@ -31,14 +31,18 @@ except Exception:
 
 
 class SSHDocker(Docker):
-    def __init__(self, host, filename='/var/run/docker.sock', *, run=subprocess.run):
+    def __init__(self, host, filename='/var/run/docker.sock', *, run=subprocess.run, source=None):
         if not isinstance(host, str) or not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_.@-]{0,127}', host):
             raise ValueError('Use the enrolled SSH host or alias')
         if not isinstance(filename, str) or not filename.startswith('/') or '\0' in filename:
             raise ValueError('Use the enrolled absolute Docker socket path')
         super().__init__(filename)
         self.host, self.run = host, run
-        self.source = Path(__file__).with_name('docker_profile.py').read_text()
+        # An approved operation supplies its frozen transport implementation.
+        # Ordinary read-only/preparation callers retain the installed source.
+        self.source = source if source is not None else Path(__file__).with_name('docker_profile.py').read_text()
+        if not isinstance(self.source, str) or not self.source.strip():
+            raise ValueError('Use the trusted Docker transport source')
 
     def _call(self, payload, *, observation_timeout=None):
         request = {**payload, 'socket': self.filename, 'source': self.source}

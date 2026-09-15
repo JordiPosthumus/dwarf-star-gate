@@ -1,5 +1,40 @@
 # Star Gate work log
 
+## 2026-09-15 — Frozen serving entry point and preparation (development)
+
+Added the entry point joining owned maintenance, retained Docker, native checks
+and private Git publication. A preparation helper uses installation-owned
+connections/contracts and read-only Docker observations to construct the exact
+candidate plan and record. Generation and thinking settings come from the reviewed
+command, unknown defaults remain unknown, and older container/package captures
+are retained as history rather than relabelled as current observations. Neither
+preparation nor a configuration record approves or launches an operation.
+
+The serving bundle embeds the known Python modules into the runner's existing
+hashed executable artifact. SSH receives that same frozen Docker implementation.
+Later checkout updates cannot replace those approved serving dependencies. The
+installed supervisor, standard library, gateway and host software remain outside
+the snapshot. Publication retains the executable alongside raw qualification
+receipts and makes the new Docker capture available to Genie's existing artifact
+reader. Git comparison now checks the committed record bytes, including owner
+edits hidden by assume-unchanged, before draining or replacing a record.
+
+Validation: the full operation suite passed 29 Node and 82 Python tests, with one
+optional native Docker fixture skipped. After the final committed-record check,
+all 41 serving tests passed again. A separate process exercised frozen imports
+and SSH source after copied checkout modules changed, rejected changed approved
+bytes before any effect, and did not repeat an existing attempt. The actual entry
+point and preparation-to-publication path passed with synthetic external
+Docker/gateway/model responses and real disposable Git repositories, preserving
+unrelated staged work and restoring a failed candidate. These checks do not prove
+a real model-server change through the complete product.
+
+Production services, native settings, live records and existing recovery were
+unchanged. Installation/restoration enrollment, the dashboard preparation adapter,
+Genie proposal/status tools, explicit approval UI and whole-operation native
+qualification remain before activation. The full plan still includes real
+concurrency qualification, Hourglass, new-server provisioning and final acceptance.
+
 ## 2026-09-15 — Serving sequence, qualification and record publication (development)
 
 Joined owned maintenance, retained Docker apply, native qualification, restoration
