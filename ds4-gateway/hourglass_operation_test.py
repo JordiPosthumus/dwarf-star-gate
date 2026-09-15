@@ -4,7 +4,7 @@ from pathlib import Path
 import unittest
 import uuid
 
-from hourglass_operation import HourglassOperation
+from hourglass_operation import HourglassOperation, NativeStartRejected
 from operation_maintenance import Maintenance
 from operation_maintenance_test import Fixture
 from operation_runner import read
@@ -72,6 +72,20 @@ class MeasurementTest(unittest.TestCase):
             self.operation().run()
         self.assertEqual(sum(c[0] == 'submit' for c in self.native.calls), 1)
         self.assertTrue(self.control.worker['maintenance_locks'])
+
+    def test_proven_rejection_returns_unchanged_worker_without_another_start(self):
+        def rejected(request):
+            self.native.calls.append(('submit', request))
+            raise NativeStartRejected()
+        self.native.submit = rejected
+        result = self.operation().run()
+        self.assertEqual(result['native_state'], 'rejected')
+        self.assertIsNone(result['job_id'])
+        self.assertEqual(result['readmission']['state'], 'readmitted')
+        self.assertFalse(self.control.worker['drained'])
+        self.assertEqual(self.operation().run(), result)
+        self.assertEqual(sum(c[0] == 'submit' for c in self.native.calls), 1)
+        self.assertFalse(any(c[0] == 'observe' for c in self.native.calls))
 
     def test_observation_timeout_and_unknown_state_follow_same_receipt(self):
         self.native.states = [TimeoutError(), 'unknown', 'completed']

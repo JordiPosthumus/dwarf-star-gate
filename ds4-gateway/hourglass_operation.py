@@ -13,6 +13,10 @@ from operation_runner import read, save
 TERMINAL = {'completed', 'stopped', 'error', 'cancelled'}
 
 
+class NativeStartRejected(Exception):
+    """Trusted adapter proved rejection before native acceptance; never a timeout."""
+
+
 class HourglassOperation:
     def __init__(self, plan, directory, *, maintenance, native, progress=lambda *args: None, sleep=time.sleep):
         self.plan, self.folder = plan, Path(directory)
@@ -37,23 +41,29 @@ class HourglassOperation:
         if read(self.folder / 'readmission-intent.json') is not None:
             raise RuntimeError('Measurement readmission requires reconciliation')
         receipt = read(self.folder / 'native-acceptance.json')
-        if receipt is None and read(self.folder / 'native-start-intent.json') is not None:
+        rejected = read(self.folder / 'native-rejection.json')
+        if receipt is None and rejected is None and read(self.folder / 'native-start-intent.json') is not None:
             raise RuntimeError('Native start acceptance is uncertain; no start will be retried')
         if self.native.check_target() is not True:
             raise RuntimeError('The reviewed native target is not verified')
         self.maintenance.acquire()
-        if receipt is None:
+        if receipt is None and rejected is None:
             self.progress('waiting_idle', 'Waiting for existing work before the measurement.')
             self.maintenance.wait_idle(self.native.idle)
             if self.native.check_target() is not True:
                 raise RuntimeError('The reviewed native target changed before measurement')
             save(self.folder, 'native-start-intent.json', {'at': time.time(), 'request': self.plan['native_request']})
-            receipt = self.native.submit(self.plan['native_request'])
-            if not isinstance(receipt, dict) or not re.fullmatch(r'[a-f0-9]{32}', receipt.get('job_id', '')):
-                raise RuntimeError('Native start returned no valid receipt; do not retry')
-            save(self.folder, 'native-acceptance.json', receipt)
-        job = receipt['job_id']
-        while True:
+            try:
+                receipt = self.native.submit(self.plan['native_request'])
+            except NativeStartRejected:
+                rejected = {'at': time.time(), 'state': 'rejected_before_acceptance'}
+                save(self.folder, 'native-rejection.json', rejected)
+            if rejected is None:
+                if not isinstance(receipt, dict) or not re.fullmatch(r'[a-f0-9]{32}', receipt.get('job_id', '')):
+                    raise RuntimeError('Native start returned no valid receipt; do not retry')
+                save(self.folder, 'native-acceptance.json', receipt)
+        job, state = (receipt['job_id'], None) if receipt else (None, 'rejected')
+        while job:
             # Preserve a newer manual decision, even if native work continues.
             if self.maintenance.owned(require_idle=False) is not True:
                 raise RuntimeError('Measurement maintenance ownership is unavailable')

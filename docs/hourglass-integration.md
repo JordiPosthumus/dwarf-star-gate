@@ -243,6 +243,9 @@ request with revision checks, and `observe` to that exact native job. These are
 trusted installation dependencies, not model-supplied callbacks. Native job
 termination does not establish a score; existing aggregate collection is separate.
 
+An explicitly proven pre-acceptance rejection returns the unchanged, verified
+idle worker without another start. The native adapter must never classify a
+timeout or missing acknowledgement as that definite rejection.
 An uncertain start keeps the hold and cannot be replayed. An observation failure
 or unknown native state keeps following the same receipt without cancelling work.
 An acknowledged job can be observed again from its saved receipt after an observer
