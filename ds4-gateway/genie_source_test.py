@@ -20,8 +20,8 @@ class InstalledSourceReads(unittest.TestCase):
         self.source = self.root / 'vllm/example.py'
         self.source.write_text('raise RuntimeError("Source must not execute")\n')
 
-    def read(self, paths):
-        return subprocess.run([sys.executable, '-B', '-c', SOURCE_QUERY, json.dumps(paths)],
+    def read(self, paths, window=None):
+        return subprocess.run([sys.executable, '-B', '-c', SOURCE_QUERY, json.dumps(paths), json.dumps(window)],
                               env={**os.environ, 'PYTHONPATH': str(self.root)},
                               capture_output=True, text=True, timeout=10)
 
@@ -33,6 +33,14 @@ class InstalledSourceReads(unittest.TestCase):
         self.assertEqual(rows[0]['sha256'], hashlib.sha256(self.source.read_bytes()).hexdigest())
         self.assertEqual(rows[1], {'path': 'vllm/absent.py', 'status': 'not_found'})
         self.assertFalse(list(self.root.rglob('__pycache__')))
+
+    def test_optional_window_returns_exact_text_and_full_file_hash(self):
+        text='αβγ\n'+('# a line of source\n'*5000);self.source.write_text(text)
+        row=json.loads(self.read(['vllm/example.py'],{'offset':70000,'length':4000}).stdout)['files'][0]
+        self.assertEqual(row['text'],text[70000:74000]);self.assertEqual(row['sha256'],hashlib.sha256(text.encode()).hexdigest())
+        self.assertEqual(row['window']['next_offset'],74000);self.assertFalse(row['window']['complete_file'])
+        self.assertNotEqual(self.read(['vllm/example.py'],{'offset':-1,'length':4000}).returncode,0)
+        self.assertNotEqual(self.read(['vllm/example.py','vllm/absent.py'],{'offset':0,'length':4000}).returncode,0)
 
     def test_traversal_absolute_and_non_package_paths_are_rejected(self):
         for name in ['vllm/../secret.py', '/etc/settings.py', 'vllm//example.py',

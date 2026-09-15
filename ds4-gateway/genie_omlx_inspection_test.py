@@ -88,6 +88,12 @@ class LocalInspection(unittest.TestCase):
         self.assertGreater(rows[0]['bytes'],262144)
         self.assertEqual(rows[1],{'path':'omlx/absent.py','status':'not_found'})
         self.assertFalse(list(source.rglob('__pycache__')))
+        page=read_sources(source,['omlx/server.py'],{'offset':300000,'length':4000})['files'][0]
+        self.assertEqual(page['text'],text[300000:304000]);self.assertEqual(page['sha256'],rows[0]['sha256'])
+        self.assertEqual(page['window']['next_offset'],304000);self.assertFalse(page['window']['complete_file'])
+        tail=read_sources(source,['omlx/server.py'],{'offset':len(text)-10,'length':4000})['files'][0]
+        self.assertEqual(tail['text'],text[-10:]);self.assertIsNone(tail['window']['next_offset'])
+        self.assertFalse(tail['window']['complete_file'])
         for paths in [['omlx/../serve.py'],['vllm/server.py'],['omlx//server.py'],['omlx/server.py']*2,[]]:
             with self.assertRaises(ValueError):read_sources(source,paths)
         (package/'escape.py').symlink_to(self.root/'serve.sh')

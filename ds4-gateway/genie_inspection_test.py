@@ -13,7 +13,7 @@ class Inspection(unittest.TestCase):
  def test_local_omlx_uses_same_tool_and_saved_event_without_ssh_or_selected_image_actions(self):
   target={'kind':'omlx-local','root':str(self.root),'url':'http://127.0.0.1:8013/v1'};self.register({'example':target})
   with patch.object(m,'inspect_omlx',return_value={'runtime':'omlx','scope':'Read only'}) as local,patch.object(m.subprocess,'run') as ssh:
-   result=self.call('inspect_server',{'worker_id':'example'});self.assertEqual(result['runtime'],'omlx');local.assert_called_once_with(target,source_files=None);ssh.assert_not_called()
+   result=self.call('inspect_server',{'worker_id':'example'});self.assertEqual(result['runtime'],'omlx');local.assert_called_once_with(target,source_files=None,source_window=None);ssh.assert_not_called()
    self.assertEqual(self.events[-1][1]['event']['state'],'complete');self.assertEqual(self.events[-1][1]['event']['result'],result)
    self.assertIn('error',self.call('inspect_server',{'worker_id':'example','selected_default':True}));self.assertEqual(local.call_count,1)
  def test_records_missing_distinct_from_unknown_and_no_secret_contents(self):

@@ -59,12 +59,16 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def read_sources(source, paths):
+def read_sources(source, paths, window=None):
     if (not isinstance(paths, list) or not 1 <= len(paths) <= 8
             or any(not isinstance(p, str) or not re.fullmatch(r'omlx/[a-zA-Z0-9_/-]+\.py', p)
                    or any(part in ['', '.', '..'] for part in p.split('/')) for p in paths)
             or len(set(paths)) != len(paths)):
         raise ValueError('Invalid source paths')
+    if window is not None and (not isinstance(window,dict) or set(window)!={'offset','length'}
+            or type(window['offset']) is not int or window['offset']<0
+            or type(window['length']) is not int or not 1<=window['length']<=16000 or len(paths)!=1):
+        raise ValueError('Source window requires one path and a valid range')
     package = source / 'omlx'
     if source.is_symlink() or package.is_symlink() or not package.is_dir():
         raise ValueError('Enrolled source checkout unavailable')
@@ -79,11 +83,17 @@ def read_sources(source, paths):
         data, _ = read_file(file, remaining)
         if len(data) > remaining:raise ValueError('Source request exceeds 512KiB; split the requested files across calls')
         remaining -= len(data)
-        files.append({'path':name, 'status':'read', 'bytes':len(data), 'sha256':hashlib.sha256(data).hexdigest(), 'text':data.decode('utf-8')})
+        content=data.decode('utf-8')
+        row={'path':name, 'status':'read', 'bytes':len(data), 'sha256':hashlib.sha256(data).hexdigest(), 'text':content}
+        if window is not None:
+            start=window['offset'];end=min(len(content),start+window['length'])
+            if start>len(content):raise ValueError('Source offset outside file')
+            row.update(text=content[start:end],window={'offset':start,'end_offset':end,'total_characters':len(content),'next_offset':end if end<len(content) else None,'complete_file':start==0 and end==len(content),'scope':'Text section by Unicode character offset; sha256 and bytes describe the full file. Request next_offset to continue.'})
+        files.append(row)
     return {'status':'read', 'files':files, 'scope':'Enrolled oMLX checkout bytes on disk. No source imported or executed. Not proof of loaded code, upstream ancestry or performance. Missing means this exact path was not found.'}
 
 
-def inspect_omlx(target, source_files=None):
+def inspect_omlx(target, source_files=None, source_window=None):
     if set(target) - {'kind', 'root', 'url', 'api_key_file'} or target.get('kind') != 'omlx-local':
         raise ValueError('Invalid local inspection enrollment')
     root = Path(target['root'])
@@ -134,7 +144,7 @@ def inspect_omlx(target, source_files=None):
         except (OSError, subprocess.SubprocessError):
             pass
     if source_files is not None:
-        try:result['sources'] = read_sources(source, source_files)
+        try:result['sources'] = read_sources(source, source_files, source_window)
         except (OSError, ValueError, UnicodeError):
             result['sources'] = {'status':'unavailable', 'reason':'source_read_failed', 'scope':'Request up to eight enrolled oMLX Python paths, at most 512KiB combined; split larger requests. No source conclusion available.'}
     result['scope'] = 'Live authenticated model discovery and listener observation; credential-redacted launcher/settings and source revision on disk. These files do not prove the running process loaded their current bytes. No inference, restart, recovery, benchmark or file modification.'

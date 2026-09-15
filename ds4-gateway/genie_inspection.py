@@ -18,11 +18,18 @@ def valid_source_files(paths, prefix='vllm'):
             and all(isinstance(p,str) and re.fullmatch(re.escape(prefix)+r'/[a-zA-Z0-9_/-]+\.py',p)
                     and all(part not in ['', '.', '..'] for part in p.split('/')) for p in paths) and len(set(paths))==len(paths))
 
+def valid_source_window(window):
+    return (isinstance(window,dict) and set(window)=={'offset','length'}
+            and type(window['offset']) is int and window['offset']>=0
+            and type(window['length']) is int and 1<=window['length']<=16000)
+
 # Executed as a fixed reader, never as model-supplied code. find_spec on the
 # top-level package locates it without importing vLLM or initializing CUDA.
 SOURCE_QUERY = r'''
 import sys,json,pathlib,importlib.util,hashlib,re
 paths=json.loads(sys.argv[1])
+window=json.loads(sys.argv[2]) if len(sys.argv)>2 else None
+if window is not None and (not isinstance(window,dict) or set(window)!={'offset','length'} or type(window['offset']) is not int or window['offset']<0 or type(window['length']) is not int or not 1<=window['length']<=16000 or len(paths)!=1):raise ValueError('Invalid source window')
 if not isinstance(paths,list) or not 1<=len(paths)<=8 or any(not isinstance(p,str) or not re.fullmatch(r'vllm/[a-zA-Z0-9_/-]+\.py',p) or any(part in ['', '.', '..'] for part in p.split('/')) for p in paths):raise ValueError('Invalid source paths')
 spec=importlib.util.find_spec('vllm')
 if not spec or not spec.origin:raise ValueError('Installed vLLM source unavailable')
@@ -36,7 +43,12 @@ for name in paths:
  with p.open('rb') as stream:data=stream.read(remaining+1)
  if len(data)>remaining:raise ValueError('Source request too large')
  remaining-=len(data)
- files.append({'path':name,'status':'read','sha256':hashlib.sha256(data).hexdigest(),'bytes':len(data),'text':data.decode('utf-8')})
+ content=data.decode('utf-8');row={'path':name,'status':'read','sha256':hashlib.sha256(data).hexdigest(),'bytes':len(data),'text':content}
+ if window is not None:
+  start=window['offset'];end=min(len(content),start+window['length'])
+  if start>len(content):raise ValueError('Source offset outside file')
+  row.update(text=content[start:end],window={'offset':start,'end_offset':end,'total_characters':len(content),'next_offset':end if end<len(content) else None,'complete_file':start==0 and end==len(content),'scope':'Text section by Unicode character offset; sha256 and bytes describe the full file. Request next_offset to continue.'})
+ files.append(row)
 print(json.dumps({'files':files,'scope':'Installed Python source bytes, not proof of loaded code, commit ancestry, compiler fusion or performance. Missing means this exact path was not found. No source executed or modified.'}))
 '''
 # Arguments arrive as JSON on stdin, never interpolated into a remote shell command.
@@ -100,7 +112,7 @@ if p.get('source_files'):
  sources={'status':'unavailable','reason':'container_not_running'}
  if c['State']['Running']:
   try:
-   source_data=json.loads(run('docker','exec',c['Id'],'python3','-B','-c',SOURCE_QUERY,json.dumps(p['source_files'])))
+   source_data=json.loads(run('docker','exec',c['Id'],'python3','-B','-c',SOURCE_QUERY,json.dumps(p['source_files']),json.dumps(p.get('source_window'))))
    check=json.loads(run('docker','inspect','--type','container','--',c['Id']))[0]
    if not check['State']['Running'] or check['State']['StartedAt']!=c['State']['StartedAt']:raise ValueError('Container changed')
    sources={'status':'read',**source_data}
@@ -209,7 +221,8 @@ def register_inspection(config, context, emit):
         if kind=='live' and isinstance(args.get('selected_default'),bool):details['selected_default']=args['selected_default']
         emit('inspection',event={'kind':event_kind,'operation':operation,'worker_id':worker,**details,'state':'reading','at':at})
         try:
-            source_files=args.get('source_files')
+            source_files=args.get('source_files');source_window=args.get('source_window')
+            if source_window is not None and (not valid_source_window(source_window) or not isinstance(source_files,list) or len(source_files)!=1):raise ValueError('Source window requires one path')
             if source_files is not None:
                 if kind!='live' or not valid_source_files(source_files, 'omlx' if workers.get(worker,{}).get('kind')=='omlx-local' else 'vllm'):raise ValueError('Invalid source request')
                 if args.get('selected_default'):raise ValueError('Source reads require current installation inspection')
@@ -249,7 +262,7 @@ def register_inspection(config, context, emit):
                 result={'worker_id':worker,'read_at':at,'record_kind':category,'artifact':artifact,'sha256':reference['sha256'],'hash_matches_record':True,'verified_references':references,'content':scrub(data),'scope':'Dated saved artifact reached through the worker record; every traversed reference matched its recorded hash. Matching bytes do not independently prove its conclusions. A restoration receipt covers only the recorded operation, configuration and checks; it does not prove fresh-machine installation or confer recovery authority. Not fresh server inspection, renewed weight verification, approval or permission to act.'}
             elif kind=='live' and workers.get(worker,{}).get('kind')=='omlx-local':
                 if args.get('selected_default',False) is not False:raise ValueError('Selected Docker images do not apply to a local oMLX installation')
-                result={'worker_id':worker,**inspect_omlx(workers[worker], source_files=source_files)}
+                result={'worker_id':worker,**inspect_omlx(workers[worker], source_files=source_files, source_window=source_window)}
             else:
                 target=workers.get(worker)
                 if not target:raise ValueError('No live inspection target configured')
@@ -262,6 +275,7 @@ def register_inspection(config, context, emit):
                 if not isinstance(selected,bool):raise ValueError('Invalid selected-default option')
                 payload_config={'container':container,'launcher':launcher}
                 if source_files is not None:payload_config['source_files']=source_files
+                if source_window is not None:payload_config['source_window']=source_window
                 if selected:
                     defaults=selected_defaults(Path(config['records_directory']),worker)
                     if defaults['unavailable'] or len(defaults['entries'])!=1:raise ValueError('A unique readable selected default is required')
@@ -294,6 +308,7 @@ def register_inspection(config, context, emit):
         if kind=='live':
             properties['selected_default']={'type':'boolean','default':False,'description':'Inspect the image named by the matching owner-selected default and its retained container recipes.'}
             properties['source_files']={'type':'array','items':{'type':'string'},'minItems':1,'maxItems':8,'description':'Optional Python paths: vllm/... .py in the current Docker container (256KiB combined), or omlx/... .py in the enrolled local checkout (512KiB combined). Local source_on_disk.changed_python_files and untracked_python_files list current runtime changes. Up to 8 paths; read bytes and hashes without importing/executing them; missing paths reported. Not supported with selected_default. On-disk source does not prove loaded code.'}
+            properties['source_window']={'type':'object','properties':{'offset':{'type':'integer','minimum':0},'length':{'type':'integer','minimum':1,'maximum':16000}},'required':['offset','length'],'additionalProperties':False,'description':'Use with ONE source_files path. Recommended for source inspection: start with offset 0, length 4000, then follow next_offset. Returns a text section with full-file hash/size; existing full reads remain available without this option. Large full results may spill to a Hermes cache this profile cannot read; use source_window instead.'}
             description+=' To evaluate an upstream patch, request its relevant source_files and compare actual contents; a build date alone cannot prove a patch absent. Keep private source contents out of web queries.'
         if kind=='artifact':
             properties.update({'artifact':{'type':'string','enum':ARTIFACTS},'record_kind':{'type':'string','enum':['observed','approved','proposed'],'default':'proposed'},'reference_chain':{'type':'array','items':{'type':'string'},'maxItems':8,'description':'Optional JSON pointers to existing path/sha256 objects. Each pointer selects a reference in the preceding document. With artifact set, start there (e.g. ["/validation_reference"]); without artifact, start at the worker record (e.g. ["/evidence/0"]). Every linked JSON file must match its hash and stay in this library. Escape ~ as ~0 and / as ~1 inside pointer keys.'}})

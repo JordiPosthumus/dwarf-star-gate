@@ -127,3 +127,13 @@ a build date alone is insufficient. Keep private source contents out of public
 search queries. Source presence is not proof of loaded code, compiler behavior,
 patch compatibility or an improvement on this hardware. A candidate still needs
 an appropriate trial and measured comparison before rollout.
+
+
+For large files, supply `source_window: {"offset": 0, "length": 4000}` with one
+`source_files` path, then follow the returned `next_offset` as needed. Offsets
+count Unicode characters; the response labels the section and includes the hash
+and byte count of the **whole file**. A final section is not a complete-file read
+unless it also began at zero. Whole-file reads remain available without this
+option, but Hermes may spill very large results into its private cache; this
+profile does not provide a general cache-file reader. Use source windows to keep
+code available in the conversation without changing model context or deadlines.
