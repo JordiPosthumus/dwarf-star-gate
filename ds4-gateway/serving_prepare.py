@@ -103,10 +103,10 @@ def prepare(proposal, enrollment, folder, record_revision, *, docker=None):
     profile = driver.prepare(enrollment['container'],proposal['image'],proposal['command'],enrollment['native_url'],record_revision)
     contracts = copy.deepcopy(enrollment['qualification'])
     if set(contracts) != {'candidate','previous'}: raise ValueError('Enroll both native qualification contracts')
-    for which, contract in contracts.items():
-        NativeQualification(transport.native_request,profile['native_url'],contract).validate_profile(profile,which)
+    qualifiers={which:NativeQualification(transport.native_request,profile['native_url'],contract) for which,contract in contracts.items()}
+    for which, qualifier in qualifiers.items():qualifier.validate_profile(profile,which)
     restoration = restoration_authority(old,profile,library)
-    supported = NativeQualification.checks_supported | {'runtime_identity','native_idle'}
+    supported = set.intersection(*(set(q.checks_supported) for q in qualifiers.values())) | {'runtime_identity','native_idle'}
     if any(set(rule['success_checks']) - supported for rule in restoration):
         raise ValueError('The enrolled native checks do not cover the recorded restoration requirements')
     record = candidate_record(old,profile,contracts['candidate'])
@@ -121,8 +121,9 @@ def prepare(proposal, enrollment, folder, record_revision, *, docker=None):
     return {'plan':plan,'review':{'at':datetime.now(timezone.utc).isoformat(),'worker_id':worker,
         'before':{'image':profile['before']['Image'],'command':profile['before']['Config']['Cmd']},
         'after':{'image':proposal['image'],'command':proposal['command']},
-        'checks':sorted(supported),'restoration':restoration,
+        'checks':sorted(set.union(*(set(q.checks_supported) for q in qualifiers.values())) | {'runtime_identity','native_idle'}),'restoration':restoration,
+        'qualification_by_version':{which:sorted(q.checks_supported) for which,q in qualifiers.items()},
         'settings':{'current':previous_record['settings'],'proposed':record['settings'],
             'current_thinking':previous_record['configuration']['chat_template_defaults'],
             'proposed_thinking':record['configuration']['chat_template_defaults']},
-        'scope':'Drain after current work finishes, retain the prior container, apply and qualify, then record and return. Launcher files and recovery bindings are unchanged. A missing or uncertain result is not retried. Native concurrency increases and fresh-machine setup are not qualified by this adapter.'}}
+        'scope':'Drain after current work finishes, retain the prior container, apply and qualify, then record and return. Launcher files, recovery bindings and gateway capacity are unchanged. A missing or uncertain result is not retried. Native two-request concurrency is checked only when explicitly enrolled; full-context requests may serialize under memory pressure. This does not qualify fresh-machine setup or establish a speed improvement.'}}

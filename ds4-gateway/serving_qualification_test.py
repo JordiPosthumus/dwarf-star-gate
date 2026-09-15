@@ -139,4 +139,91 @@ class QualificationTest(unittest.TestCase):
         self.assertFalse((self.path / 'text.result.json').exists())
 
 
+
+# Real thread coordination around synthetic API responses. No fleet connection.
+class ParallelAPI(API):
+    def __init__(self, capacity=2):
+        super().__init__()
+        import threading
+        self.lock=threading.Lock();self.slots=threading.Semaphore(capacity)
+        self.observed=threading.Event();self.capacity=capacity;self.active=0
+        self.decode_completed=[];self.bad_tool=False;self.lose_decode=False
+
+    def __call__(self,url,route,body=None):
+        import time
+        if route=='/v1/completions' and body.get('max_tokens')==256:
+            self.calls.append((route,copy.deepcopy(body)))
+            if self.lose_decode and body['prompt'][0]==1403:raise OSError('Lost synthetic reply')
+            with self.slots:
+                with self.lock:self.active+=1
+                try:
+                    self.observed.wait(2);time.sleep(.03)
+                    data={'choices':[{'finish_reason':'length','token_ids':[760]*256}],
+                          'usage':{'prompt_tokens':4096,'completion_tokens':256,'total_tokens':4352}}
+                    self.decode_completed.append(body['prompt'][0])
+                    return {'status':200,'body_base64':base64.b64encode(json.dumps(data).encode()).decode()}
+                finally:
+                    with self.lock:self.active-=1
+        value=super().__call__(url,route,body)
+        if route=='/metrics':
+            with self.lock:active=self.active
+            if active==self.capacity:self.observed.set()
+            raw=base64.b64decode(value['body_base64'])+f'vllm:num_requests_running{{engine="0"}} {active}\nvllm:num_requests_waiting{{engine="0"}} 0\n'.encode()
+            value['body_base64']=base64.b64encode(raw).decode()
+        elif body and '8462' in json.dumps(body):
+            value['body_base64']=base64.b64encode(base64.b64decode(value['body_base64']).replace(b'7319',b'8462')).decode()
+        if body and body.get('tool_choice')=='auto' and self.bad_tool:
+            data=json.loads(base64.b64decode(value['body_base64']))
+            data['choices'][0]['message']['tool_calls'][0]['function']['arguments']='{"value":9999}'
+            value['body_base64']=base64.b64encode(json.dumps(data).encode()).decode()
+        return value
+
+class ConcurrencyQualificationTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
+        self.path=Path(self.tmp.name)/'proof';self.contract={**copy.deepcopy(CONTRACT),'concurrency':2}
+        self.api=ParallelAPI()
+    def verify(self):return NativeQualification(self.api,'http://127.0.0.1:8001',self.contract).verify(self.path)
+    def test_two_request_probe_and_distinct_full_flows_preserve_evidence(self):
+        result=self.verify();self.assertEqual(result['state'],'passed')
+        self.assertIn('native_concurrency',result['checks_passed']);self.assertEqual(result['concurrency']['peak_running'],2)
+        self.assertEqual([f['value'] for f in result['concurrency']['flows']],[7319,8462])
+        for label,value in [('A',7319),('B',8462)]:
+            body=json.loads((self.path/f'pair-{label}-tool.request.json').read_text());self.assertIn(str(value),body['messages'][0]['content'])
+            response=json.loads((self.path/f'pair-{label}-tool.response.bin').read_bytes());self.assertEqual(json.loads(response['choices'][0]['message']['tool_calls'][0]['function']['arguments']),{'value':value})
+            boundary=json.loads((self.path/f'pair-{label}-context-boundary.request.json').read_text());self.assertEqual(len(boundary['prompt']),16383);self.assertEqual(boundary['max_tokens'],16384)
+        for case in result['cases']:
+            self.assertEqual(hashlib.sha256((self.path/(case['case']+'.response.bin')).read_bytes()).hexdigest(),case['response_sha256'])
+    def test_serial_server_cannot_pass_from_two_successful_serial_replies(self):
+        self.api=ParallelAPI(capacity=1);self.assertEqual(self.verify()['state'],'failed')
+        self.assertCountEqual(self.api.decode_completed,[1403,1404]);self.assertFalse((self.path/'pair-A-text.intent.json').exists())
+    def test_actual_wrong_tool_arguments_fail_even_when_overlap_was_observed(self):
+        self.api.bad_tool=True;self.assertEqual(self.verify()['state'],'failed')
+        self.assertTrue((self.path/'pair-A-tool.response.bin').exists());self.assertTrue((self.path/'pair-B-tool.response.bin').exists())
+    def test_lost_reply_is_not_retried_or_used_to_cancel_the_other_request(self):
+        self.api.lose_decode=True;self.assertEqual(self.verify()['state'],'failed')
+        self.assertEqual(self.api.decode_completed,[1404]);self.assertFalse((self.path/'concurrency-decode-A.result.json').exists())
+        self.assertTrue((self.path/'concurrency-decode-B.result.json').exists())
+        self.assertEqual(sum(bool(body and body.get('prompt',[None])[0]==1403) for _,body in self.api.calls),1)
+    def test_expired_observation_window_still_waits_for_both_native_replies(self):
+        from unittest.mock import patch
+        ticks=iter([0,31])
+        with patch('serving_qualification.time.monotonic',side_effect=lambda:next(ticks,31)):
+            result=self.verify()
+        self.assertEqual(result['state'],'failed');self.assertCountEqual(self.api.decode_completed,[1403,1404])
+        self.assertTrue((self.path/'concurrency-decode-A.result.json').exists())
+        self.assertTrue((self.path/'concurrency-decode-B.result.json').exists())
+    def test_missing_native_gauges_prevent_probe_dispatch(self):
+        self.api=API();self.assertEqual(self.verify()['state'],'failed')
+        self.assertFalse(any(body is not None for _,body in self.api.calls))
+    def test_only_explicit_matching_enrollment_can_qualify_a_changed_recipe(self):
+        before=['model','--max-model-len','16384','--max-num-seqs','1']
+        profile={'before':{'Config':{'Cmd':before}},'create':{'Cmd':before[:-1]+['2']}}
+        NativeQualification(self.api,'http://127.0.0.1',self.contract).validate_profile(profile,'candidate')
+        NativeQualification(self.api,'http://127.0.0.1',CONTRACT).validate_profile(profile,'previous')
+        with self.assertRaisesRegex(ValueError,'changed native concurrency'):NativeQualification(self.api,'http://127.0.0.1',CONTRACT).validate_profile(profile,'candidate')
+        with self.assertRaisesRegex(ValueError,'match'):NativeQualification(self.api,'http://127.0.0.1',self.contract).validate_profile(profile,'previous')
+        for value in [1,3,True,'2',2.0]:
+            with self.assertRaises(ValueError):NativeQualification(self.api,'http://127.0.0.1',{**CONTRACT,'concurrency':value})
+
 if __name__ == '__main__': unittest.main()

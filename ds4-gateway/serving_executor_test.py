@@ -8,7 +8,7 @@ import serving_executor
 import serving_records_test as fixture
 from docker_profile import RetainedProfile
 from operation_maintenance import Maintenance
-from serving_qualification_test import CONTRACT
+from serving_qualification_test import CONTRACT, ParallelAPI
 from serving_prepare import prepare
 
 
@@ -94,6 +94,29 @@ class EntryTest(unittest.TestCase):
             prepare(proposal,enrollment,f.folder,hashlib.sha256(raw).hexdigest(),docker=f.docker)
         self.assertEqual(f.docker.calls,[]); self.assertEqual(f.control.calls,[])
         self.assertFalse((f.folder / 'executor.py').exists())
+
+    def test_prepared_concurrency_contract_reaches_qualification_and_private_record(self):
+        import json
+        f=self.f;f.docker.native_request=lambda *args:None
+        command=copy.deepcopy(f.plan['profile']['create']['Cmd']);command[3]='2'
+        proposal={'id':f.folder.name,'worker_id':'fixture','image':f.plan['profile']['create']['Image'],'command':command}
+        contracts={'candidate':{**CONTRACT,'concurrency':2},'previous':copy.deepcopy(CONTRACT)}
+        enrollment={**f.plan['target'],'worker_id':'fixture','container':'engine','native_url':f.plan['profile']['native_url'],
+                    'records_directory':str(self.rig.library),'qualification':contracts}
+        result=prepare(proposal,enrollment,f.folder,f.plan['record_revision'],docker=f.docker)
+        self.assertEqual(f.docker.calls,[]);self.assertEqual(f.control.calls,[])
+        self.assertIn('native_concurrency',result['review']['qualification_by_version']['candidate'])
+        self.assertNotIn('native_concurrency',result['review']['qualification_by_version']['previous'])
+        self.assertEqual(result['review']['settings']['current']['server_concurrency'],1)
+        self.assertEqual(result['review']['settings']['proposed']['server_concurrency'],2)
+        f.plan=result['plan'];self.rig.approve();f.apis['candidate']=ParallelAPI()
+        finished=self.execute();self.assertEqual(finished['state'],'completed')
+        record=json.loads(f.record_file.read_text());self.assertEqual(record['settings']['server_concurrency'],2)
+        artifact=self.rig.library/finished['publication']['artifact']
+        proof=json.loads((artifact/'qualification-candidate/result.json').read_text())
+        self.assertEqual(proof['concurrency']['peak_running'],2)
+        self.assertTrue((artifact/'qualification-candidate/pair-B-tool.response.bin').exists())
+        self.assertEqual(self.rig.git('diff','--cached','--name-only'),'other.txt')
 
     def test_mutable_installed_entry_has_no_authority_to_start(self):
         with self.assertRaisesRegex(ValueError,'frozen approved'): serving_executor.execute(self.f.plan,self.f.folder,lambda *args:None)

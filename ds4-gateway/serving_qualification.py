@@ -12,6 +12,7 @@ import struct
 import time
 import uuid
 import zlib
+from concurrent.futures import ThreadPoolExecutor
 from operation_runner import save
 
 def require(condition, message):
@@ -43,7 +44,7 @@ def red_image():
     return 'data:image/png;base64,' + base64.b64encode(png).decode()
 
 
-def api_checks(request, nonce, contract):
+def api_checks(request, nonce, contract, value=7319):
     MODEL, CONTEXT = contract['model'], contract['context_length']
     def chat(text, **extra):
         return dict(model=MODEL, messages=[{'role': 'user', 'content': text}],
@@ -55,22 +56,22 @@ def api_checks(request, nonce, contract):
     models = request('models', '/v1/models')['data']
     require(any(m.get('id') == MODEL and m.get('max_model_len') == CONTEXT for m in models),
             'Advertised model or max_model_len differs')
-    answer = choice(request('text', '/v1/chat/completions', chat('Reply with the number 7319.')))
-    require('7319' in (answer.get('content') or ''), 'Synthetic text answer failed')
+    answer = choice(request('text', '/v1/chat/completions', chat(f'Reply with the number {value}.')))
+    require(str(value) in (answer.get('content') or ''), 'Synthetic text answer failed')
     tools = [{'type': 'function', 'function': {'name': 'report_value',
               'description': 'Return the supplied integer.', 'parameters': {'type': 'object',
               'properties': {'value': {'type': 'integer'}}, 'required': ['value']}}}]
-    body = chat('Call report_value with value 7319. Use the tool exactly once.', tools=tools, tool_choice='auto')
+    body = chat(f'Call report_value with value {value}. Use the tool exactly once.', tools=tools, tool_choice='auto')
     message = choice(request('tool', '/v1/chat/completions', body), 'tool_calls')
     calls = message.get('tool_calls') or []
     require(len(calls) == 1 and calls[0].get('id') and calls[0]['function']['name'] == 'report_value'
-            and json.loads(calls[0]['function']['arguments']) == {'value': 7319}, 'Tool boundary failed')
+            and json.loads(calls[0]['function']['arguments']) == {'value': value}, 'Tool boundary failed')
     history = chat('unused', tools=tools)
     history['messages'] = body['messages'] + [message,
-        {'role': 'tool', 'tool_call_id': calls[0]['id'], 'content': '{"value":7319}'},
+        {'role': 'tool', 'tool_call_id': calls[0]['id'], 'content': f'{{"value":{value}}}'},
         {'role': 'user', 'content': 'Give the returned integer without further tool calls.'}]
     followup = choice(request('tool-followup', '/v1/chat/completions', history))
-    require('7319' in (followup.get('content') or ''), 'Tool follow-up failed')
+    require(str(value) in (followup.get('content') or ''), 'Tool follow-up failed')
     vision = chat([{'type': 'text', 'text': 'What single solid color fills this image? Answer with its name.'},
                    {'type': 'image_url', 'image_url': {'url': red_image()}}])
     require('red' in (choice(request('vision', '/v1/chat/completions', vision)).get('content') or '').lower(),
@@ -138,7 +139,10 @@ def eos_checks(request, contract):
 
 
 def validate_contract(contract):
-    require(isinstance(contract, dict) and set(contract) == {'kind', 'model', 'context_length', 'reasoning_eos'}, 'Use the enrolled complete qualification contract')
+    keys={'kind', 'model', 'context_length', 'reasoning_eos'}
+    require(isinstance(contract, dict) and set(contract) in (keys,keys|{'concurrency'}), 'Use the enrolled complete qualification contract')
+    require('concurrency' not in contract or type(contract['concurrency']) is int and contract['concurrency']==2,
+            'Only the explicit two-request native qualification is supported')
     require(contract['kind'] == 'qwen_vllm' and isinstance(contract['model'], str) and contract['model']
             and type(contract['context_length']) is int and contract['context_length'] >= 8192, 'Unsupported model qualification contract')
     eos = contract['reasoning_eos']
@@ -149,11 +153,61 @@ def validate_contract(contract):
             and eos['ordinary_token_id'] not in eos['eos_token_ids'], 'Use the verified model token IDs for the EOS checks')
 
 
+def native_load(raw):
+    result={}
+    for name in ['num_requests_running','num_requests_waiting']:
+        prefix='vllm:'+name
+        values=[float(line.rsplit(' ',1)[1]) for line in raw.decode().splitlines()
+                if line.startswith(prefix+'{') or line.startswith(prefix+' ')]
+        require(values and all(v>=0 and v<float('inf') and v.is_integer() for v in values),
+                'Native concurrency gauges are missing or invalid')
+        result[name]=int(sum(values))
+    return result
+
+
+def concurrency_checks(request, nonce, contract):
+    before=native_load(request('concurrency-idle','/metrics',raw=True))
+    require(not any(before.values()),'Native work was already present before the concurrency probe')
+    token=contract['reasoning_eos']['ordinary_token_id']
+    def decode(label,prefix):
+        body={'model':contract['model'],'prompt':[prefix]+[42]*4095,'max_tokens':256,
+              'temperature':0,'allowed_token_ids':[token],'return_token_ids':True}
+        result=request('concurrency-decode-'+label,'/v1/completions',body)
+        require(result['usage']['completion_tokens']==256 and result['choices'][0]['finish_reason']=='length'
+                and result['choices'][0].get('token_ids')==[token]*256,'Concurrent decode response failed')
+        return result['usage']
+    peak=0;samples=0
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures=[pool.submit(decode,'A',1403),pool.submit(decode,'B',1404)]
+        end=time.monotonic()+30
+        # Bound observation/storage only. Futures still finish normally even if
+        # observation fails or this window expires; there is no inference timeout.
+        while not all(f.done() for f in futures) and time.monotonic()<end:
+            pending=all(not f.done() for f in futures)
+            load=native_load(request('concurrency-load-'+str(samples),'/metrics',raw=True));samples+=1
+            if pending:peak=max(peak,load['num_requests_running'])
+            time.sleep(.25)
+        usages=[f.result() for f in futures]
+    require(peak==2,'Two simultaneous native requests were not demonstrated')
+    require(not any(native_load(request('concurrency-finished','/metrics',raw=True)).values()),
+            'Native work remains after the concurrency probe')
+    def flow(label,value):
+        def scoped(name,*args,**kwargs):return request('pair-'+label+'-'+name,*args,**kwargs)
+        return {'value':value,'api':api_checks(scoped,nonce+'-'+label,contract,value),
+                'eos':eos_checks(scoped,contract)}
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures=[pool.submit(flow,'A',7319),pool.submit(flow,'B',8462)]
+        flows=[f.result() for f in futures]
+    return {'peak_running':peak,'observation_samples':samples,'decode_usage':usages,'flows':flows,
+            'scope':'Measured overlapping constrained decoding, then two distinct client flows through full API/cache/context/EOS checks. Full-context requests may serialize under memory pressure. No speed ranking, exhaustive quality/output proof or guarantee that every check overlapped.'}
+
+
 class NativeQualification:
     checks_supported = frozenset(['model_context', 'text', 'tools', 'vision', 'prefix_cache', 'context_boundary', 'reasoning_eos', 'fault_counters'])
     def __init__(self, transport, url, contract, *, progress=lambda *args: None):
         validate_contract(contract)
         self.transport, self.url, self.contract, self.progress = transport, url, contract, progress
+        if contract.get('concurrency')==2:self.checks_supported=self.checks_supported|{'native_concurrency'}
 
     def validate_profile(self, profile, which):
         def flag(command, name):
@@ -173,7 +227,11 @@ class NativeQualification:
         require(model is None or model == self.contract['model'], 'Qualification model must match the exact serving recipe')
         require(all(flag(before, name) == flag(after, name) for name in ['--host', '--port', '--served-model-name']),
                 'This retained serving adapter preserves the enrolled endpoint and model identity; route changes need their own reviewed workflow')
-        require(flag(before, '--max-num-seqs') == flag(after, '--max-num-seqs'),
+        sequences=flag(command,'--max-num-seqs')
+        if self.contract.get('concurrency')==2:
+            require(sequences=='2','Enrolled concurrency must match the exact serving recipe')
+        require(flag(before, '--max-num-seqs') == flag(after, '--max-num-seqs') or sequences=='1'
+                or self.contract.get('concurrency')==2,
                 'This qualifier does not establish changed native concurrency; an enrolled concurrency qualification is required')
 
     def ready(self):
@@ -216,14 +274,16 @@ class NativeQualification:
 
         try:
             before_metrics = failure_metrics(request('native-metrics-before', '/metrics', raw=True))
-            api = api_checks(request, nonce, self.contract)
-            eos = eos_checks(request, self.contract)
+            concurrent=concurrency_checks(request,nonce,self.contract) if self.contract.get('concurrency')==2 else None
+            api = concurrent['flows'][0]['api'] if concurrent else api_checks(request, nonce, self.contract)
+            eos = concurrent['flows'][0]['eos'] if concurrent else eos_checks(request, self.contract)
             after_metrics = failure_metrics(request('native-metrics-after', '/metrics', raw=True))
             require(before_metrics == after_metrics, 'Native error, abort or preemption counters changed during qualification')
             result = {'state': 'passed', 'at': time.time(), 'contract': self.contract,
                       'checks_passed': sorted(self.checks_supported),
                       'cases': cases, 'api': api, 'eos': eos, 'failure_metrics_before': before_metrics, 'failure_metrics_after': after_metrics,
-                      'scope': 'Native API/cache/context/tools/vision/EOS and failure-counter checks. Separate retained-identity, native-idle, runtime settings and readmission checks remain required. Not an exhaustive output-length or concurrency qualification.'}
+                      'scope': 'Native API/cache/context/tools/vision/EOS and failure-counter checks. Separate retained-identity, native-idle, runtime settings and readmission checks remain required. Concurrency is qualified only when explicitly enrolled and present in the result; not an exhaustive output-length or quality proof.'}
+            if concurrent:result['concurrency']=concurrent
         except Exception:
             result = {'state': 'failed', 'at': time.time(), 'contract': self.contract, 'cases': cases,
                       'error': 'A native qualification check did not complete successfully. Inspect the saved request and response evidence; no inference was retried.'}

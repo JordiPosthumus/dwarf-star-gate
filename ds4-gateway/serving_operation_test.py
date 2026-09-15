@@ -12,7 +12,7 @@ from operation_maintenance import Maintenance
 from operation_maintenance_test import Fixture
 from serving_operation import ServingOperation
 from serving_qualification import NativeQualification
-from serving_qualification_test import API, CONTRACT
+from serving_qualification_test import API, CONTRACT, ParallelAPI
 
 
 class OperationTest(unittest.TestCase):
@@ -131,6 +131,25 @@ class OperationTest(unittest.TestCase):
         self.plan['profile']['create']['Cmd'][3] = '2'
         with self.assertRaisesRegex(ValueError, 'changed native concurrency'): self.execute()
         self.assertEqual(self.control.calls, []); self.assertEqual(self.docker.calls, [])
+
+    def test_enrolled_two_request_candidate_runs_full_checks_before_readmission(self):
+        self.plan['profile']['create']['Cmd'][3]='2'
+        api=ParallelAPI()
+        self.qualifiers['candidate']=NativeQualification(api,self.plan['profile']['native_url'],{**CONTRACT,'concurrency':2})
+        result=self.execute()
+        self.assertEqual(result['state'],'completed');self.assertEqual(self.published,['candidate'])
+        proof=json.loads((self.folder/'qualification-candidate/result.json').read_text())
+        self.assertEqual(proof['concurrency']['peak_running'],2);self.assertFalse(self.control.worker['drained'])
+
+    def test_failed_concurrent_tools_restore_and_qualify_the_original_serial_server(self):
+        self.plan['profile']['create']['Cmd'][3]='2'
+        api=ParallelAPI();api.bad_tool=True
+        self.qualifiers['candidate']=NativeQualification(api,self.plan['profile']['native_url'],{**CONTRACT,'concurrency':2})
+        result=self.execute()
+        self.assertEqual(result['state'],'restored');self.assertEqual(self.published,['previous'])
+        self.assertTrue(self.docker.old['State']['Running']);self.assertFalse(self.control.worker['drained'])
+        previous=json.loads((self.folder/'qualification-previous/result.json').read_text())
+        self.assertEqual(previous['state'],'passed');self.assertNotIn('native_concurrency',previous['checks_passed'])
 
     def test_qualification_of_another_endpoint_cannot_approve_this_candidate(self):
         self.qualifiers['candidate'].url = 'http://127.0.0.1:9999'

@@ -1879,3 +1879,33 @@ now compares the home against an interpreter-only baseline, including paths,
 modes and file hashes; it still detects application writes and preserves the
 personal-Hermes/SOUL checks. Corrected full x64 installation and four setup
 regressions passed. Installer and runtime code are unchanged.
+
+
+### Explicit native two-request qualification — development
+
+The approved serving adapter can now enroll `concurrency: 2` for an exact
+`--max-num-seqs 2` recipe. It requires measured simultaneous native decoding and
+two distinct complete API/cache/context/EOS flows with separate raw evidence.
+Wrong tool arguments, missing gauges and two serialized replies do not pass.
+The gauge observation window never cancels inference; errors and observation
+expiry still wait for both requests. Serial contracts and diagnostic parameters
+remain unchanged, and the previous one-request version can still be restored
+and checked with its original serial contract.
+
+Preparation exposes checks per version and the native capacity difference.
+A synthetic prepare/approve/execute/qualify/private-Git-publication/return test
+passed, preserving unrelated staged work and archiving both flows. Failed
+concurrent tools exercised restoration and requalification of the original.
+The full operation suite passed34Node and91Python tests with one optional
+Hermes and one Docker test skipped; the final15-test qualifier suite also passed,
+including two subsequently added observation-expiry/missing-gauge cases.
+These fixtures do not prove that either physical Spark is ready for capacity2.
+Production enrollment, gateway slots and model-server settings are unchanged.
+
+A real negative control on the unchanged selected one-request Spark observed
+one running request and one waiting. Both constrained 256-token replies completed;
+raw response hashes, unchanged Docker configuration/startup and unchanged native
+failure counters were independently checked. The verifier correctly rejected a
+two-request claim, and the owned hold was released with recorded readmission.
+This was a Codex-run diagnostic, not a Genie operation or a failed baseline.
+No model restart or serving-setting change occurred.

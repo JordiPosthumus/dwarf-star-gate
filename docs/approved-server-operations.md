@@ -183,10 +183,28 @@ transport waits; an answering API with the wrong model fails qualification
 instead of waiting indefinitely for its identity to change.
 
 This first qualifier covers the enrolled Qwen/vLLM contract and existing native
-endpoint/model identity. It does not qualify increased concurrency, arbitrary
-model families, exhaustive maximum-output generation or benchmark performance.
-Changed concurrency requires its own enrolled qualification; changing routing
-requires the corresponding reviewed workflow. The current direct HTTP adapter
+endpoint/model identity. A two-request native contract is now available by adding
+`"concurrency": 2` to the candidate qualification when its exact recipe uses
+`--max-num-seqs 2`. The previous contract stays serial when restoring a
+one-request baseline; a two-request previous recipe needs its matching contract.
+A serial contract cannot qualify a changed two-request recipe.
+
+The two-request check first requires idle native gauges, then observes two
+constrained completions actually running together. Two successful serialized
+replies do not pass. It next submits two distinct client flows through the full
+API, tool/follow-up, vision, cold/warm cache, context and EOS checks. Different
+expected tool arguments catch crossed or incorrect results. Each flow retains
+its own raw artifacts; full-context requests may serialize under memory pressure.
+This is not proof that every individual check overlapped, a speed ranking or an
+exhaustive model-quality/output-length assessment.
+
+The 30-second gauge-sampling window bounds observation and saved samples only.
+It never cancels inference: both replies still finish, including after an observed
+error, and the coordinator checks native idle before restoration or readmission.
+Preparation shows which checks apply to each version. Native qualification does
+not change gateway capacity; enabling gateway slots is a separate explicit step.
+Arbitrary model families, higher native capacities and fresh-machine setup remain
+outside this contract. Changing routing requires its reviewed workflow. The current direct HTTP adapter
 uses the unauthenticated loopback API of the selected serving setup. Other
 authentication arrangements need their enrolled transport before activation.
 
