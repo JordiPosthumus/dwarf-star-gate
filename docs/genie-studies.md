@@ -108,14 +108,19 @@ requires adaptation and separate qualification.
 
 ### Direct installed-source inspection
 
-For configured Docker workers, `inspect_server` accepts optional `source_files`
-with up to eight installed `vllm/... .py` paths (256 KiB combined per call).
-It reads source bytes and SHA-256 hashes without importing vLLM or executing the
-requested files. Missing paths are reported individually. The same inspection
-switch, private chat evidence and configured connection apply; no new service
-or permission is needed. The container must remain the same running instance
-during the read. This option does not apply to selected-image inspection or
-local oMLX inspection.
+`inspect_server` accepts optional `source_files` with up to eight Python paths.
+Configured Docker workers support installed `vllm/... .py` paths (256 KiB
+combined). An enrolled local oMLX installation supports `omlx/... .py` paths in
+its `omlx-src` checkout (512 KiB combined, enough for its large server module).
+Local inspection also reports currently modified tracked and untracked runtime Python paths,
+so a dated patch manifest is not the only way to choose relevant files.
+
+Both return source bytes and SHA-256 hashes without importing or executing the
+requested files. Missing paths are reported individually. The existing inspection
+switch, private chat evidence and configured connection apply. Docker reads check
+that the same container instance remains running. Local checkout bytes do not
+prove which revision the running oMLX process loaded. Source reads are unavailable
+with selected-image inspection. No service or model configuration changes occur.
 
 Use actual relevant source when judging whether an upstream change is present;
 a build date alone is insufficient. Keep private source contents out of public

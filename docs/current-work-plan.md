@@ -73,7 +73,9 @@ deployment receipts stay outside this public repository.
   existing live Docker inspection tool, receiving bytes, hashes and explicit
   missing-file results. This supports independent source comparison without
   operator-prepared artifacts. It does not establish loaded code or measured
-  performance; other runtimes and the complete study/trial loop remain separate.
+  performance. The same tool also reads Python source from an enrolled local
+  oMLX checkout and lists its current tracked and untracked runtime modifications; loaded-code
+  identity and the complete study/trial loop remain separate.
   Normal setup studies now request those live/source checks and receive the prior
   completed study's tool evidence and dated configuration snapshot revisions.
   The UI reports actual checks and failures from saved receipts, without treating

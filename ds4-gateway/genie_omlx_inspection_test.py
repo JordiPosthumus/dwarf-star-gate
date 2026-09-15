@@ -1,3 +1,5 @@
+import hashlib
+import subprocess
 import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -6,7 +8,7 @@ import threading
 import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError
-from genie_omlx import inspect_omlx
+from genie_omlx import inspect_omlx, read_sources
 
 
 class LocalInspection(unittest.TestCase):
@@ -73,6 +75,42 @@ class LocalInspection(unittest.TestCase):
         with self.assertRaises(ValueError):
             inspect_omlx(self.target)
         self.assertEqual(self.requests, [])
+
+    def test_source_bytes_hashes_missing_paths_and_large_runtime_file_without_execution(self):
+        source=self.root/'omlx-src';package=source/'omlx';package.mkdir(parents=True)
+        text='raise RuntimeError("must not execute")\n'+'# source fixture\n'*20000
+        (package/'server.py').write_text(text)
+        (package/'__init__.py').write_text('raise RuntimeError("must not import")\n')
+        with patch('genie_omlx.subprocess.check_output',return_value='p37\n'):
+            result=inspect_omlx(self.target,source_files=['omlx/server.py','omlx/absent.py'])
+        rows=result['sources']['files'];self.assertEqual(rows[0]['text'],text)
+        self.assertEqual(rows[0]['sha256'],hashlib.sha256(text.encode()).hexdigest())
+        self.assertGreater(rows[0]['bytes'],262144)
+        self.assertEqual(rows[1],{'path':'omlx/absent.py','status':'not_found'})
+        self.assertFalse(list(source.rglob('__pycache__')))
+        for paths in [['omlx/../serve.py'],['vllm/server.py'],['omlx//server.py'],['omlx/server.py']*2,[]]:
+            with self.assertRaises(ValueError):read_sources(source,paths)
+        (package/'escape.py').symlink_to(self.root/'serve.sh')
+        with self.assertRaises(ValueError):read_sources(source,['omlx/escape.py'])
+        (package/'huge.py').write_bytes(b'x'*524289)
+        with self.assertRaises(ValueError):read_sources(source,['omlx/huge.py'])
+
+    def test_current_modified_runtime_paths_come_from_own_git_checkout(self):
+        source=self.root/'omlx-src';package=source/'omlx';package.mkdir(parents=True)
+        file=package/'server.py';file.write_text('# before\n')
+        subprocess.run(['git','init','-q',str(source)],check=True)
+        subprocess.run(['git','-C',str(source),'add','.'],check=True)
+        subprocess.run(['git','-C',str(source),'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','fixture'],check=True)
+        file.write_text('# after\n')
+        (package/'helper.py').write_text('# local addition\n')
+        original=subprocess.check_output
+        def command(args,**kwargs):
+            return 'p37\n' if args[0]=='/usr/sbin/lsof' else original(args,**kwargs)
+        with patch('genie_omlx.subprocess.check_output',side_effect=command):result=inspect_omlx(self.target)
+        self.assertEqual(result['source_on_disk']['changed_python_files'],['omlx/server.py'])
+        self.assertTrue(result['source_on_disk']['tracked_changes'])
+        self.assertEqual(result['source_on_disk']['untracked_python_files'],['omlx/helper.py'])
+        self.assertEqual(result['source_on_disk']['loaded_revision'],'not established')
 
 
 if __name__ == '__main__':

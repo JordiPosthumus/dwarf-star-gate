@@ -13,9 +13,9 @@ TOOLSET = 'stargate_inspection'
 NAMES = {'read_server_configuration', 'inspect_server', 'read_server_artifact'}
 ARTIFACTS = ['baseline_reconciliation', 'recreation_capture', 'restoration_drill', 'serving_flags_restoration']
 SECRET = re.compile(r'api[_-]?key|access[_-]?token|secret|password|authorization|hf_token|hugging_face_hub_token|private[_-]?key|credential', re.I)
-def valid_source_files(paths):
+def valid_source_files(paths, prefix='vllm'):
     return (isinstance(paths,list) and 1<=len(paths)<=8
-            and all(isinstance(p,str) and re.fullmatch(r'vllm/[a-zA-Z0-9_/-]+\.py',p)
+            and all(isinstance(p,str) and re.fullmatch(re.escape(prefix)+r'/[a-zA-Z0-9_/-]+\.py',p)
                     and all(part not in ['', '.', '..'] for part in p.split('/')) for p in paths) and len(set(paths))==len(paths))
 
 # Executed as a fixed reader, never as model-supplied code. find_spec on the
@@ -211,8 +211,8 @@ def register_inspection(config, context, emit):
         try:
             source_files=args.get('source_files')
             if source_files is not None:
-                if kind!='live' or not valid_source_files(source_files):raise ValueError('Invalid source request')
-                if args.get('selected_default') or workers.get(worker,{}).get('kind')=='omlx-local':raise ValueError('Source reads require the current Docker container')
+                if kind!='live' or not valid_source_files(source_files, 'omlx' if workers.get(worker,{}).get('kind')=='omlx-local' else 'vllm'):raise ValueError('Invalid source request')
+                if args.get('selected_default'):raise ValueError('Source reads require current installation inspection')
             if kind=='records':
                 directory=config.get('records_directory')
                 if not directory:raise ValueError('No record library configured')
@@ -249,7 +249,7 @@ def register_inspection(config, context, emit):
                 result={'worker_id':worker,'read_at':at,'record_kind':category,'artifact':artifact,'sha256':reference['sha256'],'hash_matches_record':True,'verified_references':references,'content':scrub(data),'scope':'Dated saved artifact reached through the worker record; every traversed reference matched its recorded hash. Matching bytes do not independently prove its conclusions. A restoration receipt covers only the recorded operation, configuration and checks; it does not prove fresh-machine installation or confer recovery authority. Not fresh server inspection, renewed weight verification, approval or permission to act.'}
             elif kind=='live' and workers.get(worker,{}).get('kind')=='omlx-local':
                 if args.get('selected_default',False) is not False:raise ValueError('Selected Docker images do not apply to a local oMLX installation')
-                result={'worker_id':worker,**inspect_omlx(workers[worker])}
+                result={'worker_id':worker,**inspect_omlx(workers[worker], source_files=source_files)}
             else:
                 target=workers.get(worker)
                 if not target:raise ValueError('No live inspection target configured')
@@ -293,10 +293,10 @@ def register_inspection(config, context, emit):
         properties={'worker_id':{'type':'string'}}
         if kind=='live':
             properties['selected_default']={'type':'boolean','default':False,'description':'Inspect the image named by the matching owner-selected default and its retained container recipes.'}
-            properties['source_files']={'type':'array','items':{'type':'string'},'minItems':1,'maxItems':8,'description':'Optional installed vLLM Python paths such as vllm/models/qwen4_exp/nvidia/model.py. Read bytes and hashes in the current Docker container without importing/executing them; missing paths are reported. At most 256KiB combined. Not supported with selected_default or local oMLX.'}
+            properties['source_files']={'type':'array','items':{'type':'string'},'minItems':1,'maxItems':8,'description':'Optional Python paths: vllm/... .py in the current Docker container (256KiB combined), or omlx/... .py in the enrolled local checkout (512KiB combined). Local source_on_disk.changed_python_files and untracked_python_files list current runtime changes. Up to 8 paths; read bytes and hashes without importing/executing them; missing paths reported. Not supported with selected_default. On-disk source does not prove loaded code.'}
             description+=' To evaluate an upstream patch, request its relevant source_files and compare actual contents; a build date alone cannot prove a patch absent. Keep private source contents out of web queries.'
         if kind=='artifact':
             properties.update({'artifact':{'type':'string','enum':ARTIFACTS},'record_kind':{'type':'string','enum':['observed','approved','proposed'],'default':'proposed'},'reference_chain':{'type':'array','items':{'type':'string'},'maxItems':8,'description':'Optional JSON pointers to existing path/sha256 objects. Each pointer selects a reference in the preceding document. With artifact set, start there (e.g. ["/validation_reference"]); without artifact, start at the worker record (e.g. ["/evidence/0"]). Every linked JSON file must match its hash and stay in this library. Escape ~ as ~0 and / as ~1 inside pointer keys.'}})
             description+=' Follow nested evidence with reference_chain. Omit artifact to follow references directly from the worker record. Never invent a reference, path or hash; inspect the parent first. Non-JSON or unhashed evidence remains explicitly unavailable.'
-        registry.register(name=name,toolset=TOOLSET,schema={'name':name,'description':description,'parameters':{'type':'object','properties':properties,'required':['worker_id'],'additionalProperties':False}},handler=lambda args,_kind=kind,**kw:run(_kind,args),max_result_size_chars=512000)
+        registry.register(name=name,toolset=TOOLSET,schema={'name':name,'description':description,'parameters':{'type':'object','properties':properties,'required':['worker_id'],'additionalProperties':False}},handler=lambda args,_kind=kind,**kw:run(_kind,args),max_result_size_chars=1048576 if kind=='live' else 512000)
     return NAMES

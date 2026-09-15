@@ -59,7 +59,31 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def inspect_omlx(target):
+def read_sources(source, paths):
+    if (not isinstance(paths, list) or not 1 <= len(paths) <= 8
+            or any(not isinstance(p, str) or not re.fullmatch(r'omlx/[a-zA-Z0-9_/-]+\.py', p)
+                   or any(part in ['', '.', '..'] for part in p.split('/')) for p in paths)
+            or len(set(paths)) != len(paths)):
+        raise ValueError('Invalid source paths')
+    package = source / 'omlx'
+    if source.is_symlink() or package.is_symlink() or not package.is_dir():
+        raise ValueError('Enrolled source checkout unavailable')
+    root = package.resolve()
+    files, remaining = [], 524288
+    for name in paths:
+        file = (source / name).resolve()
+        if not file.is_relative_to(root):raise ValueError('Source outside enrolled package')
+        if not file.exists():
+            files.append({'path':name, 'status':'not_found'})
+            continue
+        data, _ = read_file(file, remaining)
+        if len(data) > remaining:raise ValueError('Source request exceeds 512KiB; split the requested files across calls')
+        remaining -= len(data)
+        files.append({'path':name, 'status':'read', 'bytes':len(data), 'sha256':hashlib.sha256(data).hexdigest(), 'text':data.decode('utf-8')})
+    return {'status':'read', 'files':files, 'scope':'Enrolled oMLX checkout bytes on disk. No source imported or executed. Not proof of loaded code, upstream ancestry or performance. Missing means this exact path was not found.'}
+
+
+def inspect_omlx(target, source_files=None):
     if set(target) - {'kind', 'root', 'url', 'api_key_file'} or target.get('kind') != 'omlx-local':
         raise ValueError('Invalid local inspection enrollment')
     root = Path(target['root'])
@@ -102,8 +126,16 @@ def inspect_omlx(target):
             revision = subprocess.check_output(['git', '-C', str(source), 'rev-parse', 'HEAD'], text=True, timeout=5).strip()
             if re.fullmatch(r'[a-f0-9]{40,64}', revision):
                 dirty = subprocess.check_output(['git', '-C', str(source), 'status', '--porcelain', '--untracked-files=no'], text=True, timeout=5)
-                result['source_on_disk'].update(revision=revision, tracked_changes=bool(dirty))
+                changed = subprocess.check_output(['git', '-C', str(source), 'diff', '--name-only', '-z', 'HEAD', '--', 'omlx'], text=True, timeout=5)
+                paths = [p for p in changed.split('\0') if re.fullmatch(r'omlx/[a-zA-Z0-9_/-]+\.py', p)]
+                untracked = subprocess.check_output(['git', '-C', str(source), 'ls-files', '--others', '--exclude-standard', '-z', '--', 'omlx'], text=True, timeout=5)
+                untracked_paths = [p for p in untracked.split('\0') if re.fullmatch(r'omlx/[a-zA-Z0-9_/-]+\.py', p)]
+                result['source_on_disk'].update(revision=revision, tracked_changes=bool(dirty), changed_python_files=paths, untracked_python_files=untracked_paths)
         except (OSError, subprocess.SubprocessError):
             pass
+    if source_files is not None:
+        try:result['sources'] = read_sources(source, source_files)
+        except (OSError, ValueError, UnicodeError):
+            result['sources'] = {'status':'unavailable', 'reason':'source_read_failed', 'scope':'Request up to eight enrolled oMLX Python paths, at most 512KiB combined; split larger requests. No source conclusion available.'}
     result['scope'] = 'Live authenticated model discovery and listener observation; credential-redacted launcher/settings and source revision on disk. These files do not prove the running process loaded their current bytes. No inference, restart, recovery, benchmark or file modification.'
     return result
