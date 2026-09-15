@@ -20,6 +20,7 @@ export function chatContext(snapshot={}) {
     source:snapshot.demo?'example setup':'dashboard observation',
     unavailable:!g||Boolean(snapshot.gateway_error),
     gateway:take(g,['model','context_length','request_timeout_ms','queue_timeout_ms','healthy','total','active','queued','available','draining']),
+    recovery:g?.recovery?{...take(g.recovery,['configured','automatic','profile_handback_automatic']),workers:(g.recovery.workers??[]).map(w=>take(w,['worker_id','configured','eligible','reason','state','inspected_at'])),scope:'Dated gateway policy and worker eligibility. Automatic policy on does not mean a worker is eligible. Configuration-record mismatches do not prove this switch is off.'}:null,
     servers:(g?.workers??[]).map(w=>take(w,['id','model','backend','context_length','is_healthy','drained','load','max_concurrent_requests','queued','active_seconds','quarantine','model_aliases'])),
     configuration_records:recordsForChat(snapshot.server_records),
     hourglass_reports:hourglassForChat(snapshot.hourglass_reports),

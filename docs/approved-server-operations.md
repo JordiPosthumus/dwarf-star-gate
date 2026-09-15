@@ -262,3 +262,9 @@ retained live configuration before enrollment. A flag-change restoration must
 not silently become proof of an image upgrade or installation on another host.
 Changing a record does not change generic recovery bindings; correcting those
 bindings can remove an existing recovery veto and needs its own behavior check.
+
+Genie receives dated recovery policy and per-worker eligibility separately. A
+binding mismatch does not imply that the global automatic-recovery switch is
+off. The existing read-only artifact tool can open `serving_flags_restoration`
+using that class’s exact hashed drill reference, independently of the original
+`restoration_drill` receipt. This adds evidence access, not mutation authority.

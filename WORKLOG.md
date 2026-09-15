@@ -1,5 +1,15 @@
 # Star Gate work log
 
+## 2026-09-15 — Recovery policy evidence in chat
+
+An actual Genie audit confused a worker binding mismatch with automatic recovery
+being disabled. Chat now includes dated global recovery policy and each worker’s
+eligibility/reason separately, with credentials and raw enrollment excluded.
+Missing policy remains unknown. The inspection instructions distinguish these
+facts, and the artifact reader can open the separately hashed serving-flag
+restoration proof. Seventeen Python inspection and the affected chat/bridge
+checks passed; the live answer still needs a follow-up after deployment.
+
 ## 2026-09-15 — Restoration evidence reconciliation
 
 Re-evaluated an existing installation’s actual saved API and EOS responses against
