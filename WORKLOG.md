@@ -1861,3 +1861,21 @@ chat regression passed 29 tests with two environment-dependent Hermes skips. The
 installed Hermes inspection integration passed separately with a synthetic model
 and SSH fixture, including a two-link raw tool-result read and saved chat reload.
 These tests establish the reader integration, not a real model-server operation.
+
+
+### Fresh Linux x64 installation verified
+
+A fresh Debian/Node22.22.2 x64 container under Rosetta fetched public source and
+installed its own pinned Hermes/Python without host mounts, private settings or
+preinstalled runtimes. The full installation/chat/identity/history test passed,
+including all three foreground services and dashboard restart. Actual model
+responses were scripted; this is installation acceptance, not model-quality or
+native-hardware performance evidence. Existing containers and production services
+were not restarted or reconfigured.
+
+An initial test assertion mistook Rosetta's empty user-home cache directory for
+an application write. A Node-only reproduction established the cause. The test
+now compares the home against an interpreter-only baseline, including paths,
+modes and file hashes; it still detects application writes and preserves the
+personal-Hermes/SOUL checks. Corrected full x64 installation and four setup
+regressions passed. Installer and runtime code are unchanged.
