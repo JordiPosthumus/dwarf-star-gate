@@ -69,9 +69,11 @@ deployment receipts stay outside this public repository.
   A later installed-source comparison establishes that the selected fusion is
   absent from the inspected paths and is not directly applicable to the repaired
   tree. Its hashed evidence is available through the existing private record
-  tools. Direct read-only runtime-source inspection for Genie remains to be
-  connected: metadata/launcher inspection and operator-prepared source artifacts
-  are not a fully independent source-comparison capability.
+  tools. Genie can now request installed vLLM Python source paths through the
+  existing live Docker inspection tool, receiving bytes, hashes and explicit
+  missing-file results. This supports independent source comparison without
+  operator-prepared artifacts. It does not establish loaded code or measured
+  performance; other runtimes and the complete study/trial loop remain separate.
 - [x] Use the configured Hermes runtime and current Genie identity for fleet
   reviews, preserving provider and guarded-action contracts.
 - [x] Connect conversational questions to the existing exception for yielding

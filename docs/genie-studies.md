@@ -86,3 +86,21 @@ configuration record and version-controlled locally. These findings describe
 the inspected source paths, not every compiler optimization or a performance
 result. The recommendation remains to retain the working build; this candidate
 requires adaptation and separate qualification.
+
+
+### Direct installed-source inspection
+
+For configured Docker workers, `inspect_server` accepts optional `source_files`
+with up to eight installed `vllm/... .py` paths (256 KiB combined per call).
+It reads source bytes and SHA-256 hashes without importing vLLM or executing the
+requested files. Missing paths are reported individually. The same inspection
+switch, private chat evidence and configured connection apply; no new service
+or permission is needed. The container must remain the same running instance
+during the read. This option does not apply to selected-image inspection or
+local oMLX inspection.
+
+Use actual relevant source when judging whether an upstream change is present;
+a build date alone is insufficient. Keep private source contents out of public
+search queries. Source presence is not proof of loaded code, compiler behavior,
+patch compatibility or an improvement on this hardware. A candidate still needs
+an appropriate trial and measured comparison before rollout.

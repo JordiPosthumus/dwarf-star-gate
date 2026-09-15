@@ -13,8 +13,34 @@ TOOLSET = 'stargate_inspection'
 NAMES = {'read_server_configuration', 'inspect_server', 'read_server_artifact'}
 ARTIFACTS = ['baseline_reconciliation', 'recreation_capture', 'restoration_drill', 'serving_flags_restoration']
 SECRET = re.compile(r'api[_-]?key|access[_-]?token|secret|password|authorization|hf_token|hugging_face_hub_token|private[_-]?key|credential', re.I)
+def valid_source_files(paths):
+    return (isinstance(paths,list) and 1<=len(paths)<=8
+            and all(isinstance(p,str) and re.fullmatch(r'vllm/[a-zA-Z0-9_/-]+\.py',p)
+                    and all(part not in ['', '.', '..'] for part in p.split('/')) for p in paths) and len(set(paths))==len(paths))
+
+# Executed as a fixed reader, never as model-supplied code. find_spec on the
+# top-level package locates it without importing vLLM or initializing CUDA.
+SOURCE_QUERY = r'''
+import sys,json,pathlib,importlib.util,hashlib,re
+paths=json.loads(sys.argv[1])
+if not isinstance(paths,list) or not 1<=len(paths)<=8 or any(not isinstance(p,str) or not re.fullmatch(r'vllm/[a-zA-Z0-9_/-]+\.py',p) or any(part in ['', '.', '..'] for part in p.split('/')) for p in paths):raise ValueError('Invalid source paths')
+spec=importlib.util.find_spec('vllm')
+if not spec or not spec.origin:raise ValueError('Installed vLLM source unavailable')
+root=pathlib.Path(spec.origin).resolve().parent
+files=[];remaining=262144
+for name in paths:
+ p=(root/pathlib.PurePosixPath(name).relative_to('vllm')).resolve()
+ if not p.is_relative_to(root):raise ValueError('Source outside installed package')
+ if not p.exists():files.append({'path':name,'status':'not_found'});continue
+ if not p.is_file() or p.stat().st_size>remaining:raise ValueError('Source request too large or not a regular file')
+ with p.open('rb') as stream:data=stream.read(remaining+1)
+ if len(data)>remaining:raise ValueError('Source request too large')
+ remaining-=len(data)
+ files.append({'path':name,'status':'read','sha256':hashlib.sha256(data).hexdigest(),'bytes':len(data),'text':data.decode('utf-8')})
+print(json.dumps({'files':files,'scope':'Installed Python source bytes, not proof of loaded code, commit ancestry, compiler fusion or performance. Missing means this exact path was not found. No source executed or modified.'}))
+'''
 # Arguments arrive as JSON on stdin, never interpolated into a remote shell command.
-COLLECTOR = r'''
+COLLECTOR = 'SOURCE_QUERY = '+repr(SOURCE_QUERY)+'\n'+r'''
 import sys,json,subprocess,pathlib,re,hashlib,datetime,stat
 p=json.loads(sys.stdin.readline())
 secret=re.compile(r'api[_-]?key|access[_-]?token|secret|password|authorization|hf_token|hugging_face_hub_token|private[_-]?key|credential',re.I)
@@ -69,6 +95,16 @@ if c['State']['Running']:
   else:packages={'status':'queried','method':'importlib.metadata in inspected container; frameworks not imported','values':queried}
  except Exception:
   packages={'status':'unavailable','reason':'package_query_failed'}
+sources=None
+if p.get('source_files'):
+ sources={'status':'unavailable','reason':'container_not_running'}
+ if c['State']['Running']:
+  try:
+   source_data=json.loads(run('docker','exec',c['Id'],'python3','-B','-c',SOURCE_QUERY,json.dumps(p['source_files'])))
+   check=json.loads(run('docker','inspect','--type','container','--',c['Id']))[0]
+   if not check['State']['Running'] or check['State']['StartedAt']!=c['State']['StartedAt']:raise ValueError('Container changed')
+   sources={'status':'read',**source_data}
+  except Exception:sources={'status':'unavailable','reason':'source_read_failed','scope':'No source conclusion available. Request up to eight installed vLLM .py paths, at most 256KiB combined; inspect the requested paths and current container.'}
 env=[s.partition('=')[0]+'=<redacted>' if secret.search(s.partition('=')[0]) else s for s in config.get('Env',[])]
 cmd=config.get('Cmd',[])
 if any(secret.search(s.split('=')[0]) for s in cmd if s.startswith('--')):raise ValueError('Credential-bearing command requires private review')
@@ -79,7 +115,7 @@ if p.get('launcher'):
  data=f.read_bytes()
  if re.search(rb'(?i)(?:api[_-]?key|access[_-]?token|secret|password|hf_token|hugging_face_hub_token)\s*=',data):raise ValueError('Launcher requires credential redaction')
  launcher={'text':data.decode(),'sha256':hashlib.sha256(data).hexdigest()}
-print(json.dumps({'observed_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'container':{'id':c['Id'],'image_id':c['Image'],'running':c['State']['Running'],'started_at':c['State']['StartedAt'],'entrypoint':config.get('Entrypoint'),'command':cmd,'environment':env,'mounts':c['Mounts'],'port_bindings':c['HostConfig'].get('PortBindings'),'restart_policy':c['HostConfig'].get('RestartPolicy'),'ipc_mode':c['HostConfig'].get('IpcMode'),'shm_size':c['HostConfig'].get('ShmSize'),'device_requests':c['HostConfig'].get('DeviceRequests')},'image':{'id':i['Id'],'created':i['Created'],'repo_digests':i.get('RepoDigests',[])},'packages':packages,'launcher':launcher,'scope':'Live Docker metadata, launcher bytes and separately labelled installed distribution metadata. Package versions do not prove build ancestry or custom source integrity. No inference, restart, weight hash or restoration test. Launch settings do not independently prove effective API behavior.'}))
+print(json.dumps({'observed_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'container':{'id':c['Id'],'image_id':c['Image'],'running':c['State']['Running'],'started_at':c['State']['StartedAt'],'entrypoint':config.get('Entrypoint'),'command':cmd,'environment':env,'mounts':c['Mounts'],'port_bindings':c['HostConfig'].get('PortBindings'),'restart_policy':c['HostConfig'].get('RestartPolicy'),'ipc_mode':c['HostConfig'].get('IpcMode'),'shm_size':c['HostConfig'].get('ShmSize'),'device_requests':c['HostConfig'].get('DeviceRequests')},'image':{'id':i['Id'],'created':i['Created'],'repo_digests':i.get('RepoDigests',[])},'packages':packages,'launcher':launcher,**({'sources':sources} if sources is not None else {}),'scope':'Live Docker metadata, launcher bytes and separately labelled installed distribution metadata. Package versions do not prove build ancestry or custom source integrity. No inference, restart, weight hash or restoration test. Launch settings do not independently prove effective API behavior.'}))
 '''
 
 def read_json(file, expected_sha256=None):
@@ -173,6 +209,10 @@ def register_inspection(config, context, emit):
         if kind=='live' and isinstance(args.get('selected_default'),bool):details['selected_default']=args['selected_default']
         emit('inspection',event={'kind':event_kind,'operation':operation,'worker_id':worker,**details,'state':'reading','at':at})
         try:
+            source_files=args.get('source_files')
+            if source_files is not None:
+                if kind!='live' or not valid_source_files(source_files):raise ValueError('Invalid source request')
+                if args.get('selected_default') or workers.get(worker,{}).get('kind')=='omlx-local':raise ValueError('Source reads require the current Docker container')
             if kind=='records':
                 directory=config.get('records_directory')
                 if not directory:raise ValueError('No record library configured')
@@ -221,6 +261,7 @@ def register_inspection(config, context, emit):
                 selected=args.get('selected_default',False)
                 if not isinstance(selected,bool):raise ValueError('Invalid selected-default option')
                 payload_config={'container':container,'launcher':launcher}
+                if source_files is not None:payload_config['source_files']=source_files
                 if selected:
                     defaults=selected_defaults(Path(config['records_directory']),worker)
                     if defaults['unavailable'] or len(defaults['entries'])!=1:raise ValueError('A unique readable selected default is required')
@@ -250,7 +291,10 @@ def register_inspection(config, context, emit):
             return json.dumps({'error':message})
     for name,kind,description in [('read_server_configuration','records','Read the full private recorded configuration, matching owner-selected defaults and their hashed selection receipts, plus launch recipes and artifact references for a configured worker. Dated records are not live evidence. selected_launch_flags is partial; omitted flags are unknown until checked against the full command or recreation capture. Never publish private fields.'),('inspect_server','live','Inspect the configured worker container and launcher now using a fixed read-only collector. Set selected_default=true to inspect the exact image ID from its owner-selected default and retained containers using that exact image, instead of the running container. Read the configuration first. No image pull, container creation, execution of the selected image, or service changes. Metadata is not proof of a historical benchmark or effective generation settings. Supports configured Docker workers and local oMLX installations. selected_default applies only to Docker. For oMLX, inspect_server reads the enrolled launchers/settings with credentials redacted, live model metadata and the current listener; source on disk does not establish the loaded revision.'),('read_server_artifact','artifact','Read a saved baseline_reconciliation manifest, recreation_capture, or restoration_drill receipt referenced by a worker record. serving_flags_restoration reads the proof referenced by restoration.change_classes.serving_flags.drill_reference. restoration_drill uses restoration.drill.receipt_reference, and must have a recorded path and SHA256; a status label or receipt path alone is insufficient. Requires its recorded hash to match. Read the worker configuration first and use the actual record_kind and artifact reference it contains. Do not assume a proposed record or baseline manifest exists. Prefer the small baseline manifest when available; request the larger recreation capture when needed. Dated evidence, not new approval or live verification.')]:
         properties={'worker_id':{'type':'string'}}
-        if kind=='live':properties['selected_default']={'type':'boolean','default':False,'description':'Inspect the image named by the matching owner-selected default and its retained container recipes.'}
+        if kind=='live':
+            properties['selected_default']={'type':'boolean','default':False,'description':'Inspect the image named by the matching owner-selected default and its retained container recipes.'}
+            properties['source_files']={'type':'array','items':{'type':'string'},'minItems':1,'maxItems':8,'description':'Optional installed vLLM Python paths such as vllm/models/qwen4_exp/nvidia/model.py. Read bytes and hashes in the current Docker container without importing/executing them; missing paths are reported. At most 256KiB combined. Not supported with selected_default or local oMLX.'}
+            description+=' To evaluate an upstream patch, request its relevant source_files and compare actual contents; a build date alone cannot prove a patch absent. Keep private source contents out of web queries.'
         if kind=='artifact':
             properties.update({'artifact':{'type':'string','enum':ARTIFACTS},'record_kind':{'type':'string','enum':['observed','approved','proposed'],'default':'proposed'},'reference_chain':{'type':'array','items':{'type':'string'},'maxItems':8,'description':'Optional JSON pointers to existing path/sha256 objects. Each pointer selects a reference in the preceding document. With artifact set, start there (e.g. ["/validation_reference"]); without artifact, start at the worker record (e.g. ["/evidence/0"]). Every linked JSON file must match its hash and stay in this library. Escape ~ as ~0 and / as ~1 inside pointer keys.'}})
             description+=' Follow nested evidence with reference_chain. Omit artifact to follow references directly from the worker record. Never invent a reference, path or hash; inspect the parent first. Non-JSON or unhashed evidence remains explicitly unavailable.'

@@ -42,6 +42,18 @@ class Inspection(unittest.TestCase):
   self.register({'example':{'ssh':['example-a','example-b'],'container':'example-engine'}})
   with patch.object(m.subprocess,'run',return_value=types.SimpleNamespace(returncode=1,stdout='',stderr='PRIVATE_FAILURE')) as run:
    result=self.call('inspect_server',{'worker_id':'example'});self.assertIn('error',result);self.assertNotIn('PRIVATE_FAILURE',json.dumps(result));self.assertEqual(run.call_count,1)
+ def test_source_files_reach_fixed_collector_and_existing_receipts(self):
+  self.register({'example':{'ssh':['example-host'],'container':'example-engine'}})
+  sources={'status':'read','files':[{'path':'vllm/example.py','status':'read','text':'value = 1','sha256':'c'*64}]}
+  with patch.object(m.subprocess,'run',return_value=types.SimpleNamespace(returncode=0,stdout=json.dumps({'sources':sources}),stderr='')) as run:
+   result=self.call('inspect_server',{'worker_id':'example','source_files':['vllm/example.py']})
+   self.assertEqual(result['sources'],sources)
+   self.assertEqual(json.loads(run.call_args.kwargs['input'].split('\n',1)[0])['source_files'],['vllm/example.py'])
+   self.assertIn('c'*64,self.context['inspection_private_values'])
+   self.assertEqual(self.events[-1][1]['event']['result'],result)
+  for extra in [{'source_files':['vllm/../secret.py']},{'source_files':['vllm/example.py'],'selected_default':True}]:
+   with patch.object(m.subprocess,'run') as run:
+    self.assertIn('error',self.call('inspect_server',{'worker_id':'example',**extra}));run.assert_not_called()
  def test_injection_target_cannot_launch_a_command(self):
   self.register({'example':{'ssh':['example-host'],'container':'--privileged; touch /tmp/bad'}})
   with patch.object(m.subprocess,'run') as run:self.assertIn('error',self.call('inspect_server',{'worker_id':'example'}));run.assert_not_called()
