@@ -39,7 +39,10 @@ class GatewayControl:
 
 
 class Maintenance:
-    def __init__(self, directory, operation_id, worker_id, *, control, progress=lambda *args: None, sleep=time.sleep):
+    def __init__(self, directory, operation_id, worker_id, *, control, progress=lambda *args: None, sleep=time.sleep, purpose='serving'):
+        if purpose not in ('serving', 'hourglass'):
+            raise ValueError('Unknown maintenance purpose')
+        self.purpose = purpose
         if not re.fullmatch(r'[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}', operation_id) or not re.fullmatch(r'[a-zA-Z0-9][\w-]{0,63}', worker_id):
             raise ValueError('Use the approved operation and enrolled worker identities')
         self.folder = Path(directory) / 'gateway'
@@ -96,6 +99,8 @@ class Maintenance:
             save(self.folder, 'before.json', baseline)
         body = {'worker_id': self.worker_id, 'request_id': self.operation_id,
                 'name': 'Approved Genie operation', 'reason': 'Hold this worker for the exact approved serving change.', 'review_after_hours': None}
+        if self.purpose == 'hourglass':
+            body.update(name='Approved Hourglass measurement', reason='Keep new gateway work off this worker during the approved measurement.')
         result = self._receipt('acquire', body, '/maintenance-lock', 'lock')
         self.owned(require_idle=False)
         return result
@@ -136,6 +141,8 @@ class Maintenance:
         body = {'lock_id': acquired['result']['lock_id'],
                 'request_id': str(uuid.uuid5(uuid.UUID(self.operation_id), 'release-maintenance')),
                 'reason': 'The approved operation has finished its serving checks; release only its own hold.'}
+        if self.purpose == 'hourglass':
+            body['reason'] = 'The measurement ended and direct work finished; release only its own hold.'
         return self._receipt('release', body, '/release-maintenance-lock', 'release')
 
     def resume_if_unchanged(self):

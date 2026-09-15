@@ -225,3 +225,33 @@ uncertain start receipts remain durable.
 This is preparation and observation support. Automatic measurement scheduling,
 gateway-owned contention protection and real benchmark qualification remain
 unfinished. Public research permission does not itself start a measurement.
+
+## Owned measurement sequence in development
+
+`hourglass_operation.py` implements the sequence for an independently approved
+measurement, reusing `operation_maintenance.py`. Its lifecycle is: record the
+exact plan, verify the target, acquire an owned gateway hold, wait for existing
+gateway and direct work, submit the native request once, observe its saved job,
+wait for direct work to finish, verify the target again, then release only its
+own hold and request conditional readmission. It never changes serving settings.
+The optional maintenance purpose changes the visible hold description; existing
+serving-operation behaviour and its default control channel are unchanged.
+
+The native adapter must bind `check_target` to the reviewed endpoint and serving
+identity, `idle` to actual direct-server work, `submit` to the reviewed Hourglass
+request with revision checks, and `observe` to that exact native job. These are
+trusted installation dependencies, not model-supplied callbacks. Native job
+termination does not establish a score; existing aggregate collection is separate.
+
+An uncertain start keeps the hold and cannot be replayed. An observation failure
+or unknown native state keeps following the same receipt without cancelling work.
+An acknowledged job can be observed again from its saved receipt after an observer
+exit. An interrupted readmission requires reconciliation instead of another resume
+request. A newer manual decision or changed serving identity prevents automatic
+readmission. No one-hour wall-clock kill timer is introduced.
+
+Tests cover these paths using the real maintenance receipt code and simulated
+native/gateway responses. The sequence is not yet enrolled in the independent
+runner or wired into the dashboard's Start control. The existing owner-confirmed
+idle-window workflow is unchanged; production contention protection and a real
+benchmark remain unproven. This development module grants Genie no new authority.
