@@ -1,3 +1,4 @@
+import {createQueueTools} from './genie-queue.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -2641,4 +2642,24 @@ test('concurrent Genie replies retain independent running and queued progress id
  const before=r.gateway.currentJobsStatus();assert.equal(before.jobs.length,3);assert.deepEqual(ids.map(id=>before.jobs.find(j=>j.call_id===id).state),['running','running','queued']);assert.equal(new Set(before.jobs.map(j=>j.request_id)).size,3);
  b.releases.shift()();await a;await until(()=>b.releases.length===2);const after=r.gateway.currentJobsStatus();assert.equal(after.jobs.some(j=>j.call_id===ids[0]),false);assert.deepEqual(ids.slice(1).map(id=>after.jobs.find(j=>j.call_id===id).state),['running','running']);assert.equal(r.gateway.stats().active,2);
  b.releases.splice(0).forEach(release=>release());await Promise.all([c,queued]);assert.equal(b.aborts,0);assert.equal(r.gateway.stats().active,0);
+});
+
+
+test('conversational queue tool uses real core offers and preserves active streams',async t=>{
+  const r=await rig(t,2,{control_socket:true,automatic_affinity_rebalance_min_wait_ms:false});
+  for(const key of ['a','b','c','d','e'])await r.request('{}',key);
+  const active=r.request('{"stream":true,"fixture_hold_stream":true}','c');await until(()=>r.backends[0].heldStreams?.length===1);
+  const first=r.request('{"queued":"a","max_tokens":262144}','a');await until(()=>r.gateway.nodes[0].queue.length===1);
+  const second=r.request('{"queued":"e"}','e');await until(()=>r.gateway.nodes[0].queue.length===2);
+  const q=createQueueTools({read:async()=>r.gateway.stats(),move:input=>workerControl(r.config.control_socket,'/genie-relocate-queued',input)});
+  try {
+    const s=await q.tool({action:'status'});assert.equal(s.offers[0].trigger,'queue_pressure');
+    const input={action:'move',...Object.fromEntries(['request_id','source','destination','evidence_id'].map(k=>[k,s.offers[0][k]]))};
+    await workerControl(r.config.control_socket,'/genie-capability',{key:'rebalance',enabled:false});
+    await assert.rejects(q.tool(input),/evidence or policy changed/);assert.equal(r.gateway.nodes[0].queue.length,2);
+    await workerControl(r.config.control_socket,'/genie-capability',{key:'rebalance',enabled:true});
+    const moved=await q.tool(input);assert.equal(moved.state,'relocated');assert.equal(moved.receipt.actor,'genie');assert.equal(moved.receipt.deadline_preserved,true);assert.equal(moved.receipt.body_replayed,false);
+    assert.equal((await first).headers['x-ds4-node'],'spark2');assert.equal(r.backends[0].aborts,0);assert.ok(r.gateway.nodes[0].active);assert.equal(r.gateway.nodes[0].queue.length,1);
+    await assert.rejects(q.tool(input),/evidence or policy changed/);assert.equal((await q.tool({action:'status'})).last_move.request_id,input.request_id);
+  } finally {r.backends[0].heldStreams.shift()();await Promise.all([active,first,second]);}
 });

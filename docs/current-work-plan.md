@@ -32,6 +32,9 @@ deployment receipts stay outside this public repository.
   integration test; a live installation's collector is separately verified.
   Source files on disk are distinguished from the running process's loaded code.
 - [x] Explicit high/normal/idle-only queue classes and waiting-job edits.
+- [x] Conversational queue status and exact offered moves through the existing
+  core executor, with per-reply receipts and the independent balancing switch.
+  No active-job preemption, changed thresholds or new scheduling algorithm.
 - [x] Integrate explicit concurrent gateway slots, per-worker capacity controls,
   independent health probes and per-reply progress. Synthetic qualification
   covers scheduling and continuity; existing workers retain their capacity.

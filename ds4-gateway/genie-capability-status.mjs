@@ -4,7 +4,7 @@ export function capabilityStatus(snapshot,{genie={},chat={},operations={},hourgl
   const recovery=g.recovery??{},unbound=(recovery.workers??[]).filter(w=>w.enrollment?.binding!=='matched');
   const rows=[
     ['fleet_reviews','Routine fleet reviews',genie.configured,genie.error?'Failed':genie.busy?'Working':genie.enabled?'Ready':'Genie reviewer is off',genie.error??'Periodic checks of fleet health. Queue balancing has its own switch.'],
-    ['rebalance','Queue balancing',management,genie.enabled===false?'Genie reviewer is off':'Ready','Genie may move waiting jobs to an eligible idle server. Running jobs finish.'],
+    ['rebalance','Queue balancing',management,genie.enabled===false&&!configured.rebalance?'Genie reviewer is off':'Ready','Genie may move waiting jobs to an eligible idle server, from chat or fleet reviews. Running jobs finish.'],
     ['recovery','Server recovery',recovery.configured,unbound.length?'Not connected':'Monitoring',unbound.length?`Recovery service needs connecting: ${unbound.map(w=>w.worker_id).join(', ')}.`:'Uses the existing recovery runner and service permissions.'],
     ['research','Public web research',configured.research,'Ready','Genie can search public sources while answering.'],
     ['inspection','Server inspection',configured.inspection,'Ready','Genie can read configuration records and inspect connected servers.'],
