@@ -400,7 +400,7 @@ The progress display reports elapsed time and the last actual model/tool activit
 A quiet period is not proof of a stalled model. Existing queue/request deadlines
 are preserved; this interface introduces no shorter cancellation limit.
 
-Genie can open the `baseline_reconciliation` or `recreation_capture` JSON artifact
+Genie can open the `baseline_reconciliation`, `recreation_capture`, or `restoration_drill` JSON artifact
 referenced by a worker's observed, proposed or approved record. The file must be
 inside that installation's configuration-library artifacts directory and match
 the recorded SHA-256; symlinks and changed files are refused. The small baseline
@@ -449,3 +449,10 @@ Genie can call `inspect_server` with `selected_default: true` to inspect that ex
 Use **Stop waiting for this reply** beside an active or queued answer. Star Gate saves the decision and partial answer before signalling that reply’s Hermes process. Other conversations continue. Already queued follow-ups pause until you choose **Continue queued questions**; the stopped question is not replayed. A later follow-up receives any saved partial answer labelled as stopped.
 
 This is an explicit per-reply control. It does not change chat deadlines or give high-priority jobs permission to cancel active work. If saving the decision fails, the reply continues and the UI reports the failure.
+
+A `restoration_drill` artifact uses the chosen record’s
+`restoration.drill.receipt_reference`, with a `path` under `artifacts/` and its
+`sha256`. A status label or an unhashed path does not substitute for a receipt.
+The tool keeps the returned evidence with the answer. Genie should assess the
+actual operation and checks: matching the saved hash does not prove every claim
+in a report, qualify fresh-machine installation, or authorize recovery.

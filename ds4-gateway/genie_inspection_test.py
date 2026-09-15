@@ -55,6 +55,22 @@ class Inspection(unittest.TestCase):
   result=self.call('read_server_configuration',{'worker_id':'example'});selected=result['selected_defaults']['entries'];self.assertEqual(len(selected),1);self.assertEqual(selected[0]['selection_receipt']['status'],'verified');self.assertEqual(selected[0]['selection_receipt']['content']['run_key'],'selected-run');self.assertNotIn('PRIVATE_SECRET',json.dumps(result));self.assertNotIn('OTHER_WORKER',json.dumps(result))
   receipt.write_text('{}');result=self.call('read_server_configuration',{'worker_id':'example'});self.assertEqual(result['selected_defaults']['entries'][0]['selection_receipt']['status'],'unavailable');self.assertIn('records',result)
   receipt.unlink();receipt.symlink_to(self.root/'defaults/other.json');self.assertEqual(self.call('read_server_configuration',{'worker_id':'example'})['selected_defaults']['entries'][0]['selection_receipt']['status'],'unavailable')
+ def test_restoration_receipt_uses_exact_record_reference_and_retains_evidence(self):
+  (self.root/'approved').mkdir();(self.root/'artifacts').mkdir();file=self.root/'artifacts/restore.json';file.write_text(json.dumps({'state':'restored','checks':['cold-to-warm cache'],'api_key':'PRIVATE_SECRET'}))
+  ref={'path':'artifacts/restore.json','sha256':m.hashlib.sha256(file.read_bytes()).hexdigest()}
+  record={'schema':1,'worker_id':'example','kind':'approved','restoration':{'drill':{'receipt_reference':ref}}}
+  (self.root/'approved/example.json').write_text(json.dumps(record));self.register()
+  result=self.call('read_server_artifact',{'worker_id':'example','artifact':'restoration_drill','record_kind':'approved'})
+  self.assertTrue(result['hash_matches_record']);self.assertEqual(result['content']['checks'],['cold-to-warm cache']);self.assertNotIn('PRIVATE_SECRET',json.dumps(result))
+  event=self.events[-1][1]['event'];self.assertEqual(event['artifact'],'restoration_drill');self.assertEqual(event['record_kind'],'approved');self.assertEqual(event['result'],result)
+  self.assertIn('do not independently prove',result['scope']);self.assertIn('restoration_drill',self.registry.tools['read_server_artifact']['schema']['parameters']['properties']['artifact']['enum'])
+  file.write_text('{"state":"changed"}');self.assertIn('error',self.call('read_server_artifact',{'worker_id':'example','artifact':'restoration_drill','record_kind':'approved'}));self.assertEqual(file.read_text(),'{"state":"changed"}')
+ def test_restoration_status_or_unhashed_path_does_not_substitute_for_receipt(self):
+  (self.root/'approved').mkdir();(self.root/'artifacts').mkdir();file=self.root/'artifacts/restore.json';file.write_text('{"state":"must-not-be-read"}')
+  record={'schema':1,'worker_id':'example','kind':'approved','restoration':{'drill':{'status':'restored-in-drill','receipt':str(file)}}}
+  record_file=self.root/'approved/example.json';record_file.write_text(json.dumps(record));self.register()
+  self.assertIn('error',self.call('read_server_artifact',{'worker_id':'example','artifact':'restoration_drill','record_kind':'approved'}))
+  record['restoration']['drill']['receipt_reference']={'path':str(file)};record_file.write_text(json.dumps(record));self.assertIn('error',self.call('read_server_artifact',{'worker_id':'example','artifact':'restoration_drill','record_kind':'approved'}))
  def test_selected_image_comes_only_from_unique_library_default(self):
   (self.root/'defaults').mkdir();record={'schema':1,'workers':['example'],'selected_image':'sha256:'+'a'*64};(self.root/'defaults/shared.json').write_text(json.dumps(record));self.register({'example':{'ssh':['example-host'],'container':'live-container'}})
   with patch.object(m.subprocess,'run',return_value=types.SimpleNamespace(returncode=0,stdout=json.dumps({'selected_image':record['selected_image'],'image_present':True,'retained_containers':[]}),stderr='')) as run:

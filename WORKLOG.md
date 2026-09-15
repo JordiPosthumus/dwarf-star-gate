@@ -1,5 +1,14 @@
 # Star Gate work log
 
+## 2026-09-15 — Genie can examine restoration receipts
+
+The existing read-only artifact tool now accepts `restoration_drill`, using the
+exact path and SHA256 recorded in the configuration library. It retains the
+receipt with the answer, reports missing or changed evidence, and preserves
+existing files. A recorded restoration label alone is insufficient. This adds
+access to evidence, not server-control authority. Validation includes real Hermes
+tool dispatch against synthetic fixtures and missing/changed-reference checks.
+
 ## 2026-09-14 — Installed Pi contract fixtures refreshed
 
 Rechecked Pi 0.85.1 retry, settled-event and custom-message behavior against the
