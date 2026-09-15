@@ -1,21 +1,27 @@
 # Approved serving changes — development
 
-The conversational Genie does not yet execute this workflow. The retained
-container executor, approval store, independent runner, SSH transport and owned
-gateway maintenance adapter, serving sequence and native qualifier are
-implemented and tested as components. Connecting the chat and approval UI to
-the complete maintenance, model qualification and readmission workflow remains
-unfinished. The serving entry point, frozen-source bundle and reviewed record
-preparation are implemented as components; installation enrollment, dashboard
-transport, approval UI and whole-operation native qualification remain to connect.
-Existing production recovery and maintenance behavior is unchanged.
+Genie proposal/status tools and the owner approval/progress UI are connected to
+the retained-container workflow in development. Integration tests exercise the
+installed Hermes runtime and browser against disposable fixtures. This optional
+operation service is not yet active in production; a complete actual serving
+operation still needs qualification. Existing production recovery and maintenance
+behavior is unchanged.
+
+Genie can inspect linked JSON evidence with `read_server_artifact.reference_chain`.
+Each JSON pointer selects a recorded `path`/`sha256` reference in the preceding
+document. Start from a named artifact, or omit `artifact` to start at the worker
+record (for example, `["/evidence/0"]`). Every traversed file is checked against its
+hash and must remain inside the private artifact library. Existing named artifact
+calls still work. Read the parent first; references, hashes and report conclusions
+are evidence to inspect, not authority to act. Unhashed or non-JSON files remain
+explicitly unavailable through this reader.
 
 ## Approval and independent execution
 
 `server-operations.mjs` saves a proposed change, its prepared plan and the
 approved configuration's revision. Preparing a proposal never launches it.
 Approval must refer to the exact saved plan; a changed record or plan requires a
-new proposal. The future dashboard endpoint must require an explicit owner
+new proposal. The dashboard endpoint requires an explicit owner
 action and the same origin/CSRF checks as existing controls. The approval method
 is not a Genie tool.
 

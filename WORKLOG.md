@@ -1844,3 +1844,20 @@ Browser checks queued a follow-up behind an active answer, paused it after a
 simulated failure, then continued it without replay. The previous production
 reader preserved both waiting messages as interrupted; returning to the new
 reader made no model calls. Syntax and privacy checks passed.
+
+
+### Genie can follow recorded evidence references
+
+The inspection reader previously offered a fixed set of artifact names, leaving
+Genie unable to open linked validation reports or recorded raw JSON results. It
+now follows optional JSON-pointer reference chains from an existing named artifact
+or the worker record, checking every recorded hash and library boundary. No
+caller-supplied file path or hash is accepted, and existing artifact calls remain
+compatible. Actual traversed references are retained with the tool result.
+
+Validation: 23 Python inspection tests passed, including changed parent/child,
+array and escaped-key traversal, redaction and symlink/path failures. The affected
+chat regression passed 29 tests with two environment-dependent Hermes skips. The
+installed Hermes inspection integration passed separately with a synthetic model
+and SSH fixture, including a two-link raw tool-result read and saved chat reload.
+These tests establish the reader integration, not a real model-server operation.

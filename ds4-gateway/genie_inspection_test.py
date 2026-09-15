@@ -87,6 +87,50 @@ class Inspection(unittest.TestCase):
   with patch.object(m.subprocess,'run') as run:self.assertIn('error',self.call('inspect_server',{'worker_id':'example','selected_default':True}));run.assert_not_called()
   (self.root/'defaults/second.json').unlink();record['selected_image']='--bad; command';(self.root/'defaults/shared.json').write_text(json.dumps(record))
   with patch.object(m.subprocess,'run') as run:self.assertIn('error',self.call('inspect_server',{'worker_id':'example','selected_default':True}));run.assert_not_called()
+class EvidenceNavigation(unittest.TestCase):
+ register=Inspection.register
+ call=Inspection.call
+ def setUp(self):
+  Inspection.setUp(self)
+  (self.root/'approved').mkdir();(self.root/'artifacts').mkdir()
+  self.child=self.root/'artifacts/tool.json';self.child.write_text(json.dumps({'choices':[{'message':{'tool_calls':[{'function':{'name':'report_value','arguments':'{"value":7319}'}}]}}],'api_key':'PRIVATE_SECRET'}))
+  self.child_ref={'path':'artifacts/tool.json','sha256':m.hashlib.sha256(self.child.read_bytes()).hexdigest()}
+  self.parent=self.root/'artifacts/proof.json';self.parent.write_text(json.dumps({'validation_reference':self.child_ref,'nested/list~':[self.child_ref]}))
+  self.parent_ref={'path':'artifacts/proof.json','sha256':m.hashlib.sha256(self.parent.read_bytes()).hexdigest()}
+  self.record={'schema':1,'worker_id':'example','kind':'approved','evidence':[self.parent_ref],'restoration':{'change_classes':{'serving_flags':{'drill_reference':self.parent_ref}}}}
+  self.record_file=self.root/'approved/example.json';self.record_file.write_text(json.dumps(self.record));self.register()
+ def read_chain(self,chain,**extra):return self.call('read_server_artifact',{'worker_id':'example','record_kind':'approved','reference_chain':chain,**extra})
+ def test_named_artifact_follows_nested_reference_and_records_the_complete_provenance(self):
+  result=self.read_chain(['/validation_reference'],artifact='serving_flags_restoration')
+  self.assertEqual(result['sha256'],self.child_ref['sha256']);self.assertEqual(len(result['verified_references']),2)
+  self.assertEqual(result['content']['choices'][0]['message']['tool_calls'][0]['function']['name'],'report_value')
+  self.assertNotIn('PRIVATE_SECRET',json.dumps(result));self.assertEqual(self.events[-1][1]['event']['result'],result)
+ def test_record_array_and_escaped_pointer_keys_need_no_new_artifact_enum(self):
+  result=self.read_chain(['/evidence/0','/nested~1list~0/0'])
+  self.assertTrue(result['hash_matches_record']);self.assertEqual(result['sha256'],self.child_ref['sha256'])
+  self.assertIsNone(result['artifact']);self.assertEqual(result['verified_references'][0]['pointer'],'/evidence/0')
+ def test_changed_parent_is_rejected_before_child_is_opened(self):
+  self.parent.write_text('{}')
+  with patch.object(m,'read_json',wraps=m.read_json) as reads:
+   self.assertIn('error',self.read_chain(['/evidence/0','/validation_reference']))
+   self.assertNotIn(self.child,[call.args[0] for call in reads.call_args_list])
+  self.assertEqual(self.parent.read_text(),'{}')
+ def test_changed_child_is_rejected_without_rewriting_either_document(self):
+  self.child.write_text('{"changed":true}')
+  self.assertIn('error',self.read_chain(['/evidence/0','/validation_reference']))
+  self.assertEqual(self.child.read_text(),'{"changed":true}')
+ def test_unknown_unhashed_malformed_and_excessive_chains_fail(self):
+  for chain in [[],['/evidence/-1'],['/evidence/00'],['/evidence/0','/missing'],['/evidence'],['/evidence/0','/nested~2list'],['/evidence/0']*9,'/evidence/0',[None]]:
+   with self.subTest(chain=chain):self.assertIn('error',self.read_chain(chain))
+  self.record['evidence'][0].pop('sha256');self.record_file.write_text(json.dumps(self.record))
+  self.assertIn('error',self.read_chain(['/evidence/0']))
+ def test_nested_symlink_and_library_escape_are_rejected(self):
+  self.child.unlink();self.child.symlink_to(self.parent)
+  self.assertIn('error',self.read_chain(['/evidence/0','/validation_reference']))
+  for path in ['../outside.json','artifacts/../../outside.json','/tmp/outside.json']:
+   self.record['evidence']=[{'path':path,'sha256':'a'*64}];self.record_file.write_text(json.dumps(self.record))
+   self.assertIn('error',self.read_chain(['/evidence/0']))
+
 class Collector(unittest.TestCase):
  def collect(self, mode='ok'):
   import io,contextlib,copy
