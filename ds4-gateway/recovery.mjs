@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { recoveryConfig, recoveryCall } from './recovery-transport.mjs';
-import { verifyRecovery } from './recovery-verify.mjs';
+import { verifyRecovery,qwenRecoveryProofValid } from './recovery-verify.mjs';
 import {safeNativeRemoval,unavailableNativeRemoval} from './launchd-removal-evidence.mjs';
 import {bootstrapEnrollmentMatches,bootstrapProofValid} from './recovery-bootstrap.mjs';
 
@@ -234,7 +234,7 @@ export class Recovery {
       state:['queued','starting','restarting','bootstrapping','reconciling','verifying',...terminal].includes(last.state)?last.state:'unknown',
       action:['restart','start','bootstrap','adopt_verify','adopt_restart'].includes(last.service_action)?last.service_action:'unknown',
       recorded_at:Number.isFinite(last.updated_at)?last.updated_at:null,
-      cold_warm_proof_valid:bootstrapProofValid(last.proof,n.contextLength),
+      cold_warm_proof_valid:c?.verification==='qwen_vllm'?qwenRecoveryProofValid(last.proof,n.contextLength):bootstrapProofValid(last.proof,n.contextLength),
       enrolled_identity_fields_match:bound&&last.machine===c.machine&&last.profile===c.profile&&last.context_length===n.contextLength&&last.binding===hash([n.url,n.ssh,n.ssh_fallbacks??[],n.remote_port??8000]),
       observed_instance_matches:usable&&typeof last.new_instance==='string'&&last.new_instance===s?.instance
     }:null;
@@ -400,7 +400,7 @@ export class Recovery {
       requireNativePolicy(after,c);
       if(bootstrapping)this.bootstrapExecutionVeto(n,op);
       this.update(op,{state:'verifying',new_instance:after.instance});
-      const proof=await this.verify(n.url,this.model,op.context_length,{signal:this.abort.signal});
+      const proof=await this.verify(n.url,this.model,op.context_length,{signal:this.abort.signal,kind:c.verification??'ds4'});
       const final=await this.inspect(n.id);
       if(!this.valid(final,c) || final.instance!==after.instance || final.fault)throw new Error('identity_changed_during_verification');
       requireNativePolicy(final,c);

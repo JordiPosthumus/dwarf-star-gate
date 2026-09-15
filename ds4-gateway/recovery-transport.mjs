@@ -31,14 +31,16 @@ export function recoveryConfig(raw={}) {
   if(Object.keys(raw).some(k=>!['workers'].includes(k)) || !Array.isArray(raw.workers??[]))throw new Error('Invalid recovery configuration');
   const configs=new Map(), machines=new Set();
   for(const entry of raw.workers??[]) {
-    if(Object.keys(entry).some(k=>!['id','url','backend','ssh','ssh_fallbacks','remote_port','adapter','transport','python','helper','config','machine','profile','service_profile','start_stopped','exclusive','bootstrap_removed','bootstrap_callers','retained_definition_sha256'].includes(k)))throw new Error('Unsupported recovery configuration field');
+    if(Object.keys(entry).some(k=>!['id','url','backend','ssh','ssh_fallbacks','remote_port','adapter','verification','transport','python','helper','config','machine','profile','service_profile','start_stopped','exclusive','bootstrap_removed','bootstrap_callers','retained_definition_sha256'].includes(k)))throw new Error('Unsupported recovery configuration field');
     // Use the same explicit backend normalization as the registered worker.
     // Legacy enrollment keeps its original URL and fingerprint; an OpenAI
     // enrollment must not silently lose /v1 and then fail its exact binding.
     const worker=workerConfig(Object.fromEntries(['id','url','backend','ssh','ssh_fallbacks','remote_port'].filter(k=>entry[k]!==undefined).map(k=>[k,entry[k]])));
     const local=entry.transport==='local';
     if(entry.transport!==undefined&&!['ssh','local'].includes(entry.transport))throw new Error('Recovery transport must be ssh or local');
-    if(!['systemd-user','launchd'].includes(entry.adapter)||(!local&&!worker.ssh)||(local&&(entry.adapter!=='launchd'||worker.ssh)))throw new Error('Recovery requires an enrolled SSH adapter or an explicitly local launchd worker');
+    if(!['systemd-user','launchd','docker'].includes(entry.adapter)||(!local&&!worker.ssh)||(local&&(entry.adapter!=='launchd'||worker.ssh)))throw new Error('Recovery requires an enrolled SSH adapter or an explicitly local launchd worker');
+    if(entry.verification!==undefined&&!['ds4','qwen_vllm'].includes(entry.verification))throw new Error('Unsupported recovery verification');
+    if(entry.adapter==='docker'&&entry.start_stopped===true)throw new Error('Docker recovery preserves stopped containers; use its existing restart policy');
     if(local){
       if(typeof entry.python!=='string'||!path.isAbsolute(entry.python)||entry.python.includes('\0'))throw new Error('Local recovery requires an absolute enrolled Python interpreter');
     }else if(entry.python!==undefined)throw new Error('Python interpreter enrollment is only valid for local recovery');

@@ -75,8 +75,12 @@ deployment receipts stay outside this public repository.
   Recovery reconciliation must identify the actual service type: old DS4
   systemd/launchd enrollment cannot recover a replacement Docker model server.
   Explicit OpenAI route normalization is supported without changing legacy
-  enrollment. Docker recovery, compatible model verification and intentional-stop
-  handling still need qualification before enabling this path on a deployment.
+  enrollment. The [Docker recovery adapter](docker-recovery.md) now reuses the
+  existing runner, with explicit Qwen/vLLM verification and deliberate-stop
+  preservation. An actual Docker/SSH/controller fixture completed one restart,
+  verification and readmission using synthetic model/cache responses. Actual
+  model recovery qualification and installation enrollment remain unfinished;
+  the fixture does not prove production recovery.
 - [ ] Integrate owner-started Hourglass runs, initially measuring the chosen
   server directly with recorded configuration and measurement provenance.
   Saved aggregate reports are wired into the dashboard and chat,
