@@ -18,8 +18,9 @@ deployment receipts stay outside this public repository.
   preserve active jobs, established settings and deliberate maintenance stops.
 - Independent switches cover routine reviews, Genie queue balancing, recovery,
   public research, inspection, approved server changes and Hourglass measurement.
+  All seven choices can be saved before their services are connected.
   Use the existing gateway state and recovery policy; a switch is not proof that
-  a service is connected. Active replies and issued operations finish when a
+  a service is connected and does not create recovery enrollment. Active replies and issued operations finish when a
   feature is switched off. Production activation is tracked per release.
 - [x] Conversational Genie with a dedicated pinned Hermes installation, native
   SOUL, private saved chats, public web tools and source evidence.

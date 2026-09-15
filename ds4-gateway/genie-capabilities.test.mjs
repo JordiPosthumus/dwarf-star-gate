@@ -22,7 +22,13 @@ test('switches persist independently through core restart and use the existing d
   const base='http://127.0.0.1:'+app.address().port;
   const state=await (await fetch(base+'/api/genie/capabilities')).json();
   assert.equal(state.capabilities.length,7);
+  assert.ok(state.capabilities.every(c=>c.available),'All switches work before connection');
   const send=(key,enabled)=>fetch(base+'/api/workers/genie-capability',{method:'POST',headers:{origin:base,'content-type':'application/json','x-dsg-csrf':state.csrf_token},body:JSON.stringify({key,enabled})});
+  for(const key of ['hourglass','inspection','server_changes','fleet_reviews','recovery'])assert.equal((await send(key,false)).status,200,key);
+  assert.equal((await send('recovery',true)).status,200);
+  assert.equal(core.stats().recovery.configured,false);
+  assert.equal(core.stats().recovery.automatic,true);
+  assert.equal(core.stats().recovery.operations.length,0,'Policy does not enroll or start recovery');
   assert.equal((await send('rebalance',false)).status,200);
   assert.equal(core.stats().continuity.relocation.genie_enabled,false);
   assert.equal(core.stats().genie_capabilities.research,true);
@@ -31,7 +37,11 @@ test('switches persist independently through core restart and use the existing d
   await core.close();core=createGateway(config);await core.start();
   assert.equal(core.stats().genie_capabilities.rebalance,false);
   assert.equal(core.stats().genie_capabilities.research,false);
-  assert.equal(core.stats().genie_capabilities.inspection,true);
+  for(const key of ['hourglass','inspection','server_changes','fleet_reviews'])assert.equal(core.stats().genie_capabilities[key],false,key);
+  assert.equal(core.stats().genie_capabilities.recovery,true);
+  assert.equal(core.stats().recovery.configured,false);
+  const after=await(await fetch(base+'/api/genie/capabilities')).json();
+  assert.equal(after.capabilities.find(c=>c.key==='hourglass').status,'Off · not connected');
   assert.equal((await send('rebalance',true)).status,200);
   assert.equal(core.stats().genie_capabilities.research,false);
 });
@@ -65,7 +75,8 @@ test('turning off routine reviews leaves urgent balancing reviews enabled',()=>{
 test('an enabled recovery switch never disguises missing service connections',()=>{
   const result=capabilityStatus({gateway:{genie_capabilities:genieCapabilities(undefined,{},true),recovery:{configured:true,automatic:true,workers:[{worker_id:'one',enrollment:{binding:'mismatch'}}]},workers:[{id:'one',is_healthy:false,quarantine:{reason:'fatal_accelerator_error'}}]}},{management:true});
   assert.equal(result.capabilities.find(r=>r.key==='recovery').status,'Not connected');
-  assert.equal(result.capabilities.find(r=>r.key==='hourglass').available,false);
+  assert.equal(result.capabilities.find(r=>r.key==='hourglass').available,true);
+  assert.equal(result.capabilities.find(r=>r.key==='hourglass').connected,false);
   assert.equal(result.services[0].status,'Unavailable');
   assert.match(result.services[0].detail,/fatal accelerator error/);
   const research=capabilityStatus({gateway:{genie_capabilities:genieCapabilities(undefined,{},false)}},{management:true,chat:{capabilities_configured:{research:true}},activity:{research:{state:'failed',service:'Page extraction',error:'Service unavailable'}}});

@@ -98,7 +98,7 @@ export class Recovery {
     this.commit({...this.state,last_identities:{...this.state.last_identities,[id]:record},...(savedBoots!==undefined||bootUUID(s.boot_uuid)?{last_identity_boots:boots}:{})});
   }
   update(op,fields){Object.assign(op,this.current(op),fields,{updated_at:this.now()});this.commit({...this.state,operations:this.state.operations.map(x=>x.id===op.id?{...op}:x)});this.log('worker_recovery_action',publicOperation(op));}
-  setAutomatic(value){if(typeof value!=='boolean' || !this.configs.size)throw new Error('Recovery is not configured or enabled is invalid');this.commit({...this.state,automatic:value});this.log('worker_recovery_policy',{automatic:value});return this.status();}
+  setAutomatic(value){if(typeof value!=='boolean')throw new Error('Recovery enabled must be boolean');this.commit({...this.state,automatic:value});this.log('worker_recovery_policy',{automatic:value});return this.status();}
   setProfileHandbackAutomatic(value){if(typeof value!=='boolean'||!this.configs.size)throw new Error('Profile hand-back is not configured or enabled is invalid');this.commit({...this.state,profile_handback_automatic:value});this.log('worker_recovery_handback_policy',{automatic:value});return this.status();}
   binding(n,c){return !!n && !!c && n.url===c.url && n.ssh===c.ssh && JSON.stringify(n.ssh_fallbacks??[])===JSON.stringify(c.ssh_fallbacks??[]) && (n.remote_port??8000)===(c.remote_port??8000);}
   valid(s,c){return s?.version===1 && s.machine===c.machine && s.profile===c.profile && s.active===true && s.listener===true && /^[a-f0-9]{32}$/.test(s.instance) && Number.isFinite(s.started_at);}
