@@ -116,6 +116,10 @@ class EntryTest(unittest.TestCase):
         proof=json.loads((artifact/'qualification-candidate/result.json').read_text())
         self.assertEqual(proof['concurrency']['peak_running'],2)
         self.assertTrue((artifact/'qualification-candidate/pair-B-tool.response.bin').exists())
+        index=fixture.read_artifact_reference(self.rig.library,record['evidence'][-1])
+        pair_b=next(case for case in index['cases'] if case['case']=='pair-B-tool')
+        reply=fixture.read_artifact_reference(self.rig.library,pair_b['response'])
+        self.assertEqual(json.loads(reply['choices'][0]['message']['tool_calls'][0]['function']['arguments']),{'value':8462})
         self.assertEqual(self.rig.git('diff','--cached','--name-only'),'other.txt')
 
     def test_mutable_installed_entry_has_no_authority_to_start(self):

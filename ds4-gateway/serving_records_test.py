@@ -8,6 +8,7 @@ import serving_operation_test as fixture
 from docker_profile import digest
 from serving_qualification_test import CONTRACT
 from serving_records import ServingRecordPublisher
+from genie_inspection import read_artifact_reference, reference_at
 
 
 class PublicationTest(unittest.TestCase):
@@ -67,6 +68,32 @@ class PublicationTest(unittest.TestCase):
         changed = self.git('diff-tree', '--no-commit-id', '--name-only', '-r', receipt['commit']).splitlines()
         self.assertTrue(all(p == 'records/approved/fixture.json' or p.startswith('records/artifacts/serving-') for p in changed))
 
+    def test_published_links_reach_actual_tool_request_and_reply_without_rewriting_evidence(self):
+        f = self.fixture
+        result = f.execute(); self.assertEqual(result['state'], 'completed')
+        record = json.loads(f.record_file.read_bytes())
+        index = read_artifact_reference(self.library, record['evidence'][-1])
+        original = (f.folder / 'qualification-candidate/result.json').read_bytes()
+        self.assertEqual((self.library / index['result']['path']).read_bytes(), original)
+        self.assertEqual(read_artifact_reference(self.library, index['result'])['state'], 'passed')
+        for i, case in enumerate(index['cases']):
+            for kind in ['intent', 'receipt', 'response'] + (['request'] if 'request' in case else []):
+                ref = reference_at(index, f'/cases/{i}/{kind}')
+                self.assertEqual(hashlib.sha256((self.library / ref['path']).read_bytes()).hexdigest(), ref['sha256'])
+        tool = next(c for c in index['cases'] if c['case'] == 'tool')
+        request = read_artifact_reference(self.library, tool['request'])
+        reply = read_artifact_reference(self.library, tool['response'])
+        self.assertEqual(request['tool_choice'], 'auto')
+        call = reply['choices'][0]['message']['tool_calls'][0]
+        self.assertEqual(call['function']['name'], 'report_value')
+        self.assertEqual(json.loads(call['function']['arguments']), {'value': 7319})
+        # The existing reader must reject later changes instead of presenting
+        # them as the qualified response. Publication remains a private commit.
+        (self.library / tool['response']['path']).write_text('{}')
+        with self.assertRaisesRegex(ValueError, 'recorded hash'):
+            read_artifact_reference(self.library, tool['response'])
+        self.assertEqual(self.git('diff', '--cached', '--name-only'), 'other.txt')
+
     def test_restored_record_keeps_original_approval_and_new_startup_evidence(self):
         f = self.fixture; f.apis['candidate'].context = 8192
         result = f.execute(); self.assertEqual(result['state'], 'restored')
@@ -75,6 +102,9 @@ class PublicationTest(unittest.TestCase):
         self.assertEqual(record['restoration'], f.record['restoration'])
         self.assertEqual(record['configuration']['qualified_container_reference']['container_id'], fixture.OLD)
         self.assertEqual(record['configuration']['qualified_container_reference']['started_at'], 'new-start')
+        index = read_artifact_reference(self.library, record['evidence'][-1])
+        self.assertIn('/qualification-previous/', index['result']['path'])
+        self.assertEqual(read_artifact_reference(self.library, index['result'])['state'], 'passed')
 
     def test_uncommitted_owner_record_stops_publication_without_overwriting_it(self):
         f = self.fixture

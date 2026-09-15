@@ -159,6 +159,24 @@ class ServingRecordPublisher:
         save(artifact, 'container.json', current)
         at = datetime.now(timezone.utc).isoformat()
         reference = str(artifact.relative_to(self.library))
+        def linked(file):
+            return {'path': str(file.relative_to(self.library)), 'sha256': self.file_digest(file)}
+        # Keep the original result and its qualification hash unchanged. This
+        # separate index lets the existing Genie reader follow archived bytes.
+        evidence = []
+        for case in result['cases']:
+            name = case['case']
+            intent_file = destination / (name + '.intent.json')
+            entry = {'case': name, 'intent': linked(intent_file),
+                     'receipt': linked(destination / (name + '.result.json')),
+                     'response': linked(destination / (name + '.response.bin'))}
+            request = read(intent_file).get('request')
+            if request:
+                entry['request'] = linked(destination / request['file'])
+            evidence.append(entry)
+        save(artifact, 'qualification-evidence.json', {
+            'result': linked(destination / 'result.json'), 'cases': evidence,
+            'scope': 'Exact archived evidence for the qualified version. Responses include JSON, metrics and event streams; the JSON artifact reader cannot read non-JSON bodies. Hashes establish bytes, not correctness.'})
         record['recorded_at'] = record['evidence_updated_at'] = at
         record.setdefault('configuration', {})['qualified_container_reference'] = {
             'path': reference + '/container.json', 'sha256': hashlib.sha256(read_bytes(artifact / 'container.json')).hexdigest(),
@@ -169,6 +187,8 @@ class ServingRecordPublisher:
         record.setdefault('evidence', []).append({'path': reference + '/' + source.name + '/result.json',
             'sha256': hashlib.sha256(read_bytes(result_file)).hexdigest(), 'captured_at': at,
             'scope': 'Recorded native checks for this startup; not a benchmark or fresh-machine installation.'})
+        record['evidence'].append({**linked(artifact / 'qualification-evidence.json'),
+            'captured_at': at, 'scope': 'Links to the original requests and replies supporting these checks.'})
         record['serving_operation'] = {'id': folder.name, 'outcome': which,
             'previous_approved_revision': plan['record_revision'], 'approval_reference': reference + '/approved.json'}
         if which == 'candidate':

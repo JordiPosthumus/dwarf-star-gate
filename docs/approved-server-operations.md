@@ -16,6 +16,16 @@ calls still work. Read the parent first; references, hashes and report conclusio
 are evidence to inspect, not authority to act. Unhashed or non-JSON files remain
 explicitly unavailable through this reader.
 
+New serving publications include a `qualification-evidence.json` index in the
+record's evidence list. It links each check's original intent, request when one
+was sent, receipt and raw reply, plus the unchanged qualification result. Genie
+can follow the actual index with pointers such as `/cases/3/response`; he must
+read the case labels rather than assume their order. JSON replies are readable
+even though their saved filename ends in `.bin`. Metrics and event streams remain
+preserved raw files and are not readable through this JSON tool. The index covers
+the version qualified for publication, including the original version after
+restoration; it does not label a failed candidate as successful.
+
 ## Approval and independent execution
 
 `server-operations.mjs` saves a proposed change, its prepared plan and the

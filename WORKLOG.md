@@ -1909,3 +1909,22 @@ failure counters were independently checked. The verifier correctly rejected a
 two-request claim, and the owned hold was released with recorded readmission.
 This was a Codex-run diagnostic, not a Genie operation or a failed baseline.
 No model restart or serving-setting change occurred.
+
+
+### Published serving evidence is reachable by Genie — development
+
+The private record publisher now adds a small hashed index of the qualified
+version's original requests, intents, receipts and raw replies. It preserves the
+original result bytes and qualification hash. The existing reference-chain reader
+can open the JSON evidence directly, including distinct concurrent tool replies,
+and rejects changed bytes. Metrics and event streams remain retained raw files;
+the JSON reader does not claim to interpret them. Restoration indexes the checked
+original version, not a failed candidate. No new tool or authority was added.
+
+Fifteen publication/executor integration tests and 45 serving-sequence, frozen
+bundle and inspection regressions passed. Tests exercised actual disposable Git
+publication and the existing artifact reader against synthetic native responses.
+Unrelated staged work and original record annotations remain preserved. This is
+development code; no production restart, enrollment or serving change occurred.
+The current work plan now distinguishes the completed retained-evidence
+enrollment from the still-unfinished actual native operation.

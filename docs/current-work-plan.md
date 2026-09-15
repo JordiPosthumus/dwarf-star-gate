@@ -25,6 +25,9 @@ deployment receipts stay outside this public repository.
   Production activation is verified in the installation deployment receipt.
 - [ ] Qualify real model-server concurrency with established context, output,
   thinking and cache behavior preserved, then activate per qualified worker.
+  An explicit native two-request qualifier passes component tests; a real
+  one-request negative control correctly rejected a two-running claim without
+  changing the server. That does not qualify a physical worker for capacity two.
 - [x] Build setup research through existing chat, with opt-in reminder cadence,
   explicit start, skip, postpone and run-early controls. Research does not approve
   its recommendations. Exact production promotion is tracked per release.
@@ -53,8 +56,10 @@ deployment receipts stay outside this public repository.
   in a real disposable Git library while preserving unrelated staged work. The
   entry point and trusted preparation now bind enrolled connections, model
   contracts, the reviewed record and frozen serving code. Applicable private
-  restoration enrollment and fresh whole-operation native-model qualification
-  remain unfinished. Optional dashboard enrollment, real Hermes proposal/status
+  restoration enrollment has been checked against retained evidence for one
+  installed worker; fresh whole-operation native-model qualification remains
+  unfinished. Published results now link to their raw JSON evidence for Genie
+  inspection. Optional dashboard enrollment, real Hermes proposal/status
   tools and the owner approval/progress card now pass isolated integration and
   browser checks; they have not been activated in production.
 - [ ] Integrate owner-started Hourglass runs, initially measuring the chosen
