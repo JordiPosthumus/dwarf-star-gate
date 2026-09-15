@@ -20,6 +20,23 @@ import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 
 const config={id:'one',url:'http://127.0.0.1:39001',ssh:'test-host',adapter:'systemd-user',helper:'/opt/dsg/adapter.py',config:'/opt/dsg/private.json',machine:'a'.repeat(64),profile:'b'.repeat(64),exclusive:true};
+test('explicit OpenAI recovery enrollment preserves the registered route and legacy enrollment bytes',async()=>{
+  assert.deepEqual(recoveryConfig({workers:[config]}).get('one'),config);
+  const r=rig();
+  try {
+    r.n.backend='openai';r.n.url=config.url+'/v1';
+    const enrolled=recoveryConfig({workers:[{...config,backend:'openai',url:r.n.url+'/'}]}).get('one');
+    r.recovery.configs.set('one',enrolled);
+    assert.equal(enrolled.url,r.n.url);
+    assert.equal(r.recovery.workerStatus(r.n).enrollment.binding,'matched');
+    assert.equal(r.recovery.workerStatus(r.n).eligible,false,'route equality alone does not establish inspection or authorize recovery');
+    assert.equal(r.recovery.state.automatic,false);
+    r.n.url=config.url+'/another-api';
+    assert.equal(r.recovery.workerStatus(r.n).enrollment.binding,'mismatch');
+    assert.equal(r.restarts,0);
+    assert.throws(()=>recoveryConfig({workers:[{...config,backend:'unknown'}]}),/Backend/);
+  } finally {await r.recovery.close();}
+});
 test('recovery status exposes the newest 30 public receipts without deleting history',async()=>{
   const r=rig();r.store.data.recovery={...r.recovery.state,operations:Array.from({length:35},(_,i)=>({id:String(i),actor:'genie',worker_id:'one',state:'failed',created_at:i,updated_at:i,private_prior:'PRIVATE'}))};
   const rows=r.recovery.status().operations;assert.equal(rows.length,30);assert.equal(rows[0].id,'34');assert.equal(rows.at(-1).id,'5');

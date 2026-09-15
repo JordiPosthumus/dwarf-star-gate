@@ -20,7 +20,7 @@ function chatError(code){
   };
   return Object.assign(new Error('Hermes chat failed.'),{publicMessage:messages[code]??messages.bridge});
 }
-export function hermesProvider(config,{directory,review=false}) {
+export function hermesProvider(config,{directory,review=false,isCapabilityEnabled=()=>true}) {
   for(const key of ['python','source','url','model'])if(typeof config?.[key]!=='string'||!config[key])throw new Error(`Genie chat needs ${key}.`);
   const url=new URL(config.url);
   if(!['http:','https:'].includes(url.protocol)||url.username||url.password)throw new Error('Use a provider URL without embedded credentials.');
@@ -33,7 +33,7 @@ export function hermesProvider(config,{directory,review=false}) {
   if(config.research){for(const key of ['search_url','extract_url']){const u=new URL(config.research[key]);if(!['http:','https:'].includes(u.protocol)||u.username||u.password||u.search||u.hash)throw new Error('Use explicit research service URLs without credentials or query parameters.');}}
   const children=new Set(),runtime=runtimeProvenance(config.source);
   return {
-    get info(){return {identity:identityStatus(home),runtime_provenance:runtime,gateway_tracking:!review&&config.gateway_tracking===true,engine:'Hermes',model:config.model,mode:'provider',can_act:false,research_available:Boolean(config.research),inspection_available:Boolean(config.inspection),operations_available:!review&&Boolean(config.operations),hourglass_available:!review&&Boolean(config.hourglass)};},
+    get info(){return {capabilities_configured:{research:Boolean(config.research),inspection:Boolean(config.inspection),server_changes:Boolean(config.operations),hourglass:Boolean(config.hourglass)},identity:identityStatus(home),runtime_provenance:runtime,gateway_tracking:!review&&config.gateway_tracking===true,engine:'Hermes',model:config.model,mode:'provider',can_act:false,research_available:Boolean(config.research)&&isCapabilityEnabled('research'),inspection_available:Boolean(config.inspection)&&isCapabilityEnabled('inspection'),operations_available:!review&&Boolean(config.operations)&&isCapabilityEnabled('server_changes'),hourglass_available:!review&&Boolean(config.hourglass)&&isCapabilityEnabled('hourglass')};},
     generate(input){return new Promise((resolve,reject)=>{
       const env={PATH:process.env.PATH??'',HOME:home,HERMES_HOME:home,HERMES_WRITE_SAFE_ROOT:home,HERMES_DISABLE_LAZY_INSTALLS:'1',PYTHONDONTWRITEBYTECODE:'1',PYTHONUNBUFFERED:'1',PYTHONIOENCODING:'utf-8',LANG:'en_US.UTF-8'};
       if(input.signal?.aborted){reject(new DOMException('Aborted','AbortError'));return;}
@@ -64,10 +64,10 @@ export function hermesProvider(config,{directory,review=false}) {
       child.on('error',()=>{cleanup();reject(chatError('runtime'));});
       child.on('close',code=>{cleanup();if(failed||code!==0||!final)reject(failed??chatError('bridge'));else resolve({text:final.text});});
       child.stdin.end(JSON.stringify({profile:review?'fleet-review':'chat',instructions:review?input.instructions:null,message:input.message,history:input.history,context:input.context,session_id:input.sessionId,call_id:!review&&config.gateway_tracking===true?validCallId(input.callId):null,
-        research:input.research&&config.research?{search_url:config.research.search_url,extract_url:config.research.extract_url,requested_at:new Date().toISOString()}:null,
-        inspection:review?null:config.inspection??null,
-        operations:!review&&config.operations?{...config.operations,origin:{conversation_id:input.sessionId,reply_id:input.replyId??null}}:null,
-        hourglass:review?null:config.hourglass??null,
+        research:input.research&&config.research&&isCapabilityEnabled('research')?{search_url:config.research.search_url,extract_url:config.research.extract_url,requested_at:new Date().toISOString()}:null,
+        inspection:review||!isCapabilityEnabled('inspection')?null:config.inspection??null,
+        operations:!review&&config.operations&&isCapabilityEnabled('server_changes')?{...config.operations,origin:{conversation_id:input.sessionId,reply_id:input.replyId??null}}:null,
+        hourglass:review||!isCapabilityEnabled('hourglass')?null:config.hourglass??null,
         provider:{url:config.url,model:config.model,api_key:config.api_key??'',max_tokens:config.max_tokens??8192,reasoning_effort:config.reasoning_effort===null?null:config.reasoning_effort??'xhigh'}}));
     });},
     close(){for(const child of children)child.kill();},

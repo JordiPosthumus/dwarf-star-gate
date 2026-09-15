@@ -455,7 +455,7 @@ export class Genie {
     if(!key)this.actionOfferKey=null;
     const urgent=key&&(key!==this.actionOfferKey||now-this.actionOfferAt>=60000);
     if(urgent){this.actionOfferKey=key;this.actionOfferAt=now;this.attempt=now;void this.ask('Review the current queue pressure and deterministic action offers now. Assess whether moving a waiting job would help. If no move is eligible, explain the current blocker. Request at most one exact offered action only when the evidence supports it.',{kind:'action'});}
-    else if(!this.chatQuestions&&now-(this.attempt||0)>=5*60000){this.attempt=now;void this.ask(undefined,{kind:'scheduled'});}
+    else if(snapshot.gateway?.genie_capabilities?.fleet_reviews!==false&&!this.chatQuestions&&now-(this.attempt||0)>=5*60000){this.attempt=now;void this.ask(undefined,{kind:'scheduled'});}
   }
   close(){this.closed=true;this.enabled=false;this.abort?.abort();if(this.queuedQuestion){Object.assign(this.queuedQuestion.receipt,{state:'cancelled',finished_at:Date.now(),error:'Dashboard stopped before answering'});this.queuedQuestion=null;}}
 }

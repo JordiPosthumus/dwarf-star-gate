@@ -13,6 +13,14 @@ deployment receipts stay outside this public repository.
 
 ## Incremental delivery
 
+- Owner priority: get the basic Genie capabilities working first, with independent
+  feature switches and visible failures. Further hardening follows real use;
+  preserve active jobs, established settings and deliberate maintenance stops.
+- Independent switches cover routine reviews, Genie queue balancing, recovery,
+  public research, inspection, approved server changes and Hourglass measurement.
+  Use the existing gateway state and recovery policy; a switch is not proof that
+  a service is connected. Active replies and issued operations finish when a
+  feature is switched off. Production activation is tracked per release.
 - [x] Conversational Genie with a dedicated pinned Hermes installation, native
   SOUL, private saved chats, public web tools and source evidence.
 - [x] Read-only observed/proposed/approved configuration projections in chat and
@@ -61,7 +69,14 @@ deployment receipts stay outside this public repository.
   unfinished. Published results now link to their raw JSON evidence for Genie
   inspection. Optional dashboard enrollment, real Hermes proposal/status
   tools and the owner approval/progress card now pass isolated integration and
-  browser checks; they have not been activated in production.
+  browser checks. One installation now has a real Genie-created proposal and
+  owner-review card; the proposal remains unexecuted. Installation enrollment
+  and individual operation approval are separate.
+  Recovery reconciliation must identify the actual service type: old DS4
+  systemd/launchd enrollment cannot recover a replacement Docker model server.
+  Explicit OpenAI route normalization is supported without changing legacy
+  enrollment. Docker recovery, compatible model verification and intentional-stop
+  handling still need qualification before enabling this path on a deployment.
 - [ ] Integrate owner-started Hourglass runs, initially measuring the chosen
   server directly with recorded configuration and measurement provenance.
   Saved aggregate reports are wired into the dashboard and chat,

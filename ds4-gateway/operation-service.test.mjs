@@ -20,11 +20,11 @@ async function rig(t){
   const library=path.join(root,'records');fs.mkdirSync(path.join(library,'approved'),{recursive:true});
   const record=path.join(library,'approved','fixture.json');fs.writeFileSync(record,'{"kind":"approved","worker_id":"fixture"}');
   const executor=path.join(root,'fixture.py');fs.writeFileSync(executor,`import time\ndef execute(plan, folder, progress):\n with (folder / 'effect.txt').open('x') as f: f.write('one disposable effect')\n progress('waiting_fixture','Waiting for the disposable fixture to finish.')\n while not (folder / 'finish.fixture').exists(): time.sleep(0.02)\n return {'state':'completed','scope':'Fixture only, no model server involved'}\n`);
-  let testing=false,preparations=0;
+  let enabled=true,testing=false,preparations=0;
   const config={ui_worker_management:true,control_socket:'/fixture.sock',server_records_directory:library,
     genie_chat:{python,inspection:{workers:{fixture:{ssh:['fixture.invalid'],container:'fixture-container'}}}},
     server_operations:{enabled:true,workers:{fixture:{native_url:'http://127.0.0.1:8001',qualification:{}}}}};
-  const service=createOperationService(config,{directory,isTesting:()=>testing,prepare:async(_python,input)=>{
+  const service=createOperationService(config,{directory,isTesting:()=>testing,isEnabled:()=>enabled,prepare:async(_python,input)=>{
     preparations++;assert.equal(input.enrollment.ssh,'fixture.invalid');assert.deepEqual(input.enrollment.cache_capacity_policy,{max_loss_percent:0});
     return {plan:{worker_id:'fixture',record_file:record,record_revision:input.record_revision,execution:{path:executor,sha256:hash(fs.readFileSync(executor))}},
       review:{before:{image:'retained',command:['PRIVATE_COMMAND']},after:{image:input.proposal.image,command:input.proposal.command},checks:['fixture only'],scope:'Disposable fixture, not serving qualification'}};
@@ -37,13 +37,26 @@ async function rig(t){
   const finish=()=>{if(fs.existsSync(folder))fs.writeFileSync(path.join(folder,'finish.fixture'),'finish');};
   t.after(async()=>{finish();await service.store.idle();if(fs.existsSync(path.join(folder,'launch-intent.json')))await waitFor(async()=>!(await service.store.current(id)).runner?.process_alive);service.close();await new Promise(r=>server.close(r));fs.rmSync(root,{recursive:true,force:true});});
   const post=async(route,body,headers={})=>fetch(base+route,{method:'POST',headers:{'content-type':'application/json',...headers},body:JSON.stringify(body)});
-  return {service,server,base,id,proposal,folder,post,finish,setTesting:v=>{testing=v;},preparations:()=>preparations};
+  return {service,server,base,id,proposal,folder,post,finish,setEnabled:v=>{enabled=v;},setTesting:v=>{testing=v;},preparations:()=>preparations};
 }
 
 test('operations stay absent by default and tool status does not expose execution paths or review commands',()=>{
   assert.equal(createOperationService({}),null);
   const view=operationToolView({id:'fixture',state:'awaiting_approval',review:{command:'PRIVATE_COMMAND',path:'/private/secret'},runner:{state:'running',process_alive:true,progress:{phase:'working',detail:'Checking',heartbeat_at:1,changed_at:1}}});
   assert.doesNotMatch(JSON.stringify(view),/PRIVATE_COMMAND|private\/secret/);
+});
+
+test('server-change switch stops new proposals and approvals while retaining saved reviews',async t=>{
+  const r=await rig(t);
+  r.setEnabled(false);
+  await assert.rejects(r.service.tool({action:'propose',proposal:r.proposal}),/switched off/);
+  assert.equal(r.preparations(),0);
+  r.setEnabled(true);await r.service.tool({action:'propose',proposal:r.proposal});await r.service.store.idle();
+  const row=(await r.service.status()).operations[0];
+  r.setEnabled(false);
+  await assert.rejects(r.service.change({action:'approve',id:r.id,plan_revision:row.plan_revision}),/switched off/);
+  assert.equal((await r.service.tool({action:'status',id:r.id})).state,'awaiting_approval');
+  assert.equal(fs.existsSync(path.join(r.folder,'launch-intent.json')),false);
 });
 
 test('proposal token cannot approve; exact owner approval starts one independent operation with visible progress',async t=>{

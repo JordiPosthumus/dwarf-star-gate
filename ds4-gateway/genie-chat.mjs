@@ -20,6 +20,7 @@ export function chatContext(snapshot={}) {
     source:snapshot.demo?'example setup':'dashboard observation',
     unavailable:!g||Boolean(snapshot.gateway_error),
     gateway:take(g,['model','context_length','request_timeout_ms','queue_timeout_ms','healthy','total','active','queued','available','draining']),
+    genie_capabilities:g?.genie_capabilities??null,
     recovery:g?.recovery?{...take(g.recovery,['configured','automatic','profile_handback_automatic']),workers:(g.recovery.workers??[]).map(w=>take(w,['worker_id','configured','eligible','reason','state','inspected_at'])),scope:'Dated gateway policy and worker eligibility. Automatic policy on does not mean a worker is eligible. Configuration-record mismatches do not prove this switch is off.'}:null,
     servers:(g?.workers??[]).map(w=>take(w,['id','model','backend','context_length','is_healthy','drained','load','max_concurrent_requests','queued','active_seconds','quarantine','model_aliases'])),
     configuration_records:recordsForChat(snapshot.server_records),
@@ -77,6 +78,16 @@ export class GenieChat {
     const stored={...s,messages:s.messages.map(m=>m.state==='queued'?{...m,state:'working',pending_dispatch:true}:m)};
     try{fs.writeFileSync(temp,JSON.stringify(stored),{mode:0o600,flag:'wx'});fs.renameSync(temp,file);}
     finally{if(fs.existsSync(temp))fs.unlinkSync(temp);}
+  }
+  capabilityActivity() {
+    const latest={};
+    for(const session of this.sessions.values())for(const message of session.messages)for(const key of ['research','inspection'])for(const event of message[key]?.events??[]){
+      if(!['complete','failed'].includes(event.state))continue;
+      const at=Date.parse(event.finished_at??event.at);
+      if(!Number.isFinite(at)||at<=(latest[key]?.at??0))continue;
+      latest[key]={at,state:event.state,service:key==='research'?(event.kind==='search'?'Web search':'Page extraction'):event.worker_id,error:event.state==='failed'?event.error:null};
+    }
+    return latest;
   }
   status() {
     return {stop_reply_supported:true,notebook_access:Boolean(this.notebook),available:Boolean(this.provider)&&!this.closed&&!this.isSuspended(),suspended:this.isSuspended(),...(this.provider?.info??{}),

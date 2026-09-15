@@ -32,7 +32,7 @@ export function operationToolView(row){
     scope:'Saved proposal or observed operation state. Proposal is not approval; process heartbeat is not model progress. Only the owner can approve in the gateway UI.'};
 }
 
-export function createOperationService(config,{directory,isTesting=()=>false,prepare=prepareProcess,runner=null}={}){
+export function createOperationService(config,{directory,isTesting=()=>false,isEnabled=()=>true,prepare=prepareProcess,runner=null}={}){
   if(config.server_operations?.enabled!==true)return null;
   if(config.ui_worker_management!==true||!config.control_socket||!config.server_records_directory||!config.genie_chat?.python)throw new Error('Serving operations need worker management, a private record library and the configured Genie interpreter.');
   const enrolled=config.server_operations.workers;
@@ -58,9 +58,10 @@ export function createOperationService(config,{directory,isTesting=()=>false,pre
   return {store,toolConfig,
     bind:port=>{toolConfig.url=`http://127.0.0.1:${port}/api/genie/operation-tools`;},
     status:async()=>({configured:true,suspended:isTesting(),operations:await Promise.all(store.list().map(present))}),
-    change:async input=>{if(input.action==='approve'&&isTesting())throw new Error('Server changes are paused while testing mode is active.');return store.change(input);},
+    change:async input=>{if(input.action==='approve'&&!isEnabled())throw new Error('Server changes are switched off. Existing operations continue.');if(input.action==='approve'&&isTesting())throw new Error('Server changes are paused while testing mode is active.');return store.change(input);},
     tool:async input=>{
       if(input?.action==='propose'&&['action,proposal','action,origin,proposal'].includes(Object.keys(input).sort().join(','))){
+        if(!isEnabled())throw new Error('Server changes are switched off.');
         if(isTesting())throw new Error('Operation preparation is paused while testing mode is active.');
         try{return operationToolView(store.propose(input.proposal,input.origin??{}));}
         catch(error){
