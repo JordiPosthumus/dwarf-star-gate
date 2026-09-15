@@ -20,6 +20,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=Path, required=True)
     parser.add_argument('--node', default='node')
+    parser.add_argument('--model-file', type=Path,
+        help='Optional private JSON model entry to freeze in the synthetic run; no model work starts')
     args = parser.parse_args()
     adapter = (Path(__file__).resolve().parents[1] / 'ds4-gateway/hourglass-console.mjs').as_uri()
     with tempfile.TemporaryDirectory(prefix='sg-hourglass-contract-') as temporary:
@@ -27,12 +29,19 @@ def main():
         hashes = {}
         # Module-relative paths now point at this disposable tree. Never import
         # from the live checkout, copy private data, or call its launch script.
-        for path in sorted(args.source.glob('*.py')):
+        paths = sorted(args.source.glob('*.py'))
+        paths += [args.source / name for name in
+            ['harness/pi.mjs', 'harness/inference-settings.mjs', 'harness/pi-lock.json']
+            if (args.source / name).exists()]
+        for path in paths:
             if path.is_symlink() or not path.is_file():
-                raise ValueError('Expected regular Python source files')
+                raise ValueError('Expected regular native source files')
             data = path.read_bytes()
-            (root / path.name).write_bytes(data)
-            hashes[path.name] = hashlib.sha256(data).hexdigest()
+            name = str(path.relative_to(args.source))
+            destination = root / name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(data)
+            hashes[name] = hashlib.sha256(data).hexdigest()
         if 'web.py' not in hashes:
             raise ValueError('Source must contain the native web.py console')
         sys.path.insert(0, str(root))
@@ -47,6 +56,11 @@ def main():
         model = {'name': 'example', 'model': 'example-native-id',
             'base_url': 'http://example.invalid/v1', 'max_tokens': 262144,
             'context_window': 262144, 'reasoning': 'xhigh'}
+        if args.model_file:
+            model = json.loads(args.model_file.read_text())
+            if not isinstance(model, dict) or not isinstance(model.get('name'), str):
+                raise ValueError('Expected one native model object')
+        model_name = json.dumps(model['name'])
         models = root / 'models.json'
         models.write_text(json.dumps({'models': [model]}))
         server = web.ThreadingHTTPServer(('127.0.0.1', 0), web.H)
@@ -62,10 +76,10 @@ def main():
                 text=True, timeout=60))
 
         try:
-            result = node('const p=await c.prepare("example"); '
+            result = node('const p=await c.prepare(' + model_name + '); '
                 'assert.equal(p.window_seconds,3600); '
                 'const r=await c.submit(p.id,{ownerConfirmedIdle:true}); '
-                'const o=await c.observe(r.job_id,"example"); assert.equal(o.state,"pending"); '
+                'const o=await c.observe(r.job_id,' + model_name + '); assert.equal(o.state,"pending"); '
                 'console.log(JSON.stringify({review:p,receipt:r,observation:o}));')
             assert web.worker_thread is None and len(web.queue) == 1 and not web.running
             job = web.queue.popleft()
@@ -80,7 +94,7 @@ def main():
                 active_intervals=[{'start': ended - 3600, 'end': ended}])
             web.done.append(job)
             report = node('const id=' + json.dumps(job['id']) + '; '
-                'assert.equal((await c.observe(id,"example")).state,"completed"); '
+                'assert.equal((await c.observe(id,' + model_name + ')).state,"completed"); '
                 'console.log(JSON.stringify(await c.report(id)));')
             summary = report['summary']
             assert summary['benchmark_version'] == result['review']['benchmark_version']
@@ -93,12 +107,12 @@ def main():
                 ('model', models, models.read_text() + '\n'),
                 ('bank', task, task.read_text() + '\n'),
                 ('hardware', root / 'hardware-profiles.json',
-                    json.dumps({'http://example.invalid/v1': {'label': 'Changed fixture hardware'}})),
+                    json.dumps({model['base_url']: {'label': 'Changed fixture hardware'}})),
             ]:
                 before = path.read_bytes() if path.exists() else None
                 try:
                     rejection = node('import fs from "node:fs"; '
-                        'const p=await c.prepare("example"); fs.writeFileSync('
+                        'const p=await c.prepare(' + model_name + '); fs.writeFileSync('
                         + json.dumps(str(path)) + ',' + json.dumps(content) + '); '
                         'await assert.rejects(c.submit(p.id,{ownerConfirmedIdle:true}),'
                         'e=>e.status===400 && e.uncertain===false); '

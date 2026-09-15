@@ -174,12 +174,21 @@ Run that opt-in check against a trusted Hourglass checkout with:
 python3 scripts/hourglass-native-integration.py --source /path/to/Hourglass
 ```
 
-Use `--node /path/to/node` if Node 22+ is not on PATH. The fixture copies only
-top-level Python source into a temporary directory, creates its own model and
+Use `--node /path/to/node` if Node 22+ is not on PATH. The fixture copies
+top-level Python source and the available Pi adapter/lock files into a temporary
+directory, creates its own model and
 question, and starts only an HTTP handler on an ephemeral loopback port. It does
 not import the live checkout, launch its worker or copy its configuration,
 history or bank. Output identifies the copied source hashes and explicitly labels
 the synthetic completion. A source change during verification fails the check.
+
+To qualify a specific saved native entry, pass `--model-file /path/to/model.json`
+with one model object. The fixture freezes that complete entry unchanged in a
+synthetic evaluation and checks stale model, bank and hardware rejection. It still
+starts no model worker, even if the entry points at a real server. Raw model
+configuration and credentials are not emitted; the result includes the native
+aggregate summary, so keep it private when its model/hardware labels are private.
+This also exercises native Pi metadata capture when the supplied entry uses it.
 
 Check the **running** console's `/api/health`, not just the files on disk. A legacy
 JordiBench process can continue serving older code after its checkout is updated.
