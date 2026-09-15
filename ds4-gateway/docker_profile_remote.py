@@ -21,6 +21,7 @@ try:
   if p['method'] not in ['GET','POST']: raise ValueError('Unsupported Docker request')
   result=scope['Docker'](p['socket']).request(p['method'],p['path'],p.get('body'),timeout=p['timeout'],missing=p['missing'])
  elif p['operation']=='idle': result=scope['native_idle'](p['url'])
+ elif p['operation']=='http': result=scope['native_request'](p['url'],p['route'],p.get('body'))
  else: raise ValueError('Unsupported transport operation')
  print(json.dumps({'ok':True,'result':result}))
 except Exception:
@@ -66,3 +67,8 @@ class SSHDocker(Docker):
     def idle(self, url):
         native_address(url)
         return self._call({'operation': 'idle', 'url': url}, observation_timeout=25)
+
+    def native_request(self, url, route, body=None):
+        native_address(url)
+        return self._call({'operation': 'http', 'url': url, 'route': route, 'body': body},
+                          observation_timeout=25 if body is None else None)

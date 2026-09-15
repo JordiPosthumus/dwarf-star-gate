@@ -2,10 +2,12 @@
 
 The conversational Genie does not yet execute this workflow. The retained
 container executor, approval store, independent runner, SSH transport and owned
-gateway maintenance adapter are
+gateway maintenance adapter, serving sequence and native qualifier are
 implemented and tested as components. Connecting the chat and approval UI to
 the complete maintenance, model qualification and readmission workflow remains
-unfinished. Existing recovery and maintenance behavior is unchanged.
+unfinished, including the enrolled serving entry point and reviewed record
+preparation. A versioned record publisher is now exercised with a real private
+Git fixture. Existing production recovery and maintenance behavior is unchanged.
 
 ## Approval and independent execution
 
@@ -98,6 +100,76 @@ The Python adapter has been exercised against a real disposable gateway/backend
 fixture with an active request. That request finished without cancellation before
 the owned release and conditional return. Native model qualification and the
 full approved serving workflow remain separate, unfinished integration work.
+
+## Serving sequence and native qualification
+
+`serving_operation.py` joins maintenance, retained Docker apply, qualification,
+record publication and conditional readmission. It verifies the same worker,
+endpoint, record revision and retained identity throughout. A candidate that
+fails qualification is restored only under the applicable approved record's
+restoration rule; the restored version must pass its own checks. An acknowledged
+startup followed by an identified stopped container can also take this restore
+path. An uncertain mutation is never replayed.
+
+If stopped-candidate preparation fails before any stop intent, the executor can
+return the demonstrably unchanged original through fresh maintenance/readmission
+checks. A stop intent without a confirmed outcome is not evidence that nothing
+happened. Failed or uncertain record publication leaves routing held for
+reconciliation. A restart during publication cannot inherit the earlier
+qualification. `serving_records.py` publishes to the existing private Git library.
+It requires the complete candidate record in the exact owner-approved plan,
+binds that record to the reviewed recipe and qualified model/context, and saves
+the old record bytes, new record, actual Docker metadata, owner approval and
+hashed native request/response evidence. A new image cannot inherit uninspected
+package versions. A new candidate does not inherit a restoration-drill claim for
+the previous container; the proven old record remains retained with its evidence.
+Restoration keeps the original approval and adds the actual new startup evidence.
+
+The writer supports a library inside a larger personal repository. It commits
+only its record and operation artifacts, runs ordinary Git hooks, preserves
+unrelated staged work and never pushes the private repository. Existing edits
+to the target record fail preflight before draining. A failed or uncertain commit
+preserves files and the hold for reconciliation; the operation does not repeat it.
+The serving entry point and trusted candidate-record preparation are not yet
+enrolled in the independent runner or Genie.
+
+The record's `restoration.change_classes` maps `serving_flags` and/or
+`engine_image` to retained restoration data: automatic mode, retained container
+and canonical Docker signature, external-state preservation, restore steps,
+required success-check IDs and a hashed drill reference under `artifacts/`.
+The dated proof must identify the same worker and restored configuration, with
+`state: restored-in-drill` and successful checks. A descriptive label or a proof
+for another configuration is insufficient. Existing private records and older
+receipt formats are not silently rewritten or treated as this enrollment.
+Missing or additional unsupported success checks prevent the operation starting.
+This grants no authority to the existing automatic recovery executor.
+
+`serving_qualification.py` reuses the checks exercised on the selected Spark
+build: native model/context, text, real tool calls and follow-up, vision, two
+interleaved cold/warm cache conversations, full-context and overflow boundaries,
+reasoning/content EOS behavior, and native abort/error/preemption counters.
+Requests and raw responses are saved with hashes. Large full-context bodies are
+separate artifacts, so operation-status receipt limits cannot truncate them.
+The 16-token EOS requests are diagnostic only. Inference is never retried and
+has no newly imposed cancellation deadline. Readiness observations have bounded
+transport waits; an answering API with the wrong model fails qualification
+instead of waiting indefinitely for its identity to change.
+
+This first qualifier covers the enrolled Qwen/vLLM contract and existing native
+endpoint/model identity. It does not qualify increased concurrency, arbitrary
+model families, exhaustive maximum-output generation or benchmark performance.
+Changed concurrency requires its own enrolled qualification; changing routing
+requires the corresponding reviewed workflow. The current direct HTTP adapter
+uses the unauthenticated loopback API of the selected serving setup. Other
+authentication arrangements need their enrolled transport before activation.
+
+Sequence tests use the real component code with synthetic external Docker,
+gateway and API fixtures; publication integration uses a real disposable Git
+repository, including unrelated staged work and a failing hook. Separate real
+loopback HTTP tests cover
+request bytes, error evidence and redirects. Read-only models/metrics checks on
+enrolled hosts verify the native-read transport. None of these is a complete
+production upgrade or a fresh native-model qualification of this new workflow.
 
 Apply returns `started_unverified`; restoration returns `restored_unverified`.
 Neither state authorizes routing. The complete workflow must check the actual

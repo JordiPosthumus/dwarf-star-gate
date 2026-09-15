@@ -1,5 +1,40 @@
 # Star Gate work log
 
+## 2026-09-15 — Serving sequence, qualification and record publication (development)
+
+Joined owned maintenance, retained Docker apply, native qualification, restoration
+and conditional return. Known startup failure can restore the retained version;
+an uncertain stop is preserved without replay. A failure before any stop can
+return a demonstrably unchanged server. Identity and startup time are checked
+again after qualification and publication, and unexpected gateway work prevents
+qualification. Required restoration checks cannot be silently ignored.
+
+The native qualifier records model/context, text, actual tools and tool follow-up,
+vision, interleaved cold/warm cache, full context/overflow, reasoning/content EOS
+and fault-counter checks. Full-context request bytes are separate hashed artifacts
+rather than bounded status receipts. No inference retry, new cancellation deadline
+or production limit was introduced. The first contract covers Qwen/vLLM at the
+existing endpoint; native concurrency increases need their own qualification.
+
+Added a publisher for the existing private Git library. Exact reviewed candidate
+records, qualified identities and owner approval are required. Old/new records,
+Docker metadata and raw qualification evidence are retained. Only the operation's
+files are committed; ordinary hooks and unrelated staged work are preserved.
+Dirty target records fail before draining. Failed publication preserves evidence
+and the hold. This publisher does not push private repositories or expand recovery
+authority, and does not claim a new container inherited its predecessor's drill.
+
+Validation: the operation suite passed 29 Node and 73 Python checks, with one
+optional native Docker test skipped. Tests use actual process, HTTP and Git
+fixtures plus synthetic external model/Docker responses; they are not a real
+fleet upgrade. Read-only models/metrics checks on both enrolled Sparks returned
+HTTP 200 with unchanged container identities. No inference, drain, restart or
+live record update was performed for this increment. Fixture failures in macOS
+path normalization, artifact naming and case-name validation were fixed and their
+logs retained. The entry point/dependency binding, trusted record preparation,
+private restoration enrollment, Genie approval UI and whole-workflow native
+qualification remain unfinished.
+
 ## 2026-09-15 — Owned maintenance and conditional readmission (development)
 
 Added the Python operation adapter for the existing gateway control socket. It

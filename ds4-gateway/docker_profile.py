@@ -5,6 +5,7 @@ bind the reviewed plan to owner approval, own a gateway maintenance lock, and
 qualify the result before readmission. Started is deliberately not verified.
 """
 import copy
+import base64
 import hashlib
 import http.client
 import json
@@ -116,6 +117,27 @@ def native_idle(url):
     counts = [[float(line.rsplit(' ', 1)[1]) for line in lines if line.startswith('vllm:' + key + '{')]
               for key in ['num_requests_running', 'num_requests_waiting']]
     return all(group and all(value == 0 for value in group) for group in counts)
+
+
+def native_request(url, route, body=None):
+    """One direct request for the serving qualifier; never retry inference."""
+    native_address(url)
+    if route not in ['/v1/models', '/v1/chat/completions', '/v1/completions', '/metrics']:
+        raise ValueError('Unsupported native qualification route')
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *args, **kwargs):
+            return None
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+    request = urllib.request.Request(url.rstrip('/') + route,
+              data=None if body is None else json.dumps(body).encode(), headers={'Content-Type': 'application/json'})
+    try:
+        # Readiness/metrics are observations. Inference has no new cancellation
+        # deadline; only the owning qualifier records its completed response.
+        response = opener.open(request, timeout=10 if body is None else None)
+    except urllib.error.HTTPError as error:
+        response = error
+    with response:
+        return {'status': response.code, 'body_base64': base64.b64encode(response.read()).decode()}
 
 
 class RetainedProfile:
@@ -256,8 +278,12 @@ class RetainedProfile:
             if restoration.exists():
                 if (restoration / 'start-previous.result.json').exists() and previous['State']['Running'] and not candidate['State']['Running'] and previous['Name'] == '/' + plan['name']:
                     state = 'restored_unverified'
+                elif (restoration / 'start-previous.result.json').exists() and not previous['State']['Running'] and not candidate['State']['Running'] and previous['Name'] == '/' + plan['name']:
+                    state = 'restoration_stopped_unverified'
             elif steps.get('start-candidate') and candidate['State']['Running'] and not previous['State']['Running'] and candidate['Name'] == '/' + plan['name']:
                 state = 'started_unverified'
+            elif steps.get('start-candidate') and not candidate['State']['Running'] and not previous['State']['Running'] and candidate['Name'] == '/' + plan['name']:
+                state = 'candidate_stopped_unverified'
         return {'operation_id': operation_id, 'state': state,
                 'previous': previous, 'candidate': candidate, 'acknowledged_steps': steps,
                 'scope': 'Read-only operation observation. Container startup is not qualification or permission to readmit.'}

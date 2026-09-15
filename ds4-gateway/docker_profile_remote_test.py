@@ -53,6 +53,20 @@ class RemoteTest(unittest.TestCase):
         self.assertEqual(run.call_count, 0)
         self.assertTrue(transport.idle('http://127.0.0.1:8001'))
 
+    def test_native_inference_has_no_new_transport_deadline_and_is_not_shell_text(self):
+        transport, run = self.transport({'status': 200, 'body_base64': 'e30='})
+        body = {'messages': [{'role': 'user', 'content': '$(do-not-execute)'}]}
+        transport.native_request('http://127.0.0.1:8001', '/v1/chat/completions', body)
+        self.assertIsNone(run.call_args.kwargs['timeout'])
+        self.assertNotIn('do-not-execute', ' '.join(run.call_args.args[0]))
+        self.assertEqual(json.loads(run.call_args.kwargs['input'])['body'], body)
+        self.assertEqual(run.call_count, 1)
+
+    def test_native_readiness_uses_bounded_observation(self):
+        transport, run = self.transport({'status': 200, 'body_base64': 'e30='})
+        transport.native_request('http://127.0.0.1:8001', '/v1/models')
+        self.assertEqual(run.call_args.kwargs['timeout'], 25)
+
     def test_exact_bootstrap_roundtrip_with_separate_python_process(self):
         # Exercise real JSON stdin/stdout and exception handling without SSH or
         # Docker. This is transport protocol evidence, not a live host check.

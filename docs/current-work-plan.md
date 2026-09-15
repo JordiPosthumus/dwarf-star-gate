@@ -1,6 +1,6 @@
 # Current work plan
 
-Updated 14 September 2026. The current goal is the incremental Star Gate plan:
+Updated 15 September 2026. The current goal is the incremental Star Gate plan:
 a conversational Hermes Genie, configuration records and proven restoration,
 queue priorities and qualified concurrency, useful research and approved
 operations, then benchmarking and later media support. Keep the small gateway
@@ -47,9 +47,13 @@ deployment receipts stay outside this public repository.
   disposable-Docker qualification. The approval store, independent runner and
   SSH transport have component tests, including operation survival after a real
   dashboard process exits. Owned maintenance and conditional readmission are
-  exercised against a disposable gateway with active work preserved. Joining
-  these pieces with real-model verification, restoration and the chat/approval
-  UI remains in development.
+  exercised against a disposable gateway with active work preserved. The serving
+  sequence now joins apply, native checks, record publication and restoration in
+  component tests. Record publication retains prior bytes and qualification evidence
+  in a real disposable Git library while preserving unrelated staged work. The
+  enrolled entry point, trusted candidate-record preparation, applicable private
+  restoration enrollment, fresh native-model qualification
+  and chat/approval UI remain in development.
 - [ ] Integrate owner-started Hourglass runs, initially measuring the chosen
   server directly with recorded configuration and measurement provenance.
   Saved aggregate reports are wired into the dashboard and chat,
