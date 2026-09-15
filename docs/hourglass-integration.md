@@ -254,7 +254,38 @@ request. A newer manual decision or changed serving identity prevents automatic
 readmission. No one-hour wall-clock kill timer is introduced.
 
 Tests cover these paths using the real maintenance receipt code and simulated
-native/gateway responses. The sequence is not yet enrolled in the independent
-runner or wired into the dashboard's Start control. The existing owner-confirmed
+native/gateway responses. The frozen entry now executes through the existing
+independent approval runner; trusted plan preparation and wiring into the
+dashboard's Start control remain unfinished. The existing owner-confirmed
 idle-window workflow is unchanged; production contention protection and a real
 benchmark remain unproven. This development module grants Genie no new authority.
+
+`hourglass_native.py` binds the native protocol to read-only Docker/vLLM checks.
+The container configuration signature, startup identity, port binding and served
+model must match the reviewed target. Direct idle checks reuse the existing
+native metrics reader. The initial adapter supports this enrolled Docker/vLLM
+path; other runtimes need their corresponding native idle and identity checks.
+
+Before POSTing, it checks the reviewed controller, model endpoint and identity,
+model/hardware revisions, full question-bank hashes, one-hour window, benchmark
+version and scoring policy. A busy native console or changed review is rejected
+before submission. Native 400 is a definite validation rejection; redirects,
+timeouts, other errors and malformed acknowledgements never cause a retry. The
+15-second HTTP observation limit does not cancel native benchmark work. After
+acceptance, a replacement controller can supply the same job/model receipt without
+starting another run. Missing or conflicting receipts remain unknown.
+
+`hourglass_executor.py` combines this adapter with the owned sequence.
+`build_executor(..., kind='hourglass')` freezes its seven local source modules
+using the existing approved-source mechanism. Normal serving bundles keep their
+existing default. The independent runner still requires matching owner approval,
+launch intent, unchanged configuration-record bytes and the exact executor hash.
+The runtime, SSH enrollment and gateway remain outside that source snapshot.
+
+Integration tests exercise the actual entry, native HTTP requests, receipt
+sequence and independent process with synthetic Docker/gateway/controller state.
+Changing the copied checkout after approval does not change the frozen execution,
+and invoking the runner again does not submit another native job. This proves
+the tested wiring, not a real benchmark, live contention protection or production
+enrollment. A lifecycle marked completed retains the separate native outcome,
+including rejection or error; it does not establish a measured score.
