@@ -75,3 +75,14 @@ unexamined local repairs. That inference remains unsupported: dates and version
 labels do not establish local patch contents. This exercise
 proves live inspection and research integration, not consistently correct advice,
 an automatic upstream watcher, candidate compatibility or measured improvement.
+
+A subsequent read-only comparison of the installed source supplied stronger
+evidence: the model-level PLE residual addition and QSA gate multiplication are
+still separate, one upstream target file is absent, and the PR's runtime hunks
+do not apply cleanly to the repaired implementation. Forward and reverse checks
+ran against copied files in an isolated directory; no candidate code executed.
+The dated comparison and raw evidence were attached to the existing private
+configuration record and version-controlled locally. These findings describe
+the inspected source paths, not every compiler optimization or a performance
+result. The recommendation remains to retain the working build; this candidate
+requires adaptation and separate qualification.

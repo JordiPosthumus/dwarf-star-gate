@@ -66,6 +66,12 @@ deployment receipts stay outside this public repository.
   A [real configured-Genie exercise](genie-studies.md#live-research-exercise-15-september-2026)
   joined live inspection to official upstream PR research. Independent review
   identified two narrative corrections; no candidate was installed or measured.
+  A later installed-source comparison establishes that the selected fusion is
+  absent from the inspected paths and is not directly applicable to the repaired
+  tree. Its hashed evidence is available through the existing private record
+  tools. Direct read-only runtime-source inspection for Genie remains to be
+  connected: metadata/launcher inspection and operator-prepared source artifacts
+  are not a fully independent source-comparison capability.
 - [x] Use the configured Hermes runtime and current Genie identity for fleet
   reviews, preserving provider and guarded-action contracts.
 - [x] Connect conversational questions to the existing exception for yielding
