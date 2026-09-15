@@ -91,7 +91,11 @@ deployment receipts stay outside this public repository.
   enrollment. The [Docker recovery adapter](docker-recovery.md) now reuses the
   existing runner, with explicit Qwen/vLLM verification and deliberate-stop
   preservation. An actual Docker/SSH/controller fixture completed one restart,
-  verification and readmission using synthetic model/cache responses. Actual
+  verification and readmission using synthetic model/cache responses. A real
+  configured Genie also initiated one disposable-service restart through the
+  conversational tools and checked its in-progress receipt; the controller then
+  completed recovery. This verifies the real model/tool/action path, with the
+  recovered service’s model and cache replies still synthetic. Actual
   model recovery qualification and installation enrollment remain unfinished;
   the fixture does not prove production recovery. The Qwen model/cache verifier
   separately passed four real requests on each of two unchanged running workers,
