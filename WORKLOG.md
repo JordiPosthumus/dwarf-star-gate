@@ -1,5 +1,16 @@
 # Star Gate work log
 
+## 2026-09-15 — Conditional readmission promoted
+
+Promoted the optional newer-operator/maintenance decision checks to the gateway.
+Production-based regression passed190 tests; one integration test requires the
+optional operation module and is skipped when it is absent. That fixture now
+releases its pending request even if setup fails. Coordinated replacement kept
+the Door, dashboard and native containers running and preserved serving settings.
+One status poll failed before headers during the handover; inference and model
+discovery failure counts did not increase. That status-poll gap remains in the
+full continuity acceptance work.
+
 ## 2026-09-15 — Recovery policy evidence in chat
 
 An actual Genie audit confused a worker binding mismatch with automatic recovery

@@ -818,7 +818,7 @@ test('conditional resume refuses a later completed maintenance operation',async 
   assert.equal(r.gateway.stats().workers[0].drained,true);
 });
 
-test('Python operation maintenance uses the real gateway and retains active fixture work',async t=>{
+test('Python operation maintenance uses the real gateway and retains active fixture work',{skip:!fs.existsSync(fileURLToPath(new URL('./operation_maintenance.py',import.meta.url)))},async t=>{
   const r=await rig(t,1,{control_socket:true}),directory=path.join(path.dirname(r.config.state_file),'operation-fixture'),operation=randomUUID();fs.mkdirSync(directory);
   const source=path.dirname(fileURLToPath(import.meta.url));
   const code=`import sys,json
@@ -834,11 +834,13 @@ print(json.dumps(result))
 `;
   const call=async phase=>JSON.parse((await promisify(execFile)('python3',['-I','-c',code,source,directory,operation,r.config.control_socket,phase],{timeout:10000})).stdout);
   const pending=r.request('{"wait_for_release":true}','owned-operation-fixture');await until(()=>r.backends[0].active===1);
+  try {
   const acquired=await call('acquire');assert.equal(acquired.action,'lock');
   assert.equal(r.gateway.stats().workers[0].drained,true);assert.equal(r.gateway.stats().workers[0].load,1);assert.equal(r.backends[0].aborts,0);
   r.backends[0].releases[0]();assert.equal((await pending).status,200);
   const returned=await call('finish');assert.equal(returned.state,'readmitted');
   assert.equal(r.gateway.stats().workers[0].drained,false);assert.equal(r.gateway.stats().workers[0].maintenance_locks.length,0);assert.equal(r.backends[0].aborts,0);
+  } finally {r.backends[0].releases?.splice(0).forEach(release=>release());await pending;}
 });
 
 test('legacy recovery CLI waits beyond its former five-second timeout',async t=>{
