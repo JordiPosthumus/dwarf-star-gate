@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';import http from 'node:http';import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
-import {createRecoveryTools} from './genie-recovery.mjs';import {hermesProvider} from './genie-hermes.mjs';import {GenieChat} from './genie-chat.mjs';
+import {createRecoveryTools,recoveryEvidence} from './genie-recovery.mjs';import {hermesProvider} from './genie-hermes.mjs';import {GenieChat} from './genie-chat.mjs';
 const exact={worker_id:'worker-a',evidence_id:'a'.repeat(64),action_id:'11111111-1111-4111-8111-111111111111'};
 const state=()=>({version:1,recovery:{configured:true,automatic:true,workers:[{worker_id:'worker-a',eligible:true,evidence_id:exact.evidence_id}],operations:[]}});
 test('recovery tools preserve policy, exact core inputs, read-only status when off and issued operations',async t=>{
@@ -33,3 +33,5 @@ test('installed Hermes requests recovery once, records its handle and observes t
  const completed=answer.recovery.events.filter(e=>e.state==='complete');assert.equal(completed.length,3);assert.equal(completed[1].action_id,status.recovery.operations[0].id);assert.equal(chat.capabilityActivity().recovery.state,'complete');
  const reread=new GenieChat({directory:path.join(directory,'chats'),provider});assert.deepEqual(reread.get(c.id).messages[1].recovery,answer.recovery);
 });
+
+test('registered legacy adapter with mismatched binding is explicitly unconnected',()=>{const s=state();s.recovery.workers[0].enrollment={binding:'mismatch'};const result=recoveryEvidence(s);assert.deepEqual(result.matched_bindings,[]);assert.equal(result.unmatched_bindings[0].worker_id,'worker-a');assert.equal(result.configured,true);});

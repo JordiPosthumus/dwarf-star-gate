@@ -4,7 +4,9 @@ export function recoveryEvidence(status){
   const recovery=status?.recovery;
   if(status?.version!==1||!Array.isArray(recovery?.workers)||!Array.isArray(recovery.operations))throw new Error('Current recovery status is unavailable.');
   return {observed_at:new Date().toISOString(),...recovery,
-    scope:'Current enrolled-service eligibility and existing recovery receipts. The switch alone does not connect a service. A queued receipt is acceptance, not successful recovery. No enrollment, canary or server configuration changes are available here.'};
+    matched_bindings:recovery.workers.filter(w=>w.enrollment?.binding==='matched').map(w=>w.worker_id),
+    unmatched_bindings:recovery.workers.filter(w=>w.enrollment?.binding!=='matched').map(w=>({worker_id:w.worker_id,binding:w.enrollment?.binding??'unknown'})),
+    scope:'Current enrolled-service eligibility and existing recovery receipts. configured and adapter describe a registered definition, not a working connection. A mismatched or absent binding is NOT connected. The switch alone does not connect a service. A queued receipt is acceptance, not successful recovery. No enrollment, canary or server configuration changes are available here.'};
 }
 export function createRecoveryTools({read,recover,isTesting=()=>false,isEnabled=()=>true}){
   async function tool(input){
