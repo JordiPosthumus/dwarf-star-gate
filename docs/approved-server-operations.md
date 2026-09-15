@@ -1,7 +1,8 @@
 # Approved serving changes — development
 
 The conversational Genie does not yet execute this workflow. The retained
-container executor, approval store, independent runner and SSH transport are
+container executor, approval store, independent runner, SSH transport and owned
+gateway maintenance adapter are
 implemented and tested as components. Connecting the chat and approval UI to
 the complete maintenance, model qualification and readmission workflow remains
 unfinished. Existing recovery and maintenance behavior is unchanged.
@@ -67,6 +68,36 @@ model-supplied arguments never enter a shell command. It installs nothing on the
 host. Observation has bounded transport waits, while graceful stop has no new
 kill deadline. A failed mutation response is uncertain and is never retried by
 the transport. Host aliases and the Docker socket must come from enrollment.
+
+## Owned maintenance and conditional readmission
+
+`operation_maintenance.py` uses the gateway's existing Unix control socket. It
+records its original worker state, acquires a named hold and waits for gateway
+and direct server work to finish without cancelling requests. An uncertain lock
+or release response is resolved through the same request's saved gateway
+receipt, never by repeating the mutation. Releasing its own hold is separate
+from returning the server to traffic. The serving executor must complete actual
+qualification before asking for that return.
+
+The optional `expected_operator_actions` and `expected_maintenance_actions` maps
+on `/resume-workers` bind automated readmission to the observed decisions. The
+gateway checks them before readiness probes and immediately before committing
+the resume. A new pause or maintenance action makes the old request fail. The
+latest operator decision is retained separately from the bounded activity history
+so pruning that history cannot erase a pause token. Legacy state remains readable;
+the new per-worker records are written with subsequent operator actions.
+
+Existing manual Resume works without these optional maps. The operation adapter
+requires `conditional_resume_version: 1` from `/workers` before taking a hold;
+it cannot silently use an older gateway that would ignore its conditions. It
+preserves a preexisting manual pause, leaves other holds intact, and does not
+repeat an uncertain readmission request. A recorded readmission result describes
+that operation's observation, not a permanent promise about current routing.
+
+The Python adapter has been exercised against a real disposable gateway/backend
+fixture with an active request. That request finished without cancellation before
+the owned release and conditional return. Native model qualification and the
+full approved serving workflow remain separate, unfinished integration work.
 
 Apply returns `started_unverified`; restoration returns `restored_unverified`.
 Neither state authorizes routing. The complete workflow must check the actual

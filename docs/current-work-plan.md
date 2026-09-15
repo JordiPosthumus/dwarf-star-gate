@@ -46,8 +46,10 @@ deployment receipts stay outside this public repository.
   The [retained Docker executor](approved-server-operations.md) has unit and
   disposable-Docker qualification. The approval store, independent runner and
   SSH transport have component tests, including operation survival after a real
-  dashboard process exits. Connecting the chat/approval UI, owned maintenance,
-  real-model verification and readmission remains in development.
+  dashboard process exits. Owned maintenance and conditional readmission are
+  exercised against a disposable gateway with active work preserved. Joining
+  these pieces with real-model verification, restoration and the chat/approval
+  UI remains in development.
 - [ ] Integrate owner-started Hourglass runs, initially measuring the chosen
   server directly with recorded configuration and measurement provenance.
   Saved aggregate reports are wired into the dashboard and chat,

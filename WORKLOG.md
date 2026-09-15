@@ -1,5 +1,27 @@
 # Star Gate work log
 
+## 2026-09-15 — Owned maintenance and conditional readmission (development)
+
+Added the Python operation adapter for the existing gateway control socket. It
+takes a named hold, waits for gateway and direct work, and resolves uncertain
+lock/release acknowledgements using the original receipt. Its own release leaves
+routing paused until a separate verified return; it preserves preexisting pauses
+and other owners' holds. It never retries an uncertain readmission request.
+
+The gateway accepts optional expected operator/maintenance action maps on Resume
+and checks them again after readiness probes. Automated return cannot overwrite
+a newer pause or completed maintenance action. One current operator decision per
+registered worker survives activity-history pruning; legacy saved state is read
+without rewriting it on startup. Existing manual Resume remains available.
+
+The complete gateway/agent-control suites passed 210 tests. Operation component
+checks passed 29 Node and 37 Python tests, with the optional native Docker fixture
+not rerun. A real disposable gateway/backend test retained an active request
+through maintenance and readmission without cancelling it. These tests do not
+qualify a native model server. Joining the approved runner, Docker change, model
+qualification/restoration and Genie approval UI remains unfinished; production
+services were not restarted for this development increment.
+
 ## 2026-09-15 — Approval and independent operation runner (development)
 
 Added saved proposal/approval handling and an independent Python runner. Exact
