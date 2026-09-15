@@ -10,6 +10,12 @@ from docker_profile import digest, native_address, signature
 from hourglass_operation import NativeStartRejected
 
 
+def gateway_target_matches(snapshot, worker, endpoint):
+    workers = [row for row in snapshot.get('workers', []) if row.get('id') == worker]
+    return (snapshot.get('conditional_resume_version') == 1 and len(workers) == 1
+        and workers[0].get('url') == endpoint)
+
+
 class HourglassNative:
     def __init__(self, plan, docker, *, opener=None):
         self.plan, self.docker = plan, docker
@@ -78,33 +84,36 @@ class HourglassNative:
     def idle(self):
         return self.docker.idle(self.target['url'])
 
+    def verify_request(self, payload):
+        """Recheck a saved review using GETs only; never enqueue a job."""
+        if payload != self.plan['native_request']:
+            raise ValueError('Reviewed native request changed')
+        health, state = self.read()
+        model = next(m for m in state['model_configs'] if m.get('name') == payload['model'])
+        tasks = state['tasks']
+        if (set(payload) != {'model', 'tasks', 'repeat', 'models_revision', 'hardware_revision', 'task_bundles'}
+                or payload['repeat'] != 1 or not tasks or any(t.get('issues') for t in tasks)
+                or len({t['id'] for t in tasks}) != len(tasks)
+                or len(set(payload['tasks'])) != len(payload['tasks'])
+                or set(payload['tasks']) != {t['id'] for t in tasks}
+                or payload['task_bundles'] != {t['id']: t['task_bundle_sha'] for t in tasks}
+                or state['score_policy']['window_s'] != 3600
+                or state['score_policy']['metric'] != self.console['metric']
+                or state['score_policy']['scoring_policy'] != self.console['scoring_policy']
+                or state['jobs']['running'] or state['jobs']['pending']
+                or state['benchmark_version'] != self.console['benchmark_version']):
+            raise ValueError('The reviewed measurement scope changed')
+        if (health['controller_instance'] != self.console['controller_instance']
+                or model.get('base_url') != self.console['endpoint']
+                or model.get('model') != self.target['model']
+                or state['models_revision'] != payload['models_revision']
+                or state['endpoint_hardware']['revision'] != payload['hardware_revision']):
+            raise ValueError('The reviewed Hourglass setup changed')
+
     def submit(self, payload):
-        # Any failure in this block is known to precede POST /api/run. That is
-        # different from a timeout or malformed acknowledgement after the POST.
+        # A failed GET-only preflight proves this call has not posted a run.
         try:
-            if payload != self.plan['native_request']:
-                raise ValueError('Reviewed native request changed')
-            health, state = self.read()
-            model = next(m for m in state['model_configs'] if m.get('name') == payload['model'])
-            tasks = state['tasks']
-            if (set(payload) != {'model', 'tasks', 'repeat', 'models_revision', 'hardware_revision', 'task_bundles'}
-                    or payload['repeat'] != 1 or not tasks or any(t.get('issues') for t in tasks)
-                    or len({t['id'] for t in tasks}) != len(tasks)
-                    or len(set(payload['tasks'])) != len(payload['tasks'])
-                    or set(payload['tasks']) != {t['id'] for t in tasks}
-                    or payload['task_bundles'] != {t['id']: t['task_bundle_sha'] for t in tasks}
-                    or state['score_policy']['window_s'] != 3600
-                    or state['score_policy']['metric'] != self.console['metric']
-                    or state['score_policy']['scoring_policy'] != self.console['scoring_policy']
-                    or state['jobs']['running'] or state['jobs']['pending']
-                    or state['benchmark_version'] != self.console['benchmark_version']):
-                raise ValueError('The reviewed measurement scope changed')
-            if (health['controller_instance'] != self.console['controller_instance']
-                    or model.get('base_url') != self.console['endpoint']
-                    or model.get('model') != self.target['model']
-                    or state['models_revision'] != payload['models_revision']
-                    or state['endpoint_hardware']['revision'] != payload['hardware_revision']):
-                raise ValueError('The reviewed Hourglass setup changed')
+            self.verify_request(payload)
         except Exception:
             raise NativeStartRejected() from None
         result = self.request('/api/run', payload)

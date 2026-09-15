@@ -289,3 +289,29 @@ and invoking the runner again does not submit another native job. This proves
 the tested wiring, not a real benchmark, live contention protection or production
 enrollment. A lifecycle marked completed retains the separate native outcome,
 including rejection or error; it does not establish a measured score.
+
+`hourglass_prepare.py` prepares this owned workflow from the installation's
+`HourglassConsole.prepared` snapshot. The proposal identifies only the operation
+and worker; connection details and the native payload come from trusted setup
+and the native review. It checks the current gateway worker URL, compatible
+conditional readmission, committed approved-record bytes, actual Docker
+configuration/startup/port/model, and the unchanged native benchmark review.
+It freezes the measurement executor only after those read-only checks pass.
+Busy serving requests do not prevent preparation. No approval, maintenance hold,
+native run, record publication or serving mutation occurs during preparation.
+
+The review includes the observed image and complete command alongside the
+versioned configuration reference. Their association is not proof that every
+observed setting matches the approved record. The gateway URL and enrolled native
+target establish the intended endpoint mapping; preparation does not independently
+trace an SSH tunnel. The executor rechecks the gateway URL with native identity
+before measuring and before readmission. A changed mapping is not silently used.
+No restoration drill is required for this measurement-only preparation, because
+it does not replace a server or its configuration.
+
+This preparer is not yet connected to the dashboard's Start control. Existing
+direct owner-confirmed-idle runs retain their current behavior. Temporary-fixture
+tests cover stale reviews/routes/records, busy-worker preparation, executor
+freezing and the existing runner's exact approval checks. A read-only preparation
+against a live Spark checked real gateway and container metadata with a synthetic
+benchmark catalogue; it did not run Hourglass or prove live measurement behavior.

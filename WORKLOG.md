@@ -1970,3 +1970,21 @@ a hold or a restart. Historical candidate allocation and the current restored
 baseline differ; the dates and source types are retained rather than presenting
 them as a controlled causal comparison. An explicit owner decision about an
 acceptable cache tradeoff remains separate from successful API checks.
+
+### Prepare owned Hourglass measurements against the actual worker
+
+Added read-only preparation that binds the saved native review, current gateway
+URL, committed configuration reference and observed Docker identity to the frozen
+measurement executor. The worker may be busy during preparation. The review
+distinguishes observed settings from the approved reference, and the executor
+rechecks the gateway mapping before measuring and readmission. Existing direct
+benchmark controls and production configuration are unchanged; dashboard Start
+integration remains unfinished.
+
+Focused preparation/native/lifecycle/maintenance/bundle checks passed: 39 tests,
+no skips. The live read-only check caught a gateway `url` versus Hourglass
+`base_url` field mismatch that the original fixtures missed; both code and
+fixtures were corrected, then revalidated against the actual worker. Real
+gateway/record/Docker/model metadata matched with unchanged configuration and
+container startup. The benchmark catalogue was explicitly synthetic: no
+inference, native benchmark, approval, hold or restart occurred.

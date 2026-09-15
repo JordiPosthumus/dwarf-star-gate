@@ -140,6 +140,7 @@ class NativeAdapterTest(unittest.TestCase):
 
     def test_actual_entry_joins_native_http_to_maintenance_without_docker_mutations(self):
         control = Fixture()
+        control.worker['url'] = self.plan['hourglass']['endpoint']
         self.state['jobs']['done'] = [{'id': 'e' * 32, 'model': 'fixture', 'state': 'completed'}]
         with tempfile.TemporaryDirectory() as root:
             folder = Path(root) / self.plan['id']
@@ -179,6 +180,7 @@ def execute(plan, folder, progress):
             assert route == '/v1/models'
             return {'status':200,'body_base64':base64.b64encode(b'{"data":[{"id":"native-model"}]}').decode()}
     control = Fixture()
+    control.worker['url'] = plan['hourglass']['endpoint']
     globals()['SSHDocker'] = lambda *a, **kw: ReadOnlyDocker()
     globals()['GatewayControl'] = lambda *a: control
     globals()['Maintenance'] = lambda *a, **kw: _actual_maintenance(*a, **kw, sleep=lambda _:None)
@@ -211,6 +213,21 @@ def execute(plan, folder, progress):
             self.assertEqual(sum(c[0] == 'POST' for c in self.calls), 1)
             self.assertEqual(subprocess.run(command, capture_output=True, timeout=30).returncode, 0)
             self.assertEqual(sum(c[0] == 'POST' for c in self.calls), 1)
+
+    def test_gateway_route_changed_after_preparation_does_not_hold_or_start(self):
+        control = Fixture()
+        control.worker['url'] = 'http://127.0.0.1:9/v1'
+        with tempfile.TemporaryDirectory() as root:
+            folder = Path(root) / self.plan['id']
+            folder.mkdir()
+            with patch.object(hourglass_executor, '_BUNDLED_SOURCES', {'docker_profile': 'fixture source'}, create=True), \
+                    patch.object(hourglass_executor, 'SSHDocker', return_value=self.docker), \
+                    patch.object(hourglass_executor, 'GatewayControl', return_value=control):
+                with self.assertRaisesRegex(RuntimeError, 'target is not verified'):
+                    hourglass_executor.execute(self.plan, folder, lambda *a: None)
+            self.assertFalse(control.worker['drained'])
+            self.assertTrue(all(c == ('/workers', None) for c in control.calls))
+            self.assertFalse(any(c[0] == 'POST' for c in self.calls))
 
 
 if __name__ == '__main__':
