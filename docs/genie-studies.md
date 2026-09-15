@@ -30,9 +30,12 @@ its configuration snapshot and source events. Expand **Setup used for this answe
 for record revisions and the research brief, or **Web research sources** for links.
 Recommendations still need judgment; the UI cannot certify the model's claims.
 
-Studies have no benchmark, installation, server-control or approval tools. A
-research request does not approve its proposed changes. Ordinary chat's standing
-permission to read public sources is separate from starting a periodic study.
+Studies use the configured conversational toolset, including read-only server
+inspection when connected. The study brief authorizes research, not benchmarking,
+installation or server changes; the existing capability switches and action
+permissions still apply. A research request does not approve its proposed
+changes. Ordinary chat's standing permission to read public sources is separate
+from starting a periodic study.
 
 Reminder settings and the last accepted study identifier live in
 `research-plan.json` alongside this installation's private conversations. They
@@ -51,3 +54,24 @@ checks use the installed Hermes runtime with synthetic model/search/extraction
 responses to prove a study uses the existing tools and retains source evidence.
 These checks do not establish the quality of a real-world recommendation or
 qualify any model-server configuration change.
+
+## Live research exercise, 15 September 2026
+
+The configured Genie/Hermes completed a focused, manually requested study through
+production chat: one full configuration read, one live server inspection and
+four official GitHub API reads. He identified the installed upstream build
+commit, checked releases and merged PRs, then evaluated
+[vLLM PR #55309](https://github.com/vllm-project/vllm/pull/55309).
+He distinguished the PR's B200 kernel measurements from an unmeasured GB10
+benefit and recommended no immediate configuration change. No benchmark,
+proposal, recovery or queue move was performed.
+
+Independent review confirmed the sources but found two answer defects: the
+upstream commit date was blurred with the release publication date, and a claim
+about every released image exceeded the inspected evidence. The original answer
+was retained and a correction completed in the same conversation. It fixed those
+two claims but then inferred patch absence from the base commit's date, despite
+unexamined local repairs. That inference remains unsupported: dates and version
+labels do not establish local patch contents. This exercise
+proves live inspection and research integration, not consistently correct advice,
+an automatic upstream watcher, candidate compatibility or measured improvement.

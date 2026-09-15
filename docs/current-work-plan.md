@@ -63,6 +63,9 @@ deployment receipts stay outside this public repository.
   research, proposal and measurement pieces are partly built; this complete loop
   is a core remaining feature, not a completed watcher or a promise of arbitrary
   unattended upgrades. Use the existing study, operation and record stores.
+  A [real configured-Genie exercise](genie-studies.md#live-research-exercise-15-september-2026)
+  joined live inspection to official upstream PR research. Independent review
+  identified two narrative corrections; no candidate was installed or measured.
 - [x] Use the configured Hermes runtime and current Genie identity for fleet
   reviews, preserving provider and guarded-action contracts.
 - [x] Connect conversational questions to the existing exception for yielding
