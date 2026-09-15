@@ -2007,3 +2007,21 @@ inspection verified the review, Start and plain-language waiting/heartbeat
 display with disconnected synthetic state. Production was not enrolled or
 restarted. An actual complete native measurement and a dedicated owned-operation
 reconciliation UI remain outstanding.
+
+### Complete owned measurement path exercised with the native console API
+
+The new optional integration fixture runs the real gateway, dashboard, preparation
+CLI, frozen independent runner and copied Hourglass HTTP handlers together.
+Docker/model endpoints and the SSH connection are simulated; the normal transport
+bootstrap still executes. One active request finished after the hold was acquired,
+the spare worker served another request, exactly one native job was accepted, and
+a dashboard restart observed the same runner. Synthetic native completion led to
+conditional readmission and collection of the zero-score fixture report.
+
+Initial attempts exposed fixture assumptions about health fields, native running
+job storage, required chat-provider configuration, optional telemetry endpoints
+and nondeterministic initial routing. Those fixture issues were corrected without
+changing product behavior; the final complete run passed. All original native
+source hashes were rechecked. No benchmark worker, production restart, model
+configuration change or private installation was involved. The first real owned
+measurement and explicit interrupted-operation reconciliation remain outstanding.

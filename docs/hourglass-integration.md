@@ -362,3 +362,33 @@ That fixture simulates the measurement outcome; it is not an actual Hourglass ru
 Browser inspection checked the review, Start, waiting text and heartbeat with
 disconnected synthetic services. Production enrollment and the first real owned
 measurement remain unverified.
+
+### Complete isolated integration check
+
+```sh
+python3 scripts/hourglass-owned-integration.py --source /path/to/Hourglass \
+  --node /path/to/node --evidence /path/to/new-evidence-directory
+```
+
+This optional check copies trusted native Python source into a retained temporary
+directory. It runs the actual Star Gate gateway, dashboard, private preparation
+CLI, frozen measurement executor and independent runner, plus the copied
+Hourglass HTTP handlers. A fixture SSH command executes the real transport
+bootstrap against simulated Docker and model endpoints. It does not connect to
+an existing installation or start Hourglass's benchmark worker.
+
+The test verifies that an active gateway request finishes after its worker is
+held for measurement, that another worker still serves, that preparation and
+owner Start produce exactly one native job, and that a restarted dashboard
+observes the same independent runner. The copied console then receives an
+explicitly synthetic completion; the runner releases its own hold, conditionally
+readmits the worker, and the dashboard collects the native aggregate report.
+Neither the synthetic hour nor its zero score measures actual model performance.
+
+The evidence directory records the source hashes, native submissions, Docker reads and
+gateway log. `fixture-path.txt` identifies retained synthetic configuration,
+approval and runner receipts. Fixture listeners and processes close on completion;
+files remain for inspection. The original Hourglass checkout is read only and
+its copied source hashes are rechecked after the test. A passing check qualifies
+this integrated control path with the tested native source, not live benchmark
+performance, new-machine provisioning, or all failure/reconciliation cases.
