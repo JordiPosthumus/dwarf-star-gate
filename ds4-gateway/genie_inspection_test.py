@@ -65,6 +65,14 @@ class Inspection(unittest.TestCase):
   event=self.events[-1][1]['event'];self.assertEqual(event['artifact'],'restoration_drill');self.assertEqual(event['record_kind'],'approved');self.assertEqual(event['result'],result)
   self.assertIn('do not independently prove',result['scope']);self.assertIn('restoration_drill',self.registry.tools['read_server_artifact']['schema']['parameters']['properties']['artifact']['enum'])
   file.write_text('{"state":"changed"}');self.assertIn('error',self.call('read_server_artifact',{'worker_id':'example','artifact':'restoration_drill','record_kind':'approved'}));self.assertEqual(file.read_text(),'{"state":"changed"}')
+ def test_serving_flags_proof_is_read_from_its_own_hashed_reference(self):
+  (self.root/'approved').mkdir();(self.root/'artifacts').mkdir();file=self.root/'artifacts/enrollment.json';file.write_text('{"state":"restored-in-drill","scope":"serving flags only"}')
+  ref={'path':'artifacts/enrollment.json','sha256':m.hashlib.sha256(file.read_bytes()).hexdigest()}
+  record={'schema':1,'worker_id':'example','kind':'approved','restoration':{'change_classes':{'serving_flags':{'drill_reference':ref}}}}
+  (self.root/'approved/example.json').write_text(json.dumps(record));self.register()
+  result=self.call('read_server_artifact',{'worker_id':'example','artifact':'serving_flags_restoration','record_kind':'approved'})
+  self.assertTrue(result['hash_matches_record']);self.assertEqual(result['content']['scope'],'serving flags only')
+  file.write_text('{}');self.assertIn('error',self.call('read_server_artifact',{'worker_id':'example','artifact':'serving_flags_restoration','record_kind':'approved'}))
  def test_restoration_status_or_unhashed_path_does_not_substitute_for_receipt(self):
   (self.root/'approved').mkdir();(self.root/'artifacts').mkdir();file=self.root/'artifacts/restore.json';file.write_text('{"state":"must-not-be-read"}')
   record={'schema':1,'worker_id':'example','kind':'approved','restoration':{'drill':{'status':'restored-in-drill','receipt':str(file)}}}

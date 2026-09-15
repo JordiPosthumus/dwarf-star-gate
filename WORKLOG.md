@@ -1,5 +1,15 @@
 # Star Gate work log
 
+## 2026-09-15 — Recovery evidence for Genie
+
+An actual audit exposed an incorrect inference that a mismatched worker binding
+meant automatic recovery was disabled. Chat now includes the observed global
+policy and per-worker eligibility separately; missing policy remains unknown.
+The existing read-only artifact tool can open the separately hashed serving-flag
+restoration proof. No recovery policy, binding, server setting, personal identity
+file or chat deadline changes. Seventeen Python inspection checks and 29 affected
+Node chat/bridge checks passed; two environment-dependent Hermes cases were skipped.
+
 ## 2026-09-15 — Genie can examine restoration receipts
 
 The existing read-only artifact tool now accepts `restoration_drill`, using the

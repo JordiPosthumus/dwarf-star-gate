@@ -241,3 +241,8 @@ test('actual streamed answer chunks refresh activity and later reasoning can sup
  now=42000;call.onProgress({phase:'reasoning',step:4,reasoning_chars:120});m=chat.get(s.id).messages[1];assert.equal(m.progress.phase,'reasoning');assert.equal(m.text,'Partial answer');
  finish({text:'Complete answer'});await chat.idle();
 });
+
+ test('recovery policy stays distinct from worker eligibility and missing policy is unknown',()=>{
+  const c=chatContext({gateway:{recovery:{configured:true,automatic:true,profile_handback_automatic:true,token:'PRIVATE',workers:[{worker_id:'example',configured:true,eligible:false,reason:'service_identity_or_profile_unverified',enrollment:{secret:'PRIVATE'}}]}}});
+  assert.equal(c.recovery.automatic,true);assert.equal(c.recovery.workers[0].eligible,false);assert.equal(c.recovery.workers[0].reason,'service_identity_or_profile_unverified');assert.doesNotMatch(JSON.stringify(c),/PRIVATE/);assert.equal(chatContext({}).recovery,null);assert.equal(chatContext({gateway:{recovery:{automatic:false}}}).recovery.automatic,false);
+ });
