@@ -22,7 +22,9 @@ function fixture(t,{realRunner=false}={}){
   const client={async prepare(model){const review={id:randomUUID(),model,model_id:'native',endpoint:'http://127.0.0.1:38011/v1',question_count:1,window_seconds:3600,models_revision:'a'.repeat(64),hardware_revision:'b'.repeat(64),settings:{max_tokens:262144}};this.prepared={review,controller:'fixture',payload:{model,tasks:['fixture'],repeat:1}};return structuredClone(review);},
     async submit(){assert.fail('Owned run must use its independent runner, never the dashboard native submit');},
     async observe(){return {state:'completed'};},async report(){return {summary:{state:'final',score:{value:12,version:'fixture'}}};}};
-  const runner={async launch(input){calls.push(['launch',input]);},async observe(){return {state:result?'completed':'running',process_alive:!result,progress:{phase,detail:'Waiting for current work.',heartbeat_at:1},result};}};
+  const runner={async launch(input){calls.push(['launch',input]);},async observe(){return {state:result?'completed':'running',process_alive:!result,progress:{phase,detail:'Waiting for current work.',heartbeat_at:1},result};},
+    async inspectReturn(input){const p=JSON.parse(fs.readFileSync(path.join(input.directory,'prepared.json')));return {state:'ready',plan_revision:p.plan_revision,review_revision:'e'.repeat(64),review:{scope:'Synthetic return review.'}};},
+    async launchReturn(input){calls.push(['return',input]);return {pid:1,scope:'Synthetic launch only'};}};
   const prepare=async(_python,input)=>{
     calls.push(['prepare',input]);assert.equal(input.prepared.payload.model,'example');
     const source=`import json,time\nfrom pathlib import Path\ndef execute(plan,folder,progress):\n folder=Path(folder)\n progress('waiting','Waiting for fixture completion.')\n (folder/'native-acceptance.json').write_text(json.dumps({'job_id':'${'d'.repeat(32)}'}))\n while not (folder/'finish-fixture').exists(): time.sleep(0.05)\n return {'state':'completed','measurement':{'job_id':'${'d'.repeat(32)}','native_state':'completed','readmission':{'state':'readmitted'}}}\n`;
@@ -127,4 +129,19 @@ test('the independent process survives dashboard close and is observed after res
   await until(()=>service.store.read(p.id,'runner-result.json'));
   await runs.change({action:'refresh'});assert.equal(runs.status().runs[0].state,'completed');
   assert.equal(runs.status().blocked,false);
+});
+
+test('return requires a fresh owner review; Genie cannot approve it and duplicate service calls never relaunch',async t=>{
+  const f=fixture(t),{runs,service}=f.make();await runs.change({action:'prepare',model:'example'});const p=runs.status().prepared;
+  await runs.change({action:'start',id:p.id,plan_revision:p.maintenance.plan_revision});await service.store.idle();
+  f.unknown();await runs.change({action:'refresh'});
+  await assert.rejects(runs.tool({action:'inspect-return',id:p.id}));
+  await runs.change({action:'inspect-return',id:p.id});const review=runs.status().runs[0].return_review;
+  const input={action:'return',id:p.id,plan_revision:review.plan_revision,review_revision:review.review_revision};
+  await assert.rejects(runs.tool(input));
+  await assert.rejects(runs.change({...input,review_revision:'f'.repeat(64)}));
+  assert.equal(service.store.read(p.id,'reconcile-approved.json'),null);
+  await runs.change(input);assert.equal(service.store.read(p.id,'reconcile-approved.json').actor,'owner');
+  await service.startReturn(input);assert.equal(f.calls.filter(c=>c[0]==='return').length,1);
+  assert.equal(f.calls.filter(c=>c[0]==='launch').length,1);
 });

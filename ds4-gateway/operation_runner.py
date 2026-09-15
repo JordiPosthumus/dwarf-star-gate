@@ -128,7 +128,63 @@ def observe(directory):
         state = result['state'] if result else 'running' if alive else 'requires_reconciliation'
         return {'id': folder.name, 'state': state, 'process_alive': alive,
                 'runner': claim, 'progress': progress, 'result': result,
+                **({'reconciliation': {'runner': read(folder / 'reconcile-started.json'),
+                    'progress': read(folder / 'reconcile-progress.json'), 'result': read(folder / 'reconcile-result.json')}}
+                    if read(folder / 'reconcile-started.json') is not None else {}),
                 'scope': 'Process liveness is not model progress or successful qualification. A missing process or reply never resubmits the operation.'}
+    finally:
+        os.close(fd)
+
+
+def reconciliation(directory, *, execute=False):
+    """Use the frozen executor's return path only after its original run stopped."""
+    folder = folder_at(directory)
+    fd = lock_file(folder)
+    try:
+        try: fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError: raise ValueError('An operation still owns the runner lock') from None
+        claim = read(folder / 'runner-started.json')
+        if not claim: raise ValueError('The original runner identity is unavailable')
+        if read(folder / 'runner-result.json') is None:
+            # Cover the interval between an original claim and lock acquisition.
+            # A saved PID is never signalled; uncertainty or PID reuse blocks.
+            pid = claim.get('pid')
+            if type(pid) is not int or pid <= 1: raise ValueError('Original process identity unavailable')
+            try: os.kill(pid, 0)
+            except ProcessLookupError: pass
+            else: raise ValueError('The original process may still be active')
+        plan, revision, source = approved_plan(folder)
+        namespace = {'__name__': 'stargate_approved_executor', '__file__': plan['execution']['path']}
+        exec(compile(source, plan['execution']['path'], 'exec'), namespace)
+        if read(folder / 'reconcile-started.json') is not None:
+            return {'state': 'already_attempted', 'result': read(folder / 'reconcile-result.json')}
+        if not execute:
+            review = namespace['inspect_reconciliation'](plan, folder, lambda *args: None)
+            return {'state': 'ready', 'plan_revision': revision, 'review': review,
+                'review_revision': hashlib.sha256(json.dumps(review, sort_keys=True, separators=(',', ':')).encode()).hexdigest()}
+        approval, intent = read(folder / 'reconcile-approved.json'), read(folder / 'reconcile-launch-intent.json')
+        if (not approval or approval.get('actor') != 'owner' or approval.get('plan_revision') != revision
+                or not DIGEST.fullmatch(approval.get('review_revision', ''))
+                or not intent or intent.get('plan_revision') != revision
+                or intent.get('review_revision') != approval['review_revision']):
+            raise ValueError('Exact owner approval and return intent are required')
+        save(folder, 'reconcile-started.json', {'pid': os.getpid(), 'at': time.time(), 'plan_revision': revision})
+        def progress(phase, detail):
+            if not isinstance(phase, str) or not re.fullmatch(r'[a-z][a-z0-9_]{0,63}', phase) or not isinstance(detail, str) or len(detail) > 1000:
+                raise ValueError('Invalid return progress')
+            save(folder, 'reconcile-progress.json', {'phase': phase, 'detail': detail,
+                'changed_at': time.time(), 'heartbeat_at': time.time()}, replace=True)
+        try:
+            progress('returning', 'Checking the owner-approved return to service.')
+            result = namespace['reconcile'](plan, folder, progress)
+            if not isinstance(result, dict) or result.get('state') not in TERMINAL:
+                raise ValueError('Return did not establish an explicit outcome')
+            save(folder, 'reconcile-result.json', {**result, 'at': time.time(), 'plan_revision': revision})
+        except BaseException:
+            if read(folder / 'reconcile-result.json') is None:
+                save(folder, 'reconcile-result.json', {'state': 'requires_reconciliation', 'at': time.time(),
+                    'error': 'Return to service was not confirmed. Original evidence and remaining holds were preserved; no action was replayed.'})
+        return {'state': 'attempted', 'result': read(folder / 'reconcile-result.json')}
     finally:
         os.close(fd)
 
@@ -193,11 +249,13 @@ def run(directory, *, heartbeat_seconds=10):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['run', 'observe'])
+    parser.add_argument('action', choices=['run', 'observe', 'inspect-return', 'return'])
     parser.add_argument('directory')
     args = parser.parse_args()
     try:
-        print(json.dumps(run(args.directory) if args.action == 'run' else observe(args.directory)))
+        result = (run(args.directory) if args.action == 'run' else observe(args.directory) if args.action == 'observe'
+            else reconciliation(args.directory, execute=args.action == 'return'))
+        print(json.dumps(result))
     except Exception:
         # No raw executor, private file or transport exceptions in the UI log.
         print(json.dumps({'state': 'observation_unavailable' if args.action == 'observe' else 'launch_unconfirmed',

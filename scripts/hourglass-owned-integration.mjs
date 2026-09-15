@@ -7,6 +7,7 @@ import {createGateway} from '../ds4-gateway/gateway.mjs';
 import {runDashboard} from '../ds4-gateway/dashboard.mjs';
 
 const root=process.argv[2],configFile=path.join(root,'stargate.json');
+const interrupt=process.argv[3]==='interrupt';
 const config=JSON.parse(fs.readFileSync(configFile,'utf8'));
 const phase=value=>fs.writeFileSync(path.join(root,'fixture-phase.json'),JSON.stringify({phase:value}));
 async function until(check,seconds=90){
@@ -59,8 +60,25 @@ try{
   assert.equal((await status()).runs[0].process_alive,true);
   await post({action:'start',id:prepared.id,plan_revision:prepared.maintenance.plan_revision});
   assert.deepEqual(read('runner-started.json'),claim);
+  if(interrupt){
+    // This PID belongs to the independently launched synthetic fixture only.
+    // The copied native job remains intact; no model or benchmark is cancelled.
+    process.kill(claim.pid,'SIGTERM');
+    await until(()=>{try{process.kill(claim.pid,0);return false;}catch(e){if(e.code==='ESRCH')return true;throw e;}});
+    assert.equal(read('runner-result.json'),null);
+  }
   phase('complete_synthetic_measurement');
-  const result=await until(()=>read('runner-result.json'));
+  if(interrupt){
+    await until(async()=>{const state=await fetch(config.hourglass_console.url+'/api/state').then(r=>r.json());return state.jobs.done.some(j=>j.id===acceptance.job_id&&j.state==='completed');});
+    await post({action:'refresh'});
+    const reviewed=(await post({action:'inspect-return',id:prepared.id})).runs[0].return_review;
+    assert.equal(reviewed.review.job_id,acceptance.job_id);
+    const returning={action:'return',id:prepared.id,plan_revision:reviewed.plan_revision,review_revision:reviewed.review_revision};
+    await post(returning);
+    assert.equal(read('reconcile-approved.json').actor,'owner');
+    assert.equal(read('runner-result.json'),null);
+  }
+  const result=await until(()=>read(interrupt?'reconcile-result.json':'runner-result.json'));
   assert.equal(result.state,'completed',JSON.stringify(result));
   assert.equal(result.measurement.readmission.state,'readmitted');
   await post({action:'refresh'});
@@ -72,12 +90,12 @@ try{
   assert.equal(worker.max_concurrent_requests,1);
   fs.writeFileSync(path.join(root,'integration-result.json'),JSON.stringify({passed:true,operation_id:prepared.id,
     native_job:acceptance.job_id,active_request_finished:true,spare_served:true,dashboard_restart_observed_same_runner:true,
-    readmitted:true,score:final.report.summary.score,scope:'Native API and lifecycle integration; model/Docker responses and benchmark completion are synthetic.'},null,2));
+    interrupted_runner_returned:interrupt,readmitted:true,score:final.report.summary.score,scope:'Native API and lifecycle integration; model/Docker responses and benchmark completion are synthetic.'},null,2));
 }finally{
   // Fixture coordination releases only simulated requests and marks only this
   // copied console's job terminal. It cannot contact a real console or server.
   phase('cleanup');
   if(request)await request.catch(()=>{});
-  if(operation&&read('launch-intent.json'))await until(()=>read('runner-result.json'));
+  if(operation&&read('launch-intent.json'))await until(()=>read('runner-result.json')||read('reconcile-result.json'));
   app?.close();await gateway?.close();
 }

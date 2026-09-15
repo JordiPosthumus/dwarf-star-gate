@@ -27,6 +27,7 @@ def main():
     parser.add_argument('--source', type=Path, required=True)
     parser.add_argument('--node', default='node')
     parser.add_argument('--evidence', type=Path, required=True)
+    parser.add_argument('--interrupt-runner', action='store_true', help='Terminate only this synthetic runner after native acceptance, then test owner-approved return')
     args = parser.parse_args()
     args.evidence.mkdir(parents=True, exist_ok=False)
     root = Path(tempfile.mkdtemp(prefix='sg-hg-owned-')).resolve()
@@ -135,7 +136,8 @@ def main():
     try:
         log = (args.evidence / 'node.log').open('w')
         with log:
-            process = subprocess.Popen([args.node, str(Path(__file__).with_suffix('.mjs')), str(root)],
+            process = subprocess.Popen([args.node, str(Path(__file__).with_suffix('.mjs')), str(root),
+                'interrupt' if args.interrupt_runner else 'normal'],
                 stdout=log, stderr=subprocess.STDOUT, env={**os.environ, 'PATH': str(bindir) + os.pathsep + os.environ.get('PATH', '')})
             while process.poll() is None:
                 try: phase = json.loads((root / 'fixture-phase.json').read_text())['phase']

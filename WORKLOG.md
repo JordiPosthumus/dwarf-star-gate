@@ -2025,3 +2025,24 @@ changing product behavior; the final complete run passed. All original native
 source hashes were rechecked. No benchmark worker, production restart, model
 configuration change or private installation was involved. The first real owned
 measurement and explicit interrupted-operation reconciliation remain outstanding.
+
+
+### Owner-reviewed return after an interrupted measurement
+
+The Hourglass panel can now inspect a stopped owned runner and offer an exact
+owner-approved return when the saved native job has finished, the server and
+approved record are unchanged, and its exclusive maintenance hold remains idle.
+A separate process rechecks those facts and releases only that hold. Original
+runner evidence is preserved; uncertain return attempts never replay a launch.
+Unknown acceptance, already-started readmission and older frozen executors remain
+explicit inspection cases. Genie cannot approve either measurement Start or return.
+
+45 affected Python tests and 52 Node 22 tests passed without skips. The complete
+isolated native-API integration also passed with an intentionally interrupted
+synthetic runner: one benchmark submission, the same saved job, a separate return
+process and conditional readmission. Model/Docker responses and completion were
+synthetic; no benchmark worker or live server was used. Browser verification
+exercised both return controls. It exposed and corrected a redundant return button
+on an already-completed run whose report observation failed; the corrected UI
+retains that observation error without offering another return. Production remains
+unenrolled, and the first real owned measurement remains outstanding.

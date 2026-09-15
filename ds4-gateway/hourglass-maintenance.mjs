@@ -35,6 +35,7 @@ export function createHourglassMaintenance(config,directory,{prepare=prepareProc
       records_directory:config.server_records_directory});
   }
   const snapshots=new Map(),runtime=runner??operationRunner({python:config.genie_chat.python,directory});
+  let returnApprovals=Promise.resolve();
   const recordRevision=async worker=>{
     const fd=fs.openSync(path.join(config.server_records_directory,'approved',worker+'.json'),fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK);
     try{const stat=fs.fstatSync(fd);if(!stat.isFile()||stat.size>2*1024*1024)throw new Error('Invalid approved record');return createHash('sha256').update(fs.readFileSync(fd)).digest('hex');}finally{fs.closeSync(fd);}
@@ -67,8 +68,30 @@ export function createHourglassMaintenance(config,directory,{prepare=prepareProc
       }
     },
     observe:async id=>{
-      const row=await store.current(id),receipt=store.read(id,'native-acceptance.json'),result=store.read(id,'runner-result.json');
-      return {proposal_state:row.state,runner:row.runner??null,job_id:receipt?.job_id??null,result};
+      const row=await store.current(id),receipt=store.read(id,'native-acceptance.json'),returnResult=store.read(id,'reconcile-result.json');
+      const returning=store.read(id,'reconcile-started.json');
+      const result=returnResult??(returning?null:store.read(id,'runner-result.json'));
+      const runner=returning&&row.runner?{...row.runner,progress:row.runner.reconciliation?.progress??null,
+        state:returnResult?.state??(row.runner.process_alive===true?'running':row.runner.state==='observation_unavailable'?'observation_unavailable':'requires_reconciliation')}:row.runner??null;
+      return {proposal_state:row.state,runner,job_id:receipt?.job_id??null,result};
+    },
+    inspectReturn:id=>runtime.inspectReturn({id,directory:store.folder(id)}),
+    startReturn:input=>{
+      const task=returnApprovals.then(async()=>{
+        if(store.closed)throw new Error('Measurement controls are closed.');
+        const {id,plan_revision,review_revision}=input;
+        if(![plan_revision,review_revision].every(v=>typeof v==='string'&&/^[a-f0-9]{64}$/.test(v)))throw new Error('Use the exact return review.');
+        const existing=store.read(id,'reconcile-approved.json');
+        if(existing&&(existing.plan_revision!==plan_revision||existing.review_revision!==review_revision))throw new Error('The saved return approval differs.');
+        if(store.read(id,'reconcile-launch-intent.json'))return;
+        const observed=await runtime.inspectReturn({id,directory:store.folder(id)});
+        if(observed.state!=='ready'||observed.plan_revision!==plan_revision||observed.review_revision!==review_revision)throw new Error('Return conditions changed; inspect the operation again.');
+        if(!existing)store.write(id,'reconcile-approved.json',{actor:'owner',at:Date.now(),plan_revision,review_revision});
+        store.write(id,'reconcile-launch-intent.json',{at:Date.now(),plan_revision,review_revision});
+        const receipt=await runtime.launchReturn({id,directory:store.folder(id)});
+        store.write(id,'reconcile-launched.json',{at:Date.now(),receipt});
+      });
+      returnApprovals=task.catch(()=>{});return task;
     },
     close:()=>store.close(),
   };

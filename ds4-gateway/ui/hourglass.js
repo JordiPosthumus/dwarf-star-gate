@@ -40,7 +40,16 @@ if(panel){
       if(r.owned){
         if(r.progress)item.append(node('p',`${r.progress.detail} · ${r.process_alive===true?'Runner active':r.process_alive===false?'Runner stopped':'Runner status unavailable'}`));
         if(r.progress?.heartbeat_at)item.append(node('p',`Runner heartbeat: ${new Date(r.progress.heartbeat_at*1000).toLocaleString()} · A heartbeat does not prove model progress.`));
-        if(r.readmission)item.append(node('p','Measurement finished and the server was returned to service.'));
+        if(r.readmission)item.append(node('p',r.readmission.state==='readmitted'?'Measurement finished and the server was returned to service.':'The measurement hold was released. The server remains under the operator’s control.'));
+        if(r.error&&['submitting','uncertain','accepted','pending','running','unknown','owned'].includes(r.state)){
+          const inspect=node('button','Check return to service');inspect.className='button';inspect.type='button';inspect.disabled=busy;
+          inspect.onclick=()=>act({action:'inspect-return',id:r.id});item.append(inspect);
+        }
+        if(r.return_review){
+          item.append(node('p',r.return_review.review.scope));
+          const confirm=node('button','Return server to service');confirm.className='button';confirm.type='button';confirm.disabled=busy;
+          confirm.onclick=()=>act({action:'return',id:r.id,plan_revision:r.return_review.plan_revision,review_revision:r.return_review.review_revision});item.append(confirm);
+        }
       }
       if(r.error)item.append(node('p',r.error));
       if(r.report)item.append(node('p',`Recorded score: ${r.report.summary.score.value??'unavailable'} · ${r.report.summary.score.version??'unknown metric'} · ${r.report.summary.state}. Details are in Hourglass results below.`));

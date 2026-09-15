@@ -351,9 +351,24 @@ A record change detected before launch produces a rejected start and permits a
 fresh review. An uncertain launched operation remains visible and blocks another
 measurement until its outcome is established. The direct-run “I checked Hourglass”
 control cannot clear an owned operation: its maintenance outcome also matters.
-The UI does not yet offer a dedicated reconciliation action for an interrupted
-owned runner. Inspect its saved operation and maintenance receipts; do not delete
-them or start a replacement to clear the display.
+For an interrupted owned runner, use **Check return to service**. This reads the
+saved operation and current conditions without releasing anything. When those
+conditions are verified, **Return server to service** approves that exact review
+and launches a separate process to finish the original maintenance window.
+The original runner must have stopped, the saved native job must be terminal,
+and the same server must be idle under this operation's exclusive hold. The
+approved record and frozen executor are checked again before the return.
+
+The return releases only the original hold and respects intervening operator
+decisions. The original runner receipt is preserved; separate return receipts
+record the outcome. No benchmark is started again or cancelled, and a saved
+return launch intent is never replayed after an uncertain response. Genie can
+prepare measurements and read status; these return controls are owner actions.
+
+Unknown native acceptance, changed server/record/ownership, or readmission that
+already began still requires inspection of the saved receipts. Older prepared
+plans whose frozen executor lacks this return path are not silently upgraded.
+Do not delete their evidence or submit a replacement just to clear the display.
 
 Validation includes owner/tool HTTP separation, exact approval, durable start
 intent, duplicate-start suppression, failed receipt persistence, record changes,
@@ -392,3 +407,12 @@ files remain for inspection. The original Hourglass checkout is read only and
 its copied source hashes are rechecked after the test. A passing check qualifies
 this integrated control path with the tested native source, not live benchmark
 performance, new-machine provisioning, or all failure/reconciliation cases.
+
+
+Add `--interrupt-runner` to the isolated integration command to exercise the
+explicit return path. It terminates only the synthetic operation runner after
+native acceptance, preserves the copied console's job, waits for synthetic
+completion, and performs the owner review/return sequence. The check verifies
+one native submission, a separate return result, preserved original evidence,
+and release of the original maintenance hold. It does not simulate every crash
+location or prove recovery from an uncertain release/readmission response.

@@ -77,7 +77,8 @@ export class HourglassRuns {
     if(this.error||this.closed)throw new Error(this.error??'Hourglass controls are closed.');
     if(this.busy)throw new Error('An Hourglass operation is already in progress.');
     const ownedStart=input?.action==='start'&&(this.prepared?.id===input.id&&this.prepared.maintenance||this.runs.some(r=>r.id===input.id&&r.owned));
-    const keys={prepare:['action','model'],start:ownedStart?['action','id','plan_revision']:['action','id','owner_confirmed_idle'],refresh:['action'],resolve:['action','id','checked_in_hourglass']}[input?.action];
+    const keys={prepare:['action','model'],start:ownedStart?['action','id','plan_revision']:['action','id','owner_confirmed_idle'],refresh:['action'],resolve:['action','id','checked_in_hourglass'],
+      'inspect-return':['action','id'],'return':['action','id','plan_revision','review_revision']}[input?.action];
     if(!keys||Object.keys(input).length!==keys.length||!keys.every(k=>Object.hasOwn(input,k)))throw new Error('Invalid Hourglass action.');
     this.busy=true;
     try{
@@ -114,6 +115,19 @@ export class HourglassRuns {
           const next=this.runs.map(r=>r.id===p.id?{...r,job_id:receipt?.job_id??null,state:receipt?'accepted':uncertain?'uncertain':'rejected',error:receipt?null:uncertain?'Start acceptance is uncertain. Check Hourglass before another run.':'Hourglass rejected this start. Review its console before trying again.'}:r);
           try{this.save(next);}catch{this.error='Hourglass receipt could not be saved. New starts are disabled; check the native console.';}
         }
+      }else if(['inspect-return','return'].includes(input.action)){
+        const row=this.runs.find(r=>r.id===input.id);
+        if(!row?.owned||!active(row)||!this.maintenance)throw new Error('Choose an unfinished owned measurement.');
+        if(input.action==='inspect-return'){
+          const review=await this.maintenance.inspectReturn(row.id);
+          if(review.state!=='ready')throw new Error(review.error??'This operation has no verified return available. Its existing receipts were preserved.');
+          this.save(this.runs.map(r=>r.id===row.id?{...r,return_review:review}:r));
+        }else{
+          if(row.return_review?.plan_revision!==input.plan_revision||row.return_review?.review_revision!==input.review_revision)throw new Error('Inspect and approve the displayed return review first.');
+          await this.maintenance.startReturn(input);
+          this.save(this.runs.map(r=>r.id===row.id?{...r,return_review:null}:r));
+          await this.refresh();
+        }
       }else if(input.action==='resolve'){
         const row=this.runs.find(r=>r.id===input.id);if(!row||row.owned||!needsCheck(row)||input.checked_in_hourglass!==true)throw new Error('Check the uncertain request in Hourglass first. Owned operations also require their maintenance outcome to be reconciled.');
         this.save(this.runs.map(r=>r.id===row.id?{...r,state:'owner_checked',resolved_at:this.now(),error:'Owner checked the native console and confirmed that no related work remains active. Acceptance was not reconstructed.'}:r));
@@ -129,7 +143,7 @@ export class HourglassRuns {
         if(observed.job_id!==null&&!JOB.test(observed.job_id))throw new Error('Invalid native receipt');
         const next={...row,state:'owned',job_id:observed.job_id??row.job_id,observed_at:this.now(),
           progress:runner?.progress??null,process_alive:runner?.process_alive??null,error:null};
-        if(result?.state==='completed'&&result.measurement?.readmission?.state==='readmitted'){
+        if(result?.state==='completed'&&['readmitted','left_to_operator'].includes(result.measurement?.readmission?.state)){
           const nativeState=result.measurement.native_state;
           if(!['completed','stopped','error','cancelled','rejected'].includes(nativeState))throw new Error('Unrecognized native outcome');
           next.state=nativeState;next.readmission=result.measurement.readmission;

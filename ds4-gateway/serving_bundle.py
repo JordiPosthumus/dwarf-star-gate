@@ -43,6 +43,12 @@ def build_executor(folder, *, source_directory=None, kind='serving'):
         raise ValueError('Unknown enrolled executor kind')
     modules = MODULES if kind == 'serving' else MEASUREMENT_MODULES
     loader = LOADER if kind == 'serving' else LOADER.replace("['serving_executor']", "['hourglass_executor']")
+    if kind == 'hourglass':
+        loader = loader.replace('def execute(plan, folder, progress):', 'def _invoke(action, plan, folder, progress):').replace(
+            "sys.modules['hourglass_executor'].execute(plan, folder, progress)",
+            "getattr(sys.modules['hourglass_executor'], action)(plan, folder, progress)")
+        for action in ['execute', 'inspect_reconciliation', 'reconcile']:
+            loader += f'\ndef {action}(plan, folder, progress):\n    return _invoke({action!r}, plan, folder, progress)\n'
     folder = Path(folder).resolve()
     directory = Path(source_directory) if source_directory is not None else Path(__file__).parent
     sources = {name: read_bytes(directory / (name + '.py')).decode('utf-8') for name in modules}
