@@ -731,6 +731,118 @@ test('manual routing changes retain a bounded client-channel receipt without cla
   assert.equal(r.gateway.store.data.operator_actions.length,2);assert.ok(!JSON.stringify(r.gateway.store.data.operator_actions).includes('PRIVATE HUMAN NAME'));
 });
 
+test('conditional resume returns a released maintenance worker only while its operator decision is unchanged',async t=>{
+  const r=await rig(t,1,{control_socket:true}),ctl=(route,body)=>workerControl(r.config.control_socket,route,body,{channel:'approved_operation'});
+  const before=await ctl('/workers');assert.equal(before.conditional_resume_version,1);
+  const expected_operator_actions={spark1:before.workers[0].last_operator_action?.id??null};
+  const locked=await ctl('/maintenance-lock',{worker_id:'spark1',request_id:randomUUID(),name:'Fixture operation',reason:'Test owned readmission',review_after_hours:null});
+  await assert.rejects(ctl('/resume-workers',{workers:['spark1'],expected_operator_actions}),/maintenance lock/);
+  await ctl('/release-maintenance-lock',{lock_id:locked.result.lock_id,request_id:randomUUID(),reason:'Fixture verification completed'});
+  assert.equal(r.gateway.stats().workers[0].operator_paused,true);
+  await ctl('/resume-workers',{workers:['spark1'],expected_operator_actions});
+  assert.equal(r.gateway.stats().workers[0].drained,false);
+  assert.equal(r.gateway.stats().workers[0].last_operator_action.control_channel,'approved_operation');
+});
+
+test('conditional resume refuses a newer operator pause without probing or changing it',async t=>{
+  const r=await rig(t,1,{control_socket:true}),ctl=(route,body)=>workerControl(r.config.control_socket,route,body);
+  const expected_operator_actions={spark1:null};
+  await ctl('/drain-workers',{workers:['spark1']});
+  const before=JSON.stringify(r.gateway.store.data),probes=r.backends[0].modelHeaders.length;
+  await assert.rejects(ctl('/resume-workers',{workers:['spark1'],expected_operator_actions}),/Operator action changed/);
+  assert.equal(JSON.stringify(r.gateway.store.data),before);assert.equal(r.backends[0].modelHeaders.length,probes);
+  assert.equal(r.gateway.stats().workers[0].drained,true);
+  // An explicit current human decision to resume remains available.
+  await ctl('/resume-workers',{workers:['spark1']});assert.equal(r.gateway.stats().workers[0].drained,false);
+});
+
+test('conditional resume rechecks the decision after its awaited readiness probe',async t=>{
+  const r=await rig(t,1,{control_socket:true}),ctl=(route,body)=>workerControl(r.config.control_socket,route,body);
+  await ctl('/drain-workers',{workers:['spark1']});
+  const expected_operator_actions={spark1:r.gateway.stats().workers[0].last_operator_action.id};
+  let pause;
+  r.backends[0].server.prependListener('request',req=>{
+    if(req.url==='/v1/models'&&!pause){r.gateway.drainNodes(['spark1'],true,'fixture_operator');pause=r.gateway.stats().workers[0].last_operator_action.id;}
+  });
+  await assert.rejects(ctl('/resume-workers',{workers:['spark1'],expected_operator_actions}),/Operator action changed/);
+  assert.ok(pause);assert.equal(r.gateway.stats().workers[0].last_operator_action.id,pause);assert.equal(r.gateway.stats().workers[0].drained,true);
+});
+
+test('conditional fleet resume never partially resumes when one worker decision changed',async t=>{
+  const r=await rig(t,2,{control_socket:true}),ctl=(route,body)=>workerControl(r.config.control_socket,route,body);
+  await ctl('/drain-workers',{workers:['spark1','spark2']});
+  const expected_operator_actions=Object.fromEntries(r.gateway.stats().workers.map(w=>[w.id,w.last_operator_action.id]));
+  await ctl('/drain-workers',{workers:['spark2']});
+  await assert.rejects(ctl('/resume-workers',{workers:['spark1','spark2'],expected_operator_actions}),/Operator action changed/);
+  assert.ok(r.gateway.stats().workers.every(w=>w.drained));
+});
+
+test('conditional resume rejects incomplete or invalid decision maps',async t=>{
+  const r=await rig(t,1,{control_socket:true}),ctl=(route,body)=>workerControl(r.config.control_socket,route,body);
+  await ctl('/drain-workers',{workers:['spark1']});
+  for(const expected_operator_actions of [null,[],{}, {spark2:null},{spark1:'invalid'},{spark1:null,extra:null}]){
+    await assert.rejects(ctl('/resume-workers',{workers:['spark1'],expected_operator_actions}),/Expected operator actions/);
+    assert.equal(r.gateway.stats().workers[0].drained,true);
+  }
+});
+
+test('conditional resume retains an intervening agent hold',async t=>{
+  const r=await rig(t,1,{control_socket:true}),ctl=(route,body)=>workerControl(r.config.control_socket,route,body);
+  const grant=await ctl('/grant-agent',{agent_id:'tester',workers:['spark1']});
+  await agentRequest({control_socket:r.config.control_socket,token:grant.token},'drain',{worker_id:'spark1',reason:'Other agent fixture',request_id:randomUUID()});
+  await assert.rejects(ctl('/resume-workers',{workers:['spark1'],expected_operator_actions:{spark1:null}}),/agent holds/);
+  assert.equal(r.gateway.stats().workers[0].holds.length,1);assert.equal(r.gateway.stats().workers[0].drained,true);
+});
+
+test('conditional resume retains its worker decision across history pruning and restart',async t=>{
+  const r=await rig(t,2,{control_socket:true}),ctl=(route,body)=>workerControl(r.config.control_socket,route,body);
+  r.gateway.drainNodes(['spark1'],true,'fixture_operator');const expected=r.gateway.stats().workers[0].last_operator_action.id;
+  // Start from the previous release's persisted shape, which has only history.
+  r.gateway.store.save({...r.gateway.store.data,operator_action_heads:undefined});
+  await r.restart();assert.equal(r.gateway.stats().workers[0].last_operator_action.id,expected);
+  for(let i=0;i<257;i++)r.gateway.drainNodes(['spark2'],true,'fixture_other');
+  assert.equal(r.gateway.store.data.operator_actions.some(a=>a.id===expected),false);
+  await r.restart();assert.equal(r.gateway.stats().workers[0].last_operator_action.id,expected);
+  await assert.rejects(ctl('/resume-workers',{workers:['spark1'],expected_operator_actions:{spark1:null}}),/Operator action changed/);
+  await ctl('/resume-workers',{workers:['spark1'],expected_operator_actions:{spark1:expected}});
+  assert.equal(r.gateway.stats().workers[0].drained,false);assert.equal(r.gateway.stats().workers[1].drained,true);
+});
+
+test('conditional resume refuses a later completed maintenance operation',async t=>{
+  const r=await rig(t,1,{control_socket:true}),ctl=(route,body)=>workerControl(r.config.control_socket,route,body);
+  const lock=()=>ctl('/maintenance-lock',{worker_id:'spark1',request_id:randomUUID(),name:'Fixture maintenance',reason:'Test overlapping completed maintenance',review_after_hours:null});
+  const release=locked=>ctl('/release-maintenance-lock',{lock_id:locked.result.lock_id,request_id:randomUUID(),reason:'Fixture done; leave paused'});
+  const first=await release(await lock());await release(await lock());
+  assert.equal(r.gateway.stats().workers[0].last_operator_action,null);
+  await assert.rejects(ctl('/resume-workers',{workers:['spark1'],expected_operator_actions:{spark1:null},expected_maintenance_actions:{spark1:first.request_id}}),/Maintenance action changed/);
+  assert.equal(r.gateway.stats().workers[0].drained,true);
+});
+
+test('Python operation maintenance uses the real gateway and retains active fixture work',{skip:!fs.existsSync(fileURLToPath(new URL('./operation_maintenance.py',import.meta.url)))},async t=>{
+  const r=await rig(t,1,{control_socket:true}),directory=path.join(path.dirname(r.config.state_file),'operation-fixture'),operation=randomUUID();fs.mkdirSync(directory);
+  const source=path.dirname(fileURLToPath(import.meta.url));
+  const code=`import sys,json
+sys.path.insert(0,sys.argv[1])
+from operation_maintenance import Maintenance,GatewayControl
+window=Maintenance(sys.argv[2],sys.argv[3],'spark1',control=GatewayControl(sys.argv[4]),sleep=lambda _:None)
+if sys.argv[5]=='acquire': result=window.acquire()
+else:
+ window.wait_idle(lambda:True) # Fixture only; no real native server qualification.
+ window.release()
+ result=window.resume_if_unchanged()
+print(json.dumps(result))
+`;
+  const call=async phase=>JSON.parse((await promisify(execFile)('python3',['-I','-c',code,source,directory,operation,r.config.control_socket,phase],{timeout:10000})).stdout);
+  const pending=r.request('{"wait_for_release":true}','owned-operation-fixture');await until(()=>r.backends[0].active===1);
+  try {
+  const acquired=await call('acquire');assert.equal(acquired.action,'lock');
+  assert.equal(r.gateway.stats().workers[0].drained,true);assert.equal(r.gateway.stats().workers[0].load,1);assert.equal(r.backends[0].aborts,0);
+  r.backends[0].releases[0]();assert.equal((await pending).status,200);
+  const returned=await call('finish');assert.equal(returned.state,'readmitted');
+  assert.equal(r.gateway.stats().workers[0].drained,false);assert.equal(r.gateway.stats().workers[0].maintenance_locks.length,0);assert.equal(r.backends[0].aborts,0);
+  } finally {r.backends[0].releases?.splice(0).forEach(release=>release());await pending;}
+});
+
 test('legacy recovery CLI waits beyond its former five-second timeout',async t=>{
   const r=await rig(t,1,{control_socket:true});await r.request('{"fatal_error":true}','a');
   r.backends[0].recoveryDelay=5200;

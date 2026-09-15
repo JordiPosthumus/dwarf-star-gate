@@ -1,5 +1,14 @@
 # Star Gate work log
 
+## 2026-09-15 — Preserve newer operator decisions during readmission
+
+Optional expected operator/maintenance action IDs are checked before and after
+server probes when an operation returns a worker to routing. A newer pause or
+maintenance decision prevents that operation from overriding it. Ordinary owner
+Resume behavior is unchanged. The latest per-worker operator action survives
+pruning of the bounded history; older records remain readable. This prepares the
+existing approved-operation handback path without changing model settings.
+
 ## 2026-09-15 — Recovery evidence for Genie
 
 An actual audit exposed an incorrect inference that a mismatched worker binding

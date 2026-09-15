@@ -37,6 +37,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 const digest = value => createHash('sha256').update(value).digest('hex');
 const validContext = value => Number.isSafeInteger(value) && value > 0;
+const validOperatorAction=action=>action&&typeof action==='object'&&/^[a-f0-9-]{36}$/.test(action.id)&&['pause','resume'].includes(action.action)&&Array.isArray(action.workers)&&action.workers.length>0&&action.workers.length<=128&&action.workers.every(id=>typeof id==='string'&&/^[a-zA-Z0-9][\w-]{0,63}$/.test(id))&&typeof action.control_channel==='string'&&/^[a-z][a-z0-9_]{0,31}$/.test(action.control_channel)&&typeof action.time==='string'&&Number.isFinite(Date.parse(action.time));
 export const workerRegistrationTimeout=(config,node)=>config.registration_timeout_ms??Math.max(15000,sshTargets(node).length*15000);
 const log = (event, fields = {}) => process.stdout.write(JSON.stringify({ time: new Date().toISOString(), event, ...fields }) + '\n');
 const hopHeaders = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade']);
@@ -79,7 +80,8 @@ export class AffinityStore {
       if(data.queue_timeout_ms!==undefined){if(typeof data.queue_timeout_ms!=='number')throw new Error('Invalid saved queue allowance');queueTimeout(data.queue_timeout_ms);}
       if(data.quarantined!==undefined && (!data.quarantined || typeof data.quarantined!=='object' || Array.isArray(data.quarantined)))throw new Error('Invalid saved quarantine state');
       if(data.protections!==undefined&&(!data.protections||typeof data.protections!=='object'||Array.isArray(data.protections)||Object.keys(data.protections).some(k=>k!=='vision_jpeg')||(data.protections.vision_jpeg!==undefined&&typeof data.protections.vision_jpeg!=='boolean')))throw new Error('Invalid saved protection state');
-      if(data.operator_actions!==undefined&&(!Array.isArray(data.operator_actions)||data.operator_actions.length>256||data.operator_actions.some(action=>!action||typeof action!=='object'||!/^[a-f0-9-]{36}$/.test(action.id)||!['pause','resume'].includes(action.action)||!Array.isArray(action.workers)||!action.workers.length||action.workers.length>128||action.workers.some(id=>typeof id!=='string'||!/^[a-zA-Z0-9][\w-]{0,63}$/.test(id))||typeof action.control_channel!=='string'||!/^[a-z][a-z0-9_]{0,31}$/.test(action.control_channel)||typeof action.time!=='string'||!Number.isFinite(Date.parse(action.time)))))throw new Error('Invalid saved operator action history');
+      if(data.operator_actions!==undefined&&(!Array.isArray(data.operator_actions)||data.operator_actions.length>256||data.operator_actions.some(action=>!validOperatorAction(action))))throw new Error('Invalid saved operator action history');
+      if(data.operator_action_heads!==undefined&&(!data.operator_action_heads||typeof data.operator_action_heads!=='object'||Array.isArray(data.operator_action_heads)||Object.entries(data.operator_action_heads).some(([id,action])=>!validOperatorAction(action)||!action.workers.includes(id))))throw new Error('Invalid saved current operator actions');
       for(const entry of Object.values(data.quarantined??{}))if(!entry || !['fatal_accelerator_error','accelerator_checkpoint_failure','repeated_inference_failures'].includes(entry.reason) || typeof entry.request_id!=='string' || !Number.isFinite(Date.parse(entry.at)))throw new Error('Invalid saved quarantine entry');
       for (const [key, item] of Object.entries(data.sessions)) {
         if (!/^[a-f0-9]{64}$/.test(key) || typeof item.node !== 'string') throw new Error('Invalid affinity entry');
@@ -355,7 +357,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   const upstreamOptions = (node, url) => ({ agent: url.protocol === 'https:' ? tlsAgent : agent, headers: node.upstreamHeaders ?? {} });
   const accepted = new Set(['POST /v1/chat/completions', 'POST /v1/completions', 'POST /v1/responses', 'POST /v1/messages', 'GET /v1/models']);
   const auth = Buffer.from(`Bearer ${config.api_key}`);
-  const lastOperatorAction=id=>[...(store.data.operator_actions??[])].reverse().find(action=>action.workers.includes(id))??null;
+  const lastOperatorAction=id=>Object.hasOwn(store.data.operator_action_heads??{},id)?store.data.operator_action_heads[id]:[...(store.data.operator_actions??[])].reverse().find(action=>action.workers.includes(id))??null;
   const oldestQueued=queue=>queue.reduce((oldest,job)=>!oldest||job.createdMono<oldest.createdMono?job:oldest,null);
 
   const allocationStatus=slot=>slot.turnAllocation?{turns_used:slot.turnAllocation.used,remaining:Math.max(0,conversationTurns()-slot.turnAllocation.used),waiting_for_next_turn:!slot.active&&slot.turnAllocation.until>performance.now(),idle_remaining_ms:Math.max(0,Math.ceil(slot.turnAllocation.until-performance.now()))}:null;
@@ -1154,7 +1156,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   const startTunnel = node => {
     if (node.ssh) node.stopTunnel = tunnelFactory(node, () => shuttingDown || node.removed);
   };
-  const registry = () => ({ model: config.model, minimum_context: contextLimit(), context_limit_control:true,concurrency_control_version:1,
+  const registry = () => ({ model: config.model, minimum_context: contextLimit(), context_limit_control:true,concurrency_control_version:1,conditional_resume_version:1,
     genie_admission_version:1,genie_flexible_assignment:true,
     context_limit_source:store.data.pool_context_length === undefined ? 'config' : 'saved',
     conversation_turns:conversationTurns(),conversation_turn_idle_ms:conversationTurnIdleMs,conversation_turns_control:true,conversation_turns_source:store.data.conversation_turns!==undefined?'saved':config.conversation_turns!==undefined?'config':'default',
@@ -1372,10 +1374,16 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     const channel=typeof controlChannel==='string'&&/^[a-z][a-z0-9_]{0,31}$/.test(controlChannel)?controlChannel:'unidentified_local_client';
     return {id:randomUUID(),time:new Date().toISOString(),action:drained?'pause':'resume',workers:[...ids],control_channel:channel};
   }
+  function recordOperatorAction(action){
+    // Keep one current decision per registered worker separately from the short
+    // activity history. Otherwise pruning history could erase a pause token.
+    return {operator_actions:[...(store.data.operator_actions??[]),action].slice(-256),
+      operator_action_heads:Object.fromEntries(nodes.map(n=>[n.id,action.workers.includes(n.id)?action:lastOperatorAction(n.id)]).filter(([,head])=>head))};
+  }
   function drainNodes(ids, drained, controlChannel='in_process') {
     if (!Array.isArray(ids) || !ids.length || ids.some(id => !nodes.some(n => n.id === id))) throw new Error('Specify known worker IDs');
     const action=operatorAction(ids,drained,controlChannel);
-    store.save({...store.data,...agents.manualUpdate(ids,drained),operator_actions:[...(store.data.operator_actions??[]),action].slice(-256)});
+    store.save({...store.data,...agents.manualUpdate(ids,drained),...recordOperatorAction(action)});
     if(drained)recovery.operatorPause(ids);
     for (const n of nodes) if (ids.includes(n.id)) n.drained = drained;
     log('workers_drain_changed', { ids, drained, operator_action_id:action.id, control_channel:action.control_channel });
@@ -1436,6 +1444,21 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
           if (req.url === '/resume-workers') {
             if (!Array.isArray(input.workers) || !input.workers.length || input.workers.some(id=>!nodes.some(n=>n.id===id))) throw new Error('Specify known worker IDs');
             const selected=nodes.filter(n=>input.workers.includes(n.id));
+            const checkExpectedActions=()=>{
+              // Optional for existing human controls; automated handback binds
+              // the observation it made before maintenance. Never replace a new
+              // operator pause with an old decision to resume.
+              const checks=[['expected_operator_actions',id=>lastOperatorAction(id)?.id??null,'Operator'],
+                ['expected_maintenance_actions',id=>[...agents.state.maintenance_operations].reverse().find(op=>op.result.worker_id===id)?.request_id??null,'Maintenance']];
+              for(const [key,current,label] of checks){
+                if(!Object.hasOwn(input,key))continue;
+                const expected=input[key];
+                if(!expected||typeof expected!=='object'||Array.isArray(expected)||Object.keys(expected).sort().join(',')!==selected.map(n=>n.id).sort().join(',')||
+                  Object.values(expected).some(id=>id!==null&&(typeof id!=='string'||!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(id))))throw new Error(`Expected ${label.toLowerCase()} actions must name every selected worker and its observed action ID or null`);
+                if(selected.some(n=>current(n.id)!==expected[n.id]))throw Object.assign(new Error(`${label} action changed; observe the worker again before deciding to resume`),{status:409,code:label.toLowerCase()+'_action_changed'});
+              }
+            };
+            checkExpectedActions();
             agents.manualUpdate(input.workers,false); // Reject owned holds before probes.
             if(selected.some(n=>n.recovering))throw new Error('Recovery owns this worker; pause is allowed but wait before enabling');
             await Promise.all(selected.map(freshProbe));
@@ -1451,8 +1474,9 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
             for(const {node} of recovered)delete quarantined[node.id];
             // Commit a multi-worker resume once, after every requested check
             // passes. Partial verification must not partially enable a fleet.
+            checkExpectedActions();
             const action=operatorAction(input.workers,false,req.headers['x-dsg-control-channel']??'unidentified_local_client');
-            store.save({...store.data,quarantined,...agents.manualUpdate(input.workers,false),operator_actions:[...(store.data.operator_actions??[]),action].slice(-256)});
+            store.save({...store.data,quarantined,...agents.manualUpdate(input.workers,false),...recordOperatorAction(action)});
             for(const {node,proof} of recovered){node.quarantine=null;node.inferenceFailures=0;node.healthy=true;log('worker_recovery_verified',{node:node.id,...proof});}
             for(const n of selected)n.drained=false;
             log('workers_drain_changed',{ids:input.workers,drained:false,operator_action_id:action.id,control_channel:action.control_channel});
