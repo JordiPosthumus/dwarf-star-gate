@@ -217,3 +217,39 @@ Run the unit checks with `python3 ds4-gateway/docker_profile_test.py`. The nativ
 test's module docstring describes its explicit Docker socket, cached image ID and
 new evidence-directory inputs; it never pulls an image or discovers fleet targets.
 Run the approval, real-process and transport checks with `npm run operations:test`.
+
+## Optional Genie and dashboard connection
+
+`server_operations.enabled: true` connects the operation service only when the
+installation explicitly enrolls its `workers`. Each worker reuses its existing
+`genie_chat.inspection.workers` container and first SSH alias, with the enrolled
+`native_url`, optional `docker_socket`, and explicit `qualification.candidate`
+and `qualification.previous` contracts. The native contracts are those consumed
+by `serving_qualification.py`; they require installation evidence, not guessed
+defaults. Worker management, the private record library and configured Genie
+interpreter must already exist. Preparation checks the gateway's conditional
+readmission support and committed approved-record bytes before offering approval.
+No existing installation is enrolled automatically.
+
+Genie receives `propose_server_change` and `server_change_status`. Their private
+loopback endpoint has a separate process-scoped token and no approval action.
+Tool calls are retained with the reply; status omits full commands and executable
+paths. The owner-facing Server changes card shows exact recipes, checks, known
+capacity/thinking differences and the plan revision. Its approval requires the
+existing same-origin dashboard session. A proposal or chat message cannot grant
+that approval. The card reports independent runner progress and retains results
+across page reloads. Heartbeat age is distinct from useful model progress; a
+saved success is not presented as a new health inspection.
+
+Testing mode prevents new preparation and approval but does not cancel an
+existing operation. Closing the dashboard does not terminate an approved runner.
+Ambiguous submissions are observed using their original operation ID and never
+automatically repeated. Neither the chat nor inference deadline is shortened.
+Read-only proposal preparation and local tool HTTP exchanges have transport
+limits; those do not impose a cancellation deadline on a serving operation.
+
+This connection passes disposable API/process/browser tests and a real installed
+Hermes test using synthetic model responses. Private restoration enrollment and
+a complete native-server operation still require their actual evidence before
+production activation. Fresh-host provisioning and arbitrary model contracts
+remain separate unfinished work.

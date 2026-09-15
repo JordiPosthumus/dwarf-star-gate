@@ -8,7 +8,7 @@ import {FleetThroughput} from '../ds4-gateway/throughput.mjs';
 import {FleetSpeed} from '../ds4-gateway/fleet-speed.mjs';
 // Optional memory is supplied only by the isolated browser-test fixture. The
 // ordinary demo has no persistent storage and reads no installation config.
-export function createDemoServer({agentHold=false,quarantinedWorker=false,memory=null,chatFactory=null}={}) {
+export function createDemoServer({agentHold=false,quarantinedWorker=false,memory=null,chatFactory=null,operations=null}={}) {
 const now = Date.now();
 const workers = [
   { id:'sparkA', is_healthy:true, drained:false, load:1, queued:1, active_seconds:84, completed:42, failed:0, assigned_sessions:4 },
@@ -167,7 +167,7 @@ return createDashboard(()=>({...snapshot,time:Date.now(),gateway_at:Date.now(),
     return registry();
   },
 },genie,()=>({enabled:true,status:'ready',demo:true,window_limit:500,not_dispatched:1,throughput:throughput.snapshot(),fleet_speed:{...fleetSpeed.snapshot(Date.now(),workers.map(worker=>worker.id)),status:'ready',partial_history:false},
-  handovers:{rows:[]}}),currentJobs,null,null,chatFactory?.(()=>({...snapshot,time:Date.now(),gateway_at:Date.now()}))??null);
+  handovers:{rows:[]}}),currentJobs,null,null,chatFactory?.(()=>({...snapshot,time:Date.now(),gateway_at:Date.now()}))??null,null,operations);
 }
 if(isMain(import.meta.url)) {
 const server=createDemoServer();

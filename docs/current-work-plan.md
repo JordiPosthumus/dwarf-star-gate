@@ -53,8 +53,10 @@ deployment receipts stay outside this public repository.
   in a real disposable Git library while preserving unrelated staged work. The
   entry point and trusted preparation now bind enrolled connections, model
   contracts, the reviewed record and frozen serving code. Applicable private
-  restoration enrollment, dashboard/Genie integration, fresh whole-operation
-  native-model qualification and chat/approval UI remain in development.
+  restoration enrollment and fresh whole-operation native-model qualification
+  remain unfinished. Optional dashboard enrollment, real Hermes proposal/status
+  tools and the owner approval/progress card now pass isolated integration and
+  browser checks; they have not been activated in production.
 - [ ] Integrate owner-started Hourglass runs, initially measuring the chosen
   server directly with recorded configuration and measurement provenance.
   Saved aggregate reports are wired into the dashboard and chat,

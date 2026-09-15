@@ -89,6 +89,7 @@ class EntryTest(unittest.TestCase):
             'records_directory':str(self.rig.library),'qualification':f.plan['qualification']}
         import hashlib,json
         f.record['restoration'].pop('change_classes'); raw=json.dumps(f.record).encode(); f.record_file.write_bytes(raw)
+        self.rig.git('add','--','records/approved/fixture.json'); self.rig.git('commit','--only','-m','Fixture without restoration','--','records/approved/fixture.json')
         with self.assertRaisesRegex(ValueError,'retained restoration'):
             prepare(proposal,enrollment,f.folder,hashlib.sha256(raw).hexdigest(),docker=f.docker)
         self.assertEqual(f.docker.calls,[]); self.assertEqual(f.control.calls,[])

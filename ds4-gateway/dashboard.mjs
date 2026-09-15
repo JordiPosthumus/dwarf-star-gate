@@ -20,6 +20,7 @@ import { Activity } from './ui/activity.js';
 import { Genie } from './genie.mjs';
 import {GenieChat} from './genie-chat.mjs';
 import {ServerRecords} from './server-records.mjs';
+import {createOperationService} from './operation-service.mjs';
 import {hermesProvider} from './genie-hermes.mjs';
 import {hermesReviewFetch} from './genie-hermes-review.mjs';
 import {GenieMemory} from './genie-memory.mjs';
@@ -59,6 +60,7 @@ assets.set('/genie-handoff.js',['genie-handoff.js','text/javascript']);
 assets.set('/genie-progress.js',['genie-progress.js','text/javascript']);
 assets.set('/genie-chat.js',['genie-chat.js','text/javascript']);
 assets.set('/genie-chat.css',['genie-chat.css','text/css']);
+assets.set('/server-operations.js',['server-operations.js','text/javascript']);
 for(const [route,file,mime] of [
   ['favicon.ico','favicon.ico','image/x-icon'],['favicon-v2.ico','favicon.ico','image/x-icon'],
   ['favicon-v1.svg','favicon-v1.svg','image/svg+xml'],['favicon-v2.svg','favicon-v1.svg','image/svg+xml'],
@@ -86,7 +88,7 @@ export function genieChatConfig(config){
   const local=new URL(chat.url).href===`http://127.0.0.1:${config.port}/v1`;
   return {...chat,gateway_tracking:local,...(chat.inspection?{inspection:{...chat.inspection,records_directory:config.server_records_directory}}:{}),...(local&&chat.api_key===undefined?{api_key:config.api_key}:{})};
 }
-export function createDashboard(getSnapshot, assetsDirectory = path.join(here, 'ui'), management = null, genie = null, requestHistory = null, currentJobs = null, testing = null, lanSharing = null, chat = null, hourglass = null) {
+export function createDashboard(getSnapshot, assetsDirectory = path.join(here, 'ui'), management = null, genie = null, requestHistory = null, currentJobs = null, testing = null, lanSharing = null, chat = null, hourglass = null, operations = null) {
   const csrf = randomBytes(32).toString('base64url');
   // Freeze one complete release in memory: edits on disk cannot expose half an
   // update to a live browser. Only the dashboard needs a reload to promote it.
@@ -112,6 +114,22 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
       res.writeHead(403, headers); return res.end(dsgReport('Local same-origin dashboard only'));
     }
     const reply = (status, value) => { if (!res.destroyed && !res.headersSent) { res.writeHead(status,{...headers,'content-type':'application/json'}); res.end(JSON.stringify(status>=400&&typeof value.error==='string'?{...value,error:dsgReport(value.error)}:value)); } };
+    if(req.url==='/api/genie/operations'&&req.method==='GET'){
+      void Promise.resolve(operations?.status()??{configured:false,operations:[]}).then(value=>reply(200,{...value,csrf_token:csrf})).catch(()=>reply(503,{error:'Operation status unavailable; existing operations may still be running.'}));return;
+    }
+    if(['/api/genie/operations','/api/genie/operation-tools'].includes(req.url)&&req.method==='POST'){
+      const tool=req.url.endsWith('operation-tools');
+      const token=Buffer.from(req.headers[tool?'x-sg-operation-tool':'x-dsg-csrf']??''),expected=Buffer.from(tool?(operations?.toolConfig.token??''):csrf);
+      if(!expected.length||token.length!==expected.length||!timingSafeEqual(token,expected)||(!tool&&req.headers.origin!==`http://${req.headers.host}`))return reply(403,{error:'An authorized operation session is required.'});
+      if(!operations)return reply(409,{error:'Server operations are not enrolled for this installation.'});
+      if(req.headers['content-type']!=='application/json')return reply(415,{error:'JSON required.'});
+      let body='',ended=false;req.setEncoding('utf8');
+      const timer=setTimeout(()=>{ended=true;reply(408,{error:'Incomplete operation request.'});},15000);
+      req.on('error',()=>{ended=true;clearTimeout(timer);});req.on('aborted',()=>{ended=true;clearTimeout(timer);});
+      req.on('data',chunk=>{if(ended)return;body+=chunk;if(Buffer.byteLength(body)>(tool?80000:2048)){ended=true;clearTimeout(timer);reply(413,{error:'Operation request too large.'});}});
+      req.on('end',()=>{clearTimeout(timer);if(ended)return;ended=true;let input;try{input=JSON.parse(body);}catch{return reply(400,{error:'Invalid JSON.'});}
+        void (tool?operations.tool(input):operations.change(input)).then(value=>reply(200,value)).catch(e=>reply(409,{error:e.message}));});return;
+    }
     if(req.url==='/api/hourglass'&&req.method==='GET')return reply(200,{...(hourglass?.status()??{configured:false}),csrf_token:csrf});
     if(req.url==='/api/hourglass'&&req.method==='POST'){
       const token=Buffer.from(req.headers['x-dsg-csrf']??''),expected=Buffer.from(csrf);
@@ -459,7 +477,8 @@ export async function runDashboard(configPath, port) {
   const reviewer=config.genie_chat?hermesReviewFetch(config.genie_chat,{directory:chatDirectory}):undefined;
   const genie=new Genie(runtimeGenie,snapshot,{fetchImpl:reviewer,isTesting,memory,providerLedger,assignmentLedger,poolUrl:`http://127.0.0.1:${config.port}/v1`,recover:managementEnabled?input=>workerControl(config.control_socket,'/genie-recover-worker',input,{channel:'gate_genie'}):null,rebalance:managementEnabled?input=>workerControl(config.control_socket,'/genie-relocate-queued',input,{channel:'gate_genie'}):null});
   const stopGenieTunnel=genieTunnel(config.genie);
-  const chat=config.genie_chat?new GenieChat({directory:chatDirectory,notebook:config.genie_chat.operational_notebook===true?memory:null,getSnapshot:()=>({...snapshot(),genie:genie.status(),genie_handovers:requestHistory.snapshot().handovers}),isSuspended:isTesting,runQuestion:(answer,onWait)=>genie.answerChat(answer,onWait),provider:hermesProvider(genieChatConfig(config),{directory:chatDirectory})}):null;
+  const operations=createOperationService(config,{directory:path.join(path.dirname(config.state_file),'genie','operations'),isTesting});
+  const chat=config.genie_chat?new GenieChat({directory:chatDirectory,notebook:config.genie_chat.operational_notebook===true?memory:null,getSnapshot:()=>({...snapshot(),genie:genie.status(),genie_handovers:requestHistory.snapshot().handovers}),isSuspended:isTesting,runQuestion:(answer,onWait)=>genie.answerChat(answer,onWait),provider:hermesProvider({...genieChatConfig(config),operations:operations?.toolConfig},{directory:chatDirectory})}):null;
   const server = createDashboard(snapshot, path.join(here,'ui'), managementEnabled ? {
     read:()=>workerControl(config.control_socket,'/workers',undefined,{channel:'dashboard'}),
     act:(action,input)=>workerControl(config.control_socket,({'job-priority':'/set-job-priority',concurrency:'/set-worker-concurrency',add:'/add-worker',endpoint:'/edit-endpoint',test:'/check-endpoint',remove:'/remove-worker',drain:'/drain-workers',resume:'/resume-workers',lock:'/maintenance-lock',unlock:'/release-maintenance-lock',fallbacks:'/set-ssh-fallbacks',context:'/set-context-limit','conversation-turns':'/set-conversation-turns','queue-timeout':'/set-queue-timeout',protection:'/set-protection',relocate:'/relocate-queued',recover:'/recover-worker','recovery-policy':'/recovery-policy','recovery-handback-policy':'/recovery-handback-policy','recovery-recheck':'/recovery-recheck'})[action],input,{channel:'dashboard'}),
@@ -471,11 +490,12 @@ export async function runDashboard(configPath, port) {
   }:null,managementEnabled&&continuityEnabled(config)?{
     read:async()=>lanSharingDetails(await doorControl(doorSocket(config),'/lan-sharing'),config.port),
     set:async enabled=>lanSharingDetails(await doorControl(doorSocket(config),'/set-lan-sharing',{enabled}),config.port),
-  }:null,chat,hourglass);
+  }:null,chat,hourglass,operations);
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
+  operations?.bind(server.address().port);
   hourglass?.startObserving();
   await poll(); endpointTelemetry.poll(); const interval = setInterval(poll, 2000), endpointTimer=setInterval(()=>endpointTelemetry.poll(),2000), historyTimer=setInterval(()=>monitoringHistory.save(activity,endpointTelemetry),10000), genieTimer=setInterval(()=>{genie.tick();chat?.tick();},10000);
-  const close = () => { monitoringHistory.save(activity,endpointTelemetry);endpointTelemetry.close(); closed = true; clearInterval(interval);clearInterval(endpointTimer);clearInterval(historyTimer);clearInterval(genieTimer);genie.close();chat?.close();hourglass?.close();hardware.close();stopGenieTunnel(); for (const t of timers) clearTimeout(t); for (const child of children) child.kill(); server.closeAllConnections(); server.close(); process.removeListener('SIGTERM', close); process.removeListener('SIGINT', close); };
+  const close = () => { monitoringHistory.save(activity,endpointTelemetry);endpointTelemetry.close(); closed = true; clearInterval(interval);clearInterval(endpointTimer);clearInterval(historyTimer);clearInterval(genieTimer);genie.close();chat?.close();operations?.close();hourglass?.close();hardware.close();stopGenieTunnel(); for (const t of timers) clearTimeout(t); for (const child of children) child.kill(); server.closeAllConnections(); server.close(); process.removeListener('SIGTERM', close); process.removeListener('SIGINT', close); };
   process.once('SIGTERM', close); process.once('SIGINT', close);
   console.log(`Star Gate: http://127.0.0.1:${server.address().port} (${managementEnabled ? 'local worker controls' : 'read-only'})`);
   return { server, snapshot, close };

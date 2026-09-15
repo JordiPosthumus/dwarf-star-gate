@@ -17,6 +17,7 @@ from operation_runner import read_bytes
 from serving_bundle import build_executor
 from serving_operation import dated, restoration_authority
 from serving_qualification import NativeQualification
+from serving_records import ServingRecordPublisher
 
 
 def option(command, name):
@@ -91,6 +92,7 @@ def prepare(proposal, enrollment, folder, record_revision, *, docker=None):
     record_file = library / 'approved' / (worker + '.json')
     raw = read_bytes(record_file)
     if hashlib.sha256(raw).hexdigest() != record_revision: raise ValueError('The approved record changed')
+    ServingRecordPublisher(library).require_committed_record(record_file,raw)
     old = json.loads(raw)
     if (old.get('schema') != 1 or old.get('worker_id') != worker or old.get('kind') != 'approved'
             or not dated(old.get('approval',{}).get('at')) or not old.get('approval',{}).get('reference')):
@@ -110,6 +112,9 @@ def prepare(proposal, enrollment, folder, record_revision, *, docker=None):
     record = candidate_record(old,profile,contracts['candidate'])
     # All remote preparation above is observation only. Freeze source only after
     # prerequisites are established; no runner is launched by this function.
+    before_profile = copy.deepcopy(profile)
+    before_profile['create'] = {**profile['before']['Config'],'Image':profile['before']['Image']}
+    previous_record = candidate_record(old,before_profile,contracts['previous'])
     execution = build_executor(folder)
     plan = {'worker_id':worker,'record_file':str(record_file),'record_revision':record_revision,
         'target':target,'profile':profile,'qualification':contracts,'candidate_record':record,'execution':execution}
@@ -117,4 +122,7 @@ def prepare(proposal, enrollment, folder, record_revision, *, docker=None):
         'before':{'image':profile['before']['Image'],'command':profile['before']['Config']['Cmd']},
         'after':{'image':proposal['image'],'command':proposal['command']},
         'checks':sorted(supported),'restoration':restoration,
+        'settings':{'current':previous_record['settings'],'proposed':record['settings'],
+            'current_thinking':previous_record['configuration']['chat_template_defaults'],
+            'proposed_thinking':record['configuration']['chat_template_defaults']},
         'scope':'Drain after current work finishes, retain the prior container, apply and qualify, then record and return. Launcher files and recovery bindings are unchanged. A missing or uncertain result is not retried. Native concurrency increases and fresh-machine setup are not qualified by this adapter.'}}

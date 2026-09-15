@@ -25,3 +25,5 @@ test('gateway queue/running evidence is separate from model activity and becomes
 });
 
 test('a manually paused chat queue is shown as paused, not an advancing answer',()=>{assert.equal(chatProgress({state:'queued',at:0},{now:1000,paused:true}).label,'Saved · paused for your review');});
+
+test('operation tools show their own activity without inventing execution',()=>{const m={state:'working',at:0,operations:{events:[{tool:'propose_server_change',state:'reading',at:new Date(1000).toISOString()}]}};assert.equal(chatProgress(m,{now:2000}).label,'Preparing a server-change proposal');m.operations.events[0].state='complete';const p=chatProgress(m,{now:2000});assert.equal(p.label,'Server-change status returned');assert.match(p.detail,/1 tool call/);});

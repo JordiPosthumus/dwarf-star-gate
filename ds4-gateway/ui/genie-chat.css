@@ -17,3 +17,5 @@
 #conversation-handoff label{display:block;margin:12px 0 6px}#conversation-handoff textarea{display:block;width:100%;box-sizing:border-box;resize:vertical;min-height:160px;margin-bottom:10px;padding:12px;border:1px solid #465d49;border-radius:6px;background:#0c140f;color:#e2eae1;font:inherit;font-size:12px;line-height:1.6}#conversation-handoff textarea:focus-visible{outline:2px solid #c3e3ae;outline-offset:2px}
 
 .conversation-progress{margin:12px 0;padding:12px 16px;border-left:3px solid #a1c99a;background:#16271e;border-radius:6px;font-size:12px;color:#aec7b6;line-height:1.6;overflow-wrap:anywhere}.conversation-progress p{margin:3px 0}.conversation-progress-label{font-weight:650;color:#d5edcc}
+
+.server-operation{padding:1rem 0;border-top:1px solid var(--line,#314438)}.server-operation h3{margin:.3rem 0}.server-operation pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:.8rem;max-height:20rem;overflow:auto}.server-operation small{display:block;overflow-wrap:anywhere;opacity:.7;margin-top:.5rem}

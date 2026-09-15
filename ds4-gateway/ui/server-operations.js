@@ -1,0 +1,81 @@
+const labels={preparing:'Preparing the proposal',awaiting_approval:'Ready for your review',approved_unsubmitted:'Approved · awaiting submission',
+  submitted:'Submitted · checking progress',launch_uncertain:'Submission needs checking',preparation_interrupted:'Preparation interrupted',
+  prepare_failed:'Could not prepare this change',declined:'Declined',running:'Working',completed:'Change verified',restored:'Previous version restored',
+  failed_unchanged:'Original server unchanged',requires_reconciliation:'Needs attention',observation_unavailable:'Status temporarily unavailable',unreadable:'Saved evidence needs attention'};
+export function operationLabel(row){return labels[row.runner?.state??row.state]??'Status unknown';}
+export function operationChanges(review){
+  const before=review?.settings?.current??{},after=review?.settings?.proposed??{},changes=[];
+  const labels={context_length:'Context',max_output_tokens:'Output allowance',server_concurrency:'Concurrent requests',prefill_batch_tokens:'Prefill batch',kv_cache_dtype:'KV cache precision',prefix_caching:'Prefix caching',speculative_decoding:'Speculative decoding'};
+  const show=v=>v===undefined?'unknown':typeof v==='object'?JSON.stringify(v):String(v);
+  for(const key of new Set([...Object.keys(before),...Object.keys(after)]))if(JSON.stringify(before[key])!==JSON.stringify(after[key])){
+    let tradeoff='';if(['context_length','max_output_tokens','server_concurrency'].includes(key)&&Number.isFinite(before[key])&&after[key]<before[key])tradeoff=' — reduces this serving capacity';
+    if(key==='prefix_caching'&&before[key]===true&&after[key]===false)tradeoff=' — repeated context may take more work';
+    changes.push(`${labels[key]??key}: ${show(before[key])} → ${show(after[key])}${tradeoff}`);
+  }
+  if(JSON.stringify(review?.settings?.current_thinking)!==JSON.stringify(review?.settings?.proposed_thinking))changes.push(`Thinking defaults: ${show(review?.settings?.current_thinking)} → ${show(review?.settings?.proposed_thinking)} — review the reasoning change`);
+  if(review?.before?.image!==review?.after?.image)changes.push('Serving image changes; the exact image IDs are in the review below.');
+  if(!changes.length&&JSON.stringify(review?.before?.command)!==JSON.stringify(review?.after?.command))changes.push('Serving arguments change; review the complete recipe below.');
+  return changes;
+}
+export function operationProgress(row,now=Date.now()){
+  const p=row.runner?.progress,result=row.runner?.result;
+  if(result?.readmission?.state==='left_to_operator')return 'Verification finished. Routing was left to the operator because a separate pause or decision must be preserved.';
+  if(p){const seconds=Number.isFinite(p.heartbeat_at)?Math.max(0,Math.floor(now/1000-p.heartbeat_at)):null;return `${p.detail} ${row.runner.process_alive===true?(seconds===null?'Runner alive; heartbeat time unavailable.':`Runner alive; heartbeat ${seconds}s ago.`):'Runner is not currently confirmed alive.'} A heartbeat alone does not prove model progress.`;}
+  return row.error??row.runner?.scope??'Preparing or waiting for approval does not change a server.';
+}
+
+const panel=typeof document==='undefined'?null:document.getElementById('server-operations');
+if(panel){
+  const list=document.getElementById('server-operations-list'),error=document.getElementById('server-operations-error'),summary=document.getElementById('server-operations-summary');
+  let token=null,reading=false,signature='',state=null;
+  const busy=new Set(),known=new Set();
+  function text(tag,value,cls){const e=document.createElement(tag);e.textContent=value;if(cls)e.className=cls;return e;}
+  async function action(row,choice){
+    if(busy.has(row.id))return;busy.add(row.id);signature='';render();error.textContent='';
+    try{
+      const response=await fetch('/api/genie/operations',{method:'POST',headers:{'content-type':'application/json','x-dsg-csrf':token},
+        body:JSON.stringify({action:choice,id:row.id,plan_revision:row.plan_revision})});
+      const result=await response.json();if(!response.ok)throw new Error(result.error??'The decision was not confirmed.');
+    }catch(e){error.textContent=`${e.message} Refreshing the saved status; no action is automatically repeated.`;}
+    finally{busy.delete(row.id);signature='';await refresh();}
+  }
+  function render(){
+    if(!state)return;panel.hidden=!state.configured;if(panel.hidden)return;
+    const rows=state.operations??[];
+    const fingerprint=JSON.stringify([rows,state.suspended,[...busy],Math.floor(Date.now()/10000)]);if(fingerprint===signature)return;signature=fingerprint;
+    const expanded=new Set([...list.querySelectorAll('details[open]')].map(d=>d.dataset.operationId));
+    list.replaceChildren();summary.textContent=rows.length?`· ${rows.length} recorded`:'· no proposals';
+    if(!rows.length)list.append(text('p','Ask Genie to inspect a server and propose a specific improvement.','conversation-footnote'));
+    for(const row of rows){
+      if(!known.has(row.id)&&!['completed','restored','failed_unchanged','declined'].includes(row.runner?.state??row.state))panel.open=true;known.add(row.id);
+      const card=text('article','','server-operation');card.append(text('h3',`${row.worker_id??'Saved operation'} · ${operationLabel(row)}`));
+      if(row.reason)card.append(text('p',row.reason));
+      card.append(text('p',operationProgress(row),'conversation-footnote'));
+      if(row.review){
+        for(const change of operationChanges(row.review))card.append(text('p',change));
+        const details=text('details');details.dataset.operationId=row.id;details.open=expanded.has(row.id);
+        details.append(text('summary','Review the exact change and checks'));
+        if(row.review.settings)details.append(text('pre',JSON.stringify(row.review.settings,null,2)));
+        for(const key of ['before','after']){details.append(text('h4',key==='before'?'Current recipe':'Proposed recipe'));details.append(text('pre',JSON.stringify(row.review[key],null,2)));}
+        details.append(text('p',row.review.scope));details.append(text('p',`Checks: ${(row.review.checks??[]).join(', ')}`));
+        details.append(text('small',`Plan ${row.plan_revision}`));card.append(details);
+      }
+      if(['awaiting_approval','approved_unsubmitted'].includes(row.state)){
+        const controls=text('div','','genie-controls');
+        const approve=text('button',row.state==='approved_unsubmitted'?'Start the approved change':'Approve this change','button');approve.type='button';approve.disabled=busy.has(row.id)||state.suspended;
+        approve.addEventListener('click',()=>action(row,'approve'));controls.append(approve);
+        if(row.state==='awaiting_approval'){const decline=text('button','Decline','button');decline.type='button';decline.disabled=busy.has(row.id);decline.addEventListener('click',()=>action(row,'decline'));controls.append(decline);}
+        card.append(controls);
+      }
+      card.append(text('small',`Operation ${row.id}`));list.append(card);
+    }
+  }
+  async function refresh(){
+    if(reading)return;reading=true;
+    try{const response=await fetch('/api/genie/operations');const value=await response.json();if(!response.ok)throw new Error(value.error??'Operation status unavailable.');token=value.csrf_token;state=value;render();}
+    catch(e){panel.hidden=false;error.textContent=e.message+' Existing operations may still be running.';}
+    finally{reading=false;}
+  }
+  refresh();setInterval(()=>{if(!document.hidden&&location.hash==='#genie')refresh();},3000);
+  window.addEventListener('hashchange',()=>{if(location.hash==='#genie')refresh();});
+}

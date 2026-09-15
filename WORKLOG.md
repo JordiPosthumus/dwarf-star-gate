@@ -1,5 +1,32 @@
 # Star Gate work log
 
+## 2026-09-15 — Genie proposals, approval card and operation progress (development)
+
+Connected optional operation enrollment to the existing dashboard and Hermes chat.
+Genie can prepare a specific proposal and read its status; the scoped tool token
+cannot approve it. The owner reviews exact current/proposed recipes, known capacity
+and thinking changes, verification checks and plan revision in the Genie tab.
+Approval starts the independent runner. Progress separates observed process
+liveness from model progress, survives reload, and retains completed outcomes.
+Active or unresolved operations open their card on reload. Testing mode prevents
+new preparation or approval without cancelling existing work.
+
+Preparation now rejects uncommitted approved-record bytes before any drain.
+Private commands and executable paths remain in the owner review, not the
+operation tool response or generic diagnostics. Existing personal Hermes files,
+chat deadlines and production settings are unchanged. Enrollment is optional and
+has not been activated in production.
+
+Validation: 34 Node operation tests and 83 Python operation/serving tests passed;
+the optional native Docker and installed-Hermes cases were skipped in that suite.
+The installed-Hermes test passed separately, calling both real registered tools
+against disposable model/API fixtures and proving no approval was granted. Three
+Python tool tests passed, including redirect refusal. Dashboard/chat regression
+passed 135 tests, with two environment-dependent Hermes cases skipped. Browser
+rehearsal verified review, approval, visible running progress after reload and a
+saved completed outcome. These are product-integration checks, not a real Spark
+upgrade or fresh native-model qualification.
+
 ## 2026-09-15 — Frozen serving entry point and preparation (development)
 
 Added the entry point joining owned maintenance, retained Docker, native checks
