@@ -43,6 +43,9 @@ deployment receipts stay outside this public repository.
 - [ ] Reconcile recovery enrollment with approved records and demonstrated
   restoration. Add approved drain/apply/verify/return workflows through the
   existing mutation path; rollback claims require a retained, proven version.
+  The [retained Docker executor](approved-server-operations.md) has unit and
+  disposable-Docker qualification. Approval, durable operation supervision,
+  real-model verification and readmission integration remain in development.
 - [ ] Integrate owner-started Hourglass runs, initially measuring the chosen
   server directly with recorded configuration and measurement provenance.
   Saved aggregate reports are wired into the dashboard and chat,

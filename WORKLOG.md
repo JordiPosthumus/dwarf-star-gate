@@ -1,5 +1,17 @@
 # Star Gate work log
 
+## 2026-09-15 — Retained Docker profile executor (development)
+
+Added the executor component for approved serving changes. It preserves the
+previous container, checks the exact native endpoint and idle state, records
+intent before actions, and observes duplicate or uncertain attempts without
+replaying them. Twenty unit checks cover failure and preservation cases. A real
+disposable Docker fixture demonstrated busy refusal, cutover and restoration;
+only its own fixture IDs were cleaned up. The initial fixture ignored SIGTERM;
+its interrupted attempt was retained, and its shutdown handler was corrected.
+The final native fixture passed without forced termination. This does not grant
+Genie mutation authority or complete the approval/supervision/qualification flow.
+
 ## 2026-09-15 — Genie can examine restoration receipts
 
 The existing read-only artifact tool now accepts `restoration_drill`, using the
