@@ -253,3 +253,12 @@ Hermes test using synthetic model responses. Private restoration enrollment and
 a complete native-server operation still require their actual evidence before
 production activation. Fresh-host provisioning and arbitrary model contracts
 remain separate unfinished work.
+
+Existing restoration evidence may be normalized into the recorded proof format
+without repeating a drill. Retain original dates and actor, exact container
+configuration, original requests/responses and their hashes, the checks actually
+passed and the demonstrated scope. Re-evaluate the saved checks and compare the
+retained live configuration before enrollment. A flag-change restoration must
+not silently become proof of an image upgrade or installation on another host.
+Changing a record does not change generic recovery bindings; correcting those
+bindings can remove an existing recovery veto and needs its own behavior check.

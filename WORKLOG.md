@@ -1,5 +1,17 @@
 # Star Gate work log
 
+## 2026-09-15 — Restoration evidence reconciliation
+
+Re-evaluated an existing installation’s actual saved API and EOS responses against
+the serving qualifier and matched its current Docker signature to the retained
+recipe. The EOS diagnostic now explicitly retains the six sampling fields used
+in that earlier test; no launcher or normal request defaults changed. All 13
+archived requests/responses and 41 serving tests passed. The installation’s
+retained-restoration entry is versioned privately, scoped to demonstrated flag
+changes, with original actor/date and source evidence preserved. No new drill,
+image-upgrade proof, automatic recovery activation or production operation is
+claimed. Recovery still uses its separate existing binding and policy.
+
 ## 2026-09-15 — Genie proposals, approval card and operation progress (development)
 
 Connected optional operation enrollment to the existing dashboard and Hermes chat.

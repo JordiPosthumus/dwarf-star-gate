@@ -117,7 +117,8 @@ def api_checks(request, nonce, contract):
 def eos_checks(request, contract):
     eos = contract['reasoning_eos']
     body = dict(model=contract['model'], messages=[{'role': 'user', 'content': 'Think briefly about why two plus two equals four, then answer 4.'}],
-                max_tokens=16, allowed_token_ids=eos['eos_token_ids'] + [eos['ordinary_token_id']],
+                max_tokens=16, temperature=1.0, top_p=.95, top_k=20, min_p=0, presence_penalty=0, repetition_penalty=1,
+                allowed_token_ids=eos['eos_token_ids'] + [eos['ordinary_token_id']],
                 chat_template_kwargs={'enable_thinking': True, 'preserve_thinking': True, 'reasoning_effort': 'xhigh'},
                 stream=True, stream_options={'include_usage': True}, return_token_ids=True, include_reasoning=True)
     raw = request('reasoning-eos-guard', '/v1/chat/completions', body, raw=True)
