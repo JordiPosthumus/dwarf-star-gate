@@ -10,6 +10,12 @@ class Inspection(unittest.TestCase):
   self.patch=patch.dict(sys.modules,{'tools.registry':types.SimpleNamespace(registry=self.registry)});self.patch.start();self.addCleanup(self.patch.stop)
  def register(self,workers=None):m.register_inspection({'records_directory':str(self.root),'workers':workers or {}},self.context,lambda k,**v:self.events.append((k,v)))
  def call(self,name,args):return json.loads(self.registry.tools[name]['handler'](args))
+ def test_local_omlx_uses_same_tool_and_saved_event_without_ssh_or_selected_image_actions(self):
+  target={'kind':'omlx-local','root':str(self.root),'url':'http://127.0.0.1:8013/v1'};self.register({'example':target})
+  with patch.object(m,'inspect_omlx',return_value={'runtime':'omlx','scope':'Read only'}) as local,patch.object(m.subprocess,'run') as ssh:
+   result=self.call('inspect_server',{'worker_id':'example'});self.assertEqual(result['runtime'],'omlx');local.assert_called_once_with(target);ssh.assert_not_called()
+   self.assertEqual(self.events[-1][1]['event']['state'],'complete');self.assertEqual(self.events[-1][1]['event']['result'],result)
+   self.assertIn('error',self.call('inspect_server',{'worker_id':'example','selected_default':True}));self.assertEqual(local.call_count,1)
  def test_records_missing_distinct_from_unknown_and_no_secret_contents(self):
   (self.root/'observed').mkdir();(self.root/'observed/example.json').write_text(json.dumps({'schema':1,'worker_id':'example','kind':'observed','configuration':{'api_key':'PRIVATE_SECRET','context':262144},'runtime':{'build':'a'*64}}));self.register()
   result=self.call('read_server_configuration',{'worker_id':'example'});self.assertNotIn('PRIVATE_SECRET',json.dumps(result));self.assertEqual(result['records']['observed']['configuration']['context'],262144);self.assertIsNone(result['records']['approved']);self.assertIn('a'*64,self.context['inspection_private_values'])

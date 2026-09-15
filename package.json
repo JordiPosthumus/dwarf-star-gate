@@ -36,7 +36,7 @@
     "genie:research-test": "python3 -m unittest discover -s ds4-gateway -p 'genie_research_test.py' -v",
     "setup:test": "node --test scripts/setup.test.mjs",
     "genie:install-test": "node --test scripts/first-install.test.mjs",
-    "genie:inspection-test": "python3 -m unittest discover -s ds4-gateway -p 'genie_inspection_test.py' -v",
+    "genie:inspection-test": "python3 -m unittest discover -s ds4-gateway -p 'genie_*inspection*_test.py' -v",
     "operations:test": "node --test ds4-gateway/server-operations.test.mjs ds4-gateway/operation-runner.test.mjs ds4-gateway/operation-service.test.mjs && python3 -m unittest discover -s ds4-gateway -p 'docker_profile*_test.py' && python3 -m unittest discover -s ds4-gateway -p 'operation_*_test.py' && python3 -m unittest discover -s ds4-gateway -p 'serving_*_test.py'"
   }
 }

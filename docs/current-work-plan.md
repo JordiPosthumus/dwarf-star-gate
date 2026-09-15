@@ -26,6 +26,11 @@ deployment receipts stay outside this public repository.
 - [x] Read-only observed/proposed/approved configuration projections in chat and
   Settings. Per-installation approval, retained recipes and a controlled restore
   drill remain required before a deployment claims restoration is proven.
+- [x] Extend live inspection to an explicitly enrolled local oMLX installation:
+  credential-redacted launchers/settings, authenticated model discovery and
+  listener observation. Installed Hermes calls the real collector in an isolated
+  integration test; a live installation's collector is separately verified.
+  Source files on disk are distinguished from the running process's loaded code.
 - [x] Explicit high/normal/idle-only queue classes and waiting-job edits.
 - [x] Integrate explicit concurrent gateway slots, per-worker capacity controls,
   independent health probes and per-reply progress. Synthetic qualification
