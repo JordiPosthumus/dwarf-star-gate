@@ -54,7 +54,9 @@ separate from approved configurations and restoration evidence.
 For a conversation-first interface, [conversational Genie](docs/genie-conversation.md)
 adds saved chats and follow-up questions through Hermes. Try the clearly labelled
 example interface with `npm run genie:demo`, then connect your own model using the
-guide. This chat profile explains the observed setup and has no action tools.
+guide. With the corresponding capability switches enabled, chat can move eligible
+waiting jobs and request recovery through the existing enrolled-service executor.
+Server configuration changes use a separate exact-plan approval workflow.
 
 **Star Gate also gives your local agents an easy control surface for managing the
 gateway.** Its [scoped API and CLI](docs/agent-api.md) let authorized agents

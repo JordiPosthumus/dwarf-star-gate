@@ -35,6 +35,10 @@ deployment receipts stay outside this public repository.
 - [x] Conversational queue status and exact offered moves through the existing
   core executor, with per-reply receipts and the independent balancing switch.
   No active-job preemption, changed thresholds or new scheduling algorithm.
+- [x] Conversational recovery readiness and requests through the existing
+  enrolled-service executor, with the recovery switch and saved operation IDs.
+  This does not enroll or qualify a model server; native recovery proof below
+  remains separate.
 - [x] Integrate explicit concurrent gateway slots, per-worker capacity controls,
   independent health probes and per-reply progress. Synthetic qualification
   covers scheduling and continuity; existing workers retain their capacity.

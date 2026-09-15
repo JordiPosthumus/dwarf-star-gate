@@ -2,7 +2,10 @@
 
 Normal Star Gate setup includes a persistent conversation in the gateway's Genie tab.
 Follow-up questions carry their conversation history, and each answer receives a
-fresh, selected dashboard setup snapshot. The chat has no server-changing tools.
+fresh, selected dashboard setup snapshot. Enrolled tools can inspect the servers,
+research public sources, move eligible waiting jobs and request existing service
+recovery. Each capability has its own switch. Configuration changes require
+separate approval of the exact proposed plan.
 Existing background reviews and their handling of direct questions are unchanged.
 
 ## Try the interface without a model
@@ -128,7 +131,9 @@ Merely editing a configuration does not deploy this worktree.
 - When research services are configured, Genie has standing permission to use
   the two web-reading tools whenever useful. Their exact tool set is verified
   before inference. Without those services, chat still works without web tools.
-  No server-changing tools are exposed. Other Hermes profiles are unchanged.
+  Inspection, queue balancing, recovery, proposals and measurement tools are
+  separately connected and governed by their own controls. Other Hermes profiles
+  are unchanged.
 - Model errors do not cause automatic replay. An interrupted reply is marked as
   such; the saved user message remains. The user can ask again explicitly.
 - Partial replies are visible during generation. Completed replies are saved;
@@ -456,3 +461,18 @@ A `restoration_drill` artifact uses the chosen record’s
 The tool keeps the returned evidence with the answer. Genie should assess the
 actual operation and checks: matching the saved hash does not prove every claim
 in a report, qualify fresh-machine installation, or authorize recovery.
+
+## Recovery from chat
+
+Ask “Which servers can you recover?” or “Recover this server if it is eligible.”
+Genie reads fresh recovery policy, worker eligibility and operation receipts.
+With recovery enabled, he can request the same evidence-bound procedure used by
+the fleet reviewer. This cannot enroll a service, run a canary, override deliberate
+maintenance or change its configuration. An unconnected installation remains
+visibly unconnected; enabling the switch does not qualify its model servers.
+
+Each reply retains the tool calls and operation ID under **Server recovery
+activity**. An accepted operation keeps running independently of the chat. Genie
+can check its status later; a queued acknowledgement is not a successful recovery.
+Turning recovery off prevents new Genie recovery requests and keeps existing
+operations observable. The underlying controller preserves its existing behavior.
