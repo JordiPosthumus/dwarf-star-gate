@@ -43,3 +43,19 @@ or a synthetic fixture is insufficient. Restarting clears resident memory caches
 Retain the previous enrollment and exact container/configuration as rollback
 evidence. The ordinary Server recovery capability switch controls new automatic
 actions; already-issued work finishes reconciliation.
+
+## Native drill evidence, 15 September 2026
+
+One installed Spark completed an owner-approved same-container restart after
+gateway and direct requests finished. The other two workers remained serving.
+Both cold conversations used 7,492 prompt tokens with zero cache hits. Follow-ups
+reused 4,800 tokens each, taking 2,196 and 2,250 ms; cold calls took 5,542 and
+4,817 ms. The controller verified the unchanged service profile and new process
+instance, released only its own maintenance hold, and readmitted the worker.
+
+Docker image, command, environment, host configuration and mount contents were
+unchanged. Advertised context remained 262,144 and serving concurrency remained
+one. Actual startup KV allocation changed from 492,425 to 490,976 tokens
+(0.29% lower), despite identical configuration; this variation is recorded rather
+than described as identical effective capacity. Short generation checks do not
+exercise the full context/output boundary or qualify other machines.

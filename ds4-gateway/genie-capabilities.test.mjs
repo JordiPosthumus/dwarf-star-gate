@@ -83,3 +83,13 @@ test('an enabled recovery switch never disguises missing service connections',()
   const row=research.capabilities.find(r=>r.key==='research');
   assert.equal(row.status,'Last attempt failed');assert.match(row.detail,/Page extraction: Service unavailable/);
 });
+
+test('partial recovery rollout names both connected and outstanding workers',()=>{
+  const gateway={genie_capabilities:{},recovery:{configured:true,automatic:true,workers:[{worker_id:'one',enrollment:{binding:'matched'}},{worker_id:'two',enrollment:{binding:'mismatch'}}]}};
+  const row=capabilityStatus({gateway},{management:true}).capabilities.find(r=>r.key==='recovery');
+  assert.equal(row.connected,true);assert.equal(row.status,'Partly connected');
+  assert.match(row.detail,/Connected: one\./);assert.match(row.detail,/needs connecting: two\./);
+  gateway.recovery.automatic=false;
+  const off=capabilityStatus({gateway},{management:true}).capabilities.find(r=>r.key==='recovery');
+  assert.equal(off.enabled,false);assert.equal(off.status,'Off');assert.equal(off.connected,true);
+});

@@ -52,6 +52,17 @@ deployment receipts stay outside this public repository.
 - [x] Build setup research through existing chat, with opt-in reminder cadence,
   explicit start, skip, postpone and run-early controls. Research does not approve
   its recommendations. Exact production promotion is tracked per release.
+- [ ] Complete configuration-aware upstream improvement monitoring. The current
+  schedule raises a reminder; it does not independently run an upstream study.
+  Join each server's recorded configuration and actual installed revisions to
+  relevant upstream PRs/releases, retaining sources and the last studied revision.
+  Public research has standing owner permission; server changes and measurements
+  keep their separate controls. After recovery and Hourglass are connected, join
+  research to one approved candidate trial on a drained worker, compare against
+  the saved baseline, and report whether to keep or restore it. The inspection,
+  research, proposal and measurement pieces are partly built; this complete loop
+  is a core remaining feature, not a completed watcher or a promise of arbitrary
+  unattended upgrades. Use the existing study, operation and record stores.
 - [x] Use the configured Hermes runtime and current Genie identity for fleet
   reviews, preserving provider and guarded-action contracts.
 - [x] Connect conversational questions to the existing exception for yielding
@@ -96,8 +107,11 @@ deployment receipts stay outside this public repository.
   conversational tools and checked its in-progress receipt; the controller then
   completed recovery. This verifies the real model/tool/action path, with the
   recovered service’s model and cache replies still synthetic. Actual
-  model recovery qualification and installation enrollment remain unfinished;
-  the fixture does not prove production recovery. The Qwen model/cache verifier
+  model recovery qualification was subsequently completed on one installed
+  Spark using one explicitly approved same-container restart. It drained first,
+  returned actual replies, reused 4,800 tokens on both follow-ups, and was
+  readmitted. Other workers' recovery enrollment remains unfinished;
+  the fixture alone does not prove production recovery. The Qwen model/cache verifier
   separately passed four real requests on each of two unchanged running workers,
   with zero cached tokens on both cold calls and 4,800 reused on both follow-ups
   on each worker. These non-restarting checks do not establish recovery after
