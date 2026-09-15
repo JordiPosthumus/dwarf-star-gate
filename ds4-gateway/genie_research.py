@@ -51,6 +51,8 @@ def register_research(config, context, emit):
 
     previous = context.get("previous_study") or {}
     if isinstance(previous.get("conversation_id"), str):private_names.append(previous["conversation_id"].lower())
+    answer_id = previous.get("latest_completed_answer", {}).get("reply_id")
+    if isinstance(answer_id, str):private_names.append(answer_id.lower())
     for row in previous.get("configuration_snapshot_revisions", []):
         private_names.extend(row[k].lower() for k in ("worker_id", "approved", "observed") if isinstance(row.get(k), str) and row[k])
     for worker in previous.get("evidence", {}).get("workers", []):

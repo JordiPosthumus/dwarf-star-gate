@@ -87,3 +87,35 @@ test('later studies receive actual previous-study receipts across reload, ordina
  const saved=restored.get(second.last_run.conversation_id).messages[1];assert.deepEqual(saved.context.previous_study,r.calls[1].context.previous_study);
  const ordinary=restored.create();restored.submit(ordinary.id,'Hi','ordinary-after-studies');await restored.idle();assert.equal(r.calls[2].context.previous_study,undefined);
 });
+
+test('study follow-up corrections and partial-source scope survive reload into the next study',async t=>{
+ const r=rig(t),hash='c'.repeat(64);
+ let step=0;
+ r.chat.provider.generate=async input=>{
+  r.calls.push(input);step++;
+  if(step<=2){
+   input.onInspection({kind:'live',operation:'inspect_server',state:'complete',worker_id:'example',at:new Date().toISOString(),result:{sources:{status:'read',files:[{path:'omlx/server.py',status:'read',sha256:hash,window:{offset:step===1?0:4000,end_offset:step*4000,total_characters:12000,next_offset:step*4000,complete_file:false}}]}}});
+   input.onResearch({kind:'read',state:'complete',at:new Date().toISOString(),sources:[{url:`https://example.org/source-${step}`}]});
+  }
+  if(step===3)throw new Error('A later follow-up failed');
+  return {text:step===1?'Initial advice':step===2?'Correction: local gains remain unmeasured.':'Next study'};
+ };
+ const first=r.change('study-start',{request_id:randomUUID()});await r.chat.idle();
+ r.chat.submit(first.last_run.conversation_id,'Check that claim',randomUUID());await r.chat.idle();
+ const corrected=r.chat.get(first.last_run.conversation_id).messages.at(-1);
+ const summary=r.chat.study.status().last_run.evidence;
+ assert.deepEqual(summary.pages_read,['https://example.org/source-1','https://example.org/source-2']);
+ assert.equal(summary.workers[0].source_files.length,1);
+ assert.equal(summary.workers[0].source_files[0].window.offset,4000);
+ assert.equal(summary.workers[0].source_files[0].window.complete_file,false);
+ r.chat.submit(first.last_run.conversation_id,'Another follow-up',randomUUID());await r.chat.idle();
+ assert.equal(r.chat.get(first.last_run.conversation_id).messages.at(-1).state,'failed');
+ r.advance(DAY);const restored=new GenieChat(r.options);t.after(()=>restored.close());
+ restored.study.change({action:'study-start',expected_revision:restored.study.status().revision,request_id:randomUUID()});await restored.idle();
+ const prior=r.calls.at(-1).context.previous_study;
+ assert.equal(prior.latest_completed_answer.reply_id,corrected.id);
+ assert.equal(prior.latest_completed_answer.text,'Correction: local gains remain unmeasured.');
+ assert.match(prior.latest_completed_answer.scope,/unverified/);
+ assert.deepEqual(prior.evidence,summary);
+ assert.match(r.calls.at(-1).message,/follow-up corrections/);
+});

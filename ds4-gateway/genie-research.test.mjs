@@ -21,16 +21,16 @@ test('malformed saved research evidence is preserved without exposing a broken c
 test('installed Hermes uses only the two research tools and records actual search/read evidence',{
  skip:!process.env.DSG_TEST_HERMES_SOURCE||!process.env.DSG_TEST_HERMES_PYTHON,timeout:120000,
 },async t=>{
- let searches=0,reads=0;const modelRequests=[];
+ let searches=0,reads=0,answerText='The synthetic release fixes the example bug. [Source](https://example.org/release)',expectCorrection=false;const modelRequests=[];
  const server=http.createServer(async(req,res)=>{
   let body='';for await(const b of req)body+=b;
   const reply=v=>{res.setHeader('content-type','application/json');res.end(JSON.stringify(v));};
   if(req.url.startsWith('/search?')){searches++;assert.equal(req.headers.authorization,undefined);return reply({results:[{title:'Example release',url:'https://example.org/release',content:'Synthetic release notes'}]});}
   if(req.url==='/v1/scrape'){reads++;assert.equal(req.headers.authorization,undefined);assert.equal(JSON.parse(body).url,'https://example.org/release');return reply({success:true,data:{markdown:'Synthetic source: version example-two fixes the example bug.'}});}
   if(req.method==='GET')return reply({data:[{id:'example-model'}]});
-  const p=JSON.parse(body);if(req.url==='/api/show')return reply({model_info:{'llama.context_length':262144}});modelRequests.push(p);assert.deepEqual(p.tools.map(x=>x.function.name).sort(),['web_extract','web_search']);
+  const p=JSON.parse(body);if(req.url==='/api/show')return reply({model_info:{'llama.context_length':262144}});modelRequests.push(p);if(expectCorrection){assert.match(JSON.stringify(p.messages),/Correction: this release has not been measured locally/);assert.match(JSON.stringify(p.messages),/latest_completed_answer/);}assert.deepEqual(p.tools.map(x=>x.function.name).sort(),['web_extract','web_search']);
   const toolMessages=p.messages.filter(m=>m.role==='tool'),name=!toolMessages.length?'web_search':toolMessages.length===1?'web_extract':null;
-  const message=name?{role:'assistant',content:null,tool_calls:[{id:'call-'+toolMessages.length,type:'function',function:{name,arguments:JSON.stringify(name==='web_search'?{query:'example-runtime release notes'}:{url:'https://example.org/release'})}}]}:{role:'assistant',content:'The synthetic release fixes the example bug. [Source](https://example.org/release)'};
+  const message=name?{role:'assistant',content:null,tool_calls:[{id:'call-'+toolMessages.length,type:'function',function:{name,arguments:JSON.stringify(name==='web_search'?{query:'example-runtime release notes'}:{url:'https://example.org/release'})}}]}:{role:'assistant',content:answerText};
   if(p.stream){res.setHeader('content-type','text/event-stream');const delta={...message};delete delta.role;if(delta.tool_calls)delta.tool_calls=delta.tool_calls.map((x,index)=>({...x,index}));res.write('data: '+JSON.stringify({id:'example',choices:[{index:0,delta,finish_reason:null}]})+'\n\n');res.end('data: '+JSON.stringify({id:'example',choices:[{index:0,delta:{},finish_reason:name?'tool_calls':'stop'}],usage:{prompt_tokens:100,completion_tokens:20,total_tokens:120}})+'\n\ndata: [DONE]\n\n');}
   else reply({id:'example',choices:[{message,finish_reason:name?'tool_calls':'stop'}],usage:{prompt_tokens:100,completion_tokens:20,total_tokens:120}});
  });
@@ -39,6 +39,8 @@ test('installed Hermes uses only the two research tools and records actual searc
  const chat=new GenieChat({directory:path.join(d,'chats'),provider,getSnapshot:()=>({gateway:{workers:[{id:'private-worker'}]}})}),s=chat.create();chat.submit(s.id,'Research the example release','research-hermes');await chat.idle();
  const answer=chat.get(s.id).messages.at(-1);assert.equal(answer.state,'complete',JSON.stringify(answer));assert.match(answer.text,/synthetic release/);assert.equal(searches,1);assert.equal(reads,1);assert.equal(modelRequests.length,3);assert.equal(answer.research.events.filter(e=>e.state==='complete').length,2);assert.ok(answer.research.events.some(e=>e.content_sha256));
  const study=chat.study.change({action:'study-start',expected_revision:0,request_id:randomUUID()});await chat.idle();const studied=chat.get(study.last_run.conversation_id);assert.match(studied.title,/Setup research/);assert.equal(studied.messages.at(-1).state,'complete');assert.equal(searches,2);assert.equal(reads,2);assert.equal(modelRequests.length,6);assert.equal(studied.messages.at(-1).research.events.filter(e=>e.state==='complete').length,2);
+ answerText='Correction: this release has not been measured locally.';chat.submit(studied.id,'Recheck the performance claim',randomUUID());await chat.idle();assert.equal(chat.get(studied.id).messages.at(-1).state,'complete');
+ expectCorrection=true;chat.study.change({action:'study-start',expected_revision:chat.study.status().revision,request_id:randomUUID()});await chat.idle();assert.equal(chat.study.status().last_run.state,'complete');assert.equal(searches,4);assert.equal(reads,4);
 });
 
 test('ordinary chat works without web services and accepted retries survive a changed default',async t=>{

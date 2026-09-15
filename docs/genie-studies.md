@@ -38,11 +38,15 @@ be reported rather than filled in by inference.
 
 The next study receives a compact summary of the previous completed study's actual
 inspection receipts, source hashes, public pages read and dated configuration
-snapshot revisions. It uses those as historical evidence and checks the current
-setup again. Ordinary chats do not receive this additional study context.
+snapshot revisions. Completed follow-ups contribute their checks and the latest
+completed answer is included verbatim as historical, unverified model advice, so
+corrections are not lost. Failed or unfinished answers do not replace that answer.
+The source summary keeps each path's latest receipt, including any returned text
+window; it does not combine sections into a claim of complete source coverage.
+It uses those as historical evidence and checks the current setup again. Ordinary chats do not receive this additional study context.
 The Setup research panel shows recorded live checks, source reads, missing paths,
-public pages read and failed checks for the last study. Search results are not
-counted as pages read, and selected-image inspection is not a current-server
+public pages read and failed checks for the last study and its follow-ups.
+Search results are not counted as pages read, and selected-image inspection is not a current-server
 check. Counts do not certify a recommendation or measured benefit. These summaries
 are derived from existing private conversations; no extra database or scheduler
 is introduced. Existing reminder and operation permissions remain unchanged.

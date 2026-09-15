@@ -69,11 +69,11 @@ class ResearchValidation(unittest.TestCase):
         self.network.assert_not_called()
 
     def test_previous_study_identifiers_stay_private_without_inspection_tools(self):
-        previous = {'conversation_id':'private-study', 'configuration_snapshot_revisions':[{'worker_id':'former-box','approved':'private-approved','observed':'private-observed'}],
+        previous = {'conversation_id':'private-study', 'latest_completed_answer':{'reply_id':'private-reply'}, 'configuration_snapshot_revisions':[{'worker_id':'former-box','approved':'private-approved','observed':'private-observed'}],
                     'evidence':{'workers':[{'worker_id':'retired-box','source_files':[{'sha256':'a'*64}]}]}}
         register_research({'search_url':'http://example.invalid','extract_url':'http://example.invalid'},
                           {'previous_study':previous}, lambda _, **kw:self.events.append(kw['event']))
-        for value in ['private-study','former-box','private-approved','private-observed','retired-box','a'*64]:
+        for value in ['private-study','private-reply','former-box','private-approved','private-observed','retired-box','a'*64]:
             self.assertIn('"error"',self.handlers['web_search']({'query':'compare '+value}))
         self.network.assert_not_called()
 
