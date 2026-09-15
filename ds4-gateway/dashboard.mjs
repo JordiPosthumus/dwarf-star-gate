@@ -1,6 +1,7 @@
 import {testingModeFile,testingSuspended} from './testing-mode.mjs';
 import {HourglassReports} from './hourglass-reports.mjs';
 import {HourglassRuns} from './hourglass-runs.mjs';
+import {createHourglassMaintenance} from './hourglass-maintenance.mjs';
 import {doorControl} from './door-client.mjs';
 import http from 'node:http';
 import {EndpointTelemetry} from './endpoint-telemetry.mjs';
@@ -285,7 +286,10 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
 export async function runDashboard(configPath, port) {
   const {config} = loadConfig(configPath);
   const hourglassReports=new HourglassReports(config.hourglass_reports);
-  const hourglass=config.hourglass_console?new HourglassRuns(config.hourglass_console,path.join(path.dirname(config.state_file),'hourglass'),{records:()=>serverRecords.snapshot(gateway?.workers?.map(w=>w.id)??[])}):null;
+  const hourglassDirectory=path.join(path.dirname(config.state_file),'hourglass');
+  const hourglass=config.hourglass_console?new HourglassRuns(config.hourglass_console,hourglassDirectory,{
+    maintenance:createHourglassMaintenance(config,path.join(hourglassDirectory,'operations')),
+    records:()=>serverRecords.snapshot(gateway?.workers?.map(w=>w.id)??[])}):null;
   port ??= dashboardPort(config);
   const fileSources = telemetryFiles(config.telemetry_files);
   const cacheSources=cacheInventoryDirectories(config.cache_directories);

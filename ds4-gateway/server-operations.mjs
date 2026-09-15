@@ -12,8 +12,10 @@ const encode=value=>JSON.stringify(value,null,2)+'\n';
 const exact=(input,keys)=>input&&typeof input==='object'&&!Array.isArray(input)&&Object.keys(input).sort().join(',')===[...keys].sort().join(',');
 
 export class ServerOperations {
-  constructor({directory,workers,prepare,launch,observe,recordRevision,now=Date.now}) {
+  constructor({directory,workers,prepare,launch,observe,recordRevision,now=Date.now,proposalKind='serving'}) {
     if(!Array.isArray(workers)||workers.some(id=>!ID.test(id))||[prepare,launch,observe,recordRevision].some(f=>typeof f!=='function'))throw new Error('Operation enrollment and runner callbacks are required.');
+    if(!['serving','hourglass'].includes(proposalKind))throw new Error('Unsupported enrolled operation kind.');
+    this.proposalKind=proposalKind;
     this.directory=path.resolve(directory);this.workers=new Set(workers);this.prepare=prepare;this.launch=launch;this.observe=observe;this.recordRevision=recordRevision;this.now=now;
     this.preparing=new Map();this.launching=new Map();this.closed=false;this.approvals=Promise.resolve();
     fs.mkdirSync(this.directory,{recursive:true,mode:0o700});
@@ -61,8 +63,10 @@ export class ServerOperations {
   }
   propose(input,{conversation_id=null,reply_id=null}={}){
     if(this.closed)throw new Error('Operation proposals are closed.');
-    if(!exact(input,['id','worker_id','image','command','reason'])||!UUID.test(input.id)||!ID.test(input.worker_id)||!this.workers.has(input.worker_id)||!/^sha256:[a-f0-9]{64}$/.test(input.image)||
-       !Array.isArray(input.command)||!input.command.length||input.command.some(s=>typeof s!=='string'||s.includes('\0'))||Buffer.byteLength(JSON.stringify(input.command))>65536||typeof input.reason!=='string'||!input.reason.trim()||input.reason.length>2000)throw new Error('Specify a configured worker, exact image, complete command and reason.');
+    const validShape=this.proposalKind==='hourglass'
+      ?exact(input,['id','worker_id','model','reason'])&&typeof input.model==='string'&&input.model.trim()&&input.model.length<=256
+      :exact(input,['id','worker_id','image','command','reason'])&&/^sha256:[a-f0-9]{64}$/.test(input.image)&&Array.isArray(input.command)&&input.command.length&&!input.command.some(s=>typeof s!=='string'||s.includes('\0'))&&Buffer.byteLength(JSON.stringify(input.command))<=65536;
+    if(!validShape||!UUID.test(input.id)||!ID.test(input.worker_id)||!this.workers.has(input.worker_id)||typeof input.reason!=='string'||!input.reason.trim()||input.reason.length>2000)throw new Error(this.proposalKind==='hourglass'?'Specify an enrolled worker and saved measurement.':'Specify a configured worker, exact image, complete command and reason.');
     for(const id of [conversation_id,reply_id])if(id!==null&&!UUID.test(id))throw new Error('Invalid originating conversation.');
     const folder=this.folder(input.id),existing=fs.existsSync(folder)?this.read(input.id,'proposal.json'):null;
     if(existing){if(existing.input_digest!==hash(JSON.stringify(input)))throw new Error('Operation ID already belongs to another proposal.');return this.status(input.id);}

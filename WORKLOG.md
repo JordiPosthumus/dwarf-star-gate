@@ -1988,3 +1988,22 @@ fixtures were corrected, then revalidated against the actual worker. Real
 gateway/record/Docker/model metadata matched with unchanged configuration and
 container startup. The benchmark catalogue was explicitly synthetic: no
 inference, native benchmark, approval, hold or restart occurred.
+
+### Connect owned Hourglass windows to dashboard Start and progress
+
+Explicitly enrolled direct measurement targets can now use the existing durable
+approval store and independent runner through the dashboard. The default serving
+proposal schema and original direct Hourglass starts retain their behavior.
+Genie prepares a review; only owner Start approves its exact plan. Progress and
+native receipts are observed across dashboard closure without replaying a start.
+A changed record is rejected before launch. Uncertain launched operations retain
+their evidence and cannot be dismissed using the direct-run checkbox.
+
+51 affected Node 22 tests passed without skips, including installed Hermes with
+synthetic providers, existing serving operations, and an actual independent
+Python fixture surviving dashboard closure. New fixture syntax/escaping errors
+were corrected before passing execution; no live server was involved. Browser
+inspection verified the review, Start and plain-language waiting/heartbeat
+display with disconnected synthetic state. Production was not enrolled or
+restarted. An actual complete native measurement and a dedicated owned-operation
+reconciliation UI remain outstanding.

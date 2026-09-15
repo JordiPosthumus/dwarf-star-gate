@@ -309,9 +309,56 @@ before measuring and before readmission. A changed mapping is not silently used.
 No restoration drill is required for this measurement-only preparation, because
 it does not replace a server or its configuration.
 
-This preparer is not yet connected to the dashboard's Start control. Existing
-direct owner-confirmed-idle runs retain their current behavior. Temporary-fixture
-tests cover stale reviews/routes/records, busy-worker preparation, executor
-freezing and the existing runner's exact approval checks. A read-only preparation
-against a live Spark checked real gateway and container metadata with a synthetic
-benchmark catalogue; it did not run Hourglass or prove live measurement behavior.
+Existing direct owner-confirmed-idle runs retain their current behavior.
+Temporary-fixture tests cover stale reviews/routes/records, busy-worker
+preparation, executor freezing and the existing runner's exact approval checks.
+A read-only preparation against a live Spark checked real gateway and container
+metadata with a synthetic benchmark catalogue; it did not run Hourglass or prove
+live measurement behavior.
+
+### Optional owned measurement windows
+
+The dashboard connects this preparer to Start when an explicit direct target
+includes a `maintenance` object:
+
+```json
+{
+  "model": "Saved Hourglass model name",
+  "worker_id": "example-worker",
+  "route": "direct",
+  "maintenance": { "native_url": "http://127.0.0.1:8001" }
+}
+```
+
+This target belongs in the existing `hourglass_console.targets` array. The
+installation also needs worker management, a control socket with conditional
+readmission, versioned server records, the configured Genie interpreter, and an
+existing inspection enrollment for the same Docker/vLLM worker. The SSH host and
+container come from that enrollment; the Docker socket defaults to
+`/var/run/docker.sock` and can be specified in `maintenance.docker_socket`.
+The selected Hourglass entry must address the current gateway worker directly.
+Omitting `maintenance` retains the original free-window workflow.
+
+Genie can request a review and inspect progress. Only the owner's same-origin
+Start action approves the exact saved plan. The existing operation store saves
+approval and launch intent, and the independent runner verifies their hashes.
+The dashboard never starts this native benchmark directly. Its existing polling
+shows the runner's waiting/measurement phases, process status and dated heartbeat;
+heartbeat and model progress remain distinct. Closing/reopening the dashboard
+observes the same runner and native receipt without replaying a launch.
+
+A record change detected before launch produces a rejected start and permits a
+fresh review. An uncertain launched operation remains visible and blocks another
+measurement until its outcome is established. The direct-run “I checked Hourglass”
+control cannot clear an owned operation: its maintenance outcome also matters.
+The UI does not yet offer a dedicated reconciliation action for an interrupted
+owned runner. Inspect its saved operation and maintenance receipts; do not delete
+them or start a replacement to clear the display.
+
+Validation includes owner/tool HTTP separation, exact approval, durable start
+intent, duplicate-start suppression, failed receipt persistence, record changes,
+and a real independent Python fixture process surviving dashboard closure.
+That fixture simulates the measurement outcome; it is not an actual Hourglass run.
+Browser inspection checked the review, Start, waiting text and heartbeat with
+disconnected synthetic services. Production enrollment and the first real owned
+measurement remain unverified.
