@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import {randomUUID} from 'node:crypto';
+import {randomUUID,randomBytes} from 'node:crypto';
 import {HourglassConsole} from './hourglass-console.mjs';
 
 const UUID=/^[a-f0-9-]{36}$/,JOB=/^[a-f0-9]{32}$/,DIGEST=/^[a-f0-9]{64}$/;
@@ -28,6 +28,7 @@ export class HourglassRuns {
     if(new Set(this.targets.map(t=>t.model)).size!==this.targets.length)throw new Error('Hourglass target models must be unique.');
     this.client=client??new HourglassConsole(config.url);this.origin=new URL(config.url).origin;this.records=records;this.now=now;
     this.directory=directory;this.file=path.join(directory,'runs.json');this.runs=[];this.error=null;this.busy=false;this.prepared=null;this.closed=false;
+    this.toolConfig={url:null,token:randomBytes(32).toString('hex'),models:this.targets.map(t=>t.model)};
     fs.mkdirSync(directory,{recursive:true,mode:0o700});
     let fd;try{
       fd=fs.openSync(this.file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK);
@@ -46,6 +47,27 @@ export class HourglassRuns {
   }
   status(){return structuredClone({configured:true,available:!this.error&&!this.closed,busy:this.busy,error:this.error,console_url:this.origin,targets:this.targets,
     prepared:this.prepared,runs:this.runs.slice(-20).reverse(),blocked:this.runs.some(active),scope});}
+  bind(port){this.toolConfig.url=`http://127.0.0.1:${port}/api/genie/hourglass-tools`;}
+  toolStatus(){
+    const s=this.status(),p=s.prepared;
+    return {...hourglassRunsForChat(s),available:s.available,busy:s.busy,blocked:s.blocked,
+      targets:s.targets,reports:this.reportSnapshot().reports,prepared:p?{id:p.id,model:p.model,worker_id:p.association.worker_id,
+        route:p.association.route,benchmark_version:p.benchmark_version,metric:p.metric,
+        question_count:p.question_count,window_seconds:p.window_seconds}:null,
+      scope:'Preparation only. Review the exact measurement in Evidence → Measure with Hourglass. The owner chooses Start and a free measurement window. Preparation does not start, drain or reserve a server. This history covers only Star Gate-owned measurements: an empty list does not prove that no benchmark ran directly in Hourglass or that no score exists elsewhere. Saved observations are dated; unavailable does not mean stopped.'};
+  }
+  async tool(input){
+    const keys={status:['action'],prepare:['action','model']}[input?.action];
+    if(!keys||Object.keys(input).length!==keys.length||!keys.every(k=>Object.hasOwn(input,k)))throw new Error('Genie can only prepare a measurement or read its status.');
+    if(input.action==='prepare'){
+      if(this.prepared){
+        if(this.prepared.model!==input.model)throw new Error('A different measurement is already under review. Resolve it in Evidence before replacing it.');
+        return this.toolStatus();
+      }
+      await this.change(input);
+    }else if(!this.busy&&!this.closed&&!this.error)await this.change({action:'refresh'});
+    return this.toolStatus();
+  }
   reportSnapshot(){return {configured:true,reports:this.runs.filter(r=>r.report).slice(-50).map(r=>({...r.report,association:r.association})),
     unavailable:this.error?[{reason:'measurement_history_unavailable'}]:this.runs.filter(r=>terminal(r)&&!r.report).map(()=>({reason:'run_report_unavailable'})),scope};}
   async change(input){

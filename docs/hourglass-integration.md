@@ -187,3 +187,32 @@ A missing health API now produces a version/port diagnostic; Star Gate does not
 automatically restart or upgrade that process. Starting a newer native console
 may reconcile saved evaluation history, so a second console against the same
 working directory is not an appropriate compatibility test.
+
+## Prepare a measurement with Genie
+
+When an Hourglass console and targets are configured, conversational Genie gets
+`prepare_hourglass_measurement` and `hourglass_measurement_status`. Ask him to
+prepare a measurement for a configured target. His proposal appears in the
+existing **Evidence → Measure with Hourglass** review, with the native settings
+and revisions available for inspection. The owner still chooses the free window
+and presses Start. Preparation does not reserve or drain the server.
+
+Genie can refresh dated observations of an accepted run and see whether its
+aggregate report has been saved. Missing observations remain uncertain; his tool
+does not retry a start, cancel a run or declare it stopped. The tool results are
+retained in private chat history under **Hourglass tool calls**. Fleet reviews do
+not receive these conversational tools.
+An empty Star Gate history does not prove that no benchmark ran directly in
+Hourglass or that no score exists elsewhere; the tool states this coverage limit.
+
+The tool endpoint has a private per-dashboard credential and accepts only prepare
+and status. Owner start/resolve controls keep their separate same-origin session.
+Asking for the same pending target returns the existing review; Genie cannot
+replace a different pending review. These tools use the existing receipt store
+and observation timer, without another scheduler. The current pending review is
+in memory and must be prepared again after dashboard restart; accepted or
+uncertain start receipts remain durable.
+
+This is preparation and observation support. Automatic measurement scheduling,
+gateway-owned contention protection and real benchmark qualification remain
+unfinished. Public research permission does not itself start a measurement.

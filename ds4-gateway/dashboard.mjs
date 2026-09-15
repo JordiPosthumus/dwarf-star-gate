@@ -131,9 +131,10 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
         void (tool?operations.tool(input):operations.change(input)).then(value=>reply(200,value)).catch(e=>reply(409,{error:e.message}));});return;
     }
     if(req.url==='/api/hourglass'&&req.method==='GET')return reply(200,{...(hourglass?.status()??{configured:false}),csrf_token:csrf});
-    if(req.url==='/api/hourglass'&&req.method==='POST'){
-      const token=Buffer.from(req.headers['x-dsg-csrf']??''),expected=Buffer.from(csrf);
-      if(req.headers.origin!==`http://${req.headers.host}`||token.length!==expected.length||!timingSafeEqual(token,expected))return reply(403,{error:'Same-origin Hourglass session required.'});
+    if(['/api/hourglass','/api/genie/hourglass-tools'].includes(req.url)&&req.method==='POST'){
+      const tool=req.url.endsWith('hourglass-tools');
+      const token=Buffer.from(req.headers[tool?'x-sg-hourglass-tool':'x-dsg-csrf']??''),expected=Buffer.from(tool?(hourglass?.toolConfig.token??''):csrf);
+      if(!expected.length||(!tool&&req.headers.origin!==`http://${req.headers.host}`)||token.length!==expected.length||!timingSafeEqual(token,expected))return reply(403,{error:'An authorized Hourglass session is required.'});
       if(!hourglass)return reply(409,{error:'Hourglass console is not configured.'});
       if(req.headers['content-type']!=='application/json')return reply(415,{error:'JSON required.'});
       let body='',ended=false;req.setEncoding('utf8');
@@ -141,7 +142,7 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
       req.on('error',()=>{ended=true;clearTimeout(timer);});req.on('aborted',()=>{ended=true;clearTimeout(timer);});
       req.on('data',chunk=>{if(ended)return;body+=chunk;if(Buffer.byteLength(body)>2048){ended=true;clearTimeout(timer);reply(413,{error:'Hourglass request too large.'});}});
       req.on('end',()=>{clearTimeout(timer);if(ended)return;ended=true;let input;try{input=JSON.parse(body);}catch{return reply(400,{error:'Invalid JSON.'});}
-        void hourglass.change(input).then(()=>reply(200,hourglass.status())).catch(e=>reply(409,{error:e.message}));});return;
+        void (tool?hourglass.tool(input):hourglass.change(input)).then(value=>reply(200,tool?value:hourglass.status())).catch(e=>reply(409,{error:e.message}));});return;
     }
     if(req.url==='/api/genie/chat'&&req.method==='GET')return reply(200,{...(chat?.status()??{available:false,conversations:[]}),csrf_token:csrf});
     if(req.url?.startsWith('/api/genie/chat/')&&req.method==='GET'){
@@ -478,7 +479,7 @@ export async function runDashboard(configPath, port) {
   const genie=new Genie(runtimeGenie,snapshot,{fetchImpl:reviewer,isTesting,memory,providerLedger,assignmentLedger,poolUrl:`http://127.0.0.1:${config.port}/v1`,recover:managementEnabled?input=>workerControl(config.control_socket,'/genie-recover-worker',input,{channel:'gate_genie'}):null,rebalance:managementEnabled?input=>workerControl(config.control_socket,'/genie-relocate-queued',input,{channel:'gate_genie'}):null});
   const stopGenieTunnel=genieTunnel(config.genie);
   const operations=createOperationService(config,{directory:path.join(path.dirname(config.state_file),'genie','operations'),isTesting});
-  const chat=config.genie_chat?new GenieChat({directory:chatDirectory,notebook:config.genie_chat.operational_notebook===true?memory:null,getSnapshot:()=>({...snapshot(),genie:genie.status(),genie_handovers:requestHistory.snapshot().handovers}),isSuspended:isTesting,runQuestion:(answer,onWait)=>genie.answerChat(answer,onWait),provider:hermesProvider({...genieChatConfig(config),operations:operations?.toolConfig},{directory:chatDirectory})}):null;
+  const chat=config.genie_chat?new GenieChat({directory:chatDirectory,notebook:config.genie_chat.operational_notebook===true?memory:null,getSnapshot:()=>({...snapshot(),genie:genie.status(),genie_handovers:requestHistory.snapshot().handovers}),isSuspended:isTesting,runQuestion:(answer,onWait)=>genie.answerChat(answer,onWait),provider:hermesProvider({...genieChatConfig(config),operations:operations?.toolConfig,hourglass:hourglass?.toolConfig},{directory:chatDirectory})}):null;
   const server = createDashboard(snapshot, path.join(here,'ui'), managementEnabled ? {
     read:()=>workerControl(config.control_socket,'/workers',undefined,{channel:'dashboard'}),
     act:(action,input)=>workerControl(config.control_socket,({'job-priority':'/set-job-priority',concurrency:'/set-worker-concurrency',add:'/add-worker',endpoint:'/edit-endpoint',test:'/check-endpoint',remove:'/remove-worker',drain:'/drain-workers',resume:'/resume-workers',lock:'/maintenance-lock',unlock:'/release-maintenance-lock',fallbacks:'/set-ssh-fallbacks',context:'/set-context-limit','conversation-turns':'/set-conversation-turns','queue-timeout':'/set-queue-timeout',protection:'/set-protection',relocate:'/relocate-queued',recover:'/recover-worker','recovery-policy':'/recovery-policy','recovery-handback-policy':'/recovery-handback-policy','recovery-recheck':'/recovery-recheck'})[action],input,{channel:'dashboard'}),
@@ -493,6 +494,7 @@ export async function runDashboard(configPath, port) {
   }:null,chat,hourglass,operations);
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
   operations?.bind(server.address().port);
+  hourglass?.bind(server.address().port);
   hourglass?.startObserving();
   await poll(); endpointTelemetry.poll(); const interval = setInterval(poll, 2000), endpointTimer=setInterval(()=>endpointTelemetry.poll(),2000), historyTimer=setInterval(()=>monitoringHistory.save(activity,endpointTelemetry),10000), genieTimer=setInterval(()=>{genie.tick();chat?.tick();},10000);
   const close = () => { monitoringHistory.save(activity,endpointTelemetry);endpointTelemetry.close(); closed = true; clearInterval(interval);clearInterval(endpointTimer);clearInterval(historyTimer);clearInterval(genieTimer);genie.close();chat?.close();operations?.close();hourglass?.close();hardware.close();stopGenieTunnel(); for (const t of timers) clearTimeout(t); for (const child of children) child.kill(); server.closeAllConnections(); server.close(); process.removeListener('SIGTERM', close); process.removeListener('SIGINT', close); };

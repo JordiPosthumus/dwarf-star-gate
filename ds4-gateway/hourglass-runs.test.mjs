@@ -10,6 +10,8 @@ import {execFileSync} from 'node:child_process';
 import {HourglassRuns,hourglassRunsForChat} from './hourglass-runs.mjs';
 import {hourglassReportSummary} from './hourglass-report.mjs';
 import {createDashboard,runDashboard} from './dashboard.mjs';
+import {hermesProvider} from './genie-hermes.mjs';
+import {GenieChat} from './genie-chat.mjs';
 import {chatContext} from './genie-chat.mjs';
 const config={url:'http://127.0.0.1:4534',targets:[{model:'example',worker_id:'example-worker',route:'direct'}]};
 const nativeReport=()=>({format:'hourglass-public-report-v1',model:'Example model',state:'final',score_version:'total-points-v1',hourglass_score:0,benchmark_version:'4.0.0'});
@@ -109,4 +111,60 @@ test('normal dashboard restart retains native acceptance and adds collected resu
  assert.equal(observed.hourglass_reports.reports[0].summary.score.value,0);assert.doesNotMatch(JSON.stringify(observed.hourglass_reports),/PRIVATE_NATIVE_NOTES/);
   assert.equal(chatContext(observed).hourglass_reports.reports[0].association.worker_id,'example-worker');assert.equal(starts,1);
  assert.equal(chatContext(observed).hourglass_measurements.runs[0].state,'completed');
+});
+
+
+test('Genie prepares the existing owner review but cannot start, resolve, replace or expose credentials',async t=>{
+ const f=fixture(t),runs=f.make(),server=createDashboard(()=>({}),undefined,null,null,null,null,null,null,null,runs);
+ server.listen(0,'127.0.0.1');await once(server,'listening');runs.bind(server.address().port);
+ t.after(()=>{server.closeAllConnections();server.close();runs.close();});
+ const origin=`http://127.0.0.1:${server.address().port}`,headers={'content-type':'application/json','x-sg-hourglass-tool':runs.toolConfig.token};
+ const post=(body,h=headers)=>fetch(origin+'/api/genie/hourglass-tools',{method:'POST',headers:h,body:JSON.stringify(body)});
+ assert.equal((await post({action:'status'},{...headers,'x-sg-hourglass-tool':'wrong'})).status,403);
+ let result=await (await post({action:'prepare',model:'example'})).json();const id=result.prepared.id;
+ assert.match(result.scope,/only Star Gate-owned/);assert.match(result.scope,/empty list does not prove/);
+ assert.equal(result.prepared.worker_id,'example-worker');assert.equal(runs.status().prepared.id,id);
+ assert.equal((await (await post({action:'prepare',model:'example'})).json()).prepared.id,id);
+ assert.equal((await post({action:'prepare',model:'different'})).status,409);assert.equal(runs.status().prepared.id,id);
+ for(const action of ['start','resolve','refresh','cancel'])assert.equal((await post({action,id,owner_confirmed_idle:true})).status,409);
+ const owner=await(await fetch(origin+'/api/hourglass')).json();
+ assert.equal((await post({action:'status'},{...headers,'x-sg-hourglass-tool':owner.csrf_token})).status,403);
+ assert.equal((await fetch(origin+'/api/hourglass',{method:'POST',headers:{...headers,origin},body:JSON.stringify({action:'start',id,owner_confirmed_idle:true})})).status,403);
+ assert.deepEqual(f.calls,[]);assert.equal(fs.existsSync(runs.file),false);
+ assert.doesNotMatch(JSON.stringify(result),new RegExp(runs.toolConfig.token));
+ assert.doesNotMatch(JSON.stringify(result),/api_key|models_revision|console_url|endpoint/);
+ await runs.change({action:'start',id,owner_confirmed_idle:true});
+ result=await (await post({action:'status'})).json();assert.equal(result.runs[0].state,'completed');
+ assert.deepEqual(f.calls,['submit','observe']);assert.equal(result.runs[0].has_saved_report,true);
+ assert.equal(result.reports[0].summary.score.value,0);
+});
+
+test('installed Hermes prepares a measurement and persists actual calls without starting native work',{
+ skip:!process.env.DSG_TEST_HERMES_SOURCE||!process.env.DSG_TEST_HERMES_PYTHON,timeout:120000
+},async t=>{
+ const f=fixture(t),runs=f.make(),server=createDashboard(()=>({}),undefined,null,null,null,null,null,null,null,runs);
+ server.listen(0,'127.0.0.1');await once(server,'listening');runs.bind(server.address().port);
+ const requests=[];let turn=0;
+ const upstream=http.createServer((req,res)=>{
+  if(req.method==='GET'){res.end(JSON.stringify({data:[{id:'example-model',context_length:131072}]}));return;}
+  let raw='';req.on('data',c=>raw+=c);req.on('end',()=>{
+   const input=JSON.parse(raw);if(!Array.isArray(input.messages)){res.writeHead(404);res.end('{}');return;}requests.push(input);turn++;
+   const message=turn<=2?{role:'assistant',content:null,tool_calls:[{id:'measurement-'+turn,type:'function',function:{name:'tool_call',arguments:JSON.stringify({
+    name:turn===1?'prepare_hourglass_measurement':'hourglass_measurement_status',arguments:turn===1?{model:'example'}:{}})}}]}:{role:'assistant',content:'The synthetic measurement is ready in Evidence. No benchmark has started.'};
+   const finish=turn<=2?'tool_calls':'stop';
+   if(input.stream){res.setHeader('content-type','text/event-stream');const delta={...message,...(message.tool_calls?{tool_calls:message.tool_calls.map((c,index)=>({index,...c}))}:{})};res.end('data: '+JSON.stringify({choices:[{index:0,delta,finish_reason:null}]})+'\n\ndata: '+JSON.stringify({choices:[{index:0,delta:{},finish_reason:finish}]})+'\n\ndata: [DONE]\n\n');}
+   else{res.setHeader('content-type','application/json');res.end(JSON.stringify({id:'fixture',choices:[{index:0,message,finish_reason:finish}],usage:{prompt_tokens:100,completion_tokens:30,total_tokens:130}}));}
+  });
+ });upstream.listen(0,'127.0.0.1');await once(upstream,'listening');
+ const directory=path.join(f.directory,'chat'),provider=hermesProvider({python:process.env.DSG_TEST_HERMES_PYTHON,source:process.env.DSG_TEST_HERMES_SOURCE,
+  url:`http://127.0.0.1:${upstream.address().port}/v1`,model:'example-model',hourglass:runs.toolConfig},{directory});
+ const chat=new GenieChat({directory,provider});
+ t.after(()=>{chat.close();server.closeAllConnections();server.close();upstream.closeAllConnections();upstream.close();runs.close();});
+ const c=chat.create();chat.submit(c.id,'Prepare the synthetic measurement and check its status.','native-measurement-test');await chat.idle();
+ const answer=chat.get(c.id).messages.at(-1);assert.equal(answer.state,'complete',answer.error);
+ assert.deepEqual(answer.measurements.events.filter(e=>e.state==='complete').map(e=>e.tool),['prepare_hourglass_measurement','hourglass_measurement_status']);
+ assert.equal(answer.measurements.events.at(-1).result.prepared.id,runs.status().prepared.id);
+ assert.deepEqual(f.calls,[]);assert.equal(fs.existsSync(runs.file),false);
+ assert.doesNotMatch(JSON.stringify(requests),new RegExp(runs.toolConfig.token));
+ const reloaded=new GenieChat({directory,provider});assert.deepEqual(reloaded.get(c.id).messages.at(-1).measurements,answer.measurements);
 });
