@@ -1,6 +1,8 @@
-export function capabilityStatus(snapshot,{genie={},chat={},operations={},hourglass={},activity={},management=false}={}){
+export function capabilityStatus(snapshot,{genie={},chat={},operations={},media={},hourglass={},activity={},management=false}={}){
   const g=snapshot.gateway??{},switches=g.genie_capabilities??{},configured=chat.capabilities_configured??{};
   const current=operations.operations?.[0];
+  const mediaJob=media.jobs?.filter(j=>j.execution).at(-1),mediaPhase=mediaJob?.execution?.phase;
+  const mediaDetail=mediaJob?`${mediaJob.execution.worker_id}: ${mediaJob.execution.detail??mediaPhase}`:'Assign queued media to enrolled hosts, retaining at least one serving LLM. Turning off prevents new starts; accepted jobs finish and return their host.';
   const recovery=g.recovery??{},unbound=(recovery.workers??[]).filter(w=>w.enrollment?.binding!=='matched');
   const bound=(recovery.workers??[]).filter(w=>w.enrollment?.binding==='matched');
   const rows=[
@@ -10,6 +12,7 @@ export function capabilityStatus(snapshot,{genie={},chat={},operations={},hourgl
     ['research','Public web research',configured.research,'Ready','Genie can search public sources while answering.'],
     ['inspection','Server inspection',configured.inspection,'Ready','Genie can read configuration records and inspect connected servers.'],
     ['server_changes','Server changes',operations.configured,current?.error?'Failed':current?.state==='awaiting_approval'?'Waiting for approval':'Ready',current?.error??'Genie prepares changes; each exact change still needs your approval.'],
+    ['media','Media jobs',configured.media&&media.workers?.length,media.unavailable?'Status unavailable':['needs_attention','launch_uncertain','failed_returned','failed_unchanged'].includes(mediaPhase)?'Needs attention':mediaPhase&&mediaPhase!=='returned'?'Working':'Ready',mediaDetail],
     ['hourglass','Hourglass measurements',hourglass.configured,hourglass.error?'Failed':'Ready',hourglass.error??'Prepare measurements and observe results. Starting a run needs your approval.'],
   ];
   return {capabilities:rows.map(([key,label,available,status,detail])=>({key,label,available:Boolean(management&&g.genie_capabilities),connected:Boolean(available&&(key!=='recovery'||bound.length>0)),enabled:key==='recovery'?recovery.automatic===true:switches[key]!==false,status:switches[key]===false||key==='recovery'&&!recovery.automatic?(!available?'Off · not connected':'Off'):!available?'Not connected':activity[key]?.state==='failed'?'Last attempt failed':status,detail:activity[key]?.state==='failed'?`${activity[key].service}: ${activity[key].error??'Request failed'}`:detail})),

@@ -1,9 +1,11 @@
 # Media jobs — implementation in progress
 
-These endpoints currently provide the durable queue and retained downloads,
-not a complete media service. Production has not enabled them. Engine
-allocation, actual generation qualification and Genie controls remain to be
-connected before normal use.
+These endpoints provide the durable queue and retained downloads. Genie can now
+inspect the queue and assign a video job to an enrolled ComfyUI host. Its separate
+runner drains that host, generates the result, saves the files, restores the
+original LLM and verifies responses/cache reuse before readmission. Production
+qualification of this newly connected path is pending. ACE-Step lifecycle,
+automatic queue wakeups and the full Media view are still in progress.
 
 For an isolated development installation, `"media_jobs": {"enabled": true}`
 enables a private `media-jobs.json` beside the gateway state file. The existing
@@ -40,10 +42,10 @@ result without repeating generation. No automatic file deletion is performed.
 These behaviors are verified against HTTP fixtures. An installed H3 engine has
 also generated real H.264 video and FLAC audio through an isolated gateway;
 both retained downloads matched their size/hash receipts after H3 stopped.
-ACE-Step qualification and production Genie allocation remain pending.
+ACE-Step qualification and native verification of Genie-led allocation remain pending.
 
 Before a native submission, the queue saves its intent and selected worker.
-The future allocator must first acquire that host through the existing
+The allocator must first acquire that host through the existing
 maintenance path, preserve at least one healthy serving LLM, and verify the
 media engine is ready. The queue itself has no host shutdown authority.
 Media maintenance uses `minimum_other_llms: 1` on the existing lock request.
@@ -57,3 +59,31 @@ If acknowledgement is lost, it does not resubmit. A known native ID can be
 observed on the original engine; missing history is not proof of completion.
 Prompts and receipts remain private runtime data, and status responses omit
 the submitted payload. No automatic deadline cancels accepted media jobs.
+
+## Genie execution
+
+`media_jobs.execution_enabled` defaults to false. The independent **Media jobs**
+capability switch controls new assignments; turning it off does not cancel an
+accepted operation or prevent the runner from returning its host. Queue intake
+and downloads remain available while execution is off.
+
+Enroll a worker under `media_jobs.workers[worker_id].engines.video` with its
+existing ComfyUI `kind: "comfyui"`, full Docker `container` ID, pinned `image`
+digest and loopback `port`. The worker must already have a qualified Docker/Qwen
+recovery enrollment and inspection entry identifying the same LLM container.
+The installer does not yet create this media enrollment automatically.
+
+In chat, Genie uses `media_job_status` to read jobs, eligible engine assignments
+and current fleet demand, then `start_media_job` with a job ID and worker ID.
+The runner continues when the chat or dashboard closes. Its saved job identity
+survives gateway restart; an uncertain launch is reported without spawning again.
+Repeated starts of an assigned job return its existing status. The lifecycle
+currently supports ComfyUI video only; music remains queued until the ACE-Step
+path is qualified and connected.
+
+`execution.phase` distinguishes `waiting_idle`, `starting_media`, `generating`,
+`retaining_results`, `restoring_llm`, `checking_llm` and `returned`. Failures may
+end in `failed_unchanged`, `failed_returned` or `needs_attention`; the last one
+must be investigated rather than treated as a restored host. Generated files
+can be ready before LLM readmission. The capability card and chat tool records
+expose the observed phase and failure detail.

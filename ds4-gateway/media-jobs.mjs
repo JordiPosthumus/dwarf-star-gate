@@ -14,9 +14,9 @@ const now=()=>new Date().toISOString();
 // The gateway's existing process lock owns this store. Media prompts and native
 // receipts are private local state, never fleet telemetry or repository content.
 export class MediaJobs {
-  constructor(filename){
+  constructor(filename,{resultsDirectory}={}){
     this.filename=filename;
-    this.results=new MediaResults(path.join(path.dirname(filename),'media-results'));
+    this.results=new MediaResults(resultsDirectory??path.join(path.dirname(filename),'media-results'));
     this.collecting=new Map();
     fs.mkdirSync(path.dirname(filename),{recursive:true,mode:0o700});
     this.data=fs.existsSync(filename)?JSON.parse(fs.readFileSync(filename,'utf8')):{schema:1,jobs:[]};
@@ -35,9 +35,25 @@ export class MediaJobs {
       this.data=data;
     }finally{if(fd!==undefined)fs.closeSync(fd);if(fs.existsSync(temporary))fs.unlinkSync(temporary);}
   }
-  get(id){const job=this.data.jobs.find(j=>j.id===id);if(!job)throw fail(404,'Unknown media job');return structuredClone(job);}
-  list(kind){return this.data.jobs.filter(j=>!kind||j.kind===kind).map(({payload,fingerprint,...job})=>structuredClone(job));}
-  queued(){return this.list().filter(j=>j.state==='queued').sort((a,b)=>priorityRank(b)-priorityRank(a));}
+  executionFolder(id){if(!uuid.test(id))throw fail(400,'Invalid media job');return path.join(path.dirname(this.filename),'media-operations',id);}
+  get(id){
+    const saved=this.data.jobs.find(j=>j.id===id);if(!saved)throw fail(404,'Unknown media job');
+    let job=structuredClone(saved);
+    if(saved.execution){
+      const folder=this.executionFolder(id),native=path.join(folder,'media-jobs.json'),progress=path.join(folder,'progress.json');
+      try{
+        if(fs.existsSync(native)){
+          const row=JSON.parse(fs.readFileSync(native,'utf8')).jobs?.find(j=>j.id===id);
+          if(!row||row.fingerprint!==saved.fingerprint)throw new Error('Execution does not match the original media request');
+          for(const key of ['state','worker','backend','native_id','detail','outputs','result','updated_at'])if(Object.hasOwn(row,key))job[key]=row[key];
+        }
+        if(fs.existsSync(progress))job.execution={...saved.execution,...JSON.parse(fs.readFileSync(progress,'utf8'))};
+      }catch{job.execution={...saved.execution,phase:'observation_failed',detail:'Saved media execution could not be read; inspect its original process. No job was repeated.'};}
+    }
+    return job;
+  }
+  list(kind){return this.data.jobs.filter(j=>!kind||j.kind===kind).map(j=>{const {payload,fingerprint,key_hash,...job}=this.get(j.id);return job;});}
+  queued(){return this.list().filter(j=>j.state==='queued'&&!j.execution).sort((a,b)=>priorityRank(b)-priorityRank(a));}
   enqueue(kind,payload,{key,priority='normal'}={}){
     if(!['music','video'].includes(kind)||!object(payload))throw fail(400,'Media payload must be a JSON object');
     if(typeof key!=='string'||!/^[\x21-\x7e]{1,200}$/.test(key))throw fail(400,'An Idempotency-Key header (1–200 printable characters) is required');
