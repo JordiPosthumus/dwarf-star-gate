@@ -1,8 +1,16 @@
 # Genie first-install validation
 
-Verified during development on 2026-09-14 and 2026-09-15 (UTC), by Codex.
+Verified during development on 2026-09-14 through 2026-09-16 (UTC), by Codex.
 
-- **Current release recheck, macOS ARM64:** the public `27ecea4` source plus
+- **Current source recheck, macOS ARM64, 2026-09-16:** exported source
+  `e5af0a6` into another empty checkout and home. The complete first-install test
+  passed with no skipped checks. It installed its own CPython 3.12.13 and Hermes;
+  the runtime's own Git HEAD and installation receipt both identify
+  `2237be355906fbe6065ce1815711eee52b2d646e`. Connection verification, doctor,
+  all three services, edited SOUL injection, preservation of a separate personal
+  Hermes and chat history after dashboard restart passed. This run used a
+  scripted model endpoint and did not touch the production installation.
+- **Earlier release recheck, macOS ARM64:** the public `27ecea4` source plus
   the test corrections described below was exported into a new checkout with an
   empty home. Setup downloaded the pinned Hermes runtime and private Python,
   verified the scripted model connection and passed `doctor`. Two chat turns
