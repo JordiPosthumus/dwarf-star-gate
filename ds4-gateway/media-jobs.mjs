@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
 import {priorityRank,requestPriority,PRIORITY_HEADER} from './job-priority.mjs';
+import {MediaResults} from './media-results.mjs';
 
 const states=new Set(['queued','submitting','submitted','pending','running','completed','failed','uncertain']);
 const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
@@ -15,6 +16,8 @@ const now=()=>new Date().toISOString();
 export class MediaJobs {
   constructor(filename){
     this.filename=filename;
+    this.results=new MediaResults(path.join(path.dirname(filename),'media-results'));
+    this.collecting=new Map();
     fs.mkdirSync(path.dirname(filename),{recursive:true,mode:0o700});
     this.data=fs.existsSync(filename)?JSON.parse(fs.readFileSync(filename,'utf8')):{schema:1,jobs:[]};
     if(this.data.schema!==1||!Array.isArray(this.data.jobs)||this.data.jobs.some(j=>!uuid.test(j.id)||!states.has(j.state)||!['music','video'].includes(j.kind)||!object(j.payload)))throw new Error('Invalid saved media queue; preserved for inspection.');
@@ -70,18 +73,29 @@ export class MediaJobs {
     if(!['pending','running','completed','failed'].includes(observation.state))throw new Error('Invalid native media job state');
     return this.update(id,{state:observation.state,detail:observation.scope??null,...(observation.result!==undefined?{result:observation.result}:{})});
   }
+  async collect(id,backend,options){
+    if(this.collecting.has(id))return this.collecting.get(id);
+    const job=this.get(id);if(job.outputs?.state==='ready')return job;
+    const work=(async()=>{
+      this.update(id,{outputs:{state:'copying'}});
+      try{return this.update(id,{outputs:await this.results.collect(job,backend,options)});}
+      catch(e){this.update(id,{outputs:{state:'failed',detail:e.message}});throw e;}
+    })();
+    this.collecting.set(id,work);
+    try{return await work;}finally{this.collecting.delete(id);}
+  }
 }
 
-const publicJob=({payload,fingerprint,key_hash,...job})=>job;
+const publicJob=({payload,fingerprint,key_hash,...job})=>({...job,...(job.outputs?.files?{outputs:{...job.outputs,files:job.outputs.files.map(file=>({...file,url:`/v1/${job.kind}/jobs/${job.id}/files/${file.id}`}))}}:{})});
 const respond=(res,status,value)=>{if(!res.destroyed&&!res.headersSent){res.writeHead(status,{'content-type':'application/json','cache-control':'no-store'});res.end(JSON.stringify(value));}};
 export function handleMediaRequest(req,res,{jobs,accepting=true}){
-  const match=/^\/v1\/(music|video)\/jobs(?:\/([a-f0-9-]{36}))?$/.exec(req.url);
+  const match=/^\/v1\/(music|video)\/jobs(?:\/([a-f0-9-]{36})(?:\/files\/([a-f0-9-]{36}))?)?$/.exec(req.url);
   if(!match)return false;
-  const [,kind,id]=match;
+  const [,kind,id,fileId]=match;
   const reject=e=>respond(res,e.status??500,{error:{code:'media_job_error',message:e.status?e.message:'Could not access the media queue; inspect the gateway log.'}});
   if(!jobs){req.resume();respond(res,503,{error:{code:'media_not_configured',message:'Media jobs are not configured on this gateway.'}});return true;}
   if(req.method==='GET'){
-    try{if(id){const job=jobs.get(id);if(job.kind!==kind)throw fail(404,'Unknown media job');respond(res,200,publicJob(job));}else respond(res,200,{jobs:jobs.list(kind).map(publicJob)});}catch(e){reject(e);}return true;
+    try{if(id){const job=jobs.get(id);if(job.kind!==kind)throw fail(404,'Unknown media job');if(fileId){if(!jobs.results.serve(req,res,job,fileId))throw fail(404,'Retained media file is not available');}else respond(res,200,publicJob(job));}else respond(res,200,{jobs:jobs.list(kind).map(publicJob)});}catch(e){reject(e);}return true;
   }
   if(req.method!=='POST'||id){req.resume();respond(res,405,{error:{code:'media_method',message:'Use POST to submit or GET to inspect jobs.'}});return true;}
   if(!accepting){req.resume();respond(res,503,{error:{code:'draining',message:'Gateway is draining; no new media job accepted.'}});return true;}

@@ -172,8 +172,11 @@ deployment receipts stay outside this public repository.
   now preserve submissions, priority, native receipts and result metadata across
   gateway restarts. Repeating an idempotency key returns the original job;
   uncertain native acceptance is retained without replay. Isolated gateway and
-  native HTTP fixtures cover this; live generation, durable output-file delivery
-  and Genie host allocation remain unfinished. Media is not enabled in production.
+  native HTTP fixtures cover this. Output collection now streams files into
+  private gateway storage and provides authenticated downloads after native
+  engine shutdown and gateway restart. Live generation, output-format
+  qualification and Genie host allocation remain unfinished. Media is not
+  enabled in production.
 - [ ] Give Genie tools to read that media queue and propose/execute the permitted
   host transitions through the existing operation path. Keep at least one healthy
   LLM server serving, as the owner requires; finish admitted work before stopping
