@@ -11,6 +11,14 @@ import {Genie} from './genie.mjs';
 import {genieCapabilities} from './genie-capabilities.mjs';
 import {capabilityStatus} from './genie-capability-status.mjs';
 
+test('setup status exposes partial byte progress without claiming preparation passed',()=>{
+  const target={target_id:'new-spark',state:'running',progress:{engine:'h3',phase:'verify_or_download_models'},model_download:{state:'observed',bytes_present:1e9,bytes_required:42.5e9,last_file_activity_at:'2026-09-16T12:00:00Z'}};
+  const read=()=>capabilityStatus({gateway:{genie_capabilities:{spark_setup:true}}},{management:true,chat:{capabilities_configured:{spark_setup:true}},sparkSetup:{targets:[target]}}).capabilities.find(r=>r.key==='spark_setup');
+  assert.equal(read().status,'Working');assert.match(read().detail,/1\.0 \/ 42\.5 GB present/);assert.match(read().detail,/File activity 2026-09-16 12:00:00 UTC/);assert.match(read().detail,/partial downloads; verification is separate/);
+  target.model_download={state:'unavailable'};assert.equal(read().status,'Working');assert.match(read().detail,/download progress unavailable/);
+  target.state='needs_attention';target.error='Download hash differs';assert.equal(read().status,'Needs attention');assert.match(read().detail,/Download hash differs/);
+});
+
 test('switches persist independently through core restart and use the existing dashboard control',async t=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sg-capabilities-'));
   const config={host:'127.0.0.1',port:0,api_key:'fixture',model:'fixture',context_length:262144,nodes:[],state_file:path.join(dir,'state.json'),control_socket:path.join(dir,'core.sock')};

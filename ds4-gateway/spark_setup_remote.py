@@ -18,6 +18,37 @@ def save(file, value):
     temporary.replace(file)
 
 
+def model_progress(root, progress):
+    """Observe declared model files only; never modify a running installer."""
+    engine = progress.get('engine')
+    if progress.get('phase') != 'verify_or_download_models' or engine not in ('qwen38-repaired', 'h3', 'ace-step'):
+        return None
+    try:
+        manifest = json.loads((root / 'source/examples/spark-build' / engine / 'models.json').read_text())
+        models = root / 'engines' / engine / 'models'
+        present, required, latest = 0, 0, None
+        for item in manifest['files']:
+            relative = Path(item['path'])
+            if relative.is_absolute() or '..' in relative.parts:
+                raise ValueError('Invalid model path')
+            required += item['bytes']
+            target = models / relative
+            # A completed file and its partial must not be counted twice.
+            for file in (target, target.with_name(target.name + '.stargate-download')):
+                try:
+                    stat = file.stat()
+                except FileNotFoundError:
+                    continue  # Atomic publication can race a status read.
+                present += min(stat.st_size, item['bytes'])
+                latest = max(latest or stat.st_mtime, stat.st_mtime)
+                break
+        return {'state': 'observed', 'bytes_present': present, 'bytes_required': required,
+                'last_file_activity_at': datetime.fromtimestamp(latest, timezone.utc).isoformat() if latest is not None else None,
+                'scope': 'File sizes include partial downloads. Hash verification and serving qualification are separate; unchanged bytes can mean verification is running.'}
+    except (OSError, ValueError, KeyError, TypeError):
+        return {'state': 'unavailable', 'error': 'Model-file progress could not be read. Installer state is reported separately.'}
+
+
 def status(root):
     if not root.exists():
         return {'state': 'not_started'}
@@ -39,6 +70,7 @@ def status(root):
     return {'state': state, 'process_running': running, 'bundle_sha256': launch['bundle_sha256'],
             'started_at': launch['started_at'], 'finished_at': launch.get('finished_at'),
             'exit_code': launch.get('exit_code'), 'error': launch.get('error') or progress.get('error'), 'progress': progress,
+            'model_download': model_progress(root, progress) if not qualifying else None,
             'qualification': status(root / 'qualification') if not qualifying and (root / 'qualification').exists() else None,
             'scope': 'LLM qualification is separate from gateway registration, media generation checks and recovery proof.'}
 

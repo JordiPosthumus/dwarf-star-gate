@@ -26,6 +26,29 @@ def bundle(script):
 
 
 class RemoteSetupTests(unittest.TestCase):
+    def test_download_progress_counts_partial_bytes_once_without_claiming_verification(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest = root/'source/examples/spark-build/h3/models.json'
+            manifest.parent.mkdir(parents=True)
+            manifest.write_text(json.dumps({'files':[{'path':name,'bytes':size} for name,size in [('done',4),('partial',10),('missing',6)]]}))
+            models = root/'engines/h3/models';models.mkdir(parents=True)
+            (models/'done').write_bytes(b'done')
+            (models/'done.stargate-download').write_bytes(b'done')
+            partial = models/'partial.stargate-download';partial.write_bytes(b'abc')
+            phase = {'engine':'h3','phase':'verify_or_download_models'}
+            first = remote.model_progress(root,phase)
+            self.assertEqual((first['bytes_present'],first['bytes_required']),(7,20))
+            self.assertIn('partial downloads',first['scope'])
+            self.assertIn('verification',first['scope'])
+            self.assertIsNotNone(first['last_file_activity_at'])
+            partial.write_bytes(b'abcdefghij');partial.rename(models/'partial')
+            self.assertEqual(remote.model_progress(root,phase)['bytes_present'],14)
+            self.assertEqual((models/'done.stargate-download').read_bytes(),b'done','Observation must preserve files')
+            manifest.unlink()
+            self.assertEqual(remote.model_progress(root,phase)['state'],'unavailable')
+            self.assertIsNone(remote.model_progress(root,{'engine':'h3','phase':'build_image'}))
+
     def test_media_plan_rejects_busy_gpu_without_inspecting_or_changing_containers(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp); (root / 'engines').mkdir()

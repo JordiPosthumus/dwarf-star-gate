@@ -90,8 +90,14 @@ It never edits or resumes a worker that already existed. The new worker keeps
 the selected baseline’s one-request capacity and 262144-token context.
 
 The capability panel refreshes observed remote status approximately every 15
-seconds while open. It shows the target, engine, phase and errors. Chat retains
-the actual tool calls and results. SSH uncertainty means status is unknown, not
+seconds while open. It shows the target, engine, phase and errors. Setup status
+also reports the current model-file byte count and latest file activity during
+downloads, visible in the capability panel and Genie's tool results.
+The byte count includes partial files; it is not
+hash verification or a successful installation. Unchanged bytes can mean the
+installer is checking a file. These observations do not change its deadlines or
+restart its work. Chat retains the actual tool calls and results.
+SSH uncertainty means status is unknown, not
 that the build stopped. A repeated start reads the same directory's receipt;
 it does not launch a replacement. One preparation runs per remote SSH account at
 a time. Logs and receipts remain in the enrolled directory. Failed or interrupted
