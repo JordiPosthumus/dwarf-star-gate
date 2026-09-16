@@ -37,13 +37,22 @@ receipts; status includes gateway download URLs. They remain downloadable after
 the native engine stops and the gateway restarts. Failed copying is separately
 visible as `outputs.state: failed`, and retrying collection fetches the original
 result without repeating generation. No automatic file deletion is performed.
-These behaviors are verified against HTTP fixtures; real engine qualification
-is still pending.
+These behaviors are verified against HTTP fixtures. An installed H3 engine has
+also generated real H.264 video and FLAC audio through an isolated gateway;
+both retained downloads matched their size/hash receipts after H3 stopped.
+ACE-Step qualification and production Genie allocation remain pending.
 
 Before a native submission, the queue saves its intent and selected worker.
 The future allocator must first acquire that host through the existing
 maintenance path, preserve at least one healthy serving LLM, and verify the
 media engine is ready. The queue itself has no host shutdown authority.
+Media maintenance uses `minimum_other_llms: 1` on the existing lock request.
+The gateway checks capacity and acquires the lock together, so competing media
+switches cannot reserve the last serving LLM. The Python maintenance adapter's
+`purpose='media'` requires `media_maintenance_version: 1` in `/workers` before
+starting. Existing operator and serving maintenance remain unchanged. Executors
+must still recheck remaining LLM health before stopping a server, since a
+different host can fail after a lock is acquired.
 If acknowledgement is lost, it does not resubmit. A known native ID can be
 observed on the original engine; missing history is not proof of completion.
 Prompts and receipts remain private runtime data, and status responses omit

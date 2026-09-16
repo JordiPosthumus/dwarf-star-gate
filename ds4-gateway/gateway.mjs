@@ -1166,7 +1166,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   const startTunnel = node => {
     if (node.ssh) node.stopTunnel = tunnelFactory(node, () => shuttingDown || node.removed);
   };
-  const registry = () => ({ genie_capabilities:capabilityStatus(), model: config.model, minimum_context: contextLimit(), context_limit_control:true,concurrency_control_version:1,conditional_resume_version:1,
+  const registry = () => ({ genie_capabilities:capabilityStatus(), model: config.model, minimum_context: contextLimit(), context_limit_control:true,concurrency_control_version:1,conditional_resume_version:1,media_maintenance_version:1,
     genie_admission_version:1,genie_flexible_assignment:true,
     context_limit_source:store.data.pool_context_length === undefined ? 'config' : 'saved',
     conversation_turns:conversationTurns(),conversation_turn_idle_ms:conversationTurnIdleMs,conversation_turns_control:true,conversation_turns_source:store.data.conversation_turns!==undefined?'saved':config.conversation_turns!==undefined?'config':'default',

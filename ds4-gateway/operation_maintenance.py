@@ -40,7 +40,7 @@ class GatewayControl:
 
 class Maintenance:
     def __init__(self, directory, operation_id, worker_id, *, control, progress=lambda *args: None, sleep=time.sleep, purpose='serving'):
-        if purpose not in ('serving', 'hourglass'):
+        if purpose not in ('serving', 'hourglass', 'media'):
             raise ValueError('Unknown maintenance purpose')
         self.purpose = purpose
         if not re.fullmatch(r'[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}', operation_id) or not re.fullmatch(r'[a-zA-Z0-9][\w-]{0,63}', worker_id):
@@ -56,6 +56,8 @@ class Maintenance:
         data = self.control('/workers')
         if data.get('conditional_resume_version') != 1:
             raise RuntimeError('Gateway must support conditional readmission before this workflow starts')
+        if self.purpose == 'media' and data.get('media_maintenance_version') != 1:
+            raise RuntimeError('Gateway must support the media LLM minimum before this workflow starts')
         matches = [w for w in data.get('workers', []) if w.get('id') == self.worker_id]
         recovery = [w for w in data.get('recovery', {}).get('workers', []) if w.get('worker_id') == self.worker_id]
         if len(matches) != 1 or len(recovery) != 1:
@@ -101,6 +103,8 @@ class Maintenance:
                 'name': 'Approved Genie operation', 'reason': 'Hold this worker for the exact approved serving change.', 'review_after_hours': None}
         if self.purpose == 'hourglass':
             body.update(name='Approved Hourglass measurement', reason='Keep new gateway work off this worker during the approved measurement.')
+        elif self.purpose == 'media':
+            body.update(name='Genie media job', reason='Serve queued media while keeping another LLM available.', minimum_other_llms=1)
         result = self._receipt('acquire', body, '/maintenance-lock', 'lock')
         self.owned(require_idle=False)
         return result
@@ -143,6 +147,8 @@ class Maintenance:
                 'reason': 'The approved operation has finished its serving checks; release only its own hold.'}
         if self.purpose == 'hourglass':
             body['reason'] = 'The measurement ended and direct work finished; release only its own hold.'
+        elif self.purpose == 'media':
+            body['reason'] = 'Media work ended and the original LLM passed serving checks; release only its own hold.'
         return self._receipt('release', body, '/release-maintenance-lock', 'release')
 
     def resume_if_unchanged(self):

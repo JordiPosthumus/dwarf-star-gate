@@ -94,16 +94,21 @@ export class AgentControl {
     const {fingerprint,...receipt}=op;return receipt;
   }
   maintenanceLock(input,controlChannel='unidentified_local_client') {
-    exact(input,['name','reason','request_id','review_after_hours','worker_id']);
+    const hasMinimum=input&&Object.hasOwn(input,'minimum_other_llms');
+    exact(input,['name','reason','request_id','review_after_hours','worker_id',...(hasMinimum?['minimum_other_llms']:[])]);
+    if(hasMinimum&&(!Number.isSafeInteger(input.minimum_other_llms)||input.minimum_other_llms<1))fail('invalid_minimum_llms','Minimum other LLMs must be a positive whole number');
     if(!uuid(input.request_id))fail('invalid_request_id','Use a UUID request_id');
     if(!identifier(input.worker_id)||!this.nodes.some(n=>n.id===input.worker_id))fail('unknown_worker','Worker is not registered',404);
     if(typeof input.name!=='string'||!input.name.trim()||input.name.length>64||/[\x00-\x1f\x7f]/.test(input.name))fail('invalid_name','Use a short maintenance name without control characters');
     if(typeof input.reason!=='string'||!input.reason.trim()||input.reason.length>256||/[\x00-\x1f\x7f]/.test(input.reason))fail('invalid_reason','Use a short operational reason without control characters');
     if(input.review_after_hours!==null&&(!Number.isSafeInteger(input.review_after_hours)||input.review_after_hours<1||input.review_after_hours>8760))fail('invalid_review_time','Review time must be null or 1–8760 whole hours');
     const channel=typeof controlChannel==='string'&&/^[a-z][a-z0-9_]{0,31}$/.test(controlChannel)?controlChannel:'unidentified_local_client';
-    const fingerprint=hash(JSON.stringify({action:'lock',worker_id:input.worker_id,name:input.name.trim(),reason:input.reason.trim(),review_after_hours:input.review_after_hours}));
+    const fingerprint=hash(JSON.stringify({action:'lock',worker_id:input.worker_id,name:input.name.trim(),reason:input.reason.trim(),review_after_hours:input.review_after_hours,...(hasMinimum?{minimum_other_llms:input.minimum_other_llms}:{})}));
     const old=this.state.maintenance_operations.find(o=>o.request_id===input.request_id);
     if(old){if(old.fingerprint!==fingerprint)fail('request_id_conflict','Request ID was already used for a different maintenance action',409);return this.maintenanceReceipt({request_id:input.request_id});}
+    // Check and drain synchronously: competing media switches cannot both
+    // reserve the last serving LLM. Existing maintenance keeps its semantics.
+    if(hasMinimum&&this.nodes.filter(n=>n.id!==input.worker_id&&n.healthy&&!n.drained&&!n.quarantine&&!n.recovering&&!n.removed).length<input.minimum_other_llms)fail('minimum_llm_capacity','Keep the required number of other healthy LLM workers available',409);
     if(this.state.maintenance_operations.length>=10000)fail('receipt_limit','Maintenance receipt budget reached; operator review required',409);
     if(this.state.maintenance_locks.length>=1024)fail('lock_limit','Maintenance lock budget reached; operator review required',409);
     const created=this.now(),lock={id:randomUUID(),worker_id:input.worker_id,name:input.name.trim(),reason:input.reason.trim(),created_at:created,review_at:input.review_after_hours===null?null:created+input.review_after_hours*3600000,control_channel:channel};

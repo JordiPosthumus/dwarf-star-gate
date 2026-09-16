@@ -15,12 +15,13 @@ class Fixture:
         self.calls, self.receipts = [], {}
         self.lose_reply = None
         self.version = 1
+        self.media_version = 1
         self.before_resume = None
 
     def __call__(self, route, body=None):
         self.calls.append((route, copy.deepcopy(body)))
         if route == '/workers':
-            return {'conditional_resume_version': self.version, 'workers': [copy.deepcopy(self.worker)], 'recovery': {'workers': [copy.deepcopy(self.recovery)]}}
+            return {'conditional_resume_version': self.version, 'media_maintenance_version': self.media_version, 'workers': [copy.deepcopy(self.worker)], 'recovery': {'workers': [copy.deepcopy(self.recovery)]}}
         if route == '/maintenance-receipt':
             return self.receipts[body['request_id']]
         if route == '/resume-workers':
@@ -156,6 +157,24 @@ class MaintenanceTest(unittest.TestCase):
         self.control.version = 1; self.control.recovery['state'] = 'recovering'
         with self.assertRaisesRegex(RuntimeError, 'Another maintenance'): self.window.acquire()
         self.assertEqual(self.count('/maintenance-lock'), 0)
+
+    def test_media_requires_gateway_capacity_check_and_still_returns_worker(self):
+        window = Maintenance(self.temp.name, self.id, 'fixture', purpose='media', **self.options)
+        self.control.media_version = None
+        with self.assertRaisesRegex(RuntimeError, 'media LLM minimum'): window.acquire()
+        self.assertEqual(self.count('/maintenance-lock'), 0)
+        self.control.media_version = 1
+        window.acquire()
+        body = next(body for route, body in self.control.calls if route == '/maintenance-lock')
+        self.assertEqual(body['minimum_other_llms'], 1)
+        window.release(); window.resume_if_unchanged()
+        self.assertFalse(self.control.worker['drained'])
+
+    def test_existing_serving_maintenance_needs_no_media_capability(self):
+        self.control.media_version = None
+        self.window.acquire()
+        body = next(body for route, body in self.control.calls if route == '/maintenance-lock')
+        self.assertNotIn('minimum_other_llms', body)
 
 
 if __name__ == '__main__': unittest.main()

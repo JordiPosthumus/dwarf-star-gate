@@ -435,6 +435,15 @@ test('named maintenance lock survives restart and vetoes every broad resume path
   assert.deepEqual(await ctl('/release-maintenance-lock',releaseInput),released);
   await ctl('/resume-workers',{workers:['spark1']});assert.equal(r.gateway.stats().available,1);
 });
+test('concurrent media maintenance requests leave one LLM serving',async t=>{
+  const r=await rig(t,2,{control_socket:true}),ctl=(route,body)=>workerControl(r.config.control_socket,route,body);
+  assert.equal((await ctl('/workers')).media_maintenance_version,1);
+  const locks=await Promise.allSettled(['spark1','spark2'].map(worker_id=>ctl('/maintenance-lock',{worker_id,request_id:randomUUID(),name:'Media job',reason:'Run queued media',review_after_hours:null,minimum_other_llms:1})));
+  assert.equal(locks.filter(x=>x.status==='fulfilled').length,1);
+  assert.match(locks.find(x=>x.status==='rejected').reason.message,/Keep the required number of other healthy LLM workers/);
+  assert.equal(r.gateway.stats().workers.filter(w=>w.is_healthy&&!w.drained).length,1);
+  assert.equal((await r.request('{}','media-floor')).status,200);
+});
 test('operator CLI creates, reconciles and releases exact maintenance locks',async t=>{
   const r=await rig(t,1,{control_socket:true}),dir=path.dirname(r.config.state_file),config=path.join(dir,'config.json');fs.writeFileSync(config,JSON.stringify(r.config));
   const script=fileURLToPath(new URL('./workers.mjs',import.meta.url)),cli=(...args)=>promisify(execFile)(process.execPath,[script,...args]);

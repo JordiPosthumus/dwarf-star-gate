@@ -76,6 +76,29 @@ test('named maintenance lock is a durable hard veto and exact release leaves rou
   assert.throws(()=>restored.maintenanceRelease({...releaseInput,request_id:randomUUID()},'dashboard'),{code:'unknown_lock'});
   assert.deepEqual(restored.manualUpdate(['worker-a'],false).drained['worker-a'],false,'checked Resume is separately available after release');
 });
+test('media maintenance reserves capacity atomically and preserves receipt replay',()=>{
+  const r=rig(),input={worker_id:'worker-a',name:'Media job',reason:'Run queued video',review_after_hours:null,request_id:randomUUID(),minimum_other_llms:1};
+  const first=r.api.maintenanceLock(input);
+  assert.equal(r.nodes[0].drained,true);
+  assert.throws(()=>r.api.maintenanceLock({...input,worker_id:'worker-b',request_id:randomUUID()}),{code:'minimum_llm_capacity',status:409});
+  assert.equal(r.nodes[1].drained,false);
+  r.nodes[1].healthy=false;
+  assert.deepEqual(new AgentControl(r.options).maintenanceLock(input),first,'a recorded action remains observable when fleet health changes');
+  assert.throws(()=>r.api.maintenanceLock({...input,minimum_other_llms:2}),{code:'request_id_conflict'});
+  const {minimum_other_llms,...ordinary}=input;
+  assert.throws(()=>r.api.maintenanceLock(ordinary),{code:'request_id_conflict'});
+  r.api.maintenanceLock({...ordinary,worker_id:'worker-b',request_id:randomUUID()});
+  assert.equal(r.nodes[1].drained,true,'ordinary operator maintenance retains its existing authority');
+});
+test('media capacity excludes unavailable workers and validates the requested minimum',()=>{
+  const input={worker_id:'worker-a',name:'Media job',reason:'Run queued music',review_after_hours:null,request_id:randomUUID(),minimum_other_llms:1};
+  for(const unavailable of [{healthy:false},{drained:true},{quarantine:{}},{recovering:true},{removed:true}]){
+    const r=rig();Object.assign(r.nodes[1],unavailable);
+    assert.throws(()=>r.api.maintenanceLock(input),{code:'minimum_llm_capacity'});
+    assert.equal(r.nodes[0].drained,false);assert.equal(r.api.state.maintenance_operations.length,0);
+  }
+  for(const minimum of [0,-1,1.5,'1',null])assert.throws(()=>rig().api.maintenanceLock({...input,minimum_other_llms:minimum}),{code:'invalid_minimum_llms'});
+});
 test('maintenance review time is advisory and never expires or resumes routing',()=>{
   let now=1000;const r=rig(false,{now:()=>now});
   const locked=r.api.maintenanceLock({worker_id:'worker-a',name:'overnight maintenance',reason:'Keep out of routing until inspected',review_after_hours:1,request_id:randomUUID()},'workers_cli');
