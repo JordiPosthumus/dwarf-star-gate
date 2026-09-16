@@ -10,6 +10,12 @@ const report=()=>({format:'hourglass-public-report-v1',model:'example-model',run
   execution:{question_timeout_s:900,stop_after_wrong:0,repeat:1,round_policy:'recorded-round-policy'},
   hardware:{label:'Example hardware',source:'owner supplied'}});
 
+test('aggregate timeout, answer and efficiency facts stay distinct from weighted score',()=>{
+  const summary=hourglassReportSummary({...report(),hourglass_score:28.722222,raw_correct:20,completed_questions:20,total_questions:135,timeouts:1,incorrect_questions:0,abstained_questions:0,unsupported_vision_questions:0,efficiency:{accuracy:1,scored_answers:20,median_output_tokens:1391,answers_per_active_minute:0.333}});
+  assert.equal(summary.score.value,28.722222);assert.equal(summary.raw_correct,20);assert.equal(summary.timeouts,1);assert.equal(summary.incorrect_questions,0);assert.equal(summary.efficiency.median_output_tokens,1391);
+  const missing=hourglassReportSummary({...report(),timeouts:'1',raw_correct:-1});assert.equal(missing.timeouts,null);assert.equal(missing.raw_correct,null);assert.equal(missing.efficiency.accuracy,null);
+});
+
 test('native Hourglass scores retain metric, protocol, dates and zero or negative points without recalculation',()=>{
   for(const value of [12,0,-4]){
     const input={...report(),hourglass_score:value},before=structuredClone(input),summary=hourglassReportSummary(input);

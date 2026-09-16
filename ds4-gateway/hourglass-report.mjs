@@ -4,6 +4,7 @@ const object=value=>value&&typeof value==='object'&&!Array.isArray(value);
 const text=value=>typeof value==='string'&&value.trim()?value.slice(0,256):null;
 const finite=value=>typeof value==='number'&&Number.isFinite(value)?value:null;
 const nonnegative=value=>finite(value)!==null&&value>=0?value:null;
+const count=value=>Number.isSafeInteger(value)&&value>=0?value:null;
 const date=value=>typeof value==='string'&&/^\d{4}-\d{2}-\d{2}T/.test(value)&&Number.isFinite(Date.parse(value))?value:null;
 const digest=value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value)?value:null;
 
@@ -19,6 +20,11 @@ export function hourglassReportSummary(report){
     benchmark_version:text(report.benchmark_version),scoring_policy:text(report.scoring),timing_policy:text(report.timing_policy),
     bank_fingerprint:digest(report.bank_fingerprint),configuration_key:digest(report.configuration_key),machine_key:digest(report.machine_key),
     active_seconds:nonnegative(report.active_seconds),window_seconds:nonnegative(report.window_seconds),
+    raw_correct:count(report.raw_correct),completed_questions:count(report.completed_questions),total_questions:count(report.total_questions),
+    timeouts:count(report.timeouts),incorrect_questions:count(report.incorrect_questions),abstained_questions:count(report.abstained_questions),
+    unsupported_vision_questions:count(report.unsupported_vision_questions),
+    efficiency:{accuracy:finite(report.efficiency?.accuracy),scored_answers:count(report.efficiency?.scored_answers),
+      median_output_tokens:nonnegative(report.efficiency?.median_output_tokens),answers_per_active_minute:nonnegative(report.efficiency?.answers_per_active_minute)},
     clock_adjustment_seconds:finite(report.clock_adjustment_seconds),
     question_timeout_policy:text(report.question_timeout_policy),
     execution:{question_timeout_s:nonnegative(report.execution?.question_timeout_s),

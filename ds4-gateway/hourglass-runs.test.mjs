@@ -26,6 +26,14 @@ function fixture(t){
 }
 async function start(runs){await runs.change({action:'prepare',model:'example'});const id=runs.status().prepared.id;await runs.change({action:'start',id,owner_confirmed_idle:true});return id;}
 
+test('older saved report projections refresh counts once without replaying a native job',async t=>{
+ const f=fixture(t),runs=f.make();t.after(()=>runs.close());await start(runs);await runs.change({action:'refresh'});
+ const old=structuredClone(runs.runs);delete old[0].report.summary.timeouts;runs.save(old);
+ let reads=0;f.client.report=async()=>{reads++;return {report_revision:'a'.repeat(64),summary:hourglassReportSummary({...nativeReport(),timeouts:1,raw_correct:20})};};
+ await runs.change({action:'refresh'});assert.equal(runs.status().runs[0].report.summary.timeouts,1);await runs.change({action:'refresh'});
+ assert.equal(reads,1);assert.equal(f.calls.filter(c=>c==='submit').length,1);
+});
+
 test('Genie preparation reports the actual future window handling without starting or reserving work',async t=>{
  const f=fixture(t),direct=f.make();t.after(()=>direct.close());
  const ordinary=await direct.tool({action:'prepare',model:'example'});

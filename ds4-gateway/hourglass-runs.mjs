@@ -6,6 +6,7 @@ import {HourglassConsole} from './hourglass-console.mjs';
 const UUID=/^[a-f0-9-]{36}$/,JOB=/^[a-f0-9]{32}$/,DIGEST=/^[a-f0-9]{64}$/;
 const active=r=>['submitting','uncertain','accepted','pending','running','unknown','owned'].includes(r.state);
 const terminal=r=>['completed','stopped','error','cancelled'].includes(r.state);
+const needsReport=r=>!r.report||!Object.hasOwn(r.report.summary??{},'timeouts');
 const needsCheck=r=>['uncertain','submitting','unknown'].includes(r.state)||active(r)&&!!r.error;
 const states=new Set(['submitting','uncertain','accepted','pending','running','unknown','owned','completed','stopped','error','cancelled','rejected','owner_checked']);
 const scope='Owner-started Hourglass measurements. Hourglass owns execution, clock and results. Each review states its contention handling. No automatic starts, cancellation or changes to serving settings.';
@@ -156,16 +157,16 @@ export class HourglassRuns {
         this.save(this.runs.map(r=>r.id===row.id?next:r));
       }catch{this.save(this.runs.map(r=>r.id===row.id?{...r,error:'Owned operation observation unavailable. Existing work and maintenance receipts are preserved.'}:r));}
     }
-    for(const row of this.runs.filter(r=>r.job_id&&r.state!=='owner_checked'&&(!r.owned||terminal(r))&&(!terminal(r)||!r.report))){
+    for(const row of this.runs.filter(r=>r.job_id&&r.state!=='owner_checked'&&(!r.owned||terminal(r))&&(!terminal(r)||needsReport(r)))){
       try{
         if(row.console_url!==this.origin)throw new Error('The configured Hourglass console changed.');
         const observed=await this.client.observe(row.job_id,row.review.model);
         const next={...row,...observed,observed_at:this.now(),error:null};
-        if(terminal(next)&&!next.report){try{next.report=await this.client.report(row.job_id);}catch{next.error='The run is stopped, but its aggregate report could not be read. Refresh to try reading it again.';}}
+        if(terminal(next)&&needsReport(next)){try{next.report=await this.client.report(row.job_id);}catch{next.error='The run is stopped, but its aggregate report could not be read. Refresh to try reading it again.';}}
         this.save(this.runs.map(r=>r.id===row.id?next:r));
       }catch{this.save(this.runs.map(r=>r.id===row.id?{...r,error:'Run observation is unavailable. The saved receipt remains; no run was restarted or cancelled.'}:r));}
     }
   }
-  startObserving(){this.timer=setInterval(()=>{if(!this.busy&&!this.closed&&!this.error&&this.runs.some(r=>r.owned&&active(r)||r.job_id&&r.state!=='owner_checked'&&(!terminal(r)||!r.report)))void this.change({action:'refresh'}).catch(()=>{});},15000);this.timer.unref();}
+  startObserving(){this.timer=setInterval(()=>{if(!this.busy&&!this.closed&&!this.error&&this.runs.some(r=>r.owned&&active(r)||r.job_id&&r.state!=='owner_checked'&&(!terminal(r)||needsReport(r))))void this.change({action:'refresh'}).catch(()=>{});},15000);this.timer.unref();}
   close(){this.closed=true;clearInterval(this.timer);this.maintenance?.close();}
 }
