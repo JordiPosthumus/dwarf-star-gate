@@ -405,6 +405,15 @@ test('fatal recovery persists before restart, verifies real checks before reinst
   assert.equal(r.recovery.request(input).id,receipt.id);assert.equal(r.restarts,1);
   assert.throws(()=>r.recovery.request({...input,worker_id:'other'}),/conflict/);
 });
+test('recovery passes current enrolled endpoint authentication and aliases only to the verifier',async()=>{
+ let endpoint;
+ const r=rig({verify:async(_url,_model,_context,options)=>{endpoint=options.endpoint;return {samples:[],verified_at:new Date().toISOString()};}});
+ r.n.api_key_file='/private/fixture-key';r.n.model_aliases={'deepseek-v4-flash':'native-fixture'};
+ await r.ready();r.recovery.request(r.input());await r.recovery.task;
+ assert.equal(endpoint,r.n);assert.equal(endpoint.api_key_file,'/private/fixture-key');assert.equal(endpoint.model_aliases['deepseek-v4-flash'],'native-fixture');
+ assert.ok(!JSON.stringify(r.recovery.status()).includes('/private/fixture-key'));
+ await r.recovery.close();
+});
 test('healthy long reasoning, queues, operator pause, missing fatal evidence and stale identity cannot restart',async()=>{
   const cases=[n=>n.quarantine=null,n=>n.active={thinking:'xhigh'},n=>n.queue.push({}),n=>n.drained=true,n=>n.ssh='different-host'];
   for(const mutate of cases){const r=rig();await r.ready();mutate(r.n);assert.throws(()=>r.recovery.request(r.input()));assert.equal(r.restarts,0);}

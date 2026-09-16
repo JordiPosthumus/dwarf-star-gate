@@ -7,6 +7,10 @@ repository. No Pi or Hermes installation is required.
 
 ## Enrollment: start here
 
+For a same-host, directly launched oMLX installation using `start.py`, see
+[oMLX recovery](omlx-recovery.md). That adapter has a separate verification kind
+and validation status; the historical DS4/launchd behavior below is unchanged.
+
 Giving this task to your local coding agent? Start with
 [Enroll a DS4 server — instructions for your agent](agent-recovery-enrollment.md).
 It separates inspection, explicit permission, private setup and verification.

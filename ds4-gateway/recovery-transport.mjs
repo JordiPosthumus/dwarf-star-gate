@@ -38,8 +38,8 @@ export function recoveryConfig(raw={}) {
     const worker=workerConfig(Object.fromEntries(['id','url','backend','ssh','ssh_fallbacks','remote_port'].filter(k=>entry[k]!==undefined).map(k=>[k,entry[k]])));
     const local=entry.transport==='local';
     if(entry.transport!==undefined&&!['ssh','local'].includes(entry.transport))throw new Error('Recovery transport must be ssh or local');
-    if(!['systemd-user','launchd','docker'].includes(entry.adapter)||(!local&&!worker.ssh)||(local&&(entry.adapter!=='launchd'||worker.ssh)))throw new Error('Recovery requires an enrolled SSH adapter or an explicitly local launchd worker');
-    if(entry.verification!==undefined&&!['ds4','qwen_vllm'].includes(entry.verification))throw new Error('Unsupported recovery verification');
+    if(!['systemd-user','launchd','docker','omlx'].includes(entry.adapter)||(!local&&!worker.ssh)||(local&&(!['launchd','omlx'].includes(entry.adapter)||worker.ssh))||(entry.adapter==='omlx'&&!local))throw new Error('Recovery requires an enrolled SSH adapter or an explicitly local launchd/oMLX worker');
+    if(entry.verification!==undefined&&!['ds4','qwen_vllm','qwen_omlx'].includes(entry.verification))throw new Error('Unsupported recovery verification');
     if(entry.adapter==='docker'&&entry.start_stopped===true)throw new Error('Docker recovery preserves stopped containers; use its existing restart policy');
     if(local){
       if(typeof entry.python!=='string'||!path.isAbsolute(entry.python)||entry.python.includes('\0'))throw new Error('Local recovery requires an absolute enrolled Python interpreter');
@@ -68,7 +68,7 @@ function localInvocation(config,{platform=process.platform,uid=process.getuid?.(
   if(platform!=='darwin'||!Number.isInteger(uid)||uid===0)throw new Error('adapter_local_unavailable');
   try{
     recoveryConfig({workers:[config]});
-    if(config.adapter!=='launchd'||config.transport!=='local'||config.ssh||config.ssh_fallbacks||config.remote_port!==undefined)throw new Error();
+    if(!['launchd','omlx'].includes(config.adapter)||config.transport!=='local'||config.ssh||config.ssh_fallbacks||config.remote_port!==undefined)throw new Error();
     for(const key of ['python','helper','config']){
       const file=config[key];
       if(typeof file!=='string'||!path.isAbsolute(file)||file.includes('\0'))throw new Error();

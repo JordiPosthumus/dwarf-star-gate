@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import {verifyRecovery,qwenRecoveryProofValid} from './recovery-verify.mjs';
 import {bootstrapProofValid} from './recovery-bootstrap.mjs';
 import {recoveryConfig} from './recovery-transport.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 function fixture({cached=3000,context=262144,finish='stop'}={}){
  const calls=[];
@@ -25,9 +28,32 @@ test('Qwen verification refuses absent cache reuse, changed context, and unfinis
   await assert.rejects(verifyRecovery('http://127.0.0.1:8001','example',262144,{...fixture(options),kind:'qwen_vllm'}),message);
  }
 });
+test('oMLX recovery checks use the enrolled credential, API base and model alias, retaining distinct proof',async t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sg-recovery-endpoint-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+ const key=path.join(dir,'key');fs.writeFileSync(key,'fixture-token',{mode:0o600});
+ const endpoint={url:'http://127.0.0.1:39001/custom/v1',backend:'openai',api_key_file:key,model_aliases:{gateway:'example'}};
+ const f=fixture();let requests=0;
+ const fetchImpl=async(url,options)=>{
+  requests++;assert.equal(options.headers.authorization,'Bearer fixture-token');assert.equal(options.redirect,'error');assert.match(url.pathname,/^\/custom\/v1\//);
+  if(options.body)assert.equal(JSON.parse(options.body).model,'example');
+  return f.fetchImpl(new URL(url.pathname.replace('/custom',''),'http://127.0.0.1'),options);
+ };
+ const proof=await verifyRecovery(endpoint.url,'gateway',262144,{kind:'qwen_omlx',endpoint,fetchImpl});
+ assert.equal(requests,5);assert.equal(qwenRecoveryProofValid(proof,262144,'qwen_omlx'),true);assert.equal(qwenRecoveryProofValid(proof,262144),false);assert.equal(bootstrapProofValid(proof,262144),false);
+ assert.ok(!JSON.stringify(proof).includes('fixture-token'));assert.ok(!JSON.stringify(proof).includes(key));
+ await assert.rejects(verifyRecovery('http://127.0.0.1:39002/v1','gateway',262144,{kind:'qwen_omlx',endpoint,fetchImpl}),/endpoint_changed/);
+ fs.unlinkSync(key);await assert.rejects(verifyRecovery(endpoint.url,'gateway',262144,{kind:'qwen_omlx',endpoint,fetchImpl}),/credential unavailable/);assert.equal(requests,5);
+});
 test('Docker enrollment selects explicit verification and preserves native stopped-container policy',()=>{
  const c={id:'example',backend:'openai',url:'http://127.0.0.1:38011/v1',ssh:'example',remote_port:8001,adapter:'docker',verification:'qwen_vllm',exclusive:true,helper:'/opt/example/recovery-docker.py',config:'/opt/example/recovery.json',machine:'a'.repeat(64),profile:'b'.repeat(64)};
  assert.equal(recoveryConfig({workers:[c]}).get('example').verification,'qwen_vllm');
  assert.throws(()=>recoveryConfig({workers:[{...c,start_stopped:true,service_profile:'c'.repeat(64)}]}),/preserves stopped/);
  assert.throws(()=>recoveryConfig({workers:[{...c,verification:'guess'}]}),/Unsupported recovery verification/);
+});
+test('direct oMLX enrollment is explicitly local with a separate stopped-start pin',()=>{
+ const c={id:'local',url:'http://127.0.0.1:39001/v1',backend:'openai',adapter:'omlx',transport:'local',python:'/fixture/python',helper:'/fixture/recovery-omlx.py',config:'/fixture/config.json',machine:'a'.repeat(64),profile:'b'.repeat(64),verification:'qwen_omlx',exclusive:true};
+ assert.equal(recoveryConfig({workers:[c]}).get('local').adapter,'omlx');
+ assert.throws(()=>recoveryConfig({workers:[{...c,transport:'ssh',ssh:'fixture'}]}),/local/);
+ assert.throws(()=>recoveryConfig({workers:[{...c,start_stopped:true}]}),/static service profile/);
+ assert.equal(recoveryConfig({workers:[{...c,start_stopped:true,service_profile:'c'.repeat(64)}]}).get('local').start_stopped,true);
 });
