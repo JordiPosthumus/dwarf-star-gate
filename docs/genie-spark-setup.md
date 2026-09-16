@@ -46,8 +46,10 @@ SSH commands, change the destination, select another image or override serving
 flags through these tools. Existing containers and personal files are preserved.
 Preparation creates fresh, stopped containers and never stops a serving engine.
 `qualify_spark_media` tests the stopped H3 and ACE-Step candidates before the new
-LLM is started. It requires an idle GPU, the same per-host setup lock, and at
-least one serving gateway LLM elsewhere. It submits one standard native job per
+LLM is started. It requires an idle GPU and the same per-host setup lock. It leaves existing
+serving LLMs untouched and can also qualify a first, unused Spark before a gateway
+fleet exists. Borrowing an already serving host still uses the separate media
+execution workflow and its one-other-LLM minimum. It submits one standard native job per
 engine, retains output bytes, and fully decodes the H3 video/audio and ACE music
 with `ffprobe`/`ffmpeg` on the gateway machine. Both programs must be installed
 and available in the dashboard's PATH; missing tools fail before an engine starts.
