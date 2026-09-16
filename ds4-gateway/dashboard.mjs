@@ -1,4 +1,5 @@
 import {createSparkMediaQualification} from './spark-media-qualification.mjs';
+import {sparkInspectionSync} from './spark-inspection.mjs';
 import {SparkSetupWatch} from './spark-setup-watch.mjs';
 import {createSparkRegistration} from './spark-registration.mjs';
 import {createSparkSetupTools,setupTransport} from './genie-spark-setup.mjs';
@@ -481,11 +482,15 @@ export async function runDashboard(configPath, port) {
       gatewayAt = Date.now(); gatewayError = null;
       syncDevices(s.workers);
       hardware.poll();
+      // Keep installed static targets intact. Only the local core supplies new
+      // setup enrollments; an older core can continue without this endpoint.
+      void sparkInspection?.refresh().catch(()=>{});
     } catch { gatewayError = 'Gateway status unavailable; last snapshot is stale'; }
     finally { activity.update([...devices.values()].map(d=>({...d,endpoint_metrics:endpointTelemetry.snapshot(d.id)})),gateway?.workers||[],Date.now(),!!gatewayError);try{if(!isTesting())memory.observe(snapshot());}catch{/* A notebook fault cannot stop fleet polling. */}polling = false; }
   }
   const started = Date.now();
   const managementEnabled = config.ui_worker_management === true && !!config.control_socket;
+  const sparkInspection=managementEnabled?sparkInspectionSync(config,()=>workerControl(config.control_socket,'/spark-services')):null;
   const serverRecords=new ServerRecords(config.server_records_directory);
   const combinedHourglass=()=>{const saved=hourglassReports.snapshot(),runs=hourglass?.reportSnapshot();return runs?{...saved,configured:true,reports:[...saved.reports,...runs.reports],unavailable:[...saved.unavailable,...runs.unavailable]}:saved;};
   const snapshot = () => ({ hourglass_measurements:hourglass?.status()??{configured:false},hourglass_reports:combinedHourglass(),server_records:serverRecords.snapshot(gateway?.workers?.map(w=>w.id)??[]),service:'dwarf-star-gate-dashboard', version: 1, time: Date.now(), started, read_only: !managementEnabled, worker_management:managementEnabled, gateway, gateway_at: gatewayAt, gateway_error: gatewayError, telemetry_error: writeError,monitoring_history:monitoringHistory.snapshot(),

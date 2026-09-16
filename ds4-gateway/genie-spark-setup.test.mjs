@@ -69,7 +69,7 @@ test('bundled setup includes build constraints and redistribution notices, exclu
     return {state:'accepted'};
   }});
   await tools.tool({action:'start',target_id:'new_spark'});
-  for(const name of ['examples/spark-build/h3/constraints.txt','examples/spark-build/qwen38-repaired/NOTICE.md','examples/spark-build/qwen38-repaired/LICENSE-APACHE-2.0','examples/spark-build/ace-step/requirements.lock','examples/server-profiles/qwen38-nvfp4-vllm.json'])assert.ok(names.includes(name),name);
+  for(const name of ['ds4-gateway/spark_recovery.py','ds4-gateway/recovery-docker.py','examples/spark-build/h3/constraints.txt','examples/spark-build/qwen38-repaired/NOTICE.md','examples/spark-build/qwen38-repaired/LICENSE-APACHE-2.0','examples/spark-build/ace-step/requirements.lock','examples/server-profiles/qwen38-nvfp4-vllm.json'])assert.ok(names.includes(name),name);
   assert.equal(names.some(name=>name.includes('/test_')||name.includes('__pycache__')||name.includes('/.')),false);
 });
 

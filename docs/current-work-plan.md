@@ -210,8 +210,17 @@ deployment receipts stay outside this public repository.
   qualification now has a detached product path: test stopped H3/ACE candidates,
   retain and fully decode samples, then continue to LLM qualification. It shares
   the host setup lock and existing media adapters/results. Actual Genie has now invoked this new path on retained prepared engines: real
-  H3 video/audio and ten-second ACE music passed retention and full decode; automatic media/recovery enrollment and
-  fresh-host end-to-end acceptance are still outstanding.
+  H3 video/audio and ten-second ACE music passed retention and full decode.
+  New-host LLM qualification now installs its dedicated bundled recovery helper,
+  proves one same-container restart, and runs all eight native serving check groups
+  afterward. A real prepared candidate passed that sequence with unchanged settings,
+  zero fault-counter changes and 4,800 reused tokens in both follow-ups. The fixed
+  registration path now saves proven recovery/media bindings with the new worker,
+  preserves existing switches, and exposes its inspection target to Genie. Actual
+  native-model registration and helper inspection passed in a disposable core,
+  using the prior real media qualifications on that host. These are imported
+  prepared-engine tests; a complete fresh-host setup and a media switching cycle
+  through a newly enrolled worker remain acceptance work.
 - [x] Deliver the first end-to-end agent media workflow after the current
   baseline measurement and basic recovery work, ahead of additional concurrency
   tuning or broad hardening. Agents submit music/video jobs to dedicated Star

@@ -55,6 +55,10 @@ class RemoteSetupTests(unittest.TestCase):
                 self.assertEqual(set(remote.media_plan(root)['engines']), {'h3','ace-step'})
                 containers['qwen38-repaired']['State']['Running']=True
                 with self.assertRaisesRegex(ValueError,'stopped state'): remote.media_plan(root)
+                self.assertEqual(set(remote.media_plan(root, require_idle=False)['engines']), {'h3','ace-step'})
+                containers['h3']['State']['Running']=True
+                with self.assertRaisesRegex(ValueError,'stopped state'): remote.media_plan(root, require_idle=False)
+                containers['h3']['State']['Running']=False
                 containers['qwen38-repaired']['State']['Running']=False
                 containers['h3']['HostConfig']['PortBindings']['8188/tcp'][0]['HostIp']='0.0.0.0'
                 with self.assertRaisesRegex(ValueError,'native port'): remote.media_plan(root)

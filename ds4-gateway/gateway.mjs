@@ -1,5 +1,6 @@
 import {genieCapabilityKeys,validateGenieCapabilities,genieCapabilities} from './genie-capabilities.mjs';
 import {createMediaExecution} from './media-execution.mjs';
+import {sparkServiceBinding,validateServiceAddition,applyServiceAddition,restoreSparkServices} from './spark-services.mjs';
 import {MediaJobs,handleMediaRequest} from './media-jobs.mjs';
 import {activeJobs,activeCount,hasCapacity,requestCapacity,oldestActive} from './worker-activity.mjs';
 import {PRIORITY_HEADER,requestPriority,priorityRank,priorityIndex,priorityOrder} from './job-priority.mjs';
@@ -270,6 +271,9 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   let definitions;
   try { definitions = store.data.workers === undefined ? initial : workerConfigs(store.data.workers); }
   catch (e) { store.close(); throw e; }
+  const serviceConfig={...config,recovery:structuredClone(config.recovery),media_jobs:structuredClone(config.media_jobs),genie_chat:structuredClone(config.genie_chat)};
+  try { restoreSparkServices(serviceConfig,store.data.spark_services??{},definitions); }
+  catch(e){store.close();throw e;}
   let profiles;try{profiles=servingProfiles(config.serving_profiles,definitions);}catch(e){store.close();throw e;}
   const nodes = definitions.map(makeNode);
   let routes;try{routes=modelRoutes(config.model_routes,definitions);}catch(e){store.close();throw e;}
@@ -344,7 +348,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   const serialize = fn => { const next = mutation.then(fn); mutation = next.catch(() => {}); return next; };
   const definition = n => Object.fromEntries(workerFields.filter(k => n[k] !== undefined).map(k => [k,n[k]]));
   let recovery;
-  try { recovery=new Recovery(config.recovery,{store,nodes,model:config.model,stopping:()=>shuttingDown||draining,log,
+  try { recovery=new Recovery(serviceConfig.recovery,{store,nodes,model:config.model,stopping:()=>shuttingDown||draining,log,
     reinstate:(n,expected,recoveryState)=>{
       if(n.removed || n.drained || n.active || n.queue.length || JSON.stringify(n.quarantine)!==JSON.stringify(expected) || shuttingDown || draining)throw new Error('reinstatement_state_changed');
       const quarantined={...store.data.quarantined};delete quarantined[n.id];
@@ -368,7 +372,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   const oldestQueued=queue=>queue.reduce((oldest,job)=>!oldest||job.createdMono<oldest.createdMono?job:oldest,null);
 
   const capabilityStatus=()=>genieCapabilities(store.data.genie_capabilities,config,recovery.state.automatic);
-  const mediaExecution=createMediaExecution(config,mediaJobs,{isEnabled:()=>!draining&&capabilityStatus().media});
+  const mediaExecution=createMediaExecution(serviceConfig,mediaJobs,{isEnabled:()=>!draining&&capabilityStatus().media,matchesWorker:(id,c)=>{const n=nodes.find(n=>n.id===id);return !!n&&recovery.binding(n,c);}});
   const rebalanceEnabled=()=>capabilityStatus().rebalance;
   const allocationStatus=slot=>slot.turnAllocation?{turns_used:slot.turnAllocation.used,remaining:Math.max(0,conversationTurns()-slot.turnAllocation.used),waiting_for_next_turn:!slot.active&&slot.turnAllocation.until>performance.now(),idle_remaining_ms:Math.max(0,Math.ceil(slot.turnAllocation.until-performance.now()))}:null;
   const stats = () => ({ version: 1, genie_capabilities:capabilityStatus(), serving_profiles:profiles, conversation_turns:conversationTurns(),conversation_turn_idle_ms:conversationTurnIdleMs, model_routes:routes?Object.fromEntries([...routes].map(([name,workers])=>[name,[...workers]])):null, agent_api_version:1, maintenance_lock_version:1,client_watch_version:1,client_watch:clientWatch.snapshot(), model: config.model, context_length: contextLimit(), queue_timeout_ms:queueTimeoutMs(), request_timeout_ms:config.request_timeout_ms??360000000, draining,startup:{...startup}, dataset:dataset.snapshot(), routing_shadow:shadow.snapshot(),recovery:recovery.status(),protections:visionProtection.status(),
@@ -1168,7 +1172,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   const startTunnel = node => {
     if (node.ssh) node.stopTunnel = tunnelFactory(node, () => shuttingDown || node.removed);
   };
-  const registry = () => ({ genie_capabilities:capabilityStatus(), model: config.model, minimum_context: contextLimit(), context_limit_control:true,concurrency_control_version:1,conditional_resume_version:1,media_maintenance_version:1,
+  const registry = () => ({ spark_services_version:1,genie_capabilities:capabilityStatus(), model: config.model, minimum_context: contextLimit(), context_limit_control:true,concurrency_control_version:1,conditional_resume_version:1,media_maintenance_version:1,
     genie_admission_version:1,genie_flexible_assignment:true,
     context_limit_source:store.data.pool_context_length === undefined ? 'config' : 'saved',
     conversation_turns:conversationTurns(),conversation_turn_idle_ms:conversationTurnIdleMs,conversation_turns_control:true,conversation_turns_source:store.data.conversation_turns!==undefined?'saved':config.conversation_turns!==undefined?'config':'default',
@@ -1262,10 +1266,15 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     log('pool_context_changed',{previous:before,context_length:contextLimit()});
     return registry();
   }
-  async function addWorker(raw) {
+  async function addWorker(raw,services) {
     if (shuttingDown || draining) throw new Error('Gateway is draining');
     const settings = workerConfig(raw, { registration: true });
     assertUniqueWorker(nodes, settings);
+    let binding;
+    if(services!==undefined){
+      if(Object.hasOwn(store.data.spark_services??{},settings.id))throw new Error('Saved service enrollment already exists; reconcile it before reusing this worker ID');
+      binding=sparkServiceBinding(settings,services);validateServiceAddition(serviceConfig,binding);
+    }
     // Do not mistake another process's listener for our new SSH tunnel.
     if (settings.ssh) await new Promise((resolve, reject) => {
       const check = net.createServer(); check.once('error', () => reject(new Error('Local tunnel port is already in use')));
@@ -1287,7 +1296,11 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
       } while (Date.now() < until);
       if (shuttingDown) throw new Error('Gateway is stopping');
       if (!compatible()) throw new Error(`Compatibility check failed (${node.probeError || 'unavailable'}). Required ${config.model_agnostic || node.backend === 'openai' ? 'available endpoint' : `model ${config.model}`}, context at least ${contextLimit()}; observed context ${node.contextLength ?? 'unknown'}.`);
-      store.setWorkers([...nodes.map(definition), settings], { ...store.data.drained, [node.id]: true });
+      if(binding){
+        if(fs.existsSync(store.filename)){const backup=`${store.filename}.enrollment-${Date.now()}-${randomUUID()}.bak`;fs.copyFileSync(store.filename,backup,fs.constants.COPYFILE_EXCL);fs.chmodSync(backup,0o600);}
+        store.save({...store.data,workers:[...nodes.map(definition),settings],drained:{...store.data.drained,[node.id]:true},spark_services:{...store.data.spark_services,[node.id]:binding}});
+        applyServiceAddition(serviceConfig,binding);recovery.configs.set(node.id,binding.recovery);
+      }else store.setWorkers([...nodes.map(definition), settings], { ...store.data.drained, [node.id]: true });
       nodes.push(node);
       agent.maxSockets=tlsAgent.maxSockets=Math.max(16,nodes.reduce((sum,worker)=>sum+requestCapacity(worker),0));
       log('worker_registered', { node: node.id, context_length: node.contextLength, drained: true });
@@ -1411,6 +1424,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     if(req.method==='GET'&&req.url==='/agents')return json(res,200,agents.adminStatus());
     if (req.method === 'GET' && req.url === '/current-jobs') return json(res,200,currentJobsStatus());
     if (req.method === 'GET' && req.url === '/workers') return json(res, 200, registry());
+    if(req.method==='GET'&&req.url==='/spark-services')return json(res,200,{schema:1,workers:Object.fromEntries(Object.entries(store.data.spark_services??{}).filter(([id])=>nodes.some(n=>n.id===id)).map(([id,row])=>[id,{inspection:row.inspection,recovery:true,media:Object.keys(row.media.engines)}]))});
     if(req.method==='GET'&&req.url==='/media-jobs')return json(res,200,mediaExecution.status());
     if(req.method==='POST'&&req.url==='/genie-media-start'){
       let body='';req.on('data',chunk=>{body+=chunk;if(Buffer.byteLength(body)>2048)req.destroy();});req.on('error',()=>{});
@@ -1461,7 +1475,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
           }
           if (req.url === '/check-endpoint') return json(res, 200, await checkEndpoint(input));
           if (req.url === '/edit-endpoint') return json(res, 200, await editEndpoint(input));
-          if (req.url === '/add-worker') return json(res, 201, await addWorker(input.worker));
+          if (req.url === '/add-worker') return json(res, 201, await addWorker(input.worker,input.services));
           if (req.url === '/set-ssh-fallbacks') return json(res, 200, setSshFallbacks(input));
           if (req.url === '/set-worker-concurrency') return json(res,200,setWorkerConcurrency(input));
           if (req.url === '/remove-worker') return json(res, 200, removeWorker(input.id));

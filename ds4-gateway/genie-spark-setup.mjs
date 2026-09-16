@@ -9,7 +9,7 @@ const root=fileURLToPath(new URL('../',import.meta.url));
 const remote=fs.readFileSync(new URL('./spark_setup_remote.py',import.meta.url),'utf8');
 const quote=value=>"'"+value.replaceAll("'","'\\''")+"'";
 function bundleRecipes(){
-  const files=['ds4-gateway/spark_qualify.py','ds4-gateway/docker_profile.py','ds4-gateway/serving_qualification.py','ds4-gateway/operation_runner.py','ds4-gateway/spark_setup_remote.py','examples/server-profiles/qwen38-nvfp4-vllm.json'];
+  const files=['ds4-gateway/spark_qualify.py','ds4-gateway/spark_recovery.py','ds4-gateway/recovery-docker.py','ds4-gateway/docker_profile.py','ds4-gateway/serving_qualification.py','ds4-gateway/operation_runner.py','ds4-gateway/spark_setup_remote.py','examples/server-profiles/qwen38-nvfp4-vllm.json'];
   const visit=dir=>{for(const entry of fs.readdirSync(path.join(root,dir),{withFileTypes:true})){
     if(entry.name==='__pycache__'||entry.name.startsWith('test_')||entry.name.startsWith('.'))continue;
     const name=path.posix.join(dir,entry.name);
@@ -71,7 +71,8 @@ export function createSparkSetupTools(config,{isEnabled=()=>true,isTesting=()=>f
       if(input.action==='register'){
         if(!registration)throw new Error('Gateway registration is not connected.');
         const proof=await transport(targets[id],{action:'verify_serving'});
-        return await registration.register(id,targets[id],proof);
+        const media=proof.recovery&&mediaQualification?.enrollment?await mediaQualification.enrollment(id,targets[id],proof.container):{};
+        return await registration.register(id,targets[id],proof,media);
       }
       const before=await read(id);
       if(input.action==='start'&&before.state!=='not_started')return before;

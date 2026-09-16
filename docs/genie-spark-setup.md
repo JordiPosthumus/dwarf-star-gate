@@ -60,13 +60,29 @@ it does not enroll production media switching or recovery. If the new LLM was
 already qualified through the earlier workflow, registration remains available;
 the watcher does not stop that LLM to retrofit media testing.
 `qualify_spark_llm` then starts only that prepared LLM on its idle new host,
-compares the actual command, environment, runtime and model/cache mounts, and
-runs the existing native text, tools, vision, full-context, prefix-cache and
-reasoning-EOS checks. Passing leaves that LLM running. Failure is visible; only
+compares the actual command, environment, runtime and model/cache mounts, installs
+a dedicated copy of the bundled Docker recovery helper, and tests one same-container
+restart. It then runs the existing native text, tools, vision, full-context,
+prefix-cache and reasoning-EOS checks after the restarted LLM returns. The helper
+and its private config live inside that qualification directory; existing helpers
+are not replaced. The new host remains outside gateway routing throughout.
+This adds one model reload during initial setup. The helper preserves intentionally
+stopped containers and existing restart policies. Passing leaves that LLM running. Failure is visible; only
 its own unchanged idle candidate may be stopped.
 
 Once qualification passes, `register_spark_llm` rechecks the same running
-container instance and its current model/context. It saves the observed
+container instance and its current model/context, plus the tested recovery helper
+and configuration hashes when that proof exists. Earlier LLM-only qualifications
+remain eligible for registration; they are not silently restarted or described
+as recovery-qualified. New restart-qualified registrations also connect their dedicated recovery helper.
+Completed media qualifications are matched against the same host/LLM preparation
+and freshly inspected stopped engines before connecting music/video switching.
+These bindings and the new paused worker are saved together in the core state,
+survive a core restart, and become available to Genie’s existing inspection tools.
+The new loopback endpoint is dedicated to gateway use; intentional Docker stops
+remain respected. Existing recovery/media switches and static enrollments are
+unchanged. A disabled capability stays disabled. An older running core that lacks
+this enrollment support rejects the combined registration before adding a worker. It saves the observed
 configuration plus an immutable revision under the private library’s `history`
 directory, adds an SSH-connected paused worker through the existing gateway
 controls, and resumes it only if the operator/maintenance state is unchanged.

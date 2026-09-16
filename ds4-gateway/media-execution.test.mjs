@@ -39,6 +39,12 @@ test('uncertain process launch is retained and never replayed',async t=>{
   await assert.rejects(service.start(input));assert.equal(r.jobs.get(r.job.id).execution.phase,'launch_uncertain');
   await service.start(input);assert.equal(calls,1);
 });
+test('removed or retargeted workers cannot borrow engines from their old enrollment',async t=>{
+  const r=fixture(t);let launched=false;
+  const service=createMediaExecution(r.config,r.jobs,{isEnabled:()=>true,matchesWorker:()=>false,launchRunner:async()=>{launched=true;}});
+  await assert.rejects(service.start({job_id:r.job.id,worker_id:'one'}),/no longer matches/);
+  assert.equal(launched,false);assert.equal(r.jobs.get(r.job.id).state,'queued');assert.equal(r.jobs.get(r.job.id).execution,undefined);
+});
 
 function cycleFixture(t,kind='video'){
   const r=fixture(t,kind),containers=new Map();

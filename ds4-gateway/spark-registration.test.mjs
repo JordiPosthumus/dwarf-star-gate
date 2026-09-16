@@ -28,3 +28,16 @@ test('uncertain add outcome is retained and never automatically replayed',async 
   assert.equal((await service.register('new-spark',{ssh:'host'},proof)).state,'needs_attention');assert.equal(adds,1);
   assert.equal(fs.readFileSync(path.join(dir,'records/observed/new-spark.json'),'utf8'),record);
 });
+test('qualified recovery/media accompany registration, and older cores cannot silently drop them',async t=>{
+ const ready={...proof,container:'a'.repeat(64),recovery_restart:'passed',checks_passed:['context_boundary','fault_counters','model_context','prefix_cache','reasoning_eos','text','tools','vision'],recovery:{helper:'/srv/setup/recovery/helper.py',config:'/srv/setup/recovery/config.json',machine:'b'.repeat(64),profile:'c'.repeat(64)},configuration_evidence:{...proof.configuration_evidence,native_result_sha256:'d'.repeat(64)}};
+ const media={music:{kind:'ace-step',container:'e'.repeat(64),image:'sha256:'+'f'.repeat(64),port:8002}};let version=0,added;
+ const {dir,service}=fixture(t,async(route,input)=>{
+  if(route==='/workers')return {workers:[],spark_services_version:version};
+  if(route==='/add-worker'){added=input;return {workers:[{id:'new-spark',drained:true}]};}
+  return {workers:[{id:'new-spark',is_healthy:true,drained:false}]};
+ });
+ await assert.rejects(service.register('new-spark',{ssh:'new-spark'},ready,media),/running gateway/);assert.equal(service.read('new-spark'),null);
+ version=1;const row=await service.register('new-spark',{ssh:'new-spark'},ready,media);
+ assert.deepEqual(added.services.media,media);assert.equal(added.services.recovery.helper,ready.recovery.helper);assert.deepEqual(row.services,{recovery:true,media:['music']});
+ const record=JSON.parse(fs.readFileSync(path.join(dir,'records/observed/new-spark.json')));assert.equal(record.restoration.drill.status,'unproven');assert.equal(record.recovery_qualification.kind,'same_container_restart');
+});

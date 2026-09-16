@@ -13,7 +13,7 @@ export class SparkSetupWatch {
   request(id){
     if(!Object.hasOwn(this.targets,id))throw Error('Select an enrolled new Spark.');
     if(Object.hasOwn(this.requests,id))return this.requests[id];
-    this.requests[id]={target_id:id,binding:binding(this.targets[id]),state:'requested',requested_at:new Date().toISOString(),scope:'Prepare all engines, test the stopped media engines where connected, then qualify and register the LLM. Media and recovery enrollment remain separate.'};this.save();return this.requests[id];
+    this.requests[id]={target_id:id,binding:binding(this.targets[id]),state:'requested',requested_at:new Date().toISOString(),scope:'Prepare and test the engines, qualify the LLM and its dedicated restart helper, then register its qualified services. Existing media/recovery switches still control use.'};this.save();return this.requests[id];
   }
   async tick(){
     if(this.closed||this.busy||!this.isEnabled()||!Object.values(this.requests).some(r=>!['complete','needs_attention'].includes(r.state)))return;
@@ -36,7 +36,7 @@ export class SparkSetupWatch {
         // A no-action/failed Genie reply is visible, never an automatic retry loop.
         if(r.dispatched_stage===stage&&!r.pending){r.state='needs_attention';r.error=`Genie's ${stage} reply ended without observed stage progress; inspect its conversation.`;this.save();continue;}
         if(!r.conversation_id){r.conversation_id=this.chat.create({title:'Spark setup: '+id}).id;this.save();}
-        if(r.pending?.stage!==stage){r.pending={stage,request_id:randomUUID(),text:`Continue the owner's saved setup request for ${id}. Read spark_setup_status. The last observed next step is ${stage}; verify current status and perform that step once if still appropriate. The enabled New Spark setup switch grants standing permission. Do not ask again. Never stop existing workloads or invent another target/directory. Check status once after the action, report actual progress or failure in at most 80 words, then finish. The setup watcher will wake you for the next completed stage. This request covers engine preparation, native media samples where connected, and LLM qualification/registration; do not claim media or recovery enrollment is complete.`};this.save();}
+        if(r.pending?.stage!==stage){r.pending={stage,request_id:randomUUID(),text:`Continue the owner's saved setup request for ${id}. Read spark_setup_status. The last observed next step is ${stage}; verify current status and perform that step once if still appropriate. The enabled New Spark setup switch grants standing permission. Do not ask again. Never stop existing workloads or invent another target/directory. Check status once after the action, report actual progress or failure in at most 80 words, then finish. The setup watcher will wake you for the next completed stage. This request covers engine preparation, native media samples where connected, LLM/recovery qualification, and registration of the proven services. Report the actual registration.services fields; older LLM-only receipts do not imply media or recovery enrollment. Existing capability switches still control operation.`};this.save();}
         const pending=r.pending;
         this.chat.submit(r.conversation_id,pending.text,pending.request_id,{research:false});
         r.dispatched_stage=stage;r.state='waiting_for_genie';delete r.pending;delete r.error;this.save();break;

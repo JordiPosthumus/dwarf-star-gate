@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from docker_profile import Docker, signature, native_address, native_idle, native_request
 from serving_qualification import NativeQualification
 from operation_runner import save
+from spark_recovery import restart_new_llm, verify_recovery_proof
 
 SOURCE = Path(__file__).resolve().parent.parent
 PROFILE = SOURCE / 'examples/server-profiles/qwen38-nvfp4-vllm.json'
@@ -67,7 +68,7 @@ def prepared(setup_root, docker):
     return container, url, contract, receipt
 
 
-def qualify(setup_root, directory, *, docker=None, request=native_request, idle=native_idle, qualifier=NativeQualification, wait=time.sleep):
+def qualify(setup_root, directory, *, docker=None, request=native_request, idle=native_idle, qualifier=NativeQualification, wait=time.sleep, recovery=restart_new_llm):
     docker = docker or Docker()
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     def progress(phase, detail):
@@ -101,6 +102,10 @@ def qualify(setup_root, directory, *, docker=None, request=native_request, idle=
             wait(5)
         if not idle(url):
             raise ValueError('Native work is already present; qualification did not submit requests')
+        # Test the actual bundled recovery executor before the full native checks.
+        # This host has not been admitted to the gateway and has no live clients.
+        recovery_proof = recovery(directory, current, url, docker=docker, idle=idle,
+                                  request=request, progress=progress, wait=wait)
         result = qualifier(request, url, contract, progress=progress).verify(directory / 'native')
         if result['state'] != 'passed':
             raise ValueError('Native qualification failed; inspect retained request/response evidence')
@@ -109,13 +114,16 @@ def qualify(setup_root, directory, *, docker=None, request=native_request, idle=
         current = docker.inspect(before['Id'])
         if signature(current) != signature(before) or not current['State']['Running']:
             raise ValueError('Container identity changed during qualification')
+        verify_recovery_proof(recovery_proof)
         proof = {'container': current['Id'], 'image': current['Image'], 'signature': signature(current),
                  'started_at': current['State']['StartedAt'], 'port': receipt['port'], 'contract': contract,
+                 'recovery': recovery_proof,
                  'profile_sha256': receipt['profile_sha256'], 'prepared_profile_sha256': receipt['prepared_profile_sha256'], 'native_result_sha256': hashlib.sha256((directory / 'native/result.json').read_bytes()).hexdigest()}
         save(directory, 'serving-proof.json', proof)
         value = {'state': 'qualified_serving', 'phase': 'complete', 'updated_at': datetime.now(timezone.utc).isoformat(),
                  'container': current['Id'], 'image': current['Image'], 'port': receipt['port'], 'checks_passed': result['checks_passed'],
-                 'scope': 'New LLM passed native checks and remains running. Not yet registered with the gateway. H3/ACE generation and automatic recovery are not qualified by this result.'}
+                 'recovery_restart': 'passed',
+                 'scope': 'New LLM passed native checks after its dedicated recovery helper restarted the same container. Not yet registered; automatic recovery and media switching still need enrollment.'}
     except Exception as error:
         value = {'state': 'needs_attention', 'phase': 'failed', 'error': str(error), 'candidate_stopped': False,
                  'updated_at': datetime.now(timezone.utc).isoformat()}
@@ -150,6 +158,10 @@ def verify_serving(setup_root, *, docker=None, request=native_request):
     if response['status'] != 200 or not any(row.get('id') == proof['contract']['model'] and row.get('max_model_len') == proof['contract']['context_length'] for row in models.get('data', [])):
         raise ValueError('Qualified model/context is not currently available')
     profile = json.loads(PROFILE.read_text())
+    # Old completed qualifications remain valid for LLM-only registration. Do
+    # not invent recovery proof for them or restart an already serving candidate.
+    if proof.get('recovery'):
+        verify_recovery_proof(proof['recovery'])
     flags = profile['server_command']['flags']
     record = {'runtime': {'name': 'vllm', 'version': None, 'build': current['Image']},
               'model': {'name': proof['contract']['model'], 'quantization': 'NVFP4'},
@@ -163,6 +175,7 @@ def verify_serving(setup_root, *, docker=None, request=native_request):
                   'gpu_memory_utilization': flags['--gpu-memory-utilization'], 'container': proof['signature']},
               'profile_sha256': proof['profile_sha256'], 'native_result_sha256': proof['native_result_sha256']}
     return {**progress, 'verified_at': datetime.now(timezone.utc).isoformat(), 'contract': proof['contract'],
+            **({'recovery': proof['recovery']} if proof.get('recovery') else {}),
             'profile_sha256': proof['profile_sha256'], 'configuration_evidence': record}
 
 

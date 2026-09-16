@@ -43,19 +43,19 @@ def status(root):
             'scope': 'LLM qualification is separate from gateway registration, media generation checks and recovery proof.'}
 
 
-def media_plan(root):
+def media_plan(root, *, require_idle=True):
     """Read exact stopped preparations; this call never starts or stops anything."""
     setup = json.loads((root / 'engines/setup.json').read_text())
     if setup['state'] != 'prepared_stopped':
         raise ValueError('Complete preparation before testing media')
-    if subprocess.check_output(['nvidia-smi', '--query-compute-apps=pid', '--format=csv,noheader,nounits'], text=True).strip():
+    if require_idle and subprocess.check_output(['nvidia-smi', '--query-compute-apps=pid', '--format=csv,noheader,nounits'], text=True).strip():
         raise ValueError('GPU work is active; existing work was preserved')
     engines = {}
     for key in ('qwen38-repaired', 'h3', 'ace-step'):
         item = setup['engines'][key]
         receipt = json.loads((Path(item['data']) / 'container.json').read_text())
         actual = json.loads(subprocess.check_output(['docker', 'inspect', item['container']], text=True))[0]
-        if actual['Id'] != receipt['container'] or actual['Image'] != item['image'] or receipt['image'] != item['image'] or actual['State']['Running']:
+        if actual['Id'] != receipt['container'] or actual['Image'] != item['image'] or receipt['image'] != item['image'] or (actual['State']['Running'] and (require_idle or key != 'qwen38-repaired')):
             raise ValueError('Prepared engine identity or stopped state differs: ' + key)
         if key != 'qwen38-repaired':
             image = json.loads(subprocess.check_output(['docker', 'image', 'inspect', item['image']], text=True))[0]
@@ -144,10 +144,10 @@ if __name__ == '__main__':
             root = Path(payload['directory'])
             if not root.is_absolute() or root.is_symlink() or '..' in root.parts or root == Path('/'):
                 raise ValueError('Use an absolute dedicated remote setup directory')
-            if payload['action'] not in ('status', 'start', 'qualify', 'verify_serving', 'media_plan'):
+            if payload['action'] not in ('status', 'start', 'qualify', 'verify_serving', 'media_plan', 'media_state'):
                 raise ValueError('Unknown setup action')
-            if payload['action'] == 'media_plan':
-                result = media_plan(root)
+            if payload['action'] in ('media_plan', 'media_state'):
+                result = media_plan(root, require_idle=payload['action'] == 'media_plan')
             elif payload['action'] == 'qualify':
                 current = status(root)
                 if current['state'] != 'prepared_stopped':
