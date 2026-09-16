@@ -182,9 +182,14 @@ deployment receipts stay outside this public repository.
   uncertain native acceptance is retained without replay. Isolated gateway and
   native HTTP fixtures cover this. Output collection now streams files into
   private gateway storage and provides authenticated downloads after native
-  engine shutdown and gateway restart. Live generation, output-format
-  qualification and Genie host allocation remain unfinished. Media is not
-  enabled in production.
+  engine shutdown and gateway restart. A real installed H3 cycle has now passed:
+  drain one Spark, start its unchanged H3 container, submit one video job through
+  an isolated gateway, retain H.264 video and FLAC audio, verify downloads after
+  H3 stops, restore the original LLM and prove real responses plus cold-to-warm
+  cache hits before gateway readmission. The continuity bridge and other LLMs
+  stayed available. This qualifies that installed engine and the gateway media
+  components; ACE-Step, fresh-machine builds and Genie host allocation remain
+  unfinished. Media is not enabled in production.
 - [ ] Give Genie tools to read that media queue and propose/execute the permitted
   host transitions through the existing operation path. Keep at least one healthy
   LLM server serving, as the owner requires; finish admitted work before stopping
@@ -194,6 +199,9 @@ deployment receipts stay outside this public repository.
   queued music/video demand. Show job and service progress, failures,
   and independent capability switches. Prove the cycle with an actual agent
   submission, real generated result and successful LLM return.
+  The existing maintenance control now supports an optional atomic minimum of
+  other serving LLMs, preventing competing media reservations from taking the
+  last one. Ordinary maintenance retains its existing behavior.
   Resource switching is part of this first useful workflow, not deferred behind
   a standalone start-button release. No active-job cancellation to make room.
 - [ ] Provide the planned Media view with persistent eligibility per engine and
