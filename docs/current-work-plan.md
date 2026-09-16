@@ -146,15 +146,46 @@ deployment receipts stay outside this public repository.
   review controls are verified; real-run qualification remains unfinished.
   Preserve each report's recorded metric and rules; current Hourglass source uses
   total points, while older reports include incompatible AUC-derived scores.
-- [ ] Qualify a fresh Spark image build and installation. The selected-image
+- [ ] Deliver the official Star Gate build for two additional Sparks as a
+  near-term acceptance target: pinned chosen LLM, MiniMax H3 and ACE-Step setups,
+  with Genie-led installation, real generation checks for each engine, gateway
+  registration and workload switching that retains at least one serving LLM.
+  Keep this ahead of optional tuning and elaborate hardening. Existing media
+  containers and files are starting evidence, not a proven portable build.
+  Qualify fresh build and installation of all three engines. The selected LLM
+  image's
   [source recipe](../examples/spark-build/qwen38-repaired/README.md) now prepares
   verified upstream inputs and the retained repair bytes from a public checkout.
   An uncached build on an existing ARM64/GB10 host passed; compared source/resource
   files and package versions match the selected installation. The rebuilt kernel
   loaded in an isolated container. Model serving from the rebuild and a new
   machine's behavior remain unverified.
-- [ ] Add qualified multiple text connections and dedicated media work/results;
-  protected media borrowing and measured handback come later.
+- [ ] Deliver the first end-to-end agent media workflow after the current
+  baseline measurement and basic recovery work, ahead of additional concurrency
+  tuning or broad hardening. Agents submit music/video jobs to dedicated Star
+  Gate endpoints, receive job IDs, inspect queued/running/failed/completed state
+  and retrieve durable results. Begin with ACE-Step and MiniMax H3 through the
+  existing installed engines where usable; inspect and verify them before reuse.
+- [ ] Give Genie tools to read that media queue and propose/execute the permitted
+  host transitions through the existing operation path. Keep at least one healthy
+  LLM server serving, as the owner requires; finish admitted work before stopping
+  an LLM engine, start the required media engine, serve queued jobs, and restore
+  the recorded LLM setup afterward. The one-server minimum is a floor, not a target allocation. Genie should
+  keep more LLM capacity when text demand warrants it and adjust allocation to
+  queued music/video demand. Show job and service progress, failures,
+  and independent capability switches. Prove the cycle with an actual agent
+  submission, real generated result and successful LLM return.
+  Resource switching is part of this first useful workflow, not deferred behind
+  a standalone start-button release. No active-job cancellation to make room.
+- [ ] Provide the planned Media view with persistent eligibility per engine and
+  physical host, separate setup/readiness and disk/memory-fit status, and a
+  recipe-based setup path for eligible hosts that need installation. Retain the
+  other intended engine tabs (MiniMax M3 and LTX) as planned until verified.
+  Tagging a host does not install anything or grant access to an untagged host.
+- [ ] Add qualified multiple text connections and extend dedicated media work
+  and result support. Elaborate borrowing optimisation, residency prediction and
+  broad failure hardening follow the working end-to-end workflow; preserve basic
+  continuity, retained configurations and clear failure reporting from the start.
 - [ ] Complete installation, migration, continuity and failure-path acceptance
   against the full plan. A working chat or a passing unit suite is not completion.
   An installed-Hermes acceptance fixture now covers an actual gateway child
