@@ -22,6 +22,8 @@ test('Media dashboard keeps placement writes behind existing same-origin control
  const response=await fetch(base+'/api/media');assert.equal(response.status,200);const state=await response.json();assert.equal(state.controls_enabled,true);
  assert.equal((await fetch(base+'/api/media/eligibility',{method:'POST',headers:{'content-type':'application/json'},body:'{}'})).status,403);
  const input={worker_id:'one',kind:'music',allowed:false};assert.equal((await fetch(base+'/api/media/eligibility',{method:'POST',headers:{'content-type':'application/json',origin:base,'x-dsg-csrf':state.csrf_token},body:JSON.stringify(input)})).status,200);assert.deepEqual(changes,[{action:'media-eligibility',input}]);
+ assert.equal((await fetch(base+'/api/media/inspect',{method:'POST',headers:{'content-type':'application/json'},body:'{}'})).status,403);
+ const inspect={worker_id:'one'};assert.equal((await fetch(base+'/api/media/inspect',{method:'POST',headers:{'content-type':'application/json',origin:base,'x-dsg-csrf':state.csrf_token},body:JSON.stringify(inspect)})).status,200);assert.deepEqual(changes.at(-1),{action:'media-inspect',input:inspect});
  const html=await (await fetch(base+'/')).text();assert.match(html,/data-workspace-tab="media"/);assert.equal((await fetch(base+'/media.js')).status,200);
 });
 

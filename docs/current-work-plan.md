@@ -287,8 +287,12 @@ deployment receipts stay outside this public repository.
   The first view now provides persisted per-worker music/video placement choices,
   separate enrollment/readiness and job/LLM-return phases, plus retained result
   links. The core excludes disallowed new assignments while accepted work
-  continues. Current memory is observational; disk/engine fit and recipe-driven
-  setup from this view remain unfinished. Browser control persistence and
+  continues. Current memory is observational. A read-only resource button and matching
+  Genie tool now report actual platform, memory and filesystem space against the
+  pinned recipe model sizes. Shared filesystems are grouped; model-file space is
+  explicitly separate from image/build/output space and native memory fit.
+  Recipe-driven setup from this view and complete fit qualification remain
+  unfinished. Browser control persistence and
   download hashes passed; in-app playback hit a renderer crash and remains
   unverified. This item stays open until those remaining pieces are accepted.
 - [ ] Add qualified multiple text connections and extend dedicated media work

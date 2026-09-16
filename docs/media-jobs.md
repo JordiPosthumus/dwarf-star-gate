@@ -7,8 +7,8 @@ original LLM and verifies responses/cache reuse before readmission. A real
 production Genie-led H3 cycle has passed, including retained downloads and LLM
 return. A real ACE-Step XL/4B music cycle has also passed: normal API submission
 woke Genie automatically, he assigned the host, and the runner generated audio,
-retained it and verified LLM return. The Media view now exposes saved host choices and job results. Disk/engine
-memory-fit checks and complete fresh-host installation remain in progress.
+retained it and verified LLM return. The Media view now exposes saved host choices and job results. Read-only resource checks are available; native memory-fit qualification and
+complete fresh-host installation remain in progress.
 
 For an isolated development installation, `"media_jobs": {"enabled": true}`
 enables a private `media-jobs.json` beside the gateway state file. The existing
@@ -165,8 +165,26 @@ does not install software, start a server, or establish readiness.
 
 The view separates setup, placement permission, current LLM demand and return
 status. Current memory readings are shown only when fresh; they include the
-running LLM and do not establish whether another engine fits. Disk/engine-memory
-fit and a recipe-driven setup action from this view remain unfinished.
+running LLM and do not establish whether another engine fits. **Check resources**
+reads actual platform, GPU, memory and existing filesystem space through the
+worker’s enrolled inspection connection. Genie has the same `inspect_media_host`
+tool, controlled by the Server inspection switch. It never starts or stops a
+service, downloads models or runs model code. Shared filesystems are grouped so
+free space is not counted twice.
+
+The check also reports exact model-file totals and manifest hashes for the
+shipped H3 and ACE-Step recipes. Images, build caches and outputs need additional
+space; the future installation destination must be checked separately. Matching
+Linux ARM64/GB10 hardware is compatibility evidence, not a native runtime fit
+result. Other platforms keep their existing capabilities and are labelled
+unverified for these Spark recipes.
+
+Observations carry their timestamp. The Media page keeps them until dashboard
+restart; Genie's actual tool receipts remain with the conversation. Failed
+inspection is shown explicitly, not as fresh readiness. Runtime memory fit
+requires a native generation check using the selected configuration. A
+recipe-driven setup action from this view remains unfinished; the separate New
+Spark setup workflow remains for explicitly enrolled idle new hosts.
 
 Result players and download links use local dashboard routes; the dashboard
 adds the gateway credential on the server side. Keys stay out of browser URLs

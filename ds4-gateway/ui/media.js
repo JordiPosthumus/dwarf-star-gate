@@ -20,7 +20,26 @@ function render(){
     if(host.execution)card.append(el('p',`${host.execution.phase}: ${host.execution.detail??'Media operation in progress'}`));
     const memory=host.memory,fresh=memory&&Date.now()-memory.time>=0&&Date.now()-memory.time<60000;
     if(fresh&&Number.isFinite(memory.memory_total_bytes)&&Number.isFinite(memory.memory_used_bytes))card.append(el('p',`Memory now: ${((memory.memory_total_bytes-memory.memory_used_bytes)/2**30).toFixed(1)} GiB free of ${(memory.memory_total_bytes/2**30).toFixed(0)} GiB. Current LLM usage is included.`,'muted'));
-    card.append(el('p','Disk / engine memory fit: not verified. Enrolled engines have separate qualification evidence.','muted'));
+    const check=state.resource_checks?.[host.id];
+    if(check){
+      card.append(el('p',`Resources checked: ${new Date(check.observed_at).toLocaleString()}`,'muted'));
+      if(check.state==='unavailable')card.append(el('p',check.error,'media-job-detail'));
+      else{
+        card.append(el('p',`${check.system} ${check.architecture}${check.gpu_names?.length?' · '+check.gpu_names.join(', '):''}`));
+        const recipe=check.recipes?.find(r=>r.engine===engine.id);
+        if(recipe)card.append(el('p',`Recipe models: ${(recipe.model_bytes_required/2**30).toFixed(1)} GiB; images, build cache and outputs need extra space.`,'muted'));
+        for(const disk of check.disks??[])card.append(el('p',`${disk.locations?.join(", ")??disk.location}: ${Number.isFinite(disk.free_bytes)?(disk.free_bytes/2**30).toFixed(1)+' GiB free':disk.error}`,'muted'));
+        card.append(el('p',check.setup,'muted'));
+        for(const error of check.errors??[])card.append(el('p',error,'media-job-detail'));
+      }
+    }
+    const inspect=el('button','Check resources','button');inspect.type='button';inspect.disabled=!state.controls_enabled||!state.resource_inspection_connected;inspect.setAttribute('aria-label',`Check media resources on ${host.id}`);card.append(inspect);
+    inspect.addEventListener('click',async()=>{
+      busy=true;inspect.disabled=true;$('media-message').textContent=`Checking ${host.id}; existing services keep running…`;
+      try{const response=await fetch('/api/media/inspect',{method:'POST',headers:{'content-type':'application/json','x-dsg-csrf':state.csrf_token},body:JSON.stringify({worker_id:host.id})});const result=await response.json();if(!response.ok)throw Error(result.error??'Resource check unavailable.');$('media-message').textContent=`${host.id} resources checked. No service was changed.`;}
+      catch(error){$('media-message').textContent=error.message;}finally{busy=false;signature='';await refresh(true);}
+    });
+    card.append(el('p',choice.enrolled?'Enrolled engine. This check leaves its setup and qualification unchanged.':'Before a new setup, verify memory fit with native generation after existing work drains.','muted'));
     if(!choice.enrolled){const link=el('a','Discuss setup with Genie');link.href='#genie';card.append(link,el('p','Allowing this machine saves your placement choice. It does not install an engine.','muted'));}
     toggle.addEventListener('change',async()=>{
       busy=true;toggle.disabled=true;$('media-message').textContent='Saving placement choice…';
