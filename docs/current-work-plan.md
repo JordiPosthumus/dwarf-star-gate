@@ -126,10 +126,12 @@ deployment receipts stay outside this public repository.
   conversational tools and checked its in-progress receipt; the controller then
   completed recovery. This verifies the real model/tool/action path, with the
   recovered service’s model and cache replies still synthetic. Actual
-  model recovery qualification was subsequently completed on one installed
-  Spark using one explicitly approved same-container restart. It drained first,
-  returned actual replies, reused 4,800 tokens on both follow-ups, and was
-  readmitted. Other workers' recovery enrollment remains unfinished;
+  model recovery qualification was subsequently completed on both installed
+  Sparks, each using one explicitly approved same-container restart. Each drained
+  first, returned actual replies, reused 4,800 tokens on both follow-ups, and was
+  readmitted. Both proven Docker bindings are connected in that installation;
+  the M3 recovery binding still needs reconciliation. Fresh-machine installation
+  and broader recovery cases remain unfinished;
   the fixture alone does not prove production recovery. The Qwen model/cache verifier
   separately passed four real requests on each of two unchanged running workers,
   with zero cached tokens on both cold calls and 4,800 reused on both follow-ups
@@ -143,7 +145,13 @@ deployment receipts stay outside this public repository.
   included as optional support in this release. One installation now connects
   the current Hourglass console and a direct target with owned maintenance,
   preserving its original native entries and settings. Live capability and
-  review controls are verified; real-run qualification remains unfinished.
+  review controls are verified. One real owned one-hour Spark measurement has
+  finished, produced its native aggregate report and automatically returned the
+  unchanged server to gateway service. Actual Genie tool calls inspected the
+  live server and compared saved reports. Numeric outcome counts and native job
+  IDs now remain visible, including a refresh of older report projections.
+  This verifies that installed lifecycle, not historical performance parity or
+  all measurement failure paths.
   Preserve each report's recorded metric and rules; current Hourglass source uses
   total points, while older reports include incompatible AUC-derived scores.
 - [ ] Deliver the official Star Gate build for two additional Sparks as a
