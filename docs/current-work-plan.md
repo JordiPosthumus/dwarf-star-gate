@@ -168,6 +168,16 @@ deployment receipts stay outside this public repository.
   files and package versions match the selected installation. The rebuilt kernel
   loaded in an isolated container. Model serving from the rebuild and a new
   machine's behavior remain unverified.
+  Standalone [H3](../examples/spark-build/h3/README.md) and
+  [ACE-Step](../examples/spark-build/ace-step/README.md) candidate images now build
+  from pinned public sources and pass isolated runtime imports without personal
+  Python environments. The media recipes include verified model downloads and
+  creation of stopped containers with separate data directories. H3's formerly
+  manual audio-library build is included; ACE's selected weights and configuration
+  bytes have been matched to public inputs. The rebuilt H3 image has now generated
+  real video/audio and completed automatic original-LLM restoration and readmission.
+  Rebuilt ACE native qualification remains pending. Genie-led new-host provisioning and complete first-Spark
+  acceptance remain outstanding; building an image does not complete them.
 - [x] Deliver the first end-to-end agent media workflow after the current
   baseline measurement and basic recovery work, ahead of additional concurrency
   tuning or broad hardening. Agents submit music/video jobs to dedicated Star

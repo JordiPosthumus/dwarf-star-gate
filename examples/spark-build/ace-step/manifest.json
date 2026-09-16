@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "engine": "ace-step",
+  "platform": "linux/arm64",
+  "status": "Candidate build recipe; native rebuilt-image qualification pending.",
+  "archives": [
+    {
+      "name": "ace-step",
+      "repository": "https://github.com/ace-step/ACE-Step-1.5",
+      "revision": "dce621408bee8c31b4fcf4811682eb9359e1bc94",
+      "archive_url": "https://codeload.github.com/ace-step/ACE-Step-1.5/tar.gz/dce621408bee8c31b4fcf4811682eb9359e1bc94",
+      "sha256": "66624bfbc375d06367d4bb62b0c3f55f07ad300228d774a2e2bd296b1bd1be7d",
+      "bytes": 8420297
+    }
+  ]
+}

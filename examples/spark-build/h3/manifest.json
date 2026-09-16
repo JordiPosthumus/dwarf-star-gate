@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "engine": "h3",
+  "platform": "linux/arm64",
+  "status": "Candidate build recipe; native rebuilt-image qualification pending.",
+  "archives": [
+    {
+      "name": "comfyui",
+      "repository": "https://github.com/Comfy-Org/ComfyUI",
+      "revision": "b1693ecba9f5b65f8c80ab36b195ab963ec92413",
+      "archive_url": "https://codeload.github.com/Comfy-Org/ComfyUI/tar.gz/b1693ecba9f5b65f8c80ab36b195ab963ec92413",
+      "sha256": "a83d1ce140821b51c5ac153cdd699d02cdae5fd09df67294f50545ecb2ba610e",
+      "bytes": 11708217
+    },
+    {
+      "name": "h3-recipe",
+      "repository": "https://github.com/Xplore-LAB/minimax-h3-dgx-spark",
+      "revision": "88d0edf8644aa85846c1f93da46edce04de4441e",
+      "archive_url": "https://codeload.github.com/Xplore-LAB/minimax-h3-dgx-spark/tar.gz/88d0edf8644aa85846c1f93da46edce04de4441e",
+      "sha256": "3429d1aa79cf31320e440637cde92f2e58951f1b9ce2027fe9f4ceb8295f5ee2",
+      "bytes": 24806
+    },
+    {
+      "name": "torchaudio",
+      "repository": "https://github.com/pytorch/audio",
+      "revision": "87ff22e49ed0e92576c4935ccb8c143daac4a3cd",
+      "archive_url": "https://codeload.github.com/pytorch/audio/tar.gz/87ff22e49ed0e92576c4935ccb8c143daac4a3cd",
+      "sha256": "7f68ef090181d3ef2d8a666a6e0b9131961f62380cdc2150834d43f89861a0e5",
+      "bytes": 74313125
+    }
+  ]
+}

@@ -41,7 +41,16 @@ export function findings(file, bytes) {
     return labels;
   }
   const text = bytes.toString('utf8');
-  for (const [label, pattern] of privatePatterns) if (pattern.test(text)) labels.push(label);
+  // Public CUDA/TensorRT packages have four-part versions that resemble LAN
+  // addresses. Recognize dependency versions only in the Spark recipe locks;
+  // still inspect URL hosts, comments and every other private-data pattern.
+  let addressText = text;
+  if (/^examples\/spark-build\/(?:ace-step|h3)\/(?:requirements\.lock|constraints\.txt)$/.test(file)) {
+    addressText = text
+      .replace(/^([A-Za-z0-9][A-Za-z0-9_.-]*==)\d+\.\d+\.\d+\.\d+$/gm, '$1VERSION')
+      .replace(/(https:\/\/files\.pythonhosted\.org\/packages\/[a-f0-9/]+\/[A-Za-z0-9_]+-)\d+\.\d+\.\d+\.\d+(-[A-Za-z0-9_.+-]+\.whl)\b/g, '$1VERSION$2');
+  }
+  for (const [label, pattern] of privatePatterns) if (pattern.test(label === 'private network address' ? addressText : text)) labels.push(label);
   // Prose heuristics also cover inline dashboard copy, but not source test fixtures.
   if (/\.(?:md|html)$/i.test(file)) {
     for (const [label, pattern] of operationalPatterns) if (pattern.test(text)) labels.push(label);

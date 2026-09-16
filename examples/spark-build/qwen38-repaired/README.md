@@ -58,6 +58,18 @@ active model work merely to verify this example.
 
 Before serving the new image, supply and verify the recorded model revision,
 model/cache mounts and full [Qwen settings reference](../../server-profiles/qwen38-nvfp4-vllm.json).
+The selected checkpoint now has a pinned public `models.json` manifest covering
+every indexed tensor shard and the tokenizer/vision/serving configuration:
+
+```sh
+python3 examples/spark-build/download-models.py qwen38-repaired /path/to/new-model-directory
+```
+
+Allow approximately 135.3 GB for these assets, separately from the image and
+runtime caches. Downloads resume and verify SHA-256; existing different files
+are preserved. This manifest establishes public inputs, not current installed
+weight equality or qualification of a newly launched server.
+
 Preserve each worker's existing thinking and sampling defaults. This recipe
 builds image contents only; it does not choose private paths, create a launcher,
 register a gateway worker or approve a configuration record.

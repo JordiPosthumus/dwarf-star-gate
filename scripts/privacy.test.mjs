@@ -70,6 +70,16 @@ test('reusable profiles, public pins and synthetic source fixtures remain publis
   assert.deepEqual(findings('examples/config.json',Buffer.from('{"url":"http://127.0.0.1:38101","config":"config.local.json"}')),[]);
   assert.deepEqual(findings('example.test.mjs',Buffer.from('const fixture="Our live deployment";')),[]);
 });
+test('Spark dependency versions are distinguished from private network targets',()=>{
+  const version=[10,4,0,35].join('.'),lan=[192,168,12,34].join('.');
+  const file='examples/spark-build/ace-step/requirements.lock';
+  const wheel=`nvidia-curand @ https://files.pythonhosted.org/packages/aa/bb/cc/nvidia_curand-${version}-py3-none-manylinux_2_27_aarch64.whl`;
+  assert.deepEqual(findings(file,Buffer.from(wheel)),[]);
+  assert.deepEqual(findings('examples/spark-build/h3/constraints.txt',Buffer.from('tensorrt=='+version)),[]);
+  assert.ok(findings(file,Buffer.from(wheel+'\n# server '+lan)).includes('private network address'));
+  assert.ok(findings(file,Buffer.from(wheel.replace('files.pythonhosted.org',lan))).includes('private network address'));
+  assert.ok(findings('other.txt',Buffer.from(version)).includes('private network address'));
+});
 test('staged private content cannot be hidden by cleaning only the working copy',t=>{
   const f=fixture(t),value=['192','168','12','34'].join('.');
   f.write('new file.txt',value);f.git('add','new file.txt');f.write('new file.txt','generic');
