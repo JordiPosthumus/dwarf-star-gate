@@ -13,7 +13,7 @@ const scope='Owner-started Hourglass measurements. Hourglass owns execution, clo
 export function hourglassRunsForChat(value){
   if(!value?.configured)return {configured:false};
   return {configured:true,requires_attention:!!value.error,runs:(Array.isArray(value.runs)?value.runs:[]).slice(0,20).map(r=>({
-    id:UUID.test(r.id)?r.id:null,worker_id:/^\w[\w-]{0,63}$/.test(r.association?.worker_id??'')?r.association.worker_id:null,
+    id:UUID.test(r.id)?r.id:null,job_id:JOB.test(r.job_id??'')?r.job_id:null,worker_id:/^\w[\w-]{0,63}$/.test(r.association?.worker_id??'')?r.association.worker_id:null,
     state:states.has(r.state)?r.state:'unknown',created_at:Number.isSafeInteger(r.created_at)?r.created_at:null,
     observed_at:Number.isSafeInteger(r.observed_at)?r.observed_at:null,requires_attention:!!r.error,has_saved_report:!!r.report,
     ...(r.owned?{window:'owned-maintenance',operation_phase:/^[a-z][a-z0-9_]{0,63}$/.test(r.progress?.phase??'')?r.progress.phase:null,

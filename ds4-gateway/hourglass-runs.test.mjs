@@ -31,6 +31,7 @@ test('older saved report projections refresh counts once without replaying a nat
  const old=structuredClone(runs.runs);delete old[0].report.summary.timeouts;runs.save(old);
  let reads=0;f.client.report=async()=>{reads++;return {report_revision:'a'.repeat(64),summary:hourglassReportSummary({...nativeReport(),timeouts:1,raw_correct:20})};};
  await runs.change({action:'refresh'});assert.equal(runs.status().runs[0].report.summary.timeouts,1);await runs.change({action:'refresh'});
+ assert.equal(runs.toolStatus().runs[0].job_id,'d'.repeat(32));
  assert.equal(reads,1);assert.equal(f.calls.filter(c=>c==='submit').length,1);
 });
 
