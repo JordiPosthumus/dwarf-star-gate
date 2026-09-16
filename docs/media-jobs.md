@@ -3,9 +3,9 @@
 These endpoints provide the durable queue and retained downloads. Genie can now
 inspect the queue and assign a video job to an enrolled ComfyUI host. Its separate
 runner drains that host, generates the result, saves the files, restores the
-original LLM and verifies responses/cache reuse before readmission. Production
-qualification of this newly connected path is pending. ACE-Step lifecycle and
-the full Media view are still in progress.
+original LLM and verifies responses/cache reuse before readmission. A real
+production Genie-led H3 cycle has passed, including retained downloads and LLM
+return. ACE-Step lifecycle and the full Media view are still in progress.
 
 For an isolated development installation, `"media_jobs": {"enabled": true}`
 enables a private `media-jobs.json` beside the gateway state file. The existing
@@ -42,7 +42,10 @@ result without repeating generation. No automatic file deletion is performed.
 These behaviors are verified against HTTP fixtures. An installed H3 engine has
 also generated real H.264 video and FLAC audio through an isolated gateway;
 both retained downloads matched their size/hash receipts after H3 stopped.
-ACE-Step qualification and native verification of Genie-led allocation remain pending.
+The connected production path also passed with actual Genie status/start/status
+calls, real media output and verified LLM return. Automatic queue wakeup is
+enabled; its wakeup-to-tools path was separately tested with pinned Hermes and a
+scripted model. ACE-Step qualification remains pending.
 
 Before a native submission, the queue saves its intent and selected worker.
 The allocator must first acquire that host through the existing

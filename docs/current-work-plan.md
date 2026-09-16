@@ -188,8 +188,14 @@ deployment receipts stay outside this public repository.
   H3 stops, restore the original LLM and prove real responses plus cold-to-warm
   cache hits before gateway readmission. The continuity bridge and other LLMs
   stayed available. This qualifies that installed engine and the gateway media
-  components; ACE-Step, fresh-machine builds and Genie host allocation remain
-  unfinished. Media is not enabled in production.
+  components. The connected production H3 path has since passed with actual
+  Genie status/start/status calls, one native generation, retained downloads and
+  verified LLM readmission. The independent runner survives the chat ending;
+  the media capability switch, live phase/failure display and automatic queue
+  wakeup are enabled. Automatic wakeup-to-tools was independently exercised
+  with the pinned Hermes runtime and scripted provider. A working native video
+  request example is included under `examples/media`. H3 is enrolled on one
+  existing Spark; ACE-Step and fresh-machine builds remain unfinished.
 - [ ] Give Genie tools to read that media queue and propose/execute the permitted
   host transitions through the existing operation path. Keep at least one healthy
   LLM server serving, as the owner requires; finish admitted work before stopping
@@ -204,6 +210,9 @@ deployment receipts stay outside this public repository.
   last one. Ordinary maintenance retains its existing behavior.
   Resource switching is part of this first useful workflow, not deferred behind
   a standalone start-button release. No active-job cancellation to make room.
+  The H3 version of this workflow is now connected and natively verified;
+  expand it to music and more qualified hosts rather than replacing it with
+  additional planning or unrelated tuning.
 - [ ] Provide the planned Media view with persistent eligibility per engine and
   physical host, separate setup/readiness and disk/memory-fit status, and a
   recipe-based setup path for eligible hosts that need installation. Retain the
