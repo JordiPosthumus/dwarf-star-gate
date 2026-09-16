@@ -29,8 +29,46 @@ class SparkSetupTests(unittest.TestCase):
             self.assertFalse((Path(tmp) / 'setup.json').exists())
 
     def test_resume_after_download_failure_keeps_built_image_and_partial(self):
+        self.exercise_resume()
+
+    def test_music_only_never_builds_or_downloads_llm_or_video(self):
+        self.exercise_resume(['ace-step'])
+
+    def test_both_media_engines_resume_without_preparing_llm(self):
+        self.exercise_resume(['h3', 'ace-step'])
+
+    def test_resume_cannot_silently_expand_or_replace_engine_selection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            setup.Setup(tmp, ['ace-step'])
+            before = (Path(tmp) / 'setup.json').read_bytes()
+            for selected in (None, ['h3'], ['h3', 'ace-step']):
+                with self.assertRaisesRegex(ValueError, 'selection changed'):
+                    setup.Setup(tmp, selected)
+                self.assertEqual((Path(tmp) / 'setup.json').read_bytes(), before)
+
+    def test_invalid_engine_selection_does_not_create_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / 'setup'
+            for selected in ([], ['unknown'], ['ace-step', 'ace-step']):
+                with self.assertRaisesRegex(ValueError, 'supported engine'):
+                    setup.Setup(target, selected)
+                self.assertFalse(target.exists())
+
+    def test_legacy_all_engine_receipt_and_reordered_selection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            initial = setup.Setup(tmp)
+            del initial.state['selected_engines'];initial.save()
+            self.assertEqual(setup.Setup(tmp).engines, setup.ENGINES)
+            with self.assertRaisesRegex(ValueError, 'selection changed'):
+                setup.Setup(tmp, ['h3'])
+        with tempfile.TemporaryDirectory() as tmp:
+            setup.Setup(tmp, ['ace-step', 'h3'])
+            self.assertEqual(setup.Setup(tmp, ['h3', 'ace-step']).engines, ('h3', 'ace-step'))
+
+    def exercise_resume(self, engines=None):
         commands, containers = [], {}
         fail_once = True
+        selected = tuple(engines or setup.ENGINES)
 
         def run(command, **kwargs):
             nonlocal fail_once
@@ -48,7 +86,7 @@ class SparkSetupTests(unittest.TestCase):
                     fail_once = False
                     partial.write_bytes(b'resumable')
                     raise subprocess.CalledProcessError(1, command)
-                if command[2] == 'qwen38-repaired':
+                if command[2] == selected[0]:
                     self.assertEqual(partial.read_bytes(), b'resumable')
             elif Path(command[1]).name in ('create-llm.py', 'create-media.py'):
                 data = Path(command[command.index('--data') + 1]); data.mkdir()
@@ -67,14 +105,21 @@ class SparkSetupTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp, patch.object(setup, 'preflight'), patch.object(setup.subprocess, 'run', side_effect=run), patch.object(setup.subprocess, 'check_output', side_effect=inspect):
             with self.assertRaises(subprocess.CalledProcessError):
-                setup.Setup(tmp).prepare()
+                setup.Setup(tmp, engines).prepare()
             failed = json.loads((Path(tmp) / 'setup.json').read_text())
             self.assertEqual(failed['state'], 'failed')
             self.assertEqual(failed['phase'], 'verify_or_download_models')
-            result = setup.Setup(tmp).prepare()
+            result = setup.Setup(tmp, engines).prepare()
             self.assertEqual(result['state'], 'prepared_stopped')
-            self.assertEqual(len(containers), 3)
-            self.assertEqual(len([c for c in commands if c[:2] == ['docker', 'build']]), 3)
+            self.assertEqual(set(result['engines']), set(selected))
+            self.assertEqual(len(containers), len(selected))
+            self.assertEqual(len([c for c in commands if c[:2] == ['docker', 'build']]), len(selected))
+            downloads = [c[2] for c in commands if len(c) > 2 and Path(c[1]).name == 'download-models.py']
+            self.assertEqual(set(downloads), set(selected))
+            for engine in set(setup.ENGINES) - set(selected):
+                self.assertFalse((Path(tmp) / engine).exists())
+            if 'qwen38-repaired' not in selected:
+                self.assertFalse(any(Path(c[1]).name == 'create-llm.py' for c in commands))
             self.assertFalse(any(c[:2] in (['docker', 'start'], ['docker', 'stop'], ['docker', 'rm']) for c in commands))
 
 

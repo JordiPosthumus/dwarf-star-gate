@@ -137,6 +137,10 @@ deployment receipts stay outside this public repository.
   with zero cached tokens on both cold calls and 4,800 reused on both follow-ups
   on each worker. These non-restarting checks do not establish recovery after
   a restart.
+  Direct local oMLX recovery support now preserves an installation's existing
+  launcher, authenticated endpoint and model alias. The native disposable-process
+  restart test and affected recovery tests pass; real M3 recovery qualification
+  and activation remain pending. See [oMLX recovery](omlx-recovery.md).
 - [ ] Integrate owner-started Hourglass runs, initially measuring the chosen
   server directly with recorded configuration and measurement provenance.
   Saved aggregate reports are wired into the dashboard and chat,
@@ -190,6 +194,11 @@ deployment receipts stay outside this public repository.
   model downloads. Simulated interruption/resume and real busy-host refusal
   checks passed. Its full run on a fresh host remains unverified; it does not
   start or register a server.
+  The standalone preparation command can also select only H3 and/or ACE-Step,
+  without building or downloading another LLM. Selection is retained on resume;
+  simulated interruption tests cover both the default and media-only paths.
+  This is preparation for existing-host media setup, whose Media-page action,
+  owned drain/restore sequence and native qualification are still outstanding.
   Genie can now call the preparation command for explicitly enrolled new hosts,
   with an independent capability switch, detached execution and visible phase/error
   receipts. Repeated starts observe the same operation. Its connection has been

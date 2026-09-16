@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the three pinned Spark engines and create stopped containers on an idle host."""
+"""Build selected pinned Spark engines and create stopped containers on an idle host."""
 import argparse
 from datetime import datetime, timezone
 import hashlib
@@ -25,7 +25,7 @@ def preflight():
         raise ValueError('This selected build requires the Spark GB10 GPU.')
     active = subprocess.check_output(['nvidia-smi', '--query-compute-apps=pid', '--format=csv,noheader,nounits'], text=True).strip()
     if active:
-        raise ValueError('GPU work is active. Leave it running; use an idle new Spark for setup.')
+        raise ValueError('GPU work is active. Leave it running; setup requires an idle Spark.')
 
 
 def recipe_hash():
@@ -42,20 +42,26 @@ def recipe_hash():
 
 
 class Setup:
-    def __init__(self, directory):
+    def __init__(self, directory, engines=None):
+        requested = tuple(ENGINES if engines is None else engines)
+        if not requested or any(engine not in ENGINES for engine in requested) or len(set(requested)) != len(requested):
+            raise ValueError('Choose each supported engine at most once, with at least one engine selected.')
+        self.engines = tuple(engine for engine in ENGINES if engine in requested)
         self.root = Path(directory).absolute()
         self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.receipt = self.root / 'setup.json'
         fingerprint = recipe_hash()
         if self.receipt.exists():
             self.state = json.loads(self.receipt.read_text())
+            if tuple(self.state.get('selected_engines', ENGINES)) != self.engines:
+                raise ValueError('Engine selection changed since this setup began. Resume with the same engines; existing files are preserved.')
             if self.state.get('recipe_sha256') != fingerprint:
                 raise ValueError('Recipes changed since this setup began. Existing files are preserved; review before continuing.')
         else:
             if any(self.root.iterdir()):
                 raise ValueError('Use an empty setup directory; existing files are preserved.')
             self.state = {'schema': 1, 'id': uuid.uuid4().hex[:12], 'recipe_sha256': fingerprint,
-                          'engines': {}, 'state': 'preparing', 'scope': 'Stopped engines only. Native qualification and gateway registration still required.'}
+                          'selected_engines': list(self.engines), 'engines': {}, 'state': 'preparing', 'scope': 'Stopped engines only. Native qualification and gateway registration still required.'}
             self.save()
 
     def save(self):
@@ -75,7 +81,7 @@ class Setup:
 
     def prepare(self):
         try:
-            for engine in ENGINES:
+            for engine in self.engines:
                 preflight()  # Do not build over work that started since the previous engine.
                 item = self.state['engines'].setdefault(engine, {})
                 folder = self.root / engine
@@ -120,10 +126,11 @@ class Setup:
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('directory', type=Path, help='Private empty setup directory, or the same directory to resume unchanged recipes')
+    parser.add_argument('--engine', action='append', choices=ENGINES, help='Prepare only this engine; repeat to select several. Default: all three. Use the same selection when resuming.')
     args = parser.parse_args()
     try:
         preflight()
-        result = Setup(args.directory).prepare()
+        result = Setup(args.directory, engines=args.engine).prepare()
     except Exception as error:
         parser.exit(1, f'Setup stopped: {error}\nExisting services and files were preserved. Inspect setup.json and setup.log where present.\n')
     print(json.dumps(result, indent=2))

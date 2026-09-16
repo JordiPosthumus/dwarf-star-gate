@@ -47,6 +47,28 @@ this combined command remains unverified.
 
 ## Prepare an individual engine
 
+To build and download only ACE-Step, use the same preparation command with an
+engine selection:
+
+```sh
+python3 examples/spark-build/setup-spark.py /path/to/private-music-setup \
+  --engine ace-step
+```
+
+For both media engines, add `--engine h3`. The default without `--engine` still
+prepares all three engines. Selected preparation does not build, download or
+create containers for unselected engines, so adding music does not prepare
+another LLM. It still requires an idle GPU and creates only stopped containers;
+draining, native generation checks, enrollment and LLM return belong to the
+gateway's separate lifecycle. The existing-host setup action in the Media view
+is not connected yet.
+
+Resume with exactly the same engines and directory. The receipt records that
+selection, and a different selection is refused without changing existing files.
+Use a separate directory for a later engine addition. Simulated build/download
+tests cover media-only preparation and interrupted-download resume; they do not
+prove a completed native installation.
+
 After preparing an image and verifying its model directory, create a stopped
 candidate with a new name and a new private data directory. For example:
 
