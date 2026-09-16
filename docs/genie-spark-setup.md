@@ -98,7 +98,7 @@ a time. Logs and receipts remain in the enrolled directory. Failed or interrupte
 preparation needs inspection; automatic retries are not supplied by this tool.
 
 **Prepared is not serving.** The separate native qualification and registration tools
-advance that LLM to serving. Automatic recovery and media enrollment still follow separately; LLM success does not prove those. No “ready”
+advance that LLM to serving. Recovery and media bindings require their respective qualification evidence; LLM success alone does not prove those. No “ready”
 claim should be based only on a successful image build. Existing-host native
 qualification of the three public recipes is documented in the build recipes;
 complete first-install acceptance on a fresh Spark remains outstanding.
@@ -129,3 +129,17 @@ prepared containers on an existing Spark. It generated a 4.46-second H3 video
 with separate audio and ten-second ACE-Step XL/4B music; all files were retained,
 hash-checked and fully decoded. Both candidate engines stopped cleanly. This
 imported-candidate test is not fresh-host setup acceptance.
+
+The latest recovery-enrollment trial distinguishes native execution from model
+narration. Its actual dedicated helper restart and all eight native LLM checks
+passed. Registration, media/recovery binding persistence and native helper
+inspection passed separately in a disposable core. In the combined Genie trial,
+the model described registration receipts without calling registration; the test
+failed and no claimed registration happened. A real read-only follow-up inspected
+the state and corrected that claim. A subsequent actual-model, multi-turn test
+called status, registration and status through the real tool/registration code,
+with simulated remote/core state, and accurately reported its fixture result.
+These checks support the incremental implementation; they do not establish
+complete fresh-host acceptance or guarantee every model reply uses tools correctly.
+The setup watcher requires observed progress and exposes a no-progress reply as
+needing attention rather than accepting the model's narrative as completion.

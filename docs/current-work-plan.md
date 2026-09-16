@@ -201,8 +201,8 @@ deployment receipts stay outside this public repository.
   Actual pinned Hermes has now called qualification and registration against a
   prepared candidate on an existing Spark. All eight native check groups passed,
   and the registered worker completed real gateway requests. This imported an
-  already prepared candidate; media qualification/enrollment, recovery setup,
-  complete fresh-Spark acceptance remain outstanding. An explicit full setup
+  already prepared candidate; the later media/recovery checks are described below,
+  and complete fresh-Spark acceptance remains outstanding. An explicit full setup
   request now persists across dashboard restarts and wakes Genie on the existing
   tick for each next stage; preparation-only requests do not opt into it. Pinned
   Hermes workflow verification uses scripted provider/transport fixtures, separately
@@ -220,7 +220,12 @@ deployment receipts stay outside this public repository.
   native-model registration and helper inspection passed in a disposable core,
   using the prior real media qualifications on that host. These are imported
   prepared-engine tests; a complete fresh-host setup and a media switching cycle
-  through a newly enrolled worker remain acceptance work.
+  through a newly enrolled worker remain acceptance work. The combined recovery
+  trial caught a model reply that claimed registration without calling it; that
+  failed trial is retained. A real follow-up corrected the claim. Actual-model
+  status/registration/status calls then passed using the real registration code
+  with isolated remote/core fixtures, separately from the native component proof.
+  This does not convert the failed combined trial into an end-to-end pass.
 - [x] Deliver the first end-to-end agent media workflow after the current
   baseline measurement and basic recovery work, ahead of additional concurrency
   tuning or broad hardening. Agents submit music/video jobs to dedicated Star
