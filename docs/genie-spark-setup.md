@@ -27,9 +27,18 @@ machine to repurpose it through this setup tool.
 
 After loading that configuration, enable **New Spark setup** under Genie's
 capabilities and ask: “Prepare new-spark with the standard Star Gate engines.”
-That switch authorizes preparation; Genie need not ask permission again. Turning
-it off prevents new starts. Accepted preparation continues independently of chat,
-the dashboard, and its switch.
+That asks for preparation only. To continue automatically, ask: “Set up new-spark
+and bring its LLM into service.” Genie uses `setup_spark` to save that request.
+The existing ten-second dashboard tick wakes him when the next stage is ready:
+preparation, then native LLM qualification, then gateway registration. The request
+and its conversation survive dashboard restarts. No new scheduler service is used.
+
+The setup switch grants standing permission; Genie need not ask again. Turning
+it off or enabling testing mode pauses new stages. Already accepted remote work
+continues. SSH uncertainty is observed without replaying work. A failed stage,
+changed enrollment or Genie reply without progress is shown as needing attention,
+with its conversation and original receipts retained. Repeating `setup_spark`
+returns the existing request; it does not reset a failure or restart a build.
 
 The gateway transfers its bundled public recipe files, preserving a SHA-256
 receipt of that bundle. Genie chooses only an enrolled target ID: it cannot send
@@ -80,5 +89,8 @@ check groups passed, including 262143 prompt tokens plus one completion token
 and cold-to-warm prefix-cache hits. The new worker completed real gateway
 requests. This is a component integration test with an imported preparation
 receipt, not a complete fresh-host installation. Preparation, qualification and
-registration currently use separate tool calls; automatic continuation across
-those stages remains outstanding.
+registration remain separate tool calls, connected by the saved setup request.
+A pinned-Hermes integration test has exercised all automatic wakeups across a
+watcher restart with a scripted provider and transport. This verifies workflow
+wiring; the existing native test verifies the actual qualification/admission
+steps. Neither is complete fresh-host acceptance.

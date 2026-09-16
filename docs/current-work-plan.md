@@ -202,8 +202,11 @@ deployment receipts stay outside this public repository.
   prepared candidate on an existing Spark. All eight native check groups passed,
   and the registered worker completed real gateway requests. This imported an
   already prepared candidate; media qualification/enrollment, recovery setup,
-  automatic continuation between setup stages and complete fresh-Spark acceptance
-  remain outstanding.
+  complete fresh-Spark acceptance remain outstanding. An explicit full setup
+  request now persists across dashboard restarts and wakes Genie on the existing
+  tick for each next stage; preparation-only requests do not opt into it. Pinned
+  Hermes workflow verification uses scripted provider/transport fixtures, separately
+  from the existing real native qualification/admission evidence.
 - [x] Deliver the first end-to-end agent media workflow after the current
   baseline measurement and basic recovery work, ahead of additional concurrency
   tuning or broad hardening. Agents submit music/video jobs to dedicated Star
