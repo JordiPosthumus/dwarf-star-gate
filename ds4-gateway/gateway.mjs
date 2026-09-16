@@ -1,3 +1,4 @@
+import {createMediaHosts} from './media-hosts.mjs';
 import {genieCapabilityKeys,validateGenieCapabilities,genieCapabilities} from './genie-capabilities.mjs';
 import {createMediaExecution} from './media-execution.mjs';
 import {sparkServiceBinding,validateServiceAddition,applyServiceAddition,restoreSparkServices} from './spark-services.mjs';
@@ -372,7 +373,9 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   const oldestQueued=queue=>queue.reduce((oldest,job)=>!oldest||job.createdMono<oldest.createdMono?job:oldest,null);
 
   const capabilityStatus=()=>genieCapabilities(store.data.genie_capabilities,config,recovery.state.automatic);
-  const mediaExecution=createMediaExecution(serviceConfig,mediaJobs,{isEnabled:()=>!draining&&capabilityStatus().media,matchesWorker:(id,c)=>{const n=nodes.find(n=>n.id===id);return !!n&&recovery.binding(n,c);}});
+  const mediaHosts=createMediaHosts(serviceConfig,store,{workers:()=>registry().workers,binding:(id,c)=>recovery.binding(nodes.find(n=>n.id===id),c)});
+  const mediaStatus=()=>{const state=mediaExecution.status();return {...state,...mediaHosts.status(state.jobs)};};
+  const mediaExecution=createMediaExecution(serviceConfig,mediaJobs,{isAllowed:mediaHosts.allowed,isEnabled:()=>!draining&&capabilityStatus().media,matchesWorker:(id,c)=>{const n=nodes.find(n=>n.id===id);return !!n&&recovery.binding(n,c);}});
   const rebalanceEnabled=()=>capabilityStatus().rebalance;
   const allocationStatus=slot=>slot.turnAllocation?{turns_used:slot.turnAllocation.used,remaining:Math.max(0,conversationTurns()-slot.turnAllocation.used),waiting_for_next_turn:!slot.active&&slot.turnAllocation.until>performance.now(),idle_remaining_ms:Math.max(0,Math.ceil(slot.turnAllocation.until-performance.now()))}:null;
   const stats = () => ({ version: 1, genie_capabilities:capabilityStatus(), serving_profiles:profiles, conversation_turns:conversationTurns(),conversation_turn_idle_ms:conversationTurnIdleMs, model_routes:routes?Object.fromEntries([...routes].map(([name,workers])=>[name,[...workers]])):null, agent_api_version:1, maintenance_lock_version:1,client_watch_version:1,client_watch:clientWatch.snapshot(), model: config.model, context_length: contextLimit(), queue_timeout_ms:queueTimeoutMs(), request_timeout_ms:config.request_timeout_ms??360000000, draining,startup:{...startup}, dataset:dataset.snapshot(), routing_shadow:shadow.snapshot(),recovery:recovery.status(),protections:visionProtection.status(),
@@ -1425,12 +1428,12 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     if (req.method === 'GET' && req.url === '/current-jobs') return json(res,200,currentJobsStatus());
     if (req.method === 'GET' && req.url === '/workers') return json(res, 200, registry());
     if(req.method==='GET'&&req.url==='/spark-services')return json(res,200,{schema:1,workers:Object.fromEntries(Object.entries(store.data.spark_services??{}).filter(([id])=>nodes.some(n=>n.id===id)).map(([id,row])=>[id,{inspection:row.inspection,recovery:true,media:Object.keys(row.media.engines)}]))});
-    if(req.method==='GET'&&req.url==='/media-jobs')return json(res,200,mediaExecution.status());
+    if(req.method==='GET'&&req.url==='/media-jobs')return json(res,200,mediaStatus());
     if(req.method==='POST'&&req.url==='/genie-media-start'){
       let body='';req.on('data',chunk=>{body+=chunk;if(Buffer.byteLength(body)>2048)req.destroy();});req.on('error',()=>{});
       req.on('end',()=>{void serialize(async()=>{try{return json(res,202,await mediaExecution.start(JSON.parse(body)));}catch(e){return error(res,409,'media_start_failed',e.message);}});});return;
     }
-    if (req.method !== 'POST' || !['/drain-workers', '/resume-workers', '/maintenance-lock','/release-maintenance-lock','/maintenance-receipt','/add-worker', '/edit-endpoint', '/check-endpoint', '/remove-worker', '/set-ssh-fallbacks','/set-context-limit','/set-conversation-turns','/set-queue-timeout','/set-protection','/set-job-priority','/set-worker-concurrency','/relocate-queued','/genie-relocate-queued','/genie-capability','/recovery-policy','/recovery-handback-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/grant-agent','/revoke-agent','/release-agent-hold','/agent/v1/drain','/agent/v1/resume','/agent/v1/receipt'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
+    if (req.method !== 'POST' || !['/media-host-eligibility','/drain-workers', '/resume-workers', '/maintenance-lock','/release-maintenance-lock','/maintenance-receipt','/add-worker', '/edit-endpoint', '/check-endpoint', '/remove-worker', '/set-ssh-fallbacks','/set-context-limit','/set-conversation-turns','/set-queue-timeout','/set-protection','/set-job-priority','/set-worker-concurrency','/relocate-queued','/genie-relocate-queued','/genie-capability','/recovery-policy','/recovery-handback-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/grant-agent','/revoke-agent','/release-agent-hold','/agent/v1/drain','/agent/v1/resume','/agent/v1/receipt'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
     let body = '';
     req.on('data', chunk => { body += chunk; if (Buffer.byteLength(body) > 4096) req.destroy(); });
     req.on('error', () => {});
@@ -1440,6 +1443,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
           const input = JSON.parse(body);
           // Actor is revalidated after waiting for the shared mutation queue.
           if(agentRoute){agents.agent(actor);if(req.url==='/agent/v1/receipt')return json(res,200,agents.receipt(actor,input));return json(res,200,await agents.act(actor,req.url.endsWith('/drain')?'drain':'resume',input));}
+          if(req.url==='/media-host-eligibility')return json(res,200,mediaHosts.change(input));
           if(req.url==='/grant-agent')return json(res,201,agents.grant(input));
           if(req.url==='/revoke-agent')return json(res,200,agents.revoke(input));
           if(req.url==='/release-agent-hold')return json(res,200,agents.clearHold(input));

@@ -19,17 +19,18 @@ const launch=async folder=>{
     child.unref();return {pid:child.pid,at:new Date().toISOString()};
   }finally{fs.closeSync(log);}
 };
-export function createMediaExecution(config,jobs,{isEnabled=()=>false,launchRunner=launch,matchesWorker=()=>true}={}){
+export function createMediaExecution(config,jobs,{isEnabled=()=>false,launchRunner=launch,matchesWorker=()=>true,isAllowed=()=>true}={}){
   const targets=()=>config.media_jobs?.workers??{};
   const terminal=new Set(['returned','failed_returned','failed_unchanged']);
   const busy=worker=>jobs.list().some(j=>j.execution?.worker_id===worker&&!terminal.has(j.execution.phase));
   return {
-    status:()=>({configured:!!jobs,enabled:isEnabled(),jobs:jobs?.list()??[],workers:Object.entries(targets()).map(([id,t])=>({id,kinds:Object.keys(t.engines??{}),busy:jobs?busy(id):false}))}),
+    status:()=>({configured:!!jobs,enabled:isEnabled(),jobs:jobs?.list()??[],workers:Object.entries(targets()).map(([id,t])=>({id,kinds:Object.keys(t.engines??{}).filter(kind=>isAllowed(id,kind)),busy:jobs?busy(id):false}))}),
     async start(input){
       if(!jobs||!isEnabled())throw new Error('Media execution is switched off.');
       if(!input||Object.keys(input).sort().join(',')!=='job_id,worker_id')throw new Error('Choose a queued job and enrolled worker.');
       const job=jobs.get(input.job_id);
       if(job.execution){if(job.execution.worker_id!==input.worker_id)throw new Error('This job already belongs to another worker.');return jobs.list().find(j=>j.id===job.id);}
+      if(!isAllowed(input.worker_id,job.kind))throw new Error('Media placement is off for this engine on this machine. Existing work continues.');
       if(job.state!=='queued')throw new Error('Only an unstarted queued job can be assigned.');
       if(busy(input.worker_id))throw new Error('This worker already has a media operation.');
       const target=targets()[input.worker_id],engine=target?.engines?.[job.kind];

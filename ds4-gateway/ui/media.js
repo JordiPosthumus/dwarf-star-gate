@@ -1,0 +1,70 @@
+const $=id=>document.getElementById(id);
+const el=(tag,value,cls)=>{const node=document.createElement(tag);if(value!==undefined)node.textContent=value;if(cls)node.className=cls;return node;};
+const engineNames={music:'ACE-Step',video:'MiniMax H3'};
+let state=null,selected='ace-step',busy=false,signature='';
+function render(){
+  if(!state)return;
+  $('media-status').textContent=state.enabled?'Genie media placement is on':'Genie media placement is off — change it under Gate Genie → Capabilities';
+  const engines=state.engines??[{id:'ace-step',label:'ACE-Step',kind:'music',supported:true},{id:'h3',label:'MiniMax H3',kind:'video',supported:true},{id:'minimax-m3',label:'MiniMax M3',supported:false},{id:'ltx',label:'LTX',supported:false}];
+  $('media-engines').replaceChildren(...engines.map(engine=>{
+    const button=el('button',engine.label+(engine.supported?'':' · planned'),'button');button.type='button';button.setAttribute('role','tab');button.setAttribute('aria-selected',String(engine.id===selected));button.addEventListener('click',()=>{selected=engine.id;signature='';render();});return button;
+  }));
+  const engine=engines.find(e=>e.id===selected);
+  if(!engine.supported)$('media-hosts').replaceChildren(el('p',`${engine.label} is planned. No verified setup or execution adapter is connected yet.`,'muted'));
+  else $('media-hosts').replaceChildren(...(state.hosts?.length?state.hosts.map(host=>{
+    const choice=host.engines.find(e=>e.id===engine.id),card=el('article',undefined,'media-host-card');
+    card.append(el('h3',host.id));
+    const label=el('label'),toggle=el('input');toggle.type='checkbox';toggle.checked=choice.allowed;toggle.disabled=!state.controls_enabled||state.media_host_controls_version!==1;toggle.setAttribute('role','switch');toggle.setAttribute('aria-label',`Allow ${engine.label} on ${host.id}`);label.append(toggle,document.createTextNode(` Allow ${engine.label} here`));card.append(label);
+    card.append(el('p',choice.enrolled?'Setup: qualified engine enrolled':'Setup: not enrolled'),el('p',choice.reason,'media-readiness'));
+    card.append(el('p',`LLM: ${host.llm_serving?'serving':'unavailable or paused'} · ${host.active_requests} active · ${host.queued_requests} queued`,'muted'));
+    if(host.execution)card.append(el('p',`${host.execution.phase}: ${host.execution.detail??'Media operation in progress'}`));
+    const memory=host.memory,fresh=memory&&Date.now()-memory.time>=0&&Date.now()-memory.time<60000;
+    if(fresh&&Number.isFinite(memory.memory_total_bytes)&&Number.isFinite(memory.memory_used_bytes))card.append(el('p',`Memory now: ${((memory.memory_total_bytes-memory.memory_used_bytes)/2**30).toFixed(1)} GiB free of ${(memory.memory_total_bytes/2**30).toFixed(0)} GiB. Current LLM usage is included.`,'muted'));
+    card.append(el('p','Disk / engine memory fit: not verified. Enrolled engines have separate qualification evidence.','muted'));
+    if(!choice.enrolled){const link=el('a','Discuss setup with Genie');link.href='#genie';card.append(link,el('p','Allowing this machine saves your placement choice. It does not install an engine.','muted'));}
+    toggle.addEventListener('change',async()=>{
+      busy=true;toggle.disabled=true;$('media-message').textContent='Saving placement choice…';
+      try{const response=await fetch('/api/media/eligibility',{method:'POST',headers:{'content-type':'application/json','x-dsg-csrf':state.csrf_token},body:JSON.stringify({worker_id:host.id,kind:engine.kind,allowed:toggle.checked})});const result=await response.json();if(!response.ok)throw Error(result.error??'Could not confirm the change.');$('media-message').textContent=`${engine.label} on ${host.id}: ${result.allowed?'allowed':'off'}. Existing work continues.`;}
+      catch(error){$('media-message').textContent=error.message;}finally{busy=false;signature='';await refresh(true);}
+    });return card;
+  }):[el('p',state.configured?'No registered machines are available.':'Connect media services to see enrolled machines and queued jobs.','muted')]));
+  const jobs=engine.supported?(state.jobs??[]).filter(j=>j.kind===engine.kind):[];
+  renderJobs(jobs,engine.supported);
+}
+const jobCards=new Map();
+function renderJobs(jobs,supported){
+  const queue=$('media-queue');
+  for(const [id,row] of jobCards)if(!jobs.some(j=>j.id===id)){row.card.remove();jobCards.delete(id);}
+  if(!jobs.length){queue.replaceChildren(el('p',supported?'No jobs for this engine yet. Agents can submit through the gateway’s music or video endpoints.':'No jobs for this planned engine.','muted'));return;}
+  for(const child of [...queue.children])if(!child.dataset.jobId)child.remove();
+  jobs.forEach((job,index)=>{
+    let row=jobCards.get(job.id);
+    if(!row){
+      const card=el('article',undefined,'media-job-card');card.dataset.jobId=job.id;
+      row={card,title:el('h3'),id:el('p',job.id,'muted'),assignment:el('p'),detail:el('p',undefined,'media-job-detail'),machine:el('p'),retention:el('p',undefined,'media-job-detail'),files:el('div'),fileIds:new Set()};
+      card.append(row.title,row.id,row.assignment,row.detail,row.machine,row.retention,row.files);jobCards.set(job.id,row);
+    }
+    row.title.textContent=`${engineNames[job.kind]??job.kind} · ${job.state}`;
+    row.assignment.textContent=`${job.priority??'normal'} priority · ${job.execution?.worker_id??job.worker??'Waiting for assignment'}`;
+    row.detail.textContent=job.detail??'';row.detail.hidden=!job.detail;
+    row.machine.textContent=job.execution?`Machine: ${job.execution.phase}${job.execution.detail?' — '+job.execution.detail:''}`:'';row.machine.hidden=!job.execution;
+    row.retention.textContent=job.outputs?.state==='failed'?`Result retention failed: ${job.outputs.detail??'Inspect this job'}`:'';row.retention.hidden=job.outputs?.state!=='failed';
+    for(const file of job.outputs?.state==='ready'?job.outputs.files??[]:[]){
+      if(row.fileIds.has(file.id)||!/^[a-f0-9-]{36}$/.test(job.id)||!/^[a-f0-9-]{36}$/.test(file.id)||!engineNames[job.kind])continue;
+      const url=`/api/media/${job.kind}/jobs/${job.id}/files/${file.id}`;
+      if(file.content_type?.startsWith('audio/')||file.content_type?.startsWith('video/')){const player=el(file.content_type.startsWith('audio/')?'audio':'video');player.controls=true;player.preload='none';player.src=url;row.files.append(player);}
+      const link=el('a',`Download ${file.filename}`);link.href=url;link.download=file.filename;row.files.append(link);row.fileIds.add(file.id);
+    }
+    // Ordinary status refreshes keep the exact player node and playback position.
+    if(queue.children[index]!==row.card)queue.insertBefore(row.card,queue.children[index]??null);
+  });
+}
+async function refresh(force=false){
+  if(busy||(!force&&($('view-media').hidden||document.hidden)))return;
+  busy=true;
+  try{const response=await fetch('/api/media');if(!response.ok)throw Error('Media status unavailable. Existing work may still be running.');const value=await response.json(),next=JSON.stringify(value);state=value;if(next!==signature){render();signature=next;}}
+  catch(error){$('media-status').textContent=error.message;for(const input of $('media-hosts').querySelectorAll('input'))input.disabled=true;signature='';}
+  finally{busy=false;}
+}
+new MutationObserver(()=>{if(!$('view-media').hidden)void refresh();}).observe($('view-media'),{attributes:true,attributeFilter:['hidden']});
+void refresh();setInterval(refresh,5000);

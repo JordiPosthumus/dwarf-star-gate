@@ -67,6 +67,7 @@ const assets = new Map([['/', ['index.html', 'text/html']], ['/ui.css', ['ui.css
 assets.set('/hourglass.js',['hourglass.js','text/javascript']);
 assets.set('/activity.js',['activity.js','text/javascript']);
 assets.set('/logo.svg',['logo.svg','image/svg+xml']);
+assets.set('/media.js',['media.js','text/javascript']);
 assets.set('/current-jobs.js',['current-jobs.js','text/javascript']);
 assets.set('/genie-handoff.js',['genie-handoff.js','text/javascript']);
 assets.set('/genie-progress.js',['genie-progress.js','text/javascript']);
@@ -101,6 +102,16 @@ export function genieChatConfig(config){
   const local=new URL(chat.url).href===`http://127.0.0.1:${config.port}/v1`;
   return {...chat,gateway_tracking:local,...(chat.inspection?{inspection:{...chat.inspection,records_directory:config.server_records_directory}}:{}),...(local&&chat.api_key===undefined?{api_key:config.api_key}:{})};
 }
+export function proxyMediaFile(config,req,res,route){
+      const upstream=http.request({hostname:'127.0.0.1',port:config.port,path:route,method:'GET',headers:{authorization:`Bearer ${config.api_key}`,...(req.headers.range?{range:req.headers.range}:{})}},response=>{
+        res.statusCode=response.statusCode;
+        for(const name of ['content-type','content-length','content-range','accept-ranges','content-disposition'])if(response.headers[name])res.setHeader(name,response.headers[name]);
+        response.on('error',()=>res.destroy());response.pipe(res);
+      });
+      upstream.on('error',()=>{if(!res.headersSent){res.writeHead(503,{'content-type':'text/plain'});res.end('Media file unavailable; retry when the gateway is ready.');}else res.destroy();});
+      res.on('close',()=>upstream.destroy());upstream.end();
+    }
+
 export function createDashboard(getSnapshot, assetsDirectory = path.join(here, 'ui'), management = null, genie = null, requestHistory = null, currentJobs = null, testing = null, lanSharing = null, chat = null, hourglass = null, operations = null, queueTools = null, recoveryTools = null, mediaTools = null, sparkSetup = null) {
   const csrf = randomBytes(32).toString('base64url');
   // Freeze one complete release in memory: edits on disk cannot expose half an
@@ -127,6 +138,14 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
       res.writeHead(403, headers); return res.end(dsgReport('Local same-origin dashboard only'));
     }
     const reply = (status, value) => { if (!res.destroyed && !res.headersSent) { res.writeHead(status,{...headers,'content-type':'application/json'}); res.end(JSON.stringify(status>=400&&typeof value.error==='string'?{...value,error:dsgReport(value.error)}:value)); } };
+    if(req.method==='GET'&&/^\/api\/media\/(music|video)\/jobs\/[a-f0-9-]{36}\/files\/[a-f0-9-]{36}$/.test(req.url??'')){
+      if(!management?.mediaFile)return reply(409,{error:'Media downloads are not connected.'});
+      for(const [name,value] of Object.entries(headers))res.setHeader(name,value);
+      management.mediaFile(req,res,req.url.replace('/api/media/','/v1/'));return;
+    }
+    if(req.url==='/api/media'&&req.method==='GET'){
+      void (mediaTools?mediaTools.tool({action:'status'}):management?.media?.()??Promise.resolve({configured:false,enabled:false,jobs:[],hosts:[]})).then(value=>{const devices=getSnapshot().devices??[];reply(200,{...value,hosts:(value.hosts??[]).map(host=>{const h=devices.find(d=>d.id===host.id)?.hardware;return {...host,memory:h?.state==='connected'?h.current:null};}),controls_enabled:!!management,csrf_token:csrf});}).catch(()=>reply(503,{error:'Media status is unavailable. Existing work may still be running.'}));return;
+    }
     if(req.url==='/api/genie/capabilities'&&req.method==='GET'){
       void Promise.all([operations?.status()??{},mediaTools?.tool({action:'status'}).catch(()=>({unavailable:true}))??{},sparkSetup?.status()??{}]).then(([op,media,sparkSetup])=>reply(200,{...capabilityStatus(getSnapshot(),{media,sparkSetup,genie:genie?.status(),chat:chat?.status(),activity:chat?.capabilityActivity?.(),operations:op,hourglass:hourglass?.status(),management:!!management}),csrf_token:csrf})).catch(()=>reply(503,{error:'Capability status unavailable; existing work continues.'}));return;
     }
@@ -261,7 +280,7 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
       void management.read().then(registry => reply(200,{enabled:true,csrf_token:csrf,...registry})).catch(() => reply(503,{error:'Worker controls unavailable'}));
       return;
     }
-    const actions = { '/api/current-jobs/priority':'job-priority', '/api/workers/concurrency':'concurrency', '/api/workers/add':'add', '/api/workers/endpoint':'endpoint', '/api/workers/test':'test', '/api/workers/remove':'remove', '/api/workers/drain':'drain', '/api/workers/resume':'resume','/api/workers/lock':'lock','/api/workers/unlock':'unlock','/api/workers/fallbacks':'fallbacks', '/api/workers/context':'context','/api/workers/conversation-turns':'conversation-turns','/api/workers/queue-timeout':'queue-timeout','/api/workers/protection':'protection','/api/workers/relocate':'relocate', '/api/workers/recover':'recover', '/api/workers/genie-capability':'genie-capability','/api/workers/recovery-policy':'recovery-policy','/api/workers/recovery-handback-policy':'recovery-handback-policy','/api/workers/recovery-recheck':'recovery-recheck' };
+    const actions = { '/api/media/eligibility':'media-eligibility', '/api/current-jobs/priority':'job-priority', '/api/workers/concurrency':'concurrency', '/api/workers/add':'add', '/api/workers/endpoint':'endpoint', '/api/workers/test':'test', '/api/workers/remove':'remove', '/api/workers/drain':'drain', '/api/workers/resume':'resume','/api/workers/lock':'lock','/api/workers/unlock':'unlock','/api/workers/fallbacks':'fallbacks', '/api/workers/context':'context','/api/workers/conversation-turns':'conversation-turns','/api/workers/queue-timeout':'queue-timeout','/api/workers/protection':'protection','/api/workers/relocate':'relocate', '/api/workers/recover':'recover', '/api/workers/genie-capability':'genie-capability','/api/workers/recovery-policy':'recovery-policy','/api/workers/recovery-handback-policy':'recovery-handback-policy','/api/workers/recovery-recheck':'recovery-recheck' };
     if (management && req.method === 'POST' && Object.hasOwn(actions,req.url)) {
       const token = Buffer.from(req.headers['x-dsg-csrf'] || ''), expected = Buffer.from(csrf);
       if (req.headers.origin !== `http://${req.headers.host}` || token.length !== expected.length || !timingSafeEqual(token,expected)) return reply(403,{error:'Same-origin worker-control session required; refresh and retry'});
@@ -516,7 +535,9 @@ export async function runDashboard(configPath, port) {
   const chat=config.genie_chat?new GenieChat({directory:chatDirectory,notebook:config.genie_chat.operational_notebook===true?memory:null,getSnapshot:()=>({...snapshot(),genie:genie.status(),genie_handovers:requestHistory.snapshot().handovers}),isSuspended:isTesting,runQuestion:(answer,onWait)=>genie.answerChat(answer,onWait),provider:hermesProvider({...genieChatConfig(config),spark_setup:sparkSetup?.toolConfig,operations:operations?.toolConfig,hourglass:hourglass?.toolConfig,queue:queueTools?.toolConfig,recovery:recoveryTools?.toolConfig,media:mediaTools?.toolConfig},{directory:chatDirectory,isCapabilityEnabled})}):null;
   const server = createDashboard(snapshot, path.join(here,'ui'), managementEnabled ? {
     read:()=>workerControl(config.control_socket,'/workers',undefined,{channel:'dashboard'}),
-    act:async(action,input)=>{const value=await workerControl(config.control_socket,({'job-priority':'/set-job-priority',concurrency:'/set-worker-concurrency',add:'/add-worker',endpoint:'/edit-endpoint',test:'/check-endpoint',remove:'/remove-worker',drain:'/drain-workers',resume:'/resume-workers',lock:'/maintenance-lock',unlock:'/release-maintenance-lock',fallbacks:'/set-ssh-fallbacks',context:'/set-context-limit','conversation-turns':'/set-conversation-turns','queue-timeout':'/set-queue-timeout',protection:'/set-protection',relocate:'/relocate-queued',recover:'/recover-worker','genie-capability':'/genie-capability','recovery-policy':'/recovery-policy','recovery-handback-policy':'/recovery-handback-policy','recovery-recheck':'/recovery-recheck'})[action],input,{channel:'dashboard'});if(action==='genie-capability'&&gateway)gateway.genie_capabilities=value;return value;},
+    media:()=>workerControl(config.control_socket,'/media-jobs'),
+    mediaFile:(req,res,route)=>proxyMediaFile(config,req,res,route),
+    act:async(action,input)=>{const value=await workerControl(config.control_socket,({'media-eligibility':'/media-host-eligibility','job-priority':'/set-job-priority',concurrency:'/set-worker-concurrency',add:'/add-worker',endpoint:'/edit-endpoint',test:'/check-endpoint',remove:'/remove-worker',drain:'/drain-workers',resume:'/resume-workers',lock:'/maintenance-lock',unlock:'/release-maintenance-lock',fallbacks:'/set-ssh-fallbacks',context:'/set-context-limit','conversation-turns':'/set-conversation-turns','queue-timeout':'/set-queue-timeout',protection:'/set-protection',relocate:'/relocate-queued',recover:'/recover-worker','genie-capability':'/genie-capability','recovery-policy':'/recovery-policy','recovery-handback-policy':'/recovery-handback-policy','recovery-recheck':'/recovery-recheck'})[action],input,{channel:'dashboard'});if(action==='genie-capability'&&gateway)gateway.genie_capabilities=value;return value;},
   } : null,genie,()=>({...requestHistory.snapshot(),fleet_speed:fleetSpeed.snapshot(Date.now(),gateway?.workers?.map(worker=>worker.id)??[])}),config.control_socket?{
     read:()=>workerControl(config.control_socket,'/current-jobs',undefined,{channel:'dashboard'}),
   }:null,continuityEnabled(config)?{

@@ -16,6 +16,13 @@ function fixture(t,kind='video'){
   const config={model:'fixture',context_length:262144,control_socket:'/fixture.sock',media_jobs:{workers:{one:{engines:{video:engine}}}},genie_chat:{python:'/python',inspection:{workers:{one:{container:'a'.repeat(64),ssh:['fixture-host']}}}},recovery:{workers:[{id:'one',ssh:'fixture-host',adapter:'docker',verification:'qwen_vllm',profile:'profile'}]}};
   return {directory,jobs,job,config,engine};
 }
+test('placement off rejects new execution but preserves the accepted operation',async t=>{
+ const r=fixture(t);let allowed=false,launches=0;
+ const service=createMediaExecution(r.config,r.jobs,{isEnabled:()=>true,isAllowed:()=>allowed,launchRunner:async()=>{launches++;return {pid:123};}});
+ const input={job_id:r.job.id,worker_id:'one'};
+ await assert.rejects(service.start(input),/placement is off/);assert.equal(launches,0);assert.deepEqual(service.status().workers[0].kinds,[]);
+ allowed=true;await service.start(input);allowed=false;const existing=await service.start(input);assert.equal(existing.execution.phase,'starting');assert.equal(launches,1);
+});
 test('one execution per job survives core restart and exposes private-runner progress',async t=>{
   const r=fixture(t);let launches=0,enabled=true;
   const options={isEnabled:()=>enabled,launchRunner:async folder=>{launches++;saveMediaReceipt(folder,'progress.json',{phase:'generating',detail:'Native job running'});return {pid:123};}};

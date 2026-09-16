@@ -47,10 +47,13 @@ test('actual core atomically registers service bindings, keeps toggles off, and 
   const added=await workerControl(config.control_socket,'/add-worker',{worker:newWorker,services});assert.equal(added.workers[0].drained,true);
   assert.equal(added.genie_capabilities.media,false);assert.equal(added.recovery.automatic,false);
   assert.equal((await workerControl(config.control_socket,'/media-jobs')).workers[0].kinds[0],'music');
+  await workerControl(config.control_socket,'/media-host-eligibility',{worker_id:'new-spark',kind:'music',allowed:false});
+  assert.deepEqual((await workerControl(config.control_socket,'/media-jobs')).workers[0].kinds,[]);
   assert.equal((await workerControl(config.control_socket,'/spark-services')).workers['new-spark'].recovery,true);
-  const saved=JSON.parse(fs.readFileSync(config.state_file));assert.equal(saved.workers[0].id,'new-spark');assert.equal(saved.spark_services['new-spark'].recovery.profile,'c'.repeat(64));assert.equal(saved.drained['new-spark'],true);
+  const saved=JSON.parse(fs.readFileSync(config.state_file));assert.equal(saved.workers[0].id,'new-spark');assert.equal(saved.spark_services['new-spark'].recovery.profile,'c'.repeat(64));assert.equal(saved.drained['new-spark'],true);assert.equal(saved.media_host_eligibility['new-spark'].music,false);
   assert.ok(fs.readdirSync(directory).some(name=>name.includes('.enrollment-')));
   await gateway.close();await new Promise(r=>setTimeout(r,30));gateway=createGateway(config,{tunnelFactory});gateway.recovery.call=async()=>({active:false,listener:false});await gateway.start();
+  assert.equal((await workerControl(config.control_socket,'/media-jobs')).hosts[0].engines.find(e=>e.kind==='music').allowed,false);
   const after=await workerControl(config.control_socket,'/workers');assert.equal(after.workers[0].drained,true);assert.equal(after.recovery.workers[0].enrollment.configured,true);
   assert.equal((await workerControl(config.control_socket,'/media-jobs')).workers[0].id,'new-spark');
   assert.equal(config.recovery,undefined,'caller configuration was not mutated');

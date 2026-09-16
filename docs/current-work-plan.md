@@ -284,6 +284,13 @@ deployment receipts stay outside this public repository.
   recipe-based setup path for eligible hosts that need installation. Retain the
   other intended engine tabs (MiniMax M3 and LTX) as planned until verified.
   Tagging a host does not install anything or grant access to an untagged host.
+  The first view now provides persisted per-worker music/video placement choices,
+  separate enrollment/readiness and job/LLM-return phases, plus retained result
+  links. The core excludes disallowed new assignments while accepted work
+  continues. Current memory is observational; disk/engine fit and recipe-driven
+  setup from this view remain unfinished. Browser control persistence and
+  download hashes passed; in-app playback hit a renderer crash and remains
+  unverified. This item stays open until those remaining pieces are accepted.
 - [ ] Add qualified multiple text connections and extend dedicated media work
   and result support. Elaborate borrowing optimisation, residency prediction and
   broad failure hardening follow the working end-to-end workflow; preserve basic

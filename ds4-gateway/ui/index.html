@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Star Gate — Seamless Continuity. Keep your agents working across a local inference fleet."><meta name="robots" content="noindex,nofollow"><title>Star Gate · Seamless Continuity</title>
 <link rel="shortcut icon" href="/favicon-v2.ico"><link rel="icon" href="/favicon-v2.ico" sizes="16x16 32x32"><link rel="icon" type="image/png" sizes="32x32" href="/favicon-v2.png"><link rel="icon" type="image/svg+xml" sizes="any" href="/favicon-v2.svg"><link rel="mask-icon" href="/dsg-pinned-v2.svg" color="#71913b"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon-v2.png"><meta name="apple-mobile-web-app-title" content="Star Gate">
-<link rel="stylesheet" href="/genie-chat.css"><script type="module" src="/genie-chat.js"></script><script type="module" src="/hourglass.js"></script><script type="module" src="/server-operations.js"></script><script type="module" src="/genie-capabilities.js"></script><link rel="stylesheet" href="/ui.css"><link rel="stylesheet" href="/brand.css"><script type="module" src="/ui.js"></script><script type="module" src="/current-jobs.js"></script></head>
+<link rel="stylesheet" href="/genie-chat.css"><script type="module" src="/genie-chat.js"></script><script type="module" src="/hourglass.js"></script><script type="module" src="/server-operations.js"></script><script type="module" src="/genie-capabilities.js"></script><link rel="stylesheet" href="/ui.css"><link rel="stylesheet" href="/brand.css"><script type="module" src="/ui.js"></script><script type="module" src="/current-jobs.js"></script><script type="module" src="/media.js"></script></head>
 <body><main>
 <header class="intro dashboard-header"><img class="gate-art" src="/logo.svg" width="148" height="111" alt="Star Gate logo"><div class="intro-copy"><h1>Star Gate</h1><p class="tagline">Seamless Continuity</p><p id="model" class="muted">Model gateway · reading live status</p></div><div class="dashboard-utilities"><div class="connection-tools"><span id="connection" class="connection" role="status">Connecting</span><button id="testing-toggle" class="button testing-toggle" type="button" role="switch" aria-checked="false" disabled>Testing off</button><a class="debug-download" href="/api/diagnostics" download title="Download a Star Gate debug snapshot" aria-label="Download a Star Gate debug snapshot">↓ Debug</a></div><div class="read-only"><span id="control-mode">[ read only ]</span><br><small id="control-note">No model controls.</small></div></div></header>
 <div id="testing-status" class="testing-status" hidden><div id="testing-summary" role="status"></div><div class="testing-endpoint"><label for="testing-url">Testing base URL</label><input id="testing-url" type="text" readonly spellcheck="false" value="" aria-label="Testing base URL"><button id="testing-copy" class="button" type="button">Copy URL</button><span id="testing-copy-result" role="status" aria-live="polite"></span></div></div>
@@ -12,6 +12,7 @@
 <nav class="workspace-tabs" role="tablist" aria-label="Star Gate views">
 <button id="tab-fleet" type="button" role="tab" aria-selected="true" aria-controls="view-fleet" tabindex="0" data-workspace-tab="fleet">Fleet</button>
 <button id="tab-genie" type="button" role="tab" aria-selected="false" aria-controls="view-genie" tabindex="-1" data-workspace-tab="genie">Gate Genie</button>
+<button id="tab-media" type="button" role="tab" aria-selected="false" aria-controls="view-media" tabindex="-1" data-workspace-tab="media">Media</button>
 <button id="tab-analytics" type="button" role="tab" aria-selected="false" aria-controls="view-analytics" tabindex="-1" data-workspace-tab="analytics">Evidence</button>
 <button id="tab-activity" type="button" role="tab" aria-selected="false" aria-controls="view-activity" tabindex="-1" data-workspace-tab="activity">Activity</button>
 <button id="tab-settings" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="view-settings" tabindex="-1" data-workspace-tab="settings" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.6 2h4.8l.6 2.4 2.1 1.2 2.4-.7 2.4 4.2-1.8 1.7v2.4l1.8 1.7-2.4 4.2-2.4-.7-2.1 1.2-.6 2.4H9.6L9 19.6l-2.1-1.2-2.4.7-2.4-4.2 1.8-1.7v-2.4L2.1 9.1l2.4-4.2 2.4.7L9 4.4 9.6 2Zm2.4 6.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z"/></svg><span>Settings</span></button>
@@ -23,6 +24,15 @@
 </section>
 <div id="routing-summary" class="warning routing-summary" role="status" hidden></div>
 <section class="section-heading"><h2>model servers</h2><p>Decode + prefill, measured by each server</p></section><p id="routing-message" class="worker-message" role="status" aria-live="polite"></p><section id="devices" class="devices" aria-label="model servers"><p class="muted">Reading server status. Engine timings appear when logs are available.</p></section>
+</section>
+<section id="view-media" class="workspace-view" role="tabpanel" aria-labelledby="tab-media" data-workspace-view="media" hidden>
+<div class="section-heading"><h2>Music &amp; video</h2><p id="media-status" role="status">Reading media services…</p></div>
+<p class="muted">Choose where Genie may place new jobs. At least one LLM stays available; existing work finishes before a machine switches engines.</p>
+<div id="media-engines" class="media-engine-tabs" role="tablist" aria-label="Media engines"></div>
+<p id="media-message" role="status" aria-live="polite"></p>
+<div id="media-hosts" class="media-hosts"></div>
+<div class="section-heading"><h2>Jobs &amp; results</h2><p>Generation and the machine’s return to LLM service are shown separately.</p></div>
+<div id="media-queue" class="media-queue"></div>
 </section>
 <section id="view-genie" class="workspace-view" role="tabpanel" aria-labelledby="tab-genie" data-workspace-view="genie" hidden>
 <section id="conversation-shell" class="conversation-shell" aria-label="Conversation with Genie">

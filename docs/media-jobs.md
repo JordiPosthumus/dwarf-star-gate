@@ -7,8 +7,8 @@ original LLM and verifies responses/cache reuse before readmission. A real
 production Genie-led H3 cycle has passed, including retained downloads and LLM
 return. A real ACE-Step XL/4B music cycle has also passed: normal API submission
 woke Genie automatically, he assigned the host, and the runner generated audio,
-retained it and verified LLM return. The full Media view and portable engine
-installation remain in progress.
+retained it and verified LLM return. The Media view now exposes saved host choices and job results. Disk/engine
+memory-fit checks and complete fresh-host installation remain in progress.
 
 For an isolated development installation, `"media_jobs": {"enabled": true}`
 enables a private `media-jobs.json` beside the gateway state file. The existing
@@ -89,7 +89,8 @@ Enroll a worker under `media_jobs.workers[worker_id].engines.video` with its
 existing ComfyUI `kind: "comfyui"`, full Docker `container` ID, pinned `image`
 digest and loopback `port`. The worker must already have a qualified Docker/Qwen
 recovery enrollment and inspection entry identifying the same LLM container.
-The installer does not yet create this media enrollment automatically.
+The new-Spark registration path can now save qualified media/recovery bindings
+from retained setup receipts; full fresh-host acceptance remains outstanding.
 
 In chat, Genie uses `media_job_status` to read jobs, eligible engine assignments
 and current fleet demand, then `start_media_job` with a job ID and worker ID.
@@ -143,5 +144,32 @@ installation. Its source baseline is `dce621408bee8c31b4fcf4811682eb9359e1bc94`,
 with that installation’s existing output-metadata patch retained. The native
 qualification used Torch 2.12.0+cu130 and nano-vLLM with SDPA/eager attention;
 it does not establish a fastest configuration.
-A self-contained, pinned installer/image for new machines is still outstanding.
-A fresh Star Gate checkout does not yet install these media engines for you.
+Pinned standalone image recipes and a combined preparation command are now
+included under `examples/spark-build`. They have native qualification on an
+existing Spark; a complete fresh-host run remains unverified.
+
+## Media view and machine choices
+
+Open **Media** to see ACE-Step music and MiniMax H3 video jobs, retained result
+downloads, and each machine’s placement switch. MiniMax M3 and LTX remain clearly
+marked as planned. The switch saves a per-worker, per-engine choice in the
+existing private gateway state, with a backup before each change. Already
+enrolled engines remain allowed by default; machines without that engine start
+with placement off. A choice survives gateway restart.
+
+Turning a choice off excludes that engine/worker from Genie's available
+assignments and rejects new starts in the core. Accepted work and its LLM-return
+sequence continue. The overall Media capability switch remains separate.
+Allowing a machine without an enrolled engine saves your preference only; it
+does not install software, start a server, or establish readiness.
+
+The view separates setup, placement permission, current LLM demand and return
+status. Current memory readings are shown only when fresh; they include the
+running LLM and do not establish whether another engine fits. Disk/engine-memory
+fit and a recipe-driven setup action from this view remain unfinished.
+
+Result players and download links use local dashboard routes; the dashboard
+adds the gateway credential on the server side. Keys stay out of browser URLs
+and JavaScript. Normal status updates preserve player elements. In-app browser
+playback validation encountered a renderer crash and is not claimed as passed;
+retained audio download bytes matched their saved size and hash.

@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-09-16 — Media placement controls
+
+The Media tab shows music/video jobs, machine return status, retained results
+and persistent placement choices for each enrolled worker and engine. Existing
+enrollments stay allowed by default. Turning a choice off prevents new starts
+without cancelling accepted work. Setup, permission and readiness stay distinct;
+disk/engine fit and setup from this view are still pending.
+
 ## 2026-09-14 — Compare recorded server configurations
 
 Settings can compare observed, approved and proposed records side by side,

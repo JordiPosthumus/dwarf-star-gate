@@ -983,7 +983,7 @@ function renderGenieActionLedger() {
   // Only a completed render may suppress an identical future refresh.
   genieLedgerSignature=signature;
 }
-const workspaceNames=['fleet','genie','analytics','activity','settings'];
+const workspaceNames=['fleet','genie','media','analytics','activity','settings'];
 let currentWorkspace='fleet';
 function activateWorkspaceTab(requested,{focus=false,updateHash=false}={}) {
   const name=workspaceNames.includes(requested)?requested:'fleet';
