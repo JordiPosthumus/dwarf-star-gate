@@ -69,7 +69,7 @@ test('pinned Hermes receives setup request and all automatic stage wakeups',{ski
  const chat=new GenieChat({directory:path.join(dir,'chat'),provider,getSnapshot:()=>({gateway:{}})});
  t.after(()=>{watch?.close();chat.close();provider.close();server.closeAllConnections();server.close();fs.rmSync(dir,{recursive:true,force:true});});
  const options={filename:path.join(dir,'requests.json'),targets,chat,read:()=>tools.tool({action:'status'}),isEnabled:()=>true};watch=new SparkSetupWatch(options);
- const c=chat.create();chat.submit(c.id,'Set up new-spark and bring its LLM into service.','owner-setup');await chat.idle();assert.equal(watch.status('new-spark').state,'requested');
+ const c=chat.create();chat.submit(c.id,'Set up new-spark and bring its LLM into service.','owner-setup');await chat.idle();assert.equal(watch.status('new-spark').state,'requested');assert.ok(chat.get(c.id).messages[1].spark_setup.events.some(e=>e.tool==='setup_spark'&&e.state==='complete'&&e.result.state==='requested'));
  await watch.tick();await chat.idle();assert.equal(stage,'running');
  stage='prepared_stopped';watch=new SparkSetupWatch(options);await watch.tick();await chat.idle();assert.equal(qualification.state,'running');
  qualification.state='qualified_serving';await watch.tick();await chat.idle();await watch.tick();assert.equal(watch.status('new-spark').state,'complete');
