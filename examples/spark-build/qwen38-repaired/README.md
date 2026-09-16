@@ -7,10 +7,10 @@ twelve retained repair files. Those twelve files were compared byte for byte
 with the installed selected image. The upstream patch sources and draft
 vocabulary were also compared with the public commit.
 
-**Source preparation and a Docker `--no-cache` build have passed on an existing
-ARM64 / GB10 host. Model serving from the rebuilt image and new-Spark qualification
-have not.** A new image will have its own identity; neither the
-version label nor this recipe grants it the old image's qualification or score.
+**Source preparation, a Docker `--no-cache` build and native serving checks have
+passed on an existing ARM64 / GB10 host. Complete fresh-Spark installation remains
+unverified.** A rebuilt image has its own identity and evidence; the checks do
+not grant it the historical image's Hourglass score.
 Keep the existing working image, container, launcher and cache.
 
 The uncached build actually compiled the determinism kernel. All 2,518 compared
@@ -18,10 +18,20 @@ files matched the selected running installation: vLLM Python sources, the two
 custom Python helpers, draft vocabulary and compiled kernel. vLLM, PyTorch and
 Transformers versions also matched. The rebuilt kernel loaded and registered
 its operation in a temporary container without model mounts or GPU access.
-The existing model container was neither restarted nor replaced. These checks
-establish build/file evidence, not a new inference or performance result. Base
-image layers and checksum-pinned downloads remained locally available; this was
-not a blank-machine installation test.
+During that build comparison the existing model container was neither restarted
+nor replaced. A later owned test drained it, started the rebuilt image with a
+separate cache, and passed text, tool round-trip, vision, prefix-cache reuse,
+full-context boundary/overflow and reasoning-EOS checks with no increase in
+native abort/error/preemption counters. The original container then returned
+automatically with real reply/cache proof and gateway readmission.
+
+Both cold conversations reused zero tokens; both follow-ups reused 4,800. The
+full-context request accepted 262,143 input tokens plus one output token. The
+rebuilt engine reported 498,218 KV tokens, matching a prior original-image boot
+and within its recorded 490,976–521,391 startup range. No memory setting changed.
+These are functional checks, not a matched benchmark or exhaustive output-length
+proof. Base layers and verified download caches were available; this was not a
+blank-machine installation test.
 
 ## Prepare a separate directory
 
@@ -67,8 +77,9 @@ python3 examples/spark-build/download-models.py qwen38-repaired /path/to/new-mod
 
 Allow approximately 135.3 GB for these assets, separately from the image and
 runtime caches. Downloads resume and verify SHA-256; existing different files
-are preserved. This manifest establishes public inputs, not current installed
-weight equality or qualification of a newly launched server.
+are preserved. After native qualification, all 217 serving files used by the
+test were freshly hashed and matched this public manifest. That verifies those
+model inputs; each newly installed server still needs its own qualification.
 
 To create a stopped candidate from the selected settings reference:
 
@@ -82,8 +93,8 @@ The helper preserves the selected context, output, thinking, sampling, MTP,
 kernel and cache settings and records the profile hash and resolved image ID.
 It creates a separate cache and binds the API to host loopback (port 8001 by
 default, configurable with `--port`). Rendered arguments and environment have
-been compared with the established selected launcher. A stopped candidate has
-been created; native rebuilt-image serving qualification remains outstanding.
+been compared with the established selected launcher. Its candidate completed
+the native serving and original-container return checks described above.
 Creating it does not start a server, change an existing container, register a
 gateway worker or approve recovery. An owned drain must precede GPU allocation.
 

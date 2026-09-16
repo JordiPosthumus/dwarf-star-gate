@@ -49,10 +49,17 @@ now combines verified pinned upstream inputs with the twelve retained repair
 files, all matched to their installed counterparts. Preparing that context from
 public sources and an uncached Docker build on an existing ARM64/GB10 host have
 passed. All 2,518 compared source/resource files matched the selected installation,
-and the rebuilt kernel loaded in an isolated container. Serving the model from
-that rebuilt image and fresh-machine qualification remain unfinished; the image
-requires its own identity and runtime evidence.
-The JSON reference is documentation, not an automatically applied configuration.
+and the rebuilt kernel loaded in an isolated container. The rebuilt image later
+passed native text/tools/vision/cache/context/EOS checks with a separate cache,
+then restored the original LLM with verified readmission. All 217 serving model
+files matched the public checksum manifest in a fresh read-only pass. This is
+existing-host evidence; complete fresh-machine installation remains unfinished.
+
+The [combined Spark setup command](../examples/spark-build/README.md) prepares
+all three engine images/models and creates stopped containers on an idle host.
+It does not install host prerequisites, start servers or enroll a new worker.
+The JSON reference supplies the selected launcher settings; it is not applied
+automatically to existing workers.
 
 ## Rolling adoption
 

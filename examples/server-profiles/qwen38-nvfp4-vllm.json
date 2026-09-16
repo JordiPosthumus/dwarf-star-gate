@@ -1,17 +1,17 @@
 {
   "title": "Qwen3.8-Flash-Next NVFP4 + MTP settings reference for a custom vLLM image",
-  "status": "Reusable settings reference. Documentation only; not an installation recipe or an automatically applied default.",
+  "status": "Reusable selected settings reference, consumed by the stopped-container helper. Not automatically applied to existing servers.",
   "evidence_basis": {
     "scope": "Original configuration captured by Gate Genie and independently compared with full Docker metadata. A subsequent deployment of the selected repaired image was checked through actual APIs, installed package queries and resource hashes; measurements are summarized below. No public image-build reproducibility claim."
   },
   "checkpoint": {
     "repository": "RadixArk/Qwen3.8-Flash-Next-NVFP4",
     "recorded_public_revision": "7b719225242aacd3dbd3f9407468c2ee9a9d2594",
-    "verification_history": "Historical model verification is recorded; the later capture compared file sizes without recomputing hashes. Verify weights in your own installation.",
+    "verification_history": "A fresh read-only pass verified all 217 serving files (135252481340 bytes) against the pinned public model manifest after rebuilt-image native qualification. Complete new-host installation remains separate.",
     "served_model_name": "qwen3.8-flash-next"
   },
   "runtime_dependency_inventory": {
-    "image": "Custom repaired local image. Installed packages queried during selected-image qualification: vLLM 0.29.0, torch 2.13.0+cu130 and transformers 5.16.1. CUDA_VERSION declares 13.0.2 and NVARCH declares sbsa; inherited labels alone do not establish build ancestry. A source preparation recipe is available at examples/spark-build/qwen38-repaired; its pinned upstream inputs and retained repair bytes are verified. An uncached Docker build on an existing ARM64/GB10 host passed, with 2518 compared files matching the selected installation and successful isolated kernel loading. Rebuilt-image model serving and fresh-machine qualification remain unverified; stock vLLM compatibility is unproven.",
+    "image": "Custom repaired local image. Installed packages queried during selected-image qualification: vLLM 0.29.0, torch 2.13.0+cu130 and transformers 5.16.1. CUDA_VERSION declares 13.0.2 and NVARCH declares sbsa; inherited labels alone do not establish build ancestry. A source preparation recipe is available at examples/spark-build/qwen38-repaired; its pinned upstream inputs and retained repair bytes are verified. An uncached Docker build on an existing ARM64/GB10 host passed, with 2518 compared files matching the selected installation and successful isolated kernel loading. The rebuilt image passed native text/tools/vision/cache/full-context/reasoning-EOS and fault-counter checks on an existing ARM64/GB10 host. Complete fresh-machine installation and stock vLLM compatibility remain unproven.",
     "custom_artifacts_required": [
       {
         "artifact": "<CUSTOM_DETERMINISM_KERNEL>/_C_det.so",
@@ -22,8 +22,8 @@
         "purpose_recorded": "restricted 65,536-token vocabulary file for the MTP draft path"
       },
       {
-        "artifact": "PLE mmap table (resolved location and generation procedure not established)",
-        "purpose_recorded": "Launcher describes a disk-mapped PLE table; only model and cache mounts were inspected. A distinct table mount is not established."
+        "artifact": "PLE table in the pinned checkpoint model-plefp8-*.safetensors files",
+        "purpose_recorded": "The pinned vllm_ple_mmap helper maps checkpoint rows directly from the model directory. The qualified rebuild used no VLLM_PLE_MMAP_DIR override or separate table mount; these files are included in the verified model manifest."
       }
     ],
     "hardware_class_declared": "Launcher describes a single DGX Spark / GB10 with a 128 GB pool. Physical hardware and required driver were not measured."
@@ -124,10 +124,8 @@
     "YaRN rope-scaling override": "available via launcher toggle; disabled in this deployment"
   },
   "recreation_gaps": [
-    "The public recipe prepares the pinned upstream sources and twelve retained reasoning/parser repair files. An uncached Docker build succeeded on an existing ARM64/GB10 host; all 2518 compared source/resource files matched the selected installation. This does not prove complete image equivalence, native serving from the rebuild or a blank-machine installation.",
-    "The PLE/QSA patches, pinned determinism-kernel sources and draft vocabulary are identified and their build succeeded. Runtime-generated PLE/cache resources and native behavior still require qualification when the rebuilt image serves a model.",
-    "Current weight integrity was not established by a fresh hash pass.",
-    "Actual text, tools, vision, cold-to-warm cache reuse, context boundary and reasoning EOS checks passed on the selected image. Sustained work, exhaustive maximum-length output, MTP performance and fresh-machine recreation remain unqualified."
+    "The public pinned source recipe built and passed native qualification on an existing ARM64/GB10 host. Complete fresh-host prerequisites, installation and gateway enrollment still need end-to-end verification.",
+    "Sustained work, exhaustive maximum-length output and comparative MTP performance remain unqualified. The native checks do not establish a new Hourglass score or universal performance equivalence."
   ],
   "evaluation_gaps": [
     "No new matched Hourglass benchmark was run during this deployment qualification.",
@@ -182,9 +180,42 @@
     "limits": [
       "No new benchmark score or universal speed/reliability guarantee.",
       "No exhaustive 262144-token output generation.",
-      "No fresh full weight rehash or fresh-machine rebuild.",
+      "These original deployments did not include a fresh full weight rehash; later rebuilt-image and model-hash evidence is recorded separately below.",
       "No automatic recovery authority granted by this reference."
     ]
   },
-  "build_recipe": "examples/spark-build/qwen38-repaired/README.md"
+  "build_recipe": "examples/spark-build/qwen38-repaired/README.md",
+  "rebuilt_qualification": {
+    "scope": "Pinned public-source rebuild served the selected model on an existing ARM64/GB10 host with a separate runtime cache; the original LLM was then restored and verified before gateway readmission. Not a complete fresh-host installation.",
+    "checks": [
+      "text",
+      "tool call and follow-up",
+      "vision",
+      "two interleaved cold-to-warm conversations",
+      "262143 input tokens plus 1 output token",
+      "expected context overflow rejection",
+      "reasoning EOS suppression and normal content EOS stop",
+      "unchanged zero native abort/error/preemption counters"
+    ],
+    "cold_cached_tokens": [
+      0,
+      0
+    ],
+    "warm_cached_tokens": [
+      4800,
+      4800
+    ],
+    "model_manifest_verified_files": 217,
+    "model_manifest_verified_bytes": 135252481340,
+    "kv_capacity_observation": {
+      "rebuilt_first_boot_tokens": 498218,
+      "original_recorded_boot_range_tokens": [
+        490976,
+        521391
+      ],
+      "matches_one_prior_original_boot": true,
+      "scope": "Existing startup allocation variation; not a throughput or quality equivalence proof."
+    },
+    "existing_production_image_replaced": false
+  }
 }

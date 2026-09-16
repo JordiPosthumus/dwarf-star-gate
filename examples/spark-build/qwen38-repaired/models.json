@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "scope": "Public file manifest for the selected checkpoint revision; not proof of installed weight equality or native serving qualification. Includes every indexed tensor shard and serving/tokenizer/vision configuration.",
+  "scope": "Pinned public manifest for every indexed tensor shard and serving/tokenizer/vision file. All 217 files used in the rebuilt-image native test matched these hashes in a fresh read-only pass. Verify each new installation separately.",
   "files": [
     {
       "path": "chat_template.jinja",

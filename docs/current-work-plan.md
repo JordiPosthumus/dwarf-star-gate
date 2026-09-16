@@ -166,8 +166,11 @@ deployment receipts stay outside this public repository.
   verified upstream inputs and the retained repair bytes from a public checkout.
   An uncached build on an existing ARM64/GB10 host passed; compared source/resource
   files and package versions match the selected installation. The rebuilt kernel
-  loaded in an isolated container. Model serving from the rebuild and a new
-  machine's behavior remain unverified.
+  loaded in an isolated container. The rebuilt image subsequently passed native
+  text/tools/vision/cache/full-context/reasoning-EOS checks with unchanged zero
+  error/abort/preemption counters and verified original-LLM return. All 217
+  serving model files were freshly hashed against the public manifest. A new
+  machine's complete installation remains unverified.
   Standalone [H3](../examples/spark-build/h3/README.md) and
   [ACE-Step](../examples/spark-build/ace-step/README.md) candidate images now build
   from pinned public sources and pass isolated runtime imports without personal
@@ -180,7 +183,13 @@ deployment receipts stay outside this public repository.
   audio file, and completed automatic original-LLM restoration/readmission. Native
   tests caught and corrected a writable-output path and omitted tokenizer template.
   The selected LLM launcher now creates a stopped candidate with compared serving
-  arguments and environment; rebuilt-LLM native qualification remains next.
+  arguments and environment; its rebuilt-image native qualification and return
+  are complete.
+  A combined `setup-spark.py` command now sequences the three public build/model
+  recipes and creates stopped containers, with phase/error logs and resumed
+  model downloads. Simulated interruption/resume and real busy-host refusal
+  checks passed. Its full run on a fresh host and Genie tool integration remain
+  unverified; it does not start or register a server.
   Genie-led new-host provisioning and complete first-Spark acceptance remain
   outstanding; these existing-host tests do not complete them.
 - [x] Deliver the first end-to-end agent media workflow after the current
@@ -216,7 +225,8 @@ deployment receipts stay outside this public repository.
   after engine shutdown; the original LLM returned automatically after real
   replies and cold-to-warm cache checks. Music and video request examples are
   included. The additive local music runtime preserves the personal install;
-  fresh-machine engine builds and installation remain unfinished.
+  public engine builds now have existing-host native evidence; complete
+  fresh-machine installation remains unfinished.
 - [x] Give Genie tools to read that media queue and propose/execute the permitted
   host transitions through the existing operation path. Keep at least one healthy
   LLM server serving, as the owner requires; finish admitted work before stopping
