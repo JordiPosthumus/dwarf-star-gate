@@ -1,7 +1,8 @@
 # Hourglass integration status
 
 This release includes optional owner-started controls, durable receipts and report
-collection. Real-run qualification and production connection remain unfinished. Do not start a run,
+collection. Connection is optional and installation-specific; the first actual
+owned measurement still requires native qualification. Do not start a run,
 drain a worker, alter benchmark routes or configure a recurring benchmark merely
 because a report is available. Initial runs use the owner's chosen direct-server
 setup and time window. The benchmark itself remains Hourglass.
@@ -416,3 +417,20 @@ completion, and performs the owner review/return sequence. The check verifies
 one native submission, a separate return result, preserved original evidence,
 and release of the original maintenance hold. It does not simulate every crash
 location or prove recovery from an uncertain release/readmission response.
+
+
+## Installed connection check
+
+The existing current Hourglass 4.1.0 console has now been connected to one
+installation with owner approval. The older controller was stopped only after
+confirming idle; source, catalogue and run history were backed up first. Startup
+restored visible history without changing the backed-up files. A separate saved
+direct-server target retained the selected entry's model settings, and the
+Star Gate target uses the existing owned maintenance workflow. Existing native
+entries and unrelated gateway configuration were preserved.
+
+The live dashboard shows the connected capability, native console link and
+measurement review controls. This establishes the connection and displayed
+workflow; it does not qualify a real benchmark, establish contention-free
+performance or prove the return sequence on a production measurement. The owner
+must still approve the exact prepared measurement before it starts.

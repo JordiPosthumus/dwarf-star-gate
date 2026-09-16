@@ -140,8 +140,10 @@ deployment receipts stay outside this public repository.
   Saved aggregate reports are wired into the dashboard and chat,
   with explicit operator-supplied worker/revision associations. Owner-started
   start controls, durable receipts, restart observation and result collection are
-  included as optional support in this release. Real-run qualification and connection
-  remain unfinished.
+  included as optional support in this release. One installation now connects
+  the current Hourglass console and a direct target with owned maintenance,
+  preserving its original native entries and settings. Live capability and
+  review controls are verified; real-run qualification remains unfinished.
   Preserve each report's recorded metric and rules; current Hourglass source uses
   total points, while older reports include incompatible AUC-derived scores.
 - [ ] Qualify a fresh Spark image build and installation. The selected-image
