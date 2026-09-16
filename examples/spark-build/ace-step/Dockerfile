@@ -11,7 +11,8 @@ COPY apply-metadata-patch.py /opt/stargate/apply-metadata-patch.py
 RUN python /opt/stargate/apply-metadata-patch.py \
     && python -m pip install --no-cache-dir --no-deps --no-build-isolation /opt/ace-step/acestep/third_parts/nano-vllm \
     && ln -s /models/ace-step /opt/ace-step/checkpoints \
-    && ln -s /data/cache /opt/ace-step/.cache
+    && ln -s /data/cache /opt/ace-step/.cache \
+    && ln -s /data/gradio_outputs /opt/ace-step/gradio_outputs
 WORKDIR /opt/ace-step
 ENV ACESTEP_NO_INIT=false ACESTEP_CONFIG_PATH=acestep-v15-xl-sft \
     ACESTEP_INIT_LLM=true ACESTEP_LM_MODEL_PATH=acestep-5Hz-lm-4B \

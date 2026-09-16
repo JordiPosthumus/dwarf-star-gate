@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "scope": "Selected XL/4B assets match the tested installation. Includes the pinned base models required by the upstream startup check, XL silence latent and model code. Native clean-install qualification pending.",
+  "scope": "Selected XL/4B assets match the tested installation. Includes the pinned base models required by the upstream startup check, XL silence latent and model code. Standalone rebuilt image generated real music with a separate model/data tree and verified original-LLM return; complete new-host installation remains pending.",
   "files": [
     {
       "path": "acestep-v15-xl-sft/config.json",
@@ -31,6 +31,12 @@
       "url": "https://huggingface.co/ACE-Step/acestep-5Hz-lm-4B/resolve/0a3ec94b557aea7d508da38b31cfe7341f6ff737/added_tokens.json",
       "sha256": "db08b66a515fb5d6acca0b3492d25bb44e0deda6241fc1113ac0679d40558c48",
       "bytes": 2217787
+    },
+    {
+      "path": "acestep-5Hz-lm-4B/chat_template.jinja",
+      "url": "https://huggingface.co/ACE-Step/acestep-5Hz-lm-4B/resolve/0a3ec94b557aea7d508da38b31cfe7341f6ff737/chat_template.jinja",
+      "sha256": "a55ee1b1660128b7098723e0abcd92caa0788061051c62d51cbe87d9cf1974d8",
+      "bytes": 4168
     },
     {
       "path": "acestep-5Hz-lm-4B/config.json",

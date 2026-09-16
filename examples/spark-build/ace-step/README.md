@@ -19,6 +19,10 @@ downloads can resume. Existing different model files are preserved and reported.
 The model tree is approximately 28.5 GB: the upstream startup check also requires
 the bundled Turbo and 1.7B base assets, even when serving XL/4B.
 
+The pinned assets include the 4B tokenizer’s separate chat template, which is
+required for generation. Use `create-media.py` as shown in the parent build guide
+to create the writable cache and output directories under the private data mount.
+
 The image defaults to eager initialization, XL SFT, 4B and one API worker. Mount
 the model tree at `/models/ace-step` and a writable private data folder at `/data`.
 The model tree must be writable for upstream's pinned model-code synchronization.
@@ -31,10 +35,15 @@ working package versions; each downloaded artifact has a SHA-256 hash. The sourc
 and base image are pinned. Ubuntu system packages still come from the base's
 configured repositories, so this is not a byte-identical image claim.
 
-Status: recipe and candidate build qualification are in progress. The existing
-installation has completed real automatic Genie dispatch, generation, retained
-download and LLM restoration. That does not yet qualify this rebuilt image or a
-new Spark. Automatic new-host setup and gateway enrollment remain separate work.
+Status: the standalone image has completed native generation using XL SFT and
+the 4B nano-vLLM backend, retained a 10-second stereo 48 kHz FLAC that passed full
+decode, and automatically restored the original LLM with verified replies and
+cold-to-warm cache reuse before gateway readmission. This followed corrections
+to a writable-output path and the missing tokenizer template. The run used a
+separate model/data tree on an existing Spark; it does not establish complete
+new-machine provisioning or subjective music quality. Automatic Genie dispatch
+was previously verified with the installed engine. New-host setup and gateway
+enrollment remain separate work.
 
 ACE-Step and bundled nano-vLLM retain their upstream licenses in the downloaded
 source. The selected weights and tokenizers retain the terms of the repositories

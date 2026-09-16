@@ -70,9 +70,22 @@ runtime caches. Downloads resume and verify SHA-256; existing different files
 are preserved. This manifest establishes public inputs, not current installed
 weight equality or qualification of a newly launched server.
 
-Preserve each worker's existing thinking and sampling defaults. This recipe
-builds image contents only; it does not choose private paths, create a launcher,
-register a gateway worker or approve a configuration record.
+To create a stopped candidate from the selected settings reference:
+
+```sh
+python3 examples/spark-build/create-llm.py \
+  --image stargate/qwen38-repaired:source --name stargate-qwen38 \
+  --models /path/to/model-directory --data /path/to/new-private-data
+```
+
+The helper preserves the selected context, output, thinking, sampling, MTP,
+kernel and cache settings and records the profile hash and resolved image ID.
+It creates a separate cache and binds the API to host loopback (port 8001 by
+default, configurable with `--port`). Rendered arguments and environment have
+been compared with the established selected launcher. A stopped candidate has
+been created; native rebuilt-image serving qualification remains outstanding.
+Creating it does not start a server, change an existing container, register a
+gateway worker or approve recovery. An owned drain must precede GPU allocation.
 
 Record the new image identity and qualify text, tools and their follow-up,
 vision, actual cold-to-warm cache reuse, context/overflow behavior and reasoning

@@ -18,6 +18,8 @@ def create(engine, image, name, models, data, port=None):
             '--user', f'{os.getuid()}:{os.getgid()}',
             '-p', f'127.0.0.1:{port or native_port}:{native_port}', '-v', f'{data}:/data']
     if engine == 'ace-step':
+        for folder in ['cache', 'gradio_outputs']:
+            (data / folder).mkdir()
         args += ['-v', f'{models}:/models/ace-step']
     else:
         args += ['-v', f'{models}:/opt/ComfyUI/models:ro', '-e', 'HOME=/data', '-e', 'HF_HOME=/data/hf-cache']
