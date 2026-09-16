@@ -1,6 +1,7 @@
+import {createSparkMediaQualification} from './spark-media-qualification.mjs';
 import {SparkSetupWatch} from './spark-setup-watch.mjs';
 import {createSparkRegistration} from './spark-registration.mjs';
-import {createSparkSetupTools} from './genie-spark-setup.mjs';
+import {createSparkSetupTools,setupTransport} from './genie-spark-setup.mjs';
 import {MediaWatch} from './media-watch.mjs';
 import {createMediaTools} from './genie-media.mjs';
 import {createQueueTools} from './genie-queue.mjs';
@@ -502,7 +503,7 @@ export async function runDashboard(configPath, port) {
   const stopGenieTunnel=genieTunnel(config.genie);
   const isCapabilityEnabled=key=>gateway?.genie_capabilities?.[key]!==false;
   let sparkSetupWatch=null;
-  const sparkSetup=managementEnabled?createSparkSetupTools(config,{continuation:{status:id=>sparkSetupWatch?.status(id)??null,request:id=>{if(!sparkSetupWatch)throw new Error('Setup continuation requires Genie chat.');return sparkSetupWatch.request(id);}},isTesting,isEnabled:()=>gateway?.genie_capabilities?.spark_setup===true,registration:config.spark_setup?.enabled?createSparkRegistration({directory:path.join(path.dirname(config.state_file),'genie','spark-registration'),recordsDirectory:config.server_records_directory,control:(route,input)=>workerControl(config.control_socket,route,input,{channel:'gate_genie'})}):null}):null;
+  const sparkSetup=managementEnabled?createSparkSetupTools(config,{mediaQualification:config.spark_setup?.enabled?createSparkMediaQualification({directory:path.join(path.dirname(config.state_file),'genie','spark-media-qualification'),transport:setupTransport,fleet:async()=>(await workerControl(config.control_socket,'/workers')).workers}):null,continuation:{status:id=>sparkSetupWatch?.status(id)??null,request:id=>{if(!sparkSetupWatch)throw new Error('Setup continuation requires Genie chat.');return sparkSetupWatch.request(id);}},isTesting,isEnabled:()=>gateway?.genie_capabilities?.spark_setup===true,registration:config.spark_setup?.enabled?createSparkRegistration({directory:path.join(path.dirname(config.state_file),'genie','spark-registration'),recordsDirectory:config.server_records_directory,control:(route,input)=>workerControl(config.control_socket,route,input,{channel:'gate_genie'})}):null}):null;
   const operations=createOperationService(config,{directory:path.join(path.dirname(config.state_file),'genie','operations'),isTesting,isEnabled:()=>isCapabilityEnabled('server_changes')});
   const queueTools=managementEnabled?createQueueTools({read:()=>readService('gateway',config),move:input=>workerControl(config.control_socket,'/genie-relocate-queued',input,{channel:'gate_genie'}),isTesting,isEnabled:()=>isCapabilityEnabled('rebalance')}):null;
   const mediaTools=managementEnabled&&config.media_jobs?.enabled?createMediaTools({read:async()=>{const [media,fleet]=await Promise.all([workerControl(config.control_socket,'/media-jobs'),workerControl(config.control_socket,'/workers')]);return {...media,fleet:fleet.workers.map(w=>({id:w.id,is_healthy:w.is_healthy,drained:w.drained,load:w.load,queued:w.queued}))};},start:input=>workerControl(config.control_socket,'/genie-media-start',input,{channel:'gate_genie'}),isTesting}):null;

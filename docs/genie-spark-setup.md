@@ -30,7 +30,7 @@ capabilities and ask: “Prepare new-spark with the standard Star Gate engines.�
 That asks for preparation only. To continue automatically, ask: “Set up new-spark
 and bring its LLM into service.” Genie uses `setup_spark` to save that request.
 The existing ten-second dashboard tick wakes him when the next stage is ready:
-preparation, then native LLM qualification, then gateway registration. The request
+preparation, native media samples, native LLM qualification, then gateway registration. The request
 and its conversation survive dashboard restarts. No new scheduler service is used.
 
 The setup switch grants standing permission; Genie need not ask again. Turning
@@ -45,6 +45,18 @@ receipt of that bundle. Genie chooses only an enrolled target ID: it cannot send
 SSH commands, change the destination, select another image or override serving
 flags through these tools. Existing containers and personal files are preserved.
 Preparation creates fresh, stopped containers and never stops a serving engine.
+`qualify_spark_media` tests the stopped H3 and ACE-Step candidates before the new
+LLM is started. It requires an idle GPU, the same per-host setup lock, and at
+least one serving gateway LLM elsewhere. It submits one standard native job per
+engine, retains output bytes, and fully decodes the H3 video/audio and ACE music
+with `ffprobe`/`ffmpeg` on the gateway machine. Both programs must be installed
+and available in the dashboard's PATH; missing tools fail before an engine starts.
+It waits for native idle before stopping only its own unchanged candidates.
+The detached runner and native IDs remain inspectable after chat or dashboard
+restart. Completed media qualification leaves all prepared engines stopped;
+it does not enroll production media switching or recovery. If the new LLM was
+already qualified through the earlier workflow, registration remains available;
+the watcher does not stop that LLM to retrofit media testing.
 `qualify_spark_llm` then starts only that prepared LLM on its idle new host,
 compares the actual command, environment, runtime and model/cache mounts, and
 runs the existing native text, tools, vision, full-context, prefix-cache and
@@ -67,9 +79,8 @@ it does not launch a replacement. One preparation runs per remote SSH account at
 a time. Logs and receipts remain in the enrolled directory. Failed or interrupted
 preparation needs inspection; automatic retries are not supplied by this tool.
 
-**Prepared is not serving.** The separate qualification and registration tools
-advance that LLM to serving. Automatic recovery and H3/ACE native qualification
-and media enrollment still follow separately; LLM success does not prove those. No “ready”
+**Prepared is not serving.** The separate native qualification and registration tools
+advance that LLM to serving. Automatic recovery and media enrollment still follow separately; LLM success does not prove those. No “ready”
 claim should be based only on a successful image build. Existing-host native
 qualification of the three public recipes is documented in the build recipes;
 complete first-install acceptance on a fresh Spark remains outstanding.
@@ -94,3 +105,9 @@ A pinned-Hermes integration test has exercised all automatic wakeups across a
 watcher restart with a scripted provider and transport. This verifies workflow
 wiring; the existing native test verifies the actual qualification/admission
 steps. Neither is complete fresh-host acceptance.
+
+The new media qualification tool has been exercised by actual Genie on retained
+prepared containers on an existing Spark. It generated a 4.46-second H3 video
+with separate audio and ten-second ACE-Step XL/4B music; all files were retained,
+hash-checked and fully decoded. Both candidate engines stopped cleanly. This
+imported-candidate test is not fresh-host setup acceptance.

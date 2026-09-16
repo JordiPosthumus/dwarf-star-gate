@@ -77,3 +77,12 @@ test('pinned Hermes receives setup request and all automatic stage wakeups',{ski
  const messages=chat.get(watch.status('new-spark').conversation_id).messages.filter(m=>m.role==='assistant');assert.equal(messages.length,3);
  for(const m of messages){assert.equal(m.state,'complete');assert.equal(m.spark_setup.events.filter(e=>e.state==='complete').length,3);}
 });
+
+test('fresh setup qualifies stopped media before the LLM, and waits for native completion',async t=>{
+ const f=fixture(t);const w=f.watch();w.request('new-spark');const target=f.snapshot.targets[0];target.media_qualification_required=true;target.state='prepared_stopped';
+ await w.tick();assert.match(f.calls[0][1],/qualify_spark_media/);target.media_qualification={state:'running'};await w.tick();assert.equal(f.calls.length,1);
+ target.media_qualification.state='qualified_stopped';await w.tick();assert.match(f.calls[1][1],/qualify_spark_llm/);
+});
+test('an already qualified LLM remains eligible for registration without restarting it for media',async t=>{
+ const f=fixture(t),w=f.watch();w.request('new-spark');Object.assign(f.snapshot.targets[0],{state:'prepared_stopped',media_qualification_required:true,qualification:{state:'qualified_serving'}});await w.tick();assert.match(f.calls[0][1],/register_spark_llm/);
+});

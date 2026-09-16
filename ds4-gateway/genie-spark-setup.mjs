@@ -33,7 +33,7 @@ export function setupTransport(target,input){
   });
 }
 
-export function createSparkSetupTools(config,{isEnabled=()=>true,isTesting=()=>false,transport=setupTransport,bundle=bundleRecipes,registration=null,continuation=null}={}){
+export function createSparkSetupTools(config,{isEnabled=()=>true,isTesting=()=>false,transport=setupTransport,bundle=bundleRecipes,registration=null,mediaQualification=null,continuation=null}={}){
   if(config.spark_setup?.enabled!==true)return null;
   if(config.ui_worker_management!==true)throw new Error('Spark setup requires local worker management.');
   const targets=config.spark_setup.targets??{};
@@ -45,14 +45,14 @@ export function createSparkSetupTools(config,{isEnabled=()=>true,isTesting=()=>f
   }
   // Cache observations for frequent UI refresh; only explicit tool reads call SSH.
   const observations=new Map();
-  const present=()=>({configured:true,targets:Object.keys(targets).map(id=>({target_id:id,...(observations.get(id)??{state:'not_observed'}),registration:registration?.read(id)??null,continuation:continuation?.status(id)??null})),scope:'New Spark preparation. Native qualification and gateway registration are separate steps.'});
+  const present=()=>({configured:true,targets:Object.keys(targets).map(id=>({target_id:id,...(observations.get(id)??{state:'not_observed'}),registration:registration?.read(id)??null,media_qualification:mediaQualification?.read(id)??null,media_qualification_required:!!mediaQualification,continuation:continuation?.status(id)??null})),scope:'New Spark preparation. Native qualification and gateway registration are separate steps.'});
   const read=async id=>{try{const result=await transport(targets[id],{action:'status'});const row={...result,observed_at:new Date().toISOString()};observations.set(id,row);return {target_id:id,...row};}catch(error){const row={state:'unavailable',error:error.message,observed_at:new Date().toISOString()};observations.set(id,row);return {target_id:id,...row};}};
   const pending=new Set();
   const endpoint=createToolEndpoint('/api/genie/spark-setup-tools','x-sg-spark-setup-tool',async input=>{
     if(input?.action==='status'&&Object.keys(input).sort().join(',')==='action'){
       await Promise.all(Object.keys(targets).map(read));return present();
     }
-    if(!['setup','start','qualify','register'].includes(input?.action)||Object.keys(input).sort().join(',')!=='action,target_id'||!Object.hasOwn(targets,input.target_id))throw new Error('Read setup status and select an explicitly enrolled new Spark.');
+    if(!['setup','start','qualify_media','qualify','register'].includes(input?.action)||Object.keys(input).sort().join(',')!=='action,target_id'||!Object.hasOwn(targets,input.target_id))throw new Error('Read setup status and select an explicitly enrolled new Spark.');
     if(!isEnabled())throw new Error('New Spark setup is switched off. Existing preparation continues.');
     if(isTesting())throw new Error('New setup starts are paused in testing mode.');
     const id=input.target_id;
@@ -63,6 +63,11 @@ export function createSparkSetupTools(config,{isEnabled=()=>true,isTesting=()=>f
         if(!continuation)throw new Error('Automatic setup continuation is not connected.');
         return continuation.request(id);
       }
+      if(input.action==='qualify_media'){
+        if(!mediaQualification)throw new Error('New-host media qualification is not connected.');
+        return await mediaQualification.start(id,targets[id]);
+      }
+      if(['qualify','register'].includes(input.action)&&['accepted','running'].includes(mediaQualification?.read(id)?.state))throw new Error('Wait for this target media qualification to finish.');
       if(input.action==='register'){
         if(!registration)throw new Error('Gateway registration is not connected.');
         const proof=await transport(targets[id],{action:'verify_serving'});

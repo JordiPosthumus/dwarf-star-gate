@@ -206,7 +206,12 @@ deployment receipts stay outside this public repository.
   request now persists across dashboard restarts and wakes Genie on the existing
   tick for each next stage; preparation-only requests do not opt into it. Pinned
   Hermes workflow verification uses scripted provider/transport fixtures, separately
-  from the existing real native qualification/admission evidence.
+  from the existing real native qualification/admission evidence. New-host media
+  qualification now has a detached product path: test stopped H3/ACE candidates,
+  retain and fully decode samples, then continue to LLM qualification. It shares
+  the host setup lock and existing media adapters/results. Actual Genie has now invoked this new path on retained prepared engines: real
+  H3 video/audio and ten-second ACE music passed retention and full decode; automatic media/recovery enrollment and
+  fresh-host end-to-end acceptance are still outstanding.
 - [x] Deliver the first end-to-end agent media workflow after the current
   baseline measurement and basic recovery work, ahead of additional concurrency
   tuning or broad hardening. Agents submit music/video jobs to dedicated Star

@@ -43,6 +43,36 @@ def status(root):
             'scope': 'LLM qualification is separate from gateway registration, media generation checks and recovery proof.'}
 
 
+def media_plan(root):
+    """Read exact stopped preparations; this call never starts or stops anything."""
+    setup = json.loads((root / 'engines/setup.json').read_text())
+    if setup['state'] != 'prepared_stopped':
+        raise ValueError('Complete preparation before testing media')
+    if subprocess.check_output(['nvidia-smi', '--query-compute-apps=pid', '--format=csv,noheader,nounits'], text=True).strip():
+        raise ValueError('GPU work is active; existing work was preserved')
+    engines = {}
+    for key in ('qwen38-repaired', 'h3', 'ace-step'):
+        item = setup['engines'][key]
+        receipt = json.loads((Path(item['data']) / 'container.json').read_text())
+        actual = json.loads(subprocess.check_output(['docker', 'inspect', item['container']], text=True))[0]
+        if actual['Id'] != receipt['container'] or actual['Image'] != item['image'] or receipt['image'] != item['image'] or actual['State']['Running']:
+            raise ValueError('Prepared engine identity or stopped state differs: ' + key)
+        if key != 'qwen38-repaired':
+            image = json.loads(subprocess.check_output(['docker', 'image', 'inspect', item['image']], text=True))[0]
+            for field in ('Cmd', 'Entrypoint'):
+                if actual['Config'].get(field) != image['Config'].get(field):
+                    raise ValueError('Prepared media launch command differs: ' + key)
+            port = 8002 if key == 'ace-step' else 8188
+            if actual['HostConfig']['PortBindings'].get(str(port) + '/tcp') != [{'HostIp': '127.0.0.1', 'HostPort': str(receipt['port'])}]:
+                raise ValueError('Prepared native port differs: ' + key)
+            mounts = {m['Destination']: m for m in actual['Mounts']}
+            model_dest = '/models/ace-step' if key == 'ace-step' else '/opt/ComfyUI/models'
+            if mounts.get(model_dest, {}).get('Source') != item['models'] or mounts.get('/data', {}).get('Source') != item['data']:
+                raise ValueError('Prepared model/data mounts differ: ' + key)
+            engines[key] = {**receipt, 'inspection': actual}
+    return {'state': 'prepared_stopped', 'engines': engines, 'llm_container': setup['engines']['qwen38-repaired']['container']}
+
+
 def start(root, payload):
     # Repeated/uncertain submissions inspect the same durable receipt, never rerun.
     if root.exists():
@@ -114,9 +144,11 @@ if __name__ == '__main__':
             root = Path(payload['directory'])
             if not root.is_absolute() or root.is_symlink() or '..' in root.parts or root == Path('/'):
                 raise ValueError('Use an absolute dedicated remote setup directory')
-            if payload['action'] not in ('status', 'start', 'qualify', 'verify_serving'):
+            if payload['action'] not in ('status', 'start', 'qualify', 'verify_serving', 'media_plan'):
                 raise ValueError('Unknown setup action')
-            if payload['action'] == 'qualify':
+            if payload['action'] == 'media_plan':
+                result = media_plan(root)
+            elif payload['action'] == 'qualify':
                 current = status(root)
                 if current['state'] != 'prepared_stopped':
                     raise ValueError('Preparation is not complete')
