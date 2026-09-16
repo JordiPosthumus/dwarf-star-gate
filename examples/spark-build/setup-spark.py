@@ -35,7 +35,7 @@ def recipe_hash():
     for engine in ENGINES:
         inputs.extend(path for path in (SOURCE / engine).rglob('*') if path.is_file()
                       and '__pycache__' not in path.parts and not path.name.startswith('test_')
-                      and (path.suffix in ('.py', '.json', '.lock') or path.name == 'Dockerfile'))
+                      and (path.suffix in ('.py', '.json', '.lock', '.txt') or path.name == 'Dockerfile' or path.name.startswith('LICENSE') or path.name == 'NOTICE.md'))
     for path in sorted(inputs):
         digest.update(str(path.relative_to(SOURCE.parent)).encode() + b'\0' + path.read_bytes())
     return digest.hexdigest()

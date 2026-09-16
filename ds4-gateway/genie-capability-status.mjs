@@ -1,4 +1,4 @@
-export function capabilityStatus(snapshot,{genie={},chat={},operations={},media={},hourglass={},activity={},management=false}={}){
+export function capabilityStatus(snapshot,{genie={},chat={},operations={},media={},sparkSetup={},hourglass={},activity={},management=false}={}){
   const g=snapshot.gateway??{},switches=g.genie_capabilities??{},configured=chat.capabilities_configured??{};
   const current=operations.operations?.[0];
   const mediaJob=media.jobs?.filter(j=>j.execution).at(-1),mediaPhase=mediaJob?.execution?.phase;
@@ -13,6 +13,7 @@ export function capabilityStatus(snapshot,{genie={},chat={},operations={},media=
     ['inspection','Server inspection',configured.inspection,'Ready','Genie can read configuration records and inspect connected servers.'],
     ['server_changes','Server changes',operations.configured,current?.error?'Failed':current?.state==='awaiting_approval'?'Waiting for approval':'Ready',current?.error??'Genie prepares changes; each exact change still needs your approval.'],
     ['media','Media jobs',configured.media&&media.workers?.length,media.unavailable?'Status unavailable':['needs_attention','launch_uncertain','failed_returned','failed_unchanged'].includes(mediaPhase)?'Needs attention':mediaPhase&&mediaPhase!=='returned'?'Working':'Ready',mediaDetail],
+    ['spark_setup','New Spark setup',configured.spark_setup&&sparkSetup.targets?.length,sparkSetup.targets?.some(t=>['unavailable','unconfirmed','needs_attention'].includes(t.state))?'Needs attention':sparkSetup.targets?.some(t=>['running','accepted'].includes(t.state))?'Working':'Ready',sparkSetup.targets?.length?sparkSetup.targets.map(t=>`${t.target_id}: ${t.state}${t.progress?.engine?' · '+t.progress.engine:''}${t.progress?.phase?' · '+t.progress.phase:''}${t.error?' · '+t.error:''}`).join('; '):'No new Sparks enrolled. Preparation creates stopped engines; qualification and gateway registration follow separately.'],
     ['hourglass','Hourglass measurements',hourglass.configured,hourglass.error?'Failed':'Ready',hourglass.error??'Prepare measurements and observe results. Starting a run needs your approval.'],
   ];
   return {capabilities:rows.map(([key,label,available,status,detail])=>({key,label,available:Boolean(management&&g.genie_capabilities),connected:Boolean(available&&(key!=='recovery'||bound.length>0)),enabled:key==='recovery'?recovery.automatic===true:switches[key]!==false,status:switches[key]===false||key==='recovery'&&!recovery.automatic?(!available?'Off · not connected':'Off'):!available?'Not connected':activity[key]?.state==='failed'?'Last attempt failed':status,detail:activity[key]?.state==='failed'?`${activity[key].service}: ${activity[key].error??'Request failed'}`:detail})),

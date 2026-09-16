@@ -18,7 +18,7 @@ deployment receipts stay outside this public repository.
   preserve active jobs, established settings and deliberate maintenance stops.
 - Independent switches cover routine reviews, Genie queue balancing, recovery,
   public research, inspection, approved server changes, Hourglass measurement
-  and media jobs. All eight choices can be saved before their services are connected.
+  media jobs and new-Spark preparation. All nine choices can be saved before their services are connected.
   Use the existing gateway state and recovery policy; a switch is not proof that
   a service is connected and does not create recovery enrollment. Active replies and issued operations finish when a
   feature is switched off. Production activation is tracked per release.
@@ -188,9 +188,14 @@ deployment receipts stay outside this public repository.
   A combined `setup-spark.py` command now sequences the three public build/model
   recipes and creates stopped containers, with phase/error logs and resumed
   model downloads. Simulated interruption/resume and real busy-host refusal
-  checks passed. Its full run on a fresh host and Genie tool integration remain
-  unverified; it does not start or register a server.
-  Genie-led new-host provisioning and complete first-Spark acceptance remain
+  checks passed. Its full run on a fresh host remains unverified; it does not
+  start or register a server.
+  Genie can now call the preparation command for explicitly enrolled new hosts,
+  with an independent capability switch, detached execution and visible phase/error
+  receipts. Repeated starts observe the same operation. Its connection has been
+  exercised through the pinned Hermes runtime against controlled fixtures; this
+  does not establish complete fresh-host installation. See [setup enrollment](genie-spark-setup.md).
+  Native qualification, registration and complete first-Spark acceptance remain
   outstanding; these existing-host tests do not complete them.
 - [x] Deliver the first end-to-end agent media workflow after the current
   baseline measurement and basic recovery work, ahead of additional concurrency
