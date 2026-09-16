@@ -81,3 +81,21 @@ test('normal dashboard startup serves configured summaries and assets without ex
   const html=await(await fetch(origin)).text();assert.match(html,/id="hourglass-reports"/);
   assert.equal((await fetch(origin+'/report.json')).status,404);
 });
+
+
+test('chat retains owned measurement provenance without upgrading imported associations',async t=>{
+  const {root}=fixture(t);
+  const source='Reviewed gateway mapping and observed native target; full settings equivalence is not implied.';
+  const summary=(await import('./hourglass-report.mjs')).hourglassReportSummary(report());
+  const supplied={configured:true,reports:[{report_revision:'b'.repeat(64),association:{worker_id:'example',route:'direct',contention:'owned-maintenance',approved_configuration_revision:'a'.repeat(64),source},summary}]};
+  const calls=[],chat=new GenieChat({directory:path.join(root,'chat'),provider:{generate:async input=>{calls.push(input);return {text:'The recorded run used an owned window.'};}},getSnapshot:()=>({hourglass_reports:supplied})});
+  const conversation=chat.create();chat.submit(conversation.id,'Was the recorded run kept off gateway traffic?','owned-window');await chat.idle();
+  const evidence=calls[0].context.hourglass_reports;
+  assert.equal(evidence.reports[0].association.contention,'owned-maintenance');assert.equal(evidence.reports[0].association.source,source);
+  assert.match(evidence.scope,/does not prove complete settings equivalence or exclude new direct traffic/);
+  assert.deepEqual(chat.get(conversation.id).messages.at(-1).context.hourglass_reports,evidence);
+  const unknown=structuredClone(supplied);unknown.reports[0].association.source='PRIVATE arbitrary claim';unknown.reports[0].association.contention='fully-isolated';
+  const sanitized=hourglassForChat(unknown).reports[0].association;
+  assert.equal(sanitized.contention,'unknown');assert.equal(sanitized.source,'operator-supplied association; not independently verified');
+  assert.throws(()=>new HourglassReports([{file:path.join(root,'missing'),contention:'owned-maintenance'}]),'An imported report cannot opt into an owned workflow');
+});

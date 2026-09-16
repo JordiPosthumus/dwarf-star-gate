@@ -7,9 +7,9 @@ const worker=v=>typeof v==='string'&&/^[a-zA-Z0-9][\w-]{0,63}$/.test(v)?v:null;
 const digest=v=>typeof v==='string'&&/^[a-f0-9]{64}$/.test(v)?v:null;
 const pick=(v,allowed)=>allowed.includes(v)?v:'unknown';
 const association=v=>({worker_id:worker(v?.worker_id),approved_configuration_revision:digest(v?.approved_configuration_revision),
-  route:pick(v?.route,['direct','gateway','testing-door']),contention:pick(v?.contention,['owner-confirmed-idle','observed-contention']),
-  source:'operator-supplied association; not independently verified'});
-const scope='Saved Hourglass reports only. No benchmark is started. Worker/configuration/route/contention associations are operator supplied, not inferred or verified. Preserve each recorded metric and protocol; do not infer current performance or an upgrade.';
+  route:pick(v?.route,['direct','gateway','testing-door']),contention:pick(v?.contention,['owner-confirmed-idle','observed-contention','owned-maintenance']),
+  source:v?.source==='Reviewed gateway mapping and observed native target; full settings equivalence is not implied.'?v.source:'operator-supplied association; not independently verified'});
+const scope='Saved Hourglass reports only. No benchmark is started. Imported worker/configuration/route/contention associations are operator supplied, not inferred or verified. Owned-run associations retain their recorded mapping and maintenance-window scope; this does not prove complete settings equivalence or exclude new direct traffic. Preserve each recorded metric and protocol; do not infer current performance or an upgrade.';
 
 export class HourglassReports {
   constructor(entries=[]){
