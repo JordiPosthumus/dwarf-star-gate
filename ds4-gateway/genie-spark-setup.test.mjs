@@ -72,3 +72,16 @@ test('bundled setup includes build constraints and redistribution notices, exclu
   for(const name of ['examples/spark-build/h3/constraints.txt','examples/spark-build/qwen38-repaired/NOTICE.md','examples/spark-build/qwen38-repaired/LICENSE-APACHE-2.0','examples/spark-build/ace-step/requirements.lock','examples/server-profiles/qwen38-nvfp4-vllm.json'])assert.ok(names.includes(name),name);
   assert.equal(names.some(name=>name.includes('/test_')||name.includes('__pycache__')||name.includes('/.')),false);
 });
+
+test('qualification starts only after preparation and records existing outcomes without replay',async()=>{
+  let preparation='running',qualification=null,starts=0;
+  const tools=createSparkSetupTools(config,{bundle:()=>({bundle:'fixture'}),transport:async(_target,input)=>{
+    if(input.action==='qualify'){starts++;qualification={state:'running',progress:{phase:'qualifying_text'}};return qualification;}
+    return {state:preparation,qualification};
+  }});
+  assert.equal((await tools.tool({action:'qualify',target_id:'new_spark'})).state,'running');assert.equal(starts,0);
+  preparation='prepared_stopped';assert.equal((await tools.tool({action:'qualify',target_id:'new_spark'})).state,'running');assert.equal(starts,1);
+  await tools.tool({action:'qualify',target_id:'new_spark'});assert.equal(starts,1);
+  const cap=capabilityStatus({gateway:{genie_capabilities:{spark_setup:true}}},{management:true,chat:{capabilities_configured:{spark_setup:true}},sparkSetup:await tools.tool({action:'status'})}).capabilities.find(c=>c.key==='spark_setup');
+  assert.equal(cap.status,'Working');assert.match(cap.detail,/qualifying_text/);
+});

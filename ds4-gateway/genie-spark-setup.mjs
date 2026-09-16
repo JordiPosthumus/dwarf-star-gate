@@ -9,7 +9,7 @@ const root=fileURLToPath(new URL('../',import.meta.url));
 const remote=fs.readFileSync(new URL('./spark_setup_remote.py',import.meta.url),'utf8');
 const quote=value=>"'"+value.replaceAll("'","'\\''")+"'";
 function bundleRecipes(){
-  const files=['ds4-gateway/spark_setup_remote.py','examples/server-profiles/qwen38-nvfp4-vllm.json'];
+  const files=['ds4-gateway/spark_qualify.py','ds4-gateway/docker_profile.py','ds4-gateway/serving_qualification.py','ds4-gateway/operation_runner.py','ds4-gateway/spark_setup_remote.py','examples/server-profiles/qwen38-nvfp4-vllm.json'];
   const visit=dir=>{for(const entry of fs.readdirSync(path.join(root,dir),{withFileTypes:true})){
     if(entry.name==='__pycache__'||entry.name.startsWith('test_')||entry.name.startsWith('.'))continue;
     const name=path.posix.join(dir,entry.name);
@@ -33,7 +33,7 @@ export function setupTransport(target,input){
   });
 }
 
-export function createSparkSetupTools(config,{isEnabled=()=>true,isTesting=()=>false,transport=setupTransport,bundle=bundleRecipes}={}){
+export function createSparkSetupTools(config,{isEnabled=()=>true,isTesting=()=>false,transport=setupTransport,bundle=bundleRecipes,registration=null}={}){
   if(config.spark_setup?.enabled!==true)return null;
   if(config.ui_worker_management!==true)throw new Error('Spark setup requires local worker management.');
   const targets=config.spark_setup.targets??{};
@@ -45,24 +45,30 @@ export function createSparkSetupTools(config,{isEnabled=()=>true,isTesting=()=>f
   }
   // Cache observations for frequent UI refresh; only explicit tool reads call SSH.
   const observations=new Map();
-  const present=()=>({configured:true,targets:Object.keys(targets).map(id=>({target_id:id,...(observations.get(id)??{state:'not_observed'})})),scope:'New Spark preparation. Native qualification and gateway registration are separate steps.'});
+  const present=()=>({configured:true,targets:Object.keys(targets).map(id=>({target_id:id,...(observations.get(id)??{state:'not_observed'}),registration:registration?.read(id)??null})),scope:'New Spark preparation. Native qualification and gateway registration are separate steps.'});
   const read=async id=>{try{const result=await transport(targets[id],{action:'status'});const row={...result,observed_at:new Date().toISOString()};observations.set(id,row);return {target_id:id,...row};}catch(error){const row={state:'unavailable',error:error.message,observed_at:new Date().toISOString()};observations.set(id,row);return {target_id:id,...row};}};
   const pending=new Set();
   const endpoint=createToolEndpoint('/api/genie/spark-setup-tools','x-sg-spark-setup-tool',async input=>{
     if(input?.action==='status'&&Object.keys(input).sort().join(',')==='action'){
       await Promise.all(Object.keys(targets).map(read));return present();
     }
-    if(input?.action!=='start'||Object.keys(input).sort().join(',')!=='action,target_id'||!Object.hasOwn(targets,input.target_id))throw new Error('Read setup status and select an explicitly enrolled new Spark.');
+    if(!['start','qualify','register'].includes(input?.action)||Object.keys(input).sort().join(',')!=='action,target_id'||!Object.hasOwn(targets,input.target_id))throw new Error('Read setup status and select an explicitly enrolled new Spark.');
     if(!isEnabled())throw new Error('New Spark setup is switched off. Existing preparation continues.');
     if(isTesting())throw new Error('New setup starts are paused in testing mode.');
     const id=input.target_id;
     if(pending.has(id))throw new Error('Setup submission is already in progress; inspect the same target.');
     pending.add(id);
     try{
+      if(input.action==='register'){
+        if(!registration)throw new Error('Gateway registration is not connected.');
+        const proof=await transport(targets[id],{action:'verify_serving'});
+        return await registration.register(id,targets[id],proof);
+      }
       const before=await read(id);
-      if(before.state!=='not_started')return before;
-      const result=await transport(targets[id],{action:'start',...bundle()});
-      observations.set(id,{...result,observed_at:new Date().toISOString()});return {target_id:id,...result};
+      if(input.action==='start'&&before.state!=='not_started')return before;
+      if(input.action==='qualify'&&(before.state!=='prepared_stopped'||before.qualification))return before;
+      const result=await transport(targets[id],{action:input.action,...bundle()});
+      observations.set(id,{...(input.action==='qualify'?{...before,qualification:result}:result),observed_at:new Date().toISOString()});return {target_id:id,...result};
     }catch(error){observations.set(id,{state:'unconfirmed',error:error.message,observed_at:new Date().toISOString()});throw error;}
     finally{pending.delete(id);}
   });

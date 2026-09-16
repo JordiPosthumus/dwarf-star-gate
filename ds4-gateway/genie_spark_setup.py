@@ -6,7 +6,7 @@ import urllib.parse
 import urllib.request
 
 TOOLSET = 'stargate_spark_setup'
-NAMES = {'spark_setup_status', 'prepare_spark'}
+NAMES = {'spark_setup_status', 'prepare_spark', 'qualify_spark_llm', 'register_spark_llm'}
 
 
 def register_spark_setup(config, emit):
@@ -25,7 +25,7 @@ def register_spark_setup(config, emit):
         event = {'tool': name, 'request': args, 'at': datetime.now(timezone.utc).isoformat()}
         emit('spark_setup', event={**event, 'state': 'reading'})
         try:
-            payload = {'action': 'status'} if name == 'spark_setup_status' else {'action': 'start', **args}
+            payload = {'action': 'status'} if name == 'spark_setup_status' else {'action': 'register' if name == 'register_spark_llm' else 'qualify' if name == 'qualify_spark_llm' else 'start', **args}
             request = urllib.request.Request(config['url'], data=json.dumps(payload).encode(), headers={'Content-Type': 'application/json', 'X-SG-Spark-Setup-Tool': config['token']})
             with opener.open(request, timeout=30) as response:
                 raw = response.read(524289)
@@ -43,6 +43,8 @@ def register_spark_setup(config, emit):
             return json.dumps({'error': message, 'target_id': args.get('target_id')})
 
     schemas = [
+        ('register_spark_llm', 'Admit the qualified new LLM to the gateway. Rechecks its actual running instance, model/context and saved native proof; records observed configuration, adds a paused worker through existing gateway controls, then resumes it if operator state is unchanged. The setup switch grants permission as part of requested new-Spark setup. Does not modify an existing worker or enroll automatic recovery/media.', {'type': 'object', 'properties': {'target_id': {'type': 'string'}}, 'required': ['target_id'], 'additionalProperties': False}),
+        ('qualify_spark_llm', 'Start and qualify the prepared LLM on an idle enrolled new Spark. Uses its exact serving settings and existing native text/tools/vision/context/cache/EOS checks. Runs independently of this chat and leaves a passing LLM running for later registration. Does not stop existing workloads or register a server. Read setup status first; once a qualification exists, inspect it instead of rerunning.', {'type': 'object', 'properties': {'target_id': {'type': 'string'}}, 'required': ['target_id'], 'additionalProperties': False}),
         ('spark_setup_status', 'Read preparation progress for enrolled new Sparks. Distinguishes accepted, running, prepared stopped engines and failures. Prepared engines are not qualified or serving.', {'type': 'object', 'properties': {}, 'additionalProperties': False}),
         ('prepare_spark', 'Prepare the pinned LLM, H3 and ACE engines on an explicitly enrolled idle new Spark. The enabled setup switch grants standing permission. Builds and downloads continue independently of this chat. Never stops existing services. Read status first and once after acceptance; do not poll indefinitely. Qualification and gateway registration are still separate steps.', {'type': 'object', 'properties': {'target_id': {'type': 'string'}}, 'required': ['target_id'], 'additionalProperties': False}),
     ]

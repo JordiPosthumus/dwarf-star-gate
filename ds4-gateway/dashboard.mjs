@@ -1,3 +1,4 @@
+import {createSparkRegistration} from './spark-registration.mjs';
 import {createSparkSetupTools} from './genie-spark-setup.mjs';
 import {MediaWatch} from './media-watch.mjs';
 import {createMediaTools} from './genie-media.mjs';
@@ -499,7 +500,7 @@ export async function runDashboard(configPath, port) {
   const genie=new Genie(runtimeGenie,snapshot,{fetchImpl:reviewer,isTesting,memory,providerLedger,assignmentLedger,poolUrl:`http://127.0.0.1:${config.port}/v1`,recover:managementEnabled?input=>workerControl(config.control_socket,'/genie-recover-worker',input,{channel:'gate_genie'}):null,rebalance:managementEnabled?input=>workerControl(config.control_socket,'/genie-relocate-queued',input,{channel:'gate_genie'}):null});
   const stopGenieTunnel=genieTunnel(config.genie);
   const isCapabilityEnabled=key=>gateway?.genie_capabilities?.[key]!==false;
-  const sparkSetup=managementEnabled?createSparkSetupTools(config,{isTesting,isEnabled:()=>gateway?.genie_capabilities?.spark_setup===true}):null;
+  const sparkSetup=managementEnabled?createSparkSetupTools(config,{isTesting,isEnabled:()=>gateway?.genie_capabilities?.spark_setup===true,registration:config.spark_setup?.enabled?createSparkRegistration({directory:path.join(path.dirname(config.state_file),'genie','spark-registration'),recordsDirectory:config.server_records_directory,control:(route,input)=>workerControl(config.control_socket,route,input,{channel:'gate_genie'})}):null}):null;
   const operations=createOperationService(config,{directory:path.join(path.dirname(config.state_file),'genie','operations'),isTesting,isEnabled:()=>isCapabilityEnabled('server_changes')});
   const queueTools=managementEnabled?createQueueTools({read:()=>readService('gateway',config),move:input=>workerControl(config.control_socket,'/genie-relocate-queued',input,{channel:'gate_genie'}),isTesting,isEnabled:()=>isCapabilityEnabled('rebalance')}):null;
   const mediaTools=managementEnabled&&config.media_jobs?.enabled?createMediaTools({read:async()=>{const [media,fleet]=await Promise.all([workerControl(config.control_socket,'/media-jobs'),workerControl(config.control_socket,'/workers')]);return {...media,fleet:fleet.workers.map(w=>({id:w.id,is_healthy:w.is_healthy,drained:w.drained,load:w.load,queued:w.queued}))};},start:input=>workerControl(config.control_socket,'/genie-media-start',input,{channel:'gate_genie'}),isTesting}):null;

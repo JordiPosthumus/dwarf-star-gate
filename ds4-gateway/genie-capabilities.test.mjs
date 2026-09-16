@@ -21,7 +21,7 @@ test('switches persist independently through core restart and use the existing d
   t.after(async()=>{await new Promise(r=>app.close(r));await core.close();fs.rmSync(dir,{recursive:true,force:true});});
   const base='http://127.0.0.1:'+app.address().port;
   const state=await (await fetch(base+'/api/genie/capabilities')).json();
-  assert.equal(state.capabilities.length,8);
+  assert.equal(state.capabilities.length,9);
   assert.ok(state.capabilities.every(c=>c.available),'All switches work before connection');
   const send=(key,enabled)=>fetch(base+'/api/workers/genie-capability',{method:'POST',headers:{origin:base,'content-type':'application/json','x-dsg-csrf':state.csrf_token},body:JSON.stringify({key,enabled})});
   for(const key of ['hourglass','inspection','server_changes','fleet_reviews','recovery'])assert.equal((await send(key,false)).status,200,key);
@@ -33,8 +33,10 @@ test('switches persist independently through core restart and use the existing d
   assert.equal(core.stats().continuity.relocation.genie_enabled,false);
   assert.equal(core.stats().genie_capabilities.research,true);
   assert.equal((await send('research',false)).status,200);
+  assert.equal((await send('spark_setup',true)).status,200);
   assert.equal((await send('shell',true)).status,400);
   await core.close();core=createGateway(config);await core.start();
+  assert.equal(core.stats().genie_capabilities.spark_setup,true);
   assert.equal(core.stats().genie_capabilities.rebalance,false);
   assert.equal(core.stats().genie_capabilities.research,false);
   for(const key of ['hourglass','inspection','server_changes','fleet_reviews'])assert.equal(core.stats().genie_capabilities[key],false,key);

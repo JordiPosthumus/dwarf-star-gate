@@ -25,7 +25,8 @@ def status(root):
     if not receipt.exists():
         return {'state': 'needs_attention', 'error': 'Existing directory has no launch receipt; preserved.'}
     launch = json.loads(receipt.read_text())
-    progress_file = root / 'engines/setup.json'
+    qualifying = launch.get('operation') == 'qualify'
+    progress_file = root / ('progress.json' if qualifying else 'engines/setup.json')
     progress = json.loads(progress_file.read_text()) if progress_file.exists() else {}
     running = False
     with (root / 'running.lock').open('a') as lock:
@@ -33,11 +34,13 @@ def status(root):
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             running = True
-    state = 'running' if running else ('prepared_stopped' if launch.get('exit_code') == 0 and progress.get('state') == 'prepared_stopped' else 'needs_attention')
+    complete = 'qualified_serving' if qualifying else 'prepared_stopped'
+    state = 'running' if running else (complete if launch.get('exit_code') == 0 and progress.get('state') == complete else 'needs_attention')
     return {'state': state, 'process_running': running, 'bundle_sha256': launch['bundle_sha256'],
             'started_at': launch['started_at'], 'finished_at': launch.get('finished_at'),
             'exit_code': launch.get('exit_code'), 'error': launch.get('error') or progress.get('error'), 'progress': progress,
-            'scope': 'Preparation only. Stopped engines still require native qualification and gateway registration.'}
+            'qualification': status(root / 'qualification') if not qualifying and (root / 'qualification').exists() else None,
+            'scope': 'LLM qualification is separate from gateway registration, media generation checks and recovery proof.'}
 
 
 def start(root, payload):
@@ -73,14 +76,16 @@ def start(root, payload):
         source.mkdir()
         archive.extractall(source, members=members, filter='data')
         receipt = root / 'launch.json'
-        save(receipt, {'bundle_sha256': payload['bundle_sha256'], 'started_at': datetime.now(timezone.utc).isoformat()})
+        save(receipt, {'bundle_sha256': payload['bundle_sha256'], 'started_at': datetime.now(timezone.utc).isoformat(),
+                       'operation': payload.get('operation', 'prepare'), 'setup_directory': payload.get('setup_directory')})
         with (root / 'running.lock').open('a') as lock, (root / 'launch.log').open('a') as log:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             child = subprocess.Popen([sys.executable, '-I', '-B', str(source / 'ds4-gateway/spark_setup_remote.py'), '--run', str(root), str(host_lock.fileno()), str(lock.fileno())],
                                      stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True,
                                      pass_fds=(host_lock.fileno(), lock.fileno()))
         return {'state': 'accepted', 'pid': child.pid, 'bundle_sha256': payload['bundle_sha256'],
-                'scope': 'Detached preparation accepted. No engine has been qualified or enrolled.'}
+                'operation': payload.get('operation', 'prepare'),
+                'scope': 'Detached work accepted. This acknowledgement does not prove qualification or registration.'}
     finally:
         host_lock.close()
 
@@ -89,7 +94,10 @@ def run(root, lock_fds):
     receipt = root / 'launch.json'
     launch = json.loads(receipt.read_text())
     try:
-        result = subprocess.run([sys.executable, '-I', '-B', str(root / 'source/examples/spark-build/setup-spark.py'), str(root / 'engines')], pass_fds=lock_fds)
+        command = ([sys.executable, '-I', '-B', str(root / 'source/ds4-gateway/spark_qualify.py'), launch['setup_directory'], str(root)]
+                   if launch.get('operation') == 'qualify' else
+                   [sys.executable, '-I', '-B', str(root / 'source/examples/spark-build/setup-spark.py'), str(root / 'engines')])
+        result = subprocess.run(command, pass_fds=lock_fds)
         launch['exit_code'] = result.returncode
     except Exception as error:
         launch.update(exit_code=1, error=str(error))
@@ -106,9 +114,22 @@ if __name__ == '__main__':
             root = Path(payload['directory'])
             if not root.is_absolute() or root.is_symlink() or '..' in root.parts or root == Path('/'):
                 raise ValueError('Use an absolute dedicated remote setup directory')
-            if payload['action'] not in ('status', 'start'):
+            if payload['action'] not in ('status', 'start', 'qualify', 'verify_serving'):
                 raise ValueError('Unknown setup action')
-            print(json.dumps(status(root) if payload['action'] == 'status' else start(root, payload)))
+            if payload['action'] == 'qualify':
+                current = status(root)
+                if current['state'] != 'prepared_stopped':
+                    raise ValueError('Preparation is not complete')
+                result = start(root / 'qualification', {**payload, 'operation': 'qualify', 'setup_directory': str(root)})
+            elif payload['action'] == 'verify_serving':
+                import importlib.util
+                spec = importlib.util.spec_from_file_location('spark_qualification', root / 'qualification/source/ds4-gateway/spark_qualify.py')
+                worker = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(worker)
+                result = worker.verify_serving(root)
+            else:
+                result = status(root) if payload['action'] == 'status' else start(root, payload)
+            print(json.dumps(result))
         except Exception as error:
             print(json.dumps({'state': 'unconfirmed', 'error': str(error)}))
             sys.exit(1)

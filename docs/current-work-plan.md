@@ -195,8 +195,15 @@ deployment receipts stay outside this public repository.
   receipts. Repeated starts observe the same operation. Its connection has been
   exercised through the pinned Hermes runtime against controlled fixtures; this
   does not establish complete fresh-host installation. See [setup enrollment](genie-spark-setup.md).
-  Native qualification, registration and complete first-Spark acceptance remain
-  outstanding; these existing-host tests do not complete them.
+  LLM qualification and registration now have product tool paths: actual serving
+  settings and native behavior are checked, then a fresh unchanged-instance check
+  precedes configuration recording and paused-add/resume through the gateway.
+  Actual pinned Hermes has now called qualification and registration against a
+  prepared candidate on an existing Spark. All eight native check groups passed,
+  and the registered worker completed real gateway requests. This imported an
+  already prepared candidate; media qualification/enrollment, recovery setup,
+  automatic continuation between setup stages and complete fresh-Spark acceptance
+  remain outstanding.
 - [x] Deliver the first end-to-end agent media workflow after the current
   baseline measurement and basic recovery work, ahead of additional concurrency
   tuning or broad hardening. Agents submit music/video jobs to dedicated Star
