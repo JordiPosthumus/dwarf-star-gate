@@ -56,7 +56,10 @@ export class HourglassRuns {
     return {...hourglassRunsForChat(s),available:s.available,busy:s.busy,blocked:s.blocked,
       targets:s.targets,reports:this.reportSnapshot().reports,prepared:p?{id:p.id,model:p.model,worker_id:p.association.worker_id,
         route:p.association.route,benchmark_version:p.benchmark_version,metric:p.metric,
-        question_count:p.question_count,window_seconds:p.window_seconds}:null,
+        question_count:p.question_count,window_seconds:p.window_seconds,
+        window:p.maintenance?'owned-maintenance':'owner-confirmed-idle',
+        on_owner_start:p.maintenance?'Reserve this worker, drain new gateway traffic and wait for admitted and direct native work to finish. Run the measurement without changing server settings or restarting it, then conditionally return it to service. Other workers keep serving.':
+          'The owner confirms a free window. Start does not reserve or drain this worker; avoid other traffic during the measurement.'}:null,
       scope:'Preparation only. Review the exact measurement and its window handling in Evidence → Measure with Hourglass. The owner chooses Start. Preparation does not start, drain or reserve a server. This history covers only Star Gate-owned measurements: an empty list does not prove that no benchmark ran directly in Hourglass or that no score exists elsewhere. Saved observations are dated; unavailable does not mean stopped.'};
   }
   async tool(input){

@@ -26,6 +26,17 @@ function fixture(t){
 }
 async function start(runs){await runs.change({action:'prepare',model:'example'});const id=runs.status().prepared.id;await runs.change({action:'start',id,owner_confirmed_idle:true});return id;}
 
+test('Genie preparation reports the actual future window handling without starting or reserving work',async t=>{
+ const f=fixture(t),direct=f.make();t.after(()=>direct.close());
+ const ordinary=await direct.tool({action:'prepare',model:'example'});
+ assert.equal(ordinary.prepared.window,'owner-confirmed-idle');assert.match(ordinary.prepared.on_owner_start,/does not reserve or drain/);
+ let preparations=0;const maintenance={prepare:async()=>{preparations++;return {plan_revision:'a'.repeat(64),record_revision:'b'.repeat(64)};},start:()=>assert.fail('Preparation must not start maintenance'),close:()=>{}};
+ const owned=new HourglassRuns({...config,targets:[{...config.targets[0],maintenance:{native_url:'http://127.0.0.1:8001'}}]},f.directory,{client:f.client,maintenance});t.after(()=>owned.close());
+ const reviewed=await owned.tool({action:'prepare',model:'example'});
+ assert.equal(reviewed.prepared.window,'owned-maintenance');assert.match(reviewed.prepared.on_owner_start,/drain new gateway traffic/);assert.match(reviewed.prepared.on_owner_start,/wait for admitted and direct native work to finish/);assert.match(reviewed.prepared.on_owner_start,/conditionally return/);
+ assert.equal((await owned.tool({action:'prepare',model:'example'})).prepared.id,reviewed.prepared.id);assert.equal(preparations,1);assert.deepEqual(f.calls,[]);assert.equal(owned.status().runs.length,0);
+});
+
 test('start intent precedes dispatch; duplicate requests preserve the one native receipt',async t=>{
  const f=fixture(t),runs=f.make(),id=await start(runs);
  assert.equal(runs.status().runs[0].state,'accepted');assert.equal(runs.status().runs[0].association.approved_configuration_revision,'b'.repeat(64));
