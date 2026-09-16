@@ -8,7 +8,7 @@ import {createToolEndpoint} from './genie-tool-endpoint.mjs';
 const root=fileURLToPath(new URL('../',import.meta.url));
 const remote=fs.readFileSync(new URL('./spark_setup_remote.py',import.meta.url),'utf8');
 const quote=value=>"'"+value.replaceAll("'","'\\''")+"'";
-function bundleRecipes(){
+export function bundleRecipes(){
   const files=['ds4-gateway/spark_qualify.py','ds4-gateway/spark_recovery.py','ds4-gateway/recovery-docker.py','ds4-gateway/docker_profile.py','ds4-gateway/serving_qualification.py','ds4-gateway/operation_runner.py','ds4-gateway/spark_setup_remote.py','examples/server-profiles/qwen38-nvfp4-vllm.json'];
   const visit=dir=>{for(const entry of fs.readdirSync(path.join(root,dir),{withFileTypes:true})){
     if(entry.name==='__pycache__'||entry.name.startsWith('test_')||entry.name.startsWith('.'))continue;

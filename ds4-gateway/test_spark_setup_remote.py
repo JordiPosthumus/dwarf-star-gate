@@ -83,6 +83,14 @@ class RemoteSetupTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError,'stopped state'): remote.media_plan(root, require_idle=False)
                 containers['h3']['State']['Running']=False
                 containers['qwen38-repaired']['State']['Running']=False
+                # Media-only preparation retains an existing LLM rather than
+                # requiring another Qwen container in this setup directory.
+                setup_file=root/'engines/setup.json'
+                setup_file.write_text(json.dumps({'state':'prepared_stopped','engines':{'h3':engines['h3']}}))
+                (root/'launch.json').write_text(json.dumps({'operation':'prepare_media','selected_engines':['h3'],'llm_container':'qwen38-repaired'}))
+                selected=remote.media_plan(root)
+                self.assertEqual(set(selected['engines']),{'h3'})
+                self.assertEqual(selected['llm_container'],'qwen38-repaired')
                 containers['h3']['HostConfig']['PortBindings']['8188/tcp'][0]['HostIp']='0.0.0.0'
                 with self.assertRaisesRegex(ValueError,'native port'): remote.media_plan(root)
 
@@ -101,6 +109,23 @@ class RemoteSetupTests(unittest.TestCase):
             self.assertEqual(list(root.iterdir()), [personal])
 
     def test_detached_preparation_is_observable_and_cannot_be_launched_twice(self):
+        self.exercise_detached()
+
+    def test_selected_media_preparation_uses_original_llm_and_exact_cli_selection(self):
+        self.exercise_detached(media=True)
+
+    def test_media_preparation_requires_stopped_original_before_creating_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)/'setup'
+            payload={'operation':'prepare_media','selected_engines':['ace-step'],'llm_container':'a'*64}
+            with patch.object(remote.subprocess,'check_output',return_value=json.dumps([{'Id':'a'*64,'State':{'Running':True}}])):
+                with self.assertRaisesRegex(ValueError,'Drain and stop'):remote.start(root,payload)
+            self.assertFalse(root.exists())
+            for selected in [[],['qwen38-repaired'],['h3','h3']]:
+                with self.assertRaisesRegex(ValueError,'exact media engines'):remote.start(root,{**payload,'selected_engines':selected})
+                self.assertFalse(root.exists())
+
+    def exercise_detached(self, media=False):
         script = '''import json,sys,time
 from pathlib import Path
 def preflight(): pass
@@ -108,12 +133,14 @@ if __name__ == '__main__':
  root=Path(sys.argv[1]);root.mkdir()
  (root/'setup.json').write_text(json.dumps({'state':'running','phase':'fixture'}))
  while not (root.parent/'finish').exists(): time.sleep(.02)
- (root/'setup.json').write_text(json.dumps({'state':'prepared_stopped','phase':'complete'}))
+ (root/'setup.json').write_text(json.dumps({'state':'prepared_stopped','phase':'complete','arguments':sys.argv[2:]}))
 '''
-        with tempfile.TemporaryDirectory() as tmp, patch.object(remote.Path, 'home', return_value=Path(tmp)):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(remote.Path, 'home', return_value=Path(tmp)), patch.object(remote.subprocess,'check_output',return_value=json.dumps([{'Id':'a'*64,'State':{'Running':False}}])):
             root = Path(tmp) / 'setup'
             try:
-                self.assertEqual(remote.start(root, bundle(script))['state'], 'accepted')
+                payload=bundle(script)
+                if media:payload.update(operation='prepare_media',selected_engines=['ace-step'],llm_container='a'*64)
+                self.assertEqual(remote.start(root, payload)['state'], 'accepted')
                 self.assertEqual(remote.start(root, {})['state'], 'running')
                 with self.assertRaisesRegex(ValueError, 'Another Spark preparation'):
                     remote.start(Path(tmp) / 'other', bundle(script))
@@ -127,6 +154,11 @@ if __name__ == '__main__':
                 time.sleep(.02)
             self.assertEqual(state['state'], 'prepared_stopped', state)
             self.assertEqual(state['exit_code'], 0)
+            self.assertEqual(state['progress']['arguments'],['--engine','ace-step'] if media else [])
+            if media:
+                launch=json.loads((root/'launch.json').read_text())
+                self.assertEqual(launch['llm_container'],'a'*64)
+                self.assertEqual(launch['selected_engines'],['ace-step'])
             self.assertEqual(remote.start(root, {})['state'], 'prepared_stopped')
 
 

@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -82,8 +83,17 @@ def media_plan(root, *, require_idle=True):
         raise ValueError('Complete preparation before testing media')
     if require_idle and subprocess.check_output(['nvidia-smi', '--query-compute-apps=pid', '--format=csv,noheader,nounits'], text=True).strip():
         raise ValueError('GPU work is active; existing work was preserved')
+    launch = json.loads((root / 'launch.json').read_text()) if (root / 'launch.json').exists() else {}
+    existing = launch.get('operation') == 'prepare_media'
+    selected = launch['selected_engines'] if existing else ('qwen38-repaired', 'h3', 'ace-step')
+    if existing:
+        llm = json.loads(subprocess.check_output(['docker', 'inspect', launch['llm_container']], text=True))[0]
+        if llm['Id'] != launch['llm_container'] or (require_idle and llm['State']['Running']):
+            raise ValueError('Original LLM identity or stopped state differs')
+        if set(setup['engines']) != set(selected):
+            raise ValueError('Prepared media selection differs')
     engines = {}
-    for key in ('qwen38-repaired', 'h3', 'ace-step'):
+    for key in selected:
         item = setup['engines'][key]
         receipt = json.loads((Path(item['data']) / 'container.json').read_text())
         actual = json.loads(subprocess.check_output(['docker', 'inspect', item['container']], text=True))[0]
@@ -102,13 +112,22 @@ def media_plan(root, *, require_idle=True):
             if mounts.get(model_dest, {}).get('Source') != item['models'] or mounts.get('/data', {}).get('Source') != item['data']:
                 raise ValueError('Prepared model/data mounts differ: ' + key)
             engines[key] = {**receipt, 'inspection': actual}
-    return {'state': 'prepared_stopped', 'engines': engines, 'llm_container': setup['engines']['qwen38-repaired']['container']}
+    return {'state': 'prepared_stopped', 'engines': engines, 'llm_container': launch['llm_container'] if existing else setup['engines']['qwen38-repaired']['container']}
 
 
 def start(root, payload):
     # Repeated/uncertain submissions inspect the same durable receipt, never rerun.
     if root.exists():
         return status(root)
+    if payload.get('operation') == 'prepare_media':
+        selected = payload.get('selected_engines')
+        if (not isinstance(selected, list) or not selected or len(set(selected)) != len(selected)
+                or any(engine not in ('h3', 'ace-step') for engine in selected)
+                or not re.fullmatch(r'[a-f0-9]{64}', payload.get('llm_container', ''))):
+            raise ValueError('Choose exact media engines and the original LLM container')
+        llm = json.loads(subprocess.check_output(['docker', 'inspect', payload['llm_container']], text=True))[0]
+        if llm['Id'] != payload['llm_container'] or llm['State']['Running']:
+            raise ValueError('Drain and stop the enrolled original LLM before media preparation')
     raw = base64.b64decode(payload['bundle'], validate=True)
     if len(raw) > 8 * 1024 * 1024 or hashlib.sha256(raw).hexdigest() != payload['bundle_sha256']:
         raise ValueError('Invalid recipe bundle')
@@ -139,7 +158,8 @@ def start(root, payload):
         archive.extractall(source, members=members, filter='data')
         receipt = root / 'launch.json'
         save(receipt, {'bundle_sha256': payload['bundle_sha256'], 'started_at': datetime.now(timezone.utc).isoformat(),
-                       'operation': payload.get('operation', 'prepare'), 'setup_directory': payload.get('setup_directory')})
+                       'operation': payload.get('operation', 'prepare'), 'setup_directory': payload.get('setup_directory'),
+                       **({key: payload[key] for key in ('selected_engines', 'llm_container')} if payload.get('operation') == 'prepare_media' else {})})
         with (root / 'running.lock').open('a') as lock, (root / 'launch.log').open('a') as log:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             child = subprocess.Popen([sys.executable, '-I', '-B', str(source / 'ds4-gateway/spark_setup_remote.py'), '--run', str(root), str(host_lock.fileno()), str(lock.fileno())],
@@ -159,6 +179,9 @@ def run(root, lock_fds):
         command = ([sys.executable, '-I', '-B', str(root / 'source/ds4-gateway/spark_qualify.py'), launch['setup_directory'], str(root)]
                    if launch.get('operation') == 'qualify' else
                    [sys.executable, '-I', '-B', str(root / 'source/examples/spark-build/setup-spark.py'), str(root / 'engines')])
+        if launch.get('operation') == 'prepare_media':
+            for engine in launch['selected_engines']:
+                command.extend(['--engine', engine])
         result = subprocess.run(command, pass_fds=lock_fds)
         launch['exit_code'] = result.returncode
     except Exception as error:
@@ -176,11 +199,13 @@ if __name__ == '__main__':
             root = Path(payload['directory'])
             if not root.is_absolute() or root.is_symlink() or '..' in root.parts or root == Path('/'):
                 raise ValueError('Use an absolute dedicated remote setup directory')
-            if payload['action'] not in ('status', 'start', 'qualify', 'verify_serving', 'media_plan', 'media_state'):
+            if payload['action'] not in ('status', 'start', 'prepare_media', 'qualify', 'verify_serving', 'media_plan', 'media_state'):
                 raise ValueError('Unknown setup action')
             if payload['action'] in ('media_plan', 'media_state'):
                 result = media_plan(root, require_idle=payload['action'] == 'media_plan')
             elif payload['action'] == 'qualify':
+                if json.loads((root / 'launch.json').read_text()).get('operation') == 'prepare_media':
+                    raise ValueError('Media-only setup preserves the original LLM; do not run new-LLM qualification')
                 current = status(root)
                 if current['state'] != 'prepared_stopped':
                     raise ValueError('Preparation is not complete')
@@ -192,7 +217,7 @@ if __name__ == '__main__':
                 spec.loader.exec_module(worker)
                 result = worker.verify_serving(root)
             else:
-                result = status(root) if payload['action'] == 'status' else start(root, payload)
+                result = status(root) if payload['action'] == 'status' else start(root, {**payload, **({'operation': 'prepare_media'} if payload['action'] == 'prepare_media' else {})})
             print(json.dumps(result))
         except Exception as error:
             print(json.dumps({'state': 'unconfirmed', 'error': str(error)}))

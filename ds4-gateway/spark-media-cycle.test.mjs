@@ -11,6 +11,13 @@ function fixture(){
 test('both prepared media engines generate, retain and decode before stopping; LLM untouched',async()=>{
  const f=fixture();const result=await qualifySparkMedia(f.plan,f.io);assert.equal(result.state,'qualified_stopped');assert.deepEqual(f.calls,['start:h3','submit:video','collect:video','decode:video','stop:h3','start:ace','submit:music','collect:music','decode:music','stop:ace']);assert.ok(Object.values(f.containers).every(c=>!c.State.Running));
 });
+test('music-only preparation qualifies only music and leaves the original LLM stopped for its owner',async()=>{
+ const f=fixture();delete f.plan.preparation.engines.h3;
+ const result=await qualifySparkMedia(f.plan,f.io);
+ assert.deepEqual(Object.keys(result.engines),['ace-step']);
+ assert.deepEqual(f.calls,['start:ace','submit:music','collect:music','decode:music','stop:ace']);
+ assert.equal(f.containers.llm.State.Running,false);
+});
 test('already running LLM or changed candidate is never stopped',async()=>{
  for(const which of ['llm','h3']){const f=fixture();if(which==='llm')f.containers.llm.State.Running=true;else f.containers.h3.Config.Cmd=['different'];await assert.rejects(qualifySparkMedia(f.plan,f.io));assert.deepEqual(f.calls,[]);}
 });

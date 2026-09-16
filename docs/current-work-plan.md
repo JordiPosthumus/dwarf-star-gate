@@ -197,8 +197,12 @@ deployment receipts stay outside this public repository.
   The standalone preparation command can also select only H3 and/or ACE-Step,
   without building or downloading another LLM. Selection is retained on resume;
   simulated interruption tests cover both the default and media-only paths.
-  This is preparation for existing-host media setup, whose Media-page action,
-  owned drain/restore sequence and native qualification are still outstanding.
+  A detached existing-worker setup runner now joins selected preparation to the
+  existing maintenance and native media-qualification components, then restores
+  the original LLM and requires response/cache proof before readmission. Fixture
+  tests cover the sequence and uncertain preparation acknowledgements. Its
+  Media-page/Genie action, saved enrollment connection and native whole-workflow
+  qualification are still outstanding; it is not yet activated in production.
   Genie can now call the preparation command for explicitly enrolled new hosts,
   with an independent capability switch, detached execution and visible phase/error
   receipts. Repeated starts observe the same operation. Its connection has been

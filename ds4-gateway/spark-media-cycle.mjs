@@ -2,11 +2,14 @@ import assert from 'node:assert/strict';
 import {isDeepStrictEqual} from 'node:util';
 export const mediaContainerSignature=c=>({Id:c.Id,Image:c.Image,Config:c.Config,HostConfig:{...c.HostConfig,OomKillDisable:c.HostConfig.OomKillDisable??false},Mounts:[...c.Mounts].sort((a,b)=>a.Destination.localeCompare(b.Destination))});
 export const mediaPlanIdentity=p=>({llm_container:p.llm_container,engines:Object.fromEntries(Object.entries(p.engines).map(([key,e])=>[key,{container:e.container,image:e.image,port:e.port,kind:e.kind,configuration:mediaContainerSignature(e.inspection)}]))});
-// New-host-only: all prepared engines begin stopped. Existing serving LLMs are never touched.
+// All selected engines and the LLM must already be stopped. The caller owns
+// draining/restoration on an existing host; this qualifier never operates the LLM.
 export async function qualifySparkMedia(plan,io){
  const {save,progress,inspect,start,stop,connect,delay,jobs,decode,owned}=io;
  const completed={};
+ assert.ok(Object.keys(plan.preparation.engines).length>0&&Object.keys(plan.preparation.engines).every(key=>['h3','ace-step'].includes(key)),'Choose supported prepared media engines');
  for(const [engine,kind] of [['h3','video'],['ace-step','music']]){
+  if(!plan.preparation.engines[engine])continue;
   const selected=plan.preparation.engines[engine];let connection,started=false,ready=false;
   const before=selected.inspection;
   const unchanged=async()=>{assert.ok(owned(),'Setup host lock lost');assert.ok(isDeepStrictEqual(mediaContainerSignature(await inspect(selected.container)),mediaContainerSignature(before)),'Prepared media settings changed');};

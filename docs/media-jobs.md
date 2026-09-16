@@ -186,6 +186,16 @@ requires a native generation check using the selected configuration. A
 recipe-driven setup action from this view remains unfinished; the separate New
 Spark setup workflow remains for explicitly enrolled idle new hosts.
 
+The existing-worker setup lifecycle is now implemented as a separate detached
+runner, pending the Media-page/Genie controls and saved enrollment connection.
+It uses the existing maintenance controls to drain an enrolled Docker/Qwen LLM,
+prepares only selected media recipes in a separate directory, reuses the native
+sample qualifier, then restores the exact original LLM and checks responses and
+cache reuse before readmission. A lost preparation acknowledgement is observed
+without repeating the installation. Its lifecycle and remote selected-engine
+transport have fixture tests; this is not yet a completed native existing-host
+installation or a feature available through the production UI.
+
 Result players and download links use local dashboard routes; the dashboard
 adds the gateway credential on the server side. Keys stay out of browser URLs
 and JavaScript. Normal status updates preserve player elements. In-app browser
