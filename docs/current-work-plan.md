@@ -168,8 +168,12 @@ deployment receipts stay outside this public repository.
   existing installed engines where usable; inspect and verify them before reuse.
   A native async-job adapter now submits and observes ACE-Step tasks and
   ComfyUI prompts using their original job IDs. Isolated HTTP tests cover this
-  protocol; live engine generation, public endpoints and host allocation remain
-  unfinished. The adapter is not activated in production.
+  protocol. An opt-in durable queue and authenticated music/video job endpoints
+  now preserve submissions, priority, native receipts and result metadata across
+  gateway restarts. Repeating an idempotency key returns the original job;
+  uncertain native acceptance is retained without replay. Isolated gateway and
+  native HTTP fixtures cover this; live generation, durable output-file delivery
+  and Genie host allocation remain unfinished. Media is not enabled in production.
 - [ ] Give Genie tools to read that media queue and propose/execute the permitted
   host transitions through the existing operation path. Keep at least one healthy
   LLM server serving, as the owner requires; finish admitted work before stopping

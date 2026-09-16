@@ -1,4 +1,5 @@
 import {genieCapabilityKeys,validateGenieCapabilities,genieCapabilities} from './genie-capabilities.mjs';
+import {MediaJobs,handleMediaRequest} from './media-jobs.mjs';
 import {activeJobs,activeCount,hasCapacity,requestCapacity,oldestActive} from './worker-activity.mjs';
 import {PRIORITY_HEADER,requestPriority,priorityRank,priorityIndex,priorityOrder} from './job-priority.mjs';
 import {outputShape} from './output-shape.mjs';
@@ -255,7 +256,10 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   if(!Number.isSafeInteger(configuredConversationTurns)||configuredConversationTurns<1)throw new Error('conversation_turns must be a positive whole number');
   if(!Number.isSafeInteger(conversationTurnIdleMs)||conversationTurnIdleMs<0||conversationTurnIdleMs>2147483647)throw new Error('conversation_turn_idle_ms must be a whole millisecond count from 0 to 2147483647');
   const initial = workerConfigs(config.nodes);
+  if(config.media_jobs!==undefined&&(!config.media_jobs||typeof config.media_jobs!=='object'||typeof config.media_jobs.enabled!=='boolean'))throw new Error('media_jobs.enabled must be a boolean');
   const store = new AffinityStore(config.state_file);
+  let mediaJobs;
+  try{if(config.media_jobs?.enabled)mediaJobs=new MediaJobs(path.join(path.dirname(config.state_file),'media-jobs.json'));}catch(e){store.close();throw e;}
   const conversationTurns=()=>store.data.conversation_turns??configuredConversationTurns;
   const queueTimeoutMs=()=>store.data.queue_timeout_ms??configuredQueueTimeout;
   // Like registered workers, an explicit UI setting survives process restarts.
@@ -968,6 +972,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   const server = http.createServer((req, res) => {
     const credential = Buffer.from(req.headers.authorization || '');
     if (credential.length !== auth.length || !timingSafeEqual(credential, auth)) { req.resume(); return error(res, 401, 'unauthorized', 'Bearer API key required'); }
+    if(handleMediaRequest(req,res,{jobs:mediaJobs,accepting:!draining}))return;
     // Reject absolute URLs and encoded/normalized alternate routes; no admin forwarding.
     const discovery = req.method === 'GET' && /^\/v1\/models(?:\?[^#]*)?$/.test(req.url);
     const route = discovery ? 'GET /v1/models' : `${req.method} ${req.url}`;
@@ -1501,7 +1506,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   }) : null;
   control?.on('clientError',invalidHttp);
   return {
-    server, nodes, stats, store, drainNodes, registry,recovery,relocateQueued,visionProtection,currentJobsStatus,
+    server, nodes, stats, store, mediaJobs, drainNodes, registry,recovery,relocateQueued,visionProtection,currentJobsStatus,
     async start() {
       nodes.forEach(startTunnel);
       if(startup.barrier){
