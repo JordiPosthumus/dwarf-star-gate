@@ -5,7 +5,8 @@ inspect the queue and assign a video job to an enrolled ComfyUI host. Its separa
 runner drains that host, generates the result, saves the files, restores the
 original LLM and verifies responses/cache reuse before readmission. A real
 production Genie-led H3 cycle has passed, including retained downloads and LLM
-return. ACE-Step lifecycle and the full Media view are still in progress.
+return. The runner also supports ACE-Step music using native health and queue
+statistics; deployment qualification and the full Media view remain in progress.
 
 For an isolated development installation, `"media_jobs": {"enabled": true}`
 enables a private `media-jobs.json` beside the gateway state file. The existing
@@ -89,9 +90,13 @@ In chat, Genie uses `media_job_status` to read jobs, eligible engine assignments
 and current fleet demand, then `start_media_job` with a job ID and worker ID.
 The runner continues when the chat or dashboard closes. Its saved job identity
 survives gateway restart; an uncertain launch is reported without spawning again.
-Repeated starts of an assigned job return its existing status. The lifecycle
-currently supports ComfyUI video only; music remains queued until the ACE-Step
-path is qualified and connected.
+Repeated starts of an assigned job return its existing status. Music uses the
+same lifecycle with an `engines.music` enrollment and `kind: "ace-step"`.
+Its API must start with `ACESTEP_NO_INIT=false` so `/health` confirms model
+initialization before submission. `/v1/stats` must report no queued or running
+work before assignment and engine shutdown. Music remains queued on installations
+without an enrolled music engine. The personal ACE-Step installation is not
+modified or upgraded by this lifecycle.
 
 `execution.phase` distinguishes `waiting_idle`, `starting_media`, `generating`,
 `retaining_results`, `restoring_llm`, `checking_llm` and `returned`. Failures may

@@ -8,10 +8,10 @@ import {MediaJobs} from './media-jobs.mjs';
 import {createMediaExecution,saveMediaReceipt} from './media-execution.mjs';
 import {runMediaCycle} from './media-cycle.mjs';
 
-function fixture(t){
+function fixture(t,kind='video'){
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'sg-media-execution-'));t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
   const jobs=new MediaJobs(path.join(directory,'queue.json'));
-  const job=jobs.enqueue('video',{prompt:{one:{class_type:'Fixture'}}},{key:'fixture'}).job;
+  const job=jobs.enqueue(kind,kind==='video'?{prompt:{one:{class_type:'Fixture'}}}:{prompt:'instrumental',audio_duration:10},{key:'fixture'}).job;
   const engine={kind:'comfyui',container:'b'.repeat(64),image:'sha256:'+'c'.repeat(64),port:8188};
   const config={model:'fixture',context_length:262144,control_socket:'/fixture.sock',media_jobs:{workers:{one:{engines:{video:engine}}}},genie_chat:{python:'/python',inspection:{workers:{one:{container:'a'.repeat(64),ssh:['fixture-host']}}}},recovery:{workers:[{id:'one',ssh:'fixture-host',adapter:'docker',verification:'qwen_vllm',profile:'profile'}]}};
   return {directory,jobs,job,config,engine};
@@ -40,8 +40,8 @@ test('uncertain process launch is retained and never replayed',async t=>{
   await service.start(input);assert.equal(calls,1);
 });
 
-function cycleFixture(t){
-  const r=fixture(t),containers=new Map();
+function cycleFixture(t,kind='video'){
+  const r=fixture(t,kind),containers=new Map();
   const container=(Id,Image,Running)=>({Id,Image,Config:{untouched:true},HostConfig:{untouched:true},Mounts:[],State:{Running,StartedAt:'2026-01-01T00:00:00Z'}});
   containers.set('a'.repeat(64),container('a'.repeat(64),'original-image',true));containers.set(r.engine.container,container(r.engine.container,r.engine.image,false));
   const llm=containers.get('a'.repeat(64)),instance=createHash('sha256').update(JSON.stringify([llm.Id,llm.State.StartedAt])).digest('hex').slice(0,32);
@@ -78,4 +78,47 @@ test('mismatched LLM identity causes no stop or maintenance action',async t=>{
   await assert.rejects(runMediaCycle(r.plan,r.io),/same LLM container/);
   assert.equal(r.events.filter(e=>e==='prepare'||e.startsWith('stop:')).length,0);
   assert.ok(r.events.includes('failed_unchanged'));
+});
+
+test('music waits for initialized models, generates once and restores the LLM',async t=>{
+  const r=cycleFixture(t,'music');r.engine.kind=r.backend.kind='ace-step';
+  let healthChecks=0;
+  r.backend.request=async route=>{
+    if(route==='/health')return {data:{status:'ok',models_initialized:++healthChecks>1}};
+    assert.equal(route,'/v1/stats');return {data:{jobs:{queued:0,running:0},queue_size:0}};
+  };
+  await runMediaCycle(r.plan,r.io);
+  assert.equal(healthChecks,2);assert.equal(r.submissions(),1);
+  assert.ok(r.events.indexOf('collect')<r.events.indexOf('stop:'+r.engine.container));
+  assert.ok(r.events.includes('returned'));assert.equal(r.containers.get(r.plan.llm_container).State.Running,true);
+});
+
+test('music never treats missing native queue counters as idle',async t=>{
+  const r=cycleFixture(t,'music');r.engine.kind=r.backend.kind='ace-step';
+  r.backend.request=async route=>route==='/health'?{data:{status:'ok',models_initialized:true}}:{data:{queue_size:0}};
+  await assert.rejects(runMediaCycle(r.plan,r.io),/queue observation unavailable/);
+  assert.equal(r.submissions(),0);assert.ok(r.events.includes('needs_attention'));
+  assert.ok(!r.events.includes('stop:'+r.engine.container));
+});
+
+test('a busy music engine is left running until its direct work finishes',async t=>{
+  const r=cycleFixture(t,'music');r.engine.kind=r.backend.kind='ace-step';let stats=0;
+  r.backend.request=async route=>route==='/health'?{data:{status:'ok',models_initialized:true}}:{data:{jobs:{queued:0,running:++stats<=2?1:0},queue_size:0}};
+  await assert.rejects(runMediaCycle(r.plan,r.io),/already has native work/);
+  assert.equal(r.submissions(),0);assert.ok(stats>=3);
+  assert.ok(r.events.includes('failed_returned'));
+});
+
+test('Docker first-start false/null OOM metadata normalization does not strand the LLM',async t=>{
+  const r=cycleFixture(t),start=r.io.start;r.containers.get(r.engine.container).HostConfig.OomKillDisable=false;
+  r.io.start=async id=>{await start(id);if(id===r.engine.container)r.containers.get(id).HostConfig.OomKillDisable=null;};
+  await runMediaCycle(r.plan,r.io);assert.ok(r.events.includes('returned'));assert.ok(r.events.includes('finish'));
+});
+
+test('real media setting changes are reported after returning the unchanged LLM',async t=>{
+  const r=cycleFixture(t),start=r.io.start;r.containers.get(r.engine.container).HostConfig.OomKillDisable=false;
+  r.io.start=async id=>{await start(id);if(id===r.engine.container)r.containers.get(id).HostConfig.OomKillDisable=true;};
+  await assert.rejects(runMediaCycle(r.plan,r.io),/HostConfig changed/);
+  assert.ok(r.events.includes('failed_returned'));assert.ok(r.events.includes('finish'));
+  assert.equal(r.containers.get(r.plan.llm_container).State.Running,true);
 });
