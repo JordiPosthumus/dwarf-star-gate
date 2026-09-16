@@ -1,0 +1,17 @@
+{
+  "prompt": "Bright instrumental jazz with warm acoustic piano, brushed drums and upright bass. A relaxed, playful melody with a clean studio sound.",
+  "lyrics": "[Instrumental]",
+  "model": "acestep-v15-xl-sft",
+  "thinking": true,
+  "lm_backend": "vllm",
+  "audio_duration": 10,
+  "bpm": 110,
+  "key_scale": "C major",
+  "time_signature": "4/4",
+  "batch_size": 1,
+  "inference_steps": 50,
+  "guidance_scale": 7,
+  "audio_format": "flac",
+  "use_random_seed": false,
+  "seed": 42
+}

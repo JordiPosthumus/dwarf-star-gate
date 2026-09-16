@@ -1,6 +1,6 @@
 # Current work plan
 
-Updated 15 September 2026. The current goal is the incremental Star Gate plan:
+Updated 16 September 2026. The current goal is the incremental Star Gate plan:
 a conversational Hermes Genie, configuration records and proven restoration,
 queue priorities and qualified concurrency, useful research and approved
 operations, then benchmarking and later media support. Keep the small gateway
@@ -17,8 +17,8 @@ deployment receipts stay outside this public repository.
   feature switches and visible failures. Further hardening follows real use;
   preserve active jobs, established settings and deliberate maintenance stops.
 - Independent switches cover routine reviews, Genie queue balancing, recovery,
-  public research, inspection, approved server changes and Hourglass measurement.
-  All seven choices can be saved before their services are connected.
+  public research, inspection, approved server changes, Hourglass measurement
+  and media jobs. All eight choices can be saved before their services are connected.
   Use the existing gateway state and recovery policy; a switch is not proof that
   a service is connected and does not create recovery enrollment. Active replies and issued operations finish when a
   feature is switched off. Production activation is tracked per release.
@@ -168,7 +168,7 @@ deployment receipts stay outside this public repository.
   files and package versions match the selected installation. The rebuilt kernel
   loaded in an isolated container. Model serving from the rebuild and a new
   machine's behavior remain unverified.
-- [ ] Deliver the first end-to-end agent media workflow after the current
+- [x] Deliver the first end-to-end agent media workflow after the current
   baseline measurement and basic recovery work, ahead of additional concurrency
   tuning or broad hardening. Agents submit music/video jobs to dedicated Star
   Gate endpoints, receive job IDs, inspect queued/running/failed/completed state
@@ -195,8 +195,14 @@ deployment receipts stay outside this public repository.
   wakeup are enabled. Automatic wakeup-to-tools was independently exercised
   with the pinned Hermes runtime and scripted provider. A working native video
   request example is included under `examples/media`. H3 is enrolled on one
-  existing Spark; ACE-Step and fresh-machine builds remain unfinished.
-- [ ] Give Genie tools to read that media queue and propose/execute the permitted
+  existing Spark. ACE-Step XL/4B now also passed the complete production cycle:
+  normal music API submission automatically woke Genie, whose actual tools
+  read/assigned/checked the job. Native audio was retained and downloadable
+  after engine shutdown; the original LLM returned automatically after real
+  replies and cold-to-warm cache checks. Music and video request examples are
+  included. The additive local music runtime preserves the personal install;
+  fresh-machine engine builds and installation remain unfinished.
+- [x] Give Genie tools to read that media queue and propose/execute the permitted
   host transitions through the existing operation path. Keep at least one healthy
   LLM server serving, as the owner requires; finish admitted work before stopping
   an LLM engine, start the required media engine, serve queued jobs, and restore
@@ -210,9 +216,10 @@ deployment receipts stay outside this public repository.
   last one. Ordinary maintenance retains its existing behavior.
   Resource switching is part of this first useful workflow, not deferred behind
   a standalone start-button release. No active-job cancellation to make room.
-  The H3 version of this workflow is now connected and natively verified;
-  expand it to music and more qualified hosts rather than replacing it with
-  additional planning or unrelated tuning.
+  H3 and ACE-Step versions are connected and natively verified on one qualified
+  host. Expand enrollment to the new machines through the pinned build work.
+  The first executor restores the LLM after each job; batching and warm media
+  residency remain follow-up efficiency work, not completed capabilities.
 - [ ] Provide the planned Media view with persistent eligibility per engine and
   physical host, separate setup/readiness and disk/memory-fit status, and a
   recipe-based setup path for eligible hosts that need installation. Retain the

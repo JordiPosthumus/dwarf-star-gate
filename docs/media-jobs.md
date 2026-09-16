@@ -5,8 +5,10 @@ inspect the queue and assign a video job to an enrolled ComfyUI host. Its separa
 runner drains that host, generates the result, saves the files, restores the
 original LLM and verifies responses/cache reuse before readmission. A real
 production Genie-led H3 cycle has passed, including retained downloads and LLM
-return. The runner also supports ACE-Step music using native health and queue
-statistics; deployment qualification and the full Media view remain in progress.
+return. A real ACE-Step XL/4B music cycle has also passed: normal API submission
+woke Genie automatically, he assigned the host, and the runner generated audio,
+retained it and verified LLM return. The full Media view and portable engine
+installation remain in progress.
 
 For an isolated development installation, `"media_jobs": {"enabled": true}`
 enables a private `media-jobs.json` beside the gateway state file. The existing
@@ -46,7 +48,10 @@ both retained downloads matched their size/hash receipts after H3 stopped.
 The connected production path also passed with actual Genie status/start/status
 calls, real media output and verified LLM return. Automatic queue wakeup is
 enabled; its wakeup-to-tools path was separately tested with pinned Hermes and a
-scripted model. ACE-Step qualification remains pending.
+scripted model. Production music arrival has since exercised the automatic
+watcher, actual Genie tool calls, native ACE-Step generation, authenticated audio
+download after engine shutdown and automatic original-LLM readmission. This
+qualifies the enrolled installation; it does not provide a fresh-machine image.
 
 Before a native submission, the queue saves its intent and selected worker.
 The allocator must first acquire that host through the existing
@@ -117,3 +122,26 @@ Submit that JSON to `POST /v1/video/jobs` with your normal gateway bearer key an
 a unique `Idempotency-Key`. Poll the returned status URL; download the URLs in
 `outputs.files` when `outputs.state` is `ready`. `execution.phase: returned`
 confirms the host's LLM checks and readmission have finished.
+
+## Example music request
+
+[`examples/media/ace-step-xl-text-to-music.json`](../examples/media/ace-step-xl-text-to-music.json)
+contains a ten-second instrumental request for an enrolled ACE-Step XL SFT
+engine with its 4B music language model. Submit it to `POST /v1/music/jobs`
+with the same bearer key and idempotency header as video. The duration, seed
+and sampling settings are request parameters, not changes to LLM serving
+configuration. The verified output is stereo 48 kHz FLAC.
+
+Starting a media engine and restoring a large LLM can take several minutes;
+native generation time excludes those transitions. The current executor returns
+the LLM after each job. Warm media residency and batching across waiting jobs
+are not implemented. The Media capability switch controls new assignments.
+
+The qualified local API runs in a separate environment with the existing model
+assets and ML packages mounted read-only; it preserves the personal ACE-Step
+installation. Its source baseline is `dce621408bee8c31b4fcf4811682eb9359e1bc94`,
+with that installation’s existing output-metadata patch retained. The native
+qualification used Torch 2.12.0+cu130 and nano-vLLM with SDPA/eager attention;
+it does not establish a fastest configuration.
+A self-contained, pinned installer/image for new machines is still outstanding.
+A fresh Star Gate checkout does not yet install these media engines for you.
