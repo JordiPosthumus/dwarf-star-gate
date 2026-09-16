@@ -166,6 +166,10 @@ deployment receipts stay outside this public repository.
   Gate endpoints, receive job IDs, inspect queued/running/failed/completed state
   and retrieve durable results. Begin with ACE-Step and MiniMax H3 through the
   existing installed engines where usable; inspect and verify them before reuse.
+  A native async-job adapter now submits and observes ACE-Step tasks and
+  ComfyUI prompts using their original job IDs. Isolated HTTP tests cover this
+  protocol; live engine generation, public endpoints and host allocation remain
+  unfinished. The adapter is not activated in production.
 - [ ] Give Genie tools to read that media queue and propose/execute the permitted
   host transitions through the existing operation path. Keep at least one healthy
   LLM server serving, as the owner requires; finish admitted work before stopping
