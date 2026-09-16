@@ -4,6 +4,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import {MediaWatch} from './media-watch.mjs';
 import {createMediaTools} from './genie-media.mjs';
 import {hermesProvider} from './genie-hermes.mjs';
 import {GenieChat} from './genie-chat.mjs';
@@ -23,9 +24,14 @@ test('media capability reports the failed service and ongoing return',()=>{
   options.media.jobs[0].execution={worker_id:'one',phase:'restoring_llm',detail:'Original LLM loading'};
   row=capabilityStatus(base,options).capabilities.find(c=>c.key==='media');assert.equal(row.status,'Working');
 });
-test('pinned Hermes reads media status, starts once and retains actual tool events',{skip:!process.env.DSG_TEST_HERMES_SOURCE,timeout:120000},async t=>{
+test('bounded media status keeps old queued jobs ahead of recent completed history',async()=>{
+  const jobs=[{id:'old-waiting',state:'queued',priority:'normal'},...Array.from({length:60},(_,i)=>({id:String(i),state:'completed'})),{id:'urgent',state:'queued',priority:'high'}];
+  const tools=createMediaTools({read:async()=>({jobs,workers:[]})});const result=await tools.tool({action:'status'});
+  assert.equal(result.jobs.length,50);assert.equal(result.truncated,true);assert.deepEqual(result.jobs.slice(0,2).map(j=>j.id),['urgent','old-waiting']);
+});
+test('automatic queue wakeup uses pinned Hermes to start once and retain actual tool events',{skip:!process.env.DSG_TEST_HERMES_SOURCE,timeout:120000},async t=>{
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'sg-media-chat-'));let starts=0,calls=0;
-  const state={enabled:true,workers:[{id:'one',kinds:['video'],busy:false}],jobs:[{id,kind:'video',state:'queued'}]};
+  const state={enabled:true,fleet:[{id:'one',is_healthy:true,drained:false,load:0,queued:0},{id:'two',is_healthy:true,drained:false,load:0,queued:0}],workers:[{id:'one',kinds:['video'],busy:false}],jobs:[{id,kind:'video',state:'queued'}]};
   const tools=createMediaTools({read:async()=>state,start:async input=>{assert.deepEqual(input,{job_id:id,worker_id:'one'});starts++;state.jobs[0].execution={worker_id:'one',phase:'waiting_idle',detail:'Admitted work finishing'};return state.jobs[0];}});
   const server=http.createServer((req,res)=>{
     if(tools.handle(req,res))return;
@@ -42,8 +48,9 @@ test('pinned Hermes reads media status, starts once and retains actual tool even
   await new Promise(r=>server.listen(0,'127.0.0.1',r));tools.bind(server.address().port);
   const provider=hermesProvider({python:process.env.DSG_TEST_HERMES_PYTHON,source:process.env.DSG_TEST_HERMES_SOURCE,url:`http://127.0.0.1:${server.address().port}/v1`,model:'fixture',media:tools.toolConfig},{directory});
   t.after(()=>{provider.close();server.closeAllConnections();server.close();fs.rmSync(directory,{recursive:true,force:true});});
-  const chat=new GenieChat({directory:path.join(directory,'chats'),provider,getSnapshot:()=>({gateway:{}})}),conversation=chat.create();
-  chat.submit(conversation.id,'Serve the queued video on an appropriate host.','media-fixture');await chat.idle();
+  const chat=new GenieChat({directory:path.join(directory,'chats'),provider,getSnapshot:()=>({gateway:{}})});
+  const watch=new MediaWatch({filename:path.join(directory,'watch.json'),chat,read:async()=>state,isEnabled:()=>true});
+  await watch.tick();const conversation={id:watch.state.conversation_id};await chat.idle();await watch.tick();
   const answer=chat.get(conversation.id).messages[1];assert.equal(answer.state,'complete',JSON.stringify(answer));assert.equal(starts,1);assert.equal(calls,4);assert.equal(provider.info.can_act,true);
   assert.equal(answer.media.events.filter(e=>e.state==='complete').length,3);assert.equal(chat.capabilityActivity().media.state,'complete');
   const reread=new GenieChat({directory:path.join(directory,'chats'),provider});assert.deepEqual(reread.get(conversation.id).messages[1].media,answer.media);

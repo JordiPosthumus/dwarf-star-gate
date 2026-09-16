@@ -4,8 +4,8 @@ These endpoints provide the durable queue and retained downloads. Genie can now
 inspect the queue and assign a video job to an enrolled ComfyUI host. Its separate
 runner drains that host, generates the result, saves the files, restores the
 original LLM and verifies responses/cache reuse before readmission. Production
-qualification of this newly connected path is pending. ACE-Step lifecycle,
-automatic queue wakeups and the full Media view are still in progress.
+qualification of this newly connected path is pending. ACE-Step lifecycle and
+the full Media view are still in progress.
 
 For an isolated development installation, `"media_jobs": {"enabled": true}`
 enables a private `media-jobs.json` beside the gateway state file. The existing
@@ -67,6 +67,15 @@ capability switch controls new assignments; turning it off does not cancel an
 accepted operation or prevent the runner from returning its host. Queue intake
 and downloads remain available while execution is off.
 
+While the media capability is on, the existing ten-second dashboard tick wakes
+Genie for actionable queued jobs. He studies current fleet demand and
+chooses the host through the same tools as chat. Decisions appear in an
+**Automatic media dispatch** conversation. The watcher waits for active chat to
+finish, suppresses unchanged requests, and spaces changed-demand decisions by
+at least one minute. The media switch also pauses these wakeups. A declined job
+is reconsidered when observed fleet demand or host availability changes; it can
+also be discussed directly with Genie.
+
 Enroll a worker under `media_jobs.workers[worker_id].engines.video` with its
 existing ComfyUI `kind: "comfyui"`, full Docker `container` ID, pinned `image`
 digest and loopback `port`. The worker must already have a qualified Docker/Qwen
@@ -87,3 +96,16 @@ end in `failed_unchanged`, `failed_returned` or `needs_attention`; the last one
 must be investigated rather than treated as a restored host. Generated files
 can be ready before LLM readmission. The capability card and chat tool records
 expose the observed phase and failure detail.
+
+## Example video request
+
+[`examples/media/h3-text-to-video.json`](../examples/media/h3-text-to-video.json)
+is a native workflow for the qualified H3 model files. Its dimensions, frame
+count, seed and sampling parameters belong to this example job; they do not
+alter the installed engine's serving configuration. It produces separate video
+and audio files. Edit node 7's prompt for another scene.
+
+Submit that JSON to `POST /v1/video/jobs` with your normal gateway bearer key and
+a unique `Idempotency-Key`. Poll the returned status URL; download the URLs in
+`outputs.files` when `outputs.state` is `ready`. `execution.phase: returned`
+confirms the host's LLM checks and readmission have finished.
