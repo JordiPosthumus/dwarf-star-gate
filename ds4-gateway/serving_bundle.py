@@ -15,7 +15,7 @@ from operation_runner import read_bytes, save
 
 MODULES = ('operation_runner', 'docker_profile', 'docker_profile_remote',
     'operation_maintenance', 'serving_qualification', 'serving_records',
-    'serving_operation', 'serving_executor')
+    'hourglass_operation', 'hourglass_native', 'serving_trial', 'serving_operation', 'serving_executor')
 MEASUREMENT_MODULES = ('operation_runner', 'docker_profile', 'docker_profile_remote',
     'operation_maintenance', 'hourglass_operation', 'hourglass_native', 'hourglass_executor')
 

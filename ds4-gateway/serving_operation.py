@@ -75,13 +75,16 @@ def restoration_authority(record, profile, root):
 class ServingOperation:
     runtime_checks = frozenset(['runtime_identity', 'native_idle'])
     def __init__(self, plan, directory, *, driver, maintenance, candidate_qualifier, previous_qualifier,
-                 publish, progress=lambda *args: None, sleep=time.sleep):
+                 publish, progress=lambda *args: None, sleep=time.sleep, measurement=None):
         if not callable(publish):
             raise ValueError('An enrolled configuration record publisher is required')
         self.plan, self.folder = plan, Path(directory)
         self.driver, self.maintenance = driver, maintenance
         self.qualifiers = {'candidate': candidate_qualifier, 'previous': previous_qualifier}
         self.publish, self.progress, self.sleep = publish, progress, sleep
+        self.measurement = measurement
+        if plan.get('trial') is not None and not callable(measurement):
+            raise ValueError('The reviewed trial requires its enrolled measurement adapter')
         self.id, self.profile = self.folder.name, plan['profile']
         self.binding = digest(self.profile)
         self.cache_policy = cache_policy(plan.get('cache_capacity_policy'))
@@ -219,6 +222,8 @@ class ServingOperation:
         readmission = self.maintenance.resume_if_unchanged()
         result = {'state': state, 'at': time.time(), 'serving': which, 'publication': publication,
                   'readmission': readmission, 'scope': 'Use the recorded qualification and readmission receipts; a preserved owner pause is not overridden.'}
+        if self.plan.get('trial') is not None:
+            result['trial'] = read(self.folder / 'trial-result.json')
         save(self.folder, 'serving-result.json', result)
         return result
 
@@ -273,9 +278,13 @@ class ServingOperation:
                 raise RuntimeError('Original cache capacity is unavailable')
             self.progress('applying', 'Applying the exact approved recipe while retaining the previous container.')
             self.driver.apply(self.id, self.profile, self.binding)
-            if self.qualify('candidate'):
+            qualified = self.qualify('candidate')
+            if qualified and self.plan.get('trial') is None:
                 return self.finish('candidate', 'completed')
-            self.progress('restoring', 'The candidate failed qualification. Restoring the proven retained version.')
+            if self.plan.get('trial') is not None:
+                trial = self.measurement(self.current('candidate')) if qualified else {'state': 'qualification_failed', 'job_id': None}
+                save(self.folder, 'trial-result.json', trial)
+            self.progress('restoring', 'The trial is finished. Restoring the original configuration.' if qualified else 'The candidate failed qualification. Restoring the proven retained version.')
             self.check_record()
             self.driver.restore(self.id, self.binding)
             if not self.qualify('previous'):

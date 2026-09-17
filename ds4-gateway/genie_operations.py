@@ -39,7 +39,8 @@ def register_operations(config, emit):
             return json.dumps({'error':'Operation request could not be confirmed. Check server_change_status using the same operation ID before proposing anything again. No approval was granted by this tool.'})
     proposal={'type':'object','properties':{'id':{'type':'string','description':'A new UUID for this exact proposal. Reuse it when checking an uncertain submission.'},
         'worker_id':{'type':'string','enum':config['workers']},'image':{'type':'string','pattern':'^sha256:[a-f0-9]{64}$'},
-        'command':{'type':'array','items':{'type':'string'},'description':'Complete reviewed serving arguments as separate strings, at most 65536 JSON bytes; preserve unrelated settings.'},'reason':{'type':'string','minLength':1,'maxLength':2000}},
+        'command':{'type':'array','items':{'type':'string'},'description':'Complete reviewed serving arguments as separate strings, at most 65536 JSON bytes; preserve unrelated settings.'},'reason':{'type':'string','minLength':1,'maxLength':2000},
+        'trial':{'type':'boolean','description':'Set true for an experiment: qualify the candidate, measure it with the enrolled one-hour Hourglass run, then restore and qualify the original even if the candidate passes. No automatic adoption. Omit for the existing apply-and-qualify change.'}},
         'required':['id','worker_id','image','command','reason'],'additionalProperties':False}
     for name,description,parameters in [
         ('propose_server_change','Prepare a serving change for owner review. First inspect the current full configuration and available image. This never approves, drains or starts a server. The owner approves the exact prepared plan in the gateway UI.',proposal),

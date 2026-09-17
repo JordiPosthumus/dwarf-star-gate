@@ -5,6 +5,7 @@ const labels={preparing:'Preparing the proposal',awaiting_approval:'Ready for yo
 export function operationLabel(row){return labels[row.runner?.state??row.state]??'Status unknown';}
 export function operationChanges(review){
   const before=review?.settings?.current??{},after=review?.settings?.proposed??{},changes=[];
+  if(review?.trial)changes.push(`Measured trial: qualify the candidate, run one hour of Hourglass (${review.trial.benchmark_version}), then restore and qualify the original. This does not adopt the candidate.`);
   const labels={context_length:'Context',max_output_tokens:'Output allowance',server_concurrency:'Concurrent requests',prefill_batch_tokens:'Prefill batch',kv_cache_dtype:'KV cache precision',prefix_caching:'Prefix caching',speculative_decoding:'Speculative decoding'};
   const show=v=>v===undefined?'unknown':typeof v==='object'?JSON.stringify(v):String(v);
   for(const key of new Set([...Object.keys(before),...Object.keys(after)]))if(JSON.stringify(before[key])!==JSON.stringify(after[key])){
@@ -77,7 +78,7 @@ if(panel){
       }
       if(['awaiting_approval','approved_unsubmitted'].includes(row.state)){
         const controls=text('div','','genie-controls');
-        const approve=text('button',row.state==='approved_unsubmitted'?'Start the approved change':'Approve this change','button');approve.type='button';approve.disabled=busy.has(row.id)||state.suspended;
+        const approve=text('button',row.state==='approved_unsubmitted'?'Start the approved change':row.review?.trial?'Approve this trial':'Approve this change','button');approve.type='button';approve.disabled=busy.has(row.id)||state.suspended;
         approve.addEventListener('click',()=>action(row,'approve'));controls.append(approve);
         if(row.state==='awaiting_approval'){const decline=text('button','Decline','button');decline.type='button';decline.disabled=busy.has(row.id);decline.addEventListener('click',()=>action(row,'decline'));controls.append(decline);}
         card.append(controls);

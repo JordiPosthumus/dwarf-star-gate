@@ -65,7 +65,7 @@ export class ServerOperations {
     if(this.closed)throw new Error('Operation proposals are closed.');
     const validShape=this.proposalKind==='hourglass'
       ?exact(input,['id','worker_id','model','reason'])&&typeof input.model==='string'&&input.model.trim()&&input.model.length<=256
-      :exact(input,['id','worker_id','image','command','reason'])&&/^sha256:[a-f0-9]{64}$/.test(input.image)&&Array.isArray(input.command)&&input.command.length&&!input.command.some(s=>typeof s!=='string'||s.includes('\0'))&&Buffer.byteLength(JSON.stringify(input.command))<=65536;
+      :exact(input,['id','worker_id','image','command','reason',...(Object.hasOwn(input??{},'trial')?['trial']:[])])&&(!Object.hasOwn(input,'trial')||typeof input.trial==='boolean')&&/^sha256:[a-f0-9]{64}$/.test(input.image)&&Array.isArray(input.command)&&input.command.length&&!input.command.some(s=>typeof s!=='string'||s.includes('\0'))&&Buffer.byteLength(JSON.stringify(input.command))<=65536;
     if(!validShape||!UUID.test(input.id)||!ID.test(input.worker_id)||!this.workers.has(input.worker_id)||typeof input.reason!=='string'||!input.reason.trim()||input.reason.length>2000)throw new Error(this.proposalKind==='hourglass'?'Specify an enrolled worker and saved measurement.':'Specify a configured worker, exact image, complete command and reason.');
     for(const id of [conversation_id,reply_id])if(id!==null&&!UUID.test(id))throw new Error('Invalid originating conversation.');
     const folder=this.folder(input.id),existing=fs.existsSync(folder)?this.read(input.id,'proposal.json'):null;

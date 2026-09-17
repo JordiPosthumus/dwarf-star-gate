@@ -85,6 +85,21 @@ class PublicationTest(unittest.TestCase):
         self.assertEqual(self.git('ls-files', '--', 'records/unrelated-private.json'), '')
         self.assertEqual(private.read_text(), '{"private":true}\n')
 
+    def test_measured_trial_archives_candidate_evidence_but_keeps_original_approval(self):
+        f = self.fixture
+        f.plan['trial'] = {'fixture': 'reviewed measurement'}
+        self.approve()
+        result = f.execute(lambda _: {'state': 'completed', 'job_id': 'e' * 32})
+        self.assertEqual(result['state'], 'restored')
+        artifact = self.library / result['publication']['artifact']
+        self.assertEqual((artifact / 'qualification-candidate/result.json').read_bytes(),
+            (f.folder / 'qualification-candidate/result.json').read_bytes())
+        self.assertEqual(json.loads((artifact / 'trial-result.json').read_text())['job_id'], 'e' * 32)
+        record = json.loads(f.record_file.read_text())
+        self.assertEqual(record['approval'], f.record['approval'])
+        self.assertEqual(read_artifact_reference(self.library, record['evidence'][-1])['state'], 'completed')
+        self.assertEqual(self.git('diff', '--cached', '--name-only'), 'other.txt')
+
     def test_published_links_reach_actual_tool_request_and_reply_without_rewriting_evidence(self):
         f = self.fixture
         result = f.execute(); self.assertEqual(result['state'], 'completed')

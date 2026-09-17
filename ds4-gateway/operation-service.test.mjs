@@ -15,7 +15,7 @@ import {GenieChat} from './genie-chat.mjs';
 const hash=v=>createHash('sha256').update(v).digest('hex');
 const python=execFileSync('python3',['-c','import sys; print(sys.executable)'],{encoding:'utf8'}).trim();
 async function waitFor(check){for(let i=0;i<150;i++){const v=await check();if(v)return v;await new Promise(r=>setTimeout(r,30));}throw new Error('Fixture status did not arrive');}
-async function rig(t){
+async function rig(t,{trial=false}={}){
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'sg-operations-ui-')),directory=path.join(root,'operations');
   const library=path.join(root,'records');fs.mkdirSync(path.join(library,'approved'),{recursive:true});
   const record=path.join(library,'approved','fixture.json');fs.writeFileSync(record,'{"kind":"approved","worker_id":"fixture"}');
@@ -24,7 +24,11 @@ async function rig(t){
   const config={ui_worker_management:true,control_socket:'/fixture.sock',server_records_directory:library,
     genie_chat:{python,inspection:{workers:{fixture:{ssh:['fixture.invalid'],container:'fixture-container'}}}},
     server_operations:{enabled:true,workers:{fixture:{native_url:'http://127.0.0.1:8001',qualification:{}}}}};
-  const service=createOperationService(config,{directory,isTesting:()=>testing,isEnabled:()=>enabled,prepare:async(_python,input)=>{
+  if(trial)config.hourglass_console={url:'http://127.0.0.1:4534',targets:[{model:'fixture-measurement',worker_id:'fixture',route:'direct',maintenance:true}]};
+  const preparedInputs=[];
+  const service=createOperationService(config,{directory,isTesting:()=>testing,isEnabled:()=>enabled,
+    trialReview:async target=>({fixture_review:target.model}),prepare:async(_python,input)=>{
+    preparedInputs.push(input);
     preparations++;assert.equal(input.enrollment.ssh,'fixture.invalid');assert.deepEqual(input.enrollment.cache_capacity_policy,{max_loss_percent:0});
     return {plan:{worker_id:'fixture',record_file:record,record_revision:input.record_revision,execution:{path:executor,sha256:hash(fs.readFileSync(executor))}},
       review:{before:{image:'retained',command:['PRIVATE_COMMAND']},after:{image:input.proposal.image,command:input.proposal.command},checks:['fixture only'],scope:'Disposable fixture, not serving qualification'}};
@@ -37,8 +41,23 @@ async function rig(t){
   const finish=()=>{if(fs.existsSync(folder))fs.writeFileSync(path.join(folder,'finish.fixture'),'finish');};
   t.after(async()=>{finish();await service.store.idle();if(fs.existsSync(path.join(folder,'launch-intent.json')))await waitFor(async()=>!(await service.store.current(id)).runner?.process_alive);service.close();await new Promise(r=>server.close(r));fs.rmSync(root,{recursive:true,force:true});});
   const post=async(route,body,headers={})=>fetch(base+route,{method:'POST',headers:{'content-type':'application/json',...headers},body:JSON.stringify(body)});
-  return {service,server,base,id,proposal,folder,post,finish,setEnabled:v=>{enabled=v;},setTesting:v=>{testing=v;},preparations:()=>preparations};
+  return {service,server,base,id,proposal,folder,post,finish,preparedInputs,setEnabled:v=>{enabled=v;},setTesting:v=>{testing=v;},preparations:()=>preparations};
 }
+
+test('trial proposal freezes its enrolled measurement and does not start it',async t=>{
+  const r=await rig(t,{trial:true});
+  await r.service.tool({action:'propose',proposal:{...r.proposal,trial:true}});await r.service.store.idle();
+  assert.equal((await r.service.tool({action:'status',id:r.id})).state,'awaiting_approval');
+  assert.deepEqual(r.preparedInputs[0].enrollment.trial,{fixture_review:'fixture-measurement'});
+  assert.equal(fs.existsSync(path.join(r.folder,'launch-intent.json')),false);
+  assert.match(operationChanges({trial:{benchmark_version:'4.1.0'}})[0],/restore and qualify the original/);
+});
+
+test('trial without an enrolled direct measurement fails before native preparation',async t=>{
+  const r=await rig(t);await r.service.tool({action:'propose',proposal:{...r.proposal,trial:true}});await r.service.store.idle();
+  assert.equal((await r.service.tool({action:'status',id:r.id})).state,'prepare_failed');
+  assert.equal(r.preparations(),0);assert.equal(fs.existsSync(path.join(r.folder,'launch-intent.json')),false);
+});
 
 test('operations stay absent by default and tool status does not expose execution paths or review commands',()=>{
   assert.equal(createOperationService({}),null);

@@ -374,3 +374,30 @@ These are dated execution receipts, not fresh health checks or measured speed
 improvements. The tool does not launch, repeat, approve, keep or restore a change.
 The complete research-to-trial-to-keep-or-restore workflow still needs native
 acceptance; this evidence connection alone does not establish it.
+
+## Measured experiments that return the original
+
+Genie can set `trial: true` on `propose_server_change`. This uses the same server
+changes capability switch and exact-plan approval. The worker must already have
+an enrolled direct Hourglass target with owned maintenance enabled. Preparation
+captures the native one-hour measurement review using read-only requests.
+
+The approved operation drains existing work, retains the original container,
+applies the proposed recipe and runs its native checks. If those pass, it submits
+the reviewed Hourglass request once and observes that same job until it finishes.
+It then restores and qualifies the original, even when the candidate passes.
+Failed qualification skips measurement; a proven measurement rejection also
+returns the original. Unknown start acceptance keeps the hold for inspection:
+the runner neither repeats the start nor stops potentially active work.
+
+The review card explicitly identifies the trial and its return behavior. Saved
+status includes the native job ID and measured candidate signature. The private
+record keeps the original approval and archives both versions' check results
+and the trial receipts. A candidate trial has no newly approved configuration
+revision: do not attribute its score to the restored original's record revision.
+Read its native job report and exact trial identity when comparing with a baseline.
+Adopting an improvement remains a separate reviewed serving change.
+
+Ordinary proposals without `trial: true` retain their existing apply-and-qualify
+behavior. Fixture tests cover the new lifecycle; native trial acceptance remains
+necessary before claiming that a particular upstream improvement works or is faster.

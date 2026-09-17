@@ -141,6 +141,16 @@ class ServingRecordPublisher:
         destination.mkdir(mode=0o700)
         for item in sorted(source.iterdir()):
             self.copy_file(item, destination / item.name)
+        if plan.get('trial') is not None:
+            # Keep both qualification and measurement evidence when a successful
+            # trial deliberately returns the original instead of adopting it.
+            for name in ('trial-result.json', 'qualified-candidate.json', 'cache-comparison-candidate.json'):
+                if (folder / name).exists(): self.copy_file(folder / name, artifact / name)
+            for name in ('qualification-candidate', 'trial-measurement'):
+                if (folder / name).exists() and not (artifact / name).exists():
+                    (artifact / name).mkdir(mode=0o700)
+                    for item in sorted((folder / name).iterdir()):
+                        self.copy_file(item, artifact / name / item.name)
         baseline=folder / 'baseline-cache'
         if baseline.exists():
             (artifact / 'baseline-cache').mkdir(mode=0o700)
@@ -202,6 +212,9 @@ class ServingRecordPublisher:
             'scope': 'Recorded native checks for this startup; not a benchmark or fresh-machine installation.'})
         record['evidence'].append({**linked(artifact / 'qualification-evidence.json'),
             'captured_at': at, 'scope': 'Links to the original requests and replies supporting these checks.'})
+        if plan.get('trial') is not None:
+            record['evidence'].append({**linked(artifact / 'trial-result.json'), 'captured_at': at,
+                'scope': 'Candidate trial outcome before restoring this original configuration. No candidate adoption or speed claim.'})
         record['serving_operation'] = {'id': folder.name, 'outcome': which,
             'previous_approved_revision': plan['record_revision'], 'approval_reference': reference + '/approved.json'}
         if which == 'candidate':

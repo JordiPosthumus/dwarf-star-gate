@@ -6,6 +6,7 @@ import {createHash,randomBytes} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {ServerOperations} from './server-operations.mjs';
 import {operationRunner} from './operation-runner.mjs';
+import {HourglassConsole} from './hourglass-console.mjs';
 
 const prepareScript=fileURLToPath(new URL('./serving_prepare_cli.py',import.meta.url));
 const ID=/^[a-zA-Z0-9][\w-]{0,63}$/;
@@ -15,6 +16,10 @@ function outcomeEvidence(result,qualification){
   if(!result)return null;
   const publication=result.publication,admission=result.readmission;
   return {recorded_at:recordedTime(result.at),
+    ...(result.trial?{trial:{state:['completed','stopped','error','cancelled','rejected_before_acceptance','qualification_failed'].includes(result.trial.state)?result.trial.state:'unknown',
+      job_id:/^[a-f0-9]{32}$/.test(result.trial.job_id??'')?result.trial.job_id:null,
+      candidate_signature_sha256:revision(result.trial.candidate_signature_sha256),
+      scope:'Candidate measurement followed by original restoration. This is not candidate adoption; the measured candidate has no newly approved configuration revision.'}}:{}),
     serving:['candidate','previous'].includes(result.serving)?result.serving:null,
     configuration:publication?.state==='recorded'?{
       record_revision:revision(publication.record_revision),
@@ -48,7 +53,7 @@ export function operationToolView(row){
     scope:'Saved proposal or observed operation state. Proposal is not approval; process heartbeat is not model progress. Only the owner can approve in the gateway UI.'};
 }
 
-export function createOperationService(config,{directory,isTesting=()=>false,isEnabled=()=>true,prepare=prepareProcess,runner=null}={}){
+export function createOperationService(config,{directory,isTesting=()=>false,isEnabled=()=>true,prepare=prepareProcess,runner=null,trialReview=null}={}){
   if(config.server_operations?.enabled!==true)return null;
   if(config.ui_worker_management!==true||!config.control_socket||!config.server_records_directory||!config.genie_chat?.python)throw new Error('Serving operations need worker management, a private record library and the configured Genie interpreter.');
   const enrolled=config.server_operations.workers;
@@ -64,7 +69,20 @@ export function createOperationService(config,{directory,isTesting=()=>false,isE
   const runtime=runner??operationRunner({python:config.genie_chat.python,directory});
   const store=new ServerOperations({directory,workers:Object.keys(targets),...runtime,
     recordRevision:async id=>{const file=path.join(config.server_records_directory,'approved',id+'.json');const fd=fs.openSync(file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);try{const stat=fs.fstatSync(fd);if(!stat.isFile()||stat.size>2*1024*1024)throw new Error('Invalid record');return createHash('sha256').update(fs.readFileSync(fd)).digest('hex');}finally{fs.closeSync(fd);}},
-    prepare:async(proposal,record_revision)=>prepare(config.genie_chat.python,{proposal,record_revision,enrollment:targets[proposal.worker_id],directory:path.join(directory,proposal.id)})});
+    prepare:async(proposal,record_revision)=>{
+      const enrollment=structuredClone(targets[proposal.worker_id]);
+      if(proposal.trial===true){
+        const target=config.hourglass_console?.targets?.find(t=>t.worker_id===proposal.worker_id&&t.route==='direct'&&t.maintenance===true);
+        if(!target)throw new Error('A measured trial requires this worker’s enrolled direct Hourglass target.');
+        if(trialReview)enrollment.trial=await trialReview(target);
+        else{
+          const client=new HourglassConsole(config.hourglass_console.url);
+          await client.prepare(target.model);
+          enrollment.trial={...structuredClone(client.prepared),url:config.hourglass_console.url};
+        }
+      }
+      return prepare(config.genie_chat.python,{proposal,record_revision,enrollment,directory:path.join(directory,proposal.id)});
+    }});
   const present=async row=>{
     if(row.state==='unreadable')return row;
     let current;
@@ -96,7 +114,7 @@ export function createOperationService(config,{directory,isTesting=()=>false,isE
           // These validation errors occur before creating any proposal. Other
           // errors may follow a write and must keep their uncertain outcome.
           if(error.message==='Specify a configured worker, exact image, complete command and reason.')return {
-            state:'rejected',error:'This request was not accepted. Supply exactly id (UUID), worker_id (enrolled worker), image (sha256 plus 64 lowercase hex digits), command (complete array of strings, at most 65536 JSON bytes), and reason (1–2000 characters). This request did not start preparation or a serving operation. Check the same ID for any earlier submission before revising it.'};
+            state:'rejected',error:'This request was not accepted. Supply id (UUID), worker_id (enrolled worker), image (sha256 plus 64 lowercase hex digits), command (complete array of strings, at most 65536 JSON bytes), and reason (1–2000 characters). Optional trial must be a boolean. This request did not start preparation or a serving operation. Check the same ID for any earlier submission before revising it.'};
           if(error.message==='Invalid originating conversation.')return {state:'rejected',error:'This request was not accepted because its originating conversation is invalid. Report the integration problem; this request did not start preparation or a serving operation. Earlier submissions must still be observed.'};
           throw error;
         }

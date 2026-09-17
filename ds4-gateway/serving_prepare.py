@@ -18,6 +18,8 @@ from serving_bundle import build_executor
 from serving_operation import cache_policy, dated, restoration_authority
 from serving_qualification import NativeQualification
 from serving_records import ServingRecordPublisher
+from serving_trial import prepare_trial
+from operation_maintenance import GatewayControl
 
 
 def option(command, name):
@@ -81,7 +83,7 @@ def candidate_record(old, profile, contract):
     return record
 
 
-def prepare(proposal, enrollment, folder, record_revision, *, docker=None):
+def prepare(proposal, enrollment, folder, record_revision, *, docker=None, control=None):
     folder = Path(folder).resolve()
     capacity_policy = cache_policy(enrollment.get('cache_capacity_policy'))
     worker = proposal.get('worker_id')
@@ -111,6 +113,10 @@ def prepare(proposal, enrollment, folder, record_revision, *, docker=None):
     if any(set(rule['success_checks']) - supported for rule in restoration):
         raise ValueError('The enrolled native checks do not cover the recorded restoration requirements')
     record = candidate_record(old,profile,contracts['candidate'])
+    trial = None
+    if proposal.get('trial') is True:
+        trial = prepare_trial(enrollment['trial'], profile, contracts['candidate']['model'], transport,
+            control or GatewayControl(target['gateway_socket']), worker)
     # All remote preparation above is observation only. Freeze source only after
     # prerequisites are established; no runner is launched by this function.
     before_profile = copy.deepcopy(profile)
@@ -120,13 +126,19 @@ def prepare(proposal, enrollment, folder, record_revision, *, docker=None):
     plan = {'worker_id':worker,'record_file':str(record_file),'record_revision':record_revision,
         'target':target,'profile':profile,'qualification':contracts,'candidate_record':record,'execution':execution,
         'cache_capacity_policy':capacity_policy}
+    if trial is not None: plan['trial'] = trial
     return {'plan':plan,'review':{'at':datetime.now(timezone.utc).isoformat(),'worker_id':worker,
         'before':{'image':profile['before']['Image'],'command':profile['before']['Config']['Cmd']},
         'after':{'image':proposal['image'],'command':proposal['command']},
         'checks':sorted(set.union(*(set(q.checks_supported) for q in qualifiers.values())) | {'runtime_identity','native_idle'}),'restoration':restoration,
         'qualification_by_version':{which:sorted(q.checks_supported) for which,q in qualifiers.items()},
         'cache_capacity_policy':copy.deepcopy(capacity_policy),
+        **({'trial': {'window_seconds': 3600, 'benchmark_version': trial['hourglass']['benchmark_version'],
+            'model': trial['native_request']['model'], 'outcome': 'restore_original',
+            'scope': 'Qualify the candidate, measure it once, then restore and qualify the original. No candidate adoption. Uncertain native acceptance requires inspection, never a repeated start.'}} if trial else {}),
         'settings':{'current':previous_record['settings'],'proposed':record['settings'],
             'current_thinking':previous_record['configuration']['chat_template_defaults'],
             'proposed_thinking':record['configuration']['chat_template_defaults']},
-        'scope':'Drain after current work finishes, retain the prior container, apply and qualify, then record and return. Launcher files, recovery bindings and gateway capacity are unchanged. A missing or uncertain result is not retried. Native two-request concurrency is checked only when explicitly enrolled; full-context requests may serialize under memory pressure. This does not qualify fresh-machine setup or establish a speed improvement.'}}
+        'scope':('Drain after current work finishes, qualify the candidate, measure it once with Hourglass, then restore and qualify the original. The candidate is not adopted. ' if trial else
+            'Drain after current work finishes, retain the prior container, apply and qualify, then record and return. ')
+            +'Launcher files, recovery bindings and gateway capacity are unchanged. A missing or uncertain result is not retried. Native two-request concurrency is checked only when explicitly enrolled; full-context requests may serialize under memory pressure. This does not qualify fresh-machine setup or establish a speed improvement.'}}
