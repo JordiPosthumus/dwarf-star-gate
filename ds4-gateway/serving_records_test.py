@@ -100,6 +100,19 @@ class PublicationTest(unittest.TestCase):
         self.assertEqual(read_artifact_reference(self.library, record['evidence'][-1])['state'], 'completed')
         self.assertEqual(self.git('diff', '--cached', '--name-only'), 'other.txt')
 
+    def test_rejected_cache_capacity_keeps_native_pass_and_overall_failure_distinct(self):
+        f=self.fixture;f.apis['candidate'].cache_tokens=480000
+        result=f.execute();self.assertEqual(result['state'],'restored')
+        record=json.loads(f.record_file.read_bytes())
+        index=read_artifact_reference(self.library,record['evidence'][-1])
+        attempt=index['candidate_attempt']
+        self.assertEqual(read_artifact_reference(self.library,attempt['native_result'])['state'],'passed')
+        verdict=read_artifact_reference(self.library,attempt['verdict'])
+        self.assertEqual(verdict['state'],'failed')
+        self.assertEqual(verdict['cache_capacity_acceptance']['reason'],'exceeds_reviewed_allowance')
+        self.assertEqual(read_artifact_reference(self.library,attempt['cache_comparison'])['delta_tokens'],-20000)
+        self.assertEqual(record['approval'],f.record['approval'])
+
     def test_published_links_reach_actual_tool_request_and_reply_without_rewriting_evidence(self):
         f = self.fixture
         result = f.execute(); self.assertEqual(result['state'], 'completed')
@@ -136,6 +149,11 @@ class PublicationTest(unittest.TestCase):
         self.assertEqual(record['configuration']['qualified_container_reference']['started_at'], 'new-start')
         index = read_artifact_reference(self.library, record['evidence'][-1])
         self.assertIn('/qualification-previous/', index['result']['path'])
+        self.assertEqual(index['serving_version'],'previous')
+        self.assertEqual(read_artifact_reference(self.library,index['result'])['state'],'passed')
+        attempt=index['candidate_attempt']
+        self.assertEqual(read_artifact_reference(self.library,attempt['native_result'])['state'],'failed')
+        self.assertEqual(read_artifact_reference(self.library,attempt['verdict'])['state'],'failed')
         self.assertEqual(read_artifact_reference(self.library, index['result'])['state'], 'passed')
 
     def test_published_cache_comparison_is_reachable_and_preserves_baseline_bytes(self):

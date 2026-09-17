@@ -368,7 +368,11 @@ qualification checks. A missing final measurement or excessive loss fails the
 candidate and uses its approved retained-original restoration path. The original
 must still pass its native qualification; its capacity comparison is reported
 without letting startup allocation variation veto that restoration. The verdict,
-policy and measurements remain in the operation's archived evidence.
+policy and measurements remain in the operation's archived evidence. The linked
+qualification index identifies the serving version separately from the candidate
+attempt and exposes its native result, overall verdict and cache comparison,
+including rejected changes that returned the original. A passed native check
+does not by itself mean the candidate was accepted.
 
 Existing frozen proposals and generic recovery paths are unchanged. These checks
 are tested with synthetic serving fixtures; they do not establish a production

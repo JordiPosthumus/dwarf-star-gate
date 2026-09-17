@@ -141,9 +141,9 @@ class ServingRecordPublisher:
         destination.mkdir(mode=0o700)
         for item in sorted(source.iterdir()):
             self.copy_file(item, destination / item.name)
-        if plan.get('trial') is not None:
-            # Keep both qualification and measurement evidence when a successful
-            # trial deliberately returns the original instead of adopting it.
+        if which == 'previous':
+            # Retain rejected-candidate checks as well as successful trial data.
+            # Restoring the original must not hide why the candidate was rejected.
             for name in ('trial-result.json', 'qualified-candidate.json', 'cache-comparison-candidate.json'):
                 if (folder / name).exists(): self.copy_file(folder / name, artifact / name)
             for name in ('qualification-candidate', 'trial-measurement'):
@@ -197,9 +197,14 @@ class ServingRecordPublisher:
             evidence.append(entry)
         save(artifact, 'qualification-evidence.json', {
             'result': linked(destination / 'result.json'), 'cases': evidence,
+            'serving_version': which,
+            'candidate_attempt': {key:linked(artifact / name) for key,name in (
+                ('native_result','qualification-candidate/result.json'),
+                ('verdict','qualified-candidate.json'),
+                ('cache_comparison','cache-comparison-candidate.json')) if (artifact / name).is_file()},
             **({'cache_baseline':linked(artifact / 'baseline-cache' / 'result.json')} if baseline.exists() else {}),
             **({'cache_comparison':linked(artifact / comparison_file.name)} if comparison_file.exists() else {}),
-            'scope': 'Exact archived evidence for the qualified version. Responses include JSON, metrics and event streams; the JSON artifact reader cannot read non-JSON bodies. Hashes establish bytes, not correctness.'})
+            'scope': 'Exact archived evidence. result and cases describe serving_version; candidate_attempt is separate and may describe a rejected version. A native pass is not overall acceptance: inspect its verdict and cache comparison. Missing attempt links mean evidence unavailable. Responses include JSON, metrics and event streams; the JSON artifact reader cannot read non-JSON bodies. Hashes establish bytes, not correctness.'})
         record['recorded_at'] = record['evidence_updated_at'] = at
         record.setdefault('configuration', {})['qualified_container_reference'] = {
             'path': reference + '/container.json', 'sha256': hashlib.sha256(read_bytes(artifact / 'container.json')).hexdigest(),
