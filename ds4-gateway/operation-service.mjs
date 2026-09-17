@@ -7,18 +7,21 @@ import {fileURLToPath} from 'node:url';
 import {ServerOperations} from './server-operations.mjs';
 import {operationRunner} from './operation-runner.mjs';
 import {HourglassConsole} from './hourglass-console.mjs';
+import {hourglassForChat} from './hourglass-reports.mjs';
 
 const prepareScript=fileURLToPath(new URL('./serving_prepare_cli.py',import.meta.url));
 const ID=/^[a-zA-Z0-9][\w-]{0,63}$/;
 const revision=value=>/^[a-f0-9]{64}$/.test(value??'')?value:null;
 const recordedTime=value=>typeof value==='number'&&Number.isFinite(value)&&value>0?value:null;
-function outcomeEvidence(result,qualification){
+function outcomeEvidence(result,qualification,trialReport){
   if(!result)return null;
   const publication=result.publication,admission=result.readmission;
   return {recorded_at:recordedTime(result.at),
     ...(result.trial?{trial:{state:['completed','stopped','error','cancelled','rejected_before_acceptance','qualification_failed'].includes(result.trial.state)?result.trial.state:'unknown',
       job_id:/^[a-f0-9]{32}$/.test(result.trial.job_id??'')?result.trial.job_id:null,
       candidate_signature_sha256:revision(result.trial.candidate_signature_sha256),
+      report_state:trialReport?'available':'unavailable',
+      report:trialReport?hourglassForChat({configured:true,reports:[trialReport]}).reports[0]??null:null,
       scope:'Candidate measurement followed by original restoration. This is not candidate adoption; the measured candidate has no newly approved configuration revision.'}}:{}),
     serving:['candidate','previous'].includes(result.serving)?result.serving:null,
     configuration:publication?.state==='recorded'?{
@@ -49,11 +52,11 @@ export function operationToolView(row){
     plan_revision:row.plan_revision??null,error:row.error??null,
     ...(runner?{process_alive:typeof runner.process_alive==='boolean'?runner.process_alive:null,progress:runner.progress?{
       phase:runner.progress.phase,detail:runner.progress.detail,changed_at:runner.progress.changed_at,heartbeat_at:runner.progress.heartbeat_at}:null,
-      outcome:runner.result?.state??null,evidence:outcomeEvidence(runner.result,row.qualification)}:{}),
+      outcome:runner.result?.state??null,evidence:outcomeEvidence(runner.result,row.qualification,row.trial_report)}:{}),
     scope:'Saved proposal or observed operation state. Proposal is not approval; process heartbeat is not model progress. Only the owner can approve in the gateway UI.'};
 }
 
-export function createOperationService(config,{directory,isTesting=()=>false,isEnabled=()=>true,prepare=prepareProcess,runner=null,trialReview=null}={}){
+export function createOperationService(config,{directory,isTesting=()=>false,isEnabled=()=>true,prepare=prepareProcess,runner=null,trialReview=null,readTrialReport=null}={}){
   if(config.server_operations?.enabled!==true)return null;
   if(config.ui_worker_management!==true||!config.control_socket||!config.server_records_directory||!config.genie_chat?.python)throw new Error('Serving operations need worker management, a private record library and the configured Genie interpreter.');
   const enrolled=config.server_operations.workers;
@@ -83,11 +86,30 @@ export function createOperationService(config,{directory,isTesting=()=>false,isE
       }
       return prepare(config.genie_chat.python,{proposal,record_revision,enrollment,directory:path.join(directory,proposal.id)});
     }});
+  const reportReads=new Map();
+  const collectTrialReport=async(row,result)=>{
+    const cached=store.read(row.id,'trial-report.json');if(cached)return cached;
+    if(reportReads.has(row.id))return reportReads.get(row.id);
+    const task=(async()=>{
+      const plan=store.read(row.id,'plan.json');
+      if(!plan?.trial||result?.state!=='restored'||result.trial?.state!=='completed'||!/^[a-f0-9]{32}$/.test(result.trial.job_id??'')||!revision(result.trial.candidate_signature_sha256))return null;
+      const report=readTrialReport?await readTrialReport(plan.trial.hourglass.url,result.trial.job_id):await new HourglassConsole(plan.trial.hourglass.url).report(result.trial.job_id);
+      const value={...report,association:{worker_id:row.worker_id,route:'direct',contention:'owned-maintenance',approved_configuration_revision:null,
+        source:'Recorded serving trial job and native candidate identity; original restored afterward.',
+        trial:{operation_id:row.id,job_id:result.trial.job_id,candidate_signature_sha256:result.trial.candidate_signature_sha256}}};
+      const safe=hourglassForChat({configured:true,reports:[value]}).reports[0];
+      if(!safe?.summary?.score?.final||safe.summary.run_key!==createHash('sha256').update(result.trial.job_id).digest('hex').slice(0,24))return null;
+      store.write(row.id,'trial-report.json',safe);return safe;
+    })().finally(()=>reportReads.delete(row.id));reportReads.set(row.id,task);return task;
+  };
   const present=async row=>{
     if(row.state==='unreadable')return row;
     let current;
     try{const result=store.read(row.id,'runner-result.json');if(['completed','restored','failed_unchanged'].includes(result?.state))current={...row,runner:{state:result.state,process_alive:null,result,scope:'Saved completed outcome. Process liveness and current server health were not rechecked.'}};}catch{/* Observe a preserved unreadable result through the existing runner. */}
     current??=await store.current(row.id);
+    if(current.runner?.result?.trial){
+      try{current.trial_report=await collectTrialReport(row,current.runner.result);}catch{current.trial_report=null;}
+    }
     const which=current.runner?.result?.serving;
     if(['candidate','previous'].includes(which)){
       try{
@@ -102,6 +124,7 @@ export function createOperationService(config,{directory,isTesting=()=>false,isE
   };
   const toolConfig={url:null,token:randomBytes(32).toString('base64url'),workers:Object.keys(targets)};
   return {store,toolConfig,
+    trialReports:()=>({configured:true,reports:store.list().flatMap(row=>{try{const r=store.read(row.id,'trial-report.json');return r?[r]:[];}catch{return [];}})}),
     bind:port=>{toolConfig.url=`http://127.0.0.1:${port}/api/genie/operation-tools`;},
     status:async()=>({configured:true,suspended:isTesting(),operations:await Promise.all(store.list().map(present))}),
     change:async input=>{if(input.action==='approve'&&!isEnabled())throw new Error('Server changes are switched off. Existing operations continue.');if(input.action==='approve'&&isTesting())throw new Error('Server changes are paused while testing mode is active.');return store.change(input);},

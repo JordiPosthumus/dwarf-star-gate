@@ -6,9 +6,13 @@ import {hourglassReportSummary} from './hourglass-report.mjs';
 const worker=v=>typeof v==='string'&&/^[a-zA-Z0-9][\w-]{0,63}$/.test(v)?v:null;
 const digest=v=>typeof v==='string'&&/^[a-f0-9]{64}$/.test(v)?v:null;
 const pick=(v,allowed)=>allowed.includes(v)?v:'unknown';
+const trialSource='Recorded serving trial job and native candidate identity; original restored afterward.';
+const trialAssociation=v=>v?.source===trialSource&&/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(v.trial?.operation_id??'')&&/^[a-f0-9]{32}$/.test(v.trial?.job_id??'')&&digest(v.trial?.candidate_signature_sha256)
+  ?{trial:{operation_id:v.trial.operation_id,job_id:v.trial.job_id,candidate_signature_sha256:v.trial.candidate_signature_sha256}}:{};
 const association=v=>({worker_id:worker(v?.worker_id),approved_configuration_revision:digest(v?.approved_configuration_revision),
   route:pick(v?.route,['direct','gateway','testing-door']),contention:pick(v?.contention,['owner-confirmed-idle','observed-contention','owned-maintenance']),
-  source:v?.source==='Reviewed gateway mapping and observed native target; full settings equivalence is not implied.'?v.source:'operator-supplied association; not independently verified'});
+  ...trialAssociation(v),
+  source:v?.source==='Reviewed gateway mapping and observed native target; full settings equivalence is not implied.'||trialAssociation(v).trial?v.source:'operator-supplied association; not independently verified'});
 const scope='Saved Hourglass reports only. No benchmark is started. Imported worker/configuration/route/contention associations are operator supplied, not inferred or verified. Owned-run associations retain their recorded mapping and maintenance-window scope; this does not prove complete settings equivalence or exclude new direct traffic. Preserve each recorded metric and protocol; do not infer current performance or an upgrade.';
 
 export class HourglassReports {

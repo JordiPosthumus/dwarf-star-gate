@@ -1,6 +1,7 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {hourglassReportSummary} from './hourglass-report.mjs';
 import {compareHourglassReports} from './hourglass-comparison.mjs';
+import {createHash} from 'node:crypto';
 const row=(revision,score)=>({report_revision:revision.repeat(64),association:{worker_id:'example',route:'direct',contention:'owned-maintenance',approved_configuration_revision:'f'.repeat(64)},summary:hourglassReportSummary({format:'hourglass-public-report-v1',model:'example',run_key:revision,state:'final',is_current_run:false,score_version:'total-points-v1',hourglass_score:score,benchmark_version:'4.1.0',scoring:'net-hour-v3',timing_policy:'hour-v1',bank_fingerprint:'c'.repeat(64),configuration_key:revision.repeat(64),machine_key:'d'.repeat(64),window_seconds:3600,active_seconds:3600.05,clock_adjustment_seconds:0,question_timeout_policy:'question-900s-auto-advance-v1',execution:{question_timeout_s:900,repeat:1,stop_after_wrong:0,round_policy:'whole-bank-slowest-wrong-first-v1'}})});
 const compare=(a,b)=>compareHourglassReports([a,b],a.report_revision,b.report_revision);
 test('matching recorded methodology yields arithmetic, preserving different configurations and original scores',()=>{
@@ -35,4 +36,18 @@ test('operation association checks the completed candidate, worker and both reco
  }
  assert.equal(compareLinked({id,result:null}).operation_association.state,'needs_review');
  b.association.approved_configuration_revision=null;assert.ok(compareLinked(operation).operation_association.issues.some(i=>i.field==='candidate.approved_configuration_revision'&&i.state==='unknown'));
+});
+
+test('a restored trial links candidate job and signature without inventing an adopted revision',()=>{
+ const a=row('a',20),b=row('b',25),id='11111111-2222-4333-8444-555555555555',job='e'.repeat(32),signature='3'.repeat(64);
+ a.association.approved_configuration_revision='1'.repeat(64);
+ b.summary.run_key=createHash('sha256').update(job).digest('hex').slice(0,24);
+ b.association={...b.association,approved_configuration_revision:null,source:'Recorded serving trial job and native candidate identity; original restored afterward.',trial:{operation_id:id,job_id:job,candidate_signature_sha256:signature}};
+ const operation={id,result:{id,worker_id:'example',state:'restored',evidence:{serving:'previous',qualification:{state:'passed'},configuration:{previous_record_revision:'1'.repeat(64),record_revision:'2'.repeat(64)},trial:{state:'completed',job_id:job,candidate_signature_sha256:signature}}}};
+ const compareTrial=op=>compareHourglassReports([a,b],a.report_revision,b.report_revision,op);
+ const result=compareTrial(operation);assert.equal(result.operation_association.state,'recorded_trial_identity_matches');assert.equal(result.difference.value,5);
+ assert.equal(result.candidate.association.approved_configuration_revision,null);
+ for(const change of[o=>o.result.evidence.trial.job_id='d'.repeat(32),o=>o.result.evidence.trial.candidate_signature_sha256='4'.repeat(64),o=>o.result.state='running',o=>o.result.evidence.configuration.previous_record_revision='5'.repeat(64)]){
+  const altered=structuredClone(operation);change(altered);assert.equal(compareTrial(altered).operation_association.state,'needs_review');
+ }
 });

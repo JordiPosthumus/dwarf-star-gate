@@ -1,4 +1,5 @@
 import {hourglassForChat} from './hourglass-reports.mjs';
+import {createHash} from 'node:crypto';
 
 // Compare retained aggregate facts, not raw questions or invented normalized scores.
 export function compareHourglassReports(reports,baselineRevision,candidateRevision,operation){
@@ -23,7 +24,7 @@ export function compareHourglassReports(reports,baselineRevision,candidateRevisi
   compare(conditions,'route',baseline.association.route==='unknown'?null:baseline.association.route,candidate.association.route==='unknown'?null:candidate.association.route);
   for(const [side,row] of [['baseline',baseline],['candidate',candidate]]){
     if(!['owned-maintenance','owner-confirmed-idle'].includes(row.association.contention))conditions.push({field:`${side}.contention`,state:row.association.contention==='observed-contention'?'contention_recorded':'unknown'});
-    if(!row.association.approved_configuration_revision)conditions.push({field:`${side}.approved_configuration_revision`,state:'unknown'});
+    if(!row.association.approved_configuration_revision&&!row.association.trial)conditions.push({field:`${side}.approved_configuration_revision`,state:'unknown'});
     if(!row.summary.configuration_key)conditions.push({field:`${side}.configuration_key`,state:'unknown'});
     if(row.summary.clock_adjustment_seconds===null||row.summary.clock_adjustment_seconds!==0)conditions.push({field:`${side}.clock_adjustment_seconds`,state:row.summary.clock_adjustment_seconds===null?'unknown':'adjusted',value:row.summary.clock_adjustment_seconds});
     if(row.summary.repaired||row.summary.caveats.length)conditions.push({field:`${side}.report_caveats`,state:'review',repaired:row.summary.repaired,caveats:row.summary.caveats});
@@ -40,6 +41,17 @@ export function compareHourglassReports(reports,baselineRevision,candidateRevisi
 
 function operationAssociation(baseline,candidate,{id,result}){
   const issues=[],evidence=result?.evidence,configuration=evidence?.configuration;
+  if(evidence?.trial){
+    const trial=evidence.trial,actual=candidate.association.trial;
+    if(result.id!==id||result.state!=='restored'||evidence.serving!=='previous'||trial.state!=='completed')issues.push({field:'trial',state:'not_completed_restored_trial'});
+    if(evidence.qualification?.state!=='passed')issues.push({field:'restored_qualification',state:'unverified'});
+    for(const[side,row]of[['baseline',baseline],['candidate',candidate]])if(row.association.worker_id!==result.worker_id)issues.push({field:side+'.worker_id',state:'different'});
+    if(!actual||actual.operation_id!==id||actual.job_id!==trial.job_id||actual.candidate_signature_sha256!==trial.candidate_signature_sha256)issues.push({field:'candidate.trial_identity',state:'different_or_unknown'});
+    if(!/^[a-f0-9]{32}$/.test(trial.job_id??'')||candidate.summary.run_key!==createHash('sha256').update(trial.job_id).digest('hex').slice(0,24))issues.push({field:'candidate.run_key',state:'different_or_unknown'});
+    if(!configuration?.previous_record_revision||baseline.association.approved_configuration_revision!==configuration.previous_record_revision)issues.push({field:'baseline.approved_configuration_revision',state:'different_or_unknown'});
+    return {id,state:issues.length?'needs_review':'recorded_trial_identity_matches',issues,
+      scope:'Candidate linked by the completed native trial job and configuration signature, not by the restored original’s approved revision. No candidate adoption or causal performance claim. Baseline record changes still need review.'};
+  }
   const expected={worker_id:result?.worker_id??null,
     baseline_configuration_revision:configuration?.previous_record_revision??null,
     candidate_configuration_revision:configuration?.record_revision??null};

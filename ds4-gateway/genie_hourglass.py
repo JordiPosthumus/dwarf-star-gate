@@ -72,7 +72,7 @@ def register_hourglass(config, emit):
             {'type': 'object', 'properties': {}, 'additionalProperties': False}),
         ('compare_hourglass_reports', 'Compare two exact saved report revisions from measurement status. '
             'Checks recorded protocols and conditions, and returns a score difference only when the methodology matches. '
-            'When evaluating a server change, include its operation_id from server_change_status to check that baseline and candidate reports match that completed operation\'s worker and before/after configuration revisions. '
+            'When evaluating a server change, first read server_change_status, then include its operation_id to link the reports. A restored measured trial uses its exact native job and candidate signature; ordinary adopted changes use before/after approved revisions. Never attribute a trial score to the restored original. '
             'Does not prove an upgrade caused a difference or start any work.',
             {'type': 'object', 'properties': {**{k: {'type': 'string', 'pattern': '^[a-f0-9]{64}$'}
                 for k in ['baseline_revision', 'candidate_revision']}, 'operation_id': {'type': 'string', 'description': 'Optional UUID of the saved server-change operation being evaluated.'}},

@@ -325,10 +325,11 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
 
 export async function runDashboard(configPath, port) {
   const {config} = loadConfig(configPath);
+  let operations=null;
   const hourglassReports=new HourglassReports(config.hourglass_reports);
   const hourglassDirectory=path.join(path.dirname(config.state_file),'hourglass');
   const hourglass=config.hourglass_console?new HourglassRuns(config.hourglass_console,hourglassDirectory,{
-    reports:()=>hourglassReports.snapshot(),
+    reports:()=>{const saved=hourglassReports.snapshot();return {...saved,reports:[...saved.reports,...(operations?.trialReports().reports??[])]};},
     operationStatus:id=>operations?.tool({action:'status',id})??null,
     maintenance:createHourglassMaintenance(config,path.join(hourglassDirectory,'operations')),
     records:()=>serverRecords.snapshot(gateway?.workers?.map(w=>w.id)??[])}):null;
@@ -514,7 +515,7 @@ export async function runDashboard(configPath, port) {
   const managementEnabled = config.ui_worker_management === true && !!config.control_socket;
   const sparkInspection=managementEnabled?sparkInspectionSync(config,()=>workerControl(config.control_socket,'/spark-services')):null;
   const serverRecords=new ServerRecords(config.server_records_directory);
-  const combinedHourglass=()=>{const saved=hourglassReports.snapshot(),runs=hourglass?.reportSnapshot();return runs?{...saved,configured:true,reports:[...saved.reports,...runs.reports],unavailable:[...saved.unavailable,...runs.unavailable]}:saved;};
+  const combinedHourglass=()=>{const saved=hourglassReports.snapshot(),runs=hourglass?.reportSnapshot(),trials=operations?.trialReports().reports??[];return {...saved,configured:saved.configured||!!runs||trials.length>0,reports:[...saved.reports,...(runs?.reports??[]),...trials],unavailable:[...saved.unavailable,...(runs?.unavailable??[])]};};
   const snapshot = () => ({ hourglass_measurements:hourglass?.status()??{configured:false},hourglass_reports:combinedHourglass(),server_records:serverRecords.snapshot(gateway?.workers?.map(w=>w.id)??[]),service:'dwarf-star-gate-dashboard', version: 1, time: Date.now(), started, read_only: !managementEnabled, worker_management:managementEnabled, gateway, gateway_at: gatewayAt, gateway_error: gatewayError, telemetry_error: writeError,monitoring_history:monitoringHistory.snapshot(),
     continuity_door:continuityDoor,continuity_door_error:continuityDoorError,rate_peaks:ratePeaks.snapshot(),cache_continuity:requestHistory.cacheSnapshot(),generation_alerts:requestHistory.generationEvidence.snapshot(),
     performance_lights:performanceHistory.snapshot(Date.now(),[...devices.values()].map(d=>({...d.snapshot(),connected:d.connected&&!gatewayError,active:performanceActive(d,gateway?.workers?.find(w=>w.id===d.id))}))),
@@ -531,7 +532,7 @@ export async function runDashboard(configPath, port) {
   const isCapabilityEnabled=key=>gateway?.genie_capabilities?.[key]!==false;
   let sparkSetupWatch=null;
   const sparkSetup=managementEnabled?createSparkSetupTools(config,{mediaQualification:config.spark_setup?.enabled?createSparkMediaQualification({directory:path.join(path.dirname(config.state_file),'genie','spark-media-qualification'),transport:setupTransport}):null,continuation:{status:id=>sparkSetupWatch?.status(id)??null,request:id=>{if(!sparkSetupWatch)throw new Error('Setup continuation requires Genie chat.');return sparkSetupWatch.request(id);}},isTesting,isEnabled:()=>gateway?.genie_capabilities?.spark_setup===true,registration:config.spark_setup?.enabled?createSparkRegistration({directory:path.join(path.dirname(config.state_file),'genie','spark-registration'),recordsDirectory:config.server_records_directory,control:(route,input)=>workerControl(config.control_socket,route,input,{channel:'gate_genie'})}):null}):null;
-  const operations=createOperationService(config,{directory:path.join(path.dirname(config.state_file),'genie','operations'),isTesting,isEnabled:()=>isCapabilityEnabled('server_changes')});
+  operations=createOperationService(config,{directory:path.join(path.dirname(config.state_file),'genie','operations'),isTesting,isEnabled:()=>isCapabilityEnabled('server_changes')});
   const queueTools=managementEnabled?createQueueTools({read:()=>readService('gateway',config),move:input=>workerControl(config.control_socket,'/genie-relocate-queued',input,{channel:'gate_genie'}),isTesting,isEnabled:()=>isCapabilityEnabled('rebalance')}):null;
   const mediaTools=managementEnabled&&config.media_jobs?.enabled?createMediaTools({setup:input=>workerControl(config.control_socket,'/genie-media-setup',input,{channel:'gate_genie'}),resources:createMediaResources(config,{isEnabled:()=>isCapabilityEnabled('inspection')}),read:async()=>{const [media,fleet]=await Promise.all([workerControl(config.control_socket,'/media-jobs'),workerControl(config.control_socket,'/workers')]);return {...media,fleet:fleet.workers.map(w=>({id:w.id,is_healthy:w.is_healthy,drained:w.drained,load:w.load,queued:w.queued}))};},start:input=>workerControl(config.control_socket,'/genie-media-start',input,{channel:'gate_genie'}),isTesting}):null;
   const recoveryTools=managementEnabled?createRecoveryTools({read:()=>readService('gateway',config),recover:input=>workerControl(config.control_socket,'/genie-recover-worker',input,{channel:'gate_genie'}),isTesting,isEnabled:()=>isCapabilityEnabled('recovery')}):null;

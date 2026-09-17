@@ -398,6 +398,15 @@ revision: do not attribute its score to the restored original's record revision.
 Read its native job report and exact trial identity when comparing with a baseline.
 Adopting an improvement remains a separate reviewed serving change.
 
+Reading a completed trial's server-change status fetches its exact aggregate
+report through the existing Hourglass adapter and retains that summary beside
+the operation. The summary then appears in measurement status, chat context and
+the existing comparison tool. Its association carries the operation ID, native
+job ID and candidate signature, with no candidate approval revision. Comparison
+checks those identities and the report's run key. Missing reports remain
+unavailable and can be read again; no benchmark is restarted. Baseline record
+revisions that changed since measurement still require review.
+
 Ordinary proposals without `trial: true` retain their existing apply-and-qualify
 behavior. Fixture tests cover the new lifecycle; native trial acceptance remains
 necessary before claiming that a particular upstream improvement works or is faster.
