@@ -20,6 +20,14 @@ test('setup choices and capability gate new starts; repeated request never launc
  const row=await f.service.start(input);f.enable(false);assert.equal((await f.service.start(input)).operation_id,row.operation_id);assert.equal(f.launches(),1);
  assert.equal(f.store.data.media_host_eligibility.one.video,false);assert.deepEqual(f.store.data.other,{keep:true});assert.ok(fs.existsSync(path.join(f.options.directory,row.operation_id,'recipe-bundle.json')));
 });
+test('named Docker inspection enrollment offers setup without rewriting the installation reference',async t=>{
+ const f=fixture(t);f.config.genie_chat.inspection.workers.one.container='qwen-serving';
+ assert.equal(f.service.status().hosts[0].available,true);
+ const row=await f.service.start({worker_id:'one',engine:'ace-step'});
+ const plan=JSON.parse(fs.readFileSync(path.join(f.options.directory,row.operation_id,'plan.json')));
+ assert.equal(plan.llm_container,'qwen-serving');assert.equal(f.launches(),1);
+ assert.equal(f.config.genie_chat.inspection.workers.one.container,'qwen-serving');
+});
 test('finished proof adds only the selected engine and survives restart with choices intact',async t=>{
  const f=fixture(t),row=await f.service.start({worker_id:'one',engine:'ace-step'});f.complete(row.operation_id);f.enable(false);
  assert.equal((await f.service.finish({operation_id:row.operation_id})).phase,'enrolled');assert.equal(f.config.media_jobs.workers.one.engines.music.container,'b'.repeat(64));assert.deepEqual(f.config.media_jobs.workers.one.engines.video,f.baseline.media_jobs.workers.one.engines.video);

@@ -33,7 +33,7 @@ try{
   inspect:async id=>JSON.parse(await remote(['docker','inspect',id]))[0],start:id=>remote(['docker','start',id]),stop:id=>remote(['docker','stop','-t','120',id]),
   recoveryInspect:()=>recoveryCall(plan.recovery,{action:'inspect'}),
   verify:async()=>{const proof=await verifyRecovery(plan.recovery.url,plan.model,plan.context_length,{kind:'qwen_vllm',endpoint:plan.endpoint});assert.ok(qwenRecoveryProofValid(proof,plan.context_length),'Original LLM cache proof failed');return proof;},
-  prepare:()=>setupTransport(plan.target,{action:'prepare_media',selected_engines:plan.engines,llm_container:plan.llm_container,...bundle}),
+  prepare:llmContainer=>setupTransport(plan.target,{action:'prepare_media',selected_engines:plan.engines,llm_container:llmContainer,...bundle}),
   readPreparation:()=>setupTransport(plan.target,{action:'status'}),
   preparedMedia:()=>setupTransport(plan.target,{action:'media_plan'}),
   qualify:async preparation=>{

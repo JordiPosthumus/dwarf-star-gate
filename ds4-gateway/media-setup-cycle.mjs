@@ -13,6 +13,11 @@ export async function runMediaSetup(plan,io){
  try{
   assert.ok(Array.isArray(plan.engines)&&plan.engines.length&&new Set(plan.engines).size===plan.engines.length&&plan.engines.every(e=>['h3','ace-step'].includes(e)),'Choose supported media engines');
   original=await inspect(plan.llm_container);
+  assert.match(original.Id,/^[a-f0-9]{64}$/,'Docker inspection must identify the full original container ID');
+  // Names are valid installation references. Pin this operation to the
+  // inspected ID so a later name reassignment cannot redirect stop or return.
+  save('llm-resolution.json',{configured:plan.llm_container,container:original.Id});
+  plan={...plan,llm_container:original.Id};
   const recovery=await recoveryInspect();
   assert.equal(original.State.Running,true);assert.equal(recovery.profile,plan.recovery.profile);
   assert.equal(recovery.listener,true);assert.equal(recovery.fault,null);
@@ -25,7 +30,7 @@ export async function runMediaSetup(plan,io){
   progress('preparing_media','Building and downloading only the selected media engines.');
   save('prepare-intent.json',{engines:plan.engines,target:plan.target});
   let acknowledgement;
-  try{acknowledgement=await io.prepare();save('prepare-acknowledgement.json',acknowledgement);}
+  try{acknowledgement=await io.prepare(plan.llm_container);save('prepare-acknowledgement.json',acknowledgement);}
   catch(e){save('prepare-uncertain.json',{error:e.message});}
   if(acknowledgement?.state==='refused')throw Error(acknowledgement.error??'Preparation preflight refused; no work was launched');
   // A lost acknowledgement is not a failed install. Observe the same target,

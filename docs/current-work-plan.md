@@ -227,6 +227,9 @@ deployment receipts stay outside this public repository.
   tested with isolated controllers, private core routes, browser interaction and
   pinned Hermes tool receipts. The controls are deployed; native whole-workflow
   qualification remains outstanding.
+  Existing Docker inspection enrollments may use a container name. Media setup
+  resolves it once to the inspected full ID before maintenance and uses that ID
+  for preparation, stop and return; it still verifies the recovery instance.
   Genie can now call the preparation command for explicitly enrolled new hosts,
   with an independent capability switch, detached execution and visible phase/error
   receipts. Repeated starts observe the same operation. Its connection has been

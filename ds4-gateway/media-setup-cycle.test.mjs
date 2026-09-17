@@ -4,15 +4,15 @@ import {createHash} from 'node:crypto';
 import {runMediaSetup} from './media-setup-cycle.mjs';
 
 function fixture(){
- const llm={Id:'llm',Image:'original',Config:{Cmd:['original','--context','262144']},HostConfig:{},Mounts:[],State:{Running:true,StartedAt:'original-instance'}},media={Id:'ace',State:{Running:false}};
+ const llmId='a'.repeat(64),llm={Id:llmId,Image:'original',Config:{Cmd:['original','--context','262144']},HostConfig:{},Mounts:[],State:{Running:true,StartedAt:'original-instance'}},media={Id:'ace',State:{Running:false}};
  const calls=[],receipts={};let intent=false;
- const plan={worker_id:'one',operation_id:'setup-one',llm_container:'llm',recovery:{profile:'original-profile'},engines:['ace-step'],target:{directory:'/fixture/selected-media'}};
- const preparation={llm_container:'llm',engines:{'ace-step':{container:'ace'}}};
+ const plan={worker_id:'one',operation_id:'setup-one',llm_container:llmId,recovery:{profile:'original-profile'},engines:['ace-step'],target:{directory:'/fixture/selected-media'}};
+ const preparation={llm_container:llmId,engines:{'ace-step':{container:'ace'}}};
  const io={save:(name,value)=>receipts[name]=structuredClone(value),progress:(state)=>calls.push('phase:'+state),delay:async()=>calls.push('wait'),
   maintenance:async action=>{calls.push(action);if(action==='prepare')intent=true;return action==='finish'?{state:'readmitted'}:{owned:true};},hasMaintenanceIntent:()=>intent,
-  inspect:async id=>structuredClone(id==='llm'?llm:media),stop:async id=>{assert.equal(id,'llm');calls.push('stop:llm');llm.State.Running=false;},start:async id=>{assert.equal(id,'llm');calls.push('start:llm');llm.State.Running=true;},
+  inspect:async id=>structuredClone(id===llmId?llm:media),stop:async id=>{assert.equal(id,llmId);calls.push('stop:llm');llm.State.Running=false;},start:async id=>{assert.equal(id,llmId);calls.push('start:llm');llm.State.Running=true;},
   recoveryInspect:async()=>({profile:'original-profile',listener:true,fault:null,instance:createHash('sha256').update(JSON.stringify([llm.Id,llm.State.StartedAt])).digest('hex').slice(0,32)}),verify:async()=>{calls.push('verify');return {native:'fixture'};},
-  prepare:async()=>{calls.push('prepare:selected');assert.equal(llm.State.Running,false);return {state:'accepted'};},
+  prepare:async id=>{assert.equal(id,llmId);calls.push('prepare:selected');assert.equal(llm.State.Running,false);return {state:'accepted'};},
   readPreparation:async()=>({state:'prepared_stopped',process_running:false}),preparedMedia:async()=>preparation,
   qualify:async p=>{calls.push('qualify:music');assert.equal(p,preparation);assert.equal(llm.State.Running,false);return {state:'qualified_stopped',engines:{'ace-step':{native:'fixture'}}};},
  };
@@ -24,6 +24,20 @@ test('existing-worker music setup drains, prepares selected media, qualifies and
  assert.equal(result.state,'qualified_returned');assert.deepEqual(f.llm,before);
  assert.deepEqual(f.calls.filter(c=>!c.startsWith('phase:')),['prepare','transition','stop:llm','prepare:selected','transition','qualify:music','owned','start:llm','verify','finish']);
  assert.ok(f.receipts['media-proof.json']);assert.ok(f.receipts['llm-proof.json']);assert.equal(f.receipts['readmission.json'].state,'readmitted');
+});
+test('configured container name resolves once; preparation, stop and return use its full ID',async()=>{
+ const f=fixture(),inspect=f.io.inspect;
+ f.plan.llm_container='qwen-serving';let nameReads=0;
+ f.io.inspect=async id=>{
+  if(id==='qwen-serving'){assert.equal(++nameReads,1,'Never resolve the name again after it may have been reassigned');return structuredClone(f.llm);}
+  return inspect(id);
+ };
+ const result=await runMediaSetup(f.plan,f.io);
+ assert.equal(result.state,'qualified_returned');assert.equal(nameReads,1);
+ assert.deepEqual(f.receipts['llm-resolution.json'],{configured:'qwen-serving',container:f.llm.Id});
+ assert.equal(f.receipts['stop-llm-intent.json'].container,f.llm.Id);
+ assert.equal(f.receipts['restore-llm-intent.json'].container,f.llm.Id);
+ assert.equal(f.plan.llm_container,'qwen-serving','Installation configuration is not rewritten');
 });
 test('lost start acknowledgement and missing status observe the same accepted setup without replay or early restoration',async()=>{
  const f=fixture();let reads=0;

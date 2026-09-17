@@ -59,7 +59,7 @@ export function createMediaSetup(config,store,{directory,workers,binding,isEnabl
  };
  const canSetup=id=>{
   const recovery=config.recovery?.workers?.find(w=>w.id===id),inspection=config.genie_chat?.inspection?.workers?.[id];
-  return !!(config.control_socket&&path.isAbsolute(config.genie_chat?.python??'')&&recovery?.adapter==='docker'&&recovery.verification==='qwen_vllm'&&recovery.ssh&&inspection?.ssh?.[0]&&/^[a-f0-9]{64}$/.test(inspection.container)&&binding(id,recovery));
+  return !!(config.control_socket&&path.isAbsolute(config.genie_chat?.python??'')&&recovery?.adapter==='docker'&&recovery.verification==='qwen_vllm'&&recovery.ssh&&inspection?.ssh?.[0]&&/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(inspection.container??'')&&binding(id,recovery));
  };
  const status=()=>({connected:true,enabled:isEnabled(),operations:Object.keys(store.data.media_setups??{}).map(id=>{const {binding,...row}=read(id);return row;}),hosts:workers().map(w=>({worker_id:w.id,available:canSetup(w.id),error:restoreErrors[w.id]??null}))});
  async function finish(input){
