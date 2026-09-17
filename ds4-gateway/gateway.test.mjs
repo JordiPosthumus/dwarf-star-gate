@@ -2545,8 +2545,10 @@ test('queue pressure respects maintenance and same-session work, and stale press
 
 test('concurrent slots preserve bodies, dependent order and busy status until the final active request finishes',async t=>{
   const r=await rig(t,1,{workerConcurrency:2,control_socket:true});
-  const aBody=JSON.stringify({stream:true,delay:120,reasoning_effort:'xhigh',max_tokens:153600,messages:[{role:'user',content:'first independent turn'}]});
-  const bBody=JSON.stringify({stream:true,delay:450,reasoning_effort:'xhigh',max_tokens:153600,messages:[{role:'user',content:'second independent turn'}]});
+  // Keep both streams open until their assertions finish, independent of CI scheduling.
+  const aBody=JSON.stringify({stream:true,fixture_hold_stream:true,reasoning_effort:'xhigh',max_tokens:153600,messages:[{role:'user',content:'first independent turn'}]});
+  const bBody=JSON.stringify({stream:true,fixture_hold_stream:true,reasoning_effort:'xhigh',max_tokens:153600,messages:[{role:'user',content:'second independent turn'}]});
+  try {
   const a=r.request(aBody,'a');await until(()=>r.backends[0].active===1);
   const b=r.request(bBody,'b');await until(()=>r.backends[0].active===2);
   assert.equal(r.gateway.stats().active,2);assert.equal(r.gateway.stats().workers[0].load,2);
@@ -2554,15 +2556,18 @@ test('concurrent slots preserve bodies, dependent order and busy status until th
   const bNext=r.request('{"label":"dependent-b"}','b',{headers:{'x-dsg-priority':'high'}});
   const independent=r.request('{"label":"independent-c","delay":40}','c');
   await until(()=>r.gateway.stats().queued===2);assert.equal(r.gateway.currentJobsStatus().jobs.filter(j=>j.state==='running').length,2);
+  r.backends[0].heldStreams[0]();
   assert.equal((await a).status,200);assert.equal((await independent).status,200);
   assert.equal(r.backends[0].records[2].payload.label,'independent-c');
   assert.equal(r.gateway.stats().workers[0].load,1);assert.equal(r.gateway.currentJobsStatus().jobs.filter(j=>j.state==='running').length,1);
   r.gateway.drainNodes(['spark1'],true);assert.equal(r.gateway.stats().workers[0].gateway_drained,false);
   await assert.rejects(workerControl(r.config.control_socket,'/remove-worker',{id:'spark1'}),/finish/);
+  r.backends[0].heldStreams[1]();
   assert.equal((await b).status,200);assert.equal((await bNext).status,200);
   await until(()=>r.gateway.stats().active===0);assert.equal(r.gateway.stats().workers[0].gateway_drained,true);
   assert.equal(r.backends[0].records[0].body.toString(),aBody);assert.equal(r.backends[0].records[1].body.toString(),bBody);
   assert.equal(r.backends[0].records[3].payload.label,'dependent-b');assert.equal(r.backends[0].peak,2);assert.equal(r.backends[0].aborts,0);
+  } finally { r.backends[0].heldStreams?.forEach(release=>release()); }
 });
 
 test('concurrent slots keep conversation reservations without leaving unrelated capacity unused',async t=>{
