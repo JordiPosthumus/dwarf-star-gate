@@ -4,6 +4,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {priorityRank,requestPriority,PRIORITY_HEADER} from './job-priority.mjs';
 import {MediaResults} from './media-results.mjs';
 import {MediaInputs} from './media-inputs.mjs';
+import {prepareVideoPrompt} from './video-prompt.mjs';
 
 const states=new Set(['queued','submitting','submitted','pending','running','completed','failed','uncertain']);
 const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
@@ -74,8 +75,11 @@ export class MediaJobs {
     const fingerprint=createHash('sha256').update(JSON.stringify(canonical({kind,payload,priority}))).digest('hex');
     const previous=this.data.jobs.find(j=>j.key_hash===keyHash);
     if(previous){if(previous.fingerprint!==fingerprint)throw fail(409,'Idempotency-Key already identifies a different media request');return {job:this.get(previous.id),created:false};}
+    // Fingerprint the caller's request before expansion. Retries retain the
+    // original seed/workflow even if the bundled recipe later changes.
+    const prepared=kind==='video'&&typeof payload.prompt==='string'?prepareVideoPrompt(payload):{payload:structuredClone(payload)};
     if(kind==='video'&&Object.hasOwn(payload,'input_files'))this.inputs.forJob(payload.input_files);
-    const job={id:randomUUID(),kind,payload:structuredClone(payload),priority,key_hash:keyHash,fingerprint,state:'queued',created_at:now(),updated_at:now()};
+    const job={id:randomUUID(),kind,...prepared,priority,key_hash:keyHash,fingerprint,state:'queued',created_at:now(),updated_at:now()};
     this.save({...this.data,jobs:[...this.data.jobs,job]});return {job:this.get(job.id),created:true};
   }
   update(id,changes){const job=this.get(id),next={...job,...changes,updated_at:now()};this.save({...this.data,jobs:this.data.jobs.map(j=>j.id===id?next:j)});return this.get(id);}

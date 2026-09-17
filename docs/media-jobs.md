@@ -21,7 +21,7 @@ needed. The normal gateway bearer key protects every endpoint.
 | Endpoint | Behavior |
 | --- | --- |
 | `POST /v1/music/jobs` | Queue native ACE-Step JSON parameters. |
-| `POST /v1/video/jobs` | Queue a native ComfyUI JSON workflow envelope. |
+| `POST /v1/video/jobs` | Queue an H3 text prompt or a native ComfyUI JSON workflow envelope. |
 | `POST /v1/video/inputs` | Store raw image, audio or video bytes for a later video job. |
 | `GET /v1/video/inputs/{id}` | Read the uploaded file's name, size and SHA-256 receipt. |
 | `DELETE /v1/video/inputs/{id}` | Explicitly remove an input that no unfinished job uses. |
@@ -36,6 +36,28 @@ different content or priority with that key returns HTTP 409. A new job returns
 HTTP 202 with its ID and status URL. Keys apply across both media routes.
 The existing `x-dsg-priority` header accepts `high`, `normal` or `idle-only`;
 priority orders waiting jobs only and never cancels active generation.
+
+For a basic H3 video, agents can submit text directly:
+
+```sh
+curl "$SG_URL/v1/video/jobs" \
+  -H "Authorization: Bearer $SG_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: my-first-video' \
+  --data '{"prompt":"A paper boat floating on a calm pond, with soft water sounds.","seed":42}'
+```
+
+Set `SG_URL` to the gateway address and `SG_API_KEY` to its normal bearer key.
+The text form uses the shipped H3 workflow: 608×352, 96 frames at 24 fps
+(approximately four seconds), 20 sampling steps, video with audio and a separate
+audio result. Only `prompt` and optional `seed` are accepted in this convenience
+form. Omitting the seed chooses one when the job is first created. The response's
+`generation` field reports the exact selected settings and recipe hash.
+Retries with the same idempotency key retain the original seed and workflow,
+including after a gateway restart or recipe update. For reference inputs or other
+generation settings, submit a native workflow as before. The prompt remains in
+private job storage and is excluded from public job-status fields.
+
 JSON submissions may be up to 2 MiB. Upload larger reference files separately
 using the input endpoint below.
 

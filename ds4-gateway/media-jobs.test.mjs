@@ -75,6 +75,31 @@ test('persisted intent survives a crash and cannot dispatch twice',async t=>{
   await assert.rejects(restored.dispatch(id,backend,'fixture-worker'),e=>e.status===409);
   release();await running;assert.equal(calls,1);
 });
+test('text video prompts freeze a native H3 workflow and seed once, preserving retries and raw workflows',async t=>{
+  const file=path.join(directory(t),'jobs.json'),q=new MediaJobs(file),input={prompt:'A blue paper boat on a calm pond.'};
+  const job=q.enqueue('video',input,{key:'text-video'}).job;
+  assert.equal(job.payload.prompt['7'].inputs.prompt,input.prompt);
+  assert.deepEqual(job.generation,{engine:'h3',input_format:'text',recipe_sha256:job.generation.recipe_sha256,width:608,height:352,frames:96,fps:24,steps:20,seed:job.generation.seed});
+  assert.match(job.generation.recipe_sha256,/^[a-f0-9]{64}$/);assert.ok(Number.isSafeInteger(job.generation.seed));
+  assert.equal(job.payload.prompt['9'].inputs.seed,job.generation.seed);
+  const restarted=new MediaJobs(file),retry=restarted.enqueue('video',input,{key:'text-video'});
+  assert.equal(retry.created,false);assert.equal(retry.job.id,job.id);assert.deepEqual(retry.job.payload,job.payload);assert.deepEqual(retry.job.generation,job.generation);
+  assert.throws(()=>restarted.enqueue('video',{...input,seed:42},{key:'text-video'}),e=>e.status===409);
+  let submitted;
+  await restarted.dispatch(job.id,{kind:'comfyui',submit:async(payload,requestId)=>{submitted=payload;return {native_id:requestId};}},'fixture-worker');
+  assert.deepEqual(submitted,job.payload,'dispatch uses the frozen graph, not another expansion');
+  assert.doesNotMatch(JSON.stringify(restarted.list()),/blue paper boat/,'status exposes settings, not private prompts');
+  const raw={prompt:{one:{class_type:'Custom',inputs:{seed:123}}},extra_data:{example:true}};
+  const native=restarted.enqueue('video',raw,{key:'raw'}).job;assert.deepEqual(native.payload,raw);assert.equal(native.generation,undefined);
+  const explicit=restarted.enqueue('video',{prompt:'Test',seed:0},{key:'seed-zero'}).job;assert.equal(explicit.generation.seed,0);
+});
+test('invalid text video options fail before creating a job or draining a worker',t=>{
+  const q=new MediaJobs(path.join(directory(t),'jobs.json'));
+  for(const input of [{prompt:' '},{prompt:'test',seed:-1},{prompt:'test',seed:1.5},{prompt:'test',seed:'42'},{prompt:'test',steps:1},{prompt:'test',input_files:[]}]){
+    assert.throws(()=>q.enqueue('video',input,{key:'invalid'}),e=>e.status===400);
+  }
+  assert.equal(q.list().length,0);
+});
 test('lost ACE receipt stays uncertain, explicit rejection fails, neither is replayed',async t=>{
   const q=new MediaJobs(path.join(directory(t),'jobs.json'));
   for(const uncertain of [true,false]){
@@ -106,6 +131,11 @@ test('authenticated gateway media API is durable, isolated from LLM routes and r
   assert.equal((await call('/v1/music/jobs',{prompt:'piano'})).status,400);
   const first=await call('/v1/music/jobs',{prompt:'piano'},{'idempotency-key':'music'});assert.equal(first.status,202);const job=await first.json();assert.equal(job.payload,undefined);assert.equal(inference,0);
   assert.equal((await call('/v1/music/jobs',{prompt:'piano'},{'idempotency-key':'music'})).status,200);
+  const video=await call('/v1/video/jobs',{prompt:'A paper boat on a pond.',seed:42},{'idempotency-key':'text-video'});
+  assert.equal(video.status,202);const videoJob=await video.json();assert.equal(videoJob.generation.seed,42);assert.equal(videoJob.generation.width,608);assert.equal(videoJob.payload,undefined);
+  assert.equal((await call('/v1/video/jobs',{prompt:'A paper boat on a pond.',seed:42},{'idempotency-key':'text-video'})).status,200);
+  assert.equal((await call('/v1/video/jobs',{prompt:' ',seed:42},{'idempotency-key':'invalid-text-video'})).status,400);
+  assert.equal(inference,0,'media submission does not send an LLM inference request');
   await gateway.close();gateway=createGateway(config);address=await gateway.start();
   assert.equal((await (await call(job.status_url)).json()).id,job.id);
   assert.equal((await call('/v1/music/jobs',{prompt:'changed'},{'idempotency-key':'music'})).status,409);
