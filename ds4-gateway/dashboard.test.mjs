@@ -1200,7 +1200,7 @@ test('Fleet media UI distinguishes runner heartbeat from generation progress and
   const context=vm.createContext({});vm.runInContext(source,context);
   vm.runInContext(`fleetWorkloads={observed_at:100000,workloads:[{worker_id:'sparkA',kind:'video',job_id:'<private>',state:'running',phase:'generating',started_at:new Date(10000).toISOString(),changed_at:new Date(30000).toISOString(),heartbeat_at:new Date(99000).toISOString()}]}`,context);
   let html=vm.runInContext("workloadMarkup(workloadInfo('sparkA',100000),{},100000)",context);
-  assert.match(html,/MiniMax H3/);assert.match(html,/Generating/);assert.match(html,/Runner heartbeat received/);assert.match(html,/not measured generation progress/);assert.match(html,/completion time are not reported/);assert.match(html,/&lt;private&gt;/);assert.doesNotMatch(html,/<private>/);
+  assert.match(html,/MiniMax H3/);assert.match(html,/Generating/);assert.match(html,/Runner heartbeat received/);assert.match(html,/not measured generation progress/);assert.match(html,/No completion estimate is available/);assert.match(html,/&lt;private&gt;/);assert.doesNotMatch(html,/<private>/);
   vm.runInContext('fleetWorkloadsUnavailable=true',context);
   html=vm.runInContext("workloadMarkup(workloadInfo('sparkA',100000),{},100000)",context);assert.match(html,/Last known media operation/);assert.match(html,/return is not confirmed/);
   vm.runInContext("fleetWorkloadsUnavailable=false;fleetWorkloads.workloads[0].phase='checking_llm';fleetWorkloads.workloads[0].kind='music'",context);
@@ -1217,4 +1217,13 @@ test('Fleet workload reads are bounded and cannot hold up ordinary telemetry',as
     resolveRead({jobs:[{id:'job',kind:'video',state:'completed',execution:{worker_id:'sparkA',phase:'checking_llm'}}]});await delay(10);
     const reply=await (await fetch(base+'/api/fleet-workloads')).json();assert.equal(reply.workloads[0].phase,'checking_llm');
   }finally{resolveRead({jobs:[]});server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
+});
+
+test('Fleet native progress shows current node steps and disconnected evidence without whole-job percentage',()=>{
+ const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0],context=vm.createContext({});vm.runInContext(source,context);
+ const render=p=>vm.runInContext(`nativeMediaProgressMarkup({native_progress:${JSON.stringify(p)}},10000)`,context);
+ const p={connected:true,at:9000,node:'9',node_type:'KSampler',value:12,max:20};
+ assert.match(render(p),/Sampling steps: 12 of 20/);assert.match(render(p),/not whole-job completion/);assert.doesNotMatch(render(p),/60%|ETA/);
+ assert.match(render({...p,connected:false}),/progress connection unavailable/);assert.doesNotMatch(render({...p,value:NaN}),/<progress/);
+ assert.match(render({...p,node_type:'VAEDecode'}),/Node progress: 12 of 20/);
 });

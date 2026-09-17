@@ -1,3 +1,4 @@
+import {watchMediaProgress} from './media-progress.mjs';
 import assert from 'node:assert/strict';
 import {isDeepStrictEqual} from 'node:util';
 import {createHash} from 'node:crypto';
@@ -31,8 +32,8 @@ export async function waitForMediaLlm(plan,{recoveryInspect,progress,delay,save}
 export async function runMediaCycle(plan,io){
   const {jobs,save,maintenance,inspect,start,stop,recoveryInspect,verify,connect,delay}=io;
   const ids=plan.job_ids??[plan.operation_id];let activeId=plan.operation_id;
-  const progress=(phase,detail)=>io.progress(phase,detail,...(ids.length>1?[{active_job_id:activeId,batch_index:ids.indexOf(activeId)+1,batch_size:ids.length}]:[]));
-  let before,connection,stopped=false,mediaStarted=false,ready=false,error;
+  const progress=(phase,detail)=>io.progress(phase,detail,{...(ids.length>1?{active_job_id:activeId,batch_index:ids.indexOf(activeId)+1,batch_size:ids.length}:{}),native_progress:['generating','observing_media'].includes(phase)?nativeProgress?.snapshot()??null:null});
+  let nativeProgress,before,connection,stopped=false,mediaStarted=false,ready=false,error;
   const unchanged=(a,b)=>{
     for(const key of ['Id','Image','Config','HostConfig']){
       // Docker normalizes the unset OOM-killer flag from false to null on the
@@ -97,6 +98,7 @@ export async function runMediaCycle(plan,io){
         for(const node of Object.values(job.payload.prompt))assert.ok(catalog[node.class_type],`Missing native node ${node.class_type}`);
       }
       assert.ok(await mediaIdle(),'Media engine already has native work');assert.equal((await maintenance('transition')).owned,true);
+      nativeProgress=(io.watchProgress??watchMediaProgress)(connection.backend,job.id,job.payload.prompt);
       progress('generating','Submitting the saved media job once.');
       await jobs.dispatch(job.id,connection.backend,plan.worker_id);
       for(;;){
@@ -107,11 +109,13 @@ export async function runMediaCycle(plan,io){
         if(['completed','failed'].includes(observed.state)){assert.equal(observed.state,'completed','Native media generation failed');break;}
         await delay(3000);
       }
+      nativeProgress?.close();nativeProgress=null;
       progress('retaining_results','Saving generated files before releasing the media engine.');
       await jobs.collect(job.id,connection.backend);
     }
   }catch(e){error=e;if(jobs.get(activeId).state==='queued')jobs.update(activeId,{state:'failed',detail:e.message});save('failure.json',{error:e.message});}
   finally{
+    nativeProgress?.close();
     try{
       if(stopped){
         assert.equal((await maintenance('owned')).owned,true);

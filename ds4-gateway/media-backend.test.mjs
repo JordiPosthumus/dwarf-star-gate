@@ -56,3 +56,31 @@ test('missing or unfinished native history does not become a successful job',asy
 test('native ACE failure and malformed result stay distinct',async t=>{
  let result='[{"error":"generation failed"}]';const e=await endpoint(t,(_c,r)=>r.end(JSON.stringify({data:[{task_id:'task',status:2,result}]})));const api=new MediaBackend({kind:'ace-step',url:e.url});assert.equal((await api.observe('task')).state,'failed');result='invalid';assert.equal((await api.observe('task')).state,'unknown');
 });
+
+test('native progress uses a real WebSocket, scopes events to one job, and never submits work',async t=>{
+ const {watchMediaProgress}=await import('./media-progress.mjs'),{createHash}=await import('node:crypto');
+ const server=http.createServer(),sockets=new Set();let target;
+ server.on('upgrade',(request,socket)=>{sockets.add(socket);target=request.url;
+   socket.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: '+createHash('sha1').update(request.headers['sec-websocket-key']+'258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64')+'\r\n\r\n');
+ });
+ server.listen(0,'127.0.0.1');await once(server,'listening');t.after(async()=>{for(const socket of sockets)socket.destroy();await new Promise(resolve=>server.close(resolve));});
+ const watch=watchMediaProgress({kind:'comfyui',url:`http://127.0.0.1:${server.address().port}`},uuid,{'9':{class_type:'KSampler'},'10':{class_type:'VAEDecode'}});t.after(()=>watch.close());
+ const until=async predicate=>{for(let i=0;i<100&&!predicate();i++)await new Promise(r=>setTimeout(r,10));assert.ok(predicate());};
+ await until(()=>watch.snapshot().connected);assert.equal(target,'/ws?clientId='+uuid);
+ const send=data=>{const b=Buffer.from(JSON.stringify(data)),header=b.length<126?Buffer.from([0x81,b.length]):Buffer.from([0x81,126,b.length>>8,b.length&255]);[...sockets][0].write(Buffer.concat([header,b]));};
+ send({type:'progress',data:{prompt_id:'other',node:'9',value:18,max:20}});
+ send({type:'progress',data:{prompt_id:uuid,node:'9',value:4,max:20,prompt:'PRIVATE'}});
+ await until(()=>watch.snapshot().value===4);assert.equal(watch.snapshot().node_type,'KSampler');assert.doesNotMatch(JSON.stringify(watch.snapshot()),/PRIVATE/);
+ send({type:'progress',data:{prompt_id:uuid,node:'9',value:21,max:20}});
+ send({type:'executing',data:{prompt_id:uuid,node:'10'}});
+ await until(()=>watch.snapshot().node==='10');assert.equal(watch.snapshot().value,null,'old sampler counts cannot label the decoder');
+ [...sockets][0].destroy();await until(()=>!watch.snapshot().connected);assert.equal(watch.snapshot().node_type,'VAEDecode');
+});
+test('unavailable optional progress and token-protected endpoints do not change REST execution',async()=>{
+ const {watchMediaProgress}=await import('./media-progress.mjs');let calls=0;
+ for(const backend of [{kind:'ace-step',url:'http://localhost'},{kind:'comfyui',url:'https://localhost',token:'PRIVATE'}]){
+   const observer=watchMediaProgress(backend,uuid,{}, {socketFactory:()=>{calls++;throw Error('not supported');}});assert.equal(observer.snapshot().connected,false);observer.close();
+ }
+ assert.equal(calls,0);
+ const unavailable=watchMediaProgress({kind:'comfyui',url:'http://localhost'},uuid,{}, {socketFactory:()=>{throw Error('offline');}});assert.equal(unavailable.snapshot().connected,false);unavailable.close();
+});
