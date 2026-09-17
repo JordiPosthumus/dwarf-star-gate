@@ -140,6 +140,19 @@ must be investigated rather than treated as a restored host. Generated files
 can be ready before LLM readmission. The capability card and chat tool records
 expose the observed phase and failure detail.
 
+## Submit from the dashboard
+
+Open **Media → MiniMax H3**, describe the scene and choose **Queue video**.
+The form uses the same text-video API and shipped short-video recipe as agents.
+Genie chooses an eligible machine; progress, results and LLM return appear in the
+existing job cards. If media placement is off, the request stays queued.
+
+If submission is not confirmed, retry the unchanged prompt. The browser keeps its
+request key in this tab's session storage, including across reloads, so the retry
+returns the same job. Editing the prompt creates a different request. The gateway
+API key stays on the server. The form is enabled only when the connected gateway
+advertises text-video support.
+
 ## Example video request
 
 [`examples/media/h3-text-to-video.json`](../examples/media/h3-text-to-video.json)

@@ -29,6 +29,13 @@
 <div class="section-heading"><h2>Music &amp; video</h2><p id="media-status" role="status">Reading media services…</p></div>
 <p class="muted">Choose where Genie may place new jobs. At least one LLM stays available; existing work finishes before a machine switches engines.</p>
 <div id="media-engines" class="media-engine-tabs" role="tablist" aria-label="Media engines"></div>
+<form id="media-video-form" class="media-video-form" hidden>
+<label for="media-video-prompt">Describe your video</label>
+<textarea id="media-video-prompt" rows="3" maxlength="1500" required placeholder="A paper boat floating on a calm pond, with gentle water sounds…"></textarea>
+<p class="muted">About 4 seconds · 608 × 352 · includes audio. Genie chooses a machine and keeps at least one LLM available.</p>
+<button id="media-video-submit" class="button" type="submit" disabled>Queue video</button>
+<p id="media-video-message" role="status" aria-live="polite"></p>
+</form>
 <p id="media-message" role="status" aria-live="polite"></p>
 <div id="media-hosts" class="media-hosts"></div>
 <div class="section-heading"><h2>Jobs &amp; results</h2><p>Generation and the machine’s return to LLM service are shown separately.</p></div>

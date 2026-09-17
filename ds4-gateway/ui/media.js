@@ -1,7 +1,8 @@
 const $=id=>document.getElementById(id);
 const el=(tag,value,cls)=>{const node=document.createElement(tag);if(value!==undefined)node.textContent=value;if(cls)node.className=cls;return node;};
 const engineNames={music:'ACE-Step',video:'MiniMax H3'};
-let state=null,selected='ace-step',busy=false,signature='';
+let state=null,selected='ace-step',busy=false,signature='',submitting=false,pendingVideo=null;
+try{const saved=JSON.parse(sessionStorage.getItem('sg-pending-video'));if(typeof saved?.prompt==='string'&&typeof saved?.key==='string'){pendingVideo=saved;$('media-video-prompt').value=saved.prompt;$('media-video-message').textContent='A previous submission was not confirmed. Retry this prompt to check the same job.';}}catch{}
 function render(){
   if(!state)return;
   $('media-status').textContent=state.enabled?'Genie media placement is on':'Genie media placement is off — change it under Gate Genie → Capabilities';
@@ -10,6 +11,9 @@ function render(){
     const button=el('button',engine.label+(engine.supported?'':' · planned'),'button');button.type='button';button.setAttribute('role','tab');button.setAttribute('aria-selected',String(engine.id===selected));button.addEventListener('click',()=>{selected=engine.id;signature='';render();});return button;
   }));
   const engine=engines.find(e=>e.id===selected);
+  $('media-video-form').hidden=selected!=='h3';
+  $('media-video-submit').disabled=submitting||!state.controls_enabled||!state.text_video_supported;
+  $('media-video-submit').textContent=submitting?'Submitting…':pendingVideo?'Retry submission':'Queue video';
   if(!engine.supported)$('media-hosts').replaceChildren(el('p',`${engine.label} is planned. No verified setup or execution adapter is connected yet.`,'muted'));
   else $('media-hosts').replaceChildren(...(state.hosts?.length?state.hosts.map(host=>{
     const choice=host.engines.find(e=>e.id===engine.id),card=el('article',undefined,'media-host-card');
@@ -102,5 +106,20 @@ async function refresh(force=false){
   catch(error){$('media-status').textContent=error.message;for(const input of $('media-hosts').querySelectorAll('input'))input.disabled=true;signature='';}
   finally{busy=false;}
 }
+$('media-video-form').addEventListener('submit',async event=>{
+  event.preventDefault();if(submitting||!state?.controls_enabled||!state?.text_video_supported)return;
+  const field=$('media-video-prompt'),prompt=field.value.trim();if(!prompt)return;
+  if(!pendingVideo||pendingVideo.prompt!==prompt)pendingVideo={key:crypto.randomUUID(),prompt};
+  // Keep the request key through a lost reply or reload; retrying must not generate twice.
+  try{sessionStorage.setItem('sg-pending-video',JSON.stringify(pendingVideo));}catch{}
+  submitting=true;field.readOnly=true;render();$('media-video-message').textContent='Submitting video request…';
+  try{
+    const response=await fetch('/api/media/video/jobs',{method:'POST',headers:{'content-type':'application/json','x-dsg-csrf':state.csrf_token},body:JSON.stringify(pendingVideo)}),job=await response.json();
+    if(!response.ok)throw Error(job.error??'No confirmation received.');
+    pendingVideo=null;try{sessionStorage.removeItem('sg-pending-video');}catch{}
+    field.value='';$('media-video-message').textContent=`Job ${job.id}: ${job.state}. Follow its progress and results below.${state.enabled?'':' Media placement is off; it will wait until enabled.'}`;
+  }catch(error){$('media-video-message').textContent=`${error.message} Retry the unchanged prompt to check the same job; editing it starts a different request.`;}
+  finally{submitting=false;field.readOnly=false;signature='';render();await refresh(true);}
+});
 new MutationObserver(()=>{if(!$('view-media').hidden)void refresh();}).observe($('view-media'),{attributes:true,attributeFilter:['hidden']});
 void refresh();setInterval(refresh,5000);
