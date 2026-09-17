@@ -183,18 +183,33 @@ Observations carry their timestamp. The Media page keeps them until dashboard
 restart; Genie's actual tool receipts remain with the conversation. Failed
 inspection is shown explicitly, not as fresh readiness. Runtime memory fit
 requires a native generation check using the selected configuration. A
-recipe-driven setup action from this view remains unfinished; the separate New
-Spark setup workflow remains for explicitly enrolled idle new hosts.
+recipe-driven setup action is now connected in source for eligible existing
+workers. Complete native qualification of this new whole workflow and production
+activation remain outstanding. The separate New Spark setup workflow remains
+for explicitly enrolled idle new hosts.
 
-The existing-worker setup lifecycle is now implemented as a separate detached
-runner, pending the Media-page/Genie controls and saved enrollment connection.
+The existing-worker setup lifecycle uses a separate detached runner, connected
+to **Set up ACE-Step / MiniMax H3** in Media and Genie's `setup_media_host` tool.
+Turn on the Media capability and allow placement on the chosen machine first.
+The machine needs a matching Docker/Qwen recovery and inspection enrollment.
+Setup preserves an already enrolled engine instead of replacing it. New files
+go under the enrolled SSH account's `.local/share/star-gate/media-setup`, in a
+separate directory for each saved operation.
 It uses the existing maintenance controls to drain an enrolled Docker/Qwen LLM,
 prepares only selected media recipes in a separate directory, reuses the native
 sample qualifier, then restores the exact original LLM and checks responses and
 cache reuse before readmission. A lost preparation acknowledgement is observed
-without repeating the installation. Its lifecycle and remote selected-engine
-transport have fixture tests; this is not yet a completed native existing-host
-installation or a feature available through the production UI.
+without repeating the installation. The Media page reports preparation bytes,
+native qualification and return state. After verified return, a fresh comparison
+of the stopped media container precedes saving its engine binding in the existing
+private gateway state, with a backup. Existing engines, capability switches and
+placement choices are preserved. A pending final enrollment can be retried with
+**Finish setup**, without repeating installation or generation.
+
+Lifecycle, retained enrollment/restart, private control routes and UI controls
+have fixture tests. The pinned Hermes runtime has called the setup tool and its
+actual receipt remains in chat. These checks do not yet establish complete native
+existing-host installation or production activation.
 
 Result players and download links use local dashboard routes; the dashboard
 adds the gateway credential on the server side. Keys stay out of browser URLs

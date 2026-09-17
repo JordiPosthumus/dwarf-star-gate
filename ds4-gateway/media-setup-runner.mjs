@@ -10,6 +10,7 @@ import {saveMediaReceipt} from './media-execution.mjs';
 import {setupTransport} from './genie-spark-setup.mjs';
 import {recoveryCall} from './recovery-transport.mjs';
 import {verifyRecovery,qwenRecoveryProofValid} from './recovery-verify.mjs';
+import {workerControl} from './worker-client.mjs';
 
 const folder=path.resolve(process.argv[2]),plan=JSON.parse(fs.readFileSync(path.join(folder,'plan.json')));
 assert.equal(path.basename(folder),plan.operation_id);
@@ -23,6 +24,8 @@ const heartbeat=setInterval(()=>save('progress.json',{...current,heartbeat_at:ne
 try{
  // Read the exact recipe bundle retained before ownership or any shutdown.
  const bundle=JSON.parse(fs.readFileSync(path.join(folder,'recipe-bundle.json')));
+ const location=await setupTransport(plan.target,{action:'media_location',operation_id:plan.operation_id});
+ assert.ok(path.isAbsolute(location.directory));plan.target.directory=location.directory;saveMediaReceipt(folder,'plan.json',plan);
  const result=await runMediaSetup(plan,{
   save,progress,delay,
   maintenance:async action=>JSON.parse((await execute(plan.python,['-I','-B',fileURLToPath(new URL('./media_maintenance.py',import.meta.url)),folder,action],{maxBuffer:1024*1024})).stdout),
@@ -46,5 +49,7 @@ try{
    return JSON.parse(fs.readFileSync(path.join(destination,'completion.json')));
   },
  });save('completion.json',result);
+ try{await workerControl(plan.control_socket,'/media-setup-complete',{operation_id:plan.operation_id},{channel:'media_setup'});progress('enrolled','Engine qualified and saved; original LLM is back in service.');}
+ catch(e){save('enrollment-error.json',{error:e.message});progress('qualified_returned','Original LLM returned. Engine enrollment needs attention; use Finish setup to retry this final step.');}
 }catch(error){save('runner-error.json',{error:error.message});if(current.phase==='starting')progress('failed_unchanged',error.message);process.exitCode=1;}
 finally{clearInterval(heartbeat);}

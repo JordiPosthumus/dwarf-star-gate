@@ -19,6 +19,12 @@ def save(file, value):
     temporary.replace(file)
 
 
+def media_location(operation_id):
+    if not isinstance(operation_id, str) or not re.fullmatch(r'[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}', operation_id):
+        raise ValueError('Use a saved media setup operation ID')
+    return {'directory': str(Path.home() / '.local/share/star-gate/media-setup' / operation_id)}
+
+
 def model_progress(root, progress):
     """Observe declared model files only; never modify a running installer."""
     engine = progress.get('engine')
@@ -141,7 +147,12 @@ def start(root, payload):
     setup = archive.extractfile('examples/spark-build/setup-spark.py').read().decode()
     namespace = {'__name__': 'preflight_only', '__file__': str(root / 'source/examples/spark-build/setup-spark.py')}
     exec(compile(setup, 'setup-spark.py', 'exec'), namespace)
-    namespace['preflight']()
+    try:
+        namespace['preflight']()
+    except Exception as error:
+        if payload.get('operation') == 'prepare_media':
+            return {'state': 'refused', 'process_running': False, 'error': str(error), 'scope': 'Preflight refused before creating setup files or launching work.'}
+        raise
     # One setup per SSH account/host, including aliases pointing at the same host.
     host_lock_path = Path.home() / '.cache/star-gate-spark-setup.lock'
     host_lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -196,6 +207,9 @@ if __name__ == '__main__':
     else:
         try:
             payload = json.loads(sys.stdin.read(12 * 1024 * 1024))
+            if payload.get('action') == 'media_location':
+                print(json.dumps(media_location(payload.get('operation_id'))))
+                sys.exit(0)
             root = Path(payload['directory'])
             if not root.is_absolute() or root.is_symlink() or '..' in root.parts or root == Path('/'):
                 raise ValueError('Use an absolute dedicated remote setup directory')

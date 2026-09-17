@@ -39,8 +39,22 @@ function render(){
       try{const response=await fetch('/api/media/inspect',{method:'POST',headers:{'content-type':'application/json','x-dsg-csrf':state.csrf_token},body:JSON.stringify({worker_id:host.id})});const result=await response.json();if(!response.ok)throw Error(result.error??'Resource check unavailable.');$('media-message').textContent=`${host.id} resources checked. No service was changed.`;}
       catch(error){$('media-message').textContent=error.message;}finally{busy=false;signature='';await refresh(true);}
     });
-    card.append(el('p',choice.enrolled?'Enrolled engine. This check leaves its setup and qualification unchanged.':'Before a new setup, verify memory fit with native generation after existing work drains.','muted'));
-    if(!choice.enrolled){const link=el('a','Discuss setup with Genie');link.href='#genie';card.append(link,el('p','Allowing this machine saves your placement choice. It does not install an engine.','muted'));}
+    if(choice.enrolled)card.append(el('p','Enrolled engine. This check leaves its setup and qualification unchanged.','muted'));
+    const setup=state.setup?.operations?.find(s=>s.worker_id===host.id&&s.engine===engine.id),setupHost=state.setup?.hosts?.find(s=>s.worker_id===host.id);
+    if(setup)card.append(el('p',`Setup: ${setup.phase.replaceAll('_',' ')}${setup.detail?' · '+setup.detail:''}`),...(setup.enrollment_error?[el('p',setup.enrollment_error,'media-job-detail')]:[]));
+    if(setup?.preparation?.model_download?.state==='observed'){const d=setup.preparation.model_download;card.append(el('p',`Models: ${(d.bytes_present/1e9).toFixed(1)} / ${(d.bytes_required/1e9).toFixed(1)} GB present, including partial downloads.`,'muted'));}
+    if(setup?.qualification)card.append(el('p',`${setup.qualification.engine??'Media test'}: ${setup.qualification.phase??setup.qualification.state}${setup.qualification.error?' · '+setup.qualification.error:''}`));
+    if(setupHost?.error)card.append(el('p',setupHost.error,'media-job-detail'));
+    if(!choice.enrolled){
+      const button=el('button',setup?.phase==='qualified_returned'?'Finish setup':`Set up ${engine.label}`,'button');button.type='button';button.setAttribute('aria-label',`${button.textContent} on ${host.id}`);
+      button.disabled=!state.controls_enabled||!state.setup?.enabled||!setupHost?.available||!choice.allowed||!!(setup&&setup.phase!=='qualified_returned');card.append(button);
+      button.addEventListener('click',async()=>{
+        busy=true;button.disabled=true;$('media-message').textContent=`Starting ${engine.label} setup on ${host.id}…`;
+        try{const response=await fetch('/api/media/setup',{method:'POST',headers:{'content-type':'application/json','x-dsg-csrf':state.csrf_token},body:JSON.stringify({worker_id:host.id,engine:engine.id})});const result=await response.json();if(!response.ok)throw Error(result.error??'Setup was not confirmed. Refresh its saved status before retrying.');$('media-message').textContent=`${host.id}: ${result.phase.replaceAll('_',' ')}. Progress remains here when you leave this page.`;}
+        catch(error){$('media-message').textContent=error.message;}finally{busy=false;signature='';await refresh(true);}
+      });
+      card.append(el('p','Setup drains existing work, tests the new engine and restores this machine’s LLM. At least one other LLM stays available.','muted'));
+    }
     toggle.addEventListener('change',async()=>{
       busy=true;toggle.disabled=true;$('media-message').textContent='Saving placement choice…';
       try{const response=await fetch('/api/media/eligibility',{method:'POST',headers:{'content-type':'application/json','x-dsg-csrf':state.csrf_token},body:JSON.stringify({worker_id:host.id,kind:engine.kind,allowed:toggle.checked})});const result=await response.json();if(!response.ok)throw Error(result.error??'Could not confirm the change.');$('media-message').textContent=`${engine.label} on ${host.id}: ${result.allowed?'allowed':'off'}. Existing work continues.`;}

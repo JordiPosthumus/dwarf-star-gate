@@ -24,6 +24,8 @@ test('Media dashboard keeps placement writes behind existing same-origin control
  const input={worker_id:'one',kind:'music',allowed:false};assert.equal((await fetch(base+'/api/media/eligibility',{method:'POST',headers:{'content-type':'application/json',origin:base,'x-dsg-csrf':state.csrf_token},body:JSON.stringify(input)})).status,200);assert.deepEqual(changes,[{action:'media-eligibility',input}]);
  assert.equal((await fetch(base+'/api/media/inspect',{method:'POST',headers:{'content-type':'application/json'},body:'{}'})).status,403);
  const inspect={worker_id:'one'};assert.equal((await fetch(base+'/api/media/inspect',{method:'POST',headers:{'content-type':'application/json',origin:base,'x-dsg-csrf':state.csrf_token},body:JSON.stringify(inspect)})).status,200);assert.deepEqual(changes.at(-1),{action:'media-inspect',input:inspect});
+ assert.equal((await fetch(base+'/api/media/setup',{method:'POST',headers:{'content-type':'application/json'},body:'{}'})).status,403);
+ const setup={worker_id:'one',engine:'ace-step'};assert.equal((await fetch(base+'/api/media/setup',{method:'POST',headers:{'content-type':'application/json',origin:base,'x-dsg-csrf':state.csrf_token},body:JSON.stringify(setup)})).status,200);assert.deepEqual(changes.at(-1),{action:'media-setup',input:setup});
  const html=await (await fetch(base+'/')).text();assert.match(html,/data-workspace-tab="media"/);assert.equal((await fetch(base+'/media.js')).status,200);
 });
 

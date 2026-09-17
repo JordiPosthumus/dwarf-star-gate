@@ -1,4 +1,5 @@
 import {createMediaHosts} from './media-hosts.mjs';
+import {createMediaSetup} from './media-setup.mjs';
 import {genieCapabilityKeys,validateGenieCapabilities,genieCapabilities} from './genie-capabilities.mjs';
 import {createMediaExecution} from './media-execution.mjs';
 import {sparkServiceBinding,validateServiceAddition,applyServiceAddition,restoreSparkServices} from './spark-services.mjs';
@@ -374,8 +375,9 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
 
   const capabilityStatus=()=>genieCapabilities(store.data.genie_capabilities,config,recovery.state.automatic);
   const mediaHosts=createMediaHosts(serviceConfig,store,{workers:()=>registry().workers,binding:(id,c)=>recovery.binding(nodes.find(n=>n.id===id),c)});
-  const mediaStatus=()=>{const state=mediaExecution.status();return {...state,...mediaHosts.status(state.jobs)};};
+  const mediaStatus=()=>{const state=mediaExecution.status();return {...state,...mediaHosts.status(state.jobs),setup:mediaSetup?.status()??null};};
   const mediaExecution=createMediaExecution(serviceConfig,mediaJobs,{isAllowed:mediaHosts.allowed,isEnabled:()=>!draining&&capabilityStatus().media,matchesWorker:(id,c)=>{const n=nodes.find(n=>n.id===id);return !!n&&recovery.binding(n,c);}});
+  const mediaSetup=mediaJobs?createMediaSetup(serviceConfig,store,{directory:path.join(path.dirname(config.state_file),'media-setup'),workers:()=>nodes.map(definition),binding:(id,c)=>{const n=nodes.find(n=>n.id===id);return !!n&&recovery.binding(n,c);},isEnabled:()=>!draining&&capabilityStatus().media,isAllowed:mediaHosts.allowed}):null;
   const rebalanceEnabled=()=>capabilityStatus().rebalance;
   const allocationStatus=slot=>slot.turnAllocation?{turns_used:slot.turnAllocation.used,remaining:Math.max(0,conversationTurns()-slot.turnAllocation.used),waiting_for_next_turn:!slot.active&&slot.turnAllocation.until>performance.now(),idle_remaining_ms:Math.max(0,Math.ceil(slot.turnAllocation.until-performance.now()))}:null;
   const stats = () => ({ version: 1, genie_capabilities:capabilityStatus(), serving_profiles:profiles, conversation_turns:conversationTurns(),conversation_turn_idle_ms:conversationTurnIdleMs, model_routes:routes?Object.fromEntries([...routes].map(([name,workers])=>[name,[...workers]])):null, agent_api_version:1, maintenance_lock_version:1,client_watch_version:1,client_watch:clientWatch.snapshot(), model: config.model, context_length: contextLimit(), queue_timeout_ms:queueTimeoutMs(), request_timeout_ms:config.request_timeout_ms??360000000, draining,startup:{...startup}, dataset:dataset.snapshot(), routing_shadow:shadow.snapshot(),recovery:recovery.status(),protections:visionProtection.status(),
@@ -1429,9 +1431,9 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     if (req.method === 'GET' && req.url === '/workers') return json(res, 200, registry());
     if(req.method==='GET'&&req.url==='/spark-services')return json(res,200,{schema:1,workers:Object.fromEntries(Object.entries(store.data.spark_services??{}).filter(([id])=>nodes.some(n=>n.id===id)).map(([id,row])=>[id,{inspection:row.inspection,recovery:true,media:Object.keys(row.media.engines)}]))});
     if(req.method==='GET'&&req.url==='/media-jobs')return json(res,200,mediaStatus());
-    if(req.method==='POST'&&req.url==='/genie-media-start'){
+    if(req.method==='POST'&&['/genie-media-start','/genie-media-setup','/media-setup-complete'].includes(req.url)){
       let body='';req.on('data',chunk=>{body+=chunk;if(Buffer.byteLength(body)>2048)req.destroy();});req.on('error',()=>{});
-      req.on('end',()=>{void serialize(async()=>{try{return json(res,202,await mediaExecution.start(JSON.parse(body)));}catch(e){return error(res,409,'media_start_failed',e.message);}});});return;
+      req.on('end',()=>{void serialize(async()=>{try{const input=JSON.parse(body);return json(res,202,await (req.url==='/genie-media-start'?mediaExecution.start(input):req.url==='/genie-media-setup'?mediaSetup.start(input):mediaSetup.finish(input)));}catch(e){return error(res,409,'media_start_failed',e.message);}});});return;
     }
     if (req.method !== 'POST' || !['/media-host-eligibility','/drain-workers', '/resume-workers', '/maintenance-lock','/release-maintenance-lock','/maintenance-receipt','/add-worker', '/edit-endpoint', '/check-endpoint', '/remove-worker', '/set-ssh-fallbacks','/set-context-limit','/set-conversation-turns','/set-queue-timeout','/set-protection','/set-job-priority','/set-worker-concurrency','/relocate-queued','/genie-relocate-queued','/genie-capability','/recovery-policy','/recovery-handback-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/grant-agent','/revoke-agent','/release-agent-hold','/agent/v1/drain','/agent/v1/resume','/agent/v1/receipt'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
     let body = '';

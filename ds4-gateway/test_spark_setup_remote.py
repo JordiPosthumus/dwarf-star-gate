@@ -26,6 +26,19 @@ def bundle(script):
 
 
 class RemoteSetupTests(unittest.TestCase):
+    def test_media_location_is_derived_from_enrolled_ssh_account_and_creates_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(remote.Path,'home',return_value=Path(tmp)):
+            identity='12345678-1234-1234-1234-123456789abc'
+            self.assertEqual(remote.media_location(identity)['directory'],str(Path(tmp)/'.local/share/star-gate/media-setup'/identity))
+            self.assertEqual(list(Path(tmp).iterdir()),[])
+            with self.assertRaises(ValueError):remote.media_location('../other')
+
+    def test_media_preflight_refusal_confirms_no_launch_and_preserves_files(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(remote.subprocess,'check_output',return_value=json.dumps([{'Id':'a'*64,'State':{'Running':False}}])):
+            root=Path(tmp)/'setup'
+            result=remote.start(root,{**bundle("def preflight(): raise ValueError('unsupported platform')\n"),'operation':'prepare_media','selected_engines':['ace-step'],'llm_container':'a'*64})
+            self.assertEqual(result['state'],'refused');self.assertFalse(result['process_running']);self.assertFalse(root.exists())
+
     def test_download_progress_counts_partial_bytes_once_without_claiming_verification(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -38,6 +38,10 @@ test('terminal preparation or native qualification failure still returns the unc
   assert.equal(f.llm.State.Running,true);assert.ok(f.calls.includes('verify'));assert.ok(f.calls.includes('finish'));assert.equal(f.calls.at(-1),'phase:failed_returned');
  }
 });
+test('definitive preflight refusal returns the LLM without waiting for a nonexistent installer',async()=>{
+ const f=fixture();f.io.prepare=async()=>({state:'refused',error:'unsupported platform'});f.io.readPreparation=async()=>{assert.fail('No installation was launched');};
+ await assert.rejects(runMediaSetup(f.plan,f.io),/unsupported platform/);assert.equal(f.llm.State.Running,true);assert.ok(f.calls.includes('finish'));
+});
 test('changed original settings or a still-running media engine prevents unsafe return',async()=>{
  for(const change of ['settings','media']){
   const f=fixture();f.io.qualify=async()=>{if(change==='settings')f.llm.Config.Cmd=['someone-else'];else f.media.State.Running=true;throw Error('qualification failed');};

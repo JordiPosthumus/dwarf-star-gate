@@ -60,8 +60,8 @@ prepares all three engines. Selected preparation does not build, download or
 create containers for unselected engines, so adding music does not prepare
 another LLM. It still requires an idle GPU and creates only stopped containers;
 draining, native generation checks, enrollment and LLM return belong to the
-gateway's separate lifecycle. The existing-host setup action in the Media view
-is not connected yet.
+gateway's separate lifecycle. The existing-host setup action in the Media view now connects these steps in
+source; its complete native workflow and production activation remain unverified.
 
 Resume with exactly the same engines and directory. The receipt records that
 selection, and a different selection is refused without changing existing files.

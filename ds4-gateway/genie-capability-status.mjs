@@ -1,8 +1,8 @@
 export function capabilityStatus(snapshot,{genie={},chat={},operations={},media={},sparkSetup={},hourglass={},activity={},management=false}={}){
   const g=snapshot.gateway??{},switches=g.genie_capabilities??{},configured=chat.capabilities_configured??{};
   const current=operations.operations?.[0];
-  const mediaJob=media.jobs?.filter(j=>j.execution).at(-1),mediaPhase=mediaJob?.execution?.phase;
-  const mediaDetail=mediaJob?`${mediaJob.execution.worker_id}: ${mediaJob.execution.detail??mediaPhase}`:'Assign queued media to enrolled hosts, retaining at least one serving LLM. Turning off prevents new starts; accepted jobs finish and return their host.';
+  const mediaSetup=media.setup?.operations?.filter(s=>s.phase!=='enrolled').at(-1),mediaJob=media.jobs?.filter(j=>j.execution).at(-1),mediaPhase=mediaSetup?.phase??mediaJob?.execution?.phase;
+  const mediaDetail=mediaSetup?`${mediaSetup.worker_id} setup: ${mediaSetup.enrollment_error??mediaSetup.detail??mediaPhase}`:mediaJob?`${mediaJob.execution.worker_id}: ${mediaJob.execution.detail??mediaPhase}`:'Assign queued media and set up allowed engines, retaining at least one serving LLM. Turning off prevents new starts; accepted operations finish and return their host.';
   const recovery=g.recovery??{},unbound=(recovery.workers??[]).filter(w=>w.enrollment?.binding!=='matched');
   const bound=(recovery.workers??[]).filter(w=>w.enrollment?.binding==='matched');
   const setupState=t=>t.continuation?.state==='needs_attention'?'needs_attention':['requested','waiting_for_genie'].includes(t.continuation?.state)?'waiting_for_genie':t.registration?.state??t.qualification?.state??t.media_qualification?.state??t.state;
@@ -22,7 +22,7 @@ export function capabilityStatus(snapshot,{genie={},chat={},operations={},media=
     ['research','Public web research',configured.research,'Ready','Genie can search public sources while answering.'],
     ['inspection','Server inspection',configured.inspection,'Ready','Genie can read configuration records and inspect connected servers.'],
     ['server_changes','Server changes',operations.configured,current?.error?'Failed':current?.state==='awaiting_approval'?'Waiting for approval':'Ready',current?.error??'Genie prepares changes; each exact change still needs your approval.'],
-    ['media','Media jobs',configured.media&&media.workers?.length,media.unavailable?'Status unavailable':['needs_attention','launch_uncertain','failed_returned','failed_unchanged'].includes(mediaPhase)?'Needs attention':mediaPhase&&mediaPhase!=='returned'?'Working':'Ready',mediaDetail],
+    ['media','Media jobs',configured.media&&(media.workers?.length||media.setup?.connected),media.unavailable?'Status unavailable':['needs_attention','launch_uncertain','failed_returned','failed_unchanged','qualified_returned'].includes(mediaPhase)?'Needs attention':mediaPhase&&mediaPhase!=='returned'?'Working':'Ready',mediaDetail],
     ['spark_setup','New Spark setup',configured.spark_setup&&sparkSetup.targets?.length,sparkSetup.targets?.some(t=>['unavailable','unconfirmed','needs_attention'].includes(setupState(t)))?'Needs attention':sparkSetup.targets?.some(t=>['running','accepted','registering','registered_paused','waiting_for_genie'].includes(setupState(t)))?'Working':'Ready',sparkSetup.targets?.length?sparkSetup.targets.map(t=>`${t.target_id}: ${setupState(t)}${setupProgress(t)?.engine?' · '+setupProgress(t).engine:''}${setupProgress(t)?.phase?' · '+setupProgress(t).phase:''}${setupDownload(t)}${t.continuation?' · setup '+t.continuation.state:''}${setupError(t)?' · '+setupError(t):''}`).join('; '):'No new Sparks enrolled. Preparation creates stopped engines; qualification and gateway registration follow separately.'],
     ['hourglass','Hourglass measurements',hourglass.configured,hourglass.error?'Failed':'Ready',hourglass.error??'Prepare measurements and observe results. Starting a run needs your approval.'],
   ];

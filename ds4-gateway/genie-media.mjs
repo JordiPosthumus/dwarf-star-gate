@@ -1,6 +1,6 @@
 import {createToolEndpoint} from './genie-tool-endpoint.mjs';
 import {priorityRank} from './job-priority.mjs';
-export function createMediaTools({read,start,resources=null,isTesting=()=>false}){
+export function createMediaTools({read,start,setup=null,resources=null,isTesting=()=>false}){
   return createToolEndpoint('/api/genie/media-tools','x-sg-media-tool',async input=>{
     if(input?.action==='status'&&Object.keys(input).length===1){
       const status=await read();
@@ -14,6 +14,11 @@ export function createMediaTools({read,start,resources=null,isTesting=()=>false}
       const host=(await read()).hosts?.find(h=>h.id===input.worker_id);
       if(!host)throw Error('Choose a registered worker for inspection.');
       return {...await resources.inspect(input.worker_id),existing_engines:host.engines??[],lifecycle:'The current executor runs one media engine/job on the borrowed host, then restores its LLM. H3 and ACE-Step do not need simultaneous residency. Recipe model-file totals are disk requirements, not measured RAM. Existing engine enrollment is separate from this resource observation; it is not erased or requalified by this check.'};
+    }
+    if(input?.action==='setup'&&Object.keys(input).sort().join(',')==='action,engine,worker_id'){
+      if(isTesting())throw new Error('Media setup is suspended for testing.');
+      if(!setup)throw new Error('Media setup is not connected.');
+      return setup({worker_id:input.worker_id,engine:input.engine});
     }
     if(input?.action!=='start'||Object.keys(input).sort().join(',')!=='action,job_id,worker_id')throw new Error('Read media status, then select one queued job and enrolled worker.');
     if(isTesting())throw new Error('Media execution is suspended for testing.');

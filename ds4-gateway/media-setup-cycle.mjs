@@ -24,8 +24,10 @@ export async function runMediaSetup(plan,io){
   await stop(plan.llm_container);assert.equal((await inspect(plan.llm_container)).State.Running,false);
   progress('preparing_media','Building and downloading only the selected media engines.');
   save('prepare-intent.json',{engines:plan.engines,target:plan.target});
-  try{save('prepare-acknowledgement.json',await io.prepare());}
+  let acknowledgement;
+  try{acknowledgement=await io.prepare();save('prepare-acknowledgement.json',acknowledgement);}
   catch(e){save('prepare-uncertain.json',{error:e.message});}
+  if(acknowledgement?.state==='refused')throw Error(acknowledgement.error??'Preparation preflight refused; no work was launched');
   // A lost acknowledgement is not a failed install. Observe the same target,
   // never launch another build or restore over a process still using the host.
   for(;;){
