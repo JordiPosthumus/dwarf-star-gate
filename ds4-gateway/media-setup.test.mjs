@@ -44,6 +44,29 @@ test('lost launch acknowledgement remains visible and is never retried',async t=
  const f=fixture(t);let launches=0;const service=createMediaSetup(f.config,f.store,{...f.options,launchRunner:async()=>{launches++;throw Error('lost acknowledgement');}});
  await assert.rejects(service.start({worker_id:'one',engine:'ace-step'}));assert.equal((await service.start({worker_id:'one',engine:'ace-step'})).phase,'needs_attention');assert.equal(launches,1);
 });
+test('retained media survives LLM and tunnel updates on the same machine, but not a replacement or removed worker',async t=>{
+ const f=fixture(t);f.config.recovery.workers[0].machine='1'.repeat(64);
+ const row=await f.service.start({worker_id:'one',engine:'ace-step'});f.complete(row.operation_id);await f.service.finish({operation_id:row.operation_id});
+ const upgraded=structuredClone(f.baseline);upgraded.recovery.workers[0].machine='1'.repeat(64);upgraded.recovery.workers[0].profile='upgraded-profile';upgraded.genie_chat.inspection.workers.one.container='2'.repeat(64);f.workers[0].url='http://127.0.0.1:39999';
+ const same=createMediaSetup(upgraded,f.store,f.options);assert.equal(upgraded.media_jobs.workers.one.engines.music.container,'b'.repeat(64));assert.equal(same.status().hosts[0].error,null);
+ const replaced=structuredClone(f.baseline);replaced.recovery.workers[0].machine='3'.repeat(64);
+ const other=createMediaSetup(replaced,f.store,f.options);assert.equal(replaced.media_jobs.workers.one.engines.music,undefined);assert.match(other.status().hosts[0].error,/physical-machine binding changed/);
+ const removed=structuredClone(f.baseline);removed.recovery.workers[0].machine='1'.repeat(64);f.workers.length=0;createMediaSetup(removed,f.store,f.options);assert.equal(removed.media_jobs.workers.one.engines.music,undefined);
+});
+test('new enrollment never carries a previous machine engine into the new host binding',async t=>{
+ const f=fixture(t);f.config.recovery.workers[0].machine='1'.repeat(64);
+ f.store.save({...f.store.data,media_engine_enrollments:{one:{binding:'old-binding',host_binding:'9'.repeat(64),engines:{video:f.baseline.media_jobs.workers.one.engines.video}}}});
+ const row=await f.service.start({worker_id:'one',engine:'ace-step'});f.complete(row.operation_id);await f.service.finish({operation_id:row.operation_id});
+ assert.deepEqual(Object.keys(f.store.data.media_engine_enrollments.one.engines),['music']);
+ assert.deepEqual(f.config.media_jobs.workers.one.engines.video,f.baseline.media_jobs.workers.one.engines.video);
+ const backups=fs.readdirSync(f.directory).filter(n=>n.includes('.media-setup-')).map(n=>JSON.parse(fs.readFileSync(path.join(f.directory,n))));assert.ok(backups.some(b=>b.media_engine_enrollments?.one?.engines.video));
+});
+test('legacy enrollment requires its original exact binding and is not silently migrated',async t=>{
+ const f=fixture(t),row=await f.service.start({worker_id:'one',engine:'ace-step'});f.complete(row.operation_id);await f.service.finish({operation_id:row.operation_id});
+ delete f.store.data.media_engine_enrollments.one.host_binding;
+ const unchanged=structuredClone(f.baseline);createMediaSetup(unchanged,f.store,f.options);assert.equal(unchanged.media_jobs.workers.one.engines.music.container,'b'.repeat(64));
+ const changed=structuredClone(f.baseline);changed.recovery.workers[0].profile='different';const service=createMediaSetup(changed,f.store,f.options);assert.equal(changed.media_jobs.workers.one.engines.music,undefined);assert.ok(service.status().hosts[0].error);assert.equal(f.store.data.media_engine_enrollments.one.host_binding,undefined);
+});
 test('real core exposes setup status on its private socket and refuses unenrolled machines without changing inference',async t=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sg-setup-core-'));
  const native=http.createServer((req,res)=>res.end(JSON.stringify({data:[{id:'fixture',context_length:262144}]})));native.listen(0,'127.0.0.1');await once(native,'listening');

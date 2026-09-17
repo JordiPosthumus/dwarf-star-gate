@@ -206,6 +206,13 @@ private gateway state, with a backup. Existing engines, capability switches and
 placement choices are preserved. A pending final enrollment can be retried with
 **Finish setup**, without repeating installation or generation.
 
+Retained media enrollment follows the enrolled physical machine, so an LLM or
+local tunnel update on that same machine does not discard its qualified media.
+An in-progress setup still requires its exact original configuration when it
+finishes. A replacement machine cannot inherit saved engines from the previous
+machine; the prior records remain in the timestamped state backup. Older records
+without a physical-machine binding retain their original exact-binding check.
+
 Lifecycle, retained enrollment/restart, private control routes and UI controls
 have fixture tests. The pinned Hermes runtime has called the setup tool and its
 actual receipt remains in chat. These checks do not yet establish complete native

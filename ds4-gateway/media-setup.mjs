@@ -21,6 +21,15 @@ export function createMediaSetup(config,store,{directory,workers,binding,isEnabl
   const route=Object.fromEntries(['id','url','ssh','ssh_fallbacks','remote_port'].filter(k=>worker[k]!==undefined).map(k=>[k,worker[k]]));
   return createHash('sha256').update(JSON.stringify({route,recovery,inspection})).digest('hex');
  };
+ // Media was qualified with the LLM stopped. Its retained engine belongs to
+ // that physical machine, not a particular LLM version or local tunnel port.
+ // In-flight setup still checks the full identity above before enrollment.
+ const hostIdentity=id=>{
+  if(!workers().some(w=>w.id===id))return null;
+  const machine=config.recovery?.workers?.find(w=>w.id===id)?.machine;
+  return /^[a-f0-9]{64}$/.test(machine??'')?createHash('sha256').update(JSON.stringify([id,machine])).digest('hex'):null;
+ };
+ const retainedMatches=(id,saved)=>saved?.host_binding?hostIdentity(id)===saved.host_binding:identity(id)!==null&&identity(id)===saved?.binding;
  const backup=()=>{if(fs.existsSync(store.filename))fs.copyFileSync(store.filename,`${store.filename}.media-setup-${Date.now()}-${randomUUID()}.bak`,fs.constants.COPYFILE_EXCL);};
  const apply=(id,engines)=>{
   const previous=config.media_jobs?.workers?.[id]?.engines??{};
@@ -32,7 +41,7 @@ export function createMediaSetup(config,store,{directory,workers,binding,isEnabl
   config.media_jobs.workers[id].engines={...previous,...structuredClone(engines)};
  };
  for(const [id,saved] of Object.entries(store.data.media_engine_enrollments??{})){
-  try{assert.equal(identity(id),saved.binding,'Worker or recovery binding changed');apply(id,saved.engines);}catch(e){restoreErrors[id]=e.message;}
+  try{assert.ok(retainedMatches(id,saved),'Worker or physical-machine binding changed');apply(id,saved.engines);}catch(e){restoreErrors[id]=e.message;}
  }
  const read=id=>{
   const saved=store.data.media_setups?.[id];assert.ok(saved,'Unknown media setup');
@@ -68,7 +77,8 @@ export function createMediaSetup(config,store,{directory,workers,binding,isEnabl
   const kind=kinds[saved.engine],engine=Object.fromEntries(['container','image','kind','port'].map(k=>[k,e[k]]));
   const existing=config.media_jobs?.workers?.[saved.worker_id]?.engines?.[kind];if(existing)assert.deepEqual(existing,engine,'Existing media enrollment is preserved');
   const row={...saved,phase:'enrolled',finished_at:new Date().toISOString()};backup();
-  store.save({...store.data,media_setups:{...store.data.media_setups,[row.operation_id]:row},media_engine_enrollments:{...store.data.media_engine_enrollments,[row.worker_id]:{binding:saved.binding,engines:{...store.data.media_engine_enrollments?.[row.worker_id]?.engines,[kind]:engine}}}});
+  const prior=store.data.media_engine_enrollments?.[row.worker_id];
+  store.save({...store.data,media_setups:{...store.data.media_setups,[row.operation_id]:row},media_engine_enrollments:{...store.data.media_engine_enrollments,[row.worker_id]:{binding:saved.binding,host_binding:hostIdentity(row.worker_id),engines:{...(retainedMatches(row.worker_id,prior)?prior.engines:{}),[kind]:engine}}}});
   apply(row.worker_id,{[kind]:engine});return row;
  }
  return {status,finish,async start(input){
