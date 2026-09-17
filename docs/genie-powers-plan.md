@@ -1,19 +1,16 @@
 # Gate Genie powers: recovery, model stewardship and operator controls
 
-Status: **bounded systemd recovery, an opt-in launchd adapter, implemented; broader powers below remain a design**.
-The authoritative shipped scope, setup, controls and limits are in
-[bounded worker recovery](worker-recovery.md): private systemd-user or launchd
-enrollment, one guarded runner shared by GG and a fatal-fault detector, durable
-receipts and verified reinstatement. Systemd has a real deployment canary; launchd
-requires a per-installation canary before activation. Container adapters, editable
-Genie endpoints, persistent chat remain future work.
-The sections below
-retain the original broader plan; they are not a claim that every item shipped.
-A running process is not upgraded merely by changing files on disk.
+This document preserves the original recovery and operator-control design. Its
+historical “current” and “proposed” sections below are not the release status.
+Use the [current work plan](current-work-plan.md) for delivered capabilities and
+remaining acceptance work. Persistent Hermes chat, independent capability
+switches, Docker/oMLX recovery adapters, and approved-operation workflows have
+since been implemented; native qualification and enrollment remain specific to
+each installation.
 
-The [persistent memory plan](genie-memory.md) adds a private evidence-linked
-notebook, not a new source of permissions or training labels. It remains planned;
-the current in-memory report list is not a durable operational memory.
+The [persistent memory plan](genie-memory.md) describes the operational notebook.
+Neither notebook entries nor model commentary create operational permission.
+Changing source files does not upgrade an already running process.
 
 ## Division of responsibility
 

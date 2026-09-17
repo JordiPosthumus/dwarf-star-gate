@@ -351,8 +351,10 @@ deployment receipts stay outside this public repository.
   Genie tool now report actual platform, memory and filesystem space against the
   pinned recipe model sizes. Shared filesystems are grouped; model-file space is
   explicitly separate from image/build/output space and native memory fit.
-  Recipe-driven setup from this view and complete fit qualification remain
-  unfinished. Browser control persistence and
+  Recipe-driven setup is connected through this view and Genie for enrolled
+  inspection targets, with independent native generation and original-LLM return
+  checks. Complete fit qualification for new hardware remains unfinished; resource
+  estimates alone do not prove that an engine will run there. Browser control persistence and
   download hashes passed; in-app playback hit a renderer crash and remains
   unverified. This item stays open until those remaining pieces are accepted.
 - [ ] Add qualified multiple text connections and extend dedicated media work
