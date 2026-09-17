@@ -68,6 +68,23 @@ class PublicationTest(unittest.TestCase):
         changed = self.git('diff-tree', '--no-commit-id', '--name-only', '-r', receipt['commit']).splitlines()
         self.assertTrue(all(p == 'records/approved/fixture.json' or p.startswith('records/artifacts/serving-') for p in changed))
 
+    def test_ignored_private_library_publishes_only_its_exact_evidence(self):
+        # A private library can live under an ignored directory in a larger repo.
+        # Its approved record is already explicitly tracked; new receipts are not.
+        (self.repo / '.gitignore').write_text('/records/\n')
+        private = self.library / 'unrelated-private.json'
+        private.write_text('{"private":true}\n')
+        f = self.fixture
+        result = f.execute()
+        self.assertEqual(result['state'], 'completed')
+        self.assertFalse(f.control.worker['drained'])
+        changed = self.git('diff-tree', '--no-commit-id', '--name-only', '-r', result['publication']['commit']).splitlines()
+        self.assertTrue(any(p.startswith('records/artifacts/serving-') for p in changed))
+        self.assertTrue(all(p == 'records/approved/fixture.json' or p.startswith('records/artifacts/serving-') for p in changed))
+        self.assertEqual(self.git('diff', '--cached', '--name-only'), 'other.txt')
+        self.assertEqual(self.git('ls-files', '--', 'records/unrelated-private.json'), '')
+        self.assertEqual(private.read_text(), '{"private":true}\n')
+
     def test_published_links_reach_actual_tool_request_and_reply_without_rewriting_evidence(self):
         f = self.fixture
         result = f.execute(); self.assertEqual(result['state'], 'completed')

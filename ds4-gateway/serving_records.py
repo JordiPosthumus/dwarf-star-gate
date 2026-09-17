@@ -214,7 +214,10 @@ class ServingRecordPublisher:
         if read_bytes(record_file) != old_bytes or self.git('status', '--porcelain', '--', record_path):
             raise ValueError('Configuration record changed during evidence collection')
         save(record_file.parent, record_file.name, record, replace=True)
-        self.git('add', '--', *paths)
+        # The enrolled private library may be ignored by its parent repository.
+        # Only this already-reviewed record and this operation's evidence are
+        # explicitly versioned; never stage the containing private directory.
+        self.git('add', '-f', '--', *paths)
         self.git('commit', '--only', '-m', 'Record verified serving operation ' + folder.name, '--', *paths)
         commit = self.git('rev-parse', 'HEAD')
         prefix = self.git('rev-parse', '--show-prefix')
