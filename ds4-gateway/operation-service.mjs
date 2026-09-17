@@ -75,7 +75,8 @@ export function createOperationService(config,{directory,isTesting=()=>false,isE
     prepare:async(proposal,record_revision)=>{
       const enrollment=structuredClone(targets[proposal.worker_id]);
       if(proposal.trial===true){
-        const target=config.hourglass_console?.targets?.find(t=>t.worker_id===proposal.worker_id&&t.route==='direct'&&t.maintenance===true);
+        const target=config.hourglass_console?.targets?.find(t=>t.worker_id===proposal.worker_id&&t.route==='direct'&&t.maintenance?.native_url===enrollment.native_url
+          &&(t.maintenance.docker_socket??'/var/run/docker.sock')===enrollment.docker_socket);
         if(!target)throw new Error('A measured trial requires this worker’s enrolled direct Hourglass target.');
         if(trialReview)enrollment.trial=await trialReview(target);
         else{
