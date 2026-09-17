@@ -1,6 +1,6 @@
 import {createToolEndpoint} from './genie-tool-endpoint.mjs';
 import {priorityRank} from './job-priority.mjs';
-export function createMediaTools({read,start,setup=null,resources=null,isTesting=()=>false}){
+export function createMediaTools({read,start,inspectInputs=null,setup=null,resources=null,isTesting=()=>false}){
   return createToolEndpoint('/api/genie/media-tools','x-sg-media-tool',async input=>{
     if(input?.action==='status'&&Object.keys(input).length===1){
       const status=await read();
@@ -8,6 +8,10 @@ export function createMediaTools({read,start,setup=null,resources=null,isTesting
       const recent=status.jobs.filter(j=>!active.includes(j)).reverse();
       const jobs=[...active.sort((a,b)=>priorityRank(b)-priorityRank(a)),...recent].slice(0,50);
       return {...status,jobs,resource_checks:resources?.status()??{},resource_inspection_connected:!!resources,truncated:status.jobs.length>jobs.length,scope:'Queued media jobs and observed independent execution. Select an enrolled host using current LLM demand. At least one other LLM must remain serving. No active work is cancelled. A completed native job does not prove its host has returned; read execution.phase. Resource checks are dated observations, not permission, installation or guaranteed fit.'};
+    }
+    if(input?.action==='inputs'&&Object.keys(input).sort().join(',')==='action,job_id,worker_id'){
+      if(!inspectInputs)throw Error('Media input inspection is not connected.');
+      return inspectInputs({job_id:input.job_id,worker_id:input.worker_id});
     }
     if(input?.action==='inspect'&&Object.keys(input).sort().join(',')==='action,worker_id'){
       if(!resources)throw Error('Media resource inspection is not connected.');

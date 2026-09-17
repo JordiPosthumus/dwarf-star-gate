@@ -39,21 +39,21 @@ test('bounded media status keeps old queued jobs ahead of recent completed histo
   assert.equal(result.jobs.length,50);assert.equal(result.truncated,true);assert.deepEqual(result.jobs.slice(0,2).map(j=>j.id),['urgent','old-waiting']);
 });
 test('automatic queue wakeup uses pinned Hermes to start once and retain actual tool events',{skip:!process.env.DSG_TEST_HERMES_SOURCE,timeout:120000},async t=>{
-  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'sg-media-chat-'));let starts=0,calls=0,setups=0;
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'sg-media-chat-'));let starts=0,calls=0,setups=0,inputChecks=0;
   const state={enabled:true,batch_jobs_supported:true,hosts:[{id:'one'}],fleet:[{id:'one',is_healthy:true,drained:false,load:0,queued:0},{id:'two',is_healthy:true,drained:false,load:0,queued:0}],workers:[{id:'one',kinds:['video'],busy:false}],jobs:[{id,kind:'video',state:'queued'},{id:secondId,kind:'video',state:'queued'}]};
   const resources=createMediaResources({genie_chat:{inspection:{workers:{one:{kind:'omlx-local'}}}}},{inspect:async()=>({system:'Darwin',architecture:'arm64',gpu_names:[]})});
-  const tools=createMediaTools({setup:async input=>{assert.deepEqual(input,{worker_id:'one',engine:'ace-step'});setups++;state.setup={operations:[{worker_id:'one',engine:'ace-step',phase:'waiting_idle'}]};return state.setup.operations[0];},resources,read:async()=>state,start:async input=>{assert.deepEqual(input,{job_id:id,worker_id:'one',following_job_ids:[secondId]});starts++;for(const job of state.jobs)job.execution={worker_id:'one',phase:'waiting_idle',detail:'Admitted work finishing'};return state.jobs[0];}});
+  const tools=createMediaTools({inspectInputs:async input=>{assert.deepEqual(input,{job_id:id,worker_id:'one'});inputChecks++;return {files:[{state:'present'}]};},setup:async input=>{assert.deepEqual(input,{worker_id:'one',engine:'ace-step'});setups++;state.setup={operations:[{worker_id:'one',engine:'ace-step',phase:'waiting_idle'}]};return state.setup.operations[0];},resources,read:async()=>state,start:async input=>{assert.deepEqual(input,{job_id:id,worker_id:'one',following_job_ids:[secondId]});starts++;for(const job of state.jobs)job.execution={worker_id:'one',phase:'waiting_idle',detail:'Admitted work finishing'};return state.jobs[0];}});
   const server=http.createServer((req,res)=>{
     if(tools.handle(req,res))return;
     if(req.method==='GET'){res.end(JSON.stringify({data:[{id:'fixture'}]}));return;}
     let raw='';req.on('data',c=>raw+=c);req.on('end',()=>{
       const body=JSON.parse(raw);if(req.url!=='/v1/chat/completions'){res.end('{}');return;}calls++;
-      if(calls===4)assert.match(JSON.stringify(body.messages),/waiting_idle/);
+      if(calls===5)assert.match(JSON.stringify(body.messages),/waiting_idle/);
       if(calls===3)assert.match(JSON.stringify(body.messages),/recipe_platform_matches/);
-      const name=calls===2?'inspect_media_host':calls===3?'start_media_job':calls===5?'setup_media_host':'media_job_status',args=calls===2?{worker_id:'one'}:calls===3?{job_id:id,worker_id:'one',following_job_ids:[secondId]}:calls===5?{worker_id:'one',engine:'ace-step'}:{};
-      const message=calls<=6?{role:'assistant',content:null,tool_calls:[{id:'media-'+calls,type:'function',function:{name:'tool_call',arguments:JSON.stringify({name,arguments:args})}}]}:{role:'assistant',content:'Job accepted on one; admitted LLM work is finishing. Generation has not started.'};
+      const name=calls===2?'inspect_media_host':calls===3?'inspect_media_inputs':calls===4?'start_media_job':calls===6?'setup_media_host':'media_job_status',args=calls===2?{worker_id:'one'}:calls===3?{job_id:id,worker_id:'one'}:calls===4?{job_id:id,worker_id:'one',following_job_ids:[secondId]}:calls===6?{worker_id:'one',engine:'ace-step'}:{};
+      const message=calls<=7?{role:'assistant',content:null,tool_calls:[{id:'media-'+calls,type:'function',function:{name:'tool_call',arguments:JSON.stringify({name,arguments:args})}}]}:{role:'assistant',content:'Job accepted on one; admitted LLM work is finishing. Generation has not started.'};
       const delta={...message,...(message.tool_calls?{tool_calls:message.tool_calls.map((v,index)=>({...v,index}))}:{})};
-      res.setHeader('content-type','text/event-stream');res.end('data: '+JSON.stringify({id:'fixture',model:'fixture',choices:[{index:0,delta,finish_reason:null}]})+'\n\ndata: '+JSON.stringify({id:'fixture',model:'fixture',choices:[{index:0,delta:{},finish_reason:calls<=6?'tool_calls':'stop'}]})+'\n\ndata: [DONE]\n\n');
+      res.setHeader('content-type','text/event-stream');res.end('data: '+JSON.stringify({id:'fixture',model:'fixture',choices:[{index:0,delta,finish_reason:null}]})+'\n\ndata: '+JSON.stringify({id:'fixture',model:'fixture',choices:[{index:0,delta:{},finish_reason:calls<=7?'tool_calls':'stop'}]})+'\n\ndata: [DONE]\n\n');
     });
   });
   await new Promise(r=>server.listen(0,'127.0.0.1',r));tools.bind(server.address().port);
@@ -62,7 +62,7 @@ test('automatic queue wakeup uses pinned Hermes to start once and retain actual 
   const chat=new GenieChat({directory:path.join(directory,'chats'),provider,getSnapshot:()=>({gateway:{}})});
   const watch=new MediaWatch({filename:path.join(directory,'watch.json'),chat,read:async()=>state,isEnabled:()=>true});
   await watch.tick();const conversation={id:watch.state.conversation_id};await chat.idle();await watch.tick();
-  const answer=chat.get(conversation.id).messages[1];assert.equal(answer.state,'complete',JSON.stringify(answer));assert.equal(starts,1);assert.equal(calls,7);assert.equal(setups,1);assert.equal(provider.info.can_act,true);
-  assert.equal(answer.media.events.filter(e=>e.state==='complete').length,6);assert.equal(chat.capabilityActivity().media.state,'complete');
+  const answer=chat.get(conversation.id).messages[1];assert.equal(answer.state,'complete',JSON.stringify(answer));assert.equal(starts,1);assert.equal(calls,8);assert.equal(inputChecks,1);assert.equal(setups,1);assert.equal(provider.info.can_act,true);
+  assert.equal(answer.media.events.filter(e=>e.state==='complete').length,7);assert.ok(answer.media.events.some(e=>e.tool==='inspect_media_inputs'&&e.state==='complete'));assert.ok(answer.media.events.some(e=>e.tool==='start_media_job'&&e.state==='complete'));assert.equal(chat.capabilityActivity().media.state,'complete');
   const reread=new GenieChat({directory:path.join(directory,'chats'),provider});assert.deepEqual(reread.get(conversation.id).messages[1].media,answer.media);
 });
