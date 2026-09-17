@@ -224,7 +224,7 @@ class ModelConfiguration(unittest.TestCase):
  def test_preserves_bad_files_and_rejects_symlink(self):
   self.file.write_text('invalid-json');self.assertNotEqual(self.query().returncode,0);self.assertEqual(self.file.read_text(),'invalid-json')
   self.file.unlink();self.file.symlink_to(self.root/'must_not_import.py');self.assertNotEqual(self.query().returncode,0);self.assertTrue(self.file.is_symlink())
- def collect(self,changed=False,failed=False,runtime_failed=False,logs='selection'):
+ def collect(self,changed=False,failed=False,runtime_failed=False,logs='selection',cache_failed=False):
   import io,contextlib,copy,subprocess
   c={'Id':'exact-container-id','Image':'image-id','State':{'Running':True,'StartedAt':'2026-01-01T00:00:00Z'},'Config':{'Cmd':[str(self.root)],'Entrypoint':['vllm','serve'],'Env':[]},'Mounts':[],'HostConfig':{}}
   model_read=False;calls=[]
@@ -234,6 +234,10 @@ class ModelConfiguration(unittest.TestCase):
    if argv[:3]==('docker','image','inspect'):return json.dumps([{'Id':'image-id','Created':'dated'}])
    if argv[:2]==('docker','exec'):
     self.assertEqual(argv[2:6],('exact-container-id','python3','-B','-c'))
+    if argv[6]==m.CACHE_QUERY:
+     self.assertEqual(json.loads(argv[7]),[str(self.root)])
+     if cache_failed:raise subprocess.TimeoutExpired(argv,20)
+     return json.dumps({'state':'observed','kv_cache_size_tokens':500123})
     if argv[6]==m.RUNTIME_QUERY:
      if runtime_failed:raise subprocess.TimeoutExpired(argv,20)
      return json.dumps({'gpus':{'status':'observed','devices':[{'name':'Example GPU','compute_capability':'12.1','driver_version':'580.1'}]},'flashinfer':{'status':'installed','version':'0.6.18'}})
@@ -266,4 +270,41 @@ class ModelConfiguration(unittest.TestCase):
   result,_=self.collect(runtime_failed=True,logs='empty');self.assertEqual(result['engine_runtime']['device_and_package']['status'],'unavailable');self.assertEqual(result['engine_runtime']['gdn_prefill_log']['status'],'not_found_in_tail');self.assertEqual(result['engine_runtime']['gdn_prefill_log']['selections'],[]);self.assertEqual(result['model_config']['status'],'read')
   result,_=self.collect(logs='failed');self.assertEqual(result['engine_runtime']['gdn_prefill_log']['status'],'unavailable');self.assertEqual(result['model_config']['status'],'read')
   result,_=self.collect(changed=True);self.assertEqual(result['engine_runtime']['status'],'unavailable')
+ def test_cache_read_is_bound_to_start_and_failure_does_not_hide_other_inspection(self):
+  result,_=self.collect();cache=result['engine_runtime']['cache_capacity']
+  self.assertEqual(cache['kv_cache_size_tokens'],500123);self.assertEqual(cache['container_started_at'],'2026-01-01T00:00:00Z')
+  result,_=self.collect(cache_failed=True);self.assertEqual(result['engine_runtime']['cache_capacity']['state'],'unavailable');self.assertEqual(result['model_config']['status'],'read')
+
+class CacheMetricsQuery(unittest.TestCase):
+ def setUp(self):
+  import http.server,threading
+  self.requests=[];self.mode='normal'
+  owner=self
+  class Handler(http.server.BaseHTTPRequestHandler):
+   def log_message(self,*args):pass
+   def do_GET(self):
+    owner.requests.append(self.path)
+    if owner.mode=='redirect':
+     self.send_response(302);self.send_header('Location','/must-not-fetch');self.end_headers();return
+    if owner.mode=='denied':self.send_response(401);self.end_headers();return
+    raw=b'vllm:cache_config_info{engine="0",kv_cache_size_tokens="500123",num_gpu_blocks="340",secret="PRIVATE_VALUE"} 1.0\n'
+    if owner.mode=='duplicate':raw+=raw
+    if owner.mode=='large':raw=b'x'*4194305
+    self.send_response(200);self.end_headers();self.wfile.write(raw)
+  self.server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Handler)
+  thread=threading.Thread(target=self.server.serve_forever,daemon=True);thread.start()
+  self.addCleanup(self.server.server_close);self.addCleanup(self.server.shutdown)
+ def query(self,flags=None):
+  import subprocess,os
+  flags=flags if flags is not None else ['model','--port',str(self.server.server_port)]
+  result=subprocess.run([sys.executable,'-B','-c',m.CACHE_QUERY,json.dumps(flags)],capture_output=True,text=True,check=True,env={**os.environ,'HTTP_PROXY':'http://127.0.0.1:1','NO_PROXY':''})
+  return json.loads(result.stdout)
+ def test_reads_explicit_tokens_without_private_labels_or_proxy(self):
+  result=self.query();self.assertEqual(result['kv_cache_size_tokens'],500123);self.assertEqual(self.requests,['/metrics']);self.assertNotIn('PRIVATE_VALUE',json.dumps(result));self.assertIn('observed_at',result)
+ def test_redirect_auth_failure_and_ambiguous_metrics_stay_unavailable(self):
+  for mode in ['redirect','denied','duplicate','large']:
+   self.mode=mode;self.requests.clear();self.assertEqual(self.query()['state'],'unavailable');self.assertEqual(self.requests,['/metrics'])
+ def test_ambiguous_or_invalid_port_never_fetches(self):
+  for flags in [['--port','5','--port=6'],['--port','65536'],['--port','http://example'],['--port']]:self.assertEqual(self.query(flags)['state'],'unavailable')
+  self.assertEqual(self.requests,[])
 if __name__=='__main__':unittest.main()

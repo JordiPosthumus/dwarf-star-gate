@@ -1,5 +1,6 @@
 """Genie's read-only record and container inspection tools. No model-supplied commands."""
 import hashlib
+import inspect
 import json
 import os
 from pathlib import Path
@@ -7,6 +8,7 @@ import re
 import stat
 import subprocess
 from genie_omlx import inspect_omlx
+from serving_qualification import cache_capacity
 from datetime import datetime, timezone
 
 TOOLSET = 'stargate_inspection'
@@ -121,8 +123,29 @@ except Exception:pass
 result['scope']='Read-only device query and distribution metadata. No framework imported or inference requested. Driver version does not establish the loaded CUDA runtime; package version does not establish kernel compatibility.'
 print(json.dumps(result))
 '''
+# Reuse qualification's parser, but only perform a bounded metrics GET here.
+# Neither the qualification runner nor inference is executed in the container.
+CACHE_QUERY = 'import json,re,sys,datetime,urllib.request\n'+inspect.getsource(cache_capacity)+r'''
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+ def redirect_request(self,*args,**kwargs):return None
+try:
+ cmd=json.loads(sys.argv[1]);ports=[]
+ for n,arg in enumerate(cmd):
+  if arg=='--port':ports.append(cmd[n+1])
+  elif arg.startswith('--port='):ports.append(arg.split('=',1)[1])
+ if len(ports)>1:raise ValueError('Ambiguous port')
+ port=ports[0] if ports else '8000'
+ if not re.fullmatch(r'[0-9]{1,5}',port) or not 1<=int(port)<=65535:raise ValueError('Invalid port')
+ opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect())
+ with opener.open('http://127.0.0.1:'+port+'/metrics',timeout=5) as response:raw=response.read(4194305)
+ if len(raw)>4194304:raise ValueError('Metrics too large')
+ result=cache_capacity(raw)
+except Exception:result={'state':'unavailable','reason':'metrics_read_failed'}
+result.update(observed_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),scope='Explicit KV token allocation reported by this engine at this time, not a configured limit, cache-hit test, causal performance comparison or permission to reduce capacity. Startup memory availability can affect allocation. Raw metrics and unrelated labels are withheld.')
+print(json.dumps(result))
+'''
 # Arguments arrive as JSON on stdin, never interpolated into a remote shell command.
-COLLECTOR = 'SOURCE_QUERY = '+repr(SOURCE_QUERY)+'\nMODEL_CONFIG_QUERY = '+repr(MODEL_CONFIG_QUERY)+'\nRUNTIME_QUERY = '+repr(RUNTIME_QUERY)+'\n'+r'''
+COLLECTOR = 'SOURCE_QUERY = '+repr(SOURCE_QUERY)+'\nMODEL_CONFIG_QUERY = '+repr(MODEL_CONFIG_QUERY)+'\nRUNTIME_QUERY = '+repr(RUNTIME_QUERY)+'\nCACHE_QUERY = '+repr(CACHE_QUERY)+'\n'+r'''
 import sys,json,subprocess,pathlib,re,hashlib,datetime,stat
 p=json.loads(sys.stdin.readline())
 secret=re.compile(r'api[_-]?key|access[_-]?token|secret|password|authorization|hf_token|hugging_face_hub_token|private[_-]?key|credential',re.I)
@@ -192,6 +215,11 @@ if config.get('Entrypoint') in [['vllm','serve'],['vllm']]:
  if c['State']['Running']:
   engine_runtime={'status':'queried','device_and_package':{'status':'unavailable','reason':'runtime_query_failed'},'gdn_prefill_log':{'status':'unavailable','reason':'log_read_failed'}}
   try:engine_runtime['device_and_package']=json.loads(run('docker','exec',c['Id'],'python3','-B','-c',RUNTIME_QUERY))
+  except Exception:pass
+  engine_runtime['cache_capacity']={'state':'unavailable','reason':'metrics_query_failed'}
+  try:
+   engine_runtime['cache_capacity']=json.loads(run('docker','exec',c['Id'],'python3','-B','-c',CACHE_QUERY,json.dumps(config.get('Cmd') or [])))
+   engine_runtime['cache_capacity']['container_started_at']=c['State']['StartedAt']
   except Exception:pass
   try:
    # Retain only the known backend-selection message, never arbitrary logs,
@@ -409,7 +437,7 @@ def register_inspection(config, context, emit):
             message='Saved artifact unavailable or different from its recorded hash. Existing files were preserved; do not treat this as verified evidence.' if kind=='artifact' else 'Read-only inspection unavailable. No server changes were made; ask the operator to check the configured record or inspection target.'
             emit('inspection',event={'kind':event_kind,'operation':operation,'worker_id':worker,**details,'state':'failed','at':at,'finished_at':datetime.now(timezone.utc).isoformat(),'error':message})
             return json.dumps({'error':message})
-    for name,kind,description in [('read_server_configuration','records','Read the full private recorded configuration, matching owner-selected defaults and their hashed selection receipts, plus launch recipes and artifact references for a configured worker. Dated records are not live evidence. selected_launch_flags is partial; omitted flags are unknown until checked against the full command or recreation capture. Never publish private fields.'),('inspect_server','live','Inspect the configured worker container and launcher now using a fixed read-only collector. Set selected_default=true to inspect the exact image ID from its owner-selected default and retained containers using that exact image, instead of the running container. Read the configuration first. No image pull, container creation, execution of the selected image, or service changes. Metadata is not proof of a historical benchmark or effective generation settings. Supports configured Docker workers and local oMLX installations. selected_default applies only to Docker. For oMLX, inspect_server reads the enrolled launchers/settings with credentials redacted, live model metadata and the current listener; source on disk does not establish the loaded revision.'),('read_server_artifact','artifact','Read a saved baseline_reconciliation manifest, recreation_capture, or restoration_drill receipt referenced by a worker record. serving_flags_restoration reads the proof referenced by restoration.change_classes.serving_flags.drill_reference. restoration_drill uses restoration.drill.receipt_reference, and must have a recorded path and SHA256; a status label or receipt path alone is insufficient. Requires its recorded hash to match. Read the worker configuration first and use the actual record_kind and artifact reference it contains. Do not assume a proposed record or baseline manifest exists. Prefer the small baseline manifest when available; request the larger recreation capture when needed. Dated evidence, not new approval or live verification.')]:
+    for name,kind,description in [('read_server_configuration','records','Read the full private recorded configuration, matching owner-selected defaults and their hashed selection receipts, plus launch recipes and artifact references for a configured worker. Dated records are not live evidence. selected_launch_flags is partial; omitted flags are unknown until checked against the full command or recreation capture. Never publish private fields.'),('inspect_server','live','Inspect the configured worker container and launcher now using a fixed read-only collector. Set selected_default=true to inspect the exact image ID from its owner-selected default and retained containers using that exact image, instead of the running container. Read the configuration first. For running vLLM, engine_runtime.cache_capacity reports current explicit KV token allocation and observation/start times, not a configured limit or cache-hit test. No image pull, container creation, execution of the selected image, or service changes. Metadata is not proof of a historical benchmark or effective generation settings. Supports configured Docker workers and local oMLX installations. selected_default applies only to Docker. For oMLX, inspect_server reads the enrolled launchers/settings with credentials redacted, live model metadata and the current listener; source on disk does not establish the loaded revision.'),('read_server_artifact','artifact','Read a saved baseline_reconciliation manifest, recreation_capture, or restoration_drill receipt referenced by a worker record. serving_flags_restoration reads the proof referenced by restoration.change_classes.serving_flags.drill_reference. restoration_drill uses restoration.drill.receipt_reference, and must have a recorded path and SHA256; a status label or receipt path alone is insufficient. Requires its recorded hash to match. Read the worker configuration first and use the actual record_kind and artifact reference it contains. Do not assume a proposed record or baseline manifest exists. Prefer the small baseline manifest when available; request the larger recreation capture when needed. Dated evidence, not new approval or live verification.')]:
         properties={'worker_id':{'type':'string'}}
         if kind=='live':
             properties['selected_default']={'type':'boolean','default':False,'description':'Inspect the image named by the matching owner-selected default and its retained container recipes.'}

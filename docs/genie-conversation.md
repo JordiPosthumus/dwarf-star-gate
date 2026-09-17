@@ -427,6 +427,16 @@ RepoDigests are reported separately; an empty local list does not prove that an
 image is unavailable elsewhere. Neither labels nor package versions establish
 build ancestry or complete source integrity.
 
+Running vLLM inspections also return `engine_runtime.cache_capacity`: the explicit
+KV token allocation from the native metrics endpoint, its observation time and
+container start time. This uses the same parser as native qualification. It is
+an observed allocation, not a configured limit or proof of cache hits. Startup
+memory availability can change it; a difference alone does not establish a
+candidate regression. Missing, ambiguous, oversized or inaccessible metrics are
+reported as unavailable without hiding the remaining inspection. The reader
+uses container-local loopback, ignores proxies, follows no redirects and returns
+only selected cache fields. It does not run inference or change acceptance rules.
+
 When chat uses this installation's exact local gateway URL, each reply carries
 a private correlation ID in the existing call-ID header. The chat view can then
 show the gateway's observed queued, blocked or running request and worker. It
