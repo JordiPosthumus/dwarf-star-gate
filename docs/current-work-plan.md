@@ -235,8 +235,14 @@ deployment receipts stay outside this public repository.
   tests cover the sequence and uncertain preparation acknowledgements. Its
   Media-page/Genie action and additive saved enrollment are now connected and
   tested with isolated controllers, private core routes, browser interaction and
-  pinned Hermes tool receipts. The controls are deployed; native whole-workflow
-  qualification remains outstanding.
+  pinned Hermes tool receipts. The controls are deployed. A real Genie-led
+  ACE-Step setup on an existing production Spark completed the whole workflow:
+  one actual setup call, pinned preparation, a retained ten-second stereo sample
+  with independent full decoding, automatic original-LLM restoration, two
+  cold/warm cache conversations and readmission, then additive music enrollment.
+  No operator continuation was used. H3 setup on that worker is still in progress;
+  its native result and return remain unproven. This existing-host result does
+  not establish pristine-machine setup.
   Existing Docker inspection enrollments may use a container name. Media setup
   resolves it once to the inspected full ID before maintenance and uses that ID
   for preparation, stop and return; it still verifies the recovery instance.
