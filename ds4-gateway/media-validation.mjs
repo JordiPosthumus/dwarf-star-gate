@@ -12,6 +12,7 @@ export function validateVideoReferences(payload,files=[]){
     for(const [group,prefix] of Object.entries(groups)){
       if(inputs[group]!=null&&(typeof inputs[group]!=='object'||Object.keys(inputs[group]).length))reject(`H3 node ${id}: ${group} is not a native reference socket. Use "${group}.${prefix}0": ["SOURCE_NODE_ID", 0]. The grouped form can silently generate without the reference. See examples/media/h3-reference-files.json. No job was queued.`);
       for(const [key,value] of Object.entries(inputs)){
+        if(Object.hasOwn(groups,key))continue;
         if(!key.startsWith(group+'.')&&!(key.startsWith(prefix)&&!key.includes('.')))continue;
         if(!new RegExp(`^${group}\\.${prefix}(0|[1-9]\\d*)$`).test(key))reject(`H3 node ${id}: invalid reference socket ${key}. Use ${group}.${prefix}0 (then 1, 2, …). No job was queued.`);
         if(!Array.isArray(value)||value.length!==2||typeof value[0]!=='string'||!Number.isSafeInteger(value[1])||value[1]<0||!object(payload.prompt[value[0]]))reject(`H3 node ${id}, ${key}: connect ["SOURCE_NODE_ID", output_index] to an existing workflow node. A filename or <Picture1> in the prompt does not connect an image. No job was queued.`);

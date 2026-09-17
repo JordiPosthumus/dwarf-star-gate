@@ -181,6 +181,6 @@ test('ACE-Step saved failure explains cause and next step without changing nativ
 
 test('all H3 namespaced reference families pass unchanged, including video soundtracks and empty optional groups',t=>{
  const q=new MediaJobs(path.join(directory(t),'jobs.json'));
- const payload={prompt:{'5':{class_type:'Source'},'7':{class_type:'MiniMaxH3ReferenceToVideo',inputs:{'ref_images.ref_image_0':['5',0],'ref_audios.ref_audio_0':['5',1],'ref_videos.ref_video_0':['5',0],'ref_video_audios.ref_video_audio_0':['5',1],ref_images:{},ref_audios:[]}}}};
+ const payload={prompt:{'5':{class_type:'Source'},'7':{class_type:'MiniMaxH3ReferenceToVideo',inputs:{'ref_images.ref_image_0':['5',0],'ref_audios.ref_audio_0':['5',1],'ref_videos.ref_video_0':['5',0],'ref_video_audios.ref_video_audio_0':['5',1],ref_images:{},ref_audios:[],ref_videos:null,ref_video_audios:{}}}}};
  assert.deepEqual(q.enqueue('video',payload,{key:'all-refs'}).job.payload,payload);
 });

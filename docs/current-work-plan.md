@@ -389,7 +389,10 @@ deployment receipts stay outside this public repository.
   jobs, keeping the engine loaded between them and performing one verified LLM
   return. Higher-priority arrivals can yield unstarted jobs between generations.
   Atomic reservation, separate results, failure/return behavior and the installed
-  Hermes tool path pass component tests; native batch acceptance remains separate.
+  Hermes tool path pass component tests. Native two-job H3 acceptance also passed:
+  Genie selected one batch, both video/audio outputs decoded with matching hashes,
+  and the original LLM returned with real cold-to-warm cache reuse and unchanged
+  context. This proves the tested batch, not arbitrary failure recovery.
 - [ ] Complete installation, migration, continuity and failure-path acceptance
   against the full plan. A working chat or a passing unit suite is not completion.
   An installed-Hermes acceptance fixture now covers an actual gateway child
@@ -403,6 +406,18 @@ deployment receipts stay outside this public repository.
   Production services were unchanged by this test. The tool result remained a
   synthetic marker; arbitrary failure recovery, external-client resumption and
   platform service-manager migration remain separate acceptance work.
+
+## Current media hardening priority
+
+H3 first, ACE-Step second: reject known silently ignored references before
+queueing, keep actionable native node/field errors in job status and the Media
+tab, and distinguish reference conditioning from merely producing a valid file.
+The first implementation covers reference wiring, transferred input lists, live
+node/model/reference-socket catalogs, upload/startup failures and both engines'
+native errors. Lost receipts and ambiguous native cache timeouts remain
+observation tasks, never automatic replays or cancellation. Model settings stay
+unchanged. Broader ACE-Step input preflight and corrected-reference native
+acceptance remain to be completed; component tests alone do not close them.
 
 ## Release discipline
 
