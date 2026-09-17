@@ -1,8 +1,20 @@
 # Genie first-install validation
 
-Verified during development on 2026-09-14 through 2026-09-16 (UTC), by Codex.
+Verified during development on 2026-09-14 through 2026-09-17 (UTC), by Codex.
 
-- **Current source recheck, macOS ARM64, 2026-09-16:** exported source
+- **Current source recheck, macOS ARM64, 2026-09-17:** exported public source
+  `bb7d6b2` into an empty checkout and initial empty home. The full test passed
+  in about 61 seconds with no skipped checks; all 487 tracked files in the export
+  matched the tested release. The installed Hermes has its own Git root and clean
+  tracked source; its HEAD and installation receipt both identify
+  `2237be355906fbe6065ce1815711eee52b2d646e`. CPython 3.12.13 resolves inside that
+  isolated installation. Connection verification, doctor, three services, edited
+  SOUL injection, two-turn chat and history after dashboard restart passed.
+  Repeating setup preserved configuration, SOUL edits and separate personal-Hermes
+  files. This used a scripted model endpoint; production and personal runtimes
+  were untouched. It does not qualify model intelligence, a physical new Spark,
+  media installation or a complete candidate trial.
+- **Earlier source recheck, macOS ARM64, 2026-09-16:** exported source
   `e5af0a6` into another empty checkout and home. The complete first-install test
   passed with no skipped checks. It installed its own CPython 3.12.13 and Hermes;
   the runtime's own Git HEAD and installation receipt both identify
