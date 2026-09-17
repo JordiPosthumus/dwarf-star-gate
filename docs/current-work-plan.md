@@ -329,13 +329,18 @@ deployment receipts stay outside this public repository.
   included. The additive local music runtime preserves the personal install;
   public engine builds now have existing-host native evidence; complete
   fresh-machine installation remains unfinished.
-- [ ] Qualify gateway-owned reference uploads on a real H3 cycle. Authenticated
+- [x] Qualify gateway-owned reference uploads on a real H3 cycle. Authenticated
   image/audio/video uploads, private bounded storage, per-job input IDs and
   transfer to the chosen enrolled ComfyUI engine are implemented. Isolated
   tests cover auth, quotas, persistence, drain accounting and original-LLM
-  restoration after transfer failure. Native uploaded-reference acceptance
-  and audio conditioning remain to be verified; existing preloaded-file and
-  synthetic-reference workflows are preserved.
+  restoration after transfer failure. Real gateway image/audio uploads have now
+  automatically woken Genie, whose tools read fleet demand and selected a host.
+  Native files matched the upload hashes; the reference workflow generated
+  retained video with an embedded soundtrack plus separate audio, all fully
+  decoded. The original LLM then returned automatically with unchanged container
+  configuration and two verified warm-cache hits of 4,800 tokens before readmission.
+  Existing preloaded-file and synthetic-reference workflows are preserved;
+  identity/voice fidelity is not established by this synthetic acceptance.
 - [x] Give Genie tools to read that media queue and propose/execute the permitted
   host transitions through the existing operation path. Keep at least one healthy
   LLM server serving, as the owner requires; finish admitted work before stopping

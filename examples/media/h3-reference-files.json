@@ -3,7 +3,7 @@
     "1": {
       "class_type": "UNETLoader",
       "inputs": {
-        "unet_name": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+        "unet_name": "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
         "weight_dtype": "default"
       }
     },
@@ -27,12 +27,9 @@
       }
     },
     "5": {
-      "class_type": "EmptyMiniMaxH3LatentAV",
+      "class_type": "LoadImage",
       "inputs": {
-        "width": 608,
-        "height": 352,
-        "length": 96,
-        "batch_size": 1
+        "image": "UPLOADED_IMAGE_NAME"
       }
     },
     "6": {
@@ -42,12 +39,12 @@
           "1",
           0
         ],
-        "shift_video": 12.0,
-        "shift_audio": 3.0
+        "shift_video": 12,
+        "shift_audio": 3
       }
     },
     "7": {
-      "class_type": "MiniMaxH3ImageToVideo",
+      "class_type": "MiniMaxH3ReferenceToVideo",
       "inputs": {
         "clip": [
           "2",
@@ -57,10 +54,23 @@
           "3",
           0
         ],
-        "prompt": "A paper boat floating on a calm pond at sunrise, gentle ripples, natural birdsong and water sounds.",
+        "audio_vae": [
+          "4",
+          0
+        ],
+        "prompt": "<Picture 1> shows a white paper boat on a blue pond. Animate gentle ripples around this boat, steady camera. Use <Audio 1> as a soft electronic tone reference for the soundtrack.",
         "width": 608,
         "height": 352,
-        "length": 96
+        "length": 124,
+        "ref_image_size": "match",
+        "ref_images.ref_image_0": [
+          "5",
+          0
+        ],
+        "ref_audios.ref_audio_0": [
+          "15",
+          0
+        ]
       }
     },
     "8": {
@@ -94,10 +104,10 @@
         ],
         "seed": 42,
         "steps": 20,
-        "cfg": 1.0,
+        "cfg": 1,
         "sampler_name": "euler",
         "scheduler": "simple",
-        "denoise": 1.0
+        "denoise": 1
       }
     },
     "10": {
@@ -133,7 +143,7 @@
           "10",
           0
         ],
-        "fps": 24.0,
+        "fps": 24,
         "audio": [
           "11",
           0
@@ -147,7 +157,7 @@
           "12",
           0
         ],
-        "filename_prefix": "stargate_examples/h3_video",
+        "filename_prefix": "stargate/reference_files/video",
         "format": "auto",
         "codec": "auto"
       }
@@ -159,8 +169,18 @@
           "11",
           0
         ],
-        "filename_prefix": "stargate_examples/h3_audio"
+        "filename_prefix": "stargate/reference_files/audio"
+      }
+    },
+    "15": {
+      "class_type": "LoadAudio",
+      "inputs": {
+        "audio": "UPLOADED_AUDIO_NAME"
       }
     }
-  }
+  },
+  "input_files": [
+    "UPLOADED_IMAGE_ID",
+    "UPLOADED_AUDIO_ID"
+  ]
 }

@@ -120,8 +120,8 @@ expose the observed phase and failure detail.
 [`examples/media/h3-text-to-video.json`](../examples/media/h3-text-to-video.json)
 is a native workflow for the qualified H3 model files. Its dimensions, frame
 count, seed and sampling parameters belong to this example job; they do not
-alter the installed engine's serving configuration. It produces separate video
-and audio files. Edit node 7's prompt for another scene.
+alter the installed engine's serving configuration. It produces video with an
+embedded soundtrack plus a separate audio file. Edit node 7's prompt for another scene.
 
 Submit that JSON to `POST /v1/video/jobs` with your normal gateway bearer key and
 a unique `Idempotency-Key`. Poll the returned status URL; download the URLs in
@@ -157,6 +157,13 @@ curl --fail-with-body "$STAR_GATE_URL/v1/video/inputs" \
   -H 'Content-Type: image/png' --data-binary @reference.png > image-receipt.json
 ```
 
+The [uploaded-reference example](../examples/media/h3-reference-files.json)
+contains the complete image-plus-audio workflow. Replace its four `UPLOADED_*`
+placeholders with the two upload receipts before submitting it as a video job.
+Its sample prompt describes a paper boat and a synthetic tone; edit that prompt
+to match your references. The video includes its soundtrack, with a separate
+FLAC output retained as well.
+
 Keep the returned `id` and `name`. Add `"input_files": ["<returned id>"]` alongside
 `prompt` in the job JSON. Replace the reference-image example's node 5 with
 `{"class_type":"LoadImage","inputs":{"image":"<returned name>"}}`; the existing
@@ -181,12 +188,19 @@ not native engine files or job outputs. Uploads do not use job idempotency keys:
 keep the receipt, since repeating an upload creates a separate input. Upload
 receipts expose metadata, not a public file download URL.
 
-The upload path has isolated API, transfer and restoration tests. A native
-uploaded-image/audio conditioning test remains pending; the completed synthetic
-reference-image test generated its reference inside ComfyUI.
+The upload path has isolated API, transfer and restoration tests. In a real
+installation, two gateway uploads automatically woke Genie; his actual tools
+read fleet status and assigned a host. Native image/audio files matched both
+upload hashes, the reference workflow succeeded, and the retained H.264/AAC
+video and separate FLAC fully decoded. This tests reference input processing,
+not identity or voice fidelity. The original LLM returned automatically with its
+container configuration preserved, successful responses and two 4,800-token
+warm-cache hits before gateway readmission.
 
 When ComfyUI records a node execution error, the Media tab and job API show the
 node and its error message separately from the host's LLM restoration phase.
+Pre-execution workflow validation errors, such as a missing model or invalid
+input filename, are retained with the failed job as well.
 The failed job and native receipt remain available; viewing them never resubmits
 the generation.
 
