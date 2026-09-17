@@ -342,6 +342,7 @@ test('local recovery refuses wrong platform, public config, symlinks, unsafe hel
   const opts={platform:'darwin',spawnFn:()=>{spawned++;throw new Error('must not spawn');}};
   await assert.rejects(systemdCall(local,{action:'inspect'},{...opts,platform:'linux'}),/adapter_local_unavailable/);
   await assert.rejects(systemdCall(local,{action:'inspect'},{...opts,uid:0}),/adapter_local_unavailable/);
+  await assert.rejects(systemdCall({...local,python:local.python+'.missing-fixture'},{action:'inspect'},opts),/adapter_local_interpreter_missing/);
   fs.chmodSync(local.config,0o644);
   await assert.rejects(systemdCall(local,{action:'inspect'},opts),/adapter_local_identity_unverified/);fs.chmodSync(local.config,0o600);
   fs.chmodSync(local.helper,0o666);
@@ -353,6 +354,14 @@ test('local recovery refuses wrong platform, public config, symlinks, unsafe hel
   fs.writeFileSync(local.config,'x'.repeat(65537));
   await assert.rejects(systemdCall(local,{action:'inspect'},opts),/adapter_local_identity_unverified/);
   assert.equal(spawned,0);
+});
+
+test('missing local interpreter remains a specific inspection failure without issuing recovery',async()=>{
+  const r=rig();r.recovery.call=async()=>{throw new Error('adapter_local_interpreter_missing');};
+  assert.equal(await r.recovery.inspect('one'),null);
+  assert.equal(r.recovery.workerStatus(r.n).reason,'adapter_local_interpreter_missing');
+  assert.equal(r.restarts,0);assert.equal(r.recovery.state.operations.length,0);
+  await r.recovery.close();
 });
 test('recovery transport waits for trailing stdout after process exit',async()=>{
   const result=await systemdCall(config,{action:'inspect'},{spawnFn:()=>{

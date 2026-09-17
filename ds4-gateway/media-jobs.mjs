@@ -10,6 +10,15 @@ const object=value=>value!==null&&typeof value==='object'&&!Array.isArray(value)
 const fail=(status,message)=>Object.assign(new Error(message),{status});
 const canonical=value=>Array.isArray(value)?value.map(canonical):object(value)?Object.fromEntries(Object.keys(value).sort().map(key=>[key,canonical(value[key])])):value;
 const now=()=>new Date().toISOString();
+function nativeFailureDetail(job){
+  if(job.state!=='failed'||job.backend!=='comfyui')return null;
+  const messages=job.result?.status?.messages;
+  if(!Array.isArray(messages))return null;
+  const error=messages.findLast(item=>Array.isArray(item)&&item[0]==='execution_error'&&object(item[1]))?.[1];
+  if(!error)return null;
+  const text=value=>typeof value==='string'?value.replace(/[\x00-\x1f\x7f]/g,' ').trim().slice(0,1000):'';
+  return `ComfyUI node ${text(error.node_id)||'?'}${text(error.node_type)?` (${text(error.node_type)})`:''}: ${text(error.exception_message)||text(error.exception_type)||'Execution failed'}`;
+}
 
 // The gateway's existing process lock owns this store. Media prompts and native
 // receipts are private local state, never fleet telemetry or repository content.
@@ -50,6 +59,7 @@ export class MediaJobs {
         if(fs.existsSync(progress))job.execution={...saved.execution,...JSON.parse(fs.readFileSync(progress,'utf8'))};
       }catch{job.execution={...saved.execution,phase:'observation_failed',detail:'Saved media execution could not be read; inspect its original process. No job was repeated.'};}
     }
+    if(!job.detail)job.detail=nativeFailureDetail(job);
     return job;
   }
   list(kind){return this.data.jobs.filter(j=>!kind||j.kind===kind).map(j=>{const {payload,fingerprint,key_hash,...job}=this.get(j.id);return job;});}

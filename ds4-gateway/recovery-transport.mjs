@@ -85,7 +85,10 @@ function localInvocation(config,{platform=process.platform,uid=process.getuid?.(
     const enrolled=JSON.parse(text),worker=workerConfig({id:config.id,url:config.url});
     if(enrolled.port!==Number(new URL(worker.url).port))throw new Error();
     return {file:config.python,args:['-I',config.helper,config.config]};
-  }catch{throw new Error('adapter_local_identity_unverified');}
+  }catch(error){
+    throw new Error(error?.code==='ENOENT'&&error.path===config.python
+      ?'adapter_local_interpreter_missing':'adapter_local_identity_unverified');
+  }
 }
 
 // Operator-owned paths/host only, strict host-key checking; no shell strings

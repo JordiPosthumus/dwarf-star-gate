@@ -949,6 +949,9 @@ test('unavailable server verdicts explain the observed management layer and avoi
   assert.match(html,/class="device-name-text">Spark 1<\/span>/);
   const auth={...worker,management_path:{transport:'ssh_tunnel',state:'ssh_error',reason:'adapter_auth_failure'}};
   assert.match(vm.runInContext(`serverVerdict({},${JSON.stringify(auth)},100000,false).detail`,context),/authentication failed/);
+  const local={...worker,management_path:{transport:'local',state:'local',reason:'adapter_local_interpreter_missing'}};
+  const detail=vm.runInContext(`managementPathDetail(${JSON.stringify(local)})`,context);
+  assert.match(detail,/Python interpreter.*missing/);assert.match(detail,/does not mean the model server is down/);
 });
 test('request log filters problems and slow work while treating compatibility guidance as non-failure',async t=>{
   const {url}=await fixture(t),html=await(await fetch(url)).text(),js=await(await fetch(url+'/ui.js')).text();

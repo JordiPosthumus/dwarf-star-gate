@@ -10,6 +10,15 @@ import {MediaBackend,MediaBackendError} from './media-backend.mjs';
 import {createGateway} from './gateway.mjs';
 
 function directory(t){const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sg-media-jobs-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));return dir;}
+test('saved ComfyUI execution failures expose the native node error without rewriting or replaying the job',t=>{
+ const file=path.join(directory(t),'jobs.json'),q=new MediaJobs(file),id=q.enqueue('video',{prompt:{}},{key:'failed-video'}).job.id;
+ q.update(id,{state:'failed',backend:'comfyui',detail:null,result:{status:{status_str:'error',messages:[['execution_error',{node_id:'7',node_type:'MiniMaxH3ReferenceToVideo',exception_message:"Unexpected argument 'ref_image_1'\n",traceback:['private traceback'],current_inputs:{prompt:'private prompt'}}]]}}});
+ const before=fs.readFileSync(file),restarted=new MediaJobs(file),job=restarted.get(id);
+ assert.equal(job.detail,"ComfyUI node 7 (MiniMaxH3ReferenceToVideo): Unexpected argument 'ref_image_1'");
+ assert.equal(restarted.list()[0].detail,job.detail);assert.ok(fs.readFileSync(file).equals(before));
+ assert.doesNotMatch(job.detail,/private prompt|private traceback/);assert.equal(restarted.queued().length,0);
+ restarted.update(id,{detail:'Existing failure explanation'});assert.equal(restarted.get(id).detail,'Existing failure explanation');
+});
 test('durable queue preserves payload, priority, FIFO and idempotency across restart',t=>{
   const file=path.join(directory(t),'jobs.json'),q=new MediaJobs(file);
   const normal=q.enqueue('music',{prompt:'piano',audio_duration:30},{key:'one'}).job;

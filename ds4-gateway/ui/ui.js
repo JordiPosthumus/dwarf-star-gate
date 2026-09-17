@@ -240,9 +240,16 @@ function managementDetail(w) {
   }[w?.probe_error];
   return managementPathDetail(w)+(probe?' '+probe:'');
 }
+function recoveryReasonDetail(reason) {
+  if(['adapter_local_interpreter_missing','adapter_local_identity_unverified','adapter_local_unavailable'].includes(reason))return managementPathDetail({management_path:{transport:'local',reason}});
+  return (reason||'checking').replaceAll('_',' ');
+}
 function managementPathDetail(w) {
   const m=w?.management_path,reason=m?.reason;
   const reasons={
+    adapter_local_interpreter_missing:'The Python interpreter configured for local recovery is missing. Repair its recovery binding; this does not mean the model server is down.',
+    adapter_local_identity_unverified:'The local recovery helper or its configuration could not be verified. Model readiness is checked separately.',
+    adapter_local_unavailable:'Local recovery is unavailable in the current platform or user context. Model readiness is checked separately.',
     adapter_dns_failure:'The SSH management path cannot resolve its configured host alias.',
     adapter_host_key_failure:'SSH rejected the configured host identity. Review the operator-owned known-host entry; Star Gate will not bypass host-key checking.',
     adapter_auth_failure:'SSH authentication failed for the configured management path.',
@@ -1144,7 +1151,7 @@ function renderRecovery(state) {
   $('recovery-toggle').disabled=!state?.configured||workerBusy;
   $('recovery-handback-toggle').textContent=state?.profile_handback_automatic?'Disable verified profile hand-back':'Enable verified profile hand-back';
   $('recovery-handback-toggle').disabled=!state?.configured||workerBusy;
-  $('recovery-workers').innerHTML=(state?.workers||[]).map(w=>`<p><strong>${esc(w.worker_id)}</strong> · ${esc(w.state)} · ${esc(w.eligible?(w.profile_handback?.candidate?'verified hand-back eligible':'recovery eligible'):(w.reason||'checking').replaceAll('_',' '))}${w.profile_handback?.adopted?' · adopted profile active':''} <button type="button" class="button" data-recover="${esc(w.worker_id)}" ${!w.eligible||workerBusy?'disabled':''}>${w.profile_handback?.candidate?'Verify hand-back':'Recover'}</button>${recoveryRecheckable(w.last_action)?` <button type="button" class="button" data-recheck="${esc(w.last_action.id)}" ${workerBusy?'disabled':''}>Recheck only</button>`:''}</p>`).join('');
+  $('recovery-workers').innerHTML=(state?.workers||[]).map(w=>`<p><strong>${esc(w.worker_id)}</strong> · ${esc(w.state)} · ${esc(w.eligible?(w.profile_handback?.candidate?'verified hand-back eligible':'recovery eligible'):recoveryReasonDetail(w.reason))}${w.profile_handback?.adopted?' · adopted profile active':''} <button type="button" class="button" data-recover="${esc(w.worker_id)}" ${!w.eligible||workerBusy?'disabled':''}>${w.profile_handback?.candidate?'Verify hand-back':'Recover'}</button>${recoveryRecheckable(w.last_action)?` <button type="button" class="button" data-recheck="${esc(w.last_action.id)}" ${workerBusy?'disabled':''}>Recheck only</button>`:''}</p>`).join('');
   // Plain text receipts, not another auto-collapsing disclosure panel.
   $('recovery-actions').replaceChildren(...(state?.operations||[]).slice(0,8).map(op=>{
     const p=document.createElement('p');p.textContent=`${clock(op.updated_at)} · ${op.worker_id} · ${op.actor}${recoveryIssuanceText(op)} · ${op.state.replaceAll('_',' ')}${op.error?` · ${op.error.replaceAll('_',' ')}`:''}${op.proof?` · ${op.proof.samples.map(s=>`${s.label}: ${s.cached_tokens}/${s.prompt_tokens} cached`).join(' · ')}`:''} · ${op.id}`;return p;

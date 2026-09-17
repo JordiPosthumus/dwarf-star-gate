@@ -7,7 +7,7 @@ import {bootstrapEnrollmentMatches,bootstrapProofValid} from './recovery-bootstr
 const hash=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const terminal=new Set(['recovered','verified_paused','failed','reconciliation_needed']);
 const faultReasons=new Set(['fatal_accelerator_error','accelerator_checkpoint_failure']);
-const adapterReasons=new Set(['adapter_timeout','adapter_output_limit','adapter_spawn_failed','adapter_dns_failure','adapter_host_key_failure','adapter_auth_failure','adapter_connect_timeout','adapter_connection_refused','adapter_route_unreachable','adapter_connection_reset','adapter_unreachable','adapter_check_failed','adapter_local_unavailable','adapter_local_identity_unverified']);
+const adapterReasons=new Set(['adapter_timeout','adapter_output_limit','adapter_spawn_failed','adapter_dns_failure','adapter_host_key_failure','adapter_auth_failure','adapter_connect_timeout','adapter_connection_refused','adapter_route_unreachable','adapter_connection_reset','adapter_unreachable','adapter_check_failed','adapter_local_unavailable','adapter_local_identity_unverified','adapter_local_interpreter_missing']);
 const publicOperation=op=>Object.fromEntries(['id','worker_id','actor','service_action','state','created_at','updated_at','error','proof','service_action_issued','restart_issued','operator_override','profile_adopted','bootstrap_acknowledged'].filter(k=>op[k]!==undefined).map(k=>[k,op[k]]));
 const digest=value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
 // Wall-clock correction must not make an old observation eligible indefinitely.

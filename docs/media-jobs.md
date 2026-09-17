@@ -124,6 +124,20 @@ a unique `Idempotency-Key`. Poll the returned status URL; download the URLs in
 `outputs.files` when `outputs.state` is `ready`. `execution.phase: returned`
 confirms the host's LLM checks and readmission have finished.
 
+For a reference-to-video workflow, the installed ComfyUI V3 node uses namespaced
+dynamic input keys: `ref_images.ref_image_0`, `ref_audios.ref_audio_0`,
+`ref_videos.ref_video_0`, and `ref_video_audios.ref_video_audio_0`. Each value is
+the usual `["source_node_id", output_index]` link. Number additional inputs from
+zero. Bare keys such as `ref_image_1` are not equivalent and can cause an
+unexpected-keyword error. Reference files must already exist in that engine's
+input storage. This describes the installed input schema; the verified example
+above is text-to-video, not a claim that every reference workflow has passed.
+
+When ComfyUI records a node execution error, the Media tab and job API show the
+node and its error message separately from the host's LLM restoration phase.
+The failed job and native receipt remain available; viewing them never resubmits
+the generation.
+
 ## Example music request
 
 [`examples/media/ace-step-xl-text-to-music.json`](../examples/media/ace-step-xl-text-to-music.json)

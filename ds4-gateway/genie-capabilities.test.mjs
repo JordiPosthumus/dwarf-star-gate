@@ -115,3 +115,19 @@ test('partial recovery rollout names both connected and outstanding workers',()=
   const off=capabilityStatus({gateway},{management:true}).capabilities.find(r=>r.key==='recovery');
   assert.equal(off.enabled,false);assert.equal(off.status,'Off');assert.equal(off.connected,true);
 });
+
+test('a broken local recovery interpreter names the service while the model remains serving',()=>{
+  const gateway={genie_capabilities:{},recovery:{configured:true,automatic:true,workers:[{worker_id:'local-model',enrollment:{binding:'matched'},reason:'adapter_local_interpreter_missing'}]},workers:[{id:'local-model',is_healthy:true}]};
+  const read=()=>capabilityStatus({gateway},{management:true});
+  const row=read().capabilities.find(r=>r.key==='recovery');
+  assert.equal(row.status,'Needs attention');assert.equal(row.connected,true);
+  assert.match(row.detail,/local-model: local recovery Python interpreter is missing/);
+  assert.equal(read().services[0].status,'Serving');
+  assert.match(read().services[0].detail,/Recovery: local recovery Python interpreter is missing/);
+  gateway.recovery.workers[0].reason='no_supported_quarantine';
+  assert.equal(read().capabilities.find(r=>r.key==='recovery').status,'Monitoring');
+  assert.equal(read().services[0].detail,'');
+  gateway.recovery.automatic=false;
+  gateway.recovery.workers[0].reason='adapter_local_interpreter_missing';
+  assert.equal(read().capabilities.find(r=>r.key==='recovery').status,'Off');
+});
