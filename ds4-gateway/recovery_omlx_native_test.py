@@ -24,7 +24,9 @@ class NativeOmlxAdapterTests(unittest.TestCase):
             (root/'port').write_text(str(port));(root/'credential').write_text('fixture-token');(root/'credential').chmod(0o600)
             (root/'serve.sh').write_text('# Fixture only; start.py preserves this file.\n')
             for name in ('settings.json','model_settings.json'):(root/'state'/name).write_text('{"fixture":true}')
-            (root/'server.py').write_text('''import json,pathlib
+            (root/'server.py').write_text('''import faulthandler
+faulthandler.dump_traceback_later(5)
+import json,pathlib
 from http.server import BaseHTTPRequestHandler,HTTPServer
 r=pathlib.Path(__file__).parent
 class Handler(BaseHTTPRequestHandler):
@@ -32,7 +34,9 @@ class Handler(BaseHTTPRequestHandler):
   if self.headers.get('Authorization')!='Bearer fixture-token':self.send_error(401);return
   self.send_response(200);self.end_headers();self.wfile.write(json.dumps({'status':'ok','active_requests':int((r/'busy').exists()),'waiting_requests':0,'models_loading':0}).encode())
  def log_message(self,*args):pass
-HTTPServer(('127.0.0.1',int((r/'port').read_text())),Handler).serve_forever()
+server=HTTPServer(('127.0.0.1',int((r/'port').read_text())),Handler)
+faulthandler.cancel_dump_traceback_later()
+server.serve_forever()
 ''')
             (root/'start.py').write_text('''import pathlib,subprocess,sys
 r=pathlib.Path(__file__).parent
@@ -52,8 +56,10 @@ with (r/'server.log').open('ab') as log:
                 pid_file=root/'server.pid'
                 pid=int(pid_file.read_text()) if pid_file.exists() else None
                 listener=subprocess.run(['/usr/sbin/lsof','-nP','-a','-p',str(pid),f'-iTCP:{port}','-sTCP:LISTEN','-Fn'],capture_output=True,text=True) if pid else None
+                process=subprocess.run(['/bin/ps','-p',str(pid),'-o','pid=,ppid=,stat=,command='],capture_output=True,text=True) if pid else None
                 log=(root/'server.log').read_text() if (root/'server.log').exists() else '(no server log)'
                 self.fail(f'Disposable fixture did not start: pid={pid}, alive={m.alive(pid) if pid else False}, '
+                          f'process={None if process is None else process.stdout}, '
                           f'lsof={None if listener is None else (listener.returncode,listener.stdout,listener.stderr)}, server log={log[-8192:]}')
             try:
                 subprocess.run([sys.executable,str(root/'start.py')],check=True)
