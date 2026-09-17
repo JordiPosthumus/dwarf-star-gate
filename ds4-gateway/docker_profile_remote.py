@@ -12,6 +12,10 @@ import subprocess
 
 from docker_profile import Docker, native_address
 
+
+class RemoteObservationUnavailable(RuntimeError):
+    """A read-only remote request was not confirmed; no mutation was attempted."""
+
 BOOTSTRAP = '''import sys,json
 p=json.load(sys.stdin)
 scope={'__name__':'stargate_docker_transport'}
@@ -59,7 +63,11 @@ class SSHDocker(Docker):
             return value['result']
         except Exception:
             # SSH/Docker errors may contain private host, mount or command data.
-            raise RuntimeError('Remote observation or operation could not be confirmed; no action was retried.') from None
+            read_only = (payload['operation'] == 'idle'
+                or payload['operation'] == 'docker' and payload['method'] == 'GET'
+                or payload['operation'] == 'http' and payload.get('body') is None)
+            error = RemoteObservationUnavailable if read_only else RuntimeError
+            raise error('Remote observation or operation could not be confirmed; no action was retried.') from None
 
     def request(self, method, path, body=None, timeout=20, missing=False):
         if method not in ['GET', 'POST']:

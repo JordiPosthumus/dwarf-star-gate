@@ -7,6 +7,7 @@ import unittest
 import uuid
 
 from docker_profile import RetainedProfile, digest, signature
+from docker_profile_remote import RemoteObservationUnavailable
 from docker_profile_test import Docker, IMAGE, OLD, NEW
 from operation_maintenance import Maintenance
 from operation_maintenance_test import Fixture
@@ -66,6 +67,42 @@ class OperationTest(unittest.TestCase):
         self.assertEqual(result['state'], 'restored'); self.assertEqual(self.published, ['previous'])
         self.assertTrue(self.docker.old['State']['Running']); self.assertFalse(self.docker.containers[NEW]['State']['Running'])
         self.assertFalse(self.control.worker['drained']); self.assertEqual(signature(self.docker.old), self.plan['profile']['before'])
+
+    def test_temporary_return_observation_failure_does_not_strand_original_or_repeat_actions(self):
+        self.apis['candidate'].context = 8192
+        ready = self.qualifiers['previous'].ready
+        observe = self.driver.observe
+        pending = [False]
+        def first_ready():
+            self.qualifiers['previous'].ready = ready
+            pending[0] = True
+            return False
+        def transient_observe(*args):
+            if pending[0]:
+                pending[0] = False
+                raise RemoteObservationUnavailable('Fixture read timeout')
+            return observe(*args)
+        self.qualifiers['previous'].ready = first_ready
+        self.driver.observe = transient_observe
+        self.assertEqual(self.execute()['state'], 'restored')
+        self.assertFalse(self.control.worker['drained'])
+        self.assertEqual(self.docker.calls.count('start-a'), 1)
+        self.assertEqual(self.docker.calls.count('start-b'), 1)
+        self.assertEqual(len(self.apis['previous'].calls), 17)  # baseline metric + normal full qualification
+        self.assertTrue(any(phase == 'waiting_observation' for phase, _ in self.events))
+
+    def test_confirmed_return_identity_failure_is_not_retried(self):
+        self.apis['candidate'].context = 8192
+        observe = self.driver.observe
+        def drift(*args):
+            state = observe(*args)
+            if state['state'] == 'restored_unverified': state['state'] = 'requires_reconciliation'
+            return state
+        self.driver.observe = drift
+        self.assertEqual(self.execute()['state'], 'requires_reconciliation')
+        self.assertTrue(self.control.worker['drained'])
+        self.assertEqual(self.published, [])
+        self.assertFalse(any(phase == 'waiting_observation' for phase, _ in self.events))
 
     def test_cache_loss_restores_original_even_when_original_startup_capacity_varies(self):
         self.apis['candidate'].cache_tokens = 499999

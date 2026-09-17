@@ -4,7 +4,7 @@ import sys
 import unittest
 from unittest.mock import Mock
 
-from docker_profile_remote import BOOTSTRAP, SSHDocker
+from docker_profile_remote import BOOTSTRAP, SSHDocker, RemoteObservationUnavailable
 
 
 class RemoteTest(unittest.TestCase):
@@ -33,7 +33,7 @@ class RemoteTest(unittest.TestCase):
     def test_read_timeout_does_not_repeat_observation_or_mutation(self):
         transport, run = self.transport()
         run.side_effect = subprocess.TimeoutExpired('ssh', 35)
-        with self.assertRaisesRegex(RuntimeError, 'no action was retried'):
+        with self.assertRaisesRegex(RemoteObservationUnavailable, 'no action was retried'):
             transport.inspect('fixture')
         self.assertEqual(run.call_count, 1)
         self.assertEqual(run.call_args.kwargs['timeout'], 35)
@@ -44,6 +44,18 @@ class RemoteTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, '^Remote observation or operation could not be confirmed; no action was retried.$'):
             transport.start('a' * 64)
         self.assertEqual(run.call_count, 1)
+
+    def test_only_read_only_failures_allow_later_reobservation(self):
+        transport, run = self.transport()
+        run.side_effect = subprocess.TimeoutExpired('ssh', 25)
+        for call in [lambda: transport.idle('http://127.0.0.1:8001'),
+                     lambda: transport.native_request('http://127.0.0.1:8001', '/v1/models')]:
+            with self.assertRaises(RemoteObservationUnavailable): call()
+        for call in [lambda: transport.start('a' * 64),
+                     lambda: transport.native_request('http://127.0.0.1:8001', '/v1/chat/completions', {})]:
+            with self.assertRaises(RuntimeError) as error: call()
+            self.assertNotIsInstance(error.exception, RemoteObservationUnavailable)
+        self.assertEqual(run.call_count, 4)
 
     def test_enrollment_and_native_endpoint_validation(self):
         for host in ['-oProxyCommand=bad', 'server; bad', '$(bad)', 'server\nother']:

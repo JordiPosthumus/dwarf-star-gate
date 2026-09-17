@@ -14,6 +14,7 @@ from serving_qualification import compare_cache_capacity
 import time
 
 from docker_profile import digest, signature
+from docker_profile_remote import RemoteObservationUnavailable
 from operation_runner import read, read_bytes, save
 
 
@@ -110,8 +111,17 @@ class ServingOperation:
             raise ValueError('The approved record does not identify this worker')
         return restoration_authority(record, self.profile, Path(self.plan['record_file']).parent.parent)
 
+    def observe(self):
+        while True:
+            self.require_owned_idle()
+            try:
+                return self.driver.observe(self.id)
+            except RemoteObservationUnavailable:
+                self.progress('waiting_observation', 'Container status is temporarily unavailable; checking the same containers again without repeating any server action.')
+                self.sleep(5)
+
     def current(self, which):
-        state = self.driver.observe(self.id)
+        state = self.observe()
         container = state['candidate' if which == 'candidate' else 'previous']
         expected_state = 'started_unverified' if which == 'candidate' else 'restored_unverified'
         if state['state'] != expected_state or not container or not container['State']['Running']:
@@ -126,7 +136,7 @@ class ServingOperation:
         self.progress('waiting_' + which, 'Waiting for the ' + which + ' native API to respond.')
         folder = self.folder / ('qualification-' + which)
         def stopped():
-            state = self.driver.observe(self.id)
+            state = self.observe()
             failed = 'candidate_stopped_unverified' if which == 'candidate' else 'restoration_stopped_unverified'
             if state['state'] != failed: return False
             self.require_owned_idle()
