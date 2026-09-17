@@ -410,3 +410,30 @@ revisions that changed since measurement still require review.
 Ordinary proposals without `trial: true` retain their existing apply-and-qualify
 behavior. Fixture tests cover the new lifecycle; native trial acceptance remains
 necessary before claiming that a particular upstream improvement works or is faster.
+
+
+### Native rejected-trial check, 17 September 2026
+
+One actual Genie-prepared image-only trial passed all eight native serving groups:
+text, tools, vision, model/context, full context boundary, prefix-cache reuse,
+reasoning/EOS and fault counters. Candidate KV capacity was 493,873 tokens against
+a pre-change 512,701, so the reviewed zero-loss allowance rejected it. Hourglass
+was not submitted. The executor automatically restored the retained original,
+passed its native checks, committed private evidence and readmitted it.
+
+The restored original reported 502,563 cache tokens with unchanged serving
+settings. Startup allocation varied too; these numbers do not establish a causal
+patch cost or a speed result. Actual cache reuse returned from zero to 4,800 tokens
+in both checked conversations. This proves the apply/reject/restore path for that
+installed profile, not a successfully measured or adopted improvement.
+
+Candidate rejection details are now available to Genie and the operation card
+while restoration is in progress. Readmission remains a separate result. A real
+Genie status check correctly explained the rejection from its new tool receipt;
+an earlier ungrounded answer in a long conversation required correction and is
+retained as a failed check, not counted as autonomous verification success.
+
+Final Hourglass reports also accept its observed `stopped` hour-window outcome
+without renaming that state. A stopped status alone is not a full-hour result:
+comparison flags incomplete or unknown measured windows and still checks the
+exact job, configuration identity and report protocol.

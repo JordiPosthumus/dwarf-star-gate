@@ -126,13 +126,17 @@ deployment receipts stay outside this public repository.
   entry point and trusted preparation now bind enrolled connections, model
   contracts, the reviewed record and frozen serving code. Applicable private
   restoration enrollment has been checked against retained evidence for one
-  installed worker; fresh whole-operation native-model qualification remains
-  unfinished. Published results now link to their raw JSON evidence for Genie
+  installed worker. A real image-only trial now completed candidate native checks,
+  rejected its reduced reported cache capacity, restored and qualified the original,
+  published private evidence and readmitted the worker. The measured-candidate
+  success path remains unproven; this rejected candidate did not run Hourglass. Published results now link to their raw JSON evidence for Genie
   inspection. Optional dashboard enrollment, real Hermes proposal/status
   tools and the owner approval/progress card now pass isolated integration and
-  browser checks. One installation now has a real Genie-created proposal and
-  owner-review card; the proposal remains unexecuted. Installation enrollment
-  and individual operation approval are separate.
+  browser checks. The executed trial used an actual Genie-created proposal and an
+  independently reviewed exact plan under standing owner testing authority.
+  Installation enrollment and individual operation approval remain separate.
+  Status and the operation card now retain the candidate's rejection reason and
+  cache numbers during restoration; restoring the original does not erase them.
   Recovery reconciliation must identify the actual service type: old DS4
   systemd/launchd enrollment cannot recover a replacement Docker model server.
   Explicit OpenAI route normalization is supported without changing legacy
@@ -265,8 +269,12 @@ deployment receipts stay outside this public repository.
   preserves existing switches, and exposes its inspection target to Genie. Actual
   native-model registration and helper inspection passed in a disposable core,
   using the prior real media qualifications on that host. These are imported
-  prepared-engine tests; a complete fresh-host setup and a media switching cycle
-  through a newly enrolled worker remain acceptance work. The combined recovery
+  prepared-engine tests. A later actual Genie-dispatched music cycle through a
+  dynamically registered fresh-recipe worker in an isolated real gateway passed:
+  native audio download/full decode, automatic original-LLM return, real warm-cache
+  hits and readmission. The production gateway supplied the other serving LLMs.
+  This was an existing physical Spark, not proof of pristine new-host installation;
+  that full fresh-host acceptance remains outstanding. The combined recovery
   trial caught a model reply that claimed registration without calling it; that
   failed trial is retained. A real follow-up corrected the claim. Actual-model
   status/registration/status calls then passed using the real registration code
