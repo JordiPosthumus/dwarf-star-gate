@@ -1793,12 +1793,12 @@ test('default long queue has no timer overflow and cancellation/dispatch clear i
 test('queue allowance control persists, is operator-only and preserves admitted deadlines',async t=>{
   const r=await rig(t,1,{control_socket:true}),ctl=(b)=>workerControl(r.config.control_socket,'/set-queue-timeout',b);
   const old=r.gateway.stats().queue_timeout_ms;
-  const first=r.request('{"delay":220}','a');await until(()=>r.gateway.stats().active===1);
+  const first=r.request('{"wait_for_release":true}','a');await until(()=>r.backends[0].releases?.length===1);
   const second=r.request('{}','b');await until(()=>r.gateway.stats().queued===1);
   const initialJob=r.gateway.nodes[0].queue[0];assert.equal(initialJob.queueTimeoutMs,old);
   const updated=await ctl({queue_timeout_ms:40,expected_queue_timeout_ms:old});assert.equal(updated.queue_timeout_ms,40);assert.equal(updated.queue_timeout_source,'saved');assert.equal(initialJob.queueTimeoutMs,old);
   assert.ok(r.gateway.stats().workers[0].oldest_queue_remaining_seconds>1000000);
-  const expiry=await r.request('{}','c');assert.equal(expiry.status,504);assert.equal((await first).status,200);assert.equal((await second).status,200);
+  const expiry=await r.request('{}','c');assert.equal(expiry.status,504);r.backends[0].releases[0]();assert.equal((await first).status,200);assert.equal((await second).status,200);
   assert.equal(r.backends[0].records.length,2);assert.equal(r.gateway.stats().context_length,153600);assert.equal(r.gateway.stats().request_timeout_ms,360000000);
   assert.ok(fs.readdirSync(path.dirname(r.config.state_file)).some(f=>f.includes('.queue-')));
   await assert.rejects(ctl({queue_timeout_ms:50,expected_queue_timeout_ms:old}),/changed/);
@@ -2091,8 +2091,8 @@ test('endpoint edit rejects busy, stale, duplicate and incompatible targets with
   const ctl=(route,input)=>workerControl(r.config.control_socket,route,input),oldUrl=r.backends[0].url;
   const change=url=>ctl('/edit-endpoint',{id:'spark1',expected_url:oldUrl,url});
   await assert.rejects(change(m.url),/Pause this server/);
-  const running=r.request('{"delay":200}','edit-busy');await until(()=>r.gateway.stats().active===1);
-  await ctl('/drain-workers',{workers:['spark1']});await assert.rejects(change(m.url),/Pause this server/);await running;
+  const running=r.request('{"wait_for_release":true}','edit-busy');await until(()=>r.backends[0].releases?.length===1);
+  await ctl('/drain-workers',{workers:['spark1']});await assert.rejects(change(m.url),/Pause this server/);r.backends[0].releases[0]();await running;
   const before=JSON.stringify(r.gateway.store.data);
   await assert.rejects(ctl('/edit-endpoint',{id:'spark1',expected_url:'http://127.0.0.1:1',url:m.url}),/Endpoint changed/);
   await assert.rejects(change(r.backends[1].url),/already registered/);
@@ -2557,13 +2557,13 @@ test('concurrent slots preserve bodies, dependent order and busy status until th
 test('concurrent slots keep conversation reservations without leaving unrelated capacity unused',async t=>{
   const r=await rig(t,1,{workerConcurrency:2,conversation_turns:3,conversation_turn_idle_ms:200});
   await r.request('{"label":"a1"}','a');
-  const b=r.request('{"label":"b1","delay":220}','b');await until(()=>r.backends[0].active===1);
-  const a=r.request('{"label":"a2","delay":120}','a');await until(()=>r.backends[0].active===2);
+  const b=r.request('{"label":"b1","wait_for_release":true}','b');await until(()=>r.backends[0].releases?.length===1);
+  const a=r.request('{"label":"a2","wait_for_release":true}','a');await until(()=>r.backends[0].releases?.length===2);
   const normal=r.request('{"label":"normal"}','normal');
   const high=r.request('{"label":"high"}','high',{headers:{'x-dsg-priority':'high'}});
-  await until(()=>r.gateway.stats().queued===2);await a;
+  await until(()=>r.gateway.stats().queued===2);r.backends[0].releases[1]();await a;
   assert.equal((await high).status,200);assert.equal(r.backends[0].records[3].payload.label,'high');
-  await Promise.all([b,normal]);assert.equal(r.backends[0].peak,2);assert.equal(r.backends[0].aborts,0);
+  r.backends[0].releases[0]();await Promise.all([b,normal]);assert.equal(r.backends[0].peak,2);assert.equal(r.backends[0].aborts,0);
 });
 
 test('worker concurrency is explicit, survives registration data and rejects invalid capacities',()=>{
