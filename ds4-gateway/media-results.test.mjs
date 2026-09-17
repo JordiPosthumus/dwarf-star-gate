@@ -10,6 +10,7 @@ import {MediaJobs} from './media-jobs.mjs';
 import {MediaBackend} from './media-backend.mjs';
 import {mediaOutputFiles} from './media-results.mjs';
 import {createGateway} from './gateway.mjs';
+import {proxyMediaFile} from './dashboard.mjs';
 
 const fixture=Buffer.concat([Buffer.from('RIFF fixture audio bytes '),Buffer.alloc(256*1024,42)]);
 const digest=createHash('sha256').update(fixture).digest('hex');
@@ -62,4 +63,22 @@ test('gateway authenticates retained downloads after native engine shutdown and 
   assert.equal((await fetch(base+route)).status,401);
   const response=await fetch(base+route,{headers});assert.equal(response.status,200);assert.equal(response.headers.get('content-type'),'audio/wav');assert.deepEqual(Buffer.from(await response.arrayBuffer()),fixture);
   assert.equal((await fetch(base+route.replace('/music/','/video/'),{headers})).status,404);
+  assert.equal((await fetch(base+route,{headers:{range:'bytes=0-1'}})).status,401);
+  // Real retained bytes remain seekable after the engine stops and core restarts.
+  const proxy=await nativeServer(t,(req,res)=>proxyMediaFile({...config,port:address.port},req,res,route));
+  for(const [range,start,end] of [['bytes=0-31',0,31],['bytes=32-',32,fixture.length-1],['bytes=-64',fixture.length-64,fixture.length-1],['bytes=10-999999',10,fixture.length-1],['bytes=-999999',0,fixture.length-1]]){
+    const partial=await fetch(proxy.url,{headers:{range}});
+    assert.equal(partial.status,206,range);assert.equal(partial.headers.get('accept-ranges'),'bytes');
+    assert.equal(partial.headers.get('content-range'),`bytes ${start}-${end}/${fixture.length}`);
+    assert.equal(Number(partial.headers.get('content-length')),end-start+1);
+    assert.deepEqual(Buffer.from(await partial.arrayBuffer()),fixture.subarray(start,end+1));
+  }
+  for(const range of [`bytes=${fixture.length}-`,'bytes=9-2','bytes=-0','bytes=-','bytes=9007199254740992-']){
+    const invalid=await fetch(proxy.url,{headers:{range}});assert.equal(invalid.status,416,range);
+    assert.equal(invalid.headers.get('content-range'),`bytes */${fixture.length}`);assert.equal((await invalid.arrayBuffer()).byteLength,0);
+  }
+  for(const extra of [{range:'items=0-1'},{range:'bytes=0-1,4-5'},{range:'bytes=0-31','if-range':'"unknown-version"'}]){
+    const full=await fetch(proxy.url,{headers:extra});assert.equal(full.status,200);
+    assert.deepEqual(Buffer.from(await full.arrayBuffer()),fixture);
+  }
 });

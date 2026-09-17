@@ -375,8 +375,12 @@ deployment receipts stay outside this public repository.
   inspection targets, with independent native generation and original-LLM return
   checks. Complete fit qualification for new hardware remains unfinished; resource
   estimates alone do not prove that an engine will run there. Browser control persistence and
-  download hashes passed; in-app playback hit a renderer crash and remains
-  unverified. This item stays open until those remaining pieces are accepted.
+  download hashes passed. A retained reference video and its separate audio file
+  subsequently played to completion in the in-app browser using keyboard controls,
+  with the final video frame visibly rendered. A native accessibility mouse action
+  previously crashed that browser; its cause remains unresolved. Retained downloads
+  now support single byte ranges for seeking without modifying generated files.
+  New-hardware fit and complete installation acceptance remain outstanding.
 - [ ] Add qualified multiple text connections and extend dedicated media work
   and result support. Elaborate borrowing optimisation, residency prediction and
   broad failure hardening follow the working end-to-end workflow; preserve basic

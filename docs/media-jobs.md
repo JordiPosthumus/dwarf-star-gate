@@ -1,6 +1,9 @@
 # Media jobs — implementation in progress
 
-These endpoints provide the durable queue and retained downloads. Genie can now
+These endpoints provide the durable queue and retained downloads. Downloads support
+single HTTP byte ranges, including open-ended and suffix ranges, so players can
+seek without downloading the whole result again. Authentication and retained file
+bytes are unchanged. Genie can now
 inspect the queue and assign a video job to an enrolled ComfyUI host. Its separate
 runner drains that host, generates the result, saves the files, restores the
 original LLM and verifies responses/cache reuse before readmission. A real

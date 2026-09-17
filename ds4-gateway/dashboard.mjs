@@ -104,7 +104,7 @@ export function genieChatConfig(config){
   return {...chat,gateway_tracking:local,...(chat.inspection?{inspection:{...chat.inspection,records_directory:config.server_records_directory}}:{}),...(local&&chat.api_key===undefined?{api_key:config.api_key}:{})};
 }
 export function proxyMediaFile(config,req,res,route){
-      const upstream=http.request({hostname:'127.0.0.1',port:config.port,path:route,method:'GET',headers:{authorization:`Bearer ${config.api_key}`,...(req.headers.range?{range:req.headers.range}:{})}},response=>{
+      const upstream=http.request({hostname:'127.0.0.1',port:config.port,path:route,method:'GET',headers:{authorization:`Bearer ${config.api_key}`,...(req.headers.range?{range:req.headers.range}:{}),...(req.headers['if-range']?{'if-range':req.headers['if-range']}:{})}},response=>{
         res.statusCode=response.statusCode;
         for(const name of ['content-type','content-length','content-range','accept-ranges','content-disposition'])if(response.headers[name])res.setHeader(name,response.headers[name]);
         response.on('error',()=>res.destroy());response.pipe(res);

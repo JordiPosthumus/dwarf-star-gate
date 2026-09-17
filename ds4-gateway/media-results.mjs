@@ -74,9 +74,23 @@ export class MediaResults {
     let fd;
     try{fd=fs.openSync(target,'r');if(fs.fstatSync(fd).size!==file.bytes)throw new Error('Retained output size differs');}
     catch(e){if(fd!==undefined)fs.closeSync(fd);throw e;}
-    const stream=fs.createReadStream(target,{fd,autoClose:true});
+    const headers={'content-type':file.content_type,'content-length':file.bytes,'accept-ranges':'bytes','cache-control':'private, no-store','x-content-type-options':'nosniff','content-disposition':`attachment; filename*=UTF-8''${encodeURIComponent(file.filename).replaceAll("'",'%27')}`};
+    let start=0,end=file.bytes-1,status=200;
+    // One range supports browser seeking without changing retained bytes. Ignore
+    // unsupported/multipart ranges, and If-Range without a matching validator.
+    const range=!req.headers['if-range']&&/^bytes=(\d*)-(\d*)$/.exec(req.headers.range??'');
+    if(range){
+      const first=range[1]?Number(range[1]):null,last=range[2]?Number(range[2]):null;
+      start=first??Math.max(0,file.bytes-(last??0));
+      end=first===null||last===null?file.bytes-1:Math.min(last,file.bytes-1);
+      if((first===null&&last===null)||![start,end,...[first,last].filter(n=>n!==null)].every(Number.isSafeInteger)||start>end||start>=file.bytes){
+        fs.closeSync(fd);res.writeHead(416,{'content-range':`bytes */${file.bytes}`,'content-length':0,'accept-ranges':'bytes','cache-control':'private, no-store'});res.end();return true;
+      }
+      status=206;headers['content-range']=`bytes ${start}-${end}/${file.bytes}`;headers['content-length']=end-start+1;
+    }
+    const stream=fs.createReadStream(target,{fd,autoClose:true,...(status===206?{start,end}:{})});
     stream.on('error',()=>res.destroy());res.once('close',()=>stream.destroy());
-    res.writeHead(200,{'content-type':file.content_type,'content-length':file.bytes,'cache-control':'private, no-store','x-content-type-options':'nosniff','content-disposition':`attachment; filename*=UTF-8''${encodeURIComponent(file.filename).replaceAll("'",'%27')}`});
+    res.writeHead(status,headers);
     stream.pipe(res);return true;
   }
 }
