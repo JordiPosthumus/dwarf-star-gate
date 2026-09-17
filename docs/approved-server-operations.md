@@ -195,11 +195,15 @@ transport waits; an answering API with the wrong model fails qualification
 instead of waiting indefinitely for its identity to change.
 
 This first qualifier covers the enrolled Qwen/vLLM contract and existing native
-endpoint/model identity. A two-request native contract is now available by adding
-`"concurrency": 2` to the candidate qualification when its exact recipe uses
-`--max-num-seqs 2`. The previous contract stays serial when restoring a
-one-request baseline; a two-request previous recipe needs its matching contract.
-A serial contract cannot qualify a changed two-request recipe.
+endpoint/model identity. Read-only proposal preparation selects the existing
+native two-request checks automatically when that version's exact recipe uses
+`--max-num-seqs 2`. Genie can therefore propose that change through the normal
+review path without a separate installation-config edit. Model, context and token
+contracts still come from the installation; the proposal cannot weaken them.
+An explicit qualification setting remains enforced. A one-request previous
+recipe keeps serial restoration checks; a two-request previous recipe receives
+the same stronger checks. This does not enable gateway slots or qualify capacities
+above two.
 
 The two-request check first requires idle native gauges, then observes two
 constrained completions actually running together. Two successful serialized

@@ -146,16 +146,18 @@ class EntryTest(unittest.TestCase):
         self.assertEqual(result['review']['cache_capacity_policy'], {'max_loss_percent':4})
         self.assertEqual(f.docker.calls,[]); self.assertEqual(f.control.calls,[])
 
-    def test_prepared_concurrency_contract_reaches_qualification_and_private_record(self):
+    def test_exact_two_slot_proposal_selects_qualification_and_reaches_private_record(self):
         import json
         f=self.f;f.docker.native_request=lambda *args:None
         command=copy.deepcopy(f.plan['profile']['create']['Cmd']);command[3]='2'
         proposal={'id':f.folder.name,'worker_id':'fixture','image':f.plan['profile']['create']['Image'],'command':command}
-        contracts={'candidate':{**CONTRACT,'concurrency':2},'previous':copy.deepcopy(CONTRACT)}
+        contracts={'candidate':copy.deepcopy(CONTRACT),'previous':copy.deepcopy(CONTRACT)}
         enrollment={**f.plan['target'],'worker_id':'fixture','container':'engine','native_url':f.plan['profile']['native_url'],
                     'records_directory':str(self.rig.library),'qualification':contracts}
         result=prepare(proposal,enrollment,f.folder,f.plan['record_revision'],docker=f.docker)
         self.assertEqual(f.docker.calls,[]);self.assertEqual(f.control.calls,[])
+        self.assertNotIn('concurrency',contracts['candidate'],'Installed enrollment is not rewritten')
+        self.assertEqual(result['plan']['qualification']['candidate']['concurrency'],2)
         self.assertIn('native_concurrency',result['review']['qualification_by_version']['candidate'])
         self.assertNotIn('native_concurrency',result['review']['qualification_by_version']['previous'])
         self.assertEqual(result['review']['settings']['current']['server_concurrency'],1)
@@ -172,6 +174,17 @@ class EntryTest(unittest.TestCase):
         reply=fixture.read_artifact_reference(self.rig.library,pair_b['response'])
         self.assertEqual(json.loads(reply['choices'][0]['message']['tool_calls'][0]['function']['arguments']),{'value':8462})
         self.assertEqual(self.rig.git('diff','--cached','--name-only'),'other.txt')
+
+    def test_unsupported_three_slot_proposal_still_refuses_before_execution(self):
+        f=self.f;f.docker.native_request=lambda *args:self.fail('Preparation must not infer')
+        command=copy.deepcopy(f.plan['profile']['create']['Cmd']);command[3]='3'
+        proposal={'id':f.folder.name,'worker_id':'fixture','image':f.plan['profile']['create']['Image'],'command':command}
+        enrollment={**f.plan['target'],'worker_id':'fixture','container':'engine','native_url':f.plan['profile']['native_url'],
+                    'records_directory':str(self.rig.library),'qualification':copy.deepcopy(f.plan['qualification'])}
+        with self.assertRaisesRegex(ValueError,'enrolled concurrency qualification'):
+            prepare(proposal,enrollment,f.folder,f.plan['record_revision'],docker=f.docker)
+        self.assertEqual(f.docker.calls,[]);self.assertEqual(f.control.calls,[])
+        self.assertFalse((f.folder/'executor.py').exists())
 
     def test_mutable_installed_entry_has_no_authority_to_start(self):
         with self.assertRaisesRegex(ValueError,'frozen approved'): serving_executor.execute(self.f.plan,self.f.folder,lambda *args:None)

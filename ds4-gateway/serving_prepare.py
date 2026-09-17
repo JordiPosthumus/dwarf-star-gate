@@ -106,6 +106,11 @@ def prepare(proposal, enrollment, folder, record_revision, *, docker=None, contr
     profile = driver.prepare(enrollment['container'],proposal['image'],proposal['command'],enrollment['native_url'],record_revision)
     contracts = copy.deepcopy(enrollment['qualification'])
     if set(contracts) != {'candidate','previous'}: raise ValueError('Enroll both native qualification contracts')
+    # The reviewed recipe selects the stronger existing checks; it cannot supply
+    # a model contract or relax an explicit installation qualification setting.
+    for which, command in [('candidate', profile['create']['Cmd']), ('previous', profile['before']['Config']['Cmd'])]:
+        if 'concurrency' not in contracts[which] and option(command, '--max-num-seqs') == '2':
+            contracts[which]['concurrency'] = 2
     qualifiers={which:NativeQualification(transport.native_request,profile['native_url'],contract) for which,contract in contracts.items()}
     for which, qualifier in qualifiers.items():qualifier.validate_profile(profile,which)
     restoration = restoration_authority(old,profile,library)
