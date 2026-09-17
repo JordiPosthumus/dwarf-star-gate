@@ -36,7 +36,8 @@ HTTPServer(('127.0.0.1',int((r/'port').read_text())),Handler).serve_forever()
 ''')
             (root/'start.py').write_text('''import pathlib,subprocess,sys
 r=pathlib.Path(__file__).parent
-p=subprocess.Popen([sys.executable,str(r/'server.py')],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+with (r/'server.log').open('ab') as log:
+ p=subprocess.Popen([sys.executable,str(r/'server.py')],stdin=subprocess.DEVNULL,stdout=log,stderr=log,start_new_session=True)
 (r/'server.pid').write_text(str(p.pid)+'\\n')
 ''')
             config=None
@@ -48,7 +49,12 @@ p=subprocess.Popen([sys.executable,str(r/'server.py')],stdin=subprocess.DEVNULL,
                         if pid!=previous and m.mac.owns_listener(pid,port):return pid
                     except (OSError,ValueError):pass
                     time.sleep(.1)
-                self.fail('Disposable fixture did not start')
+                pid_file=root/'server.pid'
+                pid=int(pid_file.read_text()) if pid_file.exists() else None
+                listener=subprocess.run(['/usr/sbin/lsof','-nP','-a','-p',str(pid),f'-iTCP:{port}','-sTCP:LISTEN','-Fn'],capture_output=True,text=True) if pid else None
+                log=(root/'server.log').read_text() if (root/'server.log').exists() else '(no server log)'
+                self.fail(f'Disposable fixture did not start: pid={pid}, alive={m.alive(pid) if pid else False}, '
+                          f'lsof={None if listener is None else (listener.returncode,listener.stdout,listener.stderr)}, server log={log[-8192:]}')
             try:
                 subprocess.run([sys.executable,str(root/'start.py')],check=True)
                 pid=wait_ready();process=m.mac.process_info(pid)
