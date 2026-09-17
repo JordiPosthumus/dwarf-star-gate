@@ -14,6 +14,12 @@ model aliases and the oMLX cache-proof format have verifier tests. These are
 component tests, **not a completed recovery test on a real oMLX model server**.
 Each installation still needs its own native generation/cache qualification.
 
+The controller-to-helper test also covers normalized OpenAI endpoint enrollment.
+Its derived null journal-service field is excluded only when revalidating local
+transport options; saved binding fingerprints and all action checks are retained.
+That normalization fix has also passed a read-only inspection through the real
+local oMLX helper. It does not establish successful model recovery after restart.
+
 ## Private enrollment
 
 Copy `ds4-gateway/recovery-omlx.py` and its sibling dependency

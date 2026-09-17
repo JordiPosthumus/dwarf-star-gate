@@ -67,7 +67,11 @@ export function recoveryConfig(raw={}) {
 function localInvocation(config,{platform=process.platform,uid=process.getuid?.()}={}){
   if(platform!=='darwin'||!Number.isInteger(uid)||uid===0)throw new Error('adapter_local_unavailable');
   try{
-    recoveryConfig({workers:[config]});
+    // OpenAI normalization adds a null journal-service field. It is not an
+    // enrollment option; remove only that derived value for revalidation.
+    // Keep the original normalized object for recorded binding fingerprints.
+    const {telemetry_service,...enrollment}=config;
+    recoveryConfig({workers:[config.backend==='openai'&&telemetry_service===null?enrollment:config]});
     if(!['launchd','omlx'].includes(config.adapter)||config.transport!=='local'||config.ssh||config.ssh_fallbacks||config.remote_port!==undefined)throw new Error();
     for(const key of ['python','helper','config']){
       const file=config[key];

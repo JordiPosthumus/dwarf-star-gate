@@ -307,6 +307,24 @@ test('real local helper receives JSON on stdin and returns a complete bounded re
   // invoke launchctl. Platform override lets Linux CI exercise the subprocess.
   assert.deepEqual(await systemdCall(local,{action:'inspect'},{platform:'darwin'}),{version:1,action:'inspect'});
 });
+
+test('normalized OpenAI local recovery reaches the real helper without changing saved bindings',async t=>{
+  for(const adapter of ['launchd','omlx']){
+    const local={...localEnrollment(t),adapter,backend:'openai',url:'http://127.0.0.1:39001/v1'};
+    const store={data:{},save(next){this.data=next;}};
+    const recovery=new Recovery({workers:[local]},{store,nodes:[],model:'fixture',stopping:()=>false,
+      call:(c,r)=>systemdCall(c,r,{platform:'darwin'})});
+    t.after(()=>recovery.close());
+    const before=structuredClone(recovery.config('one'));
+    assert.equal(before.telemetry_service,null);
+    const result=await recovery.inspect('one');
+    assert.equal(result.action,'inspect');assert.equal(result.version,1);
+    assert.deepEqual(recovery.config('one'),before);
+    assert.equal(store.data.recovery?.operations?.length??0,0);
+    await assert.rejects(systemdCall({...before,telemetry_service:'unexpected.service'},{action:'inspect'},{platform:'darwin'}),/identity_unverified/);
+    await assert.rejects(systemdCall({...before,unrecognized_field:true},{action:'inspect'},{platform:'darwin'}),/identity_unverified/);
+  }
+});
 test('local enrollment preserves worker binding, operator pause and evidence-gated recovery',async t=>{
   const local=localEnrollment(t),r=rig();delete r.n.ssh;
   const original=r.recovery.call;r.recovery.call=async(c,request)=>({...await original(c,request),...(request.action==='inspect'?{native_disabled:false}:{})});
