@@ -1854,12 +1854,12 @@ test('state lock prevents double ownership; corrupt store never silently resets'
 });
 test('worker drain persists, drains admitted work, reassigns idle sessions and resumes without bouncing', async t => {
   const r = await rig(t);
-  const first = r.request('{"delay":140}', 'a'); await until(() => r.gateway.stats().active === 1);
+  const first = r.request('{"wait_for_release":true}', 'a'); await until(() => r.backends[0].releases?.length === 1);
   r.gateway.drainNodes(['spark1'], true);
   assert.equal(r.gateway.stats().workers[0].gateway_drained, false);
   const held=r.request('{}','a');await until(()=>r.gateway.stats().continuity.waiting===1);
   assert.equal((await r.request('{}', 'new')).headers['x-ds4-node'], 'spark2');
-  await first; assert.equal(r.gateway.stats().workers[0].gateway_drained, true);
+  r.backends[0].releases.shift()();await first; assert.equal(r.gateway.stats().workers[0].gateway_drained, true);
   assert.equal((await held).headers['x-ds4-node'],'spark2');
   assert.equal((await r.request('{}', 'a')).headers['x-ds4-node'], 'spark2');
   await r.restart(); assert.equal(r.gateway.stats().workers[0].drained, true);
@@ -2631,8 +2631,8 @@ test('worker capacity edits require idle pause, reject stale values and preserve
   const r=await rig(t,1,{control_socket:true}),input={id:'spark1',expected_max_concurrent_requests:1,max_concurrent_requests:2};
   const edit=value=>workerControl(r.config.control_socket,'/set-worker-concurrency',value);
   await assert.rejects(edit(input),/Pause/);
-  const running=r.request('{"delay":120}','preserve-session');await until(()=>r.gateway.stats().active===1);r.gateway.drainNodes(['spark1'],true);
-  await assert.rejects(edit(input),/finish/);assert.equal((await running).status,200);
+  const running=r.request('{"wait_for_release":true}','preserve-session');await until(()=>r.backends[0].releases?.length===1);r.gateway.drainNodes(['spark1'],true);
+  await assert.rejects(edit(input),/finish/);r.backends[0].releases.shift()();assert.equal((await running).status,200);
   const before=structuredClone(r.gateway.store.data),settings=workerConfig(r.config.nodes[0]);
   await assert.rejects(edit({...input,expected_max_concurrent_requests:3}),/changed/);
   await assert.rejects(edit({...input,max_concurrent_requests:0}),/capacity/);
