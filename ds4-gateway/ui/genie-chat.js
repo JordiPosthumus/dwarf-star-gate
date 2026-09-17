@@ -78,8 +78,9 @@ if(panel){
     const s=status?.study,box=$('genie-study');if(!box)return;box.hidden=!s;if(!s)return;
     if(s.due&&!studyDue)box.open=true;studyDue=s.due;
     const busy=['queued','working'].includes(s.last_run?.state);
-    $('study-summary').textContent=busy?'· studying':s.due?'· ready when you are':s.interval_days?'· reminder set':'· on your request';
-    $('study-status').textContent=s.error??(busy?'Genie is studying your setup. Follow his sources and answer in the study conversation.':s.due?'Would you like Genie to look for worthwhile improvements?':s.next_due_at?`Next reminder: ${new Date(s.next_due_at).toLocaleString()}`:'Start a study whenever you want, or choose a reminder interval below.');
+    const automatic=s.mode==='automatic';
+    $('study-summary').textContent=busy?'· studying':s.due?(automatic?'· waiting to study':'· ready when you are'):s.interval_days?(automatic?'· automatic studies':'· reminder set'):'· on your request';
+    $('study-status').textContent=s.error??s.dispatch_error??(busy?'Genie is studying your setup. Follow his sources and answer in the study conversation.':s.due?(automatic?'A study is due. Genie will start when his existing conversations finish and research is available.':'Would you like Genie to look for worthwhile improvements?'):s.next_due_at?`Next ${automatic?'study':'reminder'}: ${new Date(s.next_due_at).toLocaleString()}`:'Start a study whenever you want, or choose a schedule below.');
     if(!s.available&&!s.error&&!busy)$('study-status').textContent+=' Connect Genie and web search to start; testing mode must be off.';
     if(['failed','interrupted','not_started'].includes(s.last_run?.state))$('study-status').textContent+=' The last study did not finish. Open it to inspect what was saved; it will not restart automatically.';
     $('study-start').textContent=s.due?'Start study':'Research now';$('study-start').disabled=studyBusy||busy||!s.available||sending||creating;
@@ -89,6 +90,7 @@ if(panel){
     $('study-open').hidden=!s.last_run;$('study-open').disabled=sending||creating;
     $('study-save').disabled=studyBusy||!!s.error;
     if(document.activeElement!==$('study-interval')&&!$('study-interval').dataset.edited)$('study-interval').value=String(s.interval_days);
+    if(document.activeElement!==$('study-mode')&&!$('study-mode').dataset.edited)$('study-mode').value=s.mode??'reminder';
   }
   async function studyChange(action,extra={}){
     if(studyBusy)return;studyBusy=true;$('study-error').textContent='';renderStudy();
@@ -96,12 +98,13 @@ if(panel){
       const input=action==='study-start'?(studyRequest??={action,expected_revision:status.study.revision,request_id:crypto.randomUUID()}):{action,expected_revision:status.study.revision,...extra};
       const result=await api('/api/genie/chat',input);status.study=result;
       if(action==='study-start'){studyRequest=null;await refresh();await select(result.last_run.conversation_id);}
-      if(action==='study-schedule')delete $('study-interval').dataset.edited;
+      if(action==='study-schedule'){delete $('study-interval').dataset.edited;delete $('study-mode').dataset.edited;}
     }catch(e){if(e.status>=400&&e.status<500)studyRequest=null;$('study-error').textContent=e.message;}
     finally{studyBusy=false;await refresh();renderStudy();}
   }
   $('study-interval')?.addEventListener('change',()=>{$('study-interval').dataset.edited='true';});
-  $('study-schedule-form')?.addEventListener('submit',e=>{e.preventDefault();studyChange('study-schedule',{interval_days:Number($('study-interval').value)});});
+  $('study-mode')?.addEventListener('change',()=>{$('study-mode').dataset.edited='true';});
+  $('study-schedule-form')?.addEventListener('submit',e=>{e.preventDefault();studyChange('study-schedule',{interval_days:Number($('study-interval').value),mode:$('study-mode').value});});
   $('study-start')?.addEventListener('click',()=>studyChange('study-start'));
   $('study-postpone')?.addEventListener('click',()=>studyChange('study-postpone'));
   $('study-skip')?.addEventListener('click',()=>studyChange('study-skip'));

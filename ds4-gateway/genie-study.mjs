@@ -33,22 +33,22 @@ export function studyEvidence(reply){
   return {workers:[...workers.values()],pages_read:[...pages],failures,scope:'Dated tool receipts, including follow-ups. A completed answer is not proof of a complete study, a correct recommendation or measured improvement. Each source path retains its latest receipt, not accumulated coverage. Source hashes identify the full file on disk, not loaded code; a window describes only the returned text section.'};
 }
 
-// One private reminder record; existing chat owns execution and history.
-// Reading a due reminder never invokes a model. Each study needs a UI action.
+// One private schedule record; existing chat owns execution and history.
+// Reading status never invokes a model. The existing dashboard tick runs opt-in studies.
 export class GenieStudy {
   constructor(chat,{now=Date.now}={}){
     this.chat=chat;this.now=now;this.file=path.join(chat.directory,'research-plan.json');this.error=null;
-    this.plan={version:1,revision:0,interval_days:0,next_due_at:null,last_run:null};
+    this.plan={version:1,revision:0,mode:'reminder',interval_days:0,next_due_at:null,last_run:null};this.dispatchError=null;
     let fd;
     try{
       fd=fs.openSync(this.file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);
       const stat=fs.fstatSync(fd);if(!stat.isFile()||stat.nlink!==1||stat.size>65536)throw new Error();
       const p=JSON.parse(fs.readFileSync(fd,'utf8'));
-      if(p.version!==1||!Number.isSafeInteger(p.revision)||p.revision<0||![0,1,7,14,30].includes(p.interval_days)||
+      if(p.version!==1||!Number.isSafeInteger(p.revision)||p.revision<0||![0,1,7,14,30].includes(p.interval_days)||(p.mode!==undefined&&!['reminder','automatic'].includes(p.mode))||
         (p.next_due_at!==null&&(!Number.isSafeInteger(p.next_due_at)||p.next_due_at<0))||
         (p.interval_days>0&&p.next_due_at===null)||
         (p.last_run!==null&&(!UUID.test(p.last_run.conversation_id)||!UUID.test(p.last_run.request_id)||!Number.isSafeInteger(p.last_run.at))))throw new Error();
-      this.plan=p;
+      this.plan={mode:'reminder',...p};
     }catch(e){if(e.code!=='ENOENT')this.error='Research reminders could not be read. The existing file was preserved.';}
     finally{if(fd!==undefined)fs.closeSync(fd);}
   }
@@ -59,8 +59,16 @@ export class GenieStudy {
       const reply=conversation?.messages.find((m,i)=>m.role==='assistant'&&conversation.messages[i-1]?.request_id===p.last_run.request_id);
       last={conversation_id:p.last_run.conversation_id,request_id:p.last_run.request_id,at:p.last_run.at,state:reply?.state??'not_started',evidence:studyEvidence(conversation?.messages.filter(m=>m.role==='assistant')??[])};
     }
-    return {version:1,revision:p.revision,interval_days:p.interval_days,next_due_at:p.next_due_at,last_run:last,due:p.interval_days>0&&p.next_due_at<=this.now(),error:this.error,
+    return {version:1,revision:p.revision,mode:p.mode,interval_days:p.interval_days,next_due_at:p.next_due_at,last_run:last,due:p.interval_days>0&&p.next_due_at<=this.now(),error:this.error,dispatch_error:this.dispatchError,
       available:!this.error&&!!this.chat.provider?.info?.research_available&&!this.chat.closed&&!this.chat.isSuspended()};
+  }
+  tick(){
+    const s=this.status();
+    if(s.mode!=='automatic'||!s.due||!s.available||this.dispatchError)return;
+    // Let existing conversations and saved follow-ups finish before routine research.
+    if(this.chat.jobs.size||[...this.chat.sessions.values()].some(c=>c.messages.some(m=>['queued','working'].includes(m.state))))return;
+    try{this.change({action:'study-start',expected_revision:s.revision,request_id:randomUUID()});}
+    catch{this.dispatchError='Scheduled research could not start. Check the last study and use Research now or save the schedule to try again.';}
   }
   previousStudy(excludeId){
     const studies=[...this.chat.sessions.values()].filter(s=>s.purpose==='setup_research'&&s.id!==excludeId&&s.messages[1]?.role==='assistant'&&s.messages[1].state==='complete').sort((a,b)=>b.created_at-a.created_at);
@@ -75,13 +83,15 @@ export class GenieStudy {
   }
   change(input){
     if(this.error)throw new Error(this.error);
-    const keys={'study-schedule':['action','expected_revision','interval_days'],'study-postpone':['action','expected_revision'],'study-skip':['action','expected_revision'],'study-start':['action','expected_revision','request_id']}[input?.action];
+    const keys={'study-schedule':['action','expected_revision','interval_days',...(Object.hasOwn(input??{},'mode')?['mode']:[])],'study-postpone':['action','expected_revision'],'study-skip':['action','expected_revision'],'study-start':['action','expected_revision','request_id']}[input?.action];
     if(!keys||Object.keys(input).length!==keys.length||!keys.every(k=>Object.hasOwn(input,k)))throw new Error('Invalid research control.');
     if(input.action==='study-start'&&input.request_id===this.plan.last_run?.request_id)return this.status();
     if(input.expected_revision!==this.plan.revision)throw new Error('Research controls changed. Refresh before trying again.');
     const p={...this.plan,revision:this.plan.revision+1},now=this.now();
     if(input.action==='study-schedule'){
       if(![0,1,7,14,30].includes(input.interval_days))throw new Error('Choose one of the offered reminder intervals.');
+      if(input.mode!==undefined&&!['reminder','automatic'].includes(input.mode))throw new Error('Choose reminders or automatic studies.');
+      p.mode=input.mode??p.mode;
       p.interval_days=input.interval_days;p.next_due_at=p.interval_days?now+p.interval_days*DAY:null;
     }else if(input.action==='study-postpone'||input.action==='study-skip'){
       if(!this.status().due)throw new Error('There is no research reminder due.');
@@ -94,9 +104,9 @@ export class GenieStudy {
       p.last_run={conversation_id:conversation.id,request_id:input.request_id,at:now};
       p.next_due_at=p.interval_days?now+p.interval_days*DAY:null;
       // Persist intent first. An uncertain submission is never automatically replayed.
-      this.save(p);this.chat.submit(conversation.id,STUDY_PROMPT,input.request_id,{research:true});
+      this.save(p);this.chat.submit(conversation.id,STUDY_PROMPT,input.request_id,{research:true});this.dispatchError=null;
       return this.status();
     }
-    this.save(p);return this.status();
+    this.save(p);this.dispatchError=null;return this.status();
   }
 }

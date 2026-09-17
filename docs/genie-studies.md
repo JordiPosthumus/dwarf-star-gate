@@ -7,20 +7,27 @@ and ask follow-up questions. It uses the installation's dedicated Hermes runtime
 SOUL and model connection. Connect web search and extraction through normal setup
 before starting a study; without them ordinary chat remains available.
 
-Reminders are **off by default**. Choose daily, weekly, every two weeks or every
-30 days and save. The due reminder appears in the Genie tab and offers:
+Schedules are **off by default**. Choose daily, weekly, every two weeks or every
+30 days, then choose **Remind me first** or **Run automatically** and save.
+Existing schedules remain reminders. The due reminder appears in the Genie tab and offers:
 
 - **Start study**: start the requested research and open its conversation.
 - **Ask tomorrow**: postpone this reminder by one day.
 - **Skip this time**: move the next reminder one selected interval forward.
 - **Research now**: run early even before the next reminder is due.
 
-A reminder is a saved due date, not an unattended model job. No OS cron service,
-notification service or new background agent is installed. The dashboard calculates
-whether the reminder is due when it reads chat status. If it was offline, the
-same reminder appears when it returns; missed intervals do not accumulate runs.
-Starting a study schedules the next reminder from that start time. Turning
-reminders off does not cancel active work or revoke public web access in chat.
+Automatic mode uses the existing dashboard's ten-second check to start a due
+study in an ordinary saved conversation. It waits for existing Genie replies and
+queued follow-ups to finish. The Public research capability must be on, web
+research must be connected, and testing mode must be off. No OS cron service,
+notification service or new background agent is installed. Reading status never
+starts a study. After downtime, only one due study runs; missed intervals do not
+accumulate jobs. The next date is measured from the accepted start. Turning the
+schedule off does not cancel active work or revoke public web access in chat.
+Submission failures appear in the research panel instead of retrying every tick.
+Use Research now or save the schedule to clear a start failure. An accepted but
+unfinished request is never replayed on restart; a later scheduled study is a
+new conversation, with the prior completed evidence when available.
 
 The research brief requests one short, supported recommendation at a time, with
 an exact change, rationale, expected benefit, tradeoff, verification and dated
@@ -56,8 +63,8 @@ Studies use the configured conversational toolset, including read-only server
 inspection when connected. The study brief authorizes research, not benchmarking,
 installation or server changes; the existing capability switches and action
 permissions still apply. A research request does not approve its proposed
-changes. Ordinary chat's standing permission to read public sources is separate
-from starting a periodic study.
+changes. Choosing automatic mode authorizes scheduled research; normal server
+change and measurement controls remain unchanged.
 
 Reminder settings and the last accepted study identifier live in
 `research-plan.json` alongside this installation's private conversations. They
@@ -70,7 +77,8 @@ An unreadable reminder file is preserved and reported; other conversations work.
 
 ## Validation scope
 
-Synthetic tests exercise due dates, skip/postpone, persistence, duplicate requests,
+Synthetic tests exercise due dates, automatic starts, busy-chat deferral,
+legacy reminders, off controls, skip/postpone, persistence, duplicate requests,
 stale edits, testing mode, write failures and restart without replay. Integration
 checks use the installed Hermes runtime with synthetic model/search/extraction
 responses to prove a study uses the existing tools and retains source evidence.

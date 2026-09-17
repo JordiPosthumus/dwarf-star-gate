@@ -34,6 +34,31 @@ test('an explicitly started study uses native chat, keeps source evidence and is
   const restored=new GenieChat(r.options);assert.equal(restored.study.change(input).last_run.state,'complete');await restored.idle();assert.equal(r.calls.length,1);restored.close();
   assert.equal(fs.statSync(r.chat.study.file).mode&0o777,0o600);
 });
+test('automatic studies use ordinary saved chat once per due interval and skip missed intervals',async t=>{
+ const r=rig(t);r.change('study-schedule',{interval_days:7,mode:'automatic'});r.advance(22*DAY);
+ assert.equal(r.chat.study.status().due,true);assert.equal(r.calls.length,0);
+ r.chat.tick();r.chat.tick();await r.chat.idle();assert.equal(r.calls.length,1);assert.equal(r.chat.study.status().last_run.state,'complete');assert.equal(r.chat.study.status().due,false);
+ assert.equal(r.chat.study.status().next_due_at,r.options.now()+7*DAY);assert.match(r.calls[0].message,/current public documentation/);
+ const restored=new GenieChat(r.options);t.after(()=>restored.close());restored.tick();await restored.idle();assert.equal(r.calls.length,1);
+ r.advance(7*DAY);restored.tick();await restored.idle();assert.equal(r.calls.length,2);assert.ok(r.calls[1].context.previous_study);
+});
+test('legacy schedules remain reminders and automatic studies respect research, testing, busy chat and off controls',async t=>{
+ const r=rig(t);r.change('study-schedule',{interval_days:1});let p=JSON.parse(fs.readFileSync(r.chat.study.file));delete p.mode;fs.writeFileSync(r.chat.study.file,JSON.stringify(p));
+ const legacy=new GenieChat(r.options);t.after(()=>legacy.close());r.advance(DAY);legacy.tick();assert.equal(legacy.study.status().mode,'reminder');assert.equal(r.calls.length,0);
+ r.change('study-schedule',{interval_days:1,mode:'automatic'});r.advance(DAY);r.suspend(true);r.chat.tick();assert.equal(r.calls.length,0);r.suspend(false);
+ r.chat.provider.info.research_available=false;r.chat.tick();assert.equal(r.calls.length,0);r.chat.provider.info.research_available=true;
+ let finish;r.chat.provider.generate=()=>new Promise(resolve=>{finish=resolve;});const c=r.chat.create();r.chat.submit(c.id,'A conversation already in progress',randomUUID());await new Promise(resolve=>setImmediate(resolve));
+ r.chat.tick();assert.equal(r.chat.study.status().last_run,null);finish({text:'Finished'});await r.chat.idle();
+ r.chat.provider.generate=r.options.provider.generate=async input=>{r.calls.push(input);return {text:'Study'};};r.chat.tick();await r.chat.idle();assert.equal(r.calls.length,1);
+ r.change('study-schedule',{interval_days:0,mode:'automatic'});r.advance(30*DAY);r.chat.tick();assert.equal(r.calls.length,1);
+});
+test('automatic dispatch failures remain visible and do not spin or replay uncertain intent',async t=>{
+ const r=rig(t);r.change('study-schedule',{interval_days:1,mode:'automatic'});r.advance(DAY);
+ const save=r.chat.study.save.bind(r.chat.study);r.chat.study.save=()=>{throw Error('disk full');};r.chat.tick();assert.match(r.chat.study.status().dispatch_error,/could not start/);r.chat.tick();assert.equal(r.calls.length,0);
+ r.chat.study.save=save;r.change('study-schedule',{interval_days:1,mode:'automatic'});assert.equal(r.chat.study.status().dispatch_error,null);r.advance(DAY);
+ r.chat.submit=()=>{throw Error('submission interrupted');};r.chat.tick();assert.equal(r.chat.study.status().last_run.state,'not_started');
+ const restored=new GenieChat(r.options);t.after(()=>restored.close());restored.tick();await restored.idle();assert.equal(r.calls.length,0);assert.equal(restored.study.status().last_run.state,'not_started');
+});
 test('busy studies, testing mode and unavailable research cannot start another request',async t=>{
   let finish;const r=rig(t,{generate:()=>new Promise(resolve=>{finish=resolve;})});
   r.change('study-start',{request_id:randomUUID()});await new Promise(resolve=>setImmediate(resolve));

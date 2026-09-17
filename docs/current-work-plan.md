@@ -52,8 +52,10 @@ deployment receipts stay outside this public repository.
 - [x] Build setup research through existing chat, with opt-in reminder cadence,
   explicit start, skip, postpone and run-early controls. Research does not approve
   its recommendations. Exact production promotion is tracked per release.
-- [ ] Complete configuration-aware upstream improvement monitoring. The current
-  schedule raises a reminder; it does not independently run an upstream study.
+- [ ] Complete configuration-aware upstream improvement monitoring. The schedule
+  now offers opt-in automatic studies through existing chat and dashboard ticks;
+  existing reminder choices are preserved. Native production activation remains
+  to be verified in its deployment receipt.
   Join each server's recorded configuration and actual installed revisions to
   relevant upstream PRs/releases, retaining sources and the last studied revision.
   Public research has standing owner permission; server changes and measurements
@@ -81,7 +83,9 @@ deployment receipts stay outside this public repository.
   Completed study follow-ups now carry their corrected answer and checks into the
   next study; source sections retain their partial-read scope. The UI reports
   actual checks and failures from saved receipts, without treating model narration
-  as proof. Periodic reminders still require a start action.
+  as proof. Reminder mode still requires a start action; automatic mode waits for
+  existing chats to finish and honors the Public research switch and testing mode.
+  The complete candidate trial and baseline comparison loop remains outstanding.
 - [x] Use the configured Hermes runtime and current Genie identity for fleet
   reviews, preserving provider and guarded-action contracts.
 - [x] Connect conversational questions to the existing exception for yielding

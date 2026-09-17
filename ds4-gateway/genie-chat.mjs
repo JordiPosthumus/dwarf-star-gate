@@ -52,7 +52,9 @@ export class GenieChat {
       } catch {this.loadErrors.push(name);} // Preserve unreadable files verbatim; other chats remain usable.
     }
     this.study=new GenieStudy(this,{now});
-    this.tick();
+    // Restore accepted chat work now; schedule studies only on dashboard ticks,
+    // after its tool services and live snapshot have been connected.
+    for(const s of this.sessions.values())this.start(s);
   }
   context() {
     const snapshot=this.getSnapshot(),context=chatContext(snapshot);
@@ -124,7 +126,7 @@ export class GenieChat {
     try{this.save(s);}catch{s.messages.splice(previous.length);s.title=previous.title;s.updated_at=previous.updated_at;throw new Error('Could not save your message. Nothing was sent to the model.');}
     this.start(s);return this.get(id);
   }
-  tick(){for(const s of this.sessions.values())this.start(s);}
+  tick(){for(const s of this.sessions.values())this.start(s);this.study.tick();}
   resume(id,expectedReplyId){
     const s=this.sessions.get(id);if(!s)throw new Error('Conversation not found.');
     if(!s.queue_paused)return this.get(id);
