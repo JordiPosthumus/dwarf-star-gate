@@ -5,6 +5,8 @@ import {priorityRank,requestPriority,PRIORITY_HEADER} from './job-priority.mjs';
 import {MediaResults} from './media-results.mjs';
 import {MediaInputs} from './media-inputs.mjs';
 import {prepareVideoPrompt} from './video-prompt.mjs';
+import {validateVideoReferences} from './media-validation.mjs';
+import {nativeFailureDetail,mediaErrorAdvice} from './media-errors.mjs';
 
 const states=new Set(['queued','submitting','submitted','pending','running','completed','failed','uncertain']);
 const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
@@ -12,16 +14,6 @@ const object=value=>value!==null&&typeof value==='object'&&!Array.isArray(value)
 const fail=(status,message)=>Object.assign(new Error(message),{status});
 const canonical=value=>Array.isArray(value)?value.map(canonical):object(value)?Object.fromEntries(Object.keys(value).sort().map(key=>[key,canonical(value[key])])):value;
 const now=()=>new Date().toISOString();
-function nativeFailureDetail(job){
-  if(job.state!=='failed'||job.backend!=='comfyui')return null;
-  const messages=job.result?.status?.messages;
-  if(!Array.isArray(messages))return null;
-  const error=messages.findLast(item=>Array.isArray(item)&&item[0]==='execution_error'&&object(item[1]))?.[1];
-  if(!error)return null;
-  const text=value=>typeof value==='string'?value.replace(/[\x00-\x1f\x7f]/g,' ').trim().slice(0,1000):'';
-  return `ComfyUI node ${text(error.node_id)||'?'}${text(error.node_type)?` (${text(error.node_type)})`:''}: ${text(error.exception_message)||text(error.exception_type)||'Execution failed'}`;
-}
-
 // The gateway's existing process lock owns this store. Media prompts and native
 // receipts are private local state, never fleet telemetry or repository content.
 export class MediaJobs {
@@ -68,6 +60,7 @@ export class MediaJobs {
       }catch{job.execution={...saved.execution,phase:'observation_failed',detail:'Saved media execution could not be read; inspect its original process. No job was repeated.'};}
     }
     if(!job.detail)job.detail=nativeFailureDetail(job);
+    if(job.state==='failed'&&job.detail)job.next_step=mediaErrorAdvice(job.detail);
     return job;
   }
   list(kind){return this.data.jobs.filter(j=>!kind||j.kind===kind).map(j=>{const {payload,fingerprint,key_hash,...job}=this.get(j.id);return job;});}
@@ -89,7 +82,7 @@ export class MediaJobs {
     // Fingerprint the caller's request before expansion. Retries retain the
     // original seed/workflow even if the bundled recipe later changes.
     const prepared=kind==='video'&&typeof payload.prompt==='string'?prepareVideoPrompt(payload):{payload:structuredClone(payload)};
-    if(kind==='video'&&Object.hasOwn(payload,'input_files'))this.inputs.forJob(payload.input_files);
+    if(kind==='video')validateVideoReferences(prepared.payload,this.inputs.forJob(payload.input_files));
     const job={id:randomUUID(),kind,...prepared,priority,key_hash:keyHash,fingerprint,state:'queued',created_at:now(),updated_at:now()};
     this.save({...this.data,jobs:[...this.data.jobs,job]});return {job:this.get(job.id),created:true};
   }

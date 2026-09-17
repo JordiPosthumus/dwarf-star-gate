@@ -3,6 +3,7 @@ import {isDeepStrictEqual} from 'node:util';
 import {createHash} from 'node:crypto';
 import {openAsBlob} from 'node:fs';
 import {priorityRank} from './job-priority.mjs';
+import {validateVideoCatalog} from './media-validation.mjs';
 
 export function mediaBatchCanContinue(next,status){
   return !status.jobs.some(j=>j.state==='queued'&&!j.execution&&priorityRank(j)>priorityRank(next));
@@ -67,15 +68,20 @@ export async function runMediaCycle(plan,io){
     assert.equal((await inspect(plan.llm_container)).State.Running,false);
     progress('starting_media','LLM drained and stopped; starting its enrolled media engine.');
     connection=await connect();save('start-media-intent.json',{container:plan.engine.container});mediaStarted=true;await start(plan.engine.container);
+    let readinessError;
     for(let i=0;i<120;i++){
       try{
         const health=await connection.backend.request(plan.engine.kind==='ace-step'?'/health':'/system_stats');
         if(plan.engine.kind==='ace-step')assert.ok(health?.data?.status==='ok'&&health.data.models_initialized===true,'ACE-Step model is still loading');
         ready=true;break;
       }
-      catch{if(!(await inspect(plan.engine.container)).State.Running)throw new Error('Media container exited before readiness');await delay(3000);}
+      catch(e){
+        readinessError=e.message;
+        if(!(await inspect(plan.engine.container)).State.Running)throw new Error(`${plan.engine.kind}: Media container exited before readiness. Inspect its container log; no generation submitted. Last check: ${readinessError}`);
+        progress('starting_media',`${plan.engine.kind} is not ready: ${readinessError}`);await delay(3000);
+      }
     }
-    assert.ok(ready,'Media readiness not established; no generation submitted');
+    if(!ready)throw Error(`${plan.engine.kind}: Media readiness not established; no generation submitted. Last check: ${readinessError??'no usable readiness response'}. Inspect the engine log and enrolled endpoint.`);
     for(const id of ids){
       activeId=id;
       const job=jobs.get(id);
@@ -93,8 +99,7 @@ export async function runMediaCycle(plan,io){
       }
       if(plan.engine.kind==='comfyui'){
         const catalog=await connection.backend.request('/object_info');
-        assert.ok(job.payload.prompt&&Object.keys(job.payload.prompt).length,'Supply a native ComfyUI workflow');
-        for(const node of Object.values(job.payload.prompt))assert.ok(catalog[node.class_type],`Missing native node ${node.class_type}`);
+        validateVideoCatalog(job.payload,catalog);
       }
       assert.ok(await mediaIdle(),'Media engine already has native work');assert.equal((await maintenance('transition')).owned,true);
       progress('generating','Submitting the saved media job once.');
@@ -104,7 +109,7 @@ export async function runMediaCycle(plan,io){
         try{observed=await jobs.observe(job.id,connection.backend);}
         catch{progress('observing_media','Native progress is temporarily unavailable; observing the original job without repeating it.');await delay(3000);continue;}
         progress('generating',`Native job: ${observed.state}.`);
-        if(['completed','failed'].includes(observed.state)){assert.equal(observed.state,'completed','Native media generation failed');break;}
+        if(['completed','failed'].includes(observed.state)){if(observed.state==='failed')throw Error(observed.detail??'Native media generation failed; inspect the saved native task receipt');break;}
         await delay(3000);
       }
       progress('retaining_results','Saving generated files before releasing the media engine.');

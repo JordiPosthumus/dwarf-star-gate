@@ -143,3 +143,44 @@ test('authenticated gateway media API is durable, isolated from LLM routes and r
   assert.equal((await call('/v1/chat/completions',{model:'fixture',messages:[{role:'user',content:'hello'}]})).status,200);assert.equal(inference,1);
   gateway.drain();assert.equal((await call('/v1/video/jobs',{prompt:{}},{'idempotency-key':'video'})).status,503);assert.equal((await call(job.status_url)).status,200);
 });
+
+test('H3 silent reference mistakes fail before queueing; valid graphs and existing retries remain intact',t=>{
+ const q=new MediaJobs(path.join(directory(t),'jobs.json'));
+ const workflow=inputs=>({prompt:{'5':{class_type:'EmptyImage',inputs:{}},'7':{class_type:'MiniMaxH3ReferenceToVideo',inputs}}});
+ for(const inputs of [{ref_images:[['5',0]]},{ref_audios:[['5',0]]},{ref_image_0:['5',0]},{'ref_images.ref_image_0':['missing',0]},{'ref_images.ref_image_0':'picture.png'}]){
+  assert.throws(()=>q.enqueue('video',workflow(inputs),{key:'invalid-reference'}),e=>e.status===400&&/H3 node 7.*No job was queued/.test(e.message));
+ }
+ assert.equal(q.list().length,0);
+ const valid=workflow({'ref_images.ref_image_0':['5',0]}),job=q.enqueue('video',valid,{key:'valid'}).job;
+ assert.deepEqual(job.payload,valid);
+ // Replaying an already accepted legacy request remains observation, not new validation.
+ const legacy=workflow({ref_images:[['5',0]]});
+ q.update(job.id,{payload:legacy});
+ assert.equal(q.enqueue('video',valid,{key:'valid'}).job.id,job.id);
+ const custom={prompt:{'7':{class_type:'Custom',inputs:{ref_images:[['anything',0]]}}}};
+ assert.deepEqual(q.enqueue('video',custom,{key:'custom'}).job.payload,custom);
+});
+
+test('uploaded file loaders must name a file included in the transfer list',async t=>{
+ const q=new MediaJobs(path.join(directory(t),'jobs.json')),stream=Readable.from(['image']);stream.headers={'content-type':'image/png','content-length':'5'};
+ const input=await q.inputs.receive(stream),payload={prompt:{'5':{class_type:'LoadImage',inputs:{image:input.name}}}};
+ assert.throws(()=>q.enqueue('video',payload,{key:'missing-transfer'}),e=>e.status===400&&/node 5.*input_files/.test(e.message));
+ assert.equal(q.list().length,0);
+ assert.equal(q.enqueue('video',{...payload,input_files:[input.id]},{key:'transfer'}).created,true);
+});
+
+test('ACE-Step saved failure explains cause and next step without changing native settings or replaying',t=>{
+ const file=path.join(directory(t),'jobs.json'),q=new MediaJobs(file),payload={prompt:'music',audio_duration:120,inference_steps:60};
+ const job=q.enqueue('music',payload,{key:'music-error'}).job;
+ q.update(job.id,{backend:'ace-step',state:'failed',result:[{error:'CUDA out of memory',traceback:'PRIVATE TRACE',prompt:'PRIVATE PROMPT'}]});
+ const restarted=new MediaJobs(file),failed=restarted.get(job.id);
+ assert.match(failed.detail,/ACE-Step generation failed: CUDA out of memory/);assert.match(failed.next_step,/not reduced automatically/);
+ assert.doesNotMatch(failed.detail,/PRIVATE/);assert.deepEqual(failed.payload,payload);
+ assert.equal(restarted.enqueue('music',payload,{key:'music-error'}).job.id,job.id);assert.equal(restarted.queued().length,0);
+});
+
+test('all H3 namespaced reference families pass unchanged, including video soundtracks and empty optional groups',t=>{
+ const q=new MediaJobs(path.join(directory(t),'jobs.json'));
+ const payload={prompt:{'5':{class_type:'Source'},'7':{class_type:'MiniMaxH3ReferenceToVideo',inputs:{'ref_images.ref_image_0':['5',0],'ref_audios.ref_audio_0':['5',1],'ref_videos.ref_video_0':['5',0],'ref_video_audios.ref_video_audio_0':['5',1],ref_images:{},ref_audios:[]}}}};
+ assert.deepEqual(q.enqueue('video',payload,{key:'all-refs'}).job.payload,payload);
+});

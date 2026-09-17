@@ -361,3 +361,35 @@ adds the gateway credential on the server side. Keys stay out of browser URLs
 and JavaScript. Normal status updates preserve player elements. In-app browser
 playback validation encountered a renderer crash and is not claimed as passed;
 retained audio download bytes matched their saved size and hash.
+
+### Diagnosing rejected or failed media jobs
+
+Star Gate reports the engine, native HTTP status, and available node/field error
+through the job API and Media tab. Failed jobs can also include `next_step` for
+memory, disk, missing-model/node and unreadable-file errors. Native prompts and
+traceback objects are not copied into these explanations. The original native
+receipt remains available in the installation's private job storage.
+
+For H3 references, use `"ref_images.ref_image_0": ["SOURCE_NODE_ID", 0]` (audio:
+`ref_audios.ref_audio_0`; video: `ref_videos.ref_video_0`; paired soundtrack:
+`ref_video_audios.ref_video_audio_0`). The grouped form `ref_images: [[...]]`
+can be silently ignored by ComfyUI. Star Gate rejects that form and malformed
+reference links before queueing. Files named `stargate/...` in supported loaders
+must also be listed by their upload IDs in `input_files` so they are transferred
+to the selected worker. Naming `<Picture1>` in a prompt alone does not wire an image.
+
+Once the chosen engine is available, its live `/object_info` catalog is checked
+for missing nodes, unavailable combo values (including model filenames), and
+unsupported H3 reference indices before generation is submitted. These checks
+need a running engine; they are not all pre-allocation checks. Valid raw graphs
+are not rewritten, and generation settings are not reduced automatically.
+
+ACE-Step HTTP validation errors retain the field location and reason. Native
+failed-task messages are shown rather than a generic generation failure. An
+unreadable reply or a cache timeout that still contains a running task remains
+uncertain: Star Gate observes the original task without cancelling or replaying it.
+
+Retry an unchanged request with its original `Idempotency-Key` to retrieve its
+existing job. Use a new key after correcting a rejected/failed request. A lost
+reply is not permission to submit again with a new key. Producing a valid video
+file does not, by itself, prove reference conditioning or identity fidelity.

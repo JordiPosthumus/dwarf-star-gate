@@ -233,3 +233,35 @@ test('real media setting changes are reported after returning the unchanged LLM'
   assert.ok(r.events.includes('failed_returned'));assert.ok(r.events.includes('finish'));
   assert.equal(r.containers.get(r.plan.llm_container).State.Running,true);
 });
+
+test('installed model mismatch fails before native submission, names the field and restores the LLM',async t=>{
+ const r=cycleFixture(t);
+ r.jobs.update(r.job.id,{payload:{prompt:{one:{class_type:'UNETLoader',inputs:{unet_name:'absent.safetensors'}}}}});
+ const request=r.backend.request;r.backend.request=async route=>route==='/object_info'?{UNETLoader:{input:{required:{unet_name:[['installed.safetensors']]}}}}:request(route);
+ await assert.rejects(runMediaCycle(r.plan,r.io),/node one.*unet_name.*not available/);
+ assert.equal(r.submissions(),0);assert.match(r.jobs.get(r.job.id).detail,/absent.safetensors/);
+ assert.ok(r.events.includes('failed_returned'));assert.equal(r.containers.get(r.plan.llm_container).State.Running,true);
+});
+
+test('native failure detail survives restoration in both job status and machine progress',async t=>{
+ const r=cycleFixture(t),progress=[];r.io.progress=(phase,detail)=>progress.push({phase,detail});
+ r.backend.observe=async()=>({state:'failed',result:{status:{messages:[['execution_error',{node_id:'7',node_type:'MiniMaxH3ReferenceToVideo',exception_message:'CUDA out of memory'}]]}}});
+ await assert.rejects(runMediaCycle(r.plan,r.io),/node 7.*CUDA out of memory/);
+ assert.match(progress.find(p=>p.phase==='failed_returned').detail,/node 7.*CUDA out of memory.*Original LLM returned/);
+ assert.equal(r.submissions(),1);assert.match(r.jobs.get(r.job.id).next_step,/not reduced automatically/);
+});
+
+test('reference index outside the installed dynamic schema is rejected instead of silently ignored',async t=>{
+ const r=cycleFixture(t);
+ r.jobs.update(r.job.id,{payload:{prompt:{one:{class_type:'MiniMaxH3ReferenceToVideo',inputs:{'ref_images.ref_image_9':['source',0]}},source:{class_type:'Fixture'}}}});
+ const request=r.backend.request;r.backend.request=async route=>route==='/object_info'?{MiniMaxH3ReferenceToVideo:{input:{optional:{ref_images:['AUTOGROW',{template:{prefix:'ref_image_',min:0,max:9}}]}}},Fixture:{}}:request(route);
+ await assert.rejects(runMediaCycle(r.plan,r.io),/ref_image_9.*would be ignored/);
+ assert.equal(r.submissions(),0);assert.ok(r.events.includes('failed_returned'));
+});
+
+test('readiness failure retains the engine cause and returns the original LLM without submitting',async t=>{
+ const r=cycleFixture(t),request=r.backend.request;
+ r.backend.request=async route=>{if(route==='/system_stats')throw Error('HTTP 401: incorrect engine token');return request(route);};
+ await assert.rejects(runMediaCycle(r.plan,r.io),/comfyui.*readiness not established.*401.*token/);
+ assert.equal(r.submissions(),0);assert.ok(r.events.includes('failed_returned'));
+});
