@@ -1,11 +1,12 @@
-# Approved serving changes — development
+# Approved serving changes
 
-Genie proposal/status tools and the owner approval/progress UI are connected to
-the retained-container workflow in development. Integration tests exercise the
-installed Hermes runtime and browser against disposable fixtures. This optional
-operation service is not yet active in production; a complete actual serving
-operation still needs qualification. Existing production recovery and maintenance
-behavior is unchanged.
+Genie proposal/status tools and the owner approval/progress UI connect to the
+retained-container workflow through optional installation enrollment. The controls
+have been deployed, and a real Genie-created proposal has reached owner review.
+Integration tests exercise the installed Hermes runtime and browser against
+disposable fixtures; a complete actual serving-change operation still needs
+qualification. Enabling proposals does not establish native upgrade or rollback
+success. Existing recovery and maintenance remain separate capabilities.
 
 Genie can inspect linked JSON evidence with `read_server_artifact.reference_chain`.
 Each JSON pointer selects a recorded `path`/`sha256` reference in the preceding
@@ -168,7 +169,8 @@ to the target record fail preflight before draining. A failed or uncertain commi
 preserves files and the hold for reconciliation; the operation does not repeat it.
 The publisher also retains the frozen executable and exposes the new Docker
 capture through Genie's existing recreation-artifact reader. Installation
-enrollment and Genie/dashboard integration are not yet active in production.
+enrollment and Genie/dashboard integration are available through the optional
+operation service; native whole-operation qualification remains outstanding.
 
 The record's `restoration.change_classes` maps `serving_flags` and/or
 `engine_image` to retained restoration data: automatic mode, retained container

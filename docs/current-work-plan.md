@@ -216,6 +216,12 @@ deployment receipts stay outside this public repository.
   model downloads. Simulated interruption/resume and real busy-host refusal
   checks passed. Its full run on a fresh host remains unverified; it does not
   start or register a server.
+  A later [empty-directory native exercise](genie-spark-setup.md#empty-directory-native-recipe-exercise--17-september-2026)
+  completed combined preparation and real generation/serving checks for all three
+  engines on an existing host, including LLM restart and cold/warm cache proof.
+  Isolated gateway registration and a real reply passed. The separate production
+  attempt preserved the existing worker by rejecting its duplicate SSH endpoint.
+  Pristine physical-host acceptance and new-worker media switching remain open.
   The standalone preparation command can also select only H3 and/or ACE-Step,
   without building or downloading another LLM. Selection is retained on resume;
   simulated interruption tests cover both the default and media-only paths.

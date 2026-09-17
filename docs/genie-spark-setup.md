@@ -149,3 +149,28 @@ These checks support the incremental implementation; they do not establish
 complete fresh-host acceptance or guarantee every model reply uses tools correctly.
 The setup watcher requires observed progress and exposes a no-progress reply as
 needing attention rather than accepting the model's narrative as completion.
+
+
+## Empty-directory native recipe exercise — 17 September 2026
+
+The combined public recipes have now prepared all three engines in empty model
+and installation directories on an existing Spark. Actual Genie invoked the
+preparation, media qualification and LLM qualification tools. H3 produced retained
+video and audio; ACE-Step produced ten-second XL/4B music. Every output fully
+decoded. The LLM passed all eight native check groups after its dedicated helper
+restarted it, including 262143 prompt tokens plus one completion token and two
+zero-cache cold calls followed by 4800-token cache hits. Error, abort and preemption
+counters stayed unchanged. Raw responses and their hashes were retained.
+
+An isolated instance of the gateway then registered the same running, qualified
+server with its recovery and both media bindings, observed a matching native
+recovery identity and received a real model reply. That registration check was
+driven by the acceptance runner; it is not evidence that Genie performed that
+isolated registration. Genie's separate production registration attempt correctly
+reported rejection because the borrowed machine's SSH endpoint was already
+registered. It did not replace that existing worker.
+
+This exercise used an existing host with Docker, drivers and build caches. It does
+not establish installation on a pristine physical Spark. A complete media-switching
+cycle on this newly enrolled worker is also still outstanding; preparation and
+standalone generation do not establish that lifecycle.
