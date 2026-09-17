@@ -1,6 +1,6 @@
 # Current work plan
 
-Updated 16 September 2026. The current goal is the incremental Star Gate plan:
+Updated 17 September 2026. The current goal is the incremental Star Gate plan:
 a conversational Hermes Genie, configuration records and proven restoration,
 queue priorities and qualified concurrency, useful research and approved
 operations, then benchmarking and later media support. Keep the small gateway
@@ -54,8 +54,8 @@ deployment receipts stay outside this public repository.
   its recommendations. Exact production promotion is tracked per release.
 - [ ] Complete configuration-aware upstream improvement monitoring. The schedule
   now offers opt-in automatic studies through existing chat and dashboard ticks;
-  existing reminder choices are preserved. Native production activation remains
-  to be verified in its deployment receipt.
+  existing reminder choices are preserved. The controls are now deployed;
+  existing schedules were retained without enabling an automatic cadence.
   Join each server's recorded configuration and actual installed revisions to
   relevant upstream PRs/releases, retaining sources and the last studied revision.
   Public research has standing owner permission; server changes and measurements
@@ -212,8 +212,8 @@ deployment receipts stay outside this public repository.
   tests cover the sequence and uncertain preparation acknowledgements. Its
   Media-page/Genie action and additive saved enrollment are now connected and
   tested with isolated controllers, private core routes, browser interaction and
-  pinned Hermes tool receipts. Native whole-workflow qualification and production
-  activation are still outstanding.
+  pinned Hermes tool receipts. The controls are deployed; native whole-workflow
+  qualification remains outstanding.
   Genie can now call the preparation command for explicitly enrolled new hosts,
   with an independent capability switch, detached execution and visible phase/error
   receipts. Repeated starts observe the same operation. Its connection has been

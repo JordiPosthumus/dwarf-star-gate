@@ -184,8 +184,9 @@ restart; Genie's actual tool receipts remain with the conversation. Failed
 inspection is shown explicitly, not as fresh readiness. Runtime memory fit
 requires a native generation check using the selected configuration. A
 recipe-driven setup action is now connected in source for eligible existing
-workers. Complete native qualification of this new whole workflow and production
-activation remain outstanding. The separate New Spark setup workflow remains
+workers, with the controls now deployed through a coordinated core/dashboard
+update. Complete native qualification of this new whole workflow remains
+outstanding. The separate New Spark setup workflow remains
 for explicitly enrolled idle new hosts.
 
 The existing-worker setup lifecycle uses a separate detached runner, connected
@@ -216,7 +217,9 @@ without a physical-machine binding retain their original exact-binding check.
 Lifecycle, retained enrollment/restart, private control routes and UI controls
 have fixture tests. The pinned Hermes runtime has called the setup tool and its
 actual receipt remains in chat. These checks do not yet establish complete native
-existing-host installation or production activation.
+existing-host installation. Production activation preserved existing capability
+and placement choices, private settings and active maintenance locks. The
+continuity Door stayed running; the core finished admitted work before replacement.
 
 Result players and download links use local dashboard routes; the dashboard
 adds the gateway credential on the server side. Keys stay out of browser URLs

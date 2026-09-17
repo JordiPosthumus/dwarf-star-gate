@@ -85,6 +85,11 @@ responses to prove a study uses the existing tools and retains source evidence.
 These checks do not establish the quality of a real-world recommendation or
 qualify any model-server configuration change.
 
+The automatic scheduling controls are deployed. Existing schedule settings were
+preserved; deployment did not turn an off schedule on or convert reminders into
+automatic studies. The controlled timer/browser and Hermes tests establish the
+scheduling path; the complete live upstream-change trial remains separate.
+
 ## Live research exercise, 15 September 2026
 
 The configured Genie/Hermes completed a focused, manually requested study through
