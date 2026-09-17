@@ -46,7 +46,9 @@ test('failure signatures separate observed codes without relabelling missing his
   assert.equal(candidates[0].reason,'upstream_error:econnreset');assert.equal(candidates[0].observed_at,'2026-01-01T00:00:02.000Z');
   assert.deepEqual(new Set(candidates.map(c=>c.reason)),new Set(['upstream_error:econnreset','upstream_error','upstream_http_error:503','upstream_http_error:504','upstream_http_error']));
   assert.equal(new Set(candidates.map(c=>c.id)).size,5);assert.ok(candidates.every(c=>c.continuity==='unknown'));
-  assert.ok(!JSON.stringify(briefing(s)).includes('999'));
+  // A timestamp may legitimately contain "999"; inspect the HTTP evidence.
+  s.time=1789650029999;
+  assert.deepEqual(briefing(s).recent_outcomes.filter(e=>e.http_status!==undefined).map(e=>e.http_status),[503,504]);
 });
 
 test('Genie receives an allowlisted quarantine fact, not raw backend text or credentials',()=>{
