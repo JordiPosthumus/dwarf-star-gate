@@ -357,3 +357,18 @@ policy and measurements remain in the operation's archived evidence.
 Existing frozen proposals and generic recovery paths are unchanged. These checks
 are tested with synthetic serving fixtures; they do not establish a production
 allowance or qualify an actual candidate image.
+
+## Connecting a completed change to measurements
+
+`server_change_status` now includes the saved outcome: whether the candidate or
+the previous version was retained, published and previous configuration revisions,
+its native qualification summary, and the separate gateway readmission receipt.
+Genie can match those exact revisions against Hourglass report associations before
+comparing results. An owner pause can remain after successful verification; the
+status does not mislabel that as readmitted. Missing or unreadable qualification
+receipts remain explicit and are preserved.
+
+These are dated execution receipts, not fresh health checks or measured speed
+improvements. The tool does not launch, repeat, approve, keep or restore a change.
+The complete research-to-trial-to-keep-or-restore workflow still needs native
+acceptance; this evidence connection alone does not establish it.

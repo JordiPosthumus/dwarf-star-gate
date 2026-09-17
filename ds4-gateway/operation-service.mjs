@@ -9,6 +9,22 @@ import {operationRunner} from './operation-runner.mjs';
 
 const prepareScript=fileURLToPath(new URL('./serving_prepare_cli.py',import.meta.url));
 const ID=/^[a-zA-Z0-9][\w-]{0,63}$/;
+const revision=value=>/^[a-f0-9]{64}$/.test(value??'')?value:null;
+const recordedTime=value=>typeof value==='number'&&Number.isFinite(value)&&value>0?value:null;
+function outcomeEvidence(result,qualification){
+  if(!result)return null;
+  const publication=result.publication,admission=result.readmission;
+  return {recorded_at:recordedTime(result.at),
+    serving:['candidate','previous'].includes(result.serving)?result.serving:null,
+    configuration:publication?.state==='recorded'?{
+      record_revision:revision(publication.record_revision),
+      previous_record_revision:revision(publication.previous_record_revision)}:null,
+    qualification:qualification??null,
+    readmission:admission?{state:['readmitted','left_to_operator'].includes(admission.state)?admission.state:'unknown',
+      reason:['preexisting_operator_pause','pause_before_release','operator_decision_changed','other_maintenance_present'].includes(admission.reason)?admission.reason:null,
+      observed_at:recordedTime(admission.observed_at)}:null,
+    scope:'Saved execution evidence, not a fresh health check. Match configuration revisions to benchmark associations before attributing a measurement to this change. A successful native check is not a speed comparison or proof of current recovery enrollment.'};
+}
 function prepareProcess(python,input){
   return new Promise((resolve,reject)=>{
     const child=spawn(python,['-I','-B',prepareScript],{stdio:['pipe','pipe','pipe']});
@@ -28,7 +44,7 @@ export function operationToolView(row){
     plan_revision:row.plan_revision??null,error:row.error??null,
     ...(runner?{process_alive:typeof runner.process_alive==='boolean'?runner.process_alive:null,progress:runner.progress?{
       phase:runner.progress.phase,detail:runner.progress.detail,changed_at:runner.progress.changed_at,heartbeat_at:runner.progress.heartbeat_at}:null,
-      outcome:runner.result?.state??null}:{}),
+      outcome:runner.result?.state??null,evidence:outcomeEvidence(runner.result,row.qualification)}:{}),
     scope:'Saved proposal or observed operation state. Proposal is not approval; process heartbeat is not model progress. Only the owner can approve in the gateway UI.'};
 }
 
@@ -51,8 +67,20 @@ export function createOperationService(config,{directory,isTesting=()=>false,isE
     prepare:async(proposal,record_revision)=>prepare(config.genie_chat.python,{proposal,record_revision,enrollment:targets[proposal.worker_id],directory:path.join(directory,proposal.id)})});
   const present=async row=>{
     if(row.state==='unreadable')return row;
-    try{const result=store.read(row.id,'runner-result.json');if(['completed','restored','failed_unchanged'].includes(result?.state))return {...row,runner:{state:result.state,process_alive:null,result,scope:'Saved completed outcome. Process liveness and current server health were not rechecked.'}};}catch{/* Observe a preserved unreadable result through the existing runner. */}
-    return store.current(row.id);
+    let current;
+    try{const result=store.read(row.id,'runner-result.json');if(['completed','restored','failed_unchanged'].includes(result?.state))current={...row,runner:{state:result.state,process_alive:null,result,scope:'Saved completed outcome. Process liveness and current server health were not rechecked.'}};}catch{/* Observe a preserved unreadable result through the existing runner. */}
+    current??=await store.current(row.id);
+    const which=current.runner?.result?.serving;
+    if(['candidate','previous'].includes(which)){
+      try{
+        const proof=store.read(row.id,'qualified-'+which+'.json');
+        current.qualification=proof?{state:['passed','failed'].includes(proof.state)?proof.state:'unknown',
+          version:which,recorded_at:recordedTime(proof.at),result_revision:revision(proof.result_sha256),
+          missing_checks:Array.isArray(proof.missing_checks)?proof.missing_checks.filter(x=>typeof x==='string'&&/^[a-z][a-z0-9_]{0,63}$/.test(x)):null,
+          cache_capacity_acceptance:['passed','failed','reported_only'].includes(proof.cache_capacity_acceptance?.state)?proof.cache_capacity_acceptance.state:null}: {state:'unavailable',version:which};
+      }catch{current.qualification={state:'unreadable',version:which};}
+    }
+    return current;
   };
   const toolConfig={url:null,token:randomBytes(32).toString('base64url'),workers:Object.keys(targets)};
   return {store,toolConfig,

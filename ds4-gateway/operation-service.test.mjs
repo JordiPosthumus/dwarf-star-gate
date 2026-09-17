@@ -46,6 +46,46 @@ test('operations stay absent by default and tool status does not expose executio
   assert.doesNotMatch(JSON.stringify(view),/PRIVATE_COMMAND|private\/secret/);
 });
 
+test('saved serving outcomes expose exact configuration links and preserve restoration and owner-pause distinctions',async t=>{
+  const r=await rig(t);r.service.store.propose(r.proposal);await r.service.store.idle();
+  r.service.store.write(r.id,'runner-result.json',{state:'restored',at:1700000000,serving:'previous',
+    publication:{state:'recorded',record_revision:'a'.repeat(64),previous_record_revision:'b'.repeat(64),artifact:'/private/receipt',commit:'private-commit'},
+    readmission:{state:'left_to_operator',reason:'operator_decision_changed',observed_at:1700000001,operator_action:'private-action'}});
+  r.service.store.write(r.id,'qualified-previous.json',{state:'passed',at:1700000000,result_sha256:'c'.repeat(64),
+    missing_checks:[],cache_capacity_acceptance:{state:'reported_only'},container_id:'private-container'});
+  const row=await r.service.tool({action:'status',id:r.id});
+  assert.equal(row.state,'restored');assert.equal(row.evidence.serving,'previous');
+  assert.deepEqual(row.evidence.configuration,{record_revision:'a'.repeat(64),previous_record_revision:'b'.repeat(64)});
+  assert.deepEqual(row.evidence.qualification,{state:'passed',version:'previous',recorded_at:1700000000,result_revision:'c'.repeat(64),missing_checks:[],cache_capacity_acceptance:'reported_only'});
+  assert.deepEqual(row.evidence.readmission,{state:'left_to_operator',reason:'operator_decision_changed',observed_at:1700000001});
+  assert.doesNotMatch(JSON.stringify(row),/private-|\/private\//);
+  assert.match(row.evidence.scope,/not a fresh health check/);
+  assert.deepEqual((await r.service.tool({action:'list'})).operations[0],row);
+  assert.equal(fs.existsSync(path.join(r.folder,'launch-intent.json')),false);
+});
+
+test('missing and corrupt qualification evidence remain visible without replaying a saved completed change',async t=>{
+  const r=await rig(t);r.service.store.propose(r.proposal);await r.service.store.idle();
+  r.service.store.write(r.id,'runner-result.json',{state:'completed',serving:'candidate',at:1700000000});
+  let row=await r.service.tool({action:'status',id:r.id});
+  assert.equal(row.outcome,'completed');assert.deepEqual(row.evidence.qualification,{state:'unavailable',version:'candidate'});
+  assert.equal(row.evidence.configuration,null);assert.equal(row.evidence.readmission,null);
+  const proof=path.join(r.folder,'qualified-candidate.json');fs.writeFileSync(proof,'{ corrupt retained evidence');
+  row=await r.service.tool({action:'status',id:r.id});
+  assert.deepEqual(row.evidence.qualification,{state:'unreadable',version:'candidate'});
+  assert.equal(fs.readFileSync(proof,'utf8'),'{ corrupt retained evidence');
+  assert.equal(fs.existsSync(path.join(r.folder,'launch-intent.json')),false);
+});
+
+test('legacy and unchanged outcomes never acquire invented serving or qualification evidence',()=>{
+  const legacy=operationToolView({runner:{state:'completed',result:{state:'completed'}}});
+  assert.equal(legacy.evidence.serving,null);assert.equal(legacy.evidence.configuration,null);
+  assert.equal(legacy.evidence.qualification,null);assert.equal(legacy.evidence.recorded_at,null);
+  const unchanged=operationToolView({runner:{state:'failed_unchanged',result:{state:'failed_unchanged',at:1700000000,readmission:{state:'readmitted',observed_at:1700000001}}}});
+  assert.equal(unchanged.evidence.serving,null);assert.equal(unchanged.evidence.qualification,null);
+  assert.equal(unchanged.evidence.readmission.state,'readmitted');
+});
+
 test('server-change switch stops new proposals and approvals while retaining saved reviews',async t=>{
   const r=await rig(t);
   r.setEnabled(false);

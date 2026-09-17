@@ -43,7 +43,7 @@ def register_operations(config, emit):
         'required':['id','worker_id','image','command','reason'],'additionalProperties':False}
     for name,description,parameters in [
         ('propose_server_change','Prepare a serving change for owner review. First inspect the current full configuration and available image. This never approves, drains or starts a server. The owner approves the exact prepared plan in the gateway UI.',proposal),
-        ('server_change_status','Read saved proposal and independent execution status. Omit id to list changes. Submitted or a heartbeat does not mean success. Never resubmit an uncertain operation.',{'type':'object','properties':{'id':{'type':'string'}},'additionalProperties':False})]:
+        ('server_change_status','Read saved proposal and execution evidence: retained serving version, published configuration revisions, qualification and gateway readmission when recorded. Match those revisions to Hourglass report associations. These are dated receipts, not current health or a measured speed improvement. Omit id to list changes. Never resubmit an uncertain operation.',{'type':'object','properties':{'id':{'type':'string'}},'additionalProperties':False})]:
         registry.register(name=name,toolset=TOOLSET,schema={'name':name,'description':description,'parameters':parameters},
             handler=lambda args,_name=name,**kw:run(_name,args),max_result_size_chars=1048576)
     return NAMES
