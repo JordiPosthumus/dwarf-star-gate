@@ -27,7 +27,7 @@ class NativeOmlxAdapterTests(unittest.TestCase):
             (root/'server.py').write_text('''import faulthandler
 faulthandler.dump_traceback_later(5)
 import json,pathlib
-from http.server import BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler,HTTPServer
 from socketserver import TCPServer
 r=pathlib.Path(__file__).parent
 class Handler(BaseHTTPRequestHandler):
@@ -37,7 +37,12 @@ class Handler(BaseHTTPRequestHandler):
  def log_message(self,*args):pass
 # HTTPServer resolves the loopback FQDN before listening. This fixture only
 # needs the real HTTP handler and socket; CI DNS is not part of recovery.
-server=TCPServer(('127.0.0.1',int((r/'port').read_text())),Handler)
+class FixtureServer(HTTPServer):
+ def server_bind(self):
+  TCPServer.server_bind(self)
+  self.server_name='localhost'
+  self.server_port=self.server_address[1]
+server=FixtureServer(('127.0.0.1',int((r/'port').read_text())),Handler)
 faulthandler.cancel_dump_traceback_later()
 server.serve_forever()
 ''')
