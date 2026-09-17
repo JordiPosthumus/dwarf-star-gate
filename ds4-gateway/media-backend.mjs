@@ -19,7 +19,25 @@ export class MediaBackend {
         headers:{...(this.token?{authorization:`Bearer ${this.token}`} : {}),...(body===undefined?{}:{'content-type':'application/json'})},
         ...(body===undefined?{}:{body:JSON.stringify(body)})});
     }catch{throw new MediaBackendError('Native media response unavailable; observe the original job before another submission.',{uncertain:submission});}
-    if(!response.ok)throw new MediaBackendError(`Native media HTTP ${response.status}`,{uncertain:submission&&response.status>=500});
+    if(!response.ok){
+      let detail='';
+      // ComfyUI rejects missing models/files before creating native history.
+      // Keep that actionable validation message with the existing failed job.
+      if(this.kind==='comfyui'&&response.status===400){
+        try{
+          const value=await response.json(),messages=[];
+          if(object(value.node_errors))for(const [node,row]of Object.entries(value.node_errors)){
+            for(const error of Array.isArray(row?.errors)?row.errors:[]){
+              const text=[error?.message,error?.details].filter(v=>typeof v==='string'&&v.trim()).join(': ');
+              if(text)messages.push(`node ${node}${typeof row.class_type==='string'?` (${row.class_type})`:''}: ${text}`);
+            }
+          }
+          if(!messages.length&&typeof value.error?.message==='string')messages.push(value.error.message);
+          detail=messages.join('; ');
+        }catch{/* Unreadable validation responses retain the HTTP error. */}
+      }
+      throw new MediaBackendError(`Native media HTTP ${response.status}${detail?`: ${detail}`:''}`,{uncertain:submission&&response.status>=500});
+    }
     try{return await response.json();}catch{throw new MediaBackendError('Native media returned an unreadable receipt.',{uncertain:submission});}
   }
   async submit(payload,requestId){

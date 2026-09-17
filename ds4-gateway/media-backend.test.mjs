@@ -4,6 +4,15 @@ import http from 'node:http';
 import {once} from 'node:events';
 import {MediaBackend} from './media-backend.mjs';
 const uuid='00112233-4455-6677-8899-aabbccddeeff';
+test('native workflow rejection exposes model/file validation without claiming acceptance or replaying',async()=>{
+ let calls=0;
+ const api=new MediaBackend({kind:'comfyui',url:'http://127.0.0.1:1'},{fetchImpl:async()=>{calls++;return Response.json({error:{message:'Prompt outputs failed validation'},node_errors:{'1':{class_type:'UNETLoader',errors:[{message:'Value not in list',details:'unet_name: reference-model.safetensors is not installed'}]}}},{status:400});}});
+ await assert.rejects(api.submit({prompt:{}},uuid),e=>e.uncertain===false&&/node 1 \(UNETLoader\).*reference-model.safetensors is not installed/.test(e.message));assert.equal(calls,1);
+ const unavailable=new MediaBackend({kind:'comfyui',url:'http://127.0.0.1:1'},{fetchImpl:async()=>new Response('unreadable',{status:503})});
+ await assert.rejects(unavailable.submit({prompt:{}},uuid),e=>e.uncertain===true&&e.message==='Native media HTTP 503');
+ const invalid=new MediaBackend({kind:'comfyui',url:'http://127.0.0.1:1'},{fetchImpl:async()=>new Response('not JSON',{status:400})});
+ await assert.rejects(invalid.submit({prompt:{}},uuid),e=>e.uncertain===false&&e.message==='Native media HTTP 400');
+});
 test('native input transfer uses only the enrolled endpoint and confirms the stable non-overwriting name',async t=>{
  let renamed=false,calls=0;
  const server=http.createServer(async(req,res)=>{
