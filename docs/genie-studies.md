@@ -90,7 +90,7 @@ preserved; deployment did not turn an off schedule on or convert reminders into
 automatic studies. The controlled timer/browser and Hermes tests establish the
 scheduling path; the complete live upstream-change trial remains separate.
 
-## Model architecture during live inspection
+## Model and runtime evidence during live inspection
 
 For supported running `vllm serve` containers, `inspect_server` now reads a small
 allowlisted summary of the launch model's `config.json`: architecture, model
@@ -111,6 +111,18 @@ The reader was exercised on an actual serving container without changing its
 process, and against disposable JSON fixtures including config overrides,
 private fields, malformed files and container changes. This establishes the
 reader, not an upstream performance gain or a completed candidate trial.
+
+The same inspection supplies `engine_runtime`: NVIDIA device names, reported
+compute capability and driver version queried inside that container, installed
+FlashInfer distribution metadata, and structured GDN prefill-selection messages
+when present in its startup logs. It returns no raw logs. The log reader examines
+at most the last 10,000 lines within the first 30 minutes of the current container
+start; those bounds limit observation only, never server startup or inference.
+A missing message is explicit and does not prove a backend absent. Logged kernel
+initialization is distinct from tracing every request, and a driver/package
+version alone does not establish loaded CUDA or kernel compatibility. A changed
+container invalidates the combined runtime observation. None of these reads
+imports the inference framework or changes the server.
 
 ## Live research exercise, 15 September 2026
 

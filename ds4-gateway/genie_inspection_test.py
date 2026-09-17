@@ -224,9 +224,9 @@ class ModelConfiguration(unittest.TestCase):
  def test_preserves_bad_files_and_rejects_symlink(self):
   self.file.write_text('invalid-json');self.assertNotEqual(self.query().returncode,0);self.assertEqual(self.file.read_text(),'invalid-json')
   self.file.unlink();self.file.symlink_to(self.root/'must_not_import.py');self.assertNotEqual(self.query().returncode,0);self.assertTrue(self.file.is_symlink())
- def collect(self,changed=False,failed=False):
+ def collect(self,changed=False,failed=False,runtime_failed=False,logs='selection'):
   import io,contextlib,copy,subprocess
-  c={'Id':'exact-container-id','Image':'image-id','State':{'Running':True,'StartedAt':'before'},'Config':{'Cmd':[str(self.root)],'Entrypoint':['vllm','serve'],'Env':[]},'Mounts':[],'HostConfig':{}}
+  c={'Id':'exact-container-id','Image':'image-id','State':{'Running':True,'StartedAt':'2026-01-01T00:00:00Z'},'Config':{'Cmd':[str(self.root)],'Entrypoint':['vllm','serve'],'Env':[]},'Mounts':[],'HostConfig':{}}
   model_read=False;calls=[]
   def run(argv,**kwargs):
    nonlocal model_read
@@ -234,6 +234,9 @@ class ModelConfiguration(unittest.TestCase):
    if argv[:3]==('docker','image','inspect'):return json.dumps([{'Id':'image-id','Created':'dated'}])
    if argv[:2]==('docker','exec'):
     self.assertEqual(argv[2:6],('exact-container-id','python3','-B','-c'))
+    if argv[6]==m.RUNTIME_QUERY:
+     if runtime_failed:raise subprocess.TimeoutExpired(argv,20)
+     return json.dumps({'gpus':{'status':'observed','devices':[{'name':'Example GPU','compute_capability':'12.1','driver_version':'580.1'}]},'flashinfer':{'status':'installed','version':'0.6.18'}})
     if argv[6]==m.MODEL_CONFIG_QUERY:
      model_read=True
      if failed:raise subprocess.TimeoutExpired(argv,20)
@@ -243,10 +246,24 @@ class ModelConfiguration(unittest.TestCase):
    if changed and model_read:value['State']['StartedAt']='after'
    return json.dumps([value])
   output=io.StringIO()
-  with patch('subprocess.check_output',side_effect=run),patch('sys.stdin',io.StringIO(json.dumps({'container':'enrolled-name'}))),contextlib.redirect_stdout(output):exec(compile(m.COLLECTOR,'collector','exec'),{})
+  original_run=subprocess.run
+  def logged(argv,**kw):
+   if argv[0]!='docker':return original_run(argv,**kw)
+   self.assertEqual(argv,['docker','logs','--timestamps','--since','2026-01-01T00:00:00Z','--until','2026-01-01T00:30:00+00:00','--tail','10000','exact-container-id'])
+   if logs=='failed':raise subprocess.TimeoutExpired(argv,20)
+   text='PRIVATE_PROMPT PRIVATE_TOKEN\n'
+   if logs=='selection':text+='2026-01-01T00:00:00Z INFO [qwen_gdn_linear_attn.py:190] Using Triton/FLA GDN prefill kernel (requested=auto, head_k_dim=128)\n'
+   return types.SimpleNamespace(returncode=0,stdout='',stderr=text)
+  with patch('subprocess.check_output',side_effect=run),patch('subprocess.run',side_effect=logged),patch('sys.stdin',io.StringIO(json.dumps({'container':'enrolled-name'}))),contextlib.redirect_stdout(output):exec(compile(m.COLLECTOR,'collector','exec'),{})
   return json.loads(output.getvalue()),calls
  def test_collector_observes_exact_container_and_keeps_other_metadata_on_failure(self):
   result,calls=self.collect();self.assertEqual(result['model_config']['values']['architectures'],['ActualModelForCausalLM']);self.assertTrue(all(c[1] in ['image','inspect','exec'] for c in calls));self.assertNotIn('PRIVATE_',json.dumps(result))
   for options in [{'changed':True},{'failed':True}]:
    result,_=self.collect(**options);self.assertEqual(result['model_config'],{'status':'unavailable','reason':'model_config_read_failed'});self.assertEqual(result['container']['id'],'exact-container-id');self.assertEqual(result['packages']['status'],'queried')
+ def test_runtime_returns_structured_current_start_selection_without_raw_logs(self):
+  result,_=self.collect();runtime=result['engine_runtime'];self.assertEqual(runtime['device_and_package']['gpus']['devices'][0]['compute_capability'],'12.1');self.assertEqual(runtime['gdn_prefill_log']['selections'],[{'backend':'Triton/FLA','requested':'auto','head_k_dim':128}]);self.assertEqual(runtime['gdn_prefill_log']['container_started_at'],'2026-01-01T00:00:00Z');self.assertNotIn('PRIVATE_',json.dumps(result))
+ def test_missing_logs_or_device_do_not_invent_a_backend_or_hide_model_config(self):
+  result,_=self.collect(runtime_failed=True,logs='empty');self.assertEqual(result['engine_runtime']['device_and_package']['status'],'unavailable');self.assertEqual(result['engine_runtime']['gdn_prefill_log']['status'],'not_found_in_tail');self.assertEqual(result['engine_runtime']['gdn_prefill_log']['selections'],[]);self.assertEqual(result['model_config']['status'],'read')
+  result,_=self.collect(logs='failed');self.assertEqual(result['engine_runtime']['gdn_prefill_log']['status'],'unavailable');self.assertEqual(result['model_config']['status'],'read')
+  result,_=self.collect(changed=True);self.assertEqual(result['engine_runtime']['status'],'unavailable')
 if __name__=='__main__':unittest.main()

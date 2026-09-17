@@ -100,8 +100,29 @@ for key in ['text_config','vision_config','quantization_config']:
  if isinstance(data.get(key),dict):values[key]=select(data[key])
 print(json.dumps({'status':'read','sha256':hashlib.sha256(raw).hexdigest(),'bytes':len(raw),'values':values,'hf_config_path_override':override is not None,'scope':'Allowlisted config.json fields from the launch model location on disk. Not proof of loaded configuration, active kernel dispatch or performance. Command-line hf-overrides and runtime defaults are not applied here. No model code imported or executed; unknown/private fields withheld.'}))
 '''
+RUNTIME_QUERY = r'''
+import json,subprocess,csv,re,importlib.metadata as metadata
+result={'gpus':{'status':'unavailable','reason':'nvidia_query_failed'},'flashinfer':{'status':'not_found'}}
+try:
+ version=metadata.version('flashinfer-python')
+ if isinstance(version,str) and 0<len(version)<=128:result['flashinfer']={'status':'installed','version':version}
+except metadata.PackageNotFoundError:pass
+try:
+ raw=subprocess.check_output(['nvidia-smi','--query-gpu=name,compute_cap,driver_version','--format=csv,noheader,nounits'],text=True,stderr=subprocess.DEVNULL,timeout=5)
+ rows=[]
+ for row in csv.reader(raw.splitlines()):
+  if len(row)!=3:raise ValueError('Unsupported GPU observation')
+  name,capability,driver=(s.strip() for s in row)
+  if not name or len(name)>256 or not re.fullmatch(r'[0-9]+\.[0-9]+',capability) or not re.fullmatch(r'[0-9.]+',driver):raise ValueError('Unsupported GPU observation')
+  rows.append({'name':name,'compute_capability':capability,'driver_version':driver})
+ if not 1<=len(rows)<=64:raise ValueError('No GPU observed')
+ result['gpus']={'status':'observed','devices':rows,'source':'nvidia-smi inside the inspected container'}
+except Exception:pass
+result['scope']='Read-only device query and distribution metadata. No framework imported or inference requested. Driver version does not establish the loaded CUDA runtime; package version does not establish kernel compatibility.'
+print(json.dumps(result))
+'''
 # Arguments arrive as JSON on stdin, never interpolated into a remote shell command.
-COLLECTOR = 'SOURCE_QUERY = '+repr(SOURCE_QUERY)+'\nMODEL_CONFIG_QUERY = '+repr(MODEL_CONFIG_QUERY)+'\n'+r'''
+COLLECTOR = 'SOURCE_QUERY = '+repr(SOURCE_QUERY)+'\nMODEL_CONFIG_QUERY = '+repr(MODEL_CONFIG_QUERY)+'\nRUNTIME_QUERY = '+repr(RUNTIME_QUERY)+'\n'+r'''
 import sys,json,subprocess,pathlib,re,hashlib,datetime,stat
 p=json.loads(sys.stdin.readline())
 secret=re.compile(r'api[_-]?key|access[_-]?token|secret|password|authorization|hf_token|hugging_face_hub_token|private[_-]?key|credential',re.I)
@@ -165,6 +186,33 @@ if config.get('Entrypoint') in [['vllm','serve'],['vllm']]:
    check=json.loads(run('docker','inspect','--type','container','--',c['Id']))[0]
    if not check['State']['Running'] or check['State']['StartedAt']!=c['State']['StartedAt']:raise ValueError('Container changed')
   except Exception:model_config={'status':'unavailable','reason':'model_config_read_failed'}
+engine_runtime={'status':'unavailable','reason':'unsupported_launch_form'}
+if config.get('Entrypoint') in [['vllm','serve'],['vllm']]:
+ engine_runtime={'status':'unavailable','reason':'container_not_running'}
+ if c['State']['Running']:
+  engine_runtime={'status':'queried','device_and_package':{'status':'unavailable','reason':'runtime_query_failed'},'gdn_prefill_log':{'status':'unavailable','reason':'log_read_failed'}}
+  try:engine_runtime['device_and_package']=json.loads(run('docker','exec',c['Id'],'python3','-B','-c',RUNTIME_QUERY))
+  except Exception:pass
+  try:
+   # Retain only the known backend-selection message, never arbitrary logs,
+   # request contents, engine arguments or credential-bearing error text.
+   started=datetime.datetime.fromisoformat(c['State']['StartedAt'].replace('Z','+00:00'))
+   until=(started+datetime.timedelta(minutes=30)).isoformat()
+   log=subprocess.run(['docker','logs','--timestamps','--since',c['State']['StartedAt'],'--until',until,'--tail','10000',c['Id']],text=True,capture_output=True,timeout=20)
+   if log.returncode:raise ValueError('Logs unavailable')
+   selections=[]
+   for line in (log.stdout+'\n'+log.stderr).splitlines():
+    line=re.sub(r'\x1b\[[0-9;]*m','',line)
+    match=re.search(r'\[qwen_gdn_linear_attn\.py:\d+\] Using (FlashInfer|Triton/FLA|CuteDSL) GDN prefill kernel \(requested=(auto|flashinfer|triton|cutedsl), head_k_dim=(\d+)\)',line)
+    if not match:continue
+    row={'backend':match[1],'requested':match[2],'head_k_dim':int(match[3])}
+    if row not in selections:selections.append(row)
+   engine_runtime['gdn_prefill_log']={'status':'observed' if selections else 'not_found_in_tail','selections':selections,'container_started_at':c['State']['StartedAt'],'window_until':until,'tail_lines':10000,'scope':'Structured backend-selection messages from the last 10000 log lines within the first 30 minutes of this container start. This bounds log observation only, never server startup or inference. Logged initialization evidence is not a trace of each inference. No match does not prove a backend absent. Raw logs are not returned.'}
+  except Exception:pass
+  try:
+   check=json.loads(run('docker','inspect','--type','container','--',c['Id']))[0]
+   if not check['State']['Running'] or check['State']['StartedAt']!=c['State']['StartedAt']:raise ValueError('Container changed')
+  except Exception:engine_runtime={'status':'unavailable','reason':'container_identity_unverified_after_query'}
 sources=None
 if p.get('source_files'):
  sources={'status':'unavailable','reason':'container_not_running'}
@@ -185,7 +233,7 @@ if p.get('launcher'):
  data=f.read_bytes()
  if re.search(rb'(?i)(?:api[_-]?key|access[_-]?token|secret|password|hf_token|hugging_face_hub_token)\s*=',data):raise ValueError('Launcher requires credential redaction')
  launcher={'text':data.decode(),'sha256':hashlib.sha256(data).hexdigest()}
-print(json.dumps({'observed_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'container':{'id':c['Id'],'image_id':c['Image'],'running':c['State']['Running'],'started_at':c['State']['StartedAt'],'entrypoint':config.get('Entrypoint'),'command':cmd,'environment':env,'mounts':c['Mounts'],'port_bindings':c['HostConfig'].get('PortBindings'),'restart_policy':c['HostConfig'].get('RestartPolicy'),'ipc_mode':c['HostConfig'].get('IpcMode'),'shm_size':c['HostConfig'].get('ShmSize'),'device_requests':c['HostConfig'].get('DeviceRequests')},'image':{'id':i['Id'],'created':i['Created'],'repo_digests':i.get('RepoDigests',[])},'packages':packages,'model_config':model_config,'launcher':launcher,**({'sources':sources} if sources is not None else {}),'scope':'Live Docker metadata, launcher bytes, separately labelled installed distribution metadata and model configuration on disk. Package versions do not prove build ancestry or custom source integrity. Installed Python source can be requested with source_files and source_window. No inference, restart, weight hash or restoration test. Launch settings and model configuration on disk do not independently prove effective API behavior or kernel dispatch.'}))
+print(json.dumps({'observed_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'container':{'id':c['Id'],'image_id':c['Image'],'running':c['State']['Running'],'started_at':c['State']['StartedAt'],'entrypoint':config.get('Entrypoint'),'command':cmd,'environment':env,'mounts':c['Mounts'],'port_bindings':c['HostConfig'].get('PortBindings'),'restart_policy':c['HostConfig'].get('RestartPolicy'),'ipc_mode':c['HostConfig'].get('IpcMode'),'shm_size':c['HostConfig'].get('ShmSize'),'device_requests':c['HostConfig'].get('DeviceRequests')},'image':{'id':i['Id'],'created':i['Created'],'repo_digests':i.get('RepoDigests',[])},'packages':packages,'model_config':model_config,'engine_runtime':engine_runtime,'launcher':launcher,**({'sources':sources} if sources is not None else {}),'scope':'Live Docker metadata, launcher bytes, separately labelled installed distribution metadata and model configuration on disk. Package versions do not prove build ancestry or custom source integrity. Installed Python source can be requested with source_files and source_window. No inference, restart, weight hash or restoration test. Launch settings and model configuration on disk do not independently prove effective API behavior or kernel dispatch.'}))
 '''
 
 def read_json(file, expected_sha256=None):
@@ -367,7 +415,7 @@ def register_inspection(config, context, emit):
             properties['selected_default']={'type':'boolean','default':False,'description':'Inspect the image named by the matching owner-selected default and its retained container recipes.'}
             properties['source_files']={'type':'array','items':{'type':'string'},'minItems':1,'maxItems':8,'description':'Optional Python paths: vllm/... .py in the current Docker container (256KiB combined), or omlx/... .py in the enrolled local checkout (512KiB combined). Local source_on_disk.changed_python_files and untracked_python_files list current runtime changes. Up to 8 paths; read bytes and hashes without importing/executing them; missing paths reported. Not supported with selected_default. On-disk source does not prove loaded code.'}
             properties['source_window']={'type':'object','properties':{'offset':{'type':'integer','minimum':0},'length':{'type':'integer','minimum':1,'maximum':16000}},'required':['offset','length'],'additionalProperties':False,'description':'Use with ONE source_files path. Recommended for source inspection: start with offset 0, length 4000, then follow next_offset. Returns a text section with full-file hash/size; existing full reads remain available without this option. Large full results may spill to a Hermes cache this profile cannot read; use source_window instead.'}
-            description='For supported running vLLM containers, model_config includes allowlisted architecture/dimension fields read from the launch model config.json, or an explicit unavailable reason. This is on-disk configuration, not active kernel evidence. '+description
+            description='For supported running vLLM containers, engine_runtime reports NVIDIA device capability, installed FlashInfer metadata and structured current-start GDN prefill selection logs; unavailable evidence remains explicit. These are observations, not performance proof. model_config includes allowlisted architecture/dimension fields read from the launch model config.json, or an explicit unavailable reason. This is on-disk configuration, not active kernel evidence. '+description
             description+=' To evaluate an upstream patch, request its relevant source_files and compare actual contents; a build date alone cannot prove a patch absent. Keep private source contents out of web queries.'
         if kind=='artifact':
             properties.update({'artifact':{'type':'string','enum':ARTIFACTS},'record_kind':{'type':'string','enum':['observed','approved','proposed'],'default':'proposed'},'reference_chain':{'type':'array','items':{'type':'string'},'maxItems':8,'description':'Optional JSON pointers to existing path/sha256 objects. Each pointer selects a reference in the preceding document. With artifact set, start there (e.g. ["/validation_reference"]); without artifact, start at the worker record (e.g. ["/evidence/0"]). Every linked JSON file must match its hash and stay in this library. Escape ~ as ~0 and / as ~1 inside pointer keys.'}})
