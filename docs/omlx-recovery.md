@@ -11,14 +11,24 @@ The disposable native macOS test proves that an active request prevents a test
 restart, an idle process can be stopped gracefully and relaunched once, and
 repeating the same action does not repeat the restart. Authenticated endpoints,
 model aliases and the oMLX cache-proof format have verifier tests. These are
-component tests, **not a completed recovery test on a real oMLX model server**.
-Each installation still needs its own native generation/cache qualification.
+component tests. A subsequent real Qwen/oMLX installation completed one
+same-launcher restart, returned authenticated model metadata and real replies,
+and was readmitted after two cold-to-warm conversations. Both cold requests had
+zero cached tokens; each follow-up reused 4,096 tokens. The original profile,
+source files and launcher/settings were preserved. Its matching local recovery
+binding is connected in that installation.
+
+This proves that installation's same-launcher restart and return, not rollback
+to another environment or every failure case. The advertised context remained
+262,144 tokens; this drill did not repeat a full context-boundary test. Each new
+installation still needs its own native generation/cache qualification.
 
 The controller-to-helper test also covers normalized OpenAI endpoint enrollment.
 Its derived null journal-service field is excluded only when revalidating local
 transport options; saved binding fingerprints and all action checks are retained.
 That normalization fix has also passed a read-only inspection through the real
-local oMLX helper. It does not establish successful model recovery after restart.
+local oMLX helper; the real restart exercise above then verified the complete
+controller-to-helper-to-model path.
 
 ## Private enrollment
 

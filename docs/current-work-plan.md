@@ -148,8 +148,9 @@ deployment receipts stay outside this public repository.
   Sparks, each using one explicitly approved same-container restart. Each drained
   first, returned actual replies, reused 4,800 tokens on both follow-ups, and was
   readmitted. Both proven Docker bindings are connected in that installation;
-  the M3 recovery binding still needs reconciliation. Fresh-machine installation
-  and broader recovery cases remain unfinished;
+  the M3 binding was subsequently reconciled through a real same-launcher oMLX
+  restart, two cold/warm conversations and conditional readmission. Its matched
+  binding is connected. Fresh-machine installation and broader recovery cases remain unfinished;
   the fixture alone does not prove production recovery. The Qwen model/cache verifier
   separately passed four real requests on each of two unchanged running workers,
   with zero cached tokens on both cold calls and 4,800 reused on both follow-ups
@@ -157,8 +158,11 @@ deployment receipts stay outside this public repository.
   a restart.
   Direct local oMLX recovery support now preserves an installation's existing
   launcher, authenticated endpoint and model alias. The native disposable-process
-  restart test and affected recovery tests pass; real M3 recovery qualification
-  and activation remain pending. See [oMLX recovery](omlx-recovery.md).
+  restart test and affected recovery tests pass. The real M3 drill also passed,
+  preserving its profile and demonstrating 4,096 cached tokens on each of two
+  follow-ups after zero-cache cold calls; its production binding is activated.
+  This is same-launcher recovery, not previous-version rollback or a new approved
+  model configuration. See [oMLX recovery](omlx-recovery.md).
 - [ ] Integrate owner-started Hourglass runs, initially measuring the chosen
   server directly with recorded configuration and measurement provenance.
   Saved aggregate reports are wired into the dashboard and chat,
