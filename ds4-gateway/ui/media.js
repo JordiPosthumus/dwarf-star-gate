@@ -15,9 +15,12 @@ function render(){
     const choice=host.engines.find(e=>e.id===engine.id),card=el('article',undefined,'media-host-card');
     card.append(el('h3',host.id));
     const label=el('label'),toggle=el('input');toggle.type='checkbox';toggle.checked=choice.allowed;toggle.disabled=!state.controls_enabled||state.media_host_controls_version!==1;toggle.setAttribute('role','switch');toggle.setAttribute('aria-label',`Allow ${engine.label} on ${host.id}`);label.append(toggle,document.createTextNode(` Allow ${engine.label} here`));card.append(label);
-    card.append(el('p',choice.enrolled?'Setup: qualified engine enrolled':'Setup: not enrolled'),el('p',choice.reason,'media-readiness'));
-    card.append(el('p',`LLM: ${host.llm_serving?'serving':'unavailable or paused'} · ${host.active_requests} active · ${host.queued_requests} queued`,'muted'));
-    if(host.execution)card.append(el('p',`${host.execution.phase}: ${host.execution.detail??'Media operation in progress'}`));
+    const maintenance=host.maintenance?.filter(Boolean)??[],holds=host.holds?.filter(Boolean)??[];
+    const current=host.execution?`${engineNames[state.jobs?.find(j=>j.id===host.execution.job_id)?.kind]??'Media job'} · ${host.execution.phase.replaceAll('_',' ')}`:maintenance.length?`Maintenance · ${maintenance.join(', ')}`:holds.length?`Held · ${holds.join(', ')}`:host.quarantined?'LLM quarantined':host.paused?'LLM paused':host.llm_serving?`Serving LLM${host.llm_model?' · '+host.llm_model:''}`:'LLM unavailable';
+    card.append(el('p',`Current: ${current}`,'media-readiness'));
+    card.append(el('p',choice.enrolled?'Setup: qualified engine enrolled':'Setup: not enrolled'),el('p',!host.llm_serving&&maintenance.length?`Unavailable for media: ${maintenance.join(', ')}`:choice.reason,'muted'));
+    card.append(el('p',`LLM: ${host.llm_serving?'available for routing':'not available for new routing'} · ${host.active_requests} active · ${host.queued_requests} queued`,'muted'));
+    if(host.execution?.detail)card.append(el('p',host.execution.detail));
     const memory=host.memory,fresh=memory&&Date.now()-memory.time>=0&&Date.now()-memory.time<60000;
     if(fresh&&Number.isFinite(memory.memory_total_bytes)&&Number.isFinite(memory.memory_used_bytes))card.append(el('p',`Memory now: ${((memory.memory_total_bytes-memory.memory_used_bytes)/2**30).toFixed(1)} GiB free of ${(memory.memory_total_bytes/2**30).toFixed(0)} GiB. Current LLM usage is included.`,'muted'));
     const check=state.resource_checks?.[host.id];
