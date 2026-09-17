@@ -18,8 +18,10 @@ export function operationChanges(review){
   if(!changes.length&&JSON.stringify(review?.before?.command)!==JSON.stringify(review?.after?.command))changes.push('Serving arguments change; review the complete recipe below.');
   if(review?.cache_capacity_policy){
     const loss=review.cache_capacity_policy.max_loss_percent;
-    changes.push(loss===0?'KV cache capacity: no reduction allowed.':`KV cache capacity: approving this change permits up to ${loss}% fewer cached tokens — less room for cached context.`);
-    changes.push('Capacity is measured before changing the server and after candidate checks. Missing measurements prevent adoption. Returning the retained original keeps its existing qualification rules.');
+    const purpose=review.trial?'Trial KV cache capacity':'KV cache capacity';
+    changes.push(loss===0?`${purpose}: no reduction allowed.`:`${purpose}: approving this change permits up to ${loss}% fewer cached tokens — less room for cached context.`);
+    if(review.trial?.adoption_cache_capacity_policy)changes.push(`This allowance applies only to this benchmark, which restores the original. Normal adoption allowance remains ${review.trial.adoption_cache_capacity_policy.max_loss_percent}%.`);
+    changes.push(`Capacity is measured before changing the server and after candidate checks. Missing measurements prevent ${review.trial?'measurement':'adoption'}. Returning the retained original keeps its existing qualification rules.`);
   }
   return changes;
 }

@@ -350,6 +350,16 @@ set this allowance through a proposal. The owner review explicitly displays any
 permitted percentage reduction, and approving the exact plan covers that value.
 No production allowance is inferred from an unanswered request.
 
+An installation may separately enroll `trial_cache_capacity_policy` for measured
+trials that always restore the original. If omitted, trials use the normal
+allowance; this adds no default permission to lose cache capacity. The exact
+review displays the trial allowance and the unchanged normal adoption allowance.
+Genie cannot supply either policy in a proposal. All native checks and the final
+capacity observation remain required. An explicitly approved experiment can
+therefore measure a candidate within its trial allowance without making that
+candidate eligible for adoption under the normal policy. A subsequent adoption
+requires its own prepared plan and ordinary qualification; a trial never adopts.
+
 The executor requires an observed baseline before changing the serving process.
 If it cannot measure one, it returns the demonstrably unchanged server through
 the existing conditional readmission path. Candidate adoption requires a final

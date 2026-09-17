@@ -85,7 +85,9 @@ def candidate_record(old, profile, contract):
 
 def prepare(proposal, enrollment, folder, record_revision, *, docker=None, control=None):
     folder = Path(folder).resolve()
-    capacity_policy = cache_policy(enrollment.get('cache_capacity_policy'))
+    adoption_policy = cache_policy(enrollment.get('cache_capacity_policy'))
+    capacity_policy = (cache_policy(enrollment.get('trial_cache_capacity_policy', adoption_policy))
+                       if proposal.get('trial') is True else adoption_policy)
     worker = proposal.get('worker_id')
     if (not re.fullmatch(r'[a-zA-Z0-9][\w-]{0,63}', worker or '')
             or enrollment.get('worker_id') != worker or proposal.get('id') != folder.name
@@ -140,6 +142,7 @@ def prepare(proposal, enrollment, folder, record_revision, *, docker=None, contr
         'cache_capacity_policy':copy.deepcopy(capacity_policy),
         **({'trial': {'window_seconds': 3600, 'benchmark_version': trial['hourglass']['benchmark_version'],
             'model': trial['native_request']['model'], 'outcome': 'restore_original',
+            'adoption_cache_capacity_policy':copy.deepcopy(adoption_policy),
             'scope': 'Qualify the candidate, measure it once, then restore and qualify the original. No candidate adoption. Uncertain native acceptance requires inspection, never a repeated start.'}} if trial else {}),
         'settings':{'current':previous_record['settings'],'proposed':record['settings'],
             'current_thinking':previous_record['configuration']['chat_template_defaults'],
