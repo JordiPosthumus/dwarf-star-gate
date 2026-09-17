@@ -263,7 +263,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   if(config.media_jobs!==undefined&&(!config.media_jobs||typeof config.media_jobs!=='object'||typeof config.media_jobs.enabled!=='boolean'))throw new Error('media_jobs.enabled must be a boolean');
   const store = new AffinityStore(config.state_file);
   let mediaJobs;
-  try{if(config.media_jobs?.enabled)mediaJobs=new MediaJobs(path.join(path.dirname(config.state_file),'media-jobs.json'));}catch(e){store.close();throw e;}
+  try{if(config.media_jobs?.enabled)mediaJobs=new MediaJobs(path.join(path.dirname(config.state_file),'media-jobs.json'),{inputLimits:config.media_jobs});}catch(e){store.close();throw e;}
   const conversationTurns=()=>store.data.conversation_turns??configuredConversationTurns;
   const queueTimeoutMs=()=>store.data.queue_timeout_ms??configuredQueueTimeout;
   // Like registered workers, an explicit UI setting survives process restarts.
@@ -386,7 +386,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
       waiting:waiting.length,oldest_wait_seconds:waiting.length?Math.max(0,(performance.now()-oldestQueued(waiting).createdMono)/1000):null,
       waiting_reasons:Object.fromEntries([...new Set(waiting.map(j=>j.waitReason))].map(reason=>[reason,waiting.filter(j=>j.waitReason===reason).length]))},
     total: nodes.length, healthy: nodes.filter(n => n.healthy).length, available: nodes.filter(n => n.healthy && !n.drained).length,
-    active: nodes.reduce((sum,n)=>sum+activeCount(n),0), queued: waiting.length+nodes.reduce((s, n) => s + n.queue.length, 0),
+    active: nodes.reduce((sum,n)=>sum+activeCount(n),0), queued: waiting.length+nodes.reduce((s, n) => s + n.queue.length, 0),media_uploads:mediaJobs?.inputs.active??0,
     workers: nodes.map(n => ({ id: n.id, url: n.url, is_healthy: n.healthy, drained: n.drained, quarantine:n.quarantine, inference_failures:n.inferenceFailures,
       ...agents.pauseStatus(n.id),last_operator_action:lastOperatorAction(n.id),
       gateway_drained: n.drained && !n.active && !n.queue.length, load: activeCount(n),

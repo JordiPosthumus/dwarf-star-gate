@@ -5,11 +5,45 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import {once} from 'node:events';
+import {createHash} from 'node:crypto';
+import {setTimeout as delay} from 'node:timers/promises';
+import {Readable} from 'node:stream';
 import {MediaJobs} from './media-jobs.mjs';
 import {MediaBackend,MediaBackendError} from './media-backend.mjs';
 import {createGateway} from './gateway.mjs';
 
 function directory(t){const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sg-media-jobs-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));return dir;}
+test('completed job identity survives explicit deletion of its reference input',async t=>{
+ const jobs=new MediaJobs(path.join(directory(t),'jobs.json')),stream=Readable.from(['image']);stream.headers={'content-type':'image/png','content-length':'5'};
+ const input=await jobs.inputs.receive(stream),payload={prompt:{},input_files:[input.id]},first=jobs.enqueue('video',payload,{key:'original'});
+ jobs.update(first.job.id,{state:'completed'});jobs.inputs.remove(input.id);
+ const repeated=jobs.enqueue('video',payload,{key:'original'});assert.equal(repeated.job.id,first.job.id);assert.equal(repeated.created,false);
+ assert.throws(()=>jobs.enqueue('video',payload,{key:'new-job'}),e=>e.status===404);
+});
+test('authenticated video inputs persist privately, enforce storage limits and protect queued references from deletion',async t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sg-media-jobs-')),config={host:'127.0.0.1',port:0,api_key:'fixture',model:'fixture',context_length:262144,nodes:[],state_file:path.join(dir,'state.json'),media_jobs:{enabled:true,input_max_bytes:16,input_total_bytes:24}};
+ let core=createGateway(config),address=await core.start();t.after(async()=>{await core.close();fs.rmSync(dir,{recursive:true,force:true});});
+ const call=(route,body,method=body===undefined?'GET':'POST',type='image/png',key='fixture')=>fetch(`http://127.0.0.1:${address.port}${route}`,{method,headers:{authorization:'Bearer '+key,'content-type':type,'idempotency-key':'video-fixture'},...(body===undefined?{}:{body})});
+ const bytes=Buffer.from('png-data');assert.equal((await call('/v1/video/inputs',bytes,'POST','image/png','wrong')).status,401);assert.equal(fs.existsSync(path.join(dir,'media-inputs')),false);
+ assert.equal((await call('/v1/video/inputs',Buffer.alloc(17))).status,413);
+ assert.equal((await call('/v1/video/inputs',bytes,'POST','text/plain')).status,415);
+ const accepted=await call('/v1/video/inputs',bytes);assert.equal(accepted.status,201);const input=await accepted.json();assert.match(input.name,/^stargate\/[a-f0-9-]+\.png$/);assert.equal(input.sha256,createHash('sha256').update(bytes).digest('hex'));
+ const data=path.join(dir,'media-inputs',input.id,'data');assert.deepEqual(fs.readFileSync(data),bytes);assert.equal(fs.statSync(data).mode&0o777,0o600);
+ const spare=await(await call('/v1/video/inputs',Buffer.alloc(16))).json();assert.equal((await call('/v1/video/inputs',bytes)).status,507);
+ assert.equal((await call('/v1/video/inputs/'+spare.id,undefined,'DELETE')).status,200);
+ const payload={prompt:{'1':{class_type:'LoadImage',inputs:{image:input.name}}},input_files:[input.id]};
+ assert.equal((await call('/v1/video/jobs',JSON.stringify(payload),'POST','application/json')).status,202);
+ assert.equal((await call('/v1/video/inputs/'+input.id,undefined,'DELETE')).status,409);
+ await core.close();core=createGateway(config);address=await core.start();assert.equal((await(await call(input.status_url)).json()).sha256,input.sha256);
+ assert.equal(core.stats().media_uploads,0);assert.equal((await call('/v1/video/inputs/'+input.id,undefined,'GET','image/png','wrong')).status,401);
+});
+test('an in-flight input stays counted through draining, while new uploads are rejected',async t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sg-media-jobs-')),core=createGateway({host:'127.0.0.1',port:0,api_key:'fixture',model:'fixture',context_length:262144,nodes:[],state_file:path.join(dir,'state.json'),media_jobs:{enabled:true}}),address=await core.start();t.after(async()=>{await core.close();fs.rmSync(dir,{recursive:true,force:true});});
+ let request;const response=new Promise((resolve,reject)=>{request=http.request({host:'127.0.0.1',port:address.port,path:'/v1/video/inputs',method:'POST',headers:{authorization:'Bearer fixture','content-type':'audio/wav','content-length':'8'}},res=>{res.resume();res.on('end',()=>resolve(res.statusCode));});request.on('error',reject);request.write('wave');});t.after(()=>request.destroy());
+ for(let i=0;i<100&&core.stats().media_uploads!==1;i++)await delay(5);assert.equal(core.stats().media_uploads,1);core.drain();
+ const rejected=await fetch(`http://127.0.0.1:${address.port}/v1/video/inputs`,{method:'POST',headers:{authorization:'Bearer fixture','content-type':'audio/wav'},body:'wave'});assert.equal(rejected.status,503);
+ request.end('data');assert.equal(await response,201);assert.equal(core.stats().media_uploads,0);
+});
 test('saved ComfyUI execution failures expose the native node error without rewriting or replaying the job',t=>{
  const file=path.join(directory(t),'jobs.json'),q=new MediaJobs(file),id=q.enqueue('video',{prompt:{}},{key:'failed-video'}).job.id;
  q.update(id,{state:'failed',backend:'comfyui',detail:null,result:{status:{status_str:'error',messages:[['execution_error',{node_id:'7',node_type:'MiniMaxH3ReferenceToVideo',exception_message:"Unexpected argument 'ref_image_1'\n",traceback:['private traceback'],current_inputs:{prompt:'private prompt'}}]]}}});

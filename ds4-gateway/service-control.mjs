@@ -32,7 +32,7 @@ export async function readService(kind,config) {
   return value;
 }
 export function assertIdle(status,interrupt=false) {
-  if(!interrupt&&(!status||status.active!==0||status.queued!==0))throw new Error('Gateway is busy or its state is unknown. Wait for idle, or explicitly use --interrupt.');
+  if(!interrupt&&(!status||status.active!==0||status.queued!==0||(status.media_uploads??0)!==0))throw new Error('Gateway is busy or its state is unknown. Wait for idle, or explicitly use --interrupt.');
 }
 export function assertDoorIdle(status,interrupt=false){
   if(!interrupt&&(!status||status.active!==0||status.held!==0||status.holding!==false))throw new Error('Continuity Door has a hold, active or held client streams, or its state is unknown. Keep it running; wait for an idle, explicitly unheld state, or explicitly use --interrupt.');
@@ -72,13 +72,13 @@ export async function coordinatedCoreRestart(config,{doorStatus=()=>doorControl(
     let status;
     for(;;){
       status=await read();
-      if(status.active===0&&status.queued===0)break;
+      if(status.active===0&&status.queued===0&&(status.media_uploads??0)===0)break;
       if(now()>=deadline)throw new Error('Coordinated restart allowance expired; continuity door remains holding new requests');
       await wait(Math.min(1000,Math.max(1,deadline-now())));
     }
     await stop(status);await start();
     status=await read();
-    if(status.active!==0||status.queued!==0||status.startup?.complete!==true)throw new Error('Replacement core is not in a clean ready state; continuity door remains holding');
+    if(status.active!==0||status.queued!==0||(status.media_uploads??0)!==0||status.startup?.complete!==true)throw new Error('Replacement core is not in a clean ready state; continuity door remains holding');
     await release(receipt);
     return {coordinated:true,held_new_requests:true,old_core_drained:true,replacement_ready:true};
   }catch(error){error.continuity_door_holding=true;throw error;}
@@ -94,7 +94,7 @@ export async function coordinatedCorePark(config,{doorStatus=()=>readService('do
     let status;
     for(;;){
       status=await read();
-      if(status.active===0&&status.queued===0)break;
+      if(status.active===0&&status.queued===0&&(status.media_uploads??0)===0)break;
       if(now()>=deadline)throw new Error('Coordinated park allowance expired; continuity door remains holding new requests');
       await wait(Math.min(1000,Math.max(1,deadline-now())));
     }
@@ -108,7 +108,7 @@ export async function releaseParkedCore(config,{doorStatus=()=>readService('door
   if(!(door.holding===true&&door.hold_kind==='manual'&&door.reason===PARK_REASON))return {released:false,preserved_hold:door.holding===true};
   assertHoldOwnership(door);const receipt=holdReceipt(door);
   const core=await coreStatus();
-  if(core.startup?.complete!==true||core.active!==0||core.queued!==0)throw new Error('Gateway core started without a clean idle startup barrier; continuity door remains holding.');
+  if(core.startup?.complete!==true||core.active!==0||core.queued!==0||(core.media_uploads??0)!==0)throw new Error('Gateway core started without a clean idle startup barrier; continuity door remains holding.');
   await release(receipt);
   return {released:true,reason:PARK_REASON};
 }

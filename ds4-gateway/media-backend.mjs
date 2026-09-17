@@ -29,6 +29,15 @@ export class MediaBackend {
     if(!id(nativeId))throw new MediaBackendError('Native media acceptance was not established; do not replay this submission.',{uncertain:true});
     return {native_id:nativeId,state:'submitted'};
   }
+  async uploadInput(blob,name){
+    if(this.kind!=='comfyui'||!/^stargate\/[a-f0-9-]{36}\.[a-z0-9]+$/.test(name))throw Error('Use a stored Star Gate video input');
+    const form=new FormData();form.append('image',blob,name.slice('stargate/'.length));form.append('type','input');form.append('subfolder','stargate');
+    const response=await this.fetch(new URL('/upload/image',this.url),{method:'POST',redirect:'error',headers:this.token?{authorization:`Bearer ${this.token}`}:{},body:form});
+    if(!response.ok)throw Error(`ComfyUI input upload failed (HTTP ${response.status}); no generation submitted.`);
+    const result=await response.json();
+    if(result.type!=='input'||result.subfolder!=='stargate'||result.name!==name.slice('stargate/'.length))throw Error('ComfyUI input upload name was not confirmed; no generation submitted.');
+    return {name};
+  }
   async observe(nativeId){
     if(!id(nativeId))throw new Error('Invalid native media job ID');
     if(this.kind==='ace-step'){

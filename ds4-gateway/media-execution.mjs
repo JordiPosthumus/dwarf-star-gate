@@ -42,7 +42,7 @@ export function createMediaExecution(config,jobs,{isEnabled=()=>false,launchRunn
       const ssh=inspection.ssh?.[0];if(typeof ssh!=='string'||!/^[a-zA-Z0-9][a-zA-Z0-9_.@-]*$/.test(ssh)||!recovery.ssh)throw new Error('Media execution needs its enrolled SSH host.');
       const folder=jobs.executionFolder(job.id);fs.mkdirSync(folder,{recursive:true,mode:0o700});
       const plan={operation_id:job.id,worker_id:input.worker_id,host:ssh,llm_container:inspection.container,engine,python:config.genie_chat.python,control_socket:config.control_socket,
-        recovery,model:config.model,context_length:config.context_length,results_directory:jobs.results.directory};
+        recovery,model:config.model,context_length:config.context_length,results_directory:jobs.results.directory,inputs_directory:jobs.inputs.directory};
       saveMediaReceipt(folder,'plan.json',plan);
       saveMediaReceipt(folder,'media-jobs.json',{schema:1,jobs:[job]});
       // Persist ownership before spawning. Lost acknowledgement never launches twice.

@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
+import {Readable} from 'node:stream';
 import {MediaJobs} from './media-jobs.mjs';
 import {createMediaExecution,saveMediaReceipt} from './media-execution.mjs';
 import {runMediaCycle} from './media-cycle.mjs';
@@ -74,6 +75,17 @@ test('native cycle drains, generates once, retains files, verifies LLM and readm
   const ordered=['prepare','stop:'+r.plan.llm_container,'start:'+r.engine.container,'collect','stop:'+r.engine.container,'start:'+r.plan.llm_container,'verify','finish','returned'];
   let previous=-1;for(const item of ordered){const index=r.events.indexOf(item);assert.ok(index>previous,item);previous=index;}
   assert.equal(r.containers.get(r.plan.llm_container).State.Running,true);
+});
+test('reference input transfer precedes generation and a transfer failure still returns the LLM',async t=>{
+ for(const failTransfer of [false,true]){
+  const r=cycleFixture(t),stream=Readable.from([Buffer.from('wave-data')]);stream.headers={'content-type':'audio/wav','content-length':'9'};
+  const input=await r.jobs.inputs.receive(stream);r.jobs.update(r.job.id,{payload:{...r.job.payload,input_files:[input.id]}});
+  r.backend.uploadInput=async(blob,name)=>{r.events.push('upload');assert.equal(name,input.name);assert.equal(await blob.text(),'wave-data');if(failTransfer)throw Error('Input transfer failed');};
+  const submit=r.backend.submit;r.backend.submit=async payload=>{r.events.push('submit');assert.equal(payload.input_files,undefined);return submit(payload);};
+  if(failTransfer){await assert.rejects(runMediaCycle(r.plan,r.io),/Input transfer failed/);assert.equal(r.submissions(),0);assert.ok(r.events.includes('failed_returned'));}
+  else{await runMediaCycle(r.plan,r.io);assert.ok(r.events.indexOf('upload')<r.events.indexOf('submit'));assert.equal(r.submissions(),1);}
+  assert.equal(r.containers.get(r.plan.llm_container).State.Running,true);assert.ok(r.events.includes('finish'));
+ }
 });
 test('failed media startup returns the unchanged LLM without submitting generation',async t=>{
   const r=cycleFixture(t),start=r.io.start;r.io.start=async id=>{if(id===r.engine.container)throw new Error('media service failed');return start(id);};

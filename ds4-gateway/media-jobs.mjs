@@ -3,6 +3,7 @@ import path from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
 import {priorityRank,requestPriority,PRIORITY_HEADER} from './job-priority.mjs';
 import {MediaResults} from './media-results.mjs';
+import {MediaInputs} from './media-inputs.mjs';
 
 const states=new Set(['queued','submitting','submitted','pending','running','completed','failed','uncertain']);
 const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
@@ -23,9 +24,10 @@ function nativeFailureDetail(job){
 // The gateway's existing process lock owns this store. Media prompts and native
 // receipts are private local state, never fleet telemetry or repository content.
 export class MediaJobs {
-  constructor(filename,{resultsDirectory}={}){
+  constructor(filename,{resultsDirectory,inputsDirectory,inputLimits}={}){
     this.filename=filename;
     this.results=new MediaResults(resultsDirectory??path.join(path.dirname(filename),'media-results'));
+    this.inputs=new MediaInputs(inputsDirectory??path.join(path.dirname(filename),'media-inputs'),inputLimits);
     this.collecting=new Map();
     fs.mkdirSync(path.dirname(filename),{recursive:true,mode:0o700});
     this.data=fs.existsSync(filename)?JSON.parse(fs.readFileSync(filename,'utf8')):{schema:1,jobs:[]};
@@ -72,6 +74,7 @@ export class MediaJobs {
     const fingerprint=createHash('sha256').update(JSON.stringify(canonical({kind,payload,priority}))).digest('hex');
     const previous=this.data.jobs.find(j=>j.key_hash===keyHash);
     if(previous){if(previous.fingerprint!==fingerprint)throw fail(409,'Idempotency-Key already identifies a different media request');return {job:this.get(previous.id),created:false};}
+    if(kind==='video'&&Object.hasOwn(payload,'input_files'))this.inputs.forJob(payload.input_files);
     const job={id:randomUUID(),kind,payload:structuredClone(payload),priority,key_hash:keyHash,fingerprint,state:'queued',created_at:now(),updated_at:now()};
     this.save({...this.data,jobs:[...this.data.jobs,job]});return {job:this.get(job.id),created:true};
   }
@@ -85,7 +88,7 @@ export class MediaJobs {
     // readiness. This queue does not grant authority to stop an LLM server.
     this.update(id,{state:'submitting',worker,backend:backend.kind,native_id:backend.kind==='comfyui'?id:null});
     let receipt;
-    try{receipt=await backend.submit(job.payload,id);}
+    try{const {input_files,...nativePayload}=job.payload;receipt=await backend.submit(job.kind==='video'?nativePayload:job.payload,id);}
     catch(e){return this.update(id,{state:e.uncertain===false?'failed':'uncertain',detail:e.message});}
     return this.update(id,{state:'submitted',native_id:receipt.native_id});
   }
@@ -115,6 +118,22 @@ export class MediaJobs {
 const publicJob=({payload,fingerprint,key_hash,...job})=>({...job,...(job.outputs?.files?{outputs:{...job.outputs,files:job.outputs.files.map(file=>({...file,url:`/v1/${job.kind}/jobs/${job.id}/files/${file.id}`}))}}:{})});
 const respond=(res,status,value)=>{if(!res.destroyed&&!res.headersSent){res.writeHead(status,{'content-type':'application/json','cache-control':'no-store'});res.end(JSON.stringify(value));}};
 export function handleMediaRequest(req,res,{jobs,accepting=true}){
+  // gateway.mjs verifies the gateway bearer key before calling this handler.
+  const input=/^\/v1\/video\/inputs(?:\/([a-f0-9-]{36}))?$/.exec(req.url);
+  if(input){
+    const reject=e=>respond(res,e.status??500,{error:{code:'video_input_error',message:e.status?e.message:'Video input could not be stored; inspect the gateway log.'}});
+    if(!jobs){req.resume();reject(fail(503,'Media jobs are not configured.'));return true;}
+    if(req.method==='GET'&&input[1]){try{respond(res,200,jobs.inputs.info(input[1]));}catch(e){reject(e);}return true;}
+    if(req.method==='DELETE'&&input[1]){
+      req.resume();try{
+        if(jobs.data.jobs.some(saved=>{if(saved.kind!=='video'||!saved.payload.input_files?.includes(input[1]))return false;const j=jobs.get(saved.id);return !['completed','failed'].includes(j.state)||j.execution&&!['returned','failed_returned','failed_unchanged'].includes(j.execution.phase);}))throw fail(409,'Video input is used by an unfinished job');
+        respond(res,200,jobs.inputs.remove(input[1]));
+      }catch(e){reject(e);}return true;
+    }
+    if(req.method!=='POST'||input[1]){req.resume();reject(fail(405,'POST raw file bytes to /v1/video/inputs, or GET/DELETE its input ID.'));return true;}
+    if(!accepting){req.resume();reject(fail(503,'Gateway is draining; no new video input accepted.'));return true;}
+    void jobs.inputs.receive(req).then(value=>respond(res,201,{...value,status_url:`/v1/video/inputs/${value.id}`})).catch(e=>{req.resume();reject(e);});return true;
+  }
   const match=/^\/v1\/(music|video)\/jobs(?:\/([a-f0-9-]{36})(?:\/files\/([a-f0-9-]{36}))?)?$/.exec(req.url);
   if(!match)return false;
   const [,kind,id,fileId]=match;

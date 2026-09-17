@@ -25,7 +25,7 @@ const progress=(next,message)=>{if(next!==phase||message!==detail)changedAt=new 
 const heartbeat=setInterval(()=>{if(phase)progress(phase,detail);},5000);heartbeat.unref();
 try{
   const result=await runMediaCycle(p,{
-    jobs:new MediaJobs(path.join(folder,'media-jobs.json'),{resultsDirectory:p.results_directory}),save,progress,delay,
+    jobs:new MediaJobs(path.join(folder,'media-jobs.json'),{resultsDirectory:p.results_directory,inputsDirectory:p.inputs_directory}),save,progress,delay,
     maintenance:async action=>JSON.parse((await execute(p.python,['-I','-B',maintenanceScript,folder,action],{maxBuffer:1024*1024})).stdout),
     hasMaintenanceIntent:()=>fs.existsSync(path.join(folder,'gateway','acquire.intent.json')),
     inspect:async id=>JSON.parse(await remote(['docker','inspect',id]))[0],start:id=>remote(['docker','start',id]),stop:id=>remote(['docker','stop','-t','120',id]),

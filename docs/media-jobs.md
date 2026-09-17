@@ -19,18 +19,22 @@ needed. The normal gateway bearer key protects every endpoint.
 | --- | --- |
 | `POST /v1/music/jobs` | Queue native ACE-Step JSON parameters. |
 | `POST /v1/video/jobs` | Queue a native ComfyUI JSON workflow envelope. |
+| `POST /v1/video/inputs` | Store raw image, audio or video bytes for a later video job. |
+| `GET /v1/video/inputs/{id}` | Read the uploaded file's name, size and SHA-256 receipt. |
+| `DELETE /v1/video/inputs/{id}` | Explicitly remove an input that no unfinished job uses. |
 | `GET /v1/music/jobs` or `/v1/video/jobs` | List recorded job status. |
 | `GET /v1/music/jobs/{id}` or `/v1/video/jobs/{id}` | Read a saved job and any native result metadata. |
 | `GET /v1/{music\|video}/jobs/{id}/files/{file_id}` | Download a retained output using the normal gateway bearer key. |
 
-Each POST needs `Content-Type: application/json` and an `Idempotency-Key` of
+Each job POST needs `Content-Type: application/json` and an `Idempotency-Key` of
 1–200 printable characters. Reuse the same key when reconnecting or retrying a
 submission whose response was lost. The same request returns the original job;
 different content or priority with that key returns HTTP 409. A new job returns
 HTTP 202 with its ID and status URL. Keys apply across both media routes.
 The existing `x-dsg-priority` header accepts `high`, `normal` or `idle-only`;
 priority orders waiting jobs only and never cancels active generation.
-JSON submissions may be up to 2 MiB; binary asset upload is not implemented.
+JSON submissions may be up to 2 MiB. Upload larger reference files separately
+using the input endpoint below.
 
 Status distinguishes gateway `queued`, native `submitting`/`submitted`,
 `pending`/`running`, `completed`, `failed` and `uncertain`. ACE-Step's native
@@ -129,8 +133,8 @@ dynamic input keys: `ref_images.ref_image_0`, `ref_audios.ref_audio_0`,
 `ref_videos.ref_video_0`, and `ref_video_audios.ref_video_audio_0`. Each value is
 the usual `["source_node_id", output_index]` link. Number additional inputs from
 zero. Bare keys such as `ref_image_1` are not equivalent and can cause an
-unexpected-keyword error. Reference files must already exist in that engine's
-input storage. This describes the installed input schema; the verified example
+unexpected-keyword error. References can use files already in the engine's input
+storage, or gateway uploads as described below. This describes the installed input schema; the verified example
 above is text-to-video, not a claim that every reference workflow has passed.
 The [reference-image example](../examples/media/h3-reference-image.json) provides
 the namespaced wiring with a synthetic colour image and REF2VA weights. The
@@ -139,6 +143,47 @@ installations may only have FL2VA. Run the normal H3 model setup against that
 installation's model tree to add the missing asset without replacing its files.
 Do not infer image conditioning from the `MiniMaxH3ImageToVideo` class name:
 without `first_frame` or `last_frame` links, that node runs text-to-video.
+
+### Upload references through the gateway
+
+Use the same gateway address and bearer key as your LLM requests. The gateway
+stores uploads privately and transfers them to whichever enrolled ComfyUI engine
+is assigned the job. Clients do not need a Spark address or SSH access.
+
+```sh
+# STAR_GATE_URL is the gateway origin, without /v1; STAR_GATE_API_KEY is its key.
+curl --fail-with-body "$STAR_GATE_URL/v1/video/inputs" \
+  -H "Authorization: Bearer $STAR_GATE_API_KEY" \
+  -H 'Content-Type: image/png' --data-binary @reference.png > image-receipt.json
+```
+
+Keep the returned `id` and `name`. Add `"input_files": ["<returned id>"]` alongside
+`prompt` in the job JSON. Replace the reference-image example's node 5 with
+`{"class_type":"LoadImage","inputs":{"image":"<returned name>"}}`; the existing
+`ref_images.ref_image_0` link remains `["5", 0]`. For audio, upload with
+`Content-Type: audio/wav`, add that ID to `input_files`, and use a `LoadAudio`
+node with `inputs.audio` set to its returned name. Connect that node's output 0
+to `ref_audios.ref_audio_0`. Do not pass the input ID as a native filename.
+
+Uploads require `Content-Length` (curl supplies it for a regular file).
+Supported types are PNG, JPEG, WebP, GIF, WAV, FLAC, MP3, Ogg, MP4 and WebM;
+the selected native loader still determines which formats it can decode.
+Defaults are 100 MiB per file and 2 GiB of stored inputs, adjustable through
+`media_jobs.input_max_bytes` and `media_jobs.input_total_bytes`. Uploads are
+streamed to disk, and in-flight uploads finish before a coordinated core restart.
+Job progress shows `transferring_inputs` before native generation. A transfer
+failure is reported and follows the existing original-LLM restoration path.
+
+Inputs survive gateway restarts and are retained until explicitly deleted.
+Use `DELETE /v1/video/inputs/{id}` with the same bearer key when no longer needed;
+an unfinished job keeps its references protected. This deletes the gateway copy,
+not native engine files or job outputs. Uploads do not use job idempotency keys:
+keep the receipt, since repeating an upload creates a separate input. Upload
+receipts expose metadata, not a public file download URL.
+
+The upload path has isolated API, transfer and restoration tests. A native
+uploaded-image/audio conditioning test remains pending; the completed synthetic
+reference-image test generated its reference inside ComfyUI.
 
 When ComfyUI records a node execution error, the Media tab and job API show the
 node and its error message separately from the host's LLM restoration phase.

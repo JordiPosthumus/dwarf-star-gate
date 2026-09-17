@@ -4,6 +4,21 @@ import http from 'node:http';
 import {once} from 'node:events';
 import {MediaBackend} from './media-backend.mjs';
 const uuid='00112233-4455-6677-8899-aabbccddeeff';
+test('native input transfer uses only the enrolled endpoint and confirms the stable non-overwriting name',async t=>{
+ let renamed=false,calls=0;
+ const server=http.createServer(async(req,res)=>{
+  calls++;assert.equal(req.url,'/upload/image');assert.equal(req.headers.authorization,'Bearer native-fixture');
+  const chunks=[];for await(const c of req)chunks.push(c);
+  const form=await new Request('http://localhost/upload/image',{method:'POST',headers:req.headers,body:Buffer.concat(chunks)}).formData();
+  const file=form.get('image');assert.equal(file.name,uuid+'.wav');assert.deepEqual(Buffer.from(await file.arrayBuffer()),Buffer.from('wave-data'));
+  assert.equal(form.get('subfolder'),'stargate');assert.equal(form.get('type'),'input');assert.equal(form.has('overwrite'),false);
+  res.setHeader('content-type','application/json');res.end(JSON.stringify({name:renamed?'renamed.wav':file.name,type:'input',subfolder:'stargate'}));
+ });server.listen(0,'127.0.0.1');await once(server,'listening');t.after(()=>{server.closeAllConnections();server.close();});
+ const api=new MediaBackend({kind:'comfyui',url:`http://127.0.0.1:${server.address().port}`,token:'native-fixture'}),blob=new Blob(['wave-data'],{type:'audio/wav'});
+ assert.deepEqual(await api.uploadInput(blob,'stargate/'+uuid+'.wav'),{name:'stargate/'+uuid+'.wav'});
+ renamed=true;await assert.rejects(api.uploadInput(blob,'stargate/'+uuid+'.wav'),/name was not confirmed/);
+ await assert.rejects(api.uploadInput(blob,'../personal.wav'),/stored Star Gate/);assert.equal(calls,2);
+});
 async function endpoint(t,handler){
  const calls=[],server=http.createServer(async(req,res)=>{let text='';for await(const chunk of req)text+=chunk;const call={method:req.method,path:req.url,body:text?JSON.parse(text):null};calls.push(call);res.setHeader('content-type','application/json');handler(call,res);});server.listen(0,'127.0.0.1');await once(server,'listening');t.after(()=>{server.closeAllConnections();server.close();});return {url:`http://127.0.0.1:${server.address().port}`,calls};
 }

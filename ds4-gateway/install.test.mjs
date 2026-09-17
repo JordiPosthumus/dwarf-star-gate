@@ -19,9 +19,10 @@ test('restart waits for launchd removal; timeout cannot skip into bootstrap',asy
   await assert.rejects(unloadService('other',{domain:'gui/test'}),/Choose gateway, door or dashboard/);
 });
 test('coordinated core restart holds first, waits for idle, and releases only after clean readiness',async()=>{
-  const config={continuity_door:{enabled:true,control_socket:'/tmp/fixture.sock'},request_timeout_ms:10000};let now=0,index=0;const calls=[],states=[{active:1,queued:2},{active:0,queued:0},{active:0,queued:0,startup:{complete:true}}];
+  const config={continuity_door:{enabled:true,control_socket:'/tmp/fixture.sock'},request_timeout_ms:10000};let now=0,index=0;const calls=[],states=[{active:1,queued:2},{active:0,queued:0,media_uploads:1},{active:0,queued:0},{active:0,queued:0,startup:{complete:true}}];
   const result=await coordinatedCoreRestart(config,{doorStatus:async()=>({hold_ownership:1}),hold:async b=>{calls.push(['hold',b.reason]);return ownedHold;},release:async body=>{assert.deepEqual(body,{if_hold_id:'fixture-hold'});calls.push(['release']);},read:async()=>states[Math.min(index++,states.length-1)],stop:async()=>calls.push(['stop']),start:async()=>calls.push(['start']),wait:async ms=>{now+=ms;},now:()=>now});
   assert.equal(result.replacement_ready,true);assert.deepEqual(calls.map(x=>x[0]),['hold','stop','start','release']);
+  assert.equal(now,2000,'Core replacement also waits for the active reference upload');assert.throws(()=>assertIdle({active:0,queued:0,media_uploads:1}));
   await assert.rejects(coordinatedCoreRestart(config,{doorStatus:async()=>({hold_ownership:1}),hold:async()=>ownedHold,release:async()=>{throw new Error('must not release');},read:async()=>({active:0,queued:0}),stop:async()=>{},start:async()=>{throw new Error('failed replacement');}}),error=>error.continuity_door_holding===true);
 });
 test('legacy Door cannot silently ignore ownership fencing during automated restart/release',async()=>{

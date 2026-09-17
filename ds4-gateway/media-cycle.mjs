@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {isDeepStrictEqual} from 'node:util';
 import {createHash} from 'node:crypto';
+import {openAsBlob} from 'node:fs';
 
 // A failed observation does not mean an already-started model failed. Keep
 // observing the same return; start/stop and generation are never retried here.
@@ -69,6 +70,10 @@ export async function runMediaCycle(plan,io){
     }
     assert.ok(ready,'Media readiness not established; no generation submitted');
     const job=jobs.get(plan.operation_id);
+    for(const input of job.payload.input_files===undefined?[]:jobs.inputs.forJob(job.payload.input_files)){
+      progress('transferring_inputs',`Sending reference file ${input.name} to the selected engine.`);
+      await connection.backend.uploadInput(await openAsBlob(jobs.inputs.file(input.id),{type:input.content_type}),input.name);
+    }
     if(plan.engine.kind==='comfyui'){
       const catalog=await connection.backend.request('/object_info');
       assert.ok(job.payload.prompt&&Object.keys(job.payload.prompt).length,'Supply a native ComfyUI workflow');
