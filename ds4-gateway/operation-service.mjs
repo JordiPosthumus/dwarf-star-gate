@@ -93,7 +93,7 @@ export function createOperationService(config,{directory,isTesting=()=>false,isE
     if(reportReads.has(row.id))return reportReads.get(row.id);
     const task=(async()=>{
       const plan=store.read(row.id,'plan.json');
-      if(!plan?.trial||result?.state!=='restored'||result.trial?.state!=='completed'||!/^[a-f0-9]{32}$/.test(result.trial.job_id??'')||!revision(result.trial.candidate_signature_sha256))return null;
+      if(!plan?.trial||result?.state!=='restored'||!['completed','stopped'].includes(result.trial?.state)||!/^[a-f0-9]{32}$/.test(result.trial.job_id??'')||!revision(result.trial.candidate_signature_sha256))return null;
       const report=readTrialReport?await readTrialReport(plan.trial.hourglass.url,result.trial.job_id):await new HourglassConsole(plan.trial.hourglass.url).report(result.trial.job_id);
       const value={...report,association:{worker_id:row.worker_id,route:'direct',contention:'owned-maintenance',approved_configuration_revision:null,
         source:'Recorded serving trial job and native candidate identity; original restored afterward.',

@@ -89,6 +89,17 @@ test('completed trial retrieves its exact report once and exposes it without ado
   assert.equal(fs.existsSync(path.join(r.folder,'launch-intent.json')),false,'Reading a report cannot submit an operation');
 });
 
+test('Hourglass stopped-at-window outcome exposes its final report without relabelling the native state',async t=>{
+  const job='e'.repeat(32);let reads=0;
+  const r=await rig(t,{trial:true,readTrialReport:async()=>{reads++;return {report_revision:'a'.repeat(64),summary:hourglassReportSummary({format:'hourglass-public-report-v1',model:'fixture',run_key:hash(job).slice(0,24),state:'final',is_current_run:false,score_version:'total-points-v1',hourglass_score:28.722222,active_seconds:3600.054,window_seconds:3600})};}});
+  await r.service.tool({action:'propose',proposal:{...r.proposal,trial:true}});await r.service.store.idle();
+  r.service.store.write(r.id,'runner-result.json',{state:'restored',serving:'previous',trial:{state:'stopped',job_id:job,candidate_signature_sha256:'b'.repeat(64)}});
+  const row=await r.service.tool({action:'status',id:r.id});assert.equal(reads,1);
+  assert.equal(row.evidence.trial.state,'stopped');assert.equal(row.evidence.trial.report_state,'available');
+  assert.equal(row.evidence.trial.report.summary.score.value,28.722222);
+  assert.equal(fs.existsSync(path.join(r.folder,'launch-intent.json')),false);
+});
+
 test('missing or wrong-job trial reports stay unavailable without inventing a zero score',async t=>{
   let wrong=false;
   const r=await rig(t,{trial:true,readTrialReport:async()=>{if(!wrong)throw Error('fixture transport');return {report_revision:'a'.repeat(64),summary:hourglassReportSummary({format:'hourglass-public-report-v1',model:'fixture',run_key:'wrong',state:'final',is_current_run:false,score_version:'total-points-v1',hourglass_score:0})};}});

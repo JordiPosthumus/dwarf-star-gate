@@ -25,6 +25,7 @@ export function compareHourglassReports(reports,baselineRevision,candidateRevisi
   for(const [side,row] of [['baseline',baseline],['candidate',candidate]]){
     if(!['owned-maintenance','owner-confirmed-idle'].includes(row.association.contention))conditions.push({field:`${side}.contention`,state:row.association.contention==='observed-contention'?'contention_recorded':'unknown'});
     if(!row.association.approved_configuration_revision&&!row.association.trial)conditions.push({field:`${side}.approved_configuration_revision`,state:'unknown'});
+    if(row.summary.active_seconds===null||row.summary.window_seconds===null||row.summary.active_seconds+1<row.summary.window_seconds)conditions.push({field:`${side}.measured_window`,state:'incomplete_or_unknown',active_seconds:row.summary.active_seconds,window_seconds:row.summary.window_seconds});
     if(!row.summary.configuration_key)conditions.push({field:`${side}.configuration_key`,state:'unknown'});
     if(row.summary.clock_adjustment_seconds===null||row.summary.clock_adjustment_seconds!==0)conditions.push({field:`${side}.clock_adjustment_seconds`,state:row.summary.clock_adjustment_seconds===null?'unknown':'adjusted',value:row.summary.clock_adjustment_seconds});
     if(row.summary.repaired||row.summary.caveats.length)conditions.push({field:`${side}.report_caveats`,state:'review',repaired:row.summary.repaired,caveats:row.summary.caveats});
@@ -43,7 +44,7 @@ function operationAssociation(baseline,candidate,{id,result}){
   const issues=[],evidence=result?.evidence,configuration=evidence?.configuration;
   if(evidence?.trial){
     const trial=evidence.trial,actual=candidate.association.trial;
-    if(result.id!==id||result.state!=='restored'||evidence.serving!=='previous'||trial.state!=='completed')issues.push({field:'trial',state:'not_completed_restored_trial'});
+    if(result.id!==id||result.state!=='restored'||evidence.serving!=='previous'||!['completed','stopped'].includes(trial.state))issues.push({field:'trial',state:'not_completed_restored_trial'});
     if(evidence.qualification?.state!=='passed')issues.push({field:'restored_qualification',state:'unverified'});
     for(const[side,row]of[['baseline',baseline],['candidate',candidate]])if(row.association.worker_id!==result.worker_id)issues.push({field:side+'.worker_id',state:'different'});
     if(!actual||actual.operation_id!==id||actual.job_id!==trial.job_id||actual.candidate_signature_sha256!==trial.candidate_signature_sha256)issues.push({field:'candidate.trial_identity',state:'different_or_unknown'});

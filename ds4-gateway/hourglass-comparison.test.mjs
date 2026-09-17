@@ -47,6 +47,8 @@ test('a restored trial links candidate job and signature without inventing an ad
  const compareTrial=op=>compareHourglassReports([a,b],a.report_revision,b.report_revision,op);
  const result=compareTrial(operation);assert.equal(result.operation_association.state,'recorded_trial_identity_matches');assert.equal(result.difference.value,5);
  assert.equal(result.candidate.association.approved_configuration_revision,null);
+ const stopped=structuredClone(operation);stopped.result.evidence.trial.state='stopped';assert.equal(compareTrial(stopped).operation_association.state,'recorded_trial_identity_matches');
+ b.summary.active_seconds=60;const early=compareTrial(stopped);assert.equal(early.state,'conditions_need_review');assert.ok(early.condition_issues.some(i=>i.field==='candidate.measured_window'));b.summary.active_seconds=3600.05;
  for(const change of[o=>o.result.evidence.trial.job_id='d'.repeat(32),o=>o.result.evidence.trial.candidate_signature_sha256='4'.repeat(64),o=>o.result.state='running',o=>o.result.evidence.configuration.previous_record_revision='5'.repeat(64)]){
   const altered=structuredClone(operation);change(altered);assert.equal(compareTrial(altered).operation_association.state,'needs_review');
  }
