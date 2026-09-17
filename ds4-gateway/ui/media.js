@@ -124,3 +124,6 @@ $('media-video-form').addEventListener('submit',async event=>{
 });
 new MutationObserver(()=>{if(!$('view-media').hidden)void refresh();}).observe($('view-media'),{attributes:true,attributeFilter:['hidden']});
 void refresh();setInterval(refresh,5000);
+
+// Fleet links select the corresponding engine before opening the Media tab.
+document.addEventListener('click',event=>{const link=event.target.closest?.('[data-media-engine]');if(link){selected=link.dataset.mediaEngine;signature='';render();}});

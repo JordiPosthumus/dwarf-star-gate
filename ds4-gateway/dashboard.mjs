@@ -1,3 +1,4 @@
+import {fleetMediaWorkloads} from './media-workloads.mjs';
 import {createMediaResources} from './media-resources.mjs';
 import {createSparkMediaQualification} from './spark-media-qualification.mjs';
 import {sparkInspectionSync} from './spark-inspection.mjs';
@@ -130,6 +131,7 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
   for (const match of bundle.get('/').bytes.toString('utf8').matchAll(/(?:src|href)="(\/[^"#]*)"/g))
     if (!bundle.has(match[1]) && !['/api/status', '/api/diagnostics'].includes(match[1])) throw new Error(`Unserved dashboard asset: ${match[1]}`);
   // Share a single in-flight read; a slow core must not stall chat or multiply polls.
+  let workloadRead=null;
   let progressRead=null;
   const readProgress=async()=>{
     if(!currentJobs)return null;
@@ -152,6 +154,12 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
       if(!management?.mediaFile)return reply(409,{error:'Media downloads are not connected.'});
       for(const [name,value] of Object.entries(headers))res.setHeader(name,value);
       management.mediaFile(req,res,req.url.replace('/api/media/','/v1/'));return;
+    }
+    if(req.url==='/api/fleet-workloads'&&req.method==='GET'){
+      // Share in-flight I/O, but do not let it stall the separate Fleet telemetry endpoint.
+      workloadRead??=Promise.resolve().then(()=>management?.media?.()??{jobs:[]}).then(fleetMediaWorkloads).finally(()=>{workloadRead=null;});
+      const timer=setTimeout(()=>reply(503,{error:'Media status unavailable; existing work may still be running.'}),1500);
+      void workloadRead.then(value=>reply(200,value)).catch(()=>reply(503,{error:'Media status unavailable; existing work may still be running.'})).finally(()=>clearTimeout(timer));return;
     }
     if(req.url==='/api/media'&&req.method==='GET'){
       void (mediaTools?mediaTools.tool({action:'status'}):management?.media?.()??Promise.resolve({configured:false,enabled:false,jobs:[],hosts:[]})).then(value=>{const snapshot=getSnapshot(),devices=snapshot.devices??[];reply(200,{...value,hosts:(value.hosts??[]).map(host=>{const h=devices.find(d=>d.id===host.id)?.hardware,w=snapshot.gateway?.workers?.find(w=>w.id===host.id);return {...host,memory:h?.state==='connected'?h.current:null,llm_model:snapshot.gateway?.model??null,maintenance:(w?.maintenance_locks??[]).map(lock=>lock.name),holds:(w?.holds??[]).map(hold=>hold.name),paused:w?.drained===true,quarantined:!!w?.quarantine};}),controls_enabled:!!management,csrf_token:csrf});}).catch(()=>reply(503,{error:'Media status is unavailable. Existing work may still be running.'}));return;

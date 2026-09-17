@@ -297,6 +297,7 @@ function renderDevices(devices,workers,now,stale,scales,controls) {
     if(!current)current=fresh;
     else{
       const focusedLight=current.contains(document.activeElement)?document.activeElement?.dataset?.light:null;
+      if(current.querySelector('.fleet-llm-history')?.open)fresh.querySelector('.fleet-llm-history')?.setAttribute('open','');
       if(current.querySelector('.measurement-info')?.open)fresh.querySelector('.measurement-info')?.setAttribute('open','');
       for(const selector of ['.device-identity','.server-verdict','.badge','.device-readings']){const before=current.querySelector(selector),after=fresh.querySelector(selector);if(before.innerHTML!==after.innerHTML)before.innerHTML=after.innerHTML;if(before.className!==after.className)before.className=after.className;for(const name of ['data-level','title','hidden']){const value=after.getAttribute(name);if(value===null)before.removeAttribute(name);else before.setAttribute(name,value);}}
       if(focusedLight)current.querySelector(`[data-light="${focusedLight}"]`)?.focus({preventScroll:true});
@@ -391,11 +392,28 @@ function rollingRateNote(value){
   return `<span class="rolling-rate" tabindex="0" title="${esc(detail)}">6h avg ${known?fmtWhole(value.mean_tps):'—'} t/s${direction?` <span class="rate-trend ${trend}" aria-label="${trend==='up'?'faster':trend==='down'?'slower':'steady'}">${direction}</span>`:''}</span>`;
 }
 
+let fleetWorkloads={observed_at:null,workloads:[]},fleetWorkloadsUnavailable=false;
+function workloadInfo(id,now) {
+  const rows=(fleetWorkloads.workloads??[]).filter(row=>row.worker_id===id);
+  if(!rows.length)return null;
+  const job=rows[0],old=fleetWorkloadsUnavailable||!Number.isFinite(fleetWorkloads.observed_at)||now-fleetWorkloads.observed_at>15000;
+  const labels={starting:'Preparing',waiting_idle:'Waiting for LLM work to finish',starting_media:'Loading media engine',transferring_inputs:'Transferring reference files',generating:job.state==='queued'?'Queued in media engine':'Generating',observing_media:'Checking native job status',retaining_results:'Saving generated files',waiting_media_idle:'Waiting for other media work',restoring_llm:'Loading original LLM',checking_llm:'Verifying LLM and cache',needs_attention:'LLM return needs attention',observation_failed:'Operation status unavailable',launch_uncertain:'Runner launch unconfirmed'};
+  const warning=old||rows.length>1||!labels[job.phase]||['needs_attention','observation_failed','launch_uncertain','observing_media'].includes(job.phase)||job.state==='uncertain';
+  return {...job,old,warning,engine:job.kind==='video'?'MiniMax H3':job.kind==='music'?'ACE-Step':'Media',label:old?'Last known media operation':rows.length>1?'Conflicting operation records':job.state==='uncertain'?'Native submission unconfirmed':labels[job.phase]??'Operation status unknown'};
+}
+function workloadMarkup(job,w,now) {
+  const elapsed=value=>{const t=Date.parse(value);return Number.isFinite(t)&&t<=now?`${Math.floor((now-t)/60000)}m ${Math.floor((now-t)%60000/1000)}s`:'Unknown';};
+  const heartbeat=Date.parse(job.heartbeat_at),fresh=!job.old&&Number.isFinite(heartbeat)&&now>=heartbeat&&now-heartbeat<30000;
+  const llm=job.phase==='waiting_idle'?'Finishing existing LLM work before switching.':job.phase==='checking_llm'?'Checking real responses and cache reuse before readmission.':job.phase==='restoring_llm'?'Original LLM is loading; return is not yet verified.':job.phase==='needs_attention'?'Return failed or needs attention. Inspect the operation.':'Original LLM will be restored and checked after media work.';
+  return `<section class="fleet-media" aria-label="${esc(job.engine)} workload"><div class="fleet-media-heading"><strong>${esc(job.engine)}</strong><span>${esc(job.label)}</span></div><div class="fleet-media-facts"><div><span class="label">OPERATION ELAPSED</span><strong>${elapsed(job.started_at)}</strong></div><div><span class="label">CURRENT STAGE</span><strong>${elapsed(job.changed_at)}</strong></div><div><span class="label">BATCH</span><strong>${job.batch_size>1?`${fmt(job.batch_index)} / ${fmt(job.batch_size)}`:'Single job'}</strong></div></div><p class="fleet-media-job">Job <code>${esc(job.job_id)}</code> · ${esc(job.state)}${job.outputs_state?' · outputs '+esc(job.outputs_state):''}</p><p class="fleet-media-heartbeat" data-level="${fresh?'good':'warning'}">${fresh?'Runner heartbeat received':'Runner heartbeat unavailable or old'}${Number.isFinite(heartbeat)?' · '+age(heartbeat,now):''}. This is a runner check-in, not measured generation progress.</p>${['generating','observing_media'].includes(job.phase)?'<p class="muted">Generation steps and completion time are not reported by this engine connection.</p>':''}<p class="fleet-media-return"><strong>Return to LLM:</strong> ${job.old?'Status is out of date; return is not confirmed.':esc(llm)}${w?.quarantine?' LLM is quarantined.':''}</p><a href="#media" data-media-engine="${job.kind==='video'?'h3':'ace-step'}">View ${job.kind==='video'?'video':'music'} jobs, results and errors →</a></section>`;
+}
 function device(d, w, now, stale, index = 1, scales={}, controls=false) {
+  const workload=workloadInfo(d.id,now);
+  if(workload&&stale){workload.old=true;workload.warning=true;workload.label='Last known media operation';}
   const engineBusy=!stale&&d.endpoint_metrics?.connected&&now-d.endpoint_metrics.at>=0&&now-d.endpoint_metrics.at<15000&&d.endpoint_metrics.running>0;
   const state = engineBusy&&['prefill','decode','mixed'].includes(d.endpoint_metrics.phase)?d.endpoint_metrics.phase:!w?.load&&engineBusy?'engine busy':phase(d,w,now,stale);
-  const bad = stale || !w?.is_healthy;
-  const verdict=!w?.load&&engineBusy?{level:'busy',label:'Engine reports activity',detail:'The endpoint reports active work, but Star Gate has no dispatched request on this worker. Direct clients and engine cleanup are outside Star Gate request accounting.'}:serverVerdict(d,w,now,stale);
+  const bad = workload?stale||workload.warning:stale || !w?.is_healthy;
+  const verdict=workload?{level:workload.warning||stale?'unknown':'busy',label:workload.label,detail:'Star Gate media operation; LLM availability is shown separately.'}:!w?.load&&engineBusy?{level:'busy',label:'Engine reports activity',detail:'The endpoint reports active work, but Star Gate has no dispatched request on this worker. Direct clients and engine cleanup are outside Star Gate request accounting.'}:serverVerdict(d,w,now,stale);
   const metric = (kind, title) => {
     const endpoint=d.endpoint_metrics??(d.backend==='openai'?{}:null);
     if(endpoint){
@@ -419,9 +437,12 @@ function device(d, w, now, stale, index = 1, scales={}, controls=false) {
   const metricsFresh=!stale&&endpoint?.connected&&Number.isFinite(endpoint.at)&&now>=endpoint.at&&now-endpoint.at<15000;
   const metricsInfo=endpoint?`<div class="server-metrics-status"><span>${metricsFresh?'Updated':'Unavailable'} · ${age(endpoint.at,now)}</span><details class="measurement-info"><summary>Metric details</summary><div><p>${esc(endpoint.source??'Endpoint')} · ${fmt(endpoint.running)} active · ${fmt(endpoint.waiting)} waiting · ${fmt(endpoint.requests)} completed</p><p>${endpoint.source==='omlx'?'Prefill is an engine-session average: newly processed tokens divided by time to first token, including setup, waiting and cache work. It is not pure compute speed. Live prefill and its chart show latest-chunk speed.':'Prefill chart points use newly computed KV tokens divided by engine-reported prefill seconds for requests completed since the last sample. Cached tokens are excluded. Blue runs from scheduling to the first generated token; green follows generation. Phases are sampled every 2 seconds; a single completed request refines the blue duration from engine timings, with about one poll of placement uncertainty. Decode rates use token changes over polling intervals.'}</p><p>Decode includes thinking and answer tokens. Chart lines use a trailing 20-second average of samples. Raw measurements and headline speeds are unchanged. Charts cover 15 minutes with gaps compressed; missing samples do not prove idle.</p></div></details></div>`:'';
   const duration=!stale&&w?.load&&Number.isFinite(w.active_seconds)?`<span class="remaining-estimate" title="Elapsed time of the active Star Gate request; not an estimate">${fmtWhole(Math.floor(w.active_seconds/60))}m active</span>`:'';
-  const activityDuration=duration;
-  const phaseRedundant=['unavailable','paused'].includes(state);
-  return `<article class="device" data-worker-id="${esc(d.id)}"><div class="device-top"><div class="device-identity"><div class="device-name"><span class="device-number">${String(index).padStart(2,'0')}</span><span class="device-name-text">${esc(d.id.replace(/^spark/, 'Spark '))}</span></div>${activityDuration}</div><div class="device-status"><span class="server-verdict" data-level="${verdict.level}" title="${esc(verdict.detail)}">${esc(verdict.label)}</span><span class="badge ${bad ? 'bad' : w?.load ? 'busy' : ''}" title="Current generation phase" ${phaseRedundant?'hidden':''}>${esc(!stale&&w?.quarantine?'quarantined':state==='mixed'?'prefill + generation':state==='decode'?(d.endpoint_metrics?'generating':'answering'):state)}</span>${routingMarkup(w,{stale,controls,recovering:recoveryState?.workers?.some(r=>r.worker_id===w?.id&&r.state==='recovering')})}</div></div><div class="device-readings">${timeline(d,now)}${thinkingIndicator(w,stale,now)}<div class="metrics">${metric('decode','DECODE')}${metric('prefill','PREFILL')}</div>${metricsInfo}${hardwareMarkup(d.hardware,now)}${performanceLightsMarkup(d,now,stale||!(d.performance_history?.workers?.[d.id]?.active??w?.load))}</div></article>`;
+  const activityDuration=workload?`<span class="remaining-estimate">${esc(workload.engine)}</span>`:duration;
+  const phaseRedundant=!!workload||['unavailable','paused'].includes(state);
+  const llmReadings=`${timeline(d,now)}${thinkingIndicator(w,stale,now)}<div class="metrics">${metric('decode','DECODE')}${metric('prefill','PREFILL')}</div>${metricsInfo}`;
+  const performance=performanceLightsMarkup(d,now,stale||!!workload||!(d.performance_history?.workers?.[d.id]?.active??w?.load));
+  const mediaWarning=fleetWorkloadsUnavailable?'<p class="fleet-media-warning">Media status unavailable; this machine’s workload cannot currently be confirmed.</p>':'';
+  return `<article class="device" data-worker-id="${esc(d.id)}"><div class="device-top"><div class="device-identity"><div class="device-name"><span class="device-number">${String(index).padStart(2,'0')}</span><span class="device-name-text">${esc(d.id.replace(/^spark/, 'Spark '))}</span></div>${activityDuration}</div><div class="device-status"><span class="server-verdict" data-level="${verdict.level}" title="${esc(verdict.detail)}">${esc(verdict.label)}</span><span class="badge ${bad ? 'bad' : w?.load ? 'busy' : ''}" title="Current generation phase" ${phaseRedundant?'hidden':''}>${esc(!stale&&w?.quarantine?'quarantined':state==='mixed'?'prefill + generation':state==='decode'?(d.endpoint_metrics?'generating':'answering'):state)}</span>${routingMarkup(w,{stale,controls,recovering:recoveryState?.workers?.some(r=>r.worker_id===w?.id&&r.state==='recovering')})}</div></div><div class="device-readings">${mediaWarning}${workload?workloadMarkup(workload,w,now):llmReadings}${hardwareMarkup(d.hardware,now)}${workload?`<details class="fleet-llm-history"><summary>LLM measurements · may predate this media operation</summary>${llmReadings}${performance}</details>`:performance}</div></article>`;
 }
 const headlineSeverity=value=>['good','info','warning','critical'].includes(value)?value:'info';
 function deterministicHealthAlerts(snapshot) {
@@ -623,7 +644,7 @@ function render(s) {
   $('capacity-note').title=stale?'Live gateway status is unavailable.':!g?.total?'No model servers are registered. Open Settings to add your first endpoint.':schedulingExplanation(g,visibleWorkers,cap).trim();
   const excluded=visibleWorkers.filter(w=>routingInfo(w).excluded);
   $('routing-summary').hidden=!excluded.length&&!stale&&!g?.draining;
-  $('routing-summary').textContent=stale?'Routing status is stale. Controls are disabled until live status returns.':`${g?.draining?'The gateway is draining: all new admission is stopped. ':''}${excluded.length?`${excluded.length} server${excluded.length===1?' is':'s are'} not accepting new work: ${excluded.map(w=>w.id).join(', ')}. See the highlighted reason and routing control on each server card below.`:''}`;
+  $('routing-summary').textContent=stale?'Routing status is stale. Controls are disabled until live status returns.':`${g?.draining?'The gateway is draining: all new admission is stopped. ':''}${excluded.length?`${excluded.length} server${excluded.length===1?' is':'s are'} not accepting new LLM requests: ${excluded.map(w=>w.id).join(', ')}. See the highlighted reason and routing control on each server card below.`:''}`;
   renderDevices(s.devices.map(d=>({...d,cache_continuity:s.cache_continuity,performance_history:s.performance_lights})),visibleWorkers,now,stale,scales,workerControlsVisible);
   const ds=g?.dataset;
   $('cache-evidence-status').textContent=cacheEvidenceText(s,stale);
@@ -695,7 +716,11 @@ async function toggleTesting(){
   finally{testingBusy=false;await loadTesting();void loadGenie();}
 }
 async function poll() {
-  try { const r = await fetch('/api/status', { cache: 'no-store', signal: AbortSignal.timeout(5000) }); if (!r.ok) throw new Error(); render(await r.json()); }
+  try {
+    const [r]=await Promise.all([fetch('/api/status',{cache:'no-store',signal:AbortSignal.timeout(5000)}),
+      fetch('/api/fleet-workloads',{cache:'no-store',signal:AbortSignal.timeout(2000)}).then(async response=>{if(!response.ok)throw Error();fleetWorkloads=await response.json();fleetWorkloadsUnavailable=false;}).catch(()=>{fleetWorkloadsUnavailable=true;})]);
+    if(!r.ok)throw Error();render(await r.json());
+  }
   catch { workerUiStale=true;refreshRoutingControls();$('connection').textContent = 'Disconnected'; $('warning').hidden = false; $('warning').textContent = 'Dashboard connection lost. Values below are historical, not live.'; renderHealthWire({time:Date.now(),gateway_error:true}); }
   finally { setTimeout(poll, document.hidden ? 10000 : 2000); }
 }
