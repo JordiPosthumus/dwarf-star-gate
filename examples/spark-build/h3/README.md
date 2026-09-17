@@ -11,11 +11,26 @@ python3 examples/spark-build/download-models.py h3 /path/to/models/h3
 ```
 
 Use Python 3.12+, Docker and the NVIDIA Container Toolkit on a Spark. The build
-does not launch a server. The pinned model set contains FL2VA pruned INT8, the
-NVFP4 Qwen3-VL text encoder and both video/audio VAEs. Mount the model tree at
+does not launch a server. The pinned model set contains FL2VA and REF2VA pruned
+INT8, the NVFP4 Qwen3-VL text encoder and both video/audio VAEs. These files total
+63.44 GB; the reference model adds 20.97 GB to the earlier FL2VA-only setup.
+They are alternative diffusion models, not models loaded simultaneously. Existing
+files are verified and preserved by the downloader. Mount the model tree at
 `/opt/ComfyUI/models` and a separate writable output folder at `/opt/ComfyUI/output`.
 Expose container port 8188 on host loopback when enrolling it for gateway use.
 Drain existing GPU work before starting a media container.
+
+Use the [text-to-video example](../../media/h3-text-to-video.json) with FL2VA.
+The [reference-image example](../../media/h3-reference-image.json) uses REF2VA
+and the native V3 `ref_images.ref_image_0` input. It generates a synthetic colour
+reference internally, so testing its input wiring needs no personal files.
+Replace its `EmptyImage` node with `LoadImage` for an image already available in
+the selected engine's input folder. A native reference-image job with these namespaced inputs generated a 124-frame,
+608 × 352 H.264 video and stereo 32 kHz FLAC audio; both retained files passed full
+decode and hash verification. The tested reference weights match this manifest,
+and the installed H3 node/input parser match the pinned public source byte-for-byte.
+This was an existing Spark installation, not a fresh-machine acceptance run.
+Audio-reference conditioning and identity fidelity remain separate tests.
 
 The entrypoint preserves the working recipe's reserve-VRAM, headroom, offload,
 memory-mapping and cache defaults. `BUILD_JOBS=2` controls only Torchaudio

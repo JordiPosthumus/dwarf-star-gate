@@ -132,6 +132,13 @@ zero. Bare keys such as `ref_image_1` are not equivalent and can cause an
 unexpected-keyword error. Reference files must already exist in that engine's
 input storage. This describes the installed input schema; the verified example
 above is text-to-video, not a claim that every reference workflow has passed.
+The [reference-image example](../examples/media/h3-reference-image.json) provides
+the namespaced wiring with a synthetic colour image and REF2VA weights. The
+portable H3 model manifest now includes those weights alongside FL2VA; older
+installations may only have FL2VA. Run the normal H3 model setup against that
+installation's model tree to add the missing asset without replacing its files.
+Do not infer image conditioning from the `MiniMaxH3ImageToVideo` class name:
+without `first_frame` or `last_frame` links, that node runs text-to-video.
 
 When ComfyUI records a node execution error, the Media tab and job API show the
 node and its error message separately from the host's LLM restoration phase.

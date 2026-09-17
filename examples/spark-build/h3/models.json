@@ -1,11 +1,17 @@
 {
   "schema": 1,
-  "scope": "Pinned official H3 FL2VA INT8, NVFP4 text encoder and video/audio VAE assets.",
+  "scope": "Pinned official H3 FL2VA and REF2VA INT8, NVFP4 text encoder and video/audio VAE assets.",
   "files": [
     {
       "path": "diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
       "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/7e75982b97cd5a41d2dcfa1904ee88d0686d6fd1/diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
       "sha256": "e889202c41dafb67b10d67b97f0d8541508036a6090af23425a5c2615d03c47a",
+      "bytes": 20970379616
+    },
+    {
+      "path": "diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+      "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/7e75982b97cd5a41d2dcfa1904ee88d0686d6fd1/diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+      "sha256": "9255f52b6677845ad238f20dfaafa94727053694127ab7f255c048f0f9365779",
       "bytes": 20970379616
     },
     {

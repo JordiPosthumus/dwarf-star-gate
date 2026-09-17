@@ -209,6 +209,11 @@ deployment receipts stay outside this public repository.
   manual audio-library build is included; ACE's selected weights and configuration
   bytes have been matched to public inputs. The rebuilt H3 image has now generated
   real video/audio and completed automatic original-LLM restoration and readmission.
+  The portable asset set now also includes pinned REF2VA weights. A separate
+  reference-image workflow with the native namespaced input generated video/audio
+  on an existing Spark; hashes and full decoding passed. Its node/parser match
+  the pinned source. This adds image-reference evidence, not audio-reference
+  conditioning, identity fidelity or fresh-host acceptance.
   The rebuilt ACE image has now generated real XL/4B music, retained a verified
   audio file, and completed automatic original-LLM restoration/readmission. Native
   tests caught and corrected a writable-output path and omitted tokenizer template.
