@@ -7,6 +7,14 @@ import {GenieChat,chatContext} from './genie-chat.mjs';
 import {createChatDemo} from '../examples/genie-chat-demo.mjs';
 
 function directory(t){const d=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-chat-'));t.after(()=>fs.rmSync(d,{recursive:true,force:true}));return d;}
+test('saved chat context explains intentional maintenance without exporting private lock details or claiming tools are absent',async t=>{
+  let supplied;const lock={id:'owned-test',name:'Music qualification',created_at:1000,review_at:null,control_channel:'approved_operation',reason:'PRIVATE_REASON'};
+  const chat=new GenieChat({directory:directory(t),provider:{generate:async p=>{supplied=p.context;return {text:'The worker is reserved for its music test.'};}},getSnapshot:()=>({gateway:{workers:[{id:'one',is_healthy:false,drained:true,maintenance_locks:[lock]}],recovery:{automatic:true,workers:[{worker_id:'one',adapter:'docker',eligible:false}]}}})});
+  const c=chat.create();chat.submit(c.id,'Why is this worker unavailable?','maintenance-question');await chat.idle();
+  assert.equal(supplied.servers[0].maintenance_locks[0].name,'Music qualification');assert.equal(supplied.servers[0].is_healthy,false);assert.equal(supplied.recovery.workers[0].adapter,'docker');
+  assert.doesNotMatch(JSON.stringify(supplied),/PRIVATE_REASON|No credentials, raw requests or server-control tools/);
+  const restored=new GenieChat({directory:chat.directory});assert.deepEqual(restored.get(c.id).messages[1].context,supplied);
+});
 test('follow-ups receive their own history, survive reload and never leak into another conversation',async t=>{
   const d=directory(t),calls=[];
   const provider={generate:async p=>{calls.push(p);return {text:p.history.length?'I remember your first question.':'First answer.'};}};

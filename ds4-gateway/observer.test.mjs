@@ -161,6 +161,18 @@ test('Genie briefing distinguishes an empty waiting queue from genuinely free ca
   assert.match(briefing(s).semantics.join(' '),/queued=0.*NOT idle/);
   assert.match(briefing(s).semantics.join(' '),/still-undispatched.*affinity-wait escape threshold.*Genie-authorized executor/);
 });
+test('Genie receives planned maintenance alongside failed health without hiding independent failure evidence',()=>{
+  const s=snapshot(),lock={id:'owned-test',name:'Native music test',created_at:1000,review_at:null,control_channel:'approved_operation',reason:'PRIVATE_REASON'};
+  s.gateway.workers=[{id:'planned',is_healthy:false,drained:true,load:0,queued:0,maintenance_locks:[lock],probe_error:'ECONNRESET'},
+    {id:'unexpected',is_healthy:false,drained:false,load:0,queued:0,probe_error:'ECONNRESET'}];
+  s.gateway.recovery={automatic:true,workers:[{worker_id:'planned',adapter:'docker',configured:true,state:'monitoring',reason:'stopped_service_start_not_enrolled',eligible:false}]};
+  const b=briefing(s),[planned,unexpected]=b.workers;
+  assert.deepEqual(planned.maintenance_locks,[{id:lock.id,name:lock.name,created_at:1000,review_at:null,control_channel:'approved_operation'}]);
+  assert.deepEqual(unexpected.maintenance_locks,[]);assert.equal(planned.healthy,false);assert.equal(unexpected.healthy,false);
+  assert.equal(planned.health_evidence.probe_error,'ECONNRESET');assert.equal(planned.recovery_evidence.adapter,'docker');
+  assert.equal(planned.recovery_evidence.reason,'stopped_service_start_not_enrolled');assert.deepEqual(b.recovery.offers,[]);
+  assert.equal(b.recovery.automatic,true);assert.equal(planned.immediately_free,false);assert.ok(!JSON.stringify(b).includes('PRIVATE_REASON'));
+});
 test('Genie parses bounded model-written ticker entries and rejects unknown evidence references',()=>{
   const evidence=briefing(snapshot()),data=authoredReview();
   let result=parseGenieReview(JSON.stringify(data),evidence);assert.equal(result.ticker[0].text,data.ticker[0].text);assert.equal(result.ticker_error,null);
