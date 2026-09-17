@@ -7,7 +7,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {createDashboard} from './dashboard.mjs';
 import {createOperationService,operationToolView} from './operation-service.mjs';
-import {operationLabel,operationProgress,operationChanges} from './ui/server-operations.js';
+import {operationLabel,operationProgress,operationChanges,operationQualification} from './ui/server-operations.js';
 import http from 'node:http';
 import {hermesProvider} from './genie-hermes.mjs';
 import {GenieChat} from './genie-chat.mjs';
@@ -108,6 +108,20 @@ test('missing or wrong-job trial reports stay unavailable without inventing a ze
   for(const value of[false,true]){wrong=value;const row=await r.service.tool({action:'status',id:r.id});assert.equal(row.state,'restored');assert.equal(row.evidence.trial.report,null);assert.equal(row.evidence.trial.report_state,'unavailable');}
   assert.deepEqual(r.service.trialReports().reports,[]);
   assert.equal(fs.existsSync(path.join(r.folder,'launch-intent.json')),false);
+});
+
+test('candidate cache rejection stays visible during restoration without claiming it has returned',async t=>{
+  const r=await rig(t);await r.service.tool({action:'propose',proposal:r.proposal});await r.service.store.idle();
+  r.service.store.write(r.id,'qualified-candidate.json',{state:'failed',private_path:'PRIVATE',cache_capacity_acceptance:{state:'failed',reason:'exceeds_reviewed_allowance',policy:{max_loss_percent:0}}});
+  r.service.store.write(r.id,'cache-comparison-candidate.json',{baseline:{kv_cache_size_tokens:512701,secret:'PRIVATE'},current:{kv_cache_size_tokens:493873},delta_percent:-3.6723158332049284});
+  const view=await r.service.tool({action:'status',id:r.id});
+  assert.equal(view.candidate_qualification.state,'failed');assert.equal(view.candidate_qualification.baseline_cache_tokens,512701);
+  assert.doesNotMatch(JSON.stringify(view),/PRIVATE/);assert.equal(view.outcome,undefined);
+  const row=(await r.service.status()).operations[0],message=operationQualification(row);
+  assert.match(message,/512,701 → 493,873/);assert.match(message,/-3.67%/);assert.match(message,/Allowed loss: 0%/);assert.match(message,/See progress for restoration status/);
+  assert.equal(fs.existsSync(path.join(r.folder,'launch-intent.json')),false);
+  fs.writeFileSync(path.join(r.folder,'cache-comparison-candidate.json'),'{corrupt preserved');
+  assert.deepEqual((await r.service.tool({action:'status',id:r.id})).candidate_qualification,{state:'unreadable'});
 });
 
 test('operations stay absent by default and tool status does not expose execution paths or review commands',()=>{

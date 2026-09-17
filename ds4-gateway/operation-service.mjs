@@ -50,6 +50,7 @@ export function operationToolView(row){
   const runner=row.runner;
   return {id:row.id,worker_id:row.worker_id,state:runner?.state??row.state,proposal_state:row.state,
     plan_revision:row.plan_revision??null,error:row.error??null,
+    candidate_qualification:row.candidate_qualification??null,
     ...(runner?{process_alive:typeof runner.process_alive==='boolean'?runner.process_alive:null,progress:runner.progress?{
       phase:runner.progress.phase,detail:runner.progress.detail,changed_at:runner.progress.changed_at,heartbeat_at:runner.progress.heartbeat_at}:null,
       outcome:runner.result?.state??null,evidence:outcomeEvidence(runner.result,row.qualification,row.trial_report)}:{}),
@@ -111,6 +112,20 @@ export function createOperationService(config,{directory,isTesting=()=>false,isE
     if(current.runner?.result?.trial){
       try{current.trial_report=await collectTrialReport(row,current.runner.result);}catch{current.trial_report=null;}
     }
+    try{
+      const proof=store.read(row.id,'qualified-candidate.json');
+      if(proof){
+        const cache=store.read(row.id,'cache-comparison-candidate.json'),acceptance=proof.cache_capacity_acceptance;
+        const number=v=>Number.isFinite(v)?v:null;
+        current.candidate_qualification={state:['passed','failed'].includes(proof.state)?proof.state:'unknown',
+          cache_acceptance:['passed','failed'].includes(acceptance?.state)?acceptance.state:null,
+          reason:['capacity_unavailable','within_reviewed_allowance','exceeds_reviewed_allowance'].includes(acceptance?.reason)?acceptance.reason:null,
+          allowed_loss_percent:number(acceptance?.policy?.max_loss_percent),
+          baseline_cache_tokens:number(cache?.baseline?.kv_cache_size_tokens),candidate_cache_tokens:number(cache?.current?.kv_cache_size_tokens),
+          delta_percent:number(cache?.delta_percent),
+          scope:'Saved candidate checks, separate from original restoration. Startup memory can affect reported cache capacity; this does not establish cause or speed.'};
+      }
+    }catch{current.candidate_qualification={state:'unreadable'};}
     const which=current.runner?.result?.serving;
     if(['candidate','previous'].includes(which)){
       try{

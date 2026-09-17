@@ -30,6 +30,19 @@ export function operationProgress(row,now=Date.now()){
   return row.error??row.runner?.scope??'Preparing or waiting for approval does not change a server.';
 }
 
+export function operationQualification(row){
+  const q=row.candidate_qualification;if(!q)return null;
+  if(q.state==='unreadable')return 'Candidate qualification evidence could not be read.';
+  if(q.state!=='failed')return null;
+  if(q.reason==='exceeds_reviewed_allowance'){
+    const counts=Number.isFinite(q.baseline_cache_tokens)&&Number.isFinite(q.candidate_cache_tokens)?` ${q.baseline_cache_tokens.toLocaleString('en-US')} → ${q.candidate_cache_tokens.toLocaleString('en-US')} cache tokens.`:'';
+    const change=Number.isFinite(q.delta_percent)?` Change: ${q.delta_percent.toFixed(2)}%.`:'';
+    const allowance=Number.isFinite(q.allowed_loss_percent)?` Allowed loss: ${q.allowed_loss_percent}%.`:'';
+    return `Candidate rejected: cache capacity fell beyond the reviewed allowance.${counts}${change}${allowance} See progress for restoration status.`;
+  }
+  return q.reason==='capacity_unavailable'?'Candidate rejected: cache capacity could not be verified. See progress for restoration status.':'Candidate did not pass its native checks. See progress for restoration status.';
+}
+
 const panel=typeof document==='undefined'?null:document.getElementById('server-operations');
 if(panel){
   const list=document.getElementById('server-operations-list'),error=document.getElementById('server-operations-error'),summary=document.getElementById('server-operations-summary');
@@ -57,6 +70,7 @@ if(panel){
       const card=text('article','','server-operation');card.append(text('h3',`${row.worker_id??'Saved operation'} · ${operationLabel(row)}`));
       if(row.reason)card.append(text('p',row.reason));
       card.append(text('p',operationProgress(row),'conversation-footnote'));
+      const qualification=operationQualification(row);if(qualification)card.append(text('p',qualification));
       if(row.review){
         for(const change of operationChanges(row.review))card.append(text('p',change));
         const details=text('details');details.dataset.operationId=row.id;details.open=expanded.has(row.id);
