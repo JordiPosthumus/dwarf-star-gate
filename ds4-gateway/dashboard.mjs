@@ -328,6 +328,7 @@ export async function runDashboard(configPath, port) {
   const hourglassReports=new HourglassReports(config.hourglass_reports);
   const hourglassDirectory=path.join(path.dirname(config.state_file),'hourglass');
   const hourglass=config.hourglass_console?new HourglassRuns(config.hourglass_console,hourglassDirectory,{
+    reports:()=>hourglassReports.snapshot(),
     maintenance:createHourglassMaintenance(config,path.join(hourglassDirectory,'operations')),
     records:()=>serverRecords.snapshot(gateway?.workers?.map(w=>w.id)??[])}):null;
   port ??= dashboardPort(config);

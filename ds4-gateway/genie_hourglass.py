@@ -1,12 +1,13 @@
 """Prepare and observe Hourglass measurements through the existing dashboard."""
 import json
+import re
 from datetime import datetime, timezone
 import urllib.error
 import urllib.parse
 import urllib.request
 
 TOOLSET = 'stargate_hourglass'
-NAMES = {'prepare_hourglass_measurement', 'hourglass_measurement_status'}
+NAMES = {'prepare_hourglass_measurement', 'hourglass_measurement_status', 'compare_hourglass_reports'}
 
 
 def register_hourglass(config, emit):
@@ -29,6 +30,11 @@ def register_hourglass(config, emit):
                 if set(args) != {'model'} or args['model'] not in config['models']:
                     raise ValueError('Invalid target')
                 payload = {'action': 'prepare', 'model': args['model']}
+            elif name == 'compare_hourglass_reports':
+                if set(args) != {'baseline_revision', 'candidate_revision'} or not all(
+                        isinstance(v, str) and re.fullmatch(r'[a-f0-9]{64}', v) for v in args.values()):
+                    raise ValueError('Choose saved report revisions')
+                payload = {'action': 'compare', **args}
             else:
                 if args:
                     raise ValueError('Status takes no arguments')
@@ -62,6 +68,12 @@ def register_hourglass(config, emit):
         ('hourglass_measurement_status', 'Read configured measurement targets, the pending review, and dated run observations. '
             'Refreshes known receipts without starting or retrying a benchmark. Do not poll in a loop.',
             {'type': 'object', 'properties': {}, 'additionalProperties': False}),
+        ('compare_hourglass_reports', 'Compare two exact saved report revisions from measurement status. '
+            'Checks recorded protocols and conditions, and returns a score difference only when the methodology matches. '
+            'Does not prove an upgrade caused a difference or start any work.',
+            {'type': 'object', 'properties': {k: {'type': 'string', 'pattern': '^[a-f0-9]{64}$'}
+                for k in ['baseline_revision', 'candidate_revision']},
+             'required': ['baseline_revision', 'candidate_revision'], 'additionalProperties': False}),
     ]:
         registry.register(name=name, toolset=TOOLSET,
             schema={'name': name, 'description': description, 'parameters': parameters},

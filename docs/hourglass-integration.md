@@ -92,6 +92,36 @@ remain separate unfinished parts of the plan.
 
 ## Native console adapter
 
+### Compare a baseline and later report
+
+Genie can call `compare_hourglass_reports` with two exact `report_revision`
+values from `hourglass_measurement_status`. That status includes both selected
+imported reports and retained Star Gate measurements. Comparison reads their
+saved aggregates without starting, refreshing or repeating a benchmark.
+
+The result checks final scores, metric, benchmark version, bank, scoring/timing
+policy, window and question/repeat/round rules before calculating a difference.
+Missing or different protocol fields prevent that calculation. Worker, machine,
+route, contention, configuration association, stop policy, clock corrections and
+report caveats are reported separately. Thus matching protocols can yield a
+numeric difference while the result still says the conditions need review.
+Full report revisions, source associations and gaps remain in the tool receipt
+in chat. No raw questions or answers enter the comparison.
+
+This is recorded evidence for a trial review, not a keep/restore verdict or proof
+that an upgrade caused a gain. Configuration keys may differ intentionally;
+matching records do not exclude direct traffic or natural run-to-run variation.
+The complete proposed-change, measurement and keep/restore loop remains separate.
+
+The configured Genie has exercised this comparison with two real saved reports
+in an isolated conversation. Its retained calls read measurement status and then
+compared the exact reports. Its answer reported the arithmetic decline while
+identifying missing older-run traffic/configuration evidence and declining to
+infer a configuration regression. No new measurement or server change occurred.
+This validates that conversation and tool use, not the full candidate trial loop.
+
+### Prepare and run
+
 `hourglass-console.mjs` prepares a start against an explicitly connected local
 Hourglass console. It reads the saved model catalogue and full-bank revision
 metadata, then submits the native `models_revision`, `hardware_revision` and

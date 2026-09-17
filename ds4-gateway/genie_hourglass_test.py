@@ -64,6 +64,15 @@ class HourglassToolsTest(unittest.TestCase):
             self.assertIn('error', json.loads(self.catalog[name]['handler'](args)))
         self.assertEqual(self.calls, [])
 
+    def test_comparison_sends_only_retained_report_revisions_and_keeps_receipt(self):
+        args = {'baseline_revision': 'a' * 64, 'candidate_revision': 'b' * 64}
+        self.catalog['compare_hourglass_reports']['handler'](args)
+        self.assertEqual(self.calls[0][2], {'action': 'compare', **args})
+        self.assertEqual(self.events[-1][1]['event']['state'], 'complete')
+        for invalid in [{**args, 'start': True}, {**args, 'baseline_revision': '/private/report'}, {'baseline_revision': 'a' * 64}]:
+            self.assertIn('error', json.loads(self.catalog['compare_hourglass_reports']['handler'](invalid)))
+        self.assertEqual(len(self.calls), 1)
+
     def test_redirect_is_not_followed_or_retried(self):
         self.redirect = True
         result = json.loads(self.catalog['hourglass_measurement_status']['handler']({}))

@@ -86,6 +86,11 @@ deployment receipts stay outside this public repository.
   as proof. Reminder mode still requires a start action; automatic mode waits for
   existing chats to finish and honors the Public research switch and testing mode.
   The complete candidate trial and baseline comparison loop remains outstanding.
+  A read-only `compare_hourglass_reports` tool now compares selected retained
+  report revisions, checks their recorded methodology and exposes condition
+  gaps separately from score arithmetic. It reuses the existing Hourglass tool
+  endpoint and private chat receipts; it neither starts a measurement nor chooses
+  whether to keep a server change. Native whole-trial acceptance remains required.
 - [x] Use the configured Hermes runtime and current Genie identity for fleet
   reviews, preserving provider and guarded-action contracts.
 - [x] Connect conversational questions to the existing exception for yielding

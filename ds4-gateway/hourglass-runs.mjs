@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {randomUUID,randomBytes} from 'node:crypto';
 import {HourglassConsole} from './hourglass-console.mjs';
+import {compareHourglassReports} from './hourglass-comparison.mjs';
 
 const UUID=/^[a-f0-9-]{36}$/,JOB=/^[a-f0-9]{32}$/,DIGEST=/^[a-f0-9]{64}$/;
 const active=r=>['submitting','uncertain','accepted','pending','running','unknown','owned'].includes(r.state);
@@ -22,7 +23,7 @@ export function hourglassRunsForChat(value){
 }
 
 export class HourglassRuns {
-  constructor(config,directory,{client,records=()=>({records:[]}),now=Date.now,maintenance=null}={}){
+  constructor(config,directory,{client,records=()=>({records:[]}),reports=()=>({reports:[]}),now=Date.now,maintenance=null}={}){
     if(!config||typeof config.url!=='string'||!Array.isArray(config.targets)||!config.targets.length||config.targets.length>50||Object.keys(config).some(k=>!['url','targets'].includes(k)))throw new Error('Configure an Hourglass console URL and explicit targets.');
     this.targets=config.targets.map(t=>{
       if(!t||typeof t.model!=='string'||!t.model.trim()||t.model.length>256||!/^\w[\w-]{0,63}$/.test(t.worker_id)||!['direct','gateway','testing-door'].includes(t.route)||Object.keys(t).some(k=>!['model','worker_id','route','maintenance'].includes(k))||t.maintenance&&(!maintenance||t.route!=='direct'))throw new Error('Invalid Hourglass target association.');
@@ -30,7 +31,7 @@ export class HourglassRuns {
     });
     if(new Set(this.targets.map(t=>t.model)).size!==this.targets.length)throw new Error('Hourglass target models must be unique.');
     this.client=client??new HourglassConsole(config.url);this.origin=new URL(config.url).origin;this.records=records;this.now=now;
-    this.maintenance=maintenance;
+    this.maintenance=maintenance;this.externalReports=reports;
     this.directory=directory;this.file=path.join(directory,'runs.json');this.runs=[];this.error=null;this.busy=false;this.prepared=null;this.closed=false;
     this.toolConfig={url:null,token:randomBytes(32).toString('hex'),models:this.targets.map(t=>t.model)};
     fs.mkdirSync(directory,{recursive:true,mode:0o700});
@@ -55,7 +56,7 @@ export class HourglassRuns {
   toolStatus(){
     const s=this.status(),p=s.prepared;
     return {...hourglassRunsForChat(s),available:s.available,busy:s.busy,blocked:s.blocked,
-      targets:s.targets,reports:this.reportSnapshot().reports,prepared:p?{id:p.id,model:p.model,worker_id:p.association.worker_id,
+      targets:s.targets,reports:this.comparisonReports(),prepared:p?{id:p.id,model:p.model,worker_id:p.association.worker_id,
         route:p.association.route,benchmark_version:p.benchmark_version,metric:p.metric,
         question_count:p.question_count,window_seconds:p.window_seconds,
         window:p.maintenance?'owned-maintenance':'owner-confirmed-idle',
@@ -64,8 +65,9 @@ export class HourglassRuns {
       scope:'Preparation only. Review the exact measurement and its window handling in Evidence → Measure with Hourglass. The owner chooses Start. Preparation does not start, drain or reserve a server. This history covers only Star Gate-owned measurements: an empty list does not prove that no benchmark ran directly in Hourglass or that no score exists elsewhere. Saved observations are dated; unavailable does not mean stopped.'};
   }
   async tool(input){
-    const keys={status:['action'],prepare:['action','model']}[input?.action];
-    if(!keys||Object.keys(input).length!==keys.length||!keys.every(k=>Object.hasOwn(input,k)))throw new Error('Genie can only prepare a measurement or read its status.');
+    const keys={status:['action'],prepare:['action','model'],compare:['action','baseline_revision','candidate_revision']}[input?.action];
+    if(!keys||Object.keys(input).length!==keys.length||!keys.every(k=>Object.hasOwn(input,k)))throw new Error('Genie can only prepare a measurement, read its status or compare saved reports.');
+    if(input.action==='compare')return compareHourglassReports(this.comparisonReports(),input.baseline_revision,input.candidate_revision);
     if(input.action==='prepare'){
       if(this.prepared){
         if(this.prepared.model!==input.model)throw new Error('A different measurement is already under review. Resolve it in Evidence before replacing it.');
@@ -75,6 +77,7 @@ export class HourglassRuns {
     }else if(!this.busy&&!this.closed&&!this.error)await this.change({action:'refresh'});
     return this.toolStatus();
   }
+  comparisonReports(){return [...this.reportSnapshot().reports,...(this.externalReports()?.reports??[])];}
   reportSnapshot(){return {configured:true,reports:this.runs.filter(r=>r.report).slice(-50).map(r=>({...r.report,association:r.association})),
     unavailable:this.error?[{reason:'measurement_history_unavailable'}]:this.runs.filter(r=>terminal(r)&&!r.report).map(()=>({reason:'run_report_unavailable'})),scope};}
   async change(input){
