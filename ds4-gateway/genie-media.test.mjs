@@ -66,3 +66,38 @@ test('automatic queue wakeup uses pinned Hermes to start once and retain actual 
   assert.equal(answer.media.events.filter(e=>e.state==='complete').length,7);assert.ok(answer.media.events.some(e=>e.tool==='inspect_media_inputs'&&e.state==='complete'));assert.ok(answer.media.events.some(e=>e.tool==='start_media_job'&&e.state==='complete'));assert.equal(chat.capabilityActivity().media.state,'complete');
   const reread=new GenieChat({directory:path.join(directory,'chats'),provider});assert.deepEqual(reread.get(conversation.id).messages[1].media,answer.media);
 });
+
+test('compact overview keeps fleet and active return facts; full records remain available by ID',async()=>{
+ const long='native diagnostic '.repeat(1000),old={id,state:'completed',result:{prompt:long},detail:long,outputs:{state:'ready',files:[{id:'file',filename:'full-name.mp4'}]}};
+ const jobs=[old,...Array.from({length:60},(_,i)=>({id:'history-'+i,state:'completed'})),{id:secondId,state:'completed',priority:'high',execution:{worker_id:'one',phase:'restoring_llm',detail:long}}];
+ const state={jobs,workers:[{id:'one',kinds:['video'],busy:true}],fleet:[{id:'two',is_healthy:true,drained:false,load:1,queued:0}]};
+ const before=JSON.stringify(state),tools=createMediaTools({read:async()=>state});
+ const overview=await tools.tool({action:'overview'}),full=await tools.tool({action:'status'}),detail=await tools.tool({action:'job',job_id:id});
+ assert.deepEqual(overview.fleet,state.fleet);assert.equal(overview.jobs[0].id,secondId);assert.equal(overview.jobs[0].execution.phase,'restoring_llm');assert.equal(overview.jobs[0].details_shortened,true);
+ assert.match(overview.scope,/job_id/);assert.equal(overview.truncated,true);assert.equal(overview.jobs.length,50);assert.equal(overview.jobs[0].result,undefined);
+ assert.equal(full.jobs[0].execution.detail,long,'existing dashboard status is unchanged');assert.deepEqual(detail.job,old,'even records older than the overview remain available');assert.equal(JSON.stringify(state),before);
+ await assert.rejects(tools.tool({action:'job',job_id:'missing'}),/Unknown/);await assert.rejects(tools.tool({action:'job',job_id:id,command:'change'}));
+});
+
+test('pinned Hermes reads the complete compact overview and asks for full job details',{skip:!process.env.DSG_TEST_HERMES_SOURCE,timeout:120000},async t=>{
+ const directory=fs.mkdtempSync(path.join(os.tmpdir(),'sg-media-overview-'));let calls=0;const seen=[];
+ const state={enabled:true,fleet:[{id:'fleet-visible-at-the-front',is_healthy:true,drained:false,load:0}],workers:[{id:'one',kinds:['video'],busy:false}],jobs:[{id,state:'queued',kind:'video',result:{detail:'FULL_JOB_DETAIL_MARKER',graph:'x'.repeat(7000)}},...Array.from({length:25},(_,i)=>({id:'done-'+i,state:'completed',kind:'video',result:{graph:'x'.repeat(7000)}}))]};
+ const tools=createMediaTools({read:async()=>state,start:()=>{throw Error('Read-only test');}});
+ const server=http.createServer((req,res)=>{
+  if(tools.handle(req,res))return;
+  if(req.method==='GET'){res.end(JSON.stringify({data:[{id:'fixture'}]}));return;}
+  let raw='';req.on('data',c=>raw+=c);req.on('end',()=>{
+   if(req.url!=='/v1/chat/completions'){res.end('{}');return;}calls++;const body=JSON.parse(raw);seen.push(body);
+   const message=calls<=2?{role:'assistant',content:null,tool_calls:[{id:'overview-'+calls,type:'function',function:{name:'tool_call',arguments:JSON.stringify({name:'media_job_status',arguments:calls===1?{}:{job_id:id}})}}]}:{role:'assistant',content:'Fleet and full job details read.'};
+   const delta={...message,...(message.tool_calls?{tool_calls:message.tool_calls.map((v,index)=>({...v,index}))}:{})};res.setHeader('content-type','text/event-stream');res.end('data: '+JSON.stringify({id:'fixture',model:'fixture',choices:[{index:0,delta,finish_reason:null}]})+'\n\ndata: '+JSON.stringify({id:'fixture',model:'fixture',choices:[{index:0,delta:{},finish_reason:calls<=2?'tool_calls':'stop'}]})+'\n\ndata: [DONE]\n\n');
+  });
+ });
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));tools.bind(server.address().port);
+ const provider=hermesProvider({python:process.env.DSG_TEST_HERMES_PYTHON,source:process.env.DSG_TEST_HERMES_SOURCE,url:`http://127.0.0.1:${server.address().port}/v1`,model:'fixture',media:tools.toolConfig},{directory});
+ t.after(()=>{provider.close();server.closeAllConnections();server.close();fs.rmSync(directory,{recursive:true,force:true});});
+ const chat=new GenieChat({directory:path.join(directory,'chats'),provider,getSnapshot:()=>({gateway:{}})}),conversation=chat.create();chat.submit(conversation.id,'Read the overview, then full details for the queued job. Do not act.','overview-test');await chat.idle();
+ const answer=chat.get(conversation.id).messages[1];assert.equal(answer.state,'complete',JSON.stringify(answer));assert.equal(calls,3);
+ const first=JSON.stringify(seen[1].messages);assert.match(first,/fleet-visible-at-the-front/);assert.doesNotMatch(first,/FULL_JOB_DETAIL_MARKER|<persisted-output>/);
+ const second=JSON.stringify(seen[2].messages);assert.match(second,/FULL_JOB_DETAIL_MARKER/);assert.doesNotMatch(second,/<persisted-output>/);
+ const events=answer.media.events.filter(e=>e.state==='complete');assert.equal(events.length,2);assert.equal(events[1].request.job_id,id);assert.deepEqual(events[1].result.job,state.jobs[0]);
+});
