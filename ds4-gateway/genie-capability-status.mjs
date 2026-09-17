@@ -2,7 +2,7 @@ export function capabilityStatus(snapshot,{genie={},chat={},operations={},media=
   const g=snapshot.gateway??{},switches=g.genie_capabilities??{},configured=chat.capabilities_configured??{};
   const current=operations.operations?.[0];
   const mediaSetup=media.setup?.operations?.filter(s=>s.phase!=='enrolled').at(-1),mediaJob=media.jobs?.filter(j=>j.execution).at(-1),mediaPhase=mediaSetup?.phase??mediaJob?.execution?.phase;
-  const mediaDetail=mediaSetup?`${mediaSetup.worker_id} setup: ${mediaSetup.enrollment_error??mediaSetup.detail??mediaPhase}`:mediaJob?`${mediaJob.execution.worker_id}: ${mediaJob.execution.detail??mediaPhase}`:'Assign queued media and set up allowed engines, retaining at least one serving LLM. Turning off prevents new starts; accepted operations finish and return their host.';
+  let mediaDetail=mediaSetup?`${mediaSetup.worker_id} setup: ${mediaSetup.enrollment_error??mediaSetup.detail??mediaPhase}`:mediaJob?`${mediaJob.execution.worker_id}: ${mediaJob.execution.detail??mediaPhase}`:'Assign queued media and set up allowed engines, retaining at least one serving LLM. Turning off prevents new starts; accepted operations finish and return their host.';
   const recovery=g.recovery??{},unbound=(recovery.workers??[]).filter(w=>w.enrollment?.binding!=='matched');
   const bound=(recovery.workers??[]).filter(w=>w.enrollment?.binding==='matched');
   const setupState=t=>t.continuation?.state==='needs_attention'?'needs_attention':['requested','waiting_for_genie'].includes(t.continuation?.state)?'waiting_for_genie':t.registration?.state??t.qualification?.state??t.media_qualification?.state??t.state;
@@ -12,9 +12,10 @@ export function capabilityStatus(snapshot,{genie={},chat={},operations={},media=
     const d=t.model_download;if(!d)return '';
     if(d.state!=='observed')return ' · Model download progress unavailable';
     const gb=n=>(n/1e9).toFixed(1);
-    const activity=d.last_file_activity_at?new Date(d.last_file_activity_at).toISOString().slice(0,19).replace('T',' ')+' UTC':null;
+    const activity=Number.isFinite(Date.parse(d.last_file_activity_at))?new Date(d.last_file_activity_at).toISOString().slice(0,19).replace('T',' ')+' UTC':null;
     return ` · Model files: ${gb(d.bytes_present)} / ${gb(d.bytes_required)} GB present${activity?' · File activity '+activity:''} · Includes partial downloads; verification is separate`;
   };
+  if(mediaSetup?.phase==='preparing_media'||mediaSetup?.phase==='observing_preparation')mediaDetail+=setupDownload(mediaSetup.preparation??{});
   const rows=[
     ['fleet_reviews','Routine fleet reviews',genie.configured,genie.error?'Failed':genie.busy?'Working':genie.enabled?'Ready':'Genie reviewer is off',genie.error??'Periodic checks of fleet health. Queue balancing has its own switch.'],
     ['rebalance','Queue balancing',management,genie.enabled===false&&!configured.rebalance?'Genie reviewer is off':'Ready','Genie may move waiting jobs to an eligible idle server, from chat or fleet reviews. Running jobs finish.'],

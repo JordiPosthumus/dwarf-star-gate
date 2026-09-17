@@ -42,7 +42,7 @@ function render(){
     if(choice.enrolled)card.append(el('p','Enrolled engine. This check leaves its setup and qualification unchanged.','muted'));
     const setup=state.setup?.operations?.find(s=>s.worker_id===host.id&&s.engine===engine.id),setupHost=state.setup?.hosts?.find(s=>s.worker_id===host.id);
     if(setup)card.append(el('p',`Setup: ${setup.phase.replaceAll('_',' ')}${setup.detail?' · '+setup.detail:''}`),...(setup.enrollment_error?[el('p',setup.enrollment_error,'media-job-detail')]:[]));
-    if(setup?.preparation?.model_download?.state==='observed'){const d=setup.preparation.model_download;card.append(el('p',`Models: ${(d.bytes_present/1e9).toFixed(1)} / ${(d.bytes_required/1e9).toFixed(1)} GB present, including partial downloads.`,'muted'));}
+    if(setup?.preparation?.model_download?.state==='observed'){const d=setup.preparation.model_download;card.append(el('p',`Models: ${(d.bytes_present/1e9).toFixed(1)} / ${(d.bytes_required/1e9).toFixed(1)} GB present, including partial downloads.`,'muted'));if(Number.isFinite(Date.parse(d.last_file_activity_at)))card.append(el('p',`Last model-file activity: ${new Date(d.last_file_activity_at).toLocaleString()}. Unchanged bytes can mean verification is running.`,'muted'));}
     if(setup?.qualification)card.append(el('p',`${setup.qualification.engine??'Media test'}: ${setup.qualification.phase??setup.qualification.state}${setup.qualification.error?' · '+setup.qualification.error:''}`));
     if(setupHost?.error)card.append(el('p',setupHost.error,'media-job-detail'));
     if(!choice.enrolled){

@@ -19,6 +19,18 @@ test('setup status exposes partial byte progress without claiming preparation pa
   target.state='needs_attention';target.error='Download hash differs';assert.equal(read().status,'Needs attention');assert.match(read().detail,/Download hash differs/);
 });
 
+test('existing-worker media download exposes activity while preserving uncertainty and terminal failures',()=>{
+ const setup={worker_id:'one',phase:'preparing_media',detail:'h3: verify_or_download_models.',preparation:{model_download:{state:'observed',bytes_present:13e9,bytes_required:42.5e9,last_file_activity_at:'2026-09-17T10:23:49Z'}}};
+ const read=()=>capabilityStatus({gateway:{genie_capabilities:{media:true}}},{management:true,chat:{capabilities_configured:{media:true}},media:{setup:{connected:true,operations:[setup]}}}).capabilities.find(r=>r.key==='media');
+ assert.equal(read().status,'Working');assert.match(read().detail,/13\.0 \/ 42\.5 GB present/);assert.match(read().detail,/2026-09-17 10:23:49 UTC/);assert.match(read().detail,/partial downloads; verification is separate/);
+ setup.phase='observing_preparation';setup.detail='Status unavailable; observing original operation.';setup.preparation.model_download={state:'unavailable'};
+ assert.match(read().detail,/Status unavailable/);assert.match(read().detail,/download progress unavailable/);
+ setup.phase='failed_returned';setup.detail='Download failed; original LLM returned.';
+ assert.equal(read().status,'Needs attention');assert.equal(read().detail,'one setup: Download failed; original LLM returned.');
+ setup.phase='preparing_media';setup.preparation.model_download={state:'observed',bytes_present:13e9,bytes_required:42.5e9,last_file_activity_at:'invalid'};
+ assert.match(read().detail,/13\.0 \/ 42\.5/);assert.doesNotMatch(read().detail,/File activity/);
+});
+
 test('switches persist independently through core restart and use the existing dashboard control',async t=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sg-capabilities-'));
   const config={host:'127.0.0.1',port:0,api_key:'fixture',model:'fixture',context_length:262144,nodes:[],state_file:path.join(dir,'state.json'),control_socket:path.join(dir,'core.sock')};
