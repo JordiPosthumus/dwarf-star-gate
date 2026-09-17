@@ -132,6 +132,8 @@ def main():
                          "hours, inspect upstream PR timestamps directly, and distinguish "
                          "opened, updated and merged changes. Compare against the recorded engine/build; do not assume an "
                          "upstream change is missing locally. Explain uncertainty when local patches are unknown. Give the "
+                         "scope of partial or truncated reads; they cannot establish that a whole discussion has no relevant issue. "
+                         "Before recommending a trial, verify that its proposed variable changes the effective input or runtime behavior; identify missing facts rather than suggesting a no-op comparison. Give the "
                          "single most useful recommendation only, in at most two short paragraphs unless the owner asks "
                          "for detail. Keep alternatives for a follow-up. An open PR does not prove its code is absent from "
                          "a release or a local build. Research is not approval to install, benchmark or change "

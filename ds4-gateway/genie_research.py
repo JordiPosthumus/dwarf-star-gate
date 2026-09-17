@@ -1,12 +1,28 @@
 """Two read-only Hermes tools backed by explicitly configured local web services."""
 import hashlib
 import json
+import math
 import re
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
 TOOLSET = "web"
 NAMES = {"web_search", "web_extract"}
+
+
+def search_results(data):
+    # SearXNG JSON can group results by engine. Rank before taking the existing
+    # ten-result window so the first engine cannot crowd out the others.
+    def score(row):
+        value = row.get("score")
+        return value if type(value) in (int, float) and math.isfinite(value) else 0
+
+    rows = [r for r in data.get("results", []) if isinstance(r, dict) and str(r.get("url", "")).startswith("https://")]
+    rows.sort(key=score, reverse=True)
+    return [{"title": r.get("title", ""), "url": r["url"], "description": r.get("content", ""),
+             "published_at": r.get("publishedDate"), "score": score(r),
+             "engines": [name for name in (r.get("engines") if isinstance(r.get("engines"), list) else [r.get("engine")]) if isinstance(name, str)]}
+            for r in rows[:10]]
 
 
 def github_content(data):
@@ -78,11 +94,10 @@ def register_research(config, context, emit):
                     response = client.get(config["search_url"].rstrip("/") + "/search", params={"q": value, "format": "json", "language": "en"})
                     response.raise_for_status()
                     data = response.json()
-                results = [{"title": r.get("title", ""), "url": r.get("url", ""), "description": r.get("content", ""), "published_at": r.get("publishedDate")}
-                           for r in data.get("results", [])[:10] if str(r.get("url", "")).startswith("https://")]
+                results = search_results(data)
                 result = {"query": value, "checked_at": at, "results": results,
-                          "scope": "Search results can lag. Check original sources and timestamps before claiming something is recent."}
-                emit("research", event={"kind": kind, "state": "complete", "at": at, "finished_at": datetime.now(timezone.utc).isoformat(), "query": value, "sources": [{"title": r["title"], "url": r["url"]} for r in results]})
+                          "scope": "Results are ordered by the search service's score, not verified relevance. Unrelated hits are not evidence. Search results can lag; check original sources and timestamps before claiming something is recent."}
+                emit("research", event={"kind": kind, "state": "complete", "at": at, "finished_at": datetime.now(timezone.utc).isoformat(), "query": value, "sources": [{"title": r["title"], "url": r["url"], "engines": r["engines"], "score": r["score"]} for r in results]})
             else:
                 parsed = urlsplit(value)
                 if parsed.scheme != "https" or parsed.username or parsed.password or sensitive_query_param_name(value) or not is_safe_url(value):

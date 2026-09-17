@@ -1,10 +1,11 @@
 import sys
+import json
 import types
 import unittest
 from pathlib import PurePosixPath
 from urllib.parse import urlunsplit
 from unittest.mock import patch, Mock
-from genie_research import register_research
+from genie_research import register_research, search_results
 
 
 class ResearchValidation(unittest.TestCase):
@@ -45,6 +46,32 @@ class ResearchValidation(unittest.TestCase):
         self.assertIn("No alternate provider", result)
         self.assertEqual(self.network.call_count, 1)
         self.assertEqual(self.events[-1]["state"], "failed")
+
+    def test_engine_groups_are_ranked_before_tool_window_and_receipt(self):
+        rows = [{"url": f"https://example.org/{engine}/{i}", "title": f"{engine}-{i}",
+                 "engine": engine, "score": 1 / (i + 1)} for engine in ['first', 'second'] for i in range(9)]
+        response = Mock(); response.json.return_value = {"results": rows}
+        self.network.side_effect = None
+        self.network.return_value.__enter__ = Mock(return_value=Mock(get=Mock(return_value=response)))
+        self.network.return_value.__exit__ = Mock(return_value=False)
+        result = json.loads(self.handlers['web_search']({'query': 'public software'}))
+        self.assertEqual(len(result['results']), 10)
+        self.assertEqual([r['title'] for r in result['results'][:4]], ['first-0','second-0','first-1','second-1'])
+        self.assertEqual(sum(r['engines'] == ['second'] for r in result['results']), 5)
+        self.assertEqual(self.events[-1]['sources'][1]['engines'], ['second'])
+        self.assertEqual(self.events[-1]['sources'][1]['score'], 1)
+        self.assertIn('not verified relevance', result['scope'])
+        self.network.assert_called_once()
+
+    def test_missing_invalid_scores_keep_stable_order_and_https_window(self):
+        rows = [{'url': 'http://example.org/excluded', 'score': 100}, None,
+                {'url':'https://example.org/missing'}, {'url':'https://example.org/nan','score':float('nan')},
+                {'url':'https://example.org/infinite','score':float('inf')}, {'url':'https://example.org/bool','score':True},
+                {'url':'https://example.org/ranked','score':2,'engines':['first','second']}]
+        result = search_results({'results': rows})
+        self.assertEqual([r['url'].rsplit('/',1)[-1] for r in result], ['ranked','missing','nan','infinite','bool'])
+        self.assertEqual(result[0]['engines'], ['first','second'])
+        json.dumps(result, allow_nan=False)
 
     def test_hourglass_run_and_private_association_identifiers_stay_out_of_search(self):
         identifiers = ['private-report', 'benchmark-worker', 'private-approval', 'private-run', 'private-config', 'private-machine', 'private-bank']
