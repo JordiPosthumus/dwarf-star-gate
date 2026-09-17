@@ -2,6 +2,24 @@ import assert from 'node:assert/strict';
 import {isDeepStrictEqual} from 'node:util';
 import {createHash} from 'node:crypto';
 
+// A failed observation does not mean an already-started model failed. Keep
+// observing the same return; start/stop and generation are never retried here.
+export async function waitForMediaLlm(plan,{recoveryInspect,progress,delay,save}){
+  for(;;){
+    let current;
+    try{current=await recoveryInspect();}
+    catch(e){
+      save('llm-inspection-retry.json',{error:e.message});
+      progress('restoring_llm',`LLM readiness check unavailable (${e.message}); checking again without restarting it.`);
+      await delay(5000);continue;
+    }
+    assert.equal(current.profile,plan.recovery.profile);
+    if(current.listener&&!current.fault)return current;
+    progress('restoring_llm','Original LLM is loading with unchanged settings.');
+    await delay(5000);
+  }
+}
+
 // Testable lifecycle, shared by the detached product runner. Native generation
 // is submitted once. Waiting observes the same job without a cancellation limit.
 export async function runMediaCycle(plan,io){
@@ -87,7 +105,7 @@ export async function runMediaCycle(plan,io){
         unchanged(await inspect(plan.llm_container),before.llm);
         save('restore-llm-intent.json',{container:plan.llm_container});await start(plan.llm_container);
         progress('restoring_llm','Original LLM is loading with unchanged settings.');
-        for(;;){const current=await recoveryInspect();assert.equal(current.profile,plan.recovery.profile);if(current.listener&&!current.fault)break;await delay(5000);}
+        await waitForMediaLlm(plan,io);
         progress('checking_llm','Checking real responses and cold-to-warm cache reuse.');
         save('llm-proof.json',await verify());
         const result=await maintenance('finish');save('readmission.json',result);assert.equal(result.state,'readmitted');

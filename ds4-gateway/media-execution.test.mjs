@@ -86,6 +86,30 @@ test('failed LLM verification remains visible and does not claim readmission',as
   await assert.rejects(runMediaCycle(r.plan,r.io),/cache check failed/);
   assert.ok(r.events.includes('needs_attention'));assert.ok(!r.events.includes('finish'));
 });
+test('transient return inspections do not repeat generation or the LLM start',async t=>{
+  const r=cycleFixture(t),inspect=r.io.recoveryInspect,receipts={},details=[];let reads=0;
+  r.io.save=(name,value)=>{receipts[name]=value;};
+  r.io.progress=(phase,detail)=>{r.events.push(phase);details.push(detail);};
+  r.io.recoveryInspect=async()=>{
+    reads++;
+    if(reads===2||reads===3)throw Error('adapter_check_failed');
+    return {...await inspect(),listener:reads!==4};
+  };
+  await runMediaCycle(r.plan,r.io);
+  assert.equal(reads,5);assert.equal(r.submissions(),1);
+  assert.equal(r.events.filter(e=>e==='start:'+r.plan.llm_container).length,1);
+  assert.equal(r.events.filter(e=>e==='finish').length,1);
+  assert.ok(r.events.indexOf('verify')<r.events.indexOf('finish'));
+  assert.equal(receipts['llm-inspection-retry.json'].error,'adapter_check_failed');
+  assert.ok(details.some(d=>d.includes('without restarting')));
+});
+test('changed return profile remains an error rather than a retry or readmission',async t=>{
+  const r=cycleFixture(t),inspect=r.io.recoveryInspect;let reads=0;
+  r.io.recoveryInspect=async()=>({...await inspect(),profile:++reads===1?'profile':'changed'});
+  await assert.rejects(runMediaCycle(r.plan,r.io));
+  assert.equal(reads,2);assert.ok(r.events.includes('needs_attention'));
+  assert.ok(!r.events.includes('finish'));assert.equal(r.submissions(),1);
+});
 test('mismatched LLM identity causes no stop or maintenance action',async t=>{
   const r=cycleFixture(t);r.io.recoveryInspect=async()=>({profile:'profile',listener:true,fault:null,instance:'another-container'});
   await assert.rejects(runMediaCycle(r.plan,r.io),/same LLM container/);
