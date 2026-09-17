@@ -357,8 +357,15 @@ deployment receipts stay outside this public repository.
   against the full plan. A working chat or a passing unit suite is not completion.
   An installed-Hermes acceptance fixture now covers an actual gateway child
   replacement through the Door and restart coordinator, with active streaming,
-  held discovery, a second chat and one tool continuation. Model and tool replies
-  are synthetic; real model and platform service-manager acceptance remain separate.
+  held discovery, a second chat and one tool continuation. The original fixture
+  uses synthetic model and tool replies. On 17 September, a separate installed
+  Hermes acceptance also passed with real model replies through the serving
+  gateway: the old disposable core drained, a different core started, both chats
+  completed, discovery returned successfully, and the read-only fixture tool ran
+  exactly once. Door reported zero failed requests and no held arrivals afterward.
+  Production services were unchanged by this test. The tool result remained a
+  synthetic marker; arbitrary failure recovery, external-client resumption and
+  platform service-manager migration remain separate acceptance work.
 
 ## Release discipline
 
