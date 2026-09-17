@@ -13,6 +13,23 @@ woke Genie automatically, he assigned the host, and the runner generated audio,
 retained it and verified LLM return. The Media view now exposes saved host choices and job results. Read-only resource checks are available; native memory-fit qualification and
 complete fresh-host installation remain in progress.
 
+Genie can select a finite batch when `media_job_status` reports
+`batch_jobs_supported`: `start_media_job` accepts optional `following_job_ids`
+for up to seven additional queued, unassigned jobs of the same engine and
+priority. It reserves the whole selection together, runs each job once in order,
+retains each result separately and restores/verifies the original LLM once.
+This uses the existing media capability and maintenance controls, with no
+additional service or idle-residency timer. Genie chooses the batch size based on
+current text demand; at least one other LLM remains serving.
+
+Higher-priority unassigned media work is checked between jobs. On such an arrival,
+an unavailable checkpoint, or a failed batch job, the runner returns the original
+LLM before releasing unsubmitted jobs to the queue. Already submitted generation
+is never repeated or cancelled. Completed results remain available during return;
+an unfinished return keeps the batch reserved and visibly needs attention.
+These paths have component and installed-Hermes integration coverage; a native
+multi-job cycle is a separate installation acceptance check.
+
 For an isolated development installation, `"media_jobs": {"enabled": true}`
 enables a private `media-jobs.json` beside the gateway state file. The existing
 gateway process lock owns both stores; no additional service or database is

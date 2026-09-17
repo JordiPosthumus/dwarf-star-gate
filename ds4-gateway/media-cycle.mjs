@@ -2,6 +2,11 @@ import assert from 'node:assert/strict';
 import {isDeepStrictEqual} from 'node:util';
 import {createHash} from 'node:crypto';
 import {openAsBlob} from 'node:fs';
+import {priorityRank} from './job-priority.mjs';
+
+export function mediaBatchCanContinue(next,status){
+  return !status.jobs.some(j=>j.state==='queued'&&!j.execution&&priorityRank(j)>priorityRank(next));
+}
 
 // A failed observation does not mean an already-started model failed. Keep
 // observing the same return; start/stop and generation are never retried here.
@@ -24,7 +29,9 @@ export async function waitForMediaLlm(plan,{recoveryInspect,progress,delay,save}
 // Testable lifecycle, shared by the detached product runner. Native generation
 // is submitted once. Waiting observes the same job without a cancellation limit.
 export async function runMediaCycle(plan,io){
-  const {jobs,save,progress,maintenance,inspect,start,stop,recoveryInspect,verify,connect,delay}=io;
+  const {jobs,save,maintenance,inspect,start,stop,recoveryInspect,verify,connect,delay}=io;
+  const ids=plan.job_ids??[plan.operation_id];let activeId=plan.operation_id;
+  const progress=(phase,detail)=>io.progress(phase,detail,...(ids.length>1?[{active_job_id:activeId,batch_index:ids.indexOf(activeId)+1,batch_size:ids.length}]:[]));
   let before,connection,stopped=false,mediaStarted=false,ready=false,error;
   const unchanged=(a,b)=>{
     for(const key of ['Id','Image','Config','HostConfig']){
@@ -69,37 +76,48 @@ export async function runMediaCycle(plan,io){
       catch{if(!(await inspect(plan.engine.container)).State.Running)throw new Error('Media container exited before readiness');await delay(3000);}
     }
     assert.ok(ready,'Media readiness not established; no generation submitted');
-    const job=jobs.get(plan.operation_id);
-    for(const input of job.payload.input_files===undefined?[]:jobs.inputs.forJob(job.payload.input_files)){
-      progress('transferring_inputs',`Sending reference file ${input.name} to the selected engine.`);
-      await connection.backend.uploadInput(await openAsBlob(jobs.inputs.file(input.id),{type:input.content_type}),input.name);
+    for(const id of ids){
+      activeId=id;
+      const job=jobs.get(id);
+      if(id!==ids[0]&&io.continueBatch){
+        let proceed=false;
+        try{proceed=await io.continueBatch(job);}catch(e){save('batch-check-unavailable.json',{error:e.message});}
+        if(!proceed){
+          save('batch-yield.json',{remaining_job_ids:ids.slice(ids.indexOf(id)),reason:'Batch continuation deferred. Restore the LLM and release unstarted jobs.'});
+          break;
+        }
+      }
+      for(const input of job.payload.input_files===undefined?[]:jobs.inputs.forJob(job.payload.input_files)){
+        progress('transferring_inputs',`Sending reference file ${input.name} to the selected engine.`);
+        await connection.backend.uploadInput(await openAsBlob(jobs.inputs.file(input.id),{type:input.content_type}),input.name);
+      }
+      if(plan.engine.kind==='comfyui'){
+        const catalog=await connection.backend.request('/object_info');
+        assert.ok(job.payload.prompt&&Object.keys(job.payload.prompt).length,'Supply a native ComfyUI workflow');
+        for(const node of Object.values(job.payload.prompt))assert.ok(catalog[node.class_type],`Missing native node ${node.class_type}`);
+      }
+      assert.ok(await mediaIdle(),'Media engine already has native work');assert.equal((await maintenance('transition')).owned,true);
+      progress('generating','Submitting the saved media job once.');
+      await jobs.dispatch(job.id,connection.backend,plan.worker_id);
+      for(;;){
+        let observed;
+        try{observed=await jobs.observe(job.id,connection.backend);}
+        catch{progress('observing_media','Native progress is temporarily unavailable; observing the original job without repeating it.');await delay(3000);continue;}
+        progress('generating',`Native job: ${observed.state}.`);
+        if(['completed','failed'].includes(observed.state)){assert.equal(observed.state,'completed','Native media generation failed');break;}
+        await delay(3000);
+      }
+      progress('retaining_results','Saving generated files before releasing the media engine.');
+      await jobs.collect(job.id,connection.backend);
     }
-    if(plan.engine.kind==='comfyui'){
-      const catalog=await connection.backend.request('/object_info');
-      assert.ok(job.payload.prompt&&Object.keys(job.payload.prompt).length,'Supply a native ComfyUI workflow');
-      for(const node of Object.values(job.payload.prompt))assert.ok(catalog[node.class_type],`Missing native node ${node.class_type}`);
-    }
-    assert.ok(await mediaIdle(),'Media engine already has native work');assert.equal((await maintenance('transition')).owned,true);
-    progress('generating','Submitting the saved media job once.');
-    await jobs.dispatch(job.id,connection.backend,plan.worker_id);
-    for(;;){
-      let observed;
-      try{observed=await jobs.observe(job.id,connection.backend);}
-      catch{progress('observing_media','Native progress is temporarily unavailable; observing the original job without repeating it.');await delay(3000);continue;}
-      progress('generating',`Native job: ${observed.state}.`);
-      if(['completed','failed'].includes(observed.state)){assert.equal(observed.state,'completed','Native media generation failed');break;}
-      await delay(3000);
-    }
-    progress('retaining_results','Saving generated files before releasing the media engine.');
-    await jobs.collect(job.id,connection.backend);
-  }catch(e){error=e;if(jobs.get(plan.operation_id).state==='queued')jobs.update(plan.operation_id,{state:'failed',detail:e.message});save('failure.json',{error:e.message});}
+  }catch(e){error=e;if(jobs.get(activeId).state==='queued')jobs.update(activeId,{state:'failed',detail:e.message});save('failure.json',{error:e.message});}
   finally{
     try{
       if(stopped){
         assert.equal((await maintenance('owned')).owned,true);
         if(mediaStarted&&(await inspect(plan.engine.container)).State.Running){
           // Do not interrupt an accepted generation, including other direct work.
-          if(jobs.get(plan.operation_id).native_id||ready){
+          if(jobs.get(activeId).native_id||ready){
             while(!await mediaIdle()){progress('waiting_media_idle','Waiting for direct media work before restoring the LLM.');await delay(3000);}
           }
           await stop(plan.engine.container);
@@ -124,5 +142,5 @@ export async function runMediaCycle(plan,io){
     connection?.close();
   }
   if(error)throw error;
-  return {native_generation_verified:true,llm_return_verified:true};
+  return {native_generation_verified:ids.every(id=>jobs.get(id).state==='completed'),llm_return_verified:true,...(ids.length>1?{completed_job_ids:ids.filter(id=>jobs.get(id).state==='completed'),unstarted_job_ids:ids.filter(id=>jobs.get(id).state==='queued')}: {})};
 }

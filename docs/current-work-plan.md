@@ -385,6 +385,11 @@ deployment receipts stay outside this public repository.
   and result support. Elaborate borrowing optimisation, residency prediction and
   broad failure hardening follow the working end-to-end workflow; preserve basic
   continuity, retained configurations and clear failure reporting from the start.
+  Genie can now select a finite batch of existing same-engine/same-priority media
+  jobs, keeping the engine loaded between them and performing one verified LLM
+  return. Higher-priority arrivals can yield unstarted jobs between generations.
+  Atomic reservation, separate results, failure/return behavior and the installed
+  Hermes tool path pass component tests; native batch acceptance remains separate.
 - [ ] Complete installation, migration, continuity and failure-path acceptance
   against the full plan. A working chat or a passing unit suite is not completion.
   An installed-Hermes acceptance fixture now covers an actual gateway child

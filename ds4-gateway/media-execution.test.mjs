@@ -7,7 +7,7 @@ import {createHash} from 'node:crypto';
 import {Readable} from 'node:stream';
 import {MediaJobs} from './media-jobs.mjs';
 import {createMediaExecution,saveMediaReceipt} from './media-execution.mjs';
-import {runMediaCycle} from './media-cycle.mjs';
+import {runMediaCycle,mediaBatchCanContinue} from './media-cycle.mjs';
 
 function fixture(t,kind='video'){
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'sg-media-execution-'));t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
@@ -47,6 +47,35 @@ test('uncertain process launch is retained and never replayed',async t=>{
   await assert.rejects(service.start(input));assert.equal(r.jobs.get(r.job.id).execution.phase,'launch_uncertain');
   await service.start(input);assert.equal(calls,1);
 });
+test('batch reservation is atomic, shares progress across core restart and never relaunches',async t=>{
+  const r=fixture(t),second=r.jobs.enqueue('video',{prompt:{two:{class_type:'Fixture'}}},{key:'batch-second'}).job;let launches=0;
+  const options={isEnabled:()=>true,launchRunner:async()=>{launches++;throw Error('acknowledgement lost');}};
+  const service=createMediaExecution(r.config,r.jobs,options),input={job_id:r.job.id,worker_id:'one',following_job_ids:[second.id]};
+  await assert.rejects(service.start({...input,following_job_ids:[second.id,second.id]}),/only once/);
+  await assert.rejects(service.start({...input,following_job_ids:[second.id,'00000000-0000-4000-8000-000000000000']}),/Unknown/);
+  assert.equal(r.jobs.queued().length,2);assert.equal(launches,0);
+  await assert.rejects(service.start(input),/acknowledgement/);assert.equal(r.jobs.queued().length,0);
+  const restored=new MediaJobs(r.jobs.filename),again=createMediaExecution(r.config,restored,options);
+  assert.equal(restored.get(second.id).execution.phase,'launch_uncertain');
+  await again.start(input);await again.start({job_id:second.id,worker_id:'one'});assert.equal(launches,1);
+  await assert.rejects(again.start({...input,following_job_ids:[]}),/different batch/);
+  const folder=r.jobs.executionFolder(r.job.id),native=new MediaJobs(path.join(folder,'media-jobs.json'));
+  native.update(r.job.id,{state:'completed',outputs:{state:'ready',files:[]}});
+  saveMediaReceipt(folder,'progress.json',{phase:'restoring_llm',active_job_id:second.id});
+  assert.equal(restored.get(r.job.id).state,'completed');assert.equal(restored.get(second.id).execution.phase,'restoring_llm');assert.equal(restored.queued().length,0);
+  saveMediaReceipt(folder,'progress.json',{phase:'returned'});
+  assert.equal(restored.get(r.job.id).state,'completed');assert.equal(restored.get(second.id).execution,undefined);
+  assert.deepEqual(restored.queued().map(j=>j.id),[second.id]);assert.equal(again.status().workers[0].busy,false);
+  // Reassignment persists a new owner instead of continuing to read the old batch.
+  const newService=createMediaExecution(r.config,restored,{isEnabled:()=>true,launchRunner:async()=>({pid:456})});
+  await newService.start({job_id:second.id,worker_id:'one'});assert.equal(restored.get(second.id).execution.operation_id,undefined);
+});
+test('batch selection rejects mixed engines and priorities without reserving any jobs',async t=>{
+  const r=fixture(t),music=r.jobs.enqueue('music',{prompt:'music'},{key:'music'}).job,high=r.jobs.enqueue('video',{prompt:{}},{key:'high',priority:'high'}).job;
+  const service=createMediaExecution(r.config,r.jobs,{isEnabled:()=>true,launchRunner:()=>{throw Error('must not launch');}});
+  for(const id of [music.id,high.id])await assert.rejects(service.start({job_id:r.job.id,worker_id:'one',following_job_ids:[id]}),/same engine and priority/);
+  assert.equal(r.jobs.queued().length,3);
+});
 test('removed or retargeted workers cannot borrow engines from their old enrollment',async t=>{
   const r=fixture(t);let launched=false;
   const service=createMediaExecution(r.config,r.jobs,{isEnabled:()=>true,matchesWorker:()=>false,launchRunner:async()=>{launched=true;}});
@@ -61,7 +90,7 @@ function cycleFixture(t,kind='video'){
   const llm=containers.get('a'.repeat(64)),instance=createHash('sha256').update(JSON.stringify([llm.Id,llm.State.StartedAt])).digest('hex').slice(0,32);
   const plan={operation_id:r.job.id,worker_id:'one',llm_container:llm.Id,engine:r.engine,recovery:{profile:'profile'}};
   const events=[];let held=false,submitted=0;
-  const backend={kind:'comfyui',request:async route=>route==='/object_info'?{Fixture:{}}:route==='/queue'?{queue_running:[],queue_pending:[]}:{},submit:async()=>{submitted++;return {native_id:r.job.id};},observe:async()=>({state:'completed',result:{}})};
+  const backend={kind:'comfyui',request:async route=>route==='/object_info'?{Fixture:{}}:route==='/queue'?{queue_running:[],queue_pending:[]}:{},submit:async(_payload,requestId)=>{submitted++;return {native_id:requestId};},observe:async()=>({state:'completed',result:{}})};
   r.jobs.collect=async id=>{events.push('collect');return r.jobs.update(id,{outputs:{state:'ready',files:[]}});};
   const io={jobs:r.jobs,save:()=>{},progress:(phase)=>events.push(phase),delay:async()=>{},hasMaintenanceIntent:()=>held,
     maintenance:async action=>{events.push(action);if(action==='prepare')held=true;return action==='finish'?{state:'readmitted'}:{owned:true};},
@@ -76,12 +105,45 @@ test('native cycle drains, generates once, retains files, verifies LLM and readm
   let previous=-1;for(const item of ordered){const index=r.events.indexOf(item);assert.ok(index>previous,item);previous=index;}
   assert.equal(r.containers.get(r.plan.llm_container).State.Running,true);
 });
+test('two selected media jobs submit and retain separately with one engine start and one LLM return',async t=>{
+  const r=cycleFixture(t),second=r.jobs.enqueue('video',{prompt:{one:{class_type:'Fixture'}}},{key:'second'}).job;
+  r.plan.job_ids=[r.job.id,second.id];let checkpoints=0;r.io.continueBatch=async job=>{assert.equal(job.id,second.id);checkpoints++;return true;};
+  const result=await runMediaCycle(r.plan,r.io);
+  assert.equal(r.submissions(),2);assert.equal(checkpoints,1);assert.deepEqual(result.completed_job_ids,r.plan.job_ids);
+  for(const event of ['prepare','start:'+r.engine.container,'stop:'+r.engine.container,'start:'+r.plan.llm_container,'verify','finish'])assert.equal(r.events.filter(e=>e===event).length,1,event);
+  assert.equal(r.events.filter(e=>e==='collect').length,2);
+  assert.equal(r.jobs.get(second.id).state,'completed');
+  assert.equal(r.jobs.get(second.id).native_id,second.id);assert.equal(r.jobs.get(r.job.id).native_id,r.job.id);
+});
+test('between-job priority yield or unavailable checkpoint leaves unstarted work queued and restores the LLM',async t=>{
+  for(const unavailable of [false,true]){
+    const r=cycleFixture(t),second=r.jobs.enqueue('video',{prompt:{one:{class_type:'Fixture'}}},{key:'second'}).job;
+    r.plan.job_ids=[r.job.id,second.id];r.io.continueBatch=async next=>{if(unavailable)throw Error('core unavailable');return mediaBatchCanContinue(next,{jobs:[{state:'queued',priority:'high'}]});};
+    const result=await runMediaCycle(r.plan,r.io);
+    assert.equal(r.submissions(),1);assert.equal(r.jobs.get(second.id).state,'queued');assert.deepEqual(result.unstarted_job_ids,[second.id]);
+    assert.equal(result.native_generation_verified,false);assert.equal(result.llm_return_verified,true);assert.ok(r.events.includes('returned'));
+  }
+});
+test('a same-priority arrival does not break the selected batch; higher queued work does',()=>{
+  assert.equal(mediaBatchCanContinue({priority:'normal'},{jobs:[{state:'queued',priority:'normal'}]}),true);
+  assert.equal(mediaBatchCanContinue({priority:'idle-only'},{jobs:[{state:'queued',priority:'normal'}]}),false);
+  assert.equal(mediaBatchCanContinue({priority:'normal'},{jobs:[{state:'queued',priority:'high',execution:{phase:'starting'}}]}),true);
+  assert.equal(mediaBatchCanContinue({priority:'normal'},{jobs:[{state:'completed',priority:'high'}]}),true);
+});
+test('a later failed job preserves earlier results, leaves following jobs unsubmitted and returns the LLM',async t=>{
+  const r=cycleFixture(t),second=r.jobs.enqueue('video',{prompt:{one:{class_type:'Fixture'}}},{key:'second'}).job,third=r.jobs.enqueue('video',{prompt:{one:{class_type:'Fixture'}}},{key:'third'}).job;
+  r.plan.job_ids=[r.job.id,second.id,third.id];r.io.continueBatch=async()=>true;
+  r.backend.observe=async()=>({state:r.submissions()===2?'failed':'completed',result:{}});
+  await assert.rejects(runMediaCycle(r.plan,r.io),/generation failed/);
+  assert.equal(r.submissions(),2);assert.equal(r.jobs.get(r.job.id).outputs.state,'ready');assert.equal(r.jobs.get(second.id).state,'failed');assert.equal(r.jobs.get(third.id).state,'queued');
+  assert.ok(r.events.includes('failed_returned'));assert.equal(r.containers.get(r.plan.llm_container).State.Running,true);
+});
 test('reference input transfer precedes generation and a transfer failure still returns the LLM',async t=>{
  for(const failTransfer of [false,true]){
   const r=cycleFixture(t),stream=Readable.from([Buffer.from('wave-data')]);stream.headers={'content-type':'audio/wav','content-length':'9'};
   const input=await r.jobs.inputs.receive(stream);r.jobs.update(r.job.id,{payload:{...r.job.payload,input_files:[input.id]}});
   r.backend.uploadInput=async(blob,name)=>{r.events.push('upload');assert.equal(name,input.name);assert.equal(await blob.text(),'wave-data');if(failTransfer)throw Error('Input transfer failed');};
-  const submit=r.backend.submit;r.backend.submit=async payload=>{r.events.push('submit');assert.equal(payload.input_files,undefined);return submit(payload);};
+  const submit=r.backend.submit;r.backend.submit=async(payload,requestId)=>{r.events.push('submit');assert.equal(payload.input_files,undefined);return submit(payload,requestId);};
   if(failTransfer){await assert.rejects(runMediaCycle(r.plan,r.io),/Input transfer failed/);assert.equal(r.submissions(),0);assert.ok(r.events.includes('failed_returned'));}
   else{await runMediaCycle(r.plan,r.io);assert.ok(r.events.indexOf('upload')<r.events.indexOf('submit'));assert.equal(r.submissions(),1);}
   assert.equal(r.containers.get(r.plan.llm_container).State.Running,true);assert.ok(r.events.includes('finish'));

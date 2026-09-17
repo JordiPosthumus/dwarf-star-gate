@@ -52,14 +52,19 @@ export class MediaJobs {
     const saved=this.data.jobs.find(j=>j.id===id);if(!saved)throw fail(404,'Unknown media job');
     let job=structuredClone(saved);
     if(saved.execution){
-      const folder=this.executionFolder(id),native=path.join(folder,'media-jobs.json'),progress=path.join(folder,'progress.json');
       try{
+        const folder=this.executionFolder(saved.execution.operation_id??id),native=path.join(folder,'media-jobs.json'),progress=path.join(folder,'progress.json');
         if(fs.existsSync(native)){
           const row=JSON.parse(fs.readFileSync(native,'utf8')).jobs?.find(j=>j.id===id);
           if(!row||row.fingerprint!==saved.fingerprint)throw new Error('Execution does not match the original media request');
           for(const key of ['state','worker','backend','native_id','detail','outputs','result','updated_at'])if(Object.hasOwn(row,key))job[key]=row[key];
         }
         if(fs.existsSync(progress))job.execution={...saved.execution,...JSON.parse(fs.readFileSync(progress,'utf8'))};
+        // A finite batch can end early. Only unsubmitted jobs are released, and
+        // only after its original LLM returned (or no machine change occurred).
+        if(job.state==='queued'&&['returned','failed_returned','failed_unchanged'].includes(job.execution.phase)){
+          delete job.execution;job.detail='Previous batch ended before this job started; it remains queued.';
+        }
       }catch{job.execution={...saved.execution,phase:'observation_failed',detail:'Saved media execution could not be read; inspect its original process. No job was repeated.'};}
     }
     if(!job.detail)job.detail=nativeFailureDetail(job);
@@ -67,6 +72,12 @@ export class MediaJobs {
   }
   list(kind){return this.data.jobs.filter(j=>!kind||j.kind===kind).map(j=>{const {payload,fingerprint,key_hash,...job}=this.get(j.id);return job;});}
   queued(){return this.list().filter(j=>j.state==='queued'&&!j.execution).sort((a,b)=>priorityRank(b)-priorityRank(a));}
+  assignExecution(ids,execution){
+    const selected=ids.map(id=>this.get(id));
+    if(new Set(ids).size!==ids.length||selected.some(j=>j.state!=='queued'||j.execution))throw fail(409,'Every selected job must still be queued and unassigned');
+    const replacements=new Map(selected.map(j=>[j.id,{...j,execution:structuredClone(execution),updated_at:now()}]));
+    this.save({...this.data,jobs:this.data.jobs.map(j=>replacements.get(j.id)??j)});
+  }
   enqueue(kind,payload,{key,priority='normal'}={}){
     if(!['music','video'].includes(kind)||!object(payload))throw fail(400,'Media payload must be a JSON object');
     if(typeof key!=='string'||!/^[\x21-\x7e]{1,200}$/.test(key))throw fail(400,'An Idempotency-Key header (1–200 printable characters) is required');
