@@ -143,3 +143,19 @@ test('authenticated gateway media API is durable, isolated from LLM routes and r
   assert.equal((await call('/v1/chat/completions',{model:'fixture',messages:[{role:'user',content:'hello'}]})).status,200);assert.equal(inference,1);
   gateway.drain();assert.equal((await call('/v1/video/jobs',{prompt:{}},{'idempotency-key':'video'})).status,503);assert.equal((await call(job.status_url)).status,200);
 });
+
+
+test('operation start survives changing runner receipt timestamps without rewriting saved jobs',t=>{
+  const file=path.join(directory(t),'jobs.json'),q=new MediaJobs(file);
+  const first=q.enqueue('video',{prompt:{}},{key:'first'}).job.id;
+  const second=q.enqueue('video',{prompt:{}},{key:'second'}).job.id;
+  const started='2026-01-01T01:00:00.000Z';
+  q.assignExecution([first,second],{worker_id:'fixture',operation_id:first,phase:'starting',at:started,batch_job_ids:[first,second]});
+  const folder=q.executionFolder(first);fs.mkdirSync(folder,{recursive:true});
+  const original=fs.readFileSync(file);
+  for(const heartbeat of ['2026-01-01T01:05:00.000Z','2026-01-01T01:10:00.000Z']){
+    fs.writeFileSync(path.join(folder,'progress.json'),JSON.stringify({phase:'generating',active_job_id:second,at:heartbeat,heartbeat_at:heartbeat}));
+    for(const job of q.list()){assert.equal(job.execution.started_at,started);assert.equal(job.execution.at,heartbeat);}
+  }
+  assert.ok(fs.readFileSync(file).equals(original));
+});

@@ -117,7 +117,7 @@ return createDashboard(()=>({...snapshot,time:Date.now(),gateway_at:Date.now(),
   }),
   cache_continuity:{...snapshot.cache_continuity,checked_at:Date.now()},
   gateway:{...snapshot.gateway,total:workers.length,healthy:workers.filter(w=>w.is_healthy).length,available:workers.filter(w=>w.is_healthy&&!w.drained).length,active:workers.filter(w=>w.load).length,queued:workers.reduce((a,w)=>a+w.queued,0)}}),undefined,{
-  media:async()=>({jobs:mediaDemo?[{id:'00000000-0000-4000-8000-000000000002',kind:'video',state:'running',execution:{worker_id:'sparkA',operation_id:'00000000-0000-4000-8000-000000000001',active_job_id:'00000000-0000-4000-8000-000000000002',phase:'generating',at:new Date(Date.now()-660000).toISOString(),changed_at:new Date(Date.now()-180000).toISOString(),heartbeat_at:new Date(Date.now()-2000).toISOString(),batch_index:2,batch_size:3}}]:[]}),
+  media:async()=>({jobs:mediaDemo?[{id:'00000000-0000-4000-8000-000000000002',kind:'video',state:'running',execution:{worker_id:'sparkA',operation_id:'00000000-0000-4000-8000-000000000001',active_job_id:'00000000-0000-4000-8000-000000000002',phase:'generating',started_at:new Date(Date.now()-660000).toISOString(),changed_at:new Date(Date.now()-180000).toISOString(),heartbeat_at:new Date(Date.now()-2000).toISOString(),batch_index:2,batch_size:3}}]:[]}),
   read:async()=>registry(),
   act:async(action,input)=>{
     if(action==='conversation-turns'){

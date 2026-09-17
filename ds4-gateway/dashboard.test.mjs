@@ -1190,6 +1190,8 @@ test('Fleet projection follows the active batch job and omits private native dat
   const execution={worker_id:'sparkA',operation_id:'first',active_job_id:'second',phase:'generating',batch_index:2,batch_size:2};
   const data=fleetMediaWorkloads({jobs:[{id:'first',kind:'video',state:'completed',execution,result:{prompt:'PRIVATE'}},{id:'second',kind:'video',state:'running',execution,payload:{prompt:'PRIVATE'}},{id:'old',kind:'music',execution:{worker_id:'sparkB',phase:'returned'}}]},1000);
   assert.equal(data.workloads.length,1);assert.equal(data.workloads[0].job_id,'second');assert.equal(data.workloads[0].state,'running');assert.equal(data.workloads[0].batch_index,2);assert.doesNotMatch(JSON.stringify(data),/PRIVATE|payload|result/);
+  assert.equal(data.workloads[0].started_at,null,'old cores must not use heartbeat time as operation start');
+  execution.started_at='2026-01-01T01:00:00.000Z';execution.at='2026-01-01T02:00:00.000Z';assert.equal(fleetMediaWorkloads({jobs:[{id:'second',execution}]}).workloads[0].started_at,execution.started_at);
   execution.phase='restoring_llm';assert.equal(fleetMediaWorkloads({jobs:[{id:'second',kind:'video',state:'completed',execution}]}).workloads[0].phase,'restoring_llm');
   for(const phase of ['returned','failed_returned','failed_unchanged'])assert.equal(fleetMediaWorkloads({jobs:[{id:'done',execution:{worker_id:'sparkA',phase}}]}).workloads.length,0);
 });
