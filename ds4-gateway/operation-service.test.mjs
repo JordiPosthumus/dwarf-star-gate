@@ -124,6 +124,19 @@ test('candidate cache rejection stays visible during restoration without claimin
   assert.deepEqual((await r.service.tool({action:'status',id:r.id})).candidate_qualification,{state:'unreadable'});
 });
 
+test('specific native check failure reaches Genie and UI without replacing generic transport privacy',async t=>{
+  const r=await rig(t);await r.service.tool({action:'propose',proposal:r.proposal});await r.service.store.idle();
+  r.service.store.write(r.id,'qualified-candidate.json',{state:'failed',cache_capacity_acceptance:{state:'failed',reason:'capacity_unavailable'}});
+  fs.mkdirSync(path.join(r.folder,'qualification-candidate'));
+  const file=path.join(r.folder,'qualification-candidate/result.json'),message='Concurrent flow B: Warm cache B reused 0 tokens from a 7563-token prompt; substantial prefix reuse was not demonstrated.';
+  fs.writeFileSync(file,JSON.stringify({state:'failed',check_failure:message,error:'PRIVATE transport detail'}));
+  const view=await r.service.tool({action:'status',id:r.id});assert.equal(view.candidate_qualification.check_failure,message);assert.doesNotMatch(JSON.stringify(view),/PRIVATE/);
+  assert.match(operationQualification((await r.service.status()).operations[0]),/Warm cache B reused 0/);
+  fs.writeFileSync(file,JSON.stringify({state:'failed',check_failure:null,error:'PRIVATE transport detail'}));
+  assert.equal((await r.service.tool({action:'status',id:r.id})).candidate_qualification.check_failure,null);
+  assert.equal(fs.existsSync(path.join(r.folder,'launch-intent.json')),false);
+});
+
 test('operations stay absent by default and tool status does not expose execution paths or review commands',()=>{
   assert.equal(createOperationService({}),null);
   const view=operationToolView({id:'fixture',state:'awaiting_approval',review:{command:'PRIVATE_COMMAND',path:'/private/secret'},runner:{state:'running',process_alive:true,progress:{phase:'working',detail:'Checking',heartbeat_at:1,changed_at:1}}});

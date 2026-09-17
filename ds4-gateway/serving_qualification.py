@@ -16,9 +16,12 @@ import zlib
 from concurrent.futures import ThreadPoolExecutor
 from operation_runner import save
 
+class NativeCheckFailure(ValueError):
+    """A controlled check explanation, never an arbitrary transport error."""
+
 def require(condition, message):
     if not condition:
-        raise ValueError(message)
+        raise NativeCheckFailure(message)
 
 
 def choice(result, finish='stop'):
@@ -97,7 +100,7 @@ def api_checks(request, nonce, contract, value=7319):
         require(f'WARM_{key}_OK' in (choice(result).get('content') or ''), 'Warm conversation failed')
         prompt, cached = cache_usage(result)
         require(prompt >= cold_prompt and cached > cold_cached and cached >= 2000,
-                'Substantial warm prefix reuse was not demonstrated')
+                f'Warm cache {key} reused {cached} tokens from a {prompt}-token prompt; substantial prefix reuse was not demonstrated.')
         samples.append({'conversation': key, 'cold_prompt': cold_prompt, 'cold_cached': cold_cached,
                         'warm_prompt': prompt, 'warm_cached': cached})
 
@@ -226,8 +229,11 @@ def concurrency_checks(request, nonce, contract):
             'Native work remains after the concurrency probe')
     def flow(label,value):
         def scoped(name,*args,**kwargs):return request('pair-'+label+'-'+name,*args,**kwargs)
-        return {'value':value,'api':api_checks(scoped,nonce+'-'+label,contract,value),
-                'eos':eos_checks(scoped,contract)}
+        try:
+            return {'value':value,'api':api_checks(scoped,nonce+'-'+label,contract,value),
+                    'eos':eos_checks(scoped,contract)}
+        except NativeCheckFailure as error:
+            raise NativeCheckFailure(f'Concurrent flow {label}: {error}') from error
     with ThreadPoolExecutor(max_workers=2) as pool:
         futures=[pool.submit(flow,'A',7319),pool.submit(flow,'B',8462)]
         flows=[f.result() for f in futures]
@@ -322,8 +328,9 @@ class NativeQualification:
                       'cases': cases, 'api': api, 'eos': eos, 'failure_metrics_before': before_metrics, 'failure_metrics_after': after_metrics,
                       'scope': 'Native API/cache/context/tools/vision/EOS and failure-counter checks. Separate retained-identity, native-idle, runtime settings and readmission checks remain required. Concurrency is qualified only when explicitly enrolled and present in the result; not an exhaustive output-length or quality proof.'}
             if concurrent:result['concurrency']=concurrent
-        except Exception:
+        except Exception as error:
             result = {'state': 'failed', 'at': time.time(), 'contract': self.contract, 'cases': cases,
+                      'check_failure': str(error) if isinstance(error, NativeCheckFailure) else None,
                       'error': 'A native qualification check did not complete successfully. Inspect the saved request and response evidence; no inference was retried.'}
         result['cache_capacity']=capacity
         save(folder, 'result.json', result)

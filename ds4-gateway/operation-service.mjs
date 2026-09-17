@@ -115,9 +115,10 @@ export function createOperationService(config,{directory,isTesting=()=>false,isE
     try{
       const proof=store.read(row.id,'qualified-candidate.json');
       if(proof){
-        const cache=store.read(row.id,'cache-comparison-candidate.json'),acceptance=proof.cache_capacity_acceptance;
+        const cache=store.read(row.id,'cache-comparison-candidate.json'),acceptance=proof.cache_capacity_acceptance,native=store.read(row.id,'qualification-candidate/result.json');
         const number=v=>Number.isFinite(v)?v:null;
         current.candidate_qualification={state:['passed','failed'].includes(proof.state)?proof.state:'unknown',
+          check_failure:native?.state==='failed'&&typeof native.check_failure==='string'?native.check_failure.slice(0,1000):null,
           cache_acceptance:['passed','failed'].includes(acceptance?.state)?acceptance.state:null,
           reason:['capacity_unavailable','within_reviewed_allowance','exceeds_reviewed_allowance'].includes(acceptance?.reason)?acceptance.reason:null,
           allowed_loss_percent:number(acceptance?.policy?.max_loss_percent),

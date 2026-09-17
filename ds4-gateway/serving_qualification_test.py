@@ -105,7 +105,9 @@ class QualificationTest(unittest.TestCase):
                 result['body_base64'] = base64.b64encode(json.dumps(data).encode()).decode()
             return result
         self.api.mutate = change
-        self.assertEqual(self.qualifier.verify(self.path)['state'], 'failed')
+        result = self.qualifier.verify(self.path)
+        self.assertEqual(result['state'], 'failed')
+        self.assertIn('Warm cache A reused 0 tokens', result['check_failure'])
 
     def test_missing_tool_call_is_not_accepted_as_a_claimed_action(self):
         def change(route, body, result):
@@ -135,7 +137,9 @@ class QualificationTest(unittest.TestCase):
 
     def test_lost_inference_reply_is_preserved_and_never_retried(self):
         self.api.fail = '/v1/chat/completions'
-        self.assertEqual(self.qualifier.verify(self.path)['state'], 'failed')
+        result = self.qualifier.verify(self.path)
+        self.assertEqual(result['state'], 'failed')
+        self.assertIsNone(result['check_failure'])
         self.assertEqual(sum(route == self.api.fail for route, _ in self.api.calls), 1)
         self.assertTrue((self.path / 'text.intent.json').exists())
         self.assertFalse((self.path / 'text.result.json').exists())

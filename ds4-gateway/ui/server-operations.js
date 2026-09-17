@@ -34,6 +34,7 @@ export function operationQualification(row){
   const q=row.candidate_qualification;if(!q)return null;
   if(q.state==='unreadable')return 'Candidate qualification evidence could not be read.';
   if(q.state!=='failed')return null;
+  if(q.check_failure)return `Candidate rejected: ${q.check_failure} See progress for restoration status.`;
   if(q.reason==='exceeds_reviewed_allowance'){
     const counts=Number.isFinite(q.baseline_cache_tokens)&&Number.isFinite(q.candidate_cache_tokens)?` ${q.baseline_cache_tokens.toLocaleString('en-US')} → ${q.candidate_cache_tokens.toLocaleString('en-US')} cache tokens.`:'';
     const change=Number.isFinite(q.delta_percent)?` Change: ${q.delta_percent.toFixed(2)}%.`:'';
