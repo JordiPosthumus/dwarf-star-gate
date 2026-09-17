@@ -1,6 +1,7 @@
 // One detached process owns a selected job/batch and its single LLM return.
 // It writes its own queue receipt; the core remains the sole global-queue writer.
 import fs from 'node:fs';
+import {mediaInputRequirements} from './media-input-placement.mjs';
 import path from 'node:path';
 import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
@@ -24,7 +25,7 @@ export function createMediaExecution(config,jobs,{isEnabled=()=>false,launchRunn
   const terminal=new Set(['returned','failed_returned','failed_unchanged']);
   const busy=worker=>jobs.list().some(j=>j.execution?.worker_id===worker&&!terminal.has(j.execution.phase));
   return {
-    status:()=>({configured:!!jobs,enabled:isEnabled(),batch_jobs_supported:true,jobs:jobs?.list()??[],workers:Object.entries(targets()).map(([id,t])=>({id,kinds:Object.keys(t.engines??{}).filter(kind=>isAllowed(id,kind)),busy:jobs?busy(id):false}))}),
+    status:()=>({configured:!!jobs,enabled:isEnabled(),batch_jobs_supported:true,jobs:jobs?.list().map(j=>({...j,input_requirements:mediaInputRequirements(jobs.get(j.id))}))??[],workers:Object.entries(targets()).map(([id,t])=>({id,kinds:Object.keys(t.engines??{}).filter(kind=>isAllowed(id,kind)),busy:jobs?busy(id):false}))}),
     async start(input){
       if(!jobs||!isEnabled())throw new Error('Media execution is switched off.');
       if(!input||!['job_id,worker_id','following_job_ids,job_id,worker_id'].includes(Object.keys(input).sort().join(',')))throw new Error('Choose a queued job and enrolled worker.');

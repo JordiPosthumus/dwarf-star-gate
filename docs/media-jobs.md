@@ -96,6 +96,17 @@ correct native wiring and transfers the retained files to the selected worker;
 you do not need to copy them separately onto each Spark. A filename that exists
 on only one worker is not a portable reference.
 
+Genie sees `input_requirements` for stock `LoadImage` / `LoadAudio` nodes and can
+call `inspect_media_inputs(job_id, worker_id)` before choosing a worker. The tool
+uses the Server inspection switch and reads mounted file metadata through the
+enrolled connection, without starting H3 or draining the LLM. Results identify
+present, missing, non-file or unknown paths on that worker. Unmounted paths,
+custom launchers/loaders and unresolved symlinks remain unverified; unknown does
+not mean missing. The existing start API remains available, and native validation
+still runs before generation. File presence alone does not prove valid decoding
+or reference fidelity. The check and its outcome are retained in chat activity.
+
+
 This form uses the shipped REF2VA recipe: 608×352, 124 frames at 24 fps, 20 steps,
 reference sizing `match`. The receipt exposes these settings plus the reference
 IDs and hashes. A valid receipt confirms the requested inputs, not visual fidelity.

@@ -4,6 +4,7 @@ import {genieCapabilityKeys,validateGenieCapabilities,genieCapabilities} from '.
 import {createMediaExecution} from './media-execution.mjs';
 import {sparkServiceBinding,validateServiceAddition,applyServiceAddition,restoreSparkServices} from './spark-services.mjs';
 import {MediaJobs,handleMediaRequest} from './media-jobs.mjs';
+import {inspectMediaJobInputs} from './media-input-placement.mjs';
 import {activeJobs,activeCount,hasCapacity,requestCapacity,oldestActive} from './worker-activity.mjs';
 import {PRIORITY_HEADER,requestPriority,priorityRank,priorityIndex,priorityOrder} from './job-priority.mjs';
 import {outputShape} from './output-shape.mjs';
@@ -1431,6 +1432,14 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     if (req.method === 'GET' && req.url === '/workers') return json(res, 200, registry());
     if(req.method==='GET'&&req.url==='/spark-services')return json(res,200,{schema:1,workers:Object.fromEntries(Object.entries(store.data.spark_services??{}).filter(([id])=>nodes.some(n=>n.id===id)).map(([id,row])=>[id,{inspection:row.inspection,recovery:true,media:Object.keys(row.media.engines)}]))});
     if(req.method==='GET'&&req.url==='/media-jobs')return json(res,200,mediaStatus());
+    if(req.method==='POST'&&req.url==='/genie-media-inputs'){
+      let body='';req.on('data',chunk=>{body+=chunk;if(Buffer.byteLength(body)>2048)req.destroy();});req.on('error',()=>{});
+      req.on('end',()=>{void (async()=>{try{
+        if(!capabilityStatus().inspection)throw Error('Server inspection is switched off.');
+        if(!mediaJobs)throw Error('Media jobs are not configured.');
+        return json(res,200,await inspectMediaJobInputs(serviceConfig,mediaJobs,JSON.parse(body)));
+      }catch(e){return error(res,409,'media_input_inspection_failed',e.message);}})();});return;
+    }
     if(req.method==='POST'&&['/genie-media-start','/genie-media-setup','/media-setup-complete'].includes(req.url)){
       let body='';req.on('data',chunk=>{body+=chunk;if(Buffer.byteLength(body)>2048)req.destroy();});req.on('error',()=>{});
       req.on('end',()=>{void serialize(async()=>{try{const input=JSON.parse(body);return json(res,202,await (req.url==='/genie-media-start'?mediaExecution.start(input):req.url==='/genie-media-setup'?mediaSetup.start(input):mediaSetup.finish(input)));}catch(e){return error(res,409,'media_start_failed',e.message);}});});return;
