@@ -111,6 +111,11 @@ class PublicationTest(unittest.TestCase):
         self.assertEqual(verdict['state'],'failed')
         self.assertEqual(verdict['cache_capacity_acceptance']['reason'],'exceeds_reviewed_allowance')
         self.assertEqual(read_artifact_reference(self.library,attempt['cache_comparison'])['delta_tokens'],-20000)
+        tool=next(c for c in index['candidate_cases'] if c['case']=='tool')
+        self.assertEqual(read_artifact_reference(self.library,tool['request'])['tool_choice'],'auto')
+        response=read_artifact_reference(self.library,tool['response'])
+        self.assertEqual(response['choices'][0]['message']['tool_calls'][0]['function']['name'],'report_value')
+        self.assertIn('/qualification-candidate/',tool['response']['path'])
         self.assertEqual(record['approval'],f.record['approval'])
 
     def test_published_links_reach_actual_tool_request_and_reply_without_rewriting_evidence(self):
@@ -138,6 +143,20 @@ class PublicationTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'recorded hash'):
             read_artifact_reference(self.library, tool['response'])
         self.assertEqual(self.git('diff', '--cached', '--name-only'), 'other.txt')
+
+    def test_bad_rejected_candidate_response_is_unreadable_without_blocking_original_return(self):
+        f=self.fixture;f.apis['candidate'].cache_tokens=480000
+        publisher=f.publisher
+        def changed(plan,folder,which,current):
+            self.assertEqual(which,'previous')
+            (folder/'qualification-candidate/tool.response.bin').write_text('{}')
+            return publisher(plan,folder,which,current)
+        f.publisher=changed
+        result=f.execute();self.assertEqual(result['state'],'restored')
+        self.assertFalse(f.control.worker['drained'])
+        record=json.loads(f.record_file.read_bytes());index=read_artifact_reference(self.library,record['evidence'][-1])
+        tool=next(c for c in index['candidate_cases'] if c['case']=='tool')
+        with self.assertRaisesRegex(ValueError,'recorded hash'):read_artifact_reference(self.library,tool['response'])
 
     def test_restored_record_keeps_original_approval_and_new_startup_evidence(self):
         f = self.fixture; f.apis['candidate'].context = 8192

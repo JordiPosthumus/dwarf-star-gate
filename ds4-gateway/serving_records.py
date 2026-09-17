@@ -184,24 +184,38 @@ class ServingRecordPublisher:
             return {'path': str(file.relative_to(self.library)), 'sha256': self.file_digest(file)}
         # Keep the original result and its qualification hash unchanged. This
         # separate index lets the existing Genie reader follow archived bytes.
-        evidence = []
-        for case in result['cases']:
-            name = case['case']
-            intent_file = destination / (name + '.intent.json')
-            entry = {'case': name, 'intent': linked(intent_file),
-                     'receipt': linked(destination / (name + '.result.json')),
-                     'response': linked(destination / (name + '.response.bin'))}
-            request = read(intent_file).get('request')
-            if request:
-                entry['request'] = linked(destination / request['file'])
-            evidence.append(entry)
+        # Preserve the case's expected response/request hashes. The reader will
+        # reject altered candidate bytes without making a rejected candidate's
+        # integrity a new condition for returning a qualified original.
+        def case_links(directory, native_result):
+            evidence = []
+            for case in native_result['cases']:
+                name = case['case']
+                if not re.fullmatch(r'[a-zA-Z][a-zA-Z0-9-]*', name):
+                    raise ValueError('Invalid archived qualification case identity')
+                intent_file = directory / (name + '.intent.json')
+                entry = {'case': name, 'intent': linked(intent_file),
+                         'receipt': linked(directory / (name + '.result.json')),
+                         'response': {'path':str((directory / (name + '.response.bin')).relative_to(self.library)),
+                                      'sha256':case['response_sha256']}}
+                request = read(intent_file).get('request')
+                if request:
+                    if request['file'] != name + '.request.json':
+                        raise ValueError('Invalid archived qualification request identity')
+                    entry['request'] = {'path':str((directory / request['file']).relative_to(self.library)),
+                                        'sha256':request['sha256']}
+                evidence.append(entry)
+            return evidence
+        candidate_directory = artifact / 'qualification-candidate'
+        candidate_result = read(candidate_directory / 'result.json')
         save(artifact, 'qualification-evidence.json', {
-            'result': linked(destination / 'result.json'), 'cases': evidence,
+            'result': linked(destination / 'result.json'), 'cases': case_links(destination,result),
             'serving_version': which,
             'candidate_attempt': {key:linked(artifact / name) for key,name in (
                 ('native_result','qualification-candidate/result.json'),
                 ('verdict','qualified-candidate.json'),
                 ('cache_comparison','cache-comparison-candidate.json')) if (artifact / name).is_file()},
+            'candidate_cases': case_links(candidate_directory,candidate_result) if candidate_result else [],
             **({'cache_baseline':linked(artifact / 'baseline-cache' / 'result.json')} if baseline.exists() else {}),
             **({'cache_comparison':linked(artifact / comparison_file.name)} if comparison_file.exists() else {}),
             'scope': 'Exact archived evidence. result and cases describe serving_version; candidate_attempt is separate and may describe a rejected version. A native pass is not overall acceptance: inspect its verdict and cache comparison. Missing attempt links mean evidence unavailable. Responses include JSON, metrics and event streams; the JSON artifact reader cannot read non-JSON bodies. Hashes establish bytes, not correctness.'})
