@@ -13,10 +13,11 @@ const prepareScript=fileURLToPath(new URL('./serving_prepare_cli.py',import.meta
 const ID=/^[a-zA-Z0-9][\w-]{0,63}$/;
 const revision=value=>/^[a-f0-9]{64}$/.test(value??'')?value:null;
 const recordedTime=value=>typeof value==='number'&&Number.isFinite(value)&&value>0?value:null;
+const recordedUtc=value=>{const date=new Date((recordedTime(value)??NaN)*1000);return Number.isFinite(date.getTime())?date.toISOString():null;};
 function outcomeEvidence(result,qualification,trialReport){
   if(!result)return null;
   const publication=result.publication,admission=result.readmission;
-  return {recorded_at:recordedTime(result.at),
+  return {recorded_at:recordedTime(result.at),recorded_at_utc:recordedUtc(result.at),
     ...(result.trial?{trial:{state:['completed','stopped','error','cancelled','rejected_before_acceptance','qualification_failed'].includes(result.trial.state)?result.trial.state:'unknown',
       job_id:/^[a-f0-9]{32}$/.test(result.trial.job_id??'')?result.trial.job_id:null,
       candidate_signature_sha256:revision(result.trial.candidate_signature_sha256),
@@ -30,8 +31,8 @@ function outcomeEvidence(result,qualification,trialReport){
     qualification:qualification??null,
     readmission:admission?{state:['readmitted','left_to_operator'].includes(admission.state)?admission.state:'unknown',
       reason:['preexisting_operator_pause','pause_before_release','operator_decision_changed','other_maintenance_present'].includes(admission.reason)?admission.reason:null,
-      observed_at:recordedTime(admission.observed_at)}:null,
-    scope:'Saved execution evidence, not a fresh health check. Match configuration revisions to benchmark associations before attributing a measurement to this change. A successful native check is not a speed comparison or proof of current recovery enrollment.'};
+      observed_at:recordedTime(admission.observed_at),observed_at_utc:recordedUtc(admission.observed_at)}:null,
+    scope:'Saved execution evidence, not a fresh health check. Fields ending _utc are explicit UTC timestamps; numeric times are Unix seconds. Match configuration revisions to benchmark associations before attributing a measurement to this change. A successful native check is not a speed comparison or proof of current recovery enrollment.'};
 }
 function prepareProcess(python,input){
   return new Promise((resolve,reject)=>{
@@ -121,13 +122,14 @@ export function createOperationService(config,{directory,isTesting=()=>false,isE
         const cache=store.read(row.id,'cache-comparison-candidate.json'),acceptance=proof.cache_capacity_acceptance,native=store.read(row.id,'qualification-candidate/result.json');
         const number=v=>Number.isFinite(v)?v:null;
         current.candidate_qualification={state:['passed','failed'].includes(proof.state)?proof.state:'unknown',
+          native_state:['passed','failed'].includes(native?.state)?native.state:'unknown',
           check_failure:native?.state==='failed'&&typeof native.check_failure==='string'?native.check_failure.slice(0,1000):null,
           cache_acceptance:['passed','failed'].includes(acceptance?.state)?acceptance.state:null,
           reason:['capacity_unavailable','within_reviewed_allowance','exceeds_reviewed_allowance'].includes(acceptance?.reason)?acceptance.reason:null,
           allowed_loss_percent:number(acceptance?.policy?.max_loss_percent),
           baseline_cache_tokens:number(cache?.baseline?.kv_cache_size_tokens),candidate_cache_tokens:number(cache?.current?.kv_cache_size_tokens),
           delta_percent:number(cache?.delta_percent),
-          scope:'Saved candidate checks, separate from original restoration. Startup memory can affect reported cache capacity; this does not establish cause or speed.'};
+          scope:'Saved candidate checks, separate from original restoration. Native failure and cache-capacity acceptance are separate. An unavailable final capacity measurement after failed native checks does not establish cache capacity loss or the cause of the native failure. Startup memory can affect reported cache capacity; this does not establish cause or speed.'};
       }
     }catch{current.candidate_qualification={state:'unreadable'};}
     const which=current.runner?.result?.serving;
@@ -135,7 +137,7 @@ export function createOperationService(config,{directory,isTesting=()=>false,isE
       try{
         const proof=store.read(row.id,'qualified-'+which+'.json');
         current.qualification=proof?{state:['passed','failed'].includes(proof.state)?proof.state:'unknown',
-          version:which,recorded_at:recordedTime(proof.at),result_revision:revision(proof.result_sha256),
+          version:which,recorded_at:recordedTime(proof.at),recorded_at_utc:recordedUtc(proof.at),result_revision:revision(proof.result_sha256),
           missing_checks:Array.isArray(proof.missing_checks)?proof.missing_checks.filter(x=>typeof x==='string'&&/^[a-z][a-z0-9_]{0,63}$/.test(x)):null,
           cache_capacity_acceptance:['passed','failed','reported_only'].includes(proof.cache_capacity_acceptance?.state)?proof.cache_capacity_acceptance.state:null}: {state:'unavailable',version:which};
       }catch{current.qualification={state:'unreadable',version:which};}

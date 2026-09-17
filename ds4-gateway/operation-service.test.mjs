@@ -134,6 +134,8 @@ test('specific native check failure reaches Genie and UI without replacing gener
   assert.match(operationQualification((await r.service.status()).operations[0]),/Warm cache B reused 0/);
   fs.writeFileSync(file,JSON.stringify({state:'failed',check_failure:null,error:'PRIVATE transport detail'}));
   assert.equal((await r.service.tool({action:'status',id:r.id})).candidate_qualification.check_failure,null);
+  assert.equal((await r.service.tool({action:'status',id:r.id})).candidate_qualification.native_state,'failed');
+  assert.match(operationQualification((await r.service.status()).operations[0]),/no exact failure detail/);
   assert.equal(fs.existsSync(path.join(r.folder,'launch-intent.json')),false);
 });
 
@@ -158,6 +160,17 @@ test('returned operation describes assisted completion without claiming an autom
   assert.equal(view.evidence.trial.state,'qualification_failed');assert.doesNotMatch(JSON.stringify(view),/PRIVATE/);
 });
 
+test('operation evidence gives Genie the exact UTC return time without removing numeric timestamps',()=>{
+  const row={runner:{state:'restored',result:{state:'restored',at:1789646649.481825,
+    readmission:{state:'readmitted',observed_at:1789646649.4812071}}}};
+  const evidence=operationToolView(row).evidence;
+  assert.equal(evidence.recorded_at_utc,'2026-09-17T12:04:09.481Z');
+  assert.equal(evidence.readmission.observed_at_utc,'2026-09-17T12:04:09.481Z');
+  assert.equal(evidence.readmission.observed_at,1789646649.4812071);
+  row.runner.result.readmission.observed_at=undefined;
+  assert.equal(operationToolView(row).evidence.readmission.observed_at_utc,null);
+});
+
 test('saved serving outcomes expose exact configuration links and preserve restoration and owner-pause distinctions',async t=>{
   const r=await rig(t);r.service.store.propose(r.proposal);await r.service.store.idle();
   r.service.store.write(r.id,'runner-result.json',{state:'restored',at:1700000000,serving:'previous',
@@ -168,8 +181,8 @@ test('saved serving outcomes expose exact configuration links and preserve resto
   const row=await r.service.tool({action:'status',id:r.id});
   assert.equal(row.state,'restored');assert.equal(row.evidence.serving,'previous');
   assert.deepEqual(row.evidence.configuration,{record_revision:'a'.repeat(64),previous_record_revision:'b'.repeat(64)});
-  assert.deepEqual(row.evidence.qualification,{state:'passed',version:'previous',recorded_at:1700000000,result_revision:'c'.repeat(64),missing_checks:[],cache_capacity_acceptance:'reported_only'});
-  assert.deepEqual(row.evidence.readmission,{state:'left_to_operator',reason:'operator_decision_changed',observed_at:1700000001});
+  assert.deepEqual(row.evidence.qualification,{state:'passed',version:'previous',recorded_at:1700000000,recorded_at_utc:'2023-11-14T22:13:20.000Z',result_revision:'c'.repeat(64),missing_checks:[],cache_capacity_acceptance:'reported_only'});
+  assert.deepEqual(row.evidence.readmission,{state:'left_to_operator',reason:'operator_decision_changed',observed_at:1700000001,observed_at_utc:'2023-11-14T22:13:21.000Z'});
   assert.doesNotMatch(JSON.stringify(row),/private-|\/private\//);
   assert.match(row.evidence.scope,/not a fresh health check/);
   assert.deepEqual((await r.service.tool({action:'list'})).operations[0],row);
