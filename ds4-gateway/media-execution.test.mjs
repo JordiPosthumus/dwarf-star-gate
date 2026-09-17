@@ -276,3 +276,14 @@ test('reference shortcut transfers retained input before native submission on th
  await runMediaCycle(r.plan,r.io);
  assert.ok(r.events.indexOf('upload-shortcut')<r.events.indexOf('submit-shortcut'));assert.equal(r.submissions(),1);assert.equal(r.jobs.get(job.id).state,'completed');assert.ok(r.events.includes('returned'));
 });
+
+test('native step receipts are display-only, clear for restoration and cannot complete or repeat a job',async t=>{
+ const r=cycleFixture(t),receipts=[];let closed=0,observations=0;
+ r.io.watchProgress=()=>({snapshot:()=>({connected:true,at:1000,node:'9',node_type:'KSampler',value:20,max:20}),close:()=>closed++});
+ r.io.progress=(phase,detail,context)=>{r.events.push(phase);receipts.push({phase,...context});};
+ r.backend.observe=async()=>({state:++observations===1?'running':'completed',result:{}});
+ await runMediaCycle(r.plan,r.io);
+ assert.equal(observations,2,'100% node progress is not native job completion');assert.equal(r.submissions(),1);assert.equal(closed,1);
+ assert.ok(receipts.some(r=>r.phase==='generating'&&r.native_progress.value===20));
+ assert.ok(receipts.filter(r=>['retaining_results','restoring_llm','checking_llm','returned'].includes(r.phase)).every(r=>r.native_progress===null));
+});

@@ -202,6 +202,18 @@ The form uses the same text-video API and shipped short-video recipe as agents.
 Genie chooses an eligible machine; progress, results and LLM return appear in the
 existing job cards. If media placement is off, the request stays queued.
 
+Fleet server cards also identify a gateway-managed H3 or ACE-Step operation,
+its current stage, active batch job, elapsed time and retained outputs. Hardware
+telemetry stays visible; LLM-specific measurements are expandable while media is
+running. When H3 supplies native progress, the card shows the current node and
+sampling steps separately from the runner heartbeat. Finishing a sampling node
+does not mean the whole job or LLM restoration is complete. Missing or stale
+progress remains explicit; the display does not invent an ETA.
+
+Genie's `media_job_status()` tool provides a compact fleet and queue overview.
+For full saved native results, file manifests or error details, Genie can call
+`media_job_status` with a `job_id`. Summaries do not delete or replace full records.
+
 If submission is not confirmed, retry the unchanged prompt. The browser keeps its
 request key in this tab's session storage, including across reloads, so the retry
 returns the same job. Editing the prompt creates a different request. The gateway
@@ -289,6 +301,11 @@ video and separate FLAC fully decoded. This tests reference input processing,
 not identity or voice fidelity. The original LLM returned automatically with its
 container configuration preserved, successful responses and two 4,800-token
 warm-cache hits before gateway readmission.
+
+A later synthetic colour-preservation check failed: a blue reference produced
+an orange billboard with both tested samplers. Reference fidelity remains
+unresolved for that case. Correct transfer and namespaced wiring must not be
+presented as proof that the generated result faithfully follows a reference.
 
 When ComfyUI records a node execution error, the Media tab and job API show the
 node and its error message separately from the host's LLM restoration phase.

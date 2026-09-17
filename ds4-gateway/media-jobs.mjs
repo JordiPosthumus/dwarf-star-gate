@@ -59,6 +59,8 @@ export class MediaJobs {
           delete job.execution;job.detail='Previous batch ended before this job started; it remains queued.';
         }
       }catch{job.execution={...saved.execution,phase:'observation_failed',detail:'Saved media execution could not be read; inspect its original process. No job was repeated.'};}
+      // Runner receipts refresh `at`; assignment time is the stable operation start.
+      if(job.execution)job.execution.started_at=saved.execution.at??null;
     }
     if(!job.detail)job.detail=nativeFailureDetail(job);
     if(job.state==='failed'&&job.detail)job.next_step=mediaErrorAdvice(job.detail);

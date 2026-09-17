@@ -8,7 +8,7 @@ import {FleetThroughput} from '../ds4-gateway/throughput.mjs';
 import {FleetSpeed} from '../ds4-gateway/fleet-speed.mjs';
 // Optional memory is supplied only by the isolated browser-test fixture. The
 // ordinary demo has no persistent storage and reads no installation config.
-export function createDemoServer({agentHold=false,quarantinedWorker=false,memory=null,chatFactory=null,operations=null}={}) {
+export function createDemoServer({agentHold=false,quarantinedWorker=false,memory=null,chatFactory=null,operations=null,mediaDemo=false}={}) {
 const now = Date.now();
 const workers = [
   { id:'sparkA', is_healthy:true, drained:false, load:1, queued:1, active_seconds:84, completed:42, failed:0, assigned_sessions:4 },
@@ -16,6 +16,7 @@ const workers = [
   { id:'mac-ultra', is_healthy:true, drained:false, load:0, queued:0, active_seconds:0, completed:51, failed:0, assigned_sessions:2 },
 ];
 workers.forEach((w,i)=>{w.url=`http://127.0.0.1:${39101+i}`;w.context_length=262144;});
+if(mediaDemo)Object.assign(workers[0],{is_healthy:false,drained:true,load:0,queued:0});
 const devices = workers.map((w,i) => ({
   id:w.id, connected:true, telemetry_source:i===2?'file':'journal', observed_since:now-900000, last_event:now-(i===2?120000:0), phase:i ? 'decode':'thinking',
   decode:{ time:now-(i===2?120000:1000), tps:[14.6,14.4,28.2][i], average:[14.5,14.3,27.9][i] },
@@ -116,6 +117,7 @@ return createDashboard(()=>({...snapshot,time:Date.now(),gateway_at:Date.now(),
   }),
   cache_continuity:{...snapshot.cache_continuity,checked_at:Date.now()},
   gateway:{...snapshot.gateway,total:workers.length,healthy:workers.filter(w=>w.is_healthy).length,available:workers.filter(w=>w.is_healthy&&!w.drained).length,active:workers.filter(w=>w.load).length,queued:workers.reduce((a,w)=>a+w.queued,0)}}),undefined,{
+  media:async()=>({jobs:mediaDemo?[{id:'00000000-0000-4000-8000-000000000002',kind:'video',state:'running',execution:{worker_id:'sparkA',operation_id:'00000000-0000-4000-8000-000000000001',active_job_id:'00000000-0000-4000-8000-000000000002',phase:'generating',native_progress:{connected:true,at:Date.now()-4000,node:'9',node_type:'KSampler',value:12,max:20},started_at:new Date(Date.now()-660000).toISOString(),changed_at:new Date(Date.now()-180000).toISOString(),heartbeat_at:new Date(Date.now()-2000).toISOString(),batch_index:2,batch_size:3}}]:[]}),
   read:async()=>registry(),
   act:async(action,input)=>{
     if(action==='conversation-turns'){

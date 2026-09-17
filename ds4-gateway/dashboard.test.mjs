@@ -1183,3 +1183,47 @@ test('real dashboard wires only explicit chat notebook access and keeps notes ou
  }
  assert.ok(fs.readFileSync(memory.file).equals(before));
 });
+
+// Fleet media status is display-only; job completion and LLM return are separate.
+test('Fleet projection follows the active batch job and omits private native data',async()=>{
+  const {fleetMediaWorkloads}=await import('./media-workloads.mjs');
+  const execution={worker_id:'sparkA',operation_id:'first',active_job_id:'second',phase:'generating',batch_index:2,batch_size:2};
+  const data=fleetMediaWorkloads({jobs:[{id:'first',kind:'video',state:'completed',execution,result:{prompt:'PRIVATE'}},{id:'second',kind:'video',state:'running',execution,payload:{prompt:'PRIVATE'}},{id:'old',kind:'music',execution:{worker_id:'sparkB',phase:'returned'}}]},1000);
+  assert.equal(data.workloads.length,1);assert.equal(data.workloads[0].job_id,'second');assert.equal(data.workloads[0].state,'running');assert.equal(data.workloads[0].batch_index,2);assert.doesNotMatch(JSON.stringify(data),/PRIVATE|payload|result/);
+  assert.equal(data.workloads[0].started_at,null,'old cores must not use heartbeat time as operation start');
+  execution.started_at='2026-01-01T01:00:00.000Z';execution.at='2026-01-01T02:00:00.000Z';assert.equal(fleetMediaWorkloads({jobs:[{id:'second',execution}]}).workloads[0].started_at,execution.started_at);
+  execution.phase='restoring_llm';assert.equal(fleetMediaWorkloads({jobs:[{id:'second',kind:'video',state:'completed',execution}]}).workloads[0].phase,'restoring_llm');
+  for(const phase of ['returned','failed_returned','failed_unchanged'])assert.equal(fleetMediaWorkloads({jobs:[{id:'done',execution:{worker_id:'sparkA',phase}}]}).workloads.length,0);
+});
+test('Fleet media UI distinguishes runner heartbeat from generation progress and preserves stale evidence',()=>{
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const context=vm.createContext({});vm.runInContext(source,context);
+  vm.runInContext(`fleetWorkloads={observed_at:100000,workloads:[{worker_id:'sparkA',kind:'video',job_id:'<private>',state:'running',phase:'generating',started_at:new Date(10000).toISOString(),changed_at:new Date(30000).toISOString(),heartbeat_at:new Date(99000).toISOString()}]}`,context);
+  let html=vm.runInContext("workloadMarkup(workloadInfo('sparkA',100000),{},100000)",context);
+  assert.match(html,/MiniMax H3/);assert.match(html,/Generating/);assert.match(html,/Runner heartbeat received/);assert.match(html,/not measured generation progress/);assert.match(html,/No completion estimate is available/);assert.match(html,/&lt;private&gt;/);assert.doesNotMatch(html,/<private>/);
+  vm.runInContext('fleetWorkloadsUnavailable=true',context);
+  html=vm.runInContext("workloadMarkup(workloadInfo('sparkA',100000),{},100000)",context);assert.match(html,/Last known media operation/);assert.match(html,/return is not confirmed/);
+  vm.runInContext("fleetWorkloadsUnavailable=false;fleetWorkloads.workloads[0].phase='checking_llm';fleetWorkloads.workloads[0].kind='music'",context);
+  html=vm.runInContext("workloadMarkup(workloadInfo('sparkA',100000),{},100000)",context);assert.match(html,/ACE-Step/);assert.match(html,/Verifying LLM and cache/);assert.match(html,/before readmission/);
+});
+test('Fleet workload reads are bounded and cannot hold up ordinary telemetry',async()=>{
+  let resolveRead,calls=0;const pending=new Promise(resolve=>{resolveRead=resolve;});
+  const server=createDashboard(()=>({time:1000}),undefined,{media:()=>{calls++;return pending;}});server.listen(0,'127.0.0.1');await once(server,'listening');
+  const base=`http://127.0.0.1:${server.address().port}`;
+  try{
+    const waiting=fetch(base+'/api/fleet-workloads');
+    assert.deepEqual(await (await fetch(base+'/api/status')).json(),{time:1000});
+    assert.equal((await waiting).status,503);assert.equal(calls,1);
+    resolveRead({jobs:[{id:'job',kind:'video',state:'completed',execution:{worker_id:'sparkA',phase:'checking_llm'}}]});await delay(10);
+    const reply=await (await fetch(base+'/api/fleet-workloads')).json();assert.equal(reply.workloads[0].phase,'checking_llm');
+  }finally{resolveRead({jobs:[]});server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
+});
+
+test('Fleet native progress shows current node steps and disconnected evidence without whole-job percentage',()=>{
+ const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0],context=vm.createContext({});vm.runInContext(source,context);
+ const render=p=>vm.runInContext(`nativeMediaProgressMarkup({native_progress:${JSON.stringify(p)}},10000)`,context);
+ const p={connected:true,at:9000,node:'9',node_type:'KSampler',value:12,max:20};
+ assert.match(render(p),/Sampling steps: 12 of 20/);assert.match(render(p),/not whole-job completion/);assert.doesNotMatch(render(p),/60%|ETA/);
+ assert.match(render({...p,connected:false}),/progress connection unavailable/);assert.doesNotMatch(render({...p,value:NaN}),/<progress/);
+ assert.match(render({...p,node_type:'VAEDecode'}),/Node progress: 12 of 20/);
+});

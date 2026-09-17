@@ -250,3 +250,19 @@ test('reference shortcut rejects missing, mismatched and ambiguous inputs before
  assert.throws(()=>q.enqueue('video',{prompt:'test',reference_image:'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'},{key:'missing-reference'}),e=>e.status===404&&/reference_image.*Upload/.test(e.message));
  assert.equal(q.list().length,0);
 });
+
+
+test('operation start survives changing runner receipt timestamps without rewriting saved jobs',t=>{
+  const file=path.join(directory(t),'jobs.json'),q=new MediaJobs(file);
+  const first=q.enqueue('video',{prompt:{}},{key:'first'}).job.id;
+  const second=q.enqueue('video',{prompt:{}},{key:'second'}).job.id;
+  const started='2026-01-01T01:00:00.000Z';
+  q.assignExecution([first,second],{worker_id:'fixture',operation_id:first,phase:'starting',at:started,batch_job_ids:[first,second]});
+  const folder=q.executionFolder(first);fs.mkdirSync(folder,{recursive:true});
+  const original=fs.readFileSync(file);
+  for(const heartbeat of ['2026-01-01T01:05:00.000Z','2026-01-01T01:10:00.000Z']){
+    fs.writeFileSync(path.join(folder,'progress.json'),JSON.stringify({phase:'generating',active_job_id:second,at:heartbeat,heartbeat_at:heartbeat}));
+    for(const job of q.list()){assert.equal(job.execution.started_at,started);assert.equal(job.execution.at,heartbeat);}
+  }
+  assert.ok(fs.readFileSync(file).equals(original));
+});
