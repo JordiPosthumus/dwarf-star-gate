@@ -67,13 +67,40 @@ curl "$SG_URL/v1/video/jobs" \
 Set `SG_URL` to the gateway address and `SG_API_KEY` to its normal bearer key.
 The text form uses the shipped H3 workflow: 608×352, 96 frames at 24 fps
 (approximately four seconds), 20 sampling steps, video with audio and a separate
-audio result. Only `prompt` and optional `seed` are accepted in this convenience
-form. Omitting the seed chooses one when the job is first created. The response's
+audio result. The convenience form accepts `prompt`, optional `seed`, and optional
+`reference_image` / `reference_audio` upload IDs. Omitting the seed chooses one when the job is first created. The response's
 `generation` field reports the exact selected settings and recipe hash.
 Retries with the same idempotency key retain the original seed and workflow,
-including after a gateway restart or recipe update. For reference inputs or other
-generation settings, submit a native workflow as before. The prompt remains in
+including after a gateway restart or recipe update. For other generation settings
+or multiple references of the same type, submit a native workflow as before. The prompt remains in
 private job storage and is excluded from public job-status fields.
+
+For a reference image, upload it to the gateway first (the file can be on the
+agent's machine), then use the returned `id`:
+
+```sh
+curl "$SG_URL/v1/video/inputs" \
+  -H "Authorization: Bearer $SG_API_KEY" \
+  -H 'Content-Type: image/png' --data-binary @reference.png
+
+curl "$SG_URL/v1/video/jobs" \
+  -H "Authorization: Bearer $SG_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: my-reference-video' \
+  --data '{"prompt":"Animate <Picture 1> gently.","reference_image":"UPLOAD_ID","seed":42}'
+```
+
+`reference_audio` works the same way with an audio upload ID and the `<Audio 1>`
+tag. One image and one audio reference can be combined. Star Gate freezes the
+correct native wiring and transfers the retained files to the selected worker;
+you do not need to copy them separately onto each Spark. A filename that exists
+on only one worker is not a portable reference.
+
+This form uses the shipped REF2VA recipe: 608×352, 124 frames at 24 fps, 20 steps,
+reference sizing `match`. The receipt exposes these settings plus the reference
+IDs and hashes. A valid receipt confirms the requested inputs, not visual fidelity.
+Use a native workflow for `max` reference sizing or other settings. Missing IDs
+and mismatched image/audio upload types fail before queueing.
 
 JSON submissions may be up to 2 MiB. Upload larger reference files separately
 using the input endpoint below.

@@ -82,8 +82,9 @@ export class MediaJobs {
     if(previous){if(previous.fingerprint!==fingerprint)throw fail(409,'Idempotency-Key already identifies a different media request');return {job:this.get(previous.id),created:false};}
     // Fingerprint the caller's request before expansion. Retries retain the
     // original seed/workflow even if the bundled recipe later changes.
-    const prepared=kind==='video'&&typeof payload.prompt==='string'?prepareVideoPrompt(payload):{payload:structuredClone(payload)};
-    if(kind==='video')validateVideoReferences(prepared.payload,this.inputs.forJob(payload.input_files));
+    if(kind==='video'&&typeof payload.prompt!=='string'&&['reference_image','reference_audio'].some(k=>Object.hasOwn(payload,k)))throw fail(400,'reference_image/reference_audio upload IDs accompany a prompt string. For a native workflow, use reference nodes and input_files; see examples/media/h3-reference-files.json.');
+    const prepared=kind==='video'&&typeof payload.prompt==='string'?prepareVideoPrompt(payload,{resolveInput:id=>this.inputs.info(id)}):{payload:structuredClone(payload)};
+    if(kind==='video')validateVideoReferences(prepared.payload,this.inputs.forJob(prepared.payload.input_files));
     else validateMusicInputs(payload);
     const job={id:randomUUID(),kind,...prepared,priority,key_hash:keyHash,fingerprint,state:'queued',created_at:now(),updated_at:now()};
     this.save({...this.data,jobs:[...this.data.jobs,job]});return {job:this.get(job.id),created:true};

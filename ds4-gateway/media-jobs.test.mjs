@@ -217,3 +217,36 @@ test('previously accepted ACE-Step requests remain retrievable even if new prefl
  assert.equal(retry.created,false);assert.equal(retry.job.id,initial.id);assert.deepEqual(fs.readFileSync(file),saved);
  assert.throws(()=>restarted.enqueue('music',payload,{key:'new-music'}),e=>e.status===400);
 });
+
+test('prompt plus uploaded references freezes correct portable H3 wiring and preserves retries',async t=>{
+ const file=path.join(directory(t),'jobs.json'),q=new MediaJobs(file);
+ const upload=async(type,data)=>{const stream=Readable.from([data]);stream.headers={'content-type':type,'content-length':String(Buffer.byteLength(data))};return q.inputs.receive(stream);};
+ const image=await upload('image/png','image-bytes'),audio=await upload('audio/wav','audio-bytes');
+ for(const [i,refs]of [{reference_image:image.id},{reference_audio:audio.id},{reference_image:image.id,reference_audio:audio.id}].entries()){
+  const input={prompt:'Animate <Picture 1> with <Audio 1>.',seed:42,...refs},job=q.enqueue('video',input,{key:'simple-reference-'+i}).job;
+  const nodes=job.payload.prompt;
+  assert.equal(nodes['7'].class_type,'MiniMaxH3ReferenceToVideo');assert.equal(nodes['7'].inputs.prompt,input.prompt);assert.equal(nodes['9'].inputs.seed,42);
+  assert.equal(nodes['1'].inputs.unet_name,'minimax_h3_ref2va_pruned_int8_convrot.safetensors');
+  assert.equal(job.generation.input_format,'references');assert.equal(job.generation.reference_sizing,'match');assert.equal(job.generation.frames,124);
+  assert.equal(nodes['7'].inputs.ref_images,undefined);assert.equal(nodes['7'].inputs.ref_audios,undefined);
+  if(refs.reference_image){assert.equal(nodes['5'].inputs.image,image.name);assert.deepEqual(nodes['7'].inputs['ref_images.ref_image_0'],['5',0]);}
+  else{assert.equal(nodes['5'],undefined);assert.equal(nodes['7'].inputs['ref_images.ref_image_0'],undefined);}
+  if(refs.reference_audio){assert.equal(nodes['15'].inputs.audio,audio.name);assert.deepEqual(nodes['7'].inputs['ref_audios.ref_audio_0'],['15',0]);}
+  assert.deepEqual(job.payload.input_files,Object.values(refs));
+  assert.deepEqual(job.generation.reference_inputs.map(r=>r.sha256),[...(refs.reference_image?[image.sha256]:[]),...(refs.reference_audio?[audio.sha256]:[])]);
+  const restarted=new MediaJobs(file);assert.deepEqual(restarted.enqueue('video',input,{key:'simple-reference-'+i}).job.payload,job.payload);
+ }
+ const last=q.list().at(-1),input={prompt:'Animate <Picture 1> with <Audio 1>.',seed:42,reference_image:image.id,reference_audio:audio.id};
+ q.update(last.id,{state:'completed'});q.inputs.remove(image.id);
+ assert.equal(new MediaJobs(file).enqueue('video',input,{key:'simple-reference-2'}).job.id,last.id,'completed same-key retry does not resolve deleted inputs again');
+});
+
+test('reference shortcut rejects missing, mismatched and ambiguous inputs before queueing',async t=>{
+ const q=new MediaJobs(path.join(directory(t),'jobs.json')),stream=Readable.from(['audio']);stream.headers={'content-type':'audio/wav','content-length':'5'};
+ const audio=await q.inputs.receive(stream);
+ for(const params of [{reference_image:audio.id},{reference_image:'image.jpg'},{reference_image:'https://example.com/image.png'},{reference_audio:null},{reference_image:['id']},{prompt:{},reference_image:audio.id}]){
+  assert.throws(()=>q.enqueue('video',{prompt:'test',...params},{key:'bad-shortcut'}),e=>e.status===400&&/reference_image|reference_audio/.test(e.message));
+ }
+ assert.throws(()=>q.enqueue('video',{prompt:'test',reference_image:'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'},{key:'missing-reference'}),e=>e.status===404&&/reference_image.*Upload/.test(e.message));
+ assert.equal(q.list().length,0);
+});
