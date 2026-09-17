@@ -1923,6 +1923,17 @@ test('Fast Genie keeps one undispatched review flexible and uses the first compa
   }finally{for(const backend of r.backends)for(const finish of backend.heldStreams.splice(0))finish();await Promise.allSettled([first,second,review]);}
 });
 
+test('waiting flexible Genie keeps FIFO arrival order among ordinary requests of the same priority',async t=>{
+  const r=await rig(t,1),b=r.backends[0];
+  const active=r.request(JSON.stringify({label:'active',stream:true,fixture_hold_stream:true}),'active');await until(()=>b.heldStreams?.length===1);
+  const earlier=r.request(JSON.stringify({label:'earlier'}),'earlier');await until(()=>r.gateway.stats().queued===1);
+  const genie=r.request(JSON.stringify({label:'genie'}),null,{headers:{'x-dsg-observer':'gate-genie','x-dsg-review-flexible':'1'}});await until(()=>r.gateway.stats().continuity.waiting===1);
+  const later=r.request(JSON.stringify({label:'later'}),'later');await until(()=>r.gateway.nodes[0].queue.length===2);
+  assert.deepEqual(b.records.map(row=>row.payload.label),['active']);
+  b.heldStreams.shift()();await Promise.all([active,earlier,genie,later]);
+  assert.deepEqual(b.records.map(row=>row.payload.label),['active','earlier','genie','later']);assert.equal(b.aborts,0);
+});
+
 test('Fast Genie respects a paused free worker and drops a cancelled pending review without dispatch',async t=>{
   const r=await rig(t,2);r.gateway.drainNodes(['spark2'],true);
   const running=r.request(JSON.stringify({stream:true,fixture_hold_stream:true}),'busy');await until(()=>r.backends[0].heldStreams?.length===1);

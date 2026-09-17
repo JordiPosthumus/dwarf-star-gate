@@ -27,6 +27,9 @@ preference. A retry submitted as a new request uses its supplied header again.
   if the later request is high priority. Use stable conversation IDs for dependent
   turns and distinct IDs for independent work.
 - Within a class, existing conversation-turn allowances and FIFO ordering apply.
+  A flexible Genie request retains its original arrival order while waiting for
+  a compatible free slot; newer requests at the same priority do not reset it to
+  the back. Existing conversation reservations still apply.
   A higher-priority eligible request can displace a lower-priority turn reservation.
 - Compatibility, conversation ownership, pauses, maintenance holds and existing
   affinity/handover checks still apply. Priority does not select another model,

@@ -585,9 +585,9 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     clientWatch.observeRequest(job.watchId,job.id,'queued');
     evaluateShadow(node,job,wasAdmitted?'worker_free':'admission');schedule(node);
   }
-  const freeGenieNode=(modelRoute,priority='normal')=>nodes.filter(node=>{
+  const freeGenieNode=(modelRoute,priority='normal',arrival=Number.MAX_SAFE_INTEGER)=>nodes.filter(node=>{
     if(!allowsWorker(modelRoute,node)||!node.healthy||node.drained||node.quarantine||node.recovering||node.removed||!hasCapacity(node))return false;
-    const candidate={key:null,priority,sequence:Number.MAX_SAFE_INTEGER};
+    const candidate={key:null,priority,sequence:arrival};
     return canStartNow(node,candidate,[...node.queue,...parkedFor(node),candidate]);
   }).sort((a,b)=>store.count(a.id)-store.count(b.id)||a.id.localeCompare(b.id))[0];
   function pumpWaiting() {
@@ -597,7 +597,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     for(const job of priorityOrder(waiting)){
       if(job.cancelled)continue;
       heartbeat(job);
-      if(job.genieFlexible){const free=freeGenieNode(job.modelRoute,job.priority);if(free)admit(job,free);else job.waitReason='no_ready_worker';continue;}
+      if(job.genieFlexible){const free=freeGenieNode(job.modelRoute,job.priority,job.sequence);if(free)admit(job,free);else job.waitReason='no_ready_worker';continue;}
       if(job.key&&waiting.some(j=>j!==job&&j.sequence<job.sequence&&j.key===job.key)){job.waitReason='same_session_queued';continue;}
       const home=job.key&&store.get(job.key),outstanding=sessionWork(nodes,job.key);
       let node=job.fixedHome??(home&&nodes.find(n=>n.id===home.node));
