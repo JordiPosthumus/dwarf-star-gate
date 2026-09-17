@@ -23,7 +23,7 @@ export function hourglassRunsForChat(value){
 }
 
 export class HourglassRuns {
-  constructor(config,directory,{client,records=()=>({records:[]}),reports=()=>({reports:[]}),now=Date.now,maintenance=null}={}){
+  constructor(config,directory,{client,records=()=>({records:[]}),reports=()=>({reports:[]}),now=Date.now,maintenance=null,operationStatus=null}={}){
     if(!config||typeof config.url!=='string'||!Array.isArray(config.targets)||!config.targets.length||config.targets.length>50||Object.keys(config).some(k=>!['url','targets'].includes(k)))throw new Error('Configure an Hourglass console URL and explicit targets.');
     this.targets=config.targets.map(t=>{
       if(!t||typeof t.model!=='string'||!t.model.trim()||t.model.length>256||!/^\w[\w-]{0,63}$/.test(t.worker_id)||!['direct','gateway','testing-door'].includes(t.route)||Object.keys(t).some(k=>!['model','worker_id','route','maintenance'].includes(k))||t.maintenance&&(!maintenance||t.route!=='direct'))throw new Error('Invalid Hourglass target association.');
@@ -31,7 +31,7 @@ export class HourglassRuns {
     });
     if(new Set(this.targets.map(t=>t.model)).size!==this.targets.length)throw new Error('Hourglass target models must be unique.');
     this.client=client??new HourglassConsole(config.url);this.origin=new URL(config.url).origin;this.records=records;this.now=now;
-    this.maintenance=maintenance;this.externalReports=reports;
+    this.maintenance=maintenance;this.externalReports=reports;this.operationStatus=operationStatus;
     this.directory=directory;this.file=path.join(directory,'runs.json');this.runs=[];this.error=null;this.busy=false;this.prepared=null;this.closed=false;
     this.toolConfig={url:null,token:randomBytes(32).toString('hex'),models:this.targets.map(t=>t.model)};
     fs.mkdirSync(directory,{recursive:true,mode:0o700});
@@ -65,9 +65,17 @@ export class HourglassRuns {
       scope:'Preparation only. Review the exact measurement and its window handling in Evidence → Measure with Hourglass. The owner chooses Start. Preparation does not start, drain or reserve a server. This history covers only Star Gate-owned measurements: an empty list does not prove that no benchmark ran directly in Hourglass or that no score exists elsewhere. Saved observations are dated; unavailable does not mean stopped.'};
   }
   async tool(input){
-    const keys={status:['action'],prepare:['action','model'],compare:['action','baseline_revision','candidate_revision']}[input?.action];
+    const keys={status:['action'],prepare:['action','model'],compare:['action','baseline_revision','candidate_revision',...(Object.hasOwn(input??{},'operation_id')?['operation_id']:[])]}[input?.action];
     if(!keys||Object.keys(input).length!==keys.length||!keys.every(k=>Object.hasOwn(input,k)))throw new Error('Genie can only prepare a measurement, read its status or compare saved reports.');
-    if(input.action==='compare')return compareHourglassReports(this.comparisonReports(),input.baseline_revision,input.candidate_revision);
+    if(input.action==='compare'){
+      let operation;
+      if(Object.hasOwn(input,'operation_id')){
+        if(typeof input.operation_id!=='string'||!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(input.operation_id))throw new Error('Choose a saved operation UUID.');
+        let result=null;try{result=await this.operationStatus?.(input.operation_id)??null;}catch{/* Report missing evidence; never submit or retry an operation. */}
+        operation={id:input.operation_id,result};
+      }
+      return compareHourglassReports(this.comparisonReports(),input.baseline_revision,input.candidate_revision,operation);
+    }
     if(input.action==='prepare'){
       if(this.prepared){
         if(this.prepared.model!==input.model)throw new Error('A different measurement is already under review. Resolve it in Evidence before replacing it.');

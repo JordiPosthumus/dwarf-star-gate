@@ -1,5 +1,14 @@
 # Research studies
 
+When evaluating a completed server change, Genie can include its saved operation
+ID in `compare_hourglass_reports`. The comparison checks that the baseline and
+candidate reports refer to the operation's worker and its previous and published
+configuration revisions. Missing evidence, a failed or unfinished candidate, and
+mismatched report associations remain explicit. Score arithmetic and methodology
+checks are separate; matching associations do not prove that a patch caused a
+speed improvement. This reads existing receipts and does not start a benchmark,
+approve a change or make a keep/restore decision.
+
 In **Gate Genie → Setup research**, choose **Research now** to ask Genie to
 study the recorded setup against current public documentation and upstream work.
 A study opens a normal saved chat, where you can follow sources, read the answer

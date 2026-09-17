@@ -163,6 +163,8 @@ test('installed Hermes prepares, observes and compares retained reports without 
  skip:!process.env.DSG_TEST_HERMES_SOURCE||!process.env.DSG_TEST_HERMES_PYTHON,timeout:120000
 },async t=>{
  const f=fixture(t),runs=f.make(),server=createDashboard(()=>({}),undefined,null,null,null,null,null,null,null,runs);
+ const operationId='11111111-2222-4333-8444-555555555555',operationReads=[];
+ runs.operationStatus=async id=>{operationReads.push(id);return {id,worker_id:'example-worker',state:'not_found'};};
  runs.externalReports=()=>({reports:['a','b'].map((key,i)=>({report_revision:key.repeat(64),summary:hourglassReportSummary({...nativeReport(),hourglass_score:20+i,scoring:'net-hour-v3',timing_policy:'hour-v1',bank_fingerprint:'c'.repeat(64),window_seconds:3600,question_timeout_policy:'fixed',execution:{question_timeout_s:900,repeat:1,round_policy:'whole-bank'}})}))});
  server.listen(0,'127.0.0.1');await once(server,'listening');runs.bind(server.address().port);
  const requests=[];let turn=0;
@@ -171,7 +173,7 @@ test('installed Hermes prepares, observes and compares retained reports without 
   let raw='';req.on('data',c=>raw+=c);req.on('end',()=>{
    const input=JSON.parse(raw);if(!Array.isArray(input.messages)){res.writeHead(404);res.end('{}');return;}requests.push(input);turn++;
    const message=turn<=3?{role:'assistant',content:null,tool_calls:[{id:'measurement-'+turn,type:'function',function:{name:'tool_call',arguments:JSON.stringify({
-    name:turn===1?'prepare_hourglass_measurement':turn===2?'hourglass_measurement_status':'compare_hourglass_reports',arguments:turn===1?{model:'example'}:turn===2?{}:{baseline_revision:'a'.repeat(64),candidate_revision:'b'.repeat(64)}})}}]}:{role:'assistant',content:'The synthetic comparison has missing condition evidence. No benchmark has started.'};
+    name:turn===1?'prepare_hourglass_measurement':turn===2?'hourglass_measurement_status':'compare_hourglass_reports',arguments:turn===1?{model:'example'}:turn===2?{}:{baseline_revision:'a'.repeat(64),candidate_revision:'b'.repeat(64),operation_id:operationId}})}}]}:{role:'assistant',content:'The synthetic comparison has missing condition evidence. No benchmark has started.'};
    const finish=turn<=3?'tool_calls':'stop';
    if(input.stream){res.setHeader('content-type','text/event-stream');const delta={...message,...(message.tool_calls?{tool_calls:message.tool_calls.map((c,index)=>({index,...c}))}:{})};res.end('data: '+JSON.stringify({choices:[{index:0,delta,finish_reason:null}]})+'\n\ndata: '+JSON.stringify({choices:[{index:0,delta:{},finish_reason:finish}]})+'\n\ndata: [DONE]\n\n');}
    else{res.setHeader('content-type','application/json');res.end(JSON.stringify({id:'fixture',choices:[{index:0,message,finish_reason:finish}],usage:{prompt_tokens:100,completion_tokens:30,total_tokens:130}}));}
@@ -186,7 +188,18 @@ test('installed Hermes prepares, observes and compares retained reports without 
  assert.deepEqual(answer.measurements.events.filter(e=>e.state==='complete').map(e=>e.tool),['prepare_hourglass_measurement','hourglass_measurement_status','compare_hourglass_reports']);
  assert.equal(answer.measurements.events.find(e=>e.tool==='hourglass_measurement_status'&&e.state==='complete').result.prepared.id,runs.status().prepared.id);
  assert.equal(answer.measurements.events.at(-1).result.difference.value,1);assert.equal(answer.measurements.events.at(-1).result.state,'conditions_need_review');
+ assert.equal(answer.measurements.events.at(-1).result.operation_association.state,'needs_review');assert.deepEqual(operationReads,[operationId]);
  assert.deepEqual(f.calls,[]);assert.equal(fs.existsSync(runs.file),false);
  assert.doesNotMatch(JSON.stringify(requests),new RegExp(runs.toolConfig.token));
  const reloaded=new GenieChat({directory,provider});assert.deepEqual(reloaded.get(c.id).messages.at(-1).measurements,answer.measurements);
+});
+
+test('linked comparison observes one existing operation and retains uncertainty without mutation',async t=>{
+ const f=fixture(t),runs=f.make();t.after(()=>runs.close());
+ const reports=['a','b'].map(key=>({report_revision:key.repeat(64),summary:hourglassReportSummary(nativeReport())}));runs.externalReports=()=>({reports});
+ const id=randomUUID(),input={action:'compare',baseline_revision:'a'.repeat(64),candidate_revision:'b'.repeat(64),operation_id:id};let reads=0;
+ runs.operationStatus=async actual=>{assert.equal(actual,id);reads++;throw Error('transport unavailable');};
+ const result=await runs.tool(input);assert.equal(result.operation_association.state,'needs_review');assert.equal(reads,1);assert.deepEqual(f.calls,[]);assert.equal(fs.existsSync(runs.file),false);
+ for(const operation_id of ['../private',[id],null])await assert.rejects(runs.tool({...input,operation_id}));await assert.rejects(runs.tool({...input,approve:true}));assert.equal(reads,1);
+ const ordinary=await runs.tool({action:'compare',baseline_revision:input.baseline_revision,candidate_revision:input.candidate_revision});assert.equal(ordinary.operation_association,undefined);assert.equal(reads,1);
 });

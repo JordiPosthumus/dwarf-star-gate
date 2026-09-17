@@ -95,6 +95,11 @@ deployment receipts stay outside this public repository.
   qualification/readmission and exact published/previous configuration revisions
   so Genie can connect those reports to an operation. Missing receipts remain
   explicit; this is dated evidence, not current health or a complete trial.
+  The comparison tool can also take that operation's ID and check both report
+  associations against its worker and before/after record revisions. A mismatch,
+  missing qualification or unfinished operation is reported separately from
+  score arithmetic. This joins existing receipts without starting a benchmark or
+  deciding to keep a change; native whole-trial acceptance is still outstanding.
 - [x] Use the configured Hermes runtime and current Genie identity for fleet
   reviews, preserving provider and guarded-action contracts.
 - [x] Connect conversational questions to the existing exception for yielding

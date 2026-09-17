@@ -23,3 +23,16 @@ test('comparison requires two retained unambiguous revisions and strips raw payl
  for(const ids of [['a'.repeat(64),'a'.repeat(64)],['x','b'.repeat(64)],['a'.repeat(64),'e'.repeat(64)]])assert.throws(()=>compareHourglassReports([a,b],...ids));
  assert.throws(()=>compareHourglassReports([a,a,b],a.report_revision,b.report_revision),/ambiguous/);
 });
+
+test('operation association checks the completed candidate, worker and both recorded configurations',()=>{
+ const a=row('a',20),b=row('b',25),id='11111111-2222-4333-8444-555555555555';
+ a.association.approved_configuration_revision='1'.repeat(64);b.association.approved_configuration_revision='2'.repeat(64);
+ const operation={id,result:{id,worker_id:'example',state:'completed',private_path:'PRIVATE',evidence:{serving:'candidate',qualification:{state:'passed'},configuration:{previous_record_revision:'1'.repeat(64),record_revision:'2'.repeat(64)}}}};
+ const compareLinked=op=>compareHourglassReports([a,b],a.report_revision,b.report_revision,op);
+ const linked=compareLinked(operation);assert.equal(linked.operation_association.state,'recorded_revisions_match');assert.equal(linked.difference.value,5);assert.doesNotMatch(JSON.stringify(linked),/PRIVATE/);
+ for(const change of [o=>o.result.worker_id='another',o=>o.result.evidence.configuration.previous_record_revision='3'.repeat(64),o=>o.result.evidence.configuration.record_revision='3'.repeat(64),o=>o.result.evidence.serving='previous',o=>o.result.state='running',o=>o.result.evidence.qualification.state='failed',o=>o.result.id='different']){
+  const op=structuredClone(operation);change(op);const result=compareLinked(op);assert.equal(result.operation_association.state,'needs_review');assert.equal(result.difference.value,5,'Report arithmetic remains separate from operation association');
+ }
+ assert.equal(compareLinked({id,result:null}).operation_association.state,'needs_review');
+ b.association.approved_configuration_revision=null;assert.ok(compareLinked(operation).operation_association.issues.some(i=>i.field==='candidate.approved_configuration_revision'&&i.state==='unknown'));
+});

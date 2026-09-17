@@ -80,6 +80,15 @@ class HourglassToolsTest(unittest.TestCase):
         self.assertEqual(len(self.calls), 1)
         self.assertEqual(self.events[-1][1]['event']['state'], 'failed')
 
+    def test_optional_operation_association_is_forwarded_without_extra_authority(self):
+        args = {'baseline_revision': 'a' * 64, 'candidate_revision': 'b' * 64,
+                'operation_id': '11111111-2222-4333-8444-555555555555'}
+        self.catalog['compare_hourglass_reports']['handler'](args)
+        self.assertEqual(self.calls[0][2], {'action': 'compare', **args})
+        for invalid in [{**args, 'operation_id': '/private/path'}, {**args, 'operation_id': None}, {**args, 'approve': True}]:
+            self.assertIn('error', json.loads(self.catalog['compare_hourglass_reports']['handler'](invalid)))
+        self.assertEqual(len(self.calls), 1)
+
     def test_endpoint_must_be_fixed_loopback_tool_route(self):
         for url in ['http://example.invalid/api/genie/hourglass-tools',
                 'http://127.0.0.1:1/api/hourglass', 'http://127.0.0.1:1/api/genie/hourglass-tools?secret=yes']:

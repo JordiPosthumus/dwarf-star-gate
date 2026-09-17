@@ -31,9 +31,11 @@ def register_hourglass(config, emit):
                     raise ValueError('Invalid target')
                 payload = {'action': 'prepare', 'model': args['model']}
             elif name == 'compare_hourglass_reports':
-                if set(args) != {'baseline_revision', 'candidate_revision'} or not all(
-                        isinstance(v, str) and re.fullmatch(r'[a-f0-9]{64}', v) for v in args.values()):
+                if set(args) not in ({'baseline_revision', 'candidate_revision'}, {'baseline_revision', 'candidate_revision', 'operation_id'}) or not all(
+                        isinstance(args.get(k), str) and re.fullmatch(r'[a-f0-9]{64}', args[k]) for k in ['baseline_revision', 'candidate_revision']):
                     raise ValueError('Choose saved report revisions')
+                if 'operation_id' in args and (not isinstance(args['operation_id'], str) or not re.fullmatch(r'[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}', args['operation_id'])):
+                    raise ValueError('Choose a saved operation UUID')
                 payload = {'action': 'compare', **args}
             else:
                 if args:
@@ -70,9 +72,10 @@ def register_hourglass(config, emit):
             {'type': 'object', 'properties': {}, 'additionalProperties': False}),
         ('compare_hourglass_reports', 'Compare two exact saved report revisions from measurement status. '
             'Checks recorded protocols and conditions, and returns a score difference only when the methodology matches. '
+            'When evaluating a server change, include its operation_id from server_change_status to check that baseline and candidate reports match that completed operation\'s worker and before/after configuration revisions. '
             'Does not prove an upgrade caused a difference or start any work.',
-            {'type': 'object', 'properties': {k: {'type': 'string', 'pattern': '^[a-f0-9]{64}$'}
-                for k in ['baseline_revision', 'candidate_revision']},
+            {'type': 'object', 'properties': {**{k: {'type': 'string', 'pattern': '^[a-f0-9]{64}$'}
+                for k in ['baseline_revision', 'candidate_revision']}, 'operation_id': {'type': 'string', 'description': 'Optional UUID of the saved server-change operation being evaluated.'}},
              'required': ['baseline_revision', 'candidate_revision'], 'additionalProperties': False}),
     ]:
         registry.register(name=name, toolset=TOOLSET,
