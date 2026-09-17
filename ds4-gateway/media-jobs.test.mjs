@@ -184,3 +184,36 @@ test('all H3 namespaced reference families pass unchanged, including video sound
  const payload={prompt:{'5':{class_type:'Source'},'7':{class_type:'MiniMaxH3ReferenceToVideo',inputs:{'ref_images.ref_image_0':['5',0],'ref_audios.ref_audio_0':['5',1],'ref_videos.ref_video_0':['5',0],'ref_video_audios.ref_video_audio_0':['5',1],ref_images:{},ref_audios:[],ref_videos:null,ref_video_audios:{}}}}};
  assert.deepEqual(q.enqueue('video',payload,{key:'all-refs'}).job.payload,payload);
 });
+
+test('ACE-Step malformed effective parameters fail before queueing instead of silently changing the request',t=>{
+ const q=new MediaJobs(path.join(directory(t),'jobs.json'));
+ const bad=[{inference_steps:'careful'},{audio_duration:'30 seconds'},{thinking:'please'},{batch_size:[]},{guidance_scale:{}},{inference_steps:'2.5'},{audio_duration:'0x10'},{ref_audio:'song.wav'},{input_files:['a-file-id']},{param_obj:{inferenceSteps:'careful'}},{metadata:JSON.stringify({duration:'30 seconds'})},{metas:{},metadata:{inference_steps:'careful'}}];
+ for(const params of bad)assert.throws(()=>q.enqueue('music',{prompt:'music',...params},{key:'bad-music'}),e=>e.status===400&&/ACE-Step:.*No job was queued/.test(e.message));
+ assert.equal(q.list().length,0);
+});
+
+test('ACE-Step aliases, automatic values, native precedence and advanced options pass through unchanged',t=>{
+ const q=new MediaJobs(path.join(directory(t),'jobs.json'));
+ const inputs=[
+  {caption:'music',duration:'30',inferenceSteps:'50',thinking:'yes',useRandomSeed:'off',seed:'42,43'},
+  {prompt:'',sample_mode:true,audio_duration:-1,bpm:null,batch_size:'',guidance_scale:'7.0',inference_steps:1000},
+  {prompt:'music',param_obj:JSON.stringify({inferenceSteps:'50',duration:'3e1'}),metadata:{thinking:'on'}},
+  {prompt:'music',inference_steps:50,thinking:true,param_obj:{inferenceSteps:'ignored garbage',thinking:'also ignored'},metadata:{inference_steps:'also ignored'}},
+  {prompt:'music',referenceAudioPath:'/engine/reference.wav',ctx_audio_path:'/engine/source.wav',task_type:'repaint',repainting_end:-1,custom_future_option:{preserve:true}},
+  {prompt:'music',audio_duration:'1_000.5',bpm:'1_20',audio_code_string:'codes',lm_top_k:-1,thinking:'false',input_files:[]},
+  {prompt:'music',metas:{},metadata:{inference_steps:'50',thinking:'yes'}},
+ ];
+ inputs.forEach((payload,i)=>assert.deepEqual(q.enqueue('music',payload,{key:'valid-music-'+i}).job.payload,payload));
+});
+
+test('previously accepted ACE-Step requests remain retrievable even if new preflight would reject them',t=>{
+ const file=path.join(directory(t),'jobs.json'),q=new MediaJobs(file);
+ const initial=q.enqueue('music',{prompt:'music'},{key:'legacy-music'}).job;
+ const payload={inference_steps:'careful',prompt:'music'};
+ const fingerprint=createHash('sha256').update(JSON.stringify({kind:'music',payload,priority:'normal'})).digest('hex');
+ q.update(initial.id,{payload,fingerprint,state:'completed'});
+ const saved=fs.readFileSync(file),restarted=new MediaJobs(file);
+ const retry=restarted.enqueue('music',payload,{key:'legacy-music'});
+ assert.equal(retry.created,false);assert.equal(retry.job.id,initial.id);assert.deepEqual(fs.readFileSync(file),saved);
+ assert.throws(()=>restarted.enqueue('music',payload,{key:'new-music'}),e=>e.status===400);
+});

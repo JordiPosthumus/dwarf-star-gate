@@ -393,3 +393,17 @@ Retry an unchanged request with its original `Idempotency-Key` to retrieve its
 existing job. Use a new key after correcting a rejected/failed request. A lost
 reply is not permission to submit again with a new key. Producing a valid video
 file does not, by itself, prove reference conditioning or identity fidelity.
+
+ACE-Step numeric and boolean preflight checks catch malformed supplied values
+before queueing, including aliases and effective fields in `param_obj` or
+metadata. For example, `inference_steps: "careful"` would otherwise silently
+become 8; `thinking: "please"` would become false. Use numbers or numeric strings,
+and true/false or ordinary boolean strings. Null/empty automatic values, negative
+native sentinels, advanced options and accepted-job retries are preserved.
+The gateway does not set new duration, step or batch limits.
+
+Music JSON accepts `reference_audio_path` / `src_audio_path` and their native
+aliases for files already present on the selected ACE-Step host. Multipart field
+names such as `ref_audio` in JSON, or nonempty video `input_files`, are rejected
+with an explanation rather than silently ignored. Automatic music reference
+upload/transfer is not implemented by this check.

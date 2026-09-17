@@ -7,6 +7,7 @@ import {MediaInputs} from './media-inputs.mjs';
 import {prepareVideoPrompt} from './video-prompt.mjs';
 import {validateVideoReferences} from './media-validation.mjs';
 import {nativeFailureDetail,mediaErrorAdvice} from './media-errors.mjs';
+import {validateMusicInputs} from './music-input.mjs';
 
 const states=new Set(['queued','submitting','submitted','pending','running','completed','failed','uncertain']);
 const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
@@ -83,6 +84,7 @@ export class MediaJobs {
     // original seed/workflow even if the bundled recipe later changes.
     const prepared=kind==='video'&&typeof payload.prompt==='string'?prepareVideoPrompt(payload):{payload:structuredClone(payload)};
     if(kind==='video')validateVideoReferences(prepared.payload,this.inputs.forJob(payload.input_files));
+    else validateMusicInputs(payload);
     const job={id:randomUUID(),kind,...prepared,priority,key_hash:keyHash,fingerprint,state:'queued',created_at:now(),updated_at:now()};
     this.save({...this.data,jobs:[...this.data.jobs,job]});return {job:this.get(job.id),created:true};
   }
