@@ -201,4 +201,52 @@ class SelectedCollector(unittest.TestCase):
  def test_absent_is_distinct_from_daemon_failure(self):
   result,calls=self.collect('absent');self.assertFalse(result['image_present']);self.assertFalse(result['retained_containers_checked']);self.assertIn('were not queried',result['scope']);self.assertEqual(len(calls),1)
   with self.assertRaisesRegex(ValueError,'unavailable'):self.collect('failed')
+class ModelConfiguration(unittest.TestCase):
+ def setUp(self):
+  self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.root=pathlib.Path(self.tmp.name)
+  self.file=self.root/'config.json'
+  self.file.write_text(json.dumps({'architectures':['ActualModelForCausalLM'],'model_type':'actual_model','text_config':{'model_type':'actual_text','head_dim':128,'num_hidden_layers':48,'token':'PRIVATE_TOKEN'},'quantization_config':{'quant_method':'modelopt','bits':4},'auto_map':{'AutoConfig':'must_not_import.Config'},'_name_or_path':'PRIVATE_REPO','api_key':'PRIVATE_KEY'}))
+  (self.root/'must_not_import.py').write_text('raise RuntimeError("Model code must not run")')
+ def query(self,cmd=None,entry=None):
+  import subprocess
+  return subprocess.run([sys.executable,'-I','-B','-c',m.MODEL_CONFIG_QUERY,json.dumps({'Cmd':cmd or [str(self.root)],'Entrypoint':entry or ['vllm','serve']})],capture_output=True,text=True)
+ def test_reads_real_json_without_loading_model_code_or_private_fields(self):
+  r=self.query();self.assertEqual(r.returncode,0,r.stderr);data=json.loads(r.stdout)
+  self.assertEqual(data['sha256'],m.hashlib.sha256(self.file.read_bytes()).hexdigest());self.assertEqual(data['values']['architectures'],['ActualModelForCausalLM']);self.assertEqual(data['values']['text_config'],{'model_type':'actual_text','head_dim':128,'num_hidden_layers':48});self.assertNotIn('PRIVATE_',r.stdout);self.assertNotIn('auto_map',r.stdout)
+ def test_uses_explicit_config_override_and_supported_launch_forms(self):
+  other=self.root/'override';other.mkdir();(other/'config.json').write_text('{"model_type":"override"}')
+  r=self.query([str(self.root),'--hf-config-path',str(other)]);self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(json.loads(r.stdout)['values']['model_type'],'override');self.assertTrue(json.loads(r.stdout)['hf_config_path_override'])
+  for cmd,entry in [(['serve',str(self.root)],['vllm']),(['--model='+str(self.root)],['vllm','serve'])]:
+   r=self.query(cmd,entry);self.assertEqual(r.returncode,0,r.stderr)
+ def test_does_not_resolve_remote_or_ambiguous_model_locations(self):
+  for cmd,entry in [(['public/model'],None),([str(self.root),'--model',str(self.root)],None),([str(self.root),'--hf-config-path',str(self.root),'--hf-config-path',str(self.root)],None),([str(self.root)],['sh','-c'])]:
+   with self.subTest(cmd=cmd,entry=entry):self.assertNotEqual(self.query(cmd,entry).returncode,0)
+ def test_preserves_bad_files_and_rejects_symlink(self):
+  self.file.write_text('invalid-json');self.assertNotEqual(self.query().returncode,0);self.assertEqual(self.file.read_text(),'invalid-json')
+  self.file.unlink();self.file.symlink_to(self.root/'must_not_import.py');self.assertNotEqual(self.query().returncode,0);self.assertTrue(self.file.is_symlink())
+ def collect(self,changed=False,failed=False):
+  import io,contextlib,copy,subprocess
+  c={'Id':'exact-container-id','Image':'image-id','State':{'Running':True,'StartedAt':'before'},'Config':{'Cmd':[str(self.root)],'Entrypoint':['vllm','serve'],'Env':[]},'Mounts':[],'HostConfig':{}}
+  model_read=False;calls=[]
+  def run(argv,**kwargs):
+   nonlocal model_read
+   calls.append(argv)
+   if argv[:3]==('docker','image','inspect'):return json.dumps([{'Id':'image-id','Created':'dated'}])
+   if argv[:2]==('docker','exec'):
+    self.assertEqual(argv[2:6],('exact-container-id','python3','-B','-c'))
+    if argv[6]==m.MODEL_CONFIG_QUERY:
+     model_read=True
+     if failed:raise subprocess.TimeoutExpired(argv,20)
+     r=self.query();self.assertEqual(r.returncode,0);return r.stdout
+    return json.dumps({k:{'status':'not_found'} for k in ['vllm','torch','transformers']})
+   value=copy.deepcopy(c)
+   if changed and model_read:value['State']['StartedAt']='after'
+   return json.dumps([value])
+  output=io.StringIO()
+  with patch('subprocess.check_output',side_effect=run),patch('sys.stdin',io.StringIO(json.dumps({'container':'enrolled-name'}))),contextlib.redirect_stdout(output):exec(compile(m.COLLECTOR,'collector','exec'),{})
+  return json.loads(output.getvalue()),calls
+ def test_collector_observes_exact_container_and_keeps_other_metadata_on_failure(self):
+  result,calls=self.collect();self.assertEqual(result['model_config']['values']['architectures'],['ActualModelForCausalLM']);self.assertTrue(all(c[1] in ['image','inspect','exec'] for c in calls));self.assertNotIn('PRIVATE_',json.dumps(result))
+  for options in [{'changed':True},{'failed':True}]:
+   result,_=self.collect(**options);self.assertEqual(result['model_config'],{'status':'unavailable','reason':'model_config_read_failed'});self.assertEqual(result['container']['id'],'exact-container-id');self.assertEqual(result['packages']['status'],'queried')
 if __name__=='__main__':unittest.main()

@@ -90,6 +90,28 @@ preserved; deployment did not turn an off schedule on or convert reminders into
 automatic studies. The controlled timer/browser and Hermes tests establish the
 scheduling path; the complete live upstream-change trial remains separate.
 
+## Model architecture during live inspection
+
+For supported running `vllm serve` containers, `inspect_server` now reads a small
+allowlisted summary of the launch model's `config.json`: architecture, model
+type, attention dimensions and layer types, plus selected quantization fields.
+It follows an explicit local `--hf-config-path` when present. It neither imports
+model code nor resolves a remote model repository. Private and unknown fields
+are omitted; the full file's hash identifies the observed bytes.
+
+Missing files, symlinked config files, unsupported launch forms and a container
+restart during the read produce an explicit unavailable result without hiding
+the other inspection evidence. On-disk model configuration is not proof of the
+loaded configuration or active kernel dispatch; command-line overrides are not
+applied to this summary. Use this evidence with the relevant installed source
+before claiming an upstream kernel applies. A registered operator name alone
+does not establish that the model executes it.
+
+The reader was exercised on an actual serving container without changing its
+process, and against disposable JSON fixtures including config overrides,
+private fields, malformed files and container changes. This establishes the
+reader, not an upstream performance gain or a completed candidate trial.
+
 ## Live research exercise, 15 September 2026
 
 The configured Genie/Hermes completed a focused, manually requested study through

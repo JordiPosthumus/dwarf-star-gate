@@ -51,8 +51,57 @@ for name in paths:
  files.append(row)
 print(json.dumps({'files':files,'scope':'Installed Python source bytes, not proof of loaded code, commit ancestry, compiler fusion or performance. Missing means this exact path was not found. No source executed or modified.'}))
 '''
+# Only the launch configuration supplies this path. Read JSON, never import
+# transformers/model code or resolve a remote model repository.
+MODEL_CONFIG_QUERY = r'''
+import sys,json,pathlib,os,stat,hashlib
+config=json.loads(sys.argv[1]);cmd=config.get('Cmd') or [];entry=config.get('Entrypoint') or []
+def flag(name):
+ values=[]
+ for i,item in enumerate(cmd):
+  if item==name:
+   if i+1>=len(cmd) or cmd[i+1].startswith('--'):raise ValueError('Incomplete model flag')
+   values.append(cmd[i+1])
+  elif item.startswith(name+'='):values.append(item.split('=',1)[1])
+ if len(values)>1:raise ValueError('Ambiguous model flag')
+ return values[0] if values else None
+if entry not in [['vllm','serve'],['vllm']]:raise ValueError('Unsupported launch form')
+if entry==['vllm']:
+ if not cmd or cmd[0]!='serve':raise ValueError('Unsupported launch form')
+ cmd=cmd[1:]
+override=flag('--hf-config-path');explicit=flag('--model')
+positional=cmd[0] if cmd and not cmd[0].startswith('-') else None
+if explicit and positional:raise ValueError('Ambiguous model location')
+location=override or explicit or positional
+if not isinstance(location,str) or not pathlib.Path(location).is_absolute():raise ValueError('No local launch model directory')
+p=pathlib.Path(location)
+if p.name!='config.json':p=p/'config.json'
+fd=os.open(p,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+try:
+ before=os.fstat(fd)
+ if not stat.S_ISREG(before.st_mode) or before.st_size>1048576:raise ValueError('Not a small model config')
+ with os.fdopen(fd,'rb',closefd=False) as stream:raw=stream.read(1048577)
+ after=os.fstat(fd)
+ if len(raw)>1048576 or (before.st_size,before.st_mtime_ns,before.st_ctime_ns)!=(after.st_size,after.st_mtime_ns,after.st_ctime_ns):raise ValueError('Model config changed while reading')
+finally:os.close(fd)
+data=json.loads(raw)
+if not isinstance(data,dict):raise ValueError('Invalid model config')
+strings={'model_type','torch_dtype','dtype','hidden_act','quant_method','format'}
+numbers={'hidden_size','num_hidden_layers','num_attention_heads','num_key_value_heads','head_dim','max_position_embeddings','vocab_size','linear_num_key_heads','linear_num_value_heads','linear_key_head_dim','linear_value_head_dim','bits','group_size'}
+def select(obj):
+ result={}
+ for k,v in obj.items():
+  if k in strings and isinstance(v,str) and len(v)<=256:result[k]=v
+  elif k in numbers and type(v) is int:result[k]=v
+  elif k in {'architectures','layer_types','attention_types'} and isinstance(v,list) and len(v)<=1024 and all(isinstance(s,str) and len(s)<=256 for s in v):result[k]=v
+ return result
+values=select(data)
+for key in ['text_config','vision_config','quantization_config']:
+ if isinstance(data.get(key),dict):values[key]=select(data[key])
+print(json.dumps({'status':'read','sha256':hashlib.sha256(raw).hexdigest(),'bytes':len(raw),'values':values,'hf_config_path_override':override is not None,'scope':'Allowlisted config.json fields from the launch model location on disk. Not proof of loaded configuration, active kernel dispatch or performance. Command-line hf-overrides and runtime defaults are not applied here. No model code imported or executed; unknown/private fields withheld.'}))
+'''
 # Arguments arrive as JSON on stdin, never interpolated into a remote shell command.
-COLLECTOR = 'SOURCE_QUERY = '+repr(SOURCE_QUERY)+'\n'+r'''
+COLLECTOR = 'SOURCE_QUERY = '+repr(SOURCE_QUERY)+'\nMODEL_CONFIG_QUERY = '+repr(MODEL_CONFIG_QUERY)+'\n'+r'''
 import sys,json,subprocess,pathlib,re,hashlib,datetime,stat
 p=json.loads(sys.stdin.readline())
 secret=re.compile(r'api[_-]?key|access[_-]?token|secret|password|authorization|hf_token|hugging_face_hub_token|private[_-]?key|credential',re.I)
@@ -107,6 +156,15 @@ if c['State']['Running']:
   else:packages={'status':'queried','method':'importlib.metadata in inspected container; frameworks not imported','values':queried}
  except Exception:
   packages={'status':'unavailable','reason':'package_query_failed'}
+model_config={'status':'unavailable','reason':'unsupported_launch_form'}
+if config.get('Entrypoint') in [['vllm','serve'],['vllm']]:
+ model_config={'status':'unavailable','reason':'container_not_running'}
+ if c['State']['Running']:
+  try:
+   model_config=json.loads(run('docker','exec',c['Id'],'python3','-B','-c',MODEL_CONFIG_QUERY,json.dumps({'Cmd':config.get('Cmd'),'Entrypoint':config.get('Entrypoint')})))
+   check=json.loads(run('docker','inspect','--type','container','--',c['Id']))[0]
+   if not check['State']['Running'] or check['State']['StartedAt']!=c['State']['StartedAt']:raise ValueError('Container changed')
+  except Exception:model_config={'status':'unavailable','reason':'model_config_read_failed'}
 sources=None
 if p.get('source_files'):
  sources={'status':'unavailable','reason':'container_not_running'}
@@ -127,7 +185,7 @@ if p.get('launcher'):
  data=f.read_bytes()
  if re.search(rb'(?i)(?:api[_-]?key|access[_-]?token|secret|password|hf_token|hugging_face_hub_token)\s*=',data):raise ValueError('Launcher requires credential redaction')
  launcher={'text':data.decode(),'sha256':hashlib.sha256(data).hexdigest()}
-print(json.dumps({'observed_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'container':{'id':c['Id'],'image_id':c['Image'],'running':c['State']['Running'],'started_at':c['State']['StartedAt'],'entrypoint':config.get('Entrypoint'),'command':cmd,'environment':env,'mounts':c['Mounts'],'port_bindings':c['HostConfig'].get('PortBindings'),'restart_policy':c['HostConfig'].get('RestartPolicy'),'ipc_mode':c['HostConfig'].get('IpcMode'),'shm_size':c['HostConfig'].get('ShmSize'),'device_requests':c['HostConfig'].get('DeviceRequests')},'image':{'id':i['Id'],'created':i['Created'],'repo_digests':i.get('RepoDigests',[])},'packages':packages,'launcher':launcher,**({'sources':sources} if sources is not None else {}),'scope':'Live Docker metadata, launcher bytes and separately labelled installed distribution metadata. Package versions do not prove build ancestry or custom source integrity. No inference, restart, weight hash or restoration test. Launch settings do not independently prove effective API behavior.'}))
+print(json.dumps({'observed_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'container':{'id':c['Id'],'image_id':c['Image'],'running':c['State']['Running'],'started_at':c['State']['StartedAt'],'entrypoint':config.get('Entrypoint'),'command':cmd,'environment':env,'mounts':c['Mounts'],'port_bindings':c['HostConfig'].get('PortBindings'),'restart_policy':c['HostConfig'].get('RestartPolicy'),'ipc_mode':c['HostConfig'].get('IpcMode'),'shm_size':c['HostConfig'].get('ShmSize'),'device_requests':c['HostConfig'].get('DeviceRequests')},'image':{'id':i['Id'],'created':i['Created'],'repo_digests':i.get('RepoDigests',[])},'packages':packages,'model_config':model_config,'launcher':launcher,**({'sources':sources} if sources is not None else {}),'scope':'Live Docker metadata, launcher bytes, separately labelled installed distribution metadata and model configuration on disk. Package versions do not prove build ancestry or custom source integrity. Installed Python source can be requested with source_files and source_window. No inference, restart, weight hash or restoration test. Launch settings and model configuration on disk do not independently prove effective API behavior or kernel dispatch.'}))
 '''
 
 def read_json(file, expected_sha256=None):
@@ -309,6 +367,7 @@ def register_inspection(config, context, emit):
             properties['selected_default']={'type':'boolean','default':False,'description':'Inspect the image named by the matching owner-selected default and its retained container recipes.'}
             properties['source_files']={'type':'array','items':{'type':'string'},'minItems':1,'maxItems':8,'description':'Optional Python paths: vllm/... .py in the current Docker container (256KiB combined), or omlx/... .py in the enrolled local checkout (512KiB combined). Local source_on_disk.changed_python_files and untracked_python_files list current runtime changes. Up to 8 paths; read bytes and hashes without importing/executing them; missing paths reported. Not supported with selected_default. On-disk source does not prove loaded code.'}
             properties['source_window']={'type':'object','properties':{'offset':{'type':'integer','minimum':0},'length':{'type':'integer','minimum':1,'maximum':16000}},'required':['offset','length'],'additionalProperties':False,'description':'Use with ONE source_files path. Recommended for source inspection: start with offset 0, length 4000, then follow next_offset. Returns a text section with full-file hash/size; existing full reads remain available without this option. Large full results may spill to a Hermes cache this profile cannot read; use source_window instead.'}
+            description='For supported running vLLM containers, model_config includes allowlisted architecture/dimension fields read from the launch model config.json, or an explicit unavailable reason. This is on-disk configuration, not active kernel evidence. '+description
             description+=' To evaluate an upstream patch, request its relevant source_files and compare actual contents; a build date alone cannot prove a patch absent. Keep private source contents out of web queries.'
         if kind=='artifact':
             properties.update({'artifact':{'type':'string','enum':ARTIFACTS},'record_kind':{'type':'string','enum':['observed','approved','proposed'],'default':'proposed'},'reference_chain':{'type':'array','items':{'type':'string'},'maxItems':8,'description':'Optional JSON pointers to existing path/sha256 objects. Each pointer selects a reference in the preceding document. With artifact set, start there (e.g. ["/validation_reference"]); without artifact, start at the worker record (e.g. ["/evidence/0"]). Every linked JSON file must match its hash and stay in this library. Escape ~ as ~0 and / as ~1 inside pointer keys.'}})
