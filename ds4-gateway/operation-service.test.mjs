@@ -143,6 +143,21 @@ test('operations stay absent by default and tool status does not expose executio
   assert.doesNotMatch(JSON.stringify(view),/PRIVATE_COMMAND|private\/secret/);
 });
 
+test('returned operation describes assisted completion without claiming an automatic successful trial',()=>{
+  const row={state:'submitted',runner:{state:'restored',process_alive:false,
+    original_result:{state:'requires_reconciliation',private_error:'PRIVATE'},
+    progress:{detail:'Old waiting text',heartbeat_at:1},
+    result:{state:'restored',operator_completion:true,readmission:{state:'readmitted'},
+      trial:{state:'qualification_failed',job_id:null}}}};
+  assert.equal(operationLabel(row),'Previous version restored');
+  assert.match(operationProgress(row),/returned to gateway traffic/);assert.match(operationProgress(row),/operator assistance/);
+  assert.doesNotMatch(operationProgress(row),/Old waiting/);
+  const view=operationToolView(row);assert.equal(view.state,'restored');
+  assert.equal(view.return_followup.original_outcome,'requires_reconciliation');
+  assert.equal(view.return_followup.operator_completion,true);
+  assert.equal(view.evidence.trial.state,'qualification_failed');assert.doesNotMatch(JSON.stringify(view),/PRIVATE/);
+});
+
 test('saved serving outcomes expose exact configuration links and preserve restoration and owner-pause distinctions',async t=>{
   const r=await rig(t);r.service.store.propose(r.proposal);await r.service.store.idle();
   r.service.store.write(r.id,'runner-result.json',{state:'restored',at:1700000000,serving:'previous',

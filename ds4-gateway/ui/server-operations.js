@@ -26,6 +26,9 @@ export function operationChanges(review){
 export function operationProgress(row,now=Date.now()){
   const p=row.runner?.progress,result=row.runner?.result;
   if(result?.readmission?.state==='left_to_operator')return 'Verification finished. Routing was left to the operator because a separate pause or decision must be preserved.';
+  if(result?.state==='restored'&&result?.readmission?.state==='readmitted')return 'Original server verified and returned to gateway traffic.'+
+    (result.operator_completion===true?' Return checks required operator assistance; the original failure is preserved.':'')+
+    ' This is a saved outcome, not a fresh health check.';
   if(p){const seconds=Number.isFinite(p.heartbeat_at)?Math.max(0,Math.floor(now/1000-p.heartbeat_at)):null;return `${p.detail} ${row.runner.process_alive===true?(seconds===null?'Runner alive; heartbeat time unavailable.':`Runner alive; heartbeat ${seconds}s ago.`):'Runner is not currently confirmed alive.'} A heartbeat alone does not prove model progress.`;}
   return row.error??row.runner?.scope??'Preparing or waiting for approval does not change a server.';
 }

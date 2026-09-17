@@ -58,6 +58,23 @@ test('proposal alone never creates an independent process or action',async t=>{
   assert.equal(fs.existsSync(path.join(r.folder,'runner-started.json')),false);
 });
 
+test('later return evidence updates status without rewriting or rerunning the failed attempt',async t=>{
+  const r=await rig(t,{failure:true});await r.approve();r.release();
+  await waitFor(async()=>{const s=await r.transport.observe(r.target);return !s.process_alive&&s.result?.state==='requires_reconciliation';});
+  const original=fs.readFileSync(path.join(r.folder,'runner-result.json'));
+  const binding=hash(fs.readFileSync(path.join(r.folder,'plan.json')));
+  fs.writeFileSync(path.join(r.folder,'reconcile-started.json'),JSON.stringify({plan_revision:binding,pid:999999}));
+  const outcome={state:'restored',plan_revision:'f'.repeat(64),serving:'previous',readmission:{state:'readmitted'}};
+  const file=path.join(r.folder,'reconcile-result.json');fs.writeFileSync(file,JSON.stringify(outcome));
+  assert.equal((await r.transport.observe(r.target)).state,'requires_reconciliation');
+  outcome.plan_revision=binding;fs.writeFileSync(file,JSON.stringify(outcome));
+  const observed=await r.transport.observe(r.target);
+  assert.equal(observed.state,'restored');assert.equal(observed.process_alive,false);
+  assert.equal(observed.original_result.state,'requires_reconciliation');assert.deepEqual(observed.result,outcome);
+  assert.deepEqual(fs.readFileSync(path.join(r.folder,'runner-result.json')),original);
+  assert.equal(fs.readFileSync(path.join(r.folder,'effect.txt'),'utf8'),'one fixture action');
+});
+
 test('approved operation keeps running after its dashboard process exits',async t=>{
   const r=await rig(t);
   // A separate real Node process acts as the dashboard. It launches once, exits,

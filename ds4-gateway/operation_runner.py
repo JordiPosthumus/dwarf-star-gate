@@ -126,8 +126,22 @@ def observe(directory):
         claim = read(folder / 'runner-started.json')
         # A PID alone is not liveness: the kernel-held lock belongs to this job.
         state = result['state'] if result else 'running' if alive else 'requires_reconciliation'
+        original_result = None
+        returning = read(folder / 'reconcile-started.json')
+        returned = read(folder / 'reconcile-result.json') if returning else None
+        if returning and state == 'requires_reconciliation':
+            revision = hashlib.sha256(read_bytes(folder / 'plan.json')).hexdigest()
+            if returning.get('plan_revision') == revision:
+                if returned and returned.get('plan_revision') == revision and returned.get('state') in TERMINAL:
+                    original_result, result = result, returned
+                    state = returned['state']
+                    progress = read(folder / 'reconcile-progress.json')
+                elif returned is None and alive:
+                    original_result, result = result, None
+                    state, progress = 'running', read(folder / 'reconcile-progress.json')
         return {'id': folder.name, 'state': state, 'process_alive': alive,
                 'runner': claim, 'progress': progress, 'result': result,
+                **({'original_result': original_result} if original_result is not None else {}),
                 **({'reconciliation': {'runner': read(folder / 'reconcile-started.json'),
                     'progress': read(folder / 'reconcile-progress.json'), 'result': read(folder / 'reconcile-result.json')}}
                     if read(folder / 'reconcile-started.json') is not None else {}),

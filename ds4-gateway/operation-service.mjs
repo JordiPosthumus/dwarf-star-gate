@@ -51,6 +51,9 @@ export function operationToolView(row){
   return {id:row.id,worker_id:row.worker_id,state:runner?.state??row.state,proposal_state:row.state,
     plan_revision:row.plan_revision??null,error:row.error??null,
     candidate_qualification:row.candidate_qualification??null,
+    ...(runner?.original_result?{return_followup:{original_outcome:runner.original_result.state,
+      operator_completion:runner.result?.operator_completion===true,
+      scope:'Later return evidence is shown separately; the original failed attempt is preserved.'}}:{}),
     ...(runner?{process_alive:typeof runner.process_alive==='boolean'?runner.process_alive:null,progress:runner.progress?{
       phase:runner.progress.phase,detail:runner.progress.detail,changed_at:runner.progress.changed_at,heartbeat_at:runner.progress.heartbeat_at}:null,
       outcome:runner.result?.state??null,evidence:outcomeEvidence(runner.result,row.qualification,row.trial_report)}:{}),
