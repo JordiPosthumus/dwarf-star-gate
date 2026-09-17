@@ -8,10 +8,11 @@ import {fileURLToPath} from 'node:url';
 import {setTimeout as delay} from 'node:timers/promises';
 import {MediaJobs} from './media-jobs.mjs';
 import {MediaBackend} from './media-backend.mjs';
-import {runMediaCycle} from './media-cycle.mjs';
+import {runMediaCycle,mediaBatchCanContinue} from './media-cycle.mjs';
 import {saveMediaReceipt} from './media-execution.mjs';
 import {recoveryCall} from './recovery-transport.mjs';
 import {verifyRecovery,qwenRecoveryProofValid} from './recovery-verify.mjs';
+import {workerControl} from './worker-client.mjs';
 
 const folder=path.resolve(process.argv[2]),p=JSON.parse(fs.readFileSync(path.join(folder,'plan.json'),'utf8'));
 if(path.basename(folder)!==p.operation_id)throw new Error('Media operation identity mismatch');
@@ -20,12 +21,16 @@ const execute=promisify(execFile),quote=s=>"'"+String(s).replaceAll("'","'\\''")
 const remote=async args=>(await execute('ssh',['-o','BatchMode=yes','-o','ConnectTimeout=10',p.host,args.map(quote).join(' ')],{maxBuffer:8*1024*1024})).stdout;
 const save=(name,value)=>saveMediaReceipt(folder,name,{...value,at:new Date().toISOString()});
 const maintenanceScript=fileURLToPath(new URL('./media_maintenance.py',import.meta.url));
-let phase='',detail='',changedAt;
-const progress=(next,message)=>{if(next!==phase||message!==detail)changedAt=new Date().toISOString();phase=next;detail=message;save('progress.json',{phase,detail,changed_at:changedAt,heartbeat_at:new Date().toISOString()});};
+let phase='',detail='',changedAt,batch={};
+const progress=(next,message,context=batch)=>{if(next!==phase||message!==detail||context.active_job_id!==batch.active_job_id)changedAt=new Date().toISOString();phase=next;detail=message;batch=context;save('progress.json',{phase,detail,...batch,changed_at:changedAt,heartbeat_at:new Date().toISOString()});};
 const heartbeat=setInterval(()=>{if(phase)progress(phase,detail);},5000);heartbeat.unref();
 try{
   const result=await runMediaCycle(p,{
     jobs:new MediaJobs(path.join(folder,'media-jobs.json'),{resultsDirectory:p.results_directory,inputsDirectory:p.inputs_directory}),save,progress,delay,
+    continueBatch:async next=>{
+      const status=await workerControl(p.control_socket,'/media-jobs');
+      return mediaBatchCanContinue(next,status);
+    },
     maintenance:async action=>JSON.parse((await execute(p.python,['-I','-B',maintenanceScript,folder,action],{maxBuffer:1024*1024})).stdout),
     hasMaintenanceIntent:()=>fs.existsSync(path.join(folder,'gateway','acquire.intent.json')),
     inspect:async id=>JSON.parse(await remote(['docker','inspect',id]))[0],start:id=>remote(['docker','start',id]),stop:id=>remote(['docker','stop','-t','120',id]),

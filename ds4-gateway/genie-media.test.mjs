@@ -10,7 +10,7 @@ import {createMediaTools} from './genie-media.mjs';
 import {hermesProvider} from './genie-hermes.mjs';
 import {GenieChat} from './genie-chat.mjs';
 import {capabilityStatus} from './genie-capability-status.mjs';
-const id='11111111-1111-4111-8111-111111111111';
+const id='11111111-1111-4111-8111-111111111111', secondId='22222222-2222-4222-8222-222222222222';
 test('media tool preserves exact selection, observed progress and testing policy',async()=>{
   let testing=false,starts=0;
   const q=createMediaTools({read:async()=>({enabled:false,jobs:[{id,state:'running',execution:{phase:'generating'}}],workers:[]}),start:async input=>{starts++;assert.deepEqual(input,{job_id:id,worker_id:'one'});return {id,execution:{phase:'starting'}};},isTesting:()=>testing});
@@ -40,9 +40,9 @@ test('bounded media status keeps old queued jobs ahead of recent completed histo
 });
 test('automatic queue wakeup uses pinned Hermes to start once and retain actual tool events',{skip:!process.env.DSG_TEST_HERMES_SOURCE,timeout:120000},async t=>{
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'sg-media-chat-'));let starts=0,calls=0,setups=0;
-  const state={enabled:true,hosts:[{id:'one'}],fleet:[{id:'one',is_healthy:true,drained:false,load:0,queued:0},{id:'two',is_healthy:true,drained:false,load:0,queued:0}],workers:[{id:'one',kinds:['video'],busy:false}],jobs:[{id,kind:'video',state:'queued'}]};
+  const state={enabled:true,batch_jobs_supported:true,hosts:[{id:'one'}],fleet:[{id:'one',is_healthy:true,drained:false,load:0,queued:0},{id:'two',is_healthy:true,drained:false,load:0,queued:0}],workers:[{id:'one',kinds:['video'],busy:false}],jobs:[{id,kind:'video',state:'queued'},{id:secondId,kind:'video',state:'queued'}]};
   const resources=createMediaResources({genie_chat:{inspection:{workers:{one:{kind:'omlx-local'}}}}},{inspect:async()=>({system:'Darwin',architecture:'arm64',gpu_names:[]})});
-  const tools=createMediaTools({setup:async input=>{assert.deepEqual(input,{worker_id:'one',engine:'ace-step'});setups++;state.setup={operations:[{worker_id:'one',engine:'ace-step',phase:'waiting_idle'}]};return state.setup.operations[0];},resources,read:async()=>state,start:async input=>{assert.deepEqual(input,{job_id:id,worker_id:'one'});starts++;state.jobs[0].execution={worker_id:'one',phase:'waiting_idle',detail:'Admitted work finishing'};return state.jobs[0];}});
+  const tools=createMediaTools({setup:async input=>{assert.deepEqual(input,{worker_id:'one',engine:'ace-step'});setups++;state.setup={operations:[{worker_id:'one',engine:'ace-step',phase:'waiting_idle'}]};return state.setup.operations[0];},resources,read:async()=>state,start:async input=>{assert.deepEqual(input,{job_id:id,worker_id:'one',following_job_ids:[secondId]});starts++;for(const job of state.jobs)job.execution={worker_id:'one',phase:'waiting_idle',detail:'Admitted work finishing'};return state.jobs[0];}});
   const server=http.createServer((req,res)=>{
     if(tools.handle(req,res))return;
     if(req.method==='GET'){res.end(JSON.stringify({data:[{id:'fixture'}]}));return;}
@@ -50,7 +50,7 @@ test('automatic queue wakeup uses pinned Hermes to start once and retain actual 
       const body=JSON.parse(raw);if(req.url!=='/v1/chat/completions'){res.end('{}');return;}calls++;
       if(calls===4)assert.match(JSON.stringify(body.messages),/waiting_idle/);
       if(calls===3)assert.match(JSON.stringify(body.messages),/recipe_platform_matches/);
-      const name=calls===2?'inspect_media_host':calls===3?'start_media_job':calls===5?'setup_media_host':'media_job_status',args=calls===2?{worker_id:'one'}:calls===3?{job_id:id,worker_id:'one'}:calls===5?{worker_id:'one',engine:'ace-step'}:{};
+      const name=calls===2?'inspect_media_host':calls===3?'start_media_job':calls===5?'setup_media_host':'media_job_status',args=calls===2?{worker_id:'one'}:calls===3?{job_id:id,worker_id:'one',following_job_ids:[secondId]}:calls===5?{worker_id:'one',engine:'ace-step'}:{};
       const message=calls<=6?{role:'assistant',content:null,tool_calls:[{id:'media-'+calls,type:'function',function:{name:'tool_call',arguments:JSON.stringify({name,arguments:args})}}]}:{role:'assistant',content:'Job accepted on one; admitted LLM work is finishing. Generation has not started.'};
       const delta={...message,...(message.tool_calls?{tool_calls:message.tool_calls.map((v,index)=>({...v,index}))}:{})};
       res.setHeader('content-type','text/event-stream');res.end('data: '+JSON.stringify({id:'fixture',model:'fixture',choices:[{index:0,delta,finish_reason:null}]})+'\n\ndata: '+JSON.stringify({id:'fixture',model:'fixture',choices:[{index:0,delta:{},finish_reason:calls<=6?'tool_calls':'stop'}]})+'\n\ndata: [DONE]\n\n');
