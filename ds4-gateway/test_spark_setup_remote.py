@@ -26,6 +26,54 @@ def bundle(script):
 
 
 class RemoteSetupTests(unittest.TestCase):
+    def test_resume_keeps_partial_files_and_replays_observation_not_work(self):
+        script = """import json,sys,time
+from pathlib import Path
+def preflight(): pass
+if __name__ == '__main__':
+ root=Path(sys.argv[1]);root.mkdir(exist_ok=True)
+ partial=root/'retained-download';partial.write_text('downloaded bytes') if not partial.exists() else None
+ if not (root.parent/'allow-resume').exists():
+  (root/'setup.json').write_text(json.dumps({'state':'failed','error':'fixture download interrupted'}));sys.exit(7)
+ assert partial.read_text()=='downloaded bytes'
+ while not (root.parent/'finish').exists():time.sleep(.02)
+ (root/'setup.json').write_text(json.dumps({'state':'prepared_stopped','phase':'complete'}))
+"""
+        def terminal(root):
+            deadline=time.monotonic()+10
+            while time.monotonic()<deadline:
+                result=remote.status(root)
+                if not result['process_running']:return result
+                time.sleep(.02)
+            self.fail('Detached fixture did not finish')
+        with tempfile.TemporaryDirectory() as tmp, patch.object(remote.Path,'home',return_value=Path(tmp)):
+            root=Path(tmp)/'setup'
+            remote.start(root,bundle(script));failed=terminal(root)
+            self.assertEqual(failed['exit_code'],7)
+            expected=failed['finished_at']
+            original=(root/'launch.json').read_bytes()
+            with self.assertRaisesRegex(ValueError,'exact confirmed'):
+                remote.resume_preparation(root,'different-attempt')
+            source=root/'source/examples/spark-build/setup-spark.py'
+            source.write_text(script+'\n# changed\n')
+            with self.assertRaisesRegex(ValueError,'sources changed'):
+                remote.resume_preparation(root,expected)
+            source.write_text(script)
+            (root/'allow-resume').touch()
+            try:
+                result=remote.resume_preparation(root,expected)
+                self.assertEqual(result['state'],'accepted')
+                replay=remote.resume_preparation(root,expected)
+                self.assertEqual(replay['state'],'running')
+                self.assertEqual(replay['resume_of'],expected)
+                self.assertEqual(next(root.glob('launch.before-resume-*.json')).read_bytes(),original)
+                self.assertEqual((root/'engines/retained-download').read_text(),'downloaded bytes')
+            finally:(root/'finish').touch()
+            complete=terminal(root)
+            self.assertEqual(complete['state'],'prepared_stopped')
+            self.assertEqual(remote.resume_preparation(root,expected)['state'],'prepared_stopped')
+            self.assertEqual(len(list(root.glob('launch.before-resume-*.json'))),1)
+
     def test_media_location_is_derived_from_enrolled_ssh_account_and_creates_nothing(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(remote.Path,'home',return_value=Path(tmp)):
             identity='12345678-1234-1234-1234-123456789abc'

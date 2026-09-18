@@ -10,6 +10,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tarfile
+import uuid
 from datetime import datetime, timezone
 
 
@@ -76,6 +77,7 @@ def status(root):
     state = 'running' if running else (complete if launch.get('exit_code') == 0 and progress.get('state') == complete else 'needs_attention')
     return {'state': state, 'process_running': running, 'bundle_sha256': launch['bundle_sha256'],
             'started_at': launch['started_at'], 'finished_at': launch.get('finished_at'),
+            'resume_of': launch.get('resume_of'),
             'exit_code': launch.get('exit_code'), 'error': launch.get('error') or progress.get('error'), 'progress': progress,
             'model_download': model_progress(root, progress) if not qualifying else None,
             'qualification': status(root / 'qualification') if not qualifying and (root / 'qualification').exists() else None,
@@ -168,7 +170,7 @@ def start(root, payload):
         source.mkdir()
         archive.extractall(source, members=members, filter='data')
         receipt = root / 'launch.json'
-        save(receipt, {'bundle_sha256': payload['bundle_sha256'], 'started_at': datetime.now(timezone.utc).isoformat(),
+        save(receipt, {'source_sha256': {m.name: hashlib.sha256(archive.extractfile(m).read()).hexdigest() for m in members}, 'bundle_sha256': payload['bundle_sha256'], 'started_at': datetime.now(timezone.utc).isoformat(),
                        'operation': payload.get('operation', 'prepare'), 'setup_directory': payload.get('setup_directory'),
                        **({key: payload[key] for key in ('selected_engines', 'llm_container')} if payload.get('operation') == 'prepare_media' else {})})
         with (root / 'running.lock').open('a') as lock, (root / 'launch.log').open('a') as log:
@@ -181,6 +183,55 @@ def start(root, payload):
                 'scope': 'Detached work accepted. This acknowledgement does not prove qualification or registration.'}
     finally:
         host_lock.close()
+
+
+def resume_preparation(root, expected_finished_at):
+    """Explicitly resume one proven failed preparation; never replay uncertainty."""
+    current = status(root)
+    launch = json.loads((root / 'launch.json').read_text())
+    if launch.get('resume_of') == expected_finished_at:
+        return current  # Lost acknowledgement is not permission to start again.
+    if (current['state'] != 'needs_attention' or current.get('process_running')
+            or type(launch.get('exit_code')) is not int or launch['exit_code'] == 0
+            or not expected_finished_at or launch.get('finished_at') != expected_finished_at):
+        raise ValueError('Read the same target: only its exact confirmed failed preparation can resume')
+    if launch.get('operation') != 'prepare' or (root / 'qualification').exists():
+        raise ValueError('This action resumes new-host preparation only, not media or LLM qualification')
+    hashes = launch.get('source_sha256')
+    if not hashes:
+        raise ValueError('This older preparation has no source receipt for remote resume; inspect its retained files')
+    for name, expected in hashes.items():
+        relative = Path(name)
+        if relative.is_absolute() or '..' in relative.parts or hashlib.sha256((root / 'source' / relative).read_bytes()).hexdigest() != expected:
+            raise ValueError('Prepared sources changed; existing files preserved, no resume started')
+    setup_file = root / 'source/examples/spark-build/setup-spark.py'
+    namespace = {'__name__': 'preflight_only', '__file__': str(setup_file)}
+    exec(compile(setup_file.read_text(), str(setup_file), 'exec'), namespace)
+    namespace['preflight']()
+    with (Path.home() / '.cache/star-gate-spark-setup.lock').open('a') as host_lock, (root / 'running.lock').open('a') as lock:
+        try:
+            fcntl.flock(host_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise ValueError('Preparation is already running on this host; inspect instead of restarting')
+        if json.loads((root / 'launch.json').read_text()) != launch:
+            raise ValueError('Preparation receipt changed; inspect the current attempt')
+        backup = root / ('launch.before-resume-' + uuid.uuid4().hex + '.json')
+        backup.write_bytes((root / 'launch.json').read_bytes())
+        launch = {k: v for k, v in launch.items() if k not in ('exit_code', 'finished_at', 'error')}
+        launch.update(started_at=datetime.now(timezone.utc).isoformat(), resume_of=expected_finished_at)
+        save(root / 'launch.json', launch)
+        try:
+            with (root / 'launch.log').open('a') as log:
+                subprocess.Popen([sys.executable, '-I', '-B', str(root / 'source/ds4-gateway/spark_setup_remote.py'), '--run', str(root), str(host_lock.fileno()), str(lock.fileno())],
+                                 stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True,
+                                 pass_fds=(host_lock.fileno(), lock.fileno()))
+        except Exception as error:
+            launch.update(exit_code=1, finished_at=datetime.now(timezone.utc).isoformat(), error=str(error))
+            save(root / 'launch.json', launch)
+            raise
+    return {'state': 'accepted', 'resume_of': expected_finished_at, 'bundle_sha256': launch['bundle_sha256'],
+            'scope': 'Same preparation directory and verified source resumed. Existing downloads and build receipts retained. Qualification and registration remain separate.'}
 
 
 def run(root, lock_fds):
@@ -213,9 +264,11 @@ if __name__ == '__main__':
             root = Path(payload['directory'])
             if not root.is_absolute() or root.is_symlink() or '..' in root.parts or root == Path('/'):
                 raise ValueError('Use an absolute dedicated remote setup directory')
-            if payload['action'] not in ('status', 'start', 'prepare_media', 'qualify', 'verify_serving', 'media_plan', 'media_state'):
+            if payload['action'] not in ('status', 'start', 'resume', 'prepare_media', 'qualify', 'verify_serving', 'media_plan', 'media_state'):
                 raise ValueError('Unknown setup action')
-            if payload['action'] in ('media_plan', 'media_state'):
+            if payload['action'] == 'resume':
+                result = resume_preparation(root, payload.get('expected_finished_at'))
+            elif payload['action'] in ('media_plan', 'media_state'):
                 result = media_plan(root, require_idle=payload['action'] == 'media_plan')
             elif payload['action'] == 'qualify':
                 if json.loads((root / 'launch.json').read_text()).get('operation') == 'prepare_media':

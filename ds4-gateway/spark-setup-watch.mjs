@@ -15,6 +15,15 @@ export class SparkSetupWatch {
     if(Object.hasOwn(this.requests,id))return this.requests[id];
     this.requests[id]={target_id:id,binding:binding(this.targets[id]),state:'requested',requested_at:new Date().toISOString(),scope:'Prepare and test the engines, qualify the LLM and its dedicated restart helper, then register its qualified services. Existing media/recovery switches still control use.'};this.save();return this.requests[id];
   }
+  resumePreparation(id){
+    const r=this.requests[id];if(!r)return;
+    if(!this.targets[id]||binding(this.targets[id])!==r.binding)throw Error('Setup enrollment changed; inspect before continuing.');
+    if(r.state==='needs_attention'){
+      r.state='working';r.resumed_at=new Date().toISOString();delete r.error;delete r.pending;
+      if(r.dispatched_stage==='prepare_spark')delete r.dispatched_stage;
+      this.save();
+    }
+  }
   async tick(){
     if(this.closed||this.busy||!this.isEnabled()||!Object.values(this.requests).some(r=>!['complete','needs_attention'].includes(r.state)))return;
     const chat=this.chat.status();if(!chat.available||chat.conversations.some(c=>c.busy||c.queued))return;

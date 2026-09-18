@@ -37,18 +37,18 @@ test('uncertain SSH observations never trigger preparation and failures identify
   const cap=view.capabilities.find(c=>c.key==='spark_setup');assert.equal(cap.status,'Needs attention');assert.match(cap.detail,/new_spark: unavailable.*SSH/);
 });
 test('pinned Hermes calls setup tools and retains their receipts',{skip:!process.env.DSG_TEST_HERMES_SOURCE,timeout:120000},async t=>{
-  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'sg-setup-chat-'));let calls=0,starts=0,state='not_started';
-  const tools=createSparkSetupTools(config,{bundle:()=>({bundle:'fixture'}),transport:async(_target,input)=>{if(input.action==='start'){starts++;state='running';}return {state,progress:state==='running'?{engine:'qwen38-repaired',phase:'build_image'}:undefined};}});
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'sg-setup-chat-'));let calls=0,starts=0,resumes=0,state='not_started';const failedAt='2026-09-18T10:00:00Z';
+  const tools=createSparkSetupTools(config,{bundle:()=>({bundle:'fixture'}),transport:async(_target,input)=>{if(input.action==='start'){starts++;state='running';}if(input.action==='resume'){assert.equal(input.expected_finished_at,failedAt);resumes++;state='running';}return {state,...(state==='needs_attention'?{finished_at:failedAt,exit_code:7}:{}),...(resumes?{resume_of:failedAt}:{}),progress:state==='running'?{engine:'qwen38-repaired',phase:'build_image'}:undefined};}});
   const server=http.createServer((req,res)=>{
     if(tools.handle(req,res))return;
     if(req.method==='GET'){res.end(JSON.stringify({data:[{id:'fixture'}]}));return;}
     let raw='';req.on('data',c=>raw+=c);req.on('end',()=>{
       if(req.url!=='/v1/chat/completions'){res.end('{}');return;}calls++;
       const body=JSON.parse(raw);if(calls===4)assert.match(JSON.stringify(body.messages),/build_image/);
-      const name=calls===2?'prepare_spark':'spark_setup_status',args=calls===2?{target_id:'new_spark'}:{};
-      const message=calls<=3?{role:'assistant',content:null,tool_calls:[{id:'setup-'+calls,type:'function',function:{name:'tool_call',arguments:JSON.stringify({name,arguments:args})}}]}:{role:'assistant',content:'The new Spark is building its LLM image. It is not yet qualified or serving.'};
+      const name=calls===6?'resume_spark_preparation':calls===2?'prepare_spark':'spark_setup_status',args=calls===6?{target_id:'new_spark',expected_finished_at:failedAt}:calls===2?{target_id:'new_spark'}:{};const toolTurn=calls<=3||calls>=5&&calls<=7;
+      const message=toolTurn?{role:'assistant',content:null,tool_calls:[{id:'setup-'+calls,type:'function',function:{name:'tool_call',arguments:JSON.stringify({name,arguments:args})}}]}:{role:'assistant',content:'The new Spark is building its LLM image. It is not yet qualified or serving.'};
       const delta={...message,...(message.tool_calls?{tool_calls:message.tool_calls.map((v,index)=>({...v,index}))}:{})};
-      res.setHeader('content-type','text/event-stream');res.end('data: '+JSON.stringify({id:'fixture',model:'fixture',choices:[{index:0,delta,finish_reason:null}]})+'\n\ndata: '+JSON.stringify({id:'fixture',model:'fixture',choices:[{index:0,delta:{},finish_reason:calls<=3?'tool_calls':'stop'}]})+'\n\ndata: [DONE]\n\n');
+      res.setHeader('content-type','text/event-stream');res.end('data: '+JSON.stringify({id:'fixture',model:'fixture',choices:[{index:0,delta,finish_reason:null}]})+'\n\ndata: '+JSON.stringify({id:'fixture',model:'fixture',choices:[{index:0,delta:{},finish_reason:toolTurn?'tool_calls':'stop'}]})+'\n\ndata: [DONE]\n\n');
     });
   });
   await new Promise(r=>server.listen(0,'127.0.0.1',r));tools.bind(server.address().port);
@@ -59,6 +59,8 @@ test('pinned Hermes calls setup tools and retains their receipts',{skip:!process
   const answer=chat.get(conversation.id).messages[1];assert.equal(answer.state,'complete',JSON.stringify(answer));assert.equal(starts,1);assert.equal(calls,4);
   assert.equal(answer.spark_setup.events.filter(e=>e.state==='complete').length,3);assert.equal(chat.capabilityActivity().spark_setup.state,'complete');
   const reread=new GenieChat({directory:path.join(directory,'chats'),provider});assert.deepEqual(reread.get(conversation.id).messages[1].spark_setup,answer.spark_setup);
+  state='needs_attention';chat.submit(conversation.id,'Resume the same confirmed failed preparation after its download service recovered.','resume-fixture-1');await chat.idle();
+  const resumed=chat.get(conversation.id).messages.at(-1);assert.equal(resumed.state,'complete',JSON.stringify(resumed));assert.equal(resumes,1);assert.equal(starts,1);assert.ok(resumed.spark_setup.events.some(e=>e.tool==='resume_spark_preparation'&&e.state==='complete'));
 });
 
 test('bundled setup includes build constraints and redistribution notices, excluding tests',async()=>{
@@ -84,4 +86,13 @@ test('qualification starts only after preparation and records existing outcomes 
   await tools.tool({action:'qualify',target_id:'new_spark'});assert.equal(starts,1);
   const cap=capabilityStatus({gateway:{genie_capabilities:{spark_setup:true}}},{management:true,chat:{capabilities_configured:{spark_setup:true}},sparkSetup:await tools.tool({action:'status'})}).capabilities.find(c=>c.key==='spark_setup');
   assert.equal(cap.status,'Working');assert.match(cap.detail,/qualifying_text/);
+});
+
+test('resume passes the exact failed receipt, preserves capability gates and resumes only preparation',async()=>{
+ const at='2026-09-18T10:00:00Z',calls=[];let enabled=false,qualification=null,continued=0;
+ const tools=createSparkSetupTools(config,{isEnabled:()=>enabled,mediaQualification:{read:()=>qualification},continuation:{resumePreparation:()=>continued++},transport:async(_t,input)=>{calls.push(input);return {state:'accepted',resume_of:at};}});
+ const request={action:'resume',target_id:'new_spark',expected_finished_at:at};
+ await assert.rejects(tools.tool(request),/switched off/);enabled=true;
+ await tools.tool(request);assert.deepEqual(calls,[{action:'resume',expected_finished_at:at}]);assert.equal(continued,1);
+ qualification={state:'qualified_stopped'};await assert.rejects(tools.tool(request),/already advanced/);assert.equal(calls.length,1);
 });

@@ -121,7 +121,15 @@ SSH uncertainty means status is unknown, not
 that the build stopped. A repeated start reads the same directory's receipt;
 it does not launch a replacement. One preparation runs per remote SSH account at
 a time. Logs and receipts remain in the enrolled directory. Failed or interrupted
-preparation needs inspection; automatic retries are not supplied by this tool.
+preparation needs inspection. For a confirmed failed preparation, Genie can use
+`resume_spark_preparation` with its exact `finished_at` receipt after addressing
+the cause. This preserves the same directory, verified bundled sources, download
+partials and completed build receipts. A saved full setup request then continues.
+Repeated delivery of that same resume observes the attempt instead of starting
+another one. Running or uncertain work, changed sources, older preparations
+without a source receipt, and qualification failures require inspection; this
+action does not restart them. Genie must report recurring failures rather than
+retrying indefinitely.
 
 **Prepared is not serving.** The separate native qualification and registration tools
 advance that LLM to serving. Recovery and media bindings require their respective qualification evidence; LLM success alone does not prove those. No “ready”

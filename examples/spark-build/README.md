@@ -46,10 +46,13 @@ media samples, LLM/recovery qualification and registration. Preparation alone
 does not start serving. A full run on pristine hardware remains unverified.
 
 If preparation fails, inspect `setup.json` and `setup.log` in the same directory.
-The CLI can resume unchanged recipes as described above. Genie's remote setup
-currently reports the failure for attention; it does not automatically retry a
-failed installer. An uncertain SSH response is not proof of failure: read the
-same setup status before considering a retry.
+The CLI can resume unchanged recipes as described above. Genie can also resume
+a confirmed failed preparation using its exact completion receipt, after
+inspecting the cause. Remote resume uses the same directory and verified bundled
+sources; it does not restart uncertain work or failed native qualification.
+Older preparations without the source receipt still require inspection. An
+uncertain SSH response is not proof of failure: read the same setup status before
+considering a retry.
 
 ## Prepare an individual engine
 

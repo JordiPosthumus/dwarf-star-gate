@@ -101,3 +101,11 @@ test('an already qualified LLM remains eligible for registration without restart
  second.media_qualification={state:'running'};await w.tick();assert.equal(f.calls.length,3);
  first.state='prepared_stopped';await w.tick();assert.match(f.calls[3][1],/for new-spark/);assert.match(f.calls[3][1],/qualify_spark_media/);
  });
+
+test('confirmed preparation resume reopens its existing continuation but not another target binding',async t=>{
+ const f=fixture(t),w=f.watch();w.request('new-spark');await w.tick();
+ f.snapshot.targets[0].state='needs_attention';f.snapshot.targets[0].error='Download interrupted';await w.tick();assert.equal(w.status('new-spark').state,'needs_attention');
+ w.resumePreparation('new-spark');assert.equal(w.status('new-spark').state,'working');
+ f.snapshot.targets[0].state='prepared_stopped';await w.tick();assert.match(f.calls.at(-1)[1],/qualify_spark_llm/);
+ f.options.targets['new-spark'].ssh='changed';assert.throws(()=>w.resumePreparation('new-spark'),/enrollment changed/);
+});

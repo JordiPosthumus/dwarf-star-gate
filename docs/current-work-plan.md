@@ -453,3 +453,21 @@ The power and fleet-energy requirements from the earlier draft are retained in
 the implemented hardware visibility: measured watts and freshness, an explicit
 accumulation period, included workers, missing coverage and measurement scope.
 Do not substitute rated power or claim GPU-only measurements cover a whole host.
+
+### New-Spark chat entry and failed preparation
+
+Owners can give Genie a new host address and SSH username in chat. Enrollment
+checks SSH/host facts and persists a target shared immediately with the setup
+watcher; no per-host configuration editing is needed. Key-based SSH access,
+initial OS/network setup and the documented Docker/NVIDIA prerequisites still
+apply. The actual model called enrollment and requested automatic setup in a
+simulated-host rehearsal; a deployed read-only check and the capability UI
+confirmed the connection. Physical fresh-host installation remains outstanding.
+
+Genie can resume an exact confirmed failed preparation in the same directory
+after addressing its cause. Retained bundled sources must match their hashes;
+download partials and completed build receipts remain. Repeated requests observe
+the resumed attempt. This is preparation-only: uncertain work and native
+qualification failures are not automatically restarted. A detached-process test
+proved retained partial files, one resumption and duplicate observation, and
+Hermes exercised the resume tool against a simulated remote endpoint.

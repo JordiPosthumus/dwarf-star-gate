@@ -58,13 +58,21 @@ export function createSparkSetupTools(config,{isEnabled=()=>true,isTesting=()=>f
       if(!enrollment)throw new Error('Chat enrollment is not connected.');
       const {action,...details}=input;return enrollment.enroll(details);
     }
-    if(!['setup','start','qualify_media','qualify','register'].includes(input?.action)||Object.keys(input).sort().join(',')!=='action,target_id'||!Object.hasOwn(targets,input.target_id))throw new Error('Read setup status and select an explicitly enrolled new Spark.');
+    if(!['resume','setup','start','qualify_media','qualify','register'].includes(input?.action)||Object.keys(input).sort().join(',')!==(input.action==='resume'?'action,expected_finished_at,target_id':'action,target_id')||!Object.hasOwn(targets,input.target_id))throw new Error('Read setup status and select an explicitly enrolled new Spark.');
     if(!isEnabled())throw new Error('New Spark setup is switched off. Existing preparation continues.');
     if(isTesting())throw new Error('New setup starts are paused in testing mode.');
     const id=input.target_id;
     if(pending.has(id))throw new Error('Setup submission is already in progress; inspect the same target.');
     pending.add(id);
     try{
+      if(input.action==='resume'){
+        if(typeof input.expected_finished_at!=='string'||!Number.isFinite(Date.parse(input.expected_finished_at)))throw new Error('Use the exact failed preparation finished_at from setup status.');
+        if(registration?.read(id)||mediaQualification?.read(id))throw new Error('Preparation has already advanced to qualification or registration; inspect that stage instead.');
+        const result=await transport(targets[id],{action:'resume',expected_finished_at:input.expected_finished_at});
+        observations.set(id,{...result,observed_at:new Date().toISOString()});
+        if(result.resume_of===input.expected_finished_at)continuation?.resumePreparation?.(id);
+        return {target_id:id,...result};
+      }
       if(input.action==='setup'){
         if(!continuation)throw new Error('Automatic setup continuation is not connected.');
         return continuation.request(id);

@@ -6,7 +6,7 @@ import urllib.parse
 import urllib.request
 
 TOOLSET = 'stargate_spark_setup'
-NAMES = {'enroll_spark', 'qualify_spark_media', 'setup_spark', 'spark_setup_status', 'prepare_spark', 'qualify_spark_llm', 'register_spark_llm'}
+NAMES = {'resume_spark_preparation', 'enroll_spark', 'qualify_spark_media', 'setup_spark', 'spark_setup_status', 'prepare_spark', 'qualify_spark_llm', 'register_spark_llm'}
 
 
 def register_spark_setup(config, emit):
@@ -25,7 +25,7 @@ def register_spark_setup(config, emit):
         event = {'tool': name, 'request': args, 'at': datetime.now(timezone.utc).isoformat()}
         emit('spark_setup', event={**event, 'state': 'reading'})
         try:
-            payload = {'action': 'status'} if name == 'spark_setup_status' else {'action': 'enroll' if name == 'enroll_spark' else 'qualify_media' if name == 'qualify_spark_media' else 'setup' if name == 'setup_spark' else 'register' if name == 'register_spark_llm' else 'qualify' if name == 'qualify_spark_llm' else 'start', **args}
+            payload = {'action': 'status'} if name == 'spark_setup_status' else {'action': 'resume' if name == 'resume_spark_preparation' else 'enroll' if name == 'enroll_spark' else 'qualify_media' if name == 'qualify_spark_media' else 'setup' if name == 'setup_spark' else 'register' if name == 'register_spark_llm' else 'qualify' if name == 'qualify_spark_llm' else 'start', **args}
             request = urllib.request.Request(config['url'], data=json.dumps(payload).encode(), headers={'Content-Type': 'application/json', 'X-SG-Spark-Setup-Tool': config['token']})
             with opener.open(request, timeout=90 if name == 'enroll_spark' else 30) as response:
                 raw = response.read(524289)
@@ -43,6 +43,7 @@ def register_spark_setup(config, emit):
             return json.dumps({'error': message, 'target_id': args.get('target_id')})
 
     schemas = [
+        ('resume_spark_preparation', 'Resume the same confirmed failed new-Spark preparation after inspecting the failure and addressing its cause. Supply its exact finished_at from spark_setup_status. Reuses verified retained sources, downloads, builds and stopped containers. Never resumes uncertain or running work, never restarts native qualification, and does not change recipes. An enabled setup switch grants permission. Check status once afterward and report; do not repeatedly retry a recurring failure. A saved full setup request continues after preparation succeeds.', {'type': 'object', 'properties': {'target_id': {'type': 'string'}, 'expected_finished_at': {'type': 'string'}}, 'required': ['target_id', 'expected_finished_at'], 'additionalProperties': False}),
         ('enroll_spark', 'Connect a new Spark supplied by the owner: use their exact IPv4 address or hostname and SSH username, plus a new target ID. Checks SSH key access and host prerequisites, then saves enrollment for setup_spark without a dashboard restart. Does not build, start or stop engines. Never guess an address or repurpose an existing worker. Read returned readiness/issues before requesting setup. Never ask for passwords or private keys in chat; explain any SSH access prerequisite. The enabled New Spark setup switch grants permission.', {'type': 'object', 'properties': {'target_id': {'type': 'string'}, 'host': {'type': 'string'}, 'username': {'type': 'string'}}, 'required': ['target_id', 'host', 'username'], 'additionalProperties': False}),
         ('qualify_spark_media', 'Test the prepared stopped H3 and ACE-Step engines on a new idle Spark before its LLM is started. Generates real sample video/audio and music, retains and fully decodes the files, and stops only those prepared engines. Detached from chat. After acceptance, read spark_setup_status once before ending. Only a saved setup_spark request creates later automatic chat wakeups. Existing serving LLMs are untouched. The setup switch grants permission; read status and inspect the same retained operation on uncertainty. Does not enroll media or recovery.', {'type': 'object', 'properties': {'target_id': {'type': 'string'}}, 'required': ['target_id'], 'additionalProperties': False}),
         ('setup_spark', 'Request complete LLM onboarding for an enrolled new Spark: prepare the standard engines, test stopped media candidates where connected, then qualify and register the LLM. A saved request wakes Genie after each long stage, across dashboard restarts. The enabled setup switch grants permission; turning it off pauses new stages while accepted work continues. Registration connects the qualified dedicated recovery helper and any separately qualified, unchanged media engines. Existing recovery and media capability switches keep their settings. Use prepare_spark instead for preparation only.', {'type': 'object', 'properties': {'target_id': {'type': 'string'}}, 'required': ['target_id'], 'additionalProperties': False}),
