@@ -34,9 +34,10 @@ export function chatContext(snapshot={}) {
 export class GenieChat {
   constructor({directory,provider,getSnapshot=()=>({}),isSuspended=()=>false,now=Date.now,runQuestion=answer=>answer(),notebook=null}) {
     this.directory=path.resolve(directory);this.provider=provider;this.getSnapshot=getSnapshot;this.now=now;this.notebook=notebook;
-    this.loadErrors=[];this.sessions=new Map();this.jobs=new Map();this.controllers=new Map();this.closed=false;this.isSuspended=isSuspended;this.runQuestion=runQuestion;
+    this.loadErrors=[];this.corruptProgress=new Map();this.sessions=new Map();this.jobs=new Map();this.controllers=new Map();this.closed=false;this.isSuspended=isSuspended;this.runQuestion=runQuestion;
     fs.mkdirSync(this.directory,{recursive:true,mode:0o700});
     for(const name of fs.readdirSync(this.directory)) {
+      if(/^[a-f0-9-]{36}\.progress\.unreadable\.[a-f0-9-]{36}\.json$/.test(name)){this.loadErrors.push(name);continue;}
       if(!/^[a-f0-9-]{36}\.json$/.test(name))continue;
       const file=path.join(this.directory,name);
       try {
@@ -45,6 +46,7 @@ export class GenieChat {
       for(const m of s.messages){if(m.pending_dispatch!==undefined&&typeof m.pending_dispatch!=='boolean')throw new Error('Invalid dispatch marker.');if(m.state==='working'&&m.pending_dispatch===true)m.state='queued';delete m.pending_dispatch;}
       if(s.messages.some((m,i)=>m.state==='queued'&&(m.role!=='assistant'||!m.context||typeof m.id!=='string'||s.messages[i-1]?.role!=='user'||typeof s.messages[i-1].request_id!=='string')))throw new Error('Invalid queued message.');
       if(s.queue_paused!==undefined&&(typeof s.queue_paused!=='string'||!s.messages.some(m=>m.id===s.queue_paused&&['failed','interrupted'].includes(m.state))))throw new Error('Invalid paused queue.');
+      this.restoreProgress(s);
       // A server restart is not permission to replay an uncertain request.
       let changed=false;
       for(const m of s.messages)if(m.state==='working'){m.state='interrupted';if(s.messages.some(x=>x.state==='queued'))s.queue_paused=m.id;m.error='The chat service restarted before this reply finished. Your message was kept; unsaved partial output may be missing.';changed=true;}
@@ -74,12 +76,41 @@ export class GenieChat {
     if(context.operational_activity.storage)context.operational_activity.storage.notebook_included=notebook.included;
     return context;
   }
-  save(s) {
-    const file=path.join(this.directory,`${s.id}.json`),temp=`${file}.${randomUUID()}.tmp`;
-    // Older readers preserve pending work as interrupted; clear the marker before dispatch.
-    const stored={...s,messages:s.messages.map(m=>m.state==='queued'?{...m,state:'working',pending_dispatch:true}:m)};
-    try{fs.writeFileSync(temp,JSON.stringify(stored),{mode:0o600,flag:'wx'});fs.renameSync(temp,file);}
+  writePrivate(file,value) {
+    const temp=`${file}.${randomUUID()}.tmp`;
+    try{fs.writeFileSync(temp,JSON.stringify(value),{mode:0o600,flag:'wx'});fs.renameSync(temp,file);}
     finally{if(fs.existsSync(temp))fs.unlinkSync(temp);}
+  }
+  save(s) {
+    const revision=randomUUID();
+    // Older readers preserve pending work as interrupted; clear the marker before dispatch.
+    const stored={...s,storage_revision:revision,messages:s.messages.map(m=>m.state==='queued'?{...m,state:'working',pending_dispatch:true}:m)};
+    this.writePrivate(path.join(this.directory,`${s.id}.json`),stored);
+    s.storage_revision=revision;
+    // A checkpoint from an earlier revision is superseded, even if a crash left it on disk.
+  }
+  saveProgress(s,reply) {
+    const name=`${s.id}.progress.json`,file=path.join(this.directory,name);
+    if(this.corruptProgress.has(s.id)){
+      const preserved=`${s.id}.progress.unreadable.${randomUUID()}.json`;
+      fs.renameSync(file,path.join(this.directory,preserved));
+      this.loadErrors=this.loadErrors.map(x=>x===name?preserved:x);this.corruptProgress.delete(s.id);
+    }
+    this.writePrivate(file,{version:1,storage_revision:s.storage_revision,reply_id:reply.id,progress:reply.progress,text:reply.text});
+  }
+  restoreProgress(s) {
+    const name=`${s.id}.progress.json`,file=path.join(this.directory,name);
+    if(!fs.existsSync(file))return;
+    try{
+      const saved=JSON.parse(fs.readFileSync(file,'utf8'));
+      if(saved?.version!==1||typeof saved.storage_revision!=='string')throw new Error('Invalid progress checkpoint');
+      if(saved.storage_revision!==s.storage_revision)return;
+      const reply=s.messages.find(m=>m.id===saved.reply_id&&m.role==='assistant'&&m.state==='working');
+      if(!reply)return;
+      const p=saved.progress;
+      if(typeof saved.text!=='string'||!p||!['starting','model_wait','reasoning'].includes(p.phase)||!Number.isSafeInteger(p.step)||p.step<0||!Number.isSafeInteger(p.reasoning_chars)||p.reasoning_chars<0||!Number.isFinite(p.at))throw new Error('Invalid progress checkpoint');
+      reply.progress=p;reply.text=saved.text;
+    }catch{this.loadErrors.push(name);this.corruptProgress.set(s.id,true);}
   }
   capabilityActivity() {
     const latest={};
@@ -169,7 +200,7 @@ export class GenieChat {
           Object.assign(context,this.context());delete reply.waiting_for_review;
           if(this.provider.info?.gateway_tracking)reply.gateway_call_id=reply.id;
           this.save(s);
-          return this.provider.generate({signal:controller.signal,message:context.study_brief?`${user.text}\n\nResearch brief: ${context.study_brief}`:user.text,history,context,sessionId:id,replyId:reply.id,callId:reply.gateway_call_id,research,onSparkSetup:event=>{if(accepting()&&event&&['resume_spark_preparation','enroll_spark','qualify_spark_media','setup_spark','spark_setup_status','prepare_spark','qualify_spark_llm','register_spark_llm'].includes(event.tool)&&['reading','complete','failed'].includes(event.state)&&typeof event.at==='string'){reply.spark_setup??={events:[]};reply.spark_setup.events.push(event);this.save(s);}},onMedia:event=>{if(accepting()&&event&&['media_job_status','start_media_job','inspect_media_host','inspect_media_inputs','setup_media_host'].includes(event.tool)&&['reading','complete','failed'].includes(event.state)&&typeof event.at==='string'){reply.media??={events:[]};reply.media.events.push(event);this.save(s);}},onRecovery:event=>{if(accepting()&&event&&['recovery_status','recover_server'].includes(event.tool)&&['reading','complete','failed'].includes(event.state)&&typeof event.at==='string'){reply.recovery??={events:[]};reply.recovery.events.push(event);this.save(s);}},onQueue:event=>{if(accepting()&&event&&['queue_balance_status','move_waiting_job'].includes(event.tool)&&['reading','complete','failed'].includes(event.state)&&typeof event.at==='string'){reply.queue??={events:[]};reply.queue.events.push(event);this.save(s);}},onMeasurement:event=>{if(accepting()&&event&&['prepare_hourglass_measurement','hourglass_measurement_status','compare_hourglass_reports'].includes(event.tool)&&['reading','complete','failed'].includes(event.state)&&typeof event.at==='string'){reply.measurements??={events:[]};reply.measurements.events.push(event);this.save(s);}},onOperation:event=>{if(accepting()&&event&&['propose_server_change','server_change_status'].includes(event.tool)&&['reading','complete','failed'].includes(event.state)&&typeof event.at==='string'){reply.operations??={events:[]};reply.operations.events.push(event);this.save(s);}},onInspection:event=>{if(accepting()&&event&&['records','live'].includes(event.kind)&&['reading','complete','failed'].includes(event.state)&&typeof event.worker_id==='string'&&typeof event.at==='string'){reply.inspection??={events:[]};reply.inspection.events.push(event);this.save(s);}},onProgress:event=>{if(accepting()&&event&&['starting','model_wait','reasoning'].includes(event.phase)&&Number.isSafeInteger(event.step)&&event.step>=0&&Number.isSafeInteger(event.reasoning_chars)&&event.reasoning_chars>=0){reply.progress={phase:event.phase,step:event.step,reasoning_chars:event.reasoning_chars,at:this.now()};this.save(s);}},onResearch:event=>{if(accepting()&&research&&validResearchEvent(event)){reply.research.events.push(event);this.save(s);}},onDelta:delta=>{if(accepting()&&typeof delta==='string'&&delta){reply.text+=delta;reply.progress={step:reply.progress?.step??0,reasoning_chars:reply.progress?.reasoning_chars??0,phase:'answer',at:this.now()};}}});
+          return this.provider.generate({signal:controller.signal,message:context.study_brief?`${user.text}\n\nResearch brief: ${context.study_brief}`:user.text,history,context,sessionId:id,replyId:reply.id,callId:reply.gateway_call_id,research,onSparkSetup:event=>{if(accepting()&&event&&['resume_spark_preparation','enroll_spark','qualify_spark_media','setup_spark','spark_setup_status','prepare_spark','qualify_spark_llm','register_spark_llm'].includes(event.tool)&&['reading','complete','failed'].includes(event.state)&&typeof event.at==='string'){reply.spark_setup??={events:[]};reply.spark_setup.events.push(event);this.save(s);}},onMedia:event=>{if(accepting()&&event&&['media_job_status','start_media_job','inspect_media_host','inspect_media_inputs','setup_media_host'].includes(event.tool)&&['reading','complete','failed'].includes(event.state)&&typeof event.at==='string'){reply.media??={events:[]};reply.media.events.push(event);this.save(s);}},onRecovery:event=>{if(accepting()&&event&&['recovery_status','recover_server'].includes(event.tool)&&['reading','complete','failed'].includes(event.state)&&typeof event.at==='string'){reply.recovery??={events:[]};reply.recovery.events.push(event);this.save(s);}},onQueue:event=>{if(accepting()&&event&&['queue_balance_status','move_waiting_job'].includes(event.tool)&&['reading','complete','failed'].includes(event.state)&&typeof event.at==='string'){reply.queue??={events:[]};reply.queue.events.push(event);this.save(s);}},onMeasurement:event=>{if(accepting()&&event&&['prepare_hourglass_measurement','hourglass_measurement_status','compare_hourglass_reports'].includes(event.tool)&&['reading','complete','failed'].includes(event.state)&&typeof event.at==='string'){reply.measurements??={events:[]};reply.measurements.events.push(event);this.save(s);}},onOperation:event=>{if(accepting()&&event&&['propose_server_change','server_change_status'].includes(event.tool)&&['reading','complete','failed'].includes(event.state)&&typeof event.at==='string'){reply.operations??={events:[]};reply.operations.events.push(event);this.save(s);}},onInspection:event=>{if(accepting()&&event&&['records','live'].includes(event.kind)&&['reading','complete','failed'].includes(event.state)&&typeof event.worker_id==='string'&&typeof event.at==='string'){reply.inspection??={events:[]};reply.inspection.events.push(event);this.save(s);}},onProgress:event=>{if(accepting()&&event&&['starting','model_wait','reasoning'].includes(event.phase)&&Number.isSafeInteger(event.step)&&event.step>=0&&Number.isSafeInteger(event.reasoning_chars)&&event.reasoning_chars>=0){reply.progress={phase:event.phase,step:event.step,reasoning_chars:event.reasoning_chars,at:this.now()};this.saveProgress(s,reply);}},onResearch:event=>{if(accepting()&&research&&validResearchEvent(event)){reply.research.events.push(event);this.save(s);}},onDelta:delta=>{if(accepting()&&typeof delta==='string'&&delta){reply.text+=delta;reply.progress={step:reply.progress?.step??0,reasoning_chars:reply.progress?.reasoning_chars??0,phase:'answer',at:this.now()};}}});
         },kind=>{if(accepting()){reply.waiting_for_review=kind;this.save(s);}});
         if(controller.signal.aborted)throw new DOMException('Aborted','AbortError');
         if(typeof result?.text!=='string'||!result.text.trim())throw new Error('Hermes returned no answer.');

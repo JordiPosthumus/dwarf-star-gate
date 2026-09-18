@@ -254,3 +254,45 @@ test('actual streamed answer chunks refresh activity and later reasoning can sup
   const c=chatContext({gateway:{recovery:{configured:true,automatic:true,profile_handback_automatic:true,token:'PRIVATE',workers:[{worker_id:'example',configured:true,eligible:false,reason:'service_identity_or_profile_unverified',enrollment:{secret:'PRIVATE'}}]}}});
   assert.equal(c.recovery.automatic,true);assert.equal(c.recovery.workers[0].eligible,false);assert.equal(c.recovery.workers[0].reason,'service_identity_or_profile_unverified');assert.doesNotMatch(JSON.stringify(c),/PRIVATE/);assert.equal(chatContext({}).recovery,null);assert.equal(chatContext({gateway:{recovery:{automatic:false}}}).recovery.automatic,false);
  });
+
+test('progress checkpoints avoid rewriting long history and recover partial output after restart without replay',async t=>{
+ const d=directory(t);let call,finish,calls=0;
+ const chat=new GenieChat({directory:d,provider:{generate:async p=>{calls++;if(calls===1)return {text:'x'.repeat(4_000_000)};call=p;return new Promise(r=>finish=r);}}});
+ const c=chat.create();chat.submit(c.id,'First','checkpoint-first');await chat.idle();
+ chat.submit(c.id,'Next','checkpoint-second');await Promise.resolve();
+ const main=path.join(d,`${c.id}.json`),before=fs.readFileSync(main);let written=0;
+ const write=chat.writePrivate.bind(chat);chat.writePrivate=(file,value)=>{written+=Buffer.byteLength(JSON.stringify(value));write(file,value);};
+ call.onDelta('Retained partial');
+ for(let step=0;step<100;step++)call.onProgress({phase:'reasoning',step,reasoning_chars:step*10});
+ assert.ok(fs.readFileSync(main).equals(before));assert.ok(written<100_000,`100 updates wrote ${written} bytes`);t.diagnostic(`100 progress updates: ${written} checkpoint bytes versus at least ${before.length*100} bytes rewriting the conversation`);
+ assert.equal(chat.get(c.id).messages.at(-1).progress.step,99);
+ const checkpoint=path.join(d,`${c.id}.progress.json`);assert.equal(fs.statSync(checkpoint).mode&0o777,0o600);
+ const recoveredDirectory=directory(t);fs.copyFileSync(main,path.join(recoveredDirectory,path.basename(main)));fs.copyFileSync(checkpoint,path.join(recoveredDirectory,path.basename(checkpoint)));
+ let replay=0;const recovered=new GenieChat({directory:recoveredDirectory,provider:{generate:()=>{replay++;}}});
+ const m=recovered.get(c.id).messages.at(-1);assert.equal(m.state,'interrupted');assert.equal(m.text,'Retained partial');assert.equal(m.progress.step,99);assert.equal(replay,0);
+ finish({text:'Complete answer'});await chat.idle();
+ const reopened=new GenieChat({directory:d});assert.equal(reopened.get(c.id).messages.at(-1).text,'Complete answer');assert.equal(reopened.get(c.id).messages.at(-1).state,'complete');
+});
+
+test('tool receipts supersede checkpoints and later progress recovers against the new revision',async t=>{
+ const d=directory(t);let call,finish;
+ const chat=new GenieChat({directory:d,provider:{generate:p=>{call=p;return new Promise(r=>finish=r);}}});const c=chat.create();chat.submit(c.id,'Inspect setup','checkpoint-tool');await Promise.resolve();
+ call.onProgress({phase:'reasoning',step:1,reasoning_chars:10});
+ const checkpoint=path.join(d,`${c.id}.progress.json`),stale=fs.readFileSync(checkpoint);
+ call.onSparkSetup({tool:'spark_setup_status',state:'complete',at:'2026-09-18T00:00:00Z',result:{targets:[]}});
+ call.onDelta('New partial');call.onProgress({phase:'reasoning',step:2,reasoning_chars:20});
+ const copy=directory(t);for(const name of fs.readdirSync(d))fs.copyFileSync(path.join(d,name),path.join(copy,name));
+ const recovered=new GenieChat({directory:copy});const m=recovered.get(c.id).messages.at(-1);assert.equal(m.text,'New partial');assert.equal(m.progress.step,2);assert.equal(m.spark_setup.events.length,1);
+ finish({text:'Finished'});await chat.idle();fs.writeFileSync(checkpoint,stale);
+ const final=new GenieChat({directory:d}).get(c.id).messages.at(-1);assert.equal(final.text,'Finished');assert.equal(final.spark_setup.events.length,1);
+});
+
+test('unreadable progress is preserved and reported without hiding its healthy conversation',async t=>{
+ const d=directory(t),seed=new GenieChat({directory:d}),c=seed.create(),name=`${c.id}.progress.json`;fs.writeFileSync(path.join(d,name),'{broken');
+ let call,finish;const chat=new GenieChat({directory:d,provider:{generate:p=>{call=p;return new Promise(r=>finish=r);}}});
+ assert.deepEqual(chat.status().unreadable_conversations,[name]);assert.equal(chat.get(c.id).id,c.id);
+ chat.submit(c.id,'Hello','checkpoint-corrupt');await Promise.resolve();call.onProgress({phase:'model_wait',step:0,reasoning_chars:0});
+ const preserved=chat.status().unreadable_conversations[0];assert.match(preserved,/progress.unreadable/);assert.equal(fs.readFileSync(path.join(d,preserved),'utf8'),'{broken');
+ finish({text:'Hello back'});await chat.idle();assert.equal(chat.get(c.id).messages.at(-1).state,'complete');
+ assert.deepEqual(new GenieChat({directory:d}).status().unreadable_conversations,[preserved]);
+});

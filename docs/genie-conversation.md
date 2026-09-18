@@ -486,3 +486,14 @@ activity**. An accepted operation keeps running independently of the chat. Genie
 can check its status later; a queued acknowledgement is not a successful recovery.
 Turning recovery off prevents new Genie recovery requests and keeps existing
 operations observable. The underlying controller preserves its existing behavior.
+
+### Progress storage
+
+Reasoning/activity updates are saved in a small private per-conversation checkpoint,
+so a long chat is not rewritten every second. The UI update cadence is unchanged.
+Messages and tool receipts still save the full conversation. On restart, a matching
+checkpoint restores the last saved partial answer and progress before marking the
+unfinished reply interrupted; it never replays the request. A newer conversation
+save supersedes older checkpoints. Unreadable checkpoints are preserved and
+reported without hiding healthy conversations. Back up the whole chat directory,
+including checkpoints, when preserving an in-progress reply.
