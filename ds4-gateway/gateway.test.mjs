@@ -2601,7 +2601,9 @@ test('health probes reach a responsive backend while every concurrent inference 
   const r=await rig(t,1,{workerConcurrency:17,health_interval_ms:100,health_timeout_ms:100,health_failures:1}),b=r.backends[0];
   const calls=Array.from({length:17},(_,i)=>r.request('{"wait_for_release":true}','busy-'+i));
   try{
-    await until(()=>b.active===17);
+    // Sample between probes: an in-flight probe may already have reached the
+    // backend but not yet advanced lastProbe when all inference slots fill.
+    await until(()=>b.active===17&&!r.gateway.nodes[0].probing);
     const checked=r.gateway.nodes[0].lastProbe,received=b.modelHeaders.length;
     await until(()=>r.gateway.nodes[0].lastProbe!==checked);
     assert.ok(b.modelHeaders.length>received,'the health request must reach the backend, not wait behind inference');
