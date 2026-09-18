@@ -109,3 +109,22 @@ test('confirmed preparation resume reopens its existing continuation but not ano
  f.snapshot.targets[0].state='prepared_stopped';await w.tick();assert.match(f.calls.at(-1)[1],/qualify_spark_llm/);
  f.options.targets['new-spark'].ssh='changed';assert.throws(()=>w.resumePreparation('new-spark'),/enrollment changed/);
 });
+
+test('explicit continuation rechecks a resolved prerequisite once, retaining target and conversation',async t=>{
+ const f=fixture(t);let w=f.watch();w.request('new-spark');await w.tick();await w.tick();
+ assert.equal(w.status('new-spark').state,'needs_attention');const conversation=w.status('new-spark').conversation_id;
+ const tools=createSparkSetupTools({ui_worker_management:true,spark_setup:{enabled:true,targets:f.options.targets}},{continuation:w,transport:async()=>f.snapshot.targets[0]});
+ assert.equal((await tools.tool({action:'setup',target_id:'new-spark'})).state,'requested');
+ w=f.watch();assert.match(w.status('new-spark').last_attention.error,/without observed stage progress/);
+ await w.tick();assert.equal(f.calls.length,2);assert.equal(f.calls[1][0],conversation);assert.notEqual(f.calls[1][2],f.calls[0][2]);
+ await w.tick();await w.tick();assert.equal(f.calls.length,2);assert.equal(w.status('new-spark').state,'needs_attention');
+ f.options.targets['new-spark'].ssh='another-host';assert.throws(()=>w.request('new-spark'),/enrollment changed/);
+});
+test('explicit continuation cannot replay failed native, running, uncertain or completed work',async t=>{
+ for(const state of ['needs_attention','running','unavailable']){
+  const f=fixture(t),w=f.watch();w.request('new-spark');await w.tick();await w.tick();
+  f.snapshot.targets[0].state=state;w.request('new-spark');await w.tick();await w.tick();assert.equal(f.calls.length,1,state);
+ }
+ const f=fixture(t),w=f.watch();w.request('new-spark');f.snapshot.targets[0].registration={state:'registered_serving'};await w.tick();
+ assert.equal(w.request('new-spark').state,'complete');await w.tick();assert.equal(f.calls.length,0);
+});

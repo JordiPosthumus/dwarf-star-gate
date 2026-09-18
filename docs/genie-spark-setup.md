@@ -232,3 +232,10 @@ address and username, then `setup_spark`, and checked the saved request. Its
 remote host was simulated; it proves the conversational/tool path, not a fresh
 physical installation. The read-only SSH inspector has separately returned real
 OS, GPU, Docker, Python, disk and active-work observations from an existing Spark.
+
+If a prerequisite is fixed, or Genie ended a stage reply without taking its next
+step, ask him to continue the same setup. An explicit `setup_spark` call reopens
+that saved request and rechecks the same enrolled host. It retains the setup
+conversation and previous attention reason. It does not restart a failed native
+operation, replay uncertain work, or repeatedly wake Genie for an unchanged
+failure. Confirmed failed preparation still uses `resume_spark_preparation`.

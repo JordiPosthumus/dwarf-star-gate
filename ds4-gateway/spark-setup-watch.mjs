@@ -12,7 +12,16 @@ export class SparkSetupWatch {
   status(id){const r=Object.hasOwn(this.requests,id)?this.requests[id]:null;return r?{...r,...(this.error?{state:'observing',error:this.error}:{})}:null;}
   request(id){
     if(!Object.hasOwn(this.targets,id))throw Error('Select an enrolled new Spark.');
-    if(Object.hasOwn(this.requests,id))return this.requests[id];
+    if(Object.hasOwn(this.requests,id)){
+      const r=this.requests[id];
+      if(binding(this.targets[id])!==r.binding)throw Error('Setup enrollment changed; inspect before continuing.');
+      if(r.state==='needs_attention'){
+        r.last_attention={error:r.error,dispatched_stage:r.dispatched_stage};
+        r.state='requested';r.continued_at=new Date().toISOString();
+        delete r.error;delete r.dispatched_stage;delete r.pending;this.save();
+      }
+      return r;
+    }
     this.requests[id]={target_id:id,binding:binding(this.targets[id]),state:'requested',requested_at:new Date().toISOString(),scope:'Prepare and test the engines, qualify the LLM and its dedicated restart helper, then register its qualified services. Existing media/recovery switches still control use.'};this.save();return this.requests[id];
   }
   resumePreparation(id){
