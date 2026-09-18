@@ -11,11 +11,13 @@ original LLM after media work.
 | MiniMax H3 | [H3 recipe](h3/README.md) | Standalone build, real video/audio generation and original-LLM restoration passed |
 | ACE-Step XL SFT / 4B | [Music recipe](ace-step/README.md) | Standalone build, real music generation and original-LLM restoration passed |
 
-These recipes are implementation work toward the official new-Spark setup.
-They do not yet provide completed Genie-led host installation or automatically
-register a new machine with the gateway. The installed media adapters have
-already generated real downloadable results and restored an existing LLM; that
-is separate evidence from these rebuilt candidates.
+Genie can now connect these recipes to preparation, media samples, LLM and
+recovery qualification, and gateway registration. See [Genie setup for new
+Sparks](../../docs/genie-spark-setup.md) for enrollment and the chat instruction.
+The complete bundle has built and passed native checks in empty installation
+and model directories on an existing Spark. A newly registered worker has also
+completed a music-to-LLM return cycle. Installation on a pristine physical Spark
+remains unverified; the existing machine supplied working drivers and Docker.
 
 ## Prepare all three engines on an idle new Spark
 
@@ -27,7 +29,7 @@ python3 examples/spark-build/setup-spark.py /path/to/private-spark-setup
 
 This runs the existing pinned source preparation, image builds, verified model
 downloads and stopped-container creation for all three engines. It refuses a
-busy GPU and never starts or stops a server. Allow about 206 GB for models plus
+busy GPU and never starts or stops a server. Allow about 227 GB (212 GiB) for models plus
 substantial space for images, build layers and runtime caches. Use a private
 directory outside the Git checkout, and one setup process per host.
 
@@ -38,12 +40,16 @@ existing containers or different model files are preserved. Partial source
 preparations remain available for inspection. A changed recipe needs review
 before resuming an existing setup; it is not silently applied over it.
 
-The result is three **stopped** containers with recorded image IDs. This is the
-preparation step for Genie-led provisioning. Model qualification, starting the
-selected LLM, gateway registration and connecting this workflow to Genie remain
-separate work. Resume/failure handling has been tested with simulated builds;
-the busy-host preflight was checked on a real Spark. A full fresh-host run of
-this combined command remains unverified.
+The command alone produces three **stopped** containers with recorded image IDs.
+When requested through Genie's full setup workflow, he continues with native
+media samples, LLM/recovery qualification and registration. Preparation alone
+does not start serving. A full run on pristine hardware remains unverified.
+
+If preparation fails, inspect `setup.json` and `setup.log` in the same directory.
+The CLI can resume unchanged recipes as described above. Genie's remote setup
+currently reports the failure for attention; it does not automatically retry a
+failed installer. An uncertain SSH response is not proof of failure: read the
+same setup status before considering a retry.
 
 ## Prepare an individual engine
 
@@ -61,7 +67,8 @@ create containers for unselected engines, so adding music does not prepare
 another LLM. It still requires an idle GPU and creates only stopped containers;
 draining, native generation checks, enrollment and LLM return belong to the
 gateway's separate lifecycle. The existing-host setup action in the Media view now connects these steps in
-source; its complete native workflow and production activation remain unverified.
+production; native music and video setup have both completed with retained,
+decoded results and verified return of the original LLM on an existing Spark.
 
 Resume with exactly the same engines and directory. The receipt records that
 selection, and a different selection is refused without changing existing files.

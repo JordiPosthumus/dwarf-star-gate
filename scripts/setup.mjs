@@ -35,7 +35,7 @@ try{
   if(options['--help']){console.log(usage+'\nNormal setup installs a private pinned Hermes runtime and checks a model reply. --gateway-only explicitly skips Genie.');process.exit(0);}
   const destination=configPath(),before=fs.existsSync(destination)?fs.readFileSync(destination,'utf8'):null;
   const config=before?privateJSON(before,'gateway configuration'):Object.assign(JSON.parse(fs.readFileSync(path.join(projectRoot,'examples/config.json'))),{
-    api_key:randomBytes(32).toString('base64url'),nodes:[],state_file:'./runtime/affinity.json',control_socket:'./runtime/control.sock',ui_worker_management:Boolean(options['--controls']),
+    api_key:randomBytes(32).toString('base64url'),nodes:[],state_file:'./runtime/affinity.json',control_socket:'./runtime/control.sock',ui_worker_management:Boolean(options['--controls']),...(options['--controls']?{spark_setup:{enabled:true,targets:{}}}:{}),
   });
   if(before&&config.genie_chat){console.log('Configuration and existing Genie preserved; nothing overwritten. Use the Genie tab to check your connection.');process.exit(0);}
   if(before&&options['--gateway-only'])throw new Error('Configuration already exists; nothing overwritten.');

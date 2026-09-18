@@ -32,3 +32,13 @@ test('malformed private JSON is reported without echoing its contents',async t=>
   const root=temporary(t),config=path.join(root,'config.json');fs.writeFileSync(config,'{"private": PRIVATE_SENTINEL_BROKEN_JSON');
   await assert.rejects(exec(process.execPath,[setup],{env:{PATH:process.env.PATH,DWARF_GATE_CONFIG:config,HOME:root}}),e=>{assert.doesNotMatch(e.stderr,/PRIVATE_SENTINEL/);assert.match(e.stderr,/Cannot read valid/);return true;});
 });
+
+test('fresh controls-enabled setup connects chat enrollment without changing existing installations',async t=>{
+ for(const controls of [false,true]){
+  const root=temporary(t),filename=path.join(root,'config.json');
+  await exec(process.execPath,[setup,'--gateway-only',...(controls?['--controls']:[])],{env:{PATH:process.env.PATH,DWARF_GATE_CONFIG:filename,HOME:root}});
+  const config=JSON.parse(fs.readFileSync(filename));
+  assert.equal(config.ui_worker_management,controls);
+  if(controls)assert.deepEqual(config.spark_setup,{enabled:true,targets:{}});else assert.notEqual(config.spark_setup?.enabled,true);
+ }
+});

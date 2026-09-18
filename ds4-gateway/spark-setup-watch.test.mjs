@@ -41,17 +41,17 @@ test('explicit full setup persists intent; preparation alone never opts into con
  w.close();assert.equal((await tools.tool({action:'status'})).targets[0].continuation.state,'waiting_for_genie');
 });
 
-test('pinned Hermes receives setup request and all automatic stage wakeups',{skip:!process.env.DSG_TEST_HERMES_SOURCE,timeout:120000},async t=>{
- const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sg-setup-hermes-watch-'));let watch,stage='not_started',qualification=null,registered=null,calls=0;
+test('pinned Hermes receives setup request and all media, LLM and registration wakeups',{skip:!process.env.DSG_TEST_HERMES_SOURCE,timeout:120000},async t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sg-setup-hermes-watch-'));let watch,stage='not_started',media=null,qualification=null,registered=null,calls=0;
  const targets={'new-spark':{ssh:'new-spark',directory:'/srv/setup'}};
  const actions=[];
- const tools=createSparkSetupTools({ui_worker_management:true,spark_setup:{enabled:true,targets}},{continuation:{status:id=>watch?.status(id),request:id=>watch.request(id)},bundle:()=>({}),registration:{read:()=>registered,register:async()=>{actions.push('register');return registered={state:'registered_serving'};}},transport:async(_target,input)=>{
+ const tools=createSparkSetupTools({ui_worker_management:true,spark_setup:{enabled:true,targets}},{continuation:{status:id=>watch?.status(id),request:id=>watch.request(id)},bundle:()=>({}),mediaQualification:{read:()=>media,start:async()=>{actions.push('qualify_media');return media={state:'running'};}},registration:{read:()=>registered,register:async()=>{actions.push('register');return registered={state:'registered_serving'};}},transport:async(_target,input)=>{
   if(input.action==='start'){actions.push('prepare');stage='running';}
   if(input.action==='qualify'){actions.push('qualify');qualification={state:'running'};}
   if(input.action==='verify_serving')return {state:'qualified_serving'};
   return {state:stage,qualification};
  }});
- const names=['setup_spark','prepare_spark','qualify_spark_llm','register_spark_llm'];
+ const names=['setup_spark','prepare_spark','qualify_spark_media','qualify_spark_llm','register_spark_llm'];
  const server=http.createServer((req,res)=>{
   if(tools.handle(req,res))return;
   if(req.method==='GET'){res.end(JSON.stringify({data:[{id:'fixture'}]}));return;}
@@ -71,10 +71,12 @@ test('pinned Hermes receives setup request and all automatic stage wakeups',{ski
  const options={filename:path.join(dir,'requests.json'),targets,chat,read:()=>tools.tool({action:'status'}),isEnabled:()=>true};watch=new SparkSetupWatch(options);
  const c=chat.create();chat.submit(c.id,'Set up new-spark and bring its LLM into service.','owner-setup');await chat.idle();assert.equal(watch.status('new-spark').state,'requested');assert.ok(chat.get(c.id).messages[1].spark_setup.events.some(e=>e.tool==='setup_spark'&&e.state==='complete'&&e.result.state==='requested'));
  await watch.tick();await chat.idle();assert.equal(stage,'running');
- stage='prepared_stopped';watch=new SparkSetupWatch(options);await watch.tick();await chat.idle();assert.equal(qualification.state,'running');
+ stage='prepared_stopped';watch=new SparkSetupWatch(options);await watch.tick();await chat.idle();assert.equal(media.state,'running');
+ await watch.tick();assert.equal(calls,12,'An active remote media qualification must not cause another model call');
+ media.state='qualified_stopped';watch=new SparkSetupWatch(options);await watch.tick();await chat.idle();assert.equal(qualification.state,'running');
  qualification.state='qualified_serving';await watch.tick();await chat.idle();await watch.tick();assert.equal(watch.status('new-spark').state,'complete');
- assert.deepEqual(actions,['prepare','qualify','register']);assert.equal(calls,16);
- const messages=chat.get(watch.status('new-spark').conversation_id).messages.filter(m=>m.role==='assistant');assert.equal(messages.length,3);
+ assert.deepEqual(actions,['prepare','qualify_media','qualify','register']);assert.equal(calls,20);
+ const messages=chat.get(watch.status('new-spark').conversation_id).messages.filter(m=>m.role==='assistant');assert.equal(messages.length,4);
  for(const m of messages){assert.equal(m.state,'complete');assert.equal(m.spark_setup.events.filter(e=>e.state==='complete').length,3);}
 });
 
@@ -86,3 +88,16 @@ test('fresh setup qualifies stopped media before the LLM, and waits for native c
 test('an already qualified LLM remains eligible for registration without restarting it for media',async t=>{
  const f=fixture(t),w=f.watch();w.request('new-spark');Object.assign(f.snapshot.targets[0],{state:'prepared_stopped',media_qualification_required:true,qualification:{state:'qualified_serving'}});await w.tick();assert.match(f.calls[0][1],/register_spark_llm/);
 });
+
+ test('two enrolled new Sparks advance independently while a remote build is running',async t=>{
+ const f=fixture(t);f.options.targets['second-spark']={ssh:'second-spark',directory:'/srv/setup'};
+ f.snapshot.targets.push({target_id:'second-spark',state:'not_started',media_qualification_required:true});
+ const first=f.snapshot.targets[0];first.media_qualification_required=true;
+ const w=f.watch();w.request('new-spark');w.request('second-spark');
+ await w.tick();assert.match(f.calls[0][1],/for new-spark/);first.state='running';
+ await w.tick();assert.match(f.calls[1][1],/for second-spark/);
+ const second=f.snapshot.targets[1];second.state='prepared_stopped';
+ await w.tick();assert.match(f.calls[2][1],/qualify_spark_media/);assert.match(f.calls[2][1],/for second-spark/);
+ second.media_qualification={state:'running'};await w.tick();assert.equal(f.calls.length,3);
+ first.state='prepared_stopped';await w.tick();assert.match(f.calls[3][1],/for new-spark/);assert.match(f.calls[3][1],/qualify_spark_media/);
+ });

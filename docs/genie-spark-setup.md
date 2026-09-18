@@ -1,7 +1,27 @@
 # Genie setup for new Sparks
 
-Genie can prepare the shipped LLM, H3 video and ACE-Step music recipes on an
-explicitly enrolled new Spark. In the private gateway configuration:
+Give Genie the new Spark's IPv4 address or hostname and SSH username in chat:
+
+> Set up my new Spark at ADDRESS, SSH user USERNAME, as spark3 with the standard
+> LLM, H3 and ACE-Step engines. Test them and bring its LLM into service.
+
+With **New Spark setup** enabled, Genie uses `enroll_spark` to check SSH access,
+identify the host and save its target in private runtime storage. It is immediately
+available to `setup_spark`; no configuration edit or dashboard restart is needed
+for each new box. The setup directory is derived from the remote user's home.
+Existing worker IDs and resolved SSH destinations cannot be enrolled as new.
+
+SSH must be reachable and accept a key available to the gateway account. First
+connection accepts a previously unknown host key, after backing up existing
+`known_hosts`; a changed key is refused. Personal SSH configuration and keys are
+not rewritten. If login is not ready, Genie reports that prerequisite. Do not
+send passwords or private keys in chat. This does not configure the Spark's
+initial operating-system account, network or drivers.
+
+Fresh `npm run setup -- --controls` installations connect this capability.
+Existing installations preserve their settings; enable the setup integration
+once in private configuration if it is not connected. Targets can then be added
+through chat. The older explicit enrollment also remains supported:
 
 ```json
 {
@@ -171,6 +191,36 @@ reported rejection because the borrowed machine's SSH endpoint was already
 registered. It did not replace that existing worker.
 
 This exercise used an existing host with Docker, drivers and build caches. It does
-not establish installation on a pristine physical Spark. A complete media-switching
-cycle on this newly enrolled worker is also still outstanding; preparation and
-standalone generation do not establish that lifecycle.
+not establish installation on a pristine physical Spark. A subsequent music-switching cycle on a dynamically registered fresh-recipe
+worker in an isolated gateway passed: actual Genie dispatch, retained and fully
+decoded audio, automatic original-LLM return, cold-to-warm cache hits and gateway
+readmission. This establishes that tested music lifecycle on the existing host;
+it still does not establish installation on pristine hardware.
+
+## Arrival readiness
+
+For each new Spark, give Genie its address and SSH username as shown above.
+He enrolls it, checks the prerequisites and uses the full setup workflow.
+For an already enrolled target, ask: “Set up TARGET with the standard LLM, H3
+and ACE-Step engines and bring its LLM into service.”
+The saved workflow continues after long stages; the owner need not keep the
+chat open or repeatedly say “proceed.” Two enrolled targets can advance while
+one host is building; their setup conversations use the same Genie.
+
+The pinned model manifests currently total about 227 GB per host, before Docker
+images, build layers and runtime caches. Build and download time depends on the
+new host and network; an existing-host cached build does not establish a
+fresh-install ETA.
+
+The Hermes integration test covers preparation, media qualification, LLM
+qualification and registration across watcher reloads. It uses a scripted model
+and simulated remote hosts. Public download availability checks and source hash
+verification complement those tests; neither proves a new host will boot the
+engines successfully. Native qualification on each arriving machine remains
+required.
+
+A separate actual-model rehearsal also called `enroll_spark` with the supplied
+address and username, then `setup_spark`, and checked the saved request. Its
+remote host was simulated; it proves the conversational/tool path, not a fresh
+physical installation. The read-only SSH inspector has separately returned real
+OS, GPU, Docker, Python, disk and active-work observations from an existing Spark.
