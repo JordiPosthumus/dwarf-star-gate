@@ -1,3 +1,4 @@
+import {createNativeMediaStatus} from './native-media-status.mjs';
 import {fleetMediaWorkloads} from './media-workloads.mjs';
 import {createMediaResources} from './media-resources.mjs';
 import {createSparkMediaQualification} from './spark-media-qualification.mjs';
@@ -158,7 +159,7 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
     }
     if(req.url==='/api/fleet-workloads'&&req.method==='GET'){
       // Share in-flight I/O, but do not let it stall the separate Fleet telemetry endpoint.
-      workloadRead??=Promise.resolve().then(()=>management?.media?.()??{jobs:[]}).then(fleetMediaWorkloads).finally(()=>{workloadRead=null;});
+      workloadRead??=Promise.resolve().then(()=>management?.media?.()??{jobs:[]}).then(value=>({...fleetMediaWorkloads(value),native_engines:management?.nativeMedia?.()??[]})).finally(()=>{workloadRead=null;});
       const timer=setTimeout(()=>reply(503,{error:'Media status unavailable; existing work may still be running.'}),1500);
       void workloadRead.then(value=>reply(200,value)).catch(()=>reply(503,{error:'Media status unavailable; existing work may still be running.'})).finally(()=>clearTimeout(timer));return;
     }
@@ -555,9 +556,11 @@ export async function runDashboard(configPath, port) {
   const mediaTools=managementEnabled&&config.media_jobs?.enabled?createMediaTools({inspectInputs:input=>workerControl(config.control_socket,'/genie-media-inputs',input,{channel:'gate_genie'}),setup:input=>workerControl(config.control_socket,'/genie-media-setup',input,{channel:'gate_genie'}),resources:createMediaResources(config,{isEnabled:()=>isCapabilityEnabled('inspection')}),read:async()=>{const [media,fleet]=await Promise.all([workerControl(config.control_socket,'/media-jobs'),workerControl(config.control_socket,'/workers')]);return {...media,fleet:fleet.workers.map(w=>({id:w.id,is_healthy:w.is_healthy,drained:w.drained,load:w.load,queued:w.queued}))};},start:input=>workerControl(config.control_socket,'/genie-media-start',input,{channel:'gate_genie'}),isTesting}):null;
   const recoveryTools=managementEnabled?createRecoveryTools({read:()=>readService('gateway',config),recover:input=>workerControl(config.control_socket,'/genie-recover-worker',input,{channel:'gate_genie'}),isTesting,isEnabled:()=>isCapabilityEnabled('recovery')}):null;
   const chat=config.genie_chat?new GenieChat({directory:chatDirectory,notebook:config.genie_chat.operational_notebook===true?memory:null,getSnapshot:()=>({...snapshot(),genie:genie.status(),genie_handovers:requestHistory.snapshot().handovers}),isSuspended:isTesting,runQuestion:(answer,onWait)=>genie.answerChat(answer,onWait),provider:hermesProvider({...genieChatConfig(config),spark_setup:sparkSetup?.toolConfig,operations:operations?.toolConfig,hourglass:hourglass?.toolConfig,queue:queueTools?.toolConfig,recovery:recoveryTools?.toolConfig,media:mediaTools?.toolConfig},{directory:chatDirectory,isCapabilityEnabled})}):null;
+  const nativeMedia=createNativeMediaStatus(config);
   const server = createDashboard(snapshot, path.join(here,'ui'), managementEnabled ? {
     read:()=>workerControl(config.control_socket,'/workers',undefined,{channel:'dashboard'}),
     media:()=>workerControl(config.control_socket,'/media-jobs'),
+    nativeMedia,
     mediaFile:(req,res,route)=>proxyMediaFile(config,req,res,route),
     act:async(action,input)=>{if(action==='media-video-submit')return submitVideoFromDashboard(config,input);if(action==='media-inspect'||action==='media-setup'){if(!mediaTools)throw Error('Media inspection is not connected.');return mediaTools.tool({...input,action:action==='media-setup'?'setup':'inspect'});}const value=await workerControl(config.control_socket,({'media-eligibility':'/media-host-eligibility','job-priority':'/set-job-priority',concurrency:'/set-worker-concurrency',add:'/add-worker',endpoint:'/edit-endpoint',test:'/check-endpoint',remove:'/remove-worker',drain:'/drain-workers',resume:'/resume-workers',lock:'/maintenance-lock',unlock:'/release-maintenance-lock',fallbacks:'/set-ssh-fallbacks',context:'/set-context-limit','conversation-turns':'/set-conversation-turns','queue-timeout':'/set-queue-timeout',protection:'/set-protection',relocate:'/relocate-queued',recover:'/recover-worker','genie-capability':'/genie-capability','recovery-policy':'/recovery-policy','recovery-handback-policy':'/recovery-handback-policy','recovery-recheck':'/recovery-recheck'})[action],input,{channel:'dashboard'});if(action==='genie-capability'&&gateway)gateway.genie_capabilities=value;return value;},
   } : null,genie,()=>({...requestHistory.snapshot(),fleet_speed:fleetSpeed.snapshot(Date.now(),gateway?.workers?.map(worker=>worker.id)??[])}),config.control_socket?{
