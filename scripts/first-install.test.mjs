@@ -35,6 +35,11 @@ test('fresh setup installs Hermes, loads its soul, chats and preserves history a
   const requests=[],provider=http.createServer((req,res)=>{
     if(req.method==='GET'){res.setHeader('content-type','application/json');return res.end(JSON.stringify({data:[{id:'example-model'}]}));}
     let body='';req.on('data',c=>body+=c);req.on('end',()=>{const p=JSON.parse(body);if(!Array.isArray(p.messages)){console.log('Provider capability probe: '+req.url+' '+Object.keys(p).join(','));res.writeHead(404);res.end();return;}requests.push(p);const users=p.messages.filter(m=>m.role==='user');const answer=users.length>1?'Your name is Ada.':'I am Gate Genie. Hello Ada.';
+      if(users.length>1&&p.messages.at(-1).role!=='tool'){
+        const direct=p.tools.some(tool=>tool.function.name==='spark_setup_status');
+        const delta={role:'assistant',content:null,tool_calls:[{index:0,id:'fresh-setup-status',type:'function',function:{name:direct?'spark_setup_status':'tool_call',arguments:JSON.stringify(direct?{}:{name:'spark_setup_status',arguments:{}})}}]};
+        res.setHeader('content-type','text/event-stream');return res.end(`data: ${JSON.stringify({id:'fixture',model:'example-model',choices:[{index:0,delta,finish_reason:null}]})}\n\ndata: ${JSON.stringify({id:'fixture',model:'example-model',choices:[{index:0,delta:{},finish_reason:'tool_calls'}]})}\n\ndata: [DONE]\n\n`);
+      }
       if(p.stream){res.setHeader('content-type','text/event-stream');res.end(`data: ${JSON.stringify({id:'fixture',object:'chat.completion.chunk',model:'example-model',choices:[{index:0,delta:{content:answer},finish_reason:'stop'}]})}\n\ndata: [DONE]\n\n`);}
       else{res.setHeader('content-type','application/json');res.end(JSON.stringify({id:'fixture',model:'example-model',choices:[{index:0,message:{role:'assistant',content:answer},finish_reason:'stop'}]}));}
     });
@@ -59,6 +64,10 @@ test('fresh setup installs Hermes, loads its soul, chats and preserves history a
   const start=async()=>{dashboard=spawn(process.execPath,['ds4-gateway/dashboard.mjs'],{cwd:root,env,stdio:'ignore'});return until(async()=>{try{const r=await fetch(origin+'/api/genie/chat');return r.ok?await r.json():false;}catch{return false;}});};
   let status=await start();assert.equal(status.available,true);await until(async()=>{const s=await(await fetch(origin+'/api/status')).json();return s.gateway?.total===0;});
   await until(async()=>{try{const r=await fetch(`http://127.0.0.1:${config.port}/gateway/status`,{headers:{authorization:`Bearer ${config.api_key}`}});return r.ok&&(await r.json()).total===0;}catch{return false;}});
+  const capabilities=await(await fetch(origin+'/api/genie/capabilities')).json();
+  const setupCapability=capabilities.capabilities.find(c=>c.key==='spark_setup');
+  assert.equal(setupCapability.enabled,true);assert.equal(setupCapability.connected,true);
+  assert.match(setupCapability.detail,/address and SSH username/);
   const action=async body=>{const r=await fetch(origin+'/api/genie/chat',{method:'POST',headers:{origin,'content-type':'application/json','x-dsg-csrf':status.csrf_token},body:JSON.stringify(body)});assert.ok(r.ok);return r.json();};
   const chat=await action({action:'new'});
   for(const [i,text]of ['My name is Ada.','What is my name?'].entries()){
@@ -67,4 +76,6 @@ test('fresh setup installs Hermes, loads its soul, chats and preserves history a
   }
   assert.match(requests.at(-1).messages[0].content,/silver compass/);assert.equal(requests.at(-1).messages.filter(m=>m.role==='user').length,2);
   await stop();status=await start();const restored=await(await fetch(origin+'/api/genie/chat/'+chat.id)).json();assert.equal(restored.messages.length,4);assert.match(restored.messages.at(-1).text,/Ada/);
+  const setupEvent=restored.messages.at(-1).spark_setup.events.find(e=>e.tool==='spark_setup_status'&&e.state==='complete');
+  assert.equal(setupEvent.result.enrollment_available,true);assert.deepEqual(setupEvent.result.targets,[]);
 });
