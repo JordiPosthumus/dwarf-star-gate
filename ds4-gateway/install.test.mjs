@@ -8,7 +8,7 @@ import {spawn,execFile,execFileSync} from 'node:child_process';
 import {promisify} from 'node:util';
 import {setTimeout as delay} from 'node:timers/promises';
 import {configPath,loadConfig,projectRoot,dashboardPort,gatewayHost,isDashboard,isMain} from './config.mjs';
-import {serviceSpec,assertIdle,assertDoorIdle,assertRegistration,unloadService,coordinatedCoreRestart,coordinatedCorePark,releaseParkedCore,PARK_REASON} from './service-control.mjs';
+import {serviceSpec,assertDashboardIdle,assertIdle,assertDoorIdle,assertRegistration,unloadService,coordinatedCoreRestart,coordinatedCorePark,releaseParkedCore,PARK_REASON} from './service-control.mjs';
 const exec=promisify(execFile);
 const ownedHold={holding:true,hold_kind:'manual',hold_ownership:1,hold_id:'fixture-hold'};
 test('restart waits for launchd removal; timeout cannot skip into bootstrap',async()=>{
@@ -139,4 +139,12 @@ test('doctor exposes durable worker and recovery-route drift without leaking rou
   assert.ok(result.warnings.some(warning=>warning.includes('recovery routes differ')));
   assert.ok(!JSON.stringify(result).includes('configured-primary'));assert.ok(!JSON.stringify(result).includes('configured-fallback'));assert.ok(!JSON.stringify(result).includes('durable-primary'));
   assert.deepEqual(fs.readFileSync(stateFile),before);
+});
+
+
+test('dashboard reload refuses active or queued Genie work and unreadable activity',async()=>{
+ for(const conversation of [{busy:true,queued:0},{busy:false,queued:1}])await assert.rejects(assertDashboardIdle({},{fetchImpl:async url=>Response.json(url.endsWith('/chat')?{conversations:[conversation]}:{busy:false})}),/active or queued/);
+ await assert.rejects(assertDashboardIdle({},{fetchImpl:async()=>new Response('',{status:503})}),/unavailable/);
+ await assertDashboardIdle({},{fetchImpl:async url=>Response.json(url.endsWith('/chat')?{conversations:[{busy:false,queued:0}]}:{busy:false})});
+ await assert.rejects(assertDashboardIdle({},{fetchImpl:async url=>Response.json(url.endsWith('/chat')?{conversations:[]}:{busy:true})}),/active or queued/);
 });

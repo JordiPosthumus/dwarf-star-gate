@@ -927,7 +927,7 @@ test('server verdicts expose backlog, oldest wait, pause, health and telemetry s
   assert.deepEqual({...verdict({connected:true,last_event:99000},{is_healthy:true,drained:false,load:1,queued:4,oldest_queue_seconds:90})},{level:'warn',label:'Backed up · 4 waiting',detail:'4 requests are queued; oldest has waited 90 seconds.'});
   assert.equal(verdict({connected:true,last_event:99000},{is_healthy:true,drained:true,load:0,queued:0}).label,'Paused');
   assert.equal(verdict({connected:false,last_event:0},{is_healthy:true,drained:false,load:0,queued:0}).label,'Ready · telemetry stale');
-  assert.equal(verdict({}, {is_healthy:false,drained:false,load:0,queued:0}).label,'Unavailable');
+  assert.equal(verdict({}, {is_healthy:false,drained:false,load:0,queued:0}).label,'LLM unavailable');
   assert.equal(verdict({}, {is_healthy:true,quarantine:{reason:'accelerator_checkpoint_failure'},load:0,queued:0}).label,'Quarantined');
   assert.equal(verdict({}, {},true).label,'Status stale');
 });
@@ -945,7 +945,7 @@ test('unavailable server verdicts explain the observed management layer and avoi
   const verdict=vm.runInContext(`serverVerdict({},${JSON.stringify(worker)},100000,false)`,context);
   assert.match(verdict.detail,/cannot resolve/);assert.match(verdict.detail,/cycling through 3 enrolled SSH routes/);assert.ok(!verdict.detail.includes('worker.example'));
   const html=vm.runInContext(`device({id:'spark1',cache:{},series:[]},${JSON.stringify(worker)},100000,false,1,{decode:1,prefill:1},true)`,context);
-  assert.match(html,/server-verdict[^>]*>Unavailable</);assert.match(html,/class="badge bad"[^>]*hidden>unavailable</);
+  assert.match(html,/server-verdict[^>]*>LLM unavailable</);assert.match(html,/class="badge bad"[^>]*hidden>unavailable</);
   assert.match(html,/class="device-name-text">Spark 1<\/span>/);
   const auth={...worker,management_path:{transport:'ssh_tunnel',state:'ssh_error',reason:'adapter_auth_failure'}};
   assert.match(vm.runInContext(`serverVerdict({},${JSON.stringify(auth)},100000,false).detail`,context),/authentication failed/);

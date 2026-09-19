@@ -1,10 +1,11 @@
+import {requestAuthorized} from './request-auth.mjs';
 // Stable byte-transparent front door for planned DSG core replacement.
 // It never parses or persists inference bodies and never retries dispatched work.
 import http from 'node:http';
 import net from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
-import {timingSafeEqual,randomUUID} from 'node:crypto';
+import {randomUUID} from 'node:crypto';
 import {loadConfig,isMain,continuityEnabled,gatewayPort,doorSocket} from './config.mjs';
 import {dsgReport,invalidHttp} from './report.mjs';
 import {CALL_ID_HEADER,DISPATCH_HEADER,validCallId} from './continuity.mjs';
@@ -77,7 +78,7 @@ export function createDoor(config,{now=Date.now}={}){
   const corePort=gatewayPort(config),socketPath=doorSocket(config),limit=config.continuity_door.max_held_requests??Math.max(128,(config.nodes?.length??1)*(config.max_queued_per_node??128));
   if(!Number.isSafeInteger(limit)||limit<1||limit>65536)throw new Error('continuity_door.max_held_requests must be 1–65536');
   const interval=config.continuity_door.health_interval_ms??1000;if(!Number.isSafeInteger(interval)||interval<250||interval>60000)throw new Error('continuity_door.health_interval_ms must be 250–60000');
-  const auth=Buffer.from(`Bearer ${config.api_key}`),held=[],state={holding:false,hold_id:null,hold_kind:null,reason:null,since:null,last_transition:null,forwarded:0,failed:0,active:0,core_ready:false,core_failures:0};
+  const held=[],state={holding:false,hold_id:null,hold_kind:null,reason:null,since:null,last_transition:null,forwarded:0,failed:0,active:0,core_ready:false,core_failures:0};
   const lanFile=lanSharingFile(config),canShare=lanBindable(config);
   let lan=readLanSharing(lanFile,canShare);
   const lanStatus=()=>({available:canShare,enabled:canShare&&lan.enabled,urls:lanAddresses({...config,port:server.address()?.port??config.port}),api_key:config.api_key});
@@ -89,7 +90,7 @@ export function createDoor(config,{now=Date.now}={}){
   const failureCounts={inference:0,model_discovery:0,status:0,other:0},failures=[];
   let closing=false,starting=false,monitor,probe=null,probeGeneration=0;
   const invalidateProbe=()=>{probeGeneration++;const previous=probe;probe=null;previous?.cancel();};
-  const authorized=req=>{const value=Buffer.from(req.headers.authorization??'');return value.length===auth.length&&timingSafeEqual(value,auth);};
+  const authorized=req=>requestAuthorized(config,req);
   const status=()=>({service:'dwarf-star-gate-continuity-door',version:1,testing:{...testing,endpoint:'/testing/v1',held:held.filter(item=>lanes.get(item.req)!=='test'&&requestClass(item.req)==='inference').length,normal_active:laneActive.normal,test_active:laneActive.test},holding:state.holding,hold_kind:state.hold_kind,reason:state.reason,since:state.since,last_transition:state.last_transition,held:held.length,active:state.active,forwarded:state.forwarded,failed:state.failed,core_ready:state.core_ready,core_failures:state.core_failures,body_spooling:false,replay:false,core_port:corePort,
     hold_ownership:1,hold_id:state.hold_id,model_discovery_hold:true,failure_evidence:{schema:1,scope:'door_process',by_request_class:{...failureCounts},recent:failures.map(row=>({...row}))}});
   const remove=item=>{const index=held.indexOf(item);if(index>=0)held.splice(index,1);clearInterval(item.heartbeat);item.req.off('aborted',item.cancel);item.req.off('error',item.cancel);item.res.off('close',item.cancel);};
@@ -174,6 +175,8 @@ export function createDoor(config,{now=Date.now}={}){
     // Check the actual peer, never forwarded headers. Existing streams and
     // admitted/held work finish normally; only new remote requests are gated.
     if(!lan.enabled&&!isLoopback(req.socket.remoteAddress)){req.resume();return reportNotForwarded(req,res,503,'lan_sharing_off','LAN sharing is off; request was not forwarded.');}
+    // Core sees the Door as loopback: reject untrusted unauthenticated peers here.
+    if(config.lan_auth==='none'&&!authorized(req)){req.resume();return report(res,401,'unauthorized','Bearer API key required');}
     if(req.url==='/continuity/status'&&req.method==='GET'){req.resume();return authorized(req)?json(res,200,status()):report(res,401,'unauthorized','Bearer API key required');}
     if(closing){req.resume();return reportNotForwarded(req,res,503,'continuity_stopping','Continuity door is stopping; request was not forwarded.');}
     const testPath=req.url?.startsWith('/testing/');

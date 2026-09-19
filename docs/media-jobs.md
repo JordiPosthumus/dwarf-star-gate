@@ -58,13 +58,12 @@ For a basic H3 video, agents can submit text directly:
 
 ```sh
 curl "$SG_URL/v1/video/jobs" \
-  -H "Authorization: Bearer $SG_API_KEY" \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: my-first-video' \
   --data '{"prompt":"A paper boat floating on a calm pond, with soft water sounds.","seed":42}'
 ```
 
-Set `SG_URL` to the gateway address and `SG_API_KEY` to its normal bearer key.
+Set `SG_URL` to the gateway address. With `"lan_auth": "none"`, localhost and clients in the configured LAN /24 need no Authorization header, API key, or client provisioning on any gateway route. Other peers still require the configured bearer key. Omit this setting (or use `"lan_auth": "bearer"`) to require bearer authentication everywhere. For bearer mode, add `-H "Authorization: Bearer $SG_API_KEY"` to each example. Set `lan_auth_prefix` to the first three address octets with a trailing dot (for example, `192.0.2.` in documentation examples). The policy uses the actual TCP peer, never forwarded headers.
 The text form uses the shipped H3 workflow: 608×352, 96 frames at 24 fps
 (approximately four seconds), 20 sampling steps, video with audio and a separate
 audio result. The convenience form accepts `prompt`, optional `seed`, and optional
@@ -80,11 +79,9 @@ agent's machine), then use the returned `id`:
 
 ```sh
 curl "$SG_URL/v1/video/inputs" \
-  -H "Authorization: Bearer $SG_API_KEY" \
   -H 'Content-Type: image/png' --data-binary @reference.png
 
 curl "$SG_URL/v1/video/jobs" \
-  -H "Authorization: Bearer $SG_API_KEY" \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: my-reference-video' \
   --data '{"prompt":"Animate <Picture 1> gently.","reference_image":"UPLOAD_ID","seed":42}'

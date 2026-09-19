@@ -43,6 +43,7 @@ export class MediaInputs {
     fs.rmSync(folder,{recursive:true});return {id,deleted:true};
   }
   async receive(req){
+    if(req.headers['content-length']==='0'||(!req.headers['content-length']&&!req.headers['transfer-encoding']))throw fail(400,'Empty body; upload a nonempty image, audio or video file.');
     const content_type=(req.headers['content-type']??'').split(';')[0].trim().toLowerCase(),extension=extensions[content_type];
     if(!extension)throw fail(415,'Use a supported image, audio or video Content-Type for the raw file upload.');
     const declared=req.headers['content-length'];if(typeof declared!=='string'||!/^\d+$/.test(declared))throw fail(411,'Content-Length is required for video input uploads');

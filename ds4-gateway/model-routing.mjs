@@ -16,4 +16,4 @@ export function routeSelection(routes,header){
   if(typeof header!=='string'||!routes?.has(header))throw new Error('Unknown DSG model route');
   return {model:header,workers:routes.get(header)};
 }
-export const allowsWorker=(route,worker)=>!route||route.workers.has(worker.id);
+export const allowsWorker=(route,worker)=>route?route.workers.has(worker.id):worker.route_only!==true;

@@ -31,6 +31,12 @@ export async function readService(kind,config) {
   if(kind==='dashboard'?!isDashboard(value):kind==='door'?value.service!=='dwarf-star-gate-continuity-door'||value.version!==1:value.version!==1||!Array.isArray(value.workers)||typeof value.draining!=='boolean')throw new Error(`Unexpected service on ${kind} port`);
   return value;
 }
+export async function assertDashboardIdle(config,{interrupt=false,fetchImpl=fetch}={}) {
+  if(interrupt)return;
+  const read=async route=>{const response=await fetchImpl(`http://127.0.0.1:${dashboardPort(config)}${route}`,{signal:AbortSignal.timeout(3000)});if(!response.ok)throw Error('Dashboard activity unavailable; leave it running');return response.json();};
+  const [chat,reviewer]=await Promise.all([read('/api/genie/chat'),read('/api/genie')]);
+  if(!Array.isArray(chat.conversations)||chat.conversations.some(c=>c.busy||c.queued>0)||reviewer.busy)throw Error('Genie has active or queued work; leave the dashboard running until it finishes');
+}
 export function assertIdle(status,interrupt=false) {
   if(!interrupt&&(!status||status.active!==0||status.queued!==0||(status.media_uploads??0)!==0))throw new Error('Gateway is busy or its state is unknown. Wait for idle, or explicitly use --interrupt.');
 }
@@ -195,6 +201,7 @@ export async function serviceCommand(command,kinds=['gateway','door','dashboard'
         if(!state.draining)throw new Error('Admission fence was not acknowledged; service not stopped');assertIdle(state);
       }catch(error){if(fenced)launch('kill','SIGUSR2',`${domain}/${labels.gateway}`);throw error;}
     }
+    if(kinds.includes('dashboard')&&loaded('dashboard'))await assertDashboardIdle(config,{interrupt});
     for(const kind of [...kinds].reverse())await unloadService(kind,{domain,launch,loaded,interrupt});
     if(command==='stop')return {stopped:kinds,model_servers_unchanged:true};
   }

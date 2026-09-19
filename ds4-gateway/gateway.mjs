@@ -1,3 +1,4 @@
+import {requestAuthorized} from './request-auth.mjs';
 import {createMediaHosts} from './media-hosts.mjs';
 import {createMediaSetup} from './media-setup.mjs';
 import {genieCapabilityKeys,validateGenieCapabilities,genieCapabilities} from './genie-capabilities.mjs';
@@ -16,7 +17,7 @@ import {MODEL_ROUTE_HEADER,modelRoutes,routeSelection,allowsWorker} from './mode
 import https from 'node:https';
 import fs from 'node:fs';
 import path from 'node:path';
-import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
 import { RequestedThinkingObserver } from './requested-thinking.mjs';
@@ -269,6 +270,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   const queueTimeoutMs=()=>store.data.queue_timeout_ms??configuredQueueTimeout;
   // Like registered workers, an explicit UI setting survives process restarts.
   const contextLimit = () => store.data.pool_context_length ?? config.context_length;
+  const requiredContext = node => node.route_only ? node.context_length : contextLimit();
   const makeNode = n => ({ ...n, drained: store.data.drained?.[n.id] === true, quarantine:store.data.quarantined?.[n.id] ?? null, inferenceFailures:0, healthy: false, failures: 0, slots: [{}], get active(){return oldestActive(this);}, queue: [], completed: 0, failed: 0, protected:0, observationLimited:0, probing: false, healthProbeDeferred:0,
     managementPath:n.ssh?{transport:'ssh_tunnel',state:'pending',reason:null,attempts:0,route_count:sshTargets(n).length,changed_at:new Date().toISOString(),last_verified_at:null}:{transport:'local',state:'local',reason:null,attempts:0,route_count:0,changed_at:new Date().toISOString(),last_verified_at:null} });
   let definitions;
@@ -363,14 +365,13 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   try {agents=new AgentControl({store,nodes,log,onPause:ids=>recovery.operatorPause(ids),canHandback:async n=>recovery.profileHandbackOffer(n,{ignorePause:true}),onHandback:()=>void recovery.tick(),canResume:async n=>{
     if(shuttingDown||draining)throw new Error('Gateway is draining; hold retained');
     await freshProbe(n);
-    if(shuttingDown||draining||n.recovering||n.quarantine||n.probeError||!n.modelMatches||!validContext(n.contextLength)||n.contextLength<contextLimit())throw new Error('Fresh compatible worker readiness required; hold retained');
+    if(shuttingDown||draining||n.recovering||n.quarantine||n.probeError||!n.modelMatches||!validContext(n.contextLength)||n.contextLength<requiredContext(n))throw new Error('Fresh compatible worker readiness required; hold retained');
   }});}catch(e){store.close();throw e;}
   const visionProtection=new VisionProtection(config.vision_compatibility,store,path.dirname(config.state_file),visionTranscode?{transcode:visionTranscode}:undefined);
   const agent = new http.Agent({ keepAlive: true, maxSockets: Math.max(16,definitions.reduce((sum,node)=>sum+requestCapacity(node),0)) });
   const tlsAgent = new https.Agent({ keepAlive: true, maxSockets: Math.max(16,definitions.reduce((sum,node)=>sum+requestCapacity(node),0)) });
   const upstreamOptions = (node, url) => ({ agent: url.protocol === 'https:' ? tlsAgent : agent, headers: node.upstreamHeaders ?? {} });
   const accepted = new Set(['POST /v1/chat/completions', 'POST /v1/completions', 'POST /v1/responses', 'POST /v1/messages', 'GET /v1/models']);
-  const auth = Buffer.from(`Bearer ${config.api_key}`);
   const lastOperatorAction=id=>Object.hasOwn(store.data.operator_action_heads??{},id)?store.data.operator_action_heads[id]:[...(store.data.operator_actions??[])].reverse().find(action=>action.workers.includes(id))??null;
   const oldestQueued=queue=>queue.reduce((oldest,job)=>!oldest||job.createdMono<oldest.createdMono?job:oldest,null);
 
@@ -982,8 +983,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   }
 
   const server = http.createServer((req, res) => {
-    const credential = Buffer.from(req.headers.authorization || '');
-    if (credential.length !== auth.length || !timingSafeEqual(credential, auth)) { req.resume(); return error(res, 401, 'unauthorized', 'Bearer API key required'); }
+    if (!requestAuthorized(config,req)) { req.resume(); return error(res, 401, 'unauthorized', 'Bearer API key required'); }
     if(handleMediaRequest(req,res,{jobs:mediaJobs,accepting:!draining}))return;
     // Reject absolute URLs and encoded/normalized alternate routes; no admin forwarding.
     const discovery = req.method === 'GET' && /^\/v1\/models(?:\?[^#]*)?$/.test(req.url);
@@ -1040,14 +1040,15 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
             if (up.statusCode !== 200) throw new Error();
             const data = JSON.parse(body); if (!Array.isArray(data.data)) throw new Error();
             if(node.model_aliases){const originals=[...data.data];for(const [alias,id] of Object.entries(node.model_aliases)){const model=originals.find(m=>m.id===id);if(model&&!data.data.some(m=>m.id===alias))data.data.push({...model,id:alias,owned_by:'dsg-pool'});}}
-            // Publish the pool guarantee, never one larger worker's limit.
+            const publishedContext=modelRoute?Math.min(...nodes.filter(n=>modelRoute.workers.has(n.id)).map(n=>n.context_length??contextLimit())):contextLimit();
+            // Explicit routes publish their guarantee; unselected traffic keeps the pool limit.
             // Explicit per-worker aliases only rewrite the top-level request model.
             for (const model of data.data) {
-              model.context_length = contextLimit();
+              model.context_length = publishedContext;
               if(profiles[node.id]){model.max_output_tokens=profiles[node.id].max_output_tokens;model.input=profiles[node.id].input;model.reasoning=profiles[node.id].reasoning;}
-              if (model.max_model_len !== undefined) model.max_model_len = contextLimit();
-              if (model.top_provider) model.top_provider = { ...model.top_provider, context_length:contextLimit(),
-                max_completion_tokens: Math.min(model.top_provider.max_completion_tokens ?? contextLimit(), contextLimit()) };
+              if (model.max_model_len !== undefined) model.max_model_len = publishedContext;
+              if (model.top_provider) model.top_provider = { ...model.top_provider, context_length:publishedContext,
+                max_completion_tokens: Math.min(model.top_provider.max_completion_tokens ?? publishedContext, publishedContext) };
             }
             json(res, 200, data);
           } catch { error(res, 502, 'models_unavailable', 'Model metadata unavailable'); }
@@ -1163,7 +1164,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
             const previousContext=node.contextLength;
             node.contextLength = metadata.contextLength;
             if(previousContext!==undefined && previousContext!==node.contextLength)observe(()=>shadow.reset(node.id));
-            const ok = node.modelMatches && node.contextLength >= contextLimit();
+            const ok = node.modelMatches && node.contextLength >= requiredContext(node);
             finish(ok, ok ? undefined : 'model_or_context_mismatch');
           } catch { finish(false, 'invalid_model_response'); }
         });
@@ -1249,7 +1250,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     if (shuttingDown || draining) throw new Error('Gateway is draining');
     if (!input || Object.keys(input).some(k=>!['context_length','expected_context_length'].includes(k)) || !validContext(input.context_length)) throw new Error('Context limit must be a positive whole token count');
     if (input.expected_context_length !== contextLimit()) throw new Error('Pool context changed; refresh before applying');
-    const enabled=nodes.filter(n=>!n.drained);
+    const enabled=nodes.filter(n=>!n.drained&&!n.route_only);
     if (!enabled.length) throw new Error('Enable at least one model server before changing the pool context');
     await Promise.all(enabled.map(freshProbe));
     if (shuttingDown || draining) throw new Error('Gateway is draining');
@@ -1265,7 +1266,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     }
     store.save({...store.data,pool_context_length:input.context_length});
     for (const n of enabled) {n.healthy=!n.quarantine&&!n.recovering;n.failures=0;n.probeError=undefined;}
-    for (const n of nodes) if (!n.modelMatches || !validContext(n.contextLength) || n.contextLength<contextLimit()) {
+    for (const n of nodes) if (!n.modelMatches || !validContext(n.contextLength) || n.contextLength<requiredContext(n)) {
       n.healthy=false;n.failures=config.health_failures ?? 3;
       n.probeError=n.probeError || 'model_or_context_mismatch';
     }
@@ -1289,7 +1290,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     const node = makeNode(settings); node.drained = true;
     // Registration proves compatibility, not recovery. A retained quarantine
     // must survive removal/re-add, but cannot make the recovery CLI unreachable.
-    const compatible=()=>node.modelMatches && validContext(node.contextLength) && node.contextLength>=contextLimit() && !node.probeError;
+    const compatible=()=>node.modelMatches && validContext(node.contextLength) && node.contextLength>=requiredContext(node) && !node.probeError;
     try {
       startTunnel(node);
       const until = Date.now() + workerRegistrationTimeout(config,node);
@@ -1301,7 +1302,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
         await delay(250);
       } while (Date.now() < until);
       if (shuttingDown) throw new Error('Gateway is stopping');
-      if (!compatible()) throw new Error(`Compatibility check failed (${node.probeError || 'unavailable'}). Required ${config.model_agnostic || node.backend === 'openai' ? 'available endpoint' : `model ${config.model}`}, context at least ${contextLimit()}; observed context ${node.contextLength ?? 'unknown'}.`);
+      if (!compatible()) throw new Error(`Compatibility check failed (${node.probeError || 'unavailable'}). Required ${config.model_agnostic || node.backend === 'openai' ? 'available endpoint' : `model ${config.model}`}, context at least ${requiredContext(node)}; observed context ${node.contextLength ?? 'unknown'}.`);
       if(binding){
         if(fs.existsSync(store.filename)){const backup=`${store.filename}.enrollment-${Date.now()}-${randomUUID()}.bak`;fs.copyFileSync(store.filename,backup,fs.constants.COPYFILE_EXCL);fs.chmodSync(backup,0o600);}
         store.save({...store.data,workers:[...nodes.map(definition),settings],drained:{...store.data.drained,[node.id]:true},spark_services:{...store.data.spark_services,[node.id]:binding}});
@@ -1346,7 +1347,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     if(raw.ssh===null||raw.ssh===''){delete raw.ssh;delete raw.ssh_fallbacks;delete raw.remote_port;}
     const settings=workerConfig(raw);assertUniqueWorker(nodes.filter(n=>n!==node),settings);
     if(JSON.stringify(settings)===JSON.stringify(before))return registry();
-    const candidate=await inspectEndpoint(settings),required=Math.max(contextLimit(),node.contextLength??0);
+    const candidate=await inspectEndpoint(settings),required=Math.max(requiredContext(node),node.contextLength??0);
     if(candidate.contextLength<required)throw new Error(`Endpoint check failed: required context at least ${required}; observed ${candidate.contextLength}. Current endpoint retained.`);
     node.endpointEditing=true;
     try{
@@ -1515,7 +1516,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
             agents.manualUpdate(input.workers,false); // Reject owned holds before probes.
             if(selected.some(n=>n.recovering))throw new Error('Recovery owns this worker; pause is allowed but wait before enabling');
             await Promise.all(selected.map(freshProbe));
-            if (selected.some(n=>n.probeError || !validContext(n.contextLength) || n.contextLength<contextLimit())) throw new Error('Cannot enable a server without a fresh compatible model/context probe');
+            if (selected.some(n=>n.probeError || !validContext(n.contextLength) || n.contextLength<requiredContext(n))) throw new Error('Cannot enable a server without a fresh compatible model/context probe');
             const recovered=[];
             for(const n of selected.filter(n=>n.quarantine)) {
               if(n.active || n.queue.length)throw new Error('Wait for this worker to become idle before recovery verification');
