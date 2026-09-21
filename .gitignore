@@ -32,3 +32,6 @@ config.local.json
 **/*.bak*
 **/*.plist
 coverage/
+admit-*.mjs
+DSG-V6-STATUS-*.md
+pickuphere.md
