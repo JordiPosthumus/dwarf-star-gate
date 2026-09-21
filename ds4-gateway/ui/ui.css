@@ -40,3 +40,33 @@
 .fleet-native-progress{margin:16px 0;padding:12px;background:rgba(185,214,139,.06);border-radius:6px}.fleet-native-progress>progress{display:block;width:100%;margin:10px 0;accent-color:#b9d68b}.fleet-native-progress>p{font-size:12px;margin:6px 0 0}
 
 .routing-summary{padding:13px 18px;border-radius:10px;border:1px solid var(--line);white-space:pre-line}.routing-summary[hidden]{display:none}.routing-summary.info{background:#1c2420;border-color:#3c5145;color:#cfe8d6}.routing-summary.warning{background:#3a2923;border-color:#80543e;color:#ffd1b5}.routing-summary.error{background:#3a2323;border-color:#8b4038;color:#ffb3a8}
+
+/* Compact fleet cards: dot + one live line + conditional chips + Details drawer. */
+.devices{grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr));gap:12px}
+.device{padding:14px 16px 10px;border-radius:14px}
+.device-dot{width:10px;height:10px;border-radius:50%;background:#87909c;flex-shrink:0;display:inline-block}
+.device-dot[data-level=ok]{background:#68d4a1}.device-dot[data-level=busy]{background:var(--accent)}
+.device-dot[data-level=warn]{background:#efba62}.device-dot[data-level=bad]{background:#ee7b79}
+.device-dot[data-level=paused]{background:#87909c}.device-dot[data-level=unknown]{background:#87909c;opacity:.6}
+.device-identity{display:flex;align-items:center;gap:9px;min-width:0}
+.device-name-text{font-size:15px;font-weight:500;letter-spacing:-.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.device-live{display:flex;align-items:center;flex-wrap:wrap;gap:5px 10px;margin-top:8px;font-size:12px;font-variant-numeric:tabular-nums;min-height:18px}
+.state-word{text-transform:uppercase;letter-spacing:.8px;font-size:10px;color:var(--muted)}
+.state-word[data-level=busy]{color:var(--accent)}.state-word[data-level=warn],.state-word[data-level=bad]{color:var(--error)}
+.state-word[data-level=ok]{color:#9fd4b6}
+.rate-inline{font-weight:500;white-space:nowrap}
+.rate-inline.decode{color:var(--accent)}.rate-inline.prefill{color:#78aee8}
+.cache-chip{color:var(--muted);white-space:nowrap}
+.cache-chip.warn{color:#efba62}
+.request-chip{border:1px solid var(--line);border-radius:9px;padding:1px 7px;font-size:10px;color:var(--muted);white-space:nowrap}
+.requested-thinking{display:inline-flex;align-items:center;gap:5px;font-size:10px;color:var(--muted);margin:0}
+.requested-thinking .label{font-size:9px;letter-spacing:1px}
+.requested-thinking strong{font-size:10px;color:var(--muted);font-weight:500}
+.device-details{margin:6px 0 4px;font-size:12px}
+.device-details>summary{cursor:pointer;color:var(--muted);font-size:11px;padding:4px 0;list-style:none}
+.device-details>summary::before{content:'▸ '}
+.device-details[open]>summary::before{content:'▾ '}
+.device-details[open]{border-top:1px solid var(--line);margin-top:10px;padding-top:6px}
+.device-details .metrics{margin-top:10px}
+.device-details .hardware-strip{margin-top:14px}
+.device.is-media .device-details>summary,.device.is-native .device-details>summary{color:var(--accent)}

@@ -945,8 +945,8 @@ test('unavailable server verdicts explain the observed management layer and avoi
   const verdict=vm.runInContext(`serverVerdict({},${JSON.stringify(worker)},100000,false)`,context);
   assert.match(verdict.detail,/cannot resolve/);assert.match(verdict.detail,/cycling through 3 enrolled SSH routes/);assert.ok(!verdict.detail.includes('worker.example'));
   const html=vm.runInContext(`device({id:'spark1',cache:{},series:[]},${JSON.stringify(worker)},100000,false,1,{decode:1,prefill:1},true)`,context);
-  assert.match(html,/server-verdict[^>]*>LLM unavailable</);assert.match(html,/class="badge bad"[^>]*hidden>unavailable</);
-  assert.match(html,/class="device-name-text">Spark 1<\/span>/);
+  assert.match(html,/device-dot[^>]*data-level="bad"/);assert.match(html,/title="LLM unavailable — /);assert.match(html,/state-word[^>]*>unavailable</);
+  assert.match(html,/class="device-name-text"[^>]*>Spark 1<\/span>/);
   const auth={...worker,management_path:{transport:'ssh_tunnel',state:'ssh_error',reason:'adapter_auth_failure'}};
   assert.match(vm.runInContext(`serverVerdict({},${JSON.stringify(auth)},100000,false).detail`,context),/authentication failed/);
   const local={...worker,management_path:{transport:'local',state:'local',reason:'adapter_local_interpreter_missing'}};

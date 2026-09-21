@@ -349,7 +349,10 @@ function renderDevices(devices,workers,now,stale,scales,controls) {
       const focusedLight=current.contains(document.activeElement)?document.activeElement?.dataset?.light:null;
       if(current.querySelector('.fleet-llm-history')?.open)fresh.querySelector('.fleet-llm-history')?.setAttribute('open','');
       if(current.querySelector('.measurement-info')?.open)fresh.querySelector('.measurement-info')?.setAttribute('open','');
-      for(const selector of ['.device-identity','.server-verdict','.badge','.device-readings']){const before=current.querySelector(selector),after=fresh.querySelector(selector);if(before.innerHTML!==after.innerHTML)before.innerHTML=after.innerHTML;if(before.className!==after.className)before.className=after.className;for(const name of ['data-level','title','hidden']){const value=after.getAttribute(name);if(value===null)before.removeAttribute(name);else before.setAttribute(name,value);}}
+      if(current.querySelector('.device-details')?.open)fresh.querySelector('.device-details')?.setAttribute('open','');
+      for(const selector of ['.device-identity','.device-live','.device-details>summary','.fleet-media']){const before=current.querySelector(selector),after=fresh.querySelector(selector);if(!before||!after)continue;if(before.innerHTML!==after.innerHTML)before.innerHTML=after.innerHTML;if(before.className!==after.className)before.className=after.className;for(const name of ['data-level','title','hidden']){const value=after.getAttribute(name);if(value===null)before.removeAttribute(name);else before.setAttribute(name,value);}}
+      // Keep the details drawer open state stable across refreshes.
+      if(current.querySelector('.device-details')?.open)fresh.querySelector('.device-details')?.setAttribute('open','');
       if(focusedLight)current.querySelector(`[data-light="${focusedLight}"]`)?.focus({preventScroll:true});
       updateRoutingNode(current.querySelector('.worker-routing'),fresh.querySelector('.worker-routing'));
     }
@@ -501,19 +504,52 @@ function device(d, w, now, stale, index = 1, scales={}, controls=false) {
     const measured=`${staleMetric?'Last':'Latest'} measurement: ${age(m?.time,now)}. Values are engine observations, not a promise of current speed.`;
     return `<div class="metric-block ${staleMetric?'metric-stale':''}"><span class="label" title="${explanation}">${title}</span><div class="rate ${kind}">${fmtWhole(m?.tps)}<em>t/s</em></div><div class="metric-note" title="${esc(measured)}">${rollingRateNote(d.rolling_rates?.[kind])} · ${age(m?.time, now)}</div>${chart(d.series, kind, now,scales[kind])}<div class="chart-caption" title="${esc(scales.detail)} Exact ceiling: ${scales[kind]} t/s. Gaps compressed; not a shared wall-clock axis.">15m · 20s avg · 0–${fmtWhole(scales[kind])} t/s</div></div>`;
   };
-  const gatewayActivity=!stale&&w?`<p class="gateway-activity"><strong>${fmt(w.load??0)} / ${fmt(w.max_concurrent_requests??1)} gateway requests active</strong> · ${fmt(w.queued??0)} waiting${w.load?' · request in progress':''}${d.backend==='openai'&&!d.endpoint_metrics?.connected?' · native speed metrics unavailable':''}</p>`:'';
+  const gatewayActivity=(!stale&&w)?`<span class="request-chip" title="Gateway requests active / configured slots${Number.isSafeInteger(w.queued)&&w.queued>0?`; ${fmt(w.queued)} queued in Star Gate`:''}${d.backend==='openai'&&!d.endpoint_metrics?.connected?' · native speed metrics unavailable':''}">${fmt(w.load??0)}/${fmt(w.max_concurrent_requests??1)}${Number.isSafeInteger(w.queued)&&w.queued>0?` · ${fmt(w.queued)}q`:''}</span>`:'';
   const endpoint=d.endpoint_metrics;
   const metricsFresh=!stale&&endpoint?.connected&&Number.isFinite(endpoint.at)&&now>=endpoint.at&&now-endpoint.at<15000;
   const metricsInfo=endpoint?`<div class="server-metrics-status"><span>${metricsFresh?'Updated':'Unavailable'} · ${age(endpoint.at,now)}</span><details class="measurement-info"><summary>Metric details</summary><div><p>${esc(endpoint.source??'Endpoint')} · ${fmt(endpoint.running)} active · ${fmt(endpoint.waiting)} waiting · ${fmt(endpoint.requests)} completed</p><p>${endpoint.source==='omlx'?'Prefill is an engine-session average: newly processed tokens divided by time to first token, including setup, waiting and cache work. It is not pure compute speed. Live prefill and its chart show latest-chunk speed.':'Prefill chart points use newly computed KV tokens divided by engine-reported prefill seconds for requests completed since the last sample. Cached tokens are excluded. Blue runs from scheduling to the first generated token; green follows generation. Phases are sampled every 2 seconds; a single completed request refines the blue duration from engine timings, with about one poll of placement uncertainty. Decode rates use token changes over polling intervals.'}</p><p>Decode includes thinking and answer tokens. Chart lines use a trailing 20-second average of samples. Raw measurements and headline speeds are unchanged. Charts cover 15 minutes with gaps compressed; missing samples do not prove idle.</p></div></details></div>`:'';
   const duration=!stale&&w?.load&&Number.isFinite(w.active_seconds)?`<span class="remaining-estimate" title="Elapsed time of the active Star Gate request; not an estimate">${fmtWhole(Math.floor(w.active_seconds/60))}m active</span>`:'';
   const activityDuration=workload?`<span class="remaining-estimate">${esc(workload.engine)}</span>`:duration;
   const phaseRedundant=!!workload||['unavailable','paused'].includes(state)||nativeActive;
-  const llmReadings=`${gatewayActivity}${timeline(d,now)}${thinkingIndicator(w,stale,now)}<div class="metrics">${metric('decode','DECODE')}${metric('prefill','PREFILL')}</div>${metricsInfo}`;
+  const llmReadings=`${gatewayActivity}${thinkingIndicator(w,stale,now)}<div class="metrics">${metric('decode','DECODE')}${metric('prefill','PREFILL')}</div>${metricsInfo}`;
   const performance=performanceLightsMarkup(d,now,stale||!!workload||nativeActive||!(d.performance_history?.workers?.[d.id]?.active??w?.load));
   const unavailableLlm=!stale&&w&&!w.is_healthy&&!workload;
   const historicalLlm=unavailableLlm||nativeActive;
   const mediaWarning=fleetWorkloadsUnavailable?'<p class="fleet-media-warning">Media status unavailable; this machine’s workload cannot currently be confirmed.</p>':'';
-  return `<article class="device" data-worker-id="${esc(d.id)}"><div class="device-top"><div class="device-identity"><div class="device-name"><span class="device-number">${String(index).padStart(2,'0')}</span><span class="device-name-text">${esc(d.id.replace(/^spark/, 'Spark '))}</span></div>${activityDuration}</div><div class="device-status"><span class="server-verdict" data-level="${verdict.level}" title="${esc(verdict.detail)}">${esc(verdict.label)}</span><span class="badge ${bad ? 'bad' : w?.load ? 'busy' : ''}" title="Current generation phase" ${phaseRedundant?'hidden':''}>${esc(!stale&&w?.quarantine?'quarantined':state==='mixed'?'prefill + generation':state==='decode'?(d.endpoint_metrics?'generating':'answering'):state)}</span>${routingMarkup(w,{stale,controls,recovering:recoveryState?.workers?.some(r=>r.worker_id===w?.id&&r.state==='recovering')})}</div></div><div class="device-readings">${mediaWarning}${nativeMediaMarkup(d.id,now)}${workload?workloadMarkup(workload,w,now):unavailableLlm?'<p class="muted">LLM endpoint unavailable. Other work on this machine is not confirmed by this view.</p>':nativeActive?'':llmReadings}${hardwareMarkup(d.hardware,now)}${workload?`<details class="fleet-llm-history"><summary>LLM measurements · may predate this media operation</summary>${llmReadings}${performance}</details>`:historicalLlm?`<details class="fleet-llm-history"><summary>Historical LLM measurements · not current machine activity</summary>${llmReadings}${performance}</details>`:performance}</div></article>`;
+  // Compact face: status dot + name + state word, one live line, conditional chips.
+  const dotLevel={ok:'ok',busy:'busy',warn:'warn',bad:'bad',paused:'paused',unknown:'unknown'}[verdict.level]??'unknown';
+  const stateWord=!stale&&w?.quarantine?'quarantined':state==='mixed'?'prefill + generation':state==='decode'?(d.endpoint_metrics?'generating':'answering'):state;
+  const liveRates=(()=>{
+    const e=d.endpoint_metrics;
+    if(e){
+      const live=!stale&&e.connected&&Number.isFinite(e.at)&&now-e.at>=0&&now-e.at<15000;
+      const dLive=live?e.live_decode_tps:null,dHas=Number.isFinite(dLive)&&e.running>0&&(e.phase==='mixed'||e.phase==='decode'||e.phase==='thinking');
+      const decode=dHas?dLive:e.decode_tps,prefill=e.prefill_tps;
+      const parts=[];
+      if(Number.isFinite(decode)&&decode>0)parts.push(`<span class="rate-inline decode" title="Generation speed${dHas?' (live)':' (session average)'}; includes thinking tokens">↓${fmtWhole(decode)} t/s</span>`);
+      if(Number.isFinite(prefill)&&prefill>0)parts.push(`<span class="rate-inline prefill" title="Prompt-processing speed (${e.source==='omlx'?'engine-session average incl. overhead':'completed-request prefill'})">↑${fmtWhole(prefill)} t/s</span>`);
+      return parts.join(' ');
+    }
+    const parts=[];
+    for(const kind of ['decode','prefill']){const m=d[kind];if(Number.isFinite(m?.tps)&&m.tps>0&&!((stale||!Number.isFinite(m.time))||now-m.time>60000))parts.push(`<span class="rate-inline ${kind}" title="${kind==='decode'?'Generation':'Prompt-processing'} speed reported by the engine">${kind==='decode'?'↓':'↑'}${fmtWhole(m.tps)} t/s</span>`);}
+    return parts.join(' ');
+  })();
+  const cacheUsage=(()=>{
+    const u=d.cache_continuity?.usage,wu=u?.workers?.[d.id];
+    if(!wu||!wu.requests)return `<span class="cache-chip" title="Share of prompt tokens served from cache across completed Star Gate requests. No completed-request usage retained yet.">⌀— cache</span>`;
+    const value=Number.isFinite(wu.recent_cached_fraction)?wu.recent_cached_fraction:wu.cached_fraction;
+    const scope=Number.isFinite(wu.recent_cached_fraction)?`last ${fmt(wu.recent_requests)} request${wu.recent_requests===1?'':'s'}`:`${fmt(wu.requests)} requests`;
+    const pair=d.cache_continuity?.workers?.[d.id];
+    const caveat=pair?` Pair audit: ${fmt(pair.assessed_pairs)} consecutive pairs assessed${Number.isFinite(pair.last_assessed_at)?`, latest ${age(pair.last_assessed_at,now)}`:''}.`:' No consecutive-pair verdict established.';
+    const title=`Share of prompt tokens returned as cached across completed Star Gate request usage (prompt-token-weighted, ${scope}). A first/cold turn is a natural miss; this is not a cache-health verdict.${caveat} Exact prefix equality and fault causality are unavailable.`;
+    const low=pair&&Number.isFinite(pair.last_low_reuse_at)&&now-pair.last_low_reuse_at>=0&&now-pair.last_low_reuse_at<=30*60000;
+    return `<span class="cache-chip${low?' warn':''}" title="${esc(title)}">⌀${value===null?'—':Math.round(value*100)+'%'} cache</span>`;
+  })();
+  const chips=[gatewayActivity,thinkingIndicator(w,stale,now)].filter(Boolean).join('');
+  const detailBody=`<div class="metrics">${metric('decode','DECODE')}${metric('prefill','PREFILL')}</div>${timeline(d,now)}${metricsInfo}${hardwareMarkup(d.hardware,now)}${performance}`;
+  const detailOpen=workload||historicalLlm;
+  const details=`<details class="device-details"${detailOpen?' open':''}><summary>Details</summary>${workload?workloadMarkup(workload,w,now):''}${unavailableLlm?'<p class="muted">LLM endpoint unavailable. Other work on this machine is not confirmed by this view.</p>':''}${detailOpen?llmReadings:detailBody}</details>`;
+  return `<article class="device ${workload?'is-media':nativeActive?'is-native':''}" data-worker-id="${esc(d.id)}"><div class="device-top"><div class="device-identity"><span class="device-dot" data-level="${dotLevel}" title="${esc(verdict.detail)}"></span><span class="device-name-text" title="${esc(verdict.label)} — ${esc(verdict.detail)}">${esc(d.id.replace(/^spark/, 'Spark '))}</span>${activityDuration}${routingMarkup(w,{stale,controls,recovering:recoveryState?.workers?.some(r=>r.worker_id===w?.id&&r.state==='recovering')})}</div></div><div class="device-live"><span class="state-word" data-level="${dotLevel}">${esc(stateWord)}</span>${liveRates}${cacheUsage}${mediaWarning?'<span class="cache-chip warn">media?</span>':''}</div>${mediaWarning}${nativeMediaMarkup(d.id,now)}${chips}${details}</article>`;
 }
 const headlineSeverity=value=>['good','info','warning','critical'].includes(value)?value:'info';
 function deterministicHealthAlerts(snapshot) {
