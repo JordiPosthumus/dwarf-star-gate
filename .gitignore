@@ -35,3 +35,6 @@ coverage/
 admit-*.mjs
 DSG-V6-STATUS-*.md
 pickuphere.md
+docs/hourglass-spark-omlx-handoff.md
+docs/server-deployment-reference.md
+plans/
