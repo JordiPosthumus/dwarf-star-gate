@@ -22,3 +22,11 @@ Done: 2026-09-21 — Compact cards live (commit ff60765).
 - Requested/actual thinking kept on the face as small text (Jordi's request)
 - Grid minmax 440->300px; refresh-diff updated to the new selectors; dashboard
   restarted (stop/start dashboard only) and serving the new bundle. All tests green.
+
+Round 2 (2026-09-21 morning, Jordi feedback on first screenshot):
+- Thinking chip had regressed to large bordered row (brand.css legacy) -> compact chip fixed
+- '0m active' hidden unless >= 1 minute
+- ACTIVITY bar (phase timeline) now permanently on the face; tensor-parallel pairs
+  render two strips (honest: both machines run the same phases; noted in tooltip)
+- Small DEC/PRE rate charts permanently on the face, no captions (full blocks in Details)
+- Served model ID shown next to the card name (was lost when verdict label was dropped)
