@@ -6,3 +6,9 @@ compute a simple prompt-token-weighted cached share per worker over recent compl
   to the cacheSnapshot base (independent of pair-audit blocked status)
 - Surface in status snapshot; UI reads d.cache_continuity.usage
 - Tooltip carries old audit evidence (assessed pairs, suspicion counts, caveats)
+
+Done: 2026-09-21 — cache-continuity-evidence.mjs now emits a `usage` summary
+(per-worker requests/prompt/cached tokens, 30-min recent variant, cached_fraction +
+recent_cached_fraction) computed from retained finish events, independent of pair-audit
+blocked status (blocked usage carries its own status and empty workers). UI wiring comes
+with the card rewrite (002). Tests extended in request-history.test.mjs.
