@@ -395,8 +395,8 @@ test('Genie transport does not accept forged proof or classify cancellation/rese
 });
 
 test('a new Genie review uses fresh free compatible pool capacity after measured dedicated slowness',async()=>{
-  const state=()=>{const s=snapshot();return {...s,gateway_at:Date.now(),gateway_error:null,gateway:{...s.gateway,model:'deepseek-v4-flash',genie_admission_version:1,genie_flexible_assignment:true,draining:false,workers:[{id:'spark2',is_healthy:true,load:0,queued:0}]}};};
-  const calls=[],g=new Genie({url:'http://127.0.0.1:9001/v1',timeout_ms:7200000,fallback:{url:'http://127.0.0.1:9002/v1',timeout_ms:7200000}},state,{poolUrl:'http://127.0.0.1:9002/v1',fetchImpl:async(url,options)=>{
+  const state=()=>{const s=snapshot();return {...s,gateway_at:Date.now(),gateway_error:null,gateway:{...s.gateway,model:'PoolModel',genie_admission_version:1,genie_flexible_assignment:true,draining:false,workers:[{id:'spark2',is_healthy:true,load:0,queued:0}]}};};
+  const calls=[],g=new Genie({url:'http://127.0.0.1:9001/v1',timeout_ms:7200000,fallback:{url:'http://127.0.0.1:9002/v1',model:'PoolModel',timeout_ms:7200000}},state,{poolUrl:'http://127.0.0.1:9002/v1',fetchImpl:async(url,options)=>{
     calls.push({url,options});if(calls.length===1)g.providerStartedAt=Date.now()-90000;
     return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(authoredReview())}}]},{headers:{'x-ds4-node':'spark2'}});
   }});
