@@ -86,6 +86,7 @@ export class AffinityStore {
       if (data.pool_context_length !== undefined && !validContext(data.pool_context_length)) throw new Error('Invalid saved pool context limit');
       if(data.conversation_turns!==undefined&&(!Number.isSafeInteger(data.conversation_turns)||data.conversation_turns<1))throw new Error('Invalid saved conversation turn allowance');
       if(data.queue_timeout_ms!==undefined){if(typeof data.queue_timeout_ms!=='number')throw new Error('Invalid saved queue allowance');queueTimeout(data.queue_timeout_ms);}
+      if(data.direct_reserve_enabled!==undefined&&typeof data.direct_reserve_enabled!=='boolean')throw new Error('Invalid saved direct-reserve toggle');
       if(data.quarantined!==undefined && (!data.quarantined || typeof data.quarantined!=='object' || Array.isArray(data.quarantined)))throw new Error('Invalid saved quarantine state');
       if(data.protections!==undefined&&(!data.protections||typeof data.protections!=='object'||Array.isArray(data.protections)||Object.keys(data.protections).some(k=>k!=='vision_jpeg')||(data.protections.vision_jpeg!==undefined&&typeof data.protections.vision_jpeg!=='boolean')))throw new Error('Invalid saved protection state');
       if(data.operator_actions!==undefined&&(!Array.isArray(data.operator_actions)||data.operator_actions.length>256||data.operator_actions.some(action=>!validOperatorAction(action))))throw new Error('Invalid saved operator action history');
@@ -382,7 +383,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   const mediaSetup=mediaJobs?createMediaSetup(serviceConfig,store,{directory:path.join(path.dirname(config.state_file),'media-setup'),workers:()=>nodes.map(definition),binding:(id,c)=>{const n=nodes.find(n=>n.id===id);return !!n&&recovery.binding(n,c);},isEnabled:()=>!draining&&capabilityStatus().media,isAllowed:mediaHosts.allowed}):null;
   const rebalanceEnabled=()=>capabilityStatus().rebalance;
   const allocationStatus=slot=>slot.turnAllocation?{turns_used:slot.turnAllocation.used,remaining:Math.max(0,conversationTurns()-slot.turnAllocation.used),waiting_for_next_turn:!slot.active&&slot.turnAllocation.until>performance.now(),idle_remaining_ms:Math.max(0,Math.ceil(slot.turnAllocation.until-performance.now()))}:null;
-  const stats = () => ({ version: 1, genie_capabilities:capabilityStatus(), serving_profiles:profiles, conversation_turns:conversationTurns(),conversation_turn_idle_ms:conversationTurnIdleMs, model_routes:routes?Object.fromEntries([...routes].map(([name,workers])=>[name,[...workers]])):null, agent_api_version:1, maintenance_lock_version:1,client_watch_version:1,client_watch:clientWatch.snapshot(), model: config.model, context_length: contextLimit(), queue_timeout_ms:queueTimeoutMs(), request_timeout_ms:config.request_timeout_ms??360000000, draining,startup:{...startup}, dataset:dataset.snapshot(), routing_shadow:shadow.snapshot(),recovery:recovery.status(),protections:visionProtection.status(),
+  const stats = () => ({ version: 1, genie_capabilities:capabilityStatus(), serving_profiles:profiles, conversation_turns:conversationTurns(),conversation_turn_idle_ms:conversationTurnIdleMs, model_routes:routes?Object.fromEntries([...routes].map(([name,workers])=>[name,[...workers]])):null, agent_api_version:1, maintenance_lock_version:1,client_watch_version:1,client_watch:clientWatch.snapshot(), model: config.model, context_length: contextLimit(), queue_timeout_ms:queueTimeoutMs(), request_timeout_ms:config.request_timeout_ms??360000000, direct_reserve:{enabled:directReserveEnabled(),release_ms:directReserveMs(),reserved:nodes.filter(n=>directReserved(n)).map(n=>n.id)}, draining,startup:{...startup}, dataset:dataset.snapshot(), routing_shadow:shadow.snapshot(),recovery:recovery.status(),protections:visionProtection.status(),
     genie_admission_version:1,genie_flexible_assignment:true,continuity:{schema:1,recent_rejections:rejections.slice(0,20),safe_retry_contract:true,queued_relocation:true,automatic_relocation:true,automatic_relocation_scope:automaticRelocationScope,automatic_affinity_rebalance_min_wait_ms:automaticAffinityWait,patient_wait:true,
       relocation:{completed:relocation.completed,rejected:relocation.rejected,offers:relocationOffers().length,genie_enabled:rebalanceEnabled(),genie_offers:genieRelocationOffers(),diagnostics:relocationDiagnostics(),last:relocation.last},
       waiting:waiting.length,oldest_wait_seconds:waiting.length?Math.max(0,(performance.now()-oldestQueued(waiting).createdMono)/1000):null,
@@ -403,6 +404,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
       last_requested_thinking: n.lastThinking ?? null, last_request_finished_at: n.lastFinishedAt ?? null,
       context_length: n.contextLength ?? null,
       served_model: n.model_aliases?.[config.model] ?? null,
+      direct_reserved: directReserved(n),
       health_probe_deferred:n.healthProbeDeferred,
       health_state_source:n.probeError==='busy_probe_deferred'?'recent_upstream_progress':'model_probe',
       management_path:{...n.managementPath},
@@ -544,11 +546,41 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   }
 
   function pick(exclude,modelRoute) {
-    return nodes.filter(n => n.healthy && !n.drained && n.id !== exclude && allowsWorker(modelRoute,n)).sort((a, b) =>
+    // Direct-reserve is soft: a worker in active owner use is deprioritized, not
+    // excluded. If every eligible worker is reserved, the pool still serves.
+    const eligible=nodes.filter(n => n.healthy && !n.drained && n.id !== exclude && allowsWorker(modelRoute,n));
+    const preferred=eligible.filter(n=>!directReserved(n));
+    return (preferred.length?preferred:eligible).sort((a, b) =>
       Number(!hasCapacity(a))-Number(!hasCapacity(b)) ||
       (activeCount(a)+a.queue.length)/requestCapacity(a)-(activeCount(b)+b.queue.length)/requestCapacity(b) ||
       store.count(a.id) - store.count(b.id) || a.id.localeCompare(b.id))[0];
   }
+  // A worker whose engine reports active work while the gate has no dispatched
+  // job on it is in direct owner use (pi, curl, any client bypassing the gate).
+  // While reserved, new admissions prefer other workers; the reservation lapses
+  // after a quiet window so cache warmth survives short pauses.
+  function directReserveEnabled(){return store.data.direct_reserve_enabled===true;}
+  function directReserved(node,now=Date.now()){return directReserveEnabled()&&Number.isFinite(node.directReservedUntil)&&now<node.directReservedUntil;}
+  function observeDirectActivity(node,metrics,now=Date.now()){
+    if(!metrics||metrics.connected===false||!Number.isFinite(metrics.at)||now-metrics.at>=15000)return;
+    if(metrics.running>0&&activeCount(node)===0)node.directReservedUntil=now+directReserveMs();
+  }
+  function reportDirectActivity(rows,now=Date.now()){
+    if(!directReserveEnabled()||!Array.isArray(rows))throw new Error('Specify an activity row array');
+    if(rows.length>256)throw new Error('Too many activity rows');
+    let reported=0;
+    for(const row of rows){
+      if(!row||typeof row!=='object'||Object.keys(row).sort().join(',')!=='at,connected,id,running')throw new Error('Each row needs id, connected, running, at');
+      const node=nodes.find(n=>n.id===row.id);if(!node)continue;
+      if(typeof row.connected!=='boolean'||!Number.isSafeInteger(row.running)||row.running<0||!Number.isSafeInteger(row.at))throw new Error('Invalid activity row values');
+      if(now-row.at<0||now-row.at>30000)continue;
+      const before=directReserved(node,now);
+      observeDirectActivity(node,row,now);
+      if(!before&&directReserved(node,now)){reported++;log('direct_reserve_started',{node:node.id,engine_running:row.running});}
+    }
+    return {accepted:true,reserved:nodes.filter(n=>directReserved(n,now)).map(n=>n.id),reported};
+  }
+  function directReserveMs(){const value=config.direct_reserve?.release_ms??180000;return Number.isSafeInteger(value)&&value>=30000&&value<=3600000?value:180000;}
   function detach(job) {
     if(job.node)job.node.queue=job.node.queue.filter(j=>j!==job);
     const i=waiting.indexOf(job);if(i>=0)waiting.splice(i,1);
@@ -1180,7 +1212,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   const startTunnel = node => {
     if (node.ssh) node.stopTunnel = tunnelFactory(node, () => shuttingDown || node.removed);
   };
-  const registry = () => ({ spark_services_version:1,genie_capabilities:capabilityStatus(), model: config.model, minimum_context: contextLimit(), context_limit_control:true,concurrency_control_version:1,conditional_resume_version:1,media_maintenance_version:1,
+  const registry = () => ({ spark_services_version:1,genie_capabilities:capabilityStatus(), model: config.model, minimum_context: contextLimit(), context_limit_control:true,concurrency_control_version:1,conditional_resume_version:1,media_maintenance_version:1,direct_reserve_control:true,direct_reserve_enabled:directReserveEnabled(),direct_reserve_release_ms:directReserveMs(),
     genie_admission_version:1,genie_flexible_assignment:true,
     context_limit_source:store.data.pool_context_length === undefined ? 'config' : 'saved',
     conversation_turns:conversationTurns(),conversation_turn_idle_ms:conversationTurnIdleMs,conversation_turns_control:true,conversation_turns_source:store.data.conversation_turns!==undefined?'saved':config.conversation_turns!==undefined?'config':'default',
@@ -1216,6 +1248,16 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
       schedule(node);
     }
     log('conversation_turn_allowance_changed',{before,after:conversationTurns(),applies_to:'next_dispatch'});
+    return registry();
+  }
+  function setDirectReserve(input){
+    if(shuttingDown||draining)throw new Error('Gateway is draining');
+    if(!input||Array.isArray(input)||Object.keys(input).sort().join(',')!=='enabled'||typeof input.enabled!=='boolean')throw new Error('Specify boolean enabled only');
+    if(directReserveEnabled()===input.enabled&&store.data.direct_reserve_enabled!==undefined)return registry();
+    if(fs.existsSync(store.filename)){const backup=`${store.filename}.direct-reserve-${Date.now()}-${randomUUID()}.bak`;fs.copyFileSync(store.filename,backup,fs.constants.COPYFILE_EXCL);fs.chmodSync(backup,0o600);}
+    store.save({...store.data,direct_reserve_enabled:input.enabled});
+    if(!input.enabled)for(const node of nodes)delete node.directReservedUntil;
+    log('direct_reserve_changed',{enabled:input.enabled});
     return registry();
   }
   function setWorkerConcurrency(input){
@@ -1432,6 +1474,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     if(req.method==='GET'&&req.url==='/agents')return json(res,200,agents.adminStatus());
     if (req.method === 'GET' && req.url === '/current-jobs') return json(res,200,currentJobsStatus());
     if (req.method === 'GET' && req.url === '/workers') return json(res, 200, registry());
+    if (req.method === 'POST' && req.url === '/direct-activity') {let body='';req.on('data',chunk=>{body+=chunk;if(Buffer.byteLength(body)>65536)req.destroy();});req.on('error',()=>{});req.on('end',()=>{try{const input=JSON.parse(body);return json(res,200,reportDirectActivity(input?.rows));}catch(e){return error(res,400,'invalid_direct_activity',e.message);}});return;}
     if(req.method==='GET'&&req.url==='/spark-services')return json(res,200,{schema:1,workers:Object.fromEntries(Object.entries(store.data.spark_services??{}).filter(([id])=>nodes.some(n=>n.id===id)).map(([id,row])=>[id,{inspection:row.inspection,recovery:true,media:Object.keys(row.media.engines)}]))});
     if(req.method==='GET'&&req.url==='/media-jobs')return json(res,200,mediaStatus());
     if(req.method==='POST'&&req.url==='/genie-media-inputs'){
@@ -1446,7 +1489,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
       let body='';req.on('data',chunk=>{body+=chunk;if(Buffer.byteLength(body)>2048)req.destroy();});req.on('error',()=>{});
       req.on('end',()=>{void serialize(async()=>{try{const input=JSON.parse(body);return json(res,202,await (req.url==='/genie-media-start'?mediaExecution.start(input):req.url==='/genie-media-setup'?mediaSetup.start(input):mediaSetup.finish(input)));}catch(e){return error(res,409,'media_start_failed',e.message);}});});return;
     }
-    if (req.method !== 'POST' || !['/media-host-eligibility','/drain-workers', '/resume-workers', '/maintenance-lock','/release-maintenance-lock','/maintenance-receipt','/add-worker', '/edit-endpoint', '/check-endpoint', '/remove-worker', '/set-ssh-fallbacks','/set-context-limit','/set-conversation-turns','/set-queue-timeout','/set-protection','/set-job-priority','/set-worker-concurrency','/relocate-queued','/genie-relocate-queued','/genie-capability','/recovery-policy','/recovery-handback-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/grant-agent','/revoke-agent','/release-agent-hold','/agent/v1/drain','/agent/v1/resume','/agent/v1/receipt'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
+    if (req.method !== 'POST' || !['/media-host-eligibility','/drain-workers', '/resume-workers', '/maintenance-lock','/release-maintenance-lock','/maintenance-receipt','/add-worker', '/edit-endpoint', '/check-endpoint', '/remove-worker', '/set-ssh-fallbacks','/set-context-limit','/set-conversation-turns','/set-queue-timeout','/set-protection','/set-job-priority','/set-worker-concurrency','/set-direct-reserve','/relocate-queued','/genie-relocate-queued','/genie-capability','/recovery-policy','/recovery-handback-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/grant-agent','/revoke-agent','/release-agent-hold','/agent/v1/drain','/agent/v1/resume','/agent/v1/receipt'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
     let body = '';
     req.on('data', chunk => { body += chunk; if (Buffer.byteLength(body) > 4096) req.destroy(); });
     req.on('error', () => {});
@@ -1495,6 +1538,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
           if (req.url === '/add-worker') return json(res, 201, await addWorker(input.worker,input.services));
           if (req.url === '/set-ssh-fallbacks') return json(res, 200, setSshFallbacks(input));
           if (req.url === '/set-worker-concurrency') return json(res,200,setWorkerConcurrency(input));
+          if (req.url === '/set-direct-reserve') return json(res,200,setDirectReserve(input));
           if (req.url === '/remove-worker') return json(res, 200, removeWorker(input.id));
           if (req.url === '/resume-workers') {
             if (!Array.isArray(input.workers) || !input.workers.length || input.workers.some(id=>!nodes.some(n=>n.id===id))) throw new Error('Specify known worker IDs');

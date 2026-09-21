@@ -11,53 +11,49 @@ From latest screenshot:
 6. The request chip "1/2" wastes a whole row — merge into the live line.
 7. "generating" → "gen".
 
-# PRIORITY (built before card round 3): automatic pool removal on direct activity
-Jordi works directly against endpoints (esp. glm53f-m3) with pi. Star Gate should
-detect an active direct client on an endpoint and temporarily pull that worker from
-the pool, restoring it automatically when direct use stops. UI toggle:
-"automatic removal from pool upon activity".
+# Direct reserve (automatic pool removal on direct use) — BACKEND DONE
+Approved design (Jordi, 2026-09-21): detection via endpoint telemetry polling
+(engine `running>0` while the gate has no dispatched job — no client headers
+needed, works for pi/curl/anything bypassing the gate); SOFT exclusion
+(prefer-elsewhere, admit if pool would be empty); 3-minute release grace.
+Header-based detection (old Q1/Q5) was dropped: direct providers bypass the gate
+entirely, so the gate would never see those headers.
 
-## Detection (grounded in today's traffic analysis)
-- Direct pi sessions send NO session-affinity headers and NO x-dsg-observer, so they
-  arrive as affinity:'none' + traffic_class:'unclassified'.
-- Gate Genie reviews are tagged traffic_class:'genie' — already distinguishable.
-- Hermes fleet work arrives WITH session keys (affinity existing/new, 100+ today).
-- Risk: unclassified + no-session could also be a cron/agent client that omits
-  headers. Tonight's data shows distinct usage signatures (large prompts, bursty).
+Implemented in gateway.mjs:
+- `pick()` soft-excludes reserved workers; falls back to all eligible.
+- `directReserveEnabled()` (store flag `direct_reserve_enabled`), `directReserved(node,now)`
+  (checks `node.directReservedUntil`), `observeDirectActivity()`, `reportDirectActivity(rows)`
+  (validates `{id,connected,running,at}`, ≤256 rows, fresh ≤30s; logs `direct_reserve_started`).
+- `setDirectReserve({enabled})` control route `/set-direct-reserve` (backs up store,
+  clears reservations on disable); `/direct-activity` POST route for the dashboard
+  to report fresh endpoint metric rows.
+- stats().direct_reserve = {enabled, release_ms, reserved}; worker rows get
+  `direct_reserved`; registry exposes direct_reserve_control.
+- dashboard.mjs polls report endpoint metrics to the gate when enabled.
 
-## Design questions (need Jordi's call)
-- Q1 Signal: (a) request in flight on the worker with traffic_class unclassified,
-  or (b) sustained rate of unclassified no-session finishes (N in M minutes)?
-  (a) is instant but flaps per request; (b) needs a threshold.
-- Q2 Exclusion behavior: full drain (strict) vs prefer-elsewhere (soft: route new
-  work away but admit if the pool would otherwise idle)? Soft avoids stranded fleet.
-- Q3 Release timer: how long after the last direct signal before re-admitting
-  (cache warmth argues for a grace window, e.g. 2-5 minutes)?
-- Q4 Scope: per worker toggle in Settings, or one global toggle? Jordi asked for
-  "a toggle" — global with per-worker override later seems right.
-- Q5 Do direct sessions send anything identifiable we could key on instead
-  (api key, user-agent)? If Jordi's pi direct providers could send a header
-  (e.g. x-dsg-observer: owner-direct), detection becomes exact. Cheapest fix:
-  add headers:{'x-dsg-observer':'owner-direct'} to the direct provider entries
-  in ~/.pi/agent/models.json. Then no heuristics at all.
+Fixes made while landing (all verified by gateway.test.mjs):
+- stats() called `directReserved()` without the node argument → TypeError.
+- `/direct-activity` route referenced `input` outside the body handler → now parses
+  its own JSON body (`{rows:[...]}`) with a 64 KiB cap.
+- Test originally used `x-dsg-model` route pinning which requires configured
+  model_routes; rewritten to plain soft-reserve admission checks.
 
-## Implementation sketch (backend first, UI second)
-- gateway.mjs: worker flag directReserved:boolean + lastDirectAt, set on observed
-  direct signal; pick()/admission excludes directReserved workers (soft or hard per
-  config); timer releases after grace window; log direct_reserve events.
-- UI: toggle in Settings (or on the card) + a "reserved for direct use" state on
-  the card so it's visible why a worker is out of the pool.
-- Tests in gateway.test.mjs for the admission exclusion + release timer.
+Remaining on this card: card round 3 UI items 1–7 above + UI polish for the
+direct-reserve toggle/status in the dashboard (index.html/ui.js landed earlier).
 
-# Fleet power switches (startScripts in UI)
-~/startScripts holds start/stop/status per fleet member (m3-control.py,
-spark-control.py start|stop <pair> <model>, status scripts, watch).
-Goal: UI elements to turn fleet members on/off without touching scripts.
-- Wrapper approach: server_operations config already has per-worker native_url +
-  qualification containers (spark1/spark2 entries exist). Add service actions that
-  exec the existing scripts (m3-control.py, spark-control.py) with allowlisted args.
-- Safety: destructive (stop kills a serving model) — gate behind operator
-  confirmation + Genie ask-first; never stop a worker that has active requests
-  without drain first; keep the "another LLM stays available" invariant.
-- UI: power section per fleet member: Start/Stop/Status, current engine shown.
-- Cards: split into backend (script adapter + drain interlock + tests) and UI.
+## PAUSED STATE (2026-09-21 ~20:35, moving desks)
+- All 3 gateway bugs fixed and verified by probe; 195/196 gateway tests pass.
+- Test 196 (direct-reserve) still failing: after the first request lands on
+  spark2, the scheduler AUTO-RELOCATES the queued second request
+  spark2→spark1 (`queued_request_relocated`, actor scheduler) in ~1s, BEFORE the
+  until(active===2) assertion can observe spark1 active===1 with spark2 full.
+  The feature itself works (soft reserve verified); the TEST needs a redesign:
+  either assert the relocation outcome directly (second ends up on spark1 via
+  relocate event) or disable automatic relocation in the rig for this test
+  (check config knobs: automatic_affinity_rebalance_min_wait_ms / genie
+  rebalance; see relocationOffers/eligibleDestination in gateway.mjs).
+- probe evidence at the pause: first req → spark2 (soft-reserve avoided spark1);
+  queued req relocated to spark1 ~980ms later — behavior correct, timing is the
+  test problem.
+- No production files touched beyond the three fixes; full suite run NOT yet
+  green — do not deploy until 196 passes.

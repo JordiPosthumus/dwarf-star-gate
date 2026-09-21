@@ -523,7 +523,7 @@ function device(d, w, now, stale, index = 1, scales={}, controls=false) {
   const mediaWarning=fleetWorkloadsUnavailable?'<p class="fleet-media-warning">Media status unavailable; this machine’s workload cannot currently be confirmed.</p>':'';
   // Compact face: status dot + name + state word, one live line, conditional chips.
   const dotLevel={ok:'ok',busy:'busy',warn:'warn',bad:'bad',paused:'paused',unknown:'unknown'}[verdict.level]??'unknown';
-  const stateWord=!stale&&w?.quarantine?'quarantined':state==='mixed'?'prefill + generation':state==='decode'?(d.endpoint_metrics?'generating':'answering'):state;
+  const stateWord=!stale&&w?.quarantine?'quarantined':w?.direct_reserved===true?'direct use':state==='mixed'?'prefill + generation':state==='decode'?(d.endpoint_metrics?'generating':'answering'):state;
   const liveRates=(()=>{
     const e=d.endpoint_metrics;
     if(e){
@@ -857,6 +857,7 @@ let contextDirty=false, contextExpected=null;
 let queueDirty=false,queueExpected=null;
 let turnsDirty=false,turnsExpected=null;
 let visionProtectionEnabled=false;
+let directReserveEnabled=false;
 function workerMessage(text, error = false) {
   $('worker-message').textContent = text; $('worker-message').classList.toggle('error',error);
   $('routing-message').textContent=text;$('routing-message').classList.toggle('error',error);
@@ -908,6 +909,15 @@ async function loadWorkers() {
       $('vision-protection-status').textContent=`${visionProtectionEnabled?'ON':'OFF'}${!protection.available?' · guidance only (configure a supported local converter for automatic repair)':''} · ${fmt(protection.rescued)} repaired · ${fmt(protection.guided)} resend notices · ${fmt(protection.failed)} ambiguous/failed retries`;
       $('vision-protection-toggle').textContent=visionProtectionEnabled?'Disable':'Enable';
       $('vision-protection-toggle').disabled=workerBusy;
+    }
+    const directReserve=data.direct_reserve_control===true;
+    $('direct-reserve-control').hidden=!directReserve;
+    if(directReserve){
+      directReserveEnabled=data.direct_reserve_enabled===true;
+      const reserved=(data.workers??[]).filter(w=>w.direct_reserved===true).map(w=>w.id);
+      $('direct-reserve-status').textContent=`${directReserveEnabled?'ON':'OFF'}${reserved.length?` · reserved now: ${reserved.join(', ')}`:''}`;
+      $('direct-reserve-toggle').textContent=directReserveEnabled?'Disable':'Enable';
+      $('direct-reserve-toggle').disabled=workerBusy;
     }
     const offers=data.queued_relocation?.offers??[];
     $('relocation-controls').hidden=!data.queued_relocation;
@@ -996,6 +1006,7 @@ function wireWorkerControls() {
     void workerAction('queue-timeout',{queue_timeout_ms:ms,expected_queue_timeout_ms:queueExpected});
   });
   $('vision-protection-toggle').addEventListener('click',()=>void workerAction('protection',{id:'vision_jpeg',enabled:!visionProtectionEnabled}));
+  $('direct-reserve-toggle').addEventListener('click',()=>void workerAction('direct-reserve',{enabled:!directReserveEnabled}));
   $('pool-context-form').addEventListener('submit',e=>{
     e.preventDefault();const value=Number($('pool-context-input').value);
     if(!Number.isSafeInteger(value)||value<=0){workerMessage('Enter a positive whole token count.',true);return;}

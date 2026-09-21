@@ -2690,3 +2690,38 @@ test('conversational queue tool uses real core offers and preserves active strea
     await assert.rejects(q.tool(input),/evidence or policy changed/);assert.equal((await q.tool({action:'status'})).last_move.request_id,input.request_id);
   } finally {r.backends[0].heldStreams.shift()();await Promise.all([active,first,second]);}
 });
+test('direct-reserve control persists and engine activity without gate jobs soft-excludes a worker',async t=>{
+  const r=await rig(t,2,{control_socket:true,direct_reserve:{release_ms:60000}}),ctl=b=>workerControl(r.config.control_socket,'/set-direct-reserve',b);
+  // Off by default; enable through the control route and verify persistence.
+  assert.equal(r.gateway.stats().direct_reserve.enabled,false);
+  const enabled=await ctl({enabled:true});
+  assert.equal(enabled.direct_reserve_enabled,true);
+  assert.equal(r.gateway.stats().direct_reserve.enabled,true);
+  await assert.rejects(ctl({enabled:'yes'}),/boolean/);
+  await assert.rejects(workerControl(r.config.control_socket,'/direct-activity',{rows:[{id:'spark1'}]}),/id, connected, running, at/);
+  // Report engine activity with no gate job on spark1: it becomes reserved.
+  const report=await workerControl(r.config.control_socket,'/direct-activity',{rows:[{id:'spark1',connected:true,running:1,at:Date.now()}]});
+  assert.deepEqual(report.reserved,['spark1']);
+  assert.equal(r.gateway.stats().workers.find(w=>w.id==='spark1').direct_reserved,true);
+  // Soft reserve: the first unpinned request avoids the reserved worker and
+  // lands on spark2; once spark2 is full, new work still admits on the reserved
+  // spark1 so the pool never strands (soft exclusion fallback).
+  try{
+    const first=r.request('{"wait_for_release":true}',null);
+    await until(()=>r.backends[1].releases?.length===1);
+    const second=r.request('{}',null);await until(()=>r.gateway.stats().active===2,5000);
+    assert.equal(r.gateway.nodes.find(n=>n.id==='spark1').active,1,'soft reserve still serves when the rest of the pool is busy');
+    r.backends[1].releases[0]();assert.equal((await first).status,200);assert.equal((await second).status,200);
+  }finally{[...r.backends[0].releases??[],...r.backends[1].releases??[]].forEach(release=>release());}
+  // Stale observations are ignored; the reservation lapses after the quiet window.
+  await workerControl(r.config.control_socket,'/direct-activity',{rows:[{id:'spark1',connected:true,running:1,at:Date.now()-120000}]});
+  const gate=workerControl(r.config.control_socket,'/direct-activity',{rows:[{id:'spark1',connected:true,running:1,at:Date.now()}]});
+  const node=r.gateway.nodes.find(n=>n.id==='spark1');node.directReservedUntil=Date.now()-1;
+  await gate;assert.equal(r.gateway.stats().workers.find(w=>w.id==='spark1').direct_reserved,false);
+  // Disabled state clears reservations immediately and persists across restart.
+  await ctl({enabled:false});assert.equal(r.gateway.stats().direct_reserve.enabled,false);
+  await workerControl(r.config.control_socket,'/set-direct-reserve',{enabled:true});
+  await r.restart();assert.equal(r.gateway.stats().direct_reserve.enabled,true,'toggle persists across restart');
+  await workerControl(r.config.control_socket,'/set-direct-reserve',{enabled:false});
+  assert.equal((await r.request('{}',null,{path:'/set-direct-reserve'})).status,404);
+});
