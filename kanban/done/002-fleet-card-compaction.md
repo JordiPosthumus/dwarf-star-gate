@@ -11,3 +11,14 @@ Agreed design (2026-09-21 chat). Cards ~110-150px, grid minmax(440->300).
 - New: per-worker cache-hit fraction (prompt-token-weighted) from request-history usage
 Files: ui/ui.js (device(), drop performanceLightsMarkup/cacheLight inline use),
 ui/ui.css (grid, chips), dashboard.mjs (cache fraction in status snapshot).
+
+Done: 2026-09-21 — Compact cards live (commit ff60765).
+- Dead performance-lights row gone from the card face (function kept for Details drawer)
+- White gateway-activity paragraph -> tiny "1/2 · 1q" chip (hidden when idle)
+- Status dot + state word replace verdict label + phase badge (text in tooltips)
+- Inline live rates on the face; 44px blocks, charts, methodology, hardware, lights
+  all moved into a per-card Details drawer (open by default for media/historical cards)
+- New cache chip wired to the dashboard cache-usage summary (real cached-fraction)
+- Requested/actual thinking kept on the face as small text (Jordi's request)
+- Grid minmax 440->300px; refresh-diff updated to the new selectors; dashboard
+  restarted (stop/start dashboard only) and serving the new bundle. All tests green.
