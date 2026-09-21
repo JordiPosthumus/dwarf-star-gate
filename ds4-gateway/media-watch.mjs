@@ -17,7 +17,8 @@ export class MediaWatch {
     try{
       const s=await this.read();if(this.closed||!this.isEnabled()||!s.enabled)return;
       const candidates=(s.jobs??[]).filter(j=>j.state==='queued'&&!j.execution).sort((a,b)=>priorityRank(b)-priorityRank(a));
-      const job=candidates.find(j=>s.workers.some(w=>!w.busy&&w.kinds.includes(j.kind)&&s.fleet.some(f=>f.id===w.id&&f.is_healthy&&!f.drained)&&s.fleet.some(f=>f.id!==w.id&&f.is_healthy&&!f.drained)));
+      const available=(w,kind)=>Array.isArray(s.hosts)?s.hosts.some(h=>h.id===w.id&&h.engines?.some(e=>e.kind===kind&&e.ready===true)):s.fleet.some(f=>f.id===w.id&&f.is_healthy&&!f.drained);
+      const job=candidates.find(j=>s.workers.some(w=>!w.busy&&w.kinds.includes(j.kind)&&available(w,j.kind)&&s.fleet.some(f=>f.id!==w.id&&f.is_healthy&&!f.drained)));
       if(!job)return;
       const key=createHash('sha256').update(JSON.stringify({job:job.id,workers:s.workers,fleet:s.fleet})).digest('hex');
       if(!this.state.pending&&(key===this.state.key||this.now()-(this.state.last_at??0)<60000))return;

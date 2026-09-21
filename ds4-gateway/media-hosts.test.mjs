@@ -36,3 +36,12 @@ test('retained media downloads use server-side credentials and preserve byte ran
  const r=await fetch(base+route,{headers:{range:'bytes=0-3'}});assert.equal(r.status,206);assert.equal(r.headers.get('content-range'),'bytes 0-3/8');assert.equal(r.headers.get('authorization'),null);assert.equal(await r.text(),'fLaC');
  assert.equal((await fetch(base+route,{headers:{origin:'https://untrusted.example'}})).status,403);
 });
+
+test('LLM routing pause permits explicitly enabled media; maintenance and unavailable hosts do not',()=>{
+ const target={id:'one',is_healthy:true,drained:true,operator_paused:true,holds:[],maintenance_locks:[]};
+ const config={media_jobs:{workers:{one:{engines:{video:{}}}}},recovery:{workers:[{id:'one',adapter:'docker',verification:'qwen_vllm'}]},genie_chat:{inspection:{workers:{one:{container:'llm'}}}}};
+ const policy=createMediaHosts(config,{data:{}},{workers:()=>[target,{id:'two',is_healthy:true,drained:false}],binding:()=>true});
+ const state=()=>policy.status().hosts[0];assert.equal(state().llm_serving,false);assert.equal(state().engines.find(e=>e.kind==='video').ready,true);assert.match(state().engines.find(e=>e.kind==='video').reason,/LLM routing paused/);
+ target.maintenance_locks=[{id:'other'}];assert.equal(state().engines.find(e=>e.kind==='video').ready,false);
+ target.maintenance_locks=[];target.is_healthy=false;assert.equal(state().engines.find(e=>e.kind==='video').ready,false);
+});

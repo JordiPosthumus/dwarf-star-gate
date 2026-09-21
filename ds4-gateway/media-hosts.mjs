@@ -20,7 +20,7 @@ export function createMediaHosts(config,store,{workers,binding}){
       return {worker_id:input.worker_id,kind:input.kind,allowed:input.allowed,scope:'Placement choice saved. Existing execution continues; no engine was installed or started.'};
     },
     status(jobs=[]){
-      const fleet=workers(),serving=w=>w.is_healthy&&!w.drained&&!w.quarantine&&!w.recovering&&!(w.holds?.length)&&!(w.maintenance_locks?.length);
+      const fleet=workers(),borrowable=w=>w.is_healthy&&(!w.drained||w.operator_paused===true)&&!w.quarantine&&!w.recovering&&!(w.holds?.length)&&!(w.maintenance_locks?.length),serving=w=>w.is_healthy&&!w.drained&&!w.quarantine&&!w.recovering&&!(w.holds?.length)&&!(w.maintenance_locks?.length);
       return {media_host_controls_version:1,engines:mediaEngines,hosts:fleet.map(w=>{
         const active=jobs.find(j=>j.execution?.worker_id===w.id&&!terminal.has(j.execution.phase));
         return {id:w.id,llm_serving:serving(w),active_requests:w.load??0,queued_requests:w.queued??0,execution:active?{job_id:active.id,...active.execution}:null,
@@ -28,8 +28,8 @@ export function createMediaHosts(config,store,{workers,binding}){
             const installed=enrolled(w.id,e.kind),permission=allowed(w.id,e.kind);
             const recovery=config.recovery?.workers?.find(r=>r.id===w.id),inspection=config.genie_chat?.inspection?.workers?.[w.id];
             const bound=installed&&!!inspection?.container&&recovery?.adapter==='docker'&&recovery.verification==='qwen_vllm'&&binding(w.id,recovery);
-            const reason=!permission?'Placement is off':!installed?'Setup and qualification needed':!bound?'LLM return binding needs attention':active?'A media operation is already in progress':!serving(w)?'Machine is unavailable or paused':!fleet.some(other=>other.id!==w.id&&serving(other))?'Another serving LLM is required':(w.load||w.queued)?'Existing LLM jobs will drain first':'Available for Genie to select';
-            return {id:e.id,kind:e.kind,allowed:permission,enrolled:installed,ready:!!(permission&&bound&&!active&&serving(w)&&fleet.some(other=>other.id!==w.id&&serving(other))),reason};
+            const reason=!permission?'Placement is off':!installed?'Setup and qualification needed':!bound?'LLM return binding needs attention':active?'A media operation is already in progress':!borrowable(w)?'Machine is unavailable or held for maintenance':!fleet.some(other=>other.id!==w.id&&serving(other))?'Another serving LLM is required':(w.load||w.queued)?'Existing LLM jobs will drain first':w.drained?'LLM routing paused; available for Genie media selection':'Available for Genie to select';
+            return {id:e.id,kind:e.kind,allowed:permission,enrolled:installed,ready:!!(permission&&bound&&!active&&borrowable(w)&&fleet.some(other=>other.id!==w.id&&serving(other))),reason};
           })};
       })};
     },

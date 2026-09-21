@@ -402,6 +402,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
       requested_thinking: activeCount(n)===1?n.active.thinking?.result??null:null,
       last_requested_thinking: n.lastThinking ?? null, last_request_finished_at: n.lastFinishedAt ?? null,
       context_length: n.contextLength ?? null,
+      served_model: n.model_aliases?.[config.model] ?? null,
       health_probe_deferred:n.healthProbeDeferred,
       health_state_source:n.probeError==='busy_probe_deferred'?'recent_upstream_progress':'model_probe',
       management_path:{...n.managementPath},

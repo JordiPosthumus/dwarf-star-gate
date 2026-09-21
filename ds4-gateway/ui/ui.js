@@ -221,14 +221,55 @@ function routingInfo(w,{stale=false,recovering=false}={}) {
   if(locked)reasons.push(`Maintenance lock${w.maintenance_locks.length===1?'':'s'}: ${w.maintenance_locks.map(lock=>lock.name).join(', ')}. Release each exact lock in Settings; routing remains paused until a separate checked Resume.`);
   if(recovering)reasons.push('Service recovery is in progress. Wait for its verification receipt.');
   if(!w.is_healthy&&!w.quarantine&&!recovering&&reasons.length)reasons.push('The last readiness check was also unavailable; resuming will recheck it.');
+  const cause=w.quarantine?'quarantined':locked?'maintenance_lock':held?'reserved':recovering?'recovering':w.drained?'paused':!w.is_healthy?'unavailable':null;
   const excluded=w.drained||!!w.quarantine||!w.is_healthy||recovering;
   const label=w.quarantine?'QUARANTINED · NOT ROUTING':locked?'MAINTENANCE LOCK · NOT ROUTING':held?'RESERVED · NOT ROUTING':w.drained?(busy?'PAUSING · ADMITTED WORK FINISHING':'PAUSED · NOT ROUTING'):recovering?'RECOVERING · NOT ROUTING':!w.is_healthy?'UNAVAILABLE · NOT ROUTING':'ROUTING ENABLED';
   if(!reasons.length)reasons.push(w.drained?'Gateway routing is paused.':!w.is_healthy?managementDetail(w):'New requests may use this server. Pause stops new admission; admitted requests finish.');
   if(w.quarantine)reasons.push('Verify & readmit checks model/context and generates a small test response. It does not restart the model server; failed checks keep it isolated.');
-  return {level:w.quarantine||!w.is_healthy?'bad':excluded?'paused':'ok',label,detail:reasons.join(' '),excluded,
+  return {level:w.quarantine||!w.is_healthy?'bad':excluded?'paused':'ok',cause,label,detail:reasons.join(' '),excluded,
     action:excluded?'resume':'drain',button:w.quarantine?'Verify & readmit':excluded?'Resume routing':'Pause routing',
     blocked:held||locked||recovering||!!w.quarantine&&busy,
     title:locked?'Release the exact named maintenance lock in Settings first; review times never auto-release it.':held?'Release agent holds first.':recovering?'Wait for service recovery.':w.quarantine&&busy?'Wait for admitted work to settle before verification.':excluded?'Check readiness and return to routing. Does not start or restart the model server.':'Stop new gateway admission. Existing admitted work, model process and caches stay intact; the model listener remains running.'};
+}
+function workerModelName(s,id){const records=s?.server_records?.records;if(!Array.isArray(records))return null;const record=records.find(r=>r.worker_id===id);return record?.observed?.model?.name||record?.candidate?.model?.name||null;}
+function modelFamily(name){const text=String(name||'').toLowerCase();if(text.includes('qwen'))return 'Qwen';if(text.includes('deepseek'))return 'DeepSeek';return null;}
+function familyGroups(s,workers){const groups=new Map();for(const w of workers){const family=modelFamily(workerModelName(s,w.id))||'Other';if(!groups.has(family))groups.set(family,[]);groups.get(family).push(w.id);}return [...groups].map(([family,ids])=>`${family} — ${ids.join(', ')}`).join(' · ');}
+function buildRoutingSummary(s,g,workers,stale){
+  if(stale)return {hidden:false,level:'warning',text:'Routing status is stale. Controls are disabled until live status returns.'};
+  if(!workers.length)return {hidden:true,level:'info',text:''};
+  const info=workers.map(w=>({w,r:routingInfo(w)}));
+  const routing=info.filter(x=>!x.r.excluded).map(x=>x.w);
+  const paused=info.filter(x=>x.r.cause==='paused').map(x=>x.w);
+  const unavailable=info.filter(x=>x.r.cause==='unavailable').map(x=>x.w);
+  const quarantined=info.filter(x=>x.r.cause==='quarantined').map(x=>x.w);
+  const held=info.filter(x=>['maintenance_lock','reserved','recovering'].includes(x.r.cause)).map(x=>x.w);
+  const excluded=[...paused,...unavailable,...quarantined,...held];
+  if(!excluded.length&&!g?.draining)return {hidden:true,level:'info',text:''};
+  const poolModel=g?.model||'PoolModel';
+  const servingModels=[...new Set(routing.map(w=>w.served_model||workerModelName(s,w.id)).filter(Boolean))];
+  const lines=[],draining=g?.draining?'The gateway is draining: all new admission is stopped.':'';
+  if(routing.length){
+    lines.push(`● Pool live · ${routing.length} of ${workers.length} server${workers.length===1?'':'s'} routing${draining?' · '+draining:''}`);
+    lines.push(`${poolModel}${servingModels.length?' → '+servingModels.join(', '):''}`);
+    lines.push(`Serving: ${routing.map(w=>w.id).join(', ')}`);
+  }else{
+    lines.push(`● No server can accept requests${draining?' · '+draining:''}`);
+    lines.push(`All ${workers.length} server${workers.length===1?'':'s'} are paused or unavailable.`);
+  }
+  if(paused.length)lines.push(`Paused by an operator: ${familyGroups(s,paused)}`);
+  if(unavailable.length)lines.push(`Unavailable: ${unavailable.map(w=>w.id).join(', ')}`);
+  if(quarantined.length)lines.push(`Quarantined: ${quarantined.map(w=>w.id).join(', ')}`);
+  if(held.length)lines.push(`Held or locked: ${held.map(w=>w.id).join(', ')}`);
+  if(!unavailable.length&&!quarantined.length)lines.push('No server is unhealthy.');
+  const routes=g?.model_routes;
+  if(routes&&typeof routes==='object'){
+    const routingIds=new Set(routing.map(w=>w.id));
+    const down=Object.entries(routes).filter(([,ids])=>Array.isArray(ids)&&!ids.some(id=>routingIds.has(id))).map(([name])=>name);
+    if(down.length)lines.push(`Routes with no live server: ${down.join(', ')}`);
+  }
+  lines.push('See each server card for its reason and routing control.');
+  const level=!routing.length?'error':(unavailable.length||quarantined.length)?'warning':'info';
+  return {hidden:false,level,text:lines.join('\n')};
 }
 function managementDetail(w) {
   const probe={
@@ -672,9 +713,10 @@ function render(s) {
   $('continuity-door-status').textContent=s.continuity_door_error?`${s.continuity_door_error}.`:!door?'Continuity Door is not enabled.':door.holding?`Continuity Door holding ${fmt(door.held)} new request${door.held===1?'':'s'} while ${door.core_ready?'core dispatch is ready':'core dispatch is not ready (including when every eligible server is paused or unavailable)'}; existing streams remain connected.`:`Continuity Door ready · ${fmt(door.active)} active proxied stream${door.active===1?'':'s'} · no request-body spooling or replay.`;
   visibleWorkers=g?.workers??[];workerUiStale=stale;workerControlsVisible=s.worker_management===true;
   $('capacity-note').title=stale?'Live gateway status is unavailable.':!g?.total?'No model servers are registered. Open Settings to add your first endpoint.':schedulingExplanation(g,visibleWorkers,cap).trim();
-  const excluded=visibleWorkers.filter(w=>routingInfo(w).excluded);
-  $('routing-summary').hidden=!excluded.length&&!stale&&!g?.draining;
-  $('routing-summary').textContent=stale?'Routing status is stale. Controls are disabled until live status returns.':`${g?.draining?'The gateway is draining: all new admission is stopped. ':''}${excluded.length?`${excluded.length} server${excluded.length===1?' is':'s are'} not accepting new LLM requests: ${excluded.map(w=>w.id).join(', ')}. See the highlighted reason and routing control on each server card below.`:''}`;
+  const routing=buildRoutingSummary(s,g,visibleWorkers,stale);
+  $('routing-summary').hidden=routing.hidden;
+  $('routing-summary').className='routing-summary '+routing.level;
+  $('routing-summary').textContent=routing.text;
   renderDevices(s.devices.map(d=>({...d,cache_continuity:s.cache_continuity,performance_history:s.performance_lights})),visibleWorkers,now,stale,scales,workerControlsVisible);
   const ds=g?.dataset;
   $('cache-evidence-status').textContent=cacheEvidenceText(s,stale);

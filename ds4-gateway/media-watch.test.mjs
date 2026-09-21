@@ -17,3 +17,10 @@ test('uncertain chat submission reuses the same message identity',async t=>{
   const options={filename:path.join(folder,'watch.json'),isEnabled:()=>true,now:()=>100000,chat:{status:()=>({available:true,conversations:[]}),create:()=>({id:'conversation'}),submit:(...args)=>{calls.push(args);if(calls.length===1)throw new Error('reply lost');}},read:async()=>({enabled:true,jobs:[{id:'one',kind:'video',state:'queued'}],workers:[{id:'a',busy:false,kinds:['video']}],fleet:[{id:'a',is_healthy:true},{id:'b',is_healthy:true}]})};
   await new MediaWatch(options).tick();await new MediaWatch(options).tick();assert.equal(calls.length,2);assert.deepEqual(calls[0],calls[1]);
 });
+
+test('media host eligibility wakes Genie for a paused LLM without overriding placement or maintenance',async t=>{
+ const folder=fs.mkdtempSync(path.join(os.tmpdir(),'sg-media-watch-paused-'));t.after(()=>fs.rmSync(folder,{recursive:true,force:true}));const calls=[];
+ const status={enabled:true,jobs:[{id:'one',kind:'video',state:'queued'}],workers:[{id:'a',busy:false,kinds:['video']}],fleet:[{id:'a',is_healthy:true,drained:true},{id:'b',is_healthy:true,drained:false}],hosts:[{id:'a',engines:[{kind:'video',ready:false}]}]};
+ const watch=new MediaWatch({filename:path.join(folder,'state.json'),isEnabled:()=>true,chat:{status:()=>({available:true,conversations:[]}),create:()=>({id:'chat'}),submit:(...args)=>calls.push(args)},read:async()=>status});
+ await watch.tick();assert.equal(calls.length,0);status.hosts[0].engines[0].ready=true;await watch.tick();assert.equal(calls.length,1);assert.match(calls[0][1],/start_media_job/);
+});
