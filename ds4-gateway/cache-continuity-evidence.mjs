@@ -3,6 +3,32 @@
 import {auditCacheContinuity} from './cache-continuity-audit.mjs';
 const kinds=new Set(['decision','finish','queue_relocation']);
 const fields=['schema','kind','run_id','event_id','request_id','time','node','session','affinity','outcome','finish_reason','route'];
+const RECENT_USAGE_MS=30*60*1000;
+const integer=value=>Number.isSafeInteger(value)&&value>=0?value:null;
+const at=value=>{const parsed=Date.parse(value);return Number.isFinite(parsed)?parsed:null;};
+
+// Prompt-token-weighted cached share per worker from retained completed finishes.
+// Independent of the consecutive-pair audit: sums never certify a cache verdict,
+// they only count returned token accounting. Cold first turns count as misses.
+function usageSummary(events,now) {
+  const workers=Object.create(null);
+  const bucket=node=>{
+    const key=typeof node==='string'&&/^[\w-]{1,64}$/.test(node)?node:'unknown';
+    return workers[key]??={requests:0,prompt_tokens:0,cached_tokens:0,recent_requests:0,recent_prompt_tokens:0,recent_cached_tokens:0};
+  };
+  for(const row of events){
+    if(row.kind!=='finish'||row.outcome!=='complete')continue;
+    const prompt=integer(row.usage?.prompt_tokens),cached=integer(row.usage?.cached_tokens);
+    if(prompt===null||cached===null||cached>prompt)continue;
+    const worker=bucket(row.node),time=at(row.time);
+    worker.requests++;worker.prompt_tokens+=prompt;worker.cached_tokens+=cached;
+    if(time!==null&&now-time>=0&&now-time<=RECENT_USAGE_MS){worker.recent_requests++;worker.recent_prompt_tokens+=prompt;worker.recent_cached_tokens+=cached;}
+  }
+  const share=w=>w.prompt_tokens>0?Math.round(1000*w.cached_tokens/w.prompt_tokens)/1000:null;
+  const recentShare=w=>w.recent_prompt_tokens>0?Math.round(1000*w.recent_cached_tokens/w.recent_prompt_tokens)/1000:null;
+  for(const worker of Object.values(workers)){worker.cached_fraction=share(worker);worker.recent_cached_fraction=recentShare(worker);}
+  return {schema:1,recent_window_ms:RECENT_USAGE_MS,workers};
+}
 
 export class CacheContinuityEvidence {
   constructor({maxEvents=16384,maxBytes=8*1024*1024,intervalMs=15000}={}) {
@@ -31,7 +57,10 @@ export class CacheContinuityEvidence {
   }
   invalidate(){this.blocked='source_gap';this.result=null;}
   snapshot(now,{enabled=true,status='ready',partialHistory=false}={}) {
-    const base={schema:1,status:!enabled?'disabled':status,checked_at:this.evaluatedAt,interval_ms:this.intervalMs,events:this.events.length,event_limit:this.maxEvents,projected_bytes:this.bytes,byte_limit:this.maxBytes,partial_history:partialHistory,workers:{}};
+    // Usage sums stay available even when the pair audit is blocked: a gap
+    // invalidates consecutive-pair reasoning, not simple token accounting.
+    const usage=this.blocked?{schema:1,recent_window_ms:RECENT_USAGE_MS,workers:{},status:this.blocked}:usageSummary(this.events,now);
+    const base={schema:1,status:!enabled?'disabled':status,checked_at:this.evaluatedAt,interval_ms:this.intervalMs,events:this.events.length,event_limit:this.maxEvents,projected_bytes:this.bytes,byte_limit:this.maxBytes,partial_history:partialHistory,workers:{},usage};
     if(!enabled||status!=='ready')return base;
     if(this.blocked)return {...base,status:this.blocked};
     if(this.dirty&&(this.evaluatedAt===null||now-this.evaluatedAt>=this.intervalMs)){

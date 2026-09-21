@@ -34,6 +34,8 @@ test('cache dashboard projection is private, bounded and evaluated at most every
   for(const r of rows)evidence.accept({...r,prompt:'NEVER_EXPORT',vectors:['NEVER_EXPORT']});
   const first=evidence.snapshot(30000);
   assert.equal(first.workers['worker-a'].high_suspicion_low_reuse,1);
+  assert.equal(first.usage.workers['worker-a'].requests,2);
+  assert.equal(first.usage.workers['worker-a'].cached_fraction,0);
   const stored=JSON.stringify(evidence.events);assert.ok(!stored.includes('NEVER_EXPORT'));
   const shown=JSON.stringify(first);for(const value of ['b'.repeat(64),'a'.repeat(64),'cache-1','event-','NEVER_EXPORT'])assert.ok(!shown.includes(value));
   evidence.accept(row('finish',{request_id:'other'}));
@@ -43,6 +45,7 @@ test('cache dashboard projection is private, bounded and evaluated at most every
   assert.deepEqual(evidence.snapshot(45000,{enabled:false}).workers,{});
   const bounded=new CacheContinuityEvidence({maxEvents:2});rows.forEach(r=>bounded.accept(r));
   assert.equal(bounded.snapshot(50000).status,'event_limit');assert.equal(bounded.events.length,2);
+  assert.equal(bounded.snapshot(50000).usage.status,'event_limit');
   const bytes=new CacheContinuityEvidence({maxBytes:1024});
   rows.forEach(r=>bytes.accept(r));
   assert.equal(bytes.snapshot(50000).status,'event_limit');assert.ok(bytes.bytes<=1024);
