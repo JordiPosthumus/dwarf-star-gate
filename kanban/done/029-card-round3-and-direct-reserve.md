@@ -38,9 +38,10 @@ Fixes made while landing (all verified by gateway.test.mjs):
 - Test originally used `x-dsg-model` route pinning which requires configured
   model_routes; rewritten to plain soft-reserve admission checks.
 
-Remaining on this card: item 3 (Details drawer removal) needs Jordi's confirm;
-UI polish for direct-reserve card state ("direct use" state word landed; optional
-reserved-list display in Settings already exists via direct-reserve-status).
+Item 3 (Details drawer removal) split out to backlog/031-details-drawer-removal.md
+pending Jordi's confirm. Direct-reserve card state: "direct use" state word +
+per-worker direct_reserved pass-through landed; Settings toggle + reserved list
+already existed.
 
 ## LANDED (2026-09-22, evening)
 - gateway.test.mjs fully green: 196/196 (full suite 1074 pass / 0 fail).
