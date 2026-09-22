@@ -20,3 +20,13 @@ undefined → falsy → notebook NOT included in Genie context today. Enable by
 setting genie_chat.operational_notebook=true (needs dashboard restart to take
 effect). Decision left to Jordi: off by default is safe; on gives Genie briefs
 from private operational history.
+
+## VERIFIED (2026-09-22 ~03:50)
+config.local.json has NO genie_chat.operational_notebook key → the notebook is
+OFF by default (dashboard.mjs: config.genie_chat.operational_notebook===true?memory:null).
+GenieChat receives notebook only when explicitly enabled; the wiring is real
+code but not active in this installation. Memory files still accumulate via
+GenieMemory separately for the store-side, but chat context does not include
+the notebook today. Decision left to Jordi: enable via
+genie_chat.operational_notebook=true if he wants Genie to cite operational notes.
+(No code change needed; wiring verified.)
