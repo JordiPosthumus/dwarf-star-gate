@@ -58,3 +58,12 @@ retrieves notebook history when enabled. Chat context does NOT include the
 notebook today (off). Decision stays with Jordi: set
 genie_chat.operational_notebook=true (park/start restart) to let Genie cite
 the operational notebook. No code change needed either way.
+
+## VERIFIED (2026-09-22 ~03:50)
+The operational notebook is real code, off by default: genie_chat has an
+operational_notebook flag wired to GenieMemory (dashboard constructs GenieChat
+with notebook=memory when config.genie_chat.operational_notebook===true).
+config.local.json has no such key today → GenieChat receives notebook=null and
+cannot cite the memory notebook in chat. Enabling is a config change
+(genie_chat.operational_notebook=true) + dashboard restart; decision stays with
+Jordi (privacy trade-off: the notebook holds private operational history).
