@@ -48,3 +48,25 @@ do not hold all household traffic for an entire model switch.
 
 Use a small explicit hardware mapping first; #033 reconciles the full catalogue
 without blocking the concrete fixes here. Media pair placement remains #005.
+
+## LANDED 2026-09-22 ~14:30 (commits e720fcc, 2c8cdcc, aa64f75)
+- fleet_power binding fixed (mutations bound to the fleet_power switch; server_changes no longer gates power; read-only status stays available).
+- Physical-machine serialization: mutations single-flight per machine group
+  (m3-ultra / spark1+spark2 / spark3+spark4) including Start-vs-Stop and
+  different model IDs sharing hardware; a slow load blocks a second start.
+- Stop refusals: gateway load/queued, direct_reserved (owner direct use),
+  engine-reported running>0 outside gateway accounting (directRunning from
+  endpoint telemetry), same-hardware model still holding work, last healthy LLM.
+- Real verification: start is 'ready' only when the endpoint answers an
+  authenticated model-list request; stop is 'stopped' only when the port no
+  longer accepts connections; timeout = unproven (loading may continue) — never
+  reported as Started/Stopped. Status receipts are script output only.
+- UI: fleet-card Status/Start/Stop strip (management mode) with verified
+  progress line, machine-busy disabling, stop confirm dialog explaining pair
+  scope; mutations run in the background after a synchronous preflight so the
+  5s dashboard POST window is respected.
+- Genie uses the same runner/verifier via the power tool endpoint.
+- Live: power API returns all 8 enrolled members with machine groups; strip
+  served in ui.js/css. Suite 1079 pass / 0 fail at last full run.
+- Residual polish (non-blocking): active-models-first ordering is the existing
+  card sort; per-card hardware labels come from the existing machine note.
