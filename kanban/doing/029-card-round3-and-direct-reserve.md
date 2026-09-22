@@ -38,8 +38,9 @@ Fixes made while landing (all verified by gateway.test.mjs):
 - Test originally used `x-dsg-model` route pinning which requires configured
   model_routes; rewritten to plain soft-reserve admission checks.
 
-Remaining on this card: card round 3 UI items 1–7 above + UI polish for the
-direct-reserve toggle/status in the dashboard (index.html/ui.js landed earlier).
+Remaining on this card: item 3 (Details drawer removal) needs Jordi's confirm;
+UI polish for direct-reserve card state ("direct use" state word landed; optional
+reserved-list display in Settings already exists via direct-reserve-status).
 
 ## LANDED (2026-09-22, evening)
 - gateway.test.mjs fully green: 196/196 (full suite 1074 pass / 0 fail).
@@ -53,3 +54,19 @@ direct-reserve toggle/status in the dashboard (index.html/ui.js landed earlier).
   * scheduler auto-relocation (spark2→spark1 ~1s) is the intended soft-reserve
     fallback path — test rides the relocation instead of fighting it.
 
+## CARD ROUND 3 LANDED (2026-09-22 night, commit 090f9b2)
+- Item 5 ONE name: served-model chip removed from header; moved into the name
+  tooltip ("serving <model>"). `.device-model` CSS now unused (kept harmless).
+- Item 6 request chip merged into the live line (state word + 1/2 + rates +
+  cache on one row); chips row now only carries the thinking indicator.
+- Item 7 state word "generating" → "gen".
+- Item 2 pair bars: single strip + mid divider + accent "×2" chip (was two
+  duplicated lanes + "2 machines"); "×1" for singles. Machine note updated.
+- Item 4 mini charts 26px → 40px tall.
+- Item 1 M3 activity bar: VERIFIED WORKING from live snapshot — oMLX activity
+  telemetry flows (phase idle/decode/prefill rows present, 63 rows in 15m).
+  The original complaint predates the oMLX admin-login retry landing; if it
+  still shows empty on screen it is display-only, recheck after dashboard restart.
+- dashboard.mjs now passes `direct_reserved` per worker row (state word shows
+  "direct use" on reserved cards; was only reachable in-process before).
+- Full suite green after changes: 1074 pass / 0 fail (dashboard 96/96).
