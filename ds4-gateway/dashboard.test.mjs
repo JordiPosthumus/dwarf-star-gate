@@ -12,11 +12,12 @@ import { createDashboard, runDashboard, genieRuntimeConfig, genieChatConfig } fr
 import { FileLogReader, parseLocalProcessStart, parseLocalTiming, telemetryFiles } from './file-telemetry.mjs';
 import {cacheInventoryDirectories} from './cache-inventory.mjs';
 import {GenieProviderLedger} from './genie-provider-ledger.mjs';
+import {createFleetPowerTools} from './genie-power.mjs';
 import './rate-peaks.test.mjs';
 const parse = (s, t = 1000) => parseTiming(`0902 14:00:00 ds4-server: ${s}`, t);
 
 test('dashboard clocks show unknown for missing or unrepresentable evidence times',()=>{
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);
   for(const value of ['null','undefined','NaN','Infinity','Number.MAX_SAFE_INTEGER','"invalid"','{}','[]','true'])
     assert.equal(vm.runInContext(`clock(${value})`,context),'unknown');
@@ -25,7 +26,7 @@ test('dashboard clocks show unknown for missing or unrepresentable evidence time
 });
 
 test('compact performance lights keep uncertain cache evidence grey or amber and retain measurement details',()=>{
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);
   const render=d=>vm.runInContext(`performanceLightsMarkup(${JSON.stringify(d)},100000,false)`,context);
   const d={id:'worker',connected:true,last_event:99000,backend_epoch:'a'.repeat(64),cache_cost:{samples:[{kind:'disk_load',time:90000,ms:1200},{kind:'disk_load',time:95000,ms:300}]},cache_continuity:{status:'ready',checked_at:99000,workers:{worker:{assessed_pairs:3,high_suspicion_low_reuse:1,unconfirmed_low_reuse:1,last_low_reuse_at:90000}}}};
@@ -52,7 +53,7 @@ test('dashboard folds connection and diagnostics into its single identity header
 });
 
 test('rate charts compress missing intervals to idle-coloured separators without joining measured runs',()=>{
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);
   const render=(series,now=500000)=>vm.runInContext(`chart(${JSON.stringify(series)},'decode',${now},40)`,context);
   const series=[{kind:'decode',time:410000,tps:20},{kind:'decode',time:200000,tps:10},{kind:'decode',time:210000,tps:12},{kind:'decode',time:400000,tps:18}];
@@ -79,7 +80,7 @@ test('rate charts compress missing intervals to idle-coloured separators without
 });
 
 test('chart smoothing uses only the last 20 seconds, preserves zeros and resets across sparse samples or scope changes',()=>{
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);
   const samples=[{time:1000,tps:30},{time:3000,tps:0},{time:5000,tps:30},{time:21000,tps:30},{time:60000,tps:5},{time:62000,tps:20,scope:'new'}];
   context.samples=samples;const before=JSON.stringify(samples);
@@ -92,7 +93,7 @@ test('chart smoothing uses only the last 20 seconds, preserves zeros and resets 
 });
 
 test('all machine charts share exact historical maxima per phase with zero origin',()=>{
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);
   const scales=vm.runInContext(`rateScales([{series:[{kind:'prefill',tps:500,time:999},{kind:'decode',tps:20,time:999}]}],{prefill:{tps:999.25,time:1},decode:{tps:44.125,time:1}},1000)`,context);
   assert.equal(scales.prefill,999.25);assert.equal(scales.decode,44.125);
@@ -185,7 +186,7 @@ test('local telemetry configuration requires an explicit private absolute path, 
   for(const input of [null,[],{studio:'relative.txt'},{studio:'ssh worker cat file'},{studio:'/tmp/bad\0file'},{'bad id':'/tmp/log'}, {studio:{command:'tail'}}]) assert.throws(()=>telemetryFiles(input));
 });
 test('UI distinguishes local model logs from journal connectivity', () => {
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);
   const label=d=>vm.runInContext(`telemetryStatus(${JSON.stringify(d)})`,context);
   assert.equal(label({telemetry_source:'file',connected:true}),'Model log connected');
@@ -195,7 +196,7 @@ test('UI distinguishes local model logs from journal connectivity', () => {
 });
 
 test('activity view uses three honest operational colors and folds thinking into generation', () => {
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);
   const now=1_000_000;
   const html=vm.runInContext(`timeline(${JSON.stringify({activity:[
@@ -219,7 +220,7 @@ test('activity view uses three honest operational colors and folds thinking into
 });
 
 test('worker controls show escaped hold ownership and block ordinary Enable/Remove',()=>{
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);
   const row=w=>vm.runInContext(`workerRows(${JSON.stringify([w])})`,context);
   const w={id:'worker-a',is_healthy:true,drained:true,load:0,queued:0,operator_paused:false,holds:[{owner_id:'tester',reason:'<script>bad</script>'}]};
@@ -229,7 +230,7 @@ test('worker controls show escaped hold ownership and block ordinary Enable/Remo
   const free=row({...w,holds:[]});assert.ok(!/data-action="resume"[^>]*disabled/.test(free));assert.ok(!/data-action="remove"[^>]*disabled/.test(free));
 });
 test('named maintenance locks are obvious, escaped and require exact release before Resume',()=>{
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);
   const lock={id:'7d71fa8b-46ef-43e1-a212-1ea26c5ba901',name:'speed <test>',reason:'external benchmark',created_at:1,review_at:2,control_channel:'dashboard'};
   const worker={id:'worker-a',is_healthy:true,drained:true,load:0,queued:0,operator_paused:false,holds:[],maintenance_locks:[lock]};
@@ -240,7 +241,7 @@ test('named maintenance locks are obvious, escaped and require exact release bef
 });
 
 test('recovery recheck UI covers uncertain start and restart actions',()=>{
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);
   const check=action=>vm.runInContext(`recoveryRecheckable(${JSON.stringify(action)})`,context);
   assert.equal(check({state:'reconciliation_needed',restart_issued:true}),true);
@@ -278,14 +279,14 @@ test('worker enrollment offers bounded SSH fallback aliases without accepting SS
   const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8');
   assert.match(html,/name="ssh_fallbacks"/);assert.match(html,/host-key-verified SSH aliases/);
   assert.match(source,/ssh_fallbacks\.value\.split\(','\)/);assert.match(source,/worker\.ssh_fallbacks=fallbacks/);
-  const executable=source.replace(/^import .*;\n/,'').split('\npoll();')[0],context=vm.createContext({});vm.runInContext(executable,context);
+  const executable=source.replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0],context=vm.createContext({});vm.runInContext(executable,context);
   const row=vm.runInContext(`workerRows(${JSON.stringify([{id:'remote',ssh:'primary',ssh_fallbacks:['backup'],is_healthy:true,drained:false,load:1,queued:0}])})`,context);
   assert.match(row,/data-action="fallbacks"/);assert.match(row,/>Routes 2</);
   assert.doesNotMatch(html,/ProxyCommand|StrictHostKeyChecking=no/);
 });
 
 test('excluded routing states are explicit; quarantine offers checked readmission even without a pause',()=>{
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);vm.runInContext('workerControlsReady=true',context);
   const state=(w,options={})=>vm.runInContext(`routingInfo(${JSON.stringify(w)},${JSON.stringify(options)})`,context);
   const markup=(w,options={})=>vm.runInContext(`routingMarkup(${JSON.stringify(w)},${JSON.stringify(options)})`,context);
@@ -324,7 +325,7 @@ test('excluded routing states are explicit; quarantine offers checked readmissio
 });
 
 test('routing control updates preserve focused buttons until state changes and refocus the replacement',()=>{
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
   const active={},doc={activeElement:active},focusCalls=[];let writes=0,value='<button>Resume routing</button>';
   const current={dataset:{level:'paused'},contains:el=>el===active,querySelector:()=>({focus:options=>focusCalls.push(options)})};
   Object.defineProperty(current,'innerHTML',{get:()=>value,set:v=>{value=v;writes++;}});
@@ -441,7 +442,7 @@ test('requested-thinking diagnostics include only scalar metadata and reject arb
   assert.ok(!JSON.stringify(e).includes('SECRET'));
 });
 test('thinking UI distinguishes requested controls, omitted/unknown, current/last and stale values', () => {
-  const source = fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const source = fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
   const context = vm.createContext({}); vm.runInContext(source,context);
   const info = input => vm.runInContext(`thinkingInfo(${JSON.stringify(input)})`,context);
   const served={mode:'high',basis:'ds4_request_rules'};
@@ -469,7 +470,7 @@ test('thinking UI distinguishes requested controls, omitted/unknown, current/las
   assert.doesNotMatch(source,/ANSWERING|READING PROMPT|15m · shared/);
 });
 test('hardware cards stay compact, label unified memory honestly and preserve missing values',()=>{
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0],context=vm.createContext({});vm.runInContext(source,context);
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0],context=vm.createContext({});vm.runInContext(source,context);
   const hardware={schema:1,configured:true,state:'connected',last_sample_at:100000,current:{time:100000,memory_used_bytes:75,memory_total_bytes:100,memory_scope:'host_unified',accelerator_activity_pct:42,accelerator_scope:'gpu_kernel_time',power_watts:88.5,power_scope:'compute_module',clock_mhz:1200,clock_scope:'sm'},series:[]};
   const html=vm.runInContext(`hardwareMarkup(${JSON.stringify(hardware)},100001)`,context);assert.match(html,/RAM/);assert.match(html,/75%/);assert.match(html,/GPU/);assert.match(html,/42%/);assert.match(html,/89 W/);assert.match(html,/1,200 MHz SM/);assert.match(html,/Unified host memory used; not dedicated GPU RAM/);assert.match(html,/Measured compute-module power/);
   hardware.current={time:100000,memory_used_bytes:75,memory_total_bytes:100,memory_scope:'host_unified'};const partial=vm.runInContext(`hardwareMarkup(${JSON.stringify(hardware)},100001)`,context);assert.match(partial,/class="hardware-reading accelerator[^"]*"[^>]*>[\s\S]*?<strong>—<\/strong>/);assert.match(partial,/Power unavailable; no TDP estimate is substituted/);
@@ -504,7 +505,7 @@ function genieReportFixture() {
     remove() { if(this.parent){this.parent.children.splice(this.parent.children.indexOf(this),1);this.parent=null;} }
   }
   const container=new Element('div'), document={activeElement:null,getElementById:id=>id==='genie-reports'?container:null,createElement:tag=>new Element(tag)};
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
   const context=vm.createContext({document});vm.runInContext(source,context);
   const render=reports=>{context.reports=reports;vm.runInContext('renderGenieReports(reports)',context);};
   const report=id=>({id,time:1000,source:'primary',text:`Report ${id}`});
@@ -542,7 +543,7 @@ test('Genie report bodies remain inert text and an empty refresh does not close 
   node.open=false;render([]);assert.equal(container.children.length,0);
 });
 test('Genie action ledger is concise, newest-first and includes proven pool commandeering',()=>{
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);
   const snapshot={gateway:{
     recovery:{operations:[
@@ -567,7 +568,7 @@ test('Genie action ledger is concise, newest-first and includes proven pool comm
   assert.match(css,/\.genie-action-items li\{display:grid/);assert.match(source,/textContent=row\.detail/);assert.doesNotMatch(source,/innerHTML=.*genieActionRows/);
 });
 test('Genie ledger renders all 30 available receipts, filters and preserves scroll on refresh',()=>{
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
   const make=()=>({dataset:{},children:[],scrollTop:0,append(...items){this.children.push(...items);},replaceChildren(...items){this.children=items;this.scrollTop=0;}});
   const nodes={'genie-action-filter':{value:'all'},'genie-action-summary':make(),'genie-action-items':make()};
   const context=vm.createContext({document:{getElementById:id=>nodes[id],createElement:make}});vm.runInContext(source,context);
@@ -595,7 +596,7 @@ test('Genie ledger preserves legacy receipts with unrepresentable dates alongsid
   const ledger=new GenieProviderLedger(path.join(root,'actions'));
   assert.equal(ledger.append({id:'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',time:Number.MAX_SAFE_INTEGER,served_by:'pool_fallback',served_on:'worker-a'}),true);
   const bytes=fs.readFileSync(ledger.file),loaded=new GenieProviderLedger(ledger.directory);
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
   const make=()=>({dataset:{},children:[],scrollTop:0,append(...items){this.children.push(...items);},replaceChildren(...items){this.children=items;this.scrollTop=0;}});
   const nodes={'genie-action-filter':{value:'all'},'genie-action-summary':make(),'genie-action-items':make()};
   const context=vm.createContext({document:{getElementById:id=>nodes[id],createElement:make},receipts:loaded.recent()});vm.runInContext(source,context);
@@ -616,7 +617,7 @@ test('Genie ledger retries unchanged evidence after a failed render',()=>{
     let fail=false;
     const make=()=>({dataset:{},children:[],scrollTop:0,append(...items){this.children.push(...items);},replaceChildren(...items){if(fail&&failure==='replace')throw new Error('fixture render failure');this.children=items;this.scrollTop=0;}});
     const nodes={'genie-action-filter':{value:'all'},'genie-action-summary':make(),'genie-action-items':make()};
-    const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+    const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
     const context=vm.createContext({document:{getElementById:id=>nodes[id],createElement:()=>{if(fail&&failure==='create')throw new Error('fixture render failure');return make();}}});vm.runInContext(source,context);
     vm.runInContext("wireSnapshot={};requestHistoryState={};genieState={provider_actions:[{id:'old',time:0,served_by:'pool_fallback'}]};renderGenieActionLedger()",context);
     const list=nodes['genie-action-items'],old=list.children;list.scrollTop=80;fail=true;
@@ -628,7 +629,7 @@ test('Genie ledger retries unchanged evidence after a failed render',()=>{
   }
 });
 test('health wire shows Genie-authored findings and recommendations, withholding stale or unavailable advice',()=>{
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);
   const news=(s,t)=>vm.runInContext(`healthHeadlines(${JSON.stringify(s)},${JSON.stringify(t)})`,context);
   const time=Date.parse('2026-09-02T20:00:00Z');
@@ -668,7 +669,7 @@ test('health wire shows Genie-authored findings and recommendations, withholding
 
 });
 test('health wire cannot hide live quarantine or wasted-capacity evidence behind a stalled Genie',()=>{
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);
   const news=(s,t)=>vm.runInContext(`healthHeadlines(${JSON.stringify(s)},${JSON.stringify(t)})`,context);
   const quarantine={reason:'accelerator_checkpoint_failure',at:'2026-09-04T13:10:59Z',request_id:'PRIVATE-REQUEST-ID'};
@@ -692,7 +693,7 @@ test('health wire cannot hide live quarantine or wasted-capacity evidence behind
   assert.match(ready.items[1].text,/A separate Genie observation.*Recommendation: Keep watching/);
 });
 test('long occupied slots explain queue pressure without treating stale engine totals as progress',()=>{
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);
   const snapshot={time:100000,gateway:{workers:[{id:'spark1',load:1,active_seconds:7200,queued:6,is_healthy:true}]},devices:[{id:'spark1',connected:true,decode:{time:99000,generated:118000,tps:14.4,thinking:true}}]};
   const alerts=()=>JSON.parse(vm.runInContext(`JSON.stringify(deterministicHealthAlerts(${JSON.stringify(snapshot)}))`,context));
@@ -705,7 +706,7 @@ test('long occupied slots explain queue pressure without treating stale engine t
   snapshot.gateway.workers[0].queued=6;snapshot.gateway.workers[0].load=0;assert.equal(alerts().length,0);
 });
 test('Agent Watch warns only when a live client reports waiting but no request reached Star Gate',()=>{
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);
   const news=run=>vm.runInContext(`healthHeadlines(${JSON.stringify({gateway:{available:1,total:1,workers:[],client_watch:{schema:1,mode:'advisory',runs:[run]}}})},${JSON.stringify({state:'off'})})`,context);
   const base={watch_ref:'abc123def456',client:'pi',state:'waiting_for_model',process_alive:true,fresh:true,last_seen_at:new Date().toISOString(),last_seen_seconds:1,state_seconds:25,request:null};
@@ -718,7 +719,7 @@ test('Agent Watch warns only when a live client reports waiting but no request r
   const html=fs.readFileSync(new URL('./ui/index.html',import.meta.url),'utf8'),css=fs.readFileSync(new URL('./ui/brand.css',import.meta.url),'utf8');assert.match(html,/id="agent-watch"/);assert.match(html,/No prompts, task text, tool names, arguments or output/);assert.match(css,/\.agent-watch/);
 });
 test('enabled unavailable capacity is deterministic, while deliberate pauses and holds are not faults',()=>{
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);
   const news=gateway=>vm.runInContext(`healthHeadlines(${JSON.stringify({gateway})},${JSON.stringify({state:'off'})})`,context);
   const unavailable=news({available:1,total:2,workers:[{id:'worker-a',is_healthy:false,drained:false,recovery_waiting:0,quarantine:null}]});
@@ -751,7 +752,7 @@ test('each headline keeps its own severity, inert text and label in both copies 
   }
   const elements=new Map(),get=id=>{if(!elements.has(id))elements.set(id,new Element());return elements.get(id);};
   const document={getElementById:get,createElement:()=>new Element()};
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
   const ctx=vm.createContext({document,snap:{gateway:{}},tick:{state:'ready',evidence_at:1000,entries:['good','info','warning','critical'].map(severity=>({severity,text:`${severity} <img onerror=bad()>`,recommendation:null}))}});
   vm.runInContext(source,ctx);const render=()=>vm.runInContext('wireState=tick;renderHealthWire(snap)',ctx);render();
   for(const id of ['health-wire-text','health-wire-copy']){
@@ -911,7 +912,7 @@ test('opt-in worker controls require same origin, JSON and a CSRF token; diagnos
   const plain=await fixture(t);assert.deepEqual(await(await fetch(plain.url+'/api/workers')).json(),{enabled:false});
 });
 test('worker UI only offers removal after draining and finishing admitted work', () => {
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);
   const rows=w=>vm.runInContext(`workerRows(${JSON.stringify([w])})`,context);
   assert.match(rows({id:'m3',is_healthy:true,drained:false,load:0,queued:0}),/data-action="remove"[^>]+disabled/);
@@ -920,7 +921,7 @@ test('worker UI only offers removal after draining and finishing admitted work',
   assert.match(rows({id:'m3',is_healthy:true,drained:true,load:0,queued:0,context_length:300000}),/300,000/);
 });
 test('server verdicts expose backlog, oldest wait, pause, health and telemetry staleness without guessing speed',()=>{
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);
   const verdict=(device,worker,stale=false)=>vm.runInContext(`serverVerdict(${JSON.stringify(device)},${JSON.stringify(worker)},100000,${stale})`,context);
   assert.equal(verdict({connected:true,last_event:99000},{is_healthy:true,drained:false,load:0,queued:0}).label,'Ready · idle');
@@ -932,14 +933,14 @@ test('server verdicts expose backlog, oldest wait, pause, health and telemetry s
   assert.equal(verdict({}, {},true).label,'Status stale');
 });
 test('headline waiting count includes Continuity Door holds without claiming Pi-local queues',()=>{
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
   const ctx=vm.createContext({console,document:{getElementById:()=>({})},window:{},fetch:async()=>{throw new Error('unused')},setInterval:()=>{},setTimeout:()=>{},clearTimeout:()=>{},AbortSignal,URL,Date,Intl});
   vm.runInContext(source,ctx);
   assert.deepEqual({...vm.runInContext(`knownWaiting({queued:3},{holding:true,held:6})`,ctx)},{core:3,held:6,total:9});
   assert.deepEqual({...vm.runInContext(`knownWaiting({queued:3},{holding:false,held:99})`,ctx)},{core:3,held:0,total:3});
 });
 test('unavailable server verdicts explain the observed management layer and avoid a duplicate phase badge',()=>{
-  const source = fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const source = fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
   const context = vm.createContext({phase:()=> 'unavailable'});vm.runInContext(source,context);
   const worker={id:'spark1',is_healthy:false,drained:false,load:0,queued:0,management_path:{transport:'ssh_tunnel',state:'ssh_error',reason:'adapter_dns_failure',route_count:3}};
   const verdict=vm.runInContext(`serverVerdict({},${JSON.stringify(worker)},100000,false)`,context);
@@ -1073,7 +1074,7 @@ test('Current Jobs API is read-only, same-origin and separate from diagnostics',
 });
 
 test('rolling rate UI shows six-hour averages, accessible coloured trends and honest missing history',()=>{
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);
   const render=value=>vm.runInContext(`rollingRateNote(${JSON.stringify(value)})`,context);
   const value={mean_tps:129,trend:'up',samples:30,active_seconds:300,history_span_ms:18000000,change_pct:12.3,recent_mean_tps:135,previous_mean_tps:120};
@@ -1085,7 +1086,7 @@ test('rolling rate UI shows six-hour averages, accessible coloured trends and ho
 });
 
 test('OpenAI evidence cards do not imply DwarfStar telemetry failure or hide independent cache evidence when paused',()=>{
- const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+ const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
  const context=vm.createContext({});vm.runInContext(source,context);
  const d={id:'spark',backend:'openai',connected:false,cache_continuity:{status:'ready',checked_at:99000,workers:{spark:{assessed_pairs:4,reuse_observed:2,partial_reuse:1,last_assessed_at:90000,last_low_reuse_at:90000}}}};
  const render=()=>vm.runInContext(`performanceLightsMarkup(${JSON.stringify(d)},100000,true)`,context);
@@ -1094,7 +1095,7 @@ test('OpenAI evidence cards do not imply DwarfStar telemetry failure or hide ind
 });
 
 test('endpoint prefill average keeps the same basis across active and idle phases',()=>{
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
   const context=vm.createContext({phase:()=> 'idle'});vm.runInContext(source,context);
   const base={id:'m3',backend:'openai',cache:{},series:[],endpoint_metrics:{source:'omlx',connected:true,at:100000,requests:5,prefill_tps:500,decode_tps:30,live_rate_scope:'active_request_average',live_activity:true,series:[]}};
   const render=(running,phase,liveRate)=>vm.runInContext(`device(${JSON.stringify({...base,endpoint_metrics:{...base.endpoint_metrics,running,phase,live_prefill_tps:liveRate}})},{id:'m3',load:1,is_healthy:true},100000,false)`,context);
@@ -1104,7 +1105,7 @@ test('endpoint prefill average keeps the same basis across active and idle phase
 });
 
 test('vLLM timeline omits obsolete completion ticks and unavailable phase has no second grey',()=>{
- const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0],context=vm.createContext({});vm.runInContext(source,context);
+ const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0],context=vm.createContext({});vm.runInContext(source,context);
  const html=vm.runInContext(`timeline({endpoint_metrics:{source:'vllm'},activity:[],activity_markers:[{time:1000,phase:'prefill',tokens:100,basis:'poll_interval'}]},2000)`,context);
  assert.doesNotMatch(html,/prefill-evidence-marker|Blue ticks/);
  const css=fs.readFileSync(new URL('./ui/brand.css',import.meta.url),'utf8');assert.match(css,/\.phase-unknown\{fill:transparent\}/);
@@ -1155,7 +1156,7 @@ test('fleet reviewer reuses matching chat reasoning and preserves independent pr
 });
 
 test('configuration comparison preserves zero/off and distinguishes missing records from unknown settings',()=>{
- const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0],context=vm.createContext({});vm.runInContext(source,context);
+ const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0],context=vm.createContext({});vm.runInContext(source,context);
  const rows=JSON.parse(vm.runInContext(`JSON.stringify(configurationRows({observed:{settings:{context_length:262144}},approved:null,proposed:{settings:{context_length:262144},serving_contract:{generation_defaults:{temperature:0,top_k:20},chat_template_defaults:{enable_thinking:false,reasoning_effort:'xhigh'}}}}))`,context));
  assert.deepEqual(rows.find(r=>r.label==='Temperature').values,[{present:true,value:null},{present:false,value:null},{present:true,value:0}]);assert.equal(rows.find(r=>r.label==='Thinking enabled').values[2].value,false);assert.equal(rows.find(r=>r.label==='Top-k').values[2].value,20);assert.equal(rows.find(r=>r.label==='Reasoning effort').values[2].value,'xhigh');
 });
@@ -1196,7 +1197,7 @@ test('Fleet projection follows the active batch job and omits private native dat
   for(const phase of ['returned','failed_returned','failed_unchanged'])assert.equal(fleetMediaWorkloads({jobs:[{id:'done',execution:{worker_id:'sparkA',phase}}]}).workloads.length,0);
 });
 test('Fleet media UI distinguishes runner heartbeat from generation progress and preserves stale evidence',()=>{
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);
   vm.runInContext(`fleetWorkloads={observed_at:100000,workloads:[{worker_id:'sparkA',kind:'video',job_id:'<private>',state:'running',phase:'generating',started_at:new Date(10000).toISOString(),changed_at:new Date(30000).toISOString(),heartbeat_at:new Date(99000).toISOString()}]}`,context);
   let html=vm.runInContext("workloadMarkup(workloadInfo('sparkA',100000),{},100000)",context);
@@ -1220,10 +1221,38 @@ test('Fleet workload reads are bounded and cannot hold up ordinary telemetry',as
 });
 
 test('Fleet native progress shows current node steps and disconnected evidence without whole-job percentage',()=>{
- const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0],context=vm.createContext({});vm.runInContext(source,context);
+ const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0],context=vm.createContext({});vm.runInContext(source,context);
  const render=p=>vm.runInContext(`nativeMediaProgressMarkup({native_progress:${JSON.stringify(p)}},10000)`,context);
  const p={connected:true,at:9000,node:'9',node_type:'KSampler',value:12,max:20};
  assert.match(render(p),/Sampling steps: 12 of 20/);assert.match(render(p),/not whole-job completion/);assert.doesNotMatch(render(p),/60%|ETA/);
  assert.match(render({...p,connected:false}),/progress connection unavailable/);assert.doesNotMatch(render({...p,value:NaN}),/<progress/);
  assert.match(render({...p,node_type:'VAEDecode'}),/Node progress: 12 of 20/);
+});
+
+test('Fleet catalogue route assembles enrolled members, machines and routes',async()=>{
+  const catalogue=async()=>({built_at:1,entries:[{id:'glm53f-sparks12',machines:['spark1'],scripts:['status'],routes:['GLM-5.3-Flash-EXL3'],state:'serving-llm',detail:'healthy, idle',gateway_worker:true,observed_at:null,sources:{}}],warnings:['route orphan targets ghost-worker, which has no enrolled scripts']});
+  const server=createDashboard(()=>({version:1,read_only:true,devices:[],gateway:{workers:[],model_routes:{}}}),undefined,{catalogue});
+  server.listen(0,'127.0.0.1');await once(server,'listening');
+  const base=`http://127.0.0.1:${server.address().port}`;
+  try{
+    const reply=await (await fetch(base+'/api/fleet/catalogue')).json();
+    assert.equal(reply.entries[0].id,'glm53f-sparks12');assert.equal(reply.entries[0].state,'serving-llm');assert.deepEqual(reply.entries[0].machines,['spark1']);
+    assert.equal(reply.warnings.length,1);
+  }finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
+  const bare=createDashboard(()=>({version:1,read_only:true}),undefined,null);bare.listen(0,'127.0.0.1');await once(bare,'listening');
+  try{
+    const reply=await (await fetch(`http://127.0.0.1:${bare.address().port}/api/fleet/catalogue`)).json();
+    assert.equal(reply.unavailable,true);assert.deepEqual(reply.entries,[]);
+  }finally{bare.closeAllConnections();await new Promise(resolve=>bare.close(resolve));}
+});
+
+test('Fleet catalogue is included in fleet power status evidence for Genie agreement',async()=>{
+  const runner={busy:()=>false,receipts:()=>[]};
+  const tools=createFleetPowerTools({runner,read:async()=>({version:1,workers:[{id:'glm53f-sparks12',is_healthy:true,drained:false,load:0,queued:0}]})});
+  const status=await tools.tool({action:'status'});
+  assert.ok(!status.catalogue,'no catalogue builder provided, none promised');
+  const withCat=createFleetPowerTools({runner,read:async()=>({version:1,workers:[]}),catalogue:async()=>({built_at:7,entries:[{id:'glm53f-m3',state:'engine-stopped'}],warnings:[]})});
+  const value=await withCat.tool({action:'status'});
+  assert.equal(value.catalogue.entries[0].id,'glm53f-m3');assert.equal(value.catalogue.entries[0].state,'engine-stopped');
+  assert.throws(()=>createFleetPowerTools({runner,read:async()=>({}),catalogue:'nope'}),/catalogue must be a function/);
 });

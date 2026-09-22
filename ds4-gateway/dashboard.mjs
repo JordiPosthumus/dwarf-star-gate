@@ -12,7 +12,8 @@ import {createMediaTools} from './genie-media.mjs';
 import {createQueueTools} from './genie-queue.mjs';
 import {createRecoveryTools} from './genie-recovery.mjs';
 import {createFleetPowerTools} from './genie-power.mjs';
-import {createPowerRunner,createReadinessVerifier} from './power-scripts.mjs';
+import {createPowerRunner,createReadinessVerifier,powerWorkers,machineGroup} from './power-scripts.mjs';
+import {buildCatalogue} from './ui/fleet-catalogue.js';
 import {endpointHeaders} from './endpoint.mjs';
 import {readService} from './service-control.mjs';
 import {capabilityStatus} from './genie-capability-status.mjs';
@@ -73,6 +74,7 @@ function safeManagementPath(raw){
 const assets = new Map([['/', ['index.html', 'text/html']], ['/ui.css', ['ui.css', 'text/css']], ['/brand.css', ['brand.css', 'text/css']], ['/ui.js', ['ui.js', 'text/javascript']], ['/logo.png', ['logo.png', 'image/png']]]);
 assets.set('/hourglass.js',['hourglass.js','text/javascript']);
 assets.set('/activity.js',['activity.js','text/javascript']);
+assets.set('/fleet-catalogue.js',['fleet-catalogue.js','text/javascript']);
 assets.set('/logo.svg',['logo.svg','image/svg+xml']);
 assets.set('/media.js',['media.js','text/javascript']);
 assets.set('/current-jobs.js',['current-jobs.js','text/javascript']);
@@ -307,6 +309,10 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
     if (req.url === '/api/workers/power' && req.method === 'GET') {
       if (!powerTools) return reply(200, { enabled:false });
       void Promise.resolve(powerTools.tool({action:'status'})).then(value => reply(200,{enabled:getSnapshot().gateway?.genie_capabilities?.fleet_power!==false,csrf_token:csrf,...value})).catch(e => reply(503,{error:e.message}));
+      return;
+    }
+    if (req.url === '/api/fleet/catalogue' && req.method === 'GET') {
+      void (management?.catalogue?.()??Promise.resolve({unavailable:true,entries:[],warnings:[]})).then(value => reply(200,value)).catch(e => reply(503,{error:e.message}));
       return;
     }
     const actions = { '/api/media/video/jobs':'media-video-submit', '/api/media/setup':'media-setup', '/api/media/inspect':'media-inspect', '/api/media/eligibility':'media-eligibility', '/api/current-jobs/priority':'job-priority', '/api/workers/concurrency':'concurrency', '/api/workers/add':'add', '/api/workers/endpoint':'endpoint', '/api/workers/test':'test', '/api/workers/remove':'remove', '/api/workers/drain':'drain', '/api/workers/resume':'resume','/api/workers/lock':'lock','/api/workers/unlock':'unlock','/api/workers/fallbacks':'fallbacks', '/api/workers/context':'context','/api/workers/conversation-turns':'conversation-turns','/api/workers/queue-timeout':'queue-timeout','/api/workers/protection':'protection','/api/workers/direct-reserve':'direct-reserve','/api/workers/relocate':'relocate', '/api/workers/recover':'recover', '/api/workers/genie-capability':'genie-capability','/api/workers/recovery-policy':'recovery-policy','/api/workers/recovery-handback-policy':'recovery-handback-policy','/api/workers/recovery-recheck':'recovery-recheck','/api/workers/power':'power' };
@@ -548,6 +554,7 @@ export async function runDashboard(configPath, port) {
     continuity_door:continuityDoor,continuity_door_error:continuityDoorError,rate_peaks:ratePeaks.snapshot(),cache_continuity:requestHistory.cacheSnapshot(),generation_alerts:requestHistory.generationEvidence.snapshot(),
     performance_lights:performanceHistory.snapshot(Date.now(),[...devices.values()].map(d=>({...d.snapshot(),connected:d.connected&&!gatewayError,active:performanceActive(d,gateway?.workers?.find(w=>w.id===d.id))}))),
     fleet_power:powerTools?{enabled:isCapabilityEnabled('fleet_power'),control:true}:null,
+    fleet_machines:powerWorkers().map(id=>({id,machine:machineGroup(id),scripts:['status','start','stop']})),
     devices: [...devices.values()].map(d => ({...d.snapshot(),rolling_rates:fleetSpeed.workerRates(d.id),activity:activity.get(d.id),activity_markers:activity.getMarkers(d.id),hardware:hardware.snapshot(d.id),endpoint_metrics:endpointTelemetry.snapshot(d.id)})), events, attribution:attribution.snapshot(), notes: 'Engine-log rates are measurements from configured log collectors; OpenAI endpoint rates have separately labeled scopes. Cache counts cover observed prompt starts, not lifetime requests. Raw prompts and responses are excluded.' });
   const memory=new GenieMemory(path.join(path.dirname(config.state_file),'genie','memory'));
   const providerLedger=new GenieProviderLedger(path.join(path.dirname(config.state_file),'genie','actions'));
@@ -576,8 +583,10 @@ export async function runDashboard(configPath, port) {
   const powerTools=managementEnabled?createFleetPowerTools({runner:powerRunner,read:()=>readService('gateway',config),isTesting,isEnabled:()=>isCapabilityEnabled('fleet_power'),directRunning:id=>endpointTelemetry.snapshot(id)?.running??0}):null;
   const chat=config.genie_chat?new GenieChat({directory:chatDirectory,notebook:config.genie_chat.operational_notebook===true?memory:null,getSnapshot:()=>({...snapshot(),genie:genie.status(),genie_handovers:requestHistory.snapshot().handovers}),isSuspended:isTesting,runQuestion:(answer,onWait)=>genie.answerChat(answer,onWait),provider:hermesProvider({...genieChatConfig(config),spark_setup:sparkSetup?.toolConfig,operations:operations?.toolConfig,hourglass:hourglass?.toolConfig,queue:queueTools?.toolConfig,recovery:recoveryTools?.toolConfig,media:mediaTools?.toolConfig,power:powerTools?.toolConfig},{directory:chatDirectory,isCapabilityEnabled})}):null;
   const nativeMedia=createNativeMediaStatus(config);
+  const fleetCatalogue=async()=>{const s=snapshot();let media={workloads:[],native_engines:[]};try{if(managementEnabled&&config.control_socket){const value=await workerControl(config.control_socket,'/media-jobs',undefined,{channel:'dashboard'});media={...fleetMediaWorkloads(value),native_engines:nativeMedia?.()??[]};}}catch{/* Media evidence stays empty; the catalogue stays truthful about what it could observe. */}return buildCatalogue({members:s.fleet_machines??[],workers:s.gateway?.workers??[],devices:s.devices??[],media,routes:s.gateway?.model_routes??{},now:Date.now()});};
   const server = createDashboard(snapshot, path.join(here,'ui'), managementEnabled ? {
     read:()=>workerControl(config.control_socket,'/workers',undefined,{channel:'dashboard'}),
+    catalogue:()=>fleetCatalogue(),
     media:()=>workerControl(config.control_socket,'/media-jobs'),
     nativeMedia,
     mediaFile:(req,res,route)=>proxyMediaFile(config,req,res,route),

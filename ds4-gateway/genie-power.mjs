@@ -7,7 +7,7 @@
 import {createToolEndpoint} from './genie-tool-endpoint.mjs';
 import {powerWorkers,powerScript,machineGroup} from './power-scripts.mjs';
 
-export function fleetPowerEvidence({runner,workers=[],now=Date.now}){
+export function fleetPowerEvidence({runner,workers=[],now=Date.now,catalogue=null}){
   const byId=new Map(workers.map(w=>[w.id,w]));
   const members=powerWorkers().map(id=>{
     const w=byId.get(id);
@@ -23,13 +23,15 @@ export function fleetPowerEvidence({runner,workers=[],now=Date.now}){
       })};
   });
   return {schema:1,observed_at:new Date(now()).toISOString(),members,
+    ...(catalogue?{catalogue}:{}),
     recent:runner.receipts().slice(0,8),
     scope:'Enrolled power scripts with physical-machine groups and the last receipts of this dashboard process. Scripts remain the source of truth; start/stop receipts include real endpoint verification, and timeout means unproven, not failed. Stopping a Spark pair stops both machines of that pair, including any other model serving there.'};
 }
 
-export function createFleetPowerTools({runner,read,isTesting=()=>false,isEnabled=()=>true,directRunning=null}={}){
+export function createFleetPowerTools({runner,read,isTesting=()=>false,isEnabled=()=>true,directRunning=null,catalogue=null}={}){
   if(!runner||typeof read!=='function')throw new Error('Fleet power tools need a script runner and gateway status reader.');
   if(directRunning!==null&&typeof directRunning!=='function')throw new Error('directRunning must be a function when provided');
+  if(catalogue!==null&&typeof catalogue!=='function')throw new Error('catalogue must be a function when provided');
   async function snapshotWorkers(){
     const value=await read();
     if(value?.version!==1||!Array.isArray(value.workers))throw new Error('Gateway worker registry is unavailable.');
@@ -60,8 +62,10 @@ export function createFleetPowerTools({runner,read,isTesting=()=>false,isEnabled
       scope:power_action==='stop'?'Stopping a Spark pair stops both machines of that pair, including any other model serving there.':'Starting may conflict with a different model already serving the same machine; the script refuses that case and reports it.'};
   }
   async function tool(input){
-    if(input?.action==='status'&&Object.keys(input).length===1)
-      return fleetPowerEvidence({runner,workers:await snapshotWorkers()});
+    if(input?.action==='status'&&Object.keys(input).length===1){
+      const cat=catalogue?await catalogue().catch(e=>({unavailable:e.message})):null;
+      return fleetPowerEvidence({runner,workers:await snapshotWorkers(),catalogue:cat});
+    }
     if(input?.action!=='power'||Object.keys(input).sort().join(',')!=='action,action_id,power_action,worker')
       throw new Error('Specify worker, power_action and one action ID.');
     const {worker,power_action,action_id}=input;

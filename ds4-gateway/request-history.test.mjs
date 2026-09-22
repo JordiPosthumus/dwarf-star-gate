@@ -25,7 +25,7 @@ function cachePair(){
   ]);
 }
 function ui() {
-  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import .*;\n/,'').split('\npoll();')[0];
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
   const elements=new Map(),get=id=>{if(!elements.has(id)){const attributes=new Map(),values=new Map();elements.set(id,{value:id==='analytics-metric'?'queue':'',innerHTML:'',textContent:'',dataset:{},classList:{toggle:(name,value)=>attributes.set('class:'+name,value)},style:{setProperty:(name,value)=>values.set(name,value),values},setAttribute:(name,value)=>attributes.set(name,value),attributes});}return elements.get(id);};
   const ctx=vm.createContext({document:{getElementById:get},structuredClone});vm.runInContext(source,ctx);return {ctx,get,call:expr=>vm.runInContext(expr,ctx)};
 }

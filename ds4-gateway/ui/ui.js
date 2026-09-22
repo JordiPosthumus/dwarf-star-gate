@@ -1,4 +1,5 @@
 import { capacity, phase } from './activity.js';
+import { buildCatalogue } from './fleet-catalogue.js';
 const $ = id => document.getElementById(id);
 const fmt = n => Number.isFinite(n) ? n.toLocaleString(undefined, { maximumFractionDigits: 1 }) : '—';
 const fmtWhole = n => Number.isFinite(n) ? Math.round(n).toLocaleString() : '—';
@@ -332,6 +333,14 @@ function updateRoutingNode(current,fresh) {
   current.dataset.level=fresh.dataset.level;
   if(current.innerHTML!==fresh.innerHTML){const focused=current.contains(document.activeElement);current.innerHTML=fresh.innerHTML;if(focused)current.querySelector('button:not(:disabled)')?.focus({preventScroll:true});}
 }
+function renderCatalogue(s,now){
+  const container=$('fleet-catalogue');if(!container)return;
+  const {entries,warnings}=buildCatalogue({members:s.fleet_machines??[],workers:s.gateway?.workers??[],devices:s.devices??[],media:fleetWorkloadsUnavailable?{workloads:[],native_engines:[]}:fleetWorkloads,routes:s.gateway?.model_routes??{},now});
+  const serving=entries.some(e=>e.state==='serving-llm'||e.state==='serving-media');
+  const rows=entries.map(e=>`<tr data-state="${e.state}"><td title="${esc(e.detail)}">${esc(e.id)}</td><td>${esc(e.machines.length?e.machines.join(' + '):'—')}</td><td><span class="catalogue-state" data-state="${e.state}">${e.state.replace(/-/g,' ')}</span> <span class="catalogue-detail">${esc(e.detail)}</span></td><td>${esc(e.routes.length?e.routes.join(', '):'—')}</td><td>${e.observed_at?esc(new Date(e.observed_at).toLocaleTimeString()):'—'}</td></tr>`).join('');
+  container.innerHTML=`<details class="catalogue"${serving?' open':''}><summary>Fleet catalogue — model to machine mapping${warnings.length?` · ${warnings.length} note${warnings.length===1?'':'s'}`:''}</summary>${warnings.length?`<ul class="catalogue-warnings">${warnings.map(w=>`<li>${esc(w)}</li>`).join('')}</ul>`:''}<table class="catalogue-table"><thead><tr><th scope="col">Model</th><th scope="col">Machines</th><th scope="col">State</th><th scope="col">Routes</th><th scope="col">Observed</th></tr></thead><tbody>${rows}</tbody></table></details>`;
+}
+
 function renderDevices(devices,workers,now,stale,scales,controls) {
   const viewport={x:window.scrollX,y:window.scrollY};
   const container=$('devices'),existing=new Map([...container.querySelectorAll('.device')].map(el=>[el.dataset.workerId,el]));
@@ -781,6 +790,7 @@ function render(s) {
   if(s.fleet_power?.control&&workerControlsReady&&!fleetPowerPolling){fleetPowerPolling=true;void fetch('/api/workers/power',{headers:{}}).then(r=>r.ok?r.json():null).then(p=>{fleetPower=p&&p.enabled!==undefined?p:null;renderDevices(lastDevicesSpec.devices,lastDevicesSpec.workers,lastDevicesSpec.now,lastDevicesSpec.stale,lastDevicesSpec.scales,lastDevicesSpec.controls);}).catch(()=>{}).finally(()=>{fleetPowerPolling=false;});}
   lastDevicesSpec={devices:s.devices.map(d=>({...d,cache_continuity:s.cache_continuity,performance_history:s.performance_lights})),workers:visibleWorkers,now,stale,scales,controls:workerControlsVisible};
   renderDevices(lastDevicesSpec.devices,lastDevicesSpec.workers,now,stale,scales,workerControlsVisible);
+  renderCatalogue(s,now);
   const ds=g?.dataset;
   $('cache-evidence-status').textContent=cacheEvidenceText(s,stale);
   const selector=$('cache-cost-worker'),selected=selector.value,options=(g?.workers||[]).map(w=>`<option value="${esc(w.id)}">${esc(w.id)}</option>`).join('');

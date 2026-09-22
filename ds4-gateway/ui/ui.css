@@ -100,3 +100,18 @@
 .power-button:hover:not(:disabled){border-color:var(--accent);color:var(--text)}
 .power-button:disabled{opacity:.45;cursor:default}
 .power-status{font-size:9px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1;font-variant-numeric:tabular-nums;cursor:help}
+
+/* Fleet catalogue: model → machine → route → script mapping, active first. */
+.fleet-catalogue{margin-top:16px}
+.fleet-catalogue .catalogue summary{font-size:12px;color:var(--muted)}
+.fleet-catalogue .catalogue summary:hover{color:var(--text)}
+.catalogue-table{width:100%;border-collapse:collapse;font-size:11px;margin-top:10px;background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.catalogue-table th{text-align:left;color:var(--muted);font-weight:500;font-size:9.5px;text-transform:uppercase;letter-spacing:.7px;padding:8px 12px;border-bottom:1px solid var(--line)}
+.catalogue-table td{padding:7px 12px;border-bottom:1px solid var(--line);color:var(--text);white-space:nowrap}
+.catalogue-table tr:last-child td{border-bottom:0}
+.catalogue-state{display:inline-block;padding:1px 8px;border-radius:9px;border:1px solid var(--line);font-size:9px;color:var(--muted);white-space:nowrap}
+.catalogue-state[data-state="serving-llm"],.catalogue-state[data-state="serving-media"]{border-color:#4b6143;background:#253023;color:var(--accent)}
+.catalogue-state[data-state="engine-up"],.catalogue-state[data-state="paused"]{border-color:#5a5440;color:#e9bd7b}
+.catalogue-state[data-state="failed"]{border-color:#63473e;color:var(--error)}
+.catalogue-detail{color:var(--muted);font-size:9.5px}
+.catalogue-warnings{margin:8px 0 0;padding-left:20px;color:#e9bd7b;font-size:10.5px}
