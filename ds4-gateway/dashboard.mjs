@@ -11,6 +11,8 @@ import {MediaWatch} from './media-watch.mjs';
 import {createMediaTools} from './genie-media.mjs';
 import {createQueueTools} from './genie-queue.mjs';
 import {createRecoveryTools} from './genie-recovery.mjs';
+import {createFleetPowerTools} from './genie-power.mjs';
+import {createPowerRunner} from './power-scripts.mjs';
 import {readService} from './service-control.mjs';
 import {capabilityStatus} from './genie-capability-status.mjs';
 import {testingModeFile,testingSuspended} from './testing-mode.mjs';
@@ -125,7 +127,7 @@ export function proxyMediaFile(config,req,res,route){
       res.on('close',()=>upstream.destroy());upstream.end();
     }
 
-export function createDashboard(getSnapshot, assetsDirectory = path.join(here, 'ui'), management = null, genie = null, requestHistory = null, currentJobs = null, testing = null, lanSharing = null, chat = null, hourglass = null, operations = null, queueTools = null, recoveryTools = null, mediaTools = null, sparkSetup = null) {
+export function createDashboard(getSnapshot, assetsDirectory = path.join(here, 'ui'), management = null, genie = null, requestHistory = null, currentJobs = null, testing = null, lanSharing = null, chat = null, hourglass = null, operations = null, queueTools = null, recoveryTools = null, mediaTools = null, sparkSetup = null, powerTools = null) {
   const csrf = randomBytes(32).toString('base64url');
   // Freeze one complete release in memory: edits on disk cannot expose half an
   // update to a live browser. Only the dashboard needs a reload to promote it.
@@ -167,7 +169,7 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
       void (mediaTools?mediaTools.tool({action:'status'}):management?.media?.()??Promise.resolve({configured:false,enabled:false,jobs:[],hosts:[]})).then(value=>{const snapshot=getSnapshot(),devices=snapshot.devices??[];reply(200,{...value,hosts:(value.hosts??[]).map(host=>{const h=devices.find(d=>d.id===host.id)?.hardware,w=snapshot.gateway?.workers?.find(w=>w.id===host.id);return {...host,memory:h?.state==='connected'?h.current:null,llm_model:snapshot.gateway?.model??null,maintenance:(w?.maintenance_locks??[]).map(lock=>lock.name),holds:(w?.holds??[]).map(hold=>hold.name),paused:w?.drained===true,quarantined:!!w?.quarantine};}),controls_enabled:!!management,csrf_token:csrf});}).catch(()=>reply(503,{error:'Media status is unavailable. Existing work may still be running.'}));return;
     }
     if(req.url==='/api/genie/capabilities'&&req.method==='GET'){
-      void Promise.all([operations?.status()??{},mediaTools?.tool({action:'status'}).catch(()=>({unavailable:true}))??{},sparkSetup?.status()??{}]).then(([op,media,sparkSetup])=>reply(200,{...capabilityStatus(getSnapshot(),{media,sparkSetup,genie:genie?.status(),chat:chat?.status(),activity:chat?.capabilityActivity?.(),operations:op,hourglass:hourglass?.status(),management:!!management}),csrf_token:csrf})).catch(()=>reply(503,{error:'Capability status unavailable; existing work continues.'}));return;
+      void Promise.all([operations?.status()??{},mediaTools?.tool({action:'status'}).catch(()=>({unavailable:true}))??{},sparkSetup?.status()??{},powerTools?powerTools.tool({action:'status'}).catch(()=>({unavailable:true})):Promise.resolve(null)]).then(([op,media,sparkSetup,power])=>reply(200,{...capabilityStatus(getSnapshot(),{media,sparkSetup,genie:genie?.status(),chat:chat?.status(),activity:chat?.capabilityActivity?.(),operations:op,hourglass:hourglass?.status(),management:!!management,fleet_power:power}),csrf_token:csrf})).catch(()=>reply(503,{error:'Capability status unavailable; existing work continues.'}));return;
     }
     if(req.url==='/api/genie/operations'&&req.method==='GET'){
       void Promise.resolve(operations?.status()??{configured:false,operations:[]}).then(value=>reply(200,{...value,csrf_token:csrf})).catch(()=>reply(503,{error:'Operation status unavailable; existing operations may still be running.'}));return;
@@ -204,6 +206,7 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
     if(mediaTools?.handle(req,res))return;
     if(queueTools?.handle(req,res))return;
     if(recoveryTools?.handle(req,res))return;
+    if(powerTools?.handle(req,res))return;
     if(req.url==='/api/genie/chat'&&req.method==='GET')return reply(200,{...(chat?.status()??{available:false,conversations:[]}),csrf_token:csrf});
     if(req.url?.startsWith('/api/genie/chat/')&&req.method==='GET'){
       const id=req.url.slice('/api/genie/chat/'.length);
@@ -555,7 +558,9 @@ export async function runDashboard(configPath, port) {
   const queueTools=managementEnabled?createQueueTools({read:()=>readService('gateway',config),move:input=>workerControl(config.control_socket,'/genie-relocate-queued',input,{channel:'gate_genie'}),isTesting,isEnabled:()=>isCapabilityEnabled('rebalance')}):null;
   const mediaTools=managementEnabled&&config.media_jobs?.enabled?createMediaTools({inspectInputs:input=>workerControl(config.control_socket,'/genie-media-inputs',input,{channel:'gate_genie'}),setup:input=>workerControl(config.control_socket,'/genie-media-setup',input,{channel:'gate_genie'}),resources:createMediaResources(config,{isEnabled:()=>isCapabilityEnabled('inspection')}),read:async()=>{const [media,fleet]=await Promise.all([workerControl(config.control_socket,'/media-jobs'),workerControl(config.control_socket,'/workers')]);return {...media,fleet:fleet.workers.map(w=>({id:w.id,is_healthy:w.is_healthy,drained:w.drained,load:w.load,queued:w.queued}))};},start:input=>workerControl(config.control_socket,'/genie-media-start',input,{channel:'gate_genie'}),isTesting}):null;
   const recoveryTools=managementEnabled?createRecoveryTools({read:()=>readService('gateway',config),recover:input=>workerControl(config.control_socket,'/genie-recover-worker',input,{channel:'gate_genie'}),isTesting,isEnabled:()=>isCapabilityEnabled('recovery')}):null;
-  const chat=config.genie_chat?new GenieChat({directory:chatDirectory,notebook:config.genie_chat.operational_notebook===true?memory:null,getSnapshot:()=>({...snapshot(),genie:genie.status(),genie_handovers:requestHistory.snapshot().handovers}),isSuspended:isTesting,runQuestion:(answer,onWait)=>genie.answerChat(answer,onWait),provider:hermesProvider({...genieChatConfig(config),spark_setup:sparkSetup?.toolConfig,operations:operations?.toolConfig,hourglass:hourglass?.toolConfig,queue:queueTools?.toolConfig,recovery:recoveryTools?.toolConfig,media:mediaTools?.toolConfig},{directory:chatDirectory,isCapabilityEnabled})}):null;
+  const powerRunner=managementEnabled?createPowerRunner({}):null;
+  const powerTools=managementEnabled?createFleetPowerTools({runner:powerRunner,read:()=>readService('gateway',config),isTesting,isEnabled:()=>isCapabilityEnabled('server_changes')}):null;
+  const chat=config.genie_chat?new GenieChat({directory:chatDirectory,notebook:config.genie_chat.operational_notebook===true?memory:null,getSnapshot:()=>({...snapshot(),genie:genie.status(),genie_handovers:requestHistory.snapshot().handovers}),isSuspended:isTesting,runQuestion:(answer,onWait)=>genie.answerChat(answer,onWait),provider:hermesProvider({...genieChatConfig(config),spark_setup:sparkSetup?.toolConfig,operations:operations?.toolConfig,hourglass:hourglass?.toolConfig,queue:queueTools?.toolConfig,recovery:recoveryTools?.toolConfig,media:mediaTools?.toolConfig,power:powerTools?.toolConfig},{directory:chatDirectory,isCapabilityEnabled})}):null;
   const nativeMedia=createNativeMediaStatus(config);
   const server = createDashboard(snapshot, path.join(here,'ui'), managementEnabled ? {
     read:()=>workerControl(config.control_socket,'/workers',undefined,{channel:'dashboard'}),
@@ -571,9 +576,10 @@ export async function runDashboard(configPath, port) {
   }:null,managementEnabled&&continuityEnabled(config)?{
     read:async()=>lanSharingDetails(await doorControl(doorSocket(config),'/lan-sharing'),config.port),
     set:async enabled=>lanSharingDetails(await doorControl(doorSocket(config),'/set-lan-sharing',{enabled}),config.port),
-  }:null,chat,hourglass,operations,queueTools,recoveryTools,mediaTools,sparkSetup);
+  }:null,chat,hourglass,operations,queueTools,recoveryTools,mediaTools,sparkSetup,powerTools);
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
   sparkSetup?.bind(server.address().port);
+  powerTools?.bind(server.address().port);
   mediaTools?.bind(server.address().port);
   queueTools?.bind(server.address().port);
   recoveryTools?.bind(server.address().port);

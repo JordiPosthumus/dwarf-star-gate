@@ -84,6 +84,11 @@ def main():
             from genie_media import register_media, TOOLSET as MEDIA_TOOLSET
             expected_tools |= register_media(media, emit)
             toolsets.append(MEDIA_TOOLSET)
+        power = None if review else request.get('power')
+        if power:
+            from genie_power import register_power, TOOLSET as POWER_TOOLSET
+            expected_tools |= register_power(power, emit)
+            toolsets.append(POWER_TOOLSET)
         # Only fixed phases and counts leave this callback. Never relay reasoning text.
         progress = {"step": 0, "reasoning_chars": 0}
         last_emit = [0.0]
