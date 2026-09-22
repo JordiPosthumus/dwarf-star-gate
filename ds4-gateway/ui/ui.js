@@ -568,7 +568,13 @@ function device(d, w, now, stale, index = 1, scales={}, controls=false) {
   const detailBody=`<div class="metrics">${metric('decode','DECODE')}${metric('prefill','PREFILL')}</div>${metricsInfo}${hardwareMarkup(d.hardware,now)}${performance}`;
   const detailOpen=workload||historicalLlm;
   const details=`<details class="device-details"${detailOpen?' open':''}><summary>Details</summary>${workload?workloadMarkup(workload,w,now):''}${unavailableLlm?'<p class="muted">LLM endpoint unavailable. Other work on this machine is not confirmed by this view.</p>':''}${detailOpen?llmReadings:detailBody}</details>`;
-  return `<article class="device ${workload?'is-media':nativeActive?'is-native':''}" data-worker-id="${esc(d.id)}"><div class="device-top"><div class="device-identity"><span class="device-dot" data-level="${dotLevel}" title="${esc(verdict.detail)}"></span><span class="device-name-text" title="${esc(verdict.label)} — ${esc(verdict.detail)}${w?.served_model?` · serving ${esc(w.served_model)}`:''}">${esc(d.id.replace(/^spark/, 'Spark '))}</span>${activityDuration}${routingMarkup(w,{stale,controls,recovering:recoveryState?.workers?.some(r=>r.worker_id===w?.id&&r.state==='recovering')})}</div></div>${liveLine}${bar}${miniCharts}${mediaWarning}${nativeMediaMarkup(d.id,now)}${chips}${details}</article>`;
+  const powerInfo=controls&&fleetPower?.enabled?fleetPower.members?.find(m=>m.worker_id===d.id):null;
+  const latestReceipt=fleetPower?.recent?.find(r=>r.worker===d.id);
+  const powerLabel=state=>({ready:'ready ✓',stopped:'stopped ✓',timeout:'timeout — unproven',failed:'failed ✗'}[state]??'');
+  const powerLine=fleetPowerBusy.has(d.id)?'working…':latestReceipt?`${latestReceipt.action} · ${latestReceipt.verified&&latestReceipt.verified.state!=='unverified'?powerLabel(latestReceipt.verified.state):latestReceipt.ok?'ok':`exit ${latestReceipt.exit_code?? '?'}`} · ${new Date(latestReceipt.finished_at).toLocaleTimeString()}`:powerInfo?.busy?'working…':'';
+  const powerTitles={status:'Run the enrolled status script for this model.',start:'Start this model through its enrolled script. Readiness is verified against the endpoint before reporting Started.',stop:'Stop this model through its enrolled script. Refuses when gateway or direct work is active, when a same-hardware model still holds work, or when this is the last healthy LLM. Stopping a Spark pair stops both machines of that pair.'};
+  const powerStrip=powerInfo?`<div class="device-power">${['status','start','stop'].map(a=>`<button type="button" class="power-button" data-power-action="${a}" data-power-worker="${esc(d.id)}"${fleetPowerBusy.has(d.id)||powerInfo.busy?' disabled':''} title="${esc(powerTitles[a])}">${{status:'Status',start:'Start',stop:'Stop'}[a]}</button>`).join('')}<span class="power-status" title="${esc(latestReceipt?.output??'')}">${esc(powerLine)}</span></div>`:'';
+  return `<article class="device ${workload?'is-media':nativeActive?'is-native':''}" data-worker-id="${esc(d.id)}"><div class="device-top"><div class="device-identity"><span class="device-dot" data-level="${dotLevel}" title="${esc(verdict.detail)}"></span><span class="device-name-text" title="${esc(verdict.label)} — ${esc(verdict.detail)}${w?.served_model?` · serving ${esc(w.served_model)}`:''}">${esc(d.id.replace(/^spark/, 'Spark '))}</span>${activityDuration}${routingMarkup(w,{stale,controls,recovering:recoveryState?.workers?.some(r=>r.worker_id===w?.id&&r.state==='recovering')})}</div></div>${liveLine}${bar}${miniCharts}${mediaWarning}${nativeMediaMarkup(d.id,now)}${chips}${powerStrip}${details}</article>`;
 }
 const headlineSeverity=value=>['good','info','warning','critical'].includes(value)?value:'info';
 function deterministicHealthAlerts(snapshot) {
@@ -772,7 +778,9 @@ function render(s) {
   $('routing-summary').hidden=routing.hidden;
   $('routing-summary').className='routing-summary '+routing.level;
   $('routing-summary').textContent=routing.text;
-  renderDevices(s.devices.map(d=>({...d,cache_continuity:s.cache_continuity,performance_history:s.performance_lights})),visibleWorkers,now,stale,scales,workerControlsVisible);
+  if(s.fleet_power?.control&&workerControlsReady&&!fleetPowerPolling){fleetPowerPolling=true;void fetch('/api/workers/power',{headers:{}}).then(r=>r.ok?r.json():null).then(p=>{fleetPower=p&&p.enabled!==undefined?p:null;renderDevices(lastDevicesSpec.devices,lastDevicesSpec.workers,lastDevicesSpec.now,lastDevicesSpec.stale,lastDevicesSpec.scales,lastDevicesSpec.controls);}).catch(()=>{}).finally(()=>{fleetPowerPolling=false;});}
+  lastDevicesSpec={devices:s.devices.map(d=>({...d,cache_continuity:s.cache_continuity,performance_history:s.performance_lights})),workers:visibleWorkers,now,stale,scales,controls:workerControlsVisible};
+  renderDevices(lastDevicesSpec.devices,lastDevicesSpec.workers,now,stale,scales,workerControlsVisible);
   const ds=g?.dataset;
   $('cache-evidence-status').textContent=cacheEvidenceText(s,stale);
   const selector=$('cache-cost-worker'),selected=selector.value,options=(g?.workers||[]).map(w=>`<option value="${esc(w.id)}">${esc(w.id)}</option>`).join('');
@@ -853,6 +861,7 @@ async function poll() {
 }
 let controlsWired = false, workerBusy = false, workersLoading = false, csrfToken = null,recoveryState=null;
 let workerControlsReady=false,workerControlsVisible=false,workerUiStale=true,visibleWorkers=[];
+let fleetPower=null,fleetPowerBusy=new Set(),fleetPowerPolling=false,lastDevicesSpec=null;
 let endpointEdit=null, registeredWorkers=[];
 let contextDirty=false, contextExpected=null;
 let queueDirty=false,queueExpected=null;
@@ -1337,6 +1346,30 @@ $('recovery-workers').addEventListener('click',event=>{
   if(worker?.eligible)void workerAction('recover',{worker_id:worker.worker_id,evidence_id:worker.evidence_id,action_id:crypto.randomUUID()});
 });
 
+async function powerAction(worker,action){
+  if(!csrfToken||!workerControlsReady||workerUiStale){workerMessage('Live worker controls are unavailable; try again once connected.',true);return;}
+  if(action==='stop'&&!window.confirm(`Stop ${worker} through its enrolled script?\n\nRefusals apply for active gateway or direct work and for the last healthy LLM. Stopping a Spark pair stops both machines of that pair, including any other model serving there. Shutdown is verified before the card reports Stopped.`))return;
+  fleetPowerBusy.add(worker);
+  if(lastDevicesSpec)renderDevices(lastDevicesSpec.devices,lastDevicesSpec.workers,Date.now(),workerUiStale,lastDevicesSpec.scales,workerControlsVisible);
+  const actionId=crypto.randomUUID();
+  try{
+    const headers={'content-type':'application/json','x-dsg-csrf':csrfToken};
+    if(action!=='status'){
+      const check=await fetch('/api/workers/power',{method:'POST',headers,body:JSON.stringify({worker,power_action:action,action_id:actionId,mode:'check'}),signal:AbortSignal.timeout(30000)});
+      const checkBody=await check.json().catch(()=>({}));
+      if(!check.ok)throw new Error(checkBody.error||'Power preflight failed');
+    }
+    const run=await fetch('/api/workers/power',{method:'POST',headers,body:JSON.stringify({worker,power_action:action,action_id:actionId}),signal:AbortSignal.timeout(30000)});
+    const runBody=await run.json().catch(()=>({}));
+    if(!run.ok)throw new Error(runBody.error||'Power action failed');
+    workerMessage(`${worker}: ${action} accepted; the card shows verified progress.`,false);
+  }catch(e){workerMessage(`${worker} ${action}: ${e.message}`,true);}
+  finally{
+    fleetPowerBusy.delete(worker);
+    if(lastDevicesSpec)renderDevices(lastDevicesSpec.devices,lastDevicesSpec.workers,Date.now(),workerUiStale,lastDevicesSpec.scales,workerControlsVisible);
+  }
+}
+
 // Kept outside the polling card DOM so evidence remains readable and does not
 // expand the machine card. Native dialog supplies keyboard/Escape behavior.
 const performanceDialog=document.createElement('dialog');
@@ -1352,6 +1385,7 @@ performanceDialog.addEventListener('close',()=>{
 });
 document.body.append(performanceDialog);
 document.addEventListener('click',event=>{
+  const powerButton=event.target.closest?.('[data-power-action]');if(powerButton&&!powerButton.disabled){void powerAction(powerButton.dataset.powerWorker,powerButton.dataset.powerAction);return;}
   const button=event.target.closest?.('.performance-light, .temperature-reading, #fleet-speed-value');if(!button)return;
   performanceDialogTarget={id:button.id,worker:button.closest('.device')?.dataset.workerId,kind:button.dataset.light};
   performanceDialog.querySelector('h2').textContent=button.dataset.lightTitle;

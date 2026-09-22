@@ -93,3 +93,10 @@
 .mini-chart-block .mini-label.decode{color:var(--accent)}
 .mini-chart-block .mini-label.prefill{color:#78aee8}
 .device-model{font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* Fleet power controls on the card face (management mode only). */
+.device-power{display:flex;align-items:center;gap:6px;margin-top:8px}
+.power-button{border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--muted);font:inherit;font-size:10px;padding:2px 9px;cursor:pointer;white-space:nowrap}
+.power-button:hover:not(:disabled){border-color:var(--accent);color:var(--text)}
+.power-button:disabled{opacity:.45;cursor:default}
+.power-status{font-size:9px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1;font-variant-numeric:tabular-nums;cursor:help}

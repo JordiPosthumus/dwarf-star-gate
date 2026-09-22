@@ -11,7 +11,7 @@ export function fleetPowerEvidence({runner,workers=[],now=Date.now}){
   const byId=new Map(workers.map(w=>[w.id,w]));
   const members=powerWorkers().map(id=>{
     const w=byId.get(id);
-    return {worker_id:id,machine:machineGroup(id),enrolled:true,
+    return {worker_id:id,machine:machineGroup(id),enrolled:true,busy:runner.busy(id),
       script_available:Object.fromEntries(['status','start','stop'].map(a=>[a,!!powerScript(id,a)])),
       ...(w?{
         routing:{is_healthy:w.is_healthy===true,drained:w.drained===true,load:w.load??0,queued:w.queued??0,
@@ -66,10 +66,15 @@ export function createFleetPowerTools({runner,read,isTesting=()=>false,isEnabled
       throw new Error('Specify worker, power_action and one action ID.');
     const {worker,power_action,action_id}=input;
     if(!/^[a-f0-9-]{36}$/.test(action_id??''))throw new Error('Provide one action ID for this power request.');
-    if(!['start','stop'].includes(power_action))throw new Error('power_action must be start or stop; use action "status" for read-only evidence.');
+    if(!['start','stop','status'].includes(power_action))throw new Error('power_action must be start, stop or status.');
     if(isTesting())throw new Error('Fleet power is suspended for testing.');
     if(!isEnabled())throw new Error('Fleet power is switched off.');
     if(!powerScript(worker,power_action))throw new Error(`No enrolled script for ${worker} ${power_action}; scripts remain the source of truth.`);
+    if(power_action==='status'){
+      if(input.mode==='check')return {allowed:true,action_id,worker,power_action,machine:machineGroup(worker),scope:'Read-only status script.'};
+      const receipt=await runner.run(worker,'status');
+      return {receipt,action_id,next_step:'Script output is in the receipt; it describes serving engine and containers, not gateway routing.'};
+    }
     const pre=await precheck(worker,power_action);
     if(!pre.allowed)throw new Error(pre.refusals.join(' '));
     if(input.mode==='check')return {allowed:true,action_id,worker,power_action,machine:pre.machine,scope:pre.scope,
