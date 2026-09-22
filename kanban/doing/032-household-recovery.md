@@ -33,8 +33,22 @@ replacement reached readiness, owned hold released. Model servers untouched.
 
 ## Remaining work
 
-- Verify household PoolModel routing and dashboard after restoration.
+- M3-specific gateway canary remains unverified: it waited behind existing work
+  and reached its test-only 120-second client timeout. Production deadlines were
+  unchanged; the existing request was not interrupted. Recheck after it finishes.
 - Finish power controls using the existing backend; correct fleet_power toggle
   binding and serialize conflicting operations on the same physical machines.
 
 Other agents' existing changes, including card 023, are untouched.
+
+## Post-deployment verification
+
+- Normal PoolModel generation through port 30000: HTTP 200, correct answer,
+  served by glm53f-sparks12.
+- Dashboard workers endpoint: HTTP 200.
+- Door: core_ready=true, holding=false, held=0.
+- Both GLM Spark pairs and M3 reported healthy. M3 handled an active request;
+  no post-restart worker failures were recorded at the verification snapshot.
+- Live lock includes PID and process_started_at, confirming new code loaded.
+- Published recovery code as 5af750f. The existing notebook-card edit was not
+  included. Direct M3 inference passed; queued gateway canary is not claimed passed.
