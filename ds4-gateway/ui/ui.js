@@ -204,16 +204,16 @@ function schedulingExplanation(g,workers,capacity) {
 function timeline(d,now,lanes=1) {
   const rows=d.activity||[],start=now-900000,height=10*lanes;
   const band=phase=>phase==='mixed'?'mixed':phase==='prefill'?'prefill':phase==='thinking'||phase==='decode'?'decode':['idle','paused'].includes(phase)?'idle-off':'unknown';
-  // lanes>1 draws one strip per machine of a tensor-parallel pair. Both machines
-  // execute the same phases together, so the lanes intentionally repeat the same
-  // observed evidence; they show pair scope, not per-machine measurements.
+  // Tensor-parallel pairs draw one strip with a mid divider: both machines run
+  // the same phases together, so one strip plus the "×2" scope chip is honest
+  // about pair coverage without pretending to be per-machine measurements.
   const laneContent=lane=>rows.map(r=>{
     const left=Math.max(start,r.start),right=Math.min(now,r.end),width=Math.max(0,(right-left)/9000),x=Math.max(0,(left-start)/9000);
     if(width<=0)return '';
     if(r.phase==='mixed')return `<rect class="phase-prefill" x="${x}" width="${width}" y="${lane*10}" height="5"><title>Prefill and generation observed together</title></rect><rect class="phase-decode" x="${x}" width="${width}" y="${lane*10+5}" height="5"><title>Prefill and generation observed together</title></rect>`;
     return `<rect class="phase-${band(r.phase)}" x="${x}" width="${width}" y="${lane*10}" height="10"><title>${esc(r.phase)} · ${Math.round((right-left)/1000)}s</title></rect>`;
   }).join('');
-  return `<svg class="activity-timeline" viewBox="0 0 100 ${height}" preserveAspectRatio="none" role="img" aria-label="Observed activity over the last fifteen minutes: blue is prefill, green is decode or generation, grey is idle or off, and empty gaps mean the phase is unavailable${lanes>1?'; one strip per machine of the two-machine pair, which run the same phases together':''}">${Array.from({length:lanes},(_,lane)=>laneContent(lane)).join('')}${lanes>1?`<line class="lane-divider" x1="0" x2="100" y1="10" y2="10"/>`:''}${(d.endpoint_metrics?.source==='vllm'?[]:d.activity_markers??[]).filter(row=>row.basis==='completed_request'&&Number.isFinite(row.time)&&row.time>=start&&row.time<=now&&row.phase==='prefill').map(row=>`<line class="prefill-evidence-marker" x1="${(row.time-start)/9000}" x2="${(row.time-start)/9000}" y1="0" y2="${height}"><title>${row.basis==='completed_request'?'Completed request included':'Poll interval included'} ${fmtWhole(row.tokens)} computed prefill tokens. Tick marks observation time; prefill duration is not known.</title></line>`).join('')}</svg>${d.endpoint_metrics?.source!=='vllm'&&d.activity_markers?.some(row=>row.basis==='completed_request')?`<span class="timeline-evidence-note" title="Blue ticks mark observed prefill; the duration is not known.">ticks = prefill seen</span>`:''}`;
+  return `<svg class="activity-timeline" viewBox="0 0 100 ${height}" preserveAspectRatio="none" role="img" aria-label="Observed activity over the last fifteen minutes: blue is prefill, green is decode or generation, grey is idle or off, and empty gaps mean the phase is unavailable${lanes>1?'; one strip covering the two-machine pair, which runs the same phases together':''}">${Array.from({length:lanes},(_,lane)=>laneContent(lane)).join('')}${lanes>1?`<line class="lane-divider" x1="0" x2="100" y1="10" y2="10"/>`:''}${(d.endpoint_metrics?.source==='vllm'?[]:d.activity_markers??[]).filter(row=>row.basis==='completed_request'&&Number.isFinite(row.time)&&row.time>=start&&row.time<=now&&row.phase==='prefill').map(row=>`<line class="prefill-evidence-marker" x1="${(row.time-start)/9000}" x2="${(row.time-start)/9000}" y1="0" y2="${height}"><title>${row.basis==='completed_request'?'Completed request included':'Poll interval included'} ${fmtWhole(row.tokens)} computed prefill tokens. Tick marks observation time; prefill duration is not known.</title></line>`).join('')}</svg>${d.endpoint_metrics?.source!=='vllm'&&d.activity_markers?.some(row=>row.basis==='completed_request')?`<span class="timeline-evidence-note" title="Blue ticks mark observed prefill; the duration is not known.">ticks = prefill seen</span>`:''}`;
 }
 function routingInfo(w,{stale=false,recovering=false}={}) {
   if(stale||!w)return {level:'unknown',label:'STATUS UNKNOWN',detail:'Live gateway status is unavailable. Routing controls are disabled until it returns.',action:null};
@@ -523,7 +523,7 @@ function device(d, w, now, stale, index = 1, scales={}, controls=false) {
   const mediaWarning=fleetWorkloadsUnavailable?'<p class="fleet-media-warning">Media status unavailable; this machine’s workload cannot currently be confirmed.</p>':'';
   // Compact face: status dot + name + state word, one live line, conditional chips.
   const dotLevel={ok:'ok',busy:'busy',warn:'warn',bad:'bad',paused:'paused',unknown:'unknown'}[verdict.level]??'unknown';
-  const stateWord=!stale&&w?.quarantine?'quarantined':w?.direct_reserved===true?'direct use':state==='mixed'?'prefill + generation':state==='decode'?(d.endpoint_metrics?'generating':'answering'):state;
+  const stateWord=!stale&&w?.quarantine?'quarantined':w?.direct_reserved===true?'direct use':state==='mixed'?'prefill + generation':state==='decode'?(d.endpoint_metrics?'gen':'answering'):state;
   const liveRates=(()=>{
     const e=d.endpoint_metrics;
     if(e){
@@ -550,12 +550,13 @@ function device(d, w, now, stale, index = 1, scales={}, controls=false) {
     const low=pair&&Number.isFinite(pair.last_low_reuse_at)&&now-pair.last_low_reuse_at>=0&&now-pair.last_low_reuse_at<=30*60000;
     return `<span class="cache-chip${low?' warn':''}" title="${esc(title)}">⌀${value===null?'—':Math.round(value*100)+'%'} cache</span>`;
   })();
-  const chips=[gatewayActivity,thinkingIndicator(w,stale,now)].filter(Boolean).join('');
+  const chips=thinkingIndicator(w,stale,now);
+  const liveLine=`<div class="device-live"><span class="state-word" data-level="${dotLevel}">${esc(stateWord)}</span>${gatewayActivity}${liveRates}${cacheUsage}${mediaWarning?'<span class="cache-chip warn">media?</span>':''}</div>`;
   // Face-level utilization strip: always-visible phase bar (split per machine for
   // tensor-parallel pairs) plus small decode/prefill rate charts without captions.
   const machines=/sparks\d/i.test(d.id)?2:1;
-  const machineNote=machines>1?' Both machines of this tensor-parallel pair run the same phases together; two strips show pair scope, not separate measurements.':'';
-  const bar=`<div class="device-bar" data-lanes="${machines}"><div class="bar-label">ACTIVITY · 15m</div>${timeline(d,now,machines)}<span class="bar-note" title="Blue is prefill, green is decode or generation, grey is idle or off, empty gaps mean the phase is unavailable.${esc(machineNote)}">${machines>1?'2 machines':'1 machine'}</span></div>`;
+  const machineNote=machines>1?' Both machines of this tensor-parallel pair run the same phases together; one strip shows pair scope, not separate measurements.':'';
+  const bar=`<div class="device-bar" data-lanes="${machines}"><div class="bar-label">ACTIVITY · 15m</div>${timeline(d,now,machines)}<span class="bar-note${machines>1?' pair':''}" title="Blue is prefill, green is decode or generation, grey is idle or off, empty gaps mean the phase is unavailable.${esc(machineNote)}">${machines>1?'×2':'×1'}</span></div>`;
   const miniChart=kind=>{
     const e=d.endpoint_metrics;
     const svg=e?chart(e.series,kind,now):chart(d.series,kind,now,scales[kind]);
@@ -567,7 +568,7 @@ function device(d, w, now, stale, index = 1, scales={}, controls=false) {
   const detailBody=`<div class="metrics">${metric('decode','DECODE')}${metric('prefill','PREFILL')}</div>${metricsInfo}${hardwareMarkup(d.hardware,now)}${performance}`;
   const detailOpen=workload||historicalLlm;
   const details=`<details class="device-details"${detailOpen?' open':''}><summary>Details</summary>${workload?workloadMarkup(workload,w,now):''}${unavailableLlm?'<p class="muted">LLM endpoint unavailable. Other work on this machine is not confirmed by this view.</p>':''}${detailOpen?llmReadings:detailBody}</details>`;
-  return `<article class="device ${workload?'is-media':nativeActive?'is-native':''}" data-worker-id="${esc(d.id)}"><div class="device-top"><div class="device-identity"><span class="device-dot" data-level="${dotLevel}" title="${esc(verdict.detail)}"></span><span class="device-name-text" title="${esc(verdict.label)} — ${esc(verdict.detail)}">${esc(d.id.replace(/^spark/, 'Spark '))}</span>${w?.served_model?`<span class="device-model" title="Served model ID">${esc(w.served_model)}</span>`:''}${activityDuration}${routingMarkup(w,{stale,controls,recovering:recoveryState?.workers?.some(r=>r.worker_id===w?.id&&r.state==='recovering')})}</div></div><div class="device-live"><span class="state-word" data-level="${dotLevel}">${esc(stateWord)}</span>${liveRates}${cacheUsage}${mediaWarning?'<span class="cache-chip warn">media?</span>':''}</div>${bar}${miniCharts}${mediaWarning}${nativeMediaMarkup(d.id,now)}${chips}${details}</article>`;
+  return `<article class="device ${workload?'is-media':nativeActive?'is-native':''}" data-worker-id="${esc(d.id)}"><div class="device-top"><div class="device-identity"><span class="device-dot" data-level="${dotLevel}" title="${esc(verdict.detail)}"></span><span class="device-name-text" title="${esc(verdict.label)} — ${esc(verdict.detail)}${w?.served_model?` · serving ${esc(w.served_model)}`:''}">${esc(d.id.replace(/^spark/, 'Spark '))}</span>${activityDuration}${routingMarkup(w,{stale,controls,recovering:recoveryState?.workers?.some(r=>r.worker_id===w?.id&&r.state==='recovering')})}</div></div>${liveLine}${bar}${miniCharts}${mediaWarning}${nativeMediaMarkup(d.id,now)}${chips}${details}</article>`;
 }
 const headlineSeverity=value=>['good','info','warning','critical'].includes(value)?value:'info';
 function deterministicHealthAlerts(snapshot) {

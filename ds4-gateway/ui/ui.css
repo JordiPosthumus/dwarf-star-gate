@@ -84,10 +84,11 @@
 .device-bar[data-lanes="2"] .activity-timeline{height:24px}
 .device-bar .activity-timeline .lane-divider{stroke:var(--bg);stroke-width:1.5;vector-effect:non-scaling-stroke}
 .device-bar .bar-note{font-size:8px;color:var(--muted);white-space:nowrap;cursor:help}
+.device-bar .bar-note.pair{color:var(--accent);border:1px solid var(--line);border-radius:7px;padding:0 5px;line-height:1.6}
 .timeline-pair-note{display:none}
 .device-minicharts{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:7px}
 .mini-chart-block{position:relative;min-width:0}
-.mini-chart-block .chart{height:26px;margin:0}
+.mini-chart-block .chart{height:40px;margin:0}
 .mini-chart-block .mini-label{position:absolute;top:0;right:2px;font-size:8px;letter-spacing:.8px;color:var(--muted)}
 .mini-chart-block .mini-label.decode{color:var(--accent)}
 .mini-chart-block .mini-label.prefill{color:#78aee8}
