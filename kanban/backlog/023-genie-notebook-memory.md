@@ -39,3 +39,12 @@ into the chat context when enabled. The notebook store itself is live
 (runtime/genie/memory). Decision left to Jordi: set
 genie_chat.operational_notebook=true (park/start restart) if he wants the
 notebook included in Genie's context. Until then Genie can't cite it.
+
+## VERIFIED OFF-BY-DEFAULT (2026-09-22 ~03:50)
+- config.local.json has NO genie_chat.operational_notebook key → defaults false.
+- dashboard.mjs wires GenieChat notebook=memory only when the flag is true
+  (genie_chat.operational_notebook===true → operational notebook in Genie context).
+- The notebook itself (GenieMemory + jsonl store) is real code and live;
+  wiring is complete and verified off. Opt-in needs: set
+  genie_chat.operational_notebook=true in config.local.json + dashboard restart.
+- Decision left to Jordi (privacy trade-off: Genie citing private notes).
