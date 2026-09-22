@@ -67,3 +67,13 @@ config.local.json has no such key today → GenieChat receives notebook=null and
 cannot cite the memory notebook in chat. Enabling is a config change
 (genie_chat.operational_notebook=true) + dashboard restart; decision stays with
 Jordi (privacy trade-off: the notebook holds private operational history).
+
+## VERIFIED (2026-09-22 ~04:05)
+genie_chat has NO operational_notebook key in config.local.json today; GenieChat
+defaults it to null (memory wiring exists but is off). The wiring is real and
+tested: dashboard constructs GenieChat with notebook=memory when
+config.genie_chat.operational_notebook===true; chatContext retrieves notebook
+history into context. Decision for Jordi: set
+config.local.json genie_chat.operational_notebook=true (needs dashboard restart)
+if he wants Genie to cite the operational notebook in chat. Until then Genie
+cannot cite it; the memory files still accumulate via GenieMemory.
