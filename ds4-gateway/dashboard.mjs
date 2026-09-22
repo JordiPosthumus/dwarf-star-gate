@@ -306,7 +306,7 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
     }
     if (req.url === '/api/workers/power' && req.method === 'GET') {
       if (!powerTools) return reply(200, { enabled:false });
-      void Promise.resolve(powerTools.tool({action:'status'})).then(value => reply(200,{enabled:isCapabilityEnabled('fleet_power'),csrf_token:csrf,...value})).catch(e => reply(503,{error:e.message}));
+      void Promise.resolve(powerTools.tool({action:'status'})).then(value => reply(200,{enabled:getSnapshot().gateway?.genie_capabilities?.fleet_power!==false,csrf_token:csrf,...value})).catch(e => reply(503,{error:e.message}));
       return;
     }
     const actions = { '/api/media/video/jobs':'media-video-submit', '/api/media/setup':'media-setup', '/api/media/inspect':'media-inspect', '/api/media/eligibility':'media-eligibility', '/api/current-jobs/priority':'job-priority', '/api/workers/concurrency':'concurrency', '/api/workers/add':'add', '/api/workers/endpoint':'endpoint', '/api/workers/test':'test', '/api/workers/remove':'remove', '/api/workers/drain':'drain', '/api/workers/resume':'resume','/api/workers/lock':'lock','/api/workers/unlock':'unlock','/api/workers/fallbacks':'fallbacks', '/api/workers/context':'context','/api/workers/conversation-turns':'conversation-turns','/api/workers/queue-timeout':'queue-timeout','/api/workers/protection':'protection','/api/workers/direct-reserve':'direct-reserve','/api/workers/relocate':'relocate', '/api/workers/recover':'recover', '/api/workers/genie-capability':'genie-capability','/api/workers/recovery-policy':'recovery-policy','/api/workers/recovery-handback-policy':'recovery-handback-policy','/api/workers/recovery-recheck':'recovery-recheck','/api/workers/power':'power' };
