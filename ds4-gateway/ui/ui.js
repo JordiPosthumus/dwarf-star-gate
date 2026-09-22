@@ -29,7 +29,7 @@ function thinkingInfo(t) {
   return {label:mode==='none'?'OFF':mode?mode.toUpperCase():requestedLabel,detail:`Requested: ${detail}. ${mode?'Serving mode derived from backend request rules and server context; not an engine-reported measurement.':'Effective engine mode is not reported; this is the requested setting only.'}`};
 }
 function thinkingIndicator(w, stale, now) {
-  if(w?.load>1)return `<div class="requested-thinking" title="Each concurrent request retains its own requested thinking settings."><span class="label">Thinking</span><strong>${fmt(w.load)} active requests</strong>${stale?'<span class="thinking-scope">Stale</span>':''}</div>`;
+  if(w?.load>1){const info=thinkingInfo(w.requested_thinking);return `<div class="requested-thinking" title="Each concurrent request retains its own requested thinking settings; this is the oldest active request's metadata.${esc(' '+info.detail)}"><span class="label">Thinking</span><strong>${esc(info.label)}</strong><span class="thinking-scope">${fmt(w.load)} active</span>${stale?'<span class="thinking-scope">Stale</span>':''}</div>`;}
   const info = thinkingInfo(w?.load ? w.requested_thinking : w?.last_requested_thinking);
   const scope = stale ? 'Historical snapshot' : w?.load ? 'Current request' : w?.last_request_finished_at ? `Last request · ${age(Date.parse(w.last_request_finished_at),now)}` : 'No active request';
   const qualifier=stale?'Stale':!w?.load&&w?.last_request_finished_at?'Last':'';
@@ -532,7 +532,8 @@ function device(d, w, now, stale, index = 1, scales={}, controls=false) {
   const mediaWarning=fleetWorkloadsUnavailable?'<p class="fleet-media-warning">Media status unavailable; this machine’s workload cannot currently be confirmed.</p>':'';
   // Compact face: status dot + name + state word, one live line, conditional chips.
   const dotLevel={ok:'ok',busy:'busy',warn:'warn',bad:'bad',paused:'paused',unknown:'unknown'}[verdict.level]??'unknown';
-  const stateWord=!stale&&w?.quarantine?'quarantined':w?.direct_reserved===true?'direct use':state==='mixed'?'prefill + generation':state==='decode'?(d.endpoint_metrics?'gen':'answering'):state;
+  const thinkingLevel=(()=>{const info=thinkingInfo(w?.load?w.requested_thinking:w?.last_requested_thinking);return info.label&&!['Unknown','Unavailable','OFF'].includes(info.label)?info.label.toLowerCase():null;})();
+  const stateWord=!stale&&w?.quarantine?'quarantined':w?.direct_reserved===true?'direct use':state==='mixed'?'prefill + generation':state==='decode'?(d.endpoint_metrics?'gen':'answering'):state==='thinking'?`thinking${thinkingLevel?` · ${thinkingLevel}`:''}`:state;
   const liveRates=(()=>{
     const e=d.endpoint_metrics;
     if(e){
@@ -550,7 +551,7 @@ function device(d, w, now, stale, index = 1, scales={}, controls=false) {
   })();
   const cacheUsage=(()=>{
     const u=d.cache_continuity?.usage,wu=u?.workers?.[d.id];
-    if(!wu||!wu.requests)return `<span class="cache-chip" title="Share of prompt tokens served from cache across completed Star Gate requests. No completed-request usage retained yet.">⌀— cache</span>`;
+    if(!wu||!wu.requests)return '';
     const value=Number.isFinite(wu.recent_cached_fraction)?wu.recent_cached_fraction:wu.cached_fraction;
     const scope=Number.isFinite(wu.recent_cached_fraction)?`last ${fmt(wu.recent_requests)} request${wu.recent_requests===1?'':'s'}`:`${fmt(wu.requests)} requests`;
     const pair=d.cache_continuity?.workers?.[d.id];
@@ -565,7 +566,7 @@ function device(d, w, now, stale, index = 1, scales={}, controls=false) {
   // tensor-parallel pairs) plus small decode/prefill rate charts without captions.
   const machines=/sparks\d/i.test(d.id)?2:1;
   const machineNote=machines>1?' Both machines of this tensor-parallel pair run the same phases together; one strip shows pair scope, not separate measurements.':'';
-  const bar=`<div class="device-bar" data-lanes="${machines}"><div class="bar-label">ACTIVITY · 15m</div>${timeline(d,now,machines)}<span class="bar-note${machines>1?' pair':''}" title="Blue is prefill, green is decode or generation, grey is idle or off, empty gaps mean the phase is unavailable.${esc(machineNote)}">${machines>1?'×2':'×1'}</span></div>`;
+  const bar=`<div class="device-bar" data-lanes="1"><div class="bar-label">ACTIVITY · 15m</div>${timeline(d,now,1)}<span class="bar-note${machines>1?' pair':''}" title="Blue is prefill, green is decode or generation, grey is idle or off, empty gaps mean the phase is unavailable.${esc(machineNote)}">${machines>1?'×2':'×1'}</span></div>`;
   const miniChart=kind=>{
     const e=d.endpoint_metrics;
     const svg=e?chart(e.series,kind,now):chart(d.series,kind,now,scales[kind]);
@@ -581,9 +582,11 @@ function device(d, w, now, stale, index = 1, scales={}, controls=false) {
   const latestReceipt=fleetPower?.recent?.find(r=>r.worker===d.id);
   const powerLabel=state=>({ready:'ready ✓',stopped:'stopped ✓',timeout:'timeout — unproven',failed:'failed ✗'}[state]??'');
   const powerLine=fleetPowerBusy.has(d.id)?'working…':latestReceipt?`${latestReceipt.action} · ${latestReceipt.verified&&latestReceipt.verified.state!=='unverified'?powerLabel(latestReceipt.verified.state):latestReceipt.ok?'ok':`exit ${latestReceipt.exit_code?? '?'}`} · ${new Date(latestReceipt.finished_at).toLocaleTimeString()}`:powerInfo?.busy?'working…':'';
+  const offline=!metricsFresh&&!workload&&!nativeActive;
+  const compactBar=offline?'':bar,compactCharts=offline?'':miniCharts;
   const powerTitles={status:'Run the enrolled status script for this model.',start:'Start this model through its enrolled script. Readiness is verified against the endpoint before reporting Started.',stop:'Stop this model through its enrolled script. Refuses when gateway or direct work is active, when a same-hardware model still holds work, or when this is the last healthy LLM. Stopping a Spark pair stops both machines of that pair.'};
   const powerStrip=powerInfo?`<div class="device-power">${['status','start','stop'].map(a=>`<button type="button" class="power-button" data-power-action="${a}" data-power-worker="${esc(d.id)}"${fleetPowerBusy.has(d.id)||powerInfo.busy?' disabled':''} title="${esc(powerTitles[a])}">${{status:'Status',start:'Start',stop:'Stop'}[a]}</button>`).join('')}<span class="power-status" title="${esc(latestReceipt?.output??'')}">${esc(powerLine)}</span></div>`:'';
-  return `<article class="device ${workload?'is-media':nativeActive?'is-native':''}" data-worker-id="${esc(d.id)}"><div class="device-top"><div class="device-identity"><span class="device-dot" data-level="${dotLevel}" title="${esc(verdict.detail)}"></span><span class="device-name-text" title="${esc(verdict.label)} — ${esc(verdict.detail)}${w?.served_model?` · serving ${esc(w.served_model)}`:''}">${esc(d.id.replace(/^spark/, 'Spark '))}</span>${activityDuration}${routingMarkup(w,{stale,controls,recovering:recoveryState?.workers?.some(r=>r.worker_id===w?.id&&r.state==='recovering')})}</div></div>${liveLine}${bar}${miniCharts}${mediaWarning}${nativeMediaMarkup(d.id,now)}${chips}${powerStrip}${details}</article>`;
+  return `<article class="device ${workload?'is-media':nativeActive?'is-native':''}" data-worker-id="${esc(d.id)}"><div class="device-top"><div class="device-identity"><span class="device-dot" data-level="${dotLevel}" title="${esc(verdict.detail)}"></span><span class="device-name-text" title="${esc(verdict.label)} — ${esc(verdict.detail)}${w?.served_model?` · serving ${esc(w.served_model)}`:''}">${esc(d.id.replace(/^spark/, 'Spark '))}</span>${activityDuration}${routingMarkup(w,{stale,controls,recovering:recoveryState?.workers?.some(r=>r.worker_id===w?.id&&r.state==='recovering')})}</div></div>${liveLine}${compactBar}${compactCharts}${mediaWarning}${nativeMediaMarkup(d.id,now)}${offline?'':chips}${powerStrip}${details}</article>`;
 }
 const headlineSeverity=value=>['good','info','warning','critical'].includes(value)?value:'info';
 function deterministicHealthAlerts(snapshot) {
