@@ -64,3 +64,25 @@ Keep this as the only active card until the remaining recovery checks finish:
   move this card to done. Use #016's existing checks, not a new monitoring system.
 
 Prior observations above are dated evidence, not a claim of current live health.
+
+## Progress 2026-09-22 ~09:45 (owner debugging M3; M3 canary deliberately deferred)
+
+- M3 engine had shut down gracefully after serving at 08:09:40 (log: "Shutting
+  down / Waiting for connections to close" — SIGTERM-style, source unexplained;
+  not a crash). Recorded as the recurrence the card warns about.
+- Restarted 09:36 via the unchanged established launcher, fully detached
+  (nohup, fds redirected). Server PID 28390.
+- **Launcher-exit survival verified:** launcher PID 28298 exited after the load
+  barrier; server PPID is now 1 (reparented to launchd) and stayed serving.
+  Model loaded:true (359 GB) about a minute after launch — paged/hot SSD cache
+  restore. Wired limit 0 (macOS default) accepted by the launcher as the safest
+  profile; no sysctl change made.
+- Gateway marked glm53f-m3 healthy on its own probes.
+- Owner then took the M3 for debugging before the Door canary. To honour that,
+  glm53f-m3 was DRAINED (routing-only; nothing sent to :8013; engine process
+  untouched). Resume is /resume-workers when the owner is done.
+- Non-M3 checks all green: PoolModel generation through the Door → 200 via
+  glm53f-sparks12 (M3 could not be picked while drained); dashboard :30010 →
+  200; door holding=false core_ready=true held=0.
+- Still open on this card: the M3-specific Door canary (x-dsg-model
+  GLM-5.3-Flash-oQ8e-mtp) once the owner releases the machine; then close.
