@@ -70,3 +70,14 @@ reserved-list display in Settings already exists via direct-reserve-status).
 - dashboard.mjs now passes `direct_reserved` per worker row (state word shows
   "direct use" on reserved cards; was only reachable in-process before).
 - Full suite green after changes: 1074 pass / 0 fail (dashboard 96/96).
+
+## E2E VERIFIED LIVE (2026-09-22 ~02:45)
+- Toggled direct reserve ON via control socket (store-backed).
+- Direct call to :8013 (pi-style, bypassing gate) → dashboard telemetry reports
+  running>0 with no gate job → gateway logs direct_reserve_started, worker row
+  `direct_reserved:true`, dashboard shows it; state word "direct use" available.
+- Pool request during reservation: served by glm53f-sparks12 (soft exclusion
+  respected). After the 3-minute grace the reservation lapsed on its own.
+- NOTE: during testing m3 showed drained:true (health pause from the idle
+  window); resumed via /resume-workers — healthy and routing again.
+- Production dashboard restarted to serve the new UI (stop/start --only dashboard).
