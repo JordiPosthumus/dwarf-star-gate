@@ -30,3 +30,12 @@ GenieMemory separately for the store-side, but chat context does not include
 the notebook today. Decision left to Jordi: enable via
 genie_chat.operational_notebook=true if he wants Genie to cite operational notes.
 (No code change needed; wiring verified.)
+
+## VERIFIED (2026-09-22 ~03:45)
+genie_chat.operational_notebook is OFF by default (config.local.json has no key;
+defaults false). The wiring is real: dashboard.mjs constructs GenieChat with
+notebook=memory only when the flag is true; genie-chat.mjs retrieves history
+into the chat context when enabled. The notebook store itself is live
+(runtime/genie/memory). Decision left to Jordi: set
+genie_chat.operational_notebook=true (park/start restart) if he wants the
+notebook included in Genie's context. Until then Genie can't cite it.
