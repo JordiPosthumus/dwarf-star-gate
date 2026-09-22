@@ -18,7 +18,7 @@ import https from 'node:https';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
 import { RequestedThinkingObserver } from './requested-thinking.mjs';
 import {requestUserExcerpt} from './request-preview.mjs';
@@ -60,6 +60,17 @@ function json(res, status, value) {
 }
 function error(res, status, code, message) { json(res, status, { error: { type: 'gateway_error', code, message:dsgReport(message) } }); }
 
+// PID alone is not an identity: after reboot it may belong to an unrelated process.
+const processStartedAt = pid => {
+  const value = execFileSync('/bin/ps', ['-p', String(pid), '-o', 'lstart='], {
+    encoding: 'utf8', timeout: 3000, env: {...process.env, LC_ALL: 'C', TZ: 'UTC'},
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim();
+  if (!value) throw new Error(`Cannot establish state-lock owner identity for PID ${pid}`);
+  return value;
+};
+let ownProcessStartedAt;
+
 // Tiny durable metadata store. No prompts, model outputs, or KV data live here.
 // Atomic replace + fsync; an unreadable/corrupt store fails startup, never resets.
 export class AffinityStore {
@@ -67,18 +78,23 @@ export class AffinityStore {
     this.filename = filename;
     fs.mkdirSync(path.dirname(filename), { recursive: true, mode: 0o700 });
     this.lock = `${filename}.lock`;
+    const startedAt = ownProcessStartedAt ??= processStartedAt(process.pid);
     const acquire = () => fs.openSync(this.lock, 'wx', 0o600);
     let fd;
     try { fd = acquire(); } catch (e) {
       if (e.code !== 'EEXIST') throw e;
       const old = JSON.parse(fs.readFileSync(this.lock, 'utf8'));
       if (!Number.isInteger(old.pid) || old.pid <= 1) throw new Error('Invalid state lock; inspect manually');
-      try { process.kill(old.pid, 0); throw new Error(`State already locked by PID ${old.pid}`); }
-      catch (probe) { if (probe.code !== 'ESRCH') throw probe; }
+      if (old.process_started_at !== undefined && (typeof old.process_started_at !== 'string' || !old.process_started_at.trim())) throw new Error('Invalid state lock identity; inspect manually');
+      let alive = true;
+      try { process.kill(old.pid, 0); }
+      catch (probe) { if (probe.code !== 'ESRCH') throw probe; alive = false; }
+      // Legacy live-PID locks and unreadable identities remain protected.
+      if (alive && (!old.process_started_at || old.process_started_at === processStartedAt(old.pid))) throw new Error(`State already locked by PID ${old.pid}`);
       fs.unlinkSync(this.lock);
       fd = acquire();
     }
-    fs.writeFileSync(fd, JSON.stringify({ pid: process.pid })); fs.fsyncSync(fd); fs.closeSync(fd);
+    fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, process_started_at: startedAt })); fs.fsyncSync(fd); fs.closeSync(fd);
     try {
       let data = { version: 1, sessions: {} };
       if (fs.existsSync(filename)) data = JSON.parse(fs.readFileSync(filename, 'utf8'));
