@@ -36,8 +36,8 @@ replacement reached readiness, owned hold released. Model servers untouched.
 - M3-specific gateway canary remains unverified: it waited behind existing work
   and reached its test-only 120-second client timeout. Production deadlines were
   unchanged; the existing request was not interrupted. Recheck after it finishes.
-- Finish power controls using the existing backend; correct fleet_power toggle
-  binding and serialize conflicting operations on the same physical machines.
+- Fleet power implementation is tracked only in #030; it does not keep this
+  recovery card open.
 
 Other agents' existing changes, including card 023, are untouched.
 
@@ -52,3 +52,15 @@ Other agents' existing changes, including card 023, are untouched.
 - Live lock includes PID and process_started_at, confirming new code loaded.
 - Published recovery code as 5af750f. The existing notebook-card edit was not
   included. Direct M3 inference passed; queued gateway canary is not claimed passed.
+
+## Completion criteria and priority
+
+Keep this as the only active card until the remaining recovery checks finish:
+- [ ] After current work finishes, verify a real M3-specific generation through
+  the Door with explicit model routing. Preserve active jobs and production deadlines.
+- [ ] Confirm ordinary PoolModel serving, released Door and dashboard availability,
+  and that the restored M3 remains alive after its launcher exits.
+- [ ] Record current evidence, failures/uncertainty and the loaded release, then
+  move this card to done. Use #016's existing checks, not a new monitoring system.
+
+Prior observations above are dated evidence, not a claim of current live health.

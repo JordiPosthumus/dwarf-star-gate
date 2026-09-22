@@ -9,19 +9,21 @@ Tonight's manual flow = the recipe the Genie should learn (see done/001):
 5. Resume, verify generation through the door, report
 Genie needs: control-socket tool access (already has /genie-* routes; add admission),
 park/start orchestration, and the ask-first conversation per the autonomy model.
-Blocks on: 006 (Telegram) for proactive chat, or dashboard chat now.
+Dashboard chat is the first delivery channel. #006 Telegram is optional and
+does not block admission. Reuse #030 control operations and #033 hardware mapping.
 
 ## PROGRESS (2026-09-22 ~03:50)
 Prerequisites now in place from tonight's work:
-- Direct-reserve + endpoint telemetry give the Genie exact "endpoint has a
-  model but the gate has no worker" signals (running>0 + no affinity) — the
-  'notice a new model' half of the loop.
+- Direct-reserve + endpoint telemetry can indicate native/direct activity
+  (running>0 + no gate work). This does not
+  prove discovery of an unregistered endpoint or identify a new model; admission
+  still needs an explicit endpoint/model probe.
 - fleet_power tools show enrolled startScripts (status incl. serving engine);
   the admit flow itself (drain dead worker → /add-worker → model route →
   park/start → verify) is the remaining automation. Control-socket routes all
   exist (/add-worker, /edit-endpoint, /remove-worker, /set-direct-reserve,
   /drain-workers, /resume-workers); what's missing is a Genie chat toolset
   binding them with ask-first guardrails + the park/start orchestration.
-- Suggested order after 006 (Telegram) or with dashboard chat now:
+- Delivery order using dashboard chat now:
   (a) admission-proposal tool (read-only draft), (b) park/start orchestration
   tool with confirmation receipt, (c) self-verify step reusing card 016 checks.

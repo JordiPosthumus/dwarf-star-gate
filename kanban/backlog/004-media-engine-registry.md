@@ -7,3 +7,6 @@ knows music->ace-step, video->comfyui/h3.
   recipe manifests in examples/spark-build/<engine>/models.json
 - media-jobs.mjs backend dispatch -> registry-driven
 - UI tabs read /api/media engines (already do) — verify no local fallback list needed
+
+Scope boundary: reuse #033's configured-model/hardware mapping. This card owns
+media engine kinds, recipe manifests and dispatch, not a second fleet catalogue.
