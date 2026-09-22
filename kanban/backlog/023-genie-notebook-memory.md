@@ -48,3 +48,13 @@ notebook included in Genie's context. Until then Genie can't cite it.
   wiring is complete and verified off. Opt-in needs: set
   genie_chat.operational_notebook=true in config.local.json + dashboard restart.
 - Decision left to Jordi (privacy trade-off: Genie citing private notes).
+
+## VERIFIED OFF BY DEFAULT (2026-09-22 ~04:00)
+config.local.json has no genie_chat.operational_notebook key, so
+directReserveMs()/GenieChat receive notebook=null (getSnapshot passes
+memory only when operational_notebook===true). Memory wiring is real:
+dashboard constructs GenieChat with notebook:memory; GenieChat.context()
+retrieves notebook history when enabled. Chat context does NOT include the
+notebook today (off). Decision stays with Jordi: set
+genie_chat.operational_notebook=true (park/start restart) to let Genie cite
+the operational notebook. No code change needed either way.
