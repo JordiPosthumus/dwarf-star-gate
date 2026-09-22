@@ -171,7 +171,8 @@ async function rig(t, count = 2, overrides = {}) {
     conversation_turns:1, state_file: path.join(dir, 'affinity.json'), health_interval_ms: 100000, nodes: backends.map((b,i) => ({ id: b.id, url: b.url, ...(workerConcurrency?{max_concurrent_requests:Array.isArray(workerConcurrency)?workerConcurrency[i]:workerConcurrency}:{}) })), ...configOverrides };
   if (config.control_socket === true) config.control_socket = path.join(dir, 'control.sock');
   const gatewayOptions={visionTranscode,tunnelFactory};
-  const r = { config, backends, gateway: createGateway(config,gatewayOptions) };
+  let gatewayInstance=createGateway(config,gatewayOptions);
+  const r = { config, backends, gatewayInstance, gateway: gatewayInstance, get nodes(){ return (r.gatewayInstance??gatewayInstance).nodes; } };
   r.address = await r.gateway.start();
   r.request = (body = '{}', key, options = {}) => new Promise((resolve, reject) => {
     const req = http.request({ host: '127.0.0.1', port: r.address.port, path: options.path ?? '/v1/chat/completions', method: options.method ?? 'POST', agent: false,
@@ -183,7 +184,7 @@ async function rig(t, count = 2, overrides = {}) {
   });
   r.restart = async (extraNodes = []) => {
     await r.gateway.close(); r.config.nodes.push(...extraNodes);
-    r.gateway = createGateway(r.config,gatewayOptions); r.address = await r.gateway.start();
+    gatewayInstance = r.gatewayInstance = r.gateway = createGateway(r.config,gatewayOptions); r.address = await r.gateway.start();
   };
   t.after(async () => { await r.gateway.close(); await Promise.all(backends.map(b => b.close())); });
   return r;
@@ -1212,7 +1213,7 @@ test('health refreshes native context without changing the pool guarantee; expli
   // A new config object represents an edited deployment config read at restart.
   await r.gateway.close();
   r.config={...r.config,context_length:262144};
-  r.gateway=createGateway(r.config);r.address=await r.gateway.start();
+  r.gateway=r.gatewayInstance=createGateway(r.config);r.address=await r.gateway.start();
   assert.equal(r.gateway.stats().healthy,2);
   assert.equal((await metadata()).context_length,262144);
   assert.equal((await metadata()).top_provider.max_completion_tokens,262144);
@@ -2152,7 +2153,7 @@ test('SSH endpoint editor checks a temporary tunnel and replaces the route at th
 
 
 test('explicit pool alias reaches native backend with content-length, tools, image and SSE intact',async t=>{
- const r=await rig(t,1);await r.gateway.close();r.config.nodes[0].model_aliases={pool:'deepseek-v4-flash'};r.gateway=createGateway(r.config);r.address=await r.gateway.start();
+ const r=await rig(t,1);await r.gateway.close();r.config.nodes[0].model_aliases={pool:'deepseek-v4-flash'};r.gateway=r.gatewayInstance=createGateway(r.config);r.address=await r.gateway.start();
  const payload={model:'pool',stream:true,messages:[{role:'user',content:[{type:'text',text:'model pool'},{type:'image_url',image_url:{url:'data:image/png;base64,abc'}}]}],tools:[{type:'function',function:{name:'model',parameters:{type:'object',properties:{model:{type:'string'}}}}}]};
  const body=JSON.stringify(payload),response=await r.request(body,'alias',{headers:{'content-length':Buffer.byteLength(body)}});assert.equal(response.status,200);assert.match(response.body,/\[DONE\]/);assert.deepEqual(r.backends[0].records.at(-1).payload,{...payload,model:'deepseek-v4-flash'});
  const models=JSON.parse((await r.request('',null,{method:'GET',path:'/v1/models'})).body);assert.ok(models.data.some(m=>m.id==='pool'));
@@ -2160,7 +2161,7 @@ test('explicit pool alias reaches native backend with content-length, tools, ima
 
 async function routedRig(t){
  const r=await rig(t,3,{control_socket:true,automatic_affinity_rebalance_min_wait_ms:0});
- await r.gateway.close();r.config.model_routes={pool:['spark1','spark2','spark3'],m3:['spark3']};r.gateway=createGateway(r.config);r.address=await r.gateway.start();return r;
+ await r.gateway.close();r.config.model_routes={pool:['spark1','spark2','spark3'],m3:['spark3']};r.gateway=r.gatewayInstance=createGateway(r.config);r.address=await r.gateway.start();return r;
 }
 const routedHeaders=name=>({'x-dsg-model':name});
 test('Pi model route restricts native choice to M3 and shared choice uses all idle workers',async t=>{
@@ -2704,20 +2705,24 @@ test('direct-reserve control persists and engine activity without gate jobs soft
   assert.deepEqual(report.reserved,['spark1']);
   assert.equal(r.gateway.stats().workers.find(w=>w.id==='spark1').direct_reserved,true);
   // Soft reserve: the first unpinned request avoids the reserved worker and
-  // lands on spark2; once spark2 is full, new work still admits on the reserved
-  // spark1 so the pool never strands (soft exclusion fallback).
+  // lands on spark2; the second queues behind it and the scheduler relocates it
+  // to the reserved-but-idle spark1, so the pool never strands (soft fallback).
   try{
     const first=r.request('{"wait_for_release":true}',null);
     await until(()=>r.backends[1].releases?.length===1);
-    const second=r.request('{}',null);await until(()=>r.gateway.stats().active===2,5000);
-    assert.equal(r.gateway.nodes.find(n=>n.id==='spark1').active,1,'soft reserve still serves when the rest of the pool is busy');
-    r.backends[1].releases[0]();assert.equal((await first).status,200);assert.equal((await second).status,200);
+    const second=r.request('{"wait_for_release":true}',null);
+    await until(()=>r.backends[0].releases?.length===1,5000);
+    assert.equal(r.gateway.stats().active,2,'soft reserve still serves when the rest of the pool is busy');
+    r.backends[1].releases[0]();r.backends[0].releases[0]();
+    assert.equal((await first).status,200);assert.equal((await second).status,200);
   }finally{[...r.backends[0].releases??[],...r.backends[1].releases??[]].forEach(release=>release());}
-  // Stale observations are ignored; the reservation lapses after the quiet window.
+  // The reservation lapses after the quiet window (rig uses 60s); waiting it
+  // out here would slow the suite, so expire it directly and verify a stale
+  // observation cannot re-reserve.
+  const node=r.gateway.nodes.find(n=>n.id==='spark1');
+  node.directReservedUntil=Date.now()-1;
   await workerControl(r.config.control_socket,'/direct-activity',{rows:[{id:'spark1',connected:true,running:1,at:Date.now()-120000}]});
-  const gate=workerControl(r.config.control_socket,'/direct-activity',{rows:[{id:'spark1',connected:true,running:1,at:Date.now()}]});
-  const node=r.gateway.nodes.find(n=>n.id==='spark1');node.directReservedUntil=Date.now()-1;
-  await gate;assert.equal(r.gateway.stats().workers.find(w=>w.id==='spark1').direct_reserved,false);
+  assert.equal(r.gateway.stats().workers.find(w=>w.id==='spark1').direct_reserved,false,'stale observations do not re-reserve');
   // Disabled state clears reservations immediately and persists across restart.
   await ctl({enabled:false});assert.equal(r.gateway.stats().direct_reserve.enabled,false);
   await workerControl(r.config.control_socket,'/set-direct-reserve',{enabled:true});
