@@ -1,4 +1,5 @@
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import {test} from 'node:test';import assert from 'node:assert/strict';
+import {fileURLToPath} from 'node:url';
 import {createPowerRunner,createReadinessVerifier,powerScript,powerWorkers,machineGroup} from './power-scripts.mjs';
 import {createFleetPowerTools} from './genie-power.mjs';
 import http from 'node:http';import {once} from 'node:events';
@@ -7,7 +8,7 @@ const UUID=()=>crypto.randomUUID();
 const crypto=await import('node:crypto');
 
 test('power script allowlist refuses unknown workers, actions and non-executable paths',()=>{
-  assert.equal(powerScript('glm53f-m3','status'),path.join('/Users/jordiposthumus','startScripts','status-glm53-m3'));
+  assert.equal(powerScript('glm53f-m3','status'),path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..','..','startScripts','status-glm53-m3'));
   assert.equal(powerScript('nope','start'),null);
   assert.equal(powerScript('glm53f-m3','reboot'),null);
   assert.ok(powerWorkers().includes('qwen-image'));

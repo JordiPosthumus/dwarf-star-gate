@@ -2,7 +2,9 @@ import {timingSafeEqual} from 'node:crypto';
 import net from 'node:net';
 
 // Use the TCP peer only. Forwarded headers never grant LAN access.
-export function trustedHomePeer(address,prefix='192.168.100.') {
+// The home LAN prefix is intentionally not a default: it belongs to the
+// private configuration (lan_auth_prefix), never to committed source.
+export function trustedHomePeer(address,prefix=null) {
   const ip=String(address??'').replace(/^::ffff:/i,'');
   return ip==='::1'||(net.isIP(ip)===4&&(ip.startsWith('127.')||(typeof prefix==='string'&&/^(?:\d{1,3}\.){3}$/.test(prefix)&&prefix.slice(0,-1).split('.').every(n=>Number(n)<=255)&&ip.startsWith(prefix))));
 }
