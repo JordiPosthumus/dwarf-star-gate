@@ -32,6 +32,41 @@ async function refresh(){
     failures.replaceChildren(...state.services.map(service=>{
       const p=document.createElement('p');p.textContent=`${service.id}: ${service.status}${service.detail?' — '+service.detail:''}`;return p;
     }));
+
+      renderThinking(state);
+
   }catch(error){message.textContent=error.message;}
 }
+
+let thinkingBusy=false;
+function renderThinking(state){
+  const t=state.genie_thinking;if(!t)return;
+  let box=document.getElementById('genie-thinking-box');
+  if(!box){box=document.createElement('div');box.id='genie-thinking-box';box.className='genie-thinking';box.innerHTML='<h4>Genie thinking</h4><p class="muted" id="genie-thinking-scope"></p>';list.after(box);}
+  const scope=box.querySelector('#genie-thinking-scope');
+  scope.textContent='Applies to the next chat reply and fleet review. Saved in the Star Gate store; survives restarts. Current: chat '+t.chat+', reviewer '+t.reviewer+'.';
+  for(const key of ['chat','reviewer']){
+    const id='genie-thinking-'+key;
+    let row=document.getElementById(id);
+    if(!row){row=document.createElement('div');row.className='capability-row';row.id=id;
+      const label=document.createElement('label');label.textContent=(key==='chat'?'Chat thinking':'Fleet review thinking')+': ';
+      const select=document.createElement('select');
+      for(const level of t.levels??['none','minimal','low','medium','high','xhigh','max']){const o=document.createElement('option');o.value=level;o.textContent=level;select.append(o);}
+      const apply=document.createElement('button');apply.type='button';apply.className='button';apply.textContent='Apply';
+      apply.addEventListener('click',async()=>{
+        if(thinkingBusy)return;thinkingBusy=true;apply.disabled=true;message.textContent='Saving thinking level…';
+        try{
+          const result=await fetch('/api/workers/genie-thinking',{method:'POST',headers:{'content-type':'application/json','x-dsg-csrf':state.csrf_token},body:JSON.stringify({[key]:select.value})});
+          if(!result.ok)throw new Error((await result.json()).error||'Could not save the thinking level.');
+          message.textContent='Genie thinking saved. The next '+(key==='chat'?'chat reply':'fleet review')+' uses '+select.value+'.';
+        }catch(error){message.textContent=error.message;}
+        finally{thinkingBusy=false;apply.disabled=false;await refresh();}
+      });
+      label.append(select,apply);row.append(label);box.append(row);
+    }
+    const select=row.querySelector('select');
+    if(document.activeElement!==select)select.value=t[key];
+  }
+}
+
 void refresh();setInterval(refresh,5000);

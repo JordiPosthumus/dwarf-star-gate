@@ -399,7 +399,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   const mediaSetup=mediaJobs?createMediaSetup(serviceConfig,store,{directory:path.join(path.dirname(config.state_file),'media-setup'),workers:()=>nodes.map(definition),binding:(id,c)=>{const n=nodes.find(n=>n.id===id);return !!n&&recovery.binding(n,c);},isEnabled:()=>!draining&&capabilityStatus().media,isAllowed:mediaHosts.allowed}):null;
   const rebalanceEnabled=()=>capabilityStatus().rebalance;
   const allocationStatus=slot=>slot.turnAllocation?{turns_used:slot.turnAllocation.used,remaining:Math.max(0,conversationTurns()-slot.turnAllocation.used),waiting_for_next_turn:!slot.active&&slot.turnAllocation.until>performance.now(),idle_remaining_ms:Math.max(0,Math.ceil(slot.turnAllocation.until-performance.now()))}:null;
-  const stats = () => ({ version: 1, genie_capabilities:capabilityStatus(), serving_profiles:profiles, conversation_turns:conversationTurns(),conversation_turn_idle_ms:conversationTurnIdleMs, model_routes:routes?Object.fromEntries([...routes].map(([name,workers])=>[name,[...workers]])):null, agent_api_version:1, maintenance_lock_version:1,client_watch_version:1,client_watch:clientWatch.snapshot(), model: config.model, context_length: contextLimit(), queue_timeout_ms:queueTimeoutMs(), request_timeout_ms:config.request_timeout_ms??360000000, direct_reserve:{enabled:directReserveEnabled(),release_ms:directReserveMs(),reserved:nodes.filter(n=>directReserved(n)).map(n=>n.id)}, draining,startup:{...startup}, dataset:dataset.snapshot(), routing_shadow:shadow.snapshot(),recovery:recovery.status(),protections:visionProtection.status(),
+  const stats = () => ({ version: 1, genie_capabilities:capabilityStatus(), genie_thinking:genieThinking(), serving_profiles:profiles, conversation_turns:conversationTurns(),conversation_turn_idle_ms:conversationTurnIdleMs, model_routes:routes?Object.fromEntries([...routes].map(([name,workers])=>[name,[...workers]])):null, agent_api_version:1, maintenance_lock_version:1,client_watch_version:1,client_watch:clientWatch.snapshot(), model: config.model, context_length: contextLimit(), queue_timeout_ms:queueTimeoutMs(), request_timeout_ms:config.request_timeout_ms??360000000, direct_reserve:{enabled:directReserveEnabled(),release_ms:directReserveMs(),reserved:nodes.filter(n=>directReserved(n)).map(n=>n.id)}, draining,startup:{...startup}, dataset:dataset.snapshot(), routing_shadow:shadow.snapshot(),recovery:recovery.status(),protections:visionProtection.status(),
     genie_admission_version:1,genie_flexible_assignment:true,continuity:{schema:1,recent_rejections:rejections.slice(0,20),safe_retry_contract:true,queued_relocation:true,automatic_relocation:true,automatic_relocation_scope:automaticRelocationScope,automatic_affinity_rebalance_min_wait_ms:automaticAffinityWait,patient_wait:true,
       relocation:{completed:relocation.completed,rejected:relocation.rejected,offers:relocationOffers().length,genie_enabled:rebalanceEnabled(),genie_offers:genieRelocationOffers(),diagnostics:relocationDiagnostics(),last:relocation.last},
       waiting:waiting.length,oldest_wait_seconds:waiting.length?Math.max(0,(performance.now()-oldestQueued(waiting).createdMono)/1000):null,
@@ -1294,6 +1294,22 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     log('worker_request_capacity_changed',{node:node.id,before,after:requestCapacity(node),drained:true,engine_settings_changed:false});
     return registry();
   }
+  const THINKING_LEVELS=['none','minimal','low','medium','high','xhigh','max'];
+  const savedThinking=()=>store.data.genie_thinking??{};
+  function setGenieThinking(input){
+    if(shuttingDown||draining)throw new Error('Gateway is draining');
+    if(!input||Array.isArray(input)||!['chat','reviewer'].some(k=>Object.hasOwn(input,k)))throw new Error('Specify genie thinking for chat, reviewer or both');
+    const picked={};
+    for(const key of ['chat','reviewer'])if(Object.hasOwn(input,key)){
+      if(!THINKING_LEVELS.includes(input[key]))throw new Error(`genie thinking ${key} must be one of ${THINKING_LEVELS.join(', ')}`);
+      picked[key]=input[key];
+    }
+    const saved={...(store.data.genie_thinking??{}),...picked};
+    store.save({...store.data,genie_thinking:saved});
+    log('genie_thinking_changed',{...picked,operator_action:'set-genie-thinking'});
+    return saved;
+  }
+  const genieThinking=()=>({chat:savedThinking().chat??config.genie_chat?.reasoning_effort??'xhigh',reviewer:savedThinking().reviewer??config.genie?.reasoning_effort??'high',saved:store.data.genie_thinking??null,levels:THINKING_LEVELS});
   function setQueueTimeout(input){
     if(shuttingDown||draining)throw new Error('Gateway is draining');
     if(!input||Array.isArray(input)||Object.keys(input).sort().join(',')!=='expected_queue_timeout_ms,queue_timeout_ms'||!Number.isSafeInteger(input.queue_timeout_ms)||input.queue_timeout_ms<1)throw new Error('Specify a positive whole queue timeout and expected current value');
@@ -1505,7 +1521,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
       let body='';req.on('data',chunk=>{body+=chunk;if(Buffer.byteLength(body)>2048)req.destroy();});req.on('error',()=>{});
       req.on('end',()=>{void serialize(async()=>{try{const input=JSON.parse(body);return json(res,202,await (req.url==='/genie-media-start'?mediaExecution.start(input):req.url==='/genie-media-setup'?mediaSetup.start(input):mediaSetup.finish(input)));}catch(e){return error(res,409,'media_start_failed',e.message);}});});return;
     }
-    if (req.method !== 'POST' || !['/media-host-eligibility','/drain-workers', '/resume-workers', '/maintenance-lock','/release-maintenance-lock','/maintenance-receipt','/add-worker', '/edit-endpoint', '/check-endpoint', '/remove-worker', '/set-ssh-fallbacks','/set-context-limit','/set-conversation-turns','/set-queue-timeout','/set-protection','/set-job-priority','/set-worker-concurrency','/set-direct-reserve','/relocate-queued','/genie-relocate-queued','/genie-capability','/recovery-policy','/recovery-handback-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/grant-agent','/revoke-agent','/release-agent-hold','/agent/v1/drain','/agent/v1/resume','/agent/v1/receipt'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
+    if (req.method !== 'POST' || !['/set-genie-thinking','/media-host-eligibility','/drain-workers', '/resume-workers', '/maintenance-lock','/release-maintenance-lock','/maintenance-receipt','/add-worker', '/edit-endpoint', '/check-endpoint', '/remove-worker', '/set-ssh-fallbacks','/set-context-limit','/set-conversation-turns','/set-queue-timeout','/set-protection','/set-job-priority','/set-worker-concurrency','/set-direct-reserve','/relocate-queued','/genie-relocate-queued','/genie-capability','/recovery-policy','/recovery-handback-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/grant-agent','/revoke-agent','/release-agent-hold','/agent/v1/drain','/agent/v1/resume','/agent/v1/receipt'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
     let body = '';
     req.on('data', chunk => { body += chunk; if (Buffer.byteLength(body) > 4096) req.destroy(); });
     req.on('error', () => {});
@@ -1542,6 +1558,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
           if (req.url === '/set-context-limit') return json(res,200,await setContextLimit(input));
           if (req.url === '/set-conversation-turns') return json(res,200,setConversationTurns(input));
           if (req.url === '/set-queue-timeout') return json(res,200,setQueueTimeout(input));
+          if (req.url === '/set-genie-thinking') return json(res,200,setGenieThinking(input));
           if (req.url === '/set-protection') return json(res,200,visionProtection.set(input));
           if (req.url === '/set-job-priority') return json(res,200,setJobPriority(input));
           if (req.url === '/relocate-queued') return json(res,200,relocateQueued(input));

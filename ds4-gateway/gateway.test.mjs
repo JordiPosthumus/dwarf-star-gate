@@ -2730,3 +2730,17 @@ test('direct-reserve control persists and engine activity without gate jobs soft
   await workerControl(r.config.control_socket,'/set-direct-reserve',{enabled:false});
   assert.equal((await r.request('{}',null,{path:'/set-direct-reserve'})).status,404);
 });
+test('genie thinking saves to the store, reports effective levels with source and validates strictly',async t=>{
+  const r=await rig(t,1,{control_socket:true,genie_chat:{url:'http://127.0.0.1:1/v1',reasoning_effort:'high'},genie:{url:'http://127.0.0.1:1/v1',model:'x'}});
+  const before=r.gateway.stats().genie_thinking;
+  assert.equal(before.chat,'high');assert.equal(before.reviewer,'high');assert.equal(before.saved,null);
+  await workerControl(r.config.control_socket,'/set-genie-thinking',{chat:'max',reviewer:'xhigh'});
+  const after=r.gateway.stats().genie_thinking;
+  assert.equal(after.chat,'max');assert.equal(after.reviewer,'xhigh');
+  assert.deepEqual(after.saved,{chat:'max',reviewer:'xhigh'});
+  await workerControl(r.config.control_socket,'/set-genie-thinking',{reviewer:'medium'});
+  assert.equal(r.gateway.stats().genie_thinking.reviewer,'medium');
+  assert.equal(r.gateway.stats().genie_thinking.chat,'max','unchanged key persists');
+  await assert.rejects(()=>workerControl(r.config.control_socket,'/set-genie-thinking',{chat:'ultra'}),/must be one of/);
+  await assert.rejects(()=>workerControl(r.config.control_socket,'/set-genie-thinking',{}),/chat, reviewer or both/);
+});

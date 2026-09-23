@@ -24,3 +24,9 @@
 .capability-row label {font-weight:600;cursor:pointer}
 .capability-row input {accent-color:#b9d998;margin-right:8px}
 .capability-row p {grid-column:1/-1;margin:0;font-size:0.9rem}
+
+.genie-thinking{margin-top:12px;border-top:1px solid var(--line);padding-top:10px}
+.genie-thinking h4{margin:0 0 4px;font-size:12px;font-weight:500}
+.genie-thinking .capability-row{display:flex;align-items:center;gap:8px;margin-top:6px}
+.genie-thinking select{padding:2px 6px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--text);font:inherit;font-size:11px}
+.genie-thinking .button{padding:3px 10px;font-size:11px}
