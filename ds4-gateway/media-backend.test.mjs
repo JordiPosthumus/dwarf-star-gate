@@ -3,7 +3,19 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import {once} from 'node:events';
 import {MediaBackend} from './media-backend.mjs';
+import {validateVideoCatalog} from './media-validation.mjs';
 const uuid='00112233-4455-6677-8899-aabbccddeeff';
+test('missing nested image is rejected by native validation with its node error and no replay',async()=>{
+ const payload={prompt:{image:{class_type:'LoadImage',inputs:{image:`stargate/${uuid}.png`}}}};
+ validateVideoCatalog(payload,{LoadImage:{input:{required:{image:[[],{image_upload:true}]}}}});
+ let calls=0;
+ const api=new MediaBackend({kind:'comfyui',url:'http://127.0.0.1:1'},{fetchImpl:async(_url,options)=>{
+  calls++;assert.deepEqual(JSON.parse(options.body).prompt,payload.prompt);
+  return Response.json({error:{message:'Prompt outputs failed validation'},node_errors:{image:{class_type:'LoadImage',errors:[{message:'Custom validation failed for node',details:`image - Invalid image file: stargate/${uuid}.png`}]}}},{status:400});
+ }});
+ await assert.rejects(api.submit(payload,uuid),e=>e.uncertain===false&&/node image \(LoadImage\).*Invalid image file: stargate\//.test(e.message));
+ assert.equal(calls,1);
+});
 test('native workflow rejection exposes model/file validation without claiming acceptance or replaying',async()=>{
  let calls=0;
  const api=new MediaBackend({kind:'comfyui',url:'http://127.0.0.1:1'},{fetchImpl:async()=>{calls++;return Response.json({error:{message:'Prompt outputs failed validation'},node_errors:{'1':{class_type:'UNETLoader',errors:[{message:'Value not in list',details:'unet_name: reference-model.safetensors is not installed'}]}}},{status:400});}});

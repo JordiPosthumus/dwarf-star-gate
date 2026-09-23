@@ -43,6 +43,10 @@ export function validateVideoCatalog(payload,catalog){
         }
       }
       const spec=schema.input?.required?.[key]??schema.input?.optional?.[key],choices=spec?.[0];
+      // Stock LoadImage lists only top-level files; native VALIDATE_INPUTS
+      // resolves subfolders such as our uploaded stargate/<id>.png references.
+      // Leave file existence to ComfyUI without weakening other combo checks.
+      if(node.class_type==='LoadImage'&&key==='image'&&spec?.[1]?.image_upload===true)continue;
       if(typeof value==='string'&&Array.isArray(choices)&&!choices.includes(value))throw Error(`Video node ${id} (${node.class_type}), ${key}: the selected value is not available on this engine. Check its /object_info catalog and installed model/file names; no generation submitted. Requested value: ${value}`);
     }
   }
