@@ -87,9 +87,9 @@
 .device-bar .bar-note.pair{color:var(--accent);border:1px solid var(--line);border-radius:7px;padding:0 5px;line-height:1.6}
 .timeline-pair-note{display:none}
 .device-minicharts{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:7px}
-.mini-chart-block{position:relative;min-width:0}
+.mini-chart-block{position:relative;min-width:0;display:flex;flex-direction:column}
 .mini-chart-block .chart{height:40px;margin:0}
-.mini-chart-block .mini-label{position:absolute;top:0;right:2px;font-size:8px;letter-spacing:.8px;color:var(--muted)}
+.mini-chart-block .mini-label{position:static;align-self:flex-end;font-size:8px;letter-spacing:.8px;color:var(--muted)}
 .mini-chart-block .mini-label.decode{color:var(--accent)}
 .mini-chart-block .mini-label.prefill{color:#78aee8}
 .device-model{font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
@@ -118,5 +118,4 @@
 /* Compact machine cards (2026-09-22 UI round): denser face, small mini charts. */
 .device-live{margin-top:5px}
 .device-minicharts{margin-top:5px;gap:8px}
-.mini-chart-block .chart{height:30px;margin:1px 0 0}
-.mini-label{top:3px}
+.mini-chart-block .chart{height:30px;margin:0}

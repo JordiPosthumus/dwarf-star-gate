@@ -17,23 +17,23 @@ function knownWaiting(gateway,door) {
   return {core,held,total:core+held};
 }
 function thinkingInfo(t) {
-  if (!t) return { label:'Unavailable', detail:'This request predates thinking telemetry, or no request has been observed.' };
-  if (t.status === 'pending') return { label:'Reading request', detail:'Waiting for the request upload to finish.' };
-  if (t.status === 'not_specified' && !t.served) return { label:'Unknown', detail:'Requested: no recognized thinking fields. Serving mode is unavailable.' };
-  if (!['specified','not_specified'].includes(t.status)) return { label:'Unknown', detail:({capture_limit:'Upload exceeded the 8 MiB metadata observation budget. The full request still passes through unchanged.',encoded_body:'Encoded request body; not inspected.',invalid_json:'Request metadata could not be parsed.',incomplete_body:'Request upload did not finish.'})[t.reason] || 'Requested thinking metadata unavailable.' };
+  if (!t) return { label:null, detail:'No thinking metadata observed.' };
+  if (t.status === 'pending') return { label:null, detail:'Waiting for the request upload to finish.' };
+  if (!['specified','not_specified'].includes(t.status)) return { label:null, detail:({capture_limit:'Upload exceeded the 8 MiB metadata observation budget. The full request still passes through unchanged.',encoded_body:'Encoded request body; not inspected.',invalid_json:'Request metadata could not be parsed.',incomplete_body:'Request upload did not finish.'})[t.reason] || 'Requested thinking metadata unavailable.' };
   const detail = Object.entries(t.fields || {}).map(([k,v])=>`${k}=${v}`).join('; ') || 'No thinking controls supplied';
   const requested=['chat_template_kwargs.reasoning_effort','reasoning_effort','reasoning.effort'].map(k=>t.fields?.[k]).find(v=>['none','minimal','low','medium','high','xhigh','max'].includes(v));
   const enabled=t.fields?.['chat_template_kwargs.enable_thinking']??t.fields?.enable_thinking;
-  const requestedLabel=requested?`Requested ${requested.toUpperCase()}`:typeof enabled==='boolean'?`Requested ${enabled?'ON':'OFF'}`:'Unknown';
-  const mode=t.served?.basis==='ds4_request_rules' && ['high','max','none'].includes(t.served.mode) ? t.served.mode : null;
-  return {label:mode==='none'?'OFF':mode?mode.toUpperCase():requestedLabel,detail:`Requested: ${detail}. ${mode?'Serving mode derived from backend request rules and server context; not an engine-reported measurement.':'Effective engine mode is not reported; this is the requested setting only.'}`};
+  const mode=t.served?.basis==='ds4_request_rules' && ['none','minimal','low','medium','high','xhigh','max'].includes(t.served.mode) ? t.served.mode : null;
+  const level=mode??requested??(typeof enabled==='boolean'?(enabled?'on':'off'):null);
+  const shown=level==='none'?'Off':level?level.charAt(0).toUpperCase()+level.slice(1):null;
+  return {label:shown,detail:`Requested: ${detail}. ${mode?'Serving mode derived from backend request rules and server context; not an engine-reported measurement.':'Effective engine mode is not reported; this is the requested setting only.'}`};
 }
 function thinkingIndicator(w, stale, now) {
-  if(w?.load>1){const info=thinkingInfo(w.requested_thinking);return `<div class="requested-thinking" title="Each concurrent request retains its own requested thinking settings; this is the oldest active request's metadata.${esc(' '+info.detail)}"><span class="label">Thinking</span><strong>${esc(info.label)}</strong><span class="thinking-scope">${fmt(w.load)} active</span>${stale?'<span class="thinking-scope">Stale</span>':''}</div>`;}
-  const info = thinkingInfo(w?.load ? w.requested_thinking : w?.last_requested_thinking);
-  const scope = stale ? 'Historical snapshot' : w?.load ? 'Current request' : w?.last_request_finished_at ? `Last request · ${age(Date.parse(w.last_request_finished_at),now)}` : 'No active request';
-  const qualifier=stale?'Stale':!w?.load&&w?.last_request_finished_at?'Last':'';
-  return `<div class="requested-thinking" title="${esc(scope+'. '+info.detail)}"><span class="label">Thinking</span><strong>${esc(info.label)}</strong>${qualifier?`<span class="thinking-scope">${qualifier}</span>`:''}</div>`;
+  const current=thinkingInfo(w?.load?w.requested_thinking:w?.last_requested_thinking);
+  let info=current,qualifier=stale?'Stale':w?.load?'':'Last';
+  if(!current.label){const last=thinkingInfo(w?.last_requested_thinking);if(last.label){info=last;qualifier='Last';}}
+  const scope=stale?'Stale snapshot.':w?.load?'Each concurrent request retains its own requested thinking settings; this is the oldest active request\'s metadata.':w?.last_request_finished_at?`Last request · ${age(Date.parse(w.last_request_finished_at),now)}.`:'No request observed yet.';
+  return `<div class="requested-thinking" title="${esc(scope+' '+info.detail)}"><span class="label">Thinking:</span><strong>${esc(info.label??'—')}</strong>${qualifier?`<span class="thinking-scope">${qualifier}</span>`:''}${w?.load>1?`<span class="thinking-scope">${fmt(w.load)} active</span>`:''}</div>`;
 }
 function rateScales(devices,peaks,now){
   const scales=Object.fromEntries(['prefill','decode'].map(kind=>{
@@ -486,8 +486,9 @@ function workloadMarkup(job,w,now) {
 function nativeMediaMarkup(id,now){
   return (fleetWorkloads.native_engines??[]).filter(row=>row.worker_id===id).map(row=>{
     const fresh=!fleetWorkloadsUnavailable&&Number.isFinite(row.observed_at)&&now>=row.observed_at&&now-row.observed_at<20000;
-    const state=fresh?row.state:'unknown',name=row.engine==='comfyui'?'H3 / ComfyUI':row.engine==='ace-step'?'ACE-Step':'Media';
-    const detail=state==='busy'?`${row.running_count} running · ${row.waiting_count} waiting`:state==='idle'?'Native queue empty':row.reason??'Native status is stale';
+    if(!fresh)return '';
+    const state=row.state,name=row.engine==='comfyui'?'H3 / ComfyUI':row.engine==='ace-step'?'ACE-Step':'Media';
+    const detail=state==='busy'?`${row.running_count} running · ${row.waiting_count} waiting`:'Native queue empty';
     return `<section class="fleet-media"><strong>${esc(name)} · ${esc(state)}</strong><p>${esc(detail)} · ${age(row.observed_at,now)}</p>${state==='busy'&&row.running?`<p>Native jobs: ${[...row.running,...row.waiting].map(esc).join(', ')}</p>`:''}<p class="muted">Includes direct clients. Queue status is not whole-job progress or whole-machine idleness.</p></section>`;
   }).join('');
 }
@@ -512,6 +513,8 @@ function device(d, w, now, stale, index = 1, scales={}, controls=false) {
       return `<div class="metric-block ${live?'':'metric-stale'}"><span class="label">${title}</span><div class="rate ${kind}">${fmtWhole(rate)}<em>t/s</em></div><div class="metric-scope"><span>${label}</span>${chunk}</div>${chart(endpoint.series,kind,now)}<div class="chart-caption">15m · 20s avg · ${kind==='prefill'?(endpoint.source==='omlx'?'chunk speed':'completed-request prefill speed'):'live rates'}</div></div>`;
     }
 
+    const noSamples=endpoint?!Number.isFinite(endpoint[kind+'_tps'])&&!(endpoint.series??[]).some(s=>s.kind===kind):!Number.isFinite(d[kind]?.tps)&&!(d.series??[]).some(s=>s.kind===kind);
+    if(noSamples)return `<div class="metric-block metric-stale"><span class="label">${title}</span><p class="muted">No engine measurements yet.</p></div>`;
     const m = d[kind];
     const staleMetric=stale||!Number.isFinite(m?.time)||now-m.time>60000;
     const explanation=kind==='decode'?'Generation speed reported by the engine, including thinking and answer tokens.':'Prompt-processing speed reported by the engine.';
@@ -526,13 +529,14 @@ function device(d, w, now, stale, index = 1, scales={}, controls=false) {
   const activityDuration=workload?`<span class="remaining-estimate">${esc(workload.engine)}</span>`:duration;
   const phaseRedundant=!!workload||['unavailable','paused'].includes(state)||nativeActive;
   const llmReadings=`${thinkingIndicator(w,stale,now)}<div class="metrics">${metric('decode','DECODE')}${metric('prefill','PREFILL')}</div>${metricsInfo}`;
+  const offlineReadings=`<p class="muted">No LLM telemetry is available for this server right now${w?.is_healthy===false?' because Star Gate cannot reach its endpoint':''}. Hardware agents, media engines and power scripts are shown independently of LLM state.</p>`;
   const performance=performanceLightsMarkup(d,now,stale||!!workload||nativeActive||!(d.performance_history?.workers?.[d.id]?.active??w?.load));
   const unavailableLlm=!stale&&w&&!w.is_healthy&&!workload;
   const historicalLlm=unavailableLlm||nativeActive;
   const mediaWarning=fleetWorkloadsUnavailable?'<p class="fleet-media-warning">Media status unavailable; this machine’s workload cannot currently be confirmed.</p>':'';
   // Compact face: status dot + name + state word, one live line, conditional chips.
   const dotLevel={ok:'ok',busy:'busy',warn:'warn',bad:'bad',paused:'paused',unknown:'unknown'}[verdict.level]??'unknown';
-  const thinkingLevel=(()=>{const info=thinkingInfo(w?.load?w.requested_thinking:w?.last_requested_thinking);return info.label&&!['Unknown','Unavailable','OFF'].includes(info.label)?info.label.toLowerCase():null;})();
+  const thinkingLevel=(()=>{const info=thinkingInfo(w?.load?w.requested_thinking:w?.last_requested_thinking);return info.label&&info.label!=='—'?info.label.toLowerCase():null;})();
   const stateWord=!stale&&w?.quarantine?'quarantined':w?.direct_reserved===true?'direct use':state==='mixed'?'prefill + generation':state==='decode'?(d.endpoint_metrics?'gen':'answering'):state==='thinking'?`thinking${thinkingLevel?` · ${thinkingLevel}`:''}`:state;
   const liveRates=(()=>{
     const e=d.endpoint_metrics;
@@ -572,17 +576,17 @@ function device(d, w, now, stale, index = 1, scales={}, controls=false) {
     const svg=e?chart(e.series,kind,now):chart(d.series,kind,now,scales[kind]);
     const rate=e?(kind==='decode'?e.decode_tps:e.prefill_tps):d[kind]?.tps;
     const staleNote=e?'':(stale||!Number.isFinite(d[kind]?.time)||now-d[kind]?.time>60000?' · stale':'');
-    return `<div class="mini-chart-block" title="${kind==='decode'?'Decode':'Prefill'} · last 15 minutes, 20-second rolling average${Number.isFinite(rate)?` · session average ${fmtWhole(rate)} t/s`:''}${staleNote}. Full block with methodology in Details.">${svg}<span class="mini-label ${kind}">${kind==='decode'?'DEC':'PRE'}</span></div>`;
+    return `<div class="mini-chart-block" title="${kind==='decode'?'Decode':'Prefill'} · last 15 minutes, 20-second rolling average${Number.isFinite(rate)?` · session average ${fmtWhole(rate)} t/s`:''}${staleNote}. Full block with methodology in Details."><span class="mini-label ${kind}">${kind==='decode'?'DEC':'PRE'}</span>${svg}</div>`;
   };
   const miniCharts=`<div class="device-minicharts">${miniChart('decode')}${miniChart('prefill')}</div>`;
   const detailBody=`<div class="metrics">${metric('decode','DECODE')}${metric('prefill','PREFILL')}</div>${metricsInfo}${hardwareMarkup(d.hardware,now)}${performance}`;
-  const detailOpen=workload||historicalLlm;
-  const details=`<details class="device-details"${detailOpen?' open':''}><summary>Details</summary>${workload?workloadMarkup(workload,w,now):''}${unavailableLlm?'<p class="muted">LLM endpoint unavailable. Other work on this machine is not confirmed by this view.</p>':''}${detailOpen?llmReadings:detailBody}</details>`;
+  const detailOpen=!!workload;
+  const details=`<details class="device-details"${detailOpen?' open':''}><summary>Details</summary>${workload?workloadMarkup(workload,w,now):''}${unavailableLlm?offlineReadings:''}${historicalLlm&&!unavailableLlm?llmReadings:detailOpen?llmReadings:detailBody}</details>`;
   const powerInfo=controls&&fleetPower?.enabled?fleetPower.members?.find(m=>m.worker_id===d.id):null;
   const latestReceipt=fleetPower?.recent?.find(r=>r.worker===d.id);
   const powerLabel=state=>({ready:'ready ✓',stopped:'stopped ✓',timeout:'timeout — unproven',failed:'failed ✗'}[state]??'');
   const powerLine=fleetPowerBusy.has(d.id)?'working…':latestReceipt?`${latestReceipt.action} · ${latestReceipt.verified&&latestReceipt.verified.state!=='unverified'?powerLabel(latestReceipt.verified.state):latestReceipt.ok?'ok':`exit ${latestReceipt.exit_code?? '?'}`} · ${new Date(latestReceipt.finished_at).toLocaleTimeString()}`:powerInfo?.busy?'working…':'';
-  const offline=!metricsFresh&&!workload&&!nativeActive;
+  const offline=!workload&&!nativeActive&&(!endpoint||endpoint.connected!==true);
   const compactBar=offline?'':bar,compactCharts=offline?'':miniCharts;
   const powerTitles={status:'Run the enrolled status script for this model.',start:'Start this model through its enrolled script. Readiness is verified against the endpoint before reporting Started.',stop:'Stop this model through its enrolled script. Refuses when gateway or direct work is active, when a same-hardware model still holds work, or when this is the last healthy LLM. Stopping a Spark pair stops both machines of that pair.'};
   const powerStrip=powerInfo?`<div class="device-power">${['status','start','stop'].map(a=>`<button type="button" class="power-button" data-power-action="${a}" data-power-worker="${esc(d.id)}"${fleetPowerBusy.has(d.id)||powerInfo.busy?' disabled':''} title="${esc(powerTitles[a])}">${{status:'Status',start:'Start',stop:'Stop'}[a]}</button>`).join('')}<span class="power-status" title="${esc(latestReceipt?.output??'')}">${esc(powerLine)}</span></div>`:'';
