@@ -436,6 +436,14 @@ unsupported H3 reference indices before generation is submitted. These checks
 need a running engine; they are not all pre-allocation checks. Valid raw graphs
 are not rewritten, and generation settings are not reduced automatically.
 
+The stock `LoadImage.image` upload dropdown is not an authoritative file list:
+ComfyUI lists top-level input files there, while its native validator accepts
+subfolders. Star Gate therefore leaves this field's file validation to native
+`POST /prompt`, including uploaded `stargate/...` references. Missing or invalid
+files still receive the native node error; upload association and transfer checks
+remain in place. Other combo values, including model filenames, remain checked
+against the live catalog.
+
 ACE-Step HTTP validation errors retain the field location and reason. Native
 failed-task messages are shown rather than a generic generation failure. An
 unreadable reply or a cache timeout that still contains a running task remains
