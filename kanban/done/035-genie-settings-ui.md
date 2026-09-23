@@ -4,7 +4,9 @@ Owner request, 2026-09-22: Genie should run on "max" thinking for the GLM model,
 and Genie settings should be configurable from the dashboard UI instead of
 config files.
 
-## Applied immediately (owner-requested, recorded here)
+## LANDED 2026-09-22 ~21:50 (see commits)
+
+Applied immediately (owner-requested, recorded here):
 
 - `genie_chat.reasoning_effort`: high → **max** (Genie chat via Hermes).
 - `config.genie.reasoning_effort: "max"` and `config.genie.fallback.reasoning_effort:
@@ -18,18 +20,31 @@ config files.
 
 ## UI work: Genie Settings section (Settings tab)
 
-- [ ] Store-backed Genie thinking level (chat + reviewer) following the
+- [x] Store-backed Genie thinking level (chat + reviewer) following the
       established pattern (queue_timeout_ms / conversation_turns): saved value
       in the gateway store, config value as fallback, default shown honestly.
       Control route + management action + CSRF, like the other settings.
-- [ ] Settings tab section "Genie": thinking level selector (none … max) with
+- [x] Settings section "Genie" (inside the Genie capabilities panel): thinking level selector (none … max) with
       current value and source (saved/config/default); applies to the next chat
       turn / review without editing files; survives restart.
-- [ ] Surface the existing per-capability switches in the same section if not
+- [x] Surface the existing per-capability switches (the panel IS the capability surface; thinking sits beside it) in the same section if not
       already visible there (fleet_power, server_changes, rebalance, recovery,
       media, spark_setup, hourglass) so Genie behavior is configured in one place.
-- [ ] Tests: store persistence round-trip, restart survival, control validation
+- [x] Tests: store persistence round-trip, restart survival, control validation
       (bad levels rejected), UI renders current value.
 
 Done: an owner can set Genie thinking to max (or any level) from the dashboard,
 and the running Genie picks it up on the next turn/review.
+
+Landed:
+- `/set-genie-thinking` control route: validates the 7-level set, saves to the
+  gateway store (`genie_thinking`), logs the change; stats() reports effective
+  chat/reviewer levels with the saved source as fallback to config defaults.
+- Dashboard applies the saved value live: the Hermes chat provider config and
+  the fleet reviewer endpoints (dedicated + fallback) are mutated in place, so
+  the next chat reply / review uses the new level without a restart; the same
+  apply runs from the first gateway poll at startup (survives restarts).
+- UI: "Genie thinking" block in the Genie capabilities panel — chat and fleet
+  review selectors + Apply, current effective values and scope shown, changes
+  confirmed honestly ('the next reply/review uses …').
+- Suite 1106 pass / 0 fail (197 gateway tests).
