@@ -4,6 +4,7 @@
 // endpoint readiness/shutdown instead of trusting script exits. The gate execs;
 // it never parses model configuration out of scripts.
 import fs from 'node:fs';
+import {MACHINE_GROUPS as fleetMachineGroups,machineGroup as sharedMachineGroup} from './fleet-machines.mjs';
 import net from 'node:net';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -27,16 +28,13 @@ const SCRIPTS={
 };
 // Physical machines: mutations on one model sharing hardware must serialize
 // against every other model on the same machine or Spark pair.
-const MACHINE_GROUPS={
-  'glm53f-m3':['m3-ultra'],'ds41-m3':['m3-ultra'],'mimo-m3':['m3-ultra'],'qwen-image':['m3-ultra'],
-  'glm53f-sparks12':['spark1','spark2'],'ds41-sparks12':['spark1','spark2'],
-  'glm53f-sparks34':['spark3','spark4'],'ds41-sparks34':['spark3','spark4'],
-};
+const MACHINE_GROUPS=fleetMachineGroups;
+export const machineGroup=sharedMachineGroup;
 const WORKERS=Object.keys(SCRIPTS);
 const ACTIONS=new Set(['status','start','stop']);
 
 export const powerWorkers=()=>WORKERS;
-export const machineGroup=worker=>MACHINE_GROUPS[worker]??null;
+
 
 export function powerScript(worker,action){
   if(!WORKERS.includes(worker)||!ACTIONS.has(action))return null;

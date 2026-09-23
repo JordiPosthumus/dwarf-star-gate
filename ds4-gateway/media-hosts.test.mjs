@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import http from 'node:http';
-import {createMediaHosts} from './media-hosts.mjs';
+import {createMediaHosts,mediaEngines} from './media-hosts.mjs';
 import {createDashboard,proxyMediaFile} from './dashboard.mjs';
 
 test('placement defaults preserve installed engines; choices persist without granting installation',t=>{
@@ -44,4 +44,29 @@ test('LLM routing pause permits explicitly enabled media; maintenance and unavai
  const state=()=>policy.status().hosts[0];assert.equal(state().llm_serving,false);assert.equal(state().engines.find(e=>e.kind==='video').ready,true);assert.match(state().engines.find(e=>e.kind==='video').reason,/LLM routing paused/);
  target.maintenance_locks=[{id:'other'}];assert.equal(state().engines.find(e=>e.kind==='video').ready,false);
  target.maintenance_locks=[];target.is_healthy=false;assert.equal(state().engines.find(e=>e.kind==='video').ready,false);
+});
+
+test('media placement is machine-level: borrowing a pair requires a serving LLM on separate machines',t=>{
+ const folder=fs.mkdtempSync(path.join(os.tmpdir(),'sg-media-hosts-'));t.after(()=>fs.rmSync(folder,{recursive:true,force:true}));
+ const store={filename:path.join(folder,'state.json'),data:{},save(value){fs.writeFileSync(this.filename,JSON.stringify(value));this.data=value;}};store.save(store.data);
+ const config={media_jobs:{workers:{'mimo-m3':{engines:{video:{}}},'glm53f-sparks34':{engines:{video:{}}}}},recovery:{workers:[{id:'mimo-m3',adapter:'docker',verification:'qwen_vllm'},{id:'glm53f-sparks34',adapter:'docker',verification:'qwen_vllm'}]},genie_chat:{inspection:{workers:{'mimo-m3':{container:'llm'},'glm53f-sparks34':{container:'llm'}}}}};
+ // The only serving LLM sits on the SAME machines as the borrow target
+ // (m3-ultra): machine-level eligibility must refuse.
+ const workers=()=>[{id:'mimo-m3',is_healthy:true,drained:true,operator_paused:true},{id:'glm53f-m3',is_healthy:true}];
+ const policy=createMediaHosts(config,store,{workers,binding:()=>true});
+ const pair=policy.status().hosts.find(h=>h.id==='mimo-m3');
+ assert.deepEqual(pair.machines,['m3-ultra']);assert.equal(pair.pair,false);
+ const engine=pair.engines.find(e=>e.kind==='video');
+ assert.equal(engine.ready,false);assert.match(engine.reason,/separate machines/);
+ // With the other Spark pair serving, the borrow is ready.
+ const workers2=()=>[{id:'glm53f-sparks34',is_healthy:true,drained:true,operator_paused:true},{id:'glm53f-sparks12',is_healthy:true},{id:'glm53f-m3',is_healthy:false}];
+ const policy2=createMediaHosts(config,store,{workers:workers2,binding:()=>true});
+ const pair2=policy2.status().hosts.find(h=>h.id==='glm53f-sparks34');
+ assert.equal(pair2.engines.find(e=>e.kind==='video').ready,true);
+});
+
+test('engine registry carries complete kinds and planned engines stay honestly unavailable',()=>{
+ assert.deepEqual(mediaEngines.find(e=>e.id==='minimax-m3').kind,'video');
+ const qwen=mediaEngines.find(e=>e.id==='qwen-image');
+ assert.equal(qwen.kind,'image');assert.equal(qwen.supported,false);
 });

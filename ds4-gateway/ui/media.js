@@ -17,7 +17,7 @@ function render(){
   if(!engine.supported)$('media-hosts').replaceChildren(el('p',`${engine.label} is planned. No verified setup or execution adapter is connected yet.`,'muted'));
   else $('media-hosts').replaceChildren(...(state.hosts?.length?state.hosts.map(host=>{
     const choice=host.engines.find(e=>e.id===engine.id),card=el('article',undefined,'media-host-card');
-    card.append(el('h3',host.id));
+    card.append(el('h3',host.machines&&host.machines.length>1?`${host.machines.join(' + ')} (${host.id})`:host.id));
     const label=el('label'),toggle=el('input');toggle.type='checkbox';toggle.checked=choice.allowed;toggle.disabled=!state.controls_enabled||state.media_host_controls_version!==1;toggle.setAttribute('role','switch');toggle.setAttribute('aria-label',`Allow ${engine.label} on ${host.id}`);label.append(toggle,document.createTextNode(` Allow ${engine.label} here`));card.append(label);
     const maintenance=host.maintenance?.filter(Boolean)??[],holds=host.holds?.filter(Boolean)??[];
     const current=host.execution?`${engineNames[state.jobs?.find(j=>j.id===host.execution.job_id)?.kind]??'Media job'} · ${host.execution.phase.replaceAll('_',' ')}`:maintenance.length?`Maintenance · ${maintenance.join(', ')}`:holds.length?`Held · ${holds.join(', ')}`:host.quarantined?'LLM quarantined':host.paused?'LLM paused':host.llm_serving?`Serving LLM${host.llm_model?' · '+host.llm_model:''}`:'LLM unavailable';

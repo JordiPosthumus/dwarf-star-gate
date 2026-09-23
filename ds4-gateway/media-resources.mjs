@@ -1,10 +1,13 @@
 import fs from 'node:fs';
 import {execFile} from 'node:child_process';
 import {createHash} from 'node:crypto';
+import {mediaEngines} from './media-hosts.mjs';
 
 const collector=fs.readFileSync(new URL('./media_resources.py',import.meta.url),'utf8');
 const quote=value=>"'"+value.replaceAll("'","'\\''")+"'";
-export const mediaRecipeResources=['h3','ace-step'].map(engine=>{
+// Registry-driven: every supported engine with a shipped recipe manifest is
+// described; engines without a manifest are honestly absent.
+export const mediaRecipeResources=mediaEngines.filter(e=>e.supported&&fs.existsSync(new URL(`../examples/spark-build/${e.id}/models.json`,import.meta.url))).map(({id:engine})=>{
   const bytes=fs.readFileSync(new URL(`../examples/spark-build/${engine}/models.json`,import.meta.url)),manifest=JSON.parse(bytes);
   return {engine,model_bytes_required:manifest.files.reduce((n,f)=>n+f.bytes,0),model_files_required:manifest.files.length,manifest_sha256:createHash('sha256').update(bytes).digest('hex'),platform:'Linux ARM64 with NVIDIA GB10',installed_model_inventory_checked:false,scope:'Files required by this recipe, not an inventory of installed files or a RAM estimate; not all files necessarily load together. Images, build caches and generated outputs require additional disk. Runtime memory fit requires native qualification of the selected engine and job.'};
 });
