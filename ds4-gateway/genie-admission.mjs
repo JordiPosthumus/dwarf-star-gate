@@ -44,7 +44,7 @@ function contextFromModel(model) {
   return null;
 }
 
-export function createAdmissionTools({config, control, read, readDoor = null, probe = null, spawnPark = null, spawnStart = null, isTesting = () => false, isEnabled = () => true, now = Date.now, checkRunner = runServingCheck} = {}) {
+export function createAdmissionTools({config, control, read, readDoor = null, probe = null, spawnPark = null, spawnStart = null, isTesting = () => false, isEnabled = () => true, now = Date.now, checkRunner = runServingCheck, resolveNativeWorker = null} = {}) {
   if (typeof control !== 'function' || typeof read !== 'function') throw new Error('Admission tools need a control-socket caller and a gateway status reader.');
   if (readDoor !== null && typeof readDoor !== 'function') throw new Error('readDoor must be a function when provided');
   if (spawnPark !== null && typeof spawnPark !== 'function') throw new Error('spawnPark must be a function when provided');
@@ -84,10 +84,16 @@ export function createAdmissionTools({config, control, read, readDoor = null, pr
     if(state.busy||[...checks.values()].some(row=>row.worker===input.worker&&row.state==='running'))throw Error('A serving check or admission stage is already running; read its status.');
     const registry=await read(),worker=registry.workers?.find(w=>w.id===input.worker);
     if(!worker||!worker.is_healthy||worker.direct_reserved)throw Error('Use a healthy registered worker that is not reserved for direct work.');
+    let servingWorker=worker;
+    if(input.check!=='gateway'&&resolveNativeWorker){
+      const native=await resolveNativeWorker(worker.id);
+      if(native?.id!==worker.id||native.url!==worker.url)throw Error('Native endpoint identity changed; no diagnostic request was sent');
+      servingWorker={...worker,api_key_file:native.api_key_file};
+    }
     if(checks.has(input.action_id))return verifyWorker(input);
     if([...checks.values()].some(row=>row.worker===input.worker&&row.state==='running'))throw Error('Another serving check started on this worker; read its status.');
     const row={action_id:input.action_id,worker:worker.id,check:input.check,state:'running',started_at:new Date(now()).toISOString(),samples:[]};checks.set(input.action_id,row);saveCheck(row);
-    void checkRunner({worker,check:input.check,config,registry,readDoor,now,onSample:sample=>{row.samples.push(sample);saveCheck(row);}}).then(result=>Object.assign(row,result)).catch(error=>Object.assign(row,{state:'failed',error:error.message})).finally(()=>{row.finished_at=new Date(now()).toISOString();try{saveCheck(row);}catch{row.persistence_error='Could not save the completed receipt; this dashboard still has the observation.';}});
+    void checkRunner({worker:servingWorker,check:input.check,config,registry,readDoor,now,onSample:sample=>{row.samples.push(sample);saveCheck(row);}}).then(result=>Object.assign(row,result)).catch(error=>Object.assign(row,{state:'failed',error:error.message})).finally(()=>{row.finished_at=new Date(now()).toISOString();try{saveCheck(row);}catch{row.persistence_error='Could not save the completed receipt; this dashboard still has the observation.';}});
     return row;
   }
   const sameEndpoint = (worker, endpoint) => {

@@ -155,3 +155,15 @@ test('existing-worker checks run asynchronously, persist observations and never 
  release();await new Promise(r=>setImmediate(r));assert.equal((await tools.tool(input)).state,'passed');assert.equal((await tools.tool({action:'status'})).busy,false);
  const reloaded=createAdmissionTools(options);assert.equal((await reloaded.tool(input)).state,'passed');assert.equal(calls,1);
 });
+
+test('native checks resolve private credentials without exposing them and reject endpoint drift',async()=>{
+ let observed;
+ const worker={id:'fixture-worker',url:'http://127.0.0.1:34567/v1',served_model:'fixture',is_healthy:true};
+ const base={config:{port:30000},control:async()=>({}),read:async()=>({workers:[worker]}),checkRunner:async args=>{observed=args.worker;return {state:'passed'};}};
+ const tools=createAdmissionTools({...base,resolveNativeWorker:async()=>({...worker,api_key_file:'/private/fixture-key'})});
+ await tools.tool({action:'verify-worker',worker:worker.id,check:'cache',action_id:ACTION_ID});
+ await new Promise(r=>setImmediate(r));
+ assert.equal(observed.api_key_file,'/private/fixture-key');assert.ok(!JSON.stringify(await tools.tool({action:'status'})).includes('/private/fixture-key'));
+ const drift=createAdmissionTools({...base,resolveNativeWorker:async()=>({...worker,url:'http://different.invalid/v1',api_key_file:'/private/fixture-key'})});
+ await assert.rejects(drift.tool({action:'verify-worker',worker:worker.id,check:'cache',action_id:ACTION_ID}),/identity changed/);
+});
