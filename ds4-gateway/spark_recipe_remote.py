@@ -139,9 +139,10 @@ class Remote:
         # setting is changed. Preserve the upstream Dockerfile and record delta.
         dockerfile=self.candidate/'Dockerfile'
         original_dockerfile=dockerfile.read_text()
-        if original_dockerfile.count('MAX_JOBS=8')!=1:raise RuntimeError('Unexpected upstream build parallelism; inspect before building')
+        compile_assignment='TORCH_CUDA_ARCH_LIST=12.1a MAX_JOBS=8'
+        if original_dockerfile.count(compile_assignment)!=1:raise RuntimeError('Unexpected upstream build parallelism; inspect before building')
         (self.root/'upstream-Dockerfile').write_text(original_dockerfile)
-        dockerfile.write_text(original_dockerfile.replace('MAX_JOBS=8','MAX_JOBS=1'))
+        dockerfile.write_text(original_dockerfile.replace(compile_assignment,'TORCH_CUDA_ARCH_LIST=12.1a MAX_JOBS=1'))
         files=[dockerfile]
         for folder in ['overlay','files','tests','ablit']:
             for file in (self.candidate/folder).rglob('*'):
