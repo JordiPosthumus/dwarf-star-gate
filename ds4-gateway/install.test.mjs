@@ -143,8 +143,9 @@ test('doctor exposes durable worker and recovery-route drift without leaking rou
 
 
 test('dashboard reload refuses active or queued Genie work and unreadable activity',async()=>{
- for(const conversation of [{busy:true,queued:0},{busy:false,queued:1}])await assert.rejects(assertDashboardIdle({},{fetchImpl:async url=>Response.json(url.endsWith('/chat')?{conversations:[conversation]}:{busy:false})}),/active or queued/);
+ for(const conversation of [{busy:true,queued:0},{busy:false,queued:1}])await assert.rejects(assertDashboardIdle({},{fetchImpl:async url=>Response.json(url.endsWith('/power')?{members:[]}:url.endsWith('/chat')?{conversations:[conversation]}:{busy:false})}),/active or queued/);
  await assert.rejects(assertDashboardIdle({},{fetchImpl:async()=>new Response('',{status:503})}),/unavailable/);
- await assertDashboardIdle({},{fetchImpl:async url=>Response.json(url.endsWith('/chat')?{conversations:[{busy:false,queued:0}]}:{busy:false})});
- await assert.rejects(assertDashboardIdle({},{fetchImpl:async url=>Response.json(url.endsWith('/chat')?{conversations:[]}:{busy:true})}),/active or queued/);
+ await assertDashboardIdle({},{fetchImpl:async url=>Response.json(url.endsWith('/power')?{members:[]}:url.endsWith('/chat')?{conversations:[{busy:false,queued:0}]}:{busy:false})});
+ await assert.rejects(assertDashboardIdle({},{fetchImpl:async url=>Response.json(url.endsWith('/power')?{members:[{busy:true}]}:url.endsWith('/chat')?{conversations:[]}:{busy:false})}),/Fleet power activity/);
+ await assert.rejects(assertDashboardIdle({},{fetchImpl:async url=>Response.json(url.endsWith('/power')?{members:[]}:url.endsWith('/chat')?{conversations:[]}:{busy:true})}),/active or queued/);
 });

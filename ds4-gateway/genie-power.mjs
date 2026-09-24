@@ -12,7 +12,7 @@ export function fleetPowerEvidence({runner,workers=[],now=Date.now,catalogue=nul
   const members=powerWorkers().map(id=>{
     const w=byId.get(id);
     return {worker_id:id,machine:machineGroup(id),enrolled:true,busy:runner.busy(id),
-      script_available:Object.fromEntries(['status','start','stop'].map(a=>[a,!!powerScript(id,a)])),
+      script_available:Object.fromEntries(['status','start','stop'].map(a=>[a,!!(runner.script??powerScript)(id,a)])),
       ...(w?{
         routing:{is_healthy:w.is_healthy===true,drained:w.drained===true,load:w.load??0,queued:w.queued??0,
           direct_reserved:w.direct_reserved===true,quarantined:!!w.quarantine},
@@ -32,6 +32,7 @@ export function createFleetPowerTools({runner,read,isTesting=()=>false,isEnabled
   if(!runner||typeof read!=='function')throw new Error('Fleet power tools need a script runner and gateway status reader.');
   if(directRunning!==null&&typeof directRunning!=='function')throw new Error('directRunning must be a function when provided');
   if(catalogue!==null&&typeof catalogue!=='function')throw new Error('catalogue must be a function when provided');
+  const requests=new Map();
   async function snapshotWorkers(){
     const value=await read();
     if(value?.version!==1||!Array.isArray(value.workers))throw new Error('Gateway worker registry is unavailable.');
@@ -46,16 +47,23 @@ export function createFleetPowerTools({runner,read,isTesting=()=>false,isEnabled
     const refusals=[];
     if(power_action==='stop'){
       const groups=machineGroup(worker)??[];
+      if(current.is_healthy&&!current.drained)refusals.push('Drain the worker before stopping so new gateway work cannot be admitted.');
       if((current.load??0)>0||current.queued>0)refusals.push('Worker is serving or holds queued gateway work. Drain it first (drain-workers), let admitted work finish, then stop.');
       if(current.direct_reserved===true)refusals.push('The endpoint is in active direct owner use right now; stopping would interrupt it.');
       if(typeof directRunning==='function'){
         const running=await directRunning(worker);
+        if(!Number.isFinite(running)&&current.is_healthy)refusals.push('Native activity is unknown; obtain a fresh idle observation before stopping.');
         if(Number.isFinite(running)&&running>0)refusals.push(`The engine reports ${running} running request(s) outside gateway accounting; treat them as active work, not idle.`);
       }
-      const busyMates=workers.filter(w=>w.id!==worker&&(machineGroup(w.id)??[]).some(group=>groups.includes(group))&&((w.load??0)>0||w.queued>0));
+      const mates=workers.filter(w=>w.id!==worker&&(machineGroup(w.id)??[]).some(group=>groups.includes(group)));
+      const busyMates=mates.filter(w=>(w.load??0)>0||w.queued>0||w.direct_reserved===true||(w.is_healthy&&!w.drained));
       if(busyMates.length)refusals.push(`Same-hardware model(s) ${busyMates.map(w=>w.id).join(', ')} still hold gateway work; stopping this model stops the shared machine(s).`);
-      const healthy=workers.filter(w=>w.is_healthy&&!w.drained);
-      if(healthy.length<=1&&current.is_healthy)refusals.push('This is the last healthy worker. Stopping it leaves no LLM; arrange a replacement first.');
+      for(const mate of mates.filter(w=>w.is_healthy))if(directRunning){
+        const n=await directRunning(mate.id);
+        if(!Number.isFinite(n)||n>0)refusals.push(`Same-hardware model ${mate.id} has active or unknown native work.`);
+      }
+      const healthy=workers.filter(w=>w.is_healthy&&!w.drained&&!(machineGroup(w.id)??[]).some(group=>groups.includes(group)));
+      if(!healthy.length)refusals.push('This hardware contains the last healthy worker. Stopping it leaves no LLM; arrange a replacement first.');
     }
     return {allowed:refusals.length===0,refusals,worker,power_action,
       machine:machineGroup(worker),
@@ -66,25 +74,34 @@ export function createFleetPowerTools({runner,read,isTesting=()=>false,isEnabled
       const cat=catalogue?await catalogue().catch(e=>({unavailable:e.message})):null;
       return fleetPowerEvidence({runner,workers:await snapshotWorkers(),catalogue:cat});
     }
-    if(input?.action!=='power'||Object.keys(input).sort().join(',')!=='action,action_id,power_action,worker')
+    const keys=Object.keys(input??{}).sort().join(',');
+    if(input?.action!=='power'||!['action,action_id,power_action,worker','action,action_id,mode,power_action,worker'].includes(keys)||('mode' in input&&input.mode!=='check'))
       throw new Error('Specify worker, power_action and one action ID.');
     const {worker,power_action,action_id}=input;
     if(!/^[a-f0-9-]{36}$/.test(action_id??''))throw new Error('Provide one action ID for this power request.');
     if(!['start','stop','status'].includes(power_action))throw new Error('power_action must be start, stop or status.');
-    if(isTesting())throw new Error('Fleet power is suspended for testing.');
-    if(!isEnabled())throw new Error('Fleet power is switched off.');
-    if(!powerScript(worker,power_action))throw new Error(`No enrolled script for ${worker} ${power_action}; scripts remain the source of truth.`);
+    if(!(runner.script??powerScript)(worker,power_action))throw new Error(`No enrolled script for ${worker} ${power_action}; scripts remain the source of truth.`);
+    const prior=requests.get(action_id);
+    if(prior){
+      if(prior.worker!==worker||prior.power_action!==power_action)throw new Error('Action ID already belongs to a different request.');
+      return prior.result??{accepted:true,action_id,worker,power_action,state:'running',next_step:'Read fleet_power_status for this action ID. Do not repeat the mutation.'};
+    }
+    if(power_action!=='status'){
+      if(isTesting())throw new Error('Fleet power is suspended for testing.');
+      if(!isEnabled())throw new Error('Fleet power is switched off.');
+    }
     if(power_action==='status'){
       if(input.mode==='check')return {allowed:true,action_id,worker,power_action,machine:machineGroup(worker),scope:'Read-only status script.'};
-      const receipt=await runner.run(worker,'status');
+      const receipt=await runner.run(worker,'status',{actionId:action_id});
       return {receipt,action_id,next_step:'Script output is in the receipt; it describes serving engine and containers, not gateway routing.'};
     }
     const pre=await precheck(worker,power_action);
     if(!pre.allowed)throw new Error(pre.refusals.join(' '));
     if(input.mode==='check')return {allowed:true,action_id,worker,power_action,machine:pre.machine,scope:pre.scope,
       note:'Preflight only. The mutation runs through the same runner as Genie and reports real endpoint verification.'};
-    const receipt=await runner.run(worker,power_action);
-    return {receipt,action_id,
+    if(requests.has(action_id))return tool(input);
+    const request={worker,power_action};requests.set(action_id,request);
+    void runner.run(worker,power_action,{actionId:action_id}).then(receipt=>{request.result={receipt,action_id,
       next_step:power_action==='stop'
         ?receipt.verified?.state==='stopped'
           ?'Verified stopped: the endpoint no longer accepts connections. Gateway routing will mark it unavailable on its next probes.'
@@ -92,6 +109,8 @@ export function createFleetPowerTools({runner,read,isTesting=()=>false,isEnabled
         :receipt.verified?.state==='ready'
           ?'Verified ready: the endpoint answers model-list requests. Routing needs the gateway probes to mark it healthy.'
           :'Start receipt recorded but readiness is NOT verified (possibly still loading). Poll Status; do not route expectations yet.'};
+    }).catch(error=>{request.result={action_id,worker,power_action,error:error.message,state:'unverified'};});
+    return {accepted:true,action_id,worker,power_action,state:'running',next_step:'Read fleet_power_status for this action ID. Accepted means the operation is running, not verified complete.'};
   }
   const endpoint=createToolEndpoint('/api/genie/power-tools','x-sg-power-tool',tool);
   return {...endpoint,precheck:(worker,power_action)=>precheck(worker,power_action),tool};

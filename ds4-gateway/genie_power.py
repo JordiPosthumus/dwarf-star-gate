@@ -22,7 +22,7 @@ def register_power(config,emit):
         try:
             payload={'action':'status'} if name=='fleet_power_status' else {'action':'power','worker':args['worker'],'power_action':args['power_action'],'action_id':args['action_id']}
             request=urllib.request.Request(config['url'],data=json.dumps(payload).encode(),headers={'Content-Type':'application/json','X-SG-Power-Tool':config['token']})
-            with opener.open(request,timeout=15) as response:
+            with opener.open(request,timeout=30) as response:
                 raw=response.read(262145)
                 if len(raw)>262144:raise ValueError('Fleet power status too large')
                 result=json.loads(raw)
@@ -38,6 +38,6 @@ def register_power(config,emit):
             return json.dumps({'error':message,'next_step':'Read fleet_power_status and find this action ID; do not issue another start/stop for the same worker.'})
     for name,description,parameters in [
         ('fleet_power_status','Read enrolled power scripts, current gateway routing per member and recent script receipts. Use before any start or stop. Gateway health does not prove the model process is running; the status script does.',{'type':'object','properties':{},'additionalProperties':False}),
-        ('fleet_power','Run one enrolled script: status, start or stop for one exact worker. Ask the owner in chat BEFORE stopping or starting anything; the answer in this conversation is the approval. Before a stop: drain the worker (it must show load 0 and queued 0), never stop the last healthy LLM. The receipt is a script exit, not readiness or shutdown proof; follow up with fleet_power_status.',{'type':'object','properties':{'worker':{'type':'string'},'power_action':{'type':'string','enum':['start','stop']},'action_id':{'type':'string'}},'required':['worker','power_action','action_id'],'additionalProperties':False})]:
+        ('fleet_power','Run one enrolled script: status, start or stop for one exact worker. Use the owner approval already present in this conversation when it covers this exact action; otherwise ask BEFORE stopping or starting. Read-only status needs no approval. Before a stop: drain the worker (it must show load 0 and queued 0), never stop the last healthy LLM. The receipt is a script exit, not readiness or shutdown proof; follow up with fleet_power_status.',{'type':'object','properties':{'worker':{'type':'string'},'power_action':{'type':'string','enum':['status','start','stop']},'action_id':{'type':'string'}},'required':['worker','power_action','action_id'],'additionalProperties':False})]:
         registry.register(name=name,toolset=TOOLSET,schema={'name':name,'description':description,'parameters':parameters},handler=lambda args,_name=name,**kw:run(_name,args),max_result_size_chars=262144)
     return NAMES

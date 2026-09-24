@@ -34,7 +34,8 @@ export async function readService(kind,config) {
 export async function assertDashboardIdle(config,{interrupt=false,fetchImpl=fetch}={}) {
   if(interrupt)return;
   const read=async route=>{const response=await fetchImpl(`http://127.0.0.1:${dashboardPort(config)}${route}`,{signal:AbortSignal.timeout(3000)});if(!response.ok)throw Error('Dashboard activity unavailable; leave it running');return response.json();};
-  const [chat,reviewer]=await Promise.all([read('/api/genie/chat'),read('/api/genie')]);
+  const [chat,reviewer,power]=await Promise.all([read('/api/genie/chat'),read('/api/genie'),read('/api/workers/power')]);
+  if((!Array.isArray(power.members)&&power.enabled!==false)||(power.members??[]).some(member=>member.busy))throw Error('Fleet power activity is running or unknown; leave the dashboard running until it finishes');
   if(!Array.isArray(chat.conversations)||chat.conversations.some(c=>c.busy||c.queued>0)||reviewer.busy)throw Error('Genie has active or queued work; leave the dashboard running until it finishes');
 }
 export function assertIdle(status,interrupt=false) {

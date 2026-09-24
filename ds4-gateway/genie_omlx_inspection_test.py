@@ -7,7 +7,7 @@ import tempfile
 import threading
 import unittest
 from unittest.mock import patch
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from genie_omlx import inspect_omlx, read_sources
 
 
@@ -58,6 +58,15 @@ class LocalInspection(unittest.TestCase):
         self.assertTrue(result['process']['recorded_pid_matches_listener'])
         self.assertEqual(result['source_on_disk']['loaded_revision'], 'not established')
         self.assertEqual(result['files']['start.py']['state'], 'unavailable')
+
+    def test_offline_endpoint_keeps_local_configuration_evidence(self):
+        with patch('urllib.request.OpenerDirector.open', side_effect=URLError(ConnectionRefusedError())), patch('genie_omlx.subprocess.check_output', return_value='p37\n'):
+            result = inspect_omlx(self.target)
+        self.assertEqual(result['endpoint']['state'], 'unavailable')
+        self.assertIsNone(result['models'])
+        self.assertEqual(result['files']['state/model_settings.json']['content']['example']['max_tokens'], 262144)
+        self.assertNotIn('PRIVATE_TEST_KEY', json.dumps(result))
+        self.assertTrue(result['process']['recorded_pid_matches_listener'])
 
     def test_credentials_are_not_forwarded_on_redirect(self):
         self.redirect = True

@@ -11,7 +11,7 @@ import {fileURLToPath} from 'node:url';
 
 const SCRIPTS_DIR=path.join(path.dirname(fileURLToPath(import.meta.url)),'..','..','startScripts');
 const RESOLVED=path.resolve(SCRIPTS_DIR);
-const DEFAULT_TIMEOUT_MS=120000,STATUS_TIMEOUT_MS=20000;
+const DEFAULT_TIMEOUT_MS=120000,START_SCRIPT_TIMEOUT_MS=960000,STATUS_TIMEOUT_MS=20000;
 const START_VERIFY_TIMEOUT_MS=900000,STOP_VERIFY_TIMEOUT_MS=90000,VERIFY_INTERVAL_MS=5000;
 
 // Explicit allowlist only. A worker/action pair absent here is refused — adding
@@ -36,15 +36,16 @@ const ACTIONS=new Set(['status','start','stop']);
 export const powerWorkers=()=>WORKERS;
 
 
-export function powerScript(worker,action){
+export function powerScript(worker,action,directory=RESOLVED){
   if(!WORKERS.includes(worker)||!ACTIONS.has(action))return null;
   const name=SCRIPTS[worker][action];
-  const file=path.join(RESOLVED,name);
+  const resolved=path.resolve(directory);
+  const file=path.join(resolved,name);
   // Refuse symlinks and anything outside the scripts directory: exact paths only.
   try{
     const stat=fs.lstatSync(file);
     if(!stat.isFile()||stat.isSymbolicLink())return null;
-    if(!file.startsWith(RESOLVED+path.sep))return null;
+    if(!file.startsWith(resolved+path.sep))return null;
     fs.accessSync(file,fs.constants.X_OK);
     return file;
   }catch{return null;}
@@ -81,18 +82,19 @@ export function createReadinessVerifier({resolveEndpoint,startTimeoutMs=START_VE
         try{
           const base=endpoint.url.replace(/\/+$/,'').replace(/\/v1$/,'');
           const res=await fetch(`${base}/v1/models`,{headers:endpoint.headers??{},signal:AbortSignal.timeout(5000),redirect:'error'});
-          await res.body?.cancel();
-          started=res.ok;
+          const body=res.ok?await res.json():null;
+          if(!res.ok)await res.body?.cancel();
+          started=Array.isArray(body?.data)&&body.data.some(model=>typeof model?.id==='string'&&model.id.length>0&&(!endpoint.model||model.id===endpoint.model));
         }catch{started=false;}
         if(started)return {state:'ready',detail:'endpoint answered an authenticated model-list request',checked_at:now()};
       }else{
         const tcp=await probe(endpoint.url);
-        if(!tcp.reachable)return {state:'stopped',detail:'endpoint no longer accepts connections',checked_at:now()};
+        if(!tcp.reachable&&tcp.detail==='ECONNREFUSED')return {state:'stopped',detail:'endpoint explicitly refused the TCP connection',checked_at:now()};
       }
       if(now()>=deadline)return {state:'timeout',checked_at:now(),
         detail:action==='start'
           ?'endpoint still not answering when verification gave up; the model may still be loading — run Status before retrying or assuming failure'
-          :'endpoint still accepting connections when verification gave up; the model process may not be fully stopped'};
+          :'shutdown could not be proved: the endpoint still accepts connections or its network state is unknown'};
       await sleep(intervalMs);
     }
   };
@@ -113,14 +115,15 @@ export function createPowerRunner({
   //   {state:'ready'|'stopped'|...} for start/stop; never called for status.
   verify=null,
   now=Date.now,
+  directory=RESOLVED,
 }={}){
   if(verify!==null&&typeof verify!=='function')throw new Error('verify must be a function when provided');
   const running=new Map(); // machine-group key -> in-flight mutation
   const history=[]; // last receipts, bounded
-  async function run(worker,action){
+  async function run(worker,action,{actionId=null}={}){
     const groups=machineGroup(worker);
     if(!groups)return {worker,action,ok:false,output:'No enrolled script for this worker; scripts remain the source of truth.'};
-    const file=powerScript(worker,action);
+    const file=powerScript(worker,action,directory);
     if(!file)return {worker,action,ok:false,output:'No enrolled script for this worker/action; scripts remain the source of truth.'};
     // Mutations serialize across the whole physical machine/pair, including
     // Start versus Stop and different model IDs sharing the hardware.
@@ -129,7 +132,9 @@ export function createPowerRunner({
       if(busyGroup)return {worker,action,ok:false,busy:true,
         output:`A start/stop is already running for another model on the same hardware (${busyGroup}); wait for it to finish. Read-only status stays available.`};
     }
-    const timeoutMs=action==='status'?STATUS_TIMEOUT_MS:DEFAULT_TIMEOUT_MS;
+    const timeoutMs=action==='status'?STATUS_TIMEOUT_MS:action==='start'?START_SCRIPT_TIMEOUT_MS:DEFAULT_TIMEOUT_MS;
+    const receipt={worker,action,action_id:actionId,state:'running',ok:false,at:now(),verified:{state:'pending'}};
+    history.unshift(receipt);history.length=Math.min(history.length,64);
     const execute=(async()=>{
       const started=now();
       let result;
@@ -137,14 +142,14 @@ export function createPowerRunner({
       catch(error){result={exit_code:null,timed_out:false,output:`Launch failed: ${error.message}`};}
       const scriptOk=!result.timed_out&&result.exit_code===0;
       let verified={state:'unverified',detail:'status receipts are script output, not readiness proof',checked_at:started};
-      if(action!=='status'&&scriptOk&&verify){
-        verified=await verify(worker,action);
+      if(action!=='status'&&verify){
+        try{verified=await verify(worker,action);}
+        catch(error){verified={state:'unverified',detail:`Verification unavailable: ${error.message}`,checked_at:now()};}
       }else if(action!=='status'&&!scriptOk){
         verified={state:'failed',detail:'script exited nonzero; endpoint state unknown',checked_at:now()};
       }
-      const receipt={worker,action,ok:scriptOk&&verified.state!=='failed'&&verified.state!=='timeout',exit_code:result.exit_code??null,
-        timed_out:!!result.timed_out,at:started,finished_at:now(),output:String(result.output??'').slice(-4000),verified};
-      history.unshift(receipt);history.length=Math.min(history.length,64);
+      Object.assign(receipt,{state:'complete',ok:scriptOk&&(action==='status'||verified.state===(action==='start'?'ready':'stopped')),exit_code:result.exit_code??null,
+        timed_out:!!result.timed_out,at:started,finished_at:now(),output:String(result.output??'').slice(-4000),verified});
       return receipt;
     })();
     if(action!=='status'){
@@ -157,7 +162,8 @@ export function createPowerRunner({
     run,
     busy:worker=>machineGroup(worker)?.some(group=>running.has(group))??false,
     receipts:()=>history.slice(),
-    directory:RESOLVED,
+    script:(worker,action)=>powerScript(worker,action,directory),
+    directory:path.resolve(directory),
   };
 }
 
