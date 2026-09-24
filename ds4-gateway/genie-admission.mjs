@@ -10,6 +10,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {configPath, projectRoot} from './config.mjs';
 import {createToolEndpoint} from './genie-tool-endpoint.mjs';
+import {runServingCheck} from './serving-checks.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const LIFECYCLE = path.join(here, 'lifecycle.mjs');
@@ -43,7 +44,7 @@ function contextFromModel(model) {
   return null;
 }
 
-export function createAdmissionTools({config, control, read, readDoor = null, probe = null, spawnPark = null, spawnStart = null, isTesting = () => false, isEnabled = () => true, now = Date.now} = {}) {
+export function createAdmissionTools({config, control, read, readDoor = null, probe = null, spawnPark = null, spawnStart = null, isTesting = () => false, isEnabled = () => true, now = Date.now, checkRunner = runServingCheck} = {}) {
   if (typeof control !== 'function' || typeof read !== 'function') throw new Error('Admission tools need a control-socket caller and a gateway status reader.');
   if (readDoor !== null && typeof readDoor !== 'function') throw new Error('readDoor must be a function when provided');
   if (spawnPark !== null && typeof spawnPark !== 'function') throw new Error('spawnPark must be a function when provided');
@@ -61,6 +62,34 @@ export function createAdmissionTools({config, control, read, readDoor = null, pr
     } finally { clearTimeout(timer); }
   });
   const state = {proposal: null, fingerprint: null, completed: [], receipts: [], busy: false, inspected_at: null};
+  const checks=new Map();
+  const checkDirectory=config.state_file?path.join(path.dirname(config.state_file),'genie','serving-checks'):null;
+  if(checkDirectory&&fs.existsSync(checkDirectory))for(const name of fs.readdirSync(checkDirectory).filter(n=>/^[a-f0-9-]{36}\.json$/.test(n)).slice(-64)){
+    const row=JSON.parse(fs.readFileSync(path.join(checkDirectory,name),'utf8'));
+    if(row.state==='running')Object.assign(row,{state:'unverified',error:'Dashboard restarted before completion was recorded; inspect serving state. This action will not replay.'});
+    checks.set(row.action_id,row);
+  }
+  const saveCheck=row=>{
+    if(!checkDirectory)return;
+    fs.mkdirSync(checkDirectory,{recursive:true,mode:0o700});
+    const file=path.join(checkDirectory,row.action_id+'.json'),tmp=file+'.tmp';
+    fs.writeFileSync(tmp,JSON.stringify(row,null,2)+'\n',{mode:0o600});fs.renameSync(tmp,file);
+  };
+  const checksBusy=()=>[...checks.values()].some(row=>row.state==='running');
+  async function verifyWorker(input){
+    if(Object.keys(input).sort().join(',')!=='action,action_id,check,worker'||!/^[a-f0-9-]{36}$/.test(input.action_id??'')||!['gateway','cache','tools'].includes(input.check))throw Error('Specify one worker, check and action ID.');
+    const prior=checks.get(input.action_id);
+    if(prior){if(prior.worker!==input.worker||prior.check!==input.check)throw Error('Action ID belongs to a different serving check');return prior;}
+    if(isTesting()||!isEnabled())throw Error('Serving checks are suspended or server_changes is switched off.');
+    if(state.busy||[...checks.values()].some(row=>row.worker===input.worker&&row.state==='running'))throw Error('A serving check or admission stage is already running; read its status.');
+    const registry=await read(),worker=registry.workers?.find(w=>w.id===input.worker);
+    if(!worker||!worker.is_healthy||worker.direct_reserved)throw Error('Use a healthy registered worker that is not reserved for direct work.');
+    if(checks.has(input.action_id))return verifyWorker(input);
+    if([...checks.values()].some(row=>row.worker===input.worker&&row.state==='running'))throw Error('Another serving check started on this worker; read its status.');
+    const row={action_id:input.action_id,worker:worker.id,check:input.check,state:'running',started_at:new Date(now()).toISOString(),samples:[]};checks.set(input.action_id,row);saveCheck(row);
+    void checkRunner({worker,check:input.check,config,registry,readDoor,now,onSample:sample=>{row.samples.push(sample);saveCheck(row);}}).then(result=>Object.assign(row,result)).catch(error=>Object.assign(row,{state:'failed',error:error.message})).finally(()=>{row.finished_at=new Date(now()).toISOString();try{saveCheck(row);}catch{row.persistence_error='Could not save the completed receipt; this dashboard still has the observation.';}});
+    return row;
+  }
   const sameEndpoint = (worker, endpoint) => {
     try {
       const w = new URL(worker.url);
@@ -125,7 +154,7 @@ export function createAdmissionTools({config, control, read, readDoor = null, pr
       next_step: 'Present this proposal to the owner in chat. After the owner approves a stage, call admission_admit with that stage and this fingerprint. Stages run in order: ' + STAGE_ORDER.join(' → ') + ' (remove-dead only when the proposal lists dead workers).'};
   }
   function requireStage(stage, fingerprint) {
-    if (state.busy) throw new Error('Another admission stage is running; wait for its receipt.');
+    if (state.busy||checksBusy()) throw new Error('Another admission stage or serving check is running; wait for its receipt.');
     if (!state.proposal || state.fingerprint !== fingerprint) throw new Error('Fingerprint does not match the last inspection; re-inspect the endpoint (fleet state may have changed).');
     if (!STAGE_ORDER.includes(stage)) throw new Error(`Unknown admission stage ${stage}; stages: ${STAGE_ORDER.join(', ')}.`);
     const removable = state.proposal.needs_removal.length > 0;
@@ -215,15 +244,17 @@ export function createAdmissionTools({config, control, read, readDoor = null, pr
     else if (worker.is_healthy !== true) problems.push(`worker ${state.proposal.worker.id} is registered but not healthy yet`);
     let canary = null;
     try {
-      canary = await probeModels(`http://127.0.0.1:${config.port}/v1`, {timeoutMs: 30000, ...(config.api_key ? {authorization: `Bearer ${config.api_key}`} : {})}).then(() => ({route_model_list: 'ok'}));
-    } catch (e) { problems.push(`door model list failed: ${e.message}`); }
+      if(!problems.length)canary=await checkRunner({worker,check:'gateway',config,registry:value,readDoor,now});
+      if(canary&&canary.state!=='passed')problems.push('door generation was not verified');
+    } catch (e) { problems.push(`door generation failed: ${e.message}`); }
     const receipt = {stage: 'verify', action_id, door, worker: worker ? {id: worker.id, is_healthy: worker.is_healthy === true, drained: worker.drained === true} : null, canary, problems,
       verdict: problems.length === 0 ? 'admitted and verified' : 'unverified — resolve the problems or inspect honestly'};
     note(receipt);
     return receipt;
   }
   async function tool(input) {
-    if (input?.action === 'status') return {schema: 1, enabled: isEnabled(), busy: state.busy, fingerprint: state.fingerprint, inspected_at: state.inspected_at, completed: [...state.completed], receipts: state.receipts, proposal: state.proposal};
+    if (input?.action === 'status') return {schema: 1, enabled: isEnabled(), busy: state.busy||checksBusy(), serving_checks:[...checks.values()], fingerprint: state.fingerprint, inspected_at: state.inspected_at, completed: [...state.completed], receipts: state.receipts, proposal: state.proposal};
+    if(input?.action==='verify-worker')return verifyWorker(input);
     if (input?.action === 'inspect') {
       const value = await inspect(input);
       return value;

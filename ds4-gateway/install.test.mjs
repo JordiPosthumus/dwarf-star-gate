@@ -149,3 +149,9 @@ test('dashboard reload refuses active or queued Genie work and unreadable activi
  await assert.rejects(assertDashboardIdle({},{fetchImpl:async url=>Response.json(url.endsWith('/power')?{members:[{busy:true}]}:url.endsWith('/chat')?{conversations:[]}:{busy:false})}),/Fleet power activity/);
  await assert.rejects(assertDashboardIdle({},{fetchImpl:async url=>Response.json(url.endsWith('/power')?{members:[]}:url.endsWith('/chat')?{conversations:[]}:{busy:true})}),/active or queued/);
 });
+
+test('dashboard reload protects background serving checks and accepts legacy missing diagnostics route',async()=>{
+ const snapshot=url=>url.endsWith('/chat')?{conversations:[]}:url.endsWith('/power')?{members:[]}:{busy:false};
+ await assert.rejects(assertDashboardIdle({},{fetchImpl:async url=>Response.json(url.endsWith('/admission')?{busy:true}:snapshot(url))}),/serving checks/);
+ await assertDashboardIdle({},{fetchImpl:async url=>url.endsWith('/admission')?new Response('',{status:404}):Response.json(snapshot(url))});
+});

@@ -185,3 +185,34 @@ test('stop requires drained hardware, fresh native idle evidence and a separate 
   check=await tools.precheck('glm53f-m3','stop');
   assert.equal(check.allowed,false);assert.match(check.refusals.join(' '),/Drain the worker/);
 });
+
+test('a real launcher leaves its background server outside the dashboard process group',async t=>{
+  if(process.platform==='win32'){t.skip('Unix process-group check');return;}
+  const {execFileSync}=await import('node:child_process');
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'power-detachment-'));let childPid;
+  t.after(()=>{if(childPid)try{process.kill(childPid,'SIGTERM');}catch{}fs.rmSync(dir,{recursive:true,force:true});});
+  fs.writeFileSync(path.join(dir,'start-glm53-m3'),'#!/bin/sh\n/bin/sleep 30 >/dev/null 2>&1 &\necho "$! $$"\n',{mode:0o700});
+  const runner=createPowerRunner({directory:dir});const receipt=await runner.run('glm53f-m3','start');
+  const parts=receipt.output.trim().split(/\s+/).map(Number);assert.equal(parts.length,2);assert.ok(parts.every(Number.isSafeInteger));[childPid]=parts;
+  const group=Number(execFileSync('/bin/ps',['-p',String(childPid),'-o','pgid='],{encoding:'utf8'}).trim());
+  const parentGroup=Number(execFileSync('/bin/ps',['-p',String(process.pid),'-o','pgid='],{encoding:'utf8'}).trim());
+  assert.equal(group,parts[1],'background server inherits the detached launcher group');assert.notEqual(group,parentGroup,'dashboard group termination cannot reach the model');
+});
+
+test('Genie drains and conditionally resumes through existing controls without overriding a later pause',async()=>{
+ const first=UUID(),later=UUID();let rows=[{id:'glm53f-m3',is_healthy:true,drained:false,load:0,queued:0},{id:'glm53f-sparks12',is_healthy:true,drained:false,load:0,queued:0}];const calls=[];
+ const runner=createPowerRunner({directory});
+ const tools=createFleetPowerTools({runner,read:async()=>({version:1,workers:rows}),control:async(route,body)=>{
+  calls.push({route,body});
+  if(route==='/resume-workers'&&body.expected_operator_actions['glm53f-m3']!==rows[0].last_operator_action.id)throw Error('Operator action changed');
+  rows[0]={...rows[0],drained:route==='/drain-workers',last_operator_action:{id:first}};
+ }});
+ const input={action:'routing',worker:'glm53f-m3',routing_action:'drain',action_id:UUID()};
+ const drained=await tools.tool(input);assert.equal(drained.state,'complete');assert.equal(drained.operator_action,first);assert.equal(drained.was_drained,false);
+ assert.equal((await tools.tool(input)).state,'complete');assert.equal(calls.length,1);
+ rows[0].last_operator_action={id:later};
+ const resumed=await tools.tool({action:'routing',worker:'glm53f-m3',routing_action:'resume',action_id:UUID(),expected_operator_action:first});
+ assert.equal(resumed.state,'unverified');assert.match(resumed.error,/Operator action changed/);assert.equal(rows[0].drained,true);
+ rows=[rows[0]];
+ await assert.rejects(tools.tool({...input,action_id:UUID()}),/separate hardware/);
+});

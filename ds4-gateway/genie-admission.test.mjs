@@ -20,7 +20,7 @@ function rig({workers=[],models=null,door=null,configBody={}}={}) {
   const spawnPark=async(args,opts,done)=>{calls.push(['park',args]);done(null,JSON.stringify({action:'park',verified:true}));};
   const spawnStart=(args,opts)=>{calls.push(['start',args]);return {unref(){},on(){}};};
   const readDoor=door===null?null:async()=>door;
-  const tools=createAdmissionTools({config:{port:30000,api_key:'test'},control,read,readDoor,probe,spawnPark,spawnStart,isTesting:()=>false,isEnabled:()=>true});
+  const tools=createAdmissionTools({config:{port:30000,api_key:'test'},control,read,readDoor,probe,spawnPark,spawnStart,isTesting:()=>false,isEnabled:()=>true,checkRunner:async({worker,check})=>{calls.push(['canary',worker.id,check]);return {state:'passed',samples:[{worker:worker.id}]};}});
   return {tools,calls,configFile,setWorkers(rows){live.workers=rows;},cleanup(){if(oldEnv===undefined)delete process.env.DWARF_GATE_CONFIG;else process.env.DWARF_GATE_CONFIG=oldEnv;fs.rmSync(dir,{recursive:true,force:true});}};
 }
 const inspect=async(tools,url='http://127.0.0.1:8013/v1')=>tools.tool({action:'inspect',url});
@@ -127,6 +127,7 @@ test('admission verify reports door, worker and canary honestly and only complet
     await r.tools.tool({action:'admit',stage:'restart',fingerprint:value.fingerprint,action_id:ACTION_ID});
     const receipt=await r.tools.tool({action:'admit',stage:'verify',fingerprint:value.fingerprint,action_id:ACTION_ID});
     assert.equal(receipt.verdict,'admitted and verified');
+    assert.deepEqual(r.calls.find(c=>c[0]==='canary'),['canary','test-model-x','gateway']);
     const status=await r.tools.tool({action:'status'});
     assert.deepEqual(status.completed,['add-worker','route','restart','verify']);
   }finally{r.cleanup();}
@@ -142,4 +143,15 @@ test('admission verify reports door, worker and canary honestly and only complet
     const status=await blocked.tools.tool({action:'status'});
     assert.ok(!status.completed.includes('verify'),'failed verification must not count as complete');
   }finally{blocked.cleanup();}
+});
+
+test('existing-worker checks run asynchronously, persist observations and never repeat an action ID',async t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'serving-check-receipt-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+ let release,calls=0;
+ const options={config:{state_file:path.join(dir,'state.json')},control:async()=>{throw Error('No infrastructure writes allowed');},read:async()=>({version:1,workers:[{id:'fixture-worker',url:'http://127.0.0.1:1',served_model:'fixture',is_healthy:true}]}),checkRunner:async({onSample})=>{calls++;onSample({label:'proof',cached_tokens:0});await new Promise(r=>{release=r;});return {state:'passed',samples:[{label:'proof',cached_tokens:0}]};}};
+ const tools=createAdmissionTools(options),input={action:'verify-worker',worker:'fixture-worker',check:'cache',action_id:ACTION_ID};
+ assert.equal((await tools.tool(input)).state,'running');assert.equal((await tools.tool(input)).state,'running');assert.equal(calls,1);assert.equal((await tools.tool({action:'status'})).busy,true);
+ await assert.rejects(tools.tool({...input,check:'tools'}),/different serving check/);
+ release();await new Promise(r=>setImmediate(r));assert.equal((await tools.tool(input)).state,'passed');assert.equal((await tools.tool({action:'status'})).busy,false);
+ const reloaded=createAdmissionTools(options);assert.equal((await reloaded.tool(input)).state,'passed');assert.equal(calls,1);
 });

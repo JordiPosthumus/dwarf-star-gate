@@ -102,13 +102,20 @@ export function createReadinessVerifier({resolveEndpoint,startTimeoutMs=START_VE
 
 export function createPowerRunner({
   spawn=async(file,{timeoutMs})=>{
-    const {execFile}=await import('node:child_process');
+    const {spawn:spawnProcess}=await import('node:child_process');
     return await new Promise(resolve=>{
-      // Scripts own their output entirely; a bounded buffer is evidence, not control.
-      const child=execFile(file,{cwd:path.dirname(file),timeout:timeoutMs,maxBuffer:256*1024,windowsHide:true},(error,stdout,stderr)=>{
-        resolve({exit_code:error?.code??(error?.killed?null:0),timed_out:!!error?.killed,output:`${stdout}${stderr}`.slice(-4000)});
-      });
-      return child;
+      // execFile does not forward detached to spawn on the installed Node.
+      // A separate process group keeps background model servers alive when
+      // launchd tears down the dashboard group. Keep only a bounded output tail.
+      const child=spawnProcess(file,[],{cwd:path.dirname(file),windowsHide:true,detached:true,stdio:['ignore','pipe','pipe']});
+      let output='',timedOut=false,settled=false;
+      const append=chunk=>{output=(output+chunk).slice(-4000);};
+      child.stdout.setEncoding('utf8');child.stderr.setEncoding('utf8');
+      child.stdout.on('data',append);child.stderr.on('data',append);
+      const timer=setTimeout(()=>{timedOut=true;child.kill('SIGTERM');},timeoutMs);
+      const finish=exit_code=>{if(settled)return;settled=true;clearTimeout(timer);resolve({exit_code,timed_out:timedOut,output});};
+      child.once('error',error=>{append(`Launch failed: ${error.message}`);finish(null);});
+      child.once('close',code=>finish(code));
     });
   },
   // verify(worker, action) must report real state, not script exit:

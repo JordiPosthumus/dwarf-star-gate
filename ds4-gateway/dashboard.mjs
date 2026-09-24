@@ -211,6 +211,7 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
     if(queueTools?.handle(req,res))return;
     if(recoveryTools?.handle(req,res))return;
     if(powerTools?.handle(req,res))return;
+    if(req.url==='/api/genie/admission'&&req.method==='GET'){void Promise.resolve(admissionTools?.tool({action:'status'})??{configured:false,busy:false}).then(value=>reply(200,value)).catch(()=>reply(503,{error:'Admission activity unavailable'}));return;}
     if(admissionTools?.handle(req,res))return;
     if(req.url==='/api/genie/chat'&&req.method==='GET')return reply(200,{...(chat?.status()??{available:false,conversations:[]}),csrf_token:csrf});
     if(req.url?.startsWith('/api/genie/chat/')&&req.method==='GET'){
@@ -583,7 +584,7 @@ export async function runDashboard(configPath, port) {
     return {url:row.url,headers,model:row.served_model};
   }:null;
   const powerRunner=managementEnabled?createPowerRunner({verify:createReadinessVerifier({resolveEndpoint:powerResolveEndpoint})}):null;
-  const powerTools=managementEnabled?createFleetPowerTools({runner:powerRunner,read:()=>readService('gateway',config),isTesting,isEnabled:()=>isCapabilityEnabled('fleet_power'),directRunning:id=>{const s=endpointTelemetry.snapshot(id);return s?.connected&&Date.now()-s.at<10000&&Number.isFinite(s.running)&&Number.isFinite(s.waiting)?s.running+s.waiting:null;},catalogue:()=>fleetCatalogue()}):null;
+  const powerTools=managementEnabled?createFleetPowerTools({runner:powerRunner,read:()=>readService('gateway',config),isTesting,isEnabled:()=>isCapabilityEnabled('fleet_power'),directRunning:id=>{const s=endpointTelemetry.snapshot(id);return s?.connected&&Date.now()-s.at<10000&&Number.isFinite(s.running)&&Number.isFinite(s.waiting)?s.running+s.waiting:null;},catalogue:()=>fleetCatalogue(),control:(route,body)=>workerControl(config.control_socket,route,body,{channel:'gate_genie'})}):null;
   const chatProviderConfig={...genieChatConfig(config)};
   const applyGenieThinking=value=>{if(!value)return {applied:false};const applied={};if(value.chat){chatProviderConfig.reasoning_effort=value.chat;applied.chat=value.chat;}if(value.reviewer){runtimeGenie.reasoning_effort=value.reviewer;if(runtimeGenie.fallback&&typeof runtimeGenie.fallback==='object')runtimeGenie.fallback.reasoning_effort=value.reviewer;applied.reviewer=value.reviewer;}return {applied:true,...applied};};
   const admissionTools=managementEnabled?createAdmissionTools({config,control:(route,body)=>workerControl(config.control_socket,route,body,{channel:'dashboard'}),read:()=>readService('gateway',config),readDoor:async()=>doorControl(doorSocket(config),'/status'),isTesting,isEnabled:()=>isCapabilityEnabled('server_changes')}):null;
