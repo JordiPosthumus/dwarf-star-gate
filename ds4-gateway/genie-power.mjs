@@ -28,7 +28,7 @@ export function fleetPowerEvidence({runner,workers=[],now=Date.now,catalogue=nul
     scope:'Enrolled power scripts with physical-machine groups and the last receipts of this dashboard process. Scripts remain the source of truth; start/stop receipts include real endpoint verification, and timeout means unproven, not failed. Stopping a Spark pair stops both machines of that pair, including any other model serving there.'};
 }
 
-export function createFleetPowerTools({runner,read,isTesting=()=>false,isEnabled=()=>true,directRunning=null,catalogue=null,control=null}={}){
+export function createFleetPowerTools({runner,read,isTesting=()=>false,isEnabled=()=>true,directRunning=null,catalogue=null,control=null,recipes=null}={}){
   if(!runner||typeof read!=='function')throw new Error('Fleet power tools need a script runner and gateway status reader.');
   if(directRunning!==null&&typeof directRunning!=='function')throw new Error('directRunning must be a function when provided');
   if(catalogue!==null&&typeof catalogue!=='function')throw new Error('catalogue must be a function when provided');
@@ -46,6 +46,7 @@ export function createFleetPowerTools({runner,read,isTesting=()=>false,isEnabled
     const current=workers.find(w=>w.id===worker);
     if(!current)throw new Error('Worker is not a current gateway member; use the script directly.');
     const refusals=[];
+    if(recipes?.busy(worker))refusals.push('An enrolled recipe trial owns this hardware; inspect its restoration receipt before another lifecycle change.');
     if(power_action==='stop'){
       const groups=machineGroup(worker)??[];
       if(current.is_healthy&&!current.drained)refusals.push('Drain the worker before stopping so new gateway work cannot be admitted.');
@@ -73,7 +74,12 @@ export function createFleetPowerTools({runner,read,isTesting=()=>false,isEnabled
   async function runTool(input){
     if(input?.action==='status'&&Object.keys(input).length===1){
       const cat=catalogue?await catalogue().catch(e=>({unavailable:e.message})):null;
-      return {...fleetPowerEvidence({runner,workers:await snapshotWorkers(),catalogue:cat}),routing_recent:[...routingReceipts.values()].slice(-16).reverse()};
+      return {...fleetPowerEvidence({runner,workers:await snapshotWorkers(),catalogue:cat}),routing_recent:[...routingReceipts.values()].slice(-16).reverse(),recipe_trials:recipes?.status()??[]};
+    }
+    if(input?.action==='recipe-trial'){
+      if(Object.keys(input).sort().join(',')!=='action,profile,stage,trial_id'||!recipes)throw Error('Use an enrolled recipe trial profile and stage');
+      if(isTesting()||!isEnabled())throw Error('Recipe trials are suspended or fleet power is switched off');
+      return recipes.start(input);
     }
     if(input?.action==='routing'){
       const {worker,routing_action,action_id,expected_operator_action}=input;
@@ -136,7 +142,7 @@ export function createFleetPowerTools({runner,read,isTesting=()=>false,isEnabled
     return {accepted:true,action_id,worker,power_action,state:'running',next_step:'Read fleet_power_status for this action ID. Accepted means the operation is running, not verified complete.'};
   }
   const tool=input=>{
-    if(input?.action==='routing'||(input?.action==='power'&&input.power_action!=='status'&&input.mode!=='check')){
+    if(input?.action==='recipe-trial'||input?.action==='routing'||(input?.action==='power'&&input.power_action!=='status'&&input.mode!=='check')){
       const next=admission.then(()=>runTool(input));admission=next.then(()=>undefined,()=>undefined);return next;
     }
     return runTool(input);

@@ -12,6 +12,7 @@ import {createMediaTools} from './genie-media.mjs';
 import {createQueueTools} from './genie-queue.mjs';
 import {createRecoveryTools} from './genie-recovery.mjs';
 import {createFleetPowerTools} from './genie-power.mjs';
+import {createRecipeTrials} from './recipe-trials.mjs';
 import {createAdmissionTools} from './genie-admission.mjs';
 import {createPowerRunner,createReadinessVerifier,powerWorkers,machineGroup} from './power-scripts.mjs';
 import {buildCatalogue} from './ui/fleet-catalogue.js';
@@ -583,8 +584,10 @@ export async function runDashboard(configPath, port) {
     let headers={};try{headers=endpointHeaders(row);}catch{headers={};}
     return {url:row.url,headers,model:row.served_model};
   }:null;
-  const powerRunner=managementEnabled?createPowerRunner({verify:createReadinessVerifier({resolveEndpoint:powerResolveEndpoint})}):null;
-  const powerTools=managementEnabled?createFleetPowerTools({runner:powerRunner,read:()=>readService('gateway',config),isTesting,isEnabled:()=>isCapabilityEnabled('fleet_power'),directRunning:id=>{const s=endpointTelemetry.snapshot(id);return s?.connected&&Date.now()-s.at<10000&&Number.isFinite(s.running)&&Number.isFinite(s.waiting)?s.running+s.waiting:null;},catalogue:()=>fleetCatalogue(),control:(route,body)=>workerControl(config.control_socket,route,body,{channel:'gate_genie'})}):null;
+  const rawPowerRunner=managementEnabled?createPowerRunner({verify:createReadinessVerifier({resolveEndpoint:powerResolveEndpoint})}):null;
+  const recipeTrials=managementEnabled?createRecipeTrials({config,powerBusy:id=>rawPowerRunner.busy(id)}):null;
+  const powerRunner=rawPowerRunner?{...rawPowerRunner,busy:id=>rawPowerRunner.busy(id)||recipeTrials.busy(id)}:null;
+  const powerTools=managementEnabled?createFleetPowerTools({runner:powerRunner,recipes:recipeTrials,read:()=>readService('gateway',config),isTesting,isEnabled:()=>isCapabilityEnabled('fleet_power'),directRunning:id=>{const s=endpointTelemetry.snapshot(id);return s?.connected&&Date.now()-s.at<10000&&Number.isFinite(s.running)&&Number.isFinite(s.waiting)?s.running+s.waiting:null;},catalogue:()=>fleetCatalogue(),control:(route,body)=>workerControl(config.control_socket,route,body,{channel:'gate_genie'})}):null;
   const chatProviderConfig={...genieChatConfig(config)};
   const applyGenieThinking=value=>{if(!value)return {applied:false};const applied={};if(value.chat){chatProviderConfig.reasoning_effort=value.chat;applied.chat=value.chat;}if(value.reviewer){runtimeGenie.reasoning_effort=value.reviewer;if(runtimeGenie.fallback&&typeof runtimeGenie.fallback==='object')runtimeGenie.fallback.reasoning_effort=value.reviewer;applied.reviewer=value.reviewer;}return {applied:true,...applied};};
   const admissionTools=managementEnabled?createAdmissionTools({config,resolveNativeWorker:async id=>(await workerControl(config.control_socket,'/workers',undefined,{channel:'dashboard'})).workers?.find(w=>w.id===id),control:(route,body)=>workerControl(config.control_socket,route,body,{channel:'dashboard'}),read:()=>readService('gateway',config),readDoor:async()=>doorControl(doorSocket(config),'/status'),isTesting,isEnabled:()=>isCapabilityEnabled('server_changes')}):null;

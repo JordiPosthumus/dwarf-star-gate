@@ -1,0 +1,381 @@
+"""Fixed remote half of a privately enrolled Spark pair recipe trial.
+
+Runs on the head. Plan is operator-enrolled; no values come from chat. Original
+checkout, weight cache, kernel caches and image tags are never overwritten.
+"""
+import base64
+import concurrent.futures
+import contextlib
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import shutil
+import signal
+import socket
+import errno
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+import uuid
+
+
+def write(file,value):
+    temp=file.with_suffix('.tmp')
+    with open(temp,'w',opener=lambda p,f:os.open(p,f,0o600)) as stream:
+        json.dump(value,stream,indent=2);stream.write('\n');stream.flush();os.fsync(stream.fileno())
+    temp.replace(file)
+
+
+def sha(file):return hashlib.sha256(file.read_bytes()).hexdigest()
+def envmap(container):return dict(item.split('=',1) for item in container['Config']['Env'] if '=' in item)
+
+
+class Remote:
+    def __init__(self,plan):
+        self.plan=plan;self.root=Path(plan['trial_root']);self.recipe=Path(plan['recipe_root'])
+        self.candidate=self.root/'candidate';self.backup=self.root/'baseline'
+        self.tag='dsg-glm53-trial:'+plan['trial_id'];self.original_tag='dsg-glm53-original:'+plan['trial_id']
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self,*args,**kwargs):return None
+        self.opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect())
+    def command(self,args,*,input=None,timeout=7200,log=None,env=None,guard_build=False):
+        if log:
+            with open(self.root/log,'ab') as out:
+                if guard_build:
+                    process=subprocess.Popen(args,stdout=out,stderr=subprocess.STDOUT,env=env);deadline=time.monotonic()+timeout
+                    while process.poll() is None:
+                        memory=dict((key.rstrip(':'),int(value)*1024) for key,value,*_ in (line.split() for line in Path('/proc/meminfo').read_text().splitlines()))
+                        reason='Build time budget exceeded' if time.monotonic()>deadline else 'Build stopped to preserve host headroom' if memory['MemAvailable']<2*1024**3 or shutil.disk_usage(self.root).free<12*1024**3 else None
+                        if reason:
+                            process.terminate()
+                            try:process.wait(timeout=30)
+                            except subprocess.TimeoutExpired:process.kill();process.wait(timeout=10)
+                            raise RuntimeError(reason+'; original serving was not stopped')
+                        time.sleep(1)
+                    code=process.returncode
+                else:code=subprocess.run(args,input=input,stdout=out,stderr=subprocess.STDOUT,timeout=timeout,env=env).returncode
+            if code:raise RuntimeError('Command failed; preserved log: '+log)
+            return b''
+        result=subprocess.run(args,input=input,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=timeout,env=env)
+        if result.returncode:
+            with open(self.root/'commands.stderr','ab') as out:out.write(result.stderr[-16000:])
+            raise RuntimeError('Command failed; private diagnostics retained')
+        return result.stdout
+    def rank(self,args,**kw):return self.command(['ssh','-o','BatchMode=yes','-o','ConnectTimeout=15',self.plan['rank_ssh'],shlex.join(args)],**kw)
+    def inspect(self,rank=False):
+        call=self.rank if rank else self.command
+        return json.loads(call(['docker','inspect','glm53-exl3-worker' if rank else 'glm53-exl3-head'],timeout=30))[0]
+    def images(self,tag,rank=False):
+        return json.loads((self.rank if rank else self.command)(['docker','image','inspect',tag],timeout=30))[0]
+    def baseline_unchanged(self):
+        p=self.plan
+        revision=self.command(['git','-C',str(self.recipe),'rev-parse','HEAD']).decode().strip()
+        if revision!=p['baseline_revision'] or self.command(['git','-C',str(self.recipe),'status','--porcelain','--untracked-files=no']).strip():
+            raise RuntimeError('Original tracked recipe changed; leave owner changes untouched')
+        if sha(self.recipe/'.env')!=p['baseline_env_sha256'] or sha(self.recipe/'start.sh')!=p['baseline_start_sha256']:
+            raise RuntimeError('Original recipe bytes changed; leave owner changes untouched')
+        peers=re.findall(r'^WORKER_SSH=(.*)$',(self.recipe/'.env').read_text(),re.M)
+        if len(peers)!=1 or shlex.split(peers[0])!=[p['rank_ssh']]:raise RuntimeError('Rank SSH binding does not match the pinned original recipe')
+    def headers(self):
+        key=envmap(self.inspect()).get('VLLM_API_KEY','')
+        return {'Content-Type':'application/json',**({'Authorization':'Bearer '+key} if key else {})}
+    def request(self,path,body=None,timeout=2400):
+        request=urllib.request.Request('http://127.0.0.1:8888'+path,headers=self.headers(),data=None if body is None else json.dumps(body).encode())
+        with self.opener.open(request,timeout=timeout) as response:return response.read()
+    def idle(self):
+        try:
+            metrics=self.request('/metrics',timeout=10).decode()
+            values={}
+            for name in ['num_requests_running','num_requests_waiting']:
+                lines=re.findall(r'^vllm:'+name+r'(?:\{[^\n]*\})?\s+([0-9.eE+-]+)\s*$',metrics,re.M)
+                if not lines:return False
+                values[name]=sum(float(x) for x in lines)
+            return all(x==0 for x in values.values())
+        except Exception:return False
+    def wait_idle(self,timeout=3600):
+        deadline=time.monotonic()+timeout
+        while time.monotonic()<deadline:
+            if self.idle():
+                time.sleep(3)
+                if self.idle():return
+            time.sleep(2)
+        raise RuntimeError('Native work did not become verifiably idle; no stop was issued')
+    def prepare(self):
+        self.baseline_unchanged()
+        head,rank=self.inspect(),self.inspect(True)
+        if any(x['Image']!=self.plan['baseline_image'] or not x['State']['Running'] for x in [head,rank]):
+            raise RuntimeError('The running original pair differs from the approved baseline')
+        # Building isolated overlay layers needs scratch space but never prunes.
+        if shutil.disk_usage(self.root).free<50*1024**3:raise RuntimeError('Less than 50 GiB free; preserve existing images and stop preparation')
+        worker_free=int(self.rank(['python3','-c','import shutil; print(shutil.disk_usage("/home").free)']).strip())
+        if worker_free<40*1024**3:raise RuntimeError('Worker has less than 40 GiB free; preserve existing images')
+        self.backup.mkdir(mode=0o700)
+        write(self.backup/'head.json',head);write(self.backup/'rank.json',rank)
+        shutil.copy2(self.recipe/'.env',self.backup/'.env');os.chmod(self.backup/'.env',0o600)
+        self.command(['git','-C',str(self.recipe),'archive','--output='+str(self.backup/'tracked-recipe.tar'),'HEAD'])
+        for source in [self.recipe/'.glm53-exl3-head.inner.sh']:
+            if source.is_file():shutil.copy2(source,self.backup/source.name)
+        worker_script=self.rank(['cat','/tmp/glm53-exl3-worker.sh'])
+        (self.backup/'worker-inner.sh').write_bytes(worker_script);os.chmod(self.backup/'worker-inner.sh',0o600)
+        self.command(['docker','tag',head['Image'],self.original_tag]);self.rank(['docker','tag',rank['Image'],self.original_tag])
+        original=envmap(head);profile=self.candidate/'examples/tp2-long-coding.env'
+        # Keep all existing extra flags; this profile's assignment would erase them.
+        overrides='\n'.join(line for line in profile.read_text().splitlines() if not line.startswith('EXTRA_ARGS='))
+        extras=original.get('EXTRA_ARGS','')
+        if '--enable-prompt-tokens-details' not in extras:extras+=' --enable-prompt-tokens-details'
+        candidate_env=(self.backup/'.env').read_text()+'\n'+overrides+'\n'+ '\n'.join([
+            'IMAGE='+shlex.quote(self.tag),'EXTRA_ARGS='+shlex.quote(extras.strip()),
+            'CACHE_ROOT='+shlex.quote(str(self.root/'head-cache')),
+            'WORKER_VLLM_CACHE='+shlex.quote(self.plan['remote_root']+'/'+self.plan['trial_id']+'/rank-cache'),
+        ])+'\n'
+        (self.candidate/'.env').write_text(candidate_env);os.chmod(self.candidate/'.env',0o600)
+        # Bound compilation parallelism in the isolated build only; no serving
+        # setting is changed. Preserve the upstream Dockerfile and record delta.
+        dockerfile=self.candidate/'Dockerfile'
+        original_dockerfile=dockerfile.read_text()
+        if original_dockerfile.count('MAX_JOBS=8')!=1:raise RuntimeError('Unexpected upstream build parallelism; inspect before building')
+        (self.root/'upstream-Dockerfile').write_text(original_dockerfile)
+        dockerfile.write_text(original_dockerfile.replace('MAX_JOBS=8','MAX_JOBS=1'))
+        files=[dockerfile]
+        for folder in ['overlay','files','tests','ablit']:
+            for file in (self.candidate/folder).rglob('*'):
+                relative=file.relative_to(self.candidate).as_posix()
+                if file.is_file() and '__pycache__' not in file.parts and '.pytest_cache' not in file.parts and not relative.startswith(('ablit/transplant/','files/nfs-server/')) and relative!='files/nfs-share.sh' and file.suffix!='.pyc':files.append(file)
+        stamp=hashlib.sha256(''.join(sha(f)+'  '+str(f)+'\n' for f in sorted(files)).encode()).hexdigest()
+        self.command(['docker','build','--build-arg','GLM53_RECIPE_STAMP='+stamp,'-t',self.tag,str(self.candidate)],log='candidate-build.log',guard_build=True)
+        image=self.images(self.tag)
+        if image['Architecture']!='arm64':raise RuntimeError('Candidate architecture mismatch')
+        # Pipe immutable candidate layers to rank 1; no original tags are changed.
+        with open(self.root/'candidate-ship.log','ab') as log:
+            sender=subprocess.Popen(['docker','save','--platform','linux/arm64',self.tag],stdout=subprocess.PIPE,stderr=log)
+            receiver=subprocess.Popen(['ssh','-o','BatchMode=yes',self.plan['rank_ssh'],'docker load'],stdin=sender.stdout,stdout=log,stderr=log)
+            sender.stdout.close();received=receiver.wait(timeout=7200);sent=sender.wait(timeout=60)
+        if sent or received:raise RuntimeError('Candidate image transfer did not complete')
+        other=self.images(self.tag,True)
+        if image['RootFS']['Layers']!=other['RootFS']['Layers']:raise RuntimeError('Candidate image layers differ across ranks')
+        self.baseline_unchanged()
+        if self.inspect()['Id']!=head['Id'] or self.inspect(True)['Id']!=rank['Id']:raise RuntimeError('Serving identity changed during preparation')
+        result={'state':'prepared','source_revision':self.plan['source_revision'],'candidate_image':image['Id'],'rank_candidate_image':other['Id'],'recipe_stamp':stamp,'build_only_delta':{'MAX_JOBS':{'from':8,'to':1},'scope':'Isolated CUDA compilation concurrency only; no runtime flags changed.'},'candidate_env_sha256':sha(self.candidate/'.env'),'original_image':head['Image'],'original_container':head['Id'],'original_rank_container':rank['Id'],'scope':'Original recipe and both images backed up. Candidate built and shipped separately; no model stopped, settings changed or weights/cache removed.'}
+        write(self.root/'prepared.json',result);return result
+    def metrics(self):
+        raw=self.request('/metrics',timeout=15).decode();values={}
+        for name in ['prefix_cache_queries_total','prefix_cache_hits_total','request_success_total','num_requests_running','num_requests_waiting']:
+            lines=re.findall(r'^vllm:'+name+r'(?:\{[^\n]*\})?\s+([0-9.eE+-]+)\s*$',raw,re.M)
+            values[name]=sum(float(x) for x in lines) if lines else None
+        return values
+    def chat(self,messages,*,max_tokens=4096,**extra):
+        before=self.metrics();started=time.monotonic();first=None;content='';reasoning='';calls={};usage={};finish=None
+        body={'model':'GLM-5.3-Flash-EXL3','messages':messages,'max_tokens':max_tokens,'temperature':0,'stream':True,'stream_options':{'include_usage':True},**extra}
+        request=urllib.request.Request('http://127.0.0.1:8888/v1/chat/completions',data=json.dumps(body).encode(),headers=self.headers())
+        with self.opener.open(request,timeout=2400) as response:
+            for line in response:
+                if not line.startswith(b'data:'):continue
+                text=line[5:].strip()
+                if text==b'[DONE]':break
+                chunk=json.loads(text)
+                if chunk.get('error'):raise RuntimeError('Native stream returned an error')
+                if chunk.get('usage'):usage=chunk['usage']
+                for choice in chunk.get('choices',[]):
+                    delta=choice.get('delta',{})
+                    if first is None and any(delta.get(k) for k in ['content','reasoning_content','tool_calls']):first=time.monotonic()-started
+                    content+=delta.get('content') or '';reasoning+=delta.get('reasoning_content') or ''
+                    for call in delta.get('tool_calls',[]):
+                        entry=calls.setdefault(call['index'],{'id':'','type':'function','function':{'name':'','arguments':''}})
+                        if call.get('id'):entry['id']=call['id']
+                        for key in ['name','arguments']:entry['function'][key]+=call.get('function',{}).get(key) or ''
+                    if choice.get('finish_reason'):finish=choice['finish_reason']
+        elapsed=time.monotonic()-started;after=self.metrics()
+        sample={'elapsed_s':elapsed,'first_token_s':first,'finish_reason':finish,'usage':usage,'answer':content[:2000],'reasoning_tokens_reported':usage.get('completion_tokens_details',{}).get('reasoning_tokens'),'metrics_before':before,'metrics_after':after}
+        cached=usage.get('prompt_tokens_details',{}).get('cached_tokens')
+        if isinstance(cached,int):sample.update(cached_tokens=cached,cache_evidence='native response usage')
+        elif all(before.get(k) is not None and after.get(k) is not None for k in ['request_success_total','prefix_cache_hits_total']) and after['request_success_total']-before['request_success_total']==1 and all(before.get(k)==after.get(k)==0 for k in ['num_requests_running','num_requests_waiting']):
+            sample.update(cached_tokens=after['prefix_cache_hits_total']-before['prefix_cache_hits_total'],cache_evidence='Native aggregate hit-token delta with exactly one completed request and idle before/after, within the owned gateway hold; uncoordinated direct traffic remains a limitation.')
+        else:sample.update(cached_tokens=None,cache_evidence='unavailable or concurrent native traffic; no reuse claim')
+        message={'role':'assistant','content':content}
+        if reasoning:message['reasoning_content']=reasoning
+        if calls:message['tool_calls']=list(calls.values())
+        return sample,message
+    def tokens(self,messages):
+        value=json.loads(self.request('/tokenize',{'model':'GLM-5.3-Flash-EXL3','messages':messages,'add_generation_prompt':True},timeout=90))
+        count=value.get('count')
+        if not isinstance(count,int):raise RuntimeError('Native tokenizer did not report a token count')
+        return count
+    def prompt(self,target,nonce):
+        # Calibrate with this installed tokenizer, never character-count tokens.
+        head='Synthetic verification '+nonce+'. The stored verification value is 7319.\n'
+        line='Record: cedar maple oak pine birch willow ash elm.\n'
+        tail='\nReply with the stored verification value from the beginning of these records only.'
+        def messages(n):return [{'role':'user','content':head+line*n+tail}]
+        unit=self.tokens(messages(100))-self.tokens(messages(0));n=max(1,(target-self.tokens(messages(0)))*100//unit)
+        value=messages(n);count=self.tokens(value)
+        while count>target:
+            n-=max(1,(count-target)*100//unit);value=messages(n);count=self.tokens(value)
+        # A small repeated suffix is tokenized again to prove the final count.
+        while count<target-4:
+            value[0]['content']+=' x'*(target-count-2);count=self.tokens(value)
+            if count>target:raise RuntimeError('Tokenizer calibration overshot; no long inference was sent')
+        return value,count
+    def checks(self,phase,context_limit):
+        folder=self.root/phase;folder.mkdir(mode=0o700);results=[]
+        def save(label,callback):
+            try:
+                value=callback();row={'label':label,'state':'measured',**value}
+            except Exception as error:row={'label':label,'state':'failed','error':str(error)}
+            results.append(row);write(folder/'results.json',results);return row
+        def simple():
+            sample,message=self.chat([{'role':'user','content':'Compute 137 * 23. Reply with the decimal integer only.'}])
+            return {'sample':sample,'passed':message['content'].strip()=='3151' and sample['finish_reason']=='stop'}
+        save('arithmetic',simple)
+        def toolcheck():
+            tools=[{'type':'function','function':{'name':'report_value','description':'Return the supplied integer.','parameters':{'type':'object','properties':{'value':{'type':'integer'}},'required':['value'],'additionalProperties':False}}}]
+            messages=[{'role':'user','content':'Call report_value exactly once with integer value 7319.'}]
+            sample,message=self.chat(messages,tools=tools,tool_choice='auto');calls=message.get('tool_calls',[])
+            passed=len(calls)==1 and calls[0]['function']['name']=='report_value' and json.loads(calls[0]['function']['arguments'])=={'value':7319} and sample['finish_reason']=='tool_calls'
+            if not passed:return {'samples':[sample],'passed':False}
+            follow,answer=self.chat(messages+[message,{'role':'tool','tool_call_id':calls[0]['id'],'content':'{"value":7319}'},{'role':'user','content':'Reply with the returned integer, no further tool call.'}],tools=tools,tool_choice='auto')
+            return {'samples':[sample,follow],'passed':follow['finish_reason']=='stop' and '7319' in answer['content']}
+        save('tool_call_and_followup',toolcheck)
+        histories=[]
+        for key in ['A','B']:
+            messages,count=self.prompt(131072,str(uuid.uuid4())+'-'+key)
+            def cold(messages=messages,count=count):
+                sample,answer=self.chat(messages);histories.append((messages,answer))
+                return {'input_tokens_measured':count,'sample':sample,'passed':sample['finish_reason']=='stop' and '7319' in answer['content'],'cold_cache_proved':sample.get('cached_tokens')==0}
+            save('cold-'+key,cold)
+        for index,key in enumerate(['A','B']):
+            if len(histories)<=index:continue
+            messages,answer=histories[index]
+            def warm(messages=messages,answer=answer):
+                sample,reply=self.chat(messages+[answer,{'role':'user','content':'Repeat the verification value only.'}])
+                return {'sample':sample,'passed':sample['finish_reason']=='stop' and '7319' in reply['content'],'substantial_reuse_proved':sample.get('cached_tokens') is not None and sample['cached_tokens']>=100000}
+            save('append-'+key,warm)
+        if histories:
+            original=histories[0][0][0]['content'];at=int(len(original)*0.9)
+            for label,content in [('edit-90-percent',original[:at]+' Revised record.'+original[at:]),('branch-90-percent',original[:at]+'\nNew branch: verification value is 7319. Reply with the value only.')]:
+                def branch(content=content):
+                    sample,reply=self.chat([{'role':'user','content':content}]);return {'sample':sample,'passed':sample['finish_reason']=='stop' and '7319' in reply['content']}
+                save(label,branch)
+        def boundary():
+            messages,count=self.prompt(context_limit-65,str(uuid.uuid4())+'-boundary')
+            sample,reply=self.chat(messages,max_tokens=64)
+            return {'sample':sample,'requested_output_budget':64,'input_tokens_measured':count,'requested_total':count+64,'configured_context':context_limit,'accepted':sample['usage'].get('prompt_tokens')==count,'scope':'Near-limit input acceptance only. A 64-token diagnostic output budget does not test long output quality or change the production output setting.'}
+        save('context-boundary',boundary)
+        def concurrency_check():
+            messages,_=self.prompt(8192,str(uuid.uuid4())+'-concurrency');peak=0
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                futures=[pool.submit(self.chat,[{'role':'user','content':messages[0]['content']+'\nExplain why the verification value is consistent; give five sentences.'}],max_tokens=512) for _ in range(2)]
+                while not all(f.done() for f in futures):
+                    metric=self.metrics().get('num_requests_running');peak=max(peak,metric or 0);time.sleep(.2)
+                samples=[future.result()[0] for future in futures]
+            return {'samples':samples,'peak_native_running':peak,'two_active_requests_observed':peak>=2,'scope':'Two simultaneous diagnostic requests; not a maximum-throughput benchmark.'}
+        save('concurrency-two',concurrency_check)
+        return results
+    def launch(self,recipe,tag,phase):
+        environment={**os.environ,'SKIP_PULL':'1','SKIP_BUILD':'1','SKIP_DOWNLOAD':'1','SKIP_SYNC':'1','SKIP_SHIP':'1','IMAGE':tag,'READY_TIMEOUT':'1800'}
+        self.command(['bash',str(recipe/'start.sh')],env=environment,log=phase+'-start.log',timeout=2400)
+    def stop(self,recipe,phase):
+        self.wait_idle()
+        self.command(['bash',str(recipe/'start.sh'),'stop'],log=phase+'-stop.log',timeout=120)
+    def suspend_original(self,prepared):
+        # Keep the exact containers, writable layers, mounts and original image.
+        # The candidate takes their conventional names only while under our hold.
+        self.wait_idle()
+        for rank,name,key in [(False,'glm53-exl3-head','original_container'),(True,'glm53-exl3-worker','original_rank_container')]:
+            call=self.rank if rank else self.command
+            current=self.inspect(rank)
+            if current['Id']!=prepared[key]:raise RuntimeError('Original identity changed before suspension')
+            call(['docker','stop','--time','60',current['Id']],timeout=90)
+            call(['docker','rename',current['Id'],name+'-original-'+self.plan['trial_id']])
+    def restore(self,prepared):
+        self.baseline_unchanged()
+        before=json.loads((self.backup/'head.json').read_text());before_rank=json.loads((self.backup/'rank.json').read_text())
+        # Do not stop someone else's process; candidate IDs/images must match.
+        for rank,original,name,image_key in [(False,before,'glm53-exl3-head','candidate_image'),(True,before_rank,'glm53-exl3-worker','rank_candidate_image')]:
+            call=self.rank if rank else self.command
+            try:current=self.inspect(rank)
+            except Exception:current=None
+            if current and current['Id']!=original['Id']:
+                if current['Image']!=prepared[image_key]:raise RuntimeError('Another model/image now owns a container name; no further changes issued')
+                if current['State']['Running']:
+                    if not rank:
+                        # A failed owned startup can have no API at all. Only an
+                        # explicit local refusal permits cleanup without metrics.
+                        try:
+                            connection=socket.create_connection(('127.0.0.1',8888),timeout=3);connection.close();refused=False
+                        except OSError as error:refused=error.errno==errno.ECONNREFUSED
+                        if not refused:self.wait_idle()
+                    call(['docker','stop','--time','60',current['Id']],timeout=90)
+                call(['docker','rename',current['Id'],name+'-candidate-'+self.plan['trial_id']])
+            # Exact IDs survive stop/rename; never recreate the old configuration.
+            saved=json.loads(call(['docker','inspect',original['Id']]))[0]
+            if saved['Image']!=original['Image']:raise RuntimeError('Preserved original container identity differs')
+            if saved['Name']!='/'+name:call(['docker','rename',original['Id'],name])
+        current_script=self.rank(['cat','/tmp/glm53-exl3-worker.sh'])
+        permitted=[(self.backup/'worker-inner.sh').read_bytes()]
+        candidate_script=self.candidate/'.glm53-exl3-worker.inner.sh'
+        if candidate_script.is_file():permitted.append(candidate_script.read_bytes())
+        if current_script not in permitted:raise RuntimeError('Rank launcher has an unrecognized owner edit; it was preserved')
+        self.rank(['python3','-c',"import sys; from pathlib import Path; Path('/tmp/glm53-exl3-worker.sh').write_bytes(sys.stdin.buffer.read())"],input=permitted[0])
+        self.rank(['docker','start',before_rank['Id']]);self.command(['docker','start',before['Id']])
+        self.wait_idle(timeout=2400)
+        head,rank=self.inspect(),self.inspect(True)
+        for name,original,restored in [('head',before,head),('rank',before_rank,rank)]:
+            if original['Id']!=restored['Id'] or original['Image']!=restored['Image']:raise RuntimeError('Exact original container was not restored')
+            old,new=envmap(original),envmap(restored)
+            changed={key for key in old.keys()|new.keys() if old.get(key)!=new.get(key)}
+            if changed:raise RuntimeError('Original '+name+' environment differs: '+','.join(sorted(changed)))
+            old_mounts={m['Destination']:(m['Type'],m.get('Source'),m['RW']) for m in original['Mounts']}
+            new_mounts={m['Destination']:(m['Type'],m.get('Source'),m['RW']) for m in restored['Mounts']}
+            if old_mounts!=new_mounts:raise RuntimeError('Original '+name+' mounts differ; keep the hold for inspection')
+        self.baseline_unchanged()
+        return {'state':'verified','head_image':head['Image'],'rank_image':rank['Image'],'head_container':head['Id'],'rank_container':rank['Id'],'environment_and_mounts_match':True,'original_env_sha256':sha(self.recipe/'.env'),'scope':'Exact original containers, writable layers, images, environment, mounts and recipe bytes restored. Native qualification is recorded separately.'}
+    def run(self):
+        prepared=json.loads((self.root/'prepared.json').read_text());self.baseline_unchanged()
+        if (self.root/'run-intent.json').exists():raise RuntimeError('Trial already started; inspect its existing receipt rather than running it again')
+        if self.inspect()['Id']!=prepared['original_container'] or self.inspect(True)['Id']!=prepared['original_rank_container']:raise RuntimeError('Original pair identity changed since preparation')
+        if self.rank(['cat','/tmp/glm53-exl3-worker.sh'])!=(self.backup/'worker-inner.sh').read_bytes():raise RuntimeError('Original rank launcher changed since preparation')
+        self.wait_idle();write(self.root/'run-intent.json',{'started_at':time.time(),'trial_id':self.plan['trial_id']})
+        result={'state':'running','phases':{},'scope':'A/B/A2 on the owner-approved temporary profile. No candidate is adopted as a default.'}
+        changed=False
+        try:
+            result['phases']['A']=self.checks('A',400000)
+            self.baseline_unchanged();self.wait_idle();changed=True
+            self.suspend_original(prepared)
+            self.launch(self.candidate,self.tag,'candidate')
+            current=self.inspect();current_rank=self.inspect(True)
+            if current['Image']!=prepared['candidate_image'] or current_rank['Image']!=prepared['rank_candidate_image']:raise RuntimeError('Candidate image identity differs')
+            write(self.root/'candidate-head.json',current);write(self.root/'candidate-rank.json',current_rank)
+            result['candidate_settings']={k:v for k,v in envmap(current).items() if k.startswith('GLM53_') or k in ['MAX_MODEL_LEN','MAX_NUM_SEQS','MAX_NUM_BATCHED_TOKENS','GPU_MEM_UTIL','DFLASH_TOKENS','LOAD_FORMAT','EXTRA_ARGS']}
+            result['phases']['B']=self.checks('B',262144)
+        except Exception as error:result['error']=str(error)
+        finally:
+            if changed:
+                try:
+                    result['restoration']=self.restore(prepared)
+                    result['phases']['A2']=self.checks('A2',400000)
+                    required=[x for x in result['phases']['A2'] if x['label'] in ['arithmetic','tool_call_and_followup']]
+                    if len(required)!=2 or not all(x.get('passed') for x in required):result['restoration'].update(state='unverified',error='Original native quality checks did not pass')
+                except Exception as error:result['restoration']={'state':'unverified','error':str(error)}
+            else:result['restoration']={'state':'verified','scope':'Serving was never changed; original remains running.'}
+            result['state']='complete' if result['restoration']['state']=='verified' else 'restoration_required'
+            result['finished_at']=time.time();write(self.root/'run-result.json',result)
+        return result
+
+
+if __name__=='__main__':
+    # Losing the SSH session must not terminate the restoration transaction.
+    signal.signal(signal.SIGHUP,signal.SIG_IGN)
+    action,encoded=sys.argv[1:];plan=json.loads(base64.b64decode(encoded));runner=Remote(plan)
+    if action=='idle':result={'idle':runner.idle()}
+    elif action in ['prepare','run']:
+        with open(runner.root/'operation.lock','a') as lock:
+            fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            result=getattr(runner,action)()
+    else:raise SystemExit('Unknown action')
+    print(json.dumps(result),flush=True)
