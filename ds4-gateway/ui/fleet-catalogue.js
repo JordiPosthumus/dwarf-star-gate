@@ -30,6 +30,11 @@ export function catalogueEntry({ member, worker, device, mediaBusy, mediaDetail,
   const hardwareUp = device?.hardware?.state === 'connected';
   const healthy = worker?.is_healthy === true;
   const drained = worker?.drained === true;
+  const maintenance = (worker?.maintenance_locks?.length ?? 0) > 0;
+  const held = (worker?.holds?.length ?? 0) > 0;
+  const directReserved = worker?.direct_reserved === true;
+  const operatorPaused = worker?.operator_paused === true;
+  const routingBlocked = drained || maintenance || held || directReserved || operatorPaused;
   const quarantined = worker?.quarantine === true || worker?.quarantine === 'true';
   const running = telemetry?.running ?? 0;
   const routeNames = Object.entries(routes).filter(([, ids]) => Array.isArray(ids) && ids.includes(member.id)).map(([name]) => name);
@@ -57,13 +62,15 @@ export function catalogueEntry({ member, worker, device, mediaBusy, mediaDetail,
   } else if (quarantined) {
     state = 'failed';
     detail = `quarantined${worker.quarantine_reason ? `: ${worker.quarantine_reason}` : ''}`;
-  } else if (healthy && !drained && connected) {
+  } else if (healthy && !routingBlocked && connected) {
     state = 'serving-llm';
     const load = worker?.load ?? 0, queued = worker?.queued ?? 0;
     detail = load > 0 ? `${load} active request${load === 1 ? '' : 's'}${queued ? ` · ${queued} queued` : ''}` : running > 0 ? `engine reports ${running} active outside gateway accounting` : 'healthy, idle';
-  } else if (healthy && drained) {
+  } else if (healthy && routingBlocked) {
     state = 'paused';
-    detail = 'routing paused by operator; engine still up';
+    const reasons = [operatorPaused && 'paused by operator', maintenance && 'held for maintenance',
+      held && 'held by a gateway operation', directReserved && 'reserved for direct work'].filter(Boolean);
+    detail = `routing ${reasons.length ? reasons.join(' and ') : 'paused'}; ${connected ? 'endpoint answering' : 'last gateway readiness check passed; current endpoint telemetry unavailable'}`;
   } else if (connected) {
     state = 'engine-up';
     detail = `endpoint answers${running > 0 ? ` · ${running} active` : ''}; gateway health ${age === null ? 'never probed' : `last probed ${Math.round(age / 1000)}s ago`}${worker?.probe_error ? ` · ${worker.probe_error}` : ''} — may be loading or a probe mismatch`;
