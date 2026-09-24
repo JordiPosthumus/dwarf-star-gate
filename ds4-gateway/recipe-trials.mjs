@@ -32,9 +32,11 @@ export function createRecipeTrials({config,powerBusy=()=>false,launch=spawn}={})
     if(!path.isAbsolute(binding.plan_file??'')||!/^[a-f0-9]{64}$/.test(binding.plan_sha256??''))throw Error('Recipe plan enrollment is incomplete');
     const bytes=fs.readFileSync(binding.plan_file);if(hash(bytes)!==binding.plan_sha256)throw Error('Enrolled recipe plan changed; leave serving unchanged');
     const plan=JSON.parse(bytes),folder=path.join(directory,trial_id),file=path.join(folder,`${stage}.status.json`);
-    if(plan.schema!==1||plan.kind!=='glm53-spark-pair-long-coding'||!['glm53f-sparks12','glm53f-sparks34'].includes(plan.worker))throw Error('Unsupported enrolled recipe plan');
+    const localMtp=plan.kind==='omlx-glm53-mtp-depth'&&plan.worker==='glm53f-m3';
+    const spark=plan.kind==='glm53-spark-pair-long-coding'&&['glm53f-sparks12','glm53f-sparks34'].includes(plan.worker);
+    if(plan.schema!==1||(!localMtp&&!spark))throw Error('Unsupported enrolled recipe plan');
     const target=config.genie_chat?.inspection?.workers?.[plan.worker];
-    if(!target?.ssh?.includes(plan.ssh)||target.recipe_root!==plan.recipe_root)throw Error('Recipe plan does not match the enrolled worker inspection binding');
+    if(localMtp?target?.kind!=='omlx-local'||target.root!==plan.root||target.url!==plan.url||target.api_key_file!==plan.api_key_file:!target?.ssh?.includes(plan.ssh)||target.recipe_root!==plan.recipe_root)throw Error('Recipe plan does not match the enrolled worker inspection binding');
     const prior=read(file);
     if(prior){if(prior.profile!==profile||prior.plan_sha256!==binding.plan_sha256)throw Error('Trial ID belongs to another plan');return prior;}
     if(powerBusy(plan.worker)||busy(plan.worker))throw Error('An operation on this hardware is already running or needs restoration; inspect its existing receipt');
@@ -48,7 +50,7 @@ export function createRecipeTrials({config,powerBusy=()=>false,launch=spawn}={})
     fs.writeFileSync(file,JSON.stringify(receipt)+'\n',{flag:'wx',mode:0o600});
     const output=fs.openSync(path.join(folder,`${stage}.log`),'ax',0o600);
     try{
-      const child=launch(config.genie_chat.python,[path.join(here,'spark_recipe_trial.py'),stage,folder,config.control_socket],{detached:true,stdio:['ignore',output,output]});
+      const child=launch(config.genie_chat.python,[path.join(here,localMtp?'omlx_recipe_trial.py':'spark_recipe_trial.py'),stage,folder,config.control_socket],{detached:true,stdio:['ignore',output,output]});
       child.once('error',()=>{const current=read(file);if(current?.state==='starting')fs.writeFileSync(file,JSON.stringify({...current,state:'failed',error:'Executor could not start; no serving change was issued.'})+'\n',{mode:0o600});});
       child.unref();
     }finally{fs.closeSync(output);}

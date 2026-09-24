@@ -13,6 +13,7 @@ import re
 import shlex
 import subprocess
 import sys
+import tarfile
 import time
 import uuid
 
@@ -63,6 +64,10 @@ class Executor:
         return result.stdout
     def remote_action(self,action,timeout=7200):
         payload={**self.plan,'trial_id':self.id,'trial_root':self.remote}
+        source=Path(self.plan['source_archive'])
+        if hashlib.sha256(source.read_bytes()).hexdigest()!=self.plan['source_sha256']:raise RuntimeError('Source archive changed')
+        with tarfile.open(source) as archive:
+            payload['source_start_sha256']=hashlib.sha256(archive.extractfile('start.sh').read()).hexdigest()
         encoded=base64.b64encode(json.dumps(payload).encode()).decode()
         command=shlex.join(['python3','-',action,encoded])
         script=Path(__file__).with_name('spark_recipe_remote.py').read_bytes()

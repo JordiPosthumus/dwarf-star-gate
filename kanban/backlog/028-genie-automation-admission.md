@@ -27,3 +27,22 @@ Prerequisites now in place from tonight's work:
 - Delivery order using dashboard chat now:
   (a) admission-proposal tool (read-only draft), (b) park/start orchestration
   tool with confirmation receipt, (c) self-verify step reusing card 016 checks.
+
+
+## Audit 2026-09-24
+
+The staged admission backend and chat schema already existed, but the installed
+Hermes bridge never registered the admission toolset. Registration is now fixed
+and verified against the installed Python environment. Existing ask-first
+workflow remains separate from recipe-trial approval.
+
+`verify_serving` now performs real inference rather than treating `/v1/models`
+as generation proof. Real Genie calls and native verification receipts are retained privately. Credential resolution uses the private worker binding;
+public worker views intentionally omit credentials. Receipts retain failed
+checks as well as later successful evidence.
+
+Still open: one full new-worker admission through the actual Genie, including
+route activation and final generation. Do not remove/re-admit a working household
+worker merely to manufacture a completion claim. #008 now also has native
+status/routing/power controls and an enrolled immutable recipe-trial tool;
+#011 remains broader than the single GLM Spark profile being evaluated.

@@ -36,6 +36,22 @@ def sha(file):return hashlib.sha256(file.read_bytes()).hexdigest()
 def envmap(container):return dict(item.split('=',1) for item in container['Config']['Env'] if '=' in item)
 
 
+def isolated_rank_launcher(text, destination):
+    """Move candidate host-side staging only; preserve container paths/flags."""
+    if not re.fullmatch(r'/[A-Za-z0-9_./-]+',destination) or '..' in Path(destination).parts:
+        raise ValueError('Use the enrolled isolated staging path')
+    lines=[];count=0
+    for line in text.splitlines(keepends=True):
+        if not line.lstrip().startswith('#') and '/tmp/' in line:
+            valid=len(re.findall(r'/tmp/(?=\$\{CONTAINER_WORKER\}|glm53|patch_)',line))
+            if valid!=line.count('/tmp/'):
+                raise ValueError('Unexpected upstream temporary path; inspect before launching')
+            count+=valid;line=line.replace('/tmp/',destination.rstrip('/')+'/')
+        lines.append(line)
+    if count<20:raise ValueError('Expected candidate worker staging paths were not found')
+    return ''.join(lines),count
+
+
 class Remote:
     def __init__(self,plan):
         self.plan=plan;self.root=Path(plan['trial_root']);self.recipe=Path(plan['recipe_root'])
@@ -283,6 +299,42 @@ class Remote:
     def stop(self,recipe,phase):
         self.wait_idle()
         self.command(['bash',str(recipe/'start.sh'),'stop'],log=phase+'-stop.log',timeout=120)
+    def rank_staging_snapshot(self):
+        """Private bytes/hash proof for original /tmp bind files and trees."""
+        original=json.loads((self.backup/'rank.json').read_text())
+        paths=sorted({m['Source'] for m in original['Mounts'] if m['Type']=='bind' and m.get('Source','').startswith('/tmp/')})
+        script="""import base64,hashlib,json,os,stat,sys
+from pathlib import Path
+result={};total=0
+for source in json.loads(sys.argv[1]):
+ p=Path(source)
+ if p.is_symlink():raise RuntimeError('Unrecognized symlink staging source')
+ files=sorted(p.rglob('*')) if p.is_dir() else [p]
+ for file in files:
+  if file.is_symlink():raise RuntimeError('Unrecognized symlink staging content')
+  if file.is_dir():continue
+  if not file.is_file():raise RuntimeError('Staging source is not a regular file')
+  data=file.read_bytes();total+=len(data)
+  if total>32*1024**2:raise RuntimeError('Staging backup exceeds 32MiB; inspect before changes')
+  result[str(file)]={'sha256':hashlib.sha256(data).hexdigest(),'mode':stat.S_IMODE(file.stat().st_mode),'bytes_b64':base64.b64encode(data).decode()}
+print(json.dumps(result))
+"""
+        return json.loads(self.rank(['python3','-c',script,json.dumps(paths)],timeout=60))
+    def isolate_candidate_staging(self,prepared):
+        if sha(self.candidate/'.env')!=prepared['candidate_env_sha256']:
+            raise RuntimeError('Prepared candidate environment changed before trial')
+        file=self.candidate/'start.sh';original=file.read_text()
+        if sha(file)!=self.plan['source_start_sha256']:
+            raise RuntimeError('Candidate launcher differs from the pinned source archive')
+        staging=self.plan['remote_root']+'/'+self.plan['trial_id']+'/rank-launch'
+        changed,count=isolated_rank_launcher(original,staging)
+        # Do this before stopping anything. The upstream Docker build does not
+        # include start.sh; only its external transport paths change here.
+        (self.root/'upstream-start.sh').write_text(original)
+        file.write_text(changed)
+        self.rank(['mkdir','-m','700','-p',staging])
+        snapshot=self.rank_staging_snapshot();write(self.backup/'rank-staging-files.json',snapshot)
+        write(self.root/'staging-isolation.json',{'original_launcher_sha256':hashlib.sha256(original.encode()).hexdigest(),'isolated_launcher_sha256':sha(file),'rewritten_host_path_occurrences':count,'original_rank_files':len(snapshot),'scope':'Only candidate worker staging paths moved out of shared /tmp; model flags and container-side paths unchanged.'})
     def suspend_original(self,prepared):
         # Keep the exact containers, writable layers, mounts and original image.
         # The candidate takes their conventional names only while under our hold.
@@ -318,11 +370,10 @@ class Remote:
             if saved['Image']!=original['Image']:raise RuntimeError('Preserved original container identity differs')
             if saved['Name']!='/'+name:call(['docker','rename',original['Id'],name])
         current_script=self.rank(['cat','/tmp/glm53-exl3-worker.sh'])
-        permitted=[(self.backup/'worker-inner.sh').read_bytes()]
-        candidate_script=self.candidate/'.glm53-exl3-worker.inner.sh'
-        if candidate_script.is_file():permitted.append(candidate_script.read_bytes())
-        if current_script not in permitted:raise RuntimeError('Rank launcher has an unrecognized owner edit; it was preserved')
-        self.rank(['python3','-c',"import sys; from pathlib import Path; Path('/tmp/glm53-exl3-worker.sh').write_bytes(sys.stdin.buffer.read())"],input=permitted[0])
+        if current_script!=(self.backup/'worker-inner.sh').read_bytes():raise RuntimeError('Original rank launcher changed; preserve owner edits')
+        snapshot_file=self.backup/'rank-staging-files.json'
+        if snapshot_file.is_file() and self.rank_staging_snapshot()!=json.loads(snapshot_file.read_text()):
+            raise RuntimeError('Original rank staging files changed; preserve them and keep the hold')
         self.rank(['docker','start',before_rank['Id']]);self.command(['docker','start',before['Id']])
         self.wait_idle(timeout=2400)
         head,rank=self.inspect(),self.inspect(True)
@@ -341,6 +392,7 @@ class Remote:
         if (self.root/'run-intent.json').exists():raise RuntimeError('Trial already started; inspect its existing receipt rather than running it again')
         if self.inspect()['Id']!=prepared['original_container'] or self.inspect(True)['Id']!=prepared['original_rank_container']:raise RuntimeError('Original pair identity changed since preparation')
         if self.rank(['cat','/tmp/glm53-exl3-worker.sh'])!=(self.backup/'worker-inner.sh').read_bytes():raise RuntimeError('Original rank launcher changed since preparation')
+        self.isolate_candidate_staging(prepared)
         self.wait_idle();write(self.root/'run-intent.json',{'started_at':time.time(),'trial_id':self.plan['trial_id']})
         result={'state':'running','phases':{},'scope':'A/B/A2 on the owner-approved temporary profile. No candidate is adopted as a default.'}
         changed=False

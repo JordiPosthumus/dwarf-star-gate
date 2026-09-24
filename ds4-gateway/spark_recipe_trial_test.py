@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
-from spark_recipe_remote import Remote
+from spark_recipe_remote import Remote, isolated_rank_launcher
 
 class TrialTransaction(unittest.TestCase):
  def setUp(self):
@@ -15,6 +15,7 @@ class TrialTransaction(unittest.TestCase):
   self.remote.inspect=lambda rank=False:{'Id':'original-rank' if rank else 'original-head'}
   self.remote.backup.mkdir();(self.remote.backup/'worker-inner.sh').write_bytes(b'original');self.remote.rank=lambda *args,**kw:b'original'
   self.remote.suspend_original=lambda prepared:self.events.append('suspend')
+  self.remote.isolate_candidate_staging=lambda prepared:self.events.append('isolate_staging')
   self.remote.launch=lambda *args:(_ for _ in ()).throw(RuntimeError('candidate failed to load'))
   self.remote.restore=lambda prepared:(self.events.append('restore') or {'state':'verified'})
   self.remote.checks=lambda phase,limit:(self.events.append(phase) or [{'label':'arithmetic','passed':True},{'label':'tool_call_and_followup','passed':True}])
@@ -40,6 +41,12 @@ class TrialTransaction(unittest.TestCase):
   self.assertTrue(all(command[1] in ['stop','rename'] for command in commands))
 
 class Restoration(unittest.TestCase):
+ def test_candidate_staging_rewrites_every_host_copy_and_bind_but_no_container_paths(self):
+  original=''.join("scp input rank:/tmp/patch_fixture.py\n-v '/tmp/patch_fixture.py:/opt/glm53/patch_fixture.py:ro'\n" for _ in range(12))
+  value,count=isolated_rank_launcher(original,'/fixture/trial/rank-launch')
+  self.assertEqual(count,24);self.assertNotIn('/tmp/',value)
+  self.assertEqual(value.count('/opt/glm53/patch_fixture.py:ro'),12)
+  with self.assertRaisesRegex(ValueError,'Unexpected'):isolated_rank_launcher(original+'rm /tmp/unrecognized\n','/fixture/trial')
  def test_exact_containers_are_restored_and_candidate_containers_retained(self):
   with tempfile.TemporaryDirectory() as temporary:
    root=Path(temporary);recipe=root/'original';recipe.mkdir();(recipe/'.env').write_text('unchanged')

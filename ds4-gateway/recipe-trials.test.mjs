@@ -42,3 +42,14 @@ test('unresolved old restoration remains busy beyond the public history limit',a
  }
  assert.equal(manager.status().length,32);assert.equal(manager.busy('glm53f-sparks34'),true);
 });
+test('local MTP trial must match every private inspection binding and reserves M3 hardware',async t=>{
+ const f=fixture(t),plan={schema:1,kind:'omlx-glm53-mtp-depth',worker:'glm53f-m3',root:'/fixture/m3',url:'http://127.0.0.1:8013/v1',api_key_file:'/fixture/private-key'};
+ const binding=f.config.recipe_trials.fixture;
+ fs.writeFileSync(binding.plan_file,JSON.stringify(plan));binding.plan_sha256=createHash('sha256').update(fs.readFileSync(binding.plan_file)).digest('hex');
+ f.config.genie_chat.inspection.workers['glm53f-m3']={kind:'omlx-local',root:plan.root,url:plan.url,api_key_file:'/wrong-key'};
+ const manager=createRecipeTrials(f),args={profile:'fixture',stage:'prepare',trial_id:id};
+ await assert.rejects(manager.start(args),/inspection binding/);assert.equal(f.launched.length,0);
+ f.config.genie_chat.inspection.workers['glm53f-m3'].api_key_file=plan.api_key_file;
+ await manager.start(args);assert.match(f.launched[0][1][0],/omlx_recipe_trial.py$/);
+ assert.equal(manager.busy('qwen-image'),true);assert.equal(manager.busy('glm53f-sparks34'),false);
+});
