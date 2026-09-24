@@ -308,3 +308,30 @@ class CacheMetricsQuery(unittest.TestCase):
   for flags in [['--port','5','--port=6'],['--port','65536'],['--port','http://example'],['--port']]:self.assertEqual(self.query(flags)['state'],'unavailable')
   self.assertEqual(self.requests,[])
 if __name__=='__main__':unittest.main()
+
+class RecipeInspection(unittest.TestCase):
+ def test_enrolled_recipe_is_read_without_execution_and_secrets_are_redacted(self):
+  import io,contextlib,hashlib
+  with tempfile.TemporaryDirectory() as temporary:
+   root=pathlib.Path(temporary);marker=root/'must-not-exist'
+   env='MAX_MODEL_LEN=400000\nAPI_KEY=PRIVATE_TEST_VALUE\nSIDE_EFFECT=$(touch '+str(marker)+')\n'
+   (root/'.env').write_text(env);(root/'start.sh').write_text('# launcher\n'+'# unchanged\n'*1000)
+   container={'Id':'immutable-id','Image':'image-id','State':{'Running':False,'StartedAt':'dated'},'Config':{'Entrypoint':['bash'],'Cmd':['start.sh'],'Env':['MAX_MODEL_LEN=400000']},'HostConfig':{},'Mounts':[]}
+   def run(argv,**kwargs):
+    argv=tuple(argv)
+    if argv[:3]==('docker','image','inspect'):return json.dumps([{'Id':'image-id','Created':'dated','Config':{'Labels':{'glm53.recipe.stamp':'fixture-stamp'}}}])
+    if argv[:2]==('docker','inspect'):return json.dumps([container])
+    if argv[0]=='git':return 'a'*40+'\n' if argv[-1]=='HEAD' else ''
+    raise AssertionError(argv)
+   def collect():
+    output=io.StringIO()
+    with patch('subprocess.check_output',side_effect=run),patch('sys.stdin',io.StringIO(json.dumps({'container':'fixture','recipe_root':str(root)}))),contextlib.redirect_stdout(output):exec(compile(m.COLLECTOR,'collector','exec'),{})
+    return json.loads(output.getvalue())
+   result=collect();recipe=result['recipe']
+   self.assertEqual(recipe['revision'],'a'*40);self.assertFalse(recipe['tracked_changes'])
+   self.assertEqual(result['recipe_stamp'],'fixture-stamp')
+   self.assertEqual(recipe['files']['.env']['sha256'],hashlib.sha256(env.encode()).hexdigest())
+   self.assertIn('MAX_MODEL_LEN=400000',recipe['files']['.env']['text']);self.assertNotIn('PRIVATE_TEST_VALUE',json.dumps(result))
+   self.assertFalse(marker.exists());self.assertTrue(recipe['files']['start.sh']['truncated']);self.assertEqual(len(recipe['files']['start.sh']['text']),6000)
+   (root/'.env').unlink();(root/'.env').symlink_to(root/'start.sh')
+   self.assertEqual(collect()['recipe']['files']['.env'],{'state':'unavailable'})

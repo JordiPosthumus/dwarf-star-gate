@@ -89,6 +89,11 @@ def main():
             from genie_power import register_power, TOOLSET as POWER_TOOLSET
             expected_tools |= register_power(power, emit)
             toolsets.append(POWER_TOOLSET)
+        admission = None if review else request.get('admission')
+        if admission:
+            from genie_admission import register_admission, TOOLSET as ADMISSION_TOOLSET
+            expected_tools |= register_admission(admission, emit)
+            toolsets.append(ADMISSION_TOOLSET)
         # Only fixed phases and counts leave this callback. Never relay reasoning text.
         progress = {"step": 0, "reasoning_chars": 0}
         last_emit = [0.0]
@@ -120,7 +125,7 @@ def main():
             request_overrides={"extra_headers": headers},
         )
         actual_tools = {t.get("function", t).get("name") for t in agent.tools}
-        if inspection or operations or hourglass or queue or recovery or media or spark_setup:
+        if inspection or operations or hourglass or queue or recovery or media or spark_setup or power or admission:
             # Hermes may expose plugin tools through its native discovery bridge.
             # Validate the underlying catalog as well as the visible bridge surface.
             from model_tools import get_tool_definitions

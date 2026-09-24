@@ -261,7 +261,34 @@ if p.get('launcher'):
  data=f.read_bytes()
  if re.search(rb'(?i)(?:api[_-]?key|access[_-]?token|secret|password|hf_token|hugging_face_hub_token)\s*=',data):raise ValueError('Launcher requires credential redaction')
  launcher={'text':data.decode(),'sha256':hashlib.sha256(data).hexdigest()}
-print(json.dumps({'observed_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'container':{'id':c['Id'],'image_id':c['Image'],'running':c['State']['Running'],'started_at':c['State']['StartedAt'],'entrypoint':config.get('Entrypoint'),'command':cmd,'environment':env,'mounts':c['Mounts'],'port_bindings':c['HostConfig'].get('PortBindings'),'restart_policy':c['HostConfig'].get('RestartPolicy'),'ipc_mode':c['HostConfig'].get('IpcMode'),'shm_size':c['HostConfig'].get('ShmSize'),'device_requests':c['HostConfig'].get('DeviceRequests')},'image':{'id':i['Id'],'created':i['Created'],'repo_digests':i.get('RepoDigests',[])},'packages':packages,'model_config':model_config,'engine_runtime':engine_runtime,'launcher':launcher,**({'sources':sources} if sources is not None else {}),'scope':'Live Docker metadata, launcher bytes, separately labelled installed distribution metadata and model configuration on disk. Package versions do not prove build ancestry or custom source integrity. Installed Python source can be requested with source_files and source_window. No inference, restart, weight hash or restoration test. Launch settings and model configuration on disk do not independently prove effective API behavior or kernel dispatch.'}))
+recipe=None
+if p.get('recipe_root'):
+ import os,shutil
+ root=pathlib.Path(p['recipe_root'])
+ if not root.is_absolute() or root.is_symlink() or not root.is_dir():raise ValueError('Recipe directory unavailable')
+ files={}
+ for name in ['.env','start.sh']:
+  try:
+   fd=os.open(root/name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+   try:
+    info=os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode) or info.st_size>262144:raise ValueError('Recipe file unavailable')
+    data=os.read(fd,262145)
+   finally:os.close(fd)
+   lines=['<credential-related line withheld>' if secret.search(line) else line for line in data.decode().splitlines()]
+   files[name]={'sha256':hashlib.sha256(data).hexdigest(),'bytes':len(data),'text':'\n'.join(lines)[:(262144 if name=='.env' else 6000)],'truncated':name!='.env' and len('\n'.join(lines))>6000}
+  except (OSError,ValueError,UnicodeError):files[name]={'state':'unavailable'}
+ recipe={'files':files,'revision':None,'tracked_changes':None}
+ try:
+  revision=run('git','-C',str(root),'rev-parse','HEAD').strip()
+  if re.fullmatch(r'[a-f0-9]{40,64}',revision):recipe.update(revision=revision,tracked_changes=bool(run('git','-C',str(root),'status','--porcelain','--untracked-files=no')))
+ except Exception:pass
+ try:
+  mem={k:int(v.split()[0])*1024 for k,v in [line.split(':',1) for line in pathlib.Path('/proc/meminfo').read_text().splitlines()] if k in ['MemTotal','MemAvailable','SwapTotal','SwapFree']}
+  recipe['host_resources']={'memory_bytes':mem,'disk_free_bytes':shutil.disk_usage(root).free}
+ except (OSError,ValueError):recipe['host_resources']={'state':'unavailable'}
+ recipe['scope']='Enrolled recipe files read without sourcing or executing them, Git revision on disk, and host resources. Secrets redacted; file hashes cover original bytes. No backup, inference or restoration proof.'
+print(json.dumps({'observed_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'container':{'id':c['Id'],'image_id':c['Image'],'running':c['State']['Running'],'started_at':c['State']['StartedAt'],'entrypoint':config.get('Entrypoint'),'command':cmd,'environment':env,'mounts':c['Mounts'],'port_bindings':c['HostConfig'].get('PortBindings'),'restart_policy':c['HostConfig'].get('RestartPolicy'),'ipc_mode':c['HostConfig'].get('IpcMode'),'shm_size':c['HostConfig'].get('ShmSize'),'device_requests':c['HostConfig'].get('DeviceRequests')},'image':{'id':i['Id'],'created':i['Created'],'repo_digests':i.get('RepoDigests',[])},'recipe':recipe,'recipe_stamp':(i.get('Config',{}).get('Labels') or {}).get('glm53.recipe.stamp'),'packages':packages,'model_config':model_config,'engine_runtime':engine_runtime,'launcher':launcher,**({'sources':sources} if sources is not None else {}),'scope':'Live Docker metadata, launcher bytes, separately labelled installed distribution metadata and model configuration on disk. Package versions do not prove build ancestry or custom source integrity. Installed Python source can be requested with source_files and source_window. No inference, restart, weight hash or restoration test. Launch settings and model configuration on disk do not independently prove effective API behavior or kernel dispatch.'}))
 '''
 
 def read_json(file, expected_sha256=None):
@@ -408,6 +435,10 @@ def register_inspection(config, context, emit):
                 selected=args.get('selected_default',False)
                 if not isinstance(selected,bool):raise ValueError('Invalid selected-default option')
                 payload_config={'container':container,'launcher':launcher}
+                recipe=target.get('recipe_root')
+                if recipe is not None:
+                    if not isinstance(recipe,str) or not recipe.startswith('/') or '\n' in recipe or '..' in Path(recipe).parts:raise ValueError('Invalid enrolled recipe root')
+                    payload_config['recipe_root']=recipe
                 if source_files is not None:payload_config['source_files']=source_files
                 if source_window is not None:payload_config['source_window']=source_window
                 if selected:
