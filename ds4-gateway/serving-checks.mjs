@@ -21,7 +21,10 @@ export async function runServingCheck({worker,check,config,registry,readDoor,fet
     const usage=result.usage??{},cached=usage.prompt_tokens_details?.cached_tokens;
     const sample={label,elapsed_ms:now()-start,worker:response.headers.get('x-ds4-node'),model:result.model??null,
       finish_reason:choice?.finish_reason??null,prompt_tokens:usage.prompt_tokens??null,completion_tokens:usage.completion_tokens??null,
-      cached_tokens:Number.isSafeInteger(cached)?cached:null};
+      cached_tokens:Number.isSafeInteger(cached)?cached:null,
+      // Requests in this module contain synthetic data only. Preserve the
+      // returned answer so a content failure is diagnosable, not guessed at.
+      answer:typeof choice?.message?.content==='string'?choice.message.content.slice(0,2000):null};
     samples.push(sample);onSample(sample);
     if(!choice?.message)throw Error(`${label}: no assistant message`);
     return {message:choice.message,sample};

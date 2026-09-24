@@ -361,7 +361,8 @@ def selected_defaults(root, worker):
 def register_inspection(config, context, emit):
     from tools.registry import registry
     workers=config.get('workers',{})
-    known={w['id'] for w in context.get('servers',[]) if isinstance(w.get('id'),str)}
+    # Enrolled inspection-only ranks need not have their own routed API.
+    known={w['id'] for w in context.get('servers',[]) if isinstance(w.get('id'),str)} | set(workers)
     private=context.setdefault('inspection_private_values',[])
     def remember(value):
         # Extend the web tool's private identifier guard before returning inspection results.

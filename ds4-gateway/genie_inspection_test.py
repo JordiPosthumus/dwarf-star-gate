@@ -16,6 +16,11 @@ class Inspection(unittest.TestCase):
    result=self.call('inspect_server',{'worker_id':'example'});self.assertEqual(result['runtime'],'omlx');local.assert_called_once_with(target,source_files=None,source_window=None);ssh.assert_not_called()
    self.assertEqual(self.events[-1][1]['event']['state'],'complete');self.assertEqual(self.events[-1][1]['event']['result'],result)
    self.assertIn('error',self.call('inspect_server',{'worker_id':'example','selected_default':True}));self.assertEqual(local.call_count,1)
+ def test_enrolled_non_routable_rank_can_be_inspected_but_unknown_target_cannot(self):
+  self.register({'example-rank1':{'ssh':['rank-host'],'container':'worker-engine'}})
+  with patch.object(m.subprocess,'run',return_value=types.SimpleNamespace(returncode=0,stdout='{"runtime":"docker"}',stderr='')) as run:
+   result=self.call('inspect_server',{'worker_id':'example-rank1'});self.assertEqual(result['runtime'],'docker');self.assertEqual(run.call_count,1)
+   self.assertIn('error',self.call('inspect_server',{'worker_id':'unenrolled-rank'}));self.assertEqual(run.call_count,1)
  def test_records_missing_distinct_from_unknown_and_no_secret_contents(self):
   (self.root/'observed').mkdir();(self.root/'observed/example.json').write_text(json.dumps({'schema':1,'worker_id':'example','kind':'observed','configuration':{'api_key':'PRIVATE_SECRET','context':262144},'runtime':{'build':'a'*64}}));self.register()
   result=self.call('read_server_configuration',{'worker_id':'example'});self.assertNotIn('PRIVATE_SECRET',json.dumps(result));self.assertEqual(result['records']['observed']['configuration']['context'],262144);self.assertIsNone(result['records']['approved']);self.assertIn('a'*64,self.context['inspection_private_values'])
