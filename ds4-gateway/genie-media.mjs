@@ -37,7 +37,8 @@ export function createMediaTools({read,start,inspectInputs=null,setup=null,repai
       if(!inspectInputs)throw Error('Media input inspection is not connected.');
       return inspectInputs({job_id:input.job_id,worker_id:input.worker_id,...(input.member!==undefined?{member:input.member}:{})});
     }
-    if(input?.action==='inspect'&&mediaMemberInput(input,'action,worker_id')){
+    if(input?.action==='inspect'){
+      if(!mediaMemberInput(input,'action,worker_id'))throw Error('inspect_media_host accepts worker_id and optional member (0 or 1) only. Omit engine and all setup arguments; this reads the whole physical host without changes.');
       if(!resources)throw Error('Media resource inspection is not connected.');
       const host=(await read()).hosts?.find(h=>h.id===input.worker_id);
       if(!host)throw Error('Choose a registered worker for inspection.');
