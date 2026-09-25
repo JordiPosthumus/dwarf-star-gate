@@ -30,6 +30,8 @@ def atomic(file, value):
 def validate(plan):
     if plan.get('schema')!=1 or plan.get('kind')!='glm53-spark-pair-long-coding':
         raise ValueError('Unsupported recipe trial')
+    if plan.get('candidate_profile','long-coding') not in ['long-coding','baseline-cache-400k']:
+        raise ValueError('Unsupported candidate profile')
     for key in ['worker','ssh','rank_ssh']:
         if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.@-]{0,100}',plan.get(key,'')):
             raise ValueError('Invalid enrolled target')

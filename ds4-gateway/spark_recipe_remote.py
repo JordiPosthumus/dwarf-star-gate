@@ -36,6 +36,25 @@ def sha(file):return hashlib.sha256(file.read_bytes()).hexdigest()
 def envmap(container):return dict(item.split('=',1) for item in container['Config']['Env'] if '=' in item)
 
 
+def baseline_cache_settings(original):
+    """Freeze the current serving knobs; vary only checkpoint/draft retention."""
+    required={'MAX_MODEL_LEN':'400000','MAX_NUM_SEQS':'2','MAX_NUM_BATCHED_TOKENS':'7168',
+              'GPU_MEM_UTIL':'0.85','GLM53_DENSE_FP8':'off','GLM53_KDA_BF16_LARGE_M':'0',
+              'GLM53_EXL3_MOE_FAST':'0','DFLASH_TOKENS':'7'}
+    if any(original.get(key)!=value for key,value in required.items()):
+        raise ValueError('Capacity-preserving cache trial requires the pinned original settings')
+    keys={'TP','NNODES','QUANTIZATION','ENFORCE_EAGER','MAX_MODEL_LEN','MAX_NUM_SEQS',
+          'MAX_NUM_BATCHED_TOKENS','LONG_PREFILL_TOKEN_THRESHOLD','GPU_MEM_UTIL','KV_CACHE_DTYPE',
+          'LANGUAGE_MODEL_ONLY','SKIP_MM_PROFILING','LIMIT_MM','MM_IMAGE_TOKENS','VIDEO_NUM_FRAMES',
+          'MM_PROCESSOR_CACHE_GB','DFLASH_TOKENS','DFLASH_DRAFT_TP','MTP_TOKENS',
+          'DEFAULT_MAX_NEW_TOKENS','LOAD_FORMAT','SPEC_METHOD'}
+    values={key:value for key,value in original.items() if key in keys or key.startswith(('GLM53_','EXL3_'))}
+    # The precision, capacity, scheduler and decoder settings above stay frozen.
+    values.update(GLM53_DRAFT_KV_COMPACT='1',GLM53_APC_RETENTION_INTERVAL='14336',
+                  GLM53_APC_RETENTION_INTERVAL_SWA='0')
+    return values
+
+
 def isolated_rank_launcher(text, destination):
     """Move candidate host-side staging only; preserve container paths/flags."""
     if not re.fullmatch(r'/[A-Za-z0-9_./-]+',destination) or '..' in Path(destination).parts:
@@ -142,7 +161,12 @@ class Remote:
         self.command(['docker','tag',head['Image'],self.original_tag]);self.rank(['docker','tag',rank['Image'],self.original_tag])
         original=envmap(head);profile=self.candidate/'examples/tp2-long-coding.env'
         # Keep all existing extra flags; this profile's assignment would erase them.
-        overrides='\n'.join(line for line in profile.read_text().splitlines() if not line.startswith('EXTRA_ARGS='))
+        variant=self.plan.get('candidate_profile','long-coding')
+        if variant=='baseline-cache-400k':
+            overrides='\n'.join(key+'='+shlex.quote(value) for key,value in baseline_cache_settings(original).items())
+        elif variant=='long-coding':
+            overrides='\n'.join(line for line in profile.read_text().splitlines() if not line.startswith('EXTRA_ARGS='))
+        else:raise ValueError('Unsupported candidate profile')
         extras=original.get('EXTRA_ARGS','')
         if '--enable-prompt-tokens-details' not in extras:extras+=' --enable-prompt-tokens-details'
         candidate_env=(self.backup/'.env').read_text()+'\n'+overrides+'\n'+ '\n'.join([
@@ -405,7 +429,19 @@ print(json.dumps(result))
             if current['Image']!=prepared['candidate_image'] or current_rank['Image']!=prepared['rank_candidate_image']:raise RuntimeError('Candidate image identity differs')
             write(self.root/'candidate-head.json',current);write(self.root/'candidate-rank.json',current_rank)
             result['candidate_settings']={k:v for k,v in envmap(current).items() if k.startswith('GLM53_') or k in ['MAX_MODEL_LEN','MAX_NUM_SEQS','MAX_NUM_BATCHED_TOKENS','GPU_MEM_UTIL','DFLASH_TOKENS','LOAD_FORMAT','EXTRA_ARGS']}
-            result['phases']['B']=self.checks('B',262144)
+            context=262144
+            if self.plan.get('candidate_profile')=='baseline-cache-400k':
+                expected=baseline_cache_settings(envmap(json.loads((self.backup/'head.json').read_text())))
+                # Container variables map the two launcher retention knobs to vLLM.
+                mapped={'GLM53_APC_RETENTION_INTERVAL':'VLLM_PREFIX_CACHE_RETENTION_INTERVAL','GLM53_APC_RETENTION_INTERVAL_SWA':'VLLM_PREFIX_CACHE_RETENTION_INTERVAL_SWA'}
+                for container in [current,current_rank]:
+                    actual=envmap(container)
+                    if any(actual.get(mapped.get(key,key))!=value for key,value in expected.items()):
+                        raise RuntimeError('Cache candidate changed a preserved serving setting')
+                context=400000
+                result['preserved_serving_settings_verified']=True
+            result['candidate_profile']=self.plan.get('candidate_profile','long-coding')
+            result['phases']['B']=self.checks('B',context)
         except Exception as error:result['error']=str(error)
         finally:
             if changed:

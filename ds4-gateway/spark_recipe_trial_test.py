@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
-from spark_recipe_remote import Remote, isolated_rank_launcher
+from spark_recipe_remote import Remote, isolated_rank_launcher, baseline_cache_settings
 
 class TrialTransaction(unittest.TestCase):
  def setUp(self):
@@ -19,6 +19,17 @@ class TrialTransaction(unittest.TestCase):
   self.remote.launch=lambda *args:(_ for _ in ()).throw(RuntimeError('candidate failed to load'))
   self.remote.restore=lambda prepared:(self.events.append('restore') or {'state':'verified'})
   self.remote.checks=lambda phase,limit:(self.events.append(phase) or [{'label':'arithmetic','passed':True},{'label':'tool_call_and_followup','passed':True}])
+ def test_cache_variant_rejects_changed_precision_before_candidate_measurement(self):
+  original={'MAX_MODEL_LEN':'400000','MAX_NUM_SEQS':'2','MAX_NUM_BATCHED_TOKENS':'7168','GPU_MEM_UTIL':'0.85','GLM53_DENSE_FP8':'off','GLM53_KDA_BF16_LARGE_M':'0','GLM53_EXL3_MOE_FAST':'0','DFLASH_TOKENS':'7'}
+  (self.remote.backup/'head.json').write_text(json.dumps({'Config':{'Env':[key+'='+value for key,value in original.items()]}}))
+  self.remote.plan['candidate_profile']='baseline-cache-400k'
+  state={'candidate':False};self.remote.launch=lambda *args:state.update(candidate=True)
+  def inspect(rank=False):
+   if not state['candidate']:return {'Id':'original-rank' if rank else 'original-head'}
+   settings={**original,'GLM53_DENSE_FP8':'dense,kda'}
+   return {'Id':'candidate-rank' if rank else 'candidate-head','Image':'candidate-image','Config':{'Env':[key+'='+value for key,value in settings.items()]}}
+  self.remote.inspect=inspect
+  result=self.remote.run();self.assertIn('preserved serving setting',result['error']);self.assertIn('restore',self.events);self.assertNotIn('B',self.events)
  def test_failed_candidate_launch_still_restores_original_and_checks_it(self):
   result=self.remote.run();self.assertEqual(result['state'],'complete');self.assertIn('failed to load',result['error'])
   self.assertLess(self.events.index('A'),self.events.index('suspend'));self.assertLess(self.events.index('restore'),self.events.index('A2'))
@@ -77,3 +88,12 @@ class Restoration(unittest.TestCase):
    self.assertFalse(any(command[:2]==['docker','rm'] for command in commands))
 
 if __name__=='__main__':unittest.main()
+
+class CacheProfile(unittest.TestCase):
+ def test_preserves_capacity_precision_and_existing_scheduler_knobs(self):
+  original={'MAX_MODEL_LEN':'400000','MAX_NUM_SEQS':'2','MAX_NUM_BATCHED_TOKENS':'7168','GPU_MEM_UTIL':'0.85','GLM53_DENSE_FP8':'off','GLM53_KDA_BF16_LARGE_M':'0','GLM53_EXL3_MOE_FAST':'0','DFLASH_TOKENS':'7','GLM53_SPINWAIT_MS':'stock','DEFAULT_MAX_NEW_TOKENS':'65536','GLM53_APC_NO_STORE':'1','GLM53_MIXED_PREFILL_CHUNK':'fair','LOAD_FORMAT':'','EXL3_FAT_BATCHED':'0'}
+  result=baseline_cache_settings(original)
+  for key,value in original.items():self.assertEqual(result[key],value)
+  self.assertEqual(set(result)-set(original),{'GLM53_DRAFT_KV_COMPACT','GLM53_APC_RETENTION_INTERVAL','GLM53_APC_RETENTION_INTERVAL_SWA'})
+  self.assertEqual(result['GLM53_APC_RETENTION_INTERVAL'],'14336')
+  with self.assertRaisesRegex(ValueError,'pinned'):baseline_cache_settings({**original,'MAX_MODEL_LEN':'262144'})

@@ -63,3 +63,12 @@ that alone does not prove functional code correctness. The tool exchange and
 cache assertions use actual native results. All request output budgets belong
 only to these synthetic measurements. Neither a completed Spark run nor a
 completed MTP run authorizes adopting the candidate as a production default.
+
+The optional enrolled `candidate_profile: baseline-cache-400k` comparison uses
+that same pinned updated source with compact draft pages and retention 14336/0.
+It copies the original serving knobs, including 400k context, two requests,
+7168 prefill batch, 0.85 memory utilization, dense FP8 off, BF16 large-M off,
+MoE fast kernels off, stock spinwait, output defaults and loader choice. It
+checks those fields in both candidate containers before measurements. This is
+a combined source/cache experiment, not causal proof for one retention flag.
+It also restores the original containers and does not authorize adoption.
