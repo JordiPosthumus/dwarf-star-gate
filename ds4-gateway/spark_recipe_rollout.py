@@ -1,0 +1,170 @@
+"""Permanent, operator-enrolled deployment of a previously qualified Spark image.
+
+The Genie supplies only a profile and operation UUID. This executor copies the
+exact image, keeps the original containers, publishes the normal launcher, and
+readmits only after an ordinary readiness generation. No benchmark is run.
+"""
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import subprocess
+import sys
+import time
+import uuid
+
+from operation_maintenance import GatewayControl, Maintenance
+from spark_recipe_trial import Executor, atomic
+
+
+def digest(data):return hashlib.sha256(data).hexdigest()
+
+
+def replace_bytes(file, data):
+    mode=file.stat().st_mode & 0o777
+    temporary=file.with_name(file.name+'.'+str(uuid.uuid4())+'.tmp')
+    try:
+        with open(temporary,'xb',opener=lambda p,f:os.open(p,f,mode)) as stream:
+            stream.write(data);stream.flush();os.fsync(stream.fileno())
+        os.chmod(temporary,mode);temporary.replace(file)
+    finally:
+        if temporary.exists():temporary.unlink()
+
+
+class Rollout(Executor):
+    def __init__(self,*args,**kwargs):
+        super().__init__(*args,**kwargs)
+        p=self.plan
+        if p['kind']!='glm53-spark-pair-rollout' or p.get('candidate_profile')!='baseline-cache-400k':raise ValueError('Use the enrolled capacity-preserving rollout')
+        if not re.fullmatch(r'sha256:[a-f0-9]{64}',p.get('qualified_image','')):raise ValueError('Pin the qualified image')
+        if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.@-]{0,100}',p.get('image_source_ssh','')):raise ValueError('Use the enrolled source host')
+        for key in ['qualified_result_file','qualified_prepare_file','launcher_file','inspection_config_file']:
+            if not Path(p.get(key,'')).is_absolute() or '..' in Path(p[key]).parts:raise ValueError('Use an absolute enrolled publication/evidence path')
+        for key in ['qualified_result_sha256','qualified_prepare_sha256','launcher_sha256']:
+            if not re.fullmatch(r'[a-f0-9]{64}',p.get(key,'')):raise ValueError('Pin qualification and launcher bytes')
+
+    def qualification(self):
+        result_data=Path(self.plan['qualified_result_file']).read_bytes();prepared_data=Path(self.plan['qualified_prepare_file']).read_bytes()
+        if digest(result_data)!=self.plan['qualified_result_sha256'] or digest(prepared_data)!=self.plan['qualified_prepare_sha256']:raise RuntimeError('Qualification evidence changed')
+        result,prepared=json.loads(result_data),json.loads(prepared_data)
+        if (result.get('state')!='complete' or result.get('restoration',{}).get('state')!='verified'
+                or result.get('preserved_serving_settings_verified') is not True
+                or prepared.get('candidate_image')!=self.plan['qualified_image']
+                or prepared.get('source_revision')!=self.plan['source_revision']):raise RuntimeError('This image/source lacks the enrolled completed qualification')
+        rows={row['label']:row for row in result.get('phases',{}).get('B',[])}
+        if (len(rows)!=10 or any(row.get('passed') is not True for row in rows.values() if row['label'] not in ['context-boundary','concurrency-two'])
+                or rows.get('context-boundary',{}).get('accepted') is not True
+                or rows.get('concurrency-two',{}).get('two_active_requests_observed') is not True):raise RuntimeError('Saved candidate qualification did not pass')
+
+    def publication_prepare(self):
+        folder=self.folder/'publication';folder.mkdir(mode=0o700)
+        launcher=Path(self.plan['launcher_file']);config=Path(self.plan['inspection_config_file'])
+        if launcher.is_symlink() or config.is_symlink():raise RuntimeError('Publication files must not be symlinks')
+        source=launcher.read_bytes()
+        if digest(source)!=self.plan['launcher_sha256']:raise RuntimeError('The normal launcher changed before preparation')
+        old=json.dumps(self.plan['recipe_root']).encode();new=json.dumps(self.remote+'/candidate').encode()
+        if source.count(old)!=1:raise RuntimeError('Expected one exact target recipe binding in the normal launcher')
+        config_bytes=config.read_bytes();value=json.loads(config_bytes)
+        target=value.get('genie_chat',{}).get('inspection',{}).get('workers',{}).get(self.plan['worker'],{})
+        if target.get('recipe_root')!=self.plan['recipe_root'] or self.plan['ssh'] not in target.get('ssh',[]):raise RuntimeError('Inspection publication binding differs')
+        target['recipe_root']=self.remote+'/candidate'
+        after_config=(json.dumps(value,indent=2)+'\n').encode()
+        for name,data in [('launcher.before',source),('launcher.after',source.replace(old,new)),('config.before',config_bytes),('config.after',after_config)]:
+            with open(folder/name,'xb',opener=lambda p,f:os.open(p,f,0o600)) as out:out.write(data)
+        atomic(folder/'intent.json',{'worker':self.plan['worker'],'old_recipe':self.plan['recipe_root'],'new_recipe':self.remote+'/candidate','created_at':time.time(),'scope':'Change only the target normal-launcher recipe path and its read-only inspection binding. Other fleet settings are preserved.'})
+
+    def publication_unchanged(self):
+        for name,key in [('launcher','launcher_file'),('config','inspection_config_file')]:
+            if Path(self.plan[key]).read_bytes()!=(self.folder/'publication'/(name+'.before')).read_bytes():raise RuntimeError('A publication file changed; preserve owner edits')
+
+    def publish(self):
+        self.publication_unchanged();result={}
+        for name,key in [('launcher','launcher_file'),('config','inspection_config_file')]:
+            before=(self.folder/'publication'/(name+'.before')).read_bytes();after=(self.folder/'publication'/(name+'.after')).read_bytes()
+            replace_bytes(Path(self.plan[key]),after)
+            if Path(self.plan[key]).read_bytes()!=after:raise RuntimeError('Published launcher/configuration bytes were not confirmed')
+            result[name]={'before_sha256':digest(before),'after_sha256':digest(after)}
+        result.update(state='published',recipe_root=self.remote+'/candidate',dashboard_reload_required=True)
+        atomic(self.folder/'publication'/'result.json',result);return result
+
+    def unpublish(self):
+        for name,key in [('launcher','launcher_file'),('config','inspection_config_file')]:
+            file=Path(self.plan[key]);before=(self.folder/'publication'/(name+'.before')).read_bytes();after=(self.folder/'publication'/(name+'.after')).read_bytes()
+            current=file.read_bytes()
+            if current==after:replace_bytes(file,before)
+            elif current!=before:raise RuntimeError('Owner edited publication files; leave the maintenance hold for inspection')
+        return {'state':'original_publication_restored'}
+
+    def spare(self):
+        other='glm53f-sparks34' if self.plan['worker']=='glm53f-sparks12' else 'glm53f-sparks12'
+        workers=self.control('/workers').get('workers',[])
+        if not any(w.get('id') in [other,'glm53f-m3'] and w.get('is_healthy') is True and w.get('drained') is False and not w.get('direct_reserved') for w in workers):
+            raise RuntimeError('Keep a healthy admitted LLM on separate hardware before rollout')
+
+    def prepare(self):
+        self.qualification();self.publication_prepare()
+        source=Path(self.plan['source_archive'])
+        if digest(source.read_bytes())!=self.plan['source_sha256']:raise RuntimeError('Source archive changed')
+        self.status('copying_pinned_source')
+        self.ssh(shlex.join(['mkdir','-m','700','-p',self.plan['remote_root']]))
+        self.ssh(shlex.join(['mkdir','-m','700',self.remote]))
+        self.ssh(shlex.join(['mkdir','-m','700',self.remote+'/candidate']))
+        self.ssh(shlex.join(['tar','-xf','-','-C',self.remote+'/candidate']),input=source.read_bytes())
+        self.remote_action('rollout_preflight',timeout=90)
+        self.status('copying_qualified_image')
+        with open(self.folder/'image-copy.log','ab',buffering=0) as log:
+            sender=subprocess.Popen(['ssh','-o','BatchMode=yes','-o','ConnectTimeout=15',self.plan['image_source_ssh'],shlex.join(['docker','save','--platform','linux/arm64',self.plan['qualified_image']])],stdout=subprocess.PIPE,stderr=log)
+            receiver=None
+            try:
+                receiver=subprocess.Popen(['ssh','-o','BatchMode=yes','-o','ConnectTimeout=15',self.plan['ssh'],'docker load'],stdin=sender.stdout,stdout=log,stderr=log)
+                sender.stdout.close();received=receiver.wait(timeout=7200);sent=sender.wait(timeout=60)
+                if received or sent:raise RuntimeError('Qualified image transfer did not complete; serving unchanged')
+            finally:
+                if receiver is not None and receiver.poll() is None:receiver.terminate();receiver.wait(timeout=30)
+                if sender.poll() is None:sender.terminate();sender.wait(timeout=30)
+        self.status('backing_up_target_and_preparing_launcher')
+        result=self.remote_action('prepare');atomic(self.folder/'prepare.result.json',result)
+        if result.get('state')!='prepared' or result.get('candidate_image')!=self.plan['qualified_image']:raise RuntimeError('Exact-image preparation was not verified')
+        return result
+
+    def execute(self,stage):
+        if stage!='rollout':raise ValueError('Permanent rollout has one independent execution stage')
+        file=self.folder/'rollout.status.json';self.receipt=json.loads(file.read_text());maintenance=None
+        try:
+            prepared=self.prepare();self.publication_unchanged();self.spare()
+            maintenance=Maintenance(self.folder,self.id,self.plan['worker'],control=self.control,purpose='serving',progress=lambda phase,detail:self.status(phase))
+            self.status('acquiring_owned_hold');maintenance.acquire();maintenance.wait_idle(self.native_idle);self.spare()
+            self.publication_unchanged();self.status('deploying_qualified_image')
+            result=self.remote_action('deploy',timeout=7200);atomic(self.folder/'rollout.result.json',result)
+            if result.get('state')=='deployed':
+                try:
+                    maintenance.owned();self.status('publishing_normal_launcher');publication=self.publish()
+                except Exception:
+                    self.status('restoring_original_after_publication_failure')
+                    self.unpublish();restoration=self.remote_action('rollback',timeout=3600)
+                    self.receipt.update(restoration=restoration)
+                    raise
+                maintenance.wait_idle(self.native_idle);maintenance.release();resumed=maintenance.resume_if_unchanged()
+                self.receipt.update(state='complete',result=result,publication=publication,readmission=resumed)
+            elif result.get('state') in ['restored','failed_unchanged']:
+                maintenance.wait_idle(self.native_idle);maintenance.release();resumed=maintenance.resume_if_unchanged()
+                self.receipt.update(state='restored',result=result,readmission=resumed)
+            else:self.receipt.update(state='restoration_required',result=result)
+        except Exception as error:
+            self.receipt.update(state='restoration_required' if maintenance else 'failed',error=str(error))
+            # Release after a verified rollback only. Uncertain remote changes
+            # or publication conflicts retain their owned hold for inspection.
+            if maintenance and self.receipt.get('restoration',{}).get('state')=='verified':
+                try:
+                    maintenance.wait_idle(self.native_idle);maintenance.release();self.receipt.update(state='restored',readmission=maintenance.resume_if_unchanged())
+                except Exception as failure:self.receipt['readmission_error']=str(failure)
+        self.receipt['finished_at']=time.time();atomic(file,self.receipt)
+        return self.receipt
+
+
+if __name__=='__main__':
+    stage,folder,socket=sys.argv[1:]
+    result=Rollout(folder,GatewayControl(socket)).execute(stage)
+    print(json.dumps({'state':result['state'],'phase':result.get('phase')}),flush=True)

@@ -1,0 +1,67 @@
+import json
+from pathlib import Path
+import tempfile
+import unittest
+
+from spark_recipe_remote import Remote, baseline_cache_settings
+from spark_recipe_rollout import Rollout, digest
+
+
+class RolloutTransaction(unittest.TestCase):
+    def fixture(self):
+        temporary=tempfile.TemporaryDirectory();self.addCleanup(temporary.cleanup);root=Path(temporary.name)
+        remote=Remote({'kind':'glm53-spark-pair-rollout','candidate_profile':'baseline-cache-400k','trial_root':str(root),'recipe_root':str(root/'original'),'trial_id':'fixture','qualified_image':'candidate-image'})
+        original={'MAX_MODEL_LEN':'400000','MAX_NUM_SEQS':'2','MAX_NUM_BATCHED_TOKENS':'7168','GPU_MEM_UTIL':'0.85','GLM53_DENSE_FP8':'off','GLM53_KDA_BF16_LARGE_M':'0','GLM53_EXL3_MOE_FAST':'0','DFLASH_TOKENS':'7','DEFAULT_MAX_NEW_TOKENS':'65536'}
+        mapped={'GLM53_APC_RETENTION_INTERVAL':'VLLM_PREFIX_CACHE_RETENTION_INTERVAL','GLM53_APC_RETENTION_INTERVAL_SWA':'VLLM_PREFIX_CACHE_RETENTION_INTERVAL_SWA'}
+        candidate={mapped.get(k,k):v for k,v in baseline_cache_settings(original).items()}
+        events=[];launched=[False]
+        def inspect(rank=False):
+            settings=candidate if launched[0] else original
+            return {'Id':('candidate-' if launched[0] else 'original-')+('rank' if rank else 'head'),'Image':'candidate-image' if launched[0] else 'original-image','State':{'Running':True},'Config':{'Env':[k+'='+v for k,v in settings.items()]}}
+        remote.inspect=inspect;remote.backup.mkdir();(remote.backup/'head.json').write_text(json.dumps(inspect()))
+        (root/'prepared.json').write_text(json.dumps({'candidate_image':'candidate-image','rank_candidate_image':'candidate-image','original_container':'original-head','original_rank_container':'original-rank'}))
+        remote.baseline_unchanged=lambda:None;remote.wait_idle=lambda **kw:events.append('idle')
+        remote.isolate_candidate_staging=lambda prepared:events.append('staging')
+        remote.suspend_original=lambda prepared:events.append('suspend')
+        remote.launch=lambda *args:(events.append('launch'),launched.__setitem__(0,True))
+        remote.request=lambda *args,**kw:json.dumps({'data':[{'id':'GLM-5.3-Flash-EXL3'}]}).encode()
+        remote.chat=lambda *args,**kw:({'finish_reason':'stop'},{'content':'DEPLOYED_7319'})
+        remote.checks=lambda *args:(_ for _ in ()).throw(AssertionError('Permanent rollout must not run benchmark checks'))
+        remote.restore=lambda prepared:(events.append('restore') or {'state':'verified'})
+        return remote,events,candidate
+
+    def test_success_keeps_candidate_without_running_trial_or_restoring(self):
+        remote,events,_=self.fixture();result=remote.deploy()
+        self.assertEqual(result['state'],'deployed');self.assertTrue(result['preserved_serving_settings_verified']);self.assertNotIn('restore',events)
+        with self.assertRaisesRegex(RuntimeError,'already submitted'):remote.deploy()
+
+    def test_readiness_failure_restores_original_without_benchmark(self):
+        remote,events,_=self.fixture();remote.chat=lambda *args,**kw:({'finish_reason':'stop'},{'content':'wrong'})
+        result=remote.deploy();self.assertEqual(result['state'],'restored');self.assertIn('restore',events)
+
+    def test_changed_serving_precision_refuses_candidate_and_restores(self):
+        remote,events,candidate=self.fixture();candidate['GLM53_DENSE_FP8']='dense,kda'
+        result=remote.deploy();self.assertEqual(result['state'],'restored');self.assertIn('preserved serving setting',result['error']);self.assertIn('restore',events)
+
+
+class Publication(unittest.TestCase):
+    def fixture(self):
+        temporary=tempfile.TemporaryDirectory();self.addCleanup(temporary.cleanup);root=Path(temporary.name)
+        launcher=root/'launcher.py';launcher.write_text('config = {"recipe": "/original", "other": "/untouched"}\n')
+        config=root/'config.json';config.write_text(json.dumps({'unrelated':{'keep':True},'genie_chat':{'inspection':{'workers':{'glm53f-sparks12':{'recipe_root':'/original','ssh':['target']},'other':{'recipe_root':'/other'}}}}}))
+        rollout=Rollout.__new__(Rollout);rollout.folder=root;rollout.remote='/prepared/operation';rollout.plan={'worker':'glm53f-sparks12','ssh':'target','recipe_root':'/original','launcher_file':str(launcher),'inspection_config_file':str(config),'launcher_sha256':digest(launcher.read_bytes())}
+        return rollout,launcher,config
+
+    def test_publication_changes_only_target_binding_and_has_exact_rollback(self):
+        rollout,launcher,config=self.fixture();before=(launcher.read_bytes(),config.read_bytes());rollout.publication_prepare();rollout.publish()
+        self.assertIn('"recipe": "/prepared/operation/candidate"',launcher.read_text())
+        value=json.loads(config.read_text());self.assertTrue(value['unrelated']['keep']);self.assertEqual(value['genie_chat']['inspection']['workers']['other']['recipe_root'],'/other')
+        rollout.unpublish();self.assertEqual((launcher.read_bytes(),config.read_bytes()),before)
+
+    def test_owner_edits_block_publication_and_are_never_overwritten(self):
+        rollout,launcher,config=self.fixture();rollout.publication_prepare();launcher.write_text('owner edit')
+        with self.assertRaisesRegex(RuntimeError,'preserve owner edits'):rollout.publish()
+        self.assertEqual(launcher.read_text(),'owner edit')
+
+
+if __name__=='__main__':unittest.main()
