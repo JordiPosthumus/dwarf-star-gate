@@ -1,7 +1,6 @@
 # Visual check of compact cards in a real browser
-Unit-tested and served, but Jordi should eyeball: dot colors, chips when busy,
-Details drawer contents (charts, hardware, lights), media-operation open state,
-and the 300px grid density with 5-6 workers. Screenshots welcome for tweaks.
+Technical browser review of compact card colors, busy chips, Details contents,
+and the multi-column grid. Visual preference changes remain separate.
 
 
 ## Browser audit
@@ -14,5 +13,9 @@ the review panel did not say when routine reviews were off. Both have scoped
 fixes; catalogue coverage distinguishes maintenance, direct reservation and
 operator pause. No serving settings or enabled capabilities change.
 
-Remaining: recheck the labels after the next idle dashboard reload; visual
-preferences such as the proposed Details removal remain with #031.
+Done: 2026-09-24 — rechecked the deployed three-column grid and expanded Spark
+Details visually. The live M3 trial shows a disabled MAINTENANCE LOCK control
+and the catalogue says routing is held for maintenance. The reviewer panel says
+routine reviews are off. No active media job was launched for this visual check;
+media presentation remains with #019. Visual preferences such as Details removal
+remain with #031.
