@@ -8,9 +8,14 @@ export function recoveryEvidence(status){
     unmatched_bindings:recovery.workers.filter(w=>w.enrollment?.binding!=='matched').map(w=>({worker_id:w.worker_id,binding:w.enrollment?.binding??'unknown'})),
     scope:'Current enrolled-service eligibility and existing recovery receipts. configured and adapter describe a registered definition, not a working connection. A mismatched or absent binding is NOT connected. The switch alone does not connect a service. A queued receipt is acceptance, not successful recovery. No enrollment, canary or server configuration changes are available here.'};
 }
-export function createRecoveryTools({read,recover,isTesting=()=>false,isEnabled=()=>true}){
+export function createRecoveryTools({read,recover,preparation=null,isInspectionEnabled=()=>true,isTesting=()=>false,isEnabled=()=>true}){
   async function tool(input){
-    if(input?.action==='status'&&Object.keys(input).length===1)return recoveryEvidence(await read());
+    if(input?.action==='status'&&Object.keys(input).length===1)return {...recoveryEvidence(await read()),...(preparation?{pair_preparations:await preparation.status()}: {})};
+    if(input?.action==='prepare-pair'){
+      if(!preparation||!isInspectionEnabled()||isTesting())throw Error('Native pair inspection is unavailable or suspended.');
+      if(Object.keys(input).sort().join(',')!=='action,action_id,worker_id')throw Error('Specify one configured pair and capture action ID');
+      return preparation.prepare({worker_id:input.worker_id,action_id:input.action_id});
+    }
     if(input?.action!=='recover'||Object.keys(input).sort().join(',')!=='action,action_id,evidence_id,worker_id'||
       typeof input.worker_id!=='string'||!/^[a-f0-9]{64}$/.test(input.evidence_id??'')||!/^[a-f0-9-]{36}$/.test(input.action_id??''))throw new Error('Use the current worker evidence and a single recovery action ID.');
     if(isTesting())throw new Error('Recovery is suspended for testing.');

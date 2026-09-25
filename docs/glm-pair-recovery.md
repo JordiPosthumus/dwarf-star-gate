@@ -77,6 +77,23 @@ GLM verifier and admit routing only after exact identity and owner-state checks.
 
 ## Explicit controller enrollment
 
+Genie can prepare fresh evidence with `prepare_pair_recovery(worker_id)` for an
+existing configured media pair. The tool resolves the current registered route,
+uses only its configured native targets, reads both members twice and pins the
+second read to exact container IDs. Machine, epoch, Docker definition or file drift
+refuses preparation. A healthy owned head listener and matching native capacity
+are required. This is read-only on the fleet; active inference is not interrupted.
+
+The detached collector retains full observations privately under the runtime
+directory's `genie/recovery-pair-preparation/<action_id>`. `recovery_status` exposes
+bounded `pair_preparations` receipts, not Docker environments or host paths.
+`prepared` means a stable capture exists in `evidence.json`; it neither installs
+recovery enrollment nor qualifies a restart. Its `evidence_sha256` hashes the
+canonical JSON value using `recovery_pair.fingerprint`. Keep the same action ID
+when observing a lost acknowledgement. `preparing` requires a live native file
+lease; an absent lease without a receipt is `unverified`, never assumed complete
+or automatically replayed. Existing receipts survive dashboard restarts.
+
 Keep the full private enrollment outside the repository. Its wrapper has exactly
 `schema: 1`, `enrollment` (the pinned pair described above), `journal_directory`
 (an absolute, owner-only directory) and `gateway_socket` (the current owner-only

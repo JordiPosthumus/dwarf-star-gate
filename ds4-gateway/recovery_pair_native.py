@@ -16,7 +16,7 @@ import stat
 import subprocess
 import uuid
 
-from recovery_pair import enrollment_identity, fingerprint, observe_pair, recover_pair, require
+from recovery_pair import enrollment_identity, file_pins, fingerprint, observe_pair, recover_pair, require, signature
 
 UUID = re.compile(r'[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}')
 MAX_JOURNAL = 4 * 1024 * 1024
@@ -139,10 +139,24 @@ for name in sorted(paths):
 '''
 
 
-class RemotePair:
-    def __init__(self, enrollment, execute=subprocess.run):
-        enrollment_identity(enrollment)
-        self.enrollment = enrollment
+class PairReader:
+    """Read configured native targets before granting any recovery authority."""
+    def __init__(self, binding, execute=subprocess.run):
+        require(isinstance(binding, dict) and set(binding) == {'worker_id', 'model', 'port', 'context_length', 'concurrency', 'members'}, 'pair_capture_binding_unverified')
+        require(isinstance(binding['worker_id'], str) and re.fullmatch(r'[A-Za-z0-9][\w-]{0,63}', binding['worker_id'])
+                and isinstance(binding['model'], str) and 0 < len(binding['model']) <= 256, 'pair_capture_binding_unverified')
+        require(all(type(binding[k]) is int and binding[k] > 0 for k in ('port', 'context_length', 'concurrency'))
+                and binding['port'] <= 65535, 'pair_capture_binding_unverified')
+        members = binding['members']
+        require(isinstance(members, list) and len(members) == 2, 'pair_capture_binding_unverified')
+        for m in members:
+            require(isinstance(m, dict) and set(m) == {'ssh', 'container', 'recipe_root'}
+                    and isinstance(m['ssh'], str) and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.@-]*', m['ssh'])
+                    and isinstance(m['container'], str) and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,127}', m['container'])
+                    and (m['recipe_root'] is None or isinstance(m['recipe_root'], str) and m['recipe_root'].startswith('/')
+                         and '\x00' not in m['recipe_root'] and '..' not in Path(m['recipe_root']).parts), 'pair_capture_binding_unverified')
+        require(members[0]['recipe_root'] is not None and members[0]['ssh'] != members[1]['ssh'], 'pair_capture_binding_unverified')
+        self.enrollment = binding
         self.execute = execute
 
     def remote(self, host, args, timeout=120):
@@ -171,6 +185,13 @@ class RemotePair:
     def observe(self):
         with ThreadPoolExecutor(max_workers=2) as executor:
             return list(executor.map(self.inspect_member, self.enrollment['members']))
+
+
+class RemotePair(PairReader):
+    def __init__(self, enrollment, execute=subprocess.run):
+        enrollment_identity(enrollment)
+        self.enrollment = enrollment
+        self.execute = execute
 
     def idle(self):
         """Require explicit native idle counters while the pinned head is up."""
@@ -212,3 +233,23 @@ def run_native_pair(directory, enrollment, request, ownership):
         return recover_pair(enrollment, request, read_journal=journal.read, save_journal=journal.save,
                             observe=remote.observe, stop=remote.stop, start=remote.start,
                             ownership=lambda: ownership() is True and remote.idle())
+
+
+def capture_pair(binding, reader_factory=PairReader):
+    """Capture fresh pins, then independently re-observe exact IDs without mutation."""
+    reader = reader_factory(binding)
+    before = reader.observe()
+    require(isinstance(before, list) and len(before) == 2, 'pair_observation_incomplete')
+    members = [{**target, 'container': row['container']['Id'], 'machine': row['machine'],
+                'definition': signature(row['container']), 'files': file_pins(row['files'])}
+               for target, row in zip(binding['members'], before)]
+    enrollment = {**binding, 'schema': 1, 'kind': 'glm53-docker-pair', 'members': members}
+    initial = observe_pair(enrollment, before)
+    # The second observation addresses immutable container IDs, not reusable names.
+    reader.enrollment = enrollment
+    after = reader.observe()
+    current = observe_pair(enrollment, after)
+    require(initial['epoch'] == current['epoch'], 'pair_changed_during_capture')
+    require(current['active'] and current['listener'] and current['fault'] is None, 'pair_capture_requires_healthy_pair')
+    return {'schema': 1, 'enrollment': enrollment, 'before': before, 'after': after,
+            'identity': enrollment_identity(enrollment), 'epoch': current['epoch']}
