@@ -1,8 +1,8 @@
 # GLM pair recovery: transaction and verification
 
-The pair transaction, detached controller connection and GLM cache verifier are
-implemented components. Explicit enrollment and native restart qualification are
-still required for each pair; the shipped code does not enroll a fleet automatically. Enabling the existing recovery switch does not enroll a
+The pair transaction, detached controller connection, evidence-bound enrollment
+and GLM cache verifier are implemented components. Explicit enrollment and native
+restart qualification are still required for each pair. Enabling the existing recovery switch does not enroll a
 GLM pair. A successful paired-media return is evidence for that operation, not
 general service-recovery certification.
 
@@ -163,3 +163,48 @@ automatic follow-up. If the follow-up finishes without reading the terminal tool
 receipts, `recovery_status.pair_preparation_followup` reports `needs_attention`;
 a model answer alone does not count as observed evidence. This watcher grants no
 enrollment or restart authority and does not qualify general pair recovery.
+
+## Genie enrollment from retained native evidence
+
+An owner can explicitly allow enrollment for configured pairs in private config:
+
+```json
+{
+  "pair_recovery_setup": {
+    "workers": {
+      "my-glm-pair": { "exclusive": true }
+    }
+  }
+}
+```
+
+`exclusive` is the owner's declaration that DSG may manage this exact service.
+It is not inferred from an empty queue. Use the existing paired-media binding,
+physical-machine mapping and registered route for the worker; no private host
+names, paths or commands belong in a Genie request. Inspection, server changes
+and automatic recovery must also remain enabled. Other owners supply their own
+worker IDs, configured Python, native SSH bindings and runtime directory.
+
+For a prepared capture, Genie calls `enroll_pair_recovery(worker_id, capture_id)`.
+The core saves the action ID before starting native validation. Fixed code checks
+capture/request/evidence hashes, physical GPU identity, current registered binding
+and capacity, then reads both exact native members twice. Container-name retargeting,
+configuration/file drift, a new pair epoch, missing evidence or conflicting prior
+enrollment refuses the request. Current ownership and the saved route/capacity are
+checked again immediately before commit.
+
+The owner-only wrapper and native journal live beneath the configured runtime
+folder. The core takes a timestamped metadata backup, atomically records the
+binding and restores it on subsequent starts. Queued validation retains its action
+ID across restart; re-observation is read-only. An uncertain acknowledgement must
+be inspected under that same ID, never submitted with a replacement ID.
+`recovery_status.pair_enrollment.operations` reports `queued`, `enrolled` or
+`failed`. The completion watcher returns to the original conversation when a
+terminal receipt is available and records whether Genie actually read it.
+
+Enrollment preserves existing recovery entries, routing, operator pauses and all
+model settings. It does not stop/start anything or authorize stopped starts.
+Automatic pair recovery still requires the separate exact native restart canary
+and GLM generation/cache proof. `enrolled` is not `restart-qualified`. The default
+installation has no opted-in workers, and disabling setup prevents new enrollment
+without removing an already saved recovery definition.
