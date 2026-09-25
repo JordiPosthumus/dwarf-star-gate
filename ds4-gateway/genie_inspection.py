@@ -208,11 +208,12 @@ def peer_parameters(target):
     fields=dict(line.split(' ',1) for line in resolved.stdout.splitlines() if ' ' in line)
     host,user,port=fields.get('hostname',''),fields.get('user',''),fields.get('port','22')
     if not re.fullmatch(r'[A-Za-z0-9][\w.-]{0,252}',host) or not re.fullmatch(r'[A-Za-z0-9_][\w.-]{0,63}',user) or not port.isdigit() or not 1<=int(port)<=65535:raise ValueError('Direct peer destination unavailable')
-    command="python3 -c 'import hashlib,pathlib; print(hashlib.sha256(pathlib.Path(\"/etc/machine-id\").read_bytes()).hexdigest())'"
+    command="python3 -c 'import hashlib,pathlib; print(hashlib.sha256(pathlib.Path(\"/etc/machine-id\").read_bytes()).hexdigest()); print(pathlib.Path(\"/etc/ssh/ssh_host_ed25519_key.pub\").read_text().strip())'"
     result=subprocess.run(['ssh','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','UpdateHostKeys=no','-o','ConnectTimeout=8',alias,command],text=True,capture_output=True,timeout=15,check=True)
-    fingerprint=result.stdout.strip()
-    if not re.fullmatch(r'[a-f0-9]{64}',fingerprint):raise ValueError('Peer machine identity unavailable')
-    return {'destination':user+'@'+host,'port':int(port),'machine_sha256':fingerprint}
+    parts=result.stdout.strip().splitlines();fingerprint=parts[0] if parts else '';key=parts[1].split()[:2] if len(parts)==2 else []
+    if not re.fullmatch(r'[a-f0-9]{64}',fingerprint) or len(key)!=2 or key[0]!='ssh-ed25519' or not re.fullmatch(r'[A-Za-z0-9+/=]{40,200}',key[1]):raise ValueError('Peer machine/host-key identity unavailable')
+    known_host=host if int(port)==22 else '['+host+']:'+port
+    return {'destination':user+'@'+host,'port':int(port),'machine_sha256':fingerprint,'known_hosts':known_host+' '+' '.join(key)+'\n'}
 
 # Arguments arrive as JSON on stdin, never interpolated into a remote shell command.
 COLLECTOR = inspect.getsource(inspect_trial_progress)+'\nSOURCE_QUERY = '+repr(SOURCE_QUERY)+'\nMODEL_CONFIG_QUERY = '+repr(MODEL_CONFIG_QUERY)+'\nRUNTIME_QUERY = '+repr(RUNTIME_QUERY)+'\nCACHE_QUERY = '+repr(CACHE_QUERY)+'\n'+r'''
@@ -360,11 +361,16 @@ if p.get('recipe_root'):
  recipe['scope']='Enrolled recipe files read without sourcing or executing them, Git revision on disk, and host resources. Secrets redacted; file hashes cover original bytes. No backup, inference or restoration proof.'
 peer_probe=None
 if p.get('peer'):
- peer=p['peer'];peer_probe={'state':'unavailable','scope':'Read-only direct SSH reachability and exact machine identity. No file transfer, key enrollment, installation or service changes.'}
+ peer=p['peer'];peer_probe={'state':'unavailable','scope':'Read-only direct SSH reachability and exact machine identity. Pins the target public host key read through its existing trusted connection in a temporary file, then removes it. No persistent trust enrollment, installation or service changes.'}
  try:
   import shlex
   code='import hashlib,pathlib; print(hashlib.sha256(pathlib.Path("/etc/machine-id").read_bytes()).hexdigest())'
-  probe=subprocess.run(['ssh','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','UpdateHostKeys=no','-o','ConnectTimeout=8','-p',str(peer['port']),'--',peer['destination'],shlex.join(['python3','-I','-c',code])],text=True,capture_output=True,timeout=15)
+  import tempfile
+  with tempfile.TemporaryDirectory(prefix='dsg-peer-') as temp:
+   options=[]
+   if peer.get('known_hosts'):
+    pinned=pathlib.Path(temp)/'known_hosts';pinned.write_text(peer['known_hosts']);pinned.chmod(0o600);options=['-o','UserKnownHostsFile='+str(pinned)]
+   probe=subprocess.run(['ssh','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','UpdateHostKeys=no','-o','ConnectTimeout=8',*options,'-p',str(peer['port']),'--',peer['destination'],shlex.join(['python3','-I','-c',code])],text=True,capture_output=True,timeout=15)
   actual=probe.stdout.strip()
   peer_probe.update(state='verified' if probe.returncode==0 and actual==peer['machine_sha256'] else 'unavailable',machine_matches=probe.returncode==0 and actual==peer['machine_sha256'],exit_code=probe.returncode)
   if probe.returncode:peer_probe['detail']='\n'.join('<credential-related line withheld>' if secret.search(line) else line for line in probe.stderr.splitlines())[-1500:]

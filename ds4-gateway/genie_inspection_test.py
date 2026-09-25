@@ -369,10 +369,10 @@ class TrialProgress(unittest.TestCase):
 class PeerInspection(unittest.TestCase):
  def test_peer_is_resolved_from_enrollment_and_pinned_to_observed_machine(self):
   from types import SimpleNamespace
-  answers=[SimpleNamespace(stdout='hostname example.invalid\nuser fixture\nport 22\n'),SimpleNamespace(stdout='a'*64+'\n')]
+  answers=[SimpleNamespace(stdout='hostname example.invalid\nuser fixture\nport 22\n'),SimpleNamespace(stdout='a'*64+'\nssh-ed25519 '+'A'*68+' fixture\n')]
   with patch('subprocess.run',side_effect=answers) as run:
    result=m.peer_parameters({'ssh':['enrolled-peer']})
-   self.assertEqual(result,{'destination':'fixture@example.invalid','port':22,'machine_sha256':'a'*64})
+   self.assertEqual(result,{'destination':'fixture@example.invalid','port':22,'machine_sha256':'a'*64,'known_hosts':'example.invalid ssh-ed25519 '+'A'*68+'\n'})
    self.assertEqual(run.call_args_list[0].args[0],['ssh','-G','enrolled-peer'])
    self.assertIn('StrictHostKeyChecking=yes',run.call_args.args[0]);self.assertIn('UpdateHostKeys=no',run.call_args.args[0])
   with patch('subprocess.run') as run:
@@ -386,7 +386,10 @@ class PeerInspection(unittest.TestCase):
   def output(argv,**kwargs):return json.dumps([{'Id':'image-id','Created':'dated','Size':12345}]) if argv[:3]==('docker','image','inspect') else json.dumps([c])
   for actual,expected in [('a',True),('b',False)]:
    stdout=io.StringIO()
-   def run(argv,**kwargs):return SimpleNamespace(returncode=0,stdout=actual*64+'\n' if argv[0]=='ssh' else '',stderr='')
-   payload={'container':'fixture','peer':{'destination':'fixture@example.invalid','port':22,'machine_sha256':'a'*64}}
+   def run(argv,**kwargs):
+    if argv[0]=='ssh':
+     pinned=next(x.split('=',1)[1] for x in argv if x.startswith('UserKnownHostsFile='));self.assertEqual(pathlib.Path(pinned).read_text(),'example.invalid ssh-ed25519 '+'A'*68+'\n');self.assertIn('StrictHostKeyChecking=yes',argv)
+    return SimpleNamespace(returncode=0,stdout=actual*64+'\n' if argv[0]=='ssh' else '',stderr='')
+   payload={'container':'fixture','peer':{'destination':'fixture@example.invalid','port':22,'machine_sha256':'a'*64,'known_hosts':'example.invalid ssh-ed25519 '+'A'*68+'\n'}}
    with patch('subprocess.check_output',side_effect=output),patch('subprocess.run',side_effect=run),patch('sys.stdin',io.StringIO(json.dumps(payload))),contextlib.redirect_stdout(stdout):exec(compile(m.COLLECTOR,'collector','exec'),{})
    result=json.loads(stdout.getvalue());self.assertEqual(result['peer_probe']['machine_matches'],expected);self.assertEqual(result['image']['size_bytes'],12345)
