@@ -20,6 +20,7 @@ import uuid
 from operation_maintenance import GatewayControl, Maintenance
 from spark_recipe_trial import Executor, atomic
 from genie_inspection import peer_parameters
+from image_peer_transfer import transfer as peer_stream
 
 
 def digest(data):return hashlib.sha256(data).hexdigest()
@@ -153,7 +154,8 @@ with tempfile.TemporaryDirectory(prefix='dsg-image-peer-') as temp:
             payload=base64.b64encode(json.dumps({'peer':peer,'image':self.plan['qualified_image'],'mode':mode}).encode()).decode()
             return ['ssh','-o','BatchMode=yes','-o','ConnectTimeout=15',self.plan['image_source_ssh'],shlex.join(['python3','-I','-c',code,payload])]
         probe=self.run(command('probe'),stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=45)
-        if probe.returncode or probe.stdout.decode().strip()!=peer['machine_sha256']:return False
+        if probe.returncode:return peer_stream(self,peer)
+        if probe.stdout.decode().strip()!=peer['machine_sha256']:return False
         atomic(self.folder/'direct-copy-peer.json',{'state':'verified','peer':peer,'source':self.plan['image_source_ssh'],'image':self.plan['qualified_image'],'at':time.time()})
         self.status('copying_qualified_image',transport='direct_spark_peer')
         with open(self.folder/'image-copy.log','ab',buffering=0) as log:

@@ -106,3 +106,10 @@ class ImageTransport(unittest.TestCase):
         with self.assertRaises(subprocess.CalledProcessError):r.verify_retained_source()
         self.assertEqual(file.read_text(),'owner edit');file.write_text('original');(Path(r.remote)/'baseline').mkdir()
         with self.assertRaises(subprocess.CalledProcessError):r.verify_retained_source()
+
+    def test_unavailable_peer_ssh_uses_authenticated_stream_without_changing_credentials(self):
+        from unittest.mock import patch
+        from types import SimpleNamespace
+        r=self.fixture();peer={'destination':'fixture@example.invalid','port':22,'machine_sha256':'a'*64};r.run=lambda *a,**kw:SimpleNamespace(returncode=255,stdout=b'')
+        with patch('spark_recipe_rollout.peer_parameters',return_value=peer),patch('spark_recipe_rollout.peer_stream',return_value=True) as stream:
+            self.assertTrue(r.direct_image());stream.assert_called_once_with(r,peer)
