@@ -15,6 +15,9 @@ import {bundleRecipes,setupTransport} from './genie-spark-setup.mjs';
 import {mediaPlanIdentity} from './spark-media-cycle.mjs';
 
 const kinds={'ace-step':'music',h3:'video'},terminal=new Set(['enrolled','failed_returned','failed_unchanged']);
+// A changed native reader permits one new read-only source decision. This
+// does not grant permission to replay a failed setup or bypass its gates.
+const sourceRepairRevision=createHash('sha256').update(fs.readFileSync(new URL('./spark_setup_remote.py',import.meta.url))).digest('hex');
 const launch=async folder=>{
  const log=fs.openSync(path.join(folder,'runner.log'),'ax',0o600);
  try{const child=spawn(process.execPath,[fileURLToPath(new URL('./media-setup-runner.mjs',import.meta.url)),folder],{detached:true,stdio:['ignore',log,log]});await new Promise((resolve,reject)=>{child.once('spawn',resolve);child.once('error',reject);});child.unref();return {pid:child.pid};}finally{fs.closeSync(log);}
@@ -120,7 +123,7 @@ export function createMediaSetup(config,store,{directory,workers,binding,isEnabl
   return !!(config.control_socket&&path.isAbsolute(config.genie_chat?.python??'')&&recovery?.adapter==='docker'&&recovery.verification==='qwen_vllm'&&recovery.ssh&&inspection?.ssh?.[0]&&/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(inspection.container??'')&&binding(id,recovery));
  };
  const standardAudit=createMediaStandardAudit({config,store,workers,isEnabled,isInspectionEnabled,transport,backup,active:id=>Object.values(store.data.media_setups??{}).some(s=>s.worker_id===id&&!terminal.has(read(s.operation_id).phase))});
- const status=()=>({connected:true,source_repair_supported:true,standard_audit:standardAudit.status(),enabled:isEnabled(),operations:Object.keys(store.data.media_setups??{}).map(id=>{const {binding,infrastructure_binding,...row}=read(id);return row;}),hosts:workers().map(w=>({worker_id:w.id,available:canSetup(w.id),error:restoreErrors[w.id]??null}))});
+ const status=()=>({connected:true,source_repair_supported:true,source_repair_revision:sourceRepairRevision,standard_audit:standardAudit.status(),enabled:isEnabled(),operations:Object.keys(store.data.media_setups??{}).map(id=>{const {binding,infrastructure_binding,...row}=read(id);return row;}),hosts:workers().map(w=>({worker_id:w.id,available:canSetup(w.id),error:restoreErrors[w.id]??null}))});
  async function finish(input){
   assert.ok(input&&Object.keys(input).join(',')==='operation_id','Choose one saved setup');const saved=store.data.media_setups?.[input.operation_id];assert.ok(saved,'Unknown media setup');
   if(saved.phase==='enrolled')return read(input.operation_id);

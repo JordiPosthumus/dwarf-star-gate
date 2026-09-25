@@ -61,7 +61,7 @@ export class MediaStandardWatch {
      if(active||host.execution||!worker?.is_healthy||worker.load||worker.queued||!spare||!capable){phase='waiting';reason='Waiting for setup support, idle hardware and a separate serving LLM.';}
      else {phase='setup_needed';action='setup';}
     }
-    const fingerprint=createHash('sha256').update(JSON.stringify([t,phase,op?.operation_id,failed.has(op?.phase)?op.at:null,reason,...(['repair','retry'].includes(action)?[siblings.map(o=>[o.operation_id,o.phase,o.finished_at??o.at])]:[])])).digest('hex');
+    const fingerprint=createHash('sha256').update(JSON.stringify([t,phase,op?.operation_id,failed.has(op?.phase)?op.at:null,reason,...(['repair','retry'].includes(action)?[siblings.map(o=>[o.operation_id,o.phase,o.finished_at??o.at])]:[]),...(action==='repair'?[s.setup.source_repair_revision??null]:[])])).digest('hex');
     if(action&&old.dispatched===fingerprint&&!old.pending&&['setup_needed','source_repair_needed','retry_available'].includes(phase)){phase='needs_attention';reason='Genie ended its setup reply without an observed operation; inspect the standard conversation.';action=null;}
     const row={...old,phase,enrolled:engine?.enrolled===true,reason:reason??null,operation_id:op?.operation_id??null,observed_at:this.now()};this.state.targets[t.key]=row;
     if(!chosen&&action&&old.dispatched!==fingerprint)chosen={t,row,action,fingerprint};

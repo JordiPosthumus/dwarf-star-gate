@@ -102,13 +102,21 @@ def discover_media(payload):
         raise ValueError('Expected missing media is not confirmed absent on the current LLM host')
     native_port = '8188/tcp' if engine == 'h3' else '8002/tcp'
     candidates = []
+    launch_forms = []
     for offset in range(0, len(ids), 16):
         for obj in json.loads(read('inspect', '--type', 'container', '--', *ids[offset:offset + 16])):
             bindings = (obj.get('HostConfig', {}).get('PortBindings') or {}).get(native_port) or []
             config = obj.get('Config') or {}
             command = (config.get('Entrypoint') or []) + (config.get('Cmd') or [])
+            # The shipped image launches ComfyUI through this wrapper, with
+            # tini as PID 1. A wrapper name embedded in arbitrary args/shell
+            # text is not a recognized entrypoint.
+            h3_wrapper = config.get('Entrypoint') in (
+                ['/usr/local/bin/h3-entrypoint'],
+                ['/usr/bin/tini', '--', '/usr/local/bin/h3-entrypoint'],
+            ) and config.get('WorkingDir') == '/opt/ComfyUI'
             known = ('acestep.api_server' in command if engine == 'ace-step' else
-                     any(str(arg).endswith('/ComfyUI/main.py') for arg in command) or
+                     h3_wrapper or any(str(arg).endswith('/ComfyUI/main.py') for arg in command) or
                      ('main.py' in command and str(config.get('WorkingDir', '')).rstrip('/').endswith('/ComfyUI')))
             if not bindings:
                 if known:
@@ -121,10 +129,12 @@ def discover_media(payload):
                 raise ValueError('Native media candidate identity or port is invalid')
             candidates.append({'source': 'docker', 'container': obj['Id'], 'image': obj['Image'],
                                'kind': 'comfyui' if engine == 'h3' else 'ace-step', 'port': int(port)})
+            launch_forms.append('shipped_h3_wrapper' if engine == 'h3' and h3_wrapper else 'native_engine_command')
     if len(candidates) > 1:
         raise ValueError('More than one stopped media candidate; selection needs attention')
     return {'state': 'source_selected', 'engine': engine, 'missing_container': old,
             'current_llm_container': current, 'selection': candidates[0] if candidates else None,
+            'selection_launch_form': launch_forms[0] if launch_forms else None,
             'scope': 'Read-only complete Docker inventory confirmed the old media container absent. Selected a unique stopped engine with a recognized launch command, or separate fresh preparation when no port candidate exists. Nothing started, stopped, deleted or installed. Native qualification remains required.'}
 
 

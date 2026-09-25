@@ -63,6 +63,20 @@ test('native source repair progresses to exact retry without another owner promp
  f.s.setup.operations[0].phase='preparing_media';await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,2);
 });
 
+test('changed source reader reconsiders a refused read-only selection once across reloads',async t=>{
+ const f=fixture(t);f.config.media_jobs.standard.targets.splice(1);f.s.setup.source_repair_supported=true;
+ f.s.setup.source_repair_revision='reader-before';
+ f.s.setup.operations=[{worker_id:'pair',member:0,engine:'ace-step',operation_id:'old',phase:'failed_unchanged',at:'fixed-failure',failure_context:{stage:'read_only_preflight',selected_media_container:'missing'}}];
+ await new MediaStandardWatch(f.options).tick();await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,1);
+ f.s.setup.source_repair_revision='reader-after';
+ await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,2);assert.match(f.calls[1][1],/Call repair_media_setup once/);assert.match(f.calls[1][1],/"expected_failed_at":"fixed-failure"/);
+ assert.notEqual(f.calls[0][2],f.calls[1][2]);
+ await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,2);
+ // A reader update does not repeat a native setup retry.
+ f.s.setup.operations[0].retry_ready=true;await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,3);
+ f.s.setup.source_repair_revision='reader-next';await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,3);
+});
+
 test('an enrolled standard gets one periodic native audit through Genie across reloads',async t=>{
  const f=fixture(t);for(const m of f.s.hosts[0].members)for(const e of m.engines)e.enrolled=true;
  const target={key:JSON.stringify(['pair',0,'ace-step']),state:'not_observed',observed_at:null,due:true};f.s.setup.standard_audit={enabled:true,targets:[target]};
