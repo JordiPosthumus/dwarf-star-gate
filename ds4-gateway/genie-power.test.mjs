@@ -1,14 +1,18 @@
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import {test} from 'node:test';import assert from 'node:assert/strict';
-import {fileURLToPath} from 'node:url';
 import {createPowerRunner,createReadinessVerifier,powerScript,powerWorkers,machineGroup} from './power-scripts.mjs';
 import {createFleetPowerTools} from './genie-power.mjs';
 import http from 'node:http';import {once} from 'node:events';
 
 const UUID=()=>crypto.randomUUID();
 const crypto=await import('node:crypto');
+const directory=fs.mkdtempSync(path.join(os.tmpdir(),'fleet-power-test-'));
+for(const name of ['status-glm53-m3','start-glm53-m3','stop-glm53-m3','status-sparks12','start-glm53f-sparks12','stop-sparks12','stop-ds41-m3','start-ds41-sparks12']){
+  fs.writeFileSync(path.join(directory,name),'#!/bin/sh\nexit 0\n',{mode:0o700});
+}
+process.once('exit',()=>fs.rmSync(directory,{recursive:true,force:true}));
 
 test('power script allowlist refuses unknown workers, actions and non-executable paths',()=>{
-  assert.equal(powerScript('glm53f-m3','status'),path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..','..','startScripts','status-glm53-m3'));
+  assert.equal(powerScript('glm53f-m3','status',directory),path.join(directory,'status-glm53-m3'));
   assert.equal(powerScript('nope','start'),null);
   assert.equal(powerScript('glm53f-m3','reboot'),null);
   assert.ok(powerWorkers().includes('qwen-image'));
@@ -18,7 +22,7 @@ test('power script allowlist refuses unknown workers, actions and non-executable
 
 test('power runner serializes mutations per physical machine and records verified receipts',async t=>{
   let slowRelease,calls=0;
-  const runner=createPowerRunner({
+  const runner=createPowerRunner({directory,
     spawn:async()=>{calls++;if(calls===1)await new Promise(r=>{slowRelease=r;});return {exit_code:0,output:'ran'};},
     verify:async(worker,action)=>({state:action==='start'?'ready':'stopped',detail:'mock'}),
   });
@@ -35,7 +39,7 @@ test('power runner serializes mutations per physical machine and records verifie
   const stat=await runner.run('glm53f-m3','status');
   assert.equal(stat.ok,true);assert.equal(stat.verified.state,'unverified');
   // failing script marks verified failed and ok false
-  const failing=createPowerRunner({spawn:async()=>({exit_code:1,output:'boom'}),verify:async()=>({state:'ready',detail:'x'})});
+  const failing=createPowerRunner({directory,spawn:async()=>({exit_code:1,output:'boom'}),verify:async()=>({state:'ready',detail:'x'})});
   const bad=await failing.run('glm53f-m3','start');
   assert.equal(bad.ok,false);assert.equal(bad.verified.state,'failed');
 });
@@ -62,7 +66,7 @@ test('fleet power tools: status evidence, stop interlocks, exact action IDs',asy
     {id:'glm53f-m3',is_healthy:true,drained:false,load:1,queued:0},
     {id:'glm53f-sparks12',is_healthy:true,drained:false,load:0,queued:0},
   ]};
-  const runner=createPowerRunner({spawn:async()=>({exit_code:0,output:'ran'}),verify:async(worker,action)=>({state:action==='start'?'ready':'stopped',detail:'mock'})});
+  const runner=createPowerRunner({directory,spawn:async()=>({exit_code:0,output:'ran'}),verify:async(worker,action)=>({state:action==='start'?'ready':'stopped',detail:'mock'})});
   const tools=createFleetPowerTools({runner,read:async()=>state,isEnabled:()=>true});
   const status=await tools.tool({action:'status'});
   assert.equal(status.schema,1);
@@ -113,7 +117,7 @@ test('fleet power tools: status evidence, stop interlocks, exact action IDs',asy
 });
 
 test('fleet power tool endpoint authenticates like the other private chat tools',async t=>{
-  const runner=createPowerRunner({spawn:async()=>({exit_code:0,output:'ok'}),verify:async()=>({state:'stopped',detail:'x'})});
+  const runner=createPowerRunner({directory,spawn:async()=>({exit_code:0,output:'ok'}),verify:async()=>({state:'stopped',detail:'x'})});
   const tools=createFleetPowerTools({runner,read:async()=>({version:1,workers:[]})});
   const server=http.createServer((req,res)=>{if(tools.handle(req,res))return;res.writeHead(404);res.end();});
   server.listen(0,'127.0.0.1');await once(server,'listening');t.after(()=>{server.closeAllConnections();server.close();});

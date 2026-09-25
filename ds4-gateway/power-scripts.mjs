@@ -36,15 +36,16 @@ const ACTIONS=new Set(['status','start','stop']);
 export const powerWorkers=()=>WORKERS;
 
 
-export function powerScript(worker,action){
+export function powerScript(worker,action,directory=RESOLVED){
   if(!WORKERS.includes(worker)||!ACTIONS.has(action))return null;
   const name=SCRIPTS[worker][action];
-  const file=path.join(RESOLVED,name);
+  const resolved=path.resolve(directory);
+  const file=path.join(resolved,name);
   // Refuse symlinks and anything outside the scripts directory: exact paths only.
   try{
     const stat=fs.lstatSync(file);
     if(!stat.isFile()||stat.isSymbolicLink())return null;
-    if(!file.startsWith(RESOLVED+path.sep))return null;
+    if(!file.startsWith(resolved+path.sep))return null;
     fs.accessSync(file,fs.constants.X_OK);
     return file;
   }catch{return null;}
@@ -113,6 +114,7 @@ export function createPowerRunner({
   //   {state:'ready'|'stopped'|...} for start/stop; never called for status.
   verify=null,
   now=Date.now,
+  directory=RESOLVED,
 }={}){
   if(verify!==null&&typeof verify!=='function')throw new Error('verify must be a function when provided');
   const running=new Map(); // machine-group key -> in-flight mutation
@@ -120,7 +122,7 @@ export function createPowerRunner({
   async function run(worker,action){
     const groups=machineGroup(worker);
     if(!groups)return {worker,action,ok:false,output:'No enrolled script for this worker; scripts remain the source of truth.'};
-    const file=powerScript(worker,action);
+    const file=powerScript(worker,action,directory);
     if(!file)return {worker,action,ok:false,output:'No enrolled script for this worker/action; scripts remain the source of truth.'};
     // Mutations serialize across the whole physical machine/pair, including
     // Start versus Stop and different model IDs sharing the hardware.
@@ -157,7 +159,8 @@ export function createPowerRunner({
     run,
     busy:worker=>machineGroup(worker)?.some(group=>running.has(group))??false,
     receipts:()=>history.slice(),
-    directory:RESOLVED,
+    script:(worker,action)=>powerScript(worker,action,directory),
+    directory:path.resolve(directory),
   };
 }
 
