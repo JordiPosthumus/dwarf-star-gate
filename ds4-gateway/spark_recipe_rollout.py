@@ -115,10 +115,7 @@ class Rollout(Executor):
         return {'state':'original_publication_restored'}
 
     def spare(self):
-        other='glm53f-sparks34' if self.plan['worker']=='glm53f-sparks12' else 'glm53f-sparks12'
-        workers=self.control('/workers').get('workers',[])
-        if not any(w.get('id') in [other,'glm53f-m3'] and w.get('is_healthy') is True and w.get('drained') is False and not w.get('direct_reserved') for w in workers):
-            raise RuntimeError('Keep a healthy admitted LLM on separate hardware before rollout')
+        return super().spare()
 
     def relay_image(self):
         with open(self.folder/'image-copy.log','ab',buffering=0) as log:

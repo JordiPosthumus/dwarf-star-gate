@@ -8,6 +8,17 @@ inspection binding. The executors support the GLM Spark pair long
 coding reference profile and a local oMLX MTP depth 3 → 5 → 3 comparison. Enrollment is not permission to adopt the candidate.
 Use the owner's explicit approval for the temporary profile and its tradeoffs.
 
+For your own GLM pair names, configure `machine_groups` with the pair's two
+physical machine IDs and groups for independently serving workers. Include a
+nonempty `separate_workers` list of those worker IDs in the hashed plan. For
+example, groups `{"my-pair":["gpu-a","gpu-b"],"my-spare":["gpu-c"]}` and plan
+`"separate_workers":["my-spare"]` provide an explicit serving floor. Overlapping
+groups are rejected, active operations reserve every route on the same hardware,
+and the native executor checks a listed spare is healthy and admitted before the
+transition. These are configurable names; no private fleet hostname is required.
+An existing inspected GLM pair is required: this workflow does not provision an
+unconfigured tensor-parallel cluster or qualify unsupported model families.
+
 Spark preparation verifies the pinned original revision, launcher, environment and
 image on both ranks. It archives the original source and launcher files, retains
 original image tags, builds a separate pinned source archive and transfers only
@@ -81,7 +92,8 @@ enrolled permanent plan with its own UUID. It reuses the exact image from the
 completed, capacity-preserving qualification, keeps the original containers,
 waits for idle under an owned maintenance hold and checks native readiness.
 Successful publication changes only that worker's normal recipe path and its
-inspection binding; all other settings and an owner's later pause are preserved.
+inspection binding plus a matching paired-media recipe binding; all other
+settings and an owner's later pause are preserved.
 It runs no new benchmark. Full original publication bytes and deployment receipts
 remain private. A failure restores the originals; uncertainty keeps the hold.
 
@@ -106,3 +118,13 @@ failure is archived, pinned source bytes and publication files are rechecked,
 and the original target baseline is verified again. Duplicate delivery observes
 the existing attempt. Running work, uncertain state and later deployment stages
 cannot use this resume path.
+
+For the capacity-preserving profile, `qualification_mode: "candidate-only"`
+avoids repeating an earlier baseline comparison. It still requires all ten
+candidate checks, genuine cold and warm cache evidence, the context boundary,
+two observed active requests, exact original restoration and a native readiness
+response. Diagnostic request budgets never change production limits. A later
+upgrade of a published recipe can use `baseline_kind: "published-rollout"` with
+the SHA-256 of its retained deployment receipt in `baseline_deployment_sha256`;
+the executor verifies the image, source receipt and complete backed-up recipe
+manifest instead of pretending that a published archive is a Git checkout.

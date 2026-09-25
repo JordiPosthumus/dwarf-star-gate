@@ -24,3 +24,4 @@ jobs:
       - run: npm run data:test
       - run: npm run memory:test
       - run: npm run recovery:test
+      - run: npm run recipe:test

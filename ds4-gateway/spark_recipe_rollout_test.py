@@ -45,6 +45,16 @@ class RolloutTransaction(unittest.TestCase):
 
 
 class Publication(unittest.TestCase):
+    def test_custom_pair_requires_an_enrolled_healthy_independent_serving_worker(self):
+        rollout=Rollout.__new__(Rollout);rollout.plan={'worker':'my-pair','separate_workers':['my-spare']}
+        workers=[{'id':'unlisted','is_healthy':True,'drained':False},{'id':'my-spare','is_healthy':True,'drained':False,'maintenance_locks':[]}]
+        rollout.control=lambda route:{'workers':workers}
+        rollout.spare()
+        workers[1]['maintenance_locks']=[{'id':'other-operation'}]
+        with self.assertRaisesRegex(RuntimeError,'separate hardware'):rollout.spare()
+        rollout.plan.pop('separate_workers')
+        with self.assertRaisesRegex(RuntimeError,'Enroll separate'):rollout.spare()
+
     def fixture(self):
         temporary=tempfile.TemporaryDirectory();self.addCleanup(temporary.cleanup);root=Path(temporary.name)
         launcher=root/'launcher.py';launcher.write_text('config = {"recipe": "/original", "other": "/untouched"}\n')

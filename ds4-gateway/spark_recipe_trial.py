@@ -44,6 +44,12 @@ def validate(plan):
     for key in ['worker','ssh','rank_ssh']:
         if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.@-]{0,100}',plan.get(key,'')):
             raise ValueError('Invalid enrolled target')
+    if 'separate_workers' in plan:
+        peers = plan['separate_workers']
+        if (not isinstance(peers, list) or not peers
+                or any(not isinstance(p, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}', p) or p == plan['worker'] for p in peers)
+                or len(set(peers)) != len(peers)):
+            raise ValueError('Enroll distinct separate serving worker identities')
     for key in ['source_revision','baseline_revision']:
         if not re.fullmatch(r'[a-f0-9]{40}',plan.get(key,'')):raise ValueError('Pin source and baseline commits')
     for key in ['source_sha256','baseline_env_sha256','baseline_start_sha256']:
@@ -62,6 +68,16 @@ class Executor:
         self.id=str(uuid.UUID(self.folder.name));self.run=run;self.control=control
         self.remote=self.plan['remote_root']+'/'+self.id
         self.receipt=None
+    def spare(self):
+        peers=self.plan.get('separate_workers')
+        if peers is None:
+            if self.plan['worker'] not in ['glm53f-sparks12','glm53f-sparks34']:
+                raise RuntimeError('Enroll separate serving workers for this pair')
+            peers=['glm53f-sparks34' if self.plan['worker']=='glm53f-sparks12' else 'glm53f-sparks12','glm53f-m3']
+        workers=self.control('/workers').get('workers',[])
+        if not any(w.get('id') in peers and w.get('is_healthy') is True and w.get('drained') is False
+                   and not any(w.get(k) for k in ['direct_reserved','holds','maintenance_locks','quarantine','recovering']) for w in workers):
+            raise RuntimeError('Keep a healthy admitted LLM on separate hardware before the operation')
     def status(self,phase,**fields):
         self.receipt.update(state='running',phase=phase,observed_at=time.time(),**fields)
         atomic(self.folder/(self.receipt['stage']+'.status.json'),self.receipt)
@@ -105,8 +121,9 @@ class Executor:
         prepared=json.loads((self.folder/'prepare.result.json').read_text())
         if prepared.get('state')!='prepared':raise RuntimeError('Prepare this trial first')
         maintenance=Maintenance(self.folder,self.id,self.plan['worker'],control=self.control,purpose='trial',progress=lambda phase,detail:self.status(phase))
-        self.status('acquiring_owned_hold');maintenance.acquire()
+        self.spare();self.status('acquiring_owned_hold');maintenance.acquire()
         maintenance.wait_idle(self.native_idle)
+        self.spare()
         self.status('measuring_and_restoring')
         # The remote transaction has its own finally-based restoration. If SSH
         # loses its answer, inspect it; never start the transaction a second time.

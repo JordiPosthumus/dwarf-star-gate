@@ -76,3 +76,16 @@ test('only an exact confirmed pre-maintenance copy failure resumes, preserving i
  const next=await manager.start({...args,expected_finished_at:123});assert.equal(next.resume_copy,true);assert.equal(next.attempt,2);assert.equal(next.trial_id,id);assert.deepEqual(JSON.parse(fs.readFileSync(path.join(f.folder,'rollout-attempt-1.json'))),failed);assert.equal(f.launched.length,2);
  f.config.genie_chat.inspection.workers[plan.worker].recipe_root='/published';await manager.start({...args,expected_finished_at:123});assert.equal(f.launched.length,2);
 });
+
+test('custom pair names require configured independent hardware and reserve every overlapping route',async t=>{
+ const f=fixture(t),binding=f.config.recipe_trials.fixture,plan=JSON.parse(fs.readFileSync(binding.plan_file));
+ plan.worker='my-glm-pair';plan.separate_workers=['my-spare'];
+ fs.writeFileSync(binding.plan_file,JSON.stringify(plan));binding.plan_sha256=createHash('sha256').update(fs.readFileSync(binding.plan_file)).digest('hex');
+ f.config.genie_chat.inspection.workers[plan.worker]={ssh:['fixture-host'],recipe_root:'/fixture/recipe'};
+ f.config.machine_groups={'my-glm-pair':['gpu-a','gpu-b'],'my-spare':['gpu-b'],alias:['gpu-a']};
+ const manager=createRecipeTrials(f),args={profile:'fixture',stage:'prepare',trial_id:id};
+ await assert.rejects(manager.start(args),/non-overlapping/);assert.equal(f.launched.length,0);
+ f.config.machine_groups['my-spare']=['gpu-c'];await manager.start(args);
+ assert.equal(manager.busy('my-glm-pair'),true);assert.equal(manager.busy('alias'),true);assert.equal(manager.busy('my-spare'),false);
+ await assert.rejects(manager.start({...args,trial_id:'229219df-2284-4b34-a479-aab1e8d51513'}),/already running/);
+});
