@@ -76,6 +76,8 @@ class Executor:
         atomic(self.folder/(self.receipt['stage']+'.status.json'), self.receipt)
 
     def unchanged(self, expected):
+        if self.file.is_symlink():
+            raise RuntimeError('Model settings must remain the enrolled regular file')
         if self.file.read_bytes() != expected:
             raise RuntimeError('Model settings changed outside this trial; preserve owner edits')
         for relative, digest in self.plan['preserved_files'].items():
@@ -104,7 +106,7 @@ class Executor:
         if any(settings.get(key) != value for key, value in expected.items()):
             raise RuntimeError('Live model settings differ from the pinned intended settings')
         return {'loaded':True, 'settings':{key:settings[key] for key in expected},
-                'scope':'Admin engine-pool settings plus successful reload and inference; no kernel-level trace.'}
+                'scope':'Admin engine-pool settings and loaded status; reload and inference, when performed, are separate phase results. No kernel-level trace.'}
 
     def replace(self, expected, replacement):
         self.unchanged(expected)
