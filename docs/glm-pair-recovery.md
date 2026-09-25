@@ -151,3 +151,15 @@ pairs: four cold histories reported zero cached tokens and four warm histories
 reused 14,336 tokens from approximately 19,750-token initial prompts. This validates
 the diagnostic on that fleet, not the new detached restart path or another owner's
 hardware. Native restart receipts remain the acceptance gate for enabling that path.
+
+Pair capture completion is followed automatically in its originating Genie
+conversation. The dashboard reads saved preparation tool handles, waits for native
+terminal receipts, and durably submits one read-only follow-up when Genie is idle.
+It resumes after a dashboard restart and deduplicates a lost chat acknowledgement
+using the same saved request ID. Already observed results and superseded captures
+need no extra reply. Missing or uncertain evidence never causes a new capture.
+Stopped replies, paused conversations, testing mode and disabled inspection prevent
+automatic follow-up. If the follow-up finishes without reading the terminal tool
+receipts, `recovery_status.pair_preparation_followup` reports `needs_attention`;
+a model answer alone does not count as observed evidence. This watcher grants no
+enrollment or restart authority and does not qualify general pair recovery.
