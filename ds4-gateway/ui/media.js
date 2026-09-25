@@ -35,12 +35,12 @@ function render(){
         card.append(el('p',`${check.system} ${check.architecture}${check.gpu_names?.length?' · '+check.gpu_names.join(', '):''}`));
         const recipe=check.recipes?.find(r=>r.engine===engine.id);
         if(recipe)card.append(el('p',`Recipe models: ${(recipe.model_bytes_required/2**30).toFixed(1)} GiB; images, build cache and outputs need extra space.`,'muted'));
-        for(const disk of check.disks??[])card.append(el('p',`${disk.locations?.join(", ")??disk.location}: ${Number.isFinite(disk.free_bytes)?(disk.free_bytes/2**30).toFixed(1)+' GiB free':disk.error}`,'muted'));
+        for(const disk of check.disks??[])card.append(el('p',`${[...new Set((disk.locations??[disk.location]).map(location=>String(location).startsWith('existing container mount:')?'existing model storage':location))].join(', ')}: ${Number.isFinite(disk.free_bytes)?(disk.free_bytes/2**30).toFixed(1)+' GiB free':disk.error}`,'muted'));
         card.append(el('p',check.setup,'muted'));
         for(const error of check.errors??[])card.append(el('p',error,'media-job-detail'));
       }
     }
-    const inspect=el('button','Check resources','button');inspect.type='button';inspect.disabled=!state.controls_enabled||!state.resource_inspection_connected;inspect.setAttribute('aria-label',`Check media resources on ${host.id}`);card.append(inspect);
+    const inspect=el('button','Check resources','button');inspect.type='button';inspect.disabled=!state.controls_enabled||!state.resource_inspection_connected;inspect.setAttribute('aria-label',`Check media resources on ${host.display_name??host.id}`);card.append(inspect);
     inspect.addEventListener('click',async()=>{
       busy=true;inspect.disabled=true;$('media-message').textContent=`Checking ${host.id}; existing services keep running…`;
       try{const response=await fetch('/api/media/inspect',{method:'POST',headers:{'content-type':'application/json','x-dsg-csrf':state.csrf_token},body:JSON.stringify({worker_id:host.id,...(host.member!==undefined?{member:host.member}:{})})});const result=await response.json();if(!response.ok)throw Error(result.error??'Resource check unavailable.');$('media-message').textContent=`${host.id} resources checked. No service was changed.`;}
@@ -53,7 +53,7 @@ function render(){
     if(setup?.qualification)card.append(el('p',`${setup.qualification.engine??'Media test'}: ${setup.qualification.phase??setup.qualification.state}${setup.qualification.error?' · '+setup.qualification.error:''}`));
     if(setupHost?.error)card.append(el('p',setupHost.error,'media-job-detail'));
     if(!choice.enrolled){
-      const button=el('button',setup?.phase==='qualified_returned'?'Finish setup':`Set up ${engine.label}`,'button');button.type='button';button.setAttribute('aria-label',`${button.textContent} on ${host.id}`);
+      const button=el('button',setup?.phase==='qualified_returned'?'Finish setup':`Set up ${engine.label}`,'button');button.type='button';button.setAttribute('aria-label',`${button.textContent} on ${host.display_name??host.id}`);
       button.disabled=!state.controls_enabled||!state.setup?.enabled||!setupHost?.available||!choice.allowed||!!(setup&&setup.phase!=='qualified_returned');card.append(button);
       button.addEventListener('click',async()=>{
         busy=true;button.disabled=true;$('media-message').textContent=`Starting ${engine.label} setup on ${host.id}…`;

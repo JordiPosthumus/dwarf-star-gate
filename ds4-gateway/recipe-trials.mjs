@@ -5,7 +5,7 @@ import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {machineGroup} from './fleet-machines.mjs';
+import {machinesFor} from './fleet-machines.mjs';
 const here=path.dirname(fileURLToPath(import.meta.url));
 const uuid=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
@@ -25,7 +25,7 @@ export function createRecipeTrials({config,powerBusy=()=>false,launch=spawn}={})
   };
   const compact=value=>Array.isArray(value)?value.map(compact):value&&typeof value==='object'?Object.fromEntries(Object.entries(value).filter(([key])=>!['metrics_before','metrics_after'].includes(key)).map(([key,item])=>[key,key==='answer'&&typeof item==='string'?item.slice(0,160):compact(item)])):value;
   const status=()=>allStatus().sort((a,b)=>String(b.started_at).localeCompare(String(a.started_at))).slice(0,32).map(compact);
-  const busy=worker=>allStatus().some(r=>['starting','running','restoration_required'].includes(r.state)&&(machineGroup(r.worker)??[]).some(g=>(machineGroup(worker)??[]).includes(g)));
+  const busy=worker=>allStatus().some(r=>['starting','running','restoration_required'].includes(r.state)&&machinesFor(r.worker,config).some(g=>machinesFor(worker,config).includes(g)));
   async function start({profile,stage,trial_id,expected_finished_at}){
     if(!uuid.test(trial_id??'')||!['prepare','run','rollout'].includes(stage)||!Object.hasOwn(enrolled,profile))throw Error('Use an enrolled recipe profile, supported stage and one operation UUID.');
     const binding=enrolled[profile];
@@ -33,9 +33,15 @@ export function createRecipeTrials({config,powerBusy=()=>false,launch=spawn}={})
     const bytes=fs.readFileSync(binding.plan_file);if(hash(bytes)!==binding.plan_sha256)throw Error('Enrolled recipe plan changed; leave serving unchanged');
     const plan=JSON.parse(bytes),folder=path.join(directory,trial_id),file=path.join(folder,`${stage}.status.json`);
     const localMtp=plan.kind==='omlx-glm53-mtp-depth'&&plan.worker==='glm53f-m3';
-    const spark=plan.kind==='glm53-spark-pair-long-coding'&&['glm53f-sparks12','glm53f-sparks34'].includes(plan.worker);
-    const rollout=plan.kind==='glm53-spark-pair-rollout'&&['glm53f-sparks12','glm53f-sparks34'].includes(plan.worker);
+    const legacyPair=['glm53f-sparks12','glm53f-sparks34'].includes(plan.worker);
+    const customPair=/^[A-Za-z0-9][\w-]{0,63}$/.test(plan.worker??'')&&Array.isArray(config.machine_groups?.[plan.worker])&&config.machine_groups[plan.worker].length===2;
+    const spark=plan.kind==='glm53-spark-pair-long-coding'&&(legacyPair||customPair);
+    const rollout=plan.kind==='glm53-spark-pair-rollout'&&(legacyPair||customPair);
     if(plan.schema!==1||(!localMtp&&!spark&&!rollout)||rollout!==(stage==='rollout'))throw Error('Unsupported enrolled recipe plan or operation stage');
+    if((spark||rollout)&&(!legacyPair||plan.separate_workers!==undefined)){
+      const separate=plan.separate_workers,taken=machinesFor(plan.worker,config);
+      if(!Array.isArray(separate)||!separate.length||new Set(separate).size!==separate.length||separate.some(id=>typeof id!=='string'||!/^[A-Za-z0-9][\w-]{0,63}$/.test(id)||!Array.isArray(config.machine_groups?.[id])||machinesFor(id,config).some(m=>taken.includes(m))))throw Error('Enroll separate serving workers with explicit non-overlapping machine_groups');
+    }
     const prior=read(file);let resume=false;
     if(expected_finished_at!==undefined&&(!rollout||!Number.isFinite(expected_finished_at)||expected_finished_at<=0))throw Error('Resume requires one completed rollout-copy failure timestamp');
     if(prior){
