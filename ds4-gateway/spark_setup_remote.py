@@ -113,8 +113,10 @@ def status(root):
             'scope': 'LLM qualification is separate from gateway registration, media generation checks and recovery proof.'}
 
 
-def media_plan(root, *, require_idle=True):
+def media_plan(root, *, require_idle=True, current_llm=None, engine=None):
     """Read exact stopped preparations; this call never starts or stops anything."""
+    if current_llm is not None and (not re.fullmatch(r'[a-f0-9]{64}', current_llm) or engine not in ('h3', 'ace-step')):
+        raise ValueError('Pin the current LLM and selected retained media engine')
     setup = json.loads((root / 'engines/setup.json').read_text())
     if setup['state'] != 'prepared_stopped':
         raise ValueError('Complete preparation before testing media')
@@ -123,12 +125,18 @@ def media_plan(root, *, require_idle=True):
     launch = json.loads((root / 'launch.json').read_text()) if (root / 'launch.json').exists() else {}
     existing = launch.get('operation') == 'prepare_media'
     selected = launch['selected_engines'] if existing else ('qwen38-repaired', 'h3', 'ace-step')
-    if existing:
-        llm = json.loads(subprocess.check_output(['docker', 'inspect', launch['llm_container']], text=True))[0]
-        if llm['Id'] != launch['llm_container'] or (require_idle and llm['State']['Running']):
+    source_llm = launch['llm_container'] if existing else setup['engines']['qwen38-repaired']['container']
+    if existing or current_llm is not None:
+        target_llm = current_llm or source_llm
+        llm = json.loads(subprocess.check_output(['docker', 'inspect', target_llm], text=True))[0]
+        if llm['Id'] != target_llm or (require_idle and llm['State']['Running']):
             raise ValueError('Original LLM identity or stopped state differs')
         if set(setup['engines']) != set(selected):
             raise ValueError('Prepared media selection differs')
+    if current_llm is not None:
+        if engine not in selected:
+            raise ValueError('Retained preparation lacks the selected engine')
+        selected = (engine,)
     engines = {}
     for key in selected:
         item = setup['engines'][key]
@@ -149,7 +157,18 @@ def media_plan(root, *, require_idle=True):
             if mounts.get(model_dest, {}).get('Source') != item['models'] or mounts.get('/data', {}).get('Source') != item['data']:
                 raise ValueError('Prepared model/data mounts differ: ' + key)
             engines[key] = {**receipt, 'inspection': actual}
-    return {'state': 'prepared_stopped', 'engines': engines, 'llm_container': launch['llm_container'] if existing else setup['engines']['qwen38-repaired']['container']}
+    return {'state': 'prepared_stopped', 'engines': engines, 'llm_container': current_llm or source_llm,
+            **({'source_llm_container': source_llm} if current_llm is not None else {})}
+
+
+def retained_media(root, payload):
+    if (type(payload.get('require_idle')) is not bool
+            or not isinstance(payload.get('llm_container'), str)
+            or not re.fullmatch(r'[a-f0-9]{64}', payload['llm_container'])
+            or payload.get('engine') not in ('h3', 'ace-step')):
+        raise ValueError('Pin the current LLM, selected engine and idle requirement')
+    return media_plan(root, require_idle=payload['require_idle'],
+                      current_llm=payload['llm_container'], engine=payload['engine'])
 
 
 def start(root, payload):
@@ -296,10 +315,12 @@ if __name__ == '__main__':
             root = Path(payload['directory'])
             if not root.is_absolute() or root.is_symlink() or '..' in root.parts or root == Path('/'):
                 raise ValueError('Use an absolute dedicated remote setup directory')
-            if payload['action'] not in ('status', 'start', 'resume', 'prepare_media', 'qualify', 'verify_serving', 'media_plan', 'media_state'):
+            if payload['action'] not in ('status', 'start', 'resume', 'prepare_media', 'qualify', 'verify_serving', 'media_plan', 'media_state', 'retained_media'):
                 raise ValueError('Unknown setup action')
             if payload['action'] == 'resume':
                 result = resume_preparation(root, payload.get('expected_finished_at'))
+            elif payload['action'] == 'retained_media':
+                result = retained_media(root, payload)
             elif payload['action'] in ('media_plan', 'media_state'):
                 result = media_plan(root, require_idle=payload['action'] == 'media_plan')
             elif payload['action'] == 'qualify':

@@ -101,3 +101,10 @@ test('pinned Hermes reads the complete compact overview and asks for full job de
  const second=JSON.stringify(seen[2].messages);assert.match(second,/FULL_JOB_DETAIL_MARKER/);assert.doesNotMatch(second,/<persisted-output>/);
  const events=answer.media.events.filter(e=>e.state==='complete');assert.equal(events.length,2);assert.equal(events[1].request.job_id,id);assert.deepEqual(events[1].result.job,state.jobs[0]);
 });
+
+ test('setup retry forwards only the observed timestamp and physical selection',async()=>{
+  const input={worker_id:'pair',member:1,engine:'ace-step',expected_failed_at:'2026-01-01T01:02:03.000Z'};
+  const tools=createMediaTools({setup:async observed=>{assert.deepEqual(observed,input);return {phase:'starting'};}});
+  assert.equal((await tools.tool({action:'setup',...input})).phase,'starting');
+  await assert.rejects(tools.tool({action:'setup',...input,force:true}));
+ });

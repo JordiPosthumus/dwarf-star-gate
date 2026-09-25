@@ -95,21 +95,33 @@ export function createMediaSetup(config,store,{directory,workers,binding,isEnabl
   apply(row.worker_id,{[kind]:engine},saved.member);if(!config.media_jobs.workers[row.worker_id].engines?.[kind])apply(row.worker_id,{[kind]:engine});return row;
  }
  return {status,finish,async start(input){
-  assert.ok(input&&mediaMemberInput(input,'engine,worker_id')&&Object.hasOwn(kinds,input.engine),'Choose a worker and supported engine');
+  assert.ok(input&&(mediaMemberInput(input,'engine,worker_id')||mediaMemberInput(input,'engine,expected_failed_at,worker_id'))&&Object.hasOwn(kinds,input.engine),'Choose a worker and supported engine');
   const selectedPair=mediaPair(config,workers().find(w=>w.id===input.worker_id));
   assert.ok(input.member===undefined||selectedPair,'Explicit member selection requires a matching paired LLM');
   const selectedMember=selectedPair?(input.member??selectedPair.engine_members?.[kinds[input.engine]]??0):undefined;
   const prior=Object.values(store.data.media_setups??{}).find(s=>s.worker_id===input.worker_id&&s.engine===input.engine&&(s.member??selectedPair?.engine_members?.[kinds[input.engine]]??(selectedPair?0:undefined))===selectedMember);
-  if(prior){if(read(prior.operation_id).phase==='qualified_returned')return finish({operation_id:prior.operation_id});return read(prior.operation_id);}
+  const retry=input.expected_failed_at!==undefined;
+  if(retry){
+   assert.ok(prior&&typeof input.expected_failed_at==='string'&&Number.isFinite(Date.parse(input.expected_failed_at)),'Retry requires the exact saved pre-maintenance failure timestamp');
+   const observed=read(prior.operation_id),folder=path.join(directory,prior.operation_id);
+   assert.ok(observed.phase==='failed_unchanged'&&observed.at===input.expected_failed_at,'Only the current confirmed unchanged failure can retry');
+   assert.equal(identity(input.worker_id),prior.binding,'Worker binding changed; preserve this operation');
+   for(const name of ['gateway/acquire.intent.json','stop-llm-intent.json','llm-pair-stop-intent.json','prepare-intent.json'])assert.ok(!fs.existsSync(path.join(folder,name)),'Setup advanced past read-only preflight; inspect it instead of retrying');
+   const {pid}=JSON.parse(fs.readFileSync(path.join(folder,'launched.json')));assert.ok(Number.isSafeInteger(pid)&&pid>0,'Runner identity is unconfirmed');
+   let stopped=false;try{process.kill(pid,0);}catch(e){if(e.code==='ESRCH')stopped=true;else throw e;}
+   assert.ok(stopped,'Original setup runner may still be active');
+  }else if(prior){if(read(prior.operation_id).phase==='qualified_returned')return finish({operation_id:prior.operation_id});return read(prior.operation_id);}
   assert.ok(isEnabled(),'Media capability is switched off');assert.ok(isAllowed(input.worker_id,kinds[input.engine]),'Allow this engine on the machine before setup');assert.ok(canSetup(input.worker_id),'This machine needs a matching Docker LLM inspection/recovery enrollment');
   assert.ok(!mediaEngine(config,input.worker_id,kinds[input.engine],selectedMember),'This engine is already enrolled; its working installation is preserved');
   assert.ok(!Object.values(store.data.media_setups??{}).some(s=>s.worker_id===input.worker_id&&!terminal.has(read(s.operation_id).phase)),'A setup already owns this machine');
-  const operation_id=randomUUID(),folder=path.join(directory,operation_id),worker=workers().find(w=>w.id===input.worker_id),recovery=config.recovery?.workers?.find(w=>w.id===input.worker_id),inspection=config.genie_chat.inspection.workers[input.worker_id];
+  const operation_id=prior?.operation_id??randomUUID(),folder=path.join(directory,operation_id),worker=workers().find(w=>w.id===input.worker_id),recovery=config.recovery?.workers?.find(w=>w.id===input.worker_id),inspection=config.genie_chat.inspection.workers[input.worker_id];
   const enrolled=mediaPair(config,worker),pair=enrolled?{...enrolled,media_member:selectedMember}:null;
   const member=pair?.members[pair.media_member],reuse=mediaReuse(config,input.worker_id,input.engine,selectedMember);
-  const recipes=bundle();fs.mkdirSync(folder,{recursive:true,mode:0o700});saveMediaReceipt(folder,'recipe-bundle.json',recipes);
+  const recipes=bundle();
+  if(retry){const history=path.join(directory,'history',operation_id);fs.mkdirSync(history,{recursive:true,mode:0o700});fs.renameSync(folder,path.join(history,`attempt-${prior.attempt??1}`));}
+  fs.mkdirSync(folder,{recursive:true,mode:0o700});saveMediaReceipt(folder,'recipe-bundle.json',recipes);
   saveMediaReceipt(folder,'plan.json',{operation_id,worker_id:input.worker_id,separate_workers:workers().filter(w=>!machinesFor(w.id,config).some(m=>machinesFor(input.worker_id,config).includes(m))).map(w=>w.id),engines:[input.engine],target:{ssh:member?.ssh??inspection.ssh[0],...(reuse?.directory?{directory:reuse.directory}:{})},...(reuse?{reuse}:{}),llm_container:member?.container??inspection.container,recovery:pair?{profile:'glm53-docker-pair',url:worker.url}:recovery,...(pair?{llm_pair:pair}:{}),endpoint:worker,model:config.model,context_length:worker.context_length??config.context_length,control_socket:config.control_socket,python:config.genie_chat.python});
-  const row={operation_id,worker_id:input.worker_id,engine:input.engine,...(input.member!==undefined?{member:input.member}:{}),binding:identity(input.worker_id),phase:'starting',at:new Date().toISOString()};backup();store.save({...store.data,media_setups:{...store.data.media_setups,[operation_id]:row}});
+  const row={operation_id,worker_id:input.worker_id,engine:input.engine,...(input.member!==undefined?{member:input.member}:{}),binding:identity(input.worker_id),attempt:prior?(prior.attempt??1)+1:1,phase:'starting',at:new Date().toISOString()};backup();store.save({...store.data,media_setups:{...store.data.media_setups,[operation_id]:row}});
   try{saveMediaReceipt(folder,'launched.json',await launchRunner(folder));}catch(e){saveMediaReceipt(folder,'progress.json',{phase:'needs_attention',detail:'Setup launch was not confirmed; inspect this operation before retrying.'});throw e;}
   return read(operation_id);
  }};
