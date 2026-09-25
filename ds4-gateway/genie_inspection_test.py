@@ -352,6 +352,9 @@ class TrialProgress(unittest.TestCase):
    result=m.inspect_trial_progress(str(home/'recipe'),mounts)
    self.assertEqual(result['trial_id'],trial);self.assertEqual(result['phases']['A'][0]['sample']['ttft_s'],1.5);self.assertNotIn('PRIVATE_',json.dumps(result));self.assertIn('Ready',result['candidate_start_tail'])
    self.assertIsNone(m.inspect_trial_progress(str(home/'recipe'),[{'Source':str(home/'arbitrary')}]));self.assertIsNone(m.inspect_trial_progress(None,mounts))
+   (root/'prepared.json').write_text(json.dumps({'original_container':'original-id'}));(root/'run-intent.json').write_text('{}')
+   self.assertEqual(m.inspect_trial_progress(str(home/'recipe'),[],'original-id')['trial_id'],trial)
+   self.assertIsNone(m.inspect_trial_progress(str(home/'recipe'),[],'different-id'))
    (root/'A/results.json').unlink();(root/'A/results.json').symlink_to(root/'candidate-start.log')
    self.assertEqual(m.inspect_trial_progress(str(home/'recipe'),mounts)['phases']['A']['state'],'unavailable')
  def test_ambiguous_candidate_or_traversal_never_selects_a_trial(self):

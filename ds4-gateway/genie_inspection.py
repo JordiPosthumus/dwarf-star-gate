@@ -144,7 +144,7 @@ except Exception:result={'state':'unavailable','reason':'metrics_read_failed'}
 result.update(observed_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),scope='Explicit KV token allocation reported by this engine at this time, not a configured limit, cache-hit test, causal performance comparison or permission to reduce capacity. Startup memory availability can affect allocation. Raw metrics and unrelated labels are withheld.')
 print(json.dumps(result))
 '''
-def inspect_trial_progress(recipe_root, mounts):
+def inspect_trial_progress(recipe_root, mounts, container_id=None):
     """Read only fixed receipts for the candidate bound to this container."""
     import pathlib, re, json, os, stat
     if not recipe_root:return None
@@ -155,6 +155,19 @@ def inspect_trial_progress(recipe_root, mounts):
         try:parts=source.relative_to(base).parts
         except ValueError:continue
         if len(parts)>=3 and parts[1]=='candidate' and re.fullmatch(r'[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}',parts[0]):candidates.add(parts[0])
+    if not candidates and container_id and base.is_dir() and not any(part.is_symlink() for part in [base,*base.parents]):
+        # Restoration changes the conventional name back to the original. Match
+        # a recorded original identity, never an arbitrary caller-selected path.
+        matches=[]
+        for folder in sorted(base.iterdir(),key=lambda p:p.stat().st_mtime,reverse=True)[:32]:
+            if not re.fullmatch(r'[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}',folder.name) or folder.is_symlink():continue
+            file=folder/'prepared.json';intent=folder/'run-intent.json'
+            try:
+                if file.is_symlink() or intent.is_symlink() or not intent.is_file() or file.stat().st_size>65536:continue
+                prepared=json.loads(file.read_text())
+                if prepared.get('original_container')==container_id:matches.append(folder.name)
+            except (OSError,ValueError):continue
+        if len(matches)==1:candidates.add(matches[0])
     if len(candidates)!=1:return None
     trial_id=candidates.pop();root=base/trial_id
     def read(relative,tail=False):
@@ -329,7 +342,7 @@ if p.get('recipe_root'):
   recipe['host_resources']={'memory_bytes':mem,'disk_free_bytes':shutil.disk_usage(root).free}
  except (OSError,ValueError):recipe['host_resources']={'state':'unavailable'}
  recipe['scope']='Enrolled recipe files read without sourcing or executing them, Git revision on disk, and host resources. Secrets redacted; file hashes cover original bytes. No backup, inference or restoration proof.'
-print(json.dumps({'observed_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'container':{'id':c['Id'],'image_id':c['Image'],'running':c['State']['Running'],'started_at':c['State']['StartedAt'],'entrypoint':config.get('Entrypoint'),'command':cmd,'environment':env,'mounts':c['Mounts'],'port_bindings':c['HostConfig'].get('PortBindings'),'restart_policy':c['HostConfig'].get('RestartPolicy'),'ipc_mode':c['HostConfig'].get('IpcMode'),'shm_size':c['HostConfig'].get('ShmSize'),'device_requests':c['HostConfig'].get('DeviceRequests')},'image':{'id':i['Id'],'created':i['Created'],'repo_digests':i.get('RepoDigests',[])},'recipe':recipe,'recipe_trial':inspect_trial_progress(p.get('recipe_root'),c.get('Mounts',[])),'recipe_stamp':(i.get('Config',{}).get('Labels') or {}).get('glm53.recipe.stamp'),'packages':packages,'model_config':model_config,'engine_runtime':engine_runtime,'launcher':launcher,**({'sources':sources} if sources is not None else {}),'scope':'Live Docker metadata, launcher bytes, separately labelled installed distribution metadata and model configuration on disk. Package versions do not prove build ancestry or custom source integrity. Installed Python source can be requested with source_files and source_window. No inference, restart, weight hash or restoration test. Launch settings and model configuration on disk do not independently prove effective API behavior or kernel dispatch.'}))
+print(json.dumps({'observed_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'container':{'id':c['Id'],'image_id':c['Image'],'running':c['State']['Running'],'started_at':c['State']['StartedAt'],'entrypoint':config.get('Entrypoint'),'command':cmd,'environment':env,'mounts':c['Mounts'],'port_bindings':c['HostConfig'].get('PortBindings'),'restart_policy':c['HostConfig'].get('RestartPolicy'),'ipc_mode':c['HostConfig'].get('IpcMode'),'shm_size':c['HostConfig'].get('ShmSize'),'device_requests':c['HostConfig'].get('DeviceRequests')},'image':{'id':i['Id'],'created':i['Created'],'repo_digests':i.get('RepoDigests',[])},'recipe':recipe,'recipe_trial':inspect_trial_progress(p.get('recipe_root'),c.get('Mounts',[]),c.get('Id')),'recipe_stamp':(i.get('Config',{}).get('Labels') or {}).get('glm53.recipe.stamp'),'packages':packages,'model_config':model_config,'engine_runtime':engine_runtime,'launcher':launcher,**({'sources':sources} if sources is not None else {}),'scope':'Live Docker metadata, launcher bytes, separately labelled installed distribution metadata and model configuration on disk. Package versions do not prove build ancestry or custom source integrity. Installed Python source can be requested with source_files and source_window. No inference, restart, weight hash or restoration test. Launch settings and model configuration on disk do not independently prove effective API behavior or kernel dispatch.'}))
 '''
 
 def read_json(file, expected_sha256=None):
