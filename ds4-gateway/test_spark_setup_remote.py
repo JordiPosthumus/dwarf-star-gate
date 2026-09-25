@@ -26,6 +26,39 @@ def bundle(script):
 
 
 class RemoteSetupTests(unittest.TestCase):
+    def test_missing_media_discovery_is_read_only_and_refuses_ambiguous_or_active_sources(self):
+        current, old, candidate = 'a'*64, 'b'*64, 'c'*64
+        request = {'engine':'h3', 'missing_container':old, 'llm_container':current}
+        base = {'Id':candidate, 'Image':'sha256:'+'d'*64, 'State':{'Running':False},
+                'Config':{'Cmd':['python','main.py'], 'WorkingDir':'/opt/ComfyUI'},
+                'HostConfig':{'PortBindings':{'8188/tcp':[{'HostIp':'127.0.0.1','HostPort':'8188'}]}}}
+        for mode in ('known','fresh','unknown','active','old-present','many','wrong-llm','ambiguous','host-network'):
+            with self.subTest(mode=mode):
+                commands=[]
+                obj=json.loads(json.dumps(base))
+                if mode=='unknown':obj['Config']['Cmd']=['unrecognized']
+                if mode=='active':obj['State']['Running']=True
+                if mode=='host-network':obj['HostConfig']['PortBindings']={}
+                ids=[current]+([] if mode=='fresh' else [candidate])
+                if mode=='old-present':ids.append(old)
+                if mode=='many':ids=[format(i,'064x') for i in range(129)]
+                def read(args, **kwargs):
+                    commands.append(args)
+                    if args[1]=='ps':return '\n'.join(ids)
+                    if args[1:5]!=['inspect','--type','container','--']:self.fail(str(args))
+                    if args[5:]==[current]:return json.dumps([{'Id':current,'State':{'Running':mode!='wrong-llm'}}])
+                    items=[{'Id':current,'State':{'Running':True}},obj]
+                    if mode=='ambiguous':items.append({**obj,'Id':'e'*64})
+                    return json.dumps(items)
+                with patch.object(remote.subprocess,'check_output',side_effect=read):
+                    if mode in ('known','fresh'):
+                        result=remote.discover_media(request)
+                        self.assertEqual(result['selection'] is None,mode=='fresh')
+                        if mode=='known':self.assertEqual(result['selection']['container'],candidate)
+                    else:
+                        with self.assertRaises(ValueError):remote.discover_media(request)
+                self.assertTrue(all(c[0]=='docker' and c[1] in ('ps','inspect') for c in commands))
+
     def test_existing_media_is_read_only_pinned_and_requires_idle_for_qualification(self):
         expected = {'container': 'b'*64, 'image': 'sha256:'+'c'*64, 'kind': 'comfyui', 'port': 8188}
         media = {'Id': expected['container'], 'Image': expected['image'], 'State': {'Running': False},

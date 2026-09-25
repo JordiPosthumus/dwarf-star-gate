@@ -585,12 +585,30 @@ select, qualify and promote arbitrary upstream recipe releases. That improvement
 loop is a separate requirement; having trial and rollout tools is insufficient.
 
 A configured reuse candidate can be corrected after a confirmed read-only
-preflight failure. The executor compares the prior selection while requiring all
-other worker, LLM, recovery and engine bindings to remain identical. Only an
-exited attempt with no maintenance, stop or preparation intent becomes
-`retry_ready`. The standard watcher then asks Genie to retry that same operation
-with its exact failure timestamp and archived receipts. Changing a source is a
-trusted configuration action; a port candidate alone never changes it. Setting
-an absent candidate to `null` selects a separate fresh preparation and preserves
-the old records and files. A failed or uncertain installation cannot use this
-path.
+preflight failure. The executor requires the worker, LLM, physical members and
+inspection/recovery binding to remain identical. Older operation records gain
+that separate infrastructure identity only while their original complete
+configuration still matches. Only an exited attempt with no maintenance, stop or
+preparation intent becomes eligible for retry.
+
+For an owner-enabled standard target, Genie can call `repair_media_setup` with
+its exact saved failure timestamp. A fixed native reader verifies the current
+LLM identity and running state, then requires a complete bounded Docker inventory
+to prove the old media container absent. It selects a unique stopped container
+with a recognized native engine command and port. Active, unknown, ambiguous or
+unsupported candidates refuse correction. With no candidate, it selects a
+separate fresh preparation; old model files, images, directories and receipts
+remain intact. It never starts or stops a service during source selection.
+
+The selection is backed up and saved through the gateway's owned state, with a
+native evidence receipt. It survives restart on the same enrolled physical
+machine; an explicit change to the operator's configured source takes precedence.
+Existing qualified engines cannot be replaced by this tool. Media, inspection,
+placement and standard-target permissions all apply. A lost reply returns the
+same saved decision.
+
+The watcher then observes `retry_ready` and asks Genie for a same-operation retry
+with the exact failure timestamp. The full previous attempt is archived. Fresh
+native generation, retained output decoding, current LLM restoration and final
+enrollment remain mandatory. This correction path cannot replay a failed or
+uncertain installation that progressed beyond read-only preflight.

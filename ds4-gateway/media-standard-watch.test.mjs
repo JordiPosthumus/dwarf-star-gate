@@ -54,3 +54,11 @@ test('only a backend-verified corrected preflight gets one same-ID timestamped r
  const w=new MediaStandardWatch(f.options);await w.tick();assert.match(f.calls[0][1],/"expected_failed_at":"2026-01-01T00:00:00Z"/);assert.match(f.calls[0][1],/same operation ID/);
  await w.tick();assert.equal(f.calls.length,1);
 });
+
+test('native source repair progresses to exact retry without another owner prompt',async t=>{
+ const f=fixture(t);f.config.media_jobs.standard.targets.splice(1);f.s.setup.source_repair_supported=true;
+ f.s.setup.operations=[{worker_id:'pair',member:0,engine:'ace-step',operation_id:'old',phase:'failed_unchanged',at:'2026-01-01T00:00:00Z',failure_context:{stage:'read_only_preflight',selected_media_container:'missing'}}];
+ await new MediaStandardWatch(f.options).tick();assert.match(f.calls[0][1],/repair_media_setup/);
+ f.s.setup.operations[0].retry_ready=true;await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,2);assert.match(f.calls[1][1],/Call setup_media_host/);
+ f.s.setup.operations[0].phase='preparing_media';await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,2);
+});
