@@ -36,6 +36,17 @@ def sha(file):return hashlib.sha256(file.read_bytes()).hexdigest()
 def envmap(container):return dict(item.split('=',1) for item in container['Config']['Env'] if '=' in item)
 
 
+def recipe_manifest(root):
+    result={};total=0
+    for file in sorted(root.rglob('*')):
+        if file.is_symlink():raise RuntimeError('Published recipe contains a symlink; inspect before upgrading')
+        if not file.is_file():continue
+        data=file.read_bytes();total+=len(data)
+        if total>512*1024**2:raise RuntimeError('Published recipe snapshot exceeds its bounded source allowance')
+        result[file.relative_to(root).as_posix()]=hashlib.sha256(data).hexdigest()
+    return result
+
+
 def baseline_cache_settings(original):
     """Freeze the current serving knobs; vary only checkpoint/draft retention."""
     required={'MAX_MODEL_LEN':'400000','MAX_NUM_SEQS':'2','MAX_NUM_BATCHED_TOKENS':'7168',
@@ -110,9 +121,20 @@ class Remote:
         return json.loads((self.rank if rank else self.command)(['docker','image','inspect',tag],timeout=30))[0]
     def baseline_unchanged(self):
         p=self.plan
-        revision=self.command(['git','-C',str(self.recipe),'rev-parse','HEAD']).decode().strip()
-        if revision!=p['baseline_revision'] or self.command(['git','-C',str(self.recipe),'status','--porcelain','--untracked-files=no']).strip():
-            raise RuntimeError('Original tracked recipe changed; leave owner changes untouched')
+        if p.get('baseline_kind')=='published-rollout':
+            receipt=self.recipe.parent/'deploy-result.json'
+            if sha(receipt)!=p['baseline_deployment_sha256']:raise RuntimeError('Pinned previous deployment receipt changed')
+            deployed=json.loads(receipt.read_text());prepared=json.loads((self.recipe.parent/'prepared.json').read_text())
+            if (deployed.get('state')!='deployed' or deployed.get('recipe_root')!=str(self.recipe)
+                    or deployed.get('candidate_image')!=p['baseline_image'] or prepared.get('source_revision')!=p['baseline_revision']):
+                raise RuntimeError('Published recipe does not match the enrolled baseline')
+            manifest=self.backup/'recipe-manifest.json'
+            if manifest.exists() and recipe_manifest(self.recipe)!=json.loads(manifest.read_text()):
+                raise RuntimeError('Published baseline source changed; preserve owner edits')
+        else:
+            revision=self.command(['git','-C',str(self.recipe),'rev-parse','HEAD']).decode().strip()
+            if revision!=p['baseline_revision'] or self.command(['git','-C',str(self.recipe),'status','--porcelain','--untracked-files=no']).strip():
+                raise RuntimeError('Original tracked recipe changed; leave owner changes untouched')
         if sha(self.recipe/'.env')!=p['baseline_env_sha256'] or sha(self.recipe/'start.sh')!=p['baseline_start_sha256']:
             raise RuntimeError('Original recipe bytes changed; leave owner changes untouched')
         peers=re.findall(r'^WORKER_SSH=(.*)$',(self.recipe/'.env').read_text(),re.M)
@@ -153,10 +175,17 @@ class Remote:
         self.backup.mkdir(mode=0o700)
         write(self.backup/'head.json',head);write(self.backup/'rank.json',rank)
         shutil.copy2(self.recipe/'.env',self.backup/'.env');os.chmod(self.backup/'.env',0o600)
-        self.command(['git','-C',str(self.recipe),'archive','--output='+str(self.backup/'tracked-recipe.tar'),'HEAD'])
+        if self.plan.get('baseline_kind')=='published-rollout':
+            write(self.backup/'recipe-manifest.json',recipe_manifest(self.recipe))
+            self.command(['tar','-cf',str(self.backup/'tracked-recipe.tar'),'-C',str(self.recipe),'.'])
+            shutil.copy2(self.recipe.parent/'deploy-result.json',self.backup/'previous-deployment.json')
+        else:self.command(['git','-C',str(self.recipe),'archive','--output='+str(self.backup/'tracked-recipe.tar'),'HEAD'])
         for source in [self.recipe/'.glm53-exl3-head.inner.sh']:
             if source.is_file():shutil.copy2(source,self.backup/source.name)
-        worker_script=self.rank(['cat','/tmp/glm53-exl3-worker.sh'])
+        worker_paths=[m['Source'] for m in rank['Mounts'] if m['Type']=='bind' and m['Destination']=='/start.sh']
+        if len(worker_paths)!=1:raise RuntimeError('Expected exactly one original rank launcher bind')
+        write(self.backup/'worker-launcher-path.json',worker_paths[0])
+        worker_script=self.rank(['cat',worker_paths[0]])
         (self.backup/'worker-inner.sh').write_bytes(worker_script);os.chmod(self.backup/'worker-inner.sh',0o600)
         self.command(['docker','tag',head['Image'],self.original_tag]);self.rank(['docker','tag',rank['Image'],self.original_tag])
         original=envmap(head);profile=self.candidate/'examples/tp2-long-coding.env'
@@ -336,9 +365,11 @@ class Remote:
         self.wait_idle()
         self.command(['bash',str(recipe/'start.sh'),'stop'],log=phase+'-stop.log',timeout=120)
     def rank_staging_snapshot(self):
-        """Private bytes/hash proof for original /tmp bind files and trees."""
+        """Private bytes/hash proof for original launcher and code bind files."""
         original=json.loads((self.backup/'rank.json').read_text())
-        paths=sorted({m['Source'] for m in original['Mounts'] if m['Type']=='bind' and m.get('Source','').startswith('/tmp/')})
+        paths=sorted({m['Source'] for m in original['Mounts'] if m['Type']=='bind' and
+                      (m.get('Source','').startswith('/tmp/') or m.get('Destination')=='/start.sh' or
+                       m.get('Destination','').startswith('/opt/glm53/'))})
         script="""import base64,hashlib,json,os,stat,sys
 from pathlib import Path
 result={};total=0
@@ -411,7 +442,7 @@ print(json.dumps(result))
             current_head=self.recipe/'.glm53-exl3-head.inner.sh'
             if current_head.is_symlink() or current_head.read_bytes()!=saved_head.read_bytes():
                 raise RuntimeError('Original head launcher changed; preserve owner edits')
-        current_script=self.rank(['cat','/tmp/glm53-exl3-worker.sh'])
+        current_script=self.rank(['cat',self.original_rank_launcher()])
         if current_script!=(self.backup/'worker-inner.sh').read_bytes():raise RuntimeError('Original rank launcher changed; preserve owner edits')
         snapshot_file=self.backup/'rank-staging-files.json'
         if snapshot_file.is_file() and self.rank_staging_snapshot()!=json.loads(snapshot_file.read_text()):
@@ -429,17 +460,23 @@ print(json.dumps(result))
             if old_mounts!=new_mounts:raise RuntimeError('Original '+name+' mounts differ; keep the hold for inspection')
         self.baseline_unchanged()
         return {'state':'verified','head_image':head['Image'],'rank_image':rank['Image'],'head_container':head['Id'],'rank_container':rank['Id'],'environment_and_mounts_match':True,'original_env_sha256':sha(self.recipe/'.env'),'scope':'Exact original containers, writable layers, images, environment, mounts and recipe bytes restored. Native qualification is recorded separately.'}
+    def original_rank_launcher(self):
+        file=self.backup/'worker-launcher-path.json'
+        return json.loads(file.read_text()) if file.exists() else '/tmp/glm53-exl3-worker.sh'
+
     def run(self):
         prepared=json.loads((self.root/'prepared.json').read_text());self.baseline_unchanged()
         if (self.root/'run-intent.json').exists():raise RuntimeError('Trial already started; inspect its existing receipt rather than running it again')
         if self.inspect()['Id']!=prepared['original_container'] or self.inspect(True)['Id']!=prepared['original_rank_container']:raise RuntimeError('Original pair identity changed since preparation')
-        if self.rank(['cat','/tmp/glm53-exl3-worker.sh'])!=(self.backup/'worker-inner.sh').read_bytes():raise RuntimeError('Original rank launcher changed since preparation')
+        if self.rank(['cat',self.original_rank_launcher()])!=(self.backup/'worker-inner.sh').read_bytes():raise RuntimeError('Original rank launcher changed since preparation')
         self.isolate_candidate_staging(prepared)
         self.wait_idle();write(self.root/'run-intent.json',{'started_at':time.time(),'trial_id':self.plan['trial_id']})
-        result={'state':'running','phases':{},'scope':'A/B/A2 on the owner-approved temporary profile. No candidate is adopted as a default.'}
+        acceptance=self.plan.get('qualification_mode')=='candidate-only'
+        result={'state':'running','phases':{},'qualification_mode':'candidate-only' if acceptance else 'comparison',
+                'scope':'Candidate native correctness, cache and capacity acceptance, followed by exact restoration. No comparative performance benchmark or permanent adoption.' if acceptance else 'A/B/A2 on the owner-approved temporary profile. No candidate is adopted as a default.'}
         changed=False
         try:
-            result['phases']['A']=self.checks('A',400000)
+            if not acceptance:result['phases']['A']=self.checks('A',400000)
             self.baseline_unchanged();self.wait_idle();changed=True
             self.suspend_original(prepared)
             self.launch(self.candidate,self.tag,'candidate')
@@ -465,10 +502,15 @@ print(json.dumps(result))
             if changed:
                 try:
                     result['restoration']=self.restore(prepared)
-                    result['phases']['A2']=self.checks('A2',400000)
-                    rows={x['label']:x for x in result['phases']['A2']}
+                    if acceptance:
+                        sample,reply=self.chat([{'role':'user','content':'Restoration readiness check. Reply with exactly RESTORED_7319.'}])
+                        result['restoration']['readiness']=sample
+                        if sample['finish_reason']!='stop' or reply['content'].strip()!='RESTORED_7319':
+                            raise RuntimeError('Restored original failed native readiness')
+                    else:result['phases']['A2']=self.checks('A2',400000)
+                    rows={x['label']:x for x in result['phases'].get('A2',[])}
                     quality=['arithmetic','tool_call_and_followup','cold-A','cold-B','append-A','append-B','edit-90-percent','branch-90-percent']
-                    if (not all(rows.get(label,{}).get('passed') is True for label in quality)
+                    if not acceptance and (not all(rows.get(label,{}).get('passed') is True for label in quality)
                         or rows.get('context-boundary',{}).get('accepted') is not True
                         or rows.get('concurrency-two',{}).get('two_active_requests_observed') is not True):
                         result['restoration'].update(state='unverified',error='Original quality, context or concurrency checks did not pass')
