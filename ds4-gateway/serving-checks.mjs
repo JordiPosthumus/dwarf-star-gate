@@ -2,11 +2,19 @@
 // clears caches, drains workers, or claims a configured limit was exercised.
 import {randomUUID} from 'node:crypto';
 import {endpointHeaders} from './endpoint.mjs';
+import {mediaPair} from './media-pair.mjs';
+import {verifyRecovery} from './recovery-verify.mjs';
 
 export async function runServingCheck({worker,check,config,registry,readDoor,fetchImpl=fetch,now=Date.now,onSample=()=>{}}){
-  if(!['gateway','cache','tools'].includes(check))throw Error('Unknown serving check');
+  if(!['gateway','cache','tools','glm-cache'].includes(check))throw Error('Unknown serving check');
   const model=worker.served_model;
   if(!worker.url||!model)throw Error('Current worker endpoint and served model are required');
+  if(check==='glm-cache'){
+    const pair=mediaPair(config,worker);
+    if(!pair||pair.model!==model||!Number.isSafeInteger(worker.context_length)||worker.context_length<=0)throw Error('GLM recovery-cache verification requires the exact configured pair, served model and current context.');
+    const proof=await verifyRecovery(worker.url,model,worker.context_length,{kind:'glm53_vllm',endpoint:worker,fetchImpl,onSample});
+    return {state:'passed',check,worker:worker.id,samples:proof.samples,proof,scope:proof.scope+' No recovery enrollment, container transition, cache reset or routing change was performed.'};
+  }
   const nonce=randomUUID(),samples=[];
   const base=worker.url.replace(/\/+$/,'').replace(/\/v1$/,'');
   const nativeHeaders=endpointHeaders(worker);

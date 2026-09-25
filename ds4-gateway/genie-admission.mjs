@@ -86,7 +86,7 @@ export function createAdmissionTools({config, control, read, readDoor = null, pr
   };
   const checksBusy=()=>[...checks.values()].some(row=>row.state==='running');
   async function verifyWorker(input){
-    if(Object.keys(input).sort().join(',')!=='action,action_id,check,worker'||!/^[a-f0-9-]{36}$/.test(input.action_id??'')||!['gateway','cache','tools'].includes(input.check))throw Error('Specify one worker, check and action ID.');
+    if(Object.keys(input).sort().join(',')!=='action,action_id,check,worker'||!/^[a-f0-9-]{36}$/.test(input.action_id??'')||!['gateway','cache','tools','glm-cache'].includes(input.check))throw Error('Specify one worker, check and action ID.');
     const prior=checks.get(input.action_id);
     if(prior){if(prior.worker!==input.worker||prior.check!==input.check)throw Error('Action ID belongs to a different serving check');return prior;}
     if(isTesting()||!isEnabled())throw Error('Serving checks are suspended or server_changes is switched off.');

@@ -42,6 +42,11 @@ hold being released by its authenticated owner. It cannot bypass a sibling hold
 or a maintenance lock. These checks do not enroll a GLM pair for recovery;
 native paired-media restoration and general service recovery remain separate.
 
+The [GLM pair recovery components](glm-pair-recovery.md) provide an exact-container
+transaction and a separate GLM cache verifier. Genie can exercise the verifier
+through `verify_serving` with `check="glm-cache"` on an exactly configured healthy
+pair. That diagnostic does not enroll or execute pair recovery.
+
 **Connecting a server for inference does not enroll it for recovery.** The UI's
 automatic-recovery switch controls already enrolled services; it does not install
 an adapter or grant service permissions. There is not yet a browser enrollment
