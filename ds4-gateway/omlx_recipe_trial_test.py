@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from omlx_recipe_trial import Executor, candidate_bytes
+from omlx_recipe_trial import Executor, candidate_bytes, summarize_mtp
 
 MODEL='GLM-5.3-Flash-oQ8e-mtp'
 ORIGINAL=(json.dumps({'version':1,'models':{MODEL:{'mtp_enabled':True,'mtp_num_draft_tokens':3,
@@ -102,3 +102,12 @@ class TrialTests(unittest.TestCase):
 
 
 if __name__=='__main__':unittest.main()
+
+class MtpEvidence(unittest.TestCase):
+    def test_adaptive_depth_evidence_ignores_zero_depth_cycles_and_unrelated_log_text(self):
+        value=summarize_mtp('private prompt\nMTP[4] finish=stop tokens=100 depth[d1=4/5,d2=2/3,d5=0/1] d0=12\nMTP[5] finish=stop depth[d1=2/3,d3=1/2]\n')
+        self.assertEqual(value['highest_attempted_depth'],5)
+        self.assertEqual(value['requests_with_depth_logs'],2)
+        self.assertEqual(value['depths']['1'],{'accepted':6,'attempted':8})
+        self.assertNotIn('private prompt',str(value));self.assertNotIn('0',value['depths'])
+        self.assertIsNone(summarize_mtp('No finish records')['highest_attempted_depth'])

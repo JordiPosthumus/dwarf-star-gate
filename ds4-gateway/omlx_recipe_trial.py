@@ -39,6 +39,25 @@ def candidate_bytes(raw, model, depth):
     return result
 
 
+def summarize_mtp(raw):
+    rows=[];depths={}
+    for line in raw.splitlines():
+        if 'MTP[' not in line or 'finish=' not in line:continue
+        match=re.search(r'depth\[([^]]+)\]',line)
+        if not match:continue
+        row={}
+        for depth,accepted,attempted in re.findall(r'd([1-9][0-9]*)=(\d+)/(\d+)',match.group(1)):
+            depth=int(depth);accepted=int(accepted);attempted=int(attempted)
+            if accepted>attempted:continue
+            row[str(depth)]={'accepted':accepted,'attempted':attempted}
+            aggregate=depths.setdefault(str(depth),{'accepted':0,'attempted':0})
+            aggregate['accepted']+=accepted;aggregate['attempted']+=attempted
+        if row:rows.append(row)
+    return {'requests_with_depth_logs':len(rows),'depths':depths,
+            'highest_attempted_depth':max((int(k) for k,v in depths.items() if v['attempted']>0),default=None),
+            'scope':'Adaptive MTP depth counts from bounded native finish logs during this phase. This shows attempted depths, not a forced depth on every token; uncoordinated direct requests remain a limitation.'}
+
+
 class Executor:
     def __init__(self, folder, control):
         self.folder = Path(folder)
@@ -153,6 +172,10 @@ class Executor:
         return sample,message
 
     def checks(self, phase):
+        log=self.root/'logs/server.log';log_start=None
+        if not log.is_symlink():
+            try:info=log.stat();log_start=(info.st_ino,info.st_size)
+            except OSError:pass
         results=[];folder=self.folder/phase;folder.mkdir(mode=0o700)
         def save(label, value, passed):
             row={**value,'passed':bool(passed)};results.append(row);atomic(folder/(label+'.json'),row)
@@ -182,7 +205,15 @@ class Executor:
             sample,answer=self.chat('warm-'+label,histories[label])
             cached=sample['usage'].get('prompt_tokens_details',{}).get('cached_tokens')
             save('warm-'+label,sample,sample['finish_reason']=='stop' and answer['content'].strip()=='7319' and isinstance(cached,int) and cached>=2000)
-        return {'state':'passed' if all(x['passed'] for x in results) else 'failed','samples':results,
+        native_mtp={'state':'unavailable'}
+        try:
+            if log_start and not log.is_symlink():
+                with log.open('rb') as stream:
+                    info=os.fstat(stream.fileno())
+                    if info.st_ino==log_start[0] and 0<=info.st_size-log_start[1]<=2*1024**2:
+                        stream.seek(log_start[1]);native_mtp={'state':'observed',**summarize_mtp(stream.read(2*1024**2).decode('utf-8',errors='replace'))}
+        except OSError:pass
+        return {'state':'passed' if all(x['passed'] for x in results) else 'failed','samples':results,'native_mtp':native_mtp,
                 'scope':'Synthetic coding structure, real tool exchange, and interleaved native cache reuse. Code is retained for review, not executed; no general quality or capacity-boundary claim. Request-only max_tokens=4096 is not a production setting.'}
 
     def prepare(self):
