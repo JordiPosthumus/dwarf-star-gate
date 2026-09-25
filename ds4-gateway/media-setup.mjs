@@ -1,4 +1,5 @@
 import {mediaReuse,selectedMediaPreparation,mediaPreparationRequest} from './media-reuse.mjs';
+import {createMediaStandardAudit} from './media-standard-audit.mjs';
 import {mediaEngine,mediaMemberInput} from './media-enrollment.mjs';
 import {machinesFor} from './fleet-machines.mjs';
 import {mediaPair} from './media-pair.mjs';
@@ -118,7 +119,8 @@ export function createMediaSetup(config,store,{directory,workers,binding,isEnabl
   if(pair)return !!(config.control_socket&&path.isAbsolute(config.genie_chat?.python??''));
   return !!(config.control_socket&&path.isAbsolute(config.genie_chat?.python??'')&&recovery?.adapter==='docker'&&recovery.verification==='qwen_vllm'&&recovery.ssh&&inspection?.ssh?.[0]&&/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(inspection.container??'')&&binding(id,recovery));
  };
- const status=()=>({connected:true,source_repair_supported:true,enabled:isEnabled(),operations:Object.keys(store.data.media_setups??{}).map(id=>{const {binding,infrastructure_binding,...row}=read(id);return row;}),hosts:workers().map(w=>({worker_id:w.id,available:canSetup(w.id),error:restoreErrors[w.id]??null}))});
+ const standardAudit=createMediaStandardAudit({config,store,workers,isEnabled,isInspectionEnabled,transport,backup,active:id=>Object.values(store.data.media_setups??{}).some(s=>s.worker_id===id&&!terminal.has(read(s.operation_id).phase))});
+ const status=()=>({connected:true,source_repair_supported:true,standard_audit:standardAudit.status(),enabled:isEnabled(),operations:Object.keys(store.data.media_setups??{}).map(id=>{const {binding,infrastructure_binding,...row}=read(id);return row;}),hosts:workers().map(w=>({worker_id:w.id,available:canSetup(w.id),error:restoreErrors[w.id]??null}))});
  async function finish(input){
   assert.ok(input&&Object.keys(input).join(',')==='operation_id','Choose one saved setup');const saved=store.data.media_setups?.[input.operation_id];assert.ok(saved,'Unknown media setup');
   if(saved.phase==='enrolled')return read(input.operation_id);
@@ -168,7 +170,7 @@ export function createMediaSetup(config,store,{directory,workers,binding,isEnabl
   sourceBases.set(key,structuredClone(baseline));config.media_jobs.reuse??={};config.media_jobs.reuse[prior.worker_id]??={};config.media_jobs.reuse[prior.worker_id][prior.member??0]??={};config.media_jobs.reuse[prior.worker_id][prior.member??0][prior.engine]=structuredClone(candidate);
   return {operation_id:prior.operation_id,state:'source_selected',selection:candidate,retry_ready:read(prior.operation_id).retry_ready===true,scope:'Source decision saved with backup; old records and files preserved. Fresh native qualification and exact current LLM return still required.'};
  }
- return {status,finish,repair,async start(input){
+ return {status,finish,repair,audit:standardAudit.run,async start(input){
   assert.ok(input&&(mediaMemberInput(input,'engine,worker_id')||mediaMemberInput(input,'engine,expected_failed_at,worker_id'))&&Object.hasOwn(kinds,input.engine),'Choose a worker and supported engine');
   const selectedPair=mediaPair(config,workers().find(w=>w.id===input.worker_id));
   assert.ok(input.member===undefined||selectedPair,'Explicit member selection requires a matching paired LLM');

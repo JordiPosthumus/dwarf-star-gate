@@ -85,6 +85,7 @@ test('real core exposes setup status on its private socket and refuses unenrolle
  await workerControl(config.control_socket,'/media-host-eligibility',{worker_id:'one',kind:'music',allowed:true});
  await assert.rejects(workerControl(config.control_socket,'/genie-media-setup',{worker_id:'one',engine:'ace-step'}),/switched off/);
  await assert.rejects(workerControl(config.control_socket,'/genie-media-repair',{worker_id:'one',engine:'ace-step',expected_failed_at:'2026-01-01T00:00:00Z'}),/switched off/);
+ await assert.rejects(workerControl(config.control_socket,'/genie-media-audit',{}),/switched off/);
  await workerControl(config.control_socket,'/genie-capability',{key:'media',enabled:true});
  await assert.rejects(workerControl(config.control_socket,'/genie-media-setup',{worker_id:'one',engine:'ace-step'}),/matching Docker/);
  const publicAttempt=await fetch(`http://127.0.0.1:${address.port}/genie-media-setup`,{method:'POST',headers:{authorization:'Bearer fixture-key','content-type':'application/json'},body:JSON.stringify({worker_id:'one',engine:'ace-step'})});assert.equal(publicAttempt.status,404);
@@ -228,4 +229,36 @@ test('source repair respects standard/inspection permission, existing engine and
   if(deny==='qualified')f.config.media_jobs.workers.one.engines.music=Object.fromEntries(['container','image','kind','port'].map(k=>[k,e[k]]));
   await assert.rejects(service.repair({...input,expected_failed_at:at}));assert.equal(reads,0);assert.equal(f.launches(),1);assert.equal(f.store.data.media_setup_sources,undefined);
  }
+});
+
+test('standard audits save native evidence without changing enrollment and invalidate changed bindings',async t=>{
+ const f=fixture(t);f.config.media_jobs.standard={enabled:true,targets:[{worker_id:'one',engine:'h3'}]};
+ let calls=0,state='present';const before=JSON.stringify(f.config.media_jobs.workers);
+ const options={...f.options,transport:async(target,input)=>{calls++;assert.equal(target.ssh,'fixture-host');assert.equal(input.action,'audit_media');return {state,engine:input.engine,expected:input.expected,current_llm_container:'a'.repeat(64)};}};
+ const service=createMediaSetup(f.config,f.store,options);assert.equal(service.status().standard_audit.targets[0].due,true);assert.equal(calls,0);
+ await assert.rejects(service.audit({command:'anything'}));assert.equal(calls,0);
+ await service.audit({});assert.equal(calls,1);assert.equal(service.status().standard_audit.targets[0].state,'present');assert.equal(service.status().standard_audit.targets[0].due,false);
+ assert.equal(JSON.stringify(f.config.media_jobs.workers),before);assert.deepEqual(f.store.data.other,{keep:true});assert.ok(fs.readdirSync(f.directory).some(s=>s.includes('.media-setup-')));
+ const restored=createMediaSetup(f.config,f.store,options);assert.equal(restored.status().standard_audit.targets[0].state,'present');
+ state='absent';await restored.audit({});assert.equal(restored.status().standard_audit.targets[0].state,'absent');assert.equal(JSON.stringify(f.config.media_jobs.workers),before,'Absence never erases an enrollment');
+ f.config.genie_chat.inspection.workers.one.ssh=['new-host'];assert.equal(restored.status().standard_audit.targets[0].state,'not_observed');assert.equal(restored.status().standard_audit.targets[0].due,true);
+});
+
+test('standard audit distinguishes unavailable evidence, defers active setup and respects inspection permission',async t=>{
+ const f=fixture(t);f.config.media_jobs.standard={enabled:true,targets:[{worker_id:'one',engine:'h3'}]};let calls=0,inspection=false;
+ const service=createMediaSetup(f.config,f.store,{...f.options,isInspectionEnabled:()=>inspection,transport:async()=>{calls++;throw Error('SSH read unavailable');}});
+ await assert.rejects(service.audit({}),/switched off/);assert.equal(calls,0);inspection=true;
+ await service.audit({});assert.equal(service.status().standard_audit.targets[0].state,'unavailable');assert.equal(calls,1);
+ await service.start({worker_id:'one',engine:'ace-step'});const result=await service.audit({});assert.equal(result.checked[0].state,'deferred');assert.equal(calls,1);
+ assert.equal(f.config.media_jobs.workers.one.engines.video.container,'d'.repeat(64));
+});
+
+test('native audits retain distinct physical pair member identities',async t=>{
+ const f=fixture(t),w=f.workers[0];f.config.recovery.workers=[];
+ f.config.media_jobs.pairs={one:{kind:'glm53-docker-pair',model:'GLM',worker_binding:{id:w.id,url:w.url,ssh:w.ssh},members:[{ssh:'fixture-host',container:'a'.repeat(64)},{ssh:'fixture-rank',container:'rank'}]}};
+ const video=f.config.media_jobs.workers.one.engines.video;f.config.media_jobs.workers.one.member_engines={0:{video:{...video,member:0}},1:{video:{...video,member:1,container:'f'.repeat(64)}}};
+ f.config.media_jobs.standard={enabled:true,targets:[0,1].map(member=>({worker_id:'one',member,engine:'h3'}))};const calls=[];
+ const service=createMediaSetup(f.config,f.store,{...f.options,transport:async(target,input)=>{calls.push([target.ssh,input.llm_container,input.expected.container]);return {state:'present',engine:input.engine,expected:input.expected,current_llm_container:'a'.repeat(64)};}});
+ await service.audit({});assert.deepEqual(calls,[['fixture-host','a'.repeat(64),'d'.repeat(64)],['fixture-rank','rank','f'.repeat(64)]]);assert.equal(service.status().standard_audit.targets.length,2);
+ f.config.media_jobs.pairs.one.members[0].ssh='unbound';assert.ok(service.status().standard_audit.targets.every(r=>r.state==='unavailable'));
 });

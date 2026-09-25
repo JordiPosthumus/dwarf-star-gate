@@ -620,3 +620,23 @@ selection does not create a duplicate probe. A changed enrollment invalidates
 old in-flight observations. Unbound or unreachable engines remain unknown.
 These read-only queue probes do not prove installation integrity or successful
 generation, and do not automatically replace an enrolled engine.
+
+An enabled standard also requests a read-only native container audit through
+actual Genie after setup activity is idle, initially and every 24 hours.
+`media_jobs.standard.audit_interval_hours` selects a positive whole number of
+hours; `audit_enabled: false` disables these audits. Media and Server inspection
+must both remain enabled. `audit_media_standard` takes no arguments: it checks
+only the standard's currently enrolled container IDs, images and native port
+bindings on each physical member. The gateway saves dated evidence with a backup;
+status reads never open SSH connections. Changed host or engine bindings invalidate
+old observations. Busy setup is deferred, and uncertain chat submission retains
+its original request identity across watcher restart.
+
+The results distinguish **present**, **absent**, **changed** and **unavailable**.
+Absence requires a complete native Docker inventory on the host with the enrolled
+LLM reference; an SSH or inspection failure is unavailable. A present container
+does not prove model-file integrity, generation, cache performance or readiness.
+Failures wake Genie for read-only diagnosis without erasing enrollment, changing
+placement, restarting or replacing a service. Automatic replacement of an already
+enrolled missing engine remains unsupported; this audit is detection and evidence,
+not a completed repair or upstream-improvement loop.
