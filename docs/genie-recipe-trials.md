@@ -89,7 +89,13 @@ Image preparation first reuses an exact existing ARM64 image. Otherwise it tries
 direct transfer between the enrolled hosts, pinning the target public host key
 and machine identity observed through the existing trusted connection. Temporary
 host-key files are removed; permanent SSH trust files are unchanged. If the
-pre-transfer peer check is unavailable it uses a compressed local relay. Compression applies only to this image
+peer SSH login is unavailable, it can stream the image directly over a temporary
+TLS listener. That listener's certificate and random token arrive through the
+existing trusted target SSH connection; the source verifies the certificate and
+exact machine before sending bytes. It checks the loaded image identity, closes
+on owner disconnect or completion, and installs no persistent credentials or
+trust entries. If direct transport is unavailable before copying starts, it
+uses a compressed local relay. Compression applies only to this image
 transfer; it changes no persistent SSH or model settings. Once a
 copy starts, its failure is reported rather than starting a second transfer.
 
