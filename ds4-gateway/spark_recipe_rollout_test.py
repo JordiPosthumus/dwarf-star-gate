@@ -113,3 +113,37 @@ class ImageTransport(unittest.TestCase):
         r=self.fixture();peer={'destination':'fixture@example.invalid','port':22,'machine_sha256':'a'*64};r.run=lambda *a,**kw:SimpleNamespace(returncode=255,stdout=b'')
         with patch('spark_recipe_rollout.peer_parameters',return_value=peer),patch('spark_recipe_rollout.peer_stream',return_value=True) as stream:
             self.assertTrue(r.direct_image());stream.assert_called_once_with(r,peer)
+
+
+class PairPublication(unittest.TestCase):
+ def test_recipe_update_preserves_media_membership_and_rolls_back_exactly(self):
+  helper=Publication();r,launcher,config=helper.fixture();self.addCleanup(helper.doCleanups)
+  value=json.loads(config.read_text());value['media_jobs']={'automatic_dispatch':False,'pairs':{'glm53f-sparks12':{'members':[{'ssh':'target','recipe_root':'/original'},{'ssh':'rank'}],'engine_members':{'video':0,'music':1}}}}
+  config.write_text(json.dumps(value));before=config.read_bytes();r.publication_prepare();r.publish()
+  new=json.loads(config.read_text());pair=new['media_jobs']['pairs']['glm53f-sparks12']
+  self.assertEqual(pair['members'][0]['recipe_root'],'/prepared/operation/candidate');self.assertEqual(pair['members'][1],{'ssh':'rank'})
+  self.assertEqual(pair['engine_members'],{'video':0,'music':1});self.assertFalse(new['media_jobs']['automatic_dispatch'])
+  r.unpublish();self.assertEqual(config.read_bytes(),before)
+ def test_unexpected_media_binding_refuses_publication(self):
+  helper=Publication();r,launcher,config=helper.fixture();self.addCleanup(helper.doCleanups)
+  value=json.loads(config.read_text());value['media_jobs']={'pairs':{'glm53f-sparks12':{'members':[{'ssh':'target','recipe_root':'/owner-change'}]}}};config.write_text(json.dumps(value));before=config.read_bytes()
+  with self.assertRaisesRegex(RuntimeError,'media recipe binding'):r.publication_prepare()
+  self.assertEqual(config.read_bytes(),before)
+
+class CandidateQualification(unittest.TestCase):
+ def test_cache_and_restoration_proof_are_required_for_candidate_only_acceptance(self):
+  with tempfile.TemporaryDirectory() as directory:
+   root=Path(directory);r=Rollout.__new__(Rollout);result=root/'result.json';prepared=root/'prepared.json'
+   prepared.write_text(json.dumps({'candidate_image':'image','source_revision':'revision'}))
+   rows=[{'label':x,'passed':True} for x in ['arithmetic','tool_call_and_followup','cold-A','cold-B','append-A','append-B','edit-90-percent','branch-90-percent']]+[{'label':'context-boundary','accepted':True},{'label':'concurrency-two','two_active_requests_observed':True}]
+   for row in rows:
+    if row['label'].startswith('cold-'):row['cold_cache_proved']=True
+    if row['label'].startswith('append-'):row['substantial_reuse_proved']=True
+   value={'state':'complete','qualification_mode':'candidate-only','restoration':{'state':'verified','readiness':{'finish_reason':'stop','answer':'RESTORED_7319'}},'preserved_serving_settings_verified':True,'phases':{'B':rows}}
+   def save():
+    result.write_text(json.dumps(value));r.plan={'qualified_result_file':str(result),'qualified_result_sha256':digest(result.read_bytes()),'qualified_prepare_file':str(prepared),'qualified_prepare_sha256':digest(prepared.read_bytes()),'qualified_image':'image','source_revision':'revision'}
+   save();r.qualification()
+   rows[4]['substantial_reuse_proved']=False;save()
+   with self.assertRaisesRegex(RuntimeError,'native cache'):r.qualification()
+   rows[4]['substantial_reuse_proved']=True;value['error']='candidate failed';save()
+   with self.assertRaisesRegex(RuntimeError,'lacks'):r.qualification()

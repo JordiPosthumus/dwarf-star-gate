@@ -32,6 +32,15 @@ def validate(plan):
         raise ValueError('Unsupported recipe trial')
     if plan.get('candidate_profile','long-coding') not in ['long-coding','baseline-cache-400k']:
         raise ValueError('Unsupported candidate profile')
+    if plan.get('qualification_mode','comparison') not in ['comparison','candidate-only']:
+        raise ValueError('Unsupported qualification mode')
+    if plan.get('qualification_mode')=='candidate-only' and plan.get('candidate_profile')!='baseline-cache-400k':
+        raise ValueError('Candidate-only acceptance must preserve serving capacity')
+    if plan.get('baseline_kind','git') not in ['git','published-rollout']:
+        raise ValueError('Unsupported baseline kind')
+    if plan.get('baseline_kind')=='published-rollout':
+        if not re.fullmatch(r'[a-f0-9]{64}',plan.get('baseline_deployment_sha256','')):
+            raise ValueError('Pin the prior deployment receipt')
     for key in ['worker','ssh','rank_ssh']:
         if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.@-]{0,100}',plan.get(key,'')):
             raise ValueError('Invalid enrolled target')

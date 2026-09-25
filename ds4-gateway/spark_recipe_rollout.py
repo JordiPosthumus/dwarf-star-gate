@@ -53,14 +53,21 @@ class Rollout(Executor):
         result_data=Path(self.plan['qualified_result_file']).read_bytes();prepared_data=Path(self.plan['qualified_prepare_file']).read_bytes()
         if digest(result_data)!=self.plan['qualified_result_sha256'] or digest(prepared_data)!=self.plan['qualified_prepare_sha256']:raise RuntimeError('Qualification evidence changed')
         result,prepared=json.loads(result_data),json.loads(prepared_data)
-        if (result.get('state')!='complete' or result.get('restoration',{}).get('state')!='verified'
+        if (result.get('state')!='complete' or result.get('error') or result.get('restoration',{}).get('state')!='verified'
                 or result.get('preserved_serving_settings_verified') is not True
                 or prepared.get('candidate_image')!=self.plan['qualified_image']
                 or prepared.get('source_revision')!=self.plan['source_revision']):raise RuntimeError('This image/source lacks the enrolled completed qualification')
         rows={row['label']:row for row in result.get('phases',{}).get('B',[])}
-        if (len(rows)!=10 or any(row.get('passed') is not True for row in rows.values() if row['label'] not in ['context-boundary','concurrency-two'])
+        required={'arithmetic','tool_call_and_followup','cold-A','cold-B','append-A','append-B','edit-90-percent','branch-90-percent','context-boundary','concurrency-two'}
+        if (set(rows)!=required or any(row.get('passed') is not True for row in rows.values() if row['label'] not in ['context-boundary','concurrency-two'])
                 or rows.get('context-boundary',{}).get('accepted') is not True
                 or rows.get('concurrency-two',{}).get('two_active_requests_observed') is not True):raise RuntimeError('Saved candidate qualification did not pass')
+        if result.get('qualification_mode')=='candidate-only':
+            if (any(rows.get('cold-'+key,{}).get('cold_cache_proved') is not True or
+                    rows.get('append-'+key,{}).get('substantial_reuse_proved') is not True for key in ['A','B'])
+                    or result['restoration'].get('readiness',{}).get('finish_reason')!='stop'
+                    or result['restoration'].get('readiness',{}).get('answer','').strip()!='RESTORED_7319'):
+                raise RuntimeError('Candidate-only acceptance lacks native cache or restoration proof')
 
     def publication_prepare(self):
         folder=self.folder/'publication';folder.mkdir(mode=0o700)
@@ -74,10 +81,16 @@ class Rollout(Executor):
         target=value.get('genie_chat',{}).get('inspection',{}).get('workers',{}).get(self.plan['worker'],{})
         if target.get('recipe_root')!=self.plan['recipe_root'] or self.plan['ssh'] not in target.get('ssh',[]):raise RuntimeError('Inspection publication binding differs')
         target['recipe_root']=self.remote+'/candidate'
+        pair=value.get('media_jobs',{}).get('pairs',{}).get(self.plan['worker'])
+        if pair is not None:
+            members=[m for m in pair.get('members',[]) if m.get('ssh')==self.plan['ssh']]
+            if len(members)!=1 or members[0].get('recipe_root')!=self.plan['recipe_root']:
+                raise RuntimeError('Paired-media recipe binding differs; preserve the enrollment')
+            members[0]['recipe_root']=self.remote+'/candidate'
         after_config=(json.dumps(value,indent=2)+'\n').encode()
         for name,data in [('launcher.before',source),('launcher.after',source.replace(old,new)),('config.before',config_bytes),('config.after',after_config)]:
             with open(folder/name,'xb',opener=lambda p,f:os.open(p,f,0o600)) as out:out.write(data)
-        atomic(folder/'intent.json',{'worker':self.plan['worker'],'old_recipe':self.plan['recipe_root'],'new_recipe':self.remote+'/candidate','created_at':time.time(),'scope':'Change only the target normal-launcher recipe path and its read-only inspection binding. Other fleet settings are preserved.'})
+        atomic(folder/'intent.json',{'worker':self.plan['worker'],'old_recipe':self.plan['recipe_root'],'new_recipe':self.remote+'/candidate','created_at':time.time(),'scope':'Change only the target normal-launcher recipe path, inspection binding and matching paired-media recipe binding. Physical media enrollment and other fleet settings are preserved.'})
 
     def publication_unchanged(self):
         for name,key in [('launcher','launcher_file'),('config','inspection_config_file')]:

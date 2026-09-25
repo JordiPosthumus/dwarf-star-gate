@@ -126,3 +126,46 @@ class CacheHistoryLabels(unittest.TestCase):
    remote.chat=chat
    rows=remote.checks('A',400000);labels=[row['label'] for row in rows]
    self.assertIn('append-B',labels);self.assertNotIn('append-A',labels);self.assertNotIn('edit-90-percent',labels)
+
+
+class CandidateAcceptance(unittest.TestCase):
+ def test_acceptance_runs_only_candidate_checks_and_restoration_readiness(self):
+  fixture=TrialTransaction();fixture.setUp();self.addCleanup(fixture.doCleanups)
+  r=fixture.remote;r.plan['qualification_mode']='candidate-only'
+  r.launch=lambda *a:fixture.events.append('launch')
+  r.inspect=lambda rank=False:{'Id':'original-rank' if rank else 'original-head','Image':'candidate-image','Config':{'Env':[]}}
+  r.chat=lambda *a,**k:({'finish_reason':'stop','answer':'RESTORED_7319'},{'content':'RESTORED_7319'})
+  result=r.run();self.assertNotIn('A',fixture.events);self.assertNotIn('A2',fixture.events)
+  self.assertIn('B',fixture.events);self.assertIn('restore',fixture.events)
+  self.assertEqual(result['qualification_mode'],'candidate-only');self.assertEqual(result['restoration']['state'],'verified')
+ def test_acceptance_failed_restoration_answer_keeps_hold(self):
+  fixture=TrialTransaction();fixture.setUp();self.addCleanup(fixture.doCleanups)
+  r=fixture.remote;r.plan['qualification_mode']='candidate-only'
+  r.chat=lambda *a,**k:({'finish_reason':'stop'},{'content':'wrong'})
+  result=r.run();self.assertEqual(result['state'],'restoration_required');self.assertNotIn('A',fixture.events)
+
+class PublishedBaseline(unittest.TestCase):
+ def test_upgrade_pins_previous_deployment_and_detects_recipe_edits_without_git(self):
+  from spark_recipe_remote import sha,recipe_manifest
+  with tempfile.TemporaryDirectory() as directory:
+   root=Path(directory);recipe=root/'old'/'candidate';recipe.mkdir(parents=True)
+   (recipe/'.env').write_text('WORKER_SSH=rank\n');(recipe/'start.sh').write_text('launch')
+   (recipe/'overlay.py').write_text('old code')
+   receipt=recipe.parent/'deploy-result.json';receipt.write_text(json.dumps({'state':'deployed','recipe_root':str(recipe),'candidate_image':'image'}))
+   (recipe.parent/'prepared.json').write_text(json.dumps({'source_revision':'revision'}))
+   plan={'trial_root':str(root/'new'),'recipe_root':str(recipe),'trial_id':'fixture','baseline_kind':'published-rollout','baseline_deployment_sha256':sha(receipt),'baseline_image':'image','baseline_revision':'revision','baseline_env_sha256':sha(recipe/'.env'),'baseline_start_sha256':sha(recipe/'start.sh'),'rank_ssh':'rank'}
+   r=Remote(plan);r.backup.mkdir(parents=True);r.command=lambda *a,**k:(_ for _ in ()).throw(AssertionError('No git metadata in a published recipe'))
+   r.baseline_unchanged();(r.backup/'recipe-manifest.json').write_text(json.dumps(recipe_manifest(recipe)))
+   (recipe/'overlay.py').write_text('owner change')
+   with self.assertRaisesRegex(RuntimeError,'source changed'):r.baseline_unchanged()
+   self.assertEqual((recipe/'overlay.py').read_text(),'owner change')
+ def test_rank_snapshot_includes_previous_isolated_launcher_and_code(self):
+  import shlex,subprocess
+  with tempfile.TemporaryDirectory() as directory:
+   root=Path(directory);r=Remote({'trial_root':directory,'recipe_root':directory,'trial_id':'fixture'});r.backup.mkdir()
+   launcher=root/'rank-launch'/'worker.sh';launcher.parent.mkdir();launcher.write_text('original')
+   patch=root/'rank-launch'/'patch.py';patch.write_text('code')
+   (r.backup/'rank.json').write_text(json.dumps({'Mounts':[{'Type':'bind','Source':str(launcher),'Destination':'/start.sh'},{'Type':'bind','Source':str(patch),'Destination':'/opt/glm53/patch.py'},{'Type':'bind','Source':'/unread/weights','Destination':'/root/.cache/huggingface'}]}))
+   r.rank=lambda args,**kw:subprocess.check_output(args)
+   saved=r.rank_staging_snapshot();self.assertEqual(set(saved),{str(launcher),str(patch)})
+   launcher.write_text('edited');self.assertNotEqual(saved,r.rank_staging_snapshot())
