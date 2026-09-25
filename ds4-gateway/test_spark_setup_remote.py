@@ -50,11 +50,19 @@ class RemoteSetupTests(unittest.TestCase):
         base = {'Id':candidate, 'Image':'sha256:'+'d'*64, 'State':{'Running':False},
                 'Config':{'Cmd':['python','main.py'], 'WorkingDir':'/opt/ComfyUI'},
                 'HostConfig':{'PortBindings':{'8188/tcp':[{'HostIp':'127.0.0.1','HostPort':'8188'}]}}}
-        for mode in ('known','fresh','unknown','active','old-present','many','wrong-llm','ambiguous','host-network'):
+        dockerfile = (Path(__file__).parents[1]/'examples/spark-build/h3/Dockerfile').read_text()
+        shipped_entrypoint = json.loads(next(line.removeprefix('ENTRYPOINT ') for line in dockerfile.splitlines() if line.startswith('ENTRYPOINT ')))
+        for mode in ('known','wrapper','wrapper-direct','wrapper-argument','wrapper-shell','wrapper-wrong-directory','fresh','unknown','active','old-present','many','wrong-llm','ambiguous','host-network'):
             with self.subTest(mode=mode):
                 commands=[]
                 obj=json.loads(json.dumps(base))
                 if mode=='unknown':obj['Config']['Cmd']=['unrecognized']
+                if mode.startswith('wrapper'):
+                    obj['Config']={'WorkingDir':'/opt/ComfyUI','Entrypoint':shipped_entrypoint,'Cmd':['--listen','0.0.0.0']}
+                    if mode=='wrapper-direct':obj['Config']['Entrypoint']=['/usr/local/bin/h3-entrypoint']
+                    if mode=='wrapper-argument':obj['Config'].update(Entrypoint=['echo'],Cmd=['/usr/local/bin/h3-entrypoint'])
+                    if mode=='wrapper-shell':obj['Config']['Entrypoint']=['sh','-c','/usr/local/bin/h3-entrypoint']
+                    if mode=='wrapper-wrong-directory':obj['Config']['WorkingDir']='/unrelated'
                 if mode=='active':obj['State']['Running']=True
                 if mode=='host-network':obj['HostConfig']['PortBindings']={}
                 ids=[current]+([] if mode=='fresh' else [candidate])
@@ -69,10 +77,11 @@ class RemoteSetupTests(unittest.TestCase):
                     if mode=='ambiguous':items.append({**obj,'Id':'e'*64})
                     return json.dumps(items)
                 with patch.object(remote.subprocess,'check_output',side_effect=read):
-                    if mode in ('known','fresh'):
+                    if mode in ('known','wrapper','wrapper-direct','fresh'):
                         result=remote.discover_media(request)
                         self.assertEqual(result['selection'] is None,mode=='fresh')
-                        if mode=='known':self.assertEqual(result['selection']['container'],candidate)
+                        if mode!='fresh':self.assertEqual(result['selection']['container'],candidate)
+                        if mode in ('wrapper','wrapper-direct'):self.assertEqual(result['selection_launch_form'],'shipped_h3_wrapper')
                     else:
                         with self.assertRaises(ValueError):remote.discover_media(request)
                 self.assertTrue(all(c[0]=='docker' and c[1] in ('ps','inspect') for c in commands))

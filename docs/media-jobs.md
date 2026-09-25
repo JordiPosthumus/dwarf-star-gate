@@ -599,6 +599,12 @@ with a recognized native engine command and port. Active, unknown, ambiguous or
 unsupported candidates refuse correction. With no candidate, it selects a
 separate fresh preparation; old model files, images, directories and receipts
 remain intact. It never starts or stops a service during source selection.
+The shipped H3 entrypoint, directly or behind its exact `tini` wrapper, is a
+recognized candidate only in its expected ComfyUI working directory. Recognition
+does not qualify the models or generated media. When the native source reader
+changes, the watcher permits one new read-only selection attempt for the same
+failed preflight; unchanged readers do not repeatedly wake Genie. This does not
+repeat native setup or relax the timestamp, exited-runner or preservation gates.
 
 The selection is backed up and saved through the gateway's owned state, with a
 native evidence receipt. It survives restart on the same enrolled physical
