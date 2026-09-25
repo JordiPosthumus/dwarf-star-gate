@@ -118,7 +118,7 @@ class Executor:
 
     def reload(self, depth):
         result = self.request('/admin/api/reload', {})
-        if result.get('success') is not True:
+        if result.get('status') != 'ok':
             raise RuntimeError('Model reload was not confirmed')
         return self.live(depth)
 

@@ -39,6 +39,18 @@ class TrialTests(unittest.TestCase):
         maintenance=Maintenance();mock=patch('omlx_recipe_trial.Maintenance',return_value=maintenance);mock.start();self.addCleanup(mock.stop)
         return executor,maintenance
 
+    def test_reload_uses_installed_admin_status_contract_then_checks_live_settings(self):
+        e,m=self.fixture();calls=[]
+        e.request=lambda route,body:(calls.append((route,body)) or {'status':'ok','message':'Re-discovered models'})
+        e.live=lambda depth:(calls.append(('live',depth)) or {'depth':depth,'loaded':True})
+        self.assertEqual(Executor.reload(e,5),{'depth':5,'loaded':True})
+        self.assertEqual(calls,[('/admin/api/reload',{}),('live',5)])
+        e.request=lambda *args:{'success':True}
+        with self.assertRaisesRegex(RuntimeError,'not confirmed'):Executor.reload(e,5)
+        e.request=lambda *args:{'status':'ok'}
+        e.live=lambda depth:(_ for _ in ()).throw(RuntimeError('settings differ'))
+        with self.assertRaisesRegex(RuntimeError,'settings differ'):Executor.reload(e,5)
+
     def test_only_one_integer_changes_and_all_other_bytes_remain(self):
         candidate=candidate_bytes(ORIGINAL,MODEL,5)
         self.assertEqual(candidate,ORIGINAL.replace(b'"mtp_num_draft_tokens": 3',b'"mtp_num_draft_tokens": 5'))
