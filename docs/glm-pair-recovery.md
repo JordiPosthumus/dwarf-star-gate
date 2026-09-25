@@ -14,6 +14,11 @@ identities, mounted-file hashes and modes, and the head recipe files. Context an
 concurrency must match the pinned head environment. The configured head port,
 model and worker ID are part of the enrollment fingerprint. A rank without its
 own recipe directory is supported; its mounted configuration remains pinned.
+Native pair machine identities combine the existing Linux machine-ID hash with
+the sorted physical GPU UUIDs. This distinguishes factory-cloned OS installations
+without rewriting their machine IDs. Missing or changed GPU identity refuses;
+different SSH aliases alone never prove different physical hosts. Earlier
+machine-ID-only pair captures require a fresh capture before enrollment.
 
 Restart requires current native fatal-accelerator evidence or an explicitly
 authorized canary. Starting requires both exact containers to be stopped. An

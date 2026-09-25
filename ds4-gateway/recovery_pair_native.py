@@ -178,8 +178,13 @@ class PairReader:
         program += "container=json.loads(namespace['run'](['docker','inspect',payload['container']]))[0]\n"
         program += "epoch=namespace['fingerprint']([container['Id'],container['State'].get('StartedAt'),container['State'].get('FinishedAt')])\n"
         program += "if service['stopped_epoch']!=epoch:raise ValueError('pair_changed_during_inspection')\n"
+        # Factory-cloned Linux installations can share /etc/machine-id. Preserve
+        # it, but bind pair identity to the actual installed GPU hardware too.
+        program += "import re\ngpus=sorted(namespace['run'](['nvidia-smi','--query-gpu=uuid','--format=csv,noheader']).strip().splitlines())\n"
+        program += "if not 1<=len(gpus)<=16 or len(set(gpus))!=len(gpus) or any(not re.fullmatch(r'GPU-[a-fA-F0-9-]{16,80}',v) for v in gpus):raise ValueError('pair_gpu_identity_unverified')\n"
+        program += "machine_identity={'scheme':'linux-machine-id-and-gpu-uuid-v1','os_machine_id_sha256':service['machine'],'gpu_uuids':gpus}\n"
         program += REMOTE_FILES
-        program += "\nprint(json.dumps({'machine':service['machine'],'container':container,'files':files,'listener_owned':service['listener'],'started_at':service['started_at'],'fault':service['fault']}))\n"
+        program += "\nprint(json.dumps({'machine':namespace['fingerprint'](machine_identity),'machine_identity':machine_identity,'container':container,'files':files,'listener_owned':service['listener'],'started_at':service['started_at'],'fault':service['fault']}))\n"
         payload = {'container': member['container'], 'recipe_root': member['recipe_root'], 'port': self.enrollment['port']}
         return json.loads(self.remote(member['ssh'], ['python3', '-I', '-c', program, json.dumps(payload)]))
 

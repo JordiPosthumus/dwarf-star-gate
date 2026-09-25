@@ -76,7 +76,8 @@ class CaptureTests(unittest.TestCase):
             with self.assertRaises(ValueError): PairReader(binding)
 
     def test_actual_remote_program_resolves_name_to_id_and_refuses_name_retargeting(self):
-        for drift in (False, True):
+        machines = []
+        for drift in (False, True, 'other-hardware', 'missing-hardware'):
             with self.subTest(drift=drift), tempfile.TemporaryDirectory() as tmp:
                 binding = copy.deepcopy(self.binding)
                 binding['members'][0].update(container='named-head', recipe_root=tmp)
@@ -88,10 +89,11 @@ class CaptureTests(unittest.TestCase):
                     calls.append(args)
                     if args[:2] == ['docker', 'inspect']:
                         row = copy.deepcopy(container)
-                        if drift and len([c for c in calls if c[:2] == ['docker', 'inspect']]) == 3: row['Id'] = '9' * 64
+                        if drift is True and len([c for c in calls if c[:2] == ['docker', 'inspect']]) == 3: row['Id'] = '9' * 64
                         out = json.dumps([row])
                     elif args[:2] == ['docker', 'exec']: out = 'true'
                     elif args[:2] == ['docker', 'logs']: out = ''
+                    elif args[0] == 'nvidia-smi': out = '' if drift == 'missing-hardware' else 'GPU-' + ('b' if drift == 'other-hardware' else 'a') * 32
                     else: self.fail('Unexpected native command')
                     return subprocess.CompletedProcess(args, 0, out.encode(), b'')
                 reader = PairReader(binding)
@@ -103,15 +105,21 @@ class CaptureTests(unittest.TestCase):
                         exec(compile(args[3], '<native-pair-collector>', 'exec'), {})
                     return output.getvalue()
                 reader.remote = remote
-                if drift:
+                if drift is True:
                     with self.assertRaisesRegex(ValueError, 'pair_changed_during_inspection'): reader.inspect_member(binding['members'][0])
+                elif drift == 'missing-hardware':
+                    with self.assertRaisesRegex(ValueError, 'pair_gpu_identity_unverified'): reader.inspect_member(binding['members'][0])
                 else:
                     row = reader.inspect_member(binding['members'][0])
                     self.assertEqual(row['container']['Id'], container['Id'])
                     self.assertTrue(row['listener_owned'])
                     self.assertEqual(len(row['files']), 3)
+                    machines.append(row['machine'])
+                    self.assertEqual(row['machine_identity']['scheme'], 'linux-machine-id-and-gpu-uuid-v1')
                 inspections = [c[-1] for c in calls if c[:2] == ['docker', 'inspect']]
                 self.assertEqual(inspections, ['named-head', container['Id'], 'named-head'])
+        self.assertEqual(len(machines), 2)
+        self.assertNotEqual(*machines, 'Cloned OS machine IDs do not collapse distinct native hardware')
 
     def request(self, root):
         folder = root / self.f.request['action_id']
