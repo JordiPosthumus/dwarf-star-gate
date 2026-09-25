@@ -1,3 +1,4 @@
+import {mediaPair} from './media-pair.mjs';
 import fs from 'node:fs';
 import {execFile} from 'node:child_process';
 import {createHash} from 'node:crypto';
@@ -30,19 +31,25 @@ export async function inspectMediaResources(target){
 }
 export function createMediaResources(config,{isEnabled=()=>true,inspect=inspectMediaResources}={}){
   const observations=new Map(),pending=new Map();
-  return {status:()=>Object.fromEntries(observations),async inspect(id){
+  return {status:()=>Object.fromEntries(observations),async inspect(id,member){
     if(!isEnabled())throw Error('Server inspection is switched off.');
-    const target=config.genie_chat?.inspection?.workers?.[id];
+    let target=config.genie_chat?.inspection?.workers?.[id];
+    if(member!==undefined){
+      const pair=mediaPair(config,(config.workers??config.nodes??[]).find(w=>w.id===id)??config.media_jobs?.pairs?.[id]?.worker_binding);
+      if(![0,1].includes(member)||!pair)throw Error('Choose a member of an enrolled paired LLM');
+      target={...target,ssh:[pair.members[member].ssh],container:pair.members[member].container};
+    }
+    const key=member===undefined?id:`${id}:${member}`;
     if(!target)throw Error('No inspection connection is enrolled for this worker.');
-    if(pending.has(id))return pending.get(id);
+    if(pending.has(key))return pending.get(key);
     const work=(async()=>{
       try{
         const observed=await inspect(target);
         const compatible=observed.system==='Linux'&&['arm64','aarch64'].includes(observed.architecture)&&['arm64','aarch64'].includes(observed.docker_architecture)&&observed.gpu_names?.length>0&&observed.gpu_names.every(n=>n.includes('GB10'));
-        const row={worker_id:id,state:'observed',...observed,recipe_platform_matches:compatible,recipes:mediaRecipeResources,setup:compatible?'Matches the shipped Spark recipe platform. New installation needs destination/build/output space checks and native qualification.':'The shipped Spark recipes are not verified for this observed platform. Existing engine enrollments and serving capabilities are unchanged.'};
-        observations.set(id,row);return row;
-      }catch(error){observations.set(id,{worker_id:id,state:'unavailable',observed_at:new Date().toISOString(),error:error.message});throw error;}
-      finally{pending.delete(id);}
-    })();pending.set(id,work);return work;
+        const row={worker_id:id,...(member!==undefined?{member}:{}),state:'observed',...observed,recipe_platform_matches:compatible,recipes:mediaRecipeResources,setup:compatible?'Matches the shipped Spark recipe platform. New installation needs destination/build/output space checks and native qualification.':'The shipped Spark recipes are not verified for this observed platform. Existing engine enrollments and serving capabilities are unchanged.'};
+        observations.set(key,row);return row;
+      }catch(error){observations.set(key,{worker_id:id,...(member!==undefined?{member}:{}),state:'unavailable',observed_at:new Date().toISOString(),error:error.message});throw error;}
+      finally{pending.delete(key);}
+    })();pending.set(key,work);return work;
   }};
 }

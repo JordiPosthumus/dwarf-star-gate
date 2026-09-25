@@ -70,3 +70,15 @@ test('engine registry carries complete kinds and planned engines stay honestly u
  const qwen=mediaEngines.find(e=>e.id==='qwen-image');
  assert.equal(qwen.kind,'image');assert.equal(qwen.supported,false);
 });
+
+test('custom installations use configured physical groups and report each member honestly',()=>{
+ const worker={id:'custom-pair',url:'http://fixture'},pair={kind:'glm53-docker-pair',model:'GLM',worker_binding:{...worker},members:[{ssh:'host-a',container:'head'},{ssh:'host-b',container:'rank'}]};
+ const config={workers:[worker],machine_groups:{'custom-pair':['gpu-a','gpu-b'],overlap:['gpu-b'],independent:['gpu-c']},media_jobs:{pairs:{'custom-pair':pair},workers:{'custom-pair':{engines:{video:{member:0}},member_engines:{1:{music:{member:1}}}}}},genie_chat:{inspection:{workers:{'custom-pair':{container:'head',ssh:['host-a']}}}}};
+ const fleet=[{id:'custom-pair',is_healthy:true},{id:'overlap',is_healthy:true}],store={data:{media_host_eligibility:{'custom-pair':{music:true,video:true}}}};
+ const service=createMediaHosts(config,store,{workers:()=>fleet,binding:()=>false});
+ assert.equal(service.status().hosts[0].members[0].engines.find(e=>e.kind==='video').enrolled,true);
+ assert.equal(service.status().hosts[0].members[1].engines.find(e=>e.kind==='video').enrolled,false);
+ assert.equal(service.status().hosts[0].members[1].engines.find(e=>e.kind==='music').ready,false);
+ fleet.push({id:'independent',is_healthy:true});
+ assert.equal(service.status().hosts[0].members[1].engines.find(e=>e.kind==='music').ready,true);
+});

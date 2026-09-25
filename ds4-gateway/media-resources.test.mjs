@@ -22,3 +22,12 @@ test('other platforms remain unqualified without changing existing capabilities'
   const resources=createMediaResources({genie_chat:{inspection:{workers:{mac:{kind:'omlx-local'}}}}},{inspect:async()=>({system:'Darwin',architecture:'arm64',gpu_names:[],docker_architecture:null})});
   const result=await resources.inspect('mac');assert.equal(result.recipe_platform_matches,false);assert.match(result.setup,/Existing engine enrollments and serving capabilities are unchanged/);
 });
+
+test('resource observations distinguish the two physical members of an enrolled pair',async()=>{
+ const worker={id:'pair',url:'http://fixture'},config={workers:[worker],genie_chat:{inspection:{workers:{pair:{ssh:['head'],container:'head-model'}}}},media_jobs:{pairs:{pair:{kind:'glm53-docker-pair',model:'GLM',worker_binding:{...worker},members:[{ssh:'head',container:'head-model'},{ssh:'rank',container:'rank-model'}]}}}};
+ const seen=[],service=createMediaResources(config,{inspect:async target=>{seen.push(target);return {system:'Linux',architecture:'aarch64',docker_architecture:'arm64',gpu_names:['GB10']};}});
+ await service.inspect('pair',0);await service.inspect('pair',1);
+ assert.deepEqual(seen.map(t=>t.ssh[0]),['head','rank']);assert.equal(service.status()['pair:1'].member,1);
+ await assert.rejects(service.inspect('pair',2),/enrolled paired/);
+ config.media_jobs.pairs.pair.worker_binding.url='http://changed';await assert.rejects(service.inspect('pair',1),/enrolled paired/);
+});

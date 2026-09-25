@@ -297,3 +297,16 @@ test('paired execution sends a retained rank engine to its rank host and keeps t
  const plan=JSON.parse(fs.readFileSync(path.join(f.jobs.executionFolder(f.job.id),'plan.json')));
  assert.equal(plan.host,'fixture-rank');assert.equal(plan.llm_container,'rank');assert.equal(plan.llm_pair.media_member,1);assert.deepEqual(plan.endpoint,worker);assert.deepEqual(plan.separate_workers,['other']);
 });
+
+test('explicit physical member selects its qualified engine and cannot retarget an accepted job',async t=>{
+ const f=fixture(t),worker={id:'one',url:'http://127.0.0.1:38888/v1'};
+ f.config.media_jobs.pairs={one:{kind:'glm53-docker-pair',model:'GLM',worker_binding:worker,members:[{ssh:'fixture-host',container:'a'.repeat(64)},{ssh:'fixture-rank',container:'rank'}]}};
+ const rank={...f.engine,container:'d'.repeat(64),member:1};
+ f.config.media_jobs.workers.one.member_engines={1:{video:rank}};
+ let launches=0;const service=createMediaExecution(f.config,f.jobs,{workers:()=>[worker],isEnabled:()=>true,launchRunner:async()=>{launches++;return {pid:1};}});
+ await service.start({job_id:f.job.id,worker_id:'one',member:1});
+ const plan=JSON.parse(fs.readFileSync(path.join(f.jobs.executionFolder(f.job.id),'plan.json')));
+ assert.equal(plan.host,'fixture-rank');assert.equal(plan.engine.container,rank.container);assert.equal(f.config.media_jobs.workers.one.engines.video.container,f.engine.container);
+ await assert.rejects(service.start({job_id:f.job.id,worker_id:'one',member:0}),/another worker/);
+ await service.start({job_id:f.job.id,worker_id:'one',member:1});assert.equal(launches,1);
+});

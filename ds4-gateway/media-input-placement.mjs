@@ -1,3 +1,4 @@
+import {mediaEngine,mediaMemberInput} from './media-enrollment.mjs';
 import fs from 'node:fs';
 import {execFile} from 'node:child_process';
 
@@ -14,9 +15,9 @@ export function mediaInputRequirements(job){
     scope:'Known stock video loaders only. Engine-local files are not copied between workers. Custom loaders and music paths are not inspected.'};
 }
 export async function inspectMediaJobInputs(config,jobs,input,{inspect=remoteInspect}={}){
-  if(!input||Object.keys(input).sort().join(',')!=='job_id,worker_id')throw Error('Choose a saved job_id and enrolled worker_id.');
+  if(!input||!mediaMemberInput(input,'job_id,worker_id'))throw Error('Choose a saved job_id and enrolled worker_id.');
   const job=jobs.get(input.job_id),requirements=mediaInputRequirements(job);
-  const engine=config.media_jobs?.workers?.[input.worker_id]?.engines?.[job.kind];
+  const engine=mediaEngine(config,input.worker_id,job.kind,input.member);
   let connection=config.genie_chat?.inspection?.workers?.[input.worker_id];
   if(engine?.member!==undefined){
     const pair=config.media_jobs?.pairs?.[input.worker_id];
@@ -25,7 +26,7 @@ export async function inspectMediaJobInputs(config,jobs,input,{inspect=remoteIns
   }
   if(job.kind!=='video'||engine?.kind!=='comfyui'||!connection)throw Error('Input inspection supports an enrolled ComfyUI video worker.');
   const result=requirements.engine_local_files.length?await inspect(connection,engine,requirements.engine_local_files):{files:[],scope:'No engine-local stock-loader files to inspect.'};
-  return {job_id:job.id,worker_id:input.worker_id,observed_at:new Date().toISOString(),...requirements,...result,
+  return {job_id:job.id,worker_id:input.worker_id,...(input.member!==undefined?{member:input.member}:{}),observed_at:new Date().toISOString(),...requirements,...result,
     interpretation:'Read-only file presence, not image decoding or reference fidelity. A missing file on this worker may exist on another worker. Upload references to make them portable. Unknown checks do not establish absence. No job was started or changed.'};
 }
 function remoteInspect(connection,engine,files){

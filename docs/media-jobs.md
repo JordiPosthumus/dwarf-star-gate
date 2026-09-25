@@ -479,9 +479,29 @@ Docker `container`; the head must match its server-inspection enrollment.
 Include the head's `recipe_root` to retain and guard its launcher files.
 This is trusted local configuration, never model-provided shell input.
 
-Use `engine_members: {"video": 0, "music": 1}` to install H3 on the head and
-ACE-Step on the rank; omitted assignments use the head. Each retained engine
-records its member so later jobs reconnect to its actual host.
+For your own worker names, configure `machine_groups` to describe shared hardware:
+for example `{"my-pair":["gpu-a","gpu-b"],"other-model-on-a":["gpu-a"]}`.
+Use the same physical IDs for every route or SSH alias on a machine. Media uses
+these groups to prevent treating another model on borrowed hardware as the LLM
+that must remain available. If groups are absent, configured pair member SSH
+targets and single-worker inspection SSH targets supply the hardware identity;
+different aliases require explicit groups.
+
+`engine_members: {"video": 0, "music": 1}` supplies default setup destinations;
+omitted assignments use the head. For a standard configuration with both engines
+on every physical Spark, call `setup_media_host` for each engine with `member: 0`
+and `member: 1`. These are indices into your configured pair, never fixed hostnames.
+For example, `{"worker_id":"my-pair","engine":"h3","member":1}` sets up H3
+on your rank member. Repeat with `engine: "ace-step"` for music.
+
+`inspect_media_host`, `inspect_media_inputs`, and `start_media_job` accept the same
+optional `member`. Status exposes separate `members[].engines` inventories; an
+installation on one member does not qualify the other. Each setup retains its
+own native proof and survives service restarts. A repeated setup observes its
+existing operation without launching again. The first qualified engine may
+become the default if none exists; adding another member never replaces an
+existing default. Calls without `member` keep the existing default behavior.
+Retained per-member engines are stored separately from default selections.
 
 The existing `setup_media_host` and `start_media_job` tools then borrow the
 whole pair. They retain both complete Docker configurations and file backups,
