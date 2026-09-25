@@ -65,3 +65,44 @@ class Publication(unittest.TestCase):
 
 
 if __name__=='__main__':unittest.main()
+
+class ImageTransport(unittest.TestCase):
+    def fixture(self):
+        temporary=tempfile.TemporaryDirectory();self.addCleanup(temporary.cleanup)
+        r=Rollout.__new__(Rollout);r.folder=Path(temporary.name);r.plan={'ssh':'target','image_source_ssh':'source','qualified_image':'sha256:'+'c'*64};r.status=lambda *a,**k:None
+        return r
+    def test_existing_exact_arm_image_is_reused_and_wrong_identity_is_rejected(self):
+        r=self.fixture();r.ssh=lambda *a,**k:json.dumps({'present':True,'image':r.plan['qualified_image'],'architecture':'arm64'}).encode();self.assertTrue(r.target_has_image())
+        r.ssh=lambda *a,**k:json.dumps({'present':True,'image':'different','architecture':'arm64'}).encode()
+        with self.assertRaisesRegex(RuntimeError,'differs'):r.target_has_image()
+    def test_direct_copy_requires_matching_peer_before_sending_any_image(self):
+        from unittest.mock import patch
+        from types import SimpleNamespace
+        import shlex
+        r=self.fixture();peer={'destination':'fixture@example.invalid','port':22,'machine_sha256':'a'*64};calls=[]
+        def run(argv,**kw):
+            calls.append(argv)
+            if len(calls)==1:return SimpleNamespace(returncode=0,stdout=b'b'*64)
+            raise AssertionError('Image must not be sent to a mismatched machine')
+        r.run=run
+        with patch('spark_recipe_rollout.peer_parameters',return_value=peer):self.assertFalse(r.direct_image())
+        self.assertEqual(len(calls),1)
+        calls.clear()
+        def matching(argv,**kw):
+            calls.append(argv)
+            if len(calls)==1:return SimpleNamespace(returncode=0,stdout=b'a'*64)
+            command=shlex.split(argv[-1]);compile(command[3],'direct-copy','exec')
+            return SimpleNamespace(returncode=0)
+        r.run=matching
+        with patch('spark_recipe_rollout.peer_parameters',return_value=peer):self.assertTrue(r.direct_image())
+        self.assertEqual(len(calls),2);self.assertTrue((r.folder/'direct-copy-peer.json').exists())
+    def test_resume_checks_all_retained_source_bytes_and_refuses_advanced_preparation(self):
+        import tarfile,subprocess,shlex
+        r=self.fixture();r.remote=str(r.folder/'remote');candidate=Path(r.remote)/'candidate';candidate.mkdir(parents=True)
+        file=candidate/'start.sh';file.write_text('original');archive=r.folder/'source.tar'
+        with tarfile.open(archive,'w') as out:out.add(file,arcname='start.sh')
+        r.plan['source_archive']=str(archive);r.ssh=lambda command,**kw:subprocess.check_output(shlex.split(command),stderr=subprocess.STDOUT)
+        r.verify_retained_source();file.write_text('owner edit')
+        with self.assertRaises(subprocess.CalledProcessError):r.verify_retained_source()
+        self.assertEqual(file.read_text(),'owner edit');file.write_text('original');(Path(r.remote)/'baseline').mkdir()
+        with self.assertRaises(subprocess.CalledProcessError):r.verify_retained_source()

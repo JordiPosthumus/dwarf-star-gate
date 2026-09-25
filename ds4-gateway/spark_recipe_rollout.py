@@ -4,6 +4,7 @@ The Genie supplies only a profile and operation UUID. This executor copies the
 exact image, keeps the original containers, publishes the normal launcher, and
 readmits only after an ordinary readiness generation. No benchmark is run.
 """
+import base64
 import hashlib
 import json
 import os
@@ -12,11 +13,13 @@ import re
 import shlex
 import subprocess
 import sys
+import tarfile
 import time
 import uuid
 
 from operation_maintenance import GatewayControl, Maintenance
 from spark_recipe_trial import Executor, atomic
+from genie_inspection import peer_parameters
 
 
 def digest(data):return hashlib.sha256(data).hexdigest()
@@ -103,27 +106,87 @@ class Rollout(Executor):
         if not any(w.get('id') in [other,'glm53f-m3'] and w.get('is_healthy') is True and w.get('drained') is False and not w.get('direct_reserved') for w in workers):
             raise RuntimeError('Keep a healthy admitted LLM on separate hardware before rollout')
 
-    def prepare(self):
-        self.qualification();self.publication_prepare()
-        source=Path(self.plan['source_archive'])
-        if digest(source.read_bytes())!=self.plan['source_sha256']:raise RuntimeError('Source archive changed')
-        self.status('copying_pinned_source')
-        self.ssh(shlex.join(['mkdir','-m','700','-p',self.plan['remote_root']]))
-        self.ssh(shlex.join(['mkdir','-m','700',self.remote]))
-        self.ssh(shlex.join(['mkdir','-m','700',self.remote+'/candidate']))
-        self.ssh(shlex.join(['tar','-xf','-','-C',self.remote+'/candidate']),input=source.read_bytes())
-        self.remote_action('rollout_preflight',timeout=90)
-        self.status('copying_qualified_image')
+    def relay_image(self):
         with open(self.folder/'image-copy.log','ab',buffering=0) as log:
-            sender=subprocess.Popen(['ssh','-o','BatchMode=yes','-o','ConnectTimeout=15',self.plan['image_source_ssh'],shlex.join(['docker','save','--platform','linux/arm64',self.plan['qualified_image']])],stdout=subprocess.PIPE,stderr=log)
+            sender=subprocess.Popen(['ssh','-C','-o','BatchMode=yes','-o','ConnectTimeout=15',self.plan['image_source_ssh'],shlex.join(['docker','save','--platform','linux/arm64',self.plan['qualified_image']])],stdout=subprocess.PIPE,stderr=log)
             receiver=None
             try:
-                receiver=subprocess.Popen(['ssh','-o','BatchMode=yes','-o','ConnectTimeout=15',self.plan['ssh'],'docker load'],stdin=sender.stdout,stdout=log,stderr=log)
+                receiver=subprocess.Popen(['ssh','-C','-o','BatchMode=yes','-o','ConnectTimeout=15',self.plan['ssh'],'docker load'],stdin=sender.stdout,stdout=log,stderr=log)
                 sender.stdout.close();received=receiver.wait(timeout=7200);sent=sender.wait(timeout=60)
                 if received or sent:raise RuntimeError('Qualified image transfer did not complete; serving unchanged')
             finally:
                 if receiver is not None and receiver.poll() is None:receiver.terminate();receiver.wait(timeout=30)
                 if sender.poll() is None:sender.terminate();sender.wait(timeout=30)
+
+    def target_has_image(self):
+        code="import json,subprocess,sys; r=subprocess.run(['docker','image','inspect',sys.argv[1]],capture_output=True,text=True); print(json.dumps({'present':True,'image':json.loads(r.stdout)[0]['Id'],'architecture':json.loads(r.stdout)[0]['Architecture']} if r.returncode==0 else {'present':False} if 'No such image' in r.stderr else {'error':'Docker image inspection unavailable'}))"
+        result=json.loads(self.ssh(shlex.join(['python3','-I','-c',code,self.plan['qualified_image']]),timeout=60))
+        if 'error' in result:raise RuntimeError(result['error'])
+        if result.get('present') and (result.get('image')!=self.plan['qualified_image'] or result.get('architecture')!='arm64'):raise RuntimeError('Existing target image differs')
+        return result.get('present') is True
+
+    def direct_image(self):
+        # Obtain the machine identity and public host key through the enrolled
+        # trusted connection. The source uses only a temporary known-hosts file.
+        try:peer=peer_parameters({'ssh':[self.plan['ssh']]})
+        except Exception:return False
+        code="""import base64,json,pathlib,shlex,subprocess,sys,tempfile
+p=json.loads(base64.b64decode(sys.argv[1]))
+with tempfile.TemporaryDirectory(prefix='dsg-image-peer-') as temp:
+ key=pathlib.Path(temp)/'known_hosts';key.write_text(p['peer']['known_hosts']);key.chmod(0o600)
+ peer=['ssh','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','UpdateHostKeys=no','-o','UserKnownHostsFile='+str(key),'-o','ConnectTimeout=8','-p',str(p['peer']['port']),p['peer']['destination']]
+ probe='import hashlib,pathlib; print(hashlib.sha256(pathlib.Path("/etc/machine-id").read_bytes()).hexdigest())'
+ r=subprocess.run(peer+[shlex.join(['python3','-I','-c',probe])],capture_output=True,text=True,timeout=20,check=True)
+ if r.stdout.strip()!=p['peer']['machine_sha256']:raise RuntimeError('Direct target identity changed')
+ if p['mode']=='probe':print(r.stdout.strip());sys.exit(0)
+ sender=subprocess.Popen(['docker','save','--platform','linux/arm64',p['image']],stdout=subprocess.PIPE)
+ receiver=None
+ try:
+  receiver=subprocess.Popen(peer+['docker load'],stdin=sender.stdout);sender.stdout.close()
+  received=receiver.wait(timeout=7200);sent=sender.wait(timeout=60)
+  if received or sent:raise RuntimeError('Direct image copy failed')
+ finally:
+  if receiver is not None and receiver.poll() is None:receiver.terminate();receiver.wait(timeout=30)
+  if sender.poll() is None:sender.terminate();sender.wait(timeout=30)
+"""
+        def command(mode):
+            payload=base64.b64encode(json.dumps({'peer':peer,'image':self.plan['qualified_image'],'mode':mode}).encode()).decode()
+            return ['ssh','-o','BatchMode=yes','-o','ConnectTimeout=15',self.plan['image_source_ssh'],shlex.join(['python3','-I','-c',code,payload])]
+        probe=self.run(command('probe'),stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=45)
+        if probe.returncode or probe.stdout.decode().strip()!=peer['machine_sha256']:return False
+        atomic(self.folder/'direct-copy-peer.json',{'state':'verified','peer':peer,'source':self.plan['image_source_ssh'],'image':self.plan['qualified_image'],'at':time.time()})
+        self.status('copying_qualified_image',transport='direct_spark_peer')
+        with open(self.folder/'image-copy.log','ab',buffering=0) as log:
+            result=self.run(command('copy'),stdout=log,stderr=log,timeout=7300)
+        if result.returncode:raise RuntimeError('Direct image transfer failed; inspect this same operation before resuming')
+        return True
+
+    def verify_retained_source(self):
+        expected={}
+        with tarfile.open(self.plan['source_archive']) as archive:
+            for member in archive.getmembers():
+                if member.isfile():expected[member.name]=digest(archive.extractfile(member).read())
+        payload=base64.b64encode(json.dumps(expected).encode()).decode()
+        code="import base64,hashlib,json,pathlib,sys; root=pathlib.Path(sys.argv[1]); files=json.loads(base64.b64decode(sys.argv[2])); assert all((root/name).is_file() and not (root/name).is_symlink() and hashlib.sha256((root/name).read_bytes()).hexdigest()==value for name,value in files.items()), 'Retained source differs'; assert not (root.parent/'baseline').exists() and not (root.parent/'deploy-intent.json').exists(), 'Preparation advanced'; print('verified')"
+        self.ssh(shlex.join(['python3','-I','-c',code,self.remote+'/candidate',payload]),timeout=60)
+
+    def prepare(self):
+        self.qualification()
+        source=Path(self.plan['source_archive'])
+        if digest(source.read_bytes())!=self.plan['source_sha256']:raise RuntimeError('Source archive changed')
+        if self.receipt.get('resume_copy'):
+            self.publication_unchanged();self.verify_retained_source()
+        else:
+            self.publication_prepare();self.status('copying_pinned_source')
+            self.ssh(shlex.join(['mkdir','-m','700','-p',self.plan['remote_root']]))
+            self.ssh(shlex.join(['mkdir','-m','700',self.remote]))
+            self.ssh(shlex.join(['mkdir','-m','700',self.remote+'/candidate']))
+            self.ssh(shlex.join(['tar','-xf','-','-C',self.remote+'/candidate']),input=source.read_bytes())
+        self.remote_action('rollout_preflight',timeout=90)
+        self.status('copying_qualified_image')
+        if self.target_has_image():atomic(self.folder/'image-reused.json',{'image':self.plan['qualified_image'],'state':'present','at':time.time()})
+        elif not self.direct_image():
+            self.status('copying_qualified_image',transport='local_relay');self.relay_image()
         self.status('backing_up_target_and_preparing_launcher')
         result=self.remote_action('prepare');atomic(self.folder/'prepare.result.json',result)
         if result.get('state')!='prepared' or result.get('candidate_image')!=self.plan['qualified_image']:raise RuntimeError('Exact-image preparation was not verified')

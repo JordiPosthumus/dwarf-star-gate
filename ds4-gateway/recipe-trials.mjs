@@ -26,7 +26,7 @@ export function createRecipeTrials({config,powerBusy=()=>false,launch=spawn}={})
   const compact=value=>Array.isArray(value)?value.map(compact):value&&typeof value==='object'?Object.fromEntries(Object.entries(value).filter(([key])=>!['metrics_before','metrics_after'].includes(key)).map(([key,item])=>[key,key==='answer'&&typeof item==='string'?item.slice(0,160):compact(item)])):value;
   const status=()=>allStatus().sort((a,b)=>String(b.started_at).localeCompare(String(a.started_at))).slice(0,32).map(compact);
   const busy=worker=>allStatus().some(r=>['starting','running','restoration_required'].includes(r.state)&&(machineGroup(r.worker)??[]).some(g=>(machineGroup(worker)??[]).includes(g)));
-  async function start({profile,stage,trial_id}){
+  async function start({profile,stage,trial_id,expected_finished_at}){
     if(!uuid.test(trial_id??'')||!['prepare','run','rollout'].includes(stage)||!Object.hasOwn(enrolled,profile))throw Error('Use an enrolled recipe profile, supported stage and one operation UUID.');
     const binding=enrolled[profile];
     if(!path.isAbsolute(binding.plan_file??'')||!/^[a-f0-9]{64}$/.test(binding.plan_sha256??''))throw Error('Recipe plan enrollment is incomplete');
@@ -36,20 +36,31 @@ export function createRecipeTrials({config,powerBusy=()=>false,launch=spawn}={})
     const spark=plan.kind==='glm53-spark-pair-long-coding'&&['glm53f-sparks12','glm53f-sparks34'].includes(plan.worker);
     const rollout=plan.kind==='glm53-spark-pair-rollout'&&['glm53f-sparks12','glm53f-sparks34'].includes(plan.worker);
     if(plan.schema!==1||(!localMtp&&!spark&&!rollout)||rollout!==(stage==='rollout'))throw Error('Unsupported enrolled recipe plan or operation stage');
-    const prior=read(file);
-    if(prior){if(prior.profile!==profile||prior.plan_sha256!==binding.plan_sha256)throw Error('Operation ID belongs to another plan');return prior;}
+    const prior=read(file);let resume=false;
+    if(expected_finished_at!==undefined&&(!rollout||!Number.isFinite(expected_finished_at)||expected_finished_at<=0))throw Error('Resume requires one completed rollout-copy failure timestamp');
+    if(prior){
+      if(prior.profile!==profile||prior.plan_sha256!==binding.plan_sha256)throw Error('Operation ID belongs to another plan');
+      if(expected_finished_at===undefined||(prior.accepted_resume_finished_at??[]).includes(expected_finished_at))return prior;
+      if(prior.state!=='failed'||prior.phase!=='copying_qualified_image'||prior.finished_at!==expected_finished_at)throw Error('Only the same confirmed failed image copy may resume; running or uncertain work is preserved');
+      if(['gateway/acquire.intent.json','prepare.result.json','rollout.result.json','publication/result.json'].some(name=>fs.existsSync(path.join(folder,name))))throw Error('Preparation advanced beyond copying; inspect its original operation');
+      resume=true;
+    }else if(expected_finished_at!==undefined)throw Error('Unknown rollout to resume');
     const target=config.genie_chat?.inspection?.workers?.[plan.worker];
     if(localMtp?target?.kind!=='omlx-local'||target.root!==plan.root||target.url!==plan.url||target.api_key_file!==plan.api_key_file:!target?.ssh?.includes(plan.ssh)||target.recipe_root!==plan.recipe_root)throw Error('Recipe plan does not match the enrolled worker inspection binding');
     if(powerBusy(plan.worker)||busy(plan.worker))throw Error('An operation on this hardware is already running or needs restoration; inspect its existing receipt');
     fs.mkdirSync(folder,{recursive:true,mode:0o700});
     const savedPlan=path.join(folder,'plan.json');
-    if(stage==='prepare'||rollout)fs.writeFileSync(savedPlan,bytes,{flag:'wx',mode:0o600});
+    if(resume){if(hash(fs.readFileSync(savedPlan))!==binding.plan_sha256)throw Error('Saved rollout plan changed');}
+    else if(stage==='prepare'||rollout)fs.writeFileSync(savedPlan,bytes,{flag:'wx',mode:0o600});
     else{
       if(hash(fs.readFileSync(savedPlan))!==binding.plan_sha256||read(path.join(folder,'prepare.status.json'))?.state!=='prepared')throw Error('Prepare this exact trial before running it');
     }
-    const receipt={trial_id,...(rollout?{rollout_id:trial_id,operation_kind:'permanent_rollout'}:{}),profile,worker:plan.worker,stage,plan_sha256:binding.plan_sha256,state:'starting',started_at:new Date().toISOString()};
-    fs.writeFileSync(file,JSON.stringify(receipt)+'\n',{flag:'wx',mode:0o600});
-    const output=fs.openSync(path.join(folder,`${stage}.log`),'ax',0o600);
+    const receipt={trial_id,...(rollout?{rollout_id:trial_id,operation_kind:'permanent_rollout'}:{}),profile,worker:plan.worker,stage,plan_sha256:binding.plan_sha256,state:'starting',started_at:new Date().toISOString(),...(resume?{resume_copy:true,phase:'copying_qualified_image',attempt:(prior.attempt??1)+1,accepted_resume_finished_at:[...(prior.accepted_resume_finished_at??[]),expected_finished_at]}:{})};
+    if(resume){
+      fs.writeFileSync(path.join(folder,`rollout-attempt-${prior.attempt??1}.json`),JSON.stringify(prior)+'\n',{flag:'wx',mode:0o600});
+      const temp=file+'.resume.tmp';fs.writeFileSync(temp,JSON.stringify(receipt)+'\n',{flag:'wx',mode:0o600});fs.renameSync(temp,file);
+    }else fs.writeFileSync(file,JSON.stringify(receipt)+'\n',{flag:'wx',mode:0o600});
+    const output=fs.openSync(path.join(folder,`${stage}.log`),resume?'a':'ax',0o600);
     try{
       const child=launch(config.genie_chat.python,[path.join(here,rollout?'spark_recipe_rollout.py':localMtp?'omlx_recipe_trial.py':'spark_recipe_trial.py'),stage,folder,config.control_socket],{detached:true,stdio:['ignore',output,output]});
       child.once('error',()=>{const current=read(file);if(current?.state==='starting')fs.writeFileSync(file,JSON.stringify({...current,state:'failed',error:'Executor could not start; no serving change was issued.'})+'\n',{mode:0o600});});

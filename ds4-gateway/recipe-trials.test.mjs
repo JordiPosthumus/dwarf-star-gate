@@ -65,3 +65,14 @@ test('permanent rollout is explicitly enrolled, independently launched and dedup
  f.config.genie_chat.inspection.workers['glm53f-sparks34'].recipe_root='/published/recipe';
  await createRecipeTrials(f).start(args);assert.equal(f.launched.length,1);
 });
+
+test('only an exact confirmed pre-maintenance copy failure resumes, preserving its prior receipt and identity',async t=>{
+ const f=fixture(t),binding=f.config.recipe_trials.fixture,plan=JSON.parse(fs.readFileSync(binding.plan_file));plan.kind='glm53-spark-pair-rollout';fs.writeFileSync(binding.plan_file,JSON.stringify(plan));binding.plan_sha256=createHash('sha256').update(fs.readFileSync(binding.plan_file)).digest('hex');
+ const manager=createRecipeTrials(f),args={profile:'fixture',stage:'rollout',trial_id:id},first=await manager.start(args),file=path.join(f.folder,'rollout.status.json');
+ await assert.rejects(manager.start({...args,expected_finished_at:123}),/confirmed failed/);
+ const failed={...first,state:'failed',phase:'copying_qualified_image',finished_at:123,error:'fixture transport failed'};fs.writeFileSync(file,JSON.stringify(failed));
+ await assert.rejects(manager.start({...args,expected_finished_at:124}),/confirmed failed/);
+ fs.mkdirSync(path.join(f.folder,'gateway'));fs.writeFileSync(path.join(f.folder,'gateway/acquire.intent.json'),'{}');await assert.rejects(manager.start({...args,expected_finished_at:123}),/advanced beyond/);fs.unlinkSync(path.join(f.folder,'gateway/acquire.intent.json'));
+ const next=await manager.start({...args,expected_finished_at:123});assert.equal(next.resume_copy,true);assert.equal(next.attempt,2);assert.equal(next.trial_id,id);assert.deepEqual(JSON.parse(fs.readFileSync(path.join(f.folder,'rollout-attempt-1.json'))),failed);assert.equal(f.launched.length,2);
+ f.config.genie_chat.inspection.workers[plan.worker].recipe_root='/published';await manager.start({...args,expected_finished_at:123});assert.equal(f.launched.length,2);
+});
