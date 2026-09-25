@@ -2,6 +2,7 @@ import test from 'node:test';import assert from 'node:assert/strict';import fs f
 import {createMediaSetup} from './media-setup.mjs';import {saveMediaReceipt} from './media-execution.mjs';
 import http from 'node:http';import {once} from 'node:events';
 import {createGateway} from './gateway.mjs';import {workerControl} from './worker-client.mjs';
+import {mediaReuse,selectedMediaPreparation} from './media-reuse.mjs';
 function fixture(t){
  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'sg-media-setup-'));t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
  const llm='a'.repeat(64),engine={container:'b'.repeat(64),image:'sha256:'+'c'.repeat(64),kind:'ace-step',port:8002,inspection:{Id:'b'.repeat(64),Image:'sha256:'+'c'.repeat(64),Config:{Cmd:['serve']},HostConfig:{},Mounts:[]}};
@@ -127,4 +128,21 @@ test('each physical member can qualify the same engine without replacing the def
  const restarted=createMediaSetup(baseline,f.store,f.options);assert.equal(restarted.status().hosts[0].error,null);
  for(const member of [0,1])assert.equal(baseline.media_jobs.workers.one.member_engines[member].music.member,member);
  await assert.rejects(service.start({worker_id:'one',engine:'h3',member:2}));
+});
+
+test('retained preparation is pinned to its exact engine and still requires native proof',async t=>{
+ const f=fixture(t),e=f.fresh.engines['ace-step'];
+ f.config.media_jobs.reuse={one:{0:{'ace-step':{directory:'/retained/setup',...Object.fromEntries(['container','image','kind','port'].map(k=>[k,e[k]]))}}}};
+ const reuse=mediaReuse(f.config,'one','ace-step');assert.equal(reuse.directory,'/retained/setup');
+ const service=createMediaSetup(f.config,f.store,f.options),row=await service.start({worker_id:'one',engine:'ace-step'});
+ const file=path.join(f.options.directory,row.operation_id,'plan.json'),plan=JSON.parse(fs.readFileSync(file));assert.equal(plan.target.directory,reuse.directory);assert.equal(plan.reuse.container,e.container);
+ assert.equal(f.config.media_jobs.workers.one.engines.music,undefined,'A retained container is not qualification');
+ const source={...f.fresh,state:'prepared_stopped',llm_container:'9'.repeat(64)},selected=selectedMediaPreparation(source,{...reuse,llm_container:'a'.repeat(64)});
+ assert.equal(selected.llm_container,'a'.repeat(64));assert.equal(source.llm_container,'9'.repeat(64));assert.equal(selected.source_llm_container,source.llm_container);
+ assert.throws(()=>selectedMediaPreparation(source,{...reuse,container:'0'.repeat(64),llm_container:'a'.repeat(64)}),/changed/);
+ assert.throws(()=>selectedMediaPreparation(source,{...reuse,llm_container:'name'}));
+ f.complete(row.operation_id);
+ // A source-preparation or current return-binding change still blocks enrollment.
+ f.config.media_jobs.reuse.one[0]['ace-step'].image='sha256:'+'0'.repeat(64);
+ await assert.rejects(service.finish({operation_id:row.operation_id}),/binding changed/);
 });

@@ -503,6 +503,18 @@ become the default if none exists; adding another member never replaces an
 existing default. Calls without `member` keep the existing default behavior.
 Retained per-member engines are stored separately from default selections.
 
+To reuse a previous Star Gate media preparation on the same physical host,
+operators can configure `media_jobs.reuse[worker_id][member][engine]` with its
+absolute remote `directory` and exact `container`, `image`, `kind`, and `port`
+from the retained preparation receipt. `engine` is `h3` or `ace-step`; `kind` is
+`comfyui` or `ace-step`. This trusted configuration selects a candidate, not a
+qualified enrollment. Normal setup still drains the current LLM, verifies the
+retained container and source receipt, generates and fully decodes new output,
+and restores the current LLM before enrollment. It preserves the old source
+directory, model files, image and container instead of building a duplicate.
+Changed or missing source evidence refuses reuse and returns the current LLM;
+it does not silently fall back to rebuilding or replacing the old engine.
+
 The existing `setup_media_host` and `start_media_job` tools then borrow the
 whole pair. They retain both complete Docker configurations and file backups,
 drain the virtual worker, require a serving LLM on separate machines, stop both
