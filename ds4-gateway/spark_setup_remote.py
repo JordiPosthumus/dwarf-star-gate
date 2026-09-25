@@ -55,6 +55,35 @@ def existing_media(payload):
             'scope': 'Pinned existing Docker engine only; fresh native qualification and current LLM return still required.'}
 
 
+def audit_media(payload):
+    """Observe pinned media without starting it or declaring its files qualified."""
+    engine, expected, llm = payload.get('engine'), payload.get('expected'), payload.get('llm_container')
+    if (engine not in ('h3', 'ace-step') or not isinstance(expected, dict)
+            or set(expected) != {'container', 'image', 'kind', 'port'}
+            or not re.fullmatch(r'[a-f0-9]{64}', str(expected.get('container', '')))
+            or not re.fullmatch(r'sha256:[a-f0-9]{64}', str(expected.get('image', '')))
+            or expected['kind'] != ('comfyui' if engine == 'h3' else 'ace-step')
+            or type(expected['port']) is not int or not 0 < expected['port'] <= 65535
+            or not isinstance(llm, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,127}', llm)):
+        raise ValueError('Use exact enrolled media identity and LLM reference')
+    def read(*args):
+        return subprocess.check_output(['docker', *args], text=True, timeout=15)
+    current = json.loads(read('inspect', '--type', 'container', '--', llm))[0]
+    if not re.fullmatch(r'[a-f0-9]{64}', current.get('Id', '')):
+        raise ValueError('Current LLM host identity is unconfirmed')
+    ids = read('ps', '-aq', '--no-trunc').splitlines()
+    if len(ids) > 128 or any(not re.fullmatch(r'[a-f0-9]{64}', value) for value in ids) or current['Id'] not in ids:
+        raise ValueError('Complete native inventory is unavailable')
+    result = {'engine': engine, 'expected': expected, 'current_llm_container': current['Id'], 'inventory_count': len(ids)}
+    if expected['container'] not in ids:
+        return {**result, 'state': 'absent'}
+    obj = json.loads(read('inspect', '--type', 'container', '--', expected['container']))[0]
+    native = '8188/tcp' if engine == 'h3' else '8002/tcp'
+    bindings = (obj.get('HostConfig', {}).get('PortBindings') or {}).get(native) or []
+    matches = obj.get('Id') == expected['container'] and obj.get('Image') == expected['image'] and any(str(b.get('HostPort')) == str(expected['port']) for b in bindings)
+    return {**result, 'state': 'present' if matches else 'changed', 'running': obj.get('State', {}).get('Running'), 'image': obj.get('Image')}
+
+
 def discover_media(payload):
     """Choose a stopped known engine, or fresh setup, only after proving old ID absent."""
     engine = payload.get('engine')
@@ -355,6 +384,9 @@ if __name__ == '__main__':
                 sys.exit(0)
             if payload.get('action') == 'discover_media':
                 print(json.dumps(discover_media(payload)))
+                sys.exit(0)
+            if payload.get('action') == 'audit_media':
+                print(json.dumps(audit_media(payload)))
                 sys.exit(0)
             if payload.get('action') == 'existing_media':
                 print(json.dumps(existing_media(payload)))

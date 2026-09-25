@@ -16,7 +16,7 @@ export function mediaJobOverview(job){
   if(job.outputs)out.outputs={state:job.outputs.state,file_count:job.outputs.files?.length??0};
   return out;
 }
-export function createMediaTools({read,start,inspectInputs=null,setup=null,repair=null,resources=null,isTesting=()=>false}){
+export function createMediaTools({read,start,inspectInputs=null,setup=null,repair=null,audit=null,resources=null,isTesting=()=>false}){
   return createToolEndpoint('/api/genie/media-tools','x-sg-media-tool',async input=>{
     if(input?.action==='job'&&Object.keys(input).sort().join(',')==='action,job_id'){
       if(typeof input.job_id!=='string')throw Error('Supply a saved media job ID.');
@@ -43,6 +43,11 @@ export function createMediaTools({read,start,inspectInputs=null,setup=null,repai
       const host=(await read()).hosts?.find(h=>h.id===input.worker_id);
       if(!host)throw Error('Choose a registered worker for inspection.');
       return {...await resources.inspect(input.worker_id,input.member),existing_engines:(input.member===undefined?host.engines:host.members?.find(m=>m.member===input.member)?.engines)??[],lifecycle:'The executor runs one media engine on the borrowed host, then restores its LLM. A selected batch runs jobs sequentially before one LLM return. H3 and ACE-Step do not need simultaneous residency. Recipe model-file totals are disk requirements, not measured RAM. Existing engine enrollment is separate from this resource observation; it is not erased or requalified by this check.'};
+    }
+    if(input?.action==='audit'&&Object.keys(input).join(',')==='action'){
+      if(isTesting())throw Error('Standard media audit is suspended for testing.');
+      if(!audit)throw Error('Standard media audit is not connected.');
+      return audit({});
     }
     if(input?.action==='repair'&&mediaMemberInput(input,'action,engine,expected_failed_at,worker_id')){
       if(isTesting())throw Error('Media source repair is suspended for testing.');

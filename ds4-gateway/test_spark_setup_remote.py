@@ -26,6 +26,24 @@ def bundle(script):
 
 
 class RemoteSetupTests(unittest.TestCase):
+    def test_native_standard_audit_preserves_services_and_distinguishes_absence_from_changed(self):
+        llm, media = 'a'*64, 'b'*64
+        expected = {'container':media, 'image':'sha256:'+'c'*64, 'kind':'comfyui', 'port':8188}
+        payload = {'engine':'h3','expected':expected,'llm_container':'serving-llm'}
+        for mode in ('present','absent','changed','unavailable','incomplete'):
+            commands=[]
+            def read(args, **kwargs):
+                commands.append(args)
+                if mode=='unavailable':raise OSError('SSH unavailable')
+                if args[1]=='ps':return llm if mode=='absent' else ('not-an-id' if mode=='incomplete' else llm+'\n'+media)
+                if args[-1]=='serving-llm':return json.dumps([{'Id':llm}])
+                return json.dumps([{'Id':media,'Image':expected['image'] if mode=='present' else 'sha256:'+'d'*64,'State':{'Running':False},'HostConfig':{'PortBindings':{'8188/tcp':[{'HostPort':'8188'}]}}}])
+            with self.subTest(mode=mode),patch.object(remote.subprocess,'check_output',side_effect=read):
+                if mode in ('unavailable','incomplete'):
+                    with self.assertRaises((OSError,ValueError)):remote.audit_media(payload)
+                else:self.assertEqual(remote.audit_media(payload)['state'],mode)
+            self.assertTrue(all(c[0]=='docker' and c[1] in ('ps','inspect') for c in commands))
+
     def test_missing_media_discovery_is_read_only_and_refuses_ambiguous_or_active_sources(self):
         current, old, candidate = 'a'*64, 'b'*64, 'c'*64
         request = {'engine':'h3', 'missing_container':old, 'llm_container':current}

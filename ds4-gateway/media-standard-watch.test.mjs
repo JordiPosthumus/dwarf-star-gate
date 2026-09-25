@@ -62,3 +62,26 @@ test('native source repair progresses to exact retry without another owner promp
  f.s.setup.operations[0].retry_ready=true;await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,2);assert.match(f.calls[1][1],/Call setup_media_host/);
  f.s.setup.operations[0].phase='preparing_media';await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,2);
 });
+
+test('an enrolled standard gets one periodic native audit through Genie across reloads',async t=>{
+ const f=fixture(t);for(const m of f.s.hosts[0].members)for(const e of m.engines)e.enrolled=true;
+ const target={key:JSON.stringify(['pair',0,'ace-step']),state:'not_observed',observed_at:null,due:true};f.s.setup.standard_audit={enabled:true,targets:[target]};
+ await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,1);assert.match(f.calls[0][1],/Call audit_media_standard once with no arguments/);
+ await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,1);
+ target.state='present';target.observed_at='2026-01-01T00:00:00Z';target.due=false;
+ const next=new MediaStandardWatch(f.options);await next.tick();assert.equal(next.status().audit.phase,'observed');assert.equal(f.calls.length,1);
+ target.due=true;await next.tick();assert.equal(f.calls.length,2);
+});
+test('absent and unavailable audits request read-only diagnosis without new setup',async t=>{
+ const f=fixture(t);f.config.media_jobs.standard.targets.splice(1);f.s.hosts[0].members[0].engines[0].enrolled=true;
+ f.s.setup.standard_audit={enabled:true,targets:[{key:JSON.stringify(['pair',0,'ace-step']),state:'absent',observed_at:'2026-01-01T00:00:00Z',due:false}]};
+ const w=new MediaStandardWatch(f.options);await w.tick();assert.match(f.calls[0][1],/Do not replace or reinstall/);assert.equal(w.status().targets[0].phase,'needs_attention');
+ await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,1);
+});
+
+test('lost audit submission retains request identity and missing targets do not starve installed-engine audits',async t=>{
+ const f=fixture(t);f.s.hosts[0].members[0].engines[0].enrolled=true;f.s.hosts[0].members[1].engines[1].allowed=false;
+ f.s.setup.standard_audit={enabled:true,targets:[{key:JSON.stringify(['pair',0,'ace-step']),state:'not_observed',observed_at:null,due:true}]};
+ f.chat.submit=(...args)=>{f.calls.push(args);if(f.calls.length===1)throw Error('Lost response');};
+ await new MediaStandardWatch(f.options).tick();await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,2);assert.deepEqual(f.calls[0],f.calls[1]);
+});
