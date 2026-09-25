@@ -173,7 +173,8 @@ class PairReader:
         source = Path(__file__).with_name('recovery-docker.py').read_bytes()
         program = "import base64,json,sys\nfrom pathlib import Path\nnamespace={'__name__':'pair_reader'}\n"
         program += "exec(base64.b64decode(" + repr(base64.b64encode(source).decode()) + "),namespace)\n"
-        program += "payload=json.loads(sys.argv[1]);service=namespace['inspect']({'container':payload['container'],'port':payload['port']})\n"
+        program += "payload=json.loads(sys.argv[1]);initial=json.loads(namespace['run'](['docker','inspect',payload['container']]))[0]\n"
+        program += "service=namespace['inspect']({'container':initial['Id'],'port':payload['port']})\n"
         program += "container=json.loads(namespace['run'](['docker','inspect',payload['container']]))[0]\n"
         program += "epoch=namespace['fingerprint']([container['Id'],container['State'].get('StartedAt'),container['State'].get('FinishedAt')])\n"
         program += "if service['stopped_epoch']!=epoch:raise ValueError('pair_changed_during_inspection')\n"

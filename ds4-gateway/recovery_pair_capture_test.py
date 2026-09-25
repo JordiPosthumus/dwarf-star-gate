@@ -1,4 +1,6 @@
 import copy
+import contextlib
+import io
 import fcntl
 import importlib.util
 import json
@@ -9,6 +11,7 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 import unittest
+from unittest.mock import patch
 from recovery_pair_test import Fixture
 from recovery_pair_native import PairReader, capture_pair, private_read, private_save
 
@@ -71,6 +74,44 @@ class CaptureTests(unittest.TestCase):
             binding = copy.deepcopy(self.binding)
             binding['members'][0][key] = value
             with self.assertRaises(ValueError): PairReader(binding)
+
+    def test_actual_remote_program_resolves_name_to_id_and_refuses_name_retargeting(self):
+        for drift in (False, True):
+            with self.subTest(drift=drift), tempfile.TemporaryDirectory() as tmp:
+                binding = copy.deepcopy(self.binding)
+                binding['members'][0].update(container='named-head', recipe_root=tmp)
+                container = copy.deepcopy(self.f.observations[0]['container'])
+                container['Mounts'] = []
+                for name in ('.env', 'start.sh', '.glm53-exl3-head.inner.sh'): (Path(tmp) / name).write_text('fixture bytes')
+                calls = []
+                def execute(args, **kwargs):
+                    calls.append(args)
+                    if args[:2] == ['docker', 'inspect']:
+                        row = copy.deepcopy(container)
+                        if drift and len([c for c in calls if c[:2] == ['docker', 'inspect']]) == 3: row['Id'] = '9' * 64
+                        out = json.dumps([row])
+                    elif args[:2] == ['docker', 'exec']: out = 'true'
+                    elif args[:2] == ['docker', 'logs']: out = ''
+                    else: self.fail('Unexpected native command')
+                    return subprocess.CompletedProcess(args, 0, out.encode(), b'')
+                reader = PairReader(binding)
+                original = Path.read_bytes
+                def remote(host, args, timeout=120):
+                    output = io.StringIO()
+                    with patch('subprocess.run', side_effect=execute), patch.object(sys, 'argv', ['collector', args[4]]), contextlib.redirect_stdout(output), \
+                         patch.object(Path, 'read_bytes', lambda p: b'fixture-machine' if str(p) == '/etc/machine-id' else original(p)):
+                        exec(compile(args[3], '<native-pair-collector>', 'exec'), {})
+                    return output.getvalue()
+                reader.remote = remote
+                if drift:
+                    with self.assertRaisesRegex(ValueError, 'pair_changed_during_inspection'): reader.inspect_member(binding['members'][0])
+                else:
+                    row = reader.inspect_member(binding['members'][0])
+                    self.assertEqual(row['container']['Id'], container['Id'])
+                    self.assertTrue(row['listener_owned'])
+                    self.assertEqual(len(row['files']), 3)
+                inspections = [c[-1] for c in calls if c[:2] == ['docker', 'inspect']]
+                self.assertEqual(inspections, ['named-head', container['Id'], 'named-head'])
 
     def request(self, root):
         folder = root / self.f.request['action_id']
