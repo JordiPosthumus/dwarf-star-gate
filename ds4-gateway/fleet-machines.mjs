@@ -3,6 +3,7 @@
 // their own lists. A worker id not listed here is itself a machine (single
 // Spark workers and generic test hosts).
 export const MACHINE_GROUPS={
+  spark1:['spark1'],spark2:['spark2'],spark3:['spark3'],spark4:['spark4'],
   'glm53f-m3':['m3-ultra'],
   'ds41-m3':['m3-ultra'],
   'mimo-m3':['m3-ultra'],
