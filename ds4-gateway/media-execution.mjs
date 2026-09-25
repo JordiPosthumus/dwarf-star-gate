@@ -1,3 +1,4 @@
+import {mediaEngine,mediaMemberInput} from './media-enrollment.mjs';
 import {machinesFor} from './fleet-machines.mjs';
 import {mediaPair} from './media-pair.mjs';
 // One detached process owns a selected job/batch and its single LLM return.
@@ -30,14 +31,14 @@ export function createMediaExecution(config,jobs,{isEnabled=()=>false,launchRunn
     status:()=>({configured:!!jobs,enabled:isEnabled(),automatic_dispatch_enabled:config.media_jobs?.automatic_dispatch!==false,batch_jobs_supported:true,jobs:jobs?.list().map(j=>({...j,input_requirements:mediaInputRequirements(jobs.get(j.id))}))??[],workers:Object.entries(targets()).map(([id,t])=>({id,kinds:Object.keys(t.engines??{}).filter(kind=>isAllowed(id,kind)),busy:jobs?busy(id):false}))}),
     async start(input){
       if(!jobs||!isEnabled())throw new Error('Media execution is switched off.');
-      if(!input||!['job_id,worker_id','following_job_ids,job_id,worker_id'].includes(Object.keys(input).sort().join(',')))throw new Error('Choose a queued job and enrolled worker.');
+      if(!input||!(mediaMemberInput(input,'job_id,worker_id')||mediaMemberInput(input,'following_job_ids,job_id,worker_id')))throw new Error('Choose a queued job and enrolled worker.');
       const following=input.following_job_ids===undefined?[]:input.following_job_ids;
       if(!Array.isArray(following)||following.length>7)throw new Error('Choose at most seven following jobs.');
       const ids=[input.job_id,...following];
       if(new Set(ids).size!==ids.length)throw new Error('Choose each job only once.');
       const job=jobs.get(input.job_id);
       if(job.execution){
-        if(job.execution.worker_id!==input.worker_id)throw new Error('This job already belongs to another worker.');
+        if(job.execution.worker_id!==input.worker_id||input.member!==undefined&&job.execution.member!==input.member)throw new Error('This job already belongs to another worker.');
         if(input.following_job_ids!==undefined&&JSON.stringify(ids)!==JSON.stringify(job.execution.batch_job_ids??[job.id]))throw new Error('This job already belongs to a different batch; read its existing execution.');
         return jobs.list().find(j=>j.id===job.id);
       }
@@ -46,8 +47,9 @@ export function createMediaExecution(config,jobs,{isEnabled=()=>false,launchRunn
       const selected=ids.map(id=>jobs.get(id));
       if(selected.some(j=>j.state!=='queued'||j.execution||j.kind!==job.kind||j.priority!==job.priority))throw new Error('Batch jobs must be unassigned, queued, and use the same engine and priority.');
       if(busy(input.worker_id))throw new Error('This worker already has a media operation.');
-      const target=targets()[input.worker_id],engine=target?.engines?.[job.kind];
+      const engine=mediaEngine(config,input.worker_id,job.kind,input.member);
       const enrolled=mediaPair(config,workers().find(w=>w.id===input.worker_id)),pair=enrolled?{...enrolled,media_member:engine?.member??0}:null;
+      if(input.member!==undefined&&!pair)throw Error('Explicit member selection requires a matching paired LLM');
       if(pair&&![0,1].includes(pair.media_member))throw Error('Invalid media pair member');
       const member=pair?.members[pair.media_member];
       const recovery=config.recovery?.workers?.find(w=>w.id===input.worker_id);
@@ -57,12 +59,12 @@ export function createMediaExecution(config,jobs,{isEnabled=()=>false,launchRunn
       if(engine.kind!==(job.kind==='video'?'comfyui':'ace-step')||!/^[a-f0-9]{64}$/.test(engine.container)||!/^sha256:[a-f0-9]{64}$/.test(engine.image)||!Number.isSafeInteger(engine.port)||engine.port<1||engine.port>65535)throw new Error('Enroll an exact native media container, image and port.');
       const ssh=member?.ssh??inspection.ssh?.[0];if(typeof ssh!=='string'||!/^[a-zA-Z0-9][a-zA-Z0-9_.@-]*$/.test(ssh)||(!pair&&!recovery.ssh))throw new Error('Media execution needs its enrolled SSH host.');
       const folder=jobs.executionFolder(job.id);fs.mkdirSync(folder,{recursive:true,mode:0o700});
-      const plan={operation_id:job.id,...(ids.length>1?{job_ids:ids}:{}),worker_id:input.worker_id,separate_workers:workers().filter(w=>!machinesFor(w.id).some(m=>machinesFor(input.worker_id).includes(m))).map(w=>w.id),host:ssh,llm_container:member?.container??inspection.container,engine,python:config.genie_chat.python,control_socket:config.control_socket,
+      const plan={operation_id:job.id,...(ids.length>1?{job_ids:ids}:{}),worker_id:input.worker_id,separate_workers:workers().filter(w=>!machinesFor(w.id,config).some(m=>machinesFor(input.worker_id,config).includes(m))).map(w=>w.id),host:ssh,llm_container:member?.container??inspection.container,engine,python:config.genie_chat.python,control_socket:config.control_socket,
         recovery:pair?{profile:'glm53-docker-pair',url:pair.worker_binding.url}:recovery,...(pair?{llm_pair:pair,endpoint:workers().find(w=>w.id===input.worker_id)}:{}),model:config.model,context_length:config.context_length,results_directory:jobs.results.directory,inputs_directory:jobs.inputs.directory};
       saveMediaReceipt(folder,'plan.json',plan);
       saveMediaReceipt(folder,'media-jobs.json',{schema:1,jobs:selected});
       // Persist ownership before spawning. Lost acknowledgement never launches twice.
-      jobs.assignExecution(ids,{worker_id:input.worker_id,...(ids.length>1?{operation_id:job.id,batch_job_ids:ids}:{}),phase:'starting',at:new Date().toISOString()});
+      jobs.assignExecution(ids,{worker_id:input.worker_id,...(pair?{member:pair.media_member}:{}),...(ids.length>1?{operation_id:job.id,batch_job_ids:ids}:{}),phase:'starting',at:new Date().toISOString()});
       try{saveMediaReceipt(folder,'launched.json',await launchRunner(folder));}
       catch(error){saveMediaReceipt(folder,'progress.json',{phase:'launch_uncertain',detail:'Runner launch was not confirmed. Inspect this operation before any further action.',at:new Date().toISOString()});throw error;}
       return jobs.list().find(j=>j.id===job.id);

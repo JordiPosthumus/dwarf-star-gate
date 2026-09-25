@@ -1,3 +1,4 @@
+import {mediaEngine} from './media-enrollment.mjs';
 import {mediaPair} from './media-pair.mjs';
 import fs from 'node:fs';
 import {randomUUID} from 'node:crypto';
@@ -27,11 +28,12 @@ export function createMediaHosts(config,store,{workers,binding,enrollmentWorker=
       // Media borrows whole physical machines. The borrowed host's machines may
       // not overlap the machines of the LLM that must keep serving (owner
       // decision: a Spark pair goes down together, the other pair stays up).
-      const otherServingKeepsMachines=w=>{const taken=machinesFor(w.id);return fleet.some(other=>other.id!==w.id&&serving(other)&&!machinesFor(other.id).some(machine=>taken.includes(machine)));};
+      const otherServingKeepsMachines=w=>{const taken=machinesFor(w.id,config);return fleet.some(other=>other.id!==w.id&&serving(other)&&!machinesFor(other.id,config).some(machine=>taken.includes(machine)));};
       return {media_host_controls_version:1,engines:mediaEngines,hosts:fleet.map(w=>{
         const active=jobs.find(j=>j.execution?.worker_id===w.id&&!terminal.has(j.execution.phase));
-        const machines=machinesFor(w.id);
-        return {id:w.id,machines,pair:machines.length>1,llm_serving:serving(w),active_requests:w.load??0,queued_requests:w.queued??0,execution:active?{job_id:active.id,...active.execution}:null,
+        const machines=machinesFor(w.id,config),pairEnrollment=mediaPair(config,enrollmentWorker(w.id));
+        const members=pairEnrollment?pairEnrollment.members.map((m,member)=>({member,machine:machines[member]??m.ssh,engines:mediaEngines.filter(e=>e.supported).map(e=>{const engine=mediaEngine(config,w.id,e.kind,member),permission=allowed(w.id,e.kind);return {id:e.id,kind:e.kind,allowed:permission,enrolled:!!engine,ready:!!(engine&&permission&&!active&&borrowable(w)&&otherServingKeepsMachines(w))};})})):undefined;
+        return {id:w.id,machines,...(members?{members}:{}),pair:machines.length>1,llm_serving:serving(w),active_requests:w.load??0,queued_requests:w.queued??0,execution:active?{job_id:active.id,...active.execution}:null,
           engines:mediaEngines.filter(e=>e.supported).map(e=>{
             const installed=enrolled(w.id,e.kind),permission=allowed(w.id,e.kind);
             const recovery=config.recovery?.workers?.find(r=>r.id===w.id),inspection=config.genie_chat?.inspection?.workers?.[w.id];

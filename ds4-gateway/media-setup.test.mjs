@@ -107,3 +107,24 @@ test('paired setup assigns ACE to rank and saves its host member with native qua
  f.complete(row.operation_id);await service.finish({operation_id:row.operation_id});assert.equal(f.config.media_jobs.workers.one.engines.music.member,1);
  const again=createMediaSetup(f.config,f.store,f.options);assert.equal(again.status().hosts[0].error,null);
 });
+
+test('each physical member can qualify the same engine without replacing the default or replaying work',async t=>{
+ const f=fixture(t),w=f.workers[0];f.config.recovery.workers=[];
+ f.config.media_jobs.pairs={one:{kind:'glm53-docker-pair',model:'GLM',worker_binding:{id:w.id,url:w.url,ssh:w.ssh},members:[{ssh:'fixture-host',container:'a'.repeat(64)},{ssh:'fixture-rank',container:'rank'}],engine_members:{music:1,video:0}}};
+ const baseline=structuredClone(f.config),service=createMediaSetup(f.config,f.store,f.options);
+ const first=await service.start({worker_id:'one',engine:'ace-step',member:0});
+ await assert.rejects(service.start({worker_id:'one',engine:'ace-step',member:1}),/already owns/);
+ f.complete(first.operation_id);await service.finish({operation_id:first.operation_id});
+ assert.equal(f.config.media_jobs.workers.one.engines.music.member,0);
+ const second=await service.start({worker_id:'one',engine:'ace-step',member:1});
+ assert.notEqual(second.operation_id,first.operation_id);
+ const plan=JSON.parse(fs.readFileSync(path.join(f.options.directory,second.operation_id,'plan.json')));assert.equal(plan.target.ssh,'fixture-rank');
+ f.complete(second.operation_id);await service.finish({operation_id:second.operation_id});
+ assert.equal(f.config.media_jobs.workers.one.engines.music.member,0,'First default remains intact');
+ assert.equal(f.config.media_jobs.workers.one.member_engines[1].music.member,1);
+ for(const member of [0,1])assert.equal((await service.start({worker_id:'one',engine:'ace-step',member})).phase,'enrolled');
+ assert.equal(f.launches(),2);
+ const restarted=createMediaSetup(baseline,f.store,f.options);assert.equal(restarted.status().hosts[0].error,null);
+ for(const member of [0,1])assert.equal(baseline.media_jobs.workers.one.member_engines[member].music.member,member);
+ await assert.rejects(service.start({worker_id:'one',engine:'h3',member:2}));
+});
