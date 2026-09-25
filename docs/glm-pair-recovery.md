@@ -87,7 +87,10 @@ enrollment or mutation authority.
 
 Add an explicit entry to the private `recovery.workers` configuration with:
 
-- The registered worker's exact `id`, `url`, `backend`, head `ssh` and `remote_port`.
+- The registered worker's exact `id`, `url`, `backend` and, for a tunnel route,
+  its existing `ssh` and `remote_port`. A direct HTTP worker keeps its current
+  serving URL and has no routing SSH fields; the private pair enrollment supplies
+  its native SSH targets. Its native head port must match the endpoint port.
 - `adapter: "docker-pair"`, `transport: "local"`, `verification: "glm53_vllm"`
   and `exclusive: true`.
 - Absolute paths for `python`, the repository's `ds4-gateway/recovery-pair.py`

@@ -43,7 +43,7 @@ export function recoveryConfig(raw={}) {
     const worker=workerConfig(Object.fromEntries(['id','url','backend','ssh','ssh_fallbacks','remote_port'].filter(k=>entry[k]!==undefined).map(k=>[k,entry[k]])));
     const local=entry.transport==='local',pair=entry.adapter==='docker-pair';
     if(entry.transport!==undefined&&!['ssh','local'].includes(entry.transport))throw new Error('Recovery transport must be ssh or local');
-    if(!['systemd-user','launchd','docker','docker-pair','omlx'].includes(entry.adapter)||(!local&&!worker.ssh)||(local&&(!['launchd','omlx','docker-pair'].includes(entry.adapter)||(!pair&&worker.ssh)))||(['omlx','docker-pair'].includes(entry.adapter)&&!local)||(pair&&!worker.ssh))throw new Error('Recovery requires an enrolled SSH adapter or an explicitly local launchd, oMLX or Docker-pair adapter');
+    if(!['systemd-user','launchd','docker','docker-pair','omlx'].includes(entry.adapter)||(!local&&!worker.ssh)||(local&&(!['launchd','omlx','docker-pair'].includes(entry.adapter)||(!pair&&worker.ssh)))||(['omlx','docker-pair'].includes(entry.adapter)&&!local))throw new Error('Recovery requires an enrolled SSH adapter or an explicitly local launchd, oMLX or Docker-pair adapter');
     if(pair?!/^[a-f0-9]{64}$/.test(entry.pair_config_sha256??''):entry.pair_config_sha256!==undefined)throw new Error('Pair recovery requires its exact private configuration hash');
     if(pair&&entry.verification!=='glm53_vllm')throw new Error('Paired recovery requires explicit GLM verification');
     if(entry.verification!==undefined&&!['ds4','qwen_vllm','qwen_omlx','glm53_vllm'].includes(entry.verification))throw new Error('Unsupported recovery verification');
@@ -92,10 +92,14 @@ function localInvocation(config,{platform=process.platform,uid=process.getuid?.(
     }
     const fd=fs.openSync(config.config,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);
     let text;try{const buf=Buffer.alloc(maximum+1),size=fs.readSync(fd,buf,0,buf.length,0);if(size>maximum)throw new Error();text=buf.subarray(0,size).toString('utf8');}finally{fs.closeSync(fd);}
-    const enrolled=JSON.parse(text),worker=workerConfig({id:config.id,url:config.url});
+    const enrolled=JSON.parse(text),worker=workerConfig({id:config.id,url:config.url,...(config.backend?{backend:config.backend}:{})});
     if(pair){
       if(createHash('sha256').update(text).digest('hex')!==config.pair_config_sha256)throw new Error();
-      if(enrolled.schema!==1||enrolled.enrollment?.worker_id!==config.id||enrolled.enrollment.port!==(config.remote_port??8000)||enrolled.enrollment.members?.[0]?.ssh!==config.ssh)throw new Error();
+      // Direct HTTP registrations have no SSH route. Their separately pinned
+      // pair enrollment supplies native SSH identities without changing routing.
+      const endpoint=new URL(worker.url),port=config.ssh?(config.remote_port??8000):Number(endpoint.port||(endpoint.protocol==='https:'?443:80));
+      if(enrolled.schema!==1||enrolled.enrollment?.worker_id!==config.id||enrolled.enrollment.port!==port||
+        (config.ssh&&enrolled.enrollment.members?.[0]?.ssh!==config.ssh))throw new Error();
     }else if(enrolled.port!==Number(new URL(worker.url).port))throw new Error();
     return {file:config.python,args:['-I',config.helper,config.config]};
   }catch(error){
