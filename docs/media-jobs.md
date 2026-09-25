@@ -583,3 +583,14 @@ container environments and commands are excluded.
 This standard watcher covers enrolled media setup. It does not yet autonomously
 select, qualify and promote arbitrary upstream recipe releases. That improvement
 loop is a separate requirement; having trial and rollout tools is insufficient.
+
+A configured reuse candidate can be corrected after a confirmed read-only
+preflight failure. The executor compares the prior selection while requiring all
+other worker, LLM, recovery and engine bindings to remain identical. Only an
+exited attempt with no maintenance, stop or preparation intent becomes
+`retry_ready`. The standard watcher then asks Genie to retry that same operation
+with its exact failure timestamp and archived receipts. Changing a source is a
+trusted configuration action; a port candidate alone never changes it. Setting
+an absent candidate to `null` selects a separate fresh preparation and preserves
+the old records and files. A failed or uncertain installation cannot use this
+path.

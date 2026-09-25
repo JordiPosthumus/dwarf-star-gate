@@ -46,7 +46,8 @@ export function createMediaResources(config,{isEnabled=()=>true,inspect=inspectM
       try{
         const observed=await inspect(target);
         const compatible=observed.system==='Linux'&&['arm64','aarch64'].includes(observed.architecture)&&['arm64','aarch64'].includes(observed.docker_architecture)&&observed.gpu_names?.length>0&&observed.gpu_names.every(n=>n.includes('GB10'));
-        const row={worker_id:id,...(member!==undefined?{member}:{}),state:'observed',...observed,recipe_platform_matches:compatible,recipes:mediaRecipeResources,setup:compatible?'Matches the shipped Spark recipe platform. New installation needs destination/build/output space checks and native qualification.':'The shipped Spark recipes are not verified for this observed platform. Existing engine enrollments and serving capabilities are unchanged.'};
+        const candidates=Object.entries(config.media_jobs?.reuse?.[id]?.[member??0]??{}).filter(([,v])=>v).map(([engine,v])=>({engine,container:v.container,image:v.image,source:v.source??'retained_preparation'}));
+        const row={worker_id:id,...(member!==undefined?{member}:{}),state:'observed',...observed,configured_reuse_candidates:candidates,recipe_platform_matches:compatible,recipes:mediaRecipeResources,setup:compatible?'Matches the shipped Spark recipe platform. New installation needs destination/build/output space checks and native qualification.':'The shipped Spark recipes are not verified for this observed platform. Existing engine enrollments and serving capabilities are unchanged.'};
         observations.set(key,row);return row;
       }catch(error){observations.set(key,{worker_id:id,...(member!==undefined?{member}:{}),state:'unavailable',observed_at:new Date().toISOString(),error:error.message});throw error;}
       finally{pending.delete(key);}

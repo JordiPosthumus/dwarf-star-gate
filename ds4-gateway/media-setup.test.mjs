@@ -167,3 +167,30 @@ test('retained preparation is pinned to its exact engine and still requires nati
   const current={state:'prepared_stopped',llm_container:reuse.llm_container,source_llm_container:'old-removed-llm',engines:{'ace-step':reuse}};
   assert.equal(selectedMediaPreparation(current,reuse).source_llm_container,'old-removed-llm');
  });
+
+test('corrected reuse selection can retry unchanged preflight only, with every other binding preserved',async t=>{
+ for(const changed of ['candidate','fresh','route','other-engine','intent','runner']){
+  const f=fixture(t),e=f.fresh.engines['ace-step'];
+  f.config.media_jobs.reuse={one:{0:{'ace-step':{directory:'/retained',...Object.fromEntries(['container','image','kind','port'].map(k=>[k,e[k]]))},h3:null}}};
+  const service=createMediaSetup(f.config,f.store,f.options),input={worker_id:'one',engine:'ace-step'},first=await service.start(input),folder=path.join(f.options.directory,first.operation_id),at='2026-01-01T00:00:00.000Z';
+  saveMediaReceipt(folder,'progress.json',{phase:'failed_unchanged',at});saveMediaReceipt(folder,'launched.json',{pid:2147483647});
+  f.config.media_jobs.reuse.one[0]['ace-step']=changed==='fresh'?null:{source:'docker',container:'8'.repeat(64),image:'sha256:'+'9'.repeat(64),kind:'ace-step',port:8002};
+  if(changed==='route')f.workers[0].url='http://changed';
+  if(changed==='other-engine')f.config.media_jobs.reuse.one[0].h3={source:'docker'};
+  if(changed==='intent')saveMediaReceipt(folder,'prepare-intent.json',{});
+  if(changed==='runner')saveMediaReceipt(folder,'launched.json',{pid:process.pid});
+  const ready=service.status().operations[0].retry_ready===true;
+  if(['candidate','fresh'].includes(changed)){
+   assert.equal(ready,true);const next=await service.start({...input,expected_failed_at:at});assert.equal(next.operation_id,first.operation_id);assert.equal(next.attempt,2);
+   assert.ok(fs.existsSync(path.join(f.options.directory,'history',first.operation_id,'attempt-1','plan.json')));
+  }else {assert.equal(ready,false);await assert.rejects(service.start({...input,expected_failed_at:at}));assert.equal(f.launches(),1);}
+ }
+});
+
+test('unchanged failures identify media separately from the inspected current LLM',async t=>{
+ const f=fixture(t),e=f.fresh.engines['ace-step'];f.config.media_jobs.reuse={one:{0:{'ace-step':{source:'docker',...Object.fromEntries(['container','image','kind','port'].map(k=>[k,e[k]]))}}}};
+ const row=await f.service.start({worker_id:'one',engine:'ace-step'}),folder=path.join(f.options.directory,row.operation_id);
+ saveMediaReceipt(folder,'progress.json',{phase:'failed_unchanged',at:'2026-01-01T00:00:00Z'});saveMediaReceipt(folder,'llm-resolution.json',{container:'a'.repeat(64)});
+ const evidence=f.service.status().operations[0].failure_context;assert.equal(evidence.current_llm_container,'a'.repeat(64));assert.equal(evidence.selected_media_container,'b'.repeat(64));assert.equal(evidence.llm_stop_started,false);
+ saveMediaReceipt(folder,'prepare-intent.json',{});assert.equal(f.service.status().operations[0].failure_context,undefined);
+});
