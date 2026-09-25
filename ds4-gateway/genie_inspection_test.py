@@ -365,3 +365,28 @@ class TrialProgress(unittest.TestCase):
   base='/srv/example/.local/share/dsg-recipe-trials/'
   self.assertIsNone(m.inspect_trial_progress('/srv/example/recipe',[{'Source':base+'12345678-abcd-1234-abcd-123456789012/candidate/a'},{'Source':base+'12345678-abcd-1234-abcd-123456789013/candidate/b'}]))
   self.assertIsNone(m.inspect_trial_progress('/srv/example/recipe',[{'Source':base+'../candidate/private'}]))
+
+class PeerInspection(unittest.TestCase):
+ def test_peer_is_resolved_from_enrollment_and_pinned_to_observed_machine(self):
+  from types import SimpleNamespace
+  answers=[SimpleNamespace(stdout='hostname example.invalid\nuser fixture\nport 22\n'),SimpleNamespace(stdout='a'*64+'\n')]
+  with patch('subprocess.run',side_effect=answers) as run:
+   result=m.peer_parameters({'ssh':['enrolled-peer']})
+   self.assertEqual(result,{'destination':'fixture@example.invalid','port':22,'machine_sha256':'a'*64})
+   self.assertEqual(run.call_args_list[0].args[0],['ssh','-G','enrolled-peer'])
+   self.assertIn('StrictHostKeyChecking=yes',run.call_args.args[0]);self.assertIn('UpdateHostKeys=no',run.call_args.args[0])
+  with patch('subprocess.run') as run:
+   for alias in ['-oProxyCommand=bad','host;bad']:
+    with self.assertRaises(ValueError):m.peer_parameters({'ssh':[alias]})
+   run.assert_not_called()
+ def test_peer_identity_mismatch_is_not_reported_as_connected(self):
+  import io,contextlib
+  from types import SimpleNamespace
+  c={'Id':'immutable-id','Image':'image-id','State':{'Running':False,'StartedAt':'dated'},'Config':{'Entrypoint':['bash'],'Cmd':['start.sh'],'Env':[]},'HostConfig':{},'Mounts':[]}
+  def output(argv,**kwargs):return json.dumps([{'Id':'image-id','Created':'dated','Size':12345}]) if argv[:3]==('docker','image','inspect') else json.dumps([c])
+  for actual,expected in [('a',True),('b',False)]:
+   stdout=io.StringIO()
+   def run(argv,**kwargs):return SimpleNamespace(returncode=0,stdout=actual*64+'\n' if argv[0]=='ssh' else '',stderr='')
+   payload={'container':'fixture','peer':{'destination':'fixture@example.invalid','port':22,'machine_sha256':'a'*64}}
+   with patch('subprocess.check_output',side_effect=output),patch('subprocess.run',side_effect=run),patch('sys.stdin',io.StringIO(json.dumps(payload))),contextlib.redirect_stdout(stdout):exec(compile(m.COLLECTOR,'collector','exec'),{})
+   result=json.loads(stdout.getvalue());self.assertEqual(result['peer_probe']['machine_matches'],expected);self.assertEqual(result['image']['size_bytes'],12345)

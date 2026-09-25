@@ -200,6 +200,20 @@ def inspect_trial_progress(recipe_root, mounts, container_id=None):
     except Exception:result['candidate_start_tail']='Unavailable'
     return result
 
+def peer_parameters(target):
+    aliases=target.get('ssh',[])
+    if not isinstance(aliases,list) or not aliases or not re.fullmatch(r'[A-Za-z0-9][\w.@-]{0,252}',aliases[0]):raise ValueError('Use an enrolled SSH peer')
+    alias=aliases[0]
+    resolved=subprocess.run(['ssh','-G',alias],text=True,capture_output=True,timeout=10,check=True)
+    fields=dict(line.split(' ',1) for line in resolved.stdout.splitlines() if ' ' in line)
+    host,user,port=fields.get('hostname',''),fields.get('user',''),fields.get('port','22')
+    if not re.fullmatch(r'[A-Za-z0-9][\w.-]{0,252}',host) or not re.fullmatch(r'[A-Za-z0-9_][\w.-]{0,63}',user) or not port.isdigit() or not 1<=int(port)<=65535:raise ValueError('Direct peer destination unavailable')
+    command="python3 -c 'import hashlib,pathlib; print(hashlib.sha256(pathlib.Path(\"/etc/machine-id\").read_bytes()).hexdigest())'"
+    result=subprocess.run(['ssh','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','UpdateHostKeys=no','-o','ConnectTimeout=8',alias,command],text=True,capture_output=True,timeout=15,check=True)
+    fingerprint=result.stdout.strip()
+    if not re.fullmatch(r'[a-f0-9]{64}',fingerprint):raise ValueError('Peer machine identity unavailable')
+    return {'destination':user+'@'+host,'port':int(port),'machine_sha256':fingerprint}
+
 # Arguments arrive as JSON on stdin, never interpolated into a remote shell command.
 COLLECTOR = inspect.getsource(inspect_trial_progress)+'\nSOURCE_QUERY = '+repr(SOURCE_QUERY)+'\nMODEL_CONFIG_QUERY = '+repr(MODEL_CONFIG_QUERY)+'\nRUNTIME_QUERY = '+repr(RUNTIME_QUERY)+'\nCACHE_QUERY = '+repr(CACHE_QUERY)+'\n'+r'''
 import sys,json,subprocess,pathlib,re,hashlib,datetime,stat
@@ -344,6 +358,17 @@ if p.get('recipe_root'):
   recipe['host_resources']={'memory_bytes':mem,'disk_free_bytes':shutil.disk_usage(root).free}
  except (OSError,ValueError):recipe['host_resources']={'state':'unavailable'}
  recipe['scope']='Enrolled recipe files read without sourcing or executing them, Git revision on disk, and host resources. Secrets redacted; file hashes cover original bytes. No backup, inference or restoration proof.'
+peer_probe=None
+if p.get('peer'):
+ peer=p['peer'];peer_probe={'state':'unavailable','scope':'Read-only direct SSH reachability and exact machine identity. No file transfer, key enrollment, installation or service changes.'}
+ try:
+  import shlex
+  code='import hashlib,pathlib; print(hashlib.sha256(pathlib.Path("/etc/machine-id").read_bytes()).hexdigest())'
+  probe=subprocess.run(['ssh','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','UpdateHostKeys=no','-o','ConnectTimeout=8','-p',str(peer['port']),'--',peer['destination'],shlex.join(['python3','-I','-c',code])],text=True,capture_output=True,timeout=15)
+  actual=probe.stdout.strip()
+  peer_probe.update(state='verified' if probe.returncode==0 and actual==peer['machine_sha256'] else 'unavailable',machine_matches=probe.returncode==0 and actual==peer['machine_sha256'],exit_code=probe.returncode)
+  if probe.returncode:peer_probe['detail']='\n'.join('<credential-related line withheld>' if secret.search(line) else line for line in probe.stderr.splitlines())[-1500:]
+ except Exception:pass
 recent_runtime_log={'state':'unavailable'}
 try:
  log=subprocess.run(['docker','logs','--since','30m','--tail','120',c['Id']],text=True,capture_output=True,timeout=20)
@@ -352,7 +377,7 @@ try:
   text='\n'.join('<credential-related line withheld>' if secret.search(line) else line for line in lines)
   recent_runtime_log={'state':'read','container':c['Id'],'tail':text[-16000:],'truncated':len(text)>16000,'scope':'At most 120 recent container log lines from the last 30 minutes. Logs are dated evidence, not a health check or proof that an error remains active.'}
 except Exception:pass
-print(json.dumps({'observed_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'container':{'id':c['Id'],'image_id':c['Image'],'running':c['State']['Running'],'started_at':c['State']['StartedAt'],'entrypoint':config.get('Entrypoint'),'command':cmd,'environment':env,'mounts':c['Mounts'],'port_bindings':c['HostConfig'].get('PortBindings'),'restart_policy':c['HostConfig'].get('RestartPolicy'),'ipc_mode':c['HostConfig'].get('IpcMode'),'shm_size':c['HostConfig'].get('ShmSize'),'device_requests':c['HostConfig'].get('DeviceRequests')},'image':{'id':i['Id'],'created':i['Created'],'repo_digests':i.get('RepoDigests',[])},'recipe':recipe,'recipe_trial':inspect_trial_progress(p.get('recipe_root'),c.get('Mounts',[]),c.get('Id')),'recipe_stamp':(i.get('Config',{}).get('Labels') or {}).get('glm53.recipe.stamp'),'packages':packages,'model_config':model_config,'engine_runtime':engine_runtime,'launcher':launcher,'recent_runtime_log':recent_runtime_log,**({'sources':sources} if sources is not None else {}),'scope':'Live Docker metadata, launcher bytes, separately labelled installed distribution metadata and model configuration on disk. Package versions do not prove build ancestry or custom source integrity. Installed Python source can be requested with source_files and source_window. No inference, restart, weight hash or restoration test. Launch settings and model configuration on disk do not independently prove effective API behavior or kernel dispatch.'}))
+print(json.dumps({'observed_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'container':{'id':c['Id'],'image_id':c['Image'],'running':c['State']['Running'],'started_at':c['State']['StartedAt'],'entrypoint':config.get('Entrypoint'),'command':cmd,'environment':env,'mounts':c['Mounts'],'port_bindings':c['HostConfig'].get('PortBindings'),'restart_policy':c['HostConfig'].get('RestartPolicy'),'ipc_mode':c['HostConfig'].get('IpcMode'),'shm_size':c['HostConfig'].get('ShmSize'),'device_requests':c['HostConfig'].get('DeviceRequests')},'image':{'id':i['Id'],'created':i['Created'],'size_bytes':i.get('Size'),'repo_digests':i.get('RepoDigests',[])},'recipe':recipe,'recipe_trial':inspect_trial_progress(p.get('recipe_root'),c.get('Mounts',[]),c.get('Id')),'recipe_stamp':(i.get('Config',{}).get('Labels') or {}).get('glm53.recipe.stamp'),'packages':packages,'model_config':model_config,'engine_runtime':engine_runtime,'launcher':launcher,'recent_runtime_log':recent_runtime_log,**({'peer_probe':peer_probe} if peer_probe is not None else {}),**({'sources':sources} if sources is not None else {}),'scope':'Live Docker metadata, launcher bytes, separately labelled installed distribution metadata and model configuration on disk. Package versions do not prove build ancestry or custom source integrity. Installed Python source can be requested with source_files and source_window. No inference, restart, weight hash or restoration test. Launch settings and model configuration on disk do not independently prove effective API behavior or kernel dispatch.'}))
 '''
 
 def read_json(file, expected_sha256=None):
@@ -487,7 +512,7 @@ def register_inspection(config, context, emit):
                     references.append({'pointer':pointer,'path':reference['path'],'sha256':reference['sha256']})
                 result={'worker_id':worker,'read_at':at,'record_kind':category,'artifact':artifact,'sha256':reference['sha256'],'hash_matches_record':True,'verified_references':references,'content':scrub(data),'scope':'Dated saved artifact reached through the worker record; every traversed reference matched its recorded hash. Matching bytes do not independently prove its conclusions. A restoration receipt covers only the recorded operation, configuration and checks; it does not prove fresh-machine installation or confer recovery authority. Not fresh server inspection, renewed weight verification, approval or permission to act.'}
             elif kind=='live' and workers.get(worker,{}).get('kind')=='omlx-local':
-                if args.get('selected_default',False) is not False:raise ValueError('Selected Docker images do not apply to a local oMLX installation')
+                if args.get('selected_default',False) is not False or args.get('peer_worker_id') is not None:raise ValueError('Docker image/peer inspection does not apply to a local oMLX installation')
                 result={'worker_id':worker,**inspect_omlx(workers[worker], source_files=source_files, source_window=source_window)}
             else:
                 target=workers.get(worker)
@@ -504,6 +529,10 @@ def register_inspection(config, context, emit):
                 if recipe is not None:
                     if not isinstance(recipe,str) or not recipe.startswith('/') or '\n' in recipe or '..' in Path(recipe).parts:raise ValueError('Invalid enrolled recipe root')
                     payload_config['recipe_root']=recipe
+                if args.get('peer_worker_id') is not None:
+                    peer_id=args['peer_worker_id']
+                    if peer_id not in workers or peer_id==worker or selected:raise ValueError('Choose another enrolled Docker worker')
+                    payload_config['peer']=peer_parameters(workers[peer_id])
                 if source_files is not None:payload_config['source_files']=source_files
                 if source_window is not None:payload_config['source_window']=source_window
                 if selected:
@@ -536,6 +565,7 @@ def register_inspection(config, context, emit):
     for name,kind,description in [('read_server_configuration','records','Read the full private recorded configuration, matching owner-selected defaults and their hashed selection receipts, plus launch recipes and artifact references for a configured worker. Dated records are not live evidence. selected_launch_flags is partial; omitted flags are unknown until checked against the full command or recreation capture. Never publish private fields.'),('inspect_server','live','Inspect the configured worker container and launcher now using a fixed read-only collector. Set selected_default=true to inspect the exact image ID from its owner-selected default and retained containers using that exact image, instead of the running container. Read the configuration first. For running vLLM, engine_runtime.cache_capacity reports current explicit KV token allocation and observation/start times, not a configured limit or cache-hit test. No image pull, container creation, execution of the selected image, or service changes. Metadata is not proof of a historical benchmark or effective generation settings. Supports configured Docker workers and local oMLX installations. selected_default applies only to Docker. For oMLX, inspect_server reads the enrolled launchers/settings with credentials redacted, live model metadata and the current listener; source on disk does not establish the loaded revision.'),('read_server_artifact','artifact','Read a saved baseline_reconciliation manifest, recreation_capture, or restoration_drill receipt referenced by a worker record. serving_flags_restoration reads the proof referenced by restoration.change_classes.serving_flags.drill_reference. restoration_drill uses restoration.drill.receipt_reference, and must have a recorded path and SHA256; a status label or receipt path alone is insufficient. Requires its recorded hash to match. Read the worker configuration first and use the actual record_kind and artifact reference it contains. Do not assume a proposed record or baseline manifest exists. Prefer the small baseline manifest when available; request the larger recreation capture when needed. Dated evidence, not new approval or live verification.')]:
         properties={'worker_id':{'type':'string'}}
         if kind=='live':
+            properties['peer_worker_id']={'type':'string','description':'Optional other enrolled Docker worker. Resolves its existing SSH connection and checks direct SSH from this worker against the same machine identity. Read-only; never enrolls keys, transfers files or changes services.'}
             properties['selected_default']={'type':'boolean','default':False,'description':'Inspect the image named by the matching owner-selected default and its retained container recipes.'}
             properties['source_files']={'type':'array','items':{'type':'string'},'minItems':1,'maxItems':8,'description':'Optional Python paths: vllm/... .py in the current Docker container (256KiB combined), or omlx/... .py in the enrolled local checkout (512KiB combined). Local source_on_disk.changed_python_files and untracked_python_files list current runtime changes. Up to 8 paths; read bytes and hashes without importing/executing them; missing paths reported. Not supported with selected_default. On-disk source does not prove loaded code.'}
             properties['source_window']={'type':'object','properties':{'offset':{'type':'integer','minimum':0},'length':{'type':'integer','minimum':1,'maximum':16000}},'required':['offset','length'],'additionalProperties':False,'description':'Use with ONE source_files path. Recommended for source inspection: start with offset 0, length 4000, then follow next_offset. Returns a text section with full-file hash/size; existing full reads remain available without this option. Large full results may spill to a Hermes cache this profile cannot read; use source_window instead.'}
