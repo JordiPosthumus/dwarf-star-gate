@@ -28,7 +28,7 @@ export async function runMediaSetup(plan,io){
   await maintenance('prepare');assert.equal((await maintenance('transition')).owned,true);
   await unchanged();await io.pair?.check();save('stop-llm-intent.json',{container:plan.llm_container});stopped=true;
   if(io.pair)await io.pair.stop(plan.llm_container);else await stop(plan.llm_container);assert.equal((await inspect(plan.llm_container)).State.Running,false);
-  progress('preparing_media','Building and downloading only the selected media engines.');
+  progress('preparing_media',plan.reuse?'Checking the exact retained media preparation before fresh qualification.':'Building and downloading only the selected media engines.');
   save('prepare-intent.json',{engines:plan.engines,target:plan.target});
   let acknowledgement;
   try{acknowledgement=await io.prepare(plan.llm_container);save('prepare-acknowledgement.json',acknowledgement);}
