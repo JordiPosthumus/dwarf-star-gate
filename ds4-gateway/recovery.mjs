@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { recoveryConfig, recoveryCall } from './recovery-transport.mjs';
-import { verifyRecovery,qwenRecoveryProofValid } from './recovery-verify.mjs';
+import { verifyRecovery,qwenRecoveryProofValid,glmRecoveryProofValid } from './recovery-verify.mjs';
 import {safeNativeRemoval,unavailableNativeRemoval} from './launchd-removal-evidence.mjs';
 import {bootstrapEnrollmentMatches,bootstrapProofValid} from './recovery-bootstrap.mjs';
 import {recoveryOwnership} from './recovery-ownership.mjs';
@@ -239,7 +239,7 @@ export class Recovery {
       state:['queued','starting','restarting','bootstrapping','reconciling','verifying',...terminal].includes(last.state)?last.state:'unknown',
       action:['restart','start','bootstrap','adopt_verify','adopt_restart'].includes(last.service_action)?last.service_action:'unknown',
       recorded_at:Number.isFinite(last.updated_at)?last.updated_at:null,
-      cold_warm_proof_valid:['qwen_vllm','qwen_omlx'].includes(c?.verification)?qwenRecoveryProofValid(last.proof,n.contextLength,c.verification):bootstrapProofValid(last.proof,n.contextLength),
+      cold_warm_proof_valid:c?.verification==='glm53_vllm'?glmRecoveryProofValid(last.proof,n.contextLength):['qwen_vllm','qwen_omlx'].includes(c?.verification)?qwenRecoveryProofValid(last.proof,n.contextLength,c.verification):bootstrapProofValid(last.proof,n.contextLength),
       enrolled_identity_fields_match:bound&&last.machine===c.machine&&last.profile===c.profile&&last.context_length===n.contextLength&&last.binding===hash([n.url,n.ssh,n.ssh_fallbacks??[],n.remote_port??8000]),
       observed_instance_matches:usable&&typeof last.new_instance==='string'&&last.new_instance===s?.instance
     }:null;
