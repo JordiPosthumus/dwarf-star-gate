@@ -1,3 +1,4 @@
+import {machinesFor} from './fleet-machines.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -89,3 +90,10 @@ test('custom pair names require configured independent hardware and reserve ever
  assert.equal(manager.busy('my-glm-pair'),true);assert.equal(manager.busy('alias'),true);assert.equal(manager.busy('my-spare'),false);
  await assert.rejects(manager.start({...args,trial_id:'229219df-2284-4b34-a479-aab1e8d51513'}),/already running/);
 });
+
+ test('legacy single Spark aliases share their physical pair reservation despite SSH aliases',()=>{
+  const config={genie_chat:{inspection:{workers:{spark1:{ssh:['head-lan']},spark2:{ssh:['rank-lan']}}}}};
+  assert.deepEqual(machinesFor('spark1',config),['spark1']);
+  assert.deepEqual(machinesFor('spark2',config),['spark2']);
+  assert.ok(machinesFor('glm53f-sparks12',config).includes(machinesFor('spark1',config)[0]));
+ });
