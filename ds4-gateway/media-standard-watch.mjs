@@ -71,10 +71,13 @@ export class MediaStandardWatch {
    if(!chosen&&audit?.enabled&&audit.targets?.some(a=>a.due)&&!s.setup.operations.some(o=>!terminal.has(o.phase))){
     const fingerprint=createHash('sha256').update(JSON.stringify(audit.targets.map(a=>[a.key,a.state,a.observed_at,a.due]))).digest('hex');
     this.state.audit??={};const saved=this.state.audit;
-    if(saved.dispatched===fingerprint&&!saved.pending){saved.phase='needs_attention';this.save();return;}
+    // A completed chat reply is not an audit. If no native observation changed,
+    // permit one corrective read-only turn; never spin on unsupported claims.
+    const attempts=saved.dispatched===fingerprint?(saved.attempts??1):0;
+    if(attempts>=2&&!saved.pending){saved.phase='needs_attention';this.save();return;}
     if(!this.state.conversation_id){this.state.conversation_id=this.chat.create({title:'Standard media configuration'}).id;this.save();}
-    saved.pending??={fingerprint,request_id:randomUUID(),text:'Maintain the owner’s saved media standard. Call audit_media_standard once with no arguments, then report its dated results briefly. This is read-only native container inspection; present does not prove generation or model-file integrity. Absent, changed and unavailable are distinct. Preserve all services, enrollments and files. Do not reinstall or dispatch queued jobs. The standard watcher handles the next wakeup.'};this.save();
-    this.chat.submit(this.state.conversation_id,saved.pending.text,saved.pending.request_id,{research:false});saved.dispatched=saved.pending.fingerprint;delete saved.pending;saved.phase='requested';this.save();return;
+    if(!saved.pending||saved.pending.fingerprint!==fingerprint)saved.pending={fingerprint,attempt:attempts+1,request_id:randomUUID(),text:(attempts?'The previous audit request ended without a fresh native audit receipt; its narrative is not verification. Do not repeat or infer its claimed results. Actually invoke the audit_media_standard tool once with an empty argument object now. If the tool cannot be called, report that the audit is unverified. ':'Maintain the owner’s saved media standard. Call audit_media_standard once with no arguments, then report its dated results briefly. ')+'This is read-only native container inspection; present does not prove generation or model-file integrity. Absent, changed and unavailable are distinct. Preserve all services, enrollments and files. Do not reinstall or dispatch queued jobs. The standard watcher handles the next wakeup.'};this.save();
+    this.chat.submit(this.state.conversation_id,saved.pending.text,saved.pending.request_id,{research:false});saved.dispatched=saved.pending.fingerprint;saved.attempts=saved.pending.attempt??attempts+1;delete saved.pending;saved.phase=saved.attempts>1?'correction_requested':'requested';this.save();return;
    }
    if(!chosen){if(audit?.targets?.length&&!audit.targets.some(a=>a.due)&&this.state.audit){this.state.audit.phase='observed';this.save();}return;}
    const {t,row,action,fingerprint}=chosen;

@@ -81,10 +81,27 @@ test('an enrolled standard gets one periodic native audit through Genie across r
  const f=fixture(t);for(const m of f.s.hosts[0].members)for(const e of m.engines)e.enrolled=true;
  const target={key:JSON.stringify(['pair',0,'ace-step']),state:'not_observed',observed_at:null,due:true};f.s.setup.standard_audit={enabled:true,targets:[target]};
  await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,1);assert.match(f.calls[0][1],/Call audit_media_standard once with no arguments/);
- await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,1);
+ f.busy(true);await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,1);f.busy(false);
  target.state='present';target.observed_at='2026-01-01T00:00:00Z';target.due=false;
  const next=new MediaStandardWatch(f.options);await next.tick();assert.equal(next.status().audit.phase,'observed');assert.equal(f.calls.length,1);
  target.due=true;await next.tick();assert.equal(f.calls.length,2);
+});
+test('audit without native evidence gets one corrective turn, with durable deduplication and a hard stop',async t=>{
+ const f=fixture(t);for(const m of f.s.hosts[0].members)for(const e of m.engines)e.enrolled=true;
+ f.s.setup.standard_audit={enabled:true,targets:[{key:JSON.stringify(['pair',0,'ace-step']),state:'not_observed',observed_at:null,due:true}]};
+ await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,1);
+ // A saved request from before attempt accounting is still just one attempt.
+ const saved=JSON.parse(fs.readFileSync(f.options.filename));delete saved.audit.attempts;fs.writeFileSync(f.options.filename,JSON.stringify(saved));
+ f.chat.submit=(...args)=>{f.calls.push(args);if(f.calls.length===2)throw Error('Corrective acknowledgement lost');};
+ await new MediaStandardWatch(f.options).tick();assert.match(f.calls[1][1],/without a fresh native audit receipt/);assert.match(f.calls[1][1],/Actually invoke the audit_media_standard tool/);
+ assert.notEqual(f.calls[0][2],f.calls[1][2]);
+ await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,3);assert.deepEqual(f.calls[1],f.calls[2]);
+ const stopped=new MediaStandardWatch(f.options);await stopped.tick();assert.equal(f.calls.length,3);assert.equal(stopped.status().audit.phase,'needs_attention');
+ // A later native receipt, even an unavailable observation, is evidence and
+ // must not provoke further corrective chat or imply successful presence.
+ Object.assign(f.s.setup.standard_audit.targets[0],{state:'unavailable',observed_at:'2026-01-01T00:00:00Z',due:false});
+ await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,4);assert.match(f.calls[3][1],/latest native audit needs attention/);
+ await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,4);
 });
 test('absent and unavailable audits request read-only diagnosis without new setup',async t=>{
  const f=fixture(t);f.config.media_jobs.standard.targets.splice(1);f.s.hosts[0].members[0].engines[0].enrolled=true;
