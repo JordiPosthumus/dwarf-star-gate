@@ -127,6 +127,8 @@ class CaptureTests(unittest.TestCase):
             receipt = bridge.run(folder, request, capture)
             self.assertEqual(receipt['reason'], 'pair_native_capture_unavailable')
             self.assertNotIn('private host', json.dumps(receipt))
+            self.assertEqual(private_read(folder / 'failure.json')['message'], 'private host and command output')
+            self.assertEqual((folder / 'failure.json').stat().st_mode & 0o777, 0o600)
 
 
 if __name__ == '__main__': unittest.main()
