@@ -50,7 +50,7 @@ function fixture(){
 
 test('paired enrollment is explicit, pinned, local and requires GLM verification',()=>{
   assert.equal(recoveryConfig({workers:[config]}).get(config.id).adapter,'docker-pair');
-  for(const patch of [{transport:'ssh'},{verification:'qwen_vllm'},{pair_config_sha256:undefined},{ssh:undefined},{python:'relative'}])
+  for(const patch of [{transport:'ssh'},{verification:'qwen_vllm'},{pair_config_sha256:undefined},{python:'relative'}])
     assert.throws(()=>recoveryConfig({workers:[{...config,...patch}]}));
 });
 
@@ -155,6 +155,23 @@ test('local pair transport accepts Linux and macOS, pins private file bytes and 
   assert.equal(spawns,2);
 });
 
+test('direct HTTP pair keeps its serving route and uses the separately pinned native SSH binding',async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'pair-direct-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const helper=path.join(dir,'helper.py'),file=path.join(dir,'private.json');fs.writeFileSync(helper,'# fixture helper\n',{mode:0o600});
+  const contents=JSON.stringify({schema:1,enrollment:{worker_id:config.id,port:8888,members:[{ssh:'native-head'}]}});fs.writeFileSync(file,contents,{mode:0o600});
+  const {ssh,remote_port,...base}=config;
+  const c=recoveryConfig({workers:[{...base,backend:'openai',url:'http://192.0.2.10:8888/v1',python:fs.realpathSync('/usr/bin/python3'),helper,config:file,
+    pair_config_sha256:createHash('sha256').update(contents).digest('hex')}]}).get(config.id);
+  assert.equal(c.ssh,undefined);assert.equal(c.url,'http://192.0.2.10:8888/v1');
+  let spawns=0;
+  const spawnFn=()=>{spawns++;const child=new EventEmitter();child.stdout=new PassThrough();child.stderr=new PassThrough();child.stdin=new PassThrough();child.kill=()=>{};
+    setImmediate(()=>{child.stdout.end('{"version":1}');child.emit('close',0);});return child;};
+  assert.deepEqual(await recoveryCall(c,{action:'inspect'},{platform:'linux',spawnFn}),{version:1});
+  await assert.rejects(recoveryCall({...c,url:'http://192.0.2.10:8889/v1'},{action:'inspect'},{platform:'linux',spawnFn}),/identity.*unverified/);
+  fs.appendFileSync(file,' ');await assert.rejects(recoveryCall(c,{action:'inspect'},{platform:'linux',spawnFn}),/identity.*unverified/);
+  assert.equal(spawns,1);
+});
+
 test('real private gateway socket grants only the active exact pair request; LAN never exposes permits',async t=>{
   const servers=[];
   for(let i=0;i<2;i++){
@@ -168,7 +185,7 @@ test('real private gateway socket grants only the active exact pair request; LAN
     nodes:[{id:'custom-pair',url:url(0),max_concurrent_requests:2},{id:'other',url:url(1)}],state_file:path.join(dir,'state.json'),control_socket:socket});
   const address=await gateway.start();
   t.after(async()=>{await gateway.close();for(const server of servers){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}fs.rmSync(dir,{recursive:true,force:true});});
-  const node=gateway.nodes[0],c={...config,url:url(0)};node.ssh=config.ssh;node.remote_port=8000;
+  const node=gateway.nodes[0],{ssh,remote_port,...pairConfig}=config,c={...pairConfig,url:url(0)};
   gateway.recovery.configs=recoveryConfig({workers:[c]});
   node.quarantine={at:new Date().toISOString(),reason:'fatal_accelerator_error'};node.healthy=false;
   let epoch='d'.repeat(64),permit;
