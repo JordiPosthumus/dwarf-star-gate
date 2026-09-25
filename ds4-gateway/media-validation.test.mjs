@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {Readable} from 'node:stream';
 import {MediaJobs} from './media-jobs.mjs';
+import {validateVideoCatalog,validateVideoReferences} from './media-validation.mjs';
 
 test('shipped H3 reference recipes preserve ordinary ref_image_size settings and native graphs',async t=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sg-reference-recipes-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
@@ -23,4 +24,32 @@ test('shipped H3 reference recipes preserve ordinary ref_image_size settings and
   payload.prompt['7'].inputs.ref_image_0=payload.prompt['7'].inputs['ref_images.ref_image_0'];
   delete payload.prompt['7'].inputs['ref_images.ref_image_0'];
   assert.throws(()=>jobs.enqueue('video',payload,{key:'misplaced-socket'}),e=>e.status===400&&/invalid reference socket ref_image_0/.test(e.message));
+});
+
+// Stock ComfyUI LoadImage lists only top-level files in INPUT_TYPES, but its
+// native VALIDATE_INPUTS resolves subfolders. Uploaded references live there.
+test('stock image upload paths reach native validation unchanged despite an incomplete dropdown',()=>{
+  const payload={prompt:{image:{class_type:'LoadImage',inputs:{image:'stargate/00112233-4455-6677-8899-aabbccddeeff.png'}}}};
+  const original=structuredClone(payload);
+  for(const choices of [[],['top-level.png']]){
+    validateVideoCatalog(payload,{LoadImage:{input:{required:{image:[choices,{image_upload:true}]}}}});
+    assert.deepEqual(payload,original);
+  }
+  assert.throws(()=>validateVideoReferences(payload,[]),/missing from input_files/);
+  validateVideoReferences(payload,[{name:payload.prompt.image.inputs.image}]);
+});
+
+test('file validation exception preserves node, model and other combo validation',()=>{
+  const workflow=(class_type,key,value)=>({prompt:{one:{class_type,inputs:{[key]:value}}}});
+  assert.throws(()=>validateVideoCatalog(workflow('Missing','image','nested/image.png'),{}),/Missing native node/);
+  for(const [class_type,key,options] of [
+    ['UNETLoader','unet_name',{}],
+    ['CustomImageLoader','image',{image_upload:true}],
+    ['LoadImage','image',{}],
+    ['LoadImage','mode',{image_upload:true}],
+  ]){
+    const catalog={[class_type]:{input:{required:{[key]:[['available'],options]}}}};
+    assert.throws(()=>validateVideoCatalog(workflow(class_type,key,'unavailable'),catalog),/selected value is not available/);
+    validateVideoCatalog(workflow(class_type,key,'available'),catalog);
+  }
 });

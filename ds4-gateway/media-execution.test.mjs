@@ -270,7 +270,7 @@ test('reference shortcut transfers retained input before native submission on th
  const r=cycleFixture(t),stream=Readable.from(['portable-image']);stream.headers={'content-type':'image/png','content-length':'14'};
  const input=await r.jobs.inputs.receive(stream),job=r.jobs.enqueue('video',{prompt:'Animate <Picture 1>.',reference_image:input.id,seed:42},{key:'portable-shortcut'}).job;
  r.plan.operation_id=job.id;
- const request=r.backend.request;r.backend.request=async route=>route==='/object_info'?Object.fromEntries(Object.values(job.payload.prompt).map(n=>[n.class_type,{}])):request(route);
+ const request=r.backend.request;r.backend.request=async route=>route==='/object_info'?Object.fromEntries(Object.values(job.payload.prompt).map(n=>[n.class_type,n.class_type==='LoadImage'?{input:{required:{image:[['top-level.png'],{image_upload:true}]}}}:{}])):request(route);
  r.backend.uploadInput=async(blob,name)=>{r.events.push('upload-shortcut');assert.equal(name,input.name);assert.equal(await blob.text(),'portable-image');};
  const submit=r.backend.submit;r.backend.submit=async(payload,id)=>{r.events.push('submit-shortcut');assert.deepEqual(payload.prompt['7'].inputs['ref_images.ref_image_0'],['5',0]);assert.equal(payload.prompt['5'].inputs.image,input.name);assert.equal(payload.input_files,undefined);return submit(payload,id);};
  await runMediaCycle(r.plan,r.io);

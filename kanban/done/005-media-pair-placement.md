@@ -22,6 +22,10 @@ media generation. Preserve direct work and report actual engine state.
   decision: a Spark pair goes down together, the other pair / M3 stays up).
 - Media host cards show the machine pair (e.g. "spark3 + spark4
   (glm53f-sparks34)").
-- Genie flow unchanged: drain the pair worker (routing pause), run media on
-  both machines, restore. The drain/resume stays conversational per card 020.
+- This delivers the machine mapping, eligibility and host cards. It does not
+  establish pair execution: the checked-in media executor still requires a
+  Docker/Qwen recovery binding and manages one host/container. Draining and
+  restoring a GLM pair and using both physical machines needs a separate
+  implementation and native acceptance evidence. The flow above remains the
+  intended behavior, not a completed execution claim.
 - Tests: machine-overlap refusal + separate-machine ready; suite 1105 pass.

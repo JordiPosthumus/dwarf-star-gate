@@ -12,7 +12,7 @@ export function fleetPowerEvidence({runner,workers=[],now=Date.now,catalogue=nul
   const members=powerWorkers().map(id=>{
     const w=byId.get(id);
     return {worker_id:id,machine:machineGroup(id),enrolled:true,busy:runner.busy(id),
-      script_available:Object.fromEntries(['status','start','stop'].map(a=>[a,!!powerScript(id,a)])),
+      script_available:Object.fromEntries(['status','start','stop'].map(a=>[a,!!(runner.script??powerScript)(id,a)])),
       ...(w?{
         routing:{is_healthy:w.is_healthy===true,drained:w.drained===true,load:w.load??0,queued:w.queued??0,
           direct_reserved:w.direct_reserved===true,quarantined:!!w.quarantine},
@@ -73,7 +73,7 @@ export function createFleetPowerTools({runner,read,isTesting=()=>false,isEnabled
     if(!['start','stop','status'].includes(power_action))throw new Error('power_action must be start, stop or status.');
     if(isTesting())throw new Error('Fleet power is suspended for testing.');
     if(!isEnabled())throw new Error('Fleet power is switched off.');
-    if(!powerScript(worker,power_action))throw new Error(`No enrolled script for ${worker} ${power_action}; scripts remain the source of truth.`);
+    if(!(runner.script??powerScript)(worker,power_action))throw new Error(`No enrolled script for ${worker} ${power_action}; scripts remain the source of truth.`);
     if(power_action==='status'){
       if(input.mode==='check')return {allowed:true,action_id,worker,power_action,machine:machineGroup(worker),scope:'Read-only status script.'};
       const receipt=await runner.run(worker,'status');
