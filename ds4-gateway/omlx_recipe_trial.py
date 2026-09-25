@@ -14,6 +14,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+import urllib.parse
 import uuid
 
 from operation_maintenance import GatewayControl, Maintenance
@@ -64,9 +65,16 @@ class Executor:
         self.plan = json.loads((self.folder/'plan.json').read_text())
         p = self.plan
         if (p.get('schema') != 1 or p.get('kind') != 'omlx-glm53-mtp-depth'
-                or p.get('worker') != 'glm53f-m3' or p.get('candidate_depth') != 5
-                or p.get('url') != 'http://127.0.0.1:8013/v1'):
+                or not isinstance(p.get('worker'), str)
+                or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}', p['worker'])
+                or p.get('candidate_depth') != 5):
             raise ValueError('Unsupported local MTP profile')
+        if (not isinstance(p.get('url'), str)
+                or not re.fullmatch(r'http://(?:127\.0\.0\.1|\[::1\]):[1-9][0-9]*/v1', p['url'])):
+            raise ValueError('Use an explicit numeric loopback endpoint and port')
+        # Parsing also rejects out-of-range ports before reading credentials.
+        if not urllib.parse.urlsplit(p['url']).port:
+            raise ValueError('Use an explicit numeric loopback endpoint and port')
         for name in ['root', 'api_key_file']:
             if not Path(p[name]).is_absolute():
                 raise ValueError('Use an enrolled absolute path')

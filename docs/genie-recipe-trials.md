@@ -63,7 +63,13 @@ host-level transaction or a guarantee against all external interference.
 
 
 The local oMLX trial pins the source revision and original launcher/global/model
-settings hashes. Preparation backs up those bytes and checks the authenticated
+settings hashes. Its worker name, installation root, credential-file path and
+numeric loopback URL must match the private inspection enrollment. Custom worker
+names require an explicit single-machine entry in `machine_groups`; map other
+routes on that Mac to the same machine so trial reservations cover them too.
+For example, `http://127.0.0.1:9001/v1` or `http://[::1]:9001/v1` can be enrolled.
+Hostnames, non-loopback addresses, URL credentials and arbitrary API paths are
+not accepted. Preparation backs up those bytes and checks the authenticated
 engine-pool settings. A run acquires the same owned maintenance hold, waits for
 native/gateway idle, changes only `mtp_num_draft_tokens` from 3 to 5, reloads the
 existing model, compares it, restores the exact original bytes and reloads depth

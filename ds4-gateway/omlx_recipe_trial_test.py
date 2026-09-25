@@ -23,6 +23,37 @@ class Maintenance:
 
 
 class TrialTests(unittest.TestCase):
+    def test_custom_local_worker_and_port_use_enrolled_endpoint_before_any_reload(self):
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        import threading
+        observed=[]
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *_):pass
+            def do_GET(self):
+                observed.append((self.path,self.headers.get('Authorization')))
+                raw=b'{"active_requests":0}'
+                self.send_response(200);self.send_header('Content-Length',str(len(raw)));self.end_headers();self.wfile.write(raw)
+        server=HTTPServer(('127.0.0.1',0),Handler)
+        self.addCleanup(server.server_close);self.addCleanup(server.shutdown)
+        threading.Thread(target=server.serve_forever,daemon=True).start()
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);folder=root/'119219df-2284-4b34-a479-aab1e8d51513';folder.mkdir()
+            key=root/'key';key.write_text('fixture-private-key')
+            plan={'schema':1,'kind':'omlx-glm53-mtp-depth','worker':'my-local-glm','candidate_depth':5,'root':str(root),'api_key_file':str(key),'model':MODEL,'url':f'http://127.0.0.1:{server.server_port}/v1'}
+            (folder/'plan.json').write_text(json.dumps(plan))
+            executor=Executor(folder,None)
+            self.assertEqual(executor.request('/api/status'),{'active_requests':0})
+            self.assertEqual(observed,[('/api/status','Bearer fixture-private-key')])
+            from urllib.parse import urlunsplit
+            credential_url=urlunsplit(('http','fixture-user:fixture-password@127.0.0.1:9001','/v1','',''))
+            for url in ['http://example.test:9001/v1','http://localhost:9001/v1','http://127.0.0.1/v1','http://127.0.0.1:0/v1','http://127.0.0.1:65536/v1',credential_url,'http://127.0.0.1:9001/v1?x=1','http://127.0.0.1:9001/other']:
+                with self.subTest(url=url):
+                    (folder/'plan.json').write_text(json.dumps({**plan,'url':url,'api_key_file':str(root/'must-not-read')}))
+                    with self.assertRaises(ValueError):Executor(folder,None)
+            (folder/'plan.json').write_text(json.dumps({**plan,'url':'http://[::1]:9001/v1'}))
+            self.assertEqual(Executor(folder,None).base,'http://[::1]:9001')
+            self.assertEqual(len(observed),1,'Rejected enrollment must not contact an endpoint')
+
     def fixture(self):
         temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup)
         root=Path(temp.name);(root/'backup/state').mkdir(parents=True)
