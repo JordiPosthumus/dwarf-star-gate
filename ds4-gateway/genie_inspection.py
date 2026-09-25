@@ -163,11 +163,13 @@ def inspect_trial_progress(recipe_root, mounts, container_id=None):
             if not re.fullmatch(r'[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}',folder.name) or folder.is_symlink():continue
             file=folder/'prepared.json';intent=folder/'run-intent.json'
             try:
-                if file.is_symlink() or intent.is_symlink() or not intent.is_file() or file.stat().st_size>65536:continue
+                if file.is_symlink() or intent.is_symlink() or not intent.is_file() or file.stat().st_size>65536 or intent.stat().st_size>65536:continue
                 prepared=json.loads(file.read_text())
-                if prepared.get('original_container')==container_id:matches.append(folder.name)
+                started=json.loads(intent.read_text()).get('started_at')
+                if prepared.get('original_container')==container_id and type(started) in [int,float]:matches.append((started,folder.name))
             except (OSError,ValueError):continue
-        if len(matches)==1:candidates.add(matches[0])
+        matches.sort(reverse=True)
+        if matches and (len(matches)==1 or matches[0][0]>matches[1][0]):candidates.add(matches[0][1])
     if len(candidates)!=1:return None
     trial_id=candidates.pop();root=base/trial_id
     def read(relative,tail=False):
@@ -182,7 +184,7 @@ def inspect_trial_progress(recipe_root, mounts, container_id=None):
             raw=os.read(fd,6000 if tail else 1048577)
             return raw.decode('utf-8',errors='replace')
         finally:os.close(fd)
-    result={'trial_id':trial_id,'phases':{},'scope':'Read-only snapshot of fixed receipts for this container-mounted candidate. Incomplete phases and startup logs do not prove completion, restoration, or admission.'}
+    result={'trial_id':trial_id,'phases':{},'scope':'Read-only snapshot of fixed receipts for this mounted candidate or the latest recorded trial matching this original container identity. Incomplete phases and startup logs do not prove completion, restoration, or admission.'}
     def compact(value):
         if isinstance(value,dict):return {k:compact(v) for k,v in value.items() if k not in ['metrics_before','metrics_after','answer','content'] and not re.search(r'password|secret|api.key|authorization',k,re.I)}
         if isinstance(value,list):return [compact(x) for x in value[:32]]
