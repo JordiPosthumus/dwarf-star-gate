@@ -86,6 +86,13 @@ def run(root, request, capture=capture_pair):
                           scope='Fresh stable pair identity/configuration capture only. Not enrolled, restart-qualified or authorized to mutate.')
         except Exception as error:
             reason = str(error)
+            # Retain bounded diagnostics privately; none enter the tool receipt.
+            diagnostic = {'type': type(error).__name__, 'message': reason[-8192:]}
+            for key in ('stdout', 'stderr'):
+                value = getattr(error, key, None)
+                if value is not None:
+                    diagnostic[key] = (value.decode('utf8', errors='replace') if isinstance(value, bytes) else str(value))[-16384:]
+            private_save(root / 'failure.json', diagnostic)
             result.update(state='failed', reason=reason if re.fullmatch(r'pair_[a-z_]+|invalid_pair_[a-z_]+', reason) else 'pair_native_capture_unavailable')
         result['finished_at'] = datetime.now(timezone.utc).isoformat()
         private_save(root / 'receipt.json', result)
