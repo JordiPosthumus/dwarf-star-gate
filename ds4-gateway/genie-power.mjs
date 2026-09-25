@@ -83,9 +83,9 @@ export function createFleetPowerTools({runner,read,isTesting=()=>false,isEnabled
       return recipes.start(input);
     }
     if(input?.action==='recipe-rollout'){
-      if(Object.keys(input).sort().join(',')!=='action,profile,rollout_id'||!recipes)throw Error('Use an enrolled permanent rollout profile and rollout ID');
+      if(!['action,profile,rollout_id','action,expected_finished_at,profile,rollout_id'].includes(Object.keys(input).sort().join(','))||!recipes)throw Error('Use an enrolled permanent rollout profile and rollout ID');
       if(isTesting()||!isEnabled())throw Error('Recipe rollout is suspended or fleet power is switched off');
-      return recipes.start({profile:input.profile,stage:'rollout',trial_id:input.rollout_id});
+      return recipes.start({profile:input.profile,stage:'rollout',trial_id:input.rollout_id,...(input.expected_finished_at!==undefined?{expected_finished_at:input.expected_finished_at}:{})});
     }
     if(input?.action==='routing'){
       const {worker,routing_action,action_id,expected_operator_action}=input;

@@ -74,3 +74,29 @@ MoE fast kernels off, stock spinwait, output defaults and loader choice. It
 checks those fields in both candidate containers before measurements. This is
 a combined source/cache experiment, not causal proof for one retention flag.
 It also restores the original containers and does not authorize adoption.
+
+
+After explicit owner authorization, `fleet_recipe_rollout` deploys a separately
+enrolled permanent plan with its own UUID. It reuses the exact image from the
+completed, capacity-preserving qualification, keeps the original containers,
+waits for idle under an owned maintenance hold and checks native readiness.
+Successful publication changes only that worker's normal recipe path and its
+inspection binding; all other settings and an owner's later pause are preserved.
+It runs no new benchmark. Full original publication bytes and deployment receipts
+remain private. A failure restores the originals; uncertainty keeps the hold.
+
+Image preparation first reuses an exact existing ARM64 image. Otherwise it tries
+direct transfer between the enrolled hosts, pinning the target public host key
+and machine identity observed through the existing trusted connection. Temporary
+host-key files are removed; permanent SSH trust files are unchanged. If the
+pre-transfer peer check is unavailable it uses a compressed local relay. Compression applies only to this image
+transfer; it changes no persistent SSH or model settings. Once a
+copy starts, its failure is reported rather than starting a second transfer.
+
+Only a confirmed failure in `copying_qualified_image`, before any preparation
+result or maintenance intent, can be resumed with the same rollout ID and its
+exact `expected_finished_at` timestamp. Address the cause first. The original
+failure is archived, pinned source bytes and publication files are rechecked,
+and the original target baseline is verified again. Duplicate delivery observes
+the existing attempt. Running work, uncertain state and later deployment stages
+cannot use this resume path.
