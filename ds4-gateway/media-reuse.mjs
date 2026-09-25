@@ -6,11 +6,17 @@ import path from 'node:path';
 export function mediaReuse(config,id,engine,member){
  const saved=config.media_jobs?.reuse?.[id]?.[member??0]?.[engine];
  if(!saved)return null;
- assert.equal(Object.keys(saved).sort().join(','),'container,directory,image,kind,port');
- assert.ok(path.isAbsolute(saved.directory)&&saved.directory!=='/'&&!saved.directory.split('/').includes('..'));
+ assert.ok(['container,directory,image,kind,port','container,image,kind,port,source'].includes(Object.keys(saved).sort().join(',')));
+ if(saved.source!==undefined)assert.equal(saved.source,'docker');
+ else assert.ok(path.isAbsolute(saved.directory)&&saved.directory!=='/'&&!saved.directory.split('/').includes('..'));
  assert.match(saved.container,/^[a-f0-9]{64}$/);assert.match(saved.image,/^sha256:[a-f0-9]{64}$/);
  assert.equal(saved.kind,engine==='h3'?'comfyui':'ace-step');assert.ok(Number.isSafeInteger(saved.port)&&saved.port>0&&saved.port<=65535);
  return {engine,...structuredClone(saved)};
+}
+
+export function mediaPreparationRequest(reuse,requireIdle){
+ if(reuse?.source==='docker')return {action:'existing_media',engine:reuse.engine,llm_container:reuse.llm_container,require_idle:requireIdle,expected:Object.fromEntries(['container','image','kind','port'].map(k=>[k,reuse[k]]))};
+ return {action:requireIdle?'media_plan':'media_state'};
 }
 
 export function selectedMediaPreparation(current,reuse){

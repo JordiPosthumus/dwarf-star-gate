@@ -1,4 +1,4 @@
-import {selectedMediaPreparation} from './media-reuse.mjs';
+import {selectedMediaPreparation,mediaPreparationRequest} from './media-reuse.mjs';
 import {mediaPairReturn} from './media-pair-return.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -26,7 +26,7 @@ const heartbeat=setInterval(()=>save('progress.json',{...current,heartbeat_at:ne
 try{
  // Read the exact recipe bundle retained before ownership or any shutdown.
  const bundle=JSON.parse(fs.readFileSync(path.join(folder,'recipe-bundle.json')));
- const location=plan.reuse?{directory:plan.reuse.directory}:await setupTransport(plan.target,{action:'media_location',operation_id:plan.operation_id});
+ const location=plan.reuse?.directory?{directory:plan.reuse.directory}:await setupTransport(plan.target,{action:'media_location',operation_id:plan.operation_id});
  assert.ok(path.isAbsolute(location.directory));plan.target.directory=location.directory;saveMediaReceipt(folder,'plan.json',plan);
  const pair=mediaPairReturn(plan,save);
  const result=await runMediaSetup(plan,{pair,
@@ -39,11 +39,11 @@ try{
   prepare:async llmContainer=>{
    if(!plan.reuse)return setupTransport(plan.target,{action:'prepare_media',selected_engines:plan.engines,llm_container:llmContainer,...bundle});
    plan.reuse.llm_container=llmContainer;saveMediaReceipt(folder,'plan.json',plan);
-   try{const observed=selectedMediaPreparation(await setupTransport(plan.target,{action:'media_plan'}),plan.reuse);save('reuse-preparation.json',observed);return {state:'prepared_stopped',scope:'Exact retained media selected for fresh native qualification; no build or download.'};}
+   try{const observed=selectedMediaPreparation(await setupTransport(plan.target,mediaPreparationRequest(plan.reuse,true)),plan.reuse);save('reuse-preparation.json',observed);return {state:'prepared_stopped',scope:'Exact retained media selected for fresh native qualification; no build or download.'};}
    catch(e){return {state:'refused',error:e.message};}
   },
   readPreparation:()=>plan.reuse?{state:'prepared_stopped',process_running:false,progress:{phase:'reusing_exact_preparation'}}:setupTransport(plan.target,{action:'status'}),
-  preparedMedia:async()=>selectedMediaPreparation(await setupTransport(plan.target,{action:'media_plan'}),plan.reuse),
+  preparedMedia:async()=>selectedMediaPreparation(await setupTransport(plan.target,mediaPreparationRequest(plan.reuse,true)),plan.reuse),
   qualify:async preparation=>{
    // Reuse the new-Spark native sample runner, which owns the setup host lock,
    // observes accepted jobs, retains/decodes outputs and stops its media engines.
