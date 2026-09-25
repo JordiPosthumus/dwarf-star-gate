@@ -31,6 +31,10 @@ try{
  const pair=mediaPairReturn(plan,save);
  const result=await runMediaSetup(plan,{pair,
   save,progress,delay,
+  preflight:plan.reuse?async llmContainer=>{
+   plan.reuse.llm_container=llmContainer;saveMediaReceipt(folder,'plan.json',plan);
+   save('reuse-preflight.json',selectedMediaPreparation(await setupTransport(plan.target,mediaPreparationRequest(plan.reuse,false)),plan.reuse));
+  }:undefined,
   maintenance:async action=>JSON.parse((await execute(plan.python,['-I','-B',fileURLToPath(new URL('./media_maintenance.py',import.meta.url)),folder,action],{maxBuffer:1024*1024})).stdout),
   hasMaintenanceIntent:()=>fs.existsSync(path.join(folder,'gateway/acquire.intent.json')),
   inspect:async id=>JSON.parse(await remote(['docker','inspect',id]))[0],start:id=>remote(['docker','start',id]),stop:id=>remote(['docker','stop','-t','120',id]),

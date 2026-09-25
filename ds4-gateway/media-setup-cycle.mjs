@@ -24,6 +24,8 @@ export async function runMediaSetup(plan,io){
   assert.equal(recovery.listener,true);assert.equal(recovery.fault,null);
   assert.equal(recovery.instance,createHash('sha256').update(JSON.stringify([original.Id,original.State.StartedAt])).digest('hex').slice(0,32),'Recovery and setup must identify the same original LLM');
   save('llm-before.json',original);
+  // A stale retained-media candidate can be rejected while the LLM still serves.
+  if(io.preflight)await io.preflight(original.Id);
   progress('waiting_idle','Waiting for admitted and direct LLM work before preparing media.');
   await maintenance('prepare');assert.equal((await maintenance('transition')).owned,true);
   await unchanged();await io.pair?.check();save('stop-llm-intent.json',{container:plan.llm_container});stopped=true;
