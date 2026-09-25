@@ -2,7 +2,7 @@ import test from 'node:test';import assert from 'node:assert/strict';import fs f
 import {createMediaSetup} from './media-setup.mjs';import {saveMediaReceipt} from './media-execution.mjs';
 import http from 'node:http';import {once} from 'node:events';
 import {createGateway} from './gateway.mjs';import {workerControl} from './worker-client.mjs';
-import {mediaReuse,selectedMediaPreparation} from './media-reuse.mjs';
+import {mediaReuse,selectedMediaPreparation,mediaPreparationRequest} from './media-reuse.mjs';
 function fixture(t){
  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'sg-media-setup-'));t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
  const llm='a'.repeat(64),engine={container:'b'.repeat(64),image:'sha256:'+'c'.repeat(64),kind:'ace-step',port:8002,inspection:{Id:'b'.repeat(64),Image:'sha256:'+'c'.repeat(64),Config:{Cmd:['serve']},HostConfig:{},Mounts:[]}};
@@ -146,3 +146,24 @@ test('retained preparation is pinned to its exact engine and still requires nati
  f.config.media_jobs.reuse.one[0]['ace-step'].image='sha256:'+'0'.repeat(64);
  await assert.rejects(service.finish({operation_id:row.operation_id}),/binding changed/);
 });
+
+ test('retry archives only a confirmed pre-maintenance failure under the same operation ID',async t=>{
+  const f=fixture(t),input={worker_id:'one',engine:'ace-step'},row=await f.service.start(input),folder=path.join(f.options.directory,row.operation_id),at='2026-01-01T01:02:03.000Z';
+  saveMediaReceipt(folder,'progress.json',{phase:'failed_unchanged',at,detail:'Retained original LLM no longer exists'});
+  assert.equal((await f.service.start(input)).phase,'failed_unchanged');assert.equal(f.launches(),1);
+  await assert.rejects(f.service.start({...input,expected_failed_at:'2026-01-01T01:02:04.000Z'}),/current confirmed/);
+  await assert.rejects(f.service.start({...input,expected_failed_at:at}),/may still be active/);
+  saveMediaReceipt(folder,'launched.json',{pid:2147483647});fs.mkdirSync(path.join(folder,'gateway'));
+  fs.writeFileSync(path.join(folder,'gateway/acquire.intent.json'),'{}');
+  await assert.rejects(f.service.start({...input,expected_failed_at:at}),/past read-only preflight/);assert.equal(f.launches(),1);
+  fs.unlinkSync(path.join(folder,'gateway/acquire.intent.json'));
+  const next=await f.service.start({...input,expected_failed_at:at});assert.equal(next.operation_id,row.operation_id);assert.equal(next.attempt,2);assert.equal(f.launches(),2);
+  const old=JSON.parse(fs.readFileSync(path.join(f.options.directory,'history',row.operation_id,'attempt-1','progress.json')));assert.equal(old.at,at);assert.equal(old.phase,'failed_unchanged');
+  await assert.rejects(f.service.start({...input,expected_failed_at:at}),/current confirmed/);assert.equal(f.launches(),2);
+ });
+ test('retained directory requests pin the current LLM while preserving the old LLM provenance',()=>{
+  const reuse={engine:'ace-step',directory:'/retained',llm_container:'a'.repeat(64),container:'b'.repeat(64),image:'sha256:'+'c'.repeat(64),kind:'ace-step',port:8002};
+  assert.deepEqual(mediaPreparationRequest(reuse,false),{action:'retained_media',engine:'ace-step',llm_container:reuse.llm_container,require_idle:false});
+  const current={state:'prepared_stopped',llm_container:reuse.llm_container,source_llm_container:'old-removed-llm',engines:{'ace-step':reuse}};
+  assert.equal(selectedMediaPreparation(current,reuse).source_llm_container,'old-removed-llm');
+ });

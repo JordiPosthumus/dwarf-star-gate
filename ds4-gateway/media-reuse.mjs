@@ -16,6 +16,7 @@ export function mediaReuse(config,id,engine,member){
 
 export function mediaPreparationRequest(reuse,requireIdle){
  if(reuse?.source==='docker')return {action:'existing_media',engine:reuse.engine,llm_container:reuse.llm_container,require_idle:requireIdle,expected:Object.fromEntries(['container','image','kind','port'].map(k=>[k,reuse[k]]))};
+ if(reuse)return {action:'retained_media',engine:reuse.engine,llm_container:reuse.llm_container,require_idle:requireIdle};
  return {action:requireIdle?'media_plan':'media_state'};
 }
 
@@ -26,5 +27,5 @@ export function selectedMediaPreparation(current,reuse){
  for(const key of ['container','image','kind','port'])assert.equal(candidate[key],reuse[key],`Retained media ${key} changed`);
  // The source preparation's old LLM remains untouched. The current operation
  // owns and verifies its current LLM through the normal drain/return lifecycle.
- return {...current,source_llm_container:current.llm_container,llm_container:reuse.llm_container,engines:{[reuse.engine]:candidate}};
+ return {...current,source_llm_container:current.source_llm_container??current.llm_container,llm_container:reuse.llm_container,engines:{[reuse.engine]:candidate}};
 }

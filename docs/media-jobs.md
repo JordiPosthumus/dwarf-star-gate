@@ -536,3 +536,19 @@ Paired support does not enroll, start, or migrate any machine on installation.
 Keep `media_jobs.automatic_dispatch: false` when only explicit media tool calls
 are wanted. The Media capability still controls those calls; this additional
 setting prevents the dashboard from waking Genie for queued media jobs.
+
+
+Retained preparations can outlive the LLM that originally created them. Reuse
+checks the selected engine's original image, command, port and mounts while
+pinning the current LLM for this operation. The old LLM identity remains in the
+provenance receipt; its container does not need to exist. Source records remain
+unchanged, and the normal idle and current-LLM return checks still apply.
+
+If read-only preflight fails before any maintenance, stop or preparation intent,
+correct the cause and pass its exact saved `at` value as `expected_failed_at` to
+`setup_media_host` (or use **Retry setup** in Media). The executor confirms that
+the runner exited and the target binding is unchanged, archives the full failed
+attempt, then retries under the same operation ID. Ordinary repeated calls only
+observe it. A stale timestamp, live runner, uncertain failure or any transition
+intent refuses retry; inspect that operation instead. This never reruns an
+uncertain native installation or generation.

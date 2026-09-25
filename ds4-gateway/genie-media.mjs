@@ -43,10 +43,10 @@ export function createMediaTools({read,start,inspectInputs=null,setup=null,resou
       if(!host)throw Error('Choose a registered worker for inspection.');
       return {...await resources.inspect(input.worker_id,input.member),existing_engines:(input.member===undefined?host.engines:host.members?.find(m=>m.member===input.member)?.engines)??[],lifecycle:'The executor runs one media engine on the borrowed host, then restores its LLM. A selected batch runs jobs sequentially before one LLM return. H3 and ACE-Step do not need simultaneous residency. Recipe model-file totals are disk requirements, not measured RAM. Existing engine enrollment is separate from this resource observation; it is not erased or requalified by this check.'};
     }
-    if(input?.action==='setup'&&mediaMemberInput(input,'action,engine,worker_id')){
+    if(input?.action==='setup'&&(mediaMemberInput(input,'action,engine,worker_id')||mediaMemberInput(input,'action,engine,expected_failed_at,worker_id'))){
       if(isTesting())throw new Error('Media setup is suspended for testing.');
       if(!setup)throw new Error('Media setup is not connected.');
-      return setup({worker_id:input.worker_id,engine:input.engine,...(input.member!==undefined?{member:input.member}:{})});
+      return setup({worker_id:input.worker_id,engine:input.engine,...(input.member!==undefined?{member:input.member}:{}),...(input.expected_failed_at!==undefined?{expected_failed_at:input.expected_failed_at}:{})});
     }
     if(input?.action!=='start'||!(mediaMemberInput(input,'action,job_id,worker_id')||mediaMemberInput(input,'action,following_job_ids,job_id,worker_id')))throw new Error('Read media status, then select queued jobs and an enrolled worker.');
     if(isTesting())throw new Error('Media execution is suspended for testing.');

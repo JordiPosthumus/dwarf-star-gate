@@ -175,6 +175,22 @@ if __name__ == '__main__':
                 selected=remote.media_plan(root)
                 self.assertEqual(set(selected['engines']),{'h3'})
                 self.assertEqual(selected['llm_container'],'qwen38-repaired')
+                # A retained media preparation survives replacement/removal of its old LLM.
+                before = (root/'launch.json').read_bytes()
+                replacement = 'f'*64
+                containers[replacement] = {'Id':replacement,'State':{'Running':True}}
+                del containers['qwen38-repaired']
+                retained=remote.retained_media(root,{'require_idle':False,'llm_container':replacement,'engine':'h3'})
+                self.assertEqual(retained['source_llm_container'],'qwen38-repaired')
+                with self.assertRaisesRegex(ValueError,'Pin the current'):
+                    remote.retained_media(root,{'require_idle':False,'llm_container':None,'engine':'h3'})
+                self.assertEqual(retained['llm_container'],replacement)
+                self.assertEqual((root/'launch.json').read_bytes(),before)
+                with self.assertRaisesRegex(ValueError,'stopped state'):
+                    remote.media_plan(root,current_llm=replacement,engine='h3')
+                containers[replacement]['State']['Running']=False
+                self.assertEqual(remote.media_plan(root,current_llm=replacement,engine='h3')['llm_container'],replacement)
+                containers['qwen38-repaired']={'Id':'qwen38-repaired','State':{'Running':False}}
                 containers['h3']['HostConfig']['PortBindings']['8188/tcp'][0]['HostIp']='0.0.0.0'
                 with self.assertRaisesRegex(ValueError,'native port'): remote.media_plan(root)
 

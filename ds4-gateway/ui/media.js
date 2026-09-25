@@ -53,11 +53,11 @@ function render(){
     if(setup?.qualification)card.append(el('p',`${setup.qualification.engine??'Media test'}: ${setup.qualification.phase??setup.qualification.state}${setup.qualification.error?' · '+setup.qualification.error:''}`));
     if(setupHost?.error)card.append(el('p',setupHost.error,'media-job-detail'));
     if(!choice.enrolled){
-      const button=el('button',setup?.phase==='qualified_returned'?'Finish setup':`Set up ${engine.label}`,'button');button.type='button';button.setAttribute('aria-label',`${button.textContent} on ${host.display_name??host.id}`);
-      button.disabled=!state.controls_enabled||!state.setup?.enabled||!setupHost?.available||!choice.allowed||!!(setup&&setup.phase!=='qualified_returned');card.append(button);
+      const button=el('button',setup?.phase==='qualified_returned'?'Finish setup':setup?.phase==='failed_unchanged'?'Retry setup':`Set up ${engine.label}`,'button');button.type='button';button.setAttribute('aria-label',`${button.textContent} on ${host.display_name??host.id}`);
+      button.disabled=!state.controls_enabled||!state.setup?.enabled||!setupHost?.available||!choice.allowed||!!(setup&&!['qualified_returned','failed_unchanged'].includes(setup.phase));card.append(button);
       button.addEventListener('click',async()=>{
         busy=true;button.disabled=true;$('media-message').textContent=`Starting ${engine.label} setup on ${host.id}…`;
-        try{const response=await fetch('/api/media/setup',{method:'POST',headers:{'content-type':'application/json','x-dsg-csrf':state.csrf_token},body:JSON.stringify({worker_id:host.id,engine:engine.id,...(host.member!==undefined?{member:host.member}:{})})});const result=await response.json();if(!response.ok)throw Error(result.error??'Setup was not confirmed. Refresh its saved status before retrying.');$('media-message').textContent=`${host.id}: ${result.phase.replaceAll('_',' ')}. Progress remains here when you leave this page.`;}
+        try{const response=await fetch('/api/media/setup',{method:'POST',headers:{'content-type':'application/json','x-dsg-csrf':state.csrf_token},body:JSON.stringify({worker_id:host.id,engine:engine.id,...(host.member!==undefined?{member:host.member}:{}),...(setup?.phase==='failed_unchanged'?{expected_failed_at:setup.at}:{})})});const result=await response.json();if(!response.ok)throw Error(result.error??'Setup was not confirmed. Refresh its saved status before retrying.');$('media-message').textContent=`${host.id}: ${result.phase.replaceAll('_',' ')}. Progress remains here when you leave this page.`;}
         catch(error){$('media-message').textContent=error.message;}finally{busy=false;signature='';await refresh(true);}
       });
       card.append(el('p','Setup drains existing work, tests the new engine and restores this machine’s LLM. At least one other LLM stays available.','muted'));
