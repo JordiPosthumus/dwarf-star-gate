@@ -467,3 +467,34 @@ aliases for files already present on the selected ACE-Step host. Multipart field
 names such as `ref_audio` in JSON, or nonempty video `input_files`, are rejected
 with an explanation rather than silently ignored. Automatic music reference
 upload/transfer is not implemented by this check.
+
+
+### Existing paired GLM workers
+
+An operator can enroll `media_jobs.pairs[worker_id]` with kind
+`glm53-docker-pair`, its served `model`, the exact `worker_binding` route
+(`id`, `url`, and any `ssh`, `ssh_fallbacks`, `remote_port` fields), and two
+`members` in head/rank order. Each member names an enrolled `ssh` target and
+Docker `container`; the head must match its server-inspection enrollment.
+Include the head's `recipe_root` to retain and guard its launcher files.
+This is trusted local configuration, never model-provided shell input.
+
+Use `engine_members: {"video": 0, "music": 1}` to install H3 on the head and
+ACE-Step on the rank; omitted assignments use the head. Each retained engine
+records its member so later jobs reconnect to its actual host.
+
+The existing `setup_media_host` and `start_media_job` tools then borrow the
+whole pair. They retain both complete Docker configurations and file backups,
+drain the virtual worker, require a serving LLM on separate machines, stop both
+originals by ID, and run media on the selected member. Return starts the original rank
+before the original head. Changed settings or mounted files prevent automatic
+return; uncertainty retains the maintenance hold. Native model metadata and a
+readiness response must pass before readmission. That response is a serving
+check, not a new performance benchmark or cache comparison.
+
+H3 and ACE-Step setup still installs each selected engine separately and
+requires native output retention and full decoding before saving enrollment.
+Paired support does not enroll, start, or migrate any machine on installation.
+Keep `media_jobs.automatic_dispatch: false` when only explicit media tool calls
+are wanted. The Media capability still controls those calls; this additional
+setting prevents the dashboard from waking Genie for queued media jobs.

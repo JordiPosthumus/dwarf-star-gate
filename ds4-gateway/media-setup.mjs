@@ -1,3 +1,5 @@
+import {machinesFor} from './fleet-machines.mjs';
+import {mediaPair} from './media-pair.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
@@ -17,15 +19,18 @@ export function createMediaSetup(config,store,{directory,workers,binding,isEnabl
  const restoreErrors={};
  const identity=id=>{
   const worker=workers().find(w=>w.id===id),recovery=config.recovery?.workers?.find(w=>w.id===id),inspection=config.genie_chat?.inspection?.workers?.[id];
-  if(!worker||!recovery||!inspection)return null;
+  const pair=mediaPair(config,worker);
+  if(!worker||(!recovery&&!pair)||!inspection)return null;
   const route=Object.fromEntries(['id','url','ssh','ssh_fallbacks','remote_port'].filter(k=>worker[k]!==undefined).map(k=>[k,worker[k]]));
-  return createHash('sha256').update(JSON.stringify({route,recovery,inspection})).digest('hex');
+  return createHash('sha256').update(JSON.stringify({route,recovery,inspection,...(pair?{pair}:{})})).digest('hex');
  };
  // Media was qualified with the LLM stopped. Its retained engine belongs to
  // that physical machine, not a particular LLM version or local tunnel port.
  // In-flight setup still checks the full identity above before enrollment.
  const hostIdentity=id=>{
   if(!workers().some(w=>w.id===id))return null;
+  const pair=mediaPair(config,workers().find(w=>w.id===id));
+  if(pair)return createHash('sha256').update(JSON.stringify([id,pair.members.map(m=>({ssh:m.ssh}))])).digest('hex');
   const machine=config.recovery?.workers?.find(w=>w.id===id)?.machine;
   return /^[a-f0-9]{64}$/.test(machine??'')?createHash('sha256').update(JSON.stringify([id,machine])).digest('hex'):null;
  };
@@ -34,7 +39,7 @@ export function createMediaSetup(config,store,{directory,workers,binding,isEnabl
  const apply=(id,engines)=>{
   const previous=config.media_jobs?.workers?.[id]?.engines??{};
   for(const [kind,e] of Object.entries(engines)){
-   assert.ok(['music','video'].includes(kind)&&e&&Object.keys(e).sort().join(',')==='container,image,kind,port'&&/^[a-f0-9]{64}$/.test(e.container)&&/^sha256:[a-f0-9]{64}$/.test(e.image)&&e.kind===(kind==='music'?'ace-step':'comfyui')&&Number.isSafeInteger(e.port)&&e.port>0&&e.port<=65535,'Invalid retained media enrollment');
+   assert.ok(['music','video'].includes(kind)&&e&&['container,image,kind,port','container,image,kind,member,port'].includes(Object.keys(e).sort().join(','))&&(e.member===undefined||[0,1].includes(e.member))&&/^[a-f0-9]{64}$/.test(e.container)&&/^sha256:[a-f0-9]{64}$/.test(e.image)&&e.kind===(kind==='music'?'ace-step':'comfyui')&&Number.isSafeInteger(e.port)&&e.port>0&&e.port<=65535,'Invalid retained media enrollment');
    if(previous[kind])assert.deepEqual(previous[kind],e,'Existing media enrollment is preserved');
   }
   config.media_jobs??={enabled:false};config.media_jobs.workers??={};config.media_jobs.workers[id]??={engines:{}};
@@ -59,6 +64,8 @@ export function createMediaSetup(config,store,{directory,workers,binding,isEnabl
  };
  const canSetup=id=>{
   const recovery=config.recovery?.workers?.find(w=>w.id===id),inspection=config.genie_chat?.inspection?.workers?.[id];
+  const pair=mediaPair(config,workers().find(w=>w.id===id));
+  if(pair)return !!(config.control_socket&&path.isAbsolute(config.genie_chat?.python??''));
   return !!(config.control_socket&&path.isAbsolute(config.genie_chat?.python??'')&&recovery?.adapter==='docker'&&recovery.verification==='qwen_vllm'&&recovery.ssh&&inspection?.ssh?.[0]&&/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(inspection.container??'')&&binding(id,recovery));
  };
  const status=()=>({connected:true,enabled:isEnabled(),operations:Object.keys(store.data.media_setups??{}).map(id=>{const {binding,...row}=read(id);return row;}),hosts:workers().map(w=>({worker_id:w.id,available:canSetup(w.id),error:restoreErrors[w.id]??null}))});
@@ -74,7 +81,7 @@ export function createMediaSetup(config,store,{directory,workers,binding,isEnabl
   assert.equal(proof.container,e.container);assert.equal(proof.image,e.image);assert.equal(proof.outputs?.state,'ready');
   assert.ok(proof.decoded?.length&&proof.decoded.every(p=>p.full_decode));const streams=new Set(proof.decoded.flatMap(p=>p.streams.map(s=>s.codec_type)));assert.ok(streams.has('audio'));if(saved.engine==='h3')assert.ok(streams.has('video'));
   assert.ok(/^[a-f0-9]{64}$/.test(e.container)&&/^sha256:[a-f0-9]{64}$/.test(e.image)&&Number.isSafeInteger(e.port)&&e.port>0&&e.port<=65535&&e.kind===(saved.engine==='h3'?'comfyui':'ace-step'));
-  const kind=kinds[saved.engine],engine=Object.fromEntries(['container','image','kind','port'].map(k=>[k,e[k]]));
+  const kind=kinds[saved.engine],engine={...Object.fromEntries(['container','image','kind','port'].map(k=>[k,e[k]])),...(plan.llm_pair?{member:plan.llm_pair.media_member??0}:{})};
   const existing=config.media_jobs?.workers?.[saved.worker_id]?.engines?.[kind];if(existing)assert.deepEqual(existing,engine,'Existing media enrollment is preserved');
   const row={...saved,phase:'enrolled',finished_at:new Date().toISOString()};backup();
   const prior=store.data.media_engine_enrollments?.[row.worker_id];
@@ -88,9 +95,11 @@ export function createMediaSetup(config,store,{directory,workers,binding,isEnabl
   assert.ok(isEnabled(),'Media capability is switched off');assert.ok(isAllowed(input.worker_id,kinds[input.engine]),'Allow this engine on the machine before setup');assert.ok(canSetup(input.worker_id),'This machine needs a matching Docker LLM inspection/recovery enrollment');
   assert.ok(!config.media_jobs?.workers?.[input.worker_id]?.engines?.[kinds[input.engine]],'This engine is already enrolled; its working installation is preserved');
   assert.ok(!Object.values(store.data.media_setups??{}).some(s=>s.worker_id===input.worker_id&&!terminal.has(read(s.operation_id).phase)),'A setup already owns this machine');
-  const operation_id=randomUUID(),folder=path.join(directory,operation_id),worker=workers().find(w=>w.id===input.worker_id),recovery=config.recovery.workers.find(w=>w.id===input.worker_id),inspection=config.genie_chat.inspection.workers[input.worker_id];
+  const operation_id=randomUUID(),folder=path.join(directory,operation_id),worker=workers().find(w=>w.id===input.worker_id),recovery=config.recovery?.workers?.find(w=>w.id===input.worker_id),inspection=config.genie_chat.inspection.workers[input.worker_id];
+  const enrolled=mediaPair(config,worker),pair=enrolled?{...enrolled,media_member:enrolled.engine_members?.[kinds[input.engine]]??0}:null;
+  const member=pair?.members[pair.media_member];
   const recipes=bundle();fs.mkdirSync(folder,{recursive:true,mode:0o700});saveMediaReceipt(folder,'recipe-bundle.json',recipes);
-  saveMediaReceipt(folder,'plan.json',{operation_id,worker_id:input.worker_id,engines:[input.engine],target:{ssh:inspection.ssh[0]},llm_container:inspection.container,recovery,endpoint:worker,model:config.model,context_length:worker.context_length??config.context_length,control_socket:config.control_socket,python:config.genie_chat.python});
+  saveMediaReceipt(folder,'plan.json',{operation_id,worker_id:input.worker_id,separate_workers:workers().filter(w=>!machinesFor(w.id).some(m=>machinesFor(input.worker_id).includes(m))).map(w=>w.id),engines:[input.engine],target:{ssh:member?.ssh??inspection.ssh[0]},llm_container:member?.container??inspection.container,recovery:pair?{profile:'glm53-docker-pair',url:worker.url}:recovery,...(pair?{llm_pair:pair}:{}),endpoint:worker,model:config.model,context_length:worker.context_length??config.context_length,control_socket:config.control_socket,python:config.genie_chat.python});
   const row={operation_id,worker_id:input.worker_id,engine:input.engine,binding:identity(input.worker_id),phase:'starting',at:new Date().toISOString()};backup();store.save({...store.data,media_setups:{...store.data.media_setups,[operation_id]:row}});
   try{saveMediaReceipt(folder,'launched.json',await launchRunner(folder));}catch(e){saveMediaReceipt(folder,'progress.json',{phase:'needs_attention',detail:'Setup launch was not confirmed; inspect this operation before retrying.'});throw e;}
   return read(operation_id);

@@ -17,7 +17,7 @@ def main(folder, action):
 
     def floor():
         workers = control('/workers')['workers']
-        others = [w for w in workers if w['id'] != plan['worker_id'] and w.get('is_healthy')
+        others = [w for w in workers if w['id'] != plan['worker_id'] and (not plan.get('llm_pair') or w['id'] in plan.get('separate_workers', [])) and w.get('is_healthy')
                   and not any(w.get(k) for k in ['drained', 'quarantine', 'recovering', 'holds', 'maintenance_locks'])]
         if not others:
             raise RuntimeError('At least one other healthy LLM must remain serving')
@@ -37,6 +37,7 @@ def main(folder, action):
     if action == 'owned':
         return {'owned': window.owned()}
     if action == 'finish':
+        if plan.get('llm_pair'):window.wait_idle(idle)
         window.release()
         return window.resume_if_unchanged()
     raise ValueError('Unknown media maintenance action')
