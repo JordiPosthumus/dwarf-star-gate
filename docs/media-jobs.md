@@ -612,3 +612,11 @@ with the exact failure timestamp. The full previous attempt is archived. Fresh
 native generation, retained output decoding, current LLM restoration and final
 enrollment remain mandatory. This correction path cannot replay a failed or
 uncertain installation that progressed beyond read-only preflight.
+
+Native queue observations use the gateway's current engine enrollments, including
+engines qualified after dashboard startup. Paired engines are queried on their
+own physical member, with one observation per member/kind; the original default
+selection does not create a duplicate probe. A changed enrollment invalidates
+old in-flight observations. Unbound or unreachable engines remain unknown.
+These read-only queue probes do not prove installation integrity or successful
+generation, and do not automatically replace an enrolled engine.
