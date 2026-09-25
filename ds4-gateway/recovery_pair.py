@@ -118,14 +118,7 @@ def observe_pair(enrollment, observations):
             'fault': max(faults, key=lambda value: value['at']) if faults else None}
 
 
-def recover_pair(enrollment, request, *, read_journal, save_journal, observe, stop, start, ownership, now=lambda: round(time.time() * 1000)):
-    """Run/resume one leased operation; a saved command intent is never replayed.
-
-    The caller must hold an exclusive native lock for the entire invocation.
-    save_journal must atomically replace and fsync the private journal. Remote
-    adapters must wait for Docker's command acknowledgement. After lost ack, a
-    later invocation may advance only if native state proves the intended step.
-    """
+def validate_request(enrollment, request):
     identity = enrollment_identity(enrollment)
     require(isinstance(request, dict) and set(request) == {'action', 'action_id', 'epoch', 'machine', 'profile', 'canary', 'fault_after'}, 'invalid_pair_request')
     require(request['action'] in ('restart', 'start') and isinstance(request['action_id'], str)
@@ -134,15 +127,49 @@ def recover_pair(enrollment, request, *, read_journal, save_journal, observe, st
             and type(request['fault_after']) in (int, float) and math.isfinite(request['fault_after'])
             and request['fault_after'] >= 0, 'invalid_pair_request')
     require(all(request[key] == identity[key] for key in identity), 'pair_enrollment_changed')
+    return identity
+
+
+def validate_journal(enrollment, request, journal):
+    identity = validate_request(enrollment, request)
+    require(isinstance(journal, dict) and journal.get('schema') == 1 and journal.get('action_id') == request['action_id']
+            and journal.get('request_hash') == fingerprint(request) and journal.get('enrollment') == identity['profile'], 'pair_action_id_conflict')
+    require(journal.get('state') in ('running', 'waiting_for_ownership', 'uncertain', 'completed'), 'pair_journal_invalid')
+    def epochs_valid(epochs):
+        return isinstance(epochs, list) and len(epochs) == 2 and all(isinstance(epoch, list) and len(epoch) == 4
+            and epoch[0] == enrollment['members'][i]['container'] and all(isinstance(v, str) for v in epoch)
+            and epoch[3] in ('created', 'exited', 'running') for i, epoch in enumerate(epochs))
+    initial = journal.get('initial_epochs')
+    require(epochs_valid(initial) and fingerprint(initial) == request['epoch'], 'pair_journal_invalid')
+    sequence = [('stop', 0), ('stop', 1), ('start', 1), ('start', 0)]
+    steps = journal.get('steps')
+    require(isinstance(steps, list) and len(steps) <= 4, 'pair_journal_invalid')
+    for index, step in enumerate(steps):
+        require(isinstance(step, dict) and (step.get('action'), step.get('member')) == sequence[index]
+                and step.get('state') in ('intent', 'observed'), 'pair_journal_invalid')
+        require(epochs_valid(step.get('epochs')) if step['state'] == 'observed' else index == len(steps) - 1, 'pair_journal_invalid')
+    if journal['state'] == 'completed':
+        require(len(steps) == 4 and all(step['state'] == 'observed' for step in steps)
+                and all(epoch[3] == 'running' for epoch in steps[-1]['epochs'])
+                and journal.get('final_epoch') == fingerprint(steps[-1]['epochs'])
+                and journal['final_epoch'] != request['epoch'], 'pair_journal_invalid')
+    return journal
+
+
+def recover_pair(enrollment, request, *, read_journal, save_journal, observe, stop, start, ownership, now=lambda: round(time.time() * 1000)):
+    """Run/resume one leased operation; a saved command intent is never replayed.
+
+    The caller must hold an exclusive native lock for the entire invocation.
+    save_journal must atomically replace and fsync the private journal. Remote
+    adapters must wait for Docker's command acknowledgement. After lost ack, a
+    later invocation may advance only if native state proves the intended step.
+    """
+    identity = validate_request(enrollment, request)
     request_hash = fingerprint(request)
     journal = read_journal()
     if journal is not None:
-        require(journal.get('schema') == 1 and journal.get('action_id') == request['action_id']
-                and journal.get('request_hash') == request_hash and journal.get('enrollment') == identity['profile'], 'pair_action_id_conflict')
-        require(journal.get('state') in ('running', 'waiting_for_ownership', 'uncertain', 'completed'), 'pair_journal_invalid')
+        validate_journal(enrollment, request, journal)
         if journal.get('state') == 'completed':
-            require(len(journal.get('steps', [])) == 4 and all(s.get('state') == 'observed' for s in journal['steps'])
-                    and digest(journal.get('final_epoch')), 'pair_journal_invalid')
             return copy.deepcopy(journal)
     else:
         current = observe_pair(enrollment, observe())

@@ -1,8 +1,8 @@
 # GLM pair recovery: transaction and verification
 
-The pair transaction and GLM cache verifier are implemented components. Automatic
-pair enrollment, the detached controller connection and native restart acceptance
-are still incomplete. Enabling the existing recovery switch does not enroll a
+The pair transaction, detached controller connection and GLM cache verifier are
+implemented components. Explicit enrollment and native restart qualification are
+still required for each pair; the shipped code does not enroll a fleet automatically. Enabling the existing recovery switch does not enroll a
 GLM pair. A successful paired-media return is evidence for that operation, not
 general service-recovery certification.
 
@@ -30,9 +30,13 @@ operation or external peer restart cannot be adopted silently.
 
 `recovery_pair_native.py` supplies fixed SSH commands, strict host-key checks,
 native listener ownership, timestamped CUDA evidence, bounded file snapshots,
-private atomic/fsynced journals and an exclusive OS file lock. The controller must
-provide current ownership checks and a detached runner; this module deliberately
-does not expose a standalone mutation CLI. Transaction completion means the
+private atomic/fsynced journals and an exclusive OS file lock. The fixed `recovery-pair.py` bridge starts a detached runner using an exact saved
+request and an exclusive native lease. Before each native command it requests a
+fresh permit over the owner-only gateway Unix socket and checks native running
+and waiting counters while the head is live. Missing metrics, changed ownership
+or an unavailable controller prevents the next command. A stopped pinned head
+cannot admit direct work; its remaining transaction can continue after ownership
+returns. Transaction completion means the
 containers returned, not that serving, cache reuse or routing admission passed.
 
 ## GLM generation and cache verification
@@ -63,6 +67,62 @@ replayed after dashboard interruption.
 Tests exercise every lost-acknowledgement boundary, file/configuration drift,
 ownership continuation, cross-process lock exclusion and abrupt process exit
 after a simulated native transition. Those are fixture results, not a Spark
-restart qualification. Native acceptance must additionally bind fresh identities,
-demonstrate the actual detached runner and controller continuation, execute the
-GLM verifier, and admit routing only after exact identity and owner-state checks.
+restart qualification. The bridge tests also use real detached processes, process exit and a private
+Unix socket with simulated Docker transitions. Controller tests reconstruct the
+controller, resume the same request, preserve shared-machine reservations and
+exercise temporary ownership holds. Native restart acceptance must still bind
+fresh hardware identities, demonstrate the complete installed path, execute the
+GLM verifier and admit routing only after exact identity and owner-state checks.
+
+
+## Explicit controller enrollment
+
+Keep the full private enrollment outside the repository. Its wrapper has exactly
+`schema: 1`, `enrollment` (the pinned pair described above), `journal_directory`
+(an absolute, owner-only directory) and `gateway_socket` (the current owner-only
+control socket). Preserve the enrollment and its source observations as rollback
+evidence. The controller hashes the complete private file bytes; any change
+requires explicit re-enrollment. Native inspection is read-only and does not grant
+enrollment or mutation authority.
+
+Add an explicit entry to the private `recovery.workers` configuration with:
+
+- The registered worker's exact `id`, `url`, `backend`, head `ssh` and `remote_port`.
+- `adapter: "docker-pair"`, `transport: "local"`, `verification: "glm53_vllm"`
+  and `exclusive: true`.
+- Absolute paths for `python`, the repository's `ds4-gateway/recovery-pair.py`
+  as `helper`, and the private wrapper as `config`. Keep the helper with its
+  adjacent shipped modules. Linux and macOS controllers are supported.
+- `machine` and `profile` from `recovery_pair.enrollment_identity(enrollment)`,
+  and `pair_config_sha256` equal to the SHA256 of the complete wrapper file.
+- An exact two-member physical-machine mapping, shared with every alias using
+  either machine. Serving limits must match the pinned native enrollment.
+
+Stopped starts remain unenrolled by default. Explicit `start_stopped: true` also
+requires `service_profile` equal to the enrolled pair profile. Native commands
+can only start or stop those existing containers; no image pull, rebuild,
+recreation, launcher rewrite or model-file deletion is available.
+
+Automatic recovery requires a completed operator restart canary for this exact
+configuration, physical mapping, context and concurrency. The existing private
+`/recovery-canary` control requires the worker to be paused first, another physical
+LLM to remain available, current ownership and native idle evidence. It leaves
+the worker paused after native generation/cache verification. A controller must
+record all four native transaction steps and a changed final pair epoch before
+that receipt can qualify automatic recovery. A stopped-start or externally
+restarted replacement alone cannot substitute for this canary.
+
+While an operation is unresolved, the controller reserves both physical members
+and their registered aliases against inference dispatch. New aliases sharing the
+same mapping inherit that reservation. Owner pauses, other holds and active work
+continue to block native commands. Temporary holds retain the same durable action
+and resume observation after they clear; a failed proof or changed identity stays
+reserved for explicit reconciliation. Current native identity and a distinct GLM
+proof are required before routing admission. No public HTTP or chat endpoint can
+issue a native step permit.
+
+The standalone diagnostic has been exercised through actual Genie on two configured
+pairs: four cold histories reported zero cached tokens and four warm histories
+reused 14,336 tokens from approximately 19,750-token initial prompts. This validates
+the diagnostic on that fleet, not the new detached restart path or another owner's
+hardware. Native restart receipts remain the acceptance gate for enabling that path.
