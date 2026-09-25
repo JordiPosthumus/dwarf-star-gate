@@ -61,6 +61,15 @@ test('a failed journal write cannot dispatch on a later tick until the write suc
   const f=fixture(t);f.finish();const w=f.watch(),save=w.save.bind(w);w.save=()=>{throw Error('disk full');};
   await w.tick();await w.tick();assert.equal(f.calls.length,0);w.save=save;await w.tick();assert.equal(f.calls.length,1);
 });
+test('enrollment completion has its own receipt and follow-up identity, separate from capture completion',async t=>{
+  const f=fixture(t);f.options.kind='enrollment';f.rows.forEach(r=>r.state='queued');
+  f.conversation.messages[0].recovery.events=f.rows.map(r=>({...prepare(r),tool:'enroll_pair_recovery'}));
+  await f.watch().tick();assert.equal(f.calls.length,0);
+  f.rows.forEach(r=>{r.state='enrolled';r.evidence_sha256='a'.repeat(64);});await f.watch().tick();assert.equal(f.calls.length,1);
+  assert.match(f.calls[0][1],/enrollment watcher/);assert.match(f.calls[0][1],/native restart qualification remains required/);assert.ok(f.calls[0][2].length<=80);
+  f.conversation.messages.push({role:'assistant',recovery:{events:[{tool:'recovery_status',state:'complete',result:{pair_enrollment:{operations:f.rows}}}]}});
+  await f.watch().tick();assert.equal(f.watch().status().requests[0].state,'observed');assert.equal(f.calls.length,1);
+});
 test('real persisted Genie chat deduplicates lost submission acknowledgement after both services restart',async t=>{
   const f=fixture(t);f.finish();let generates=0;
   const provider={generate:async({onRecovery})=>{generates++;onRecovery(observation(f.rows));return 'Both native receipts were observed.';}};

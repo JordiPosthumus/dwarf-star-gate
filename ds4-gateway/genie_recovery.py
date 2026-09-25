@@ -6,7 +6,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 TOOLSET='stargate_recovery'
-NAMES={'recovery_status','recover_server','prepare_pair_recovery'}
+NAMES={'recovery_status','recover_server','prepare_pair_recovery','enroll_pair_recovery'}
 
 
 def register_recovery(config,emit):
@@ -20,11 +20,11 @@ def register_recovery(config,emit):
     opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect())
     def run(name,args):
         # The bridge creates and reports the handle before sending exactly once.
-        action_id=str(uuid.uuid4()) if name in ('recover_server', 'prepare_pair_recovery') else None
+        action_id=str(uuid.uuid4()) if name in ('recover_server', 'prepare_pair_recovery', 'enroll_pair_recovery') else None
         event={'tool':name,'at':datetime.now(timezone.utc).isoformat(),'request':args,'action_id':action_id}
         emit('recovery',event={**event,'state':'reading'})
         try:
-            payload={'action':'status'} if name=='recovery_status' else {**args,'action':'prepare-pair' if name=='prepare_pair_recovery' else 'recover','action_id':action_id}
+            payload={'action':'status'} if name=='recovery_status' else {**args,'action':'prepare-pair' if name=='prepare_pair_recovery' else 'enroll-pair' if name=='enroll_pair_recovery' else 'recover','action_id':action_id}
             request=urllib.request.Request(config['url'],data=json.dumps(payload).encode(),headers={'Content-Type':'application/json','X-SG-Recovery-Tool':config['token']})
             with opener.open(request,timeout=15) as response:
                 raw=response.read(262145)
@@ -41,6 +41,7 @@ def register_recovery(config,emit):
             emit('recovery',event={**event,'state':'failed','finished_at':datetime.now(timezone.utc).isoformat(),'error':message})
             return json.dumps({'error':message,'action_id':action_id,'next_step':'Read recovery_status and find this action ID; do not issue another recovery for the same fault.'})
     for name,description,parameters in [
+        ('enroll_pair_recovery','Enroll one explicitly opted-in pair from an existing prepared capture ID. Fixed native validation preserves exact identities, settings and capacity. Returns a durable action ID; observe recovery_status.pair_enrollment.operations. Does not restart, pause or qualify recovery. Never replay an uncertain request.',{'type':'object','properties':{'worker_id':{'type':'string'},'capture_id':{'type':'string'}},'required':['worker_id','capture_id'],'additionalProperties':False}),
         ('prepare_pair_recovery','Capture current native identities, exact Docker definitions and mounted-file hashes for an existing configured GLM pair. Reads both members twice and retains evidence privately. Does not enroll recovery, run inference, restart, pause or change settings. Returns an action ID promptly; observe its pair_preparations entry in recovery_status. Prepared is inspection evidence only, not restart qualification or mutation authority. Do not replay an uncertain request.',{'type':'object','properties':{'worker_id':{'type':'string'}},'required':['worker_id'],'additionalProperties':False}),
         ('recovery_status','Read fresh recovery policy, service enrollment, worker eligibility and recent operation receipts. Use before recovery and to follow an accepted or uncertain action. A switch on does not mean the service is connected. Eligibility concerns the observed fault now. no_supported_quarantine means there is no currently supported quarantine trigger; it does not by itself mean recovery is disabled or disconnected. Check matched enrollment and start_stopped_enrolled separately before describing stopped-service recovery. A healthy running service can be correctly enrolled while no recovery is presently needed.',{'type':'object','properties':{},'additionalProperties':False}),
         ('recover_server','Request existing recovery for one currently eligible worker using its exact evidence_id from recovery_status. The recovery toggle authorizes eligible requests; no per-request approval is needed. Cannot enroll services, change settings, run canaries or interrupt active jobs. Returns an operation receipt, not proof of completion. Never replay an uncertain request.',{'type':'object','properties':{k:{'type':'string'} for k in ['worker_id','evidence_id']},'required':['worker_id','evidence_id'],'additionalProperties':False})]:
