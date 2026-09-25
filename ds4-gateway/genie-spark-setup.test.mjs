@@ -63,11 +63,18 @@ test('pinned Hermes calls setup tools and retains their receipts',{skip:!process
   const resumed=chat.get(conversation.id).messages.at(-1);assert.equal(resumed.state,'complete',JSON.stringify(resumed));assert.equal(resumes,1);assert.equal(starts,1);assert.ok(resumed.spark_setup.events.some(e=>e.tool==='resume_spark_preparation'&&e.state==='complete'));
 });
 
-test('bundled setup includes build constraints and redistribution notices, excluding tests',async()=>{
+test('bundled setup includes build constraints and redistribution notices, excluding tests',async t=>{
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'sg-setup-bundle-'));
+  t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
+  const archive=path.join(directory,'recipes.tar.gz');
   let names=[];
   const tools=createSparkSetupTools(config,{transport:async(_target,input)=>{
     if(input.action==='status')return {state:'not_started'};
-    names=execFileSync('tar',['-tzf','-'],{input:Buffer.from(input.bundle,'base64'),encoding:'utf8'}).trim().split('\n');
+    // BSD tar may close stdin after its end marker before Node writes trailing
+    // archive padding, yielding an intermittent EPIPE. Inspect the same bytes
+    // from a regular file so this test checks package contents, not pipe timing.
+    fs.writeFileSync(archive,Buffer.from(input.bundle,'base64'));
+    names=execFileSync('tar',['-tzf',archive],{encoding:'utf8'}).trim().split('\n');
     return {state:'accepted'};
   }});
   await tools.tool({action:'start',target_id:'new_spark'});
