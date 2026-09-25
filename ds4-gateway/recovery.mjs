@@ -4,11 +4,13 @@ import { verifyRecovery,qwenRecoveryProofValid,glmRecoveryProofValid } from './r
 import {safeNativeRemoval,unavailableNativeRemoval} from './launchd-removal-evidence.mjs';
 import {bootstrapEnrollmentMatches,bootstrapProofValid} from './recovery-bootstrap.mjs';
 import {recoveryOwnership} from './recovery-ownership.mjs';
+import {pairPermit,pairPeers,pairBinding,pairCertified,reservePair,executePair} from './recovery-pair-controller.mjs';
+import {requestCapacity} from './worker-activity.mjs';
 
 const hash=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const terminal=new Set(['recovered','verified_paused','failed','reconciliation_needed']);
 const faultReasons=new Set(['fatal_accelerator_error','accelerator_checkpoint_failure']);
-const adapterReasons=new Set(['adapter_timeout','adapter_output_limit','adapter_spawn_failed','adapter_dns_failure','adapter_host_key_failure','adapter_auth_failure','adapter_connect_timeout','adapter_connection_refused','adapter_route_unreachable','adapter_connection_reset','adapter_unreachable','adapter_check_failed','adapter_local_unavailable','adapter_local_identity_unverified','adapter_local_interpreter_missing']);
+const adapterReasons=new Set(['pair_identity_or_journal_unverified','pair_ownership_unavailable','adapter_timeout','adapter_output_limit','adapter_spawn_failed','adapter_dns_failure','adapter_host_key_failure','adapter_auth_failure','adapter_connect_timeout','adapter_connection_refused','adapter_route_unreachable','adapter_connection_reset','adapter_unreachable','adapter_check_failed','adapter_local_unavailable','adapter_local_identity_unverified','adapter_local_interpreter_missing']);
 const publicOperation=op=>Object.fromEntries(['id','worker_id','actor','service_action','state','created_at','updated_at','error','proof','service_action_issued','restart_issued','operator_override','profile_adopted','bootstrap_acknowledged','readmission_blocked_reason'].filter(k=>op[k]!==undefined).map(k=>[k,op[k]]));
 const digest=value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
 // Wall-clock correction must not make an old observation eligible indefinitely.
@@ -45,6 +47,7 @@ const adoptionOperationValid=op=>{
 export class Recovery {
   constructor(raw,{store,nodes,model,stopping,reinstate,fleetConfig={},directReserved=()=>false,log=()=>{},call=recoveryCall,verify=verifyRecovery,now=Date.now}) {
     this.configs=recoveryConfig(raw);this.store=store;this.nodes=nodes;this.model=model;this.stopping=stopping;this.reinstate=reinstate;this.log=log;this.call=call;this.verify=verify;this.now=now;
+    this.fleetConfig=fleetConfig;
     this.ownershipReason=(node,options={})=>recoveryOwnership({node,nodes,store,config:fleetConfig,directReserved,...options});
     this.observations=new Map();this.stoppedSince=new Map();this.handbackSeen=new Map();this.busy=false;this.closed=false;this.task=null;this.abort=new AbortController();
     this.removals=new Map();
@@ -57,6 +60,10 @@ export class Recovery {
     for(const [worker,profile] of Object.entries(saved?.adopted_profiles??{}))if(!/^[a-zA-Z0-9][\w-]{0,63}$/.test(worker)||!profile||!digest(profile.config_profile)||!digest(profile.machine)||!digest(profile.profile)||(profile.service_profile!==null&&!digest(profile.service_profile))||!Number.isFinite(profile.adopted_at)||!/^[a-f0-9-]{36}$/.test(profile.operation_id))throw new Error('Invalid adopted recovery profile');
     for(const op of this.state.operations) {
       if(!/^[a-f0-9-]{36}$/.test(op.id) || typeof op.worker_id!=='string' || typeof op.state!=='string'||!adoptionOperationValid(op)||!bootstrapOperationValid(op))throw new Error('Invalid recovery operation');
+      if(op.pair_reserved!==undefined){
+        if(typeof op.pair_reserved!=='boolean'||!digest(op.pair_epoch)||!digest(op.pair_enrollment)||!Number.isSafeInteger(op.pair_concurrency)||op.pair_concurrency<1)throw new Error('Invalid paired recovery journal');
+        if(op.pair_reserved)reservePair(this,op,true);
+      }
       if(!terminal.has(op.state)) {
         // Resume observation/verification only. Never resend an uncertain command.
         const node=this.node(op.worker_id);if(node){node.recovering=true;node.healthy=false;}
@@ -102,6 +109,8 @@ export class Recovery {
   update(op,fields){Object.assign(op,this.current(op),fields,{updated_at:this.now()});this.commit({...this.state,operations:this.state.operations.map(x=>x.id===op.id?{...op}:x)});this.log('worker_recovery_action',publicOperation(op));}
   setAutomatic(value){if(typeof value!=='boolean')throw new Error('Recovery enabled must be boolean');this.commit({...this.state,automatic:value});this.log('worker_recovery_policy',{automatic:value});return this.status();}
   setProfileHandbackAutomatic(value){if(typeof value!=='boolean'||!this.configs.size)throw new Error('Profile hand-back is not configured or enabled is invalid');this.commit({...this.state,profile_handback_automatic:value});this.log('worker_recovery_handback_policy',{automatic:value});return this.status();}
+  pairPermit(input){return pairPermit(this,input);}
+  pairOwner(id){return this.state.operations.find(op=>op.pair_reserved&&pairPeers(this,op.worker_id).some(n=>n.id===id))?.id??null;}
   binding(n,c){return !!n && !!c && n.url===c.url && n.ssh===c.ssh && JSON.stringify(n.ssh_fallbacks??[])===JSON.stringify(c.ssh_fallbacks??[]) && (n.remote_port??8000)===(c.remote_port??8000);}
   valid(s,c){return s?.version===1 && s.machine===c.machine && s.profile===c.profile && s.active===true && s.listener===true && /^[a-f0-9]{32}$/.test(s.instance) && Number.isFinite(s.started_at);}
   validStopped(s,c){return c?.start_stopped===true && s?.version===1 && s.machine===c.machine && s.service_profile===c.service_profile && s.loaded===true && s.stopped===true && s.active===false && s.listener===false && /^[a-f0-9]{64}$/.test(s.stopped_epoch);}
@@ -164,6 +173,12 @@ export class Recovery {
     // operator and Genie do not imply that an empty queue alone restores
     // recovery authority. The executor still independently rechecks identity.
     const live=this.valid(s,c),stopped=this.validStopped(s,c),candidate=this.profileCandidate(s,c);
+    if(c.adapter==='docker-pair'){
+      if(!digest(s?.pair_epoch)||s.context_length!==n.contextLength||s.concurrency!==requestCapacity(n))return 'pair_capacity_or_identity_unverified';
+      const peers=pairPeers(this,n.id);
+      if(!this.nodes.some(other=>!peers.includes(other)&&other.healthy&&!other.drained&&!other.quarantine&&!other.recovering&&!other.removed))return 'pair_other_llm_required';
+      if(!canary&&!pairCertified(this,n,c))return 'pair_restart_canary_required';
+    }
     // Missing registration is distinct from an unreadable domain. Only separate
     // bootstrap enrollment and its independent gates can turn absence into an offer.
     if(c.adapter==='launchd'&&s?.version===1&&s.machine===c.machine&&s.active===false&&s.stopped===false&&s.pid===0&&s.instance===''&&
@@ -236,7 +251,7 @@ export class Recovery {
     // A retained receipt is historical evidence, not certification of today's
     // helper/configuration or effective settings. Do not create action authority.
     const canary=last?{
-      state:['queued','starting','restarting','bootstrapping','reconciling','verifying',...terminal].includes(last.state)?last.state:'unknown',
+      state:['queued','starting','restarting','bootstrapping','reconciling','waiting_for_ownership','verifying',...terminal].includes(last.state)?last.state:'unknown',
       action:['restart','start','bootstrap','adopt_verify','adopt_restart'].includes(last.service_action)?last.service_action:'unknown',
       recorded_at:Number.isFinite(last.updated_at)?last.updated_at:null,
       cold_warm_proof_valid:c?.verification==='glm53_vllm'?glmRecoveryProofValid(last.proof,n.contextLength):['qwen_vllm','qwen_omlx'].includes(c?.verification)?qwenRecoveryProofValid(last.proof,n.contextLength,c.verification):bootstrapProofValid(last.proof,n.contextLength),
@@ -337,16 +352,18 @@ export class Recovery {
     const op={id,worker_id:n.id,actor,evidence_id:input.evidence_id??null,service_action:serviceAction,state:'queued',created_at:this.now(),updated_at:this.now(),instance:s.instance,
       stopped_epoch:serviceAction==='start'?s.stopped_epoch:null,service_profile:serviceAction==='start'?s.service_profile:null,
       machine:s.machine,profile:serviceAction==='start'?c.profile:s.profile,context_length:n.contextLength,canary,was_paused:n.drained,quarantine:n.quarantine?{...n.quarantine}:null,
+      ...(c.adapter==='docker-pair'?{pair_epoch:s.pair_epoch,pair_enrollment:pairBinding(this,c),pair_concurrency:requestCapacity(n),pair_reserved:true}:{}),
       ...(candidate?{adopt_profile:candidate.profile,adopt_service_profile:candidate.service_profile,configured_profile:this.configs.get(n.id).profile}:{}),
       ...(bootstrapping?{instance:prior.instance,profile:prior.profile,service_profile:prior.service_profile,bootstrap_prior:prior,
         bootstrap_enrollment:hash(c),bootstrap_definition_sha256:c.retained_definition_sha256}:{}),
       binding:hash([n.url,n.ssh,n.ssh_fallbacks??[],n.remote_port??8000]),operator_override:false};
     this.commit({...this.state,operations:[...this.state.operations,op]});
     n.recovering=true;n.healthy=false;
+    if(op.pair_reserved)reservePair(this,op,true);
     this.task=this.execute(op,false).finally(()=>{this.task=null;});
     return publicOperation(op);
   }
-  operatorPause(ids){for(const op of this.state.operations.filter(o=>ids.includes(o.worker_id)&&!terminal.has(o.state)))this.update({...op},{operator_override:true});}
+  operatorPause(ids){for(const op of this.state.operations.filter(o=>(ids.includes(o.worker_id)||(o.pair_reserved&&pairPeers(this,o.worker_id).some(n=>ids.includes(n.id))))&&(!terminal.has(o.state)||o.pair_reserved)))this.update({...op},{operator_override:true});}
   reconcile(input) {
     if(!input || Object.keys(input).join(',')!=='action_id')throw new Error('Specify action_id only');
     const op=this.state.operations.find(o=>o.id===input.action_id),n=this.node(op?.worker_id);
@@ -356,6 +373,7 @@ export class Recovery {
   }
   current(op){return this.state.operations.find(o=>o.id===op.id)??op;}
   async execute(initial,reconcile) {
+    if(this.config(initial.worker_id)?.adapter==='docker-pair')return executePair(this,initial);
     let op={...initial};const enrolled=this.configs.get(op.worker_id),effective=this.config(op.worker_id),adopting=digest(op.adopt_profile),c=adopting?{...effective,profile:op.adopt_profile,...(digest(op.adopt_service_profile)?{service_profile:op.adopt_service_profile}:{})}:effective,n=this.node(op.worker_id);
     try {
       if(!n || !this.binding(n,enrolled) || hash([n.url,n.ssh,n.ssh_fallbacks??[],n.remote_port??8000])!==op.binding || c.profile!==op.profile || c.machine!==op.machine || (adopting&&op.configured_profile!==enrolled.profile))throw new Error('recovery_binding_changed');

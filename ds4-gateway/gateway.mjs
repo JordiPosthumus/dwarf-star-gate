@@ -1384,6 +1384,8 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
         applyServiceAddition(serviceConfig,binding);recovery.configs.set(node.id,binding.recovery);
       }else store.setWorkers([...nodes.map(definition), settings], { ...store.data.drained, [node.id]: true });
       nodes.push(node);
+      const recoveryOwner=recovery.pairOwner(node.id);
+      if(recoveryOwner){node.recoveryOperationId=recoveryOwner;node.recovering=true;node.healthy=false;}
       agent.maxSockets=tlsAgent.maxSockets=Math.max(16,nodes.reduce((sum,worker)=>sum+requestCapacity(worker),0));
       log('worker_registered', { node: node.id, context_length: node.contextLength, drained: true });
       return registry();
@@ -1521,7 +1523,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
       let body='';req.on('data',chunk=>{body+=chunk;if(Buffer.byteLength(body)>2048)req.destroy();});req.on('error',()=>{});
       req.on('end',()=>{void serialize(async()=>{try{const input=JSON.parse(body);return json(res,202,await (req.url==='/genie-media-start'?mediaExecution.start(input):req.url==='/genie-media-setup'?mediaSetup.start(input):req.url==='/genie-media-repair'?mediaSetup.repair(input):req.url==='/genie-media-audit'?mediaSetup.audit(input):mediaSetup.finish(input)));}catch(e){return error(res,409,'media_start_failed',e.message);}});});return;
     }
-    if (req.method !== 'POST' || !['/set-genie-thinking','/media-host-eligibility','/drain-workers', '/resume-workers', '/maintenance-lock','/release-maintenance-lock','/maintenance-receipt','/add-worker', '/edit-endpoint', '/check-endpoint', '/remove-worker', '/set-ssh-fallbacks','/set-context-limit','/set-conversation-turns','/set-queue-timeout','/set-protection','/set-job-priority','/set-worker-concurrency','/set-direct-reserve','/relocate-queued','/genie-relocate-queued','/genie-capability','/recovery-policy','/recovery-handback-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/grant-agent','/revoke-agent','/release-agent-hold','/agent/v1/drain','/agent/v1/resume','/agent/v1/receipt'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
+    if (req.method !== 'POST' || !['/set-genie-thinking','/media-host-eligibility','/drain-workers', '/resume-workers', '/maintenance-lock','/release-maintenance-lock','/maintenance-receipt','/add-worker', '/edit-endpoint', '/check-endpoint', '/remove-worker', '/set-ssh-fallbacks','/set-context-limit','/set-conversation-turns','/set-queue-timeout','/set-protection','/set-job-priority','/set-worker-concurrency','/set-direct-reserve','/relocate-queued','/genie-relocate-queued','/genie-capability','/recovery-policy','/recovery-handback-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/recovery-pair-permit','/grant-agent','/revoke-agent','/release-agent-hold','/agent/v1/drain','/agent/v1/resume','/agent/v1/receipt'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
     let body = '';
     req.on('data', chunk => { body += chunk; if (Buffer.byteLength(body) > 4096) req.destroy(); });
     req.on('error', () => {});
@@ -1538,6 +1540,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
           if(req.url==='/maintenance-lock')return json(res,201,agents.maintenanceLock(input,req.headers['x-dsg-control-channel']));
           if(req.url==='/release-maintenance-lock')return json(res,200,agents.maintenanceRelease(input,req.headers['x-dsg-control-channel']));
           if(req.url==='/maintenance-receipt')return json(res,200,agents.maintenanceReceipt(input));
+          if(req.url==='/recovery-pair-permit')return json(res,200,recovery.pairPermit(input));
           if(req.url==='/recovery-recheck')return json(res,202,recovery.reconcile(input));
           if(req.url==='/genie-capability') {
             if(Object.keys(input).sort().join(',')!=='enabled,key'||![...genieCapabilityKeys,'recovery'].includes(input.key)||typeof input.enabled!=='boolean')throw new Error('Specify a known capability and boolean enabled');

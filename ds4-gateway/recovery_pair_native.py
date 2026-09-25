@@ -16,7 +16,7 @@ import stat
 import subprocess
 import uuid
 
-from recovery_pair import enrollment_identity, fingerprint, recover_pair, require
+from recovery_pair import enrollment_identity, fingerprint, observe_pair, recover_pair, require
 
 UUID = re.compile(r'[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}')
 MAX_JOURNAL = 4 * 1024 * 1024
@@ -172,6 +172,28 @@ class RemotePair:
         with ThreadPoolExecutor(max_workers=2) as executor:
             return list(executor.map(self.inspect_member, self.enrollment['members']))
 
+    def idle(self):
+        """Require explicit native idle counters while the pinned head is up."""
+        try:
+            current = observe_pair(self.enrollment, self.observe())
+            if current['members'][0] == 'stopped':
+                return True  # Our exact stopped head cannot admit direct work.
+            program = """import json,math,re,sys,urllib.request
+r=urllib.request.urlopen('http://127.0.0.1:'+sys.argv[1]+'/metrics',timeout=10)
+data=r.read(1048577)
+if len(data)>1048576:raise ValueError('metrics_limit')
+gauges={name:[] for name in ('num_requests_running','num_requests_waiting')}
+for line in data.decode().splitlines():
+    m=re.fullmatch(r'vllm:(num_requests_running|num_requests_waiting)(?:\\{[^}]*\\})?\\s+([^\\s]+)(?:\\s+[^\\s]+)?',line)
+    if m:gauges[m[1]].append(float(m[2]))
+print(json.dumps({'idle':all(values and all(math.isfinite(v) and v==0 for v in values) for values in gauges.values())}))
+"""
+            head = self.enrollment['members'][0]
+            result = json.loads(self.remote(head['ssh'], ['python3', '-I', '-c', program, str(self.enrollment['port'])], timeout=20))
+            return result.get('idle') is True
+        except Exception:
+            return False
+
     def command(self, action, host, container):
         require(action in ('start', 'stop') and any(m['ssh'] == host and m['container'] == container
                 for m in self.enrollment['members']), 'pair_command_not_enrolled')
@@ -188,4 +210,5 @@ def run_native_pair(directory, enrollment, request, ownership):
     remote = RemotePair(enrollment)
     with PairJournal(directory, enrollment, request) as journal:
         return recover_pair(enrollment, request, read_journal=journal.read, save_journal=journal.save,
-                            observe=remote.observe, stop=remote.stop, start=remote.start, ownership=ownership)
+                            observe=remote.observe, stop=remote.stop, start=remote.start,
+                            ownership=lambda: ownership() is True and remote.idle())
