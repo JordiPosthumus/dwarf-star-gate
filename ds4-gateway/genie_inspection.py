@@ -144,8 +144,49 @@ except Exception:result={'state':'unavailable','reason':'metrics_read_failed'}
 result.update(observed_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),scope='Explicit KV token allocation reported by this engine at this time, not a configured limit, cache-hit test, causal performance comparison or permission to reduce capacity. Startup memory availability can affect allocation. Raw metrics and unrelated labels are withheld.')
 print(json.dumps(result))
 '''
+def inspect_trial_progress(recipe_root, mounts):
+    """Read only fixed receipts for the candidate bound to this container."""
+    import pathlib, re, json, os, stat
+    if not recipe_root:return None
+    base=pathlib.Path(recipe_root).parent/'.local/share/dsg-recipe-trials'
+    candidates=set()
+    for mount in mounts:
+        source=pathlib.Path(mount.get('Source',''))
+        try:parts=source.relative_to(base).parts
+        except ValueError:continue
+        if len(parts)>=3 and parts[1]=='candidate' and re.fullmatch(r'[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}',parts[0]):candidates.add(parts[0])
+    if len(candidates)!=1:return None
+    trial_id=candidates.pop();root=base/trial_id
+    def read(relative,tail=False):
+        file=root/relative
+        for part in [file,*file.parents]:
+            if part.is_symlink():raise ValueError('Symlink trial observation')
+        fd=os.open(file,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+        try:
+            info=os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or (not tail and info.st_size>1048576):raise ValueError('Invalid trial receipt')
+            if tail:os.lseek(fd,max(0,info.st_size-6000),os.SEEK_SET)
+            raw=os.read(fd,6000 if tail else 1048577)
+            return raw.decode('utf-8',errors='replace')
+        finally:os.close(fd)
+    result={'trial_id':trial_id,'phases':{},'scope':'Read-only snapshot of fixed receipts for this container-mounted candidate. Incomplete phases and startup logs do not prove completion, restoration, or admission.'}
+    def compact(value):
+        if isinstance(value,dict):return {k:compact(v) for k,v in value.items() if k not in ['metrics_before','metrics_after','answer','content'] and not re.search(r'password|secret|api.key|authorization',k,re.I)}
+        if isinstance(value,list):return [compact(x) for x in value[:32]]
+        return value[:500] if isinstance(value,str) else value
+    for phase in ['A','B','A2']:
+        try:result['phases'][phase]=compact(json.loads(read(phase+'/results.json')))
+        except FileNotFoundError:pass
+        except Exception:result['phases'][phase]={'state':'unavailable'}
+    try:
+        text=read('candidate-start.log',True)
+        result['candidate_start_tail']='\n'.join('<credential-related line withheld>' if re.search(r'api[_-]?key|access[_-]?token|secret|password|authorization|hf_token|credential',line,re.I) else line for line in text.splitlines())
+    except FileNotFoundError:pass
+    except Exception:result['candidate_start_tail']='Unavailable'
+    return result
+
 # Arguments arrive as JSON on stdin, never interpolated into a remote shell command.
-COLLECTOR = 'SOURCE_QUERY = '+repr(SOURCE_QUERY)+'\nMODEL_CONFIG_QUERY = '+repr(MODEL_CONFIG_QUERY)+'\nRUNTIME_QUERY = '+repr(RUNTIME_QUERY)+'\nCACHE_QUERY = '+repr(CACHE_QUERY)+'\n'+r'''
+COLLECTOR = inspect.getsource(inspect_trial_progress)+'\nSOURCE_QUERY = '+repr(SOURCE_QUERY)+'\nMODEL_CONFIG_QUERY = '+repr(MODEL_CONFIG_QUERY)+'\nRUNTIME_QUERY = '+repr(RUNTIME_QUERY)+'\nCACHE_QUERY = '+repr(CACHE_QUERY)+'\n'+r'''
 import sys,json,subprocess,pathlib,re,hashlib,datetime,stat
 p=json.loads(sys.stdin.readline())
 secret=re.compile(r'api[_-]?key|access[_-]?token|secret|password|authorization|hf_token|hugging_face_hub_token|private[_-]?key|credential',re.I)
@@ -288,7 +329,7 @@ if p.get('recipe_root'):
   recipe['host_resources']={'memory_bytes':mem,'disk_free_bytes':shutil.disk_usage(root).free}
  except (OSError,ValueError):recipe['host_resources']={'state':'unavailable'}
  recipe['scope']='Enrolled recipe files read without sourcing or executing them, Git revision on disk, and host resources. Secrets redacted; file hashes cover original bytes. No backup, inference or restoration proof.'
-print(json.dumps({'observed_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'container':{'id':c['Id'],'image_id':c['Image'],'running':c['State']['Running'],'started_at':c['State']['StartedAt'],'entrypoint':config.get('Entrypoint'),'command':cmd,'environment':env,'mounts':c['Mounts'],'port_bindings':c['HostConfig'].get('PortBindings'),'restart_policy':c['HostConfig'].get('RestartPolicy'),'ipc_mode':c['HostConfig'].get('IpcMode'),'shm_size':c['HostConfig'].get('ShmSize'),'device_requests':c['HostConfig'].get('DeviceRequests')},'image':{'id':i['Id'],'created':i['Created'],'repo_digests':i.get('RepoDigests',[])},'recipe':recipe,'recipe_stamp':(i.get('Config',{}).get('Labels') or {}).get('glm53.recipe.stamp'),'packages':packages,'model_config':model_config,'engine_runtime':engine_runtime,'launcher':launcher,**({'sources':sources} if sources is not None else {}),'scope':'Live Docker metadata, launcher bytes, separately labelled installed distribution metadata and model configuration on disk. Package versions do not prove build ancestry or custom source integrity. Installed Python source can be requested with source_files and source_window. No inference, restart, weight hash or restoration test. Launch settings and model configuration on disk do not independently prove effective API behavior or kernel dispatch.'}))
+print(json.dumps({'observed_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'container':{'id':c['Id'],'image_id':c['Image'],'running':c['State']['Running'],'started_at':c['State']['StartedAt'],'entrypoint':config.get('Entrypoint'),'command':cmd,'environment':env,'mounts':c['Mounts'],'port_bindings':c['HostConfig'].get('PortBindings'),'restart_policy':c['HostConfig'].get('RestartPolicy'),'ipc_mode':c['HostConfig'].get('IpcMode'),'shm_size':c['HostConfig'].get('ShmSize'),'device_requests':c['HostConfig'].get('DeviceRequests')},'image':{'id':i['Id'],'created':i['Created'],'repo_digests':i.get('RepoDigests',[])},'recipe':recipe,'recipe_trial':inspect_trial_progress(p.get('recipe_root'),c.get('Mounts',[])),'recipe_stamp':(i.get('Config',{}).get('Labels') or {}).get('glm53.recipe.stamp'),'packages':packages,'model_config':model_config,'engine_runtime':engine_runtime,'launcher':launcher,**({'sources':sources} if sources is not None else {}),'scope':'Live Docker metadata, launcher bytes, separately labelled installed distribution metadata and model configuration on disk. Package versions do not prove build ancestry or custom source integrity. Installed Python source can be requested with source_files and source_window. No inference, restart, weight hash or restoration test. Launch settings and model configuration on disk do not independently prove effective API behavior or kernel dispatch.'}))
 '''
 
 def read_json(file, expected_sha256=None):

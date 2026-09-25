@@ -340,3 +340,21 @@ class RecipeInspection(unittest.TestCase):
    self.assertFalse(marker.exists());self.assertTrue(recipe['files']['start.sh']['truncated']);self.assertEqual(len(recipe['files']['start.sh']['text']),6000)
    (root/'.env').unlink();(root/'.env').symlink_to(root/'start.sh')
    self.assertEqual(collect()['recipe']['files']['.env'],{'state':'unavailable'})
+
+class TrialProgress(unittest.TestCase):
+ def test_only_current_candidate_fixed_receipts_are_read_and_sensitive_samples_omitted(self):
+  with tempfile.TemporaryDirectory() as temp:
+   home=pathlib.Path(temp).resolve();trial='12345678-abcd-1234-abcd-123456789012';root=home/'.local/share/dsg-recipe-trials'/trial
+   (root/'A').mkdir(parents=True);(root/'candidate').mkdir()
+   (root/'A/results.json').write_text(json.dumps([{'label':'cold-A','sample':{'answer':'PRIVATE_ANSWER','metrics_before':{'private':'PRIVATE_METRIC'},'ttft_s':1.5},'passed':True}]))
+   (root/'candidate-start.log').write_text('Starting compiler\nAPI_KEY=PRIVATE_KEY\nReady\n')
+   mounts=[{'Source':str(root/'candidate/overlay/file.py')}]
+   result=m.inspect_trial_progress(str(home/'recipe'),mounts)
+   self.assertEqual(result['trial_id'],trial);self.assertEqual(result['phases']['A'][0]['sample']['ttft_s'],1.5);self.assertNotIn('PRIVATE_',json.dumps(result));self.assertIn('Ready',result['candidate_start_tail'])
+   self.assertIsNone(m.inspect_trial_progress(str(home/'recipe'),[{'Source':str(home/'arbitrary')}]));self.assertIsNone(m.inspect_trial_progress(None,mounts))
+   (root/'A/results.json').unlink();(root/'A/results.json').symlink_to(root/'candidate-start.log')
+   self.assertEqual(m.inspect_trial_progress(str(home/'recipe'),mounts)['phases']['A']['state'],'unavailable')
+ def test_ambiguous_candidate_or_traversal_never_selects_a_trial(self):
+  base='/srv/example/.local/share/dsg-recipe-trials/'
+  self.assertIsNone(m.inspect_trial_progress('/srv/example/recipe',[{'Source':base+'12345678-abcd-1234-abcd-123456789012/candidate/a'},{'Source':base+'12345678-abcd-1234-abcd-123456789013/candidate/b'}]))
+  self.assertIsNone(m.inspect_trial_progress('/srv/example/recipe',[{'Source':base+'../candidate/private'}]))
