@@ -78,11 +78,11 @@ exposed an unusable dashboard preflight contract, a 15-second chat timeout for
 long starts, missing action IDs in receipts, and absent status in the tool schema.
 Readiness also accepted any HTTP 200 and shutdown treated network failure as stopped.
 
-Staged fixes now share asynchronous action-ID receipts, require the expected model,
+The fixes share asynchronous action-ID receipts, require the expected model,
 keep hardware serialization during launcher/endpoint verification, preserve read-only
 status, and refuse dashboard restart during power work. Stop checks require drained
 healthy hardware, fresh native idle telemetry and a healthy separate machine.
-The existing production launcher settings are unchanged. Fixture coverage passes;
-a live Genie-controlled M3 start and pair trial are still required before declaring
-this card complete. Receipt history and action deduplication currently last for the
+The existing production launcher settings are unchanged. Fixture coverage and native Genie-controlled start, serving, cache and
+launcher-survival validation are complete; deployment receipts remain private.
+Receipt history and action deduplication currently last for the
 dashboard process lifetime; this is not a durable operation service.

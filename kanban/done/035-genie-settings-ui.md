@@ -49,13 +49,14 @@ Landed:
   confirmed honestly ('the next reply/review uses …').
 - Suite 1106 pass / 0 fail (197 gateway tests).
 
-Deployment verified: 2026-09-24. The core was reloaded at idle through an owned
-Continuity Door hold; the Door and model servers stayed running. The browser
-check then caught a missing dashboard projection field: the core reported
-`genie_thinking`, but the dashboard dropped it before rendering or applying it.
-The bounded projection now preserves valid thinking values and strips unrelated
-fields. A live poll/HTTP capabilities regression covers that path (98 focused
-tests passed). The deployed browser shows both selectors at max and the live
-capability endpoint reports chat=max, reviewer=max; routine reviews remain off.
-The controls are in the Gate Genie capability panel. No lower level was applied
-as a diagnostic, and worker serving-profile defaults remain unchanged.
+## Activation and projection verification
+
+Core activation requires an idle reload through an owned Continuity Door hold.
+Native verification then caught a missing dashboard projection field: the core
+reported `genie_thinking`, but the dashboard dropped it before rendering or
+applying it. The bounded projection preserves valid thinking values and strips
+unrelated fields. A live poll/HTTP capabilities regression covers that path
+(98 focused tests passed). Browser and capability-endpoint verification are
+complete; installation-specific settings and receipts remain private.
+The controls are in the Gate Genie capability panel, and worker serving-profile
+defaults remain unchanged.

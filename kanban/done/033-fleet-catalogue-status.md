@@ -55,5 +55,5 @@ with #005; do not create competing lists. Record unresolved mismatches honestly.
 Verified 2026-09-24: maintenance locks, owned holds, and direct reservations now
 exclude a worker from serving-LLM status and are distinguished from an operator
 pause. Endpoint readiness is described only with current endpoint evidence.
-The live M3 trial demonstrated the shared UI/Genie catalogue state while both
-Spark pairs continued serving. Intentional alternative/stopped entries remain.
+The shared UI/Genie catalogue state is covered by regressions and native UI
+validation. Intentional alternative/stopped entries remain.

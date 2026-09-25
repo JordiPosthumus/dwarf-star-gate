@@ -28,8 +28,8 @@ Rules of the road (matching the Genie autonomy model):
 
 `doing` means active; `backlog` means pending. Keep implementation focused:
 
-1. **#032 Household recovery — done** — real M3 Door generation, cache reuse and
-   survival after dashboard reloads verified; see the dated evidence in the card.
+1. **#032 Household recovery — done** — native Door generation, cache reuse and
+   survival after dashboard reloads verified; deployment receipts remain private.
 2. **#030 Shared fleet power controls** — prevent conflicting commands and deliver
    useful UI/Genie controls while keeping household serving available.
 3. **#033 Fleet catalogue and truthful status** — reconcile models, workers,
