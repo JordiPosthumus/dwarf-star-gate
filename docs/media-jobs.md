@@ -515,6 +515,12 @@ directory, model files, image and container instead of building a duplicate.
 Changed or missing source evidence refuses reuse and returns the current LLM;
 it does not silently fall back to rebuilding or replacing the old engine.
 
+For an existing Docker installation made outside Star Gate, replace `directory`
+with `"source":"docker"` and pin the same four engine fields. This path observes
+the exact stopped container and its native port, snapshots its complete Docker
+configuration, and performs the same fresh qualification and current-LLM return.
+It does not rewrite the existing launch command, mounts, image or model files.
+
 The existing `setup_media_host` and `start_media_job` tools then borrow the
 whole pair. They retain both complete Docker configurations and file backups,
 drain the virtual worker, require a serving LLM on separate machines, stop both

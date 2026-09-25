@@ -26,6 +26,29 @@ def bundle(script):
 
 
 class RemoteSetupTests(unittest.TestCase):
+    def test_existing_media_is_read_only_pinned_and_requires_idle_for_qualification(self):
+        expected = {'container': 'b'*64, 'image': 'sha256:'+'c'*64, 'kind': 'comfyui', 'port': 8188}
+        media = {'Id': expected['container'], 'Image': expected['image'], 'State': {'Running': False},
+                 'HostConfig': {'PortBindings': {'8188/tcp': [{'HostIp': '127.0.0.1', 'HostPort': '8188'}]}}}
+        llm = {'Id': 'a'*64, 'State': {'Running': False}}
+        request = {'engine': 'h3', 'expected': expected, 'llm_container': llm['Id'], 'require_idle': True}
+        calls = []
+        def observe(args, **kwargs):
+            calls.append(args)
+            if args[0] == 'nvidia-smi': return ''
+            self.assertEqual(args[:2], ['docker', 'inspect'])
+            return json.dumps([media if args[2] == media['Id'] else llm])
+        with patch.object(remote.subprocess, 'check_output', side_effect=observe):
+            result = remote.existing_media(request)
+            self.assertEqual(result['engines']['h3']['container'], media['Id'])
+            llm['State']['Running'] = True
+            with self.assertRaisesRegex(ValueError, 'active'): remote.existing_media(request)
+            self.assertEqual(remote.existing_media({**request, 'require_idle': False})['state'], 'prepared_stopped')
+            media['Image'] = 'sha256:'+'d'*64
+            with self.assertRaisesRegex(ValueError, 'identity'): remote.existing_media(request)
+        self.assertTrue(all(args[0] == 'nvidia-smi' or args[:2] == ['docker', 'inspect'] for args in calls))
+        with self.assertRaisesRegex(ValueError, 'Pin'): remote.existing_media({**request, 'expected': {**expected, 'command': 'arbitrary'}})
+
     def test_resume_keeps_partial_files_and_replays_observation_not_work(self):
         script = """import json,sys,time
 from pathlib import Path

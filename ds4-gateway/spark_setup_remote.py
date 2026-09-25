@@ -26,6 +26,35 @@ def media_location(operation_id):
     return {'directory': str(Path.home() / '.local/share/star-gate/media-setup' / operation_id)}
 
 
+def existing_media(payload):
+    """Read a pinned existing Docker engine; never build, start, stop or edit it."""
+    engine, expected = payload.get('engine'), payload.get('expected', {})
+    if (engine not in ('h3', 'ace-step') or set(expected) != {'container', 'image', 'kind', 'port'}
+            or not re.fullmatch(r'[a-f0-9]{64}', expected.get('container', ''))
+            or not re.fullmatch(r'sha256:[a-f0-9]{64}', expected.get('image', ''))
+            or expected.get('kind') != ('comfyui' if engine == 'h3' else 'ace-step')
+            or type(expected.get('port')) is not int or not 0 < expected['port'] <= 65535
+            or not re.fullmatch(r'[a-f0-9]{64}', payload.get('llm_container', ''))
+            or type(payload.get('require_idle')) is not bool):
+        raise ValueError('Pin the existing media engine and current LLM identities')
+    actual = json.loads(subprocess.check_output(['docker', 'inspect', expected['container']], text=True))[0]
+    llm = json.loads(subprocess.check_output(['docker', 'inspect', payload['llm_container']], text=True))[0]
+    if actual['Id'] != expected['container'] or actual['Image'] != expected['image'] or actual['State']['Running']:
+        raise ValueError('Existing media identity or stopped state differs; preserved')
+    if llm['Id'] != payload['llm_container'] or actual['Id'] == llm['Id']:
+        raise ValueError('Existing media and current LLM identities differ')
+    native_port = 8188 if engine == 'h3' else 8002
+    bindings = actual['HostConfig'].get('PortBindings', {}).get(str(native_port) + '/tcp', []) or []
+    if not any(str(b.get('HostPort')) == str(expected['port']) for b in bindings):
+        raise ValueError('Existing media native port differs; preserved')
+    if payload['require_idle'] and (llm['State']['Running'] or subprocess.check_output(
+            ['nvidia-smi', '--query-compute-apps=pid', '--format=csv,noheader,nounits'], text=True).strip()):
+        raise ValueError('GPU work is active; existing work was preserved')
+    return {'state': 'prepared_stopped', 'llm_container': llm['Id'],
+            'engines': {engine: {**expected, 'inspection': actual}},
+            'scope': 'Pinned existing Docker engine only; fresh native qualification and current LLM return still required.'}
+
+
 def model_progress(root, progress):
     """Observe declared model files only; never modify a running installer."""
     engine = progress.get('engine')
@@ -260,6 +289,9 @@ if __name__ == '__main__':
             payload = json.loads(sys.stdin.read(12 * 1024 * 1024))
             if payload.get('action') == 'media_location':
                 print(json.dumps(media_location(payload.get('operation_id'))))
+                sys.exit(0)
+            if payload.get('action') == 'existing_media':
+                print(json.dumps(existing_media(payload)))
                 sys.exit(0)
             root = Path(payload['directory'])
             if not root.is_absolute() or root.is_symlink() or '..' in root.parts or root == Path('/'):
