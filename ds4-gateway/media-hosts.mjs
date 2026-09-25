@@ -1,3 +1,4 @@
+import {mediaPair} from './media-pair.mjs';
 import fs from 'node:fs';
 import {randomUUID} from 'node:crypto';
 import {machinesFor} from './fleet-machines.mjs';
@@ -11,7 +12,7 @@ export const mediaEngines=[
 ];
 const terminal=new Set(['returned','failed_returned','failed_unchanged']);
 // Choices express placement permission, never installation or native readiness.
-export function createMediaHosts(config,store,{workers,binding}){
+export function createMediaHosts(config,store,{workers,binding,enrollmentWorker=id=>config.workers?.find(w=>w.id===id)}){
   const enrolled=(id,kind)=>!!config.media_jobs?.workers?.[id]?.engines?.[kind];
   const allowed=(id,kind)=>store.data.media_host_eligibility?.[id]?.[kind]??enrolled(id,kind);
   return {allowed,
@@ -34,7 +35,8 @@ export function createMediaHosts(config,store,{workers,binding}){
           engines:mediaEngines.filter(e=>e.supported).map(e=>{
             const installed=enrolled(w.id,e.kind),permission=allowed(w.id,e.kind);
             const recovery=config.recovery?.workers?.find(r=>r.id===w.id),inspection=config.genie_chat?.inspection?.workers?.[w.id];
-            const bound=installed&&!!inspection?.container&&recovery?.adapter==='docker'&&recovery.verification==='qwen_vllm'&&binding(w.id,recovery);
+            const pair=mediaPair(config,enrollmentWorker(w.id));
+            const bound=installed&&!!inspection?.container&&(!!pair||(recovery?.adapter==='docker'&&recovery.verification==='qwen_vllm'&&binding(w.id,recovery)));
             const reason=!permission?'Placement is off':!installed?'Setup and qualification needed':!bound?'LLM return binding needs attention':active?'A media operation is already in progress':!borrowable(w)?'Machine is unavailable or held for maintenance':!otherServingKeepsMachines(w)?'Another serving LLM on separate machines is required':(w.load||w.queued)?'Existing LLM jobs will drain first':w.drained?'LLM routing paused; available for Genie media selection':'Available for Genie to select';
             return {id:e.id,kind:e.kind,allowed:permission,enrolled:installed,ready:!!(permission&&bound&&!active&&borrowable(w)&&otherServingKeepsMachines(w)),reason};
           })};

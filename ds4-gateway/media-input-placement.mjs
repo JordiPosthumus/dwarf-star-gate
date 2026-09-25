@@ -17,7 +17,12 @@ export async function inspectMediaJobInputs(config,jobs,input,{inspect=remoteIns
   if(!input||Object.keys(input).sort().join(',')!=='job_id,worker_id')throw Error('Choose a saved job_id and enrolled worker_id.');
   const job=jobs.get(input.job_id),requirements=mediaInputRequirements(job);
   const engine=config.media_jobs?.workers?.[input.worker_id]?.engines?.[job.kind];
-  const connection=config.genie_chat?.inspection?.workers?.[input.worker_id];
+  let connection=config.genie_chat?.inspection?.workers?.[input.worker_id];
+  if(engine?.member!==undefined){
+    const pair=config.media_jobs?.pairs?.[input.worker_id];
+    if(![0,1].includes(engine.member)||pair?.kind!=='glm53-docker-pair'||pair.members?.[0]?.ssh!==connection?.ssh?.[0]||pair.members?.[0]?.container!==connection?.container)throw Error('Paired media inspection binding changed');
+    connection={ssh:[pair.members[engine.member].ssh]};
+  }
   if(job.kind!=='video'||engine?.kind!=='comfyui'||!connection)throw Error('Input inspection supports an enrolled ComfyUI video worker.');
   const result=requirements.engine_local_files.length?await inspect(connection,engine,requirements.engine_local_files):{files:[],scope:'No engine-local stock-loader files to inspect.'};
   return {job_id:job.id,worker_id:input.worker_id,observed_at:new Date().toISOString(),...requirements,...result,

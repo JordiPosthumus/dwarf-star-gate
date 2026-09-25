@@ -330,9 +330,10 @@ class RecipeInspection(unittest.TestCase):
     raise AssertionError(argv)
    def collect():
     output=io.StringIO()
-    with patch('subprocess.check_output',side_effect=run),patch('sys.stdin',io.StringIO(json.dumps({'container':'fixture','recipe_root':str(root)}))),contextlib.redirect_stdout(output):exec(compile(m.COLLECTOR,'collector','exec'),{})
+    with patch('subprocess.check_output',side_effect=run),patch('subprocess.run',return_value=__import__('types').SimpleNamespace(returncode=0,stdout='native fixture failure\n',stderr='API_KEY=PRIVATE_LOG_VALUE\n')),patch('sys.stdin',io.StringIO(json.dumps({'container':'fixture','recipe_root':str(root)}))),contextlib.redirect_stdout(output):exec(compile(m.COLLECTOR,'collector','exec'),{})
     return json.loads(output.getvalue())
    result=collect();recipe=result['recipe']
+   self.assertEqual(result['recent_runtime_log']['container'],'immutable-id');self.assertIn('native fixture failure',result['recent_runtime_log']['tail']);self.assertNotIn('PRIVATE_LOG_VALUE',json.dumps(result))
    self.assertEqual(recipe['revision'],'a'*40);self.assertFalse(recipe['tracked_changes'])
    self.assertEqual(result['recipe_stamp'],'fixture-stamp')
    self.assertEqual(recipe['files']['.env']['sha256'],hashlib.sha256(env.encode()).hexdigest())

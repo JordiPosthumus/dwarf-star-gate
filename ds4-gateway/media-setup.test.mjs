@@ -88,3 +88,22 @@ test('real core exposes setup status on its private socket and refuses unenrolle
  const publicAttempt=await fetch(`http://127.0.0.1:${address.port}/genie-media-setup`,{method:'POST',headers:{authorization:'Bearer fixture-key','content-type':'application/json'},body:JSON.stringify({worker_id:'one',engine:'ace-step'})});assert.equal(publicAttempt.status,404);
  assert.equal((await workerControl(config.control_socket,'/workers')).workers[0].drained,false);assert.equal((await workerControl(config.control_socket,'/media-jobs')).setup.operations.length,0);
 });
+
+test('explicit GLM pair enrollment prepares media without pretending to be a single Qwen recovery',async t=>{
+ const f=fixture(t),w=f.workers[0];f.config.recovery.workers=[];
+ const pair={kind:'glm53-docker-pair',model:'GLM',worker_binding:{id:w.id,url:w.url,ssh:w.ssh},members:[{ssh:'fixture-host',container:'a'.repeat(64)},{ssh:'fixture-rank',container:'rank'}]};
+ f.config.media_jobs.pairs={one:pair};
+ const service=createMediaSetup(f.config,f.store,{...f.options,binding:()=>false});assert.equal(service.status().hosts[0].available,true);
+ const row=await service.start({worker_id:'one',engine:'ace-step'}),plan=JSON.parse(fs.readFileSync(path.join(f.options.directory,row.operation_id,'plan.json')));
+ assert.deepEqual(plan.llm_pair,{...pair,media_member:0});assert.equal(plan.recovery.profile,'glm53-docker-pair');assert.equal(plan.endpoint.url,w.url);assert.deepEqual(f.config.recovery.workers,[]);
+ f.workers[0].url='http://changed';assert.equal(service.status().hosts[0].available,false);
+});
+
+test('paired setup assigns ACE to rank and saves its host member with native qualification',async t=>{
+ const f=fixture(t),w=f.workers[0];f.config.recovery.workers=[];
+ f.config.media_jobs.pairs={one:{kind:'glm53-docker-pair',model:'GLM',worker_binding:{id:w.id,url:w.url,ssh:w.ssh},members:[{ssh:'fixture-host',container:'a'.repeat(64)},{ssh:'fixture-rank',container:'rank'}],engine_members:{music:1,video:0}}};
+ const service=createMediaSetup(f.config,f.store,f.options),row=await service.start({worker_id:'one',engine:'ace-step'});
+ const plan=JSON.parse(fs.readFileSync(path.join(f.options.directory,row.operation_id,'plan.json')));assert.equal(plan.target.ssh,'fixture-rank');assert.equal(plan.llm_container,'rank');assert.equal(plan.llm_pair.media_member,1);
+ f.complete(row.operation_id);await service.finish({operation_id:row.operation_id});assert.equal(f.config.media_jobs.workers.one.engines.music.member,1);
+ const again=createMediaSetup(f.config,f.store,f.options);assert.equal(again.status().hosts[0].error,null);
+});

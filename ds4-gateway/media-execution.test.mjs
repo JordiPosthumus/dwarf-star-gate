@@ -287,3 +287,13 @@ test('native step receipts are display-only, clear for restoration and cannot co
  assert.ok(receipts.some(r=>r.phase==='generating'&&r.native_progress.value===20));
  assert.ok(receipts.filter(r=>['retaining_results','restoring_llm','checking_llm','returned'].includes(r.phase)).every(r=>r.native_progress===null));
 });
+
+test('paired execution sends a retained rank engine to its rank host and keeps the head endpoint for return',async t=>{
+ const f=fixture(t),worker={id:'one',url:'http://127.0.0.1:38888/v1',backend:'openai'};
+ f.config.recovery.workers=[];f.engine.member=1;
+ f.config.media_jobs.pairs={one:{kind:'glm53-docker-pair',model:'GLM',worker_binding:{id:worker.id,url:worker.url},members:[{ssh:'fixture-host',container:'a'.repeat(64)},{ssh:'fixture-rank',container:'rank'}]}};
+ const service=createMediaExecution(f.config,f.jobs,{workers:()=>[worker,{id:'other'}],isEnabled:()=>true,matchesWorker:()=>false,launchRunner:async()=>({pid:1})});
+ await service.start({job_id:f.job.id,worker_id:'one'});
+ const plan=JSON.parse(fs.readFileSync(path.join(f.jobs.executionFolder(f.job.id),'plan.json')));
+ assert.equal(plan.host,'fixture-rank');assert.equal(plan.llm_container,'rank');assert.equal(plan.llm_pair.media_member,1);assert.deepEqual(plan.endpoint,worker);assert.deepEqual(plan.separate_workers,['other']);
+});

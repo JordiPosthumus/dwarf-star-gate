@@ -1,3 +1,4 @@
+import {mediaPairReturn} from './media-pair-return.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
@@ -26,13 +27,14 @@ try{
  const bundle=JSON.parse(fs.readFileSync(path.join(folder,'recipe-bundle.json')));
  const location=await setupTransport(plan.target,{action:'media_location',operation_id:plan.operation_id});
  assert.ok(path.isAbsolute(location.directory));plan.target.directory=location.directory;saveMediaReceipt(folder,'plan.json',plan);
- const result=await runMediaSetup(plan,{
+ const pair=mediaPairReturn(plan,save);
+ const result=await runMediaSetup(plan,{pair,
   save,progress,delay,
   maintenance:async action=>JSON.parse((await execute(plan.python,['-I','-B',fileURLToPath(new URL('./media_maintenance.py',import.meta.url)),folder,action],{maxBuffer:1024*1024})).stdout),
   hasMaintenanceIntent:()=>fs.existsSync(path.join(folder,'gateway/acquire.intent.json')),
   inspect:async id=>JSON.parse(await remote(['docker','inspect',id]))[0],start:id=>remote(['docker','start',id]),stop:id=>remote(['docker','stop','-t','120',id]),
-  recoveryInspect:()=>recoveryCall(plan.recovery,{action:'inspect'}),
-  verify:async()=>{const proof=await verifyRecovery(plan.recovery.url,plan.model,plan.context_length,{kind:'qwen_vllm',endpoint:plan.endpoint});assert.ok(qwenRecoveryProofValid(proof,plan.context_length),'Original LLM cache proof failed');return proof;},
+  recoveryInspect:()=>pair?pair.recoveryInspect():recoveryCall(plan.recovery,{action:'inspect'}),
+  verify:async()=>{if(pair)return pair.verify();const proof=await verifyRecovery(plan.recovery.url,plan.model,plan.context_length,{kind:'qwen_vllm',endpoint:plan.endpoint});assert.ok(qwenRecoveryProofValid(proof,plan.context_length),'Original LLM cache proof failed');return proof;},
   prepare:llmContainer=>setupTransport(plan.target,{action:'prepare_media',selected_engines:plan.engines,llm_container:llmContainer,...bundle}),
   readPreparation:()=>setupTransport(plan.target,{action:'status'}),
   preparedMedia:()=>setupTransport(plan.target,{action:'media_plan'}),

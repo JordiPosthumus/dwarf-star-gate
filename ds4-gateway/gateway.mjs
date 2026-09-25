@@ -393,9 +393,9 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   const oldestQueued=queue=>queue.reduce((oldest,job)=>!oldest||job.createdMono<oldest.createdMono?job:oldest,null);
 
   const capabilityStatus=()=>genieCapabilities(store.data.genie_capabilities,config,recovery.state.automatic);
-  const mediaHosts=createMediaHosts(serviceConfig,store,{workers:()=>registry().workers,binding:(id,c)=>recovery.binding(nodes.find(n=>n.id===id),c)});
+  const mediaHosts=createMediaHosts(serviceConfig,store,{workers:()=>registry().workers,enrollmentWorker:id=>{const n=nodes.find(n=>n.id===id);return n?definition(n):null;},binding:(id,c)=>recovery.binding(nodes.find(n=>n.id===id),c)});
   const mediaStatus=()=>{const state=mediaExecution.status();return {...state,text_video_supported:!!mediaJobs,...mediaHosts.status(state.jobs),setup:mediaSetup?.status()??null};};
-  const mediaExecution=createMediaExecution(serviceConfig,mediaJobs,{isAllowed:mediaHosts.allowed,isEnabled:()=>!draining&&capabilityStatus().media,matchesWorker:(id,c)=>{const n=nodes.find(n=>n.id===id);return !!n&&recovery.binding(n,c);}});
+  const mediaExecution=createMediaExecution(serviceConfig,mediaJobs,{workers:()=>nodes.map(definition),isAllowed:mediaHosts.allowed,isEnabled:()=>!draining&&capabilityStatus().media,matchesWorker:(id,c)=>{const n=nodes.find(n=>n.id===id);return !!n&&recovery.binding(n,c);}});
   const mediaSetup=mediaJobs?createMediaSetup(serviceConfig,store,{directory:path.join(path.dirname(config.state_file),'media-setup'),workers:()=>nodes.map(definition),binding:(id,c)=>{const n=nodes.find(n=>n.id===id);return !!n&&recovery.binding(n,c);},isEnabled:()=>!draining&&capabilityStatus().media,isAllowed:mediaHosts.allowed}):null;
   const rebalanceEnabled=()=>capabilityStatus().rebalance;
   const allocationStatus=slot=>slot.turnAllocation?{turns_used:slot.turnAllocation.used,remaining:Math.max(0,conversationTurns()-slot.turnAllocation.used),waiting_for_next_turn:!slot.active&&slot.turnAllocation.until>performance.now(),idle_remaining_ms:Math.max(0,Math.ceil(slot.turnAllocation.until-performance.now()))}:null;
