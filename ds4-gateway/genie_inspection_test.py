@@ -393,3 +393,12 @@ class PeerInspection(unittest.TestCase):
    payload={'container':'fixture','peer':{'destination':'fixture@example.invalid','port':22,'machine_sha256':'a'*64,'known_hosts':'example.invalid ssh-ed25519 '+'A'*68+'\n'}}
    with patch('subprocess.check_output',side_effect=output),patch('subprocess.run',side_effect=run),patch('sys.stdin',io.StringIO(json.dumps(payload))),contextlib.redirect_stdout(stdout):exec(compile(m.COLLECTOR,'collector','exec'),{})
    result=json.loads(stdout.getvalue());self.assertEqual(result['peer_probe']['machine_matches'],expected);self.assertEqual(result['image']['size_bytes'],12345)
+
+
+class ImageTransferInspection(unittest.TestCase):
+ def test_only_docker_image_stream_counters_are_returned(self):
+  with tempfile.TemporaryDirectory() as folder:
+   root=pathlib.Path(folder)
+   for pid,args in [('12',b'/usr/bin/docker\0save\0sha256:fixture'),('13',b'/usr/bin/docker\0load'),('14',b'/usr/bin/docker\0run\0private-argument'),('15',b'/usr/bin/ssh\0private-host')]:
+    p=root/pid;p.mkdir();(p/'cmdline').write_bytes(args);(p/'io').write_text('rchar: 1024\nwchar: 512\nsyscr: 7\nread_bytes: 0\nwrite_bytes: 0\n')
+   value=m.inspect_image_transfers(folder);self.assertEqual({x['operation'] for x in value},{'save','load'});self.assertNotIn('private',json.dumps(value));self.assertTrue(all(x['bytes']['rchar']==1024 for x in value));self.assertNotIn('syscr',value[0]['bytes'])

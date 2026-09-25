@@ -1,4 +1,4 @@
-// Explicit paired-LLM enrollment. Media always runs on the enrolled head;
+// Explicit paired-LLM enrollment. Media runs on its enrolled pair member;
 // both original containers return by ID, with their full Docker settings intact.
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';

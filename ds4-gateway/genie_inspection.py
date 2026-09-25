@@ -200,6 +200,23 @@ def inspect_trial_progress(recipe_root, mounts, container_id=None):
     except Exception:result['candidate_start_tail']='Unavailable'
     return result
 
+def inspect_image_transfers(root='/proc'):
+    """Bounded native byte counters for Docker image streams, without environment data."""
+    from pathlib import Path
+    result=[]
+    try:entries=Path(root).iterdir()
+    except OSError:return result
+    for entry in entries:
+        if not entry.name.isdigit():continue
+        try:
+            args=(entry/'cmdline').read_bytes().decode().strip('\0').split('\0')
+            if len(args)<2 or Path(args[0]).name!='docker' or args[1] not in ['save','load']:continue
+            counters={k:int(v.strip()) for k,v in [line.split(':',1) for line in (entry/'io').read_text().splitlines()] if k in ['rchar','wchar','read_bytes','write_bytes']}
+            result.append({'pid':int(entry.name),'operation':args[1],'bytes':counters})
+            if len(result)>=16:break
+        except (OSError,ValueError,UnicodeError):continue
+    return result
+
 def peer_parameters(target):
     aliases=target.get('ssh',[])
     if not isinstance(aliases,list) or not aliases or not re.fullmatch(r'[A-Za-z0-9][\w.@-]{0,252}',aliases[0]):raise ValueError('Use an enrolled SSH peer')
@@ -216,7 +233,7 @@ def peer_parameters(target):
     return {'destination':user+'@'+host,'port':int(port),'machine_sha256':fingerprint,'known_hosts':known_host+' '+' '.join(key)+'\n'}
 
 # Arguments arrive as JSON on stdin, never interpolated into a remote shell command.
-COLLECTOR = inspect.getsource(inspect_trial_progress)+'\nSOURCE_QUERY = '+repr(SOURCE_QUERY)+'\nMODEL_CONFIG_QUERY = '+repr(MODEL_CONFIG_QUERY)+'\nRUNTIME_QUERY = '+repr(RUNTIME_QUERY)+'\nCACHE_QUERY = '+repr(CACHE_QUERY)+'\n'+r'''
+COLLECTOR = inspect.getsource(inspect_image_transfers)+'\n'+inspect.getsource(inspect_trial_progress)+'\nSOURCE_QUERY = '+repr(SOURCE_QUERY)+'\nMODEL_CONFIG_QUERY = '+repr(MODEL_CONFIG_QUERY)+'\nRUNTIME_QUERY = '+repr(RUNTIME_QUERY)+'\nCACHE_QUERY = '+repr(CACHE_QUERY)+'\n'+r'''
 import sys,json,subprocess,pathlib,re,hashlib,datetime,stat
 p=json.loads(sys.stdin.readline())
 secret=re.compile(r'api[_-]?key|access[_-]?token|secret|password|authorization|hf_token|hugging_face_hub_token|private[_-]?key|credential',re.I)
@@ -383,7 +400,7 @@ try:
   text='\n'.join('<credential-related line withheld>' if secret.search(line) else line for line in lines)
   recent_runtime_log={'state':'read','container':c['Id'],'tail':text[-16000:],'truncated':len(text)>16000,'scope':'At most 120 recent container log lines from the last 30 minutes. Logs are dated evidence, not a health check or proof that an error remains active.'}
 except Exception:pass
-print(json.dumps({'observed_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'container':{'id':c['Id'],'image_id':c['Image'],'running':c['State']['Running'],'started_at':c['State']['StartedAt'],'entrypoint':config.get('Entrypoint'),'command':cmd,'environment':env,'mounts':c['Mounts'],'port_bindings':c['HostConfig'].get('PortBindings'),'restart_policy':c['HostConfig'].get('RestartPolicy'),'ipc_mode':c['HostConfig'].get('IpcMode'),'shm_size':c['HostConfig'].get('ShmSize'),'device_requests':c['HostConfig'].get('DeviceRequests')},'image':{'id':i['Id'],'created':i['Created'],'size_bytes':i.get('Size'),'repo_digests':i.get('RepoDigests',[])},'recipe':recipe,'recipe_trial':inspect_trial_progress(p.get('recipe_root'),c.get('Mounts',[]),c.get('Id')),'recipe_stamp':(i.get('Config',{}).get('Labels') or {}).get('glm53.recipe.stamp'),'packages':packages,'model_config':model_config,'engine_runtime':engine_runtime,'launcher':launcher,'recent_runtime_log':recent_runtime_log,**({'peer_probe':peer_probe} if peer_probe is not None else {}),**({'sources':sources} if sources is not None else {}),'scope':'Live Docker metadata, launcher bytes, separately labelled installed distribution metadata and model configuration on disk. Package versions do not prove build ancestry or custom source integrity. Installed Python source can be requested with source_files and source_window. No inference, restart, weight hash or restoration test. Launch settings and model configuration on disk do not independently prove effective API behavior or kernel dispatch.'}))
+print(json.dumps({'observed_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'container':{'id':c['Id'],'image_id':c['Image'],'running':c['State']['Running'],'started_at':c['State']['StartedAt'],'entrypoint':config.get('Entrypoint'),'command':cmd,'environment':env,'mounts':c['Mounts'],'port_bindings':c['HostConfig'].get('PortBindings'),'restart_policy':c['HostConfig'].get('RestartPolicy'),'ipc_mode':c['HostConfig'].get('IpcMode'),'shm_size':c['HostConfig'].get('ShmSize'),'device_requests':c['HostConfig'].get('DeviceRequests')},'image':{'id':i['Id'],'created':i['Created'],'size_bytes':i.get('Size'),'repo_digests':i.get('RepoDigests',[])},'recipe':recipe,'recipe_trial':inspect_trial_progress(p.get('recipe_root'),c.get('Mounts',[]),c.get('Id')),'recipe_stamp':(i.get('Config',{}).get('Labels') or {}).get('glm53.recipe.stamp'),'packages':packages,'model_config':model_config,'engine_runtime':engine_runtime,'launcher':launcher,'recent_runtime_log':recent_runtime_log,'image_transfers':inspect_image_transfers(),**({'peer_probe':peer_probe} if peer_probe is not None else {}),**({'sources':sources} if sources is not None else {}),'scope':'Live Docker metadata, launcher bytes, separately labelled installed distribution metadata and model configuration on disk. Package versions do not prove build ancestry or custom source integrity. Installed Python source can be requested with source_files and source_window. No inference, restart, weight hash or restoration test. Launch settings and model configuration on disk do not independently prove effective API behavior or kernel dispatch.'}))
 '''
 
 def read_json(file, expected_sha256=None):
