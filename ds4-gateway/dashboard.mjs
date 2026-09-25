@@ -12,6 +12,7 @@ import {MediaWatch} from './media-watch.mjs';
 import {createMediaTools} from './genie-media.mjs';
 import {createQueueTools} from './genie-queue.mjs';
 import {createRecoveryTools} from './genie-recovery.mjs';
+import {createPairPreparation} from './recovery-pair-preparation.mjs';
 import {createFleetPowerTools} from './genie-power.mjs';
 import {createRecipeTrials} from './recipe-trials.mjs';
 import {createAdmissionTools} from './genie-admission.mjs';
@@ -577,7 +578,9 @@ export async function runDashboard(configPath, port) {
   operations=createOperationService(config,{directory:path.join(path.dirname(config.state_file),'genie','operations'),isTesting,isEnabled:()=>isCapabilityEnabled('server_changes')});
   const queueTools=managementEnabled?createQueueTools({read:()=>readService('gateway',config),move:input=>workerControl(config.control_socket,'/genie-relocate-queued',input,{channel:'gate_genie'}),isTesting,isEnabled:()=>isCapabilityEnabled('rebalance')}):null;
   const mediaTools=managementEnabled&&config.media_jobs?.enabled?createMediaTools({audit:input=>workerControl(config.control_socket,'/genie-media-audit',input,{channel:'gate_genie'}),repair:input=>workerControl(config.control_socket,'/genie-media-repair',input,{channel:'gate_genie'}),inspectInputs:input=>workerControl(config.control_socket,'/genie-media-inputs',input,{channel:'gate_genie'}),setup:input=>workerControl(config.control_socket,'/genie-media-setup',input,{channel:'gate_genie'}),resources:createMediaResources(config,{isEnabled:()=>isCapabilityEnabled('inspection')}),read:async()=>{const [media,fleet]=await Promise.all([workerControl(config.control_socket,'/media-jobs'),workerControl(config.control_socket,'/workers')]);return {...media,standard_setup:mediaStandardWatch?.status()??null,fleet:fleet.workers.map(w=>({id:w.id,is_healthy:w.is_healthy,drained:w.drained,load:w.load,queued:w.queued}))};},start:input=>workerControl(config.control_socket,'/genie-media-start',input,{channel:'gate_genie'}),isTesting}):null;
-  const recoveryTools=managementEnabled?createRecoveryTools({read:()=>readService('gateway',config),recover:input=>workerControl(config.control_socket,'/genie-recover-worker',input,{channel:'gate_genie'}),isTesting,isEnabled:()=>isCapabilityEnabled('recovery')}):null;
+  const recoveryTools=managementEnabled?createRecoveryTools({read:()=>readService('gateway',config),recover:input=>workerControl(config.control_socket,'/genie-recover-worker',input,{channel:'gate_genie'}),
+    preparation:config.genie_chat?.python?createPairPreparation({config,readWorkers:()=>workerControl(config.control_socket,'/workers')}):null,
+    isInspectionEnabled:()=>isCapabilityEnabled('inspection'),isTesting,isEnabled:()=>isCapabilityEnabled('recovery')}):null;
   const powerResolveEndpoint=managementEnabled?async worker=>{
     const registry=await workerControl(config.control_socket,'/workers',undefined,{channel:'dashboard'});
     const row=(registry?.workers??[]).find(w=>w.id===worker);
