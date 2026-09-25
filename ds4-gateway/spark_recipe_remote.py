@@ -282,22 +282,22 @@ class Remote:
             follow,answer=self.chat(messages+[message,{'role':'tool','tool_call_id':calls[0]['id'],'content':'{"value":7319}'},{'role':'user','content':'Reply with the returned integer, no further tool call.'}],tools=tools,tool_choice='auto')
             return {'samples':[sample,follow],'passed':follow['finish_reason']=='stop' and '7319' in answer['content']}
         save('tool_call_and_followup',toolcheck)
-        histories=[]
+        histories={}
         for key in ['A','B']:
             messages,count=self.prompt(131072,str(uuid.uuid4())+'-'+key)
-            def cold(messages=messages,count=count):
-                sample,answer=self.chat(messages);histories.append((messages,answer))
+            def cold(messages=messages,count=count,key=key):
+                sample,answer=self.chat(messages);histories[key]=(messages,answer)
                 return {'input_tokens_measured':count,'sample':sample,'passed':sample['finish_reason']=='stop' and '7319' in answer['content'],'cold_cache_proved':sample.get('cached_tokens')==0}
             save('cold-'+key,cold)
-        for index,key in enumerate(['A','B']):
-            if len(histories)<=index:continue
-            messages,answer=histories[index]
+        for key in ['A','B']:
+            if key not in histories:continue
+            messages,answer=histories[key]
             def warm(messages=messages,answer=answer):
                 sample,reply=self.chat(messages+[answer,{'role':'user','content':'Repeat the verification value only.'}])
                 return {'sample':sample,'passed':sample['finish_reason']=='stop' and '7319' in reply['content'],'substantial_reuse_proved':sample.get('cached_tokens') is not None and sample['cached_tokens']>=100000}
             save('append-'+key,warm)
-        if histories:
-            original=histories[0][0][0]['content'];at=int(len(original)*0.9)
+        if 'A' in histories:
+            original=histories['A'][0][0]['content'];at=int(len(original)*0.9)
             for label,content in [('edit-90-percent',original[:at]+' Revised record.'+original[at:]),('branch-90-percent',original[:at]+'\nNew branch: verification value is 7319. Reply with the value only.')]:
                 def branch(content=content):
                     sample,reply=self.chat([{'role':'user','content':content}]);return {'sample':sample,'passed':sample['finish_reason']=='stop' and '7319' in reply['content']}

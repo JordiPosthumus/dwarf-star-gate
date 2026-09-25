@@ -97,3 +97,17 @@ class CacheProfile(unittest.TestCase):
   self.assertEqual(set(result)-set(original),{'GLM53_DRAFT_KV_COMPACT','GLM53_APC_RETENTION_INTERVAL','GLM53_APC_RETENTION_INTERVAL_SWA'})
   self.assertEqual(result['GLM53_APC_RETENTION_INTERVAL'],'14336')
   with self.assertRaisesRegex(ValueError,'pinned'):baseline_cache_settings({**original,'MAX_MODEL_LEN':'262144'})
+
+class CacheHistoryLabels(unittest.TestCase):
+ def test_failed_first_cold_request_cannot_relabel_second_history(self):
+  with tempfile.TemporaryDirectory() as directory:
+   remote=Remote({'trial_root':directory,'recipe_root':directory,'trial_id':'fixture'})
+   remote.prompt=lambda count,nonce:([{'role':'user','content':nonce}],count)
+   remote.metrics=lambda:{}
+   def chat(messages,**kwargs):
+    content=messages[0]['content']
+    if content.endswith('-A'):raise RuntimeError('first history failed')
+    return {'finish_reason':'stop','usage':{'prompt_tokens':399935},'cached_tokens':131000},{'role':'assistant','content':'7319'}
+   remote.chat=chat
+   rows=remote.checks('A',400000);labels=[row['label'] for row in rows]
+   self.assertIn('append-B',labels);self.assertNotIn('append-A',labels);self.assertNotIn('edit-90-percent',labels)
