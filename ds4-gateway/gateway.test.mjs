@@ -675,8 +675,8 @@ test('retired encoder configuration is ignored while numerical collection preser
 
 test('client metadata is recorded while queued, never changes body settings or reaches DS4',async t=>{
   const r=await rig(t,1,{dataset_enabled:true});
-  const first=r.request(JSON.stringify({stream:true,delay:400}),'busy');
-  await until(()=>r.backends[0].active===1);
+  const first=r.request(JSON.stringify({stream:true,fixture_hold_stream:true}),'busy');
+  await until(()=>r.backends[0].heldStreams?.length===1);
   const body=JSON.stringify({stream:true,reasoning_effort:'xhigh',max_tokens:131072});
   const header=JSON.stringify({schema:1,prompt_tokens_estimate:262144,turn_index:4,compaction_count:1,reasoning_effort:'low'});
   const second=r.request(body,'early',{headers:{'x-dsg-client-metadata':header}});
@@ -685,6 +685,7 @@ test('client metadata is recorded while queued, never changes body settings or r
   const event=read().find(e=>e.client_metadata?.status==='ready');
   assert.ok(!read().some(e=>e.request_id===event.request_id&&e.kind==='dispatch'));
   assert.equal(event.client_metadata.reasoning_effort,'low');
+  r.backends[0].heldStreams.shift()();
   assert.equal((await first).status,200);assert.equal((await second).status,200);
   assert.equal(r.backends[0].records[1].body.toString(),body);
   assert.equal(r.backends[0].records[1].headers['x-dsg-client-metadata'],undefined);
