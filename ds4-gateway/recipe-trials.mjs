@@ -32,12 +32,17 @@ export function createRecipeTrials({config,powerBusy=()=>false,launch=spawn}={})
     if(!path.isAbsolute(binding.plan_file??'')||!/^[a-f0-9]{64}$/.test(binding.plan_sha256??''))throw Error('Recipe plan enrollment is incomplete');
     const bytes=fs.readFileSync(binding.plan_file);if(hash(bytes)!==binding.plan_sha256)throw Error('Enrolled recipe plan changed; leave serving unchanged');
     const plan=JSON.parse(bytes),folder=path.join(directory,trial_id),file=path.join(folder,`${stage}.status.json`);
-    const localMtp=plan.kind==='omlx-glm53-mtp-depth'&&plan.worker==='glm53f-m3';
+    const localMtp=plan.kind==='omlx-glm53-mtp-depth'&&/^[A-Za-z0-9][\w-]{0,63}$/.test(plan.worker??'');
     const legacyPair=['glm53f-sparks12','glm53f-sparks34'].includes(plan.worker);
     const customPair=/^[A-Za-z0-9][\w-]{0,63}$/.test(plan.worker??'')&&Array.isArray(config.machine_groups?.[plan.worker])&&config.machine_groups[plan.worker].length===2;
     const spark=plan.kind==='glm53-spark-pair-long-coding'&&(legacyPair||customPair);
     const rollout=plan.kind==='glm53-spark-pair-rollout'&&(legacyPair||customPair);
     if(plan.schema!==1||(!localMtp&&!spark&&!rollout)||rollout!==(stage==='rollout'))throw Error('Unsupported enrolled recipe plan or operation stage');
+    if(localMtp){
+      const endpoint=typeof plan.url==='string'&&plan.url.trim()===plan.url&&/^http:\/\/(?:127\.0\.0\.1|\[::1\]):([1-9][0-9]*)\/v1$/.exec(plan.url);
+      if(!endpoint||Number(endpoint[1])>65535)throw Error('Local MTP trials require an explicit numeric loopback endpoint and port');
+      if((plan.worker!=='glm53f-m3'&&!Array.isArray(config.machine_groups?.[plan.worker]))||machinesFor(plan.worker,config).length!==1)throw Error('Enroll the local trial worker with one explicit physical machine');
+    }
     if((spark||rollout)&&(!legacyPair||plan.separate_workers!==undefined)){
       const separate=plan.separate_workers,taken=machinesFor(plan.worker,config);
       if(!Array.isArray(separate)||!separate.length||new Set(separate).size!==separate.length||separate.some(id=>typeof id!=='string'||!/^[A-Za-z0-9][\w-]{0,63}$/.test(id)||!Array.isArray(config.machine_groups?.[id])||machinesFor(id,config).some(m=>taken.includes(m))))throw Error('Enroll separate serving workers with explicit non-overlapping machine_groups');

@@ -54,6 +54,23 @@ test('local MTP trial must match every private inspection binding and reserves M
  await manager.start(args);assert.match(f.launched[0][1][0],/omlx_recipe_trial.py$/);
  assert.equal(manager.busy('qwen-image'),true);assert.equal(manager.busy('glm53f-sparks34'),false);
 });
+test('custom local trial needs explicit shared hardware and exact loopback inspection enrollment',async t=>{
+ const f=fixture(t),plan={schema:1,kind:'omlx-glm53-mtp-depth',worker:'my-local-glm',root:'/fixture/local',url:'http://127.0.0.1:9001/v1',api_key_file:'/fixture/key',candidate_depth:5};
+ const binding=f.config.recipe_trials.fixture,write=()=>{fs.writeFileSync(binding.plan_file,JSON.stringify(plan));binding.plan_sha256=createHash('sha256').update(fs.readFileSync(binding.plan_file)).digest('hex');};write();
+ const target={kind:'omlx-local',root:plan.root,url:plan.url,api_key_file:plan.api_key_file};f.config.genie_chat.inspection.workers[plan.worker]=target;
+ const manager=createRecipeTrials(f),args={profile:'fixture',stage:'prepare',trial_id:id};
+ await assert.rejects(manager.start(args),/explicit physical machine/);
+ f.config.machine_groups={[plan.worker]:['mac-a','mac-b']};await assert.rejects(manager.start(args),/explicit physical machine/);
+ f.config.machine_groups={[plan.worker]:['mac-a'],'image-worker':['mac-a'],spare:['mac-b']};
+ const credentialUrl=new URL(plan.url);credentialUrl.username='fixture-user';credentialUrl.password='fixture-password';
+ for(const url of ['http://example.test:9001/v1','http://127.0.0.1/v1','http://127.0.0.1:0/v1','http://127.0.0.1:65536/v1',credentialUrl.href,'http://127.0.0.1:9001/v1?x=1','http://127.0.0.1:9001/other']){
+  plan.url=url;write();target.url=url;await assert.rejects(manager.start(args),/loopback/);
+ }
+ assert.equal(f.launched.length,0);assert.equal(fs.existsSync(f.folder),false);
+ plan.url='http://[::1]:9001/v1';write();target.url='http://127.0.0.1:9001/v1';await assert.rejects(manager.start(args),/inspection binding/);
+ target.url=plan.url;await manager.start(args);assert.equal(f.launched.length,1);
+ assert.match(f.launched[0][1][0],/omlx_recipe_trial.py$/);assert.equal(manager.busy('image-worker'),true);assert.equal(manager.busy('spare'),false);
+});
 test('permanent rollout is explicitly enrolled, independently launched and deduplicated after publication',async t=>{
  const f=fixture(t),binding=f.config.recipe_trials.fixture;
  const plan=JSON.parse(fs.readFileSync(binding.plan_file));plan.kind='glm53-spark-pair-rollout';
