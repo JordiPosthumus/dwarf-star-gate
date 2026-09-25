@@ -85,3 +85,18 @@ test('lost audit submission retains request identity and missing targets do not 
  f.chat.submit=(...args)=>{f.calls.push(args);if(f.calls.length===1)throw Error('Lost response');};
  await new MediaStandardWatch(f.options).tick();await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,2);assert.deepEqual(f.calls[0],f.calls[1]);
 });
+
+test('same-worker native setup defers source repair until completion, then continues once',async t=>{
+ const f=fixture(t);f.config.media_jobs.standard.targets.splice(0,1);f.s.setup.source_repair_supported=true;
+ const active={worker_id:'pair',member:0,engine:'ace-step',operation_id:'active',phase:'preparing_media'};
+ f.s.setup.operations=[active,{worker_id:'pair',member:1,engine:'h3',operation_id:'failed',phase:'failed_unchanged',at:'failure',failure_context:{stage:'read_only_preflight',selected_media_container:'missing'}}];
+ const w=new MediaStandardWatch(f.options);await w.tick();assert.equal(f.calls.length,0);assert.equal(w.status().targets[0].phase,'waiting');
+ active.phase='enrolled';active.finished_at='finished';await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,1);assert.match(f.calls[0][1],/repair_media_setup/);
+ await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,1);
+});
+
+test('disabled native inspection preserves attention evidence without dispatching inspection',async t=>{
+ const f=fixture(t);f.config.media_jobs.standard.targets.splice(1);f.s.hosts[0].members[0].engines[0].enrolled=true;
+ f.s.setup.standard_audit={enabled:false,targets:[{key:JSON.stringify(['pair',0,'ace-step']),state:'unavailable',observed_at:'fixed',due:true}]};
+ const w=new MediaStandardWatch(f.options);await w.tick();assert.equal(f.calls.length,0);assert.equal(w.status().targets[0].phase,'needs_attention');
+});

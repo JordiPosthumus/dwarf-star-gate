@@ -37,13 +37,16 @@ export class MediaStandardWatch {
     const engines=t.member===undefined?host?.engines:host?.members?.find(m=>m.member===t.member)?.engines;
     const engine=engines?.find(e=>e.id===t.engine);
     const op=s.setup?.operations?.find(o=>o.worker_id===t.worker_id&&o.engine===t.engine&&o.member===t.member);
+    const siblings=(s.setup?.operations??[]).filter(o=>o.worker_id===t.worker_id&&o.operation_id!==op?.operation_id);
+    const occupied=siblings.some(o=>!terminal.has(o.phase));
     const audit=s.setup?.standard_audit?.targets?.find(a=>a.key===t.key);
     let phase,reason,action;
     if(!host||!engine){phase='needs_attention';reason='Configured worker/member is not observed.';}
     else if(engine.enrolled){
-     if(audit&&['absent','changed','unavailable'].includes(audit.state)){phase='needs_attention';reason=`Native container audit ${audit.state} at ${audit.observed_at}; enrollment retained.`;action='audit_inspect';}
+     if(audit&&['absent','changed','unavailable'].includes(audit.state)){phase='needs_attention';reason=`Native container audit ${audit.state} at ${audit.observed_at}; enrollment retained.`;if(s.setup.standard_audit.enabled)action='audit_inspect';}
      else phase='enrolled';
     }
+    else if(op?.phase==='failed_unchanged'&&occupied){phase='waiting';reason='Another setup owns this worker; wait for its native completion before repair or retry.';}
     else if(op?.phase==='failed_unchanged'&&op.retry_ready===true){phase='retry_available';action='retry';}
     else if(op?.phase==='failed_unchanged'&&op.failure_context?.stage==='read_only_preflight'&&op.failure_context?.selected_media_container&&s.setup?.source_repair_supported===true){phase='source_repair_needed';action='repair';}
     else if(op&&failed.has(op.phase)){phase='needs_attention';reason=op.detail??op.phase;action='inspect';}
@@ -58,7 +61,7 @@ export class MediaStandardWatch {
      if(active||host.execution||!worker?.is_healthy||worker.load||worker.queued||!spare||!capable){phase='waiting';reason='Waiting for setup support, idle hardware and a separate serving LLM.';}
      else {phase='setup_needed';action='setup';}
     }
-    const fingerprint=createHash('sha256').update(JSON.stringify([t,phase,op?.operation_id,failed.has(op?.phase)?op.at:null,reason])).digest('hex');
+    const fingerprint=createHash('sha256').update(JSON.stringify([t,phase,op?.operation_id,failed.has(op?.phase)?op.at:null,reason,...(['repair','retry'].includes(action)?[siblings.map(o=>[o.operation_id,o.phase,o.finished_at??o.at])]:[])])).digest('hex');
     if(action&&old.dispatched===fingerprint&&!old.pending&&['setup_needed','source_repair_needed','retry_available'].includes(phase)){phase='needs_attention';reason='Genie ended its setup reply without an observed operation; inspect the standard conversation.';action=null;}
     const row={...old,phase,enrolled:engine?.enrolled===true,reason:reason??null,operation_id:op?.operation_id??null,observed_at:this.now()};this.state.targets[t.key]=row;
     if(!chosen&&action&&old.dispatched!==fingerprint)chosen={t,row,action,fingerprint};
