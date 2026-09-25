@@ -47,3 +47,10 @@ test('a no-action Genie reply is visible and does not create a repeated setup lo
  await w.tick();await w.tick();assert.equal(f.calls.length,1);assert.equal(w.status().targets[0].phase,'needs_attention');
  await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,1);
 });
+
+test('only a backend-verified corrected preflight gets one same-ID timestamped retry',async t=>{
+ const f=fixture(t);f.config.media_jobs.standard.targets.splice(1);
+ f.s.setup.operations=[{worker_id:'pair',member:0,engine:'ace-step',operation_id:'old',phase:'failed_unchanged',at:'2026-01-01T00:00:00Z',retry_ready:true}];
+ const w=new MediaStandardWatch(f.options);await w.tick();assert.match(f.calls[0][1],/"expected_failed_at":"2026-01-01T00:00:00Z"/);assert.match(f.calls[0][1],/same operation ID/);
+ await w.tick();assert.equal(f.calls.length,1);
+});

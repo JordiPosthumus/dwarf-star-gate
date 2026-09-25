@@ -19,12 +19,12 @@ const launch=async folder=>{
 };
 export function createMediaSetup(config,store,{directory,workers,binding,isEnabled,isAllowed,bundle=bundleRecipes,transport=setupTransport,launchRunner=launch}){
  const restoreErrors={};
- const identity=id=>{
+ const identity=(id,reuse=config.media_jobs?.reuse?.[id])=>{
   const worker=workers().find(w=>w.id===id),recovery=config.recovery?.workers?.find(w=>w.id===id),inspection=config.genie_chat?.inspection?.workers?.[id];
   const pair=mediaPair(config,worker);
   if(!worker||(!recovery&&!pair)||!inspection)return null;
   const route=Object.fromEntries(['id','url','ssh','ssh_fallbacks','remote_port'].filter(k=>worker[k]!==undefined).map(k=>[k,worker[k]]));
-  return createHash('sha256').update(JSON.stringify({route,recovery,inspection,...(pair?{pair}:{}),...(config.media_jobs?.reuse?.[id]?{reuse:config.media_jobs.reuse[id]}:{})})).digest('hex');
+  return createHash('sha256').update(JSON.stringify({route,recovery,inspection,...(pair?{pair}:{}),...(reuse?{reuse}:{})})).digest('hex');
  };
  // Media was qualified with the LLM stopped. Its retained engine belongs to
  // that physical machine, not a particular LLM version or local tunnel port.
@@ -51,6 +51,26 @@ export function createMediaSetup(config,store,{directory,workers,binding,isEnabl
  for(const [id,saved] of Object.entries(store.data.media_engine_enrollments??{})){
   try{assert.ok(retainedMatches(id,saved),'Worker or physical-machine binding changed');apply(id,saved.engines??{});for(const [member,engines] of Object.entries(saved.member_engines??{}))apply(id,engines,member);}catch(e){restoreErrors[id]=e.message;}
  }
+ const candidateCorrected=saved=>{
+  if(identity(saved.worker_id)===saved.binding)return false;
+  try{
+   const plan=JSON.parse(fs.readFileSync(path.join(directory,saved.operation_id,'plan.json')));
+   if(!plan.reuse||plan.worker_id!==saved.worker_id||plan.engines?.length!==1||plan.engines[0]!==saved.engine)return false;
+   const member=saved.member??plan.llm_pair?.media_member??0;
+   const old=structuredClone(config.media_jobs?.reuse?.[saved.worker_id]??{});old[member]??={};
+   old[member][saved.engine]=Object.fromEntries(Object.entries(plan.reuse).filter(([k])=>!['engine','llm_container'].includes(k)));
+   // Only this selected reuse candidate may differ. Route, LLM, other engines,
+   // physical members and all remaining inspection/recovery fields still match.
+   return identity(saved.worker_id,old)===saved.binding;
+  }catch{return false;}
+ };
+ const unchangedAttemptExited=saved=>{
+  const folder=path.join(directory,saved.operation_id);
+  for(const name of ['gateway/acquire.intent.json','stop-llm-intent.json','llm-pair-stop-intent.json','prepare-intent.json'])assert.ok(!fs.existsSync(path.join(folder,name)),'Setup advanced past read-only preflight; inspect it instead of retrying');
+  const {pid}=JSON.parse(fs.readFileSync(path.join(folder,'launched.json')));assert.ok(Number.isSafeInteger(pid)&&pid>0,'Runner identity is unconfirmed');
+  let stopped=false;try{process.kill(pid,0);}catch(e){if(e.code==='ESRCH')stopped=true;else throw e;}
+  assert.ok(stopped,'Original setup runner may still be active');
+ };
  const read=id=>{
   let saved=store.data.media_setups?.[id];assert.ok(saved,'Unknown media setup');
   if(saved.member===undefined)try{const member=JSON.parse(fs.readFileSync(path.join(directory,id,'plan.json'))).llm_pair?.media_member;if([0,1].includes(member))saved={...saved,member};}catch{}
@@ -64,7 +84,14 @@ export function createMediaSetup(config,store,{directory,workers,binding,isEnabl
   let preparation,qualification;
   try{const s=JSON.parse(fs.readFileSync(path.join(folder,'preparation.json')));preparation={state:s.state,engine:s.progress?.engine,phase:s.progress?.phase,model_download:s.model_download};}catch{}
   try{const q=JSON.parse(fs.readFileSync(path.join(folder,'qualification/progress.json')));qualification={state:q.state,engine:q.engine,phase:q.phase,detail:q.detail,error:q.error};}catch{}
-  return {...saved,...progress,preparation,qualification,...(enrollmentError?{enrollment_error:enrollmentError}:{})};
+  let failure_context;
+  if(progress.phase==='failed_unchanged')try{
+   const plan=JSON.parse(fs.readFileSync(path.join(folder,'plan.json'))),resolution=JSON.parse(fs.readFileSync(path.join(folder,'llm-resolution.json')));
+   const intents=['gateway/acquire.intent.json','stop-llm-intent.json','llm-pair-stop-intent.json','prepare-intent.json'];
+   if(intents.every(name=>!fs.existsSync(path.join(folder,name))))failure_context={stage:'read_only_preflight',selected_engine:saved.engine,selected_media_container:plan.reuse?.container??null,current_llm_container:resolution.container,maintenance_started:false,llm_stop_started:false,media_preparation_started:false,scope:'Saved intent evidence: this attempt stopped before maintenance, LLM stop or media preparation. The selected media and current LLM identities are distinct. An inspection failure does not alone establish why an object was unavailable.'};
+  }catch{}
+  let retry_ready=false;if(progress.phase==='failed_unchanged'&&candidateCorrected(saved))try{unchangedAttemptExited(saved);retry_ready=true;}catch{}
+  return {...saved,...progress,preparation,qualification,...(failure_context?{failure_context}:{}),...(retry_ready?{retry_ready:true}:{}),...(enrollmentError?{enrollment_error:enrollmentError}:{})};
  };
  const canSetup=id=>{
   const recovery=config.recovery?.workers?.find(w=>w.id===id),inspection=config.genie_chat?.inspection?.workers?.[id];
@@ -105,11 +132,8 @@ export function createMediaSetup(config,store,{directory,workers,binding,isEnabl
    assert.ok(prior&&typeof input.expected_failed_at==='string'&&Number.isFinite(Date.parse(input.expected_failed_at)),'Retry requires the exact saved pre-maintenance failure timestamp');
    const observed=read(prior.operation_id),folder=path.join(directory,prior.operation_id);
    assert.ok(observed.phase==='failed_unchanged'&&observed.at===input.expected_failed_at,'Only the current confirmed unchanged failure can retry');
-   assert.equal(identity(input.worker_id),prior.binding,'Worker binding changed; preserve this operation');
-   for(const name of ['gateway/acquire.intent.json','stop-llm-intent.json','llm-pair-stop-intent.json','prepare-intent.json'])assert.ok(!fs.existsSync(path.join(folder,name)),'Setup advanced past read-only preflight; inspect it instead of retrying');
-   const {pid}=JSON.parse(fs.readFileSync(path.join(folder,'launched.json')));assert.ok(Number.isSafeInteger(pid)&&pid>0,'Runner identity is unconfirmed');
-   let stopped=false;try{process.kill(pid,0);}catch(e){if(e.code==='ESRCH')stopped=true;else throw e;}
-   assert.ok(stopped,'Original setup runner may still be active');
+   assert.ok(identity(input.worker_id)===prior.binding||candidateCorrected(prior),'Worker binding changed; preserve this operation');
+   unchangedAttemptExited(prior);
   }else if(prior){if(read(prior.operation_id).phase==='qualified_returned')return finish({operation_id:prior.operation_id});return read(prior.operation_id);}
   assert.ok(isEnabled(),'Media capability is switched off');assert.ok(isAllowed(input.worker_id,kinds[input.engine]),'Allow this engine on the machine before setup');assert.ok(canSetup(input.worker_id),'This machine needs a matching Docker LLM inspection/recovery enrollment');
   assert.ok(!mediaEngine(config,input.worker_id,kinds[input.engine],selectedMember),'This engine is already enrolled; its working installation is preserved');
