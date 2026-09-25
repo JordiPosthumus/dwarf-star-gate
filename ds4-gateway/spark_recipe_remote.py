@@ -75,7 +75,7 @@ class Remote:
     def __init__(self,plan):
         self.plan=plan;self.root=Path(plan['trial_root']);self.recipe=Path(plan['recipe_root'])
         self.candidate=self.root/'candidate';self.backup=self.root/'baseline'
-        self.tag='dsg-glm53-trial:'+plan['trial_id'];self.original_tag='dsg-glm53-original:'+plan['trial_id']
+        self.tag=('dsg-glm53-rollout:' if plan.get('kind')=='glm53-spark-pair-rollout' else 'dsg-glm53-trial:')+plan['trial_id'];self.original_tag='dsg-glm53-original:'+plan['trial_id']
         class NoRedirect(urllib.request.HTTPRedirectHandler):
             def redirect_request(self,*args,**kwargs):return None
         self.opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect())
@@ -174,6 +174,10 @@ class Remote:
             'CACHE_ROOT='+shlex.quote(str(self.root/'head-cache')),
             'WORKER_VLLM_CACHE='+shlex.quote(self.plan['remote_root']+'/'+self.plan['trial_id']+'/rank-cache'),
         ])+'\n'
+        if self.plan.get('kind')=='glm53-spark-pair-rollout':
+            # Future normal starts use the same already-qualified image. These
+            # match launch()'s transport controls, not diagnostic model limits.
+            candidate_env+='SKIP_PULL=1\nSKIP_BUILD=1\nSKIP_DOWNLOAD=1\nSKIP_SYNC=1\nSKIP_SHIP=1\n'
         (self.candidate/'.env').write_text(candidate_env);os.chmod(self.candidate/'.env',0o600)
         # Bound compilation parallelism in the isolated build only; no serving
         # setting is changed. Preserve the upstream Dockerfile and record delta.
@@ -189,7 +193,12 @@ class Remote:
                 relative=file.relative_to(self.candidate).as_posix()
                 if file.is_file() and '__pycache__' not in file.parts and '.pytest_cache' not in file.parts and not relative.startswith(('ablit/transplant/','files/nfs-server/')) and relative!='files/nfs-share.sh' and file.suffix!='.pyc':files.append(file)
         stamp=hashlib.sha256(''.join(sha(f)+'  '+str(f)+'\n' for f in sorted(files)).encode()).hexdigest()
-        self.command(['docker','build','--build-arg','GLM53_RECIPE_STAMP='+stamp,'-t',self.tag,str(self.candidate)],log='candidate-build.log',guard_build=True)
+        if self.plan.get('kind')=='glm53-spark-pair-rollout':
+            image=self.images(self.plan['qualified_image'])
+            if image['Id']!=self.plan['qualified_image']:raise RuntimeError('Transferred image differs from the qualified image')
+            self.command(['docker','tag',image['Id'],self.tag])
+        else:
+            self.command(['docker','build','--build-arg','GLM53_RECIPE_STAMP='+stamp,'-t',self.tag,str(self.candidate)],log='candidate-build.log',guard_build=True)
         image=self.images(self.tag)
         if image['Architecture']!='arm64':raise RuntimeError('Candidate architecture mismatch')
         # Pipe immutable candidate layers to rank 1; no original tags are changed.
@@ -203,6 +212,9 @@ class Remote:
         self.baseline_unchanged()
         if self.inspect()['Id']!=head['Id'] or self.inspect(True)['Id']!=rank['Id']:raise RuntimeError('Serving identity changed during preparation')
         result={'state':'prepared','source_revision':self.plan['source_revision'],'candidate_image':image['Id'],'rank_candidate_image':other['Id'],'recipe_stamp':stamp,'build_only_delta':{'MAX_JOBS':{'from':8,'to':1},'scope':'Isolated CUDA compilation concurrency only; no runtime flags changed.'},'candidate_env_sha256':sha(self.candidate/'.env'),'original_image':head['Image'],'original_container':head['Id'],'original_rank_container':rank['Id'],'scope':'Original recipe and both images backed up. Candidate built and shipped separately; no model stopped, settings changed or weights/cache removed.'}
+        if self.plan.get('kind')=='glm53-spark-pair-rollout':
+            result.update(reused_qualified_image=True,recipe_stamp=image.get('Config',{}).get('Labels',{}).get('glm53.recipe.stamp'),scope='Original recipe and both containers/images backed up. The exact qualified image was copied without rebuilding; serving remains unchanged.')
+            result.pop('build_only_delta',None)
         write(self.root/'prepared.json',result);return result
     def metrics(self):
         raw=self.request('/metrics',timeout=15).decode();values={}
@@ -368,7 +380,8 @@ print(json.dumps(result))
             current=self.inspect(rank)
             if current['Id']!=prepared[key]:raise RuntimeError('Original identity changed before suspension')
             call(['docker','stop','--time','60',current['Id']],timeout=90)
-            call(['docker','rename',current['Id'],name+'-original-'+self.plan['trial_id']])
+            preserved=('dsg-preserved-'+name if self.plan.get('kind')=='glm53-spark-pair-rollout' else name)+'-original-'+self.plan['trial_id']
+            call(['docker','rename',current['Id'],preserved])
     def restore(self,prepared):
         self.baseline_unchanged()
         before=json.loads((self.backup/'head.json').read_text());before_rank=json.loads((self.backup/'rank.json').read_text())
@@ -465,15 +478,61 @@ print(json.dumps(result))
             result['finished_at']=time.time();write(self.root/'run-result.json',result)
         return result
 
+    def rollout_preflight(self):
+        self.baseline_unchanged()
+        head,rank=self.inspect(),self.inspect(True)
+        if any(x['Image']!=self.plan['baseline_image'] or not x['State']['Running'] for x in [head,rank]):
+            raise RuntimeError('The running target pair differs from its enrolled baseline')
+        baseline_cache_settings(envmap(head))
+        if shutil.disk_usage(self.root).free<50*1024**3:raise RuntimeError('Insufficient target scratch space; serving unchanged')
+        return {'state':'verified','original_container':head['Id'],'original_rank_container':rank['Id'],'scope':'Read-only baseline and capacity preflight; no model stopped.'}
+
+    def deploy(self):
+        if self.plan.get('kind')!='glm53-spark-pair-rollout' or self.plan.get('candidate_profile')!='baseline-cache-400k':raise RuntimeError('Only an explicitly enrolled capacity-preserving permanent rollout can deploy')
+        prepared=json.loads((self.root/'prepared.json').read_text());self.baseline_unchanged()
+        if (self.root/'deploy-intent.json').exists():raise RuntimeError('Deployment already submitted; inspect its existing receipt')
+        if prepared['candidate_image']!=self.plan['qualified_image']:raise RuntimeError('Prepared image is not the qualified image')
+        if self.inspect()['Id']!=prepared['original_container'] or self.inspect(True)['Id']!=prepared['original_rank_container']:
+            raise RuntimeError('Original pair identity changed during preparation')
+        self.isolate_candidate_staging(prepared)
+        self.wait_idle();write(self.root/'deploy-intent.json',{'started_at':time.time(),'operation_id':self.plan['trial_id']})
+        result={'state':'deploying','scope':'Owner-authorized permanent rollout. Readiness canary only; no performance benchmark or capacity test.'}
+        changed=False
+        try:
+            changed=True;self.suspend_original(prepared)
+            self.launch(self.candidate,self.tag,'deployment')
+            head,rank=self.inspect(),self.inspect(True)
+            expected=baseline_cache_settings(envmap(json.loads((self.backup/'head.json').read_text())))
+            mapped={'GLM53_APC_RETENTION_INTERVAL':'VLLM_PREFIX_CACHE_RETENTION_INTERVAL','GLM53_APC_RETENTION_INTERVAL_SWA':'VLLM_PREFIX_CACHE_RETENTION_INTERVAL_SWA'}
+            for current,key in [(head,'candidate_image'),(rank,'rank_candidate_image')]:
+                if current['Image']!=prepared[key] or not current['State']['Running']:raise RuntimeError('Deployed image identity or running state differs')
+                actual=envmap(current)
+                if any(actual.get(mapped.get(key,key))!=value for key,value in expected.items()):raise RuntimeError('A preserved serving setting differs')
+            models=json.loads(self.request('/v1/models',timeout=15))
+            if not any(m.get('id')=='GLM-5.3-Flash-EXL3' for m in models.get('data',[])):raise RuntimeError('Expected served model unavailable')
+            sample,reply=self.chat([{'role':'user','content':'Deployment readiness check. Reply with exactly DEPLOYED_7319.'}])
+            if sample['finish_reason']!='stop' or reply['content'].strip()!='DEPLOYED_7319':raise RuntimeError('Deployment readiness generation did not return the expected answer')
+            write(self.root/'candidate-head.json',head);write(self.root/'candidate-rank.json',rank)
+            result.update(state='deployed',candidate_image=head['Image'],rank_candidate_image=rank['Image'],head_container=head['Id'],rank_container=rank['Id'],preserved_serving_settings_verified=True,
+                          serving_settings={k:v for k,v in envmap(head).items() if k in expected or k in mapped.values()},readiness=sample,
+                          original_containers={'head':prepared['original_container'],'rank':prepared['original_rank_container']},recipe_root=str(self.candidate))
+        except Exception as error:
+            result['error']=str(error)
+            if changed:
+                try:result.update(state='restored',restoration=self.restore(prepared))
+                except Exception as failure:result.update(state='restoration_required',restoration_error=str(failure))
+            else:result['state']='failed_unchanged'
+        result['finished_at']=time.time();write(self.root/'deploy-result.json',result);return result
+
 
 if __name__=='__main__':
     # Losing the SSH session must not terminate the restoration transaction.
     signal.signal(signal.SIGHUP,signal.SIG_IGN)
     action,encoded=sys.argv[1:];plan=json.loads(base64.b64decode(encoded));runner=Remote(plan)
     if action=='idle':result={'idle':runner.idle()}
-    elif action in ['prepare','run']:
+    elif action in ['prepare','run','deploy','rollout_preflight','rollback']:
         with open(runner.root/'operation.lock','a') as lock:
             fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-            result=getattr(runner,action)()
+            result=runner.restore(json.loads((runner.root/'prepared.json').read_text())) if action=='rollback' else getattr(runner,action)()
     else:raise SystemExit('Unknown action')
     print(json.dumps(result),flush=True)

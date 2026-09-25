@@ -28,7 +28,7 @@ def atomic(file, value):
 
 
 def validate(plan):
-    if plan.get('schema')!=1 or plan.get('kind')!='glm53-spark-pair-long-coding':
+    if plan.get('schema')!=1 or plan.get('kind') not in ['glm53-spark-pair-long-coding','glm53-spark-pair-rollout']:
         raise ValueError('Unsupported recipe trial')
     if plan.get('candidate_profile','long-coding') not in ['long-coding','baseline-cache-400k']:
         raise ValueError('Unsupported candidate profile')

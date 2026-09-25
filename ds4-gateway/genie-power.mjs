@@ -78,8 +78,14 @@ export function createFleetPowerTools({runner,read,isTesting=()=>false,isEnabled
     }
     if(input?.action==='recipe-trial'){
       if(Object.keys(input).sort().join(',')!=='action,profile,stage,trial_id'||!recipes)throw Error('Use an enrolled recipe trial profile and stage');
+      if(!['prepare','run'].includes(input.stage))throw Error('Trials only support prepare/run; permanent rollout uses its own enrolled action');
       if(isTesting()||!isEnabled())throw Error('Recipe trials are suspended or fleet power is switched off');
       return recipes.start(input);
+    }
+    if(input?.action==='recipe-rollout'){
+      if(Object.keys(input).sort().join(',')!=='action,profile,rollout_id'||!recipes)throw Error('Use an enrolled permanent rollout profile and rollout ID');
+      if(isTesting()||!isEnabled())throw Error('Recipe rollout is suspended or fleet power is switched off');
+      return recipes.start({profile:input.profile,stage:'rollout',trial_id:input.rollout_id});
     }
     if(input?.action==='routing'){
       const {worker,routing_action,action_id,expected_operator_action}=input;
@@ -142,7 +148,7 @@ export function createFleetPowerTools({runner,read,isTesting=()=>false,isEnabled
     return {accepted:true,action_id,worker,power_action,state:'running',next_step:'Read fleet_power_status for this action ID. Accepted means the operation is running, not verified complete.'};
   }
   const tool=input=>{
-    if(input?.action==='recipe-trial'||input?.action==='routing'||(input?.action==='power'&&input.power_action!=='status'&&input.mode!=='check')){
+    if(input?.action==='recipe-trial'||input?.action==='recipe-rollout'||input?.action==='routing'||(input?.action==='power'&&input.power_action!=='status'&&input.mode!=='check')){
       const next=admission.then(()=>runTool(input));admission=next.then(()=>undefined,()=>undefined);return next;
     }
     return runTool(input);

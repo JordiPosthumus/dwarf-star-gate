@@ -53,3 +53,15 @@ test('local MTP trial must match every private inspection binding and reserves M
  await manager.start(args);assert.match(f.launched[0][1][0],/omlx_recipe_trial.py$/);
  assert.equal(manager.busy('qwen-image'),true);assert.equal(manager.busy('glm53f-sparks34'),false);
 });
+test('permanent rollout is explicitly enrolled, independently launched and deduplicated after publication',async t=>{
+ const f=fixture(t),binding=f.config.recipe_trials.fixture;
+ const plan=JSON.parse(fs.readFileSync(binding.plan_file));plan.kind='glm53-spark-pair-rollout';
+ fs.writeFileSync(binding.plan_file,JSON.stringify(plan));binding.plan_sha256=createHash('sha256').update(fs.readFileSync(binding.plan_file)).digest('hex');
+ const manager=createRecipeTrials(f),args={profile:'fixture',stage:'rollout',trial_id:id};
+ await assert.rejects(manager.start({...args,stage:'prepare'}),/operation stage/);assert.equal(f.launched.length,0);
+ const receipt=await manager.start(args);assert.equal(receipt.operation_kind,'permanent_rollout');assert.equal(receipt.rollout_id,id);
+ assert.match(f.launched[0][1][0],/spark_recipe_rollout.py$/);assert.equal(f.launched[0][2].detached,true);
+ assert.equal(manager.busy('glm53f-sparks34'),true);
+ f.config.genie_chat.inspection.workers['glm53f-sparks34'].recipe_root='/published/recipe';
+ await createRecipeTrials(f).start(args);assert.equal(f.launched.length,1);
+});
