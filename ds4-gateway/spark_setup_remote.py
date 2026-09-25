@@ -55,6 +55,50 @@ def existing_media(payload):
             'scope': 'Pinned existing Docker engine only; fresh native qualification and current LLM return still required.'}
 
 
+def discover_media(payload):
+    """Choose a stopped known engine, or fresh setup, only after proving old ID absent."""
+    engine = payload.get('engine')
+    old, current = payload.get('missing_container'), payload.get('llm_container')
+    if engine not in ('h3', 'ace-step') or any(not isinstance(v, str) or not re.fullmatch(r'[a-f0-9]{64}', v) for v in (old, current)):
+        raise ValueError('Pin the missing media and current LLM identities')
+    def read(*args):
+        return subprocess.check_output(['docker', *args], text=True, timeout=15)
+    llm = json.loads(read('inspect', '--type', 'container', '--', current))[0]
+    if llm['Id'] != current or llm['State']['Running'] is not True:
+        raise ValueError('Current LLM identity or running state is unconfirmed')
+    ids = read('ps', '-aq', '--no-trunc').splitlines()
+    if len(ids) > 128 or any(not re.fullmatch(r'[a-f0-9]{64}', v) for v in ids):
+        raise ValueError('Complete bounded Docker inventory is unavailable')
+    if current not in ids or old in ids:
+        raise ValueError('Expected missing media is not confirmed absent on the current LLM host')
+    native_port = '8188/tcp' if engine == 'h3' else '8002/tcp'
+    candidates = []
+    for offset in range(0, len(ids), 16):
+        for obj in json.loads(read('inspect', '--type', 'container', '--', *ids[offset:offset + 16])):
+            bindings = (obj.get('HostConfig', {}).get('PortBindings') or {}).get(native_port) or []
+            config = obj.get('Config') or {}
+            command = (config.get('Entrypoint') or []) + (config.get('Cmd') or [])
+            known = ('acestep.api_server' in command if engine == 'ace-step' else
+                     any(str(arg).endswith('/ComfyUI/main.py') for arg in command) or
+                     ('main.py' in command and str(config.get('WorkingDir', '')).rstrip('/').endswith('/ComfyUI')))
+            if not bindings:
+                if known:
+                    raise ValueError('Recognized media engine has an unsupported port mapping; preserved')
+                continue
+            if not known or obj.get('State', {}).get('Running') is not False or len(bindings) != 1:
+                raise ValueError('Native media port is occupied by an active, unknown or ambiguous container; preserved')
+            port = bindings[0].get('HostPort', '')
+            if not str(port).isdigit() or not 0 < int(port) <= 65535 or not re.fullmatch(r'sha256:[a-f0-9]{64}', obj.get('Image', '')):
+                raise ValueError('Native media candidate identity or port is invalid')
+            candidates.append({'source': 'docker', 'container': obj['Id'], 'image': obj['Image'],
+                               'kind': 'comfyui' if engine == 'h3' else 'ace-step', 'port': int(port)})
+    if len(candidates) > 1:
+        raise ValueError('More than one stopped media candidate; selection needs attention')
+    return {'state': 'source_selected', 'engine': engine, 'missing_container': old,
+            'current_llm_container': current, 'selection': candidates[0] if candidates else None,
+            'scope': 'Read-only complete Docker inventory confirmed the old media container absent. Selected a unique stopped engine with a recognized launch command, or separate fresh preparation when no port candidate exists. Nothing started, stopped, deleted or installed. Native qualification remains required.'}
+
+
 def model_progress(root, progress):
     """Observe declared model files only; never modify a running installer."""
     engine = progress.get('engine')
@@ -308,6 +352,9 @@ if __name__ == '__main__':
             payload = json.loads(sys.stdin.read(12 * 1024 * 1024))
             if payload.get('action') == 'media_location':
                 print(json.dumps(media_location(payload.get('operation_id'))))
+                sys.exit(0)
+            if payload.get('action') == 'discover_media':
+                print(json.dumps(discover_media(payload)))
                 sys.exit(0)
             if payload.get('action') == 'existing_media':
                 print(json.dumps(existing_media(payload)))

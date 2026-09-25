@@ -84,6 +84,7 @@ test('real core exposes setup status on its private socket and refuses unenrolle
  const state=await workerControl(config.control_socket,'/media-jobs');assert.equal(state.setup.connected,true);assert.equal(state.setup.hosts[0].available,false);
  await workerControl(config.control_socket,'/media-host-eligibility',{worker_id:'one',kind:'music',allowed:true});
  await assert.rejects(workerControl(config.control_socket,'/genie-media-setup',{worker_id:'one',engine:'ace-step'}),/switched off/);
+ await assert.rejects(workerControl(config.control_socket,'/genie-media-repair',{worker_id:'one',engine:'ace-step',expected_failed_at:'2026-01-01T00:00:00Z'}),/switched off/);
  await workerControl(config.control_socket,'/genie-capability',{key:'media',enabled:true});
  await assert.rejects(workerControl(config.control_socket,'/genie-media-setup',{worker_id:'one',engine:'ace-step'}),/matching Docker/);
  const publicAttempt=await fetch(`http://127.0.0.1:${address.port}/genie-media-setup`,{method:'POST',headers:{authorization:'Bearer fixture-key','content-type':'application/json'},body:JSON.stringify({worker_id:'one',engine:'ace-step'})});assert.equal(publicAttempt.status,404);
@@ -176,7 +177,7 @@ test('corrected reuse selection can retry unchanged preflight only, with every o
   saveMediaReceipt(folder,'progress.json',{phase:'failed_unchanged',at});saveMediaReceipt(folder,'launched.json',{pid:2147483647});
   f.config.media_jobs.reuse.one[0]['ace-step']=changed==='fresh'?null:{source:'docker',container:'8'.repeat(64),image:'sha256:'+'9'.repeat(64),kind:'ace-step',port:8002};
   if(changed==='route')f.workers[0].url='http://changed';
-  if(changed==='other-engine')f.config.media_jobs.reuse.one[0].h3={source:'docker'};
+  if(changed==='other-engine'){f.config.media_jobs.reuse.one[0].h3={source:'docker'};f.config.media_jobs.reuse.one[0]['ace-step']={directory:'/retained',...Object.fromEntries(['container','image','kind','port'].map(k=>[k,e[k]]))};}
   if(changed==='intent')saveMediaReceipt(folder,'prepare-intent.json',{});
   if(changed==='runner')saveMediaReceipt(folder,'launched.json',{pid:process.pid});
   const ready=service.status().operations[0].retry_ready===true;
@@ -193,4 +194,38 @@ test('unchanged failures identify media separately from the inspected current LL
  saveMediaReceipt(folder,'progress.json',{phase:'failed_unchanged',at:'2026-01-01T00:00:00Z'});saveMediaReceipt(folder,'llm-resolution.json',{container:'a'.repeat(64)});
  const evidence=f.service.status().operations[0].failure_context;assert.equal(evidence.current_llm_container,'a'.repeat(64));assert.equal(evidence.selected_media_container,'b'.repeat(64));assert.equal(evidence.llm_stop_started,false);
  saveMediaReceipt(folder,'prepare-intent.json',{});assert.equal(f.service.status().operations[0].failure_context,undefined);
+});
+
+test('Genie source repair is bounded, backed up, idempotent and survives restart before same-ID retry',async t=>{
+ for(const fresh of [false,true]){
+  const f=fixture(t),e=f.fresh.engines['ace-step'];f.config.recovery.workers[0].machine='1'.repeat(64);
+  f.config.media_jobs.standard={enabled:true,targets:[{worker_id:'one',engine:'ace-step'}]};
+  f.config.media_jobs.reuse={one:{0:{'ace-step':{directory:'/old',...Object.fromEntries(['container','image','kind','port'].map(k=>[k,e[k]]))}}}};
+  const baseline=structuredClone(f.config),selection=fresh?null:{source:'docker',container:'8'.repeat(64),image:'sha256:'+'9'.repeat(64),kind:'ace-step',port:8002};let reads=0;
+  const options={...f.options,transport:async(target,input)=>{reads++;assert.equal(input.action,'discover_media');assert.equal(input.missing_container,e.container);assert.equal(input.llm_container,'a'.repeat(64));return {state:'source_selected',engine:'ace-step',missing_container:e.container,current_llm_container:'a'.repeat(64),selection};}};
+  const service=createMediaSetup(f.config,f.store,options),input={worker_id:'one',engine:'ace-step'},row=await service.start(input),folder=path.join(f.options.directory,row.operation_id),at='2026-01-01T00:00:00Z';
+  saveMediaReceipt(folder,'progress.json',{phase:'failed_unchanged',at});saveMediaReceipt(folder,'llm-resolution.json',{container:'a'.repeat(64)});saveMediaReceipt(folder,'launched.json',{pid:2147483647});
+  // Earlier operations are migrated only under the exact original identity.
+  delete f.store.data.media_setups[row.operation_id].infrastructure_binding;
+  const migrated=createMediaSetup(f.config,f.store,options);assert.ok(f.store.data.media_setups[row.operation_id].infrastructure_binding);
+  await assert.rejects(migrated.repair({...input,expected_failed_at:'wrong'}));
+  const result=await migrated.repair({...input,expected_failed_at:at});assert.equal(result.retry_ready,true);assert.equal(f.launches(),1);assert.equal(reads,1);
+  await migrated.repair({...input,expected_failed_at:at});assert.equal(reads,1,'lost reply does not repeat selection');
+  assert.ok(fs.existsSync(path.join(folder,'source-correction.json')));assert.equal(f.config.media_jobs.workers.one.engines.music,undefined);
+  const restored=createMediaSetup(baseline,f.store,options);assert.equal(restored.status().operations[0].retry_ready,true);
+  const next=await restored.start({...input,expected_failed_at:at});assert.equal(next.operation_id,row.operation_id);assert.equal(next.attempt,2);
+  const plan=JSON.parse(fs.readFileSync(path.join(folder,'plan.json')));assert.equal(plan.reuse?.container,selection?.container);assert.ok(fs.existsSync(path.join(f.options.directory,'history',row.operation_id,'attempt-1','source-correction.json')));
+ }
+});
+test('source repair respects standard/inspection permission, existing engine and transition guards',async t=>{
+ for(const deny of ['standard','inspection','intent','live','llm','qualified','uncertain']){
+  const f=fixture(t),e=f.fresh.engines['ace-step'];f.config.recovery.workers[0].machine='1'.repeat(64);f.config.media_jobs.standard={enabled:true,targets:[{worker_id:'one',engine:'ace-step'}]};f.config.media_jobs.reuse={one:{0:{'ace-step':{source:'docker',...Object.fromEntries(['container','image','kind','port'].map(k=>[k,e[k]]))}}}};
+  let reads=0;const service=createMediaSetup(f.config,f.store,{...f.options,isInspectionEnabled:()=>deny!=='inspection',transport:async()=>{reads++;throw Error('must not inspect');}}),input={worker_id:'one',engine:'ace-step'},row=await service.start(input),folder=path.join(f.options.directory,row.operation_id),at='2026-01-01T00:00:00Z';
+  saveMediaReceipt(folder,'progress.json',{phase:deny==='uncertain'?'needs_attention':'failed_unchanged',at});saveMediaReceipt(folder,'llm-resolution.json',{container:'a'.repeat(64)});saveMediaReceipt(folder,'launched.json',{pid:deny==='live'?process.pid:2147483647});
+  if(deny==='standard')f.config.media_jobs.standard.enabled=false;
+  if(deny==='intent')saveMediaReceipt(folder,'stop-llm-intent.json',{});
+  if(deny==='llm')f.config.genie_chat.inspection.workers.one.container='different';
+  if(deny==='qualified')f.config.media_jobs.workers.one.engines.music=Object.fromEntries(['container','image','kind','port'].map(k=>[k,e[k]]));
+  await assert.rejects(service.repair({...input,expected_failed_at:at}));assert.equal(reads,0);assert.equal(f.launches(),1);assert.equal(f.store.data.media_setup_sources,undefined);
+ }
 });
