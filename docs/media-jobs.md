@@ -637,6 +637,12 @@ bindings on each physical member. The gateway saves dated evidence with a backup
 status reads never open SSH connections. Changed host or engine bindings invalidate
 old observations. Busy setup is deferred, and uncertain chat submission retains
 its original request identity across watcher restart.
+If Genie finishes an audit reply without fresh native evidence, the watcher
+requests one corrective read-only tool call. That request also retains its
+identity across lost acknowledgements and restarts. Two replies without a native
+receipt leave visible attention status; neither narrative claims nor repeated
+chat turns count as a successful audit. A dated unavailable result is evidence
+of an unsuccessful observation, not absence and not a reason for this retry.
 
 The results distinguish **present**, **absent**, **changed** and **unavailable**.
 Absence requires a complete native Docker inventory on the host with the enrolled
