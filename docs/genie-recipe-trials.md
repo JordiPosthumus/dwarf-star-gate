@@ -6,7 +6,7 @@ The private `recipe_trials` configuration maps each profile to an absolute
 `plan_file` and its SHA-256. Its worker/SSH/recipe path must match the existing
 inspection binding. The executors support the GLM Spark pair long
 coding reference profile and a local oMLX MTP depth 3 → 5 → 3 comparison. Enrollment is not permission to adopt the candidate.
-Use the owner's explicit approval for the temporary profile and its tradeoffs.
+Use the owner's authorization for the temporary profile and its tradeoffs. A standing policy may authorize verified improvements; it does not waive native evidence or permit unapproved capability reductions.
 
 For your own GLM pair names, configure `machine_groups` with the pair's two
 physical machine IDs and groups for independently serving workers. Include a
@@ -87,7 +87,7 @@ a combined source/cache experiment, not causal proof for one retention flag.
 It also restores the original containers and does not authorize adoption.
 
 
-After explicit owner authorization, `fleet_recipe_rollout` deploys a separately
+Under explicit owner authorization, including an applicable standing policy, `fleet_recipe_rollout` deploys a separately
 enrolled permanent plan with its own UUID. It reuses the exact image from the
 completed, capacity-preserving qualification, keeps the original containers,
 waits for idle under an owned maintenance hold and checks native readiness.

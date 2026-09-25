@@ -1,4 +1,4 @@
-# Media jobs — implementation in progress
+# Media jobs and per-machine setup
 
 These endpoints provide the durable queue and retained downloads. Downloads support
 single HTTP byte ranges, including open-ended and suffix ranges, so players can
@@ -10,8 +10,7 @@ original LLM and verifies responses/cache reuse before readmission. A real
 production Genie-led H3 cycle has passed, including retained downloads and LLM
 return. A real ACE-Step XL/4B music cycle has also passed: normal API submission
 woke Genie automatically, he assigned the host, and the runner generated audio,
-retained it and verified LLM return. The Media view now exposes saved host choices and job results. Read-only resource checks are available; native memory-fit qualification and
-complete fresh-host installation remain in progress.
+retained it and verified LLM return. The Media view exposes saved host choices, per-member engine inventories and job results. Existing-host setup has passed native generation, retained-output decoding and verified LLM return on connected Sparks. Each installation still needs its own qualification; these receipts do not establish installation on pristine hardware.
 
 Genie can select a finite batch when `media_job_status` reports
 `batch_jobs_supported`: `start_media_job` accepts optional `following_job_ids`
@@ -127,8 +126,7 @@ These behaviors are verified against HTTP fixtures. An installed H3 engine has
 also generated real H.264 video and FLAC audio through an isolated gateway;
 both retained downloads matched their size/hash receipts after H3 stopped.
 The connected production path also passed with actual Genie status/start/status
-calls, real media output and verified LLM return. Automatic queue wakeup is
-enabled; its wakeup-to-tools path was separately tested with pinned Hermes and a
+calls, real media output and verified LLM return. Automatic queue wakeup is available when its capability and dispatch settings are enabled; its wakeup-to-tools path was separately tested with pinned Hermes and a
 scripted model. Production music arrival has since exercised the automatic
 watcher, actual Genie tool calls, native ACE-Step generation, authenticated audio
 download after engine shutdown and automatic original-LLM readmission. This
@@ -157,7 +155,7 @@ capability switch controls new assignments; turning it off does not cancel an
 accepted operation or prevent the runner from returning its host. Queue intake
 and downloads remain available while execution is off.
 
-While the media capability is on, the existing ten-second dashboard tick wakes
+While the media capability is on and `media_jobs.automatic_dispatch` is not false, the existing ten-second dashboard tick wakes
 Genie for actionable queued jobs. He studies current fleet demand and
 chooses the host through the same tools as chat. Decisions appear in an
 **Automatic media dispatch** conversation. The watcher waits for active chat to
@@ -369,12 +367,7 @@ unverified for these Spark recipes.
 Observations carry their timestamp. The Media page keeps them until dashboard
 restart; Genie's actual tool receipts remain with the conversation. Failed
 inspection is shown explicitly, not as fresh readiness. Runtime memory fit
-requires a native generation check using the selected configuration. A
-recipe-driven setup action is now connected in source for eligible existing
-workers, with the controls now deployed through a coordinated core/dashboard
-update. Complete native qualification of this new whole workflow remains
-outstanding. The separate New Spark setup workflow remains
-for explicitly enrolled idle new hosts.
+requires a native generation check using the selected configuration. The recipe-driven setup action is available for eligible existing workers. Native setup has passed on connected Sparks, including a newly prepared ACE-Step installation and retained Docker-engine reuse; qualification remains specific to the selected engine and physical member. The separate New Spark setup workflow is for explicitly enrolled idle new hosts.
 
 The existing-worker setup lifecycle uses a separate detached runner, connected
 to **Set up ACE-Step / MiniMax H3** in Media and Genie's `setup_media_host` tool.
@@ -401,12 +394,7 @@ finishes. A replacement machine cannot inherit saved engines from the previous
 machine; the prior records remain in the timestamped state backup. Older records
 without a physical-machine binding retain their original exact-binding check.
 
-Lifecycle, retained enrollment/restart, private control routes and UI controls
-have fixture tests. The pinned Hermes runtime has called the setup tool and its
-actual receipt remains in chat. These checks do not yet establish complete native
-existing-host installation. Production activation preserved existing capability
-and placement choices, private settings and active maintenance locks. The
-continuity Door stayed running; the core finished admitted work before replacement.
+Lifecycle, retained enrollment/restart, private control routes and UI controls have fixture tests. The actual Genie has also called the setup tool on connected hardware: native media generation, full decoding, current paired-LLM restoration and final enrollment passed. These receipts establish those installations, separately from the fixture tests and from pristine-host acceptance. Guarded control-service activation keeps the continuity Door running and drains admitted work before replacing the core.
 
 Result players and download links use local dashboard routes; the dashboard
 adds the gateway credential on the server side. Keys stay out of browser URLs
@@ -552,3 +540,46 @@ attempt, then retries under the same operation ID. Ordinary repeated calls only
 observe it. A stale timestamp, live runner, uncertain failure or any transition
 intent refuses retry; inspect that operation instead. This never reruns an
 uncertain native installation or generation.
+
+
+### Maintain an owner-selected standard
+
+Set `media_jobs.standard.enabled` to true and provide explicit `targets`, for
+example:
+
+```json
+{
+  "enabled": true,
+  "targets": [
+    {"worker_id": "my-pair", "member": 0, "engine": "h3"},
+    {"worker_id": "my-pair", "member": 0, "engine": "ace-step"},
+    {"worker_id": "my-pair", "member": 1, "engine": "h3"},
+    {"worker_id": "my-pair", "member": 1, "engine": "ace-step"}
+  ]
+}
+```
+
+This is standing authority to set up those engines through Genie. It preserves
+placement choices and the Media capability; neither is switched on implicitly.
+The existing dashboard tick compares this standard with separate per-member
+enrollments, waits for idle capacity and wakes the actual Genie for the next
+missing engine. Saved observations and chat request identities survive reloads.
+Native setup still enforces its own reservation, resource, qualification and LLM
+return checks. `media_job_status` and the dashboard media API expose
+`standard_setup`; a recorded enrollment does not mean a server is currently running.
+
+Long-running operations are observed without resubmission. A qualified return
+with unfinished enrollment wakes Genie to finish that same operation. A failed
+or uncertain operation gets one read-only diagnosis per changed failure; it is
+never automatically replayed. Other eligible targets can continue. An ended
+Genie reply with no observed setup is reported as needing attention. This loop
+is independent of `automatic_dispatch`, which controls queued media jobs.
+
+Resource inspection also reports a bounded, read-only inventory of Docker
+containers publishing native media ports. These are candidates, not qualification
+or permission to replace an engine. Missing observations remain unknown; private
+container environments and commands are excluded.
+
+This standard watcher covers enrolled media setup. It does not yet autonomously
+select, qualify and promote arbitrary upstream recipe releases. That improvement
+loop is a separate requirement; having trial and rollout tools is insufficient.
