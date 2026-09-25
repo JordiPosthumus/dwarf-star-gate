@@ -27,3 +27,43 @@ Prerequisites now in place from tonight's work:
 - Delivery order using dashboard chat now:
   (a) admission-proposal tool (read-only draft), (b) park/start orchestration
   tool with confirmation receipt, (c) self-verify step reusing card 016 checks.
+
+
+## Audit 2026-09-24
+
+The staged admission backend and chat schema already existed, but the installed
+Hermes bridge never registered the admission toolset. Registration is now fixed
+and verified against the installed Python environment. Existing ask-first
+workflow remains separate from recipe-trial approval.
+
+`verify_serving` now performs real inference rather than treating `/v1/models`
+as generation proof. Real Genie calls and native verification receipts are retained privately. Credential resolution uses the private worker binding;
+public worker views intentionally omit credentials. Receipts retain failed
+checks as well as later successful evidence.
+
+Still open: one full new-worker admission through the actual Genie, including
+route activation and final generation. Do not remove/re-admit a working household
+worker merely to manufacture a completion claim. #008 now also has native
+status/routing/power controls and an enrolled immutable recipe-trial tool;
+#011 remains broader than the single GLM Spark profile being evaluated.
+
+
+## Admission lifecycle corrections
+
+An integration check using isolated model endpoints, a real gateway core and
+Continuity Door exposed two gaps in the prior mocked flow: real registration
+starts paused, and a native model needs the gateway's pool-name alias. The
+proposal now includes that alias and a separate `resume` stage. Readmission
+requires fresh readiness and the registration's operator/maintenance decision
+tokens; newer pauses, named holds and direct reservations remain protected.
+
+Completed stages and original registration evidence survive dashboard reload.
+An interrupted stage is surfaced with its saved intent and cannot be replayed
+or silently replaced. Completed action IDs are deduplicated. A new inspection
+cannot replace a proposal while its mutation is in flight.
+
+Validation crosses add → route → real fixture core restart → dashboard-tool
+reload → conditional resume → real Door generation with the expected worker
+header. Its native fixture rejects an incorrect model name. This proves the
+control integration, not admission of another production model. The remaining
+production-admission criterion above stays open.

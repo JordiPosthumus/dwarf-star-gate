@@ -89,6 +89,11 @@ def main():
             from genie_power import register_power, TOOLSET as POWER_TOOLSET
             expected_tools |= register_power(power, emit)
             toolsets.append(POWER_TOOLSET)
+        admission = None if review else request.get('admission')
+        if admission:
+            from genie_admission import register_admission, TOOLSET as ADMISSION_TOOLSET
+            expected_tools |= register_admission(admission, emit)
+            toolsets.append(ADMISSION_TOOLSET)
         # Only fixed phases and counts leave this callback. Never relay reasoning text.
         progress = {"step": 0, "reasoning_chars": 0}
         last_emit = [0.0]
@@ -120,7 +125,7 @@ def main():
             request_overrides={"extra_headers": headers},
         )
         actual_tools = {t.get("function", t).get("name") for t in agent.tools}
-        if inspection or operations or hourglass or queue or recovery or media or spark_setup:
+        if inspection or operations or hourglass or queue or recovery or media or spark_setup or power or admission:
             # Hermes may expose plugin tools through its native discovery bridge.
             # Validate the underlying catalog as well as the visible bridge surface.
             from model_tools import get_tool_definitions
@@ -160,6 +165,8 @@ def main():
             instructions += "\nYou can propose_server_change for an enrolled worker after inspecting its full current configuration, and use server_change_status to follow it. Preparing a proposal does not approve or start it. Once a proposal is awaiting approval, finish your reply and direct the owner to the Server changes card in this Genie tab; do not poll for their approval in a loop. That card records exact-plan approval; never claim that conversational agreement or research granted approval. Keep existing capabilities and unrelated settings, explain any tradeoff before proposing a reduction, and preserve the same operation ID when checking an uncertain request. Approved execution is independent of this reply and continues if the chat closes. Do not call it completed until its saved outcome confirms that.\n"
         if hourglass:
             instructions += "\nYou can use hourglass_measurement_status to see configured targets and dated observations, and prepare_hourglass_measurement to prepare a selected saved setup. Once prepared, direct the owner to Evidence → Measure with Hourglass and finish your reply. Do not poll waiting for approval. Only the owner control starts this measurement and confirms a free window; preparation neither starts nor reserves a server. Never claim an unobserved score or that unavailable observation means stopped. Targets are configured associations, not proof of the actual route or absence of contention. Use your inspection tools to evaluate the server configuration when available. These tools do not change native benchmark rules, settings or question banks. Use compare_hourglass_reports with exact report_revision values from status when comparing a baseline and later run. Report its protocol and condition gaps, and distinguish the arithmetic score difference from a proven configuration effect. A comparison does not authorize keeping, restoring or changing a server.\n"
+        if admission:
+            instructions += "\nverify_serving exercises an existing healthy worker using synthetic requests, without changing or admitting a server. Use the owner verification request already present; do not ask again when it covers this check. gateway checks one routed generation, cache checks actual cold-to-warm usage, and tools checks a function call and follow-up. It returns an action ID immediately. Read admission_status once afterward and report running honestly; do not repeat the check under another ID. Only a passed receipt proves that named check. These checks do not prove full context/output/concurrency boundaries or isolated benchmark speed.\n"
         if review:
             instructions = operating_instructions + "\nFleet review task: return the requested structured JSON. Action requests are proposals for the existing guarded executor, not actions you performed.\n" + request["instructions"]
         result = agent.run_conversation(

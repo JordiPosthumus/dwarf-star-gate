@@ -50,3 +50,10 @@ with #005; do not create competing lists. Record unresolved mismatches honestly.
 - Deliberately NOT done: no deletion of stale entries (spark1/spark2 dead Qwen
   workers and their self-routes stay visible and flagged); no new registry —
   members come from the power-script enrollment, workers/routes from core.
+## Maintenance-state correction
+
+Verified 2026-09-24: maintenance locks, owned holds, and direct reservations now
+exclude a worker from serving-LLM status and are distinguished from an operator
+pause. Endpoint readiness is described only with current endpoint evidence.
+The shared UI/Genie catalogue state is covered by regressions and native UI
+validation. Intentional alternative/stopped entries remain.

@@ -1032,7 +1032,7 @@ test('six-worker monitoring only reads gateway status; credentials and addresses
   const calls = [];
   const backend = http.createServer((req,res) => {
     calls.push(req.url); assert.equal(req.headers.authorization, 'Bearer SECRET_FOR_TEST');
-    res.end(JSON.stringify({ version:1, model:'ds4', context_length:153600, total:6, healthy:6, available:6, active:2, queued:0,
+    res.end(JSON.stringify({ version:1, genie_thinking:{chat:'max',reviewer:'high',saved:{chat:'max',private:'NEVER_EXPORT'},levels:['NEVER_EXPORT'],private:'NEVER_EXPORT'}, model:'ds4', context_length:153600, total:6, healthy:6, available:6, active:2, queued:0,
       workers:Array.from({ length:6 }, (_,i) => ({ id:`spark${i+1}`, is_healthy:true, load:0, url:'http://private-address', probe_error:'secret',
         requested_thinking:{status:'specified',fields:{reasoning_effort:i===0?'xhigh':'none',prompt:'NEVER_EXPORT'}},
         last_requested_thinking:{status:'not_specified'},last_request_finished_at:'NEVER_EXPORT' })) }));
@@ -1044,6 +1044,8 @@ test('six-worker monitoring only reads gateway status; credentials and addresses
   fs.writeFileSync(path.join(dir,'gateway.log'), JSON.stringify({ event:'request_finished', node:'spark1', outcome:'complete', prompt:'NEVER_EXPORT' })+'\n');
   const app = await runDashboard(config, 0); t.after(app.close);
   const s = app.snapshot(); assert.equal(s.devices.length, 6); assert.equal(s.events.length, 1);
+  assert.deepEqual(s.gateway.genie_thinking,{chat:'max',reviewer:'high',saved:{chat:'max'},levels:['none','minimal','low','medium','high','xhigh','max']});
+  const caps=await(await fetch('http://127.0.0.1:'+app.server.address().port+'/api/genie/capabilities')).json();assert.deepEqual(caps.genie_thinking,s.gateway.genie_thinking);
   assert.deepEqual(s.gateway.workers[0].requested_thinking,{status:'specified',fields:{reasoning_effort:'xhigh'}});
   assert.equal(s.gateway.workers[1].requested_thinking.fields.reasoning_effort,'none');
   assert.equal(s.gateway.workers[0].last_request_finished_at,null);

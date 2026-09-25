@@ -12,12 +12,13 @@ import {createMediaTools} from './genie-media.mjs';
 import {createQueueTools} from './genie-queue.mjs';
 import {createRecoveryTools} from './genie-recovery.mjs';
 import {createFleetPowerTools} from './genie-power.mjs';
+import {createRecipeTrials} from './recipe-trials.mjs';
 import {createAdmissionTools} from './genie-admission.mjs';
 import {createPowerRunner,createReadinessVerifier,powerWorkers,machineGroup} from './power-scripts.mjs';
 import {buildCatalogue} from './ui/fleet-catalogue.js';
 import {endpointHeaders} from './endpoint.mjs';
 import {readService} from './service-control.mjs';
-import {capabilityStatus} from './genie-capability-status.mjs';
+import {capabilityStatus,safeGenieThinking} from './genie-capability-status.mjs';
 import {testingModeFile,testingSuspended} from './testing-mode.mjs';
 import {HourglassReports} from './hourglass-reports.mjs';
 import {HourglassRuns} from './hourglass-runs.mjs';
@@ -211,6 +212,7 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
     if(queueTools?.handle(req,res))return;
     if(recoveryTools?.handle(req,res))return;
     if(powerTools?.handle(req,res))return;
+    if(req.url==='/api/genie/admission'&&req.method==='GET'){void Promise.resolve(admissionTools?.tool({action:'status'})??{configured:false,busy:false}).then(value=>reply(200,value)).catch(()=>reply(503,{error:'Admission activity unavailable'}));return;}
     if(admissionTools?.handle(req,res))return;
     if(req.url==='/api/genie/chat'&&req.method==='GET')return reply(200,{...(chat?.status()??{available:false,conversations:[]}),csrf_token:csrf});
     if(req.url?.startsWith('/api/genie/chat/')&&req.method==='GET'){
@@ -525,7 +527,7 @@ export async function runDashboard(configPath, port) {
       if (!r.ok) throw new Error('Status unavailable');
       const s = await r.json();
       if (s.version !== 1 || !Array.isArray(s.workers)) throw new Error('Unsupported gateway');
-      gateway = { genie_capabilities:s.genie_capabilities,genie_flexible_assignment:s.genie_flexible_assignment===true,genie_admission_version:s.genie_admission_version===1?1:null,model: s.model,model_routes:s.model_routes&&typeof s.model_routes==='object'?s.model_routes:null, context_length: s.context_length,direct_reserve_control:s.direct_reserve!==undefined,direct_reserve_enabled:s.direct_reserve?.enabled===true,direct_reserve_reserved:s.direct_reserve?.reserved??[],queue_timeout_ms:s.queue_timeout_ms,conversation_turns:s.conversation_turns,conversation_turn_idle_ms:s.conversation_turn_idle_ms,request_timeout_ms:s.request_timeout_ms, total: s.total, healthy: s.healthy, available: s.available, active: s.active, queued: s.queued, draining: s.draining, dataset:s.dataset,recovery:s.recovery,protections:s.protections,agent_api_version:s.agent_api_version,maintenance_lock_version:s.maintenance_lock_version,client_watch_version:s.client_watch_version,client_watch:clientWatchForDisplay(s.client_watch),
+      gateway = { genie_thinking:safeGenieThinking(s.genie_thinking),genie_capabilities:s.genie_capabilities,genie_flexible_assignment:s.genie_flexible_assignment===true,genie_admission_version:s.genie_admission_version===1?1:null,model: s.model,model_routes:s.model_routes&&typeof s.model_routes==='object'?s.model_routes:null, context_length: s.context_length,direct_reserve_control:s.direct_reserve!==undefined,direct_reserve_enabled:s.direct_reserve?.enabled===true,direct_reserve_reserved:s.direct_reserve?.reserved??[],queue_timeout_ms:s.queue_timeout_ms,conversation_turns:s.conversation_turns,conversation_turn_idle_ms:s.conversation_turn_idle_ms,request_timeout_ms:s.request_timeout_ms, total: s.total, healthy: s.healthy, available: s.available, active: s.active, queued: s.queued, draining: s.draining, dataset:s.dataset,recovery:s.recovery,protections:s.protections,agent_api_version:s.agent_api_version,maintenance_lock_version:s.maintenance_lock_version,client_watch_version:s.client_watch_version,client_watch:clientWatchForDisplay(s.client_watch),
         continuity:continuityForDisplay(s.continuity),
         workers: s.workers.map(w => ({ id: w.id, is_healthy: w.is_healthy, drained: w.drained, quarantine:safeQuarantine(w.quarantine), load: w.load, max_concurrent_requests:Number.isSafeInteger(w.max_concurrent_requests)&&w.max_concurrent_requests>0?w.max_concurrent_requests:1, queued: w.queued, active_seconds: w.active_seconds, completed: w.completed, failed: w.failed, assigned_sessions: w.assigned_sessions,
           gateway_drained:w.gateway_drained,recovery_waiting:Number.isSafeInteger(w.recovery_waiting)?w.recovery_waiting:0,operator_paused:w.operator_paused,holds:Array.isArray(w.holds)?w.holds.slice(0,1024).map(h=>({id:h.id,owner_id:h.owner_id,created_at:h.created_at})):[],maintenance_locks:Array.isArray(w.maintenance_locks)?w.maintenance_locks.slice(0,1024).flatMap(l=>typeof l.id==='string'&&typeof l.name==='string'&&Number.isFinite(l.created_at)?[{id:l.id,name:l.name.slice(0,64),created_at:l.created_at,review_at:Number.isFinite(l.review_at)?l.review_at:null,control_channel:typeof l.control_channel==='string'?l.control_channel:null}]:[]):[],
@@ -580,13 +582,15 @@ export async function runDashboard(configPath, port) {
     const row=(registry?.workers??[]).find(w=>w.id===worker);
     if(!row?.url)return null;
     let headers={};try{headers=endpointHeaders(row);}catch{headers={};}
-    return {url:row.url,headers};
+    return {url:row.url,headers,model:row.served_model};
   }:null;
-  const powerRunner=managementEnabled?createPowerRunner({verify:createReadinessVerifier({resolveEndpoint:powerResolveEndpoint})}):null;
-  const powerTools=managementEnabled?createFleetPowerTools({runner:powerRunner,read:()=>readService('gateway',config),isTesting,isEnabled:()=>isCapabilityEnabled('fleet_power'),directRunning:id=>endpointTelemetry.snapshot(id)?.running??0,catalogue:()=>fleetCatalogue()}):null;
+  const rawPowerRunner=managementEnabled?createPowerRunner({verify:createReadinessVerifier({resolveEndpoint:powerResolveEndpoint})}):null;
+  const recipeTrials=managementEnabled?createRecipeTrials({config,powerBusy:id=>rawPowerRunner.busy(id)}):null;
+  const powerRunner=rawPowerRunner?{...rawPowerRunner,busy:id=>rawPowerRunner.busy(id)||recipeTrials.busy(id)}:null;
+  const powerTools=managementEnabled?createFleetPowerTools({runner:powerRunner,recipes:recipeTrials,read:()=>readService('gateway',config),isTesting,isEnabled:()=>isCapabilityEnabled('fleet_power'),directRunning:id=>{const s=endpointTelemetry.snapshot(id);return s?.connected&&Date.now()-s.at<10000&&Number.isFinite(s.running)&&Number.isFinite(s.waiting)?s.running+s.waiting:null;},catalogue:()=>fleetCatalogue(),control:(route,body)=>workerControl(config.control_socket,route,body,{channel:'gate_genie'})}):null;
   const chatProviderConfig={...genieChatConfig(config)};
   const applyGenieThinking=value=>{if(!value)return {applied:false};const applied={};if(value.chat){chatProviderConfig.reasoning_effort=value.chat;applied.chat=value.chat;}if(value.reviewer){runtimeGenie.reasoning_effort=value.reviewer;if(runtimeGenie.fallback&&typeof runtimeGenie.fallback==='object')runtimeGenie.fallback.reasoning_effort=value.reviewer;applied.reviewer=value.reviewer;}return {applied:true,...applied};};
-  const admissionTools=managementEnabled?createAdmissionTools({config,control:(route,body)=>workerControl(config.control_socket,route,body,{channel:'dashboard'}),read:()=>readService('gateway',config),readDoor:async()=>doorControl(doorSocket(config),'/status'),isTesting,isEnabled:()=>isCapabilityEnabled('server_changes')}):null;
+  const admissionTools=managementEnabled?createAdmissionTools({config,resolveNativeWorker:async id=>(await workerControl(config.control_socket,'/workers',undefined,{channel:'dashboard'})).workers?.find(w=>w.id===id),control:(route,body)=>workerControl(config.control_socket,route,body,{channel:'dashboard'}),read:()=>readService('gateway',config),readDoor:async()=>doorControl(doorSocket(config),'/status'),isTesting,isEnabled:()=>isCapabilityEnabled('server_changes')}):null;
   const chat=config.genie_chat?new GenieChat({directory:chatDirectory,notebook:config.genie_chat.operational_notebook===true?memory:null,getSnapshot:()=>({...snapshot(),genie:genie.status(),genie_handovers:requestHistory.snapshot().handovers}),isSuspended:isTesting,runQuestion:(answer,onWait)=>genie.answerChat(answer,onWait),provider:hermesProvider({...chatProviderConfig,spark_setup:sparkSetup?.toolConfig,operations:operations?.toolConfig,hourglass:hourglass?.toolConfig,queue:queueTools?.toolConfig,recovery:recoveryTools?.toolConfig,media:mediaTools?.toolConfig,power:powerTools?.toolConfig,admission:admissionTools?.toolConfig},{directory:chatDirectory,isCapabilityEnabled})}):null;
   const nativeMedia=createNativeMediaStatus(config);
   const fleetCatalogue=async()=>{const s=snapshot();let media={workloads:[],native_engines:[]};try{if(managementEnabled&&config.control_socket){const value=await workerControl(config.control_socket,'/media-jobs',undefined,{channel:'dashboard'});media={...fleetMediaWorkloads(value),native_engines:nativeMedia?.()??[]};}}catch{/* Media evidence stays empty; the catalogue stays truthful about what it could observe. */}return buildCatalogue({members:s.fleet_machines??[],workers:s.gateway?.workers??[],devices:s.devices??[],media,routes:s.gateway?.model_routes??{},now:Date.now()});};

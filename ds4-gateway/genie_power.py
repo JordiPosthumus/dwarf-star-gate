@@ -4,7 +4,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 TOOLSET='stargate_fleet_power'
-NAMES={'fleet_power_status','fleet_power'}
+NAMES={'fleet_power_status','fleet_power','fleet_routing','fleet_recipe_trial'}
 
 
 def register_power(config,emit):
@@ -20,9 +20,12 @@ def register_power(config,emit):
         event={'tool':name,'at':__import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat(),'request':args}
         emit('power',event={**event,'state':'reading'})
         try:
-            payload={'action':'status'} if name=='fleet_power_status' else {'action':'power','worker':args['worker'],'power_action':args['power_action'],'action_id':args['action_id']}
+            if name=='fleet_power_status':payload={'action':'status'}
+            elif name=='fleet_recipe_trial':payload={'action':'recipe-trial','profile':args['profile'],'stage':args['stage'],'trial_id':args['trial_id']}
+            elif name=='fleet_routing':payload={'action':'routing','worker':args['worker'],'routing_action':args['routing_action'],'action_id':args['action_id'],**({'expected_operator_action':args['expected_operator_action']} if 'expected_operator_action' in args else {})}
+            else:payload={'action':'power','worker':args['worker'],'power_action':args['power_action'],'action_id':args['action_id']}
             request=urllib.request.Request(config['url'],data=json.dumps(payload).encode(),headers={'Content-Type':'application/json','X-SG-Power-Tool':config['token']})
-            with opener.open(request,timeout=15) as response:
+            with opener.open(request,timeout=30) as response:
                 raw=response.read(262145)
                 if len(raw)>262144:raise ValueError('Fleet power status too large')
                 result=json.loads(raw)
@@ -37,7 +40,9 @@ def register_power(config,emit):
             emit('power',event={**event,'state':'failed','finished_at':__import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat(),'error':message})
             return json.dumps({'error':message,'next_step':'Read fleet_power_status and find this action ID; do not issue another start/stop for the same worker.'})
     for name,description,parameters in [
+        ('fleet_recipe_trial','Run a pre-enrolled, immutable owner-approved recipe trial. Use the exact profile ID provided by the owner/operator. prepare backs up and verifies the original; Spark profiles also build an isolated candidate while serving remains running. run reserves only its enrolled worker, waits for gateway/native work, measures A/B/A2, restores the original containers or exact local settings and conditionally readmits. Never adopt a candidate or change the plan. Use the existing explicit approval for this exact temporary profile; otherwise ask first. Use the SAME trial_id for prepare and run. Preparation must be complete before run. Returns promptly; read fleet_power_status recipe_trials for durable status. Never reissue an uncertain stage with a new ID.',{'type':'object','properties':{'profile':{'type':'string'},'stage':{'type':'string','enum':['prepare','run']},'trial_id':{'type':'string'}},'required':['profile','stage','trial_id'],'additionalProperties':False}),
+        ('fleet_routing','For an owner-approved lifecycle action, drain or resume one enrolled worker through the existing core controls. Drain stops new routing and lets admitted work finish; never stops a model. Keep a separate healthy LLM. Save the returned operator_action ID; resume requires that exact expected_operator_action so a later owner pause is preserved. If was_drained is true, preserve that preexisting pause unless explicitly authorized otherwise. Use fleet_power_status to inspect routing receipts after uncertainty. Never repeat an action ID with different arguments.',{'type':'object','properties':{'worker':{'type':'string'},'routing_action':{'type':'string','enum':['drain','resume']},'action_id':{'type':'string'},'expected_operator_action':{'type':['string','null']}},'required':['worker','routing_action','action_id'],'additionalProperties':False}),
         ('fleet_power_status','Read enrolled power scripts, current gateway routing per member and recent script receipts. Use before any start or stop. Gateway health does not prove the model process is running; the status script does.',{'type':'object','properties':{},'additionalProperties':False}),
-        ('fleet_power','Run one enrolled script: status, start or stop for one exact worker. Ask the owner in chat BEFORE stopping or starting anything; the answer in this conversation is the approval. Before a stop: drain the worker (it must show load 0 and queued 0), never stop the last healthy LLM. The receipt is a script exit, not readiness or shutdown proof; follow up with fleet_power_status.',{'type':'object','properties':{'worker':{'type':'string'},'power_action':{'type':'string','enum':['start','stop']},'action_id':{'type':'string'}},'required':['worker','power_action','action_id'],'additionalProperties':False})]:
+        ('fleet_power','Run one enrolled script: status, start or stop for one exact worker. Use the owner approval already present in this conversation when it covers this exact action; otherwise ask BEFORE stopping or starting. Read-only status needs no approval. Before a stop: use fleet_routing to drain the worker (then wait for load 0 and queued 0), never stop the last healthy LLM. The receipt is a script exit, not readiness or shutdown proof; follow up with fleet_power_status.',{'type':'object','properties':{'worker':{'type':'string'},'power_action':{'type':'string','enum':['status','start','stop']},'action_id':{'type':'string'}},'required':['worker','power_action','action_id'],'additionalProperties':False})]:
         registry.register(name=name,toolset=TOOLSET,schema={'name':name,'description':description,'parameters':parameters},handler=lambda args,_name=name,**kw:run(_name,args),max_result_size_chars=262144)
     return NAMES
