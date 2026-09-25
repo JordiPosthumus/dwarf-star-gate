@@ -370,7 +370,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   const serialize = fn => { const next = mutation.then(fn); mutation = next.catch(() => {}); return next; };
   const definition = n => Object.fromEntries(workerFields.filter(k => n[k] !== undefined).map(k => [k,n[k]]));
   let recovery;
-  try { recovery=new Recovery(serviceConfig.recovery,{store,nodes,model:config.model,stopping:()=>shuttingDown||draining,log,
+  try { recovery=new Recovery(serviceConfig.recovery,{store,nodes,model:config.model,stopping:()=>shuttingDown||draining,log,fleetConfig:serviceConfig,directReserved,
     reinstate:(n,expected,recoveryState)=>{
       if(n.removed || n.drained || n.active || n.queue.length || JSON.stringify(n.quarantine)!==JSON.stringify(expected) || shuttingDown || draining)throw new Error('reinstatement_state_changed');
       const quarantined={...store.data.quarantined};delete quarantined[n.id];
@@ -379,7 +379,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
       observe(()=>shadow.reset(n.id));
     }}); } catch(e){store.close();throw e;}
   let agents;
-  try {agents=new AgentControl({store,nodes,log,onPause:ids=>recovery.operatorPause(ids),canHandback:async n=>recovery.profileHandbackOffer(n,{ignorePause:true}),onHandback:()=>void recovery.tick(),canResume:async n=>{
+  try {agents=new AgentControl({store,nodes,log,onPause:ids=>recovery.operatorPause(ids),canHandback:async (n,{releasingHoldId})=>recovery.profileHandbackOffer(n,{ignorePause:true,releasingHoldId}),onHandback:()=>void recovery.tick(),canResume:async n=>{
     if(shuttingDown||draining)throw new Error('Gateway is draining; hold retained');
     await freshProbe(n);
     if(shuttingDown||draining||n.recovering||n.quarantine||n.probeError||!n.modelMatches||!validContext(n.contextLength)||n.contextLength<requiredContext(n))throw new Error('Fresh compatible worker readiness required; hold retained');

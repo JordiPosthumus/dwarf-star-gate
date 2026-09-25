@@ -170,7 +170,7 @@ export class AgentControl {
         if(n.recovering)fail('recovery_required','Recovery already owns this worker; hold retained',409);
         if(n.quarantine){
           if(!this.canHandback)fail('recovery_required','Recovery or quarantine requires operator review; hold retained',409);
-          try {await this.canHandback(n);} catch(error) {fail('recovery_required',`${error.message}; hold retained`,409);}
+          try {await this.canHandback(n,{releasingHoldId:h.id});} catch(error) {fail('recovery_required',`${error.message}; hold retained`,409);}
           handback=true;
         }else await this.canResume(n);
         this.agent(actor); // Recheck after asynchronous probe/offer.

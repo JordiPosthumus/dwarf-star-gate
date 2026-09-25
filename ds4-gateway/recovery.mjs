@@ -3,12 +3,13 @@ import { recoveryConfig, recoveryCall } from './recovery-transport.mjs';
 import { verifyRecovery,qwenRecoveryProofValid } from './recovery-verify.mjs';
 import {safeNativeRemoval,unavailableNativeRemoval} from './launchd-removal-evidence.mjs';
 import {bootstrapEnrollmentMatches,bootstrapProofValid} from './recovery-bootstrap.mjs';
+import {recoveryOwnership} from './recovery-ownership.mjs';
 
 const hash=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const terminal=new Set(['recovered','verified_paused','failed','reconciliation_needed']);
 const faultReasons=new Set(['fatal_accelerator_error','accelerator_checkpoint_failure']);
 const adapterReasons=new Set(['adapter_timeout','adapter_output_limit','adapter_spawn_failed','adapter_dns_failure','adapter_host_key_failure','adapter_auth_failure','adapter_connect_timeout','adapter_connection_refused','adapter_route_unreachable','adapter_connection_reset','adapter_unreachable','adapter_check_failed','adapter_local_unavailable','adapter_local_identity_unverified','adapter_local_interpreter_missing']);
-const publicOperation=op=>Object.fromEntries(['id','worker_id','actor','service_action','state','created_at','updated_at','error','proof','service_action_issued','restart_issued','operator_override','profile_adopted','bootstrap_acknowledged'].filter(k=>op[k]!==undefined).map(k=>[k,op[k]]));
+const publicOperation=op=>Object.fromEntries(['id','worker_id','actor','service_action','state','created_at','updated_at','error','proof','service_action_issued','restart_issued','operator_override','profile_adopted','bootstrap_acknowledged','readmission_blocked_reason'].filter(k=>op[k]!==undefined).map(k=>[k,op[k]]));
 const digest=value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
 // Wall-clock correction must not make an old observation eligible indefinitely.
 // Use the same bounded age rule for diagnostics, offers and action admission.
@@ -42,8 +43,9 @@ const adoptionOperationValid=op=>{
 // Lives in the gateway, not the dashboard or LLM process. Intent and outcomes
 // share the gateway's atomic/fsynced metadata store. No inference text is saved.
 export class Recovery {
-  constructor(raw,{store,nodes,model,stopping,reinstate,log=()=>{},call=recoveryCall,verify=verifyRecovery,now=Date.now}) {
+  constructor(raw,{store,nodes,model,stopping,reinstate,fleetConfig={},directReserved=()=>false,log=()=>{},call=recoveryCall,verify=verifyRecovery,now=Date.now}) {
     this.configs=recoveryConfig(raw);this.store=store;this.nodes=nodes;this.model=model;this.stopping=stopping;this.reinstate=reinstate;this.log=log;this.call=call;this.verify=verify;this.now=now;
+    this.ownershipReason=(node,options={})=>recoveryOwnership({node,nodes,store,config:fleetConfig,directReserved,...options});
     this.observations=new Map();this.stoppedSince=new Map();this.handbackSeen=new Map();this.busy=false;this.closed=false;this.task=null;this.abort=new AbortController();
     this.removals=new Map();
     const saved=store.data.recovery;
@@ -122,6 +124,7 @@ export class Recovery {
       s.loaded!==false||s.registration!=='absent'||s.active!==false||s.stopped!==false||s.listener!==false||s.pid!==0||s.instance!=='')return 'launchd_bootstrap_identity_unverified';
     if(nativePolicyReason(s,c))return nativePolicyReason(s,c);
     if(this.bootstrapHoldReason(n))return this.bootstrapHoldReason(n);
+    const ownership=this.ownershipReason(n);if(ownership)return ownership;
     if(n.active||n.queue.length)return 'wait_for_admitted_work';
     if(canary&&!n.drained)return 'drain_before_canary';
     if(!canary&&n.drained)return 'operator_paused';
@@ -137,11 +140,12 @@ export class Recovery {
     if(!canary&&previous.some(op=>this.now()-op.created_at<30*60000))return 'recovery_cooldown';
     return null;
   }
-  bootstrapExecutionVeto(n,op){
+  bootstrapExecutionVeto(n,op,{phase='action'}={}){
     if(n.removed||this.node(n.id)!==n||this.stopping()||this.closed)throw new Error('controller_stopping');
     if(hash(this.config(n.id))!==op.bootstrap_enrollment)throw new Error('bootstrap_enrollment_changed');
     if(n.contextLength!==op.context_length)throw new Error('recovery_context_changed');
     const held=this.bootstrapHoldReason(n);if(held)throw new Error(held);
+    const ownership=this.ownershipReason(n,{phase});if(ownership)throw new Error(ownership);
     if(n.active||n.queue.length)throw new Error('worker_has_admitted_work');
     if(this.current(op).operator_override||(n.drained&&!op.was_paused)||(op.actor!=='operator'&&!this.state.automatic))throw new Error('operator_cancelled_before_bootstrap');
   }
@@ -149,7 +153,7 @@ export class Recovery {
   profileCandidate(s,c){return !!c&&s?.version===1&&s.machine===c.machine&&digest(s.profile)&&s.profile!==c.profile&&s.active===true&&s.listener===true&&/^[a-f0-9]{32}$/.test(s.instance)&&Number.isFinite(s.started_at)?{profile:s.profile,service_profile:digest(s.service_profile)?s.service_profile:null,instance:s.instance}:null;}
   candidateStable(id,candidate){const seen=this.handbackSeen.get(id);return !!seen&&seen.profile===candidate.profile&&seen.service_profile===candidate.service_profile&&seen.instance===candidate.instance&&seen.count>=2&&seen.last_at-seen.first_at>=10000;}
   evidence(n,s){const c=this.config(n.id),candidate=this.profileCandidate(s,c);return c?.bootstrap_removed===true&&s?.registration==='absent'?hash([n.id,'bootstrap',this.priorIdentity(n.id),hash(c),this.removals.get(n.id)?.result]):candidate?hash([n.id,n.quarantine,'adopt',candidate.instance,s.machine,c.profile,candidate.profile,candidate.service_profile]):this.valid(s,c)?hash([n.id,n.quarantine,'restart',s.instance,s.machine,s.profile]):hash([n.id,n.quarantine,'start',s.stopped_epoch,s.machine,s.service_profile]);}
-  reason(n,s,{canary=false,ignoreOwnership=false,ignorePause=false}={}) {
+  reason(n,s,{canary=false,ignoreOwnership=false,ignorePause=false,releasingHoldId=null}={}) {
     const c=this.config(n?.id);
     if(!this.binding(n,c))return 'manual_recovery_required';
     if(this.closed || this.stopping())return 'gateway_stopping';
@@ -172,6 +176,7 @@ export class Recovery {
     const nativeReason=nativePolicyReason(s,c);if(nativeReason)return nativeReason;
     if(candidate&&(n.active||n.queue.length))return 'profile_handback_wait_for_admitted_work';
     if(n.active || n.queue.length)return 'wait_for_admitted_work';
+    const ownership=this.ownershipReason(n,{releasingHoldId});if(ownership)return ownership;
     if(canary) {
       if(!n.drained)return 'drain_before_canary';
       if(live)return null;
@@ -273,12 +278,12 @@ export class Recovery {
       ...(effective?.bootstrap_removed===true?{bootstrap:{enrolled:true,certified:this.bootstrapCertified(n,effective)}}:{}),
       state,profile_handback:candidate?{candidate:true,stable:this.candidateStable(n.id,candidate),automatic:this.state.profile_handback_automatic}:adopted?{candidate:false,stable:true,automatic:this.state.profile_handback_automatic,adopted:true}:null,last_action:last?publicOperation(last):null};
   }
-  profileHandbackOffer(n,{ignorePause=false}={}) {
+  profileHandbackOffer(n,{ignorePause=false,releasingHoldId=null}={}) {
     if(!this.state.automatic)throw new Error('automatic_recovery_off');
     const observed=this.observations.get(n?.id),s=observed?.value,c=this.config(n?.id);
     if(!n||!freshInspection(observed,this.now()))throw new Error('service_inspection_pending');
     if(!this.profileCandidate(s,c))throw new Error('no_profile_handback_candidate');
-    const reason=observed.error||this.reason(n,s,{ignorePause});if(reason)throw new Error(reason);
+    const reason=observed.error||this.reason(n,s,{ignorePause,releasingHoldId});if(reason)throw new Error(reason);
     return {worker_id:n.id,evidence_id:this.evidence(n,s)};
   }
   status(){const adapters=[...new Set([...this.configs.values()].map(c=>c.adapter))];return {configured:!!this.configs.size,automatic:this.state.automatic,profile_handback_automatic:this.state.profile_handback_automatic,adapter:adapters.length===1?adapters[0]:adapters.length?'mixed':null,workers:this.nodes.map(n=>this.workerStatus(n)),operations:this.state.operations.slice(-30).reverse().map(publicOperation)};}
@@ -361,6 +366,7 @@ export class Recovery {
       if(!reconcile && !activeBefore && !(starting&&stoppedBefore)&&!bootstrapping)throw new Error('service_identity_or_profile_unverified');
       if(activeBefore||stoppedBefore)requireNativePolicy(before,c);
       if(bootstrapping)this.bootstrapExecutionVeto(n,op);
+      const ownership=this.ownershipReason(n);if(ownership)throw new Error(ownership);
       if(n.active || n.queue.length)throw new Error('worker_has_admitted_work');
       if(this.closed)throw new Error('controller_stopping');
       const failedAt=Date.parse(op.quarantine?.at);
@@ -399,6 +405,7 @@ export class Recovery {
       if(!this.valid(after,c) || after.fault)throw new Error('replacement_identity_or_health_failed');
       requireNativePolicy(after,c);
       if(bootstrapping)this.bootstrapExecutionVeto(n,op);
+      const verificationOwnership=this.ownershipReason(n);if(verificationOwnership)throw new Error(verificationOwnership);
       this.update(op,{state:'verifying',new_instance:after.instance});
       const proof=await this.verify(n.url,this.model,op.context_length,{signal:this.abort.signal,kind:c.verification??'ds4',endpoint:n});
       const final=await this.inspect(n.id);
@@ -406,10 +413,12 @@ export class Recovery {
       requireNativePolicy(final,c);
       if(bootstrapping){
         if(!this.validBootstrapLive(final,c,op)||!bootstrapProofValid(proof,op.context_length))throw new Error('bootstrap_generation_or_identity_unverified');
-        this.bootstrapExecutionVeto(n,op);
+        this.bootstrapExecutionVeto(n,op,{phase:'readmit'});
       }
       op={...this.current(op)};
-      const held=op.operator_override || op.was_paused || n.removed || this.node(n.id)!==n || n.drained || this.stopping();
+      const readmissionReason=this.ownershipReason(n,{phase:'readmit'});
+      if(readmissionReason)op.readmission_blocked_reason=readmissionReason;
+      const held=op.operator_override || op.was_paused || n.removed || this.node(n.id)!==n || n.drained || this.stopping() || readmissionReason;
       const adoption=adopting?{config_profile:enrolled.profile,machine:enrolled.machine,profile:op.adopt_profile,service_profile:digest(op.adopt_service_profile)?op.adopt_service_profile:null,adopted_at:this.now(),operation_id:op.id}:null;
       const nextState={...this.state,adopted_profiles:adoption?{...this.state.adopted_profiles,[n.id]:adoption}:this.state.adopted_profiles,operations:this.state.operations.map(x=>x.id===op.id?{...op,profile_adopted:!!adoption,state:held?'verified_paused':'recovered',proof,updated_at:this.now()}:x)};
       if(!held) {
