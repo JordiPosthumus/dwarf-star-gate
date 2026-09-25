@@ -116,3 +116,10 @@ test('source repair forwards only the exact observed target and failure under te
  await assert.rejects(tools.tool({action:'repair',...input,container:'invented'}));
  assert.equal((await tools.tool({action:'repair',...input})).state,'source_selected');assert.equal(calls,1);
 });
+
+// Actual-model regression: an inspection error must not redirect to job dispatch.
+test('inspection rejects setup arguments with a corrective read-only schema message',async()=>{
+ let reads=0;const tools=createMediaTools({read:async()=>{reads++;return {hosts:[{id:'pair'}]};},resources:{inspect:async()=>({state:'observed'})}});
+ await assert.rejects(tools.tool({action:'inspect',worker_id:'pair',member:0,engine:'h3'}),/inspect_media_host accepts worker_id and optional member.*Omit engine/);
+ assert.equal(reads,0);assert.equal((await tools.tool({action:'inspect',worker_id:'pair',member:0})).state,'observed');
+});

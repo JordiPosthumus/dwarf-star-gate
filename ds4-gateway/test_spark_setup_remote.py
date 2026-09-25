@@ -86,14 +86,16 @@ class RemoteSetupTests(unittest.TestCase):
         script = """import json,sys,time
 from pathlib import Path
 def preflight(): pass
+def save(root, value):
+ pending=root/'setup.json.tmp';pending.write_text(json.dumps(value));pending.replace(root/'setup.json')
 if __name__ == '__main__':
  root=Path(sys.argv[1]);root.mkdir(exist_ok=True)
  partial=root/'retained-download';partial.write_text('downloaded bytes') if not partial.exists() else None
  if not (root.parent/'allow-resume').exists():
-  (root/'setup.json').write_text(json.dumps({'state':'failed','error':'fixture download interrupted'}));sys.exit(7)
+  save(root,{'state':'failed','error':'fixture download interrupted'});sys.exit(7)
  assert partial.read_text()=='downloaded bytes'
  while not (root.parent/'finish').exists():time.sleep(.02)
- (root/'setup.json').write_text(json.dumps({'state':'prepared_stopped','phase':'complete'}))
+ save(root,{'state':'prepared_stopped','phase':'complete'})
 """
         def terminal(root):
             deadline=time.monotonic()+10
@@ -262,11 +264,13 @@ if __name__ == '__main__':
         script = '''import json,sys,time
 from pathlib import Path
 def preflight(): pass
+def save(root, value):
+ pending=root/'setup.json.tmp';pending.write_text(json.dumps(value));pending.replace(root/'setup.json')
 if __name__ == '__main__':
  root=Path(sys.argv[1]);root.mkdir()
- (root/'setup.json').write_text(json.dumps({'state':'running','phase':'fixture'}))
+ save(root,{'state':'running','phase':'fixture'})
  while not (root.parent/'finish').exists(): time.sleep(.02)
- (root/'setup.json').write_text(json.dumps({'state':'prepared_stopped','phase':'complete','arguments':sys.argv[2:]}))
+ save(root,{'state':'prepared_stopped','phase':'complete','arguments':sys.argv[2:]})
 '''
         with tempfile.TemporaryDirectory() as tmp, patch.object(remote.Path, 'home', return_value=Path(tmp)), patch.object(remote.subprocess,'check_output',return_value=json.dumps([{'Id':'a'*64,'State':{'Running':False}}])):
             root = Path(tmp) / 'setup'
