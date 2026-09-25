@@ -393,6 +393,11 @@ print(json.dumps(result))
             saved=json.loads(call(['docker','inspect',original['Id']]))[0]
             if saved['Image']!=original['Image']:raise RuntimeError('Preserved original container identity differs')
             if saved['Name']!='/'+name:call(['docker','rename',original['Id'],name])
+        saved_head=self.backup/'.glm53-exl3-head.inner.sh'
+        if saved_head.is_file():
+            current_head=self.recipe/'.glm53-exl3-head.inner.sh'
+            if current_head.is_symlink() or current_head.read_bytes()!=saved_head.read_bytes():
+                raise RuntimeError('Original head launcher changed; preserve owner edits')
         current_script=self.rank(['cat','/tmp/glm53-exl3-worker.sh'])
         if current_script!=(self.backup/'worker-inner.sh').read_bytes():raise RuntimeError('Original rank launcher changed; preserve owner edits')
         snapshot_file=self.backup/'rank-staging-files.json'
@@ -448,8 +453,12 @@ print(json.dumps(result))
                 try:
                     result['restoration']=self.restore(prepared)
                     result['phases']['A2']=self.checks('A2',400000)
-                    required=[x for x in result['phases']['A2'] if x['label'] in ['arithmetic','tool_call_and_followup']]
-                    if len(required)!=2 or not all(x.get('passed') for x in required):result['restoration'].update(state='unverified',error='Original native quality checks did not pass')
+                    rows={x['label']:x for x in result['phases']['A2']}
+                    quality=['arithmetic','tool_call_and_followup','cold-A','cold-B','append-A','append-B','edit-90-percent','branch-90-percent']
+                    if (not all(rows.get(label,{}).get('passed') is True for label in quality)
+                        or rows.get('context-boundary',{}).get('accepted') is not True
+                        or rows.get('concurrency-two',{}).get('two_active_requests_observed') is not True):
+                        result['restoration'].update(state='unverified',error='Original quality, context or concurrency checks did not pass')
                 except Exception as error:result['restoration']={'state':'unverified','error':str(error)}
             else:result['restoration']={'state':'verified','scope':'Serving was never changed; original remains running.'}
             result['state']='complete' if result['restoration']['state']=='verified' else 'restoration_required'

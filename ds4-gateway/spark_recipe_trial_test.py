@@ -18,7 +18,7 @@ class TrialTransaction(unittest.TestCase):
   self.remote.isolate_candidate_staging=lambda prepared:self.events.append('isolate_staging')
   self.remote.launch=lambda *args:(_ for _ in ()).throw(RuntimeError('candidate failed to load'))
   self.remote.restore=lambda prepared:(self.events.append('restore') or {'state':'verified'})
-  self.remote.checks=lambda phase,limit:(self.events.append(phase) or [{'label':'arithmetic','passed':True},{'label':'tool_call_and_followup','passed':True}])
+  self.remote.checks=lambda phase,limit:(self.events.append(phase) or [{'label':label,'passed':True} for label in ['arithmetic','tool_call_and_followup','cold-A','cold-B','append-A','append-B','edit-90-percent','branch-90-percent']]+[{'label':'context-boundary','accepted':True},{'label':'concurrency-two','two_active_requests_observed':True}])
  def test_cache_variant_rejects_changed_precision_before_candidate_measurement(self):
   original={'MAX_MODEL_LEN':'400000','MAX_NUM_SEQS':'2','MAX_NUM_BATCHED_TOKENS':'7168','GPU_MEM_UTIL':'0.85','GLM53_DENSE_FP8':'off','GLM53_KDA_BF16_LARGE_M':'0','GLM53_EXL3_MOE_FAST':'0','DFLASH_TOKENS':'7'}
   (self.remote.backup/'head.json').write_text(json.dumps({'Config':{'Env':[key+'='+value for key,value in original.items()]}}))
@@ -33,6 +33,21 @@ class TrialTransaction(unittest.TestCase):
  def test_failed_candidate_launch_still_restores_original_and_checks_it(self):
   result=self.remote.run();self.assertEqual(result['state'],'complete');self.assertIn('failed to load',result['error'])
   self.assertLess(self.events.index('A'),self.events.index('suspend'));self.assertLess(self.events.index('restore'),self.events.index('A2'))
+ def test_failed_restored_context_or_concurrency_cannot_claim_verified_restoration(self):
+  for label,key in [('context-boundary','accepted'),('concurrency-two','two_active_requests_observed')]:
+   with self.subTest(label=label):
+    intent=self.root/'run-intent.json'
+    if intent.exists():intent.unlink()
+    original=self.remote.checks
+    def checks(phase,limit):
+     rows=original(phase,limit)
+     if phase=='A2':
+      for row in rows:
+       if row['label']==label:row[key]=False
+     return rows
+    self.remote.checks=checks
+    result=self.remote.run();self.assertEqual(result['state'],'restoration_required');self.assertEqual(result['restoration']['state'],'unverified')
+    self.remote.checks=original
  def test_restoration_failure_never_claims_completion(self):
   self.remote.restore=lambda prepared:(_ for _ in ()).throw(RuntimeError('owner changed the recipe'))
   result=self.remote.run();self.assertEqual(result['state'],'restoration_required');self.assertNotIn('A2',self.events)

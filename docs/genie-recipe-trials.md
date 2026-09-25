@@ -33,7 +33,9 @@ two simultaneous requests. Diagnostic token budgets never become production
 settings. Synthetic measurements do not establish general model quality.
 
 Restoration compares original container identities, images, full environment,
-mounts and recipe bytes and runs native checks again. Only verified restoration
+mounts and recipe bytes and runs native checks again. Readmission requires the restored quality probes,
+near-context-limit acceptance, and two-active-request observation to pass; it
+does not require a cache benefit the original never had. Only verified restoration
 can release this operation's maintenance hold; conditional readmission preserves
 a subsequent owner pause. A failed or uncertain restoration remains visible and
 keeps the hardware reserved. Never retry an uncertain run under a new UUID.
