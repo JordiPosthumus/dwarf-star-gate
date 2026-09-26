@@ -64,11 +64,11 @@ export function createSparkSetupTools(config,{isEnabled=()=>true,isDiscoveryEnab
     if(input?.action==='status'&&Object.keys(input).sort().join(',')==='action'){
       await Promise.all(Object.keys(targets).map(read));return present();
     }
-    if(input?.action==='enroll'){
+    if(['enroll','enroll_discovered'].includes(input?.action)){
       if(!isEnabled())throw new Error('New Spark setup is switched off.');
       if(isTesting())throw new Error('New Spark enrollment is paused in testing mode.');
       if(!enrollment)throw new Error('Chat enrollment is not connected.');
-      const {action,...details}=input;return enrollment.enroll(details);
+      const {action,...details}=input;return action==='enroll_discovered'?enrollment.enrollDiscovered(details):enrollment.enroll(details);
     }
     if(!['resume','setup','start','qualify_media','qualify','register'].includes(input?.action)||Object.keys(input).sort().join(',')!==(input.action==='resume'?'action,expected_finished_at,target_id':'action,target_id')||!Object.hasOwn(targets,input.target_id))throw new Error('Read setup status and select an explicitly enrolled new Spark.');
     if(!isEnabled())throw new Error('New Spark setup is switched off. Existing preparation continues.');

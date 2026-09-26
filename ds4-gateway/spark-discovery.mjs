@@ -243,13 +243,14 @@ export function createSparkDiscovery({directory,aliases=async()=>[],sources=loca
     const runDir=path.join(directory,id);fs.mkdirSync(runDir,{recursive:true,mode:0o700});
     const knownHosts=path.join(runDir,'known_hosts'),original=path.join(os.homedir(),'.ssh','known_hosts');
     fs.writeFileSync(knownHosts,fs.existsSync(original)?fs.readFileSync(original):'',{mode:0o600,flag:'wx'});
-    const issues=[],known=[],users=new Set(username?[username]:[]);
+    const issues=[],known=[],connections=[],users=new Set(username?[username]:[]);
     const configured=[...new Set(await aliases())];
     if(configured.length>64)throw Error('More than 64 configured SSH connections; discovery needs an explicit bounded topology.');
     await mapLimit(configured,4,async ssh=>{
       if(!aliasPattern.test(ssh)){issues.push({source:'configured_host',reason:'unsupported_alias'});return;}
       try{
         const resolved=await resolve(ssh);if(userPattern.test(resolved.username??''))users.add(resolved.username);
+        connections.push({ssh,destination:resolved.hostname});
         const facts=await inspect(ssh,{knownHosts}),identity=sparkIdentity(facts);
         known.push({ssh,hostname:resolved.hostname,identity,facts});
         if(!identity)issues.push({source:'configured_host',ssh,reason:'physical_identity_unverified'});
@@ -297,14 +298,26 @@ export function createSparkDiscovery({directory,aliases=async()=>[],sources=loca
       if(localAddress(address))peers.push({via:host.ssh,address,interface:neighbor.dev,state:'peer_visible_unverified',scope:address.includes('%')?'IPv6 link-local scope belongs to the remote interface, not a gateway interface.':'Remote neighbor evidence alone establishes neither gateway reachability nor unreachability.'});
     }
     state={scan_id:id,state:'complete',observed_at:now(),addresses_checked:ports.length,ssh_open:open.length,candidates:[...candidates.values()].sort((a,b)=>a.identity.localeCompare(b.identity)),unverified,peer_neighbors:peers,
-      known_hosts:known.map(({ssh,identity,hostname,facts})=>({ssh,identity,destination:hostname,reported_addresses:reportedAddresses(facts)})),issues,coverage:'partial',scope:'Read-only discovery. Missing candidates may require multicast, cable configuration, peer reachability or SSH access; this result never proves absence.'};save();
+      configured_aliases:configured.sort(),configured_connections:connections,known_hosts:known.map(({ssh,identity,hostname,facts})=>({ssh,identity,destination:hostname,reported_addresses:reportedAddresses(facts)})),issues,coverage:'partial',scope:'Read-only discovery. Missing candidates may require multicast, cable configuration, peer reachability or SSH access; this result never proves absence.'};save();
   };
-  return {status:({scan_id}={})=>{
+  const status=({scan_id}={})=>{
     if(scan_id===undefined||scan_id===state.scan_id)return structuredClone(state);
     if(!scanIdPattern.test(scan_id))throw Error('Use a saved discovery scan ID.');
     const saved=path.join(directory,scan_id,'result.json');if(!fs.existsSync(saved))throw Error('Discovery scan is not recorded.');
     const result=JSON.parse(fs.readFileSync(saved,'utf8'));
     return result.state==='running'?{...result,state:'observation_lost',scope:'The earlier read-only scan is no longer observed. No enrollment or setup was performed.'}:result;
+  };
+  return {status,async candidate({scan_id,candidate_id}){
+    if(!scanIdPattern.test(scan_id??'')||!/^[a-f0-9]{64}$/.test(candidate_id??''))throw Error('Select a saved scan and hardware-verified candidate ID.');
+    const scan=status({scan_id});if(scan.state!=='complete')throw Error('Wait for this discovery scan to complete.');
+    if(JSON.stringify([...new Set(await aliases())].sort())!==JSON.stringify(scan.configured_aliases))throw Error('Configured SSH connections changed or this scan predates enrollment evidence; discover again before enrollment.');
+    const candidate=scan.candidates.find(c=>c.candidate_id===candidate_id);
+    if(!candidate||candidate.identity!==candidate_id||candidate.state!=='discovered_spark'||candidate.existing_connections.length)throw Error('This is not a hardware-verified new Spark; existing machines cannot be enrolled as new.');
+    const address=candidate.addresses.find(a=>a.ssh_open&&net.isIP(a.address)===4&&localAddress(a.address)&&userPattern.test(a.username??''));
+    if(!address)throw Error('This candidate has no verified IPv4 SSH path for the current setup transport. Discovery evidence is retained.');
+    if(scan.configured_connections.some(c=>c.destination===address.address))throw Error('This address belongs to a configured SSH connection; it cannot be enrolled as new.');
+    const knownHosts=path.join(directory,scan_id,'known_hosts');if(!fs.existsSync(knownHosts))throw Error('The scan host-key receipt is missing; no enrollment is allowed.');
+    return {scan_id,candidate_id,identity:candidate.identity,host:address.address,username:address.username,knownHosts};
   },async discover({username}={}){
     if(username!==undefined&&!userPattern.test(username))throw Error('Use an SSH username, never a password or command.');
     if(running)return structuredClone(state);

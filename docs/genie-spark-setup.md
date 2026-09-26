@@ -41,9 +41,27 @@ local interface scope. VPN/tunnel interfaces and the gateway's own addresses are
 excluded. A silent probe or incomplete neighbor cache never proves absence.
 The probe does not assign addresses, bring links up or change routing.
 
-**This is a discovery stage, not completed automatic onboarding.** DNS-SD service
-discovery, unconfigured cable links, password credential bootstrap, peer-only
-reachability and identity-bound automatic enrollment remain unfinished. An IPv6
+For owner-requested onboarding, Genie can call `enroll_discovered_spark` with
+the saved `scan_id`, hardware `candidate_id`, and a new `target_id`. No copied IP
+is needed. **New Spark setup** must be enabled. The tool refuses existing
+machines and scans whose configured connections have changed. It rechecks the
+candidate's hardware identity using only the scan's pinned host keys, without
+SSH connection sharing or alternate global/DNS trust. It then backs up normal
+`known_hosts`, adds only the verified destination's key, and rechecks identity
+through normal SSH before saving the target. Repeating the same saved IDs returns
+the enrollment without restarting setup. Readiness and native qualification are
+still separate; an enrolled target is not a tested or serving machine.
+
+Existing SSH configuration is preserved. Conflicting keys, disabled host-key
+checks, nondefault trust stores, changed destinations, and unsupported ports are
+reported for inspection rather than overwritten. If enrollment loses observation
+after adding trust, retain the backup and inspect setup status before retrying
+the same IDs. No remote installation or service start occurs during enrollment.
+
+**Automatic onboarding remains incomplete.** DNS-SD service discovery,
+unconfigured cable links, password credential bootstrap, IPv6-only setup and
+peer-only reachability remain unfinished. Discovered enrollment currently needs
+a verified IPv4 path with existing SSH key access. An IPv6
 link-local neighbor observed on a remote Spark belongs to that remote interface;
 it must not be used as though it were a local gateway interface. An unscoped
 remote IPv4 observation alone proves neither reachability nor unreachability. Discovery

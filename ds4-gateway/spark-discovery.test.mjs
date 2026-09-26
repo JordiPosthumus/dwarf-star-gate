@@ -195,3 +195,23 @@ test('read-only discovery uses inspection permission without enabling new-host e
   inspection=false;await assert.rejects(tools.tool({action:'discover'}),/Server inspection is switched off/);
   assert.equal((await tools.tool({action:'discovery_status'})).state,'complete','Existing receipts stay readable when inspection is disabled.');
 });
+test('candidate enrollment resolves IDs from saved evidence, excludes existing machines and rejects changed topology',async t=>{
+  let aliases=['existing-spark'];const f=fixture(t,{aliases:async()=>aliases});
+  await f.service.discover();await f.service.settled();const scan=f.service.status(),candidate=scan.candidates.find(c=>c.state==='discovered_spark');
+  const ids={scan_id:scan.scan_id,candidate_id:candidate.candidate_id};
+  const proof=await f.service.candidate(ids);assert.equal(proof.host,ip(192,168,9,3));assert.equal(proof.username,'owner');assert.equal(proof.identity,candidate.identity);
+  assert.equal(proof.knownHosts,path.join(f.directory,scan.scan_id,'known_hosts'));
+  await assert.rejects(f.service.candidate({...ids,candidate_id:scan.candidates.find(c=>c.state==='existing_spark').candidate_id}),/not a hardware-verified new/);
+  await assert.rejects(f.service.candidate({...ids,scan_id:'../escape'}),/saved scan/);
+  aliases.push('added-host');await assert.rejects(f.service.candidate(ids),/connections changed/);
+});
+test('IPv6-only evidence, missing pinned keys and configured destinations cannot become new enrollments',async t=>{
+  const f=fixture(t,{aliases:async()=>[],sources:async()=>({addresses:[{address:'fe80::2%en5'}],issues:[]})});
+  await f.service.discover({username:'owner'});await f.service.settled();const scan=f.service.status();
+  await assert.rejects(f.service.candidate({scan_id:scan.scan_id,candidate_id:scan.candidates[0].candidate_id}),/no verified IPv4/);
+  const g=fixture(t);await g.service.discover();await g.service.settled();const second=g.service.status();
+  const ids={scan_id:second.scan_id,candidate_id:second.candidates.find(c=>c.state==='discovered_spark').candidate_id};
+  fs.unlinkSync(path.join(g.directory,ids.scan_id,'known_hosts'));await assert.rejects(g.service.candidate(ids),/host-key receipt is missing/);
+  const h=fixture(t,{resolve:async()=>({hostname:ip(192,168,9,3),username:'owner'})});await h.service.discover();await h.service.settled();const third=h.service.status();
+  await assert.rejects(h.service.candidate({scan_id:third.scan_id,candidate_id:third.candidates.find(c=>c.state==='discovered_spark').candidate_id}),/configured SSH connection/);
+});
