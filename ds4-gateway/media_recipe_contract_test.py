@@ -47,6 +47,20 @@ class RecipeContractTests(unittest.TestCase):
         self.assertEqual(r['source_sha256'],self.receipt['source_sha256']);self.assertEqual(before,self.files)
         self.assertTrue(all(c[1] in ('inspect','cp') for c in self.calls));self.assertEqual(self.inspect_count,2)
 
+    def test_generation_receipts_require_all_nine_sources_and_both_response_paths(self):
+        for name in m.RESULT_FILES:self.files['/opt/ace-step/'+name]=('source:'+name).encode()
+        self.receipt.update(schema=2,checks=76,generation_receipt=m.RESULT_RECEIPT,
+            source_sha256={name:hashlib.sha256(self.files['/opt/ace-step/'+name]).hexdigest() for name in m.FILES+m.RESULT_FILES})
+        self.publish();proof=self.read();self.assertEqual(proof['generation_receipt'],m.RESULT_RECEIPT)
+        for name in m.RESULT_FILES:
+            old=self.files['/opt/ace-step/'+name];self.files['/opt/ace-step/'+name]=b'changed'
+            with self.assertRaises(ValueError):self.read()
+            self.files['/opt/ace-step/'+name]=old
+        self.receipt['generation_receipt']={**m.RESULT_RECEIPT,'query_paths':['cache']};self.publish()
+        with self.assertRaises(ValueError):self.read()
+        self.receipt['generation_receipt']=m.RESULT_RECEIPT;self.receipt['checks']=52;self.publish()
+        with self.assertRaises(ValueError):self.read()
+
     def test_missing_build_receipt_never_implies_support(self):
         del self.files['/opt/stargate/recipe-fields-verification.json']
         with self.assertRaises(subprocess.CalledProcessError):self.read()

@@ -84,13 +84,60 @@ def verify(root):
             try: request({field:value})
             except ValueError: checks += 1
             else: raise AssertionError('Invalid explicit recipe option accepted: '+field)
+        # Verify metadata from the generator's returned audio objects rather
+        # than reconstructing effective values from the submitted request.
+        response_module = load('sg_recipe_result', 'acestep/api/job_result_payload.py')
+        cache_module = load('sg_recipe_cache', 'acestep/api/jobs/local_cache_updates.py')
+        query_module = load('sg_recipe_query', 'acestep/api/http/query_result_service.py')
+        generated = [dict(dataclasses.asdict(explicit.params), seed=seed, audio_format='flac',
+                          caption='Generator caption '+str(seed), lora_loaded=False,
+                          use_lora=False, lora_scale=1.0, lora_weights_hash=None)
+                     for seed in (11, 12)]
+        audio_rows = [{'path':'/output/sample-'+str(i)+'.flac','params':v} for i,v in enumerate(generated)]
+        payload = response_module.build_generation_success_response(
+            result=types.SimpleNamespace(audios=audio_rows, extra_outputs={}, status_message='success'),
+            params=explicit.params, bpm=80, audio_duration=-1, key_scale=None, time_signature=None,
+            original_prompt='Requested caption', original_lyrics='Requested lyrics', inference_steps=80,
+            path_to_audio_url=lambda name:'/v1/audio?path='+name, build_generation_info=lambda **kw:'info',
+            lm_model_name='fixture-lm', dit_model_name='fixture-dit')
+        assert len(payload['generation_receipts'])==2;checks+=1
+        record=types.SimpleNamespace(result=payload,status='succeeded',created_at=1,progress_text='done',env='fixture')
+        store=types.SimpleNamespace(get=lambda task:record)
+        cache_data={}
+        class Cache:
+            def get(self,key):return cache_data.get(key)
+            def set(self,key,value,ex):cache_data[key]=json.dumps(value)
+        cache=Cache()
+        cache_module.update_local_cache(cache,store,'fixture',payload,'succeeded',lambda _:1,'result:',3600)
+        for selected_cache in (cache,None):
+            rows=query_module.collect_query_results(['fixture'],selected_cache,store,lambda _:1,'result:',3600,lambda:'')
+            assert rows[0]['task_id']=='fixture' and rows[0]['status']==1;checks+=1
+            audios=json.loads(rows[0]['result']);assert len(audios)==2;checks+=1
+            for i,audio in enumerate(audios):
+                receipt=audio['generation_receipt']
+                assert audio['file']==payload['audio_paths'][i];checks+=1
+                assert receipt['schema']==1 and receipt['source']=='acestep.inference.audio.params';checks+=1
+                assert receipt['parameters']==generated[i];checks+=1
+                assert receipt['reported_models']=={'lm':'fixture-lm','dit':'fixture-dit'};checks+=1
+        # A response snapshot cannot change if later code mutates an audio row.
+        audio_rows[0]['params']['sampler_mode']='changed-after-response'
+        assert payload['generation_receipts'][payload['audio_paths'][0]]['parameters']['sampler_mode']=='heun';checks+=1
+        # Old/analysis/failed results do not acquire invented generation proof.
+        legacy={k:v for k,v in payload.items() if k!='generation_receipts'}
+        record.result=legacy
+        cache_module.update_local_cache(cache,store,'fixture',legacy,'succeeded',lambda _:1,'result:',3600)
+        for selected_cache in (cache,None):
+            rows=query_module.collect_query_results(['fixture'],selected_cache,store,lambda _:1,'result:',3600,lambda:'')
+            assert all('generation_receipt' not in row for row in json.loads(rows[0]['result']));checks+=1
         files=['acestep/constants.py','acestep/inference.py','acestep/api/http/release_task_param_parser.py',
-               'acestep/api/http/release_task_models.py','acestep/api/http/release_task_request_builder.py','acestep/api/job_generation_setup.py']
-        return {'schema':1,'state':'verified','checks':checks,
+               'acestep/api/http/release_task_models.py','acestep/api/http/release_task_request_builder.py','acestep/api/job_generation_setup.py',
+               'acestep/api/job_result_payload.py','acestep/api/http/query_result_service.py','acestep/api/jobs/local_cache_updates.py']
+        return {'schema':2,'state':'verified','checks':checks,
+                'generation_receipt':{'schema':1,'source':'acestep.inference.audio.params','per_audio':True,'query_paths':['cache','store']},
                 'supported':{'sampler_mode':['euler','heun'],'dcw_enabled':[True,False]},
                 'source_sha256':{name:hashlib.sha256((root/name).read_bytes()).hexdigest() for name in files},
                 'omitted_defaults':{k:getattr(native_defaults,k) for k in ('sampler_mode','dcw_enabled')},
-                'scope':'Actual pinned request parser/model and generation parameter assembly; no GPU inference performed.'}
+                'scope':'Actual pinned parameter assembly and per-audio result serialization through cache/store paths; no GPU inference performed.'}
     finally:
         for key in set(sys.modules)-set(saved_modules):
             if key.startswith(('sg_recipe_', 'acestep.')):sys.modules.pop(key,None)

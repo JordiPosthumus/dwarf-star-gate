@@ -27,6 +27,29 @@ PATCHES = {
         '        guidance_scale=req.guidance_scale,\n'
         '        **({} if req.sampler_mode is None else {"sampler_mode": req.sampler_mode}),\n'
         '        **({} if req.dcw_enabled is None else {"dcw_enabled": req.dcw_enabled}),\n'),
+    'acestep/api/job_result_payload.py': (
+        '0b77bb060f9412ad7cf479a09f1a5b3ae9461072d0169bd774a0222743763a43',
+        '        "raw_audio_paths": list(audio_paths),\n',
+        '        "raw_audio_paths": list(audio_paths),\n'
+        '        "generation_receipts": {\n'
+        '            path_to_audio_url(audio["path"]): {\n'
+        '                "schema": 1, "source": "acestep.inference.audio.params",\n'
+        '                "parameters": __import__("copy").deepcopy(audio["params"]),\n'
+        '                "reported_models": {"lm": lm_model_name, "dit": dit_model_name},\n'
+        '            } for audio in audios if audio.get("path") and isinstance(audio.get("params"), dict)\n'
+        '        },\n'),
+    'acestep/api/http/query_result_service.py': (
+        '609d4cbc718987af42be2e106550358b200f01682e5ded64670a801eab45c6fd',
+        '                    "file": path,\n',
+        '                    "file": path,\n'
+        '                    **({"generation_receipt": record.result["generation_receipts"][path]}\n'
+        '                       if path in record.result.get("generation_receipts", {}) else {}),\n'),
+    'acestep/api/jobs/local_cache_updates.py': (
+        'dcb2fd1cefc89259b9b601e82632967d6e9a10dcf743a69ad1af3b0d9cf6d171',
+        '                        "file": path,\n',
+        '                        "file": path,\n'
+        '                        **({"generation_receipt": result["generation_receipts"][path]}\n'
+        '                           if path in result.get("generation_receipts", {}) else {}),\n'),
 }
 
 
@@ -49,7 +72,7 @@ def apply(root):
     for path, patched in prepared:
         path.write_text(patched)
     return {'state': 'patched', 'files': [str(p.relative_to(root)) for p, _ in prepared],
-            'scope': 'Explicit API sampler/DCW fields only; omitted defaults preserved.'}
+            'scope': 'Explicit API sampler/DCW fields and per-audio native-parameter receipts; omitted defaults and generation inputs preserved.'}
 
 
 if __name__ == '__main__':

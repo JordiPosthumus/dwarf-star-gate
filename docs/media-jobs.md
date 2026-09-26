@@ -234,6 +234,29 @@ before starting a stopped ACE container. Omitted fields and older saved plans
 retain their existing behavior. This source/build witness does not replace
 native image qualification, effective inference checks or audio validation.
 
+The candidate also returns a per-file `generation_receipt` from the generator's
+own returned audio parameters. It includes the actual per-audio seed, full
+parameter dictionary and the model names reported by the API. Both native cache
+and fallback-store query paths retain it. These values are separate from the
+original submitted request; the gateway retains both. The receipt does not prove
+voice identity, exact loaded model weights or low-level kernel behavior.
+
+Build-witness schema 2 covers nine source files and 76 checks, including both
+result paths and multi-output seed association. Read-only inspection still
+accepts the older six-file schema 1 as parameter-wiring evidence; it does not
+upgrade that evidence into generation-receipt support. Existing images and
+omitted parameter defaults are unchanged.
+
+The internal `verifyAceGeneration` qualification check requires a completed,
+explicit one-song FLAC job, the exact candidate's receipt-capable source proof,
+matching returned sampler/steps/CFG/thinking/DCW/method/format/seed, and retained
+bytes matching their SHA-256 before and after a full ffmpeg decode. Requested
+`audio_duration: -1` remains distinct from duration resolved during generation.
+A missing receipt, changed file, other codec or parameter mismatch cannot qualify
+the result. This check is not yet connected to the candidate qualification and
+promotion lifecycle. Generated audio proof alone does not establish LLM return,
+cache preservation, unchanged review-tool compatibility or permission to enroll.
+
 Genie can request this fixed preparation through `prepare_media_improvement`
 with `worker_id` and an optional physical pair `member`. It requires an enrolled
 ACE engine included in the enabled `media_jobs.standard`, enabled Media, Server

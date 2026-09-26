@@ -27,7 +27,7 @@ HEX = re.compile(r'[a-f0-9]{64}')
 IMAGE = re.compile(r'sha256:[a-f0-9]{64}')
 SOURCES = ('apply-recipe-fields.py', 'verify-api-fields.py')
 DEFAULT_SOURCE = Path(__file__).resolve().parent.parent / 'examples/spark-build/ace-step'
-DELTA = 'Separate image with explicit ACE sampler/DCW API forwarding and build witness; original container, image, runtime settings and bind mounts retained. No start, stop, rename, removal or enrollment.'
+DELTA = 'Separate image with explicit ACE sampler/DCW API forwarding, per-audio generation-parameter receipts and build witness; original container, image, runtime settings and bind mounts retained. No start, stop, rename, removal or enrollment.'
 
 
 def require(value, reason):
