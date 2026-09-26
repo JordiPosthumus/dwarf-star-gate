@@ -33,6 +33,19 @@ test('six-Spark budget counts complete pairs, deduplicates aliases, and retains 
  for(const value of [-1,1.5,'4',null])assert.throws(()=>mediaSparkLimit({media_jobs:{max_borrowed_sparks:value}}),/whole/);
  assert.equal(mediaSparkLimit({}),null,'existing installations without a configured ceiling keep their policy');
 });
+test('concurrent film starts reserve before awaiting launch and reject excess before plan creation',async t=>{
+ const f=fixture(t);f.config.media_jobs.workers.two=structuredClone(f.config.media_jobs.workers.one);
+ f.config.genie_chat.inspection.workers.two=structuredClone(f.config.genie_chat.inspection.workers.one);
+ f.config.genie_chat.inspection.workers.two.ssh=['second-host'];
+ f.config.recovery.workers.push({...f.config.recovery.workers[0],id:'two'});
+ const batch=f.jobs.enqueueBatch({requested_parallelism:1,clips:[0,1].map(i=>({clip_id:`c${i}`,payload:{prompt:{}}}))},{key:'limited'}).batch;
+ let finishLaunch,launches=0;const service=createMediaExecution(f.config,f.jobs,{isEnabled:()=>true,launchRunner:()=>{launches++;return new Promise(resolve=>{finishLaunch=resolve;});}});
+ const input={job_id:batch.clips[0].id,worker_id:'one'},first=service.start(input);
+ await assert.rejects(service.start({job_id:batch.clips[1].id,worker_id:'two'}),/requested_parallelism/);
+ assert.equal(launches,1);assert.equal(fs.existsSync(f.jobs.executionFolder(batch.clips[1].id)),false);
+ assert.equal(service.status().batches[0].remaining_requested_slots,0);
+ finishLaunch({pid:123});await first;await service.start(input);assert.equal(launches,1);
+});
 test('budget refuses before plan creation and never cancels an existing accepted execution',async t=>{
  const r=fixture(t);r.config.media_jobs.max_borrowed_sparks=1;r.config.machine_groups={one:['s1','s2']};let launches=0;
  const service=createMediaExecution(r.config,r.jobs,{isEnabled:()=>true,launchRunner:async()=>{launches++;return {pid:123};}}),input={job_id:r.job.id,worker_id:'one'};
@@ -359,6 +372,9 @@ test('parallel member allocation requires explicit policy and both enrollments, 
  f.config.media_jobs.parallel_pair_members=true;await assert.rejects(service.start(input),/both qualified/);
  const rank={...f.engine,container:'d'.repeat(64),member:1};f.config.media_jobs.workers.one.member_engines={1:{video:rank}};
  assert.deepEqual(service.status().workers[0].parallel_kinds,['video']);
+ const limited=f.jobs.enqueueBatch({requested_parallelism:1,clips:[0,1].map(i=>({clip_id:`c${i}`,payload:{prompt:{}}}))},{key:'limited-film'}).batch;
+ await assert.rejects(service.start({job_id:limited.clips[0].id,following_job_ids:[limited.clips[1].id],worker_id:'one',parallel_members:true}),/requested_parallelism/);
+ assert.equal(fs.existsSync(f.jobs.executionFolder(limited.clips[0].id)),false);assert.equal(launches,0);
  await assert.rejects(service.start({...input,member:0}),/not both/);
  await assert.rejects(service.start(input),/lost launch/);assert.equal(launches,1);
  const plan=JSON.parse(fs.readFileSync(path.join(f.jobs.executionFolder(f.job.id),'plan.json')));

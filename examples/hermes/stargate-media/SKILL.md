@@ -34,6 +34,7 @@ A film JSON file has this shape:
 ```json
 {
   "name": "Example film",
+  "requested_parallelism": 4,
   "defaults": {"seed": 42},
   "clips": [
     {"clip_id": "opening", "payload": {"prompt": "Opening scene"}},
@@ -43,6 +44,13 @@ A film JSON file has this shape:
 ```
 
 `defaults` supplies shared payload fields; individual clip fields override them.
+When the live capability API advertises support, `requested_parallelism` (1–128)
+sets an optional per-film ceiling. Omit it to use available owner-approved
+capacity. It never guarantees that many simultaneous clips or overrides the
+physical Spark budget. Batch `scheduling` reports reserved and remaining film
+slots; reservations include restoration and uncertain work. Do not resubmit a
+film merely because clips remain queued, or change its ceiling under the same
+idempotency key.
 For native workflows each `payload` can instead contain `prompt` as a node graph
 and `input_files`. Keep artistic planning, reference/voice preparation and assembly
 in the relevant production workflow; this skill supplies transport and tracking.

@@ -37,7 +37,7 @@ export function createMediaExecution(config,jobs,{isEnabled=()=>false,launchRunn
   const assertCapacity=id=>{const result=budget().admission(id);if(!result.allowed)throw Error(result.reason);return result;};
   return {
     assertCapacity,
-    status:()=>{const capacity=budget();return {configured:!!jobs,enabled:isEnabled(),automatic_dispatch_enabled:config.media_jobs?.automatic_dispatch!==false,batch_jobs_supported:true,film_batches_supported:true,media_budget:capacity.snapshot,jobs:jobs?.list().map(j=>({...j,input_requirements:mediaInputRequirements(jobs.get(j.id))}))??[],workers:Object.entries(targets()).map(([id,t])=>({id,kinds:Object.keys(t.engines??{}).filter(kind=>isAllowed(id,kind)),parallel_kinds:parallelKinds(id),busy:jobs?busy(id):false,budget:capacity.admission(id)}))};},
+    status:()=>{const capacity=budget();return {configured:!!jobs,enabled:isEnabled(),automatic_dispatch_enabled:config.media_jobs?.automatic_dispatch!==false,batch_jobs_supported:true,film_batches_supported:true,media_budget:capacity.snapshot,batches:(jobs?.data.batches??[]).map(b=>({id:b.id,...jobs.batchScheduling(b.id)})),jobs:jobs?.list().map(j=>({...j,input_requirements:mediaInputRequirements(jobs.get(j.id))}))??[],workers:Object.entries(targets()).map(([id,t])=>({id,kinds:Object.keys(t.engines??{}).filter(kind=>isAllowed(id,kind)),parallel_kinds:parallelKinds(id),busy:jobs?busy(id):false,budget:capacity.admission(id)}))};},
     async start(input){
       if(!jobs||!isEnabled())throw new Error('Media execution is switched off.');
       if(!input||!(mediaStartInput(input,'job_id,worker_id')||mediaStartInput(input,'following_job_ids,job_id,worker_id')))throw new Error('Choose queued jobs and an enrolled worker; select a member or parallel_members, not both.');
@@ -74,6 +74,10 @@ export function createMediaExecution(config,jobs,{isEnabled=()=>false,launchRunn
       const ssh=member?.ssh??inspection.ssh?.[0];if(typeof ssh!=='string'||!/^[a-zA-Z0-9][a-zA-Z0-9_.@-]*$/.test(ssh)||(!pair&&!recovery.ssh))throw new Error('Media execution needs its enrolled SSH host.');
       const lanes=parallel?[0,1].map(index=>({member:index,host:pair.members[index].ssh,llm_container:pair.members[index].container,
         engine:mediaEngine(config,input.worker_id,job.kind,index),job_ids:ids.filter((_,i)=>i%2===index)})):undefined;
+      const assignment={worker_id:input.worker_id,physical_machines:capacity.machines,...(pair?{member:pair.media_member}:{}),...(lanes?{parallel_members:true,member_jobs:lanes.map(l=>({member:l.member,job_ids:l.job_ids}))}:{}),...(ids.length>1?{operation_id:job.id,batch_job_ids:ids}:{}),phase:'starting',at:new Date().toISOString()};
+      // Check before writing a plan; assignExecution repeats the check in the
+      // same synchronous durable write boundary. No async launch can oversubscribe.
+      jobs.assertBatchCapacity(ids,assignment);
       // The root head is whichever member the normal enrollment uses; the
       // coordinator still captures/stops/restores the entire pair exactly once.
       const folder=jobs.executionFolder(job.id);fs.mkdirSync(folder,{recursive:true,mode:0o700});
@@ -82,7 +86,7 @@ export function createMediaExecution(config,jobs,{isEnabled=()=>false,launchRunn
       saveMediaReceipt(folder,'plan.json',plan);
       saveMediaReceipt(folder,'media-jobs.json',{schema:1,jobs:selected});
       // Persist ownership before spawning. Lost acknowledgement never launches twice.
-      jobs.assignExecution(ids,{worker_id:input.worker_id,physical_machines:capacity.machines,...(pair?{member:pair.media_member}:{}),...(lanes?{parallel_members:true,member_jobs:lanes.map(l=>({member:l.member,job_ids:l.job_ids}))}:{}),...(ids.length>1?{operation_id:job.id,batch_job_ids:ids}:{}),phase:'starting',at:new Date().toISOString()});
+      jobs.assignExecution(ids,assignment);
       try{saveMediaReceipt(folder,'launched.json',await launchRunner(folder));}
       catch(error){saveMediaReceipt(folder,'progress.json',{phase:'launch_uncertain',detail:'Runner launch was not confirmed. Inspect this operation before any further action.',at:new Date().toISOString()});throw error;}
       return jobs.list().find(j=>j.id===job.id);

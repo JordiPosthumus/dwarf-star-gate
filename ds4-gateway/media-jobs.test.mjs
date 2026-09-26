@@ -14,6 +14,41 @@ import {createGateway} from './gateway.mjs';
 import {videoCapabilities} from './media-capabilities.mjs';
 
 function directory(t){const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sg-media-jobs-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));return dir;}
+test('film parallelism is durable, validates atomically, and holds lane capacity through uncertainty and return',t=>{
+ const q=new MediaJobs(path.join(directory(t),'queue.json'));
+ const payload={requested_parallelism:2,clips:Array.from({length:6},(_,i)=>({clip_id:`c${i}`,payload:{prompt:{}}}))};
+ for(const requested_parallelism of [0,-1,1.5,'2',null,129]){
+  assert.throws(()=>q.enqueueBatch({...payload,requested_parallelism},{key:'film'}),e=>e.status===400);assert.equal(q.data.jobs.length,0);
+ }
+ const {batch}=q.enqueueBatch(payload,{key:'film'}),ids=batch.clips.map(c=>c.id),operation_id=ids[0];
+ assert.equal(batch.scheduling.requested_parallelism,2);
+ assert.throws(()=>q.enqueueBatch({...payload,requested_parallelism:1},{key:'film'}),e=>e.status===409);
+ q.assignExecution(ids.slice(0,4),{operation_id,phase:'launch_uncertain',parallel_members:true,member_jobs:[{member:0,job_ids:[ids[0],ids[2]]},{member:1,job_ids:[ids[1],ids[3]]}]});
+ const restored=new MediaJobs(q.filename);
+ assert.equal(restored.batch(batch.id).scheduling.reserved_generation_slots,2,'four clips on two lanes reserve two slots');
+ assert.equal(restored.batchScheduling(batch.id).remaining_requested_slots,0);
+ const before=fs.readFileSync(q.filename);
+ assert.throws(()=>restored.assignExecution([ids[4]],{phase:'starting'}),/requested_parallelism/);assert.deepEqual(fs.readFileSync(q.filename),before);
+ const folder=restored.executionFolder(operation_id);fs.mkdirSync(folder,{recursive:true});
+ fs.writeFileSync(path.join(folder,'progress.json'),'{broken');
+ assert.equal(restored.batchScheduling(batch.id).reserved_generation_slots,2,'unreadable progress keeps reservations');
+ fs.writeFileSync(path.join(folder,'progress.json'),JSON.stringify({phase:'returned'}));
+ assert.equal(restored.batchScheduling(batch.id).reserved_generation_slots,0);
+ restored.assignExecution([ids[4],ids[5]],{operation_id:ids[4],phase:'starting'});
+ assert.equal(restored.batchScheduling(batch.id).reserved_generation_slots,1,'sequential clips use one reserved generation lane');
+});
+test('mixed films reserve only their assigned lanes and omitted ceilings preserve previous capacity',t=>{
+ const q=new MediaJobs(path.join(directory(t),'queue.json'));
+ const film=(key,requested_parallelism)=>q.enqueueBatch({...(requested_parallelism?{requested_parallelism}:{}),clips:[0,1,2].map(i=>({clip_id:`c${i}`,payload:{prompt:{}}}))},{key}).batch;
+ const a=film('a',1),b=film('b',1),c=film('c');const ids=[a.clips[0].id,b.clips[0].id,a.clips[1].id,b.clips[1].id];
+ q.assignExecution(ids,{operation_id:ids[0],phase:'starting',parallel_members:true,member_jobs:[{member:0,job_ids:[ids[0],ids[2]]},{member:1,job_ids:[ids[1],ids[3]]}]});
+ assert.equal(q.batchScheduling(a.id).reserved_generation_slots,1);assert.equal(q.batchScheduling(b.id).reserved_generation_slots,1);
+ assert.throws(()=>q.assignExecution([a.clips[2].id],{phase:'starting'}),/requested_parallelism/);
+ for(const clip of c.clips)q.assignExecution([clip.id],{phase:'starting'});
+ assert.equal(q.batchScheduling(c.id).requested_parallelism,null);assert.equal(q.batchScheduling(c.id).reserved_generation_slots,3);
+ const data=JSON.parse(fs.readFileSync(q.filename));data.batches[0].requested_parallelism=0;fs.writeFileSync(q.filename,JSON.stringify(data));
+ assert.throws(()=>new MediaJobs(q.filename),/Invalid saved media batches/);
+});
 test('sixteen-clip film commits once, preserves individual recipes and deduplicates through restart',t=>{
  const file=path.join(directory(t),'queue.json'),q=new MediaJobs(file);let writes=0;const save=q.save.bind(q);q.save=data=>{writes++;save(data);};
  const payload={name:'Example film',defaults:{seed:42},clips:Array.from({length:16},(_,i)=>({clip_id:`c${i}`,payload:{prompt:`Scene ${i}`,...(i===3?{seed:123}:{})}}))};
@@ -51,11 +86,11 @@ test('film API accepts all clips through authenticated HTTP and restores their i
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sg-film-api-')),config={host:'127.0.0.1',port:0,api_key:'fixture',model:'fixture',context_length:262144,nodes:[],state_file:path.join(dir,'state.json'),media_jobs:{enabled:true}};
  let core=createGateway(config),address=await core.start();t.after(async()=>{await core.close();fs.rmSync(dir,{recursive:true,force:true});});
  const call=(route,body,key='fixture')=>fetch(`http://127.0.0.1:${address.port}${route}`,{method:body?'POST':'GET',headers:{authorization:'Bearer '+key,'content-type':'application/json','idempotency-key':'film'},...(body?{body:JSON.stringify(body)}:{})});
- const payload={clips:Array.from({length:16},(_,i)=>({clip_id:`c${i}`,payload:{prompt:`Scene ${i}`}}))};
+ const payload={requested_parallelism:4,clips:Array.from({length:16},(_,i)=>({clip_id:`c${i}`,payload:{prompt:`Scene ${i}`}}))};
  assert.equal((await call('/v1/video/batches',payload,'wrong')).status,401);
  assert.equal((await call('/v1/video/capabilities',undefined,'wrong')).status,401);
- const capabilities=await(await call('/v1/video/capabilities')).json();assert.equal(capabilities.submission.atomic_film_batches,true);assert.equal(capabilities.submission.max_batch_clips,128);
- const response=await call('/v1/video/batches',payload);assert.equal(response.status,202);const batch=await response.json();assert.equal(batch.clips.length,16);
+ const capabilities=await(await call('/v1/video/capabilities')).json();assert.equal(capabilities.submission.atomic_film_batches,true);assert.equal(capabilities.submission.max_batch_clips,128);assert.equal(capabilities.submission.requested_parallelism_supported,true);
+ const response=await call('/v1/video/batches',payload);assert.equal(response.status,202);const batch=await response.json();assert.equal(batch.clips.length,16);assert.equal(batch.scheduling.requested_parallelism,4);
  assert.equal((await call('/v1/video/batches',payload)).status,200);
  await core.close();core=createGateway(config);address=await core.start();
  assert.deepEqual(await(await call(batch.status_url)).json(),batch);assert.equal((await(await call('/v1/video/jobs')).json()).jobs.length,16);

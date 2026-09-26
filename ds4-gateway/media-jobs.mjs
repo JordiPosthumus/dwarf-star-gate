@@ -15,6 +15,8 @@ const object=value=>value!==null&&typeof value==='object'&&!Array.isArray(value)
 const fail=(status,message)=>Object.assign(new Error(message),{status});
 const canonical=value=>Array.isArray(value)?value.map(canonical):object(value)?Object.fromEntries(Object.keys(value).sort().map(key=>[key,canonical(value[key])])):value;
 const now=()=>new Date().toISOString();
+const returned=new Set(['returned','failed_returned','failed_unchanged']);
+const validParallelism=n=>Number.isSafeInteger(n)&&n>=1&&n<=128;
 // The gateway's existing process lock owns this store. Media prompts and native
 // receipts are private local state, never fleet telemetry or repository content.
 export class MediaJobs {
@@ -29,7 +31,7 @@ export class MediaJobs {
     this.data=fs.existsSync(filename)?JSON.parse(fs.readFileSync(filename,'utf8')):{schema:1,jobs:[]};
     if(this.data.schema!==1||!Array.isArray(this.data.jobs)||this.data.jobs.some(j=>!uuid.test(j.id)||!states.has(j.state)||!['music','video'].includes(j.kind)||!object(j.payload)))throw new Error('Invalid saved media queue; preserved for inspection.');
     const batches=this.data.batches??[];
-    if(!Array.isArray(batches)||batches.some(b=>!uuid.test(b.id)||!Array.isArray(b.clips)||!b.clips.length||
+    if(!Array.isArray(batches)||batches.some(b=>!uuid.test(b.id)||b.requested_parallelism!==undefined&&!validParallelism(b.requested_parallelism)||!Array.isArray(b.clips)||!b.clips.length||
       b.clips.some(c=>typeof c.clip_id!=='string'||!this.data.jobs.some(j=>j.id===c.job_id&&j.batch_id===b.id&&j.clip_id===c.clip_id))||
       new Set(b.clips.map(c=>c.clip_id)).size!==b.clips.length||new Set(b.clips.map(c=>c.job_id)).size!==b.clips.length))throw new Error('Invalid saved media batches; preserved for inspection.');
     // A crashed submit is not evidence of rejection. Reconciliation may observe
@@ -87,10 +89,41 @@ export class MediaJobs {
   }
   list(kind){return this.data.jobs.filter(j=>!kind||j.kind===kind).map(j=>{const {payload,fingerprint,key_hash,...job}=this.get(j.id);return job;});}
   queued(){return this.list().filter(j=>j.state==='queued'&&!j.execution&&!j.dispatch_hold).sort((a,b)=>priorityRank(b)-priorityRank(a));}
+  batchReservations(id,selected=[]){
+    const slots=new Set();
+    for(const job of [...this.data.jobs.filter(j=>j.batch_id===id).map(j=>this.get(j.id)),...selected.filter(j=>j.batch_id===id)]){
+      const e=job.execution;
+      if(e&&!returned.has(e.phase)){
+        const operation=e.operation_id??job.id;
+        if(e.parallel_members){
+          const member=e.member_jobs?.find(l=>l.job_ids.includes(job.id))?.member;
+          if(![0,1].includes(member))throw fail(409,'Film member ownership cannot be verified; inspect the existing operation');
+          slots.add(`${operation}:${member}`);
+        }else slots.add(`${operation}:serial`);
+      }else if(!e&&['submitting','submitted','pending','running','uncertain'].includes(job.state))slots.add(`${job.id}:native`);
+    }
+    return slots.size;
+  }
+  batchScheduling(id){
+    const batch=this.data.batches?.find(b=>b.id===id);if(!batch)throw fail(404,'Unknown film batch');
+    const limit=batch.requested_parallelism??null,reserved=this.batchReservations(id);
+    return {requested_parallelism:limit,reserved_generation_slots:reserved,remaining_requested_slots:limit===null?null:Math.max(0,limit-reserved),
+      scope:'A ceiling, not guaranteed throughput. Assigned lanes retain their reservation until verified LLM return, including uncertain execution. Owner physical budget and serving availability also apply.'};
+  }
+  assertBatchCapacity(ids,execution){
+    const selected=ids.map(id=>({...this.get(id),execution}));
+    for(const id of new Set(selected.map(j=>j.batch_id).filter(Boolean))){
+      const batch=this.data.batches?.find(b=>b.id===id);
+      if(!batch)throw fail(409,'Film batch metadata is unavailable; leave its jobs queued');
+      if(batch.requested_parallelism!==undefined&&this.batchReservations(id,selected)>batch.requested_parallelism)
+        throw fail(409,'Film requested_parallelism is fully reserved or too small for the selected lanes; leave excess clips queued');
+    }
+  }
   assignExecution(ids,execution){
     const selected=ids.map(id=>this.get(id));
     if(selected.some(j=>j.dispatch_hold))throw fail(409,'A selected media job is held by owner configuration');
     if(new Set(ids).size!==ids.length||selected.some(j=>j.state!=='queued'||j.execution))throw fail(409,'Every selected job must still be queued and unassigned');
+    this.assertBatchCapacity(ids,execution);
     const replacements=new Map(selected.map(j=>[j.id,{...j,execution:structuredClone(execution),updated_at:now()}]));
     this.save({...this.data,jobs:this.data.jobs.map(j=>replacements.get(j.id)??j)});
   }
@@ -125,10 +158,11 @@ export class MediaJobs {
     if(this.data.jobs.some(j=>j.key_hash===keyHash))throw fail(409,'Idempotency-Key already identifies a media job');
     const previous=this.data.batches?.find(b=>b.key_hash===keyHash);
     if(previous){if(previous.fingerprint!==fingerprint)throw fail(409,'Idempotency-Key already identifies a different film batch');return {batch:this.batch(previous.id),created:false};}
-    if(!object(payload)||Object.keys(payload).some(k=>!['name','defaults','clips'].includes(k))||
+    if(!object(payload)||Object.keys(payload).some(k=>!['name','defaults','clips','requested_parallelism'].includes(k))||
+      payload.requested_parallelism!==undefined&&!validParallelism(payload.requested_parallelism)||
       payload.name!==undefined&&(typeof payload.name!=='string'||payload.name.length>200)||
       payload.defaults!==undefined&&!object(payload.defaults)||!Array.isArray(payload.clips)||!payload.clips.length||payload.clips.length>128)
-      throw fail(400,'A film batch needs 1–128 clips, with optional name and shared payload defaults');
+      throw fail(400,'A film batch needs 1–128 clips, with optional name, shared payload defaults and requested_parallelism from 1 to 128');
     if(payload.clips.some(c=>!object(c)||Object.keys(c).sort().join(',')!=='clip_id,payload'||
       typeof c.clip_id!=='string'||! /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/.test(c.clip_id)||!object(c.payload))||
       new Set(payload.clips.map(c=>c.clip_id)).size!==payload.clips.length)throw fail(400,'Each clip needs a distinct clip_id and a payload');
@@ -137,6 +171,7 @@ export class MediaJobs {
       return {...job,batch_id:id,clip_id:c.clip_id};
     });
     const batch={id,kind:'video',name:payload.name??null,key_hash:keyHash,fingerprint,priority,created_at:now(),
+      ...(payload.requested_parallelism!==undefined?{requested_parallelism:payload.requested_parallelism}:{}),
       clips:prepared.map(j=>({clip_id:j.clip_id,job_id:j.id}))};
     // Validate every clip before the one durable write. A bad final clip must
     // not leave earlier clips eligible for dispatch from a rejected batch.
@@ -152,7 +187,7 @@ export class MediaJobs {
     const needsAttention=clips.some(j=>j.state==='uncertain'||['needs_attention','launch_uncertain','observation_failed'].includes(j.execution?.phase));
     return {id:saved.id,kind:'video',name:saved.name,priority:saved.priority,created_at:saved.created_at,
       state:needsAttention?'needs_attention':generationComplete&&restorationComplete?'completed':restorationComplete&&counts.failed?'failed':clips.some(j=>j.execution)?'running':'queued',
-      counts,held:clips.filter(j=>j.dispatch_hold).length,generation_complete:generationComplete,restoration_complete:restorationComplete,
+      counts,held:clips.filter(j=>j.dispatch_hold).length,generation_complete:generationComplete,restoration_complete:restorationComplete,scheduling:this.batchScheduling(id),
       clips,status_url:`/v1/video/batches/${id}`};
   }
   update(id,changes){const job=this.get(id),next={...job,...changes,updated_at:now()};this.save({...this.data,jobs:this.data.jobs.map(j=>j.id===id?next:j)});return this.get(id);}

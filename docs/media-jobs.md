@@ -58,11 +58,13 @@ priority orders waiting jobs only and never cancels active generation.
 
 ## Film submissions and client integration
 
-The film API accepts `name`, optional shared payload `defaults`, and `clips`:
+The film API accepts `name`, optional shared payload `defaults`, an optional
+`requested_parallelism` ceiling (1–128), and `clips`:
 
 ```json
 {
   "name": "Example film",
+  "requested_parallelism": 4,
   "defaults": {"seed": 42},
   "clips": [
     {"clip_id": "opening", "payload": {"prompt": "Opening scene"}},
@@ -87,6 +89,19 @@ and `restoration_complete` are separate: generated videos are downloadable befor
 their machines have completed verified LLM return. An uncertain native operation
 needs reconciliation rather than resubmission. A requested retake uses a new
 individual job, leaving the original film and successful clips intact.
+
+`requested_parallelism` limits the film's simultaneous generation lanes. Omit it
+to use the capacity permitted by the installation's policy. It is not a guarantee
+of immediate throughput and never overrides the owner's physical Spark budget,
+other films' ownership, or the serving floor. The value is part of the idempotent
+request: changing it under the same key returns a conflict. Batch status includes
+`scheduling.requested_parallelism`, `reserved_generation_slots` and
+`remaining_requested_slots`. Sequential clips in one operation share one slot;
+clips assigned to both pair members consume two. Each film in a mixed operation
+reserves only the lanes assigned to it. Reservations persist through launch or
+observation uncertainty and core replacement until verified LLM return. This can
+temporarily keep clips queued after the prior clip finishes generating while its
+pair restores. Excess clips stay queued; no accepted work is cancelled.
 
 The portable Hermes skill lives at `examples/hermes/stargate-media`. Copy that
 directory into your Hermes skills directory (normally
@@ -158,8 +173,9 @@ The Fleet view shows both member jobs under the shared operation.
 
 The capability API reports `paired_members_parallel` only when an opted-in
 worker has both enrollments; its slot count counts one slot per enabled member
-while charging both physical members to the budget once. Clients still cannot
-request a per-film parallelism limit (`requested_parallelism_supported: false`).
+while charging both physical members to the budget once. Clients can request a
+per-film ceiling (`requested_parallelism_supported: true`). Genie sees remaining
+film slots in `batches[]` and must select compatible lanes within that allowance.
 Detached execution survives core replacement without another launch. A killed
 runner retains its claimed operation and uncertain state for reconciliation;
 automatic resumption after runner death is not implemented. Do not launch a new

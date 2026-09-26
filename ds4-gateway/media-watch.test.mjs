@@ -1,5 +1,15 @@
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
 import {MediaWatch} from './media-watch.mjs';
+test('full film reservations defer dispatch and release wakes the same queued clip',async t=>{
+ const folder=fs.mkdtempSync(path.join(os.tmpdir(),'sg-film-watch-'));t.after(()=>fs.rmSync(folder,{recursive:true,force:true}));const calls=[];
+ const status={enabled:true,jobs:[{id:'clip',batch_id:'film',kind:'video',state:'queued'}],batches:[{id:'film',remaining_requested_slots:0}],workers:[{id:'a',busy:false,kinds:['video']}],fleet:[{id:'a',is_healthy:true},{id:'b',is_healthy:true}]};
+ let now=100000;
+ const watch=new MediaWatch({filename:path.join(folder,'state.json'),now:()=>now,isEnabled:()=>true,chat:{status:()=>({available:true,conversations:[]}),create:()=>({id:'chat'}),submit:(...args)=>calls.push(args)},read:async()=>status});
+ await watch.tick();assert.equal(calls.length,0);
+ status.batches[0].remaining_requested_slots=1;await watch.tick();assert.equal(calls.length,1);assert.match(calls[0][1],/clip is waiting/);
+ now+=60001;await watch.tick();assert.equal(calls.length,1,'unchanged capacity does not repeat the prompt');
+ status.batches[0].remaining_requested_slots=2;await watch.tick();assert.equal(calls.length,2,'newly released film capacity permits a fresh decision');
+});
 test('held backlog cannot wake Genie or displace a new job; old pending intent is retained without replay',async t=>{
  const folder=fs.mkdtempSync(path.join(os.tmpdir(),'sg-media-held-'));t.after(()=>fs.rmSync(folder,{recursive:true,force:true}));
  const filename=path.join(folder,'watch.json'),calls=[],old={id:'old',kind:'video',state:'queued',priority:'high',dispatch_hold:'held'};
