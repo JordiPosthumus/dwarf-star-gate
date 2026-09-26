@@ -16,6 +16,7 @@ import {saveMediaReceipt} from './media-execution.mjs';
 import {recoveryCall} from './recovery-transport.mjs';
 import {verifyRecovery,qwenRecoveryProofValid} from './recovery-verify.mjs';
 import {workerControl} from './worker-client.mjs';
+import {createAceQualification} from './ace-qualification.mjs';
 
 const folder=path.resolve(process.argv[2]),p=JSON.parse(fs.readFileSync(path.join(folder,'plan.json'),'utf8'));
 if(path.basename(folder)!==p.operation_id)throw new Error('Media operation identity mismatch');
@@ -45,8 +46,10 @@ const nativeIo=(target,prefix='',member=p.llm_pair?.media_member??0)=>{
 };
 try{
   const pair=mediaPairReturn(p,save,{command:commands?.command});
+  const qualification=p.ace_qualification?createAceQualification(p,{pair,save,read:name=>JSON.parse(fs.readFileSync(path.join(folder,name),'utf8')),
+    verifyPrepared:async()=>JSON.parse((await execute(p.python,['-I','-B',fileURLToPath(new URL('./media-candidate-runner.py',import.meta.url)),p.ace_qualification.preparation_directory,'status'],{timeout:300000,maxBuffer:1024*1024})).stdout)}):null;
   const cycle=p.media_lanes?runParallelMediaCycle:runMediaCycle;
-  const result=await cycle(p,{pair,...nativeIo(p),prepareCommands:commands?()=>commands.prepare():undefined,forMember:lane=>nativeIo(lane,`member-${lane.member}-`,lane.member),
+  const result=await cycle(p,{pair,...nativeIo(p),prepareCommands:commands?()=>commands.prepare():undefined,preflight:qualification?.preflight,verifyOutputs:qualification?.verifyOutputs,forMember:lane=>nativeIo(lane,`member-${lane.member}-`,lane.member),
     jobs:new MediaJobs(path.join(folder,'media-jobs.json'),{resultsDirectory:p.results_directory,inputsDirectory:p.inputs_directory}),save,progress,delay,
     continueBatch:async next=>{
       const status=await workerControl(p.control_socket,'/media-jobs');
@@ -55,9 +58,10 @@ try{
     maintenance:async action=>JSON.parse((await execute(p.python,['-I','-B',maintenanceScript,folder,action],{maxBuffer:1024*1024})).stdout),
     hasMaintenanceIntent:()=>fs.existsSync(path.join(folder,'gateway','acquire.intent.json')),
     recoveryInspect:()=>pair?pair.recoveryInspect():recoveryCall(p.recovery,{action:'inspect'}),
-    verify:async()=>{if(pair)return pair.verify();const proof=await verifyRecovery(p.recovery.url,p.model,p.context_length,{kind:'qwen_vllm'});if(!qwenRecoveryProofValid(proof,p.context_length))throw new Error('Original LLM response/cache checks failed');return proof;},
+    verify:async()=>{if(qualification)return qualification.verifyReturn();if(pair)return pair.verify();const proof=await verifyRecovery(p.recovery.url,p.model,p.context_length,{kind:'qwen_vllm'});if(!qwenRecoveryProofValid(proof,p.context_length))throw new Error('Original LLM response/cache checks failed');return proof;},
 
   });
-  save('completion.json',result);
+  save('completion.json',{...result,...(qualification?{qualification:qualification.completion()}: {})});
+  if(qualification)await workerControl(p.control_socket,'/media-qualification-complete',{operation_id:p.ace_qualification.candidate_operation_id});
 }catch(e){save('runner-error.json',{error:e.message});process.exitCode=1;}
 finally{clearInterval(heartbeat);}

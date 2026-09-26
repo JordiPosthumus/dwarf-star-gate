@@ -47,6 +47,7 @@ export async function runMediaCycle(plan,io){
   try{
     assert.ok(['comfyui','ace-step'].includes(plan.engine.kind),'Unsupported media engine');
     await io.prepareCommands?.();
+    await io.preflight?.();
     await io.pair?.capture();
     const initial=await recoveryInspect();assert.equal(initial.profile,plan.recovery.profile);assert.equal(initial.listener,true);assert.equal(initial.fault,null);
     before={llm:await inspect(plan.llm_container),media:await inspect(plan.engine.container)};
@@ -76,6 +77,7 @@ export async function runMediaCycle(plan,io){
     }
     if(!ready)throw Error(`${plan.engine.kind}: Media readiness not established; no generation submitted. Last check: ${readinessError??'no usable readiness response'}. Inspect the engine log and enrolled endpoint.`);
     await runMediaGeneration(plan,{...io,backend:connection.backend,progress,onJob:id=>{activeId=id;}});
+    await io.verifyOutputs?.({jobs,backend:connection.backend});
   }catch(e){error=e;if(jobs.get(activeId).state==='queued')jobs.update(activeId,{state:'failed',detail:e.message});save('failure.json',{error:e.message});}
   finally{
     try{

@@ -253,8 +253,8 @@ matching returned sampler/steps/CFG/thinking/DCW/method/format/seed, and retaine
 bytes matching their SHA-256 before and after a full ffmpeg decode. Requested
 `audio_duration: -1` remains distinct from duration resolved during generation.
 A missing receipt, changed file, other codec or parameter mismatch cannot qualify
-the result. This check is not yet connected to the candidate qualification and
-promotion lifecycle. Generated audio proof alone does not establish LLM return,
+the result. This check is connected to the saved candidate qualification
+lifecycle below. Generated audio proof alone does not establish LLM return,
 cache preservation, unchanged review-tool compatibility or permission to enroll.
 
 Genie can request this fixed preparation through `prepare_media_improvement`
@@ -282,8 +282,41 @@ repeating the tool does not launch another runner or replay a build. Read-only
 native verification can finish a completed preparation after policy withdrawal.
 Only a currently verified `candidate_prepared` receipt releases preparation
 ownership. It does not change enrollment or grant qualification/promotion
-permission. Native audio validation, capability/benefit comparison, exact LLM
-return and conditional promotion remain separate unfinished product stages.
+permission.
+
+After preparation, `qualify_media_improvement` takes only the saved
+`operation_id`. It rechecks the exact stopped original and candidate, preserves
+the existing enrollment, and reserves the whole paired GLM's physical machines
+before launching a separate saved qualification. The fixed synthetic song uses
+Heun 80, CFG 3, duration -1, DCW off, thinking off, explicit seed 11 and FLAC;
+these are request settings only. Original engine model/LM and LLM settings are
+not overwritten. This tests the API recipe, not an album track or voice identity.
+
+The journaled media runner checks source support and native prepared state before
+draining. Current policy, capabilities, placement, target bindings and capacity
+are checked before borrowing, each LLM-stop/media-start transition, and native
+submission. The operation may exclude only its own exact maintenance lock from
+host-conflict checks. Withdrawing improvement permission blocks new test work;
+observing accepted work and returning the unchanged original LLM remain allowed
+under the existing maintenance ownership checks. Native graceful stops use the
+command journal, not the older setup runner's timed-stop path.
+
+The runner verifies generator-returned parameters, retained file hashes and a
+full FLAC decode before stopping the candidate. It restores both original GLM
+containers, verifies unchanged profiles/readiness, and then measures two
+interleaved cold-to-warm histories before readmission. A decode or parameter
+failure still follows the original LLM return path. A cache-verification failure
+leaves the pair running but held for reconciliation. Existing media plans do not
+gain this candidate-specific permission or qualification requirement.
+
+The core accepts `qualified_returned` only with bound audio, original pair,
+cache and readmission receipts. Completion can be recorded after policy
+withdrawal without authorizing new work. This is dated qualification evidence;
+it releases the qualification reservation but does not replace enrollment.
+Lost launches are never repeated. Full coordinator takeover, capability/benefit
+comparison, conditional enrollment promotion and autonomous improvement-stage
+watching remain unfinished. Native Spark generation and AceFarm folder/harness
+acceptance must be proven separately from fixture tests.
 
 The internal ACE candidate preparer retains the exact stopped original container
 and snapshots its writable filesystem before adding the fixed sampler/DCW patch

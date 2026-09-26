@@ -89,3 +89,61 @@ test('private core routes retain a failed launch across gateway restart; public 
  const state=await workerControl(config.control_socket,'/media-jobs');assert.equal(state.improvements.operations.length,1);assert.equal(state.media_budget.borrowed_sparks,1);
  assert.equal((await workerControl(config.control_socket,'/workers')).workers[0].drained,false,'candidate launch did not drain inference');
 });
+
+async function preparedFixture(t){
+ const f=fixture(t);f.config.context_length=400000;f.config.model='glm';f.qualifications=0;
+ f.options.launchQualification=async root=>{f.qualifications++;const row=Object.values(f.store.data.media_candidates)[0];assert.equal(row.phase,'candidate_qualifying');assert.equal(path.basename(root),row.qualification_job_id);return {pid:456};};f.reopen();
+ const row=await f.service.start({worker_id:'pair'}),c=f.capture(row);f.service.permit(c.permit);
+ f.result={state:'prepared_stopped',operation_id:row.operation_id,request_file_sha256:c.permit.request_file_sha256,container:'e'.repeat(64),image:'sha256:'+'f'.repeat(64),snapshot_image:'sha256:'+'d'.repeat(64),original_preserved:true};
+ f.result.recipe_contract={state:'verified',container:f.result.container,image:f.result.image,container_state_unchanged:true,receipt_sha256:'c'.repeat(64),generation_receipt:{schema:1,source:'acestep.inference.audio.params',per_audio:true,query_paths:['cache','store']}};
+ saveMediaReceipt(c.folder,'result.json',f.result);await f.service.finish({operation_id:row.operation_id});
+ f.row=row;f.preparation=c.folder;f.input={operation_id:row.operation_id};
+ f.qualification=()=>{const row=f.store.data.media_candidates[f.row.operation_id],root=path.join(f.preparation,'qualification',row.qualification_job_id),plan=JSON.parse(fs.readFileSync(path.join(root,'plan.json')));return {root,plan,permit:{operation_id:row.operation_id,job_id:row.qualification_job_id,plan_file_sha256:row.qualification_plan_sha256}};};
+ return f;
+}
+test('qualification holds physical capacity before launch, retains enrollment and uses one fixed private job across restart',async t=>{
+ const f=await preparedFixture(t),before=structuredClone(f.config.media_jobs.workers);
+ const row=await f.service.qualify(f.input),q=f.qualification();assert.equal(row.phase,'candidate_qualifying');assert.equal(f.qualifications,1);
+ assert.equal(q.plan.engine.container,f.result.container);assert.equal(q.plan.command_journal_version,1);assert.equal(q.plan.llm_pair.media_member,0);
+ const queue=JSON.parse(fs.readFileSync(path.join(q.root,'media-jobs.json')));assert.equal(queue.jobs.length,1);assert.equal(queue.jobs[0].payload.sampler_mode,'heun');assert.equal(queue.jobs[0].payload.thinking,false);assert.equal(queue.jobs[0].payload.audio_duration,-1);
+ assert.deepEqual(f.config.media_jobs.workers,before);assert.throws(()=>f.execution.assertCapacity('alias'),/overlapping/);
+ assert.equal(f.service.qualificationPermit(q.permit).allowed,true);f.reopen();assert.deepEqual(await f.service.qualify(f.input),row);assert.equal(f.qualifications,1);
+ assert.equal((await f.service.start({worker_id:'pair'})).phase,'candidate_qualifying');await assert.rejects(f.service.finish(f.input),/cannot replace/);
+});
+test('qualification refuses changed native preparation and rechecks policy after asynchronous inspection',async t=>{
+ const f=await preparedFixture(t);f.result.container='d'.repeat(64);await assert.rejects(f.service.qualify(f.input),/changed/);assert.equal(f.qualifications,0);
+ f.result.container='e'.repeat(64);f.options.observeRunner=async()=>{f.enabled=false;return f.result;};f.reopen();await assert.rejects(f.service.qualify(f.input),/policy/);assert.equal(f.qualifications,0);
+});
+test('qualification cannot use a legacy source witness lacking native per-output parameter receipts',async t=>{
+ const f=await preparedFixture(t);delete f.result.recipe_contract.generation_receipt;saveMediaReceipt(f.preparation,'result.json',f.result);
+ await assert.rejects(f.service.qualify(f.input),/receipt support/);assert.equal(f.qualifications,0);
+});
+test('uncertain qualification spawn retains its job and reservation and never dispatches again',async t=>{
+ const f=await preparedFixture(t);f.options.launchQualification=async()=>{f.qualifications++;throw Error('reply lost');};f.reopen();
+ await assert.rejects(f.service.qualify(f.input),/launch unconfirmed/);f.reopen();assert.equal((await f.service.qualify(f.input)).phase,'requires_reconciliation');assert.equal(f.qualifications,1);
+ assert.throws(()=>f.execution.assertCapacity('alias'),/overlapping/);
+});
+test('qualification permit binds exact plan/job/recipe, excludes only its owned maintenance lock and checks current policy',async t=>{
+ const f=await preparedFixture(t);await f.service.qualify(f.input);const q=f.qualification();
+ for(const key of ['enabled','allowed','available']){f[key]=false;assert.throws(()=>f.service.qualificationPermit(q.permit));f[key]=true;}
+ const lock='22222222-2222-4222-8222-222222222222';fs.mkdirSync(path.join(q.root,'gateway'),{mode:0o700});
+ saveMediaReceipt(path.join(q.root,'gateway'),'acquire.result.json',{request_id:q.plan.operation_id,action:'lock',control_channel:'approved_operation',result:{worker_id:'pair',lock_id:lock}});
+ f.options.hostAvailable=(id,own)=>id==='pair'&&own===lock;f.reopen();assert.equal(f.service.qualificationPermit(q.permit).allowed,true);
+ const queue=JSON.parse(fs.readFileSync(path.join(q.root,'media-jobs.json')));queue.jobs[0].payload.inference_steps=8;saveMediaReceipt(q.root,'media-jobs.json',queue);
+ assert.throws(()=>f.service.qualificationPermit(q.permit),/recipe changed/);
+ queue.jobs[0].payload.inference_steps=80;saveMediaReceipt(q.root,'media-jobs.json',queue);saveMediaReceipt(q.root,'plan.json',{...q.plan,engine:f.config.media_jobs.workers.pair.engines.music});
+ assert.throws(()=>f.service.qualificationPermit(q.permit),/plan changed/);
+});
+test('read-only qualification completion needs audio, cache, original identity and readmission evidence, even after permission withdrawal',async t=>{
+ const f=await preparedFixture(t);await f.service.qualify(f.input);const q=f.qualification(),engine=q.plan.engine;
+ const proof={state:'qualified_returned',candidate_operation_id:f.row.operation_id,job_id:q.plan.operation_id,container:engine.container,image:engine.image,enrollment_changed:false,source_receipt_sha256:q.plan.ace_qualification.source_proof.receipt_sha256};
+ saveMediaReceipt(q.root,'completion.json',{native_generation_verified:true,llm_return_verified:true,qualification:proof});
+ assert.throws(()=>f.service.finishQualification(f.input));assert.throws(()=>f.execution.assertCapacity('alias'),/overlapping/);
+ saveMediaReceipt(q.root,'ace-audio-proof.json',{...proof,state:'audio_verified'});
+ saveMediaReceipt(q.root,'llm-pair-before.json',{members:q.plan.llm_pair.members,containers:['a','b'].map(id=>({Id:id.repeat(64),Image:'sha256:'+'b'.repeat(64)}))});
+ const cache={check:'glm53_vllm_two_conversations_cold_to_warm',context_length:400000,verified_at:new Date().toISOString(),samples:['cold-A','cold-B','warm-A','warm-B'].map((label,i)=>({label,prompt_tokens:i<2?20000:20100,cached_tokens:i<2?0:14336,elapsed_ms:100}))};
+ saveMediaReceipt(q.root,'llm-proof.json',{configuration_unchanged:true,context_length:400000,containers:['a','b'].map(id=>({id:id.repeat(64),image:'sha256:'+'b'.repeat(64)})),cache});
+ saveMediaReceipt(q.root,'readmission.json',{state:'readmitted'});f.enabled=false;
+ assert.equal(f.service.finishQualification(f.input).phase,'qualified_returned');assert.equal(f.execution.assertCapacity('alias').allowed,true);
+ assert.equal(f.config.media_jobs.workers.pair.engines.music.container,'a'.repeat(64));assert.equal((await f.service.qualify(f.input)).phase,'qualified_returned');assert.equal(f.qualifications,1);
+});

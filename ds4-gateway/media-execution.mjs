@@ -21,7 +21,7 @@ export function saveMediaReceipt(folder,name,value){
     const parent=fs.openSync(folder,'r');try{fs.fsyncSync(parent);}finally{fs.closeSync(parent);}
   }finally{if(fd!==undefined)fs.closeSync(fd);if(fs.existsSync(temporary))fs.unlinkSync(temporary);}
 }
-const launch=async folder=>{
+export const launchMediaRunner=async folder=>{
   const log=fs.openSync(path.join(folder,'runner.log'),'ax',0o600);
   try{
     const child=spawn(process.execPath,[script,folder],{detached:true,stdio:['ignore',log,log]});
@@ -29,7 +29,7 @@ const launch=async folder=>{
     child.unref();return {pid:child.pid,at:new Date().toISOString()};
   }finally{fs.closeSync(log);}
 };
-export function createMediaExecution(config,jobs,{isEnabled=()=>false,launchRunner=launch,matchesWorker=()=>true,isAllowed=()=>true,workers=()=>config.workers??[],externalOperations=()=>[]}={}){
+export function createMediaExecution(config,jobs,{isEnabled=()=>false,launchRunner=launchMediaRunner,matchesWorker=()=>true,isAllowed=()=>true,workers=()=>config.workers??[],externalOperations=()=>[]}={}){
   mediaSparkLimit(config);
   if(config.media_jobs?.parallel_pair_members!==undefined&&typeof config.media_jobs.parallel_pair_members!=='boolean')throw Error('media_jobs.parallel_pair_members must be a boolean');
   const validEngine=(e,kind)=>e?.kind===(kind==='video'?'comfyui':'ace-step')&&/^[a-f0-9]{64}$/.test(e.container)&&/^sha256:[a-f0-9]{64}$/.test(e.image)&&Number.isSafeInteger(e.port)&&e.port>=1&&e.port<=65535;
