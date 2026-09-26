@@ -88,6 +88,9 @@ export function createPairEnrollment({config,store,recovery,isEnabled,materializ
       // No await between durable enrollment and its in-memory installation.
       config.recovery={workers:entries};recovery.configs.set(row.worker_id,checked);
     }catch(error){
+      // Graceful core replacement retains the queued identity just like a crash.
+      // Only read-only observation may resume; authority was never committed.
+      if(closed)return;
       const reason=/^[a-z_]+$/.test(error.message)?error.message:'pair_enrollment_unverified';
       save({...row,state:'failed',finished_at:new Date().toISOString(),error:reason});
     }
