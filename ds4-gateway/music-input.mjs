@@ -2,6 +2,16 @@ const object=v=>v!==null&&typeof v==='object'&&!Array.isArray(v);
 const reject=message=>{throw Object.assign(new Error(`ACE-Step: ${message} No job was queued.`),{status:400});};
 const decode=v=>{if(object(v))return v;try{const parsed=JSON.parse(v);return object(parsed)?parsed:{};}catch{return {};}};
 
+export function musicRecipeRequirements(payload){
+  const nonempty=v=>object(v)||Array.isArray(v)?Object.keys(v).length>0:Boolean(v);
+  const meta=['metas','meta','metadata','user_metadata','userMetadata'].find(k=>nonempty(payload[k]));
+  const sources=[payload,decode(payload.param_obj),decode(payload[meta])];
+  return ['sampler_mode','dcw_enabled'].filter(key=>{
+    const source=sources.find(s=>s[key]!=null);
+    return source!==undefined&&source[key]!=='';
+  });
+}
+
 // Matches release_task_param_parser.py in the pinned ACE-Step build (dce6214).
 // Validate only supplied effective values; never expand defaults or rewrite the
 // request. Preserve aliases, native source precedence and automatic sentinels.

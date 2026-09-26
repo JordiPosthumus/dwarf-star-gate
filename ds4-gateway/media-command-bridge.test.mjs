@@ -67,3 +67,8 @@ test('preparation requires its exact operation and fixed commands reject extra t
     await assert.rejects(f.bridge.command(...args));
   assert.equal(f.calls.length,1);
 });
+test('unverified explicit recipe fails preparation before any native lifecycle command',async()=>{
+  const f=fixture([{state:'recipe_unverified',native_mutation:false}]);
+  await assert.rejects(f.bridge.prepare(),/Qualify a compatible image; no LLM was drained/);
+  assert.deepEqual(f.calls.map(c=>c.args[4]),['prepare']);
+});

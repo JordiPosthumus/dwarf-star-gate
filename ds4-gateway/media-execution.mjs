@@ -6,6 +6,7 @@ import {mediaBudget,mediaSparkLimit} from './media-budget.mjs';
 // It writes its own queue receipt; the core remains the sole global-queue writer.
 import fs from 'node:fs';
 import {mediaInputRequirements} from './media-input-placement.mjs';
+import {musicRecipeRequirements} from './music-input.mjs';
 import path from 'node:path';
 import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
@@ -85,7 +86,8 @@ export function createMediaExecution(config,jobs,{isEnabled=()=>false,launchRunn
       // The root head is whichever member the normal enrollment uses; the
       // coordinator still captures/stops/restores the entire pair exactly once.
       const folder=jobs.executionFolder(job.id);fs.mkdirSync(folder,{recursive:true,mode:0o700});
-      const plan={operation_id:job.id,command_journal_version:1,...(ids.length>1?{job_ids:ids}:{}),worker_id:input.worker_id,separate_workers:workers().filter(w=>!machinesFor(w.id,config).some(m=>machinesFor(input.worker_id,config).includes(m))).map(w=>w.id),host:ssh,llm_container:member?.container??inspection.container,engine,python:config.genie_chat.python,control_socket:config.control_socket,
+      const required_recipe_fields=job.kind==='music'?[...new Set(selected.flatMap(j=>musicRecipeRequirements(j.payload)))].sort():[];
+      const plan={operation_id:job.id,command_journal_version:1,...(required_recipe_fields.length?{required_recipe_fields}:{}),...(ids.length>1?{job_ids:ids}:{}),worker_id:input.worker_id,separate_workers:workers().filter(w=>!machinesFor(w.id,config).some(m=>machinesFor(input.worker_id,config).includes(m))).map(w=>w.id),host:ssh,llm_container:member?.container??inspection.container,engine,python:config.genie_chat.python,control_socket:config.control_socket,
         recovery:pair?{profile:'glm53-docker-pair',url:pair.worker_binding.url}:recovery,...(pair?{llm_pair:pair,endpoint:workers().find(w=>w.id===input.worker_id)}:{}),...(lanes?{media_lanes:lanes}:{}),model:config.model,context_length:config.context_length,results_directory:jobs.results.directory,inputs_directory:jobs.inputs.directory};
       saveMediaReceipt(folder,'plan.json',plan);
       saveMediaReceipt(folder,'media-jobs.json',{schema:1,jobs:selected});

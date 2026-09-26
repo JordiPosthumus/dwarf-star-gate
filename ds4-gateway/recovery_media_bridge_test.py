@@ -138,5 +138,25 @@ class BridgeTests(unittest.TestCase):
         self.assertTrue(all(options['timeout'] is None for _,options in calls))
         self.assertTrue(all('StrictHostKeyChecking=yes' in args for args,_ in calls))
 
+    def test_explicit_recipe_requires_both_member_proofs_before_any_native_mutation(self):
+        self.plan['required_recipe_fields']=['dcw_enabled','sampler_mode']
+        for lane in self.plan['media_lanes']:lane['engine']['kind']='ace-step'
+        self.plan['engine']['kind']='ace-step';self.save('plan.json',self.plan)
+        self.assertEqual(self.prepare()['state'],'recipe_unverified');self.assertEqual(self.commands,[])
+        def proof(remote,cid,image):
+            return {'state':'verified','container':cid,'image':image,'supported':b.RECIPE_FIELDS,
+                    'container_state_unchanged':True,'receipt_sha256':remote.host}
+        self.Remote.recipe_fields=proof
+        self.assertEqual(self.prepare()['state'],'prepared')
+        self.assertEqual(self.invoke('media-start-0','c')['state'],'completed')
+        # A different proof after preparation is refused, without starting lane 1.
+        self.Remote.recipe_fields=lambda remote,cid,image:{**proof(remote,cid,image),'receipt_sha256':'changed'}
+        self.assertEqual(self.invoke('media-start-1','d')['state'],'refused')
+        self.assertEqual(len(self.commands),1)
+
+    def test_legacy_recipe_does_not_require_new_build_receipts(self):
+        self.assertEqual(self.prepare()['state'],'prepared')
+        self.assertFalse((self.root/'media-recipe-contracts.json').exists())
+
 
 if __name__=='__main__':unittest.main()

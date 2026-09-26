@@ -15,7 +15,11 @@ export function createMediaCommandBridge(plan,folder,{run=execute,wait=delay,sav
     return row;
   };
   return {
-    async prepare(){const row=exact(await call('prepare'));assert.equal(row.state,'prepared','Native command bindings were not prepared');return row;},
+    async prepare(){
+      const row=exact(await call('prepare'));
+      if(row.state==='recipe_unverified')throw Error(`ACE-Step support for ${(plan.required_recipe_fields??[]).join(', ')} is not verified on every selected engine. Qualify a compatible image; no LLM was drained or generation submitted.`);
+      assert.equal(row.state,'prepared','Native command bindings were not prepared');return row;
+    },
     async command(action,role,member,container){
       assert.ok(['start','stop'].includes(action)&&['llm','media'].includes(role)&&[0,1].includes(member)&&/^[a-f0-9]{64}$/.test(container));
       const step=`${role}-${action}-${member}`;let mode='run';

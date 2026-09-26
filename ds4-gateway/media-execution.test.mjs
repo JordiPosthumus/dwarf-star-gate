@@ -9,6 +9,7 @@ import {MediaJobs} from './media-jobs.mjs';
 import {createMediaExecution,saveMediaReceipt} from './media-execution.mjs';
 import {runMediaCycle,mediaBatchCanContinue} from './media-cycle.mjs';
 import {createMediaCommandBridge} from './media-command-bridge.mjs';
+import {musicRecipeRequirements} from './music-input.mjs';
 import {mediaBudget,mediaSparkLimit} from './media-budget.mjs';
 
 test('failed durable receipt storage preserves the previous receipt and prevents crossing the command boundary',t=>{
@@ -31,6 +32,17 @@ function fixture(t,kind='video'){
   const config={model:'fixture',context_length:262144,control_socket:'/fixture.sock',media_jobs:{workers:{one:{engines:{video:engine}}}},genie_chat:{python:'/python',inspection:{workers:{one:{container:'a'.repeat(64),ssh:['fixture-host']}}}},recovery:{workers:[{id:'one',ssh:'fixture-host',adapter:'docker',verification:'qwen_vllm',profile:'profile'}]}};
   return {directory,jobs,job,config,engine};
 }
+test('explicit recipe requirements are pinned into the original music execution plan',async t=>{
+ const r=fixture(t,'music');r.jobs.update(r.job.id,{payload:{caption:'fixture',param_obj:{sampler_mode:'heun',dcw_enabled:false}}});
+ r.config.media_jobs.workers.one.engines.music={...r.engine,kind:'ace-step',port:8002};
+ const service=createMediaExecution(r.config,r.jobs,{isEnabled:()=>true,launchRunner:async()=>({pid:1})});
+ await service.start({job_id:r.job.id,worker_id:'one'});
+ const plan=JSON.parse(fs.readFileSync(path.join(r.jobs.executionFolder(r.job.id),'plan.json')));
+ assert.deepEqual(plan.required_recipe_fields,['dcw_enabled','sampler_mode']);
+ assert.deepEqual(musicRecipeRequirements({sampler_mode:'',dcw_enabled:false,param_obj:{sampler_mode:'heun'}}),['dcw_enabled']);
+ assert.deepEqual(musicRecipeRequirements({metas:{},metadata:JSON.stringify({sampler_mode:'heun',dcw_enabled:false})}),['sampler_mode','dcw_enabled']);
+ assert.deepEqual(musicRecipeRequirements({prompt:'unchanged legacy'}),[]);
+});
 test('six-Spark budget counts complete pairs, deduplicates aliases, and retains uncertain reservations',()=>{
  const config={media_jobs:{max_borrowed_sparks:4},machine_groups:{a:['s1','s2'],alias:['s1','s2'],b:['s3','s4'],c:['s5','s6']}};
  const job=(worker_id,phase='generating')=>({execution:{worker_id,phase}});
@@ -166,6 +178,13 @@ test('native cycle drains, generates once, retains files, verifies LLM and readm
   const ordered=['prepare','stop:'+r.plan.llm_container,'start:'+r.engine.container,'collect','stop:'+r.engine.container,'start:'+r.plan.llm_container,'verify','finish','returned'];
   let previous=-1;for(const item of ordered){const index=r.events.indexOf(item);assert.ok(index>previous,item);previous=index;}
   assert.equal(r.containers.get(r.plan.llm_container).State.Running,true);
+});
+test('unverified recipe leaves the LLM serving and takes no maintenance reservation',async t=>{
+ const r=cycleFixture(t);r.io.prepareCommands=async()=>{throw Error('ACE-Step recipe support is not verified');};
+ await assert.rejects(runMediaCycle(r.plan,r.io),/recipe support is not verified/);
+ assert.equal(r.submissions(),0);assert.equal(r.containers.get(r.plan.llm_container).State.Running,true);
+ assert.ok(r.events.includes('failed_unchanged'));
+ assert.ok(!r.events.some(e=>e==='prepare'||e==='finish'||e.startsWith('stop:')||e.startsWith('start:')));
 });
 test('two selected media jobs submit and retain separately with one engine start and one LLM return',async t=>{
   const r=cycleFixture(t),second=r.jobs.enqueue('video',{prompt:{one:{class_type:'Fixture'}}},{key:'second'}).job;

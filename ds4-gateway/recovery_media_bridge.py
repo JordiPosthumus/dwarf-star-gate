@@ -16,6 +16,7 @@ from docker_profile import digest, signature
 from media_maintenance import main as maintenance
 from recovery_pair_native import private_read, private_save
 from serving_qualification import native_load
+from media_recipe_contract import SUPPORTED as RECIPE_FIELDS
 
 
 def require(value, reason):
@@ -89,6 +90,10 @@ print(json.dumps({'machine':hashlib.sha256(json.dumps(identity,sort_keys=True,se
 
     def start(self, cid):
         self.call(['docker', 'start', cid], timeout=None)
+
+    def recipe_fields(self, cid, image):
+        code = Path(__file__).with_name('media_recipe_contract.py').read_text()
+        return json.loads(self.call(['python3', '-I', '-c', code, cid, image], timeout=300))
 
     def stop(self, cid):
         # Graceful stop only. A slow or disconnected native command remains
@@ -168,6 +173,33 @@ def prepare(folder, remote_factory=Remote):
             require(all(isinstance(v, str) and command.ID.fullmatch(v) for v in machines.values()), 'machine_unverified')
             require(len(machines) == len(set(machines.values())), 'physical_members_not_distinct')
             private_save(file, {'schema': 1, 'plan_hash': digest(plan), 'targets': selected, 'machines': machines})
+        required = plan.get('required_recipe_fields', [])
+        require(isinstance(required, list) and len(required) == len(set(required)) and
+                all(k in RECIPE_FIELDS for k in required), 'recipe_requirements_unverified')
+        if required:
+            bindings = load_bindings(root, plan)
+            proofs = {}
+            try:
+                for key, target in bindings['targets'].items():
+                    if not key.startswith('media-'):
+                        continue
+                    require(target['kind'] == 'ace-step', 'recipe_engine_changed')
+                    remote = remote_factory(target['host'])
+                    require(remote.machine() == bindings['machines'][target['host']], 'recipe_machine_changed')
+                    proof = remote.recipe_fields(target['container'], target['image'])
+                    require(proof.get('state') == 'verified' and proof.get('container') == target['container'] and
+                            proof.get('image') == target['image'] and proof.get('supported') == RECIPE_FIELDS and
+                            proof.get('container_state_unchanged') is True, 'recipe_fields_unverified')
+                    proofs[key] = proof
+            except Exception:
+                return {'state': 'recipe_unverified', 'operation_id': plan['operation_id'],
+                        'required_recipe_fields': required, 'native_mutation': False}
+            expected = {'plan_hash': digest(plan), 'bindings_hash': digest(bindings), 'proofs': proofs}
+            proof_path = root / 'media-recipe-contracts.json'
+            if proof_path.exists():
+                require(private_read(proof_path) == expected, 'recipe_proof_changed')
+            else:
+                private_save(proof_path, expected)
         return {'state': 'prepared', 'operation_id': plan['operation_id']}
     finally:
         os.close(fd)
@@ -216,6 +248,13 @@ class BoundIO:
 
     def inspect(self, cid):
         current = self.remote.inspect(cid)
+        if self.target['kind'] == 'ace-step' and self.plan.get('required_recipe_fields') and current['State']['Running'] is False:
+            saved = private_read(self.root / 'media-recipe-contracts.json')
+            require(saved.get('plan_hash') == digest(self.plan) and saved.get('bindings_hash') == digest(self.bindings),
+                    'recipe_proof_binding_changed')
+            expected = saved.get('proofs', {}).get('media-' + str(self.target['member']))
+            require(expected is not None and self.remote.recipe_fields(cid, self.target['image']) == expected,
+                    'recipe_source_changed')
         if self.target['kind'] == 'llm' and self.plan.get('llm_pair'):
             member = self.target['member']
             saved = private_read(self.root / 'llm-pair-files-before.json')

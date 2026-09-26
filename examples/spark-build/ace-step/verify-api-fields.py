@@ -6,6 +6,7 @@ This proves parameter wiring only, not native synthesis or audio fidelity.
 """
 import ast
 import dataclasses
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -83,7 +84,12 @@ def verify(root):
             try: request({field:value})
             except ValueError: checks += 1
             else: raise AssertionError('Invalid explicit recipe option accepted: '+field)
-        return {'state':'verified','checks':checks,'omitted_defaults':{k:getattr(native_defaults,k) for k in ('sampler_mode','dcw_enabled')},
+        files=['acestep/constants.py','acestep/inference.py','acestep/api/http/release_task_param_parser.py',
+               'acestep/api/http/release_task_models.py','acestep/api/http/release_task_request_builder.py','acestep/api/job_generation_setup.py']
+        return {'schema':1,'state':'verified','checks':checks,
+                'supported':{'sampler_mode':['euler','heun'],'dcw_enabled':[True,False]},
+                'source_sha256':{name:hashlib.sha256((root/name).read_bytes()).hexdigest() for name in files},
+                'omitted_defaults':{k:getattr(native_defaults,k) for k in ('sampler_mode','dcw_enabled')},
                 'scope':'Actual pinned request parser/model and generation parameter assembly; no GPU inference performed.'}
     finally:
         for key in set(sys.modules)-set(saved_modules):

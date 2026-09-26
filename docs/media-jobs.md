@@ -223,6 +223,17 @@ source runner; deployment and actual native acceptance remain separate gates.
 The immutable coordinator claim is still retained: automatic takeover after a
 coordinator dies is not implemented by this transport.
 
+For new music plans that explicitly request `sampler_mode` or `dcw_enabled`,
+preparation verifies API support on every selected engine before draining any
+LLM. The candidate ACE image retains its build-time parser/parameter verification
+receipt and hashes of the relevant source files. A fixed read-only reader uses
+Docker inspect/cp on the exact enrolled image/container to compare that witness
+with the current files; it does not start an engine. Missing proof or changed
+source causes a clear preflight failure. The bound source proof is rechecked
+before starting a stopped ACE container. Omitted fields and older saved plans
+retain their existing behavior. This source/build witness does not replace
+native image qualification, effective inference checks or audio validation.
+
 **Native acceptance still required:** simultaneous generation on actual enrolled
 members, full autonomous film production through installed Hermes, and native
 six-machine operation. Component/fault tests prove ownership, overlapping fixture
