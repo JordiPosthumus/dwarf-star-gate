@@ -77,3 +77,14 @@ test('decoder fully traverses original audio and refuses non-FLAC probe before f
  assert.deepEqual(calls[1],{command:'ffmpeg',args:['-v','error','-xerror','-i','/fixture/retained.flac','-map','0','-f','null','-']});
  let count=0;await assert.rejects(decodeAceFlac('/fixture/renamed.flac',{run:async()=>{count++;return {stdout:JSON.stringify({...decoded,streams:[{codec_type:'audio',codec_name:'mp3'}]})};}}),/real FLAC/);assert.equal(count,1);
 });
+test('qualification checks initialized generator handlers, not only matching environment labels',async t=>{
+ const f=await fixture(t),models={dit:'fixture-dit',lm:'fixture-lm'};
+ const handlers={dit:{config_path:models.dit,initialized:true},lm:{model_path:models.lm,full_model_path:'/models/fixture-lm',initialized:true,passed_to_generator:true}};
+ const runtime={schema:1,source:'acestep.api.generate_music_fn.handlers',before:handlers,after:structuredClone(handlers),unchanged:true};
+ f.job.payload.model=models.dit;f.job.result[0].generation_receipt.runtime_models=runtime;
+ const options={...f.options,expectedModels:models,sourceProof:{...f.options.sourceProof,runtime_models:{schema:1,source:runtime.source,per_call:true}}};
+ assert.deepEqual((await verifyAceGeneration(f.job,options)).model_names,models);
+ const changes=[r=>delete r.runtime_models,r=>{r.runtime_models.unchanged=false;},r=>{r.runtime_models.before.lm.model_path='other';r.runtime_models.after.lm.model_path='other';},r=>{for(const h of [r.runtime_models.before,r.runtime_models.after])h.lm.passed_to_generator=false;},r=>{for(const h of [r.runtime_models.before,r.runtime_models.after])h.lm.initialized=false;},r=>{for(const h of [r.runtime_models.before,r.runtime_models.after])h.dit.config_path='turbo';}];
+ for(const change of changes){const job=structuredClone(f.job);change(job.result[0].generation_receipt);await assert.rejects(verifyAceGeneration(job,options));}
+ await assert.rejects(verifyAceGeneration(f.job,{...options,sourceProof:f.options.sourceProof}),/source support/);
+});

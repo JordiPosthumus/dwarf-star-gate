@@ -8,6 +8,9 @@ import {createMediaPromotions} from './media-promotions.mjs';
 import {createMediaCandidates} from './media-candidates.mjs';
 import {createMediaExecution,saveMediaReceipt} from './media-execution.mjs';
 import {createMediaTools} from './genie-media.mjs';
+const modelNames={dit:'fixture-xl-sft',lm:'fixture-4B'},runtimeDescriptor={schema:1,source:'acestep.api.generate_music_fn.handlers',per_call:true};
+const handlerState={dit:{config_path:modelNames.dit,initialized:true},lm:{model_path:modelNames.lm,full_model_path:'/models/fixture-4B',initialized:true,passed_to_generator:true}};
+const modelReceipt=()=>({reported_models:modelNames,runtime_models:{schema:1,source:runtimeDescriptor.source,before:structuredClone(handlerState),after:structuredClone(handlerState),unchanged:true}});
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 function fixture(t){
  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'sg-candidate-'));t.after(async()=>{await f.cleanup?.();fs.rmSync(directory,{recursive:true,force:true});});
@@ -18,7 +21,7 @@ function fixture(t){
  const execution=createMediaExecution(config,null,{externalOperations:()=>[...f.external,...(service?.operations()??[])]});f.execution=execution;
  f.options={directory:path.join(directory,'operations'),workers:()=>[worker],isEnabled:()=>f.enabled,isAllowed:()=>f.allowed,hostAvailable:()=>f.available,assertCapacity:(id,own)=>execution.assertCapacity(id,own),launchRunner:async(folder)=>{f.launches++;assert.ok(store.data.media_candidates[path.basename(folder)],'ownership saved before spawn');return {pid:123};},observeRunner:async()=>structuredClone(f.result)};
  f.reopen=()=>f.service=service=createMediaCandidates(config,store,f.options);f.reopen();
- f.capture=row=>{const folder=path.join(f.options.directory,row.operation_id),plan=JSON.parse(fs.readFileSync(path.join(folder,'plan.json')));const request={operation_id:row.operation_id,before:{Id:plan.engine.container,Image:plan.engine.image},epoch:{running:false},machine:'d'.repeat(64),source_sha256:plan.source_sha256};saveMediaReceipt(folder,'request.json',request);return {folder,request,permit:{operation_id:row.operation_id,request_file_sha256:sha(fs.readFileSync(path.join(folder,'request.json')))}};};
+ f.capture=row=>{const folder=path.join(f.options.directory,row.operation_id),plan=JSON.parse(fs.readFileSync(path.join(folder,'plan.json')));const request={operation_id:row.operation_id,before:{Id:plan.engine.container,Image:plan.engine.image,Config:{Env:['ACESTEP_CONFIG_PATH='+modelNames.dit,'ACESTEP_LM_MODEL_PATH='+modelNames.lm]}},epoch:{running:false},machine:'d'.repeat(64),source_sha256:plan.source_sha256};saveMediaReceipt(folder,'request.json',request);return {folder,request,permit:{operation_id:row.operation_id,request_file_sha256:sha(fs.readFileSync(path.join(folder,'request.json')))}};};
  return f;
 }
 test('candidate reserves pair before launch; restart and aliases cannot duplicate work',async t=>{
@@ -106,7 +109,7 @@ async function preparedFixture(t){
  f.options.launchQualification=async root=>{f.qualifications++;const row=Object.values(f.store.data.media_candidates)[0];assert.equal(row.phase,'candidate_qualifying');assert.equal(path.basename(root),row.qualification_job_id);return {pid:456};};f.reopen();
  const row=await f.service.start({worker_id:'pair'}),c=f.capture(row);f.service.permit(c.permit);
  f.result={state:'prepared_stopped',operation_id:row.operation_id,request_file_sha256:c.permit.request_file_sha256,container:'e'.repeat(64),image:'sha256:'+'f'.repeat(64),snapshot_image:'sha256:'+'d'.repeat(64),original_preserved:true};
- f.result.recipe_contract={state:'verified',container:f.result.container,image:f.result.image,container_state_unchanged:true,receipt_sha256:'c'.repeat(64),generation_receipt:{schema:1,source:'acestep.inference.audio.params',per_audio:true,query_paths:['cache','store']}};
+ f.result.recipe_contract={runtime_models:runtimeDescriptor,state:'verified',container:f.result.container,image:f.result.image,container_state_unchanged:true,receipt_sha256:'c'.repeat(64),generation_receipt:{schema:1,source:'acestep.inference.audio.params',per_audio:true,query_paths:['cache','store']}};
  saveMediaReceipt(c.folder,'result.json',f.result);await f.service.finish({operation_id:row.operation_id});
  f.row=row;f.preparation=c.folder;f.input={operation_id:row.operation_id};
  f.qualification=()=>{const row=f.store.data.media_candidates[f.row.operation_id],root=path.join(f.preparation,'qualification',row.qualification_job_id),plan=JSON.parse(fs.readFileSync(path.join(root,'plan.json')));return {root,plan,permit:{operation_id:row.operation_id,job_id:row.qualification_job_id,plan_file_sha256:row.qualification_plan_sha256}};};
@@ -171,10 +174,10 @@ test('qualification permit binds exact plan/job/recipe, excludes only its owned 
 });
 test('read-only qualification completion needs audio, cache, original identity and readmission evidence, even after permission withdrawal',async t=>{
  const f=await preparedFixture(t);await f.service.qualify(f.input);const q=f.qualification(),engine=q.plan.engine;
- const proof={state:'qualified_returned',candidate_operation_id:f.row.operation_id,job_id:q.plan.operation_id,container:engine.container,image:engine.image,enrollment_changed:false,source_receipt_sha256:q.plan.ace_qualification.source_proof.receipt_sha256};
+ const proof={model_names:modelNames,state:'qualified_returned',candidate_operation_id:f.row.operation_id,job_id:q.plan.operation_id,container:engine.container,image:engine.image,enrollment_changed:false,source_receipt_sha256:q.plan.ace_qualification.source_proof.receipt_sha256};
  saveMediaReceipt(q.root,'completion.json',{native_generation_verified:true,llm_return_verified:true,qualification:proof});
  assert.throws(()=>f.service.finishQualification(f.input));assert.throws(()=>f.execution.assertCapacity('alias'),/overlapping/);
- saveMediaReceipt(q.root,'ace-audio-proof.json',{...proof,state:'audio_verified'});
+ saveMediaReceipt(q.root,'ace-audio-proof.json',{...proof,generation_receipt:modelReceipt(),state:'audio_verified'});
  saveMediaReceipt(q.root,'llm-pair-before.json',{members:q.plan.llm_pair.members,containers:['a','b'].map(id=>({Id:id.repeat(64),Image:'sha256:'+'b'.repeat(64)}))});
  const cache={check:'glm53_vllm_two_conversations_cold_to_warm',context_length:400000,verified_at:new Date().toISOString(),samples:['cold-A','cold-B','warm-A','warm-B'].map((label,i)=>({label,prompt_tokens:i<2?20000:20100,cached_tokens:i<2?0:14336,elapsed_ms:100}))};
  saveMediaReceipt(q.root,'llm-proof.json',{configuration_unchanged:true,context_length:400000,containers:['a','b'].map(id=>({id:id.repeat(64),image:'sha256:'+'b'.repeat(64)})),cache});
@@ -194,10 +197,10 @@ async function qualifiedFixture(t){
  const f=await preparedFixture(t);f.baseline=structuredClone(f.config);f.observations=0;
  f.options.promotions=createMediaPromotions(f.config,f.store,{hostIdentity:()=> '1'.repeat(64)});f.reopen();
  await f.service.qualify(f.input);const q=f.qualification(),engine=q.plan.engine;
- const proof={state:'qualified_returned',candidate_operation_id:f.row.operation_id,job_id:q.plan.operation_id,container:engine.container,image:engine.image,enrollment_changed:false,source_receipt_sha256:q.plan.ace_qualification.source_proof.receipt_sha256};
+ const proof={model_names:modelNames,state:'qualified_returned',candidate_operation_id:f.row.operation_id,job_id:q.plan.operation_id,container:engine.container,image:engine.image,enrollment_changed:false,source_receipt_sha256:q.plan.ace_qualification.source_proof.receipt_sha256};
  saveMediaReceipt(q.root,'completion.json',{native_generation_verified:true,llm_return_verified:true,qualification:proof});
  const output={id:'33333333-3333-4333-8333-333333333333',sha256:'9'.repeat(64),bytes:123};
- saveMediaReceipt(q.root,'ace-audio-proof.json',{...proof,state:'audio_verified',output});
+ saveMediaReceipt(q.root,'ace-audio-proof.json',{...proof,generation_receipt:modelReceipt(),state:'audio_verified',output});
  const containers=['a','b'].map(id=>({Id:id.repeat(64),Image:'sha256:'+'b'.repeat(64)}));
  saveMediaReceipt(q.root,'llm-pair-before.json',{members:q.plan.llm_pair.members,containers});
  const cache={check:'glm53_vllm_two_conversations_cold_to_warm',context_length:400000,verified_at:new Date().toISOString(),samples:['cold-A','cold-B','warm-A','warm-B'].map((label,i)=>({label,prompt_tokens:i<2?20000:20100,cached_tokens:i<2?0:14336,elapsed_ms:100}))};
@@ -237,4 +240,30 @@ test('lost durable promotion acknowledgement never repeats the commit; restart r
  await assert.rejects(f.service.promote(f.input),/requires reconciliation/);assert.equal(commits,1);assert.equal(f.config.media_jobs.workers.pair.engines.music.container,'a'.repeat(64));
  f.store.save=save;const restarted=structuredClone(f.baseline);assert.deepEqual(createMediaPromotions(restarted,f.store,{hostIdentity:()=> '1'.repeat(64)}).restore(),{});
  assert.equal(restarted.media_jobs.workers.pair.engines.music.container,f.result.container);
+});
+test('new qualification pins preserved DIT/LM and refuses missing or ambiguous model declarations before launch',async t=>{
+ for(const mode of ['missing','duplicate','source']){
+  const f=await preparedFixture(t);
+  if(mode==='source'){delete f.result.recipe_contract.runtime_models;saveMediaReceipt(f.preparation,'result.json',f.result);}
+  else{
+   const request=JSON.parse(fs.readFileSync(path.join(f.preparation,'request.json')));
+   if(mode==='missing')request.before.Config.Env=[];
+   else request.before.Config.Env.push('ACESTEP_LM_MODEL_PATH=other');
+   saveMediaReceipt(f.preparation,'request.json',request);
+   const hash=sha(fs.readFileSync(path.join(f.preparation,'request.json')));
+   f.store.data.media_candidates[f.row.operation_id].request_file_sha256=hash;f.result.request_file_sha256=hash;saveMediaReceipt(f.preparation,'result.json',f.result);
+  }
+  await assert.rejects(f.service.qualify(f.input),mode==='source'?/handler receipt/:/Explicit unique/);
+  assert.equal(f.qualifications,0);
+ }
+ const f=await preparedFixture(t);await f.service.qualify(f.input);const q=f.qualification();
+ assert.deepEqual(q.plan.ace_qualification.expected_models,modelNames);
+ const job=JSON.parse(fs.readFileSync(path.join(q.root,'media-jobs.json'))).jobs[0];assert.equal(job.payload.model,modelNames.dit);
+});
+test('historical recipe-only qualification cannot authorize model-preserving promotion',async t=>{
+ const f=await qualifiedFixture(t),q=f.q;
+ delete q.plan.ace_qualification.expected_models;saveMediaReceipt(q.root,'plan.json',q.plan);
+ f.store.data.media_candidates[f.row.operation_id].qualification_plan_sha256=sha(fs.readFileSync(path.join(q.root,'plan.json')));
+ await assert.rejects(f.service.promote(f.input),/historical recipe-only/);
+ assert.equal(f.observations,0);assert.deepEqual(f.config,f.baseline);
 });

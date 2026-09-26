@@ -4,23 +4,26 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {createAceQualification,aceQualificationPayload} from './ace-qualification.mjs';
-import {verifyAceGeneration} from './ace-generation-proof.mjs';
+import {verifyAceGeneration,aceRuntimeModelsDescriptor} from './ace-generation-proof.mjs';
 import {verifyRecovery} from './recovery-verify.mjs';
 import {MediaJobs} from './media-jobs.mjs';
 import {MediaBackend} from './media-backend.mjs';
 import {pairedMediaReturn} from './media-pair.mjs';
 import {runMediaCycle} from './media-cycle.mjs';
 
+const models={dit:'fixture-xl-sft',lm:'fixture-4B'};
+const handlers={dit:{config_path:models.dit,initialized:true},lm:{model_path:models.lm,full_model_path:'/models/fixture-4B',initialized:true,passed_to_generator:true}};
+const runtimeModels=()=>({schema:1,source:aceRuntimeModelsDescriptor.source,before:structuredClone(handlers),after:structuredClone(handlers),unchanged:true});
 function fixture(t){
  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'sg-ace-qualify-'));t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
- const jobs=new MediaJobs(path.join(directory,'media-jobs.json')),job=jobs.enqueue('music',aceQualificationPayload(),{key:'fixture'}).job;
+ const jobs=new MediaJobs(path.join(directory,'media-jobs.json')),job=jobs.enqueue('music',aceQualificationPayload(models),{key:'fixture'}).job;
  const container=(id,running)=>({Id:id.repeat(64),Image:'sha256:'+'e'.repeat(64),Config:{Env:['MAX_MODEL_LEN=400000','MAX_NUM_SEQS=2','PRESERVE=original']},HostConfig:{Memory:0},Mounts:[],State:{Running:running,StartedAt:'old-'+id,FinishedAt:'never'}});
  const native={head:container('a',true),rank:container('b',true),candidate:container('c',false)},events=[],receipts={};let steps=0;
  const inspect=async id=>structuredClone(Object.values(native).find(c=>c.Id===id)??native[id]);
  const command=async(action,id)=>{const c=Object.values(native).find(c=>c.Id===id);events.push(action+':'+id[0]);c.State.Running=action==='start';c.State[action==='start'?'StartedAt':'FinishedAt']='step-'+ ++steps;};
  const engine={kind:'ace-step',container:native.candidate.Id,image:native.candidate.Image,port:8002};
- const source={state:'verified',container:engine.container,image:engine.image,container_state_unchanged:true,receipt_sha256:'d'.repeat(64),generation_receipt:{schema:1,source:'acestep.inference.audio.params',per_audio:true,query_paths:['cache','store']}};
- const plan={operation_id:job.id,command_journal_version:1,worker_id:'pair',engine,llm_container:'rank',context_length:400000,model:'glm',endpoint:{url:'http://llm'},recovery:{profile:'glm53-docker-pair',url:'http://llm'},llm_pair:{model:'glm',media_member:1,members:[{ssh:'host1',container:'head'},{ssh:'host2',container:'rank'}]},ace_qualification:{schema:1,candidate_operation_id:'11111111-1111-4111-8111-111111111111',source_proof:source,prepared_result:{state:'prepared_stopped',original_preserved:true}}};
+ const source={runtime_models:aceRuntimeModelsDescriptor,state:'verified',container:engine.container,image:engine.image,container_state_unchanged:true,receipt_sha256:'d'.repeat(64),generation_receipt:{schema:1,source:'acestep.inference.audio.params',per_audio:true,query_paths:['cache','store']}};
+ const plan={operation_id:job.id,command_journal_version:1,worker_id:'pair',engine,llm_container:'rank',context_length:400000,model:'glm',endpoint:{url:'http://llm'},recovery:{profile:'glm53-docker-pair',url:'http://llm'},llm_pair:{model:'glm',media_member:1,members:[{ssh:'host1',container:'head'},{ssh:'host2',container:'rank'}]},ace_qualification:{schema:1,expected_models:models,candidate_operation_id:'11111111-1111-4111-8111-111111111111',source_proof:source,prepared_result:{state:'prepared_stopped',original_preserved:true}}};
  const save=(name,value)=>receipts[name]=structuredClone(value);
  const pair=pairedMediaReturn(plan.llm_pair,{save,inspectRemote:(_host,id)=>inspect(id),startRemote:(_host,id)=>command('start',id),stopRemote:(_host,id)=>command('stop',id),request:async(route)=>route==='/v1/models'?{data:[{id:'glm',max_model_len:400000}]}:{choices:[{finish_reason:'stop',message:{content:'RESTORED_7319'}}]}});
  const f={jobs,job,plan,source,native,events,receipts,audioMismatch:false,cacheFailure:false,decodeFailure:false};
@@ -30,8 +33,8 @@ function fixture(t){
   let value;
   if(route==='/health')value={data:{status:'ok',models_initialized:true}};
   else if(route==='/v1/stats')value={data:{jobs:{queued:0,running:0},queue_size:0}};
-  else if(route==='/release_task'){events.push('submit');assert.deepEqual(JSON.parse(options.body),aceQualificationPayload());value={data:{task_id:'native-song'}};}
-  else if(route==='/query_result')value={data:[{task_id:'native-song',status:1,result:[{file:'/v1/audio?path=sample.flac',generation_receipt:{schema:1,source:'acestep.inference.audio.params',parameters:{...aceQualificationPayload(),sampler_mode:f.audioMismatch?'euler':'heun',duration:123}}}]}]};
+  else if(route==='/release_task'){events.push('submit');assert.deepEqual(JSON.parse(options.body),aceQualificationPayload(models));value={data:{task_id:'native-song'}};}
+  else if(route==='/query_result')value={data:[{task_id:'native-song',status:1,result:[{file:'/v1/audio?path=sample.flac',generation_receipt:{schema:1,source:'acestep.inference.audio.params',reported_models:models,runtime_models:f.modelMismatch?{...runtimeModels(),before:{...handlers,lm:{...handlers.lm,model_path:'other'}}}:runtimeModels(),parameters:{...aceQualificationPayload(models),sampler_mode:f.audioMismatch?'euler':'heun',duration:123}}}]}]};
   else throw Error('Unexpected '+route);
   return Response.json(value);
  }});
@@ -66,7 +69,7 @@ test('old/mismatched source receipt is refused before capturing or draining the 
  assert.equal(f.events.some(x=>x.startsWith('maintenance-')||x.startsWith('stop:')||x==='submit'),false);
 });
 test('generation parameter mismatch or decode failure still restores unchanged LLM and retains completed song',async t=>{
- for(const [key,pattern] of [['audioMismatch',/sampler_mode/],['decodeFailure',/decode failed/]]){
+ for(const [key,pattern] of [['modelMismatch',/Handler identity changed/],['audioMismatch',/sampler_mode/],['decodeFailure',/decode failed/]]){
   const f=fixture(t);f.set(key,true);await assert.rejects(f.run(),pattern);
   assert.equal(f.jobs.get(f.job.id).state,'completed');assert.equal(f.jobs.get(f.job.id).outputs.state,'ready');
   assert.ok(f.events.includes('phase-failed_returned'));assert.ok(f.events.includes('maintenance-finish'));

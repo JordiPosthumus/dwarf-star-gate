@@ -61,6 +61,18 @@ class RecipeContractTests(unittest.TestCase):
         self.receipt['generation_receipt']=m.RESULT_RECEIPT;self.receipt['checks']=52;self.publish()
         with self.assertRaises(ValueError):self.read()
 
+    def test_handler_receipt_requires_tenth_pinned_source_and_explicit_scope(self):
+        names=m.FILES+m.RESULT_FILES+m.RUNTIME_FILES
+        for name in names:self.files['/opt/ace-step/'+name]=('source:'+name).encode()
+        self.receipt.update(schema=3,checks=88,generation_receipt=m.RESULT_RECEIPT,runtime_models=m.RUNTIME_MODELS,
+            source_sha256={name:hashlib.sha256(self.files['/opt/ace-step/'+name]).hexdigest() for name in names})
+        self.publish();self.assertEqual(self.read()['runtime_models'],m.RUNTIME_MODELS)
+        self.receipt['runtime_models']={**m.RUNTIME_MODELS,'source':'environment'};self.publish()
+        with self.assertRaises(ValueError):self.read()
+        self.receipt['runtime_models']=m.RUNTIME_MODELS;self.publish()
+        self.files['/opt/ace-step/'+m.RUNTIME_FILES[0]]=b'changed'
+        with self.assertRaises(ValueError):self.read()
+
     def test_missing_build_receipt_never_implies_support(self):
         del self.files['/opt/stargate/recipe-fields-verification.json']
         with self.assertRaises(subprocess.CalledProcessError):self.read()

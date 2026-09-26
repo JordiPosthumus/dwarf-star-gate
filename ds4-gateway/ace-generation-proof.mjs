@@ -7,6 +7,21 @@ import {mediaOutputFiles} from './media-results.mjs';
 const execute=promisify(execFile);
 const descriptor={schema:1,source:'acestep.inference.audio.params',per_audio:true,query_paths:['cache','store']};
 const fields=['inference_steps','guidance_scale','sampler_mode','dcw_enabled','thinking','infer_method','audio_format'];
+export const aceRuntimeModelsDescriptor={schema:1,source:'acestep.api.generate_music_fn.handlers',per_call:true};
+export function assertAceRuntimeModels(receipt,expected){
+ assert.ok(expected&&Object.keys(expected).sort().join(',')==='dit,lm'&&['dit','lm'].every(k=>typeof expected[k]==='string'&&expected[k].trim()),'Explicit DIT and LM identities required');
+ const runtime=receipt?.runtime_models;
+ assert.ok(runtime?.schema===1&&runtime.source===aceRuntimeModelsDescriptor.source&&runtime.unchanged===true,'Native handler model receipt required');
+ assert.deepEqual(runtime.before,runtime.after,'Handler identity changed during generation');
+ assert.equal(runtime.before?.dit?.initialized,true,'DIT handler was not initialized');
+ assert.equal(runtime.before?.lm?.initialized,true,'Music LM handler was not initialized');
+ assert.equal(runtime.before?.lm?.passed_to_generator,true,'Music LM was not passed to generation');
+ assert.equal(runtime.before.dit.config_path,expected.dit,'Native DIT handler differs');
+ assert.equal(runtime.before.lm.model_path,expected.lm,'Native music LM handler differs');
+ assert.ok(typeof runtime.before.lm.full_model_path==='string'&&runtime.before.lm.full_model_path.length>0,'Native music LM path missing');
+ assert.deepEqual(receipt.reported_models,expected,'Reported model labels differ');
+ return structuredClone(expected);
+}
 
 export async function decodeAceFlac(file,{run=execute}={}){
  const probe=JSON.parse((await run('ffprobe',['-v','error','-show_entries','format=duration:stream=codec_type,codec_name,sample_rate,channels','-of','json',file],{maxBuffer:1024*1024})).stdout);
@@ -29,7 +44,7 @@ function retainedBytes(file,expected){
 
 // Qualification of one explicit seeded song. This does not enroll an engine,
 // restore an LLM, infer model quality, or turn an ingress echo into runtime proof.
-export async function verifyAceGeneration(job,{engine,sourceProof,backend,results,decode=decodeAceFlac}){
+export async function verifyAceGeneration(job,{engine,sourceProof,backend,results,expectedModels,decode=decodeAceFlac}){
  assert.ok(job.kind==='music'&&job.backend==='ace-step'&&job.state==='completed'&&job.native_id,'Completed native ACE job required');
  assert.ok(sourceProof?.state==='verified'&&sourceProof.container===engine.container&&sourceProof.image===engine.image&&sourceProof.container_state_unchanged===true&&/^[a-f0-9]{64}$/.test(sourceProof.receipt_sha256),'Exact candidate source proof required');
  assert.deepEqual(sourceProof.generation_receipt,descriptor,'Generation-receipt source support is unverified');
@@ -41,6 +56,12 @@ export async function verifyAceGeneration(job,{engine,sourceProof,backend,result
  assert.ok(Array.isArray(job.result)&&job.result.length===1&&job.outputs.files.length===1,'Exactly one generated and retained audio result required');
  const audio=job.result[0],receipt=audio.generation_receipt;
  assert.ok(receipt?.schema===1&&receipt.source==='acestep.inference.audio.params'&&receipt.parameters&&typeof receipt.parameters==='object','Native per-audio parameter receipt missing');
+ let models;
+ if(expectedModels){
+  assert.deepEqual(sourceProof.runtime_models,aceRuntimeModelsDescriptor,'Handler receipt source support required');
+  assert.equal(request.model,expectedModels.dit,'Qualification must request the preserved DIT explicitly');
+  models=assertAceRuntimeModels(receipt,expectedModels);
+ }
  for(const field of fields)assert.deepEqual(receipt.parameters[field],request[field],'Native generation differs for '+field);
  assert.equal(receipt.parameters.seed,request.seed,'Native seed differs');
  assert.ok(Number.isFinite(receipt.parameters.duration)&&(receipt.parameters.duration===-1||receipt.parameters.duration>0),'Native duration is unverified');
@@ -51,6 +72,6 @@ export async function verifyAceGeneration(job,{engine,sourceProof,backend,result
  assert.ok(decoded?.full_decode===true&&Number(decoded.format?.duration)>0&&decoded.streams?.length===1&&decoded.streams[0].codec_name==='flac'&&decoded.streams[0].codec_type==='audio','Complete FLAC decoding is unverified');
  assert.deepEqual(retainedBytes(local,file),before,'Retained audio changed during decoding');
  return {schema:1,state:'audio_verified',job_id:job.id,native_id:job.native_id,container:engine.container,image:engine.image,source_receipt_sha256:sourceProof.receipt_sha256,
-  requested_duration:request.audio_duration,generation_receipt:structuredClone(receipt),output:{...file,decoded},
+  requested_duration:request.audio_duration,generation_receipt:structuredClone(receipt),...(models?{model_names:models}:{}),output:{...file,decoded},
   scope:'Generator-returned parameters match the explicit one-song recipe; retained FLAC bytes and full decode verified. Automatic duration may resolve natively. This is not model-quality, exact-model identity, LLM-return or promotion proof.'};
 }

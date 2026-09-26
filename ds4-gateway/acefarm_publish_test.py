@@ -54,6 +54,8 @@ class PublicationTests(unittest.TestCase):
         self.receipt = dict(schema=1,gateway='http://127.0.0.1:30000',kind='music',id='10000000-0000-0000-0000-000000000000',payload=payload)
         parameters = {**{k:payload[k] for k in ('seed','thinking','inference_steps','guidance_scale','sampler_mode','dcw_enabled','infer_method','audio_format')}, 'duration':123.0}
         native = dict(schema=1,source='acestep.inference.audio.params',parameters=parameters,reported_models=dict(dit=self.metadata['model'],lm=self.metadata['lm_model']))
+        handlers=dict(dit=dict(config_path=self.metadata['model'],initialized=True),lm=dict(model_path=self.metadata['lm_model'],full_model_path='/models/fixture-4B',initialized=True,passed_to_generator=True))
+        native['runtime_models']=dict(schema=1,source='acestep.api.generate_music_fn.handlers',before=handlers,after=copy.deepcopy(handlers),unchanged=True)
         self.job = dict(id=self.receipt['id'],kind='music',backend='ace-step',native_id='native-test',state='completed',execution=dict(phase='restoring_llm'),result=[dict(file='/v1/audio?path=%2Fout%2Fsong.flac',generation_receipt=native)],outputs=dict(state='ready',files=[dict(id='20000000-0000-0000-0000-000000000000',filename='song.flac',content_type='audio/flac')]))
         self.refresh_audio()
         self.receipt_file = self.root/'receipt.json'
@@ -128,7 +130,10 @@ class PublicationTests(unittest.TestCase):
 
     def test_native_recipe_model_and_file_mismatches_refuse_before_collection(self):
         baseline = copy.deepcopy(self.job)
-        changes = [('sampler',lambda j:j['result'][0]['generation_receipt']['parameters'].update(sampler_mode='euler')),
+        changes = [('missing handler',lambda j:j['result'][0]['generation_receipt'].pop('runtime_models')),
+                   ('LM not passed',lambda j:j['result'][0]['generation_receipt']['runtime_models']['before']['lm'].update(passed_to_generator=False)),
+                   ('LM substituted',lambda j:j['result'][0]['generation_receipt']['runtime_models']['before']['lm'].update(model_path='other')),
+                   ('sampler',lambda j:j['result'][0]['generation_receipt']['parameters'].update(sampler_mode='euler')),
                    ('cfg',lambda j:j['result'][0]['generation_receipt']['parameters'].update(guidance_scale=7)),
                    ('model',lambda j:j['result'][0]['generation_receipt']['reported_models'].update(dit='turbo')),
                    ('lm',lambda j:j['result'][0]['generation_receipt']['reported_models'].update(lm='other')),

@@ -9,7 +9,8 @@ import {mediaPair} from './media-pair.mjs';
 import {machinesFor} from './fleet-machines.mjs';
 import {saveMediaReceipt,launchMediaRunner} from './media-execution.mjs';
 import {MediaJobs} from './media-jobs.mjs';
-import {aceQualificationPayload,assertAceSourceProof} from './ace-qualification.mjs';
+import {aceRuntimeModelsDescriptor,assertAceRuntimeModels} from './ace-generation-proof.mjs';
+import {aceQualificationPayload,assertAceSourceProof,aceQualificationModels} from './ace-qualification.mjs';
 import {glmRecoveryProofValid} from './recovery-verify.mjs';
 import {retainMediaRuntime,verifyMediaRuntime,mediaRuntimeScript} from './media-runtime.mjs';
 const root=fileURLToPath(new URL('../',import.meta.url)),runner=path.join(root,'ds4-gateway/media-candidate-runner.py');
@@ -90,6 +91,7 @@ export function createMediaCandidates(config,store,{directory,workers,isEnabled,
   const root=qualificationFolder(row),bytes=readPrivate(path.join(root,'plan.json'));
   assert.equal(sha(bytes),row.qualification_plan_sha256,'Qualification plan changed');
   const plan=JSON.parse(bytes);assert.equal(plan.operation_id,row.qualification_job_id);assert.equal(plan.ace_qualification.candidate_operation_id,row.operation_id);
+  if(plan.ace_qualification.expected_models)assert.deepEqual(plan.ace_qualification.expected_models,aceQualificationModels(JSON.parse(readPrivate(path.join(folder(row.operation_id),'request.json')))),'Preserved model identities changed');
   if(plan.runtime)verifyMediaRuntime(root,plan.runtime);
   return {root,plan};
  }
@@ -104,6 +106,12 @@ export function createMediaCandidates(config,store,{directory,workers,isEnabled,
   assert.equal(original.containers?.length,2);assert.deepEqual(original.members,plan.llm_pair.members);assert.equal(llm.context_length,plan.context_length);
   assert.deepEqual(llm.containers,original.containers.map(c=>({id:c.Id,image:c.Image})),'Original GLM identity differs');
   assert.ok(audio.state==='audio_verified'&&audio.job_id===row.qualification_job_id&&audio.container===proof.container&&audio.image===proof.image&&audio.source_receipt_sha256===plan.ace_qualification.source_proof.receipt_sha256,'Audio qualification binding changed');
+  if(plan.ace_qualification.expected_models){
+   const expected=plan.ace_qualification.expected_models;
+   assert.deepEqual(proof.model_names,expected,'Qualification model identities missing');
+   assert.deepEqual(audio.model_names,expected,'Audio model identities missing');
+   assertAceRuntimeModels(audio.generation_receipt,expected);
+  }
   assert.ok(llm.configuration_unchanged===true&&glmRecoveryProofValid(llm.cache,plan.context_length)&&readmission.state==='readmitted','Original GLM return/cache/readmission proof missing');
   const files=['completion.json','ace-audio-proof.json','llm-proof.json','readmission.json','llm-pair-before.json','llm-pair-files-before.json','containers-before.json','media-recipe-contracts.json','media-command-bindings.json','media-jobs.json'];
   for(const step of ['llm-stop-0','llm-start-0','llm-stop-1','llm-start-1','media-start-'+plan.llm_pair.media_member,'media-stop-'+plan.llm_pair.media_member])files.push('commands/'+step+'.request',...['.json','.backup'].map(suffix=>'commands/'+plan.operation_id+'-'+step+suffix));
@@ -156,7 +164,7 @@ export function createMediaCandidates(config,store,{directory,workers,isEnabled,
    assert.equal(input.job_id,row.qualification_job_id);assert.equal(input.plan_file_sha256,row.qualification_plan_sha256);
    const {root,plan}=qualificationPlan(row);
    const saved=JSON.parse(readPrivate(path.join(root,'media-jobs.json')));
-   assert.equal(saved.jobs?.length,1);assert.equal(saved.jobs[0].id,plan.operation_id);assert.deepEqual(saved.jobs[0].payload,aceQualificationPayload(),'Qualification recipe changed');
+   assert.equal(saved.jobs?.length,1);assert.equal(saved.jobs[0].id,plan.operation_id);assert.deepEqual(saved.jobs[0].payload,aceQualificationPayload(plan.ace_qualification.expected_models),'Qualification recipe changed');
    let ownLock;
    const acquired=path.join(root,'gateway','acquire.result.json');
    if(fs.existsSync(acquired)){
@@ -183,11 +191,13 @@ export function createMediaCandidates(config,store,{directory,workers,isEnabled,
    assert.equal(get(row.operation_id).phase,'candidate_prepared','Qualification already started');
    assert.equal(prepared.container,row.candidate.container);assert.equal(prepared.image,row.candidate.image);assert.equal(prepared.original_preserved,true);
    const engine={...row.engine,container:prepared.container,image:prepared.image};assertAceSourceProof(prepared.recipe_contract,engine);
+   const expectedModels=aceQualificationModels(JSON.parse(readPrivate(path.join(folder(row.operation_id),'request.json'))));
+   assert.deepEqual(prepared.recipe_contract.runtime_models,aceRuntimeModelsDescriptor,'Native handler receipt support required before qualification');
    const worker=workers().find(w=>w.id===row.worker_id),pair=mediaPair(config,worker);
    assert.ok(pair&&[0,1].includes(row.member)&&Number.isSafeInteger(config.context_length)&&config.context_length>0,'Qualification requires a registered paired GLM and explicit context');pair.media_member=row.member;
    const jobs=new MediaJobs(path.join(folder(row.operation_id),'qualification-jobs.json'),{resultsDirectory:path.join(folder(row.operation_id),'qualification-results')});
    assert.equal(jobs.data.jobs.length,0,'Qualification job already exists; reconcile it without resubmission');
-   const {job}=jobs.enqueue('music',aceQualificationPayload(),{key:'ace-qualification-'+row.operation_id});
+   const {job}=jobs.enqueue('music',aceQualificationPayload(expectedModels),{key:'ace-qualification-'+row.operation_id});
    const updated={...row,phase:'candidate_qualifying',qualification_job_id:job.id};delete updated.finished_at;
    const root=qualificationFolder(updated);fs.mkdirSync(root,{recursive:true,mode:0o700});
    const plan={operation_id:job.id,command_journal_version:1,required_recipe_fields:['dcw_enabled','sampler_mode'],worker_id:row.worker_id,
@@ -195,7 +205,7 @@ export function createMediaCandidates(config,store,{directory,workers,isEnabled,
     host:row.host,llm_container:pair.members[row.member].container,engine,python:row.python,control_socket:row.control_socket,
     recovery:{profile:'glm53-docker-pair',url:pair.worker_binding.url},llm_pair:pair,endpoint:worker,model:config.model,context_length:config.context_length,
     results_directory:jobs.results.directory,inputs_directory:jobs.inputs.directory,
-    ace_qualification:{schema:1,candidate_operation_id:row.operation_id,preparation_directory:folder(row.operation_id),source_proof:prepared.recipe_contract,prepared_result:prepared}};
+    ace_qualification:{schema:1,expected_models:expectedModels,candidate_operation_id:row.operation_id,preparation_directory:folder(row.operation_id),source_proof:prepared.recipe_contract,prepared_result:prepared}};
    plan.runtime=retainMediaRuntime(root);
    saveMediaReceipt(root,'plan.json',plan);saveMediaReceipt(root,'media-jobs.json',{schema:1,jobs:[job]});
    updated.qualification_plan_sha256=sha(readPrivate(path.join(root,'plan.json')));save(updated);
@@ -209,6 +219,7 @@ export function createMediaCandidates(config,store,{directory,workers,isEnabled,
    if(row.phase==='promoted')return view(row);
    assert.ok(promotions&&['qualified_returned','candidate_promoting'].includes(row.phase),'Saved native qualification and promotion support required');
    permitted(row);const verified=completeQualification(row,{persist:false});
+   assert.ok(verified.plan.ace_qualification.expected_models,'Promotion needs qualification of the preserved DIT and music LM; historical recipe-only evidence is insufficient');
    const reserved={...row,phase:'candidate_promoting'};save(reserved);
    const native=await observePromotionRunner(verified.root,row.python);
    permitted(reserved);assert.equal(get(row.operation_id).phase,'candidate_promoting');

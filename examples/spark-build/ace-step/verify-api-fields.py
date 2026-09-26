@@ -84,6 +84,40 @@ def verify(root):
             try: request({field:value})
             except ValueError: checks += 1
             else: raise AssertionError('Invalid explicit recipe option accepted: '+field)
+        # Exercise the actual pinned call wrapper without importing GPU code.
+        blocking = ast.parse((root/'acestep/api/job_blocking_generation.py').read_text())
+        wrappers = [n for n in ast.walk(blocking) if isinstance(n, ast.FunctionDef) and n.name == 'generate_music_fn']
+        assert len(wrappers) == 1
+        scope = {}
+        exec(compile(ast.Module(body=wrappers, type_ignores=[]), 'pinned-handler-receipt', 'exec'), scope)
+        dit = types.SimpleNamespace(last_init_params={'config_path':'fixture-dit'},model=object())
+        lm = types.SimpleNamespace(_last_initialize_config={'lm_model_path':'fixture-lm'},_lm_full_model_path='/models/fixture-lm',llm_initialized=True)
+        seen = []
+        def original(*args, **kwargs):
+            seen.append((args,kwargs))
+            return types.SimpleNamespace(audios=[{'path':'first.flac'},{'path':'second.flac'}])
+        scope['original_generate_music_fn'] = original
+        call = {'dit_handler':dit,'llm_handler':lm,'params':explicit.params,'config':explicit.config,'save_dir':'fixture'}
+        wrapped = scope['generate_music_fn'](**call)
+        assert len(seen)==1 and all(seen[0][1][k] is v for k,v in call.items());checks+=1
+        runtime = wrapped.audios[0]['_stargate_runtime_models']
+        assert runtime['unchanged'] and runtime['before']==runtime['after'];checks+=1
+        assert runtime['before']['dit']=={'config_path':'fixture-dit','initialized':True};checks+=1
+        assert runtime['before']['lm']=={'model_path':'fixture-lm','full_model_path':'/models/fixture-lm','initialized':True,'passed_to_generator':True};checks+=1
+        wrapped.audios[1]['_stargate_runtime_models']['before']['lm']['model_path']='changed'
+        assert runtime['before']['lm']['model_path']=='fixture-lm';checks+=1
+        missing = scope['generate_music_fn'](**dict(call,llm_handler=None)).audios[0]['_stargate_runtime_models']
+        assert missing['before']['lm']['initialized'] is False and missing['before']['lm']['passed_to_generator'] is False;checks+=1
+        def drift(**kwargs):
+            lm._last_initialize_config['lm_model_path']='substituted'
+            return types.SimpleNamespace(audios=[{'path':'changed.flac'}])
+        scope['original_generate_music_fn']=drift
+        assert scope['generate_music_fn'](**call).audios[0]['_stargate_runtime_models']['unchanged'] is False;checks+=1
+        def failed(**kwargs): raise RuntimeError('original generation failure')
+        scope['original_generate_music_fn']=failed
+        try: scope['generate_music_fn'](**call)
+        except RuntimeError as error: assert str(error)=='original generation failure';checks+=1
+        else: raise AssertionError('Original exception was swallowed')
         # Verify metadata from the generator's returned audio objects rather
         # than reconstructing effective values from the submitted request.
         response_module = load('sg_recipe_result', 'acestep/api/job_result_payload.py')
@@ -93,7 +127,7 @@ def verify(root):
                           caption='Generator caption '+str(seed), lora_loaded=False,
                           use_lora=False, lora_scale=1.0, lora_weights_hash=None)
                      for seed in (11, 12)]
-        audio_rows = [{'path':'/output/sample-'+str(i)+'.flac','params':v} for i,v in enumerate(generated)]
+        audio_rows = [{'path':'/output/sample-'+str(i)+'.flac','params':v,'_stargate_runtime_models':runtime} for i,v in enumerate(generated)]
         payload = response_module.build_generation_success_response(
             result=types.SimpleNamespace(audios=audio_rows, extra_outputs={}, status_message='success'),
             params=explicit.params, bpm=80, audio_duration=-1, key_scale=None, time_signature=None,
@@ -119,6 +153,7 @@ def verify(root):
                 assert receipt['schema']==1 and receipt['source']=='acestep.inference.audio.params';checks+=1
                 assert receipt['parameters']==generated[i];checks+=1
                 assert receipt['reported_models']=={'lm':'fixture-lm','dit':'fixture-dit'};checks+=1
+                assert receipt['runtime_models']==runtime;checks+=1
         # A response snapshot cannot change if later code mutates an audio row.
         audio_rows[0]['params']['sampler_mode']='changed-after-response'
         assert payload['generation_receipts'][payload['audio_paths'][0]]['parameters']['sampler_mode']=='heun';checks+=1
@@ -131,9 +166,10 @@ def verify(root):
             assert all('generation_receipt' not in row for row in json.loads(rows[0]['result']));checks+=1
         files=['acestep/constants.py','acestep/inference.py','acestep/api/http/release_task_param_parser.py',
                'acestep/api/http/release_task_models.py','acestep/api/http/release_task_request_builder.py','acestep/api/job_generation_setup.py',
-               'acestep/api/job_result_payload.py','acestep/api/http/query_result_service.py','acestep/api/jobs/local_cache_updates.py']
-        return {'schema':2,'state':'verified','checks':checks,
+               'acestep/api/job_result_payload.py','acestep/api/http/query_result_service.py','acestep/api/jobs/local_cache_updates.py','acestep/api/job_blocking_generation.py']
+        return {'schema':3,'state':'verified','checks':checks,
                 'generation_receipt':{'schema':1,'source':'acestep.inference.audio.params','per_audio':True,'query_paths':['cache','store']},
+                'runtime_models':{'schema':1,'source':'acestep.api.generate_music_fn.handlers','per_call':True},
                 'supported':{'sampler_mode':['euler','heun'],'dcw_enabled':[True,False]},
                 'source_sha256':{name:hashlib.sha256((root/name).read_bytes()).hexdigest() for name in files},
                 'omitted_defaults':{k:getattr(native_defaults,k) for k in ('sampler_mode','dcw_enabled')},

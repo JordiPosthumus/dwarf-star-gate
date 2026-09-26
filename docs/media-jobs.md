@@ -236,22 +236,37 @@ native image qualification, effective inference checks or audio validation.
 
 The candidate also returns a per-file `generation_receipt` from the generator's
 own returned audio parameters. It includes the actual per-audio seed, full
-parameter dictionary and the model names reported by the API. Both native cache
+parameter dictionary and the model names reported by the API. Those labels
+alone are insufficient: the pinned API derives its LM label from an environment
+variable. New candidates additionally attach `runtime_models` from the actual
+`generate_music_fn` invocation. This captures the DIT handler's initialization
+configuration, the music LM's initialized model path, whether that LM was passed
+to generation, and matching snapshots before and after the call. The wrapper
+forwards the original arguments and exceptions without changing inference.
+Both native cache
 and fallback-store query paths retain it. These values are separate from the
 original submitted request; the gateway retains both. The receipt does not prove
 voice identity, exact loaded model weights or low-level kernel behavior.
 
-Build-witness schema 2 covers nine source files and 76 checks, including both
-result paths and multi-output seed association. Read-only inspection still
-accepts the older six-file schema 1 as parameter-wiring evidence; it does not
-upgrade that evidence into generation-receipt support. Existing images and
-omitted parameter defaults are unchanged.
+Build-witness schema 3 covers ten source files and 88 checks, including handler
+capture, unchanged call arguments, absent/substituted handlers, both result paths
+and multi-output association. Read-only inspection still accepts schema 2's
+nine-file parameter receipts and schema 1's six-file wiring evidence, without
+upgrading either to handler evidence. Existing images and omitted parameter
+defaults are unchanged.
 
 The internal `verifyAceGeneration` qualification check requires a completed,
 explicit one-song FLAC job, the exact candidate's receipt-capable source proof,
 matching returned sampler/steps/CFG/thinking/DCW/method/format/seed, and retained
 bytes matching their SHA-256 before and after a full ffmpeg decode. Requested
 `audio_duration: -1` remains distinct from duration resolved during generation.
+New candidate qualification pins the original stopped container's explicit,
+unique `ACESTEP_CONFIG_PATH` and `ACESTEP_LM_MODEL_PATH` declarations. It requests
+that DIT and checks initialized generator handlers against both names. Missing
+declarations or handler receipt support prevent qualification before drain;
+a substituted or absent runtime handler fails audio qualification while the
+owned lifecycle still restores the original LLM. Historical recipe-only
+qualification can be observed but cannot authorize automatic promotion.
 A missing receipt, changed file, other codec or parameter mismatch cannot qualify
 the result. This check is connected to the saved candidate qualification
 lifecycle below. Generated audio proof alone does not establish LLM return,
@@ -741,7 +756,8 @@ model and LM. It is not a reduced metadata reconstruction or a published
 sidecar. The adapter imports the explicitly supplied trusted AceFarm CLI and
 calls its canonical ID, filename and publishing functions in a private stage.
 It downloads retained gateway bytes, checks their SHA-256/size, verifies native
-per-audio parameters/model names, and fully decodes the FLAC with installed
+per-audio parameters and initialized handler identities against AceFarm's
+model/LM names, and fully decodes the FLAC with installed
 `ffprobe`/`ffmpeg`. Missing native receipts or differences fail publication
 without resubmitting generation. Existing engines may need receipt support
 qualified before they can satisfy this check.

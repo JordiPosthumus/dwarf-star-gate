@@ -9,6 +9,36 @@ from pathlib import Path
 import sys
 
 PATCHES = {
+    'acestep/api/job_blocking_generation.py': (
+        '8d4325c466bac67341449948cbc601e8c2b07d33e4ac30844b686b3acc8a3242',
+        '    result = run_generation_with_optional_sequential_cover_mode(\n',
+        '    original_generate_music_fn = generate_music_fn\n'
+        '    def generate_music_fn(*args, **kwargs):\n'
+        '        # Observe only the actual handlers passed to this invocation. Do not\n'
+        '        # infer a loaded LM from the process environment or selected label.\n'
+        '        def snapshot():\n'
+        '            dit = kwargs.get("dit_handler")\n'
+        '            lm = kwargs.get("llm_handler")\n'
+        '            dit_init = getattr(dit, "last_init_params", None) or {}\n'
+        '            lm_init = getattr(lm, "_last_initialize_config", None) or {}\n'
+        '            return {\n'
+        '                "dit": {"config_path": dit_init.get("config_path"),\n'
+        '                        "initialized": getattr(dit, "model", None) is not None},\n'
+        '                "lm": {"model_path": lm_init.get("lm_model_path"),\n'
+        '                       "full_model_path": getattr(lm, "_lm_full_model_path", None),\n'
+        '                       "initialized": getattr(lm, "llm_initialized", False) is True,\n'
+        '                       "passed_to_generator": lm is not None},\n'
+        '            }\n'
+        '        before = snapshot()\n'
+        '        generated = original_generate_music_fn(*args, **kwargs)\n'
+        '        after = snapshot()\n'
+        '        receipt = {"schema": 1, "source": "acestep.api.generate_music_fn.handlers",\n'
+        '                   "before": before, "after": after, "unchanged": before == after}\n'
+        '        for audio in getattr(generated, "audios", None) or []:\n'
+        '            audio["_stargate_runtime_models"] = __import__("copy").deepcopy(receipt)\n'
+        '        return generated\n'
+        '\n'
+        '    result = run_generation_with_optional_sequential_cover_mode(\n'),
     'acestep/api/http/release_task_models.py': (
         '296c3973a7b51057f5e1fbe16f394d901a6c0492e30b957cf4d9741d4aa1f916',
         '    guidance_scale: float = 7.0\n',
@@ -36,6 +66,8 @@ PATCHES = {
         '                "schema": 1, "source": "acestep.inference.audio.params",\n'
         '                "parameters": __import__("copy").deepcopy(audio["params"]),\n'
         '                "reported_models": {"lm": lm_model_name, "dit": dit_model_name},\n'
+        '                **({"runtime_models": __import__("copy").deepcopy(audio["_stargate_runtime_models"])}\n'
+        '                   if isinstance(audio.get("_stargate_runtime_models"), dict) else {}),\n'
         '            } for audio in audios if audio.get("path") and isinstance(audio.get("params"), dict)\n'
         '        },\n'),
     'acestep/api/http/query_result_service.py': (

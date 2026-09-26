@@ -17,6 +17,8 @@ FILES = ('acestep/constants.py', 'acestep/inference.py',
 RESULT_FILES = ('acestep/api/job_result_payload.py','acestep/api/http/query_result_service.py',
                 'acestep/api/jobs/local_cache_updates.py')
 RESULT_RECEIPT = {'schema':1,'source':'acestep.inference.audio.params','per_audio':True,'query_paths':['cache','store']}
+RUNTIME_FILES = ('acestep/api/job_blocking_generation.py',)
+RUNTIME_MODELS = {'schema':1,'source':'acestep.api.generate_music_fn.handlers','per_call':True}
 SUPPORTED = {'sampler_mode': ['euler', 'heun'], 'dcw_enabled': [True, False]}
 
 
@@ -48,9 +50,10 @@ def inspect_recipe(container, image, execute=subprocess.run):
     receipt_bytes = read('/opt/stargate/recipe-fields-verification.json')
     receipt = json.loads(receipt_bytes)
     schema=receipt.get('schema')
-    require(type(schema) is int and schema in (1,2))
-    files=FILES + (RESULT_FILES if schema==2 else ())
-    if schema==2:require(receipt.get('generation_receipt') == RESULT_RECEIPT and receipt.get('checks',0)>=76)
+    require(type(schema) is int and schema in (1,2,3))
+    files=FILES + (RESULT_FILES if schema>=2 else ()) + (RUNTIME_FILES if schema==3 else ())
+    if schema>=2:require(receipt.get('generation_receipt') == RESULT_RECEIPT and receipt.get('checks',0)>=76)
+    if schema==3:require(receipt.get('runtime_models') == RUNTIME_MODELS and receipt.get('checks',0)>=88)
     require(receipt.get('state') == 'verified' and
             receipt.get('supported') == SUPPORTED and type(receipt.get('checks')) is int and receipt['checks'] >= 52 and
             isinstance(receipt.get('source_sha256'), dict) and set(receipt['source_sha256']) == set(files))
@@ -61,7 +64,7 @@ def inspect_recipe(container, image, execute=subprocess.run):
     after = inspect()
     require(all(before[key] == after[key] for key in ('Id', 'Image', 'Config', 'HostConfig', 'Mounts', 'State')))
     return {'schema': 1, 'state': 'verified', 'container': container, 'image': image,
-            'supported': SUPPORTED, **({'generation_receipt':RESULT_RECEIPT} if schema==2 else {}), 'receipt_sha256': hashlib.sha256(receipt_bytes).hexdigest(),
+            'supported': SUPPORTED, **({'generation_receipt':RESULT_RECEIPT} if schema>=2 else {}), **({'runtime_models':RUNTIME_MODELS} if schema==3 else {}), 'receipt_sha256': hashlib.sha256(receipt_bytes).hexdigest(),
             'source_sha256': receipt['source_sha256'], 'container_state_unchanged': True,
             'scope': 'Read-only build-proof/source binding; not native synthesis or audio fidelity.'}
 

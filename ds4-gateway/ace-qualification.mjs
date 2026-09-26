@@ -1,16 +1,29 @@
 import assert from 'node:assert/strict';
-import {verifyAceGeneration} from './ace-generation-proof.mjs';
+import {verifyAceGeneration,aceRuntimeModelsDescriptor} from './ace-generation-proof.mjs';
 import {verifyRecovery,glmRecoveryProofValid} from './recovery-verify.mjs';
 
 // A fixed synthetic song exercises the owner's AceFarm defaults. It is not an
 // album track, a voice-identity check, or permission to replace model settings.
-export const aceQualificationPayload=()=>({
+export const aceQualificationPayload=models=>({
+ ...(models?{model:models.dit}:{}),
  prompt:'Male vocal, dark rhythm and blues, deep 808 bass, dark synthesizers.',
  lyrics:'[Verse]\nWe keep the lights on through the night\nEach promise measured, each step right\n[Chorus]\nCarry the song and bring it home\nKeep the signal steady as we roam',
  seed:11,use_random_seed:false,batch_size:1,thinking:false,
  inference_steps:80,guidance_scale:3,sampler_mode:'heun',dcw_enabled:false,
  audio_duration:-1,audio_format:'flac',infer_method:'ode',
 });
+export function aceQualificationModels(request){
+ const env=request?.before?.Config?.Env;
+ assert.ok(Array.isArray(env),'Preserved ACE model environment required');
+ const read=key=>{
+  const rows=env.filter(v=>typeof v==='string'&&v.startsWith(key+'='));
+  assert.equal(rows.length,1,'Explicit unique preserved '+key+' required');
+  const value=rows[0].slice(key.length+1);
+  assert.ok(value.trim()===value&&value.length>0&&!/[\u0000\r\n]/.test(value),'Explicit preserved model identity required');
+  return value;
+ };
+ return {dit:read('ACESTEP_CONFIG_PATH'),lm:read('ACESTEP_LM_MODEL_PATH')};
+}
 const descriptor={schema:1,source:'acestep.inference.audio.params',per_audio:true,query_paths:['cache','store']};
 export function assertAceSourceProof(proof,engine){
  assert.ok(proof?.state==='verified'&&proof.container===engine.container&&proof.image===engine.image&&proof.container_state_unchanged===true,'Exact candidate source proof required');
@@ -32,11 +45,12 @@ export function createAceQualification(plan,{read,save,pair,verifyPrepared,verif
    source=receipt.proofs?.['media-'+plan.llm_pair.media_member];
    assertAceSourceProof(source,plan.engine);
    assert.deepEqual(source,qualification.source_proof,'Prepared candidate source changed');
+   if(qualification.expected_models)assert.deepEqual(source.runtime_models,aceRuntimeModelsDescriptor,'Handler receipt support required before drain');
   },
   async verifyOutputs({jobs,backend}){
    const job=jobs.get(plan.operation_id);
-   assert.deepEqual(job.payload,aceQualificationPayload(),'Fixed qualification recipe changed');
-   audio=await verifyAudio(job,{engine:plan.engine,sourceProof:source,backend,results:jobs.results});
+   assert.deepEqual(job.payload,aceQualificationPayload(qualification.expected_models),'Fixed qualification recipe changed');
+   audio=await verifyAudio(job,{engine:plan.engine,sourceProof:source,backend,results:jobs.results,expectedModels:qualification.expected_models});
    save('ace-audio-proof.json',audio);
   },
   async verifyReturn(){
@@ -54,6 +68,7 @@ export function createAceQualification(plan,{read,save,pair,verifyPrepared,verif
    assert.ok(audio?.state==='audio_verified'&&llm&&glmRecoveryProofValid(llm.cache,plan.context_length),'Audio and LLM-return qualification must both pass');
    return {schema:1,state:'qualified_returned',candidate_operation_id:qualification.candidate_operation_id,job_id:plan.operation_id,
     container:plan.engine.container,image:plan.engine.image,source_receipt_sha256:source.receipt_sha256,
+    ...(qualification.expected_models?{model_names:audio.model_names}:{}),
     audio_proof:'ace-audio-proof.json',llm_proof:'llm-proof.json',enrollment_changed:false,
     scope:'Dated native recipe/audio and original GLM return evidence. No enrollment promotion, model-weight/voice identity, or maximum-capacity qualification.'};
   },

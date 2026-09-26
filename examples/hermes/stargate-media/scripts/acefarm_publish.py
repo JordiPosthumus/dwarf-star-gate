@@ -113,6 +113,13 @@ def verify_song(receipt, job, metadata):
             require(key in parameters and same(parameters[key], metadata[key]), 'Native generation differs: ' + key)
     models = native.get('reported_models', {})
     require(models.get('dit') == metadata['model'] and models.get('lm') == metadata['lm_model'], 'Native reported DIT/LM differ from AceFarm; model substitution is not accepted')
+    runtime = native.get('runtime_models', {})
+    require(runtime.get('schema') == 1 and runtime.get('source') == 'acestep.api.generate_music_fn.handlers' and runtime.get('unchanged') is True, 'Actual generator handler receipt is required; environment labels alone are insufficient')
+    require(runtime.get('before') == runtime.get('after'), 'Generator handlers changed during the call')
+    observed = runtime.get('before', {})
+    dit, lm = observed.get('dit', {}), observed.get('lm', {})
+    require(dit.get('initialized') is True and dit.get('config_path') == metadata['model'], 'Initialized generator DIT differs from AceFarm')
+    require(lm.get('initialized') is True and lm.get('passed_to_generator') is True and lm.get('model_path') == metadata['lm_model'] and isinstance(lm.get('full_model_path'), str) and lm['full_model_path'], 'Initialized music LM was not passed to generation or differs from AceFarm')
     require(output.get('content_type') == 'audio/flac' and Path(output.get('filename', '')).suffix.lower() == '.flac', 'Retained output is not a FLAC')
     parsed = urllib.parse.urlsplit(audio.get('file', ''))
     native_path = urllib.parse.parse_qs(parsed.query).get('path', [parsed.path])[0]
