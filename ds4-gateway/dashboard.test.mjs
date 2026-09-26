@@ -13,6 +13,7 @@ import { FileLogReader, parseLocalProcessStart, parseLocalTiming, telemetryFiles
 import {cacheInventoryDirectories} from './cache-inventory.mjs';
 import {GenieProviderLedger} from './genie-provider-ledger.mjs';
 import {createFleetPowerTools} from './genie-power.mjs';
+import {phase} from './ui/activity.js';
 import './rate-peaks.test.mjs';
 const parse = (s, t = 1000) => parseTiming(`0902 14:00:00 ds4-server: ${s}`, t);
 
@@ -217,6 +218,25 @@ test('activity view uses three honest operational colors and folds thinking into
   assert.doesNotMatch(html,/15m activity|sampled every 2s|status badge distinguishes/);
   const css=fs.readFileSync(new URL('./ui/brand.css',import.meta.url),'utf8');
   assert.match(css,/\.phase-prefill\{fill:#78aee8\}/);assert.match(css,/\.phase-decode\{fill:#b9d889\}/);assert.match(css,/\.phase-idle-off\{fill:#42484c\}/);
+});
+
+test('activity bar retains measured history when endpoint metrics disconnect or are absent',()=>{
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
+  const context=vm.createContext({phase});vm.runInContext(source,context);
+  const now=1_000_000;
+  for(const endpoint of [undefined,{source:'omlx',connected:false,at:now-30_000}]){
+    const d={id:'m3',series:[],cache:{},endpoint_metrics:endpoint,activity:[
+      {start:now-60_000,end:now-30_000,phase:'decode'},
+      {start:now-30_000,end:now,phase:'working'}
+    ]};
+    const html=vm.runInContext(`device(${JSON.stringify(d)},{id:'m3',load:1,is_healthy:false},${now},false)`,context);
+    assert.match(html,/class="device-bar"/);
+    const bar=html.slice(html.indexOf('<div class="device-bar"'),html.indexOf('<span class="bar-note'));
+    assert.match(bar,/phase-decode/,'retain the observed generation interval');
+    assert.match(bar,/phase-unknown/,'gateway work without native phase stays unknown');
+    assert.doesNotMatch(bar,/phase-idle-off|phase-prefill/,'do not invent idle or prompt processing');
+    assert.doesNotMatch(html,/class="device-minicharts"/,'disconnected live-speed charts remain hidden');
+  }
 });
 
 test('worker controls show escaped hold ownership and block ordinary Enable/Remove',()=>{
