@@ -371,7 +371,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   const serialize = fn => { const next = mutation.then(fn); mutation = next.catch(() => {}); return next; };
   const definition = n => Object.fromEntries(workerFields.filter(k => n[k] !== undefined).map(k => [k,n[k]]));
   let recovery;
-  try { recovery=new Recovery(serviceConfig.recovery,{store,nodes,model:config.model,stopping:()=>shuttingDown||draining,log,fleetConfig:serviceConfig,directReserved,
+  try { recovery=new Recovery(serviceConfig.recovery,{store,nodes,model:config.model,stopping:()=>shuttingDown||draining,log,fleetConfig:serviceConfig,directReserved,isPairQualificationEnabled:()=>capabilityStatus().server_changes&&capabilityStatus().inspection,
     reinstate:(n,expected,recoveryState)=>{
       if(n.removed || n.drained || n.active || n.queue.length || JSON.stringify(n.quarantine)!==JSON.stringify(expected) || shuttingDown || draining)throw new Error('reinstatement_state_changed');
       const quarantined={...store.data.quarantined};delete quarantined[n.id];
@@ -1525,7 +1525,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
       let body='';req.on('data',chunk=>{body+=chunk;if(Buffer.byteLength(body)>2048)req.destroy();});req.on('error',()=>{});
       req.on('end',()=>{void serialize(async()=>{try{const input=JSON.parse(body);return json(res,202,await (req.url==='/genie-media-start'?mediaExecution.start(input):req.url==='/genie-media-setup'?mediaSetup.start(input):req.url==='/genie-media-repair'?mediaSetup.repair(input):req.url==='/genie-media-audit'?mediaSetup.audit(input):mediaSetup.finish(input)));}catch(e){return error(res,409,'media_start_failed',e.message);}});});return;
     }
-    if (req.method !== 'POST' || !['/set-genie-thinking','/media-host-eligibility','/drain-workers', '/resume-workers', '/maintenance-lock','/release-maintenance-lock','/maintenance-receipt','/add-worker', '/edit-endpoint', '/check-endpoint', '/remove-worker', '/set-ssh-fallbacks','/set-context-limit','/set-conversation-turns','/set-queue-timeout','/set-protection','/set-job-priority','/set-worker-concurrency','/set-direct-reserve','/relocate-queued','/genie-relocate-queued','/genie-capability','/recovery-policy','/recovery-handback-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/recovery-pair-permit','/enroll-pair-recovery','/grant-agent','/revoke-agent','/release-agent-hold','/agent/v1/drain','/agent/v1/resume','/agent/v1/receipt'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
+    if (req.method !== 'POST' || !['/set-genie-thinking','/media-host-eligibility','/drain-workers', '/resume-workers', '/maintenance-lock','/release-maintenance-lock','/maintenance-receipt','/add-worker', '/edit-endpoint', '/check-endpoint', '/remove-worker', '/set-ssh-fallbacks','/set-context-limit','/set-conversation-turns','/set-queue-timeout','/set-protection','/set-job-priority','/set-worker-concurrency','/set-direct-reserve','/relocate-queued','/genie-relocate-queued','/genie-capability','/recovery-policy','/recovery-handback-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/recovery-pair-permit','/enroll-pair-recovery','/qualify-pair-recovery','/grant-agent','/revoke-agent','/release-agent-hold','/agent/v1/drain','/agent/v1/resume','/agent/v1/receipt'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
     let body = '';
     req.on('data', chunk => { body += chunk; if (Buffer.byteLength(body) > 4096) req.destroy(); });
     req.on('error', () => {});
@@ -1542,6 +1542,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
           if(req.url==='/maintenance-lock')return json(res,201,agents.maintenanceLock(input,req.headers['x-dsg-control-channel']));
           if(req.url==='/release-maintenance-lock')return json(res,200,agents.maintenanceRelease(input,req.headers['x-dsg-control-channel']));
           if(req.url==='/maintenance-receipt')return json(res,200,agents.maintenanceReceipt(input));
+          if(req.url==='/qualify-pair-recovery')return json(res,202,recovery.request(input,'genie',{canary:true,qualification:true}));
           if(req.url==='/enroll-pair-recovery')return json(res,202,pairEnrollment.request(input));
           if(req.url==='/recovery-pair-permit')return json(res,200,recovery.pairPermit(input));
           if(req.url==='/recovery-recheck')return json(res,202,recovery.reconcile(input));

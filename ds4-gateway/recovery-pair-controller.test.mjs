@@ -48,6 +48,75 @@ function fixture(){
     async reconstruct(){await recovery.close();recovery=new Recovery({workers:[config]},deps);return recovery;}};
 }
 
+function qualificationFixture(){
+  const f=fixture();f.node.healthy=true;f.node.quarantine=null;
+  f.store.data.recovery={...f.recovery.state,automatic:true,operations:[]};
+  f.deps.fleetConfig.pair_recovery_setup={workers:{[f.node.id]:{qualify_restart:true}}};
+  f.deps.isPairQualificationEnabled=()=>true;f.recovery.isPairQualificationEnabled=f.deps.isPairQualificationEnabled;
+  const native=f.deps.call;
+  f.deps.call=async(c,input)=>{const result=await native(c,input);return input.action==='inspect'?{...result,fault:null}:result;};
+  f.recovery.call=f.deps.call;
+  f.qualify=()=>{const offer=f.recovery.workerStatus(f.node).pair_qualification;return f.recovery.request({worker_id:f.node.id,evidence_id:offer.evidence_id,action_id:randomUUID()},'genie',{canary:true,qualification:true});};
+  return f;
+}
+
+test('Genie qualifies an opted-in healthy pair under its own identity and native proof, without an operator pause',async()=>{
+  const f=qualificationFixture();await f.ready();const offer=f.recovery.workerStatus(f.node).pair_qualification;
+  assert.equal(offer.eligible,true);assert.match(offer.evidence_id,/^[a-f0-9]{64}$/);
+  assert.throws(()=>f.recovery.request({worker_id:f.node.id,evidence_id:'f'.repeat(64),action_id:randomUUID()},'genie',{canary:true,qualification:true}),/qualification evidence/);
+  assert.throws(()=>f.recovery.request({worker_id:f.node.id},'genie',{canary:true}),/operator-only/);
+  f.complete();const receipt=f.qualify();assert.equal(receipt.actor,'genie');assert.equal(receipt.pair_qualification,true);await f.recovery.task;
+  const op=f.recovery.state.operations.at(-1);assert.equal(op.state,'recovered');assert.equal(op.was_paused,false);assert.equal(f.node.drained,false);
+  assert.equal(f.verifyCount,1);assert.equal(pairCertified(f.recovery,f.node,f.recovery.config(f.node.id)),true);
+  assert.equal(f.recovery.workerStatus(f.node).pair_qualification.reason,'pair_already_restart_qualified');
+  await f.reconstruct();assert.equal(pairCertified(f.recovery,f.node,f.recovery.config(f.node.id)),true);await f.recovery.close();
+});
+
+test('qualification needs explicit policy, healthy unpaused identity, idle physical peers and another serving LLM',async()=>{
+  const changes=[
+    f=>{f.deps.fleetConfig.pair_recovery_setup.workers[f.node.id].qualify_restart=false;},
+    f=>{f.recovery.isPairQualificationEnabled=()=>false;},f=>{f.store.data.recovery.automatic=false;},
+    f=>{f.node.drained=true;},f=>{f.node.healthy=false;},f=>{f.node.quarantine={reason:'fatal_accelerator_error'};},
+    f=>{f.alias.slots=[{active:null},{active:{id:'second-slot'}}];},f=>{f.other.healthy=false;},
+    f=>{f.store.data.agent_control={holds:[{worker_id:f.alias.id}],maintenance_locks:[]};}
+  ];
+  for(const change of changes){const f=qualificationFixture();await f.ready();change(f);
+    assert.equal(f.recovery.workerStatus(f.node).pair_qualification.eligible,false);assert.throws(()=>f.qualify());assert.equal(f.calls.length,0);await f.recovery.close();}
+});
+
+test('qualification resumes the same native journal after core replacement and retains an intervening owner pause',async()=>{
+  const f=qualificationFixture();await f.ready();const accepted=f.qualify();await f.recovery.task;
+  assert.equal(f.calls.length,1);assert.equal(f.recovery.state.operations.at(-1).state,'reconciling');
+  await f.reconstruct();f.complete();await f.resume();assert.deepEqual(f.calls[0],f.calls[1]);
+  assert.equal(f.recovery.state.operations.at(-1).id,accepted.id);assert.equal(f.recovery.state.operations.at(-1).state,'recovered');await f.recovery.close();
+  const held=qualificationFixture();await held.ready();held.complete();held.recovery.verify=async()=>{held.recovery.operatorPause([held.alias.id]);held.node.drained=true;return proof();};
+  held.qualify();await held.recovery.task;assert.equal(held.recovery.state.operations.at(-1).state,'verified_paused');assert.equal(held.node.drained,true);
+  assert.equal(pairCertified(held.recovery,held.node,held.recovery.config(held.node.id)),false);await held.recovery.close();
+});
+
+test('revoking qualification policy blocks native permits and readmission, retaining the same operation',async()=>{
+  for(const when of ['before-dispatch','during-proof']){
+    const f=qualificationFixture();await f.ready();f.complete();
+    const revoke=()=>{f.deps.fleetConfig.pair_recovery_setup.workers[f.node.id].qualify_restart=false;};
+    if(when==='before-dispatch'){const native=f.recovery.call;f.recovery.call=async(c,input)=>{if(input.action==='inspect')revoke();return native(c,input);};}
+    else f.recovery.verify=async()=>{revoke();return proof();};
+    f.qualify();await f.recovery.task;
+    assert.equal(f.recovery.state.operations.at(-1).state,'waiting_for_ownership');assert.equal(f.node.recovering,true);
+    assert.equal(f.recovery.pairPermit(pairRequest(f.recovery.state.operations.at(-1))).allowed,false);
+    assert.equal(f.calls.length,when==='before-dispatch'?0:1);await f.recovery.close();
+  }
+});
+
+test('qualification retains a private metadata backup before intent, and a failed backup cannot launch',async t=>{
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'pair-qualification-backup-'));t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
+  const f=qualificationFixture();await f.ready();f.store.filename=path.join(directory,'state.json');
+  fs.writeFileSync(f.store.filename,JSON.stringify(f.store.data));const before=fs.readFileSync(f.store.filename,'utf8');
+  f.complete();f.qualify();await f.recovery.task;const backup=f.recovery.state.operations.at(-1).qualification_backup;
+  assert.equal(fs.readFileSync(backup,'utf8'),before);assert.equal(fs.statSync(backup).mode&0o077,0);await f.recovery.close();
+  const g=qualificationFixture();await g.ready();g.store.filename=path.join(directory,'missing.json');
+  assert.throws(()=>g.qualify(),/ENOENT/);assert.equal(g.calls.length,0);assert.equal(g.recovery.state.operations.length,0);assert.equal(g.node.recovering,undefined);await g.recovery.close();
+});
+
 test('paired enrollment is explicit, pinned, local and requires GLM verification',()=>{
   assert.equal(recoveryConfig({workers:[config]}).get(config.id).adapter,'docker-pair');
   for(const patch of [{transport:'ssh'},{verification:'qwen_vllm'},{pair_config_sha256:undefined},{python:'relative'}])
@@ -205,4 +274,17 @@ test('real private gateway socket grants only the active exact pair request; LAN
   assert.equal((await workerControl(socket,'/recovery-pair-permit',pairRequest(gateway.recovery.state.operations.at(-1)))).allowed,false);
   const response=await fetch(`http://127.0.0.1:${address.port}/recovery-pair-permit`,{method:'POST',headers:{authorization:'Bearer none'},body:'{}'});
   assert.ok(response.status>=400);await response.text();
+  // The distinct private qualification route records Genie, not an invented
+  // operator action, and does not require altering the owner's pause history.
+  node.drained=false;node.quarantine=null;node.healthy=true;epoch='f'.repeat(64);
+  gateway.recovery.fleetConfig.pair_recovery_setup={workers:{[node.id]:{qualify_restart:true}}};
+  gateway.store.save({...gateway.store.data,recovery:{...gateway.recovery.state,automatic:true,operations:[]}});
+  await gateway.recovery.inspect(node.id);
+  const offer=gateway.recovery.workerStatus(node).pair_qualification;assert.equal(offer.eligible,true);
+  const qualification=await workerControl(socket,'/qualify-pair-recovery',{worker_id:node.id,evidence_id:offer.evidence_id,action_id:randomUUID()});
+  await gateway.recovery.task;assert.equal(qualification.actor,'genie');assert.equal(qualification.pair_qualification,true);
+  assert.equal(gateway.recovery.state.operations.at(-1).state,'recovered');assert.equal(node.drained,false);
+  assert.equal(pairCertified(gateway.recovery,node,gateway.recovery.config(node.id)),true);
+  const denied=await fetch(`http://127.0.0.1:${address.port}/qualify-pair-recovery`,{method:'POST',headers:{authorization:'Bearer none'},body:'{}'});
+  assert.ok(denied.status>=400);await denied.text();
 });

@@ -7,6 +7,7 @@ import {createHash,randomUUID} from 'node:crypto';
 const uuid=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const kinds={
   capture:{tool:'prepare_pair_recovery',rows:r=>r?.pair_preparations??[],states:['prepared','failed'],prefix:'pair-result-',label:'capture',limit:'Prepared means inspection evidence only; recovery enrollment and restart qualification remain separate.'},
+  qualification:{tool:'qualify_pair_recovery',rows:r=>(r?.operations??[]).filter(o=>o.pair_qualification===true).map(o=>({...o,action_id:o.id})),states:['recovered','verified_paused','failed','reconciliation_needed'],prefix:'pair-qual-',label:'restart qualification',limit:'Recovered with native proof qualifies this exact pair. Failed, uncertain or paused outcomes do not authorize another restart. After reading the terminal receipt, you may continue an original request to qualify other explicitly opted-in pairs only when their fresh pair_qualification evidence is eligible. Never replay any existing action, override a pause, enroll a new binding or change settings.'},
   enrollment:{tool:'enroll_pair_recovery',rows:r=>r?.pair_enrollment?.operations??[],states:['enrolled','failed'],prefix:'pair-enroll-',label:'enrollment',limit:'Enrolled means an exact recovery binding was installed; native restart qualification remains required.'}
 };
 const terminal=(row,kind)=>kind.states.includes(row?.state);
@@ -85,7 +86,7 @@ export class PairPreparationWatch {
           const action_ids=needed.map(r=>r.action_id).sort();
           const request_id=this.kind.prefix+createHash('sha256').update(JSON.stringify([conversation.id,action_ids])).digest('hex');
           record={conversation_id:conversation.id,request_id,action_ids,receipts:needed.map(receiptKey),state:'pending',
-            text:`The native pair ${this.kind.label} watcher has terminal receipts for these previously requested action IDs: ${action_ids.join(', ')}. Read recovery_status once and report their actual states, worker IDs and evidence hashes in at most 100 words. This is an automatic completion follow-up to the existing ${this.kind.label} requests. Do not start or retry a capture, enroll recovery, run a canary, restart a service or change configuration. ${this.kind.limit} If evidence is unavailable or disagrees, report that uncertainty and finish.`};
+            text:`The native pair ${this.kind.label} watcher has terminal receipts for these previously requested action IDs: ${action_ids.join(', ')}. Read recovery_status once and report their actual states, worker IDs and evidence hashes in at most 100 words. This is an automatic completion follow-up to the existing ${this.kind.label} requests. ${this.kind===kinds.qualification?'Do not repeat the completed or uncertain qualification.':'Do not start or retry a capture, enroll recovery, run a canary, restart a service or change configuration.'} ${this.kind.limit} If evidence is unavailable or disagrees, report that uncertainty and finish.`};
           this.records[request_id]=record;this.save();
         }
         this.save(); // Retry a failed durable write before crossing the submission boundary.

@@ -1,17 +1,18 @@
 import { createHash, randomUUID } from 'node:crypto';
+import fs from 'node:fs';
 import { recoveryConfig, recoveryCall } from './recovery-transport.mjs';
 import { verifyRecovery,qwenRecoveryProofValid,glmRecoveryProofValid } from './recovery-verify.mjs';
 import {safeNativeRemoval,unavailableNativeRemoval} from './launchd-removal-evidence.mjs';
 import {bootstrapEnrollmentMatches,bootstrapProofValid} from './recovery-bootstrap.mjs';
 import {recoveryOwnership} from './recovery-ownership.mjs';
-import {pairPermit,pairPeers,pairBinding,pairCertified,reservePair,executePair} from './recovery-pair-controller.mjs';
+import {pairPermit,pairPeers,pairBinding,pairCertified,pairQualificationEnabled,pairQualificationEvidence,reservePair,executePair} from './recovery-pair-controller.mjs';
 import {requestCapacity} from './worker-activity.mjs';
 
 const hash=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const terminal=new Set(['recovered','verified_paused','failed','reconciliation_needed']);
 const faultReasons=new Set(['fatal_accelerator_error','accelerator_checkpoint_failure']);
 const adapterReasons=new Set(['pair_identity_or_journal_unverified','pair_ownership_unavailable','adapter_timeout','adapter_output_limit','adapter_spawn_failed','adapter_dns_failure','adapter_host_key_failure','adapter_auth_failure','adapter_connect_timeout','adapter_connection_refused','adapter_route_unreachable','adapter_connection_reset','adapter_unreachable','adapter_check_failed','adapter_local_unavailable','adapter_local_identity_unverified','adapter_local_interpreter_missing']);
-const publicOperation=op=>Object.fromEntries(['id','worker_id','actor','service_action','state','created_at','updated_at','error','proof','service_action_issued','restart_issued','operator_override','profile_adopted','bootstrap_acknowledged','readmission_blocked_reason'].filter(k=>op[k]!==undefined).map(k=>[k,op[k]]));
+const publicOperation=op=>Object.fromEntries(['id','worker_id','actor','service_action','state','created_at','updated_at','error','proof','service_action_issued','restart_issued','operator_override','profile_adopted','bootstrap_acknowledged','readmission_blocked_reason','pair_qualification'].filter(k=>op[k]!==undefined).map(k=>[k,op[k]]));
 const digest=value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
 // Wall-clock correction must not make an old observation eligible indefinitely.
 // Use the same bounded age rule for diagnostics, offers and action admission.
@@ -45,9 +46,10 @@ const adoptionOperationValid=op=>{
 // Lives in the gateway, not the dashboard or LLM process. Intent and outcomes
 // share the gateway's atomic/fsynced metadata store. No inference text is saved.
 export class Recovery {
-  constructor(raw,{store,nodes,model,stopping,reinstate,fleetConfig={},directReserved=()=>false,log=()=>{},call=recoveryCall,verify=verifyRecovery,now=Date.now}) {
+  constructor(raw,{store,nodes,model,stopping,reinstate,fleetConfig={},isPairQualificationEnabled=()=>false,directReserved=()=>false,log=()=>{},call=recoveryCall,verify=verifyRecovery,now=Date.now}) {
     this.configs=recoveryConfig(raw);this.store=store;this.nodes=nodes;this.model=model;this.stopping=stopping;this.reinstate=reinstate;this.log=log;this.call=call;this.verify=verify;this.now=now;
     this.fleetConfig=fleetConfig;
+    this.isPairQualificationEnabled=isPairQualificationEnabled;
     this.ownershipReason=(node,options={})=>recoveryOwnership({node,nodes,store,config:fleetConfig,directReserved,...options});
     this.observations=new Map();this.stoppedSince=new Map();this.handbackSeen=new Map();this.busy=false;this.closed=false;this.task=null;this.abort=new AbortController();
     this.removals=new Map();
@@ -59,6 +61,7 @@ export class Recovery {
     if(saved && (saved.version!==1 || typeof saved.automatic!=='boolean' || (saved.profile_handback_automatic!==undefined&&typeof saved.profile_handback_automatic!=='boolean') || !Array.isArray(saved.operations) || (saved.adopted_profiles!==undefined&&(!saved.adopted_profiles||typeof saved.adopted_profiles!=='object'||Array.isArray(saved.adopted_profiles)))))throw new Error('Invalid recovery journal; inspect manually');
     for(const [worker,profile] of Object.entries(saved?.adopted_profiles??{}))if(!/^[a-zA-Z0-9][\w-]{0,63}$/.test(worker)||!profile||!digest(profile.config_profile)||!digest(profile.machine)||!digest(profile.profile)||(profile.service_profile!==null&&!digest(profile.service_profile))||!Number.isFinite(profile.adopted_at)||!/^[a-f0-9-]{36}$/.test(profile.operation_id))throw new Error('Invalid adopted recovery profile');
     for(const op of this.state.operations) {
+      if(op.pair_qualification!==undefined&&(op.pair_qualification!==true||op.actor!=='genie'||op.canary!==true||op.was_paused!==false||op.service_action!=='restart'||!digest(op.evidence_id)||op.pair_reserved===undefined))throw new Error('Invalid pair qualification journal');
       if(!/^[a-f0-9-]{36}$/.test(op.id) || typeof op.worker_id!=='string' || typeof op.state!=='string'||!adoptionOperationValid(op)||!bootstrapOperationValid(op))throw new Error('Invalid recovery operation');
       if(op.pair_reserved!==undefined){
         if(typeof op.pair_reserved!=='boolean'||!digest(op.pair_epoch)||!digest(op.pair_enrollment)||!Number.isSafeInteger(op.pair_concurrency)||op.pair_concurrency<1)throw new Error('Invalid paired recovery journal');
@@ -162,9 +165,15 @@ export class Recovery {
   profileCandidate(s,c){return !!c&&s?.version===1&&s.machine===c.machine&&digest(s.profile)&&s.profile!==c.profile&&s.active===true&&s.listener===true&&/^[a-f0-9]{32}$/.test(s.instance)&&Number.isFinite(s.started_at)?{profile:s.profile,service_profile:digest(s.service_profile)?s.service_profile:null,instance:s.instance}:null;}
   candidateStable(id,candidate){const seen=this.handbackSeen.get(id);return !!seen&&seen.profile===candidate.profile&&seen.service_profile===candidate.service_profile&&seen.instance===candidate.instance&&seen.count>=2&&seen.last_at-seen.first_at>=10000;}
   evidence(n,s){const c=this.config(n.id),candidate=this.profileCandidate(s,c);return c?.bootstrap_removed===true&&s?.registration==='absent'?hash([n.id,'bootstrap',this.priorIdentity(n.id),hash(c),this.removals.get(n.id)?.result]):candidate?hash([n.id,n.quarantine,'adopt',candidate.instance,s.machine,c.profile,candidate.profile,candidate.service_profile]):this.valid(s,c)?hash([n.id,n.quarantine,'restart',s.instance,s.machine,s.profile]):hash([n.id,n.quarantine,'start',s.stopped_epoch,s.machine,s.service_profile]);}
-  reason(n,s,{canary=false,ignoreOwnership=false,ignorePause=false,releasingHoldId=null}={}) {
+  reason(n,s,{canary=false,qualification=false,ignoreOwnership=false,ignorePause=false,releasingHoldId=null}={}) {
     const c=this.config(n?.id);
     if(!this.binding(n,c))return 'manual_recovery_required';
+    if(qualification){
+      if(c.adapter!=='docker-pair'||!pairQualificationEnabled(this,n.id))return 'pair_qualification_policy_disabled';
+      if(pairCertified(this,n,c))return 'pair_already_restart_qualified';
+      if(n.drained)return 'operator_paused';
+      if(n.healthy!==true||n.quarantine||!this.valid(s,c)||s.fault)return 'pair_qualification_requires_healthy_pair';
+    }
     if(this.closed || this.stopping())return 'gateway_stopping';
     if(!Number.isSafeInteger(n.contextLength) || n.contextLength<=0)return 'context_unverified';
     if(!ignoreOwnership && (this.task || this.state.operations.some(o=>!terminal.has(o.state))))return 'fleet_recovery_in_progress';
@@ -193,7 +202,7 @@ export class Recovery {
     if(n.active || n.queue.length)return 'wait_for_admitted_work';
     const ownership=this.ownershipReason(n,{releasingHoldId});if(ownership)return ownership;
     if(canary) {
-      if(!n.drained)return 'drain_before_canary';
+      if(!qualification&&!n.drained)return 'drain_before_canary';
       if(live)return null;
       if(stopped) {
         if(n.healthy!==false)return 'worker_health_not_failed';
@@ -287,9 +296,11 @@ export class Recovery {
     // particular, a successful paused canary may since have been resumed.
     const state=n.recovering?'recovering':!configured?'manual':n.drained?'paused':n.quarantine?'quarantined':n.healthy===false?'unavailable':'monitoring';
     const effective=this.config(n.id),candidate=this.profileCandidate(s,effective),adopted=!!this.state.adopted_profiles[n.id]&&effective?.profile===this.state.adopted_profiles[n.id].profile;
+    const qualificationReason=effective?.adapter==='docker-pair'?(!freshInspection(observed,this.now())?'service_inspection_pending':observed.error||this.reason(n,s,{canary:true,qualification:true})):null;
     return {worker_id:n.id,configured,adapter:configured?this.configs.get(n.id).adapter:null,transport:configured?(this.configs.get(n.id).transport??'ssh'):null,reason:configured?reason:'manual_recovery_required',eligible:configured&&!reason,
       evidence_id:configured&&!reason?this.evidence(n,s):null,inspected_at:observed?.at??null,
       removal:this.removals.get(n.id)?.result??null,enrollment:this.enrollmentChecklist(n),
+      ...(effective?.adapter==='docker-pair'?{pair_qualification:{eligible:!qualificationReason,reason:qualificationReason,evidence_id:qualificationReason?null:pairQualificationEvidence(this,n,s),certified:pairCertified(this,n,effective)}}:{}),
       ...(effective?.bootstrap_removed===true?{bootstrap:{enrolled:true,certified:this.bootstrapCertified(n,effective)}}:{}),
       state,profile_handback:candidate?{candidate:true,stable:this.candidateStable(n.id,candidate),automatic:this.state.profile_handback_automatic}:adopted?{candidate:false,stable:true,automatic:this.state.profile_handback_automatic,adopted:true}:null,last_action:last?publicOperation(last):null};
   }
@@ -334,16 +345,18 @@ export class Recovery {
       else pending.result=result??unavailableNativeRemoval(this.now());
     }
   }
-  request(input,actor='operator',{canary=false}={}) {
+  request(input,actor='operator',{canary=false,qualification=false}={}) {
     if(!input || Object.keys(input).some(k=>!['worker_id','evidence_id','action_id'].includes(k)) || !['operator','genie','detector'].includes(actor))throw new Error('Invalid recovery request');
     const id=input.action_id??randomUUID();if(!/^[a-f0-9-]{36}$/.test(id))throw new Error('Invalid action ID');
     const duplicate=this.state.operations.find(o=>o.id===id);
-    if(duplicate){if(duplicate.worker_id!==input.worker_id || duplicate.evidence_id!==input.evidence_id)throw new Error('Action ID conflict');return publicOperation(duplicate);}
+    if(duplicate){if(duplicate.worker_id!==input.worker_id || duplicate.evidence_id!==input.evidence_id||!!duplicate.pair_qualification!==qualification)throw new Error('Action ID conflict');return publicOperation(duplicate);}
     if(actor!=='operator' && !this.state.automatic)throw new Error('Automatic recovery is off');
-    if(canary && actor!=='operator')throw new Error('Canary is operator-only');
+    if(qualification&&(!canary||actor!=='genie'))throw new Error('Invalid pair qualification request');
+    if(canary && actor!=='operator'&&!qualification)throw new Error('Canary is operator-only');
     const n=this.node(input.worker_id),observed=this.observations.get(input.worker_id),s=observed?.value;
     if(!n || !freshInspection(observed,this.now()))throw new Error('Refresh service inspection first');
-    const reason=this.reason(n,s,{canary});if(reason)throw new Error(reason);
+    const reason=this.reason(n,s,{canary,qualification});if(reason)throw new Error(reason);
+    if(qualification&&input.evidence_id!==pairQualificationEvidence(this,n,s))throw new Error('Stale or invented qualification evidence');
     if(!canary && input.evidence_id!==this.evidence(n,s))throw new Error('Stale or invented recovery evidence');
     if(this.state.operations.length>=10000)throw new Error('Recovery journal full; review required');
     const c=this.config(n.id),candidate=this.profileCandidate(s,c),failedAt=Date.parse(n.quarantine?.at),replacement=!!candidate&&Number.isFinite(failedAt)&&s.started_at>failedAt+1000;
@@ -352,11 +365,16 @@ export class Recovery {
     const op={id,worker_id:n.id,actor,evidence_id:input.evidence_id??null,service_action:serviceAction,state:'queued',created_at:this.now(),updated_at:this.now(),instance:s.instance,
       stopped_epoch:serviceAction==='start'?s.stopped_epoch:null,service_profile:serviceAction==='start'?s.service_profile:null,
       machine:s.machine,profile:serviceAction==='start'?c.profile:s.profile,context_length:n.contextLength,canary,was_paused:n.drained,quarantine:n.quarantine?{...n.quarantine}:null,
+      ...(qualification?{pair_qualification:true}:{}),
       ...(c.adapter==='docker-pair'?{pair_epoch:s.pair_epoch,pair_enrollment:pairBinding(this,c),pair_concurrency:requestCapacity(n),pair_reserved:true}:{}),
       ...(candidate?{adopt_profile:candidate.profile,adopt_service_profile:candidate.service_profile,configured_profile:this.configs.get(n.id).profile}:{}),
       ...(bootstrapping?{instance:prior.instance,profile:prior.profile,service_profile:prior.service_profile,bootstrap_prior:prior,
         bootstrap_enrollment:hash(c),bootstrap_definition_sha256:c.retained_definition_sha256}:{}),
       binding:hash([n.url,n.ssh,n.ssh_fallbacks??[],n.remote_port??8000]),operator_override:false};
+    if(qualification&&this.store.filename){
+      op.qualification_backup=this.store.filename+'.pair-qualification-'+this.now()+'-'+id+'.bak';
+      fs.copyFileSync(this.store.filename,op.qualification_backup,fs.constants.COPYFILE_EXCL);fs.chmodSync(op.qualification_backup,0o600);
+    }
     this.commit({...this.state,operations:[...this.state.operations,op]});
     n.recovering=true;n.healthy=false;
     if(op.pair_reserved)reservePair(this,op,true);

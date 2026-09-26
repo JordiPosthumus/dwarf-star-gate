@@ -128,7 +128,7 @@ requires `service_profile` equal to the enrolled pair profile. Native commands
 can only start or stop those existing containers; no image pull, rebuild,
 recreation, launcher rewrite or model-file deletion is available.
 
-Automatic recovery requires a completed operator restart canary for this exact
+Automatic recovery requires a completed native restart qualification for this exact
 configuration, physical mapping, context and concurrency. The existing private
 `/recovery-canary` control requires the worker to be paused first, another physical
 LLM to remain available, current ownership and native idle evidence. It leaves
@@ -208,3 +208,36 @@ Automatic pair recovery still requires the separate exact native restart canary
 and GLM generation/cache proof. `enrolled` is not `restart-qualified`. The default
 installation has no opted-in workers, and disabling setup prevents new enrollment
 without removing an already saved recovery definition.
+
+
+## Genie restart qualification
+
+An owner may separately set `pair_recovery_setup.workers.<worker-id>.qualify_restart`
+to `true`. Enrollment alone does not enable this policy. Automatic recovery,
+inspection and server changes must also remain enabled. With this explicit policy,
+`recovery_status.workers[].pair_qualification` offers a short-lived evidence ID
+only for a healthy, unpaused, idle enrolled pair, with no native fault or shared
+physical-machine hold and another physical LLM available.
+
+Genie calls `qualify_pair_recovery(worker_id, evidence_id)`. The core retains a
+private timestamped metadata backup, records Genie as the actor and reserves both
+physical members before starting the existing exact-container transaction. It
+does not change operator pause history. Policy and ownership are checked again
+after inspection, at each native command permit and before readmission. A native
+restart must change the pair epoch, retain exact configuration/file/capacity pins,
+and pass two interleaved cold-to-warm GLM conversations. Only a `recovered` receipt
+with that proof qualifies the Genie path. The existing operator-only canary remains
+separate and still requires and preserves its preexisting pause.
+
+The same action and native journal survive controller replacement. No uncertain
+Docker command is replayed. Owner pauses or revoked policy prevent continued
+mutation/readmission; held or uncertain operations remain visible for observation.
+An already qualified binding is not offered another qualification. Changing its
+configuration, physical mapping or capacity invalidates the prior qualification.
+
+The qualification completion watcher returns to the originating conversation and
+requires an actual terminal `recovery_status` receipt. It may continue an original
+request covering another opted-in pair only from fresh eligibility after the first
+operation completes; it cannot repeat a completed or uncertain restart. These are
+product guarantees covered by fixtures; native fleet qualification remains a
+separate acceptance requirement until actual receipts are collected.

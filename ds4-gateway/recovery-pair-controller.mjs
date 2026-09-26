@@ -9,9 +9,14 @@ export const pairRequest=op=>({action:op.service_action,action_id:op.id,epoch:op
   canary:op.canary,fault_after:op.canary||op.service_action==='start'?0:Math.max(0,Date.parse(op.quarantine?.at)-120000)});
 
 export const pairBinding=(recovery,c)=>hash([c,machinesFor(c.id,recovery.fleetConfig)]);
+export const pairQualificationEnabled=(recovery,id)=>recovery.state.automatic&&recovery.isPairQualificationEnabled()&&
+  recovery.fleetConfig.pair_recovery_setup?.workers?.[id]?.qualify_restart===true;
+export const pairQualificationEvidence=(recovery,n,s)=>hash([n.id,'pair-restart-qualification',pairBinding(recovery,recovery.config(n.id)),s.pair_epoch,n.contextLength,requestCapacity(n)]);
 export function pairCertified(recovery,n,c){
-  return recovery.state.operations.some(op=>op.worker_id===n.id&&op.actor==='operator'&&op.canary===true&&op.was_paused===true&&
-    op.service_action==='restart'&&op.state==='verified_paused'&&op.service_action_issued===true&&op.pair_dispatched===true&&
+  return recovery.state.operations.some(op=>op.worker_id===n.id&&op.canary===true&&
+    ((op.actor==='operator'&&op.was_paused===true&&op.state==='verified_paused')||
+     (op.actor==='genie'&&op.pair_qualification===true&&op.was_paused===false&&op.state==='recovered'))&&
+    op.service_action==='restart'&&op.service_action_issued===true&&op.pair_dispatched===true&&
     op.pair_transaction_completed===true&&op.pair_reserved===false&&!op.operator_override&&op.pair_enrollment===pairBinding(recovery,c)&&
     op.context_length===n.contextLength&&op.pair_concurrency===requestCapacity(n)&&digest(op.pair_final_epoch)&&op.pair_final_epoch!==op.pair_epoch&&
     op.new_instance===op.pair_final_epoch.slice(0,32)&&glmRecoveryProofValid(op.proof,n.contextLength));
@@ -36,6 +41,7 @@ export function pairPermit(recovery,input){
   const op=recovery.state.operations.find(o=>o.id===input?.action_id),n=recovery.node(op?.worker_id),c=recovery.config(op?.worker_id);
   const denied=reason=>({allowed:false,reason});
   if(!op||!n||c?.adapter!=='docker-pair'||!op.pair_reserved||!op.service_action_issued||op.pair_enrollment!==pairBinding(recovery,c))return denied('pair_operation_not_owned');
+  if(op.pair_qualification&&!pairQualificationEnabled(recovery,n.id))return denied('pair_qualification_policy_disabled');
   if(!op.canary&&!pairCertified(recovery,n,c))return denied('pair_restart_canary_required');
   if(!['queued','starting','restarting','reconciling','waiting_for_ownership'].includes(op.state))return denied('pair_operation_not_owned');
   const request=pairRequest(op);
@@ -72,6 +78,8 @@ export async function executePair(recovery,initial){
     const replacement=!op.pair_dispatched&&recovery.valid(before,c)&&!before.fault&&before.pair_epoch!==op.pair_epoch;
     let finalEpoch=replacement?before.pair_epoch:null;
     if(!replacement){
+      const currentPermit=pairPermit(recovery,pairRequest(op));
+      if(!currentPermit.allowed){update({state:'waiting_for_ownership',error:currentPermit.reason});return;}
       update({state:op.service_action==='start'?'starting':'restarting',pair_dispatched:true,error:null});
       const receipt=await recovery.call(c,pairRequest(op));
       if(receipt.action_id!==op.id)throw Error('pair_runner_receipt_unverified');
@@ -92,6 +100,7 @@ export async function executePair(recovery,initial){
     const final=await recovery.inspect(n.id);
     if(!recovery.valid(final,c)||final.pair_epoch!==finalEpoch||final.fault||final.context_length!==op.context_length||final.concurrency!==op.pair_concurrency)throw Error('pair_identity_changed_during_verification');
     op={...recovery.current(op)};
+    if(op.pair_qualification&&!pairQualificationEnabled(recovery,n.id)){update({state:'waiting_for_ownership',proof,error:'pair_qualification_policy_disabled'});return;}
     const reason=recovery.ownershipReason(n,{phase:'readmit',operationId:op.id});
     const held=op.operator_override||op.was_paused||n.drained||n.removed||recovery.node(n.id)!==n||recovery.stopping()||reason;
     // A late temporary hold retains the proof and reservation. The same action
