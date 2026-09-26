@@ -15,7 +15,7 @@ const numbers=[
   ...['lm_top_k','repaint_latent_crossfade_frames'].map(k=>['int',k]),
 ];
 const booleans=[
-  ['thinking'],['use_random_seed','useRandomSeed'],['sample_mode','sampleMode'],
+  ['thinking'],['dcw_enabled'],['use_random_seed','useRandomSeed'],['sample_mode','sampleMode'],
   ['analysis_only','analysisOnly'],['full_analysis_only','fullAnalysisOnly'],
   ['extract_codes_only','extractCodesOnly'],['use_format','useFormat','format'],
   ['use_tiled_decode','useTiledDecode'],['constrained_decoding','constrainedDecoding','constrained'],
@@ -50,6 +50,8 @@ export function validateMusicInputs(payload){
     if(typeof value==='string'&&['','1','0','true','false','yes','no','y','n','on','off'].includes(value.trim().toLowerCase()))continue;
     reject(`${key} must be true or false (or a supported boolean string such as "yes" or "no"). Other text can silently turn this option off.`);
   }
+  const sampler=effective(['sampler_mode']);
+  if(sampler&&sampler.value!==''&&!['euler','heun'].includes(sampler.value))reject('sampler_mode must be "euler" or "heun". Omit it to preserve the engine default.');
   for(const key of ['ref_audio','reference_audio','ctx_audio','src_audio'])if(payload[key]!=null&&payload[key]!=='')reject(`${key} is a multipart upload field, not a JSON audio reference. Use reference_audio_path or src_audio_path for a file already present on the selected ACE-Step host. This music endpoint does not transfer a file from a local filename.`);
   if(payload.input_files!==undefined&&(!Array.isArray(payload.input_files)||payload.input_files.length))reject('input_files transfers uploaded references for video jobs only. Music JSON currently uses reference_audio_path or src_audio_path for files already on the selected ACE-Step host.');
 }

@@ -315,6 +315,21 @@ test('ACE-Step aliases, automatic values, native precedence and advanced options
  inputs.forEach((payload,i)=>assert.deepEqual(q.enqueue('music',payload,{key:'valid-music-'+i}).job.payload,payload));
 });
 
+test('explicit AceFarm recipe survives durable queueing and retries without adopting API defaults',t=>{
+ const file=path.join(directory(t),'jobs.json'),q=new MediaJobs(file);
+ const recipe={caption:'Recipe fixture',lyrics:'[Verse]\nOriginal words',thinking:true,inference_steps:80,
+  guidance_scale:3.0,audio_duration:-1,sampler_mode:'heun',infer_method:'ode',dcw_enabled:false,
+  seed:11,use_random_seed:false,batch_size:1,audio_format:'flac'};
+ for(const [i,payload] of [recipe,{param_obj:JSON.stringify(recipe)},{metadata:recipe}].entries()){
+  const key='acefarm-recipe-'+i,job=q.enqueue('music',payload,{key}).job;
+  const retry=new MediaJobs(file).enqueue('music',payload,{key}).job;
+  assert.equal(retry.id,job.id);assert.deepEqual(retry.payload,payload);
+ }
+ for(const extra of [{sampler_mode:'guess'},{sampler_mode:0},{dcw_enabled:'perhaps'},{param_obj:{sampler_mode:'guess'}}])
+  assert.throws(()=>q.enqueue('music',{prompt:'fixture',...extra},{key:'bad-explicit'}),e=>e.status===400);
+ assert.equal(q.list().length,3);
+});
+
 test('previously accepted ACE-Step requests remain retrievable even if new preflight would reject them',t=>{
  const file=path.join(directory(t),'jobs.json'),q=new MediaJobs(file);
  const initial=q.enqueue('music',{prompt:'music'},{key:'legacy-music'}).job;

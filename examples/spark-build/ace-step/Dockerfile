@@ -8,7 +8,11 @@ COPY requirements.lock /opt/stargate/requirements.lock
 RUN python -m pip install --no-cache-dir --require-hashes --no-deps -r /opt/stargate/requirements.lock
 COPY ace-step-src/ /opt/ace-step/
 COPY apply-metadata-patch.py /opt/stargate/apply-metadata-patch.py
+COPY apply-recipe-fields.py verify-api-fields.py /opt/stargate/
 RUN python /opt/stargate/apply-metadata-patch.py \
+    && python /opt/stargate/apply-recipe-fields.py \
+    && python /opt/stargate/verify-api-fields.py > /opt/stargate/recipe-fields-verification.json \
+    && cat /opt/stargate/recipe-fields-verification.json \
     && python -m pip install --no-cache-dir --no-deps --no-build-isolation /opt/ace-step/acestep/third_parts/nano-vllm \
     && ln -s /models/ace-step /opt/ace-step/checkpoints \
     && ln -s /data/cache /opt/ace-step/.cache \

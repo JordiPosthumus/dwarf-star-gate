@@ -30,6 +30,23 @@ Expose container port 8002 on host loopback when creating an enrolled worker.
 The gateway handles remote access through its existing transport. Preserve other
 serving workloads and drain before allocating the GPU to this container.
 
+The build adds explicit `sampler_mode` (`euler` or `heun`) and `dcw_enabled`
+fields to the pinned HTTP request model and forwards them to `GenerationParams`.
+Without this extension the pinned HTTP path does not forward those choices;
+its core defaults are Euler and DCW enabled. Omitting the new fields preserves
+those defaults. For an AceFarm request that explicitly selects Heun and DCW off,
+send `sampler_mode: "heun"` and `dcw_enabled: false`, together with its unchanged
+steps, CFG, duration, seed, thinking, model and language-model settings.
+
+`apply-recipe-fields.py` requires exact source hashes before changing a new build
+context. `verify-api-fields.py` runs in the image build and exercises the actual
+pinned request parser, Pydantic model and generation parameter assembly. It
+loads the real parameter dataclass definitions without importing GPU libraries,
+checks omitted defaults and explicit overrides, and rejects invalid options.
+This verifies API wiring, not native synthesis. Existing deployed images do not
+gain this extension until separately rebuilt and natively qualified. Do not
+patch running engines or claim old enrollment receipts verify the new fields.
+
 The requirements lock is a clean Python 3.12/Linux ARM64 resolution based on the
 working package versions; each downloaded artifact has a SHA-256 hash. The source
 and base image are pinned. Ubuntu system packages still come from the base's
