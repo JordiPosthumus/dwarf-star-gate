@@ -59,6 +59,30 @@ routes are not exposed on the inference HTTP listener. Native active work preven
 the stop; the replacement listener must also report zero active/waiting requests
 and loading models before the transaction completes.
 
+The adapter also supports `transaction-status` with only an `action_id`. This
+reads the existing private request, journal and verified backup without obtaining
+a mutation permit, spawning a runner or creating missing files. Its request hash
+lets a controller join the receipt to its saved intent. It is available when
+mutation permission has been withdrawn. A missing record or pending receipt does
+not establish process liveness, service health, or permission to repeat an action.
+
+The staged `start-transaction` protocol is distinct from a restart. It requires
+the private adapter's explicit `start_stopped: true`, a recorded stopped epoch,
+an exact static profile, an empty listener and a gateway permit bound to a demand
+UUID. It never sends a stop signal. The same durable intent and backup rules
+protect its one launch; an interrupted launch is observed, never repeated. A
+lost or revoked permit before launch leaves it waiting; a change at the final
+launch guard preserves an uncertain receipt. The native fixture tests exercise
+this protocol and read-only observation after permission revocation.
+
+**On-demand integration is not complete:** the production controller does not yet
+issue this demand-bound start protocol or enroll its authority through Genie.
+Do not enable a deployment's stopped-start setting merely because the adapter
+protocol passes its tests. Completion still needs live-demand admission,
+cancellation handling, controller reconstruction, and native correctness/cache
+proof before queued inference is released. Existing restart qualification and
+legacy manual start behavior remain separate.
+
 Readmission additionally requires unchanged process/profile, native model context
 and two actual cold-to-warm GLM/oMLX conversations. A Spark/vLLM or Qwen receipt
 cannot qualify this worker. A late owner pause remains effective. A late hold or

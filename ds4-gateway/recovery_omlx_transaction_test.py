@@ -15,7 +15,7 @@ m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 class Interruption(BaseException):pass
 
 
-class OmlxTransactionTests(unittest.TestCase):
+class OmlxTransactionFixture:
     def setUp(self):
         tmp=tempfile.TemporaryDirectory();self.addCleanup(tmp.cleanup)
         self.root=Path(tmp.name);(self.root/'state').mkdir()
@@ -54,6 +54,8 @@ class OmlxTransactionTests(unittest.TestCase):
             if current==phase:raise Interruption()
         return crash
 
+
+class OmlxTransactionTests(OmlxTransactionFixture,unittest.TestCase):
     def test_one_restart_retains_bytes_and_private_backup(self):
         before={str(p):p.read_bytes() for p in m.backup_files(self.config)}
         result=self.run_action();self.assertEqual(result['state'],'completed')
@@ -228,6 +230,159 @@ class OmlxTransactionTests(unittest.TestCase):
         self.assertFalse(m.permitted(self.request))
         self.filename.write_text('{}');self.filename.chmod(0o644)
         with self.assertRaisesRegex(ValueError,'file_unverified'):m.private_read(self.filename)
+
+
+class OmlxStartTransactionTests(OmlxTransactionFixture,unittest.TestCase):
+    def setUp(self):
+        super().setUp()
+        self.config['start_stopped']=True
+        self.request={k:v for k,v in self.request.items() if k not in ('canary','instance')}
+        self.request.update(action='start-transaction',stopped_epoch='e'*64,demand_id='92345678-1234-1234-1234-123456789abc')
+        self.current={**self.initial,'loaded':True,'active':False,'listener':False,'stopped':True,
+                      'pid':0,'instance':'','service_profile':'d'*64,'stopped_epoch':'e'*64}
+
+    def test_unenrolled_start_is_refused_before_request_backup_or_launch(self):
+        self.config['start_stopped']=False;spawn=Mock()
+        before=set(self.root.rglob('*'))
+        for run in (self.run_action,lambda:m.dispatch(self.filename,self.config,self.request,owns=self.owns,popen=spawn)):
+            with self.assertRaisesRegex(ValueError,'stopped_start_not_enrolled'):run()
+        spawn.assert_not_called();self.owns.assert_not_called()
+        self.assertEqual(self.starts,[]);self.assertEqual(self.stops,[]);self.assertEqual(set(self.root.rglob('*')),before)
+
+    def test_read_only_status_after_revoked_permit_preserves_result_without_dispatch(self):
+        m.omlx.mac.atomic_save(self.journal.with_suffix('.request'),{'request':self.request,'configuration':m.omlx.fingerprint(self.config)})
+        result=self.run_action();self.owns.return_value=False
+        before={str(p):p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
+        with patch.object(m,'permitted',side_effect=AssertionError('read cannot ask for mutation authority')):
+            value=m.transaction_status(self.filename,self.config,{'action':'transaction-status','action_id':self.request['action_id']})
+        self.assertEqual(value['state'],'completed');self.assertEqual(value['new_instance'],result['new_instance'])
+        self.assertEqual(value['request_hash'],m.omlx.fingerprint(self.request))
+        self.assertEqual(before,{str(p):p.read_bytes() for p in self.root.rglob('*') if p.is_file()})
+        self.assertEqual(len(self.starts),1);self.assertEqual(self.stops,[])
+
+    def test_read_only_status_does_not_create_missing_state_or_repair_broken_evidence(self):
+        input={'action':'transaction-status','action_id':self.request['action_id']}
+        absent=self.root/'absent.json';before=set(self.root.rglob('*'))
+        self.assertEqual(m.transaction_status(absent,self.config,input)['state'],'not_found')
+        self.assertEqual(set(self.root.rglob('*')),before)
+        for changed in ({'action_id':'../bad'},{'command':'launch'},{'action':'start-transaction'}):
+            with self.assertRaisesRegex(ValueError,'request_invalid'):m.transaction_status(self.filename,self.config,{**input,**changed})
+        m.omlx.mac.atomic_save(self.journal.with_suffix('.request'),{'request':self.request,'configuration':m.omlx.fingerprint(self.config)})
+        self.assertEqual(m.transaction_status(self.filename,self.config,input)['state'],'pending')
+        self.assertEqual(self.starts,[])
+        self.run_action();row=m.private_read(self.journal)
+        m.omlx.mac.atomic_save(self.journal,{**row,'request_hash':'a'*64})
+        with self.assertRaisesRegex(ValueError,'journal_unverified'):m.transaction_status(self.filename,self.config,input)
+        m.omlx.mac.atomic_save(self.journal,row)
+        (Path(row['backup'])/'0').write_text('damaged')
+        with self.assertRaisesRegex(ValueError,'backup_unverified'):m.transaction_status(self.filename,self.config,input)
+
+    def test_start_only_preserves_files_and_launches_once_without_signal(self):
+        before={str(p):p.read_bytes() for p in m.backup_files(self.config)}
+        self.idle.side_effect=lambda config:bool(self.starts)
+        result=self.run_action();self.assertEqual(result['state'],'completed')
+        self.assertEqual(self.stops,[]);self.assertEqual(len(self.starts),1)
+        self.assertEqual(before,{str(p):p.read_bytes() for p in m.backup_files(self.config)})
+        row=m.private_read(self.journal);self.assertEqual(row['stopped_epoch'],self.request['stopped_epoch'])
+        m.verify_backup(self.config,self.journal.parent,self.request,row)
+        self.assertEqual(self.run_action(),result);self.assertEqual(len(self.starts),1)
+
+    def test_start_requires_exact_stopped_identity_and_empty_port(self):
+        before=copy.deepcopy(self.current)
+        for delta in ({'active':True},{'listener':True},{'stopped':False},{'loaded':False},{'pid':123},
+                      {'fault':'unknown'},{'instance':'f'*32},{'profile':'a'*64},
+                      {'service_profile':'a'*64},{'machine':'a'*64},{'stopped_epoch':'a'*64}):
+            with self.subTest(delta=delta):
+                self.current={**before,**delta}
+                with self.assertRaisesRegex(ValueError,'identity_changed'):self.run_action()
+        self.assertEqual(self.starts,[]);self.assertEqual(self.stops,[])
+
+    def test_revoked_demand_waits_before_launch_without_needing_native_idle(self):
+        self.owns.return_value=False
+        self.assertEqual(self.run_action()['state'],'waiting_for_ownership')
+        self.idle.assert_not_called();self.assertEqual(self.starts,[])
+        self.owns.return_value=True
+        self.assertEqual(self.run_action()['state'],'completed');self.assertEqual(len(self.starts),1)
+
+    def test_controller_loss_before_launch_rechecks_live_demand(self):
+        with self.assertRaises(Interruption):self.run_action(checkpoint=self.crash_at('stopped'))
+        self.owns.return_value=False
+        self.assertEqual(self.run_action()['state'],'waiting_for_ownership');self.assertEqual(self.starts,[])
+        self.owns.return_value=True
+        self.assertEqual(self.run_action()['state'],'completed');self.assertEqual(len(self.starts),1)
+        self.assertEqual(self.stops,[])
+
+    def test_loss_after_launch_observes_without_launching_again(self):
+        with self.assertRaises(Interruption):self.run_action(checkpoint=self.crash_at('launch_issued'))
+        self.owns.return_value=False # Observation remains allowed after the one issued launch.
+        self.assertEqual(self.run_action()['state'],'completed');self.assertEqual(len(self.starts),1)
+        self.assertEqual(self.stops,[])
+
+    def test_loss_before_command_never_replays_uncertain_launch(self):
+        with self.assertRaises(Interruption):self.run_action(checkpoint=self.crash_at('launch_intent'))
+        for _ in range(2):self.assertEqual(self.run_action()['reason'],'omlx_transaction_launch_observation_pending')
+        self.assertEqual(self.starts,[]);self.assertEqual(self.stops,[])
+
+    def test_revoked_demand_at_final_guard_is_sticky_and_never_launches(self):
+        def revoke(phase):
+            if phase=='launch_intent':self.owns.return_value=False
+        self.assertEqual(self.run_action(checkpoint=revoke)['state'],'uncertain')
+        self.owns.return_value=True
+        self.assertEqual(self.run_action()['state'],'uncertain');self.assertEqual(self.starts,[])
+
+    def test_new_port_owner_or_changed_epoch_after_reservation_refuses_launch(self):
+        with self.assertRaises(Interruption):self.run_action(checkpoint=self.crash_at('stopped'))
+        before=copy.deepcopy(self.current)
+        for delta in ({'listener':True},{'stopped_epoch':'a'*64},{'service_profile':'a'*64}):
+            self.current={**before,**delta}
+            with self.subTest(delta=delta),self.assertRaisesRegex(ValueError,'stopped_identity_changed'):self.run_action()
+        self.assertEqual(self.starts,[])
+
+    def test_loading_replacement_is_observed_until_idle_without_relaunch(self):
+        self.idle.return_value=False
+        self.assertEqual(self.run_action()['phase'],'launch_observed')
+        self.idle.return_value=True
+        self.assertEqual(self.run_action()['state'],'completed');self.assertEqual(len(self.starts),1)
+
+    def test_journal_cannot_change_original_stop_epoch_or_become_restart(self):
+        with self.assertRaises(Interruption):self.run_action(checkpoint=self.crash_at('stopped'))
+        original=m.private_read(self.journal)
+        for delta in ({'stopped_epoch':'f'*64},{'phase':'stop_intent'},{'before':self.initial}):
+            m.omlx.mac.atomic_save(self.journal,{**original,**delta})
+            with self.subTest(delta=delta),self.assertRaisesRegex(ValueError,'journal_unverified'):self.run_action()
+        self.assertEqual(self.starts,[]);self.assertEqual(self.stops,[])
+
+    def test_existing_restart_history_and_new_start_share_locks_and_journal(self):
+        start_request=copy.deepcopy(self.request);stopped=copy.deepcopy(self.current)
+        self.request={k:v for k,v in self.request.items() if k not in ('demand_id','stopped_epoch')}
+        self.request.update(action='transaction',instance='b'*32,canary=True)
+        self.current=copy.deepcopy(self.initial)
+        m.omlx.mac.atomic_save(self.journal.with_suffix('.request'),{'request':self.request,'configuration':m.omlx.fingerprint(self.config)})
+        self.run_action()
+        self.request={**start_request,'action_id':'22345678-1234-1234-1234-123456789abc'};self.current=stopped
+        spawn=Mock();spawn.return_value.pid=678
+        self.assertEqual(m.dispatch(self.filename,self.config,self.request,owns=self.owns,popen=spawn)['state'],'running')
+        other={**self.request,'action_id':'32345678-1234-1234-1234-123456789abc'}
+        with self.assertRaisesRegex(ValueError,'instance_already_attempted'):m.dispatch(self.filename,self.config,other,owns=self.owns,popen=spawn)
+        other['stopped_epoch']='a'*64
+        with self.assertRaisesRegex(ValueError,'other_action_unresolved'):m.dispatch(self.filename,self.config,other,owns=self.owns,popen=spawn)
+        self.assertEqual(spawn.call_count,1)
+
+    def test_missing_or_corrupt_backup_prevents_launch(self):
+        with self.assertRaises(Interruption):self.run_action(checkpoint=self.crash_at('stopped'))
+        (Path(m.private_read(self.journal)['backup'])/'0').write_text('corrupt')
+        with self.assertRaisesRegex(ValueError,'backup_unverified'):self.run_action()
+        self.assertEqual(self.starts,[])
+
+    def test_start_has_distinct_exact_request_shape(self):
+        m.validate_request(self.request)
+        for delta in ({'canary':True},{'instance':'b'*32},{'demand_id':None},{'demand_id':'../bad'},
+                      {'stopped_epoch':'b'*32},{'action':'transaction'}):
+            with self.subTest(delta=delta),self.assertRaises(ValueError):m.validate_request({**self.request,**delta})
+        with m.lease(self.filename.with_suffix('.actions.json.lock')):
+            with self.assertRaisesRegex(ValueError,'runner_active'):self.run_action()
+        m.omlx.mac.atomic_save(self.filename.with_suffix('.actions.json'),{'old-start':{'identity':self.request['stopped_epoch'],'state':'intent'}})
+        with self.assertRaisesRegex(ValueError,'instance_already_attempted'):self.run_action()
 
 
 if __name__=='__main__':unittest.main()

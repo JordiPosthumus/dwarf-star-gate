@@ -208,10 +208,11 @@ def main():
     raw = sys.stdin.buffer.read(8193)
     if len(raw) > 8192: raise ValueError('adapter_input_limit')
     request=json.loads(raw)
-    if request.get('action')=='transaction':
+    if request.get('action') in ('transaction','start-transaction','transaction-status'):
         spec=importlib.util.spec_from_file_location('omlx_transaction',Path(__file__).with_name('recovery_omlx_transaction.py'))
         transaction=importlib.util.module_from_spec(spec);spec.loader.exec_module(transaction)
-        result=transaction.dispatch(filename,config,request)
+        result=(transaction.transaction_status(filename,config,request) if request['action']=='transaction-status'
+                else transaction.dispatch(filename,config,request))
     else:result=handle(config,request,filename.with_suffix('.actions.json'))
     print(json.dumps(result))
 

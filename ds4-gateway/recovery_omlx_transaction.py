@@ -1,4 +1,4 @@
-"""Detached local oMLX restart transaction; no uncertain command is replayed."""
+"""Detached local oMLX transactions; no uncertain command is replayed."""
 from contextlib import contextmanager
 import fcntl
 import hashlib
@@ -26,18 +26,31 @@ def require(value,reason):
     if not value:raise ValueError(reason)
 
 
+def starting(request):
+    return request.get('action')=='start-transaction'
+
+
+def identity_key(request):
+    return 'stopped_epoch' if starting(request) else 'instance'
+
+
 def validate_request(request):
-    require(isinstance(request,dict) and set(request)=={'action','action_id','instance','machine','profile','canary','gateway_socket'},'omlx_transaction_request_invalid')
-    require(request['action']=='transaction' and request['canary'] is True
+    require(isinstance(request,dict),'omlx_transaction_request_invalid')
+    fields={'action','action_id','machine','profile','gateway_socket'}
+    fields.update(('stopped_epoch','demand_id') if starting(request) else ('instance','canary'))
+    require(set(request)==fields,'omlx_transaction_request_invalid')
+    require((starting(request) and isinstance(request['stopped_epoch'],str) and DIGEST.fullmatch(request['stopped_epoch'])
+             and isinstance(request['demand_id'],str) and UUID.fullmatch(request['demand_id'])
+             or request['action']=='transaction' and request['canary'] is True
+             and isinstance(request['instance'],str) and INSTANCE.fullmatch(request['instance']))
             and isinstance(request['action_id'],str) and UUID.fullmatch(request['action_id'])
-            and isinstance(request['instance'],str) and INSTANCE.fullmatch(request['instance'])
             and all(isinstance(request[k],str) and DIGEST.fullmatch(request[k]) for k in ('machine','profile'))
             and isinstance(request['gateway_socket'],str) and Path(request['gateway_socket']).is_absolute()
             and '\0' not in request['gateway_socket'],'omlx_transaction_request_invalid')
 
 
-def private_directory(folder):
-    folder.mkdir(mode=0o700,exist_ok=True)
+def private_directory(folder,*,create=True):
+    if create:folder.mkdir(mode=0o700,exist_ok=True)
     info=folder.lstat()
     require(stat.S_ISDIR(info.st_mode) and info.st_uid==os.getuid() and not info.st_mode&0o077,'omlx_transaction_directory_unverified')
 
@@ -80,18 +93,19 @@ def permitted(request):
             response=conn.getresponse();raw=response.read(65537)
             if response.status!=200 or len(raw)>65536:return False
             value=json.loads(raw)
-            return value.get('allowed') is True and all(value.get(k)==request[k] for k in ('action_id','instance','profile'))
+            keys=('action_id','stopped_epoch','profile','demand_id') if starting(request) else ('action_id','instance','profile')
+            return value.get('allowed') is True and all(value.get(k)==request[k] for k in keys)
         finally:conn.close()
     except Exception:return False
 
 
-def folder_for(filename):
+def folder_for(filename,*,create=True):
     # macOS exposes /tmp and /var through symlinked parents. The dispatcher
     # resolves its config path; an interrupted runner must use the same journal
     # and backup identity when resumed through that canonical spelling.
     filename=Path(filename)
     root=(filename.parent.resolve()/filename.name).with_suffix('.transactions')
-    private_directory(root);return root
+    private_directory(root,create=create);return root
 
 
 def check_row(row,config,request):
@@ -101,19 +115,30 @@ def check_row(row,config,request):
             and row.get('phase') in ('prepared','stop_intent','stopped','launch_intent','launch_observed','completed'),
             'omlx_transaction_journal_unverified')
     before=row.get('before',{})
-    require(isinstance(before,dict) and before.get('active') is True and before.get('listener') is True and before.get('fault') is None
+    if starting(request):
+        require(stopped_matches(before,request) and row['phase']!='stop_intent','omlx_transaction_journal_unverified')
+    else:require(isinstance(before,dict) and before.get('active') is True and before.get('listener') is True and before.get('fault') is None
             and type(before.get('pid')) is int and 2<=before['pid']<=2147483647
             and all(before.get(k)==request[k] for k in ('instance','machine','profile')),
             'omlx_transaction_journal_unverified')
     if row['phase'] in ('stopped','launch_intent','launch_observed','completed'):
         require(isinstance(row.get('stopped_epoch'),str) and DIGEST.fullmatch(row['stopped_epoch']),'omlx_transaction_journal_unverified')
+        if starting(request):require(row['stopped_epoch']==request['stopped_epoch'],'omlx_transaction_journal_unverified')
     if row['phase'] in ('launch_observed','completed'):
         require(isinstance(row.get('new_instance'),str) and INSTANCE.fullmatch(row['new_instance'])
-                and row['new_instance']!=request['instance'],'omlx_transaction_journal_unverified')
+                and row['new_instance']!=request.get('instance'),'omlx_transaction_journal_unverified')
     require((row['state']=='completed')==(row['phase']=='completed'),'omlx_transaction_journal_unverified')
     require(row.get('reason') is None or (isinstance(row['reason'],str) and
             re.fullmatch(r'omlx_transaction_[a-z_]+',row['reason'])),'omlx_transaction_journal_unverified')
     if row['phase']!='prepared':require(isinstance(row.get('backup'),str),'omlx_transaction_journal_unverified')
+
+
+def stopped_matches(current,request):
+    return (isinstance(current,dict) and current.get('loaded') is True and current.get('stopped') is True
+            and current.get('active') is False and current.get('listener') is False and current.get('fault') is None
+            and current.get('pid')==0 and current.get('instance')==''
+            and all(current.get(k)==request[k] for k in ('machine','profile','stopped_epoch'))
+            and current.get('service_profile')==request['profile'])
 
 
 def summary(row,request):
@@ -156,7 +181,7 @@ def backup(config,root,request):
 def verify_backup(config,root,request,row):
     destination=root/(request['action_id']+'.backup')
     require(row.get('backup')==str(destination),'omlx_transaction_backup_unverified')
-    private_directory(destination)
+    private_directory(destination,create=False)
     manifest=private_read(destination/'manifest.json');files=backup_files(config)
     require(isinstance(manifest,dict) and set(manifest)==set(map(str,files)),'omlx_transaction_backup_unverified')
     for index,file in enumerate(files):
@@ -166,10 +191,38 @@ def verify_backup(config,root,request,row):
                 'omlx_transaction_backup_unverified')
 
 
+def transaction_status(filename,config,input):
+    """Read saved evidence only, even when current mutation permission is absent."""
+    require(isinstance(input,dict) and set(input)=={'action','action_id'}
+            and input['action']=='transaction-status' and isinstance(input['action_id'],str)
+            and UUID.fullmatch(input['action_id']),'omlx_transaction_request_invalid')
+    omlx.validate_config(config)
+    missing={'state':'not_found','action_id':input['action_id']}
+    try:root=folder_for(filename,create=False)
+    except FileNotFoundError:return missing
+    request_file=root/(input['action_id']+'.request');journal=root/(input['action_id']+'.json')
+    try:saved=private_read(request_file)
+    except FileNotFoundError:
+        require(not journal.exists(),'omlx_transaction_journal_unverified')
+        return missing
+    request=saved.get('request');validate_request(request)
+    require(request['action_id']==input['action_id'] and saved.get('configuration')==omlx.fingerprint(config),
+            'omlx_transaction_configuration_changed')
+    try:row=private_read(journal)
+    except FileNotFoundError:row=None
+    if row is not None:
+        check_row(row,config,request)
+        if row['phase']!='prepared':verify_backup(config,root,request,row)
+    return {**summary(row,request),'request_hash':omlx.fingerprint(request),
+            'scope':'Saved transaction evidence only; no process liveness, current health or new launch authority.'}
+
+
 def run_transaction(filename,config,request,*,inspect=omlx.inspect,idle=omlx.idle,owns=permitted,
                     stop=lambda pid:os.kill(pid,signal.SIGTERM),start=omlx.start,save=omlx.mac.atomic_save,
                     checkpoint=lambda phase:None,budget=30,now=time.monotonic,sleep=time.sleep):
-    validate_request(request);omlx.validate_config(config);root=folder_for(filename)
+    validate_request(request);omlx.validate_config(config)
+    require(not starting(request) or config['start_stopped'] is True,'omlx_transaction_stopped_start_not_enrolled')
+    root=folder_for(filename)
     journal=root/(request['action_id']+'.json')
     # Share the established adapter's operation lock as well. An older helper
     # still observing a stop must finish before this runner can inspect/mutate.
@@ -182,10 +235,11 @@ def run_transaction(filename,config,request,*,inspect=omlx.inspect,idle=omlx.idl
         if row is None:
             legacy=omlx.mac.load_history(Path(filename).with_suffix('.actions.json'))
             require(isinstance(legacy,dict) and all(isinstance(item,dict) and
-                    item.get('identity')!=request['instance'] for item in legacy.values()),
+                    item.get('identity')!=request[identity_key(request)] for item in legacy.values()),
                     'omlx_transaction_instance_already_attempted')
             current=inspect(config)
-            require(current['active'] and current['listener'] and current['fault'] is None
+            require(stopped_matches(current,request) if starting(request) else
+                    current['active'] and current['listener'] and current['fault'] is None
                     and all(current[k]==request[k] for k in ('instance','machine','profile')),'omlx_transaction_identity_changed')
             row={'schema':1,'action_id':request['action_id'],'request_hash':omlx.fingerprint(request),
                  'configuration':omlx.fingerprint(config),'before':current,'phase':'prepared','state':'pending'}
@@ -201,10 +255,17 @@ def run_transaction(filename,config,request,*,inspect=omlx.inspect,idle=omlx.idl
             if row['phase']=='prepared':
                 require(current==row['before'],'omlx_transaction_identity_changed')
                 if not owns(request):return waiting('omlx_transaction_ownership_unavailable')
-                if not idle(config):return waiting('omlx_transaction_native_busy')
+                if not starting(request) and not idle(config):return waiting('omlx_transaction_native_busy')
                 retained=backup(config,root,request)
                 require(inspect(config)==current,'omlx_transaction_identity_changed')
                 if not owns(request):return waiting('omlx_transaction_ownership_unavailable')
+                if starting(request):
+                    # A stopped endpoint cannot report native idle. Its exact
+                    # stopped epoch and empty port replace that pre-launch check.
+                    # Demand and physical ownership must still be live at the
+                    # final launch permit, including after a controller restart.
+                    update(phase='stopped',state='pending',reason=None,backup=retained,stopped_epoch=request['stopped_epoch'])
+                    continue
                 if not idle(config):return waiting('omlx_transaction_native_busy')
                 update(phase='stop_intent',state='pending',reason=None,backup=retained)
                 # Intent is durable before mutation. Changes while writing it
@@ -223,6 +284,7 @@ def run_transaction(filename,config,request,*,inspect=omlx.inspect,idle=omlx.idl
             elif row['phase']=='stopped':
                 require(current['stopped'] and not current['active'] and not current['listener']
                         and current['stopped_epoch']==row['stopped_epoch'],'omlx_transaction_stopped_identity_changed')
+                if starting(request):require(stopped_matches(current,request),'omlx_transaction_stopped_identity_changed')
                 if not owns(request):return waiting('omlx_transaction_ownership_unavailable')
                 update(phase='launch_intent',state='pending',reason=None)
                 if not owns(request) or inspect(config)!=current:
@@ -231,7 +293,7 @@ def run_transaction(filename,config,request,*,inspect=omlx.inspect,idle=omlx.idl
                 checkpoint('launch_issued')
                 update(launcher_pid=launcher)
             elif row['phase'] in ('launch_intent','launch_observed'):
-                if current['active'] and current['instance']!=request['instance']:
+                if current['active'] and current['instance']!=request.get('instance'):
                     if row['phase']=='launch_intent':update(phase='launch_observed',state='pending',reason=None,new_instance=current['instance'])
                     require(current['instance']==row['new_instance'],'omlx_transaction_replacement_changed')
                     if current['listener'] and current['fault'] is None and idle(config):
@@ -244,6 +306,7 @@ def run_transaction(filename,config,request,*,inspect=omlx.inspect,idle=omlx.idl
 
 def dispatch(filename,config,request,*,owns=permitted,popen=subprocess.Popen):
     validate_request(request);omlx.validate_config(config)
+    require(not starting(request) or config['start_stopped'] is True,'omlx_transaction_stopped_start_not_enrolled')
     require(owns(request),'omlx_transaction_ownership_unavailable')
     root=folder_for(filename)
     with lease(root/'dispatch.lock',blocking=True):
@@ -255,7 +318,7 @@ def dispatch(filename,config,request,*,owns=permitted,popen=subprocess.Popen):
                 saved=private_read(other);previous=saved.get('request',{})
                 validate_request(previous)
                 require(other.stem==previous['action_id'] and saved.get('configuration')==omlx.fingerprint(config),'omlx_transaction_journal_unverified')
-                require(previous.get('instance')!=request['instance'],'omlx_transaction_instance_already_attempted')
+                require(previous.get(identity_key(request))!=request[identity_key(request)],'omlx_transaction_instance_already_attempted')
                 result=other.with_suffix('.json')
                 require(result.exists(),'omlx_transaction_other_action_unresolved')
                 prior=private_read(result);check_row(prior,config,previous)

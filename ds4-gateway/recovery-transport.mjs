@@ -128,7 +128,7 @@ function recoveryAttempt(config,request,target,{spawnFn=spawn,timeoutMs=45000,..
     // close, otherwise a valid inspection can be misclassified as malformed.
     child.on('close',code=>{try {
       const result=JSON.parse(output);
-      if(config.adapter==='omlx'&&request.action==='transaction'&&/^omlx_transaction_[a-z_]+$/.test(result?.error??''))return finish(new Error(result.error));
+      if(config.adapter==='omlx'&&['transaction','start-transaction','transaction-status'].includes(request.action)&&/^omlx_transaction_[a-z_]+$/.test(result?.error??''))return finish(new Error(result.error));
       if(config.adapter==='docker-pair'&&result?.error==='pair_ownership_unavailable')return finish(new Error('pair_ownership_unavailable'));
       if(config.adapter==='docker-pair'&&pairIdentityFailures.has(result?.error))return finish(new Error('pair_identity_or_journal_unverified'));
       if(code!==0 || !result || typeof result!=='object' || Array.isArray(result) || result.error)throw new Error();finish(null,result);
