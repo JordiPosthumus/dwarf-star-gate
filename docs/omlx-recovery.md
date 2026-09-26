@@ -1,9 +1,10 @@
 # Recovery for a directly launched local oMLX server
 
-This adapter uses an installation's existing `start.py`, `serve.sh` and
-`server.pid`. It does not convert it to launchd, alter its settings, delete caches
-or reinstall oMLX. It is for same-host macOS installations with that launcher
-layout; endpoint registration alone does not enable it.
+This adapter uses an installation's existing launcher, `serve.sh` and
+`server.pid`. The default launcher is `start.py`; an existing executable shell
+launcher can instead be explicitly enrolled. It does not convert the installation
+to launchd, alter its settings, delete caches or reinstall oMLX. It is for same-host
+macOS installations with that layout; endpoint registration alone does not enable it.
 
 ## Current validation
 
@@ -52,8 +53,19 @@ directory must be owned by the operator and not group/world writable. Derive the
 command hash privately from the enrolled running process; its command may contain
 credentials, so do not publish it. Inspect before making any service changes.
 
+For an existing executable launcher, add both `launcher` (its absolute path) and
+`profile_files` (an explicit list of absolute dependency paths, up to 32). Include
+guard scripts, sourced files and other startup dependencies whose changes must
+invalidate enrollment. An empty list is permitted when there are no additional
+dependencies. These files must be regular files owned by the operator or root,
+without group/world write access; the launcher must be executable. Symlinks are
+rejected. The adapter executes that exact path without a shell command string or
+extra arguments, retaining the launcher's own shebang, environment setup and
+guard behavior. It never substitutes `start.py`. Legacy enrollment profiles
+remain unchanged when these optional fields are absent.
+
 The gateway recovery worker uses `adapter: "omlx"`, `transport: "local"`,
-`verification: "qwen_omlx"`, and the existing local `python`, `helper`, `config`,
+`verification: "qwen_omlx"` for Qwen or `"glm53_omlx"` for GLM-5.3, and the existing local `python`, `helper`, `config`,
 `machine`, `profile`, `service_profile` and `start_stopped` enrollment fields.
 Its URL must match the inference endpoint. The verifier uses that endpoint's
 existing credential file, API base path and model alias. It does not need another
@@ -63,6 +75,13 @@ The static profile covers the launcher, serving script, two settings files,
 Python executable and exact command hash. It does **not** hash every installed
 Python module or the model weights, or prove what source an existing process
 loaded. Record those separately when establishing a deployment's provenance.
+
+GLM verification retains the enrolled thinking/template defaults and uses two
+interleaved cold-to-warm conversations with fresh prefixes of at least 16,384
+tokens. It requires zero cold cached tokens and warm reuse leaving no more than
+8,192 original prefix tokens uncached. Its receipt is distinct from Spark/vLLM
+and Qwen receipts. This does not exercise maximum context/output/concurrency or
+certify any particular GLM installation until native verification succeeds.
 
 ## Behavior
 
@@ -79,11 +98,14 @@ loaded. Record those separately when establishing a deployment's provenance.
   for its exit. It never escalates to SIGKILL. This is a process-exit observation
   deadline, not a chat cancellation limit. A pending stop stays an uncertain
   operation rather than being replayed.
-- The existing `start.py` starts the server. Its acknowledgement is not proof of
+- The existing enrolled launcher starts the server. Its acknowledgement is not proof of
   readiness. Readmission needs unchanged identity/context, real answers and
   two conversations with measured cold-to-warm cache reuse.
 - The port check permits TCP TIME_WAIT left by closed connections, while a
   listening socket prevents startup. It is a sampled check, not a port lock.
+- A helper interruption after durable intent is not automatically replayed. A
+  saved intent alone cannot prove whether stop or launch happened. Supported
+  reconciliation across that boundary remains necessary for full independence.
 
 Before the first live drill, retain the working launcher/settings and arrange
 another serving LLM. Restore and verify the tested worker afterward. Existing

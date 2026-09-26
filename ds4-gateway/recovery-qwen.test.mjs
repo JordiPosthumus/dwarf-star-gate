@@ -23,10 +23,12 @@ test('Qwen verification proves two real cold/warm conversations with native thin
  assert.equal(f.calls[3].messages[1].content,'CHECK_B_OK');
  assert.equal(qwenRecoveryProofValid({...proof,context_length:8192},262144),false);
 });
-test('GLM recovery keeps template defaults, uses long interleaved prefixes and emits a distinct bounded-tail cache proof',async()=>{
+for(const kind of ['glm53_vllm','glm53_omlx'])test(`${kind} recovery keeps template defaults, uses long interleaved prefixes and emits a distinct bounded-tail cache proof`,async()=>{
  const f=fixture({context:400000,coldPrompt:22000,warmPrompt:22100,cached:14336});
- const proof=await verifyRecovery('http://127.0.0.1:8000/v1','gateway',400000,{...f,kind:'glm53_vllm',endpoint:{url:'http://127.0.0.1:8000/v1',model_aliases:{gateway:'example'}}});
- assert.equal(glmRecoveryProofValid(proof,400000),true);assert.equal(qwenRecoveryProofValid(proof,400000),false);assert.equal(bootstrapProofValid(proof,400000),false);
+ const proof=await verifyRecovery('http://127.0.0.1:8000/v1','gateway',400000,{...f,kind,endpoint:{url:'http://127.0.0.1:8000/v1',model_aliases:{gateway:'example'}}});
+ assert.equal(glmRecoveryProofValid(proof,400000,kind),true);assert.equal(qwenRecoveryProofValid(proof,400000),false);assert.equal(bootstrapProofValid(proof,400000),false);
+ assert.equal(glmRecoveryProofValid(proof,400000,kind==='glm53_vllm'?'glm53_omlx':'glm53_vllm'),false);
+ assert.equal(glmRecoveryProofValid(proof,400000,'qwen_omlx'),false);
  assert.equal(f.calls.length,4);
  assert.deepEqual(f.calls.map(c=>c.messages.length),[1,1,3,3]);
  for(const body of f.calls){assert.equal(body.model,'example');assert.equal(body.max_tokens,4096);assert.equal(body.thinking,undefined);assert.equal(body.reasoning_effort,undefined);assert.equal(body.chat_template_kwargs,undefined);}
@@ -35,16 +37,16 @@ test('GLM recovery keeps template defaults, uses long interleaved prefixes and e
  assert.deepEqual(f.calls[2].messages[0],f.calls[0].messages[0]);assert.deepEqual(f.calls[3].messages[0],f.calls[1].messages[0]);
  assert.equal(f.calls[2].messages[1].reasoning_content,'Fixture reasoning retained');
  assert.match(proof.scope,/does not exercise maximum context/);
- assert.equal(glmRecoveryProofValid({...proof,check:'qwen_vllm_two_conversations_cold_to_warm'},400000),false);
- assert.equal(glmRecoveryProofValid(proof,8192),false);
+ assert.equal(glmRecoveryProofValid({...proof,check:'qwen_vllm_two_conversations_cold_to_warm'},400000,kind),false);
+ assert.equal(glmRecoveryProofValid(proof,8192,kind),false);
  for(const [index,patch] of [[0,{cached_tokens:1}],[0,{prompt_tokens:16000}],[2,{cached_tokens:13807}],[2,{prompt_tokens:21999}],[3,{elapsed_ms:-1}],[3,{cached_tokens:22101}]]){
-  const broken=structuredClone(proof);Object.assign(broken.samples[index],patch);assert.equal(glmRecoveryProofValid(broken,400000),false);
+  const broken=structuredClone(proof);Object.assign(broken.samples[index],patch);assert.equal(glmRecoveryProofValid(broken,400000,kind),false);
  }
 });
-test('GLM native verification refuses short or already-warm histories, weak reuse, altered context and incomplete answers',async()=>{
+for(const kind of ['glm53_vllm','glm53_omlx'])test(`${kind} native verification refuses short or already-warm histories, weak reuse, altered context and incomplete answers`,async()=>{
  const base={context:400000,coldPrompt:22000,warmPrompt:22100,cached:14336};
  for(const [options,message] of [[{coldPrompt:16000},/cold_start/],[{coldCached:1},/cold_start/],[{cached:13807},/warm_cache/],[{warmPrompt:21999},/warm_cache/],[{context:8192},/context_changed/],[{finish:'length'},/generation_or_usage/]]){
-  await assert.rejects(verifyRecovery('http://127.0.0.1:8000/v1','example',400000,{...fixture({...base,...options}),kind:'glm53_vllm'}),message);
+  await assert.rejects(verifyRecovery('http://127.0.0.1:8000/v1','example',400000,{...fixture({...base,...options}),kind}),message);
  }
 });
 test('Qwen verification refuses absent cache reuse, changed context, and unfinished generation',async()=>{
@@ -77,6 +79,8 @@ test('Docker enrollment selects explicit verification and preserves native stopp
 test('direct oMLX enrollment is explicitly local with a separate stopped-start pin',()=>{
  const c={id:'local',url:'http://127.0.0.1:39001/v1',backend:'openai',adapter:'omlx',transport:'local',python:'/fixture/python',helper:'/fixture/recovery-omlx.py',config:'/fixture/config.json',machine:'a'.repeat(64),profile:'b'.repeat(64),verification:'qwen_omlx',exclusive:true};
  assert.equal(recoveryConfig({workers:[c]}).get('local').adapter,'omlx');
+ assert.equal(recoveryConfig({workers:[{...c,verification:'glm53_omlx'}]}).get('local').verification,'glm53_omlx');
+ assert.throws(()=>recoveryConfig({workers:[{...c,adapter:'launchd',verification:'glm53_omlx'}]}),/local oMLX adapter/);
  assert.throws(()=>recoveryConfig({workers:[{...c,transport:'ssh',ssh:'fixture'}]}),/local/);
  assert.throws(()=>recoveryConfig({workers:[{...c,start_stopped:true}]}),/static service profile/);
  assert.equal(recoveryConfig({workers:[{...c,start_stopped:true,service_profile:'c'.repeat(64)}]}).get('local').start_stopped,true);

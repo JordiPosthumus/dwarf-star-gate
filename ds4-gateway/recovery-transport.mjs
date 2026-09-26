@@ -46,7 +46,8 @@ export function recoveryConfig(raw={}) {
     if(!['systemd-user','launchd','docker','docker-pair','omlx'].includes(entry.adapter)||(!local&&!worker.ssh)||(local&&(!['launchd','omlx','docker-pair'].includes(entry.adapter)||(!pair&&worker.ssh)))||(['omlx','docker-pair'].includes(entry.adapter)&&!local))throw new Error('Recovery requires an enrolled SSH adapter or an explicitly local launchd, oMLX or Docker-pair adapter');
     if(pair?!/^[a-f0-9]{64}$/.test(entry.pair_config_sha256??''):entry.pair_config_sha256!==undefined)throw new Error('Pair recovery requires its exact private configuration hash');
     if(pair&&entry.verification!=='glm53_vllm')throw new Error('Paired recovery requires explicit GLM verification');
-    if(entry.verification!==undefined&&!['ds4','qwen_vllm','qwen_omlx','glm53_vllm'].includes(entry.verification))throw new Error('Unsupported recovery verification');
+    if(entry.verification!==undefined&&!['ds4','qwen_vllm','qwen_omlx','glm53_vllm','glm53_omlx'].includes(entry.verification))throw new Error('Unsupported recovery verification');
+    if(entry.verification==='glm53_omlx'&&entry.adapter!=='omlx')throw new Error('GLM oMLX verification requires the local oMLX adapter');
     if(entry.adapter==='docker'&&entry.start_stopped===true)throw new Error('Docker recovery preserves stopped containers; use its existing restart policy');
     if(local){
       if(typeof entry.python!=='string'||!path.isAbsolute(entry.python)||entry.python.includes('\0'))throw new Error('Local recovery requires an absolute enrolled Python interpreter');

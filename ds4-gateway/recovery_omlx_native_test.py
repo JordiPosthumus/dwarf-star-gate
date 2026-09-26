@@ -4,6 +4,7 @@ import importlib.util
 import json
 from pathlib import Path
 import socket
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -17,6 +18,12 @@ m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 @unittest.skipUnless(sys.platform=='darwin','macOS native PID/listener fixture')
 class NativeOmlxAdapterTests(unittest.TestCase):
     def test_native_busy_refusal_then_one_restart_and_original_launcher_settings(self):
+        self.exercise_launcher(False)
+
+    def test_native_enrolled_shell_launcher_without_start_py(self):
+        self.exercise_launcher(True)
+
+    def exercise_launcher(self, shell_launcher):
         with tempfile.TemporaryDirectory(prefix='sg-omlx-adapter-') as tmp:
             root=Path(tmp);(root/'state').mkdir()
             with socket.socket() as reserve:
@@ -46,12 +53,17 @@ server=FixtureServer(('127.0.0.1',int((r/'port').read_text())),Handler)
 faulthandler.cancel_dump_traceback_later()
 server.serve_forever()
 ''')
-            (root/'start.py').write_text('''import pathlib,subprocess,sys
+            bootstrap=root/('bootstrap.py' if shell_launcher else 'start.py')
+            bootstrap.write_text('''import pathlib,subprocess,sys
 r=pathlib.Path(__file__).parent
 with (r/'server.log').open('ab') as log:
  p=subprocess.Popen([sys.executable,str(r/'server.py')],stdin=subprocess.DEVNULL,stdout=log,stderr=log,start_new_session=True)
 (r/'server.pid').write_text(str(p.pid)+'\\n')
 ''')
+            if shell_launcher:
+                launcher=root/'start guarded.sh'
+                launcher.write_text('#!/bin/sh\nexec '+shlex.quote(sys.executable)+' '+shlex.quote(str(bootstrap))+'\n')
+                launcher.chmod(0o700)
             config=None
             def wait_ready(previous=None):
                 deadline=time.monotonic()+15
@@ -70,9 +82,12 @@ with (r/'server.log').open('ab') as log:
                           f'process={None if process is None else process.stdout}, '
                           f'lsof={None if listener is None else (listener.returncode,listener.stdout,listener.stderr)}, server log={log[-8192:]}')
             try:
-                subprocess.run([sys.executable,str(root/'start.py')],check=True)
+                subprocess.run([str(launcher)] if shell_launcher else [sys.executable,str(bootstrap)],check=True)
                 pid=wait_ready();process=m.mac.process_info(pid)
                 config={'root':str(root),'binary':process['executable'],'command_sha256':hashlib.sha256(process['command'].encode()).hexdigest(),'port':port,'api_key_file':str(root/'credential'),'start_stopped':True}
+                if shell_launcher:
+                    config.update(launcher=str(launcher),profile_files=[str(bootstrap),str(root/'server.py')])
+                    self.assertFalse((root/'start.py').exists())
                 file=root/'config.json';file.write_text(json.dumps(config));file.chmod(0o600)
                 def invoke(request):
                     result=subprocess.run([sys.executable,'-I',m.__file__,str(file)],input=json.dumps(request),text=True,capture_output=True,timeout=40)
