@@ -97,6 +97,9 @@ class CandidateTests(unittest.TestCase):
         self.assertEqual(self.run_candidate(lambda _:False),result)
         self.assertEqual(self.io.calls,['snapshot','build','create'])
         self.assertEqual(m.private_read(self.root/self.req['operation_id']/'original.json')['request'],self.req)
+        backup=m.private_read(self.root/self.req['operation_id']/'original.json')
+        self.assertEqual(backup['delta'],m.DELTA)
+        self.assertLessEqual(m.datetime.fromisoformat(backup['created_at']),m.datetime.fromisoformat(result['stage_at']))
         self.assertNotIn('pip',self.io.dockerfile);self.assertNotIn('apt',self.io.dockerfile)
 
     def test_every_uncertain_native_step_is_retained_and_never_replayed(self):

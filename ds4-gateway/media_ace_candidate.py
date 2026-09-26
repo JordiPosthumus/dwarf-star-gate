@@ -15,6 +15,7 @@ from pathlib import Path
 import re
 import stat
 import subprocess
+from datetime import datetime, timezone
 
 from docker_profile import Docker, digest, signature, require_retention
 from recovery_pair_native import private_read, private_save
@@ -26,6 +27,7 @@ HEX = re.compile(r'[a-f0-9]{64}')
 IMAGE = re.compile(r'sha256:[a-f0-9]{64}')
 SOURCES = ('apply-recipe-fields.py', 'verify-api-fields.py')
 DEFAULT_SOURCE = Path(__file__).resolve().parent.parent / 'examples/spark-build/ace-step'
+DELTA = 'Separate image with explicit ACE sampler/DCW API forwarding and build witness; original container, image, runtime settings and bind mounts retained. No start, stop, rename, removal or enrollment.'
 
 
 def require(value, reason):
@@ -99,7 +101,10 @@ def read_record(root, request):
         return None
     root_directory(folder)
     backup = private_read(folder / 'original.json')
-    require(backup == {'request': request, 'request_hash': digest(request)}, 'backup_changed')
+    require(set(backup) == {'request', 'request_hash', 'created_at', 'delta'} and
+            backup['request'] == request and backup['request_hash'] == digest(request) and
+            backup['delta'] == DELTA and isinstance(backup['created_at'], str) and
+            datetime.fromisoformat(backup['created_at']).utcoffset() == timezone.utc.utcoffset(None), 'backup_changed')
     row = private_read(folder / 'candidate.json')
     require(row.get('request_hash') == digest(request) and row.get('state') in
             ('prepared', 'snapshot_intent', 'snapshot_acknowledged', 'build_intent', 'build_acknowledged',
@@ -115,6 +120,7 @@ def observe(directory, request, io):
     result = {'operation_id': request['operation_id'], 'request_hash': digest(request),
               'state': 'missing' if row is None else 'requires_reconciliation',
               'stage': row['state'] if row else None,
+              'stage_at': row.get('at') if row else None,
               'scope': 'Candidate preparation only. No native audio qualification, promotion or enrollment.'}
     if row is None:
         return result
@@ -173,10 +179,11 @@ def prepare(directory, request, io, authorize, source_root=DEFAULT_SOURCE):
         folder = root / request['operation_id']
         folder.mkdir(mode=0o700)
         sync_directory(root)
-        private_save(folder / 'original.json', {'request': request, 'request_hash': digest(request)})
+        private_save(folder / 'original.json', {'request': request, 'request_hash': digest(request),
+                     'created_at': datetime.now(timezone.utc).isoformat(), 'delta': DELTA})
         row = {'request_hash': digest(request), 'state': 'prepared'}
         def save(state, **values):
-            row.update(state=state, **values)
+            row.update(state=state, at=datetime.now(timezone.utc).isoformat(), **values)
             private_save(folder / 'candidate.json', row)
         save('prepared')
         context = folder / 'context'
