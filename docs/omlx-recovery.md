@@ -122,6 +122,24 @@ qualification for the new binding before demand starts become eligible. The
 completion watcher permits continuing the original requested setup through these
 eligible stages; enrollment alone is never reported as working on-demand service.
 
+If a stage is busy when that follow-up finishes, the eligibility watcher returns
+to the same saved Genie conversation when the next offer becomes eligible. It
+requires all three explicit policies (`exclusive`, `start_on_demand` and
+`qualify_restart`) and an actual prior enrollment tool handle with a matching
+successful core receipt. It does not create initial setup requests. Genie reads
+fresh status before using its fixed enrollment or qualification tool. A completed
+restart on the old binding does not prevent a new opted-in enrollment upgrade;
+pending, missing or uncertain native receipts remain under observation.
+
+The watcher saves each chat request identity before submission and reuses it if
+the acknowledgement is lost. Owner stops, paused conversations, disabled
+capabilities and active chat turns prevent continuation. A no-action reply can
+wait for another eligible offer only when its completed status-tool receipt
+actually records ineligibility; narrative alone stops with `needs_attention`.
+Read `recovery_status.omlx_setup_followup` for its per-worker phase and reason.
+Installed-Hermes fixture tests cover both stages and saved-chat reconstruction;
+they do not establish live model qualification or production readiness.
+
 **Native acceptance remains incomplete:** this enrollment/controller workflow is
 implemented and tested with disposable fixtures. It is not yet qualified on the
 owner's live M3. Each installation needs unchanged-launcher native qualification,
