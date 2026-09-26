@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import {createHash} from 'node:crypto';
 import { workerConfig, sshTargets } from './worker-config.mjs';
 
 const sshFailurePatterns = [
@@ -12,6 +13,10 @@ const sshFailurePatterns = [
   ['adapter_route_unreachable', /no route to host|network is unreachable/i],
   ['adapter_connection_reset', /connection reset|connection closed by remote host|connection closed by .* port/i],
 ];
+const pairIdentityFailures=new Set(['pair_action_id_conflict','pair_journal_invalid','pair_epoch_already_attempted','pair_other_operation_unresolved',
+  'pair_runner_enrollment_changed','pair_enrollment_changed','pair_machine_changed','pair_container_or_configuration_changed','pair_mounted_files_changed',
+  'pair_epoch_changed','pair_epoch_changed_during_recovery','pair_peer_changed_during_command','pair_final_identity_unverified','pair_config_unverified',
+  'pair_private_journal_unverified','pair_private_directory_unverified','pair_capacity_differs_from_enrollment']);
 
 // Public recovery state receives a bounded reason class, never SSH stderr,
 // aliases, addresses, usernames or command output.
@@ -31,15 +36,18 @@ export function recoveryConfig(raw={}) {
   if(Object.keys(raw).some(k=>!['workers'].includes(k)) || !Array.isArray(raw.workers??[]))throw new Error('Invalid recovery configuration');
   const configs=new Map(), machines=new Set();
   for(const entry of raw.workers??[]) {
-    if(Object.keys(entry).some(k=>!['id','url','backend','ssh','ssh_fallbacks','remote_port','adapter','verification','transport','python','helper','config','machine','profile','service_profile','start_stopped','exclusive','bootstrap_removed','bootstrap_callers','retained_definition_sha256'].includes(k)))throw new Error('Unsupported recovery configuration field');
+    if(Object.keys(entry).some(k=>!['id','url','backend','ssh','ssh_fallbacks','remote_port','adapter','verification','transport','python','helper','config','machine','profile','service_profile','start_stopped','exclusive','bootstrap_removed','bootstrap_callers','retained_definition_sha256','pair_config_sha256'].includes(k)))throw new Error('Unsupported recovery configuration field');
     // Use the same explicit backend normalization as the registered worker.
     // Legacy enrollment keeps its original URL and fingerprint; an OpenAI
     // enrollment must not silently lose /v1 and then fail its exact binding.
     const worker=workerConfig(Object.fromEntries(['id','url','backend','ssh','ssh_fallbacks','remote_port'].filter(k=>entry[k]!==undefined).map(k=>[k,entry[k]])));
-    const local=entry.transport==='local';
+    const local=entry.transport==='local',pair=entry.adapter==='docker-pair';
     if(entry.transport!==undefined&&!['ssh','local'].includes(entry.transport))throw new Error('Recovery transport must be ssh or local');
-    if(!['systemd-user','launchd','docker','omlx'].includes(entry.adapter)||(!local&&!worker.ssh)||(local&&(!['launchd','omlx'].includes(entry.adapter)||worker.ssh))||(entry.adapter==='omlx'&&!local))throw new Error('Recovery requires an enrolled SSH adapter or an explicitly local launchd/oMLX worker');
-    if(entry.verification!==undefined&&!['ds4','qwen_vllm','qwen_omlx'].includes(entry.verification))throw new Error('Unsupported recovery verification');
+    if(!['systemd-user','launchd','docker','docker-pair','omlx'].includes(entry.adapter)||(!local&&!worker.ssh)||(local&&(!['launchd','omlx','docker-pair'].includes(entry.adapter)||(!pair&&worker.ssh)))||(['omlx','docker-pair'].includes(entry.adapter)&&!local))throw new Error('Recovery requires an enrolled SSH adapter or an explicitly local launchd, oMLX or Docker-pair adapter');
+    if(pair?!/^[a-f0-9]{64}$/.test(entry.pair_config_sha256??''):entry.pair_config_sha256!==undefined)throw new Error('Pair recovery requires its exact private configuration hash');
+    if(pair&&entry.verification!=='glm53_vllm')throw new Error('Paired recovery requires explicit GLM verification');
+    if(entry.verification!==undefined&&!['ds4','qwen_vllm','qwen_omlx','glm53_vllm','glm53_omlx'].includes(entry.verification))throw new Error('Unsupported recovery verification');
+    if(entry.verification==='glm53_omlx'&&entry.adapter!=='omlx')throw new Error('GLM oMLX verification requires the local oMLX adapter');
     if(entry.adapter==='docker'&&entry.start_stopped===true)throw new Error('Docker recovery preserves stopped containers; use its existing restart policy');
     if(local){
       if(typeof entry.python!=='string'||!path.isAbsolute(entry.python)||entry.python.includes('\0'))throw new Error('Local recovery requires an absolute enrolled Python interpreter');
@@ -62,32 +70,42 @@ export function recoveryConfig(raw={}) {
   return configs;
 }
 
-// Same-host execution is explicit, macOS-only and never falls back from failed
-// SSH. Private enrollment, not Genie input, selects these files and interpreter.
+// Same-host execution is explicit and never falls back from failed SSH.
+// Launchd/oMLX stay macOS-only; the detached SSH pair bridge also runs on Linux.
+// Private enrollment, not Genie input, selects these files and interpreter.
 function localInvocation(config,{platform=process.platform,uid=process.getuid?.()}={}){
-  if(platform!=='darwin'||!Number.isInteger(uid)||uid===0)throw new Error('adapter_local_unavailable');
+  const pair=config.adapter==='docker-pair';
+  if((pair?!['darwin','linux'].includes(platform):platform!=='darwin')||!Number.isInteger(uid)||uid===0)throw new Error('adapter_local_unavailable');
   try{
     // OpenAI normalization adds a null journal-service field. It is not an
     // enrollment option; remove only that derived value for revalidation.
     // Keep the original normalized object for recorded binding fingerprints.
     const {telemetry_service,...enrollment}=config;
     recoveryConfig({workers:[config.backend==='openai'&&telemetry_service===null?enrollment:config]});
-    if(!['launchd','omlx'].includes(config.adapter)||config.transport!=='local'||config.ssh||config.ssh_fallbacks||config.remote_port!==undefined)throw new Error();
+    if(!['launchd','omlx','docker-pair'].includes(config.adapter)||config.transport!=='local'||(!pair&&(config.ssh||config.ssh_fallbacks||config.remote_port!==undefined)))throw new Error();
+    const maximum=pair?4*1024*1024:65536;
     for(const key of ['python','helper','config']){
       const file=config[key];
       if(typeof file!=='string'||!path.isAbsolute(file)||file.includes('\0'))throw new Error();
       const s=fs.lstatSync(file);
       if(!s.isFile()||![uid,0].includes(s.uid)||s.mode&0o022)throw new Error();
-      if(key==='config'&&(s.uid!==uid||s.mode&0o077||s.size>65536))throw new Error();
+      if(key==='config'&&(s.uid!==uid||s.mode&0o077||s.size>maximum))throw new Error();
     }
     const fd=fs.openSync(config.config,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);
-    let text;try{const buf=Buffer.alloc(65537),size=fs.readSync(fd,buf,0,buf.length,0);if(size>65536)throw new Error();text=buf.subarray(0,size).toString('utf8');}finally{fs.closeSync(fd);}
-    const enrolled=JSON.parse(text),worker=workerConfig({id:config.id,url:config.url});
-    if(enrolled.port!==Number(new URL(worker.url).port))throw new Error();
+    let text;try{const buf=Buffer.alloc(maximum+1),size=fs.readSync(fd,buf,0,buf.length,0);if(size>maximum)throw new Error();text=buf.subarray(0,size).toString('utf8');}finally{fs.closeSync(fd);}
+    const enrolled=JSON.parse(text),worker=workerConfig({id:config.id,url:config.url,...(config.backend?{backend:config.backend}:{})});
+    if(pair){
+      if(createHash('sha256').update(text).digest('hex')!==config.pair_config_sha256)throw new Error();
+      // Direct HTTP registrations have no SSH route. Their separately pinned
+      // pair enrollment supplies native SSH identities without changing routing.
+      const endpoint=new URL(worker.url),port=config.ssh?(config.remote_port??8000):Number(endpoint.port||(endpoint.protocol==='https:'?443:80));
+      if(enrolled.schema!==1||enrolled.enrollment?.worker_id!==config.id||enrolled.enrollment.port!==port||
+        (config.ssh&&enrolled.enrollment.members?.[0]?.ssh!==config.ssh))throw new Error();
+    }else if(enrolled.port!==Number(new URL(worker.url).port))throw new Error();
     return {file:config.python,args:['-I',config.helper,config.config]};
   }catch(error){
     throw new Error(error?.code==='ENOENT'&&error.path===config.python
-      ?'adapter_local_interpreter_missing':'adapter_local_identity_unverified');
+      ?'adapter_local_interpreter_missing':pair?'pair_identity_or_journal_unverified':'adapter_local_identity_unverified');
   }
 }
 
@@ -108,7 +126,13 @@ function recoveryAttempt(config,request,target,{spawnFn=spawn,timeoutMs=45000,..
     child.stdin.on('error',()=>{});
     // Process exit can precede the final stdout bytes. Settle only after pipes
     // close, otherwise a valid inspection can be misclassified as malformed.
-    child.on('close',code=>{try {const result=JSON.parse(output);if(code!==0 || !result || typeof result!=='object' || Array.isArray(result) || result.error)throw new Error();finish(null,result);}catch{finish(new Error(local?'adapter_check_failed':classifySshFailure(stderr,null,code)));}});
+    child.on('close',code=>{try {
+      const result=JSON.parse(output);
+      if(config.adapter==='omlx'&&['transaction','start-transaction','transaction-status'].includes(request.action)&&/^omlx_transaction_[a-z_]+$/.test(result?.error??''))return finish(new Error(result.error));
+      if(config.adapter==='docker-pair'&&result?.error==='pair_ownership_unavailable')return finish(new Error('pair_ownership_unavailable'));
+      if(config.adapter==='docker-pair'&&pairIdentityFailures.has(result?.error))return finish(new Error('pair_identity_or_journal_unverified'));
+      if(code!==0 || !result || typeof result!=='object' || Array.isArray(result) || result.error)throw new Error();finish(null,result);
+    }catch{finish(new Error(local?'adapter_check_failed':classifySshFailure(stderr,null,code)));}});
     child.stdin.end(JSON.stringify(request));
   });
 }

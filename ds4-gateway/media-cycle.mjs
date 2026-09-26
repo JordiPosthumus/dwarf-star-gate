@@ -1,13 +1,11 @@
-import {watchMediaProgress} from './media-progress.mjs';
+import {runMediaGeneration,mediaEngineIdle} from './media-generation.mjs';
 import assert from 'node:assert/strict';
 import {isDeepStrictEqual} from 'node:util';
 import {createHash} from 'node:crypto';
-import {openAsBlob} from 'node:fs';
 import {priorityRank} from './job-priority.mjs';
-import {validateVideoCatalog} from './media-validation.mjs';
 
 export function mediaBatchCanContinue(next,status){
-  return !status.jobs.some(j=>j.state==='queued'&&!j.execution&&priorityRank(j)>priorityRank(next));
+  return !status.jobs.some(j=>j.state==='queued'&&!j.execution&&!j.dispatch_hold&&priorityRank(j)>priorityRank(next));
 }
 
 // A failed observation does not mean an already-started model failed. Keep
@@ -33,8 +31,8 @@ export async function waitForMediaLlm(plan,{recoveryInspect,progress,delay,save}
 export async function runMediaCycle(plan,io){
   const {jobs,save,maintenance,inspect,start,stop,recoveryInspect,verify,connect,delay}=io;
   const ids=plan.job_ids??[plan.operation_id];let activeId=plan.operation_id;
-  const progress=(phase,detail)=>io.progress(phase,detail,{...(ids.length>1?{active_job_id:activeId,batch_index:ids.indexOf(activeId)+1,batch_size:ids.length}:{}),native_progress:['generating','observing_media'].includes(phase)?nativeProgress?.snapshot()??null:null});
-  let nativeProgress,before,connection,stopped=false,mediaStarted=false,ready=false,error;
+  const progress=(phase,detail,context={})=>io.progress(phase,detail,{...(ids.length>1?{active_job_id:activeId,batch_index:ids.indexOf(activeId)+1,batch_size:ids.length}:{}),native_progress:context.native_progress??null});
+  let before,connection,stopped=false,mediaStarted=false,ready=false,error;
   const unchanged=(a,b)=>{
     for(const key of ['Id','Image','Config','HostConfig']){
       // Docker normalizes the unset OOM-killer flag from false to null on the
@@ -45,27 +43,22 @@ export async function runMediaCycle(plan,io){
     const mounts=x=>[...x.Mounts].sort((a,b)=>a.Destination.localeCompare(b.Destination));
     if(!isDeepStrictEqual(mounts(a),mounts(b)))throw new Error('Container mounts changed');
   };
-  const mediaIdle=async()=>{
-    if(plan.engine.kind==='ace-step'){
-      const {data}=await connection.backend.request('/v1/stats');
-      const counts=[data?.jobs?.queued,data?.jobs?.running,data?.queue_size];
-      assert.ok(counts.every(n=>Number.isSafeInteger(n)&&n>=0),'ACE-Step queue observation unavailable');
-      return counts.every(n=>n===0);
-    }
-    const q=await connection.backend.request('/queue');
-    return q.queue_running.length+q.queue_pending.length===0;
-  };
+  const mediaIdle=()=>mediaEngineIdle(connection.backend,plan.engine.kind);
   try{
     assert.ok(['comfyui','ace-step'].includes(plan.engine.kind),'Unsupported media engine');
+    await io.prepareCommands?.();
+    await io.preflight?.();
+    await io.pair?.capture();
     const initial=await recoveryInspect();assert.equal(initial.profile,plan.recovery.profile);assert.equal(initial.listener,true);assert.equal(initial.fault,null);
     before={llm:await inspect(plan.llm_container),media:await inspect(plan.engine.container)};
+    assert.match(before.llm.Id,/^[a-f0-9]{64}$/);plan={...plan,llm_container:before.llm.Id};
     const instance=createHash('sha256').update(JSON.stringify([before.llm.Id,before.llm.State.StartedAt])).digest('hex').slice(0,32);
     assert.equal(initial.instance,instance,'Media enrollment and recovery must identify the same LLM container');
     assert.equal(before.llm.State.Running,true);assert.equal(before.media.State.Running,false);assert.equal(before.media.Image,plan.engine.image);save('containers-before.json',before);
     progress('waiting_idle','Waiting for this worker’s admitted and direct LLM work to finish.');
     await maintenance('prepare');assert.equal((await maintenance('transition')).owned,true);
     unchanged(await inspect(plan.llm_container),before.llm);unchanged(await inspect(plan.engine.container),before.media);
-    save('stop-llm-intent.json',{container:plan.llm_container});stopped=true;await stop(plan.llm_container);
+    save('stop-llm-intent.json',{container:plan.llm_container});stopped=true;if(io.pair)await io.pair.stop(plan.llm_container);else await stop(plan.llm_container);
     assert.equal((await inspect(plan.llm_container)).State.Running,false);
     progress('starting_media','LLM drained and stopped; starting its enrolled media engine.');
     connection=await connect();save('start-media-intent.json',{container:plan.engine.container});mediaStarted=true;await start(plan.engine.container);
@@ -83,44 +76,10 @@ export async function runMediaCycle(plan,io){
       }
     }
     if(!ready)throw Error(`${plan.engine.kind}: Media readiness not established; no generation submitted. Last check: ${readinessError??'no usable readiness response'}. Inspect the engine log and enrolled endpoint.`);
-    for(const id of ids){
-      activeId=id;
-      const job=jobs.get(id);
-      if(id!==ids[0]&&io.continueBatch){
-        let proceed=false;
-        try{proceed=await io.continueBatch(job);}catch(e){save('batch-check-unavailable.json',{error:e.message});}
-        if(!proceed){
-          save('batch-yield.json',{remaining_job_ids:ids.slice(ids.indexOf(id)),reason:'Batch continuation deferred. Restore the LLM and release unstarted jobs.'});
-          break;
-        }
-      }
-      for(const input of job.payload.input_files===undefined?[]:jobs.inputs.forJob(job.payload.input_files)){
-        progress('transferring_inputs',`Sending reference file ${input.name} to the selected engine.`);
-        await connection.backend.uploadInput(await openAsBlob(jobs.inputs.file(input.id),{type:input.content_type}),input.name);
-      }
-      if(plan.engine.kind==='comfyui'){
-        const catalog=await connection.backend.request('/object_info');
-        validateVideoCatalog(job.payload,catalog);
-      }
-      assert.ok(await mediaIdle(),'Media engine already has native work');assert.equal((await maintenance('transition')).owned,true);
-      nativeProgress=(io.watchProgress??watchMediaProgress)(connection.backend,job.id,job.payload.prompt);
-      progress('generating','Submitting the saved media job once.');
-      await jobs.dispatch(job.id,connection.backend,plan.worker_id);
-      for(;;){
-        let observed;
-        try{observed=await jobs.observe(job.id,connection.backend);}
-        catch{progress('observing_media','Native progress is temporarily unavailable; observing the original job without repeating it.');await delay(3000);continue;}
-        progress('generating',`Native job: ${observed.state}.`);
-        if(['completed','failed'].includes(observed.state)){if(observed.state==='failed')throw Error(observed.detail??'Native media generation failed; inspect the saved native task receipt');break;}
-        await delay(3000);
-      }
-      nativeProgress?.close();nativeProgress=null;
-      progress('retaining_results','Saving generated files before releasing the media engine.');
-      await jobs.collect(job.id,connection.backend);
-    }
+    await runMediaGeneration(plan,{...io,backend:connection.backend,progress,onJob:id=>{activeId=id;}});
+    await io.verifyOutputs?.({jobs,backend:connection.backend});
   }catch(e){error=e;if(jobs.get(activeId).state==='queued')jobs.update(activeId,{state:'failed',detail:e.message});save('failure.json',{error:e.message});}
   finally{
-    nativeProgress?.close();
     try{
       if(stopped){
         assert.equal((await maintenance('owned')).owned,true);
@@ -130,15 +89,24 @@ export async function runMediaCycle(plan,io){
             while(!await mediaIdle()){progress('waiting_media_idle','Waiting for direct media work before restoring the LLM.');await delay(3000);}
           }
           await stop(plan.engine.container);
+          assert.equal((await inspect(plan.engine.container)).State.Running,false,'Media engine did not stop');
         }
         // A stopped media engine's changed settings remain an error, but must
         // not strand an unchanged LLM offline after successful generation.
         try{unchanged(await inspect(plan.engine.container),before.media);}catch(e){error=e;save('media-settings-changed.json',{error:e.message});}
-        unchanged(await inspect(plan.llm_container),before.llm);
-        save('restore-llm-intent.json',{container:plan.llm_container});await start(plan.llm_container);
+        const currentLlm=await inspect(plan.llm_container);unchanged(currentLlm,before.llm);
+        save('restore-llm-intent.json',{container:plan.llm_container});
+        if(io.pair)await io.pair.restore(plan.llm_container);
+        else if(!currentLlm.State.Running)await start(plan.llm_container);
+        else{
+          // A refused stop can leave the original running instance untouched.
+          // Do not turn that into a second start or adopt an external restart.
+          assert.equal(currentLlm.State.StartedAt,before.llm.State.StartedAt,'Original LLM running epoch changed');
+          assert.equal(currentLlm.State.FinishedAt,before.llm.State.FinishedAt,'Original LLM stopped epoch changed');
+        }
         progress('restoring_llm','Original LLM is loading with unchanged settings.');
         await waitForMediaLlm(plan,io);
-        progress('checking_llm','Checking real responses and cold-to-warm cache reuse.');
+        progress('checking_llm',io.pair?'Verifying both original GLM containers and a native readiness response.':'Checking real responses and cold-to-warm cache reuse.');
         save('llm-proof.json',await verify());
         const result=await maintenance('finish');save('readmission.json',result);assert.equal(result.state,'readmitted');
         progress(error?'failed_returned':'returned',error?`Media failed: ${error.message}. Original LLM returned to the gateway.`:'Generated files retained; original LLM verified and returned to the gateway.');

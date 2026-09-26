@@ -1,3 +1,4 @@
+import {selectedMediaPreparation,mediaPreparationRequest} from './media-reuse.mjs';
 import fs from 'node:fs';import path from 'node:path';import net from 'node:net';import assert from 'node:assert/strict';
 import {execFile,spawn} from 'node:child_process';import {promisify,isDeepStrictEqual} from 'node:util';import {once} from 'node:events';import {fileURLToPath} from 'node:url';import {setTimeout as delay} from 'node:timers/promises';
 import {MediaJobs} from './media-jobs.mjs';import {MediaBackend} from './media-backend.mjs';import {saveMediaReceipt} from './media-execution.mjs';import {setupTransport} from './genie-spark-setup.mjs';import {qualifySparkMedia,mediaPlanIdentity} from './spark-media-cycle.mjs';
@@ -15,7 +16,7 @@ try{
  const code="import fcntl,pathlib,sys; p=pathlib.Path.home()/'.cache/star-gate-spark-setup.lock'; p.parent.mkdir(parents=True,exist_ok=True); f=p.open('a'); fcntl.flock(f,fcntl.LOCK_EX|fcntl.LOCK_NB); print('locked',flush=True); sys.stdin.read()";
  lock=spawn('ssh',['-T','-o','BatchMode=yes','-o','ServerAliveInterval=15','-o','ServerAliveCountMax=3','--',plan.target.ssh,'python3 -I -c '+quote(code)],{stdio:['pipe','pipe','pipe']});lock.stderr.resume();lock.stdin.on('error',()=>{});
  await new Promise((resolve,reject)=>{lock.once('error',reject);lock.once('exit',()=>reject(Error('Host setup lock unavailable')));lock.stdout.once('data',data=>data.toString().trim()==='locked'?resolve():reject(Error('Host lock not confirmed')));});
- const current=await setupTransport(plan.target,{action:'media_plan'});save('preflight-observation.json',current);
+ const current=selectedMediaPreparation(await setupTransport(plan.target,mediaPreparationRequest(plan.reuse,true)),plan.reuse);save('preflight-observation.json',current);
  assert.ok(isDeepStrictEqual(mediaPlanIdentity(current),mediaPlanIdentity(plan.preparation)),'Prepared media configuration changed before execution');
  const result=await qualifySparkMedia(plan,{save,progress,inspect,owned:()=>lock.exitCode===null&&lock.signalCode===null,delay,
   start:id=>remote(['docker','start',id]),stop:id=>remote(['docker','stop','-t','120',id]),

@@ -1,3 +1,5 @@
+import {selectedMediaPreparation,mediaPreparationRequest} from './media-reuse.mjs';
+import {mediaPairReturn} from './media-pair-return.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
@@ -24,23 +26,33 @@ const heartbeat=setInterval(()=>save('progress.json',{...current,heartbeat_at:ne
 try{
  // Read the exact recipe bundle retained before ownership or any shutdown.
  const bundle=JSON.parse(fs.readFileSync(path.join(folder,'recipe-bundle.json')));
- const location=await setupTransport(plan.target,{action:'media_location',operation_id:plan.operation_id});
+ const location=plan.reuse?.directory?{directory:plan.reuse.directory}:await setupTransport(plan.target,{action:'media_location',operation_id:plan.operation_id});
  assert.ok(path.isAbsolute(location.directory));plan.target.directory=location.directory;saveMediaReceipt(folder,'plan.json',plan);
- const result=await runMediaSetup(plan,{
+ const pair=mediaPairReturn(plan,save);
+ const result=await runMediaSetup(plan,{pair,
   save,progress,delay,
+  preflight:plan.reuse?async llmContainer=>{
+   plan.reuse.llm_container=llmContainer;saveMediaReceipt(folder,'plan.json',plan);
+   save('reuse-preflight.json',selectedMediaPreparation(await setupTransport(plan.target,mediaPreparationRequest(plan.reuse,false)),plan.reuse));
+  }:undefined,
   maintenance:async action=>JSON.parse((await execute(plan.python,['-I','-B',fileURLToPath(new URL('./media_maintenance.py',import.meta.url)),folder,action],{maxBuffer:1024*1024})).stdout),
   hasMaintenanceIntent:()=>fs.existsSync(path.join(folder,'gateway/acquire.intent.json')),
   inspect:async id=>JSON.parse(await remote(['docker','inspect',id]))[0],start:id=>remote(['docker','start',id]),stop:id=>remote(['docker','stop','-t','120',id]),
-  recoveryInspect:()=>recoveryCall(plan.recovery,{action:'inspect'}),
-  verify:async()=>{const proof=await verifyRecovery(plan.recovery.url,plan.model,plan.context_length,{kind:'qwen_vllm',endpoint:plan.endpoint});assert.ok(qwenRecoveryProofValid(proof,plan.context_length),'Original LLM cache proof failed');return proof;},
-  prepare:llmContainer=>setupTransport(plan.target,{action:'prepare_media',selected_engines:plan.engines,llm_container:llmContainer,...bundle}),
-  readPreparation:()=>setupTransport(plan.target,{action:'status'}),
-  preparedMedia:()=>setupTransport(plan.target,{action:'media_plan'}),
+  recoveryInspect:()=>pair?pair.recoveryInspect():recoveryCall(plan.recovery,{action:'inspect'}),
+  verify:async()=>{if(pair)return pair.verify();const proof=await verifyRecovery(plan.recovery.url,plan.model,plan.context_length,{kind:'qwen_vllm',endpoint:plan.endpoint});assert.ok(qwenRecoveryProofValid(proof,plan.context_length),'Original LLM cache proof failed');return proof;},
+  prepare:async llmContainer=>{
+   if(!plan.reuse)return setupTransport(plan.target,{action:'prepare_media',selected_engines:plan.engines,llm_container:llmContainer,...bundle});
+   plan.reuse.llm_container=llmContainer;saveMediaReceipt(folder,'plan.json',plan);
+   try{const observed=selectedMediaPreparation(await setupTransport(plan.target,mediaPreparationRequest(plan.reuse,true)),plan.reuse);save('reuse-preparation.json',observed);return {state:'prepared_stopped',scope:'Exact retained media selected for fresh native qualification; no build or download.'};}
+   catch(e){return {state:'refused',error:e.message};}
+  },
+  readPreparation:()=>plan.reuse?{state:'prepared_stopped',process_running:false,progress:{phase:'reusing_exact_preparation'}}:setupTransport(plan.target,{action:'status'}),
+  preparedMedia:async()=>selectedMediaPreparation(await setupTransport(plan.target,mediaPreparationRequest(plan.reuse,true)),plan.reuse),
   qualify:async preparation=>{
    // Reuse the new-Spark native sample runner, which owns the setup host lock,
    // observes accepted jobs, retains/decodes outputs and stops its media engines.
    const destination=path.join(folder,'qualification');fs.mkdirSync(destination,{mode:0o700});
-   saveMediaReceipt(destination,'plan.json',{target_id:plan.worker_id,target:plan.target,preparation});
+   saveMediaReceipt(destination,'plan.json',{target_id:plan.worker_id,target:plan.target,preparation,...(plan.reuse?{reuse:plan.reuse}:{})});
    const log=fs.openSync(path.join(destination,'runner.log'),'ax',0o600);
    try{
     const child=spawn(process.execPath,[fileURLToPath(new URL('./spark-media-runner.mjs',import.meta.url)),destination],{stdio:['ignore',log,log]});

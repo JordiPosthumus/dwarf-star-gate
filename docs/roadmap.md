@@ -3,10 +3,13 @@
 This is a living roadmap, not a claim that every feature below ships today.
 Start with the [current work plan](current-work-plan.md) for the reconciled active
 checklist and delivery order; this document preserves the detailed designs.
-DSG remains a companion to [antirez's DS4 engine](https://github.com/antirez/ds4).
-The engine performs inference and manages KV state; DSG observes and routes.
-The [DS4 integration contract](ds4-integration.md) is explicit: learn the engine's
+DSG routes DS4 and enrolled OpenAI-compatible workers, including vLLM and oMLX.
+The engines perform inference and manage KV state; DSG observes and routes.
+For [antirez's DS4 engine](https://github.com/antirez/ds4), the
+[DS4 integration contract](ds4-integration.md) remains explicit: learn the engine's
 existing interfaces deeply; do not edit DS4 or require a custom server build.
+The DS4-focused designs below retain their historical scope; current delivery
+status belongs in the work plan and [Kanban](../kanban/README.md).
 
 ## Delivery principles
 

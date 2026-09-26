@@ -1,10 +1,15 @@
+import {createOmlxEnrollment,restoreOmlxEnrollments} from './recovery-omlx-enrollment.mjs';
+import {createPairEnrollment,restorePairEnrollments} from './recovery-pair-enrollment.mjs';
 import {requestAuthorized} from './request-auth.mjs';
 import {createMediaHosts} from './media-hosts.mjs';
+import {createMediaCandidates} from './media-candidates.mjs';
+import {machinesFor} from './fleet-machines.mjs';
 import {createMediaSetup} from './media-setup.mjs';
 import {genieCapabilityKeys,validateGenieCapabilities,genieCapabilities} from './genie-capabilities.mjs';
 import {createMediaExecution} from './media-execution.mjs';
 import {sparkServiceBinding,validateServiceAddition,applyServiceAddition,restoreSparkServices} from './spark-services.mjs';
 import {MediaJobs,handleMediaRequest} from './media-jobs.mjs';
+import {videoCapabilities} from './media-capabilities.mjs';
 import {inspectMediaJobInputs} from './media-input-placement.mjs';
 import {activeJobs,activeCount,hasCapacity,requestCapacity,oldestActive} from './worker-activity.mjs';
 import {PRIORITY_HEADER,requestPriority,priorityRank,priorityIndex,priorityOrder} from './job-priority.mjs';
@@ -282,7 +287,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   if(config.media_jobs!==undefined&&(!config.media_jobs||typeof config.media_jobs!=='object'||typeof config.media_jobs.enabled!=='boolean'))throw new Error('media_jobs.enabled must be a boolean');
   const store = new AffinityStore(config.state_file);
   let mediaJobs;
-  try{if(config.media_jobs?.enabled)mediaJobs=new MediaJobs(path.join(path.dirname(config.state_file),'media-jobs.json'),{inputLimits:config.media_jobs});}catch(e){store.close();throw e;}
+  try{if(config.media_jobs?.enabled)mediaJobs=new MediaJobs(path.join(path.dirname(config.state_file),'media-jobs.json'),{inputLimits:config.media_jobs,heldJobIds:config.media_jobs.held_job_ids});}catch(e){store.close();throw e;}
   const conversationTurns=()=>store.data.conversation_turns??configuredConversationTurns;
   const queueTimeoutMs=()=>store.data.queue_timeout_ms??configuredQueueTimeout;
   // Like registered workers, an explicit UI setting survives process restarts.
@@ -294,7 +299,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   try { definitions = store.data.workers === undefined ? initial : workerConfigs(store.data.workers); }
   catch (e) { store.close(); throw e; }
   const serviceConfig={...config,recovery:structuredClone(config.recovery),media_jobs:structuredClone(config.media_jobs),genie_chat:structuredClone(config.genie_chat)};
-  try { restoreSparkServices(serviceConfig,store.data.spark_services??{},definitions); }
+  try { restoreSparkServices(serviceConfig,store.data.spark_services??{},definitions); restorePairEnrollments(serviceConfig,store.data.pair_recovery_enrollments??{},definitions); restoreOmlxEnrollments(serviceConfig,store.data.omlx_recovery_enrollments??{},definitions); }
   catch(e){store.close();throw e;}
   let profiles;try{profiles=servingProfiles(config.serving_profiles,definitions);}catch(e){store.close();throw e;}
   const nodes = definitions.map(makeNode);
@@ -370,16 +375,23 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   const serialize = fn => { const next = mutation.then(fn); mutation = next.catch(() => {}); return next; };
   const definition = n => Object.fromEntries(workerFields.filter(k => n[k] !== undefined).map(k => [k,n[k]]));
   let recovery;
-  try { recovery=new Recovery(serviceConfig.recovery,{store,nodes,model:config.model,stopping:()=>shuttingDown||draining,log,
+  try { recovery=new Recovery(serviceConfig.recovery,{store,nodes,model:config.model,stopping:()=>shuttingDown||draining,log,fleetConfig:serviceConfig,directReserved,isPairQualificationEnabled:()=>capabilityStatus().server_changes&&capabilityStatus().inspection,isOmlxQualificationEnabled:()=>capabilityStatus().server_changes&&capabilityStatus().inspection,
+    // Only a live undispatched request can authorize waking an enrolled service.
+    // A blocked conversation or request pinned elsewhere grants no authority.
+    omlxDemand:n=>waiting.find(job=>!job.cancelled&&!job.dispatched&&!job.upstream&&!job.res.destroyed&&
+      allowsWorker(job.modelRoute,n)&&(!job.fixedHome||job.fixedHome===n)&&!sessionWork(nodes,job.key)&&
+      !(job.key&&waiting.some(prior=>prior!==job&&!prior.cancelled&&prior.key===job.key&&prior.sequence<job.sequence)))?.id??null,
     reinstate:(n,expected,recoveryState)=>{
-      if(n.removed || n.drained || n.active || n.queue.length || JSON.stringify(n.quarantine)!==JSON.stringify(expected) || shuttingDown || draining)throw new Error('reinstatement_state_changed');
+      if(n.removed || n.drained || n.active || (n.queue.length&&!recovery.omlxReadmissionOwnsQueue(n,recoveryState)) || JSON.stringify(n.quarantine)!==JSON.stringify(expected) || shuttingDown || draining)throw new Error('reinstatement_state_changed');
       const quarantined={...store.data.quarantined};delete quarantined[n.id];
       store.save({...store.data,quarantined,recovery:recoveryState});
       n.quarantine=null;n.inferenceFailures=0;n.healthy=true;n.failures=0;
       observe(()=>shadow.reset(n.id));
     }}); } catch(e){store.close();throw e;}
+  const pairEnrollment=createPairEnrollment({config:serviceConfig,store,recovery,isEnabled:()=>!draining&&!shuttingDown&&capabilityStatus().server_changes&&capabilityStatus().inspection&&recovery.state.automatic});
+  const omlxEnrollment=createOmlxEnrollment({config:serviceConfig,store,recovery,isEnabled:()=>!draining&&!shuttingDown&&capabilityStatus().server_changes&&capabilityStatus().inspection&&recovery.state.automatic});
   let agents;
-  try {agents=new AgentControl({store,nodes,log,onPause:ids=>recovery.operatorPause(ids),canHandback:async n=>recovery.profileHandbackOffer(n,{ignorePause:true}),onHandback:()=>void recovery.tick(),canResume:async n=>{
+  try {agents=new AgentControl({store,nodes,log,onPause:ids=>recovery.operatorPause(ids),canHandback:async (n,{releasingHoldId})=>recovery.profileHandbackOffer(n,{ignorePause:true,releasingHoldId}),onHandback:()=>void recovery.tick(),canResume:async n=>{
     if(shuttingDown||draining)throw new Error('Gateway is draining; hold retained');
     await freshProbe(n);
     if(shuttingDown||draining||n.recovering||n.quarantine||n.probeError||!n.modelMatches||!validContext(n.contextLength)||n.contextLength<requiredContext(n))throw new Error('Fresh compatible worker readiness required; hold retained');
@@ -393,13 +405,25 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   const oldestQueued=queue=>queue.reduce((oldest,job)=>!oldest||job.createdMono<oldest.createdMono?job:oldest,null);
 
   const capabilityStatus=()=>genieCapabilities(store.data.genie_capabilities,config,recovery.state.automatic);
-  const mediaHosts=createMediaHosts(serviceConfig,store,{workers:()=>registry().workers,binding:(id,c)=>recovery.binding(nodes.find(n=>n.id===id),c)});
-  const mediaStatus=()=>{const state=mediaExecution.status();return {...state,text_video_supported:!!mediaJobs,...mediaHosts.status(state.jobs),setup:mediaSetup?.status()??null};};
-  const mediaExecution=createMediaExecution(serviceConfig,mediaJobs,{isAllowed:mediaHosts.allowed,isEnabled:()=>!draining&&capabilityStatus().media,matchesWorker:(id,c)=>{const n=nodes.find(n=>n.id===id);return !!n&&recovery.binding(n,c);}});
-  const mediaSetup=mediaJobs?createMediaSetup(serviceConfig,store,{directory:path.join(path.dirname(config.state_file),'media-setup'),workers:()=>nodes.map(definition),binding:(id,c)=>{const n=nodes.find(n=>n.id===id);return !!n&&recovery.binding(n,c);},isEnabled:()=>!draining&&capabilityStatus().media,isAllowed:mediaHosts.allowed}):null;
+  const mediaHosts=createMediaHosts(serviceConfig,store,{workers:()=>registry().workers,enrollmentWorker:id=>{const n=nodes.find(n=>n.id===id);return n?definition(n):null;},binding:(id,c)=>recovery.binding(nodes.find(n=>n.id===id),c)});
+  let mediaCandidates=null;
+  const mediaStatus=()=>{const state=mediaExecution.status();return {...state,text_video_supported:!!mediaJobs,...mediaHosts.status(state.jobs),setup:mediaSetup?.status()??null,improvements:mediaCandidates?.status()??null};};
+  const mediaExecution=createMediaExecution(serviceConfig,mediaJobs,{externalOperations:()=>[...(mediaSetup?.status().operations??[]),...(mediaCandidates?.operations()??[])],workers:()=>nodes.map(definition),isAllowed:mediaHosts.allowed,isEnabled:()=>!draining&&capabilityStatus().media,matchesWorker:(id,c)=>{const n=nodes.find(n=>n.id===id);return !!n&&recovery.binding(n,c);}});
+  const mediaSetup=mediaJobs?createMediaSetup(serviceConfig,store,{assertCapacity:id=>mediaExecution.assertCapacity(id),directory:path.join(path.dirname(config.state_file),'media-setup'),workers:()=>nodes.map(definition),binding:(id,c)=>{const n=nodes.find(n=>n.id===id);return !!n&&recovery.binding(n,c);},isEnabled:()=>!draining&&capabilityStatus().media,isInspectionEnabled:()=>capabilityStatus().inspection,isAllowed:mediaHosts.allowed}):null;
+  mediaCandidates=mediaJobs?createMediaCandidates(serviceConfig,store,{
+    directory:path.join(path.dirname(config.state_file),'media-candidates'),promotions:mediaSetup.promotions,workers:()=>nodes.map(definition),isAllowed:mediaHosts.allowed,
+    isEnabled:()=>!draining&&!shuttingDown&&capabilityStatus().media&&capabilityStatus().inspection&&capabilityStatus().server_changes,
+    assertCapacity:(id,ownOperation)=>mediaExecution.assertCapacity(id,ownOperation),
+    hostAvailable:(id,ownLock)=>{const physical=machinesFor(id,serviceConfig);return nodes.filter(n=>machinesFor(n.id,serviceConfig).some(m=>physical.includes(m))).every(n=>!n.recovering&&!agents.holds(n.id).length&&agents.maintenanceLocks(n.id).every(lock=>n.id===id&&lock.id===ownLock&&lock.control_channel==='approved_operation'));},
+    qualificationReady:id=>{
+      const physical=machinesFor(id,serviceConfig),available=n=>n.healthy&&!n.drained&&!n.quarantine&&!n.recovering&&!agents.holds(n.id).length&&!agents.maintenanceLocks(n.id).length;
+      const selected=nodes.filter(n=>machinesFor(n.id,serviceConfig).some(m=>physical.includes(m)));
+      return selected.some(n=>n.id===id)&&selected.every(n=>available(n)&&!activeCount(n)&&!n.queue.length&&!parkedFor(n).length&&!directReserved(n))&&nodes.some(n=>available(n)&&!machinesFor(n.id,serviceConfig).some(m=>physical.includes(m)));
+    },
+  }):null;
   const rebalanceEnabled=()=>capabilityStatus().rebalance;
   const allocationStatus=slot=>slot.turnAllocation?{turns_used:slot.turnAllocation.used,remaining:Math.max(0,conversationTurns()-slot.turnAllocation.used),waiting_for_next_turn:!slot.active&&slot.turnAllocation.until>performance.now(),idle_remaining_ms:Math.max(0,Math.ceil(slot.turnAllocation.until-performance.now()))}:null;
-  const stats = () => ({ version: 1, genie_capabilities:capabilityStatus(), genie_thinking:genieThinking(), serving_profiles:profiles, conversation_turns:conversationTurns(),conversation_turn_idle_ms:conversationTurnIdleMs, model_routes:routes?Object.fromEntries([...routes].map(([name,workers])=>[name,[...workers]])):null, agent_api_version:1, maintenance_lock_version:1,client_watch_version:1,client_watch:clientWatch.snapshot(), model: config.model, context_length: contextLimit(), queue_timeout_ms:queueTimeoutMs(), request_timeout_ms:config.request_timeout_ms??360000000, direct_reserve:{enabled:directReserveEnabled(),release_ms:directReserveMs(),reserved:nodes.filter(n=>directReserved(n)).map(n=>n.id)}, draining,startup:{...startup}, dataset:dataset.snapshot(), routing_shadow:shadow.snapshot(),recovery:recovery.status(),protections:visionProtection.status(),
+  const stats = () => ({ version: 1, genie_capabilities:capabilityStatus(), genie_thinking:genieThinking(), serving_profiles:profiles, conversation_turns:conversationTurns(),conversation_turn_idle_ms:conversationTurnIdleMs, model_routes:routes?Object.fromEntries([...routes].map(([name,workers])=>[name,[...workers]])):null, agent_api_version:1, maintenance_lock_version:1,client_watch_version:1,client_watch:clientWatch.snapshot(), model: config.model, context_length: contextLimit(), queue_timeout_ms:queueTimeoutMs(), request_timeout_ms:config.request_timeout_ms??360000000, direct_reserve:{enabled:directReserveEnabled(),release_ms:directReserveMs(),reserved:nodes.filter(n=>directReserved(n)).map(n=>n.id)}, draining,startup:{...startup}, dataset:dataset.snapshot(), routing_shadow:shadow.snapshot(),recovery:{...recovery.status(),pair_enrollment:pairEnrollment.status(),omlx_enrollment:omlxEnrollment.status()},protections:visionProtection.status(),
     genie_admission_version:1,genie_flexible_assignment:true,continuity:{schema:1,recent_rejections:rejections.slice(0,20),safe_retry_contract:true,queued_relocation:true,automatic_relocation:true,automatic_relocation_scope:automaticRelocationScope,automatic_affinity_rebalance_min_wait_ms:automaticAffinityWait,patient_wait:true,
       relocation:{completed:relocation.completed,rejected:relocation.rejected,offers:relocationOffers().length,genie_enabled:rebalanceEnabled(),genie_offers:genieRelocationOffers(),diagnostics:relocationDiagnostics(),last:relocation.last},
       waiting:waiting.length,oldest_wait_seconds:waiting.length?Math.max(0,(performance.now()-oldestQueued(waiting).createdMono)/1000):null,
@@ -1033,7 +1057,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
 
   const server = http.createServer((req, res) => {
     if (!requestAuthorized(config,req)) { req.resume(); return error(res, 401, 'unauthorized', 'Bearer API key required'); }
-    if(handleMediaRequest(req,res,{jobs:mediaJobs,accepting:!draining}))return;
+    if(handleMediaRequest(req,res,{jobs:mediaJobs,accepting:!draining,capabilities:()=>videoCapabilities(mediaStatus(),serviceConfig)}))return;
     // Reject absolute URLs and encoded/normalized alternate routes; no admin forwarding.
     const discovery = req.method === 'GET' && /^\/v1\/models(?:\?[^#]*)?$/.test(req.url);
     const route = discovery ? 'GET /v1/models' : `${req.method} ${req.url}`;
@@ -1233,7 +1257,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     context_limit_source:store.data.pool_context_length === undefined ? 'config' : 'saved',
     conversation_turns:conversationTurns(),conversation_turn_idle_ms:conversationTurnIdleMs,conversation_turns_control:true,conversation_turns_source:store.data.conversation_turns!==undefined?'saved':config.conversation_turns!==undefined?'config':'default',
     queue_timeout_ms:queueTimeoutMs(),queue_timeout_control:true,queue_timeout_source:store.data.queue_timeout_ms!==undefined?'saved':config.queue_timeout_ms!==undefined?'config':'default',
-    recovery:recovery.status(),protections:visionProtection.status(),queued_relocation:{schema:1,automatic:true,automatic_scope:automaticRelocationScope,automatic_affinity_rebalance_min_wait_ms:automaticAffinityWait,offers:relocationOffers(),diagnostics:relocationDiagnostics(),completed:relocation.completed,rejected:relocation.rejected},
+    recovery:{...recovery.status(),pair_enrollment:pairEnrollment.status(),omlx_enrollment:omlxEnrollment.status()},protections:visionProtection.status(),queued_relocation:{schema:1,automatic:true,automatic_scope:automaticRelocationScope,automatic_affinity_rebalance_min_wait_ms:automaticAffinityWait,offers:relocationOffers(),diagnostics:relocationDiagnostics(),completed:relocation.completed,rejected:relocation.rejected},
     workers: nodes.map(n => ({ ...definition(n), ...stats().workers.find(w => w.id === n.id),...agents.pauseStatus(n.id,{includeReason:true}) })) });
   async function freshProbe(node) {
     while (node.probing) await delay(10);
@@ -1384,6 +1408,8 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
         applyServiceAddition(serviceConfig,binding);recovery.configs.set(node.id,binding.recovery);
       }else store.setWorkers([...nodes.map(definition), settings], { ...store.data.drained, [node.id]: true });
       nodes.push(node);
+      const recoveryOwner=recovery.physicalOwner(node.id);
+      if(recoveryOwner){node.recoveryOperationId=recoveryOwner;node.recovering=true;node.healthy=false;}
       agent.maxSockets=tlsAgent.maxSockets=Math.max(16,nodes.reduce((sum,worker)=>sum+requestCapacity(worker),0));
       log('worker_registered', { node: node.id, context_length: node.contextLength, drained: true });
       return registry();
@@ -1517,11 +1543,19 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
         return json(res,200,await inspectMediaJobInputs(serviceConfig,mediaJobs,JSON.parse(body)));
       }catch(e){return error(res,409,'media_input_inspection_failed',e.message);}})();});return;
     }
-    if(req.method==='POST'&&['/genie-media-start','/genie-media-setup','/media-setup-complete'].includes(req.url)){
+    if(req.method==='POST'&&['/genie-media-improvement','/genie-media-qualify','/genie-media-promote','/media-qualification-complete','/media-qualification-permit','/media-candidate-permit','/media-candidate-complete'].includes(req.url)){
       let body='';req.on('data',chunk=>{body+=chunk;if(Buffer.byteLength(body)>2048)req.destroy();});req.on('error',()=>{});
-      req.on('end',()=>{void serialize(async()=>{try{const input=JSON.parse(body);return json(res,202,await (req.url==='/genie-media-start'?mediaExecution.start(input):req.url==='/genie-media-setup'?mediaSetup.start(input):mediaSetup.finish(input)));}catch(e){return error(res,409,'media_start_failed',e.message);}});});return;
+      req.on('end',()=>{void serialize(async()=>{try{
+        if(!mediaCandidates)throw Error('Media improvements are not configured');
+        const input=JSON.parse(body),start=req.url==='/genie-media-improvement';
+        return json(res,start||req.url==='/genie-media-qualify'?202:200,await (start?mediaCandidates.start(input):req.url==='/genie-media-promote'?mediaCandidates.promote(input):req.url==='/genie-media-qualify'?mediaCandidates.qualify(input):req.url==='/media-qualification-complete'?mediaCandidates.finishQualification(input):req.url==='/media-qualification-permit'?mediaCandidates.qualificationPermit(input):req.url==='/media-candidate-permit'?mediaCandidates.permit(input):mediaCandidates.finish(input)));
+      }catch(e){return error(res,409,'media_candidate_unconfirmed',e.message);}});});return;
     }
-    if (req.method !== 'POST' || !['/set-genie-thinking','/media-host-eligibility','/drain-workers', '/resume-workers', '/maintenance-lock','/release-maintenance-lock','/maintenance-receipt','/add-worker', '/edit-endpoint', '/check-endpoint', '/remove-worker', '/set-ssh-fallbacks','/set-context-limit','/set-conversation-turns','/set-queue-timeout','/set-protection','/set-job-priority','/set-worker-concurrency','/set-direct-reserve','/relocate-queued','/genie-relocate-queued','/genie-capability','/recovery-policy','/recovery-handback-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/grant-agent','/revoke-agent','/release-agent-hold','/agent/v1/drain','/agent/v1/resume','/agent/v1/receipt'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
+    if(req.method==='POST'&&['/genie-media-start','/genie-media-setup','/genie-media-repair','/genie-media-audit','/media-setup-complete'].includes(req.url)){
+      let body='';req.on('data',chunk=>{body+=chunk;if(Buffer.byteLength(body)>2048)req.destroy();});req.on('error',()=>{});
+      req.on('end',()=>{void serialize(async()=>{try{const input=JSON.parse(body);return json(res,202,await (req.url==='/genie-media-start'?mediaExecution.start(input):req.url==='/genie-media-setup'?mediaSetup.start(input):req.url==='/genie-media-repair'?mediaSetup.repair(input):req.url==='/genie-media-audit'?mediaSetup.audit(input):mediaSetup.finish(input)));}catch(e){return error(res,409,'media_start_failed',e.message);}});});return;
+    }
+    if (req.method !== 'POST' || !['/set-genie-thinking','/media-host-eligibility','/drain-workers', '/resume-workers', '/maintenance-lock','/release-maintenance-lock','/maintenance-receipt','/add-worker', '/edit-endpoint', '/check-endpoint', '/remove-worker', '/set-ssh-fallbacks','/set-context-limit','/set-conversation-turns','/set-queue-timeout','/set-protection','/set-job-priority','/set-worker-concurrency','/set-direct-reserve','/relocate-queued','/genie-relocate-queued','/genie-capability','/recovery-policy','/recovery-handback-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/recovery-pair-permit','/enroll-pair-recovery','/enroll-omlx-recovery','/qualify-omlx-recovery','/recovery-omlx-permit','/qualify-pair-recovery','/grant-agent','/revoke-agent','/release-agent-hold','/agent/v1/drain','/agent/v1/resume','/agent/v1/receipt'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
     let body = '';
     req.on('data', chunk => { body += chunk; if (Buffer.byteLength(body) > 4096) req.destroy(); });
     req.on('error', () => {});
@@ -1538,6 +1572,12 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
           if(req.url==='/maintenance-lock')return json(res,201,agents.maintenanceLock(input,req.headers['x-dsg-control-channel']));
           if(req.url==='/release-maintenance-lock')return json(res,200,agents.maintenanceRelease(input,req.headers['x-dsg-control-channel']));
           if(req.url==='/maintenance-receipt')return json(res,200,agents.maintenanceReceipt(input));
+          if(req.url==='/qualify-omlx-recovery')return json(res,202,recovery.requestOmlxQualification(input));
+          if(req.url==='/recovery-omlx-permit')return json(res,200,recovery.omlxPermit(input));
+          if(req.url==='/qualify-pair-recovery')return json(res,202,recovery.request(input,'genie',{canary:true,qualification:true}));
+          if(req.url==='/enroll-pair-recovery')return json(res,202,pairEnrollment.request(input));
+          if(req.url==='/enroll-omlx-recovery')return json(res,202,omlxEnrollment.request(input));
+          if(req.url==='/recovery-pair-permit')return json(res,200,recovery.pairPermit(input));
           if(req.url==='/recovery-recheck')return json(res,202,recovery.reconcile(input));
           if(req.url==='/genie-capability') {
             if(Object.keys(input).sort().join(',')!=='enabled,key'||![...genieCapabilityKeys,'recovery'].includes(input.key)||typeof input.enabled!=='boolean')throw new Error('Specify a known capability and boolean enabled');
@@ -1650,7 +1690,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
       if(!startup.barrier){await Promise.all(nodes.map(probe));startup.complete=true;startup.completed_at=new Date().toISOString();startup.unavailable=nodes.filter(n=>!n.healthy&&!n.drained&&!n.quarantine).map(n=>n.id);}
       healthTimer = setInterval(() => { for (const n of nodes) void probe(n); }, config.health_interval_ms ?? 5000);
       waitingTimer=setInterval(pumpWaiting,1000);waitingTimer.unref?.();
-      void recovery.tick();recoveryTimer=setInterval(()=>void recovery.tick(),30000);
+      void recovery.tick();pairEnrollment.tick();omlxEnrollment.tick();recoveryTimer=setInterval(()=>{void recovery.tick();pairEnrollment.tick();omlxEnrollment.tick();},30000);
       return server.address();
     },
     drain(value = true) { draining = value; log('drain_changed', { draining }); },
@@ -1660,7 +1700,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
       for(const node of nodes)releaseTurns(node);
       clearInterval(waitingTimer);
       for(const job of [...waiting]){detach(job);reject(job.req,job.res,503,'draining','Gateway is stopping; the waiting request was not dispatched. A compatible patient client may retry after DSG returns.',{...job,node:job.fixedHome,reason:'gateway_draining'});job.cleanup();}
-      clearInterval(recoveryTimer);await recovery.close();
+      clearInterval(recoveryTimer);pairEnrollment.close();omlxEnrollment.close();await Promise.all([pairEnrollment.idle(),omlxEnrollment.idle()]);await recovery.close();
       if (control) await new Promise(resolve => control.close(resolve));
       await new Promise(resolve => { server.close(resolve); server.closeIdleConnections(); });
       clearInterval(healthTimer); agent.destroy(); tlsAgent.destroy(); store.close();await dataset.close();

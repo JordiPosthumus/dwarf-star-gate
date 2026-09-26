@@ -675,8 +675,8 @@ test('retired encoder configuration is ignored while numerical collection preser
 
 test('client metadata is recorded while queued, never changes body settings or reaches DS4',async t=>{
   const r=await rig(t,1,{dataset_enabled:true});
-  const first=r.request(JSON.stringify({stream:true,delay:400}),'busy');
-  await until(()=>r.backends[0].active===1);
+  const first=r.request(JSON.stringify({stream:true,fixture_hold_stream:true}),'busy');
+  await until(()=>r.backends[0].heldStreams?.length===1);
   const body=JSON.stringify({stream:true,reasoning_effort:'xhigh',max_tokens:131072});
   const header=JSON.stringify({schema:1,prompt_tokens_estimate:262144,turn_index:4,compaction_count:1,reasoning_effort:'low'});
   const second=r.request(body,'early',{headers:{'x-dsg-client-metadata':header}});
@@ -685,6 +685,7 @@ test('client metadata is recorded while queued, never changes body settings or r
   const event=read().find(e=>e.client_metadata?.status==='ready');
   assert.ok(!read().some(e=>e.request_id===event.request_id&&e.kind==='dispatch'));
   assert.equal(event.client_metadata.reasoning_effort,'low');
+  r.backends[0].heldStreams.shift()();
   assert.equal((await first).status,200);assert.equal((await second).status,200);
   assert.equal(r.backends[0].records[1].body.toString(),body);
   assert.equal(r.backends[0].records[1].headers['x-dsg-client-metadata'],undefined);
@@ -1552,21 +1553,23 @@ test('busy home queues FIFO, never spills to idle Spark', async t => {
   assert.equal(r.backends[0].peak, 1); assert.equal(r.backends[1].records.length, 0);
 });
 test('core rebalances a mature affinity queue without Genie or dashboard',async t=>{
-  const r=await rig(t,2,{automatic_affinity_rebalance_min_wait_ms:25});
+  const r=await rig(t,2,{automatic_affinity_rebalance_min_wait_ms:300000});
   await r.request('{"seed":"a"}','a');await r.request('{"seed":"b"}','b');await r.request('{"seed":"c"}','c');
-  // The production sweep runs once per second. Keep the home occupied long
-  // enough to prove the core-owned sweep, rather than winning a timing race
-  // with the ordinary FIFO completion path.
-  const active=r.request('{"delay":1500,"active":"c"}','c');await until(()=>r.gateway.nodes[0].active);
-  const body='{"queued":"a","reasoning_effort":"xhigh"}',queued=r.request(body,'a');
-  await until(()=>r.gateway.nodes[0].queue.length===1);
-  assert.equal(r.gateway.stats().continuity.relocation.diagnostics.sources[0].automatic_reason,'automatic_wait_threshold');
-  const result=await queued;await active;
-  assert.equal(result.headers['x-ds4-node'],'spark2');assert.equal(result.headers['x-ds4-affinity'],'rebalanced');
-  assert.equal(r.backends[1].records.at(-1).body.toString(),body);
-  assert.equal(r.gateway.stats().continuity.automatic_relocation_scope,'first_unaffined_or_affinity_wait_expired');
-  assert.equal(r.gateway.stats().continuity.automatic_affinity_rebalance_min_wait_ms,25);
-  assert.equal(r.gateway.stats().continuity.relocation.last.actor,'scheduler');
+  // Hold the active response until relocation completes. Explicitly age the
+  // queued request after proving the threshold, independent of CI scheduling.
+  const active=r.request('{"wait_for_release":true,"active":"c"}','c');await until(()=>r.backends[0].releases?.length===1);
+  try{
+    const body='{"queued":"a","reasoning_effort":"xhigh"}',queued=r.request(body,'a');
+    await until(()=>r.gateway.nodes[0].queue.length===1);
+    assert.equal(r.gateway.stats().continuity.relocation.diagnostics.sources[0].automatic_reason,'automatic_wait_threshold');
+    r.gateway.nodes[0].queue[0].createdMono=performance.now()-300001;
+    const result=await queued;
+    assert.equal(result.headers['x-ds4-node'],'spark2');assert.equal(result.headers['x-ds4-affinity'],'rebalanced');
+    assert.equal(r.backends[1].records.at(-1).body.toString(),body);
+    assert.equal(r.gateway.stats().continuity.automatic_relocation_scope,'first_unaffined_or_affinity_wait_expired');
+    assert.equal(r.gateway.stats().continuity.automatic_affinity_rebalance_min_wait_ms,300000);
+    assert.equal(r.gateway.stats().continuity.relocation.last.actor,'scheduler');
+  }finally{r.backends[0].releases.shift()();await active;}
 });
 test('maintenance lock revokes a relocation offer and blocks mature automatic handover until explicit resume',async t=>{
   const r=await rig(t,2,{control_socket:true,genie_rebalance_min_wait_ms:0});

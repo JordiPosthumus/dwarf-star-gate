@@ -11,7 +11,7 @@ import {fileURLToPath} from 'node:url';
 
 const SCRIPTS_DIR=path.join(path.dirname(fileURLToPath(import.meta.url)),'..','..','startScripts');
 const RESOLVED=path.resolve(SCRIPTS_DIR);
-const DEFAULT_TIMEOUT_MS=120000,STATUS_TIMEOUT_MS=20000;
+const DEFAULT_TIMEOUT_MS=120000,START_SCRIPT_TIMEOUT_MS=960000,STATUS_TIMEOUT_MS=20000;
 const START_VERIFY_TIMEOUT_MS=900000,STOP_VERIFY_TIMEOUT_MS=90000,VERIFY_INTERVAL_MS=5000;
 
 // Explicit allowlist only. A worker/action pair absent here is refused — adding
@@ -82,18 +82,19 @@ export function createReadinessVerifier({resolveEndpoint,startTimeoutMs=START_VE
         try{
           const base=endpoint.url.replace(/\/+$/,'').replace(/\/v1$/,'');
           const res=await fetch(`${base}/v1/models`,{headers:endpoint.headers??{},signal:AbortSignal.timeout(5000),redirect:'error'});
-          await res.body?.cancel();
-          started=res.ok;
+          const body=res.ok?await res.json():null;
+          if(!res.ok)await res.body?.cancel();
+          started=Array.isArray(body?.data)&&body.data.some(model=>typeof model?.id==='string'&&model.id.length>0&&(!endpoint.model||model.id===endpoint.model));
         }catch{started=false;}
         if(started)return {state:'ready',detail:'endpoint answered an authenticated model-list request',checked_at:now()};
       }else{
         const tcp=await probe(endpoint.url);
-        if(!tcp.reachable)return {state:'stopped',detail:'endpoint no longer accepts connections',checked_at:now()};
+        if(!tcp.reachable&&tcp.detail==='ECONNREFUSED')return {state:'stopped',detail:'endpoint explicitly refused the TCP connection',checked_at:now()};
       }
       if(now()>=deadline)return {state:'timeout',checked_at:now(),
         detail:action==='start'
           ?'endpoint still not answering when verification gave up; the model may still be loading — run Status before retrying or assuming failure'
-          :'endpoint still accepting connections when verification gave up; the model process may not be fully stopped'};
+          :'shutdown could not be proved: the endpoint still accepts connections or its network state is unknown'};
       await sleep(intervalMs);
     }
   };
@@ -101,13 +102,20 @@ export function createReadinessVerifier({resolveEndpoint,startTimeoutMs=START_VE
 
 export function createPowerRunner({
   spawn=async(file,{timeoutMs})=>{
-    const {execFile}=await import('node:child_process');
+    const {spawn:spawnProcess}=await import('node:child_process');
     return await new Promise(resolve=>{
-      // Scripts own their output entirely; a bounded buffer is evidence, not control.
-      const child=execFile(file,{cwd:path.dirname(file),timeout:timeoutMs,maxBuffer:256*1024,windowsHide:true},(error,stdout,stderr)=>{
-        resolve({exit_code:error?.code??(error?.killed?null:0),timed_out:!!error?.killed,output:`${stdout}${stderr}`.slice(-4000)});
-      });
-      return child;
+      // execFile does not forward detached to spawn on the installed Node.
+      // A separate process group keeps background model servers alive when
+      // launchd tears down the dashboard group. Keep only a bounded output tail.
+      const child=spawnProcess(file,[],{cwd:path.dirname(file),windowsHide:true,detached:true,stdio:['ignore','pipe','pipe']});
+      let output='',timedOut=false,settled=false;
+      const append=chunk=>{output=(output+chunk).slice(-4000);};
+      child.stdout.setEncoding('utf8');child.stderr.setEncoding('utf8');
+      child.stdout.on('data',append);child.stderr.on('data',append);
+      const timer=setTimeout(()=>{timedOut=true;child.kill('SIGTERM');},timeoutMs);
+      const finish=exit_code=>{if(settled)return;settled=true;clearTimeout(timer);resolve({exit_code,timed_out:timedOut,output});};
+      child.once('error',error=>{append(`Launch failed: ${error.message}`);finish(null);});
+      child.once('close',code=>finish(code));
     });
   },
   // verify(worker, action) must report real state, not script exit:
@@ -119,7 +127,7 @@ export function createPowerRunner({
   if(verify!==null&&typeof verify!=='function')throw new Error('verify must be a function when provided');
   const running=new Map(); // machine-group key -> in-flight mutation
   const history=[]; // last receipts, bounded
-  async function run(worker,action){
+  async function run(worker,action,{actionId=null}={}){
     const groups=machineGroup(worker);
     if(!groups)return {worker,action,ok:false,output:'No enrolled script for this worker; scripts remain the source of truth.'};
     const file=powerScript(worker,action,directory);
@@ -131,7 +139,9 @@ export function createPowerRunner({
       if(busyGroup)return {worker,action,ok:false,busy:true,
         output:`A start/stop is already running for another model on the same hardware (${busyGroup}); wait for it to finish. Read-only status stays available.`};
     }
-    const timeoutMs=action==='status'?STATUS_TIMEOUT_MS:DEFAULT_TIMEOUT_MS;
+    const timeoutMs=action==='status'?STATUS_TIMEOUT_MS:action==='start'?START_SCRIPT_TIMEOUT_MS:DEFAULT_TIMEOUT_MS;
+    const receipt={worker,action,action_id:actionId,state:'running',ok:false,at:now(),verified:{state:'pending'}};
+    history.unshift(receipt);history.length=Math.min(history.length,64);
     const execute=(async()=>{
       const started=now();
       let result;
@@ -139,14 +149,14 @@ export function createPowerRunner({
       catch(error){result={exit_code:null,timed_out:false,output:`Launch failed: ${error.message}`};}
       const scriptOk=!result.timed_out&&result.exit_code===0;
       let verified={state:'unverified',detail:'status receipts are script output, not readiness proof',checked_at:started};
-      if(action!=='status'&&scriptOk&&verify){
-        verified=await verify(worker,action);
+      if(action!=='status'&&verify){
+        try{verified=await verify(worker,action);}
+        catch(error){verified={state:'unverified',detail:`Verification unavailable: ${error.message}`,checked_at:now()};}
       }else if(action!=='status'&&!scriptOk){
         verified={state:'failed',detail:'script exited nonzero; endpoint state unknown',checked_at:now()};
       }
-      const receipt={worker,action,ok:scriptOk&&verified.state!=='failed'&&verified.state!=='timeout',exit_code:result.exit_code??null,
-        timed_out:!!result.timed_out,at:started,finished_at:now(),output:String(result.output??'').slice(-4000),verified};
-      history.unshift(receipt);history.length=Math.min(history.length,64);
+      Object.assign(receipt,{state:'complete',ok:scriptOk&&(action==='status'||verified.state===(action==='start'?'ready':'stopped')),exit_code:result.exit_code??null,
+        timed_out:!!result.timed_out,at:started,finished_at:now(),output:String(result.output??'').slice(-4000),verified});
       return receipt;
     })();
     if(action!=='status'){

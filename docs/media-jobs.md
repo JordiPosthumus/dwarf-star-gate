@@ -1,4 +1,4 @@
-# Media jobs — implementation in progress
+# Media jobs and per-machine setup
 
 These endpoints provide the durable queue and retained downloads. Downloads support
 single HTTP byte ranges, including open-ended and suffix ranges, so players can
@@ -10,8 +10,7 @@ original LLM and verifies responses/cache reuse before readmission. A real
 production Genie-led H3 cycle has passed, including retained downloads and LLM
 return. A real ACE-Step XL/4B music cycle has also passed: normal API submission
 woke Genie automatically, he assigned the host, and the runner generated audio,
-retained it and verified LLM return. The Media view now exposes saved host choices and job results. Read-only resource checks are available; native memory-fit qualification and
-complete fresh-host installation remain in progress.
+retained it and verified LLM return. The Media view exposes saved host choices, per-member engine inventories and job results. Existing-host setup has passed native generation, retained-output decoding and verified LLM return on connected Sparks. Each installation still needs its own qualification; these receipts do not establish installation on pristine hardware.
 
 Genie can select a finite batch when `media_job_status` reports
 `batch_jobs_supported`: `start_media_job` accepts optional `following_job_ids`
@@ -39,6 +38,9 @@ needed. The normal gateway bearer key protects every endpoint.
 | --- | --- |
 | `POST /v1/music/jobs` | Queue native ACE-Step JSON parameters. |
 | `POST /v1/video/jobs` | Queue an H3 text prompt or a native ComfyUI JSON workflow envelope. |
+| `GET /v1/video/capabilities` | Read supported submission formats, physical budget, advisory slots and current limitations. |
+| `POST /v1/video/batches` | Atomically queue a film containing 1–128 independently identified clips. |
+| `GET /v1/video/batches` or `/v1/video/batches/{id}` | Inspect film progress, partial results and restoration separately. |
 | `POST /v1/video/inputs` | Store raw image, audio or video bytes for a later video job. |
 | `GET /v1/video/inputs/{id}` | Read the uploaded file's name, size and SHA-256 receipt. |
 | `DELETE /v1/video/inputs/{id}` | Explicitly remove an input that no unfinished job uses. |
@@ -53,6 +55,367 @@ different content or priority with that key returns HTTP 409. A new job returns
 HTTP 202 with its ID and status URL. Keys apply across both media routes.
 The existing `x-dsg-priority` header accepts `high`, `normal` or `idle-only`;
 priority orders waiting jobs only and never cancels active generation.
+
+## Film submissions and client integration
+
+The film API accepts `name`, optional shared payload `defaults`, an optional
+`requested_parallelism` ceiling (1–128), and `clips`:
+
+```json
+{
+  "name": "Example film",
+  "requested_parallelism": 4,
+  "defaults": {"seed": 42},
+  "clips": [
+    {"clip_id": "opening", "payload": {"prompt": "Opening scene"}},
+    {"clip_id": "ending", "payload": {"prompt": "Closing scene", "seed": 43}}
+  ]
+}
+```
+
+Each clip has a unique `clip_id` (1–64 letters, digits, dots, underscores or
+hyphens, starting with a letter or digit). Clip payload fields override shared
+defaults. Native workflow envelopes are supported; use them to preserve a
+production's resolution, frame counts, reference sizing and multiple references.
+Upload shared reference assets once and reuse their IDs/names. The whole request
+has a 2 MiB JSON limit; inputs travel through the separate upload API.
+
+All clips validate before one durable queue write. A rejected last clip does not
+leave earlier clips queued. Film and individual job keys share one idempotency
+namespace. Keep the same body, priority and key after a lost acknowledgement;
+the original batch, clip IDs, seeds and job IDs survive gateway restart.
+`counts` and each clip's `outputs` expose partial completion. `generation_complete`
+and `restoration_complete` are separate: generated videos are downloadable before
+their machines have completed verified LLM return. An uncertain native operation
+needs reconciliation rather than resubmission. A requested retake uses a new
+individual job, leaving the original film and successful clips intact.
+
+`requested_parallelism` limits the film's simultaneous generation lanes. Omit it
+to use the capacity permitted by the installation's policy. It is not a guarantee
+of immediate throughput and never overrides the owner's physical Spark budget,
+other films' ownership, or the serving floor. The value is part of the idempotent
+request: changing it under the same key returns a conflict. Batch status includes
+`scheduling.requested_parallelism`, `reserved_generation_slots` and
+`remaining_requested_slots`. Sequential clips in one operation share one slot;
+clips assigned to both pair members consume two. Each film in a mixed operation
+reserves only the lanes assigned to it. Reservations persist through launch or
+observation uncertainty and core replacement until verified LLM return. This can
+temporarily keep clips queued after the prior clip finishes generating while its
+pair restores. Excess clips stay queued; no accepted work is cancelled.
+
+The portable Hermes skill lives at `examples/hermes/stargate-media`. Copy that
+directory into your Hermes skills directory (normally
+`~/.hermes/skills/creative/stargate-media`), preserving an existing installation
+in a timestamped backup before replacing it. The bundled Python 3 client uses
+the standard library on macOS/Linux; no cloud media provider is needed. Configure
+`SG_URL` and, when required by your gateway policy, `SG_API_KEY` in your normal
+private environment. Do not put credentials in a skill or tracked file.
+
+```sh
+python3 examples/hermes/stargate-media/scripts/media_client.py capabilities
+python3 examples/hermes/stargate-media/scripts/media_client.py submit \
+  --kind batch --request film.json --receipt film-receipt.json --priority normal
+python3 examples/hermes/stargate-media/scripts/media_client.py wait \
+  --receipt film-receipt.json --seconds 45
+python3 examples/hermes/stargate-media/scripts/media_client.py download \
+  --receipt film-receipt.json --directory results
+```
+
+The private receipt is flushed to disk before submitting. Reuse the same receipt
+after interruption; after acknowledgement, repeated submit only reads status.
+Changed payloads or priorities cannot overwrite that receipt. Downloads verify
+byte count and SHA-256 and refuse to overwrite differing local files. Both native
+video and generated audio are retained. Input upload acknowledgement currently
+has no idempotent lookup: an uncertain upload is preserved and reported instead
+of silently making more copies.
+
+## Physical media budget and deferred work
+
+`media_jobs.max_borrowed_sparks` optionally limits the number of physical machines
+borrowed by media execution or setup. It is a nonnegative integer. Omitting it
+preserves the installation's existing policy; zero prevents new borrowing without
+cancelling accepted work. Configure `machine_groups` so every alias identifies
+its physical members. A two-machine GLM pair consumes two units even when only
+one member runs media. Multiple job records for the same ownership are counted
+once. Uncertain/unfinished returns retain ownership. A later mapping change
+cannot erase saved physical reservations. The budget supplements existing
+serving-floor, native-idle, owner-pause and maintenance checks.
+
+`media_jobs.held_job_ids` optionally names saved job UUIDs to keep deferred.
+Held queued/unassigned jobs remain visible with `dispatch_hold`, retain their
+idempotent identities, and are excluded from dispatch and watcher prompts. Holds
+do not cancel an already assigned operation. Before enabling automatic dispatch
+on an installation with old backlog, explicitly identify any jobs that should
+remain deferred. Removing a hold makes that queued job eligible again.
+
+The capabilities endpoint reports `max_borrowed_sparks`, `borrowed_sparks`,
+`remaining_sparks`, and nonoverlapping advisory generation slots. Missing capacity
+queues accepted films; it does not grant clients lifecycle authority. Slot counts
+do not promise immediate execution, and unknown timing estimates remain null.
+
+Set `media_jobs.parallel_pair_members: true` to opt an installation into shared
+pair execution after qualifying both member engines and validating the parallel
+workload. This does not alter per-engine concurrency: one generation runs per
+physical member. The selected worker must have an exact pair binding, two
+physical machine mappings, and both engines enrolled. Genie sees eligible kinds
+in `workers[].parallel_kinds` and may pass `parallel_members: true` with two to
+eight already queued compatible jobs to `start_media_job`. It cannot also select
+an individual `member`. Default single-member behavior remains available.
+
+One coordinator reserves both physical machines, checks both media engines before
+draining, captures/stops the exact original GLM pair, and runs separate sequential
+clip queues on the two members concurrently. All member/job assignments persist
+before launch. Both outputs must be retained and all accepted native work must
+settle before engines are stopped and the pair is restored and verified once.
+A failure vetoes new clips without cancelling or replaying its sibling's accepted
+job. Unsubmitted clips return to the queue only after verified pair return.
+The Fleet view shows both member jobs under the shared operation.
+
+The capability API reports `paired_members_parallel` only when an opted-in
+worker has both enrollments; its slot count counts one slot per enabled member
+while charging both physical members to the budget once. Clients can request a
+per-film ceiling (`requested_parallelism_supported: true`). Genie sees remaining
+film slots in `batches[]` and must select compatible lanes within that allowance.
+Detached execution survives core replacement without another launch. A killed
+runner retains its claimed operation and uncertain state for reconciliation;
+automatic resumption after runner death is not implemented. Do not launch a new
+runner or replay native submissions to bypass that uncertainty.
+
+The shared generation loop can resume a saved queue after a coordinator has
+established exclusive ownership and the original engine binding. It observes
+accepted native IDs and retains already-completed outputs without re-uploading
+references or submitting those clips again. New-work vetoes and queue priorities
+apply to unsubmitted clips; they do not abandon accepted work. Missing native
+history or a lost ACE-Step task ID stays uncertain. Disposable process tests
+exercise a killed generation runner, including a lost ComfyUI submission reply,
+and prove one submission with retained output hashes after reconstruction. This
+is a recovery prerequisite, not permission to take over a live or uncertain
+runner; lifecycle takeover and automatic pair restoration remain incomplete.
+
+An internal exact-container command journal supports that future coordinator.
+It pins each operation, physical machine, member, start/stop step, original Docker definition and
+process epoch, retaining a private backup before command intent. A per-container
+operating-system lease distinguishes a live command runner from a saved PID or
+stale timestamp. Stops additionally require a current native-idle assertion;
+the caller must supply current ownership and a graceful command adapter.
+Prepared work can continue after an exit. Once command intent exists, resumption
+only observes the original outcome and cannot issue that command again. A
+different operation or step cannot bypass an unresolved command on the same
+container. Read-only status creates no missing records or locks and can observe
+an already-issued outcome after permission withdrawal. Completion is a recorded
+container transition, not model readiness, cache proof or gateway readmission.
+New media plans opt into this journal through a fixed private Python transport.
+It captures Linux machine/GPU identity once, binds the saved original containers
+and paired recipe files, and uses the prior completed stop/start receipt for a
+return transition. External process-epoch changes are rejected. Serial member
+selection and both parallel members use their exact enrolled hosts. SSH stops
+are graceful without a forced-kill deadline; lost transport replies cause
+read-only observation of the same request. Old saved plans retain their existing
+adapter. Receipt files flush their data and parent directory before callers may
+cross a command boundary.
+
+A positively acknowledged start followed by a new exited container epoch is a
+terminal startup failure, allowing the existing lifecycle to return the LLM.
+An exited container after a lost start acknowledgement remains uncertain. A
+known pre-dispatch refusal does not claim an issued command, while missing prior
+receipts never prove non-execution. These command boundaries are wired into the
+source runner; deployment and actual native acceptance remain separate gates.
+The immutable coordinator claim is still retained: automatic takeover after a
+coordinator dies is not implemented by this transport.
+
+For new music plans that explicitly request `sampler_mode` or `dcw_enabled`,
+preparation verifies API support on every selected engine before draining any
+LLM. The candidate ACE image retains its build-time parser/parameter verification
+receipt and hashes of the relevant source files. A fixed read-only reader uses
+Docker inspect/cp on the exact enrolled image/container to compare that witness
+with the current files; it does not start an engine. Missing proof or changed
+source causes a clear preflight failure. The bound source proof is rechecked
+before starting a stopped ACE container. Omitted fields and older saved plans
+retain their existing behavior. This source/build witness does not replace
+native image qualification, effective inference checks or audio validation.
+
+The candidate also returns a per-file `generation_receipt` from the generator's
+own returned audio parameters. It includes the actual per-audio seed, full
+parameter dictionary and the model names reported by the API. Both native cache
+and fallback-store query paths retain it. These values are separate from the
+original submitted request; the gateway retains both. The receipt does not prove
+voice identity, exact loaded model weights or low-level kernel behavior.
+
+Build-witness schema 2 covers nine source files and 76 checks, including both
+result paths and multi-output seed association. Read-only inspection still
+accepts the older six-file schema 1 as parameter-wiring evidence; it does not
+upgrade that evidence into generation-receipt support. Existing images and
+omitted parameter defaults are unchanged.
+
+The internal `verifyAceGeneration` qualification check requires a completed,
+explicit one-song FLAC job, the exact candidate's receipt-capable source proof,
+matching returned sampler/steps/CFG/thinking/DCW/method/format/seed, and retained
+bytes matching their SHA-256 before and after a full ffmpeg decode. Requested
+`audio_duration: -1` remains distinct from duration resolved during generation.
+A missing receipt, changed file, other codec or parameter mismatch cannot qualify
+the result. This check is connected to the saved candidate qualification
+lifecycle below. Generated audio proof alone does not establish LLM return,
+cache preservation, unchanged review-tool compatibility or permission to enroll.
+
+Genie can request this fixed preparation through `prepare_media_improvement`
+with `worker_id` and an optional physical pair `member`. It requires an enrolled
+ACE engine included in the enabled `media_jobs.standard`, enabled Media, Server
+inspection and Server changes capabilities, and explicit
+`"media_jobs": {"improvements": {"enabled": true}}` policy. Merge this fragment
+into the existing configuration; retain every other setting. Omission leaves
+improvement preparation disabled. A standard target without `member` authorizes
+only the enrolled default member, not both members.
+
+The core saves the operation and reserves its physical machines before spawning
+an independent fixed runner. Preparation shares ownership/budget accounting with
+media execution and setup, but does not drain or stop inference. Host holds,
+maintenance, recovery, placement, configuration and policy are checked before
+each native preparation stage. The runner retains source hashes and an exact
+stopped-original profile; its SSH transport never accepts a model-supplied
+command, Dockerfile, image, source or replacement setting. Private backups record
+the intended change. Build logs and original settings remain private.
+
+`media_job_status.improvements` exposes saved operations and recorded stages.
+These are dated journal observations, not proof that a process remains alive.
+A lost launch or native command reply retains ownership and the same operation;
+repeating the tool does not launch another runner or replay a build. Read-only
+native verification can finish a completed preparation after policy withdrawal.
+Only a currently verified `candidate_prepared` receipt releases preparation
+ownership. It does not change enrollment or grant qualification/promotion
+permission.
+
+After preparation, `qualify_media_improvement` takes only the saved
+`operation_id`. It rechecks the exact stopped original and candidate, preserves
+the existing enrollment, and reserves the whole paired GLM's physical machines
+before launching a separate saved qualification. The fixed synthetic song uses
+Heun 80, CFG 3, duration -1, DCW off, thinking off, explicit seed 11 and FLAC;
+these are request settings only. Original engine model/LM and LLM settings are
+not overwritten. This tests the API recipe, not an album track or voice identity.
+
+The journaled media runner checks source support and native prepared state before
+draining. Current policy, capabilities, placement, target bindings and capacity
+are checked before borrowing, each LLM-stop/media-start transition, and native
+submission. The operation may exclude only its own exact maintenance lock from
+host-conflict checks. Withdrawing improvement permission blocks new test work;
+observing accepted work and returning the unchanged original LLM remain allowed
+under the existing maintenance ownership checks. Native graceful stops use the
+command journal, not the older setup runner's timed-stop path.
+
+The runner verifies generator-returned parameters, retained file hashes and a
+full FLAC decode before stopping the candidate. It restores both original GLM
+containers, verifies unchanged profiles/readiness, and then measures two
+interleaved cold-to-warm histories before readmission. A decode or parameter
+failure still follows the original LLM return path. A cache-verification failure
+leaves the pair running but held for reconciliation. Existing media plans do not
+gain this candidate-specific permission or qualification requirement.
+
+The core accepts `qualified_returned` only with bound audio, original pair,
+cache and readmission receipts. Completion can be recorded after policy
+withdrawal without authorizing new work. This is dated qualification evidence;
+it releases the qualification reservation but does not replace enrollment.
+Qualification completion pins the audio, pair, source, job and command-journal
+receipts in core state; promotion refuses changed or unpinned evidence.
+Lost launches are never repeated. Native Spark generation and AceFarm
+folder/harness acceptance must be proven separately from fixture tests.
+
+`promote_media_improvement` takes that saved operation ID only and requires the
+current improvement policy, capabilities, per-member standard, placement,
+original target binding and available physical ownership. Its fixed reader
+performs no native mutations. It verifies original container/settings/process
+epoch retention and rollback images; candidate source, profile and exact stopped
+epoch after qualification; unchanged retained audio bytes; and both returned GLM
+containers, mounted settings and final start epochs. A saved successful command
+is insufficient: the reader checks native state against that command's completed
+receipt, including its previous acknowledged transition. It never recaptures a
+new baseline. Unknown, missing, active or changed command evidence refuses.
+
+The core commits the promotion record, candidate status and updated enrollment
+in one durable state write after backups. Only container/image fields change on
+the selected member; its default binding changes too if that default selects the
+same member. Original container, image and snapshot stay available. All other
+engine settings, other members and H3 enrollments are retained. The existing
+setup path still refuses replacement; it restores a promoted override only when
+its history, atomic commit record, physical binding, configured baseline and
+retained enrollment agree. Conflicts are reported without partially applying an
+override. Already committed promotions persist when mutation permission is later
+withdrawn; disabling that permission does not silently roll back an installation.
+Uncertain commit acknowledgements cannot repeat publication in the same process;
+a restarted controller resolves its saved state. Read-only promotion failures
+retain the same reserved operation for reconciliation, not another native run.
+
+The fixed improvement adds verified API recipe representation and parameter
+receipts. It does not establish model-weight/voice fidelity, maximum-capacity
+boundaries or a new performance benchmark. Full coordinator takeover remains
+unfinished. Native
+candidate generation/promotion and the complete AceFarm acceptance run remain
+separate installation requirements.
+
+With `media_jobs.improvements.enabled: true`, the enabled per-machine standard
+also drives the fixed ACE improvement through Genie. The core exposes advisory
+stage offers for its exact registered target: prepare, qualify, promote, or
+verify an already-saved stage completion. Qualification offers wait for an idle
+pair and a separate healthy serving LLM. Every tool and native transition still
+checks current permission, ownership and identities; an offer is not a permit.
+
+The dashboard watcher continues the existing improvement conversation when one
+exists, otherwise creates a standard-improvement conversation. It persists chat
+request identities before submission and observes actual core stages across
+restarts. Missing acknowledgements retain the same identity. A completed reply
+without native progress does not trigger another mutation; only a real status
+tool receipt proving temporary ineligibility permits another later wakeup.
+Testing mode, capability withdrawal, removed standard targets and owner-stopped
+or paused conversations prevent new wakeups. Already-owned restoration remains
+available. `improvement_watch` reports the target, stage, operation, conversation
+and reason; uncertain work needs reconciliation. The watcher neither executes
+server commands nor changes policies, and it does not discover arbitrary new
+upstream improvements.
+
+New media executions, candidate preparations and qualifications retain a private
+copy of their fixed JavaScript/Python dependency set before recording ownership.
+The saved plan pins its manifest hash. Detached runners and their later Python
+helpers use that retained code, so a checkout update during generation does not
+change the implementation used to return the original LLM. Launch, native helper
+calls, qualification permits and promotion verification check the retained files;
+changed, missing, extra or symlinked files are refused. Restart never replaces a
+saved runtime with the latest checkout. Already-owned legacy jobs keep their
+existing path. This retention does not freeze external interpreters, codecs or
+Docker, and does not provide automatic takeover of a failed coordinator.
+
+The internal ACE candidate preparer retains the exact stopped original container
+and snapshots its writable filesystem before adding the fixed sampler/DCW patch
+in a separate image. Mounted model, cache and output files remain on the original
+bind mounts; they are not included in the Docker snapshot. It installs no new
+packages and grants no GPU access to the build. The candidate gets the original
+runtime configuration and host settings, with only its image changed. Extra
+network attachments, aliases or anonymous volumes require a separate retention
+adapter and are refused. Exact source hashes, original process epoch, current
+coordinator permission and OS leases gate preparation. Missing acknowledgements
+or records never trigger another build or create operation. An uncertain attempt
+also prevents another operation ID from rebuilding the same original.
+
+The fixed runner accepts only its saved operation directory and action; the
+internal primitive is not a promotion API. Neither starts, stops, renames,
+removes or enrolls a container. The stopped candidate still needs actual recipe
+qualification, decoded output, exact LLM return and preservation/benefit proof
+before a separate promotion transaction may change enrollment. Candidate
+preparation, reconstruction and native image acceptance remain distinct.
+
+The read-only **Check resources** / `inspect_media_host` observation also checks
+this witness on up to four native-port ACE candidates per physical host, including
+stopped containers. Each result is bound to the observed container ID and image.
+`unverified` means the current source witness could not be established, not that
+the engine is absent or incompatible. Additional candidates are `not_checked`.
+A port match does not establish enrollment; compare the exact enrolled identity.
+This observation neither promotes an image nor starts a service.
+
+**Native acceptance still required:** simultaneous generation on actual enrolled
+members, full autonomous film production through installed Hermes, and native
+six-machine operation. Component/fault tests prove ownership, overlapping fixture
+generations and transport identities; they do not prove native memory fit,
+throughput, output fidelity or production availability. Qualify those properties
+before enabling the parallel policy on an installation.
+
+## Individual clips and references
 
 For a basic H3 video, agents can submit text directly:
 
@@ -127,8 +490,7 @@ These behaviors are verified against HTTP fixtures. An installed H3 engine has
 also generated real H.264 video and FLAC audio through an isolated gateway;
 both retained downloads matched their size/hash receipts after H3 stopped.
 The connected production path also passed with actual Genie status/start/status
-calls, real media output and verified LLM return. Automatic queue wakeup is
-enabled; its wakeup-to-tools path was separately tested with pinned Hermes and a
+calls, real media output and verified LLM return. Automatic queue wakeup is available when its capability and dispatch settings are enabled; its wakeup-to-tools path was separately tested with pinned Hermes and a
 scripted model. Production music arrival has since exercised the automatic
 watcher, actual Genie tool calls, native ACE-Step generation, authenticated audio
 download after engine shutdown and automatic original-LLM readmission. This
@@ -157,7 +519,7 @@ capability switch controls new assignments; turning it off does not cancel an
 accepted operation or prevent the runner from returning its host. Queue intake
 and downloads remain available while execution is off.
 
-While the media capability is on, the existing ten-second dashboard tick wakes
+While the media capability is on and `media_jobs.automatic_dispatch` is not false, the existing ten-second dashboard tick wakes
 Genie for actionable queued jobs. He studies current fleet demand and
 chooses the host through the same tools as chat. Decisions appear in an
 **Automatic media dispatch** conversation. The watcher waits for active chat to
@@ -335,6 +697,87 @@ Pinned standalone image recipes and a combined preparation command are now
 included under `examples/spark-build`. They have native qualification on an
 existing Spark; a complete fresh-host run remains unverified.
 
+## AceFarm coordinator integration
+
+Use an AceFarm machine backend that calls the asynchronous music HTTP API.
+The coordinator owns YAML expansion, `lyrics-file` loading, integer seed counts
+versus explicit seed ranges, per-track folders and its complete canonical
+generation identity metadata. Submit one concrete song/seed per job with a
+durable idempotency receipt; native `batch_size` is not a multi-track YAML batch.
+DSG owns physical worker selection, waiting, draining, engine lifecycle and
+retention. Do not also dispatch or collect that same job over AceFarm's SSH path.
+
+| AceFarm value | Explicit music request field |
+| --- | --- |
+| caption / file contents | `prompt` / `lyrics` |
+| concrete seed | `seed`, `use_random_seed: false`, `batch_size: 1` |
+| thinking | `thinking` boolean |
+| cfg / steps / solver | `guidance_scale` / `inference_steps` / `sampler_mode` |
+| duration | `audio_duration`, preserving automatic `-1` |
+| DCW / integration method | `dcw_enabled` boolean / `infer_method` |
+| selected DIT / output format | `model` / `audio_format: "flac"` |
+
+Keep the installed AceFarm defaults, including model and LM selection. Sampling
+settings alone do not establish recipe parity. The engine's reported DIT and LM
+must match the coordinator's intended names; model weights and voice identity
+need separate evidence. Mac-local music reference uploads are not implemented.
+
+The bundled Python client supports `submit --kind music`, `status`, bounded
+`wait`, and streamed `download`, using the same private receipt across retries.
+The companion `acefarm_publish.py` is a collection adapter, not an installed
+AceFarm backend or batch scheduler. Invoke it after a job completes:
+
+```sh
+python3 examples/hermes/stargate-media/scripts/media_client.py submit \
+  --kind music --request song-request.json --receipt song-receipt.json
+python3 examples/hermes/stargate-media/scripts/acefarm_publish.py \
+  --receipt song-receipt.json --metadata song-identity.json \
+  --acefarm /path/to/trusted/acefarm --target-folder /path/to/listen_track1
+```
+
+`song-identity.json` is the coordinator's exact metadata passed to AceFarm's
+`short_track_id`, including full caption/lyrics, seed, recipe, track, machine,
+model and LM. It is not a reduced metadata reconstruction or a published
+sidecar. The adapter imports the explicitly supplied trusted AceFarm CLI and
+calls its canonical ID, filename and publishing functions in a private stage.
+It downloads retained gateway bytes, checks their SHA-256/size, verifies native
+per-audio parameters/model names, and fully decodes the FLAC with installed
+`ffprobe`/`ffmpeg`. Missing native receipts or differences fail publication
+without resubmitting generation. Existing engines may need receipt support
+qualified before they can satisfy this check.
+
+Publication creates real FLAC files and JSON sidecars, then atomically updates
+`track_index.json`. The sidecar includes the full canonical metadata, native
+parameters and gateway provenance. Existing index contents are backed up next
+to the private job receipt. Retries adopt only matching artifacts and preserve
+rating additions; changed files, index fields, source identity or collisions
+are refused. The adapter serializes its own publishers for a target folder.
+Other AceFarm writers do not share that file lock: use one coordinator/publisher
+per target folder, without simultaneous independent writers.
+
+Generation is observed by job ID, so a silent model load or generation is not
+an idle chat response. There is no overall generation cancellation deadline
+after native acceptance; individual network attempts and engine startup waits
+are bounded. Unknown native submission acknowledgements are retained as
+uncertain, never automatically resubmitted. Accepted-job observation can resume;
+automatic takeover of an entire abandoned media runner remains unfinished.
+Binary outputs are copied into DSG retention and served by authenticated file
+URLs with byte counts, SHA-256 and range support. Requesters need no worker SSH
+access. `outputs.state: "ready"` and `execution.phase: "returned"` are separate:
+publication can finish before the LLM has returned.
+
+Continuity drains new admissions and waits for active native work before
+eviction; it does not migrate an in-flight LLM request. Other eligible gateway
+capacity can serve new requests, subject to affinity and queueing. Fixed
+machine-specific judge endpoints do not automatically reroute. Reserve their
+capacity or explicitly qualify a compatible gateway model route before a batch.
+Do not silently replace a Qwen judge with another model. End-to-end harness
+survival and unmodified AceFarm rate/predict/view acceptance still require the
+native album test. Client fixtures prove a 32 MiB transfer and lost-acknowledgement
+recovery; publication fault tests also run against an explicitly selected
+installed AceFarm (`DSG_TEST_ACEFARM_SOURCE`) with synthetic FLAC audio. They are
+not native music generation evidence.
+
 ## Media view and machine choices
 
 Open **Media** to see ACE-Step music and MiniMax H3 video jobs, retained result
@@ -369,12 +812,7 @@ unverified for these Spark recipes.
 Observations carry their timestamp. The Media page keeps them until dashboard
 restart; Genie's actual tool receipts remain with the conversation. Failed
 inspection is shown explicitly, not as fresh readiness. Runtime memory fit
-requires a native generation check using the selected configuration. A
-recipe-driven setup action is now connected in source for eligible existing
-workers, with the controls now deployed through a coordinated core/dashboard
-update. Complete native qualification of this new whole workflow remains
-outstanding. The separate New Spark setup workflow remains
-for explicitly enrolled idle new hosts.
+requires a native generation check using the selected configuration. The recipe-driven setup action is available for eligible existing workers. Native setup has passed on connected Sparks, including a newly prepared ACE-Step installation and retained Docker-engine reuse; qualification remains specific to the selected engine and physical member. The separate New Spark setup workflow is for explicitly enrolled idle new hosts.
 
 The existing-worker setup lifecycle uses a separate detached runner, connected
 to **Set up ACE-Step / MiniMax H3** in Media and Genie's `setup_media_host` tool.
@@ -401,12 +839,7 @@ finishes. A replacement machine cannot inherit saved engines from the previous
 machine; the prior records remain in the timestamped state backup. Older records
 without a physical-machine binding retain their original exact-binding check.
 
-Lifecycle, retained enrollment/restart, private control routes and UI controls
-have fixture tests. The pinned Hermes runtime has called the setup tool and its
-actual receipt remains in chat. These checks do not yet establish complete native
-existing-host installation. Production activation preserved existing capability
-and placement choices, private settings and active maintenance locks. The
-continuity Door stayed running; the core finished admitted work before replacement.
+Lifecycle, retained enrollment/restart, private control routes and UI controls have fixture tests. The actual Genie has also called the setup tool on connected hardware: native media generation, full decoding, current paired-LLM restoration and final enrollment passed. These receipts establish those installations, separately from the fixture tests and from pristine-host acceptance. Guarded control-service activation keeps the continuity Door running and drains admitted work before replacing the core.
 
 Result players and download links use local dashboard routes; the dashboard
 adds the gateway credential on the server side. Keys stay out of browser URLs
@@ -467,3 +900,200 @@ aliases for files already present on the selected ACE-Step host. Multipart field
 names such as `ref_audio` in JSON, or nonempty video `input_files`, are rejected
 with an explanation rather than silently ignored. Automatic music reference
 upload/transfer is not implemented by this check.
+
+
+### Existing paired GLM workers
+
+An operator can enroll `media_jobs.pairs[worker_id]` with kind
+`glm53-docker-pair`, its served `model`, the exact `worker_binding` route
+(`id`, `url`, and any `ssh`, `ssh_fallbacks`, `remote_port` fields), and two
+`members` in head/rank order. Each member names an enrolled `ssh` target and
+Docker `container`; the head must match its server-inspection enrollment.
+Include the head's `recipe_root` to retain and guard its launcher files.
+This is trusted local configuration, never model-provided shell input.
+
+For your own worker names, configure `machine_groups` to describe shared hardware:
+for example `{"my-pair":["gpu-a","gpu-b"],"other-model-on-a":["gpu-a"]}`.
+Use the same physical IDs for every route or SSH alias on a machine. Media uses
+these groups to prevent treating another model on borrowed hardware as the LLM
+that must remain available. If groups are absent, configured pair member SSH
+targets and single-worker inspection SSH targets supply the hardware identity;
+different aliases require explicit groups.
+
+`engine_members: {"video": 0, "music": 1}` supplies default setup destinations;
+omitted assignments use the head. For a standard configuration with both engines
+on every physical Spark, call `setup_media_host` for each engine with `member: 0`
+and `member: 1`. These are indices into your configured pair, never fixed hostnames.
+For example, `{"worker_id":"my-pair","engine":"h3","member":1}` sets up H3
+on your rank member. Repeat with `engine: "ace-step"` for music.
+
+`inspect_media_host`, `inspect_media_inputs`, and `start_media_job` accept the same
+optional `member`. Status exposes separate `members[].engines` inventories; an
+installation on one member does not qualify the other. Each setup retains its
+own native proof and survives service restarts. A repeated setup observes its
+existing operation without launching again. The first qualified engine may
+become the default if none exists; adding another member never replaces an
+existing default. Calls without `member` keep the existing default behavior.
+Retained per-member engines are stored separately from default selections.
+
+To reuse a previous Star Gate media preparation on the same physical host,
+operators can configure `media_jobs.reuse[worker_id][member][engine]` with its
+absolute remote `directory` and exact `container`, `image`, `kind`, and `port`
+from the retained preparation receipt. `engine` is `h3` or `ace-step`; `kind` is
+`comfyui` or `ace-step`. This trusted configuration selects a candidate, not a
+qualified enrollment. Normal setup still drains the current LLM, verifies the
+retained container and source receipt, generates and fully decodes new output,
+and restores the current LLM before enrollment. It preserves the old source
+directory, model files, image and container instead of building a duplicate.
+Changed or missing source evidence refuses reuse and returns the current LLM;
+it does not silently fall back to rebuilding or replacing the old engine.
+
+For an existing Docker installation made outside Star Gate, replace `directory`
+with `"source":"docker"` and pin the same four engine fields. This path observes
+the exact stopped container and its native port, snapshots its complete Docker
+configuration, and performs the same fresh qualification and current-LLM return.
+It does not rewrite the existing launch command, mounts, image or model files.
+
+The existing `setup_media_host` and `start_media_job` tools then borrow the
+whole pair. They retain both complete Docker configurations and file backups,
+drain the virtual worker, require a serving LLM on separate machines, stop both
+originals by ID, and run media on the selected member. Return starts the original rank
+before the original head. Changed settings or mounted files prevent automatic
+return; uncertainty retains the maintenance hold. Native model metadata and a
+readiness response must pass before readmission. That response is a serving
+check, not a new performance benchmark or cache comparison.
+
+H3 and ACE-Step setup still installs each selected engine separately and
+requires native output retention and full decoding before saving enrollment.
+Paired support does not enroll, start, or migrate any machine on installation.
+Keep `media_jobs.automatic_dispatch: false` when only explicit media tool calls
+are wanted. The Media capability still controls those calls; this additional
+setting prevents the dashboard from waking Genie for queued media jobs.
+
+
+Retained preparations can outlive the LLM that originally created them. Reuse
+checks the selected engine's original image, command, port and mounts while
+pinning the current LLM for this operation. The old LLM identity remains in the
+provenance receipt; its container does not need to exist. Source records remain
+unchanged, and the normal idle and current-LLM return checks still apply.
+
+If read-only preflight fails before any maintenance, stop or preparation intent,
+correct the cause and pass its exact saved `at` value as `expected_failed_at` to
+`setup_media_host` (or use **Retry setup** in Media). The executor confirms that
+the runner exited and the target binding is unchanged, archives the full failed
+attempt, then retries under the same operation ID. Ordinary repeated calls only
+observe it. A stale timestamp, live runner, uncertain failure or any transition
+intent refuses retry; inspect that operation instead. This never reruns an
+uncertain native installation or generation.
+
+
+### Maintain an owner-selected standard
+
+Set `media_jobs.standard.enabled` to true and provide explicit `targets`, for
+example:
+
+```json
+{
+  "enabled": true,
+  "targets": [
+    {"worker_id": "my-pair", "member": 0, "engine": "h3"},
+    {"worker_id": "my-pair", "member": 0, "engine": "ace-step"},
+    {"worker_id": "my-pair", "member": 1, "engine": "h3"},
+    {"worker_id": "my-pair", "member": 1, "engine": "ace-step"}
+  ]
+}
+```
+
+This is standing authority to set up those engines through Genie. It preserves
+placement choices and the Media capability; neither is switched on implicitly.
+The existing dashboard tick compares this standard with separate per-member
+enrollments, waits for idle capacity and wakes the actual Genie for the next
+missing engine. Saved observations and chat request identities survive reloads.
+Native setup still enforces its own reservation, resource, qualification and LLM
+return checks. `media_job_status` and the dashboard media API expose
+`standard_setup`; a recorded enrollment does not mean a server is currently running.
+
+Long-running operations are observed without resubmission. A qualified return
+with unfinished enrollment wakes Genie to finish that same operation. A failed
+or uncertain operation gets one read-only diagnosis per changed failure; it is
+never automatically replayed. Other eligible targets can continue. An ended
+Genie reply with no observed setup is reported as needing attention. This loop
+is independent of `automatic_dispatch`, which controls queued media jobs.
+
+Resource inspection also reports a bounded, read-only inventory of Docker
+containers publishing native media ports. These are candidates, not qualification
+or permission to replace an engine. Missing observations remain unknown; private
+container environments and commands are excluded.
+
+This standard watcher covers enrolled media setup. It does not yet autonomously
+select, qualify and promote arbitrary upstream recipe releases. That improvement
+loop is a separate requirement; having trial and rollout tools is insufficient.
+
+A configured reuse candidate can be corrected after a confirmed read-only
+preflight failure. The executor requires the worker, LLM, physical members and
+inspection/recovery binding to remain identical. Older operation records gain
+that separate infrastructure identity only while their original complete
+configuration still matches. Only an exited attempt with no maintenance, stop or
+preparation intent becomes eligible for retry.
+
+For an owner-enabled standard target, Genie can call `repair_media_setup` with
+its exact saved failure timestamp. A fixed native reader verifies the current
+LLM identity and running state, then requires a complete bounded Docker inventory
+to prove the old media container absent. It selects a unique stopped container
+with a recognized native engine command and port. Active, unknown, ambiguous or
+unsupported candidates refuse correction. With no candidate, it selects a
+separate fresh preparation; old model files, images, directories and receipts
+remain intact. It never starts or stops a service during source selection.
+The shipped H3 entrypoint, directly or behind its exact `tini` wrapper, is a
+recognized candidate only in its expected ComfyUI working directory. Recognition
+does not qualify the models or generated media. When the native source reader
+changes, the watcher permits one new read-only selection attempt for the same
+failed preflight; unchanged readers do not repeatedly wake Genie. This does not
+repeat native setup or relax the timestamp, exited-runner or preservation gates.
+
+The selection is backed up and saved through the gateway's owned state, with a
+native evidence receipt. It survives restart on the same enrolled physical
+machine; an explicit change to the operator's configured source takes precedence.
+Existing qualified engines cannot be replaced by this tool. Media, inspection,
+placement and standard-target permissions all apply. A lost reply returns the
+same saved decision.
+
+The watcher then observes `retry_ready` and asks Genie for a same-operation retry
+with the exact failure timestamp. The full previous attempt is archived. Fresh
+native generation, retained output decoding, current LLM restoration and final
+enrollment remain mandatory. This correction path cannot replay a failed or
+uncertain installation that progressed beyond read-only preflight.
+
+Native queue observations use the gateway's current engine enrollments, including
+engines qualified after dashboard startup. Paired engines are queried on their
+own physical member, with one observation per member/kind; the original default
+selection does not create a duplicate probe. A changed enrollment invalidates
+old in-flight observations. Unbound or unreachable engines remain unknown.
+These read-only queue probes do not prove installation integrity or successful
+generation, and do not automatically replace an enrolled engine.
+
+An enabled standard also requests a read-only native container audit through
+actual Genie after setup activity is idle, initially and every 24 hours.
+`media_jobs.standard.audit_interval_hours` selects a positive whole number of
+hours; `audit_enabled: false` disables these audits. Media and Server inspection
+must both remain enabled. `audit_media_standard` takes no arguments: it checks
+only the standard's currently enrolled container IDs, images and native port
+bindings on each physical member. The gateway saves dated evidence with a backup;
+status reads never open SSH connections. Changed host or engine bindings invalidate
+old observations. Busy setup is deferred, and uncertain chat submission retains
+its original request identity across watcher restart.
+If Genie finishes an audit reply without fresh native evidence, the watcher
+requests one corrective read-only tool call. That request also retains its
+identity across lost acknowledgements and restarts. Two replies without a native
+receipt leave visible attention status; neither narrative claims nor repeated
+chat turns count as a successful audit. A dated unavailable result is evidence
+of an unsuccessful observation, not absence and not a reason for this retry.
+
+The results distinguish **present**, **absent**, **changed** and **unavailable**.
+Absence requires a complete native Docker inventory on the host with the enrolled
+LLM reference; an SSH or inspection failure is unavailable. A present container
+does not prove model-file integrity, generation, cache performance or readiness.
+Failures wake Genie for read-only diagnosis without erasing enrollment, changing
+placement, restarting or replacing a service. Automatic replacement of an already
+enrolled missing engine remains unsupported; this audit is detection and evidence,
+not a completed repair or upstream-improvement loop.

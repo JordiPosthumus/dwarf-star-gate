@@ -26,6 +26,118 @@ def media_location(operation_id):
     return {'directory': str(Path.home() / '.local/share/star-gate/media-setup' / operation_id)}
 
 
+def existing_media(payload):
+    """Read a pinned existing Docker engine; never build, start, stop or edit it."""
+    engine, expected = payload.get('engine'), payload.get('expected', {})
+    if (engine not in ('h3', 'ace-step') or set(expected) != {'container', 'image', 'kind', 'port'}
+            or not re.fullmatch(r'[a-f0-9]{64}', expected.get('container', ''))
+            or not re.fullmatch(r'sha256:[a-f0-9]{64}', expected.get('image', ''))
+            or expected.get('kind') != ('comfyui' if engine == 'h3' else 'ace-step')
+            or type(expected.get('port')) is not int or not 0 < expected['port'] <= 65535
+            or not re.fullmatch(r'[a-f0-9]{64}', payload.get('llm_container', ''))
+            or type(payload.get('require_idle')) is not bool):
+        raise ValueError('Pin the existing media engine and current LLM identities')
+    actual = json.loads(subprocess.check_output(['docker', 'inspect', expected['container']], text=True))[0]
+    llm = json.loads(subprocess.check_output(['docker', 'inspect', payload['llm_container']], text=True))[0]
+    if actual['Id'] != expected['container'] or actual['Image'] != expected['image'] or actual['State']['Running']:
+        raise ValueError('Existing media identity or stopped state differs; preserved')
+    if llm['Id'] != payload['llm_container'] or actual['Id'] == llm['Id']:
+        raise ValueError('Existing media and current LLM identities differ')
+    native_port = 8188 if engine == 'h3' else 8002
+    bindings = actual['HostConfig'].get('PortBindings', {}).get(str(native_port) + '/tcp', []) or []
+    if not any(str(b.get('HostPort')) == str(expected['port']) for b in bindings):
+        raise ValueError('Existing media native port differs; preserved')
+    if payload['require_idle'] and (llm['State']['Running'] or subprocess.check_output(
+            ['nvidia-smi', '--query-compute-apps=pid', '--format=csv,noheader,nounits'], text=True).strip()):
+        raise ValueError('GPU work is active; existing work was preserved')
+    return {'state': 'prepared_stopped', 'llm_container': llm['Id'],
+            'engines': {engine: {**expected, 'inspection': actual}},
+            'scope': 'Pinned existing Docker engine only; fresh native qualification and current LLM return still required.'}
+
+
+def audit_media(payload):
+    """Observe pinned media without starting it or declaring its files qualified."""
+    engine, expected, llm = payload.get('engine'), payload.get('expected'), payload.get('llm_container')
+    if (engine not in ('h3', 'ace-step') or not isinstance(expected, dict)
+            or set(expected) != {'container', 'image', 'kind', 'port'}
+            or not re.fullmatch(r'[a-f0-9]{64}', str(expected.get('container', '')))
+            or not re.fullmatch(r'sha256:[a-f0-9]{64}', str(expected.get('image', '')))
+            or expected['kind'] != ('comfyui' if engine == 'h3' else 'ace-step')
+            or type(expected['port']) is not int or not 0 < expected['port'] <= 65535
+            or not isinstance(llm, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,127}', llm)):
+        raise ValueError('Use exact enrolled media identity and LLM reference')
+    def read(*args):
+        return subprocess.check_output(['docker', *args], text=True, timeout=15)
+    current = json.loads(read('inspect', '--type', 'container', '--', llm))[0]
+    if not re.fullmatch(r'[a-f0-9]{64}', current.get('Id', '')):
+        raise ValueError('Current LLM host identity is unconfirmed')
+    ids = read('ps', '-aq', '--no-trunc').splitlines()
+    if len(ids) > 128 or any(not re.fullmatch(r'[a-f0-9]{64}', value) for value in ids) or current['Id'] not in ids:
+        raise ValueError('Complete native inventory is unavailable')
+    result = {'engine': engine, 'expected': expected, 'current_llm_container': current['Id'], 'inventory_count': len(ids)}
+    if expected['container'] not in ids:
+        return {**result, 'state': 'absent'}
+    obj = json.loads(read('inspect', '--type', 'container', '--', expected['container']))[0]
+    native = '8188/tcp' if engine == 'h3' else '8002/tcp'
+    bindings = (obj.get('HostConfig', {}).get('PortBindings') or {}).get(native) or []
+    matches = obj.get('Id') == expected['container'] and obj.get('Image') == expected['image'] and any(str(b.get('HostPort')) == str(expected['port']) for b in bindings)
+    return {**result, 'state': 'present' if matches else 'changed', 'running': obj.get('State', {}).get('Running'), 'image': obj.get('Image')}
+
+
+def discover_media(payload):
+    """Choose a stopped known engine, or fresh setup, only after proving old ID absent."""
+    engine = payload.get('engine')
+    old, current = payload.get('missing_container'), payload.get('llm_container')
+    if engine not in ('h3', 'ace-step') or any(not isinstance(v, str) or not re.fullmatch(r'[a-f0-9]{64}', v) for v in (old, current)):
+        raise ValueError('Pin the missing media and current LLM identities')
+    def read(*args):
+        return subprocess.check_output(['docker', *args], text=True, timeout=15)
+    llm = json.loads(read('inspect', '--type', 'container', '--', current))[0]
+    if llm['Id'] != current or llm['State']['Running'] is not True:
+        raise ValueError('Current LLM identity or running state is unconfirmed')
+    ids = read('ps', '-aq', '--no-trunc').splitlines()
+    if len(ids) > 128 or any(not re.fullmatch(r'[a-f0-9]{64}', v) for v in ids):
+        raise ValueError('Complete bounded Docker inventory is unavailable')
+    if current not in ids or old in ids:
+        raise ValueError('Expected missing media is not confirmed absent on the current LLM host')
+    native_port = '8188/tcp' if engine == 'h3' else '8002/tcp'
+    candidates = []
+    launch_forms = []
+    for offset in range(0, len(ids), 16):
+        for obj in json.loads(read('inspect', '--type', 'container', '--', *ids[offset:offset + 16])):
+            bindings = (obj.get('HostConfig', {}).get('PortBindings') or {}).get(native_port) or []
+            config = obj.get('Config') or {}
+            command = (config.get('Entrypoint') or []) + (config.get('Cmd') or [])
+            # The shipped image launches ComfyUI through this wrapper, with
+            # tini as PID 1. A wrapper name embedded in arbitrary args/shell
+            # text is not a recognized entrypoint.
+            h3_wrapper = config.get('Entrypoint') in (
+                ['/usr/local/bin/h3-entrypoint'],
+                ['/usr/bin/tini', '--', '/usr/local/bin/h3-entrypoint'],
+            ) and config.get('WorkingDir') == '/opt/ComfyUI'
+            known = ('acestep.api_server' in command if engine == 'ace-step' else
+                     h3_wrapper or any(str(arg).endswith('/ComfyUI/main.py') for arg in command) or
+                     ('main.py' in command and str(config.get('WorkingDir', '')).rstrip('/').endswith('/ComfyUI')))
+            if not bindings:
+                if known:
+                    raise ValueError('Recognized media engine has an unsupported port mapping; preserved')
+                continue
+            if not known or obj.get('State', {}).get('Running') is not False or len(bindings) != 1:
+                raise ValueError('Native media port is occupied by an active, unknown or ambiguous container; preserved')
+            port = bindings[0].get('HostPort', '')
+            if not str(port).isdigit() or not 0 < int(port) <= 65535 or not re.fullmatch(r'sha256:[a-f0-9]{64}', obj.get('Image', '')):
+                raise ValueError('Native media candidate identity or port is invalid')
+            candidates.append({'source': 'docker', 'container': obj['Id'], 'image': obj['Image'],
+                               'kind': 'comfyui' if engine == 'h3' else 'ace-step', 'port': int(port)})
+            launch_forms.append('shipped_h3_wrapper' if engine == 'h3' and h3_wrapper else 'native_engine_command')
+    if len(candidates) > 1:
+        raise ValueError('More than one stopped media candidate; selection needs attention')
+    return {'state': 'source_selected', 'engine': engine, 'missing_container': old,
+            'current_llm_container': current, 'selection': candidates[0] if candidates else None,
+            'selection_launch_form': launch_forms[0] if launch_forms else None,
+            'scope': 'Read-only complete Docker inventory confirmed the old media container absent. Selected a unique stopped engine with a recognized launch command, or separate fresh preparation when no port candidate exists. Nothing started, stopped, deleted or installed. Native qualification remains required.'}
+
+
 def model_progress(root, progress):
     """Observe declared model files only; never modify a running installer."""
     engine = progress.get('engine')
@@ -84,8 +196,10 @@ def status(root):
             'scope': 'LLM qualification is separate from gateway registration, media generation checks and recovery proof.'}
 
 
-def media_plan(root, *, require_idle=True):
+def media_plan(root, *, require_idle=True, current_llm=None, engine=None):
     """Read exact stopped preparations; this call never starts or stops anything."""
+    if current_llm is not None and (not re.fullmatch(r'[a-f0-9]{64}', current_llm) or engine not in ('h3', 'ace-step')):
+        raise ValueError('Pin the current LLM and selected retained media engine')
     setup = json.loads((root / 'engines/setup.json').read_text())
     if setup['state'] != 'prepared_stopped':
         raise ValueError('Complete preparation before testing media')
@@ -94,12 +208,18 @@ def media_plan(root, *, require_idle=True):
     launch = json.loads((root / 'launch.json').read_text()) if (root / 'launch.json').exists() else {}
     existing = launch.get('operation') == 'prepare_media'
     selected = launch['selected_engines'] if existing else ('qwen38-repaired', 'h3', 'ace-step')
-    if existing:
-        llm = json.loads(subprocess.check_output(['docker', 'inspect', launch['llm_container']], text=True))[0]
-        if llm['Id'] != launch['llm_container'] or (require_idle and llm['State']['Running']):
+    source_llm = launch['llm_container'] if existing else setup['engines']['qwen38-repaired']['container']
+    if existing or current_llm is not None:
+        target_llm = current_llm or source_llm
+        llm = json.loads(subprocess.check_output(['docker', 'inspect', target_llm], text=True))[0]
+        if llm['Id'] != target_llm or (require_idle and llm['State']['Running']):
             raise ValueError('Original LLM identity or stopped state differs')
         if set(setup['engines']) != set(selected):
             raise ValueError('Prepared media selection differs')
+    if current_llm is not None:
+        if engine not in selected:
+            raise ValueError('Retained preparation lacks the selected engine')
+        selected = (engine,)
     engines = {}
     for key in selected:
         item = setup['engines'][key]
@@ -120,7 +240,18 @@ def media_plan(root, *, require_idle=True):
             if mounts.get(model_dest, {}).get('Source') != item['models'] or mounts.get('/data', {}).get('Source') != item['data']:
                 raise ValueError('Prepared model/data mounts differ: ' + key)
             engines[key] = {**receipt, 'inspection': actual}
-    return {'state': 'prepared_stopped', 'engines': engines, 'llm_container': launch['llm_container'] if existing else setup['engines']['qwen38-repaired']['container']}
+    return {'state': 'prepared_stopped', 'engines': engines, 'llm_container': current_llm or source_llm,
+            **({'source_llm_container': source_llm} if current_llm is not None else {})}
+
+
+def retained_media(root, payload):
+    if (type(payload.get('require_idle')) is not bool
+            or not isinstance(payload.get('llm_container'), str)
+            or not re.fullmatch(r'[a-f0-9]{64}', payload['llm_container'])
+            or payload.get('engine') not in ('h3', 'ace-step')):
+        raise ValueError('Pin the current LLM, selected engine and idle requirement')
+    return media_plan(root, require_idle=payload['require_idle'],
+                      current_llm=payload['llm_container'], engine=payload['engine'])
 
 
 def start(root, payload):
@@ -261,13 +392,24 @@ if __name__ == '__main__':
             if payload.get('action') == 'media_location':
                 print(json.dumps(media_location(payload.get('operation_id'))))
                 sys.exit(0)
+            if payload.get('action') == 'discover_media':
+                print(json.dumps(discover_media(payload)))
+                sys.exit(0)
+            if payload.get('action') == 'audit_media':
+                print(json.dumps(audit_media(payload)))
+                sys.exit(0)
+            if payload.get('action') == 'existing_media':
+                print(json.dumps(existing_media(payload)))
+                sys.exit(0)
             root = Path(payload['directory'])
             if not root.is_absolute() or root.is_symlink() or '..' in root.parts or root == Path('/'):
                 raise ValueError('Use an absolute dedicated remote setup directory')
-            if payload['action'] not in ('status', 'start', 'resume', 'prepare_media', 'qualify', 'verify_serving', 'media_plan', 'media_state'):
+            if payload['action'] not in ('status', 'start', 'resume', 'prepare_media', 'qualify', 'verify_serving', 'media_plan', 'media_state', 'retained_media'):
                 raise ValueError('Unknown setup action')
             if payload['action'] == 'resume':
                 result = resume_preparation(root, payload.get('expected_finished_at'))
+            elif payload['action'] == 'retained_media':
+                result = retained_media(root, payload)
             elif payload['action'] in ('media_plan', 'media_state'):
                 result = media_plan(root, require_idle=payload['action'] == 'media_plan')
             elif payload['action'] == 'qualify':

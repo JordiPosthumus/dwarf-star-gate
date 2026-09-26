@@ -10,6 +10,7 @@ import subprocess
 from datetime import datetime, timezone
 import urllib.request
 import urllib.parse
+import urllib.error
 
 SECRET = re.compile(r'api[_-]?key|access[_-]?token|secret|password|authorization|hf_token|hugging_face_hub_token|private[_-]?key|credential', re.I)
 
@@ -117,11 +118,18 @@ def inspect_omlx(target, source_files=None, source_window=None):
             raise ValueError('Invalid private endpoint credential')
         headers['Authorization'] = 'Bearer ' + token.decode().strip()
     request = urllib.request.Request(target['url'].rstrip('/') + '/models', headers=headers)
-    with urllib.request.build_opener(NoRedirect()).open(request, timeout=5) as response:
-        data = response.read(262145)
-        if len(data) > 262144:
-            raise ValueError('Model metadata too large')
-        result['models'] = scrub(json.loads(data))
+    try:
+        with urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect()).open(request, timeout=5) as response:
+            data = response.read(262145)
+            if len(data) > 262144:
+                raise ValueError('Model metadata too large')
+            result['models'] = scrub(json.loads(data))
+            result['endpoint'] = {'state': 'connected'}
+    except urllib.error.HTTPError:
+        raise
+    except (urllib.error.URLError, TimeoutError, ConnectionError):
+        result['models'] = None
+        result['endpoint'] = {'state': 'unavailable', 'scope': 'Model discovery failed; local files below remain inspectable. This does not prove the model process stopped.'}
     try:
         raw = subprocess.check_output(['/usr/sbin/lsof', '-nP', '-iTCP:' + str(url.port), '-sTCP:LISTEN', '-Fp'], text=True, timeout=5)
         pids = sorted({int(line[1:]) for line in raw.splitlines() if re.fullmatch(r'p[0-9]+', line)})
@@ -147,5 +155,5 @@ def inspect_omlx(target, source_files=None, source_window=None):
         try:result['sources'] = read_sources(source, source_files, source_window)
         except (OSError, ValueError, UnicodeError):
             result['sources'] = {'status':'unavailable', 'reason':'source_read_failed', 'scope':'Request up to eight enrolled oMLX Python paths, at most 512KiB combined; split larger requests. No source conclusion available.'}
-    result['scope'] = 'Live authenticated model discovery and listener observation; credential-redacted launcher/settings and source revision on disk. These files do not prove the running process loaded their current bytes. No inference, restart, recovery, benchmark or file modification.'
+    result['scope'] = 'Endpoint discovery and listener observation where available; credential-redacted launcher/settings and source revision on disk. Unavailable endpoint evidence is explicit. These files do not prove the running process loaded their current bytes. No inference, restart, recovery, benchmark or file modification.'
     return result

@@ -13,6 +13,7 @@ import { FileLogReader, parseLocalProcessStart, parseLocalTiming, telemetryFiles
 import {cacheInventoryDirectories} from './cache-inventory.mjs';
 import {GenieProviderLedger} from './genie-provider-ledger.mjs';
 import {createFleetPowerTools} from './genie-power.mjs';
+import {phase} from './ui/activity.js';
 import './rate-peaks.test.mjs';
 const parse = (s, t = 1000) => parseTiming(`0902 14:00:00 ds4-server: ${s}`, t);
 
@@ -217,6 +218,25 @@ test('activity view uses three honest operational colors and folds thinking into
   assert.doesNotMatch(html,/15m activity|sampled every 2s|status badge distinguishes/);
   const css=fs.readFileSync(new URL('./ui/brand.css',import.meta.url),'utf8');
   assert.match(css,/\.phase-prefill\{fill:#78aee8\}/);assert.match(css,/\.phase-decode\{fill:#b9d889\}/);assert.match(css,/\.phase-idle-off\{fill:#42484c\}/);
+});
+
+test('activity bar retains measured history when endpoint metrics disconnect or are absent',()=>{
+  const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
+  const context=vm.createContext({phase});vm.runInContext(source,context);
+  const now=1_000_000;
+  for(const endpoint of [undefined,{source:'omlx',connected:false,at:now-30_000}]){
+    const d={id:'m3',series:[],cache:{},endpoint_metrics:endpoint,activity:[
+      {start:now-60_000,end:now-30_000,phase:'decode'},
+      {start:now-30_000,end:now,phase:'working'}
+    ]};
+    const html=vm.runInContext(`device(${JSON.stringify(d)},{id:'m3',load:1,is_healthy:false},${now},false)`,context);
+    assert.match(html,/class="device-bar"/);
+    const bar=html.slice(html.indexOf('<div class="device-bar"'),html.indexOf('<span class="bar-note'));
+    assert.match(bar,/phase-decode/,'retain the observed generation interval');
+    assert.match(bar,/phase-unknown/,'gateway work without native phase stays unknown');
+    assert.doesNotMatch(bar,/phase-idle-off|phase-prefill/,'do not invent idle or prompt processing');
+    assert.doesNotMatch(html,/class="device-minicharts"/,'disconnected live-speed charts remain hidden');
+  }
 });
 
 test('worker controls show escaped hold ownership and block ordinary Enable/Remove',()=>{
@@ -1032,7 +1052,7 @@ test('six-worker monitoring only reads gateway status; credentials and addresses
   const calls = [];
   const backend = http.createServer((req,res) => {
     calls.push(req.url); assert.equal(req.headers.authorization, 'Bearer SECRET_FOR_TEST');
-    res.end(JSON.stringify({ version:1, model:'ds4', context_length:153600, total:6, healthy:6, available:6, active:2, queued:0,
+    res.end(JSON.stringify({ version:1, genie_thinking:{chat:'max',reviewer:'high',saved:{chat:'max',private:'NEVER_EXPORT'},levels:['NEVER_EXPORT'],private:'NEVER_EXPORT'}, model:'ds4', context_length:153600, total:6, healthy:6, available:6, active:2, queued:0,
       workers:Array.from({ length:6 }, (_,i) => ({ id:`spark${i+1}`, is_healthy:true, load:0, url:'http://private-address', probe_error:'secret',
         requested_thinking:{status:'specified',fields:{reasoning_effort:i===0?'xhigh':'none',prompt:'NEVER_EXPORT'}},
         last_requested_thinking:{status:'not_specified'},last_request_finished_at:'NEVER_EXPORT' })) }));
@@ -1044,6 +1064,8 @@ test('six-worker monitoring only reads gateway status; credentials and addresses
   fs.writeFileSync(path.join(dir,'gateway.log'), JSON.stringify({ event:'request_finished', node:'spark1', outcome:'complete', prompt:'NEVER_EXPORT' })+'\n');
   const app = await runDashboard(config, 0); t.after(app.close);
   const s = app.snapshot(); assert.equal(s.devices.length, 6); assert.equal(s.events.length, 1);
+  assert.deepEqual(s.gateway.genie_thinking,{chat:'max',reviewer:'high',saved:{chat:'max'},levels:['none','minimal','low','medium','high','xhigh','max']});
+  const caps=await(await fetch('http://127.0.0.1:'+app.server.address().port+'/api/genie/capabilities')).json();assert.deepEqual(caps.genie_thinking,s.gateway.genie_thinking);
   assert.deepEqual(s.gateway.workers[0].requested_thinking,{status:'specified',fields:{reasoning_effort:'xhigh'}});
   assert.equal(s.gateway.workers[1].requested_thinking.fields.reasoning_effort,'none');
   assert.equal(s.gateway.workers[0].last_request_finished_at,null);
@@ -1201,6 +1223,19 @@ test('Fleet projection follows the active batch job and omits private native dat
   execution.phase='restoring_llm';assert.equal(fleetMediaWorkloads({jobs:[{id:'second',kind:'video',state:'completed',execution}]}).workloads[0].phase,'restoring_llm');
   for(const phase of ['returned','failed_returned','failed_unchanged'])assert.equal(fleetMediaWorkloads({jobs:[{id:'done',execution:{worker_id:'sparkA',phase}}]}).workloads.length,0);
 });
+test('parallel Fleet progress shows both member jobs within one physical-pair operation',async()=>{
+ const {fleetMediaWorkloads}=await import('./media-workloads.mjs');
+ const lanes=[0,1].map(member=>({member,active_job_id:`job-${member}`,phase:'generating',private_graph:'must-not-export',native_progress:{connected:true,at:100000,node_type:'KSampler',value:member+1,max:20}}));
+ const jobs=lanes.map(l=>({id:l.active_job_id,kind:'video',state:'running',execution:{worker_id:'pair',operation_id:'operation',parallel_members:true,phase:'generating',active_job_id:l.active_job_id,batch_size:8,lanes}}));
+ const view=fleetMediaWorkloads({jobs},100000);assert.equal(view.workloads.length,1);assert.equal(view.workloads[0].lanes.length,2);
+ assert.doesNotMatch(JSON.stringify(view),/must-not-export|private_graph/);
+ const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
+ const context=vm.createContext({});vm.runInContext(source,context);
+ const html=vm.runInContext(`workloadMarkup(${JSON.stringify({...view.workloads[0],engine:'H3',label:'Parallel generation'})},{},100000)`,context);
+ assert.match(html,/Member 1/);assert.match(html,/Member 2/);assert.match(html,/job-0/);assert.match(html,/job-1/);
+ assert.match(html,/2 member slots · 8 jobs/);assert.equal((html.match(/<progress /g)??[]).length,2);
+});
+
 test('Fleet media UI distinguishes runner heartbeat from generation progress and preserves stale evidence',()=>{
   const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);

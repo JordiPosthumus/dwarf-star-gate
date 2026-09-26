@@ -25,6 +25,28 @@ the age budget, recovery policy, service settings or existing action receipts.
 An idempotent query for an already issued action still returns its receipt; it
 does not repeat the action to work around stale evidence.
 
+Recovery checks physical-machine ownership as well as the selected worker.
+Configure `machine_groups` when multiple custom worker names use the same
+hardware; paired-media membership and the built-in fleet mapping are also
+recognized. An agent hold or maintenance lock on either member blocks recovery
+of a pair using that member. Admitted work, another recovery, and observed
+direct-traffic reservations on shared workers also prevent a new recovery action.
+An idle, paused alternative worker by itself does not reserve the hardware.
+
+The controller rechecks ownership after inspection and before verification. A
+hold arriving after a command was issued retains that operation for observation;
+it never causes the command to be replayed. A hold arriving during verification
+retains the proof and prevents readmission, with a public
+`readmission_blocked_reason`. Agent hand-back can discount only the exact final
+hold being released by its authenticated owner. It cannot bypass a sibling hold
+or a maintenance lock. These checks do not enroll a GLM pair for recovery;
+native paired-media restoration and general service recovery remain separate.
+
+The [GLM pair recovery components](glm-pair-recovery.md) provide an exact-container
+transaction and a separate GLM cache verifier. Genie can exercise the verifier
+through `verify_serving` with `check="glm-cache"` on an exactly configured healthy
+pair. That diagnostic does not enroll or execute pair recovery.
+
 **Connecting a server for inference does not enroll it for recovery.** The UI's
 automatic-recovery switch controls already enrolled services; it does not install
 an adapter or grant service permissions. There is not yet a browser enrollment

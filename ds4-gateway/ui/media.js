@@ -15,19 +15,19 @@ function render(){
   $('media-video-submit').disabled=submitting||!state.controls_enabled||!state.text_video_supported;
   $('media-video-submit').textContent=submitting?'Submitting…':pendingVideo?'Retry submission':'Queue video';
   if(!engine.supported)$('media-hosts').replaceChildren(el('p',`${engine.label} is planned. No verified setup or execution adapter is connected yet.`,'muted'));
-  else $('media-hosts').replaceChildren(...(state.hosts?.length?state.hosts.map(host=>{
+  else $('media-hosts').replaceChildren(...(state.hosts?.length?state.hosts.flatMap(host=>host.members?.length?host.members.map(member=>({...host,...member,display_name:`${member.machine} (${host.id})`})): [host]).map(host=>{
     const choice=host.engines.find(e=>e.id===engine.id),card=el('article',undefined,'media-host-card');
-    card.append(el('h3',host.machines&&host.machines.length>1?`${host.machines.join(' + ')} (${host.id})`:host.id));
-    const label=el('label'),toggle=el('input');toggle.type='checkbox';toggle.checked=choice.allowed;toggle.disabled=!state.controls_enabled||state.media_host_controls_version!==1;toggle.setAttribute('role','switch');toggle.setAttribute('aria-label',`Allow ${engine.label} on ${host.id}`);label.append(toggle,document.createTextNode(` Allow ${engine.label} here`));card.append(label);
+    card.append(el('h3',host.display_name??(host.machines&&host.machines.length>1?`${host.machines.join(' + ')} (${host.id})`:host.id)));
+    const label=el('label'),toggle=el('input');toggle.type='checkbox';toggle.checked=choice.allowed;toggle.disabled=!state.controls_enabled||state.media_host_controls_version!==1;toggle.setAttribute('role','switch');toggle.setAttribute('aria-label',`Allow ${engine.label} on ${host.id}`);label.append(toggle,document.createTextNode(host.member===undefined?` Allow ${engine.label} here`:` Allow ${engine.label} on this pair`));card.append(label);
     const maintenance=host.maintenance?.filter(Boolean)??[],holds=host.holds?.filter(Boolean)??[];
     const current=host.execution?`${engineNames[state.jobs?.find(j=>j.id===host.execution.job_id)?.kind]??'Media job'} · ${host.execution.phase.replaceAll('_',' ')}`:maintenance.length?`Maintenance · ${maintenance.join(', ')}`:holds.length?`Held · ${holds.join(', ')}`:host.quarantined?'LLM quarantined':host.paused?'LLM paused':host.llm_serving?`Serving LLM${host.llm_model?' · '+host.llm_model:''}`:'LLM unavailable';
     card.append(el('p',`Current: ${current}`,'media-readiness'));
-    card.append(el('p',choice.enrolled?'Setup: qualified engine enrolled':'Setup: not enrolled'),el('p',!host.llm_serving&&maintenance.length?`Unavailable for media: ${maintenance.join(', ')}`:choice.reason,'muted'));
+    card.append(el('p',choice.enrolled?'Setup: qualified engine enrolled':'Setup: not enrolled'),el('p',!host.llm_serving&&maintenance.length?`Unavailable for media: ${maintenance.join(', ')}`:(choice.reason??(choice.ready?'Available for Genie to select':choice.enrolled?'Pair availability or placement prevents selection':'Setup and qualification needed')),'muted'));
     card.append(el('p',`LLM: ${host.llm_serving?'available for routing':'not available for new routing'} · ${host.active_requests} active · ${host.queued_requests} queued`,'muted'));
     if(host.execution?.detail)card.append(el('p',host.execution.detail));
     const memory=host.memory,fresh=memory&&Date.now()-memory.time>=0&&Date.now()-memory.time<60000;
     if(fresh&&Number.isFinite(memory.memory_total_bytes)&&Number.isFinite(memory.memory_used_bytes))card.append(el('p',`Memory now: ${((memory.memory_total_bytes-memory.memory_used_bytes)/2**30).toFixed(1)} GiB free of ${(memory.memory_total_bytes/2**30).toFixed(0)} GiB. Current LLM usage is included.`,'muted'));
-    const check=state.resource_checks?.[host.id];
+    const check=state.resource_checks?.[host.member===undefined?host.id:`${host.id}:${host.member}`];
     if(check){
       card.append(el('p',`Resources checked: ${new Date(check.observed_at).toLocaleString()}`,'muted'));
       if(check.state==='unavailable')card.append(el('p',check.error,'media-job-detail'));
@@ -35,29 +35,29 @@ function render(){
         card.append(el('p',`${check.system} ${check.architecture}${check.gpu_names?.length?' · '+check.gpu_names.join(', '):''}`));
         const recipe=check.recipes?.find(r=>r.engine===engine.id);
         if(recipe)card.append(el('p',`Recipe models: ${(recipe.model_bytes_required/2**30).toFixed(1)} GiB; images, build cache and outputs need extra space.`,'muted'));
-        for(const disk of check.disks??[])card.append(el('p',`${disk.locations?.join(", ")??disk.location}: ${Number.isFinite(disk.free_bytes)?(disk.free_bytes/2**30).toFixed(1)+' GiB free':disk.error}`,'muted'));
+        for(const disk of check.disks??[])card.append(el('p',`${[...new Set((disk.locations??[disk.location]).map(location=>String(location).startsWith('existing container mount:')?'existing model storage':location))].join(', ')}: ${Number.isFinite(disk.free_bytes)?(disk.free_bytes/2**30).toFixed(1)+' GiB free':disk.error}`,'muted'));
         card.append(el('p',check.setup,'muted'));
         for(const error of check.errors??[])card.append(el('p',error,'media-job-detail'));
       }
     }
-    const inspect=el('button','Check resources','button');inspect.type='button';inspect.disabled=!state.controls_enabled||!state.resource_inspection_connected;inspect.setAttribute('aria-label',`Check media resources on ${host.id}`);card.append(inspect);
+    const inspect=el('button','Check resources','button');inspect.type='button';inspect.disabled=!state.controls_enabled||!state.resource_inspection_connected;inspect.setAttribute('aria-label',`Check media resources on ${host.display_name??host.id}`);card.append(inspect);
     inspect.addEventListener('click',async()=>{
       busy=true;inspect.disabled=true;$('media-message').textContent=`Checking ${host.id}; existing services keep running…`;
-      try{const response=await fetch('/api/media/inspect',{method:'POST',headers:{'content-type':'application/json','x-dsg-csrf':state.csrf_token},body:JSON.stringify({worker_id:host.id})});const result=await response.json();if(!response.ok)throw Error(result.error??'Resource check unavailable.');$('media-message').textContent=`${host.id} resources checked. No service was changed.`;}
+      try{const response=await fetch('/api/media/inspect',{method:'POST',headers:{'content-type':'application/json','x-dsg-csrf':state.csrf_token},body:JSON.stringify({worker_id:host.id,...(host.member!==undefined?{member:host.member}:{})})});const result=await response.json();if(!response.ok)throw Error(result.error??'Resource check unavailable.');$('media-message').textContent=`${host.id} resources checked. No service was changed.`;}
       catch(error){$('media-message').textContent=error.message;}finally{busy=false;signature='';await refresh(true);}
     });
     if(choice.enrolled)card.append(el('p','Enrolled engine. This check leaves its setup and qualification unchanged.','muted'));
-    const setup=state.setup?.operations?.find(s=>s.worker_id===host.id&&s.engine===engine.id),setupHost=state.setup?.hosts?.find(s=>s.worker_id===host.id);
+    const setup=state.setup?.operations?.find(s=>s.worker_id===host.id&&s.engine===engine.id&&(host.member===undefined||s.member===host.member)),setupHost=state.setup?.hosts?.find(s=>s.worker_id===host.id);
     if(setup)card.append(el('p',`Setup: ${setup.phase.replaceAll('_',' ')}${setup.detail?' · '+setup.detail:''}`),...(setup.enrollment_error?[el('p',setup.enrollment_error,'media-job-detail')]:[]));
     if(setup?.preparation?.model_download?.state==='observed'){const d=setup.preparation.model_download;card.append(el('p',`Models: ${(d.bytes_present/1e9).toFixed(1)} / ${(d.bytes_required/1e9).toFixed(1)} GB present, including partial downloads.`,'muted'));if(Number.isFinite(Date.parse(d.last_file_activity_at)))card.append(el('p',`Last model-file activity: ${new Date(d.last_file_activity_at).toLocaleString()}. Unchanged bytes can mean verification is running.`,'muted'));}
     if(setup?.qualification)card.append(el('p',`${setup.qualification.engine??'Media test'}: ${setup.qualification.phase??setup.qualification.state}${setup.qualification.error?' · '+setup.qualification.error:''}`));
     if(setupHost?.error)card.append(el('p',setupHost.error,'media-job-detail'));
     if(!choice.enrolled){
-      const button=el('button',setup?.phase==='qualified_returned'?'Finish setup':`Set up ${engine.label}`,'button');button.type='button';button.setAttribute('aria-label',`${button.textContent} on ${host.id}`);
-      button.disabled=!state.controls_enabled||!state.setup?.enabled||!setupHost?.available||!choice.allowed||!!(setup&&setup.phase!=='qualified_returned');card.append(button);
+      const button=el('button',setup?.phase==='qualified_returned'?'Finish setup':setup?.phase==='failed_unchanged'?'Retry setup':`Set up ${engine.label}`,'button');button.type='button';button.setAttribute('aria-label',`${button.textContent} on ${host.display_name??host.id}`);
+      button.disabled=!state.controls_enabled||!state.setup?.enabled||!setupHost?.available||!choice.allowed||!!(setup&&!['qualified_returned','failed_unchanged'].includes(setup.phase));card.append(button);
       button.addEventListener('click',async()=>{
         busy=true;button.disabled=true;$('media-message').textContent=`Starting ${engine.label} setup on ${host.id}…`;
-        try{const response=await fetch('/api/media/setup',{method:'POST',headers:{'content-type':'application/json','x-dsg-csrf':state.csrf_token},body:JSON.stringify({worker_id:host.id,engine:engine.id})});const result=await response.json();if(!response.ok)throw Error(result.error??'Setup was not confirmed. Refresh its saved status before retrying.');$('media-message').textContent=`${host.id}: ${result.phase.replaceAll('_',' ')}. Progress remains here when you leave this page.`;}
+        try{const response=await fetch('/api/media/setup',{method:'POST',headers:{'content-type':'application/json','x-dsg-csrf':state.csrf_token},body:JSON.stringify({worker_id:host.id,engine:engine.id,...(host.member!==undefined?{member:host.member}:{}),...(setup?.phase==='failed_unchanged'?{expected_failed_at:setup.at}:{})})});const result=await response.json();if(!response.ok)throw Error(result.error??'Setup was not confirmed. Refresh its saved status before retrying.');$('media-message').textContent=`${host.id}: ${result.phase.replaceAll('_',' ')}. Progress remains here when you leave this page.`;}
         catch(error){$('media-message').textContent=error.message;}finally{busy=false;signature='';await refresh(true);}
       });
       card.append(el('p','Setup drains existing work, tests the new engine and restores this machine’s LLM. At least one other LLM stays available.','muted'));
@@ -84,10 +84,10 @@ function renderJobs(jobs,supported){
       row={card,title:el('h3'),id:el('p',job.id,'muted'),assignment:el('p'),detail:el('p',undefined,'media-job-detail'),machine:el('p'),retention:el('p',undefined,'media-job-detail'),files:el('div'),fileIds:new Set()};
       card.append(row.title,row.id,row.assignment,row.detail,row.machine,row.retention,row.files);jobCards.set(job.id,row);
     }
-    row.title.textContent=`${engineNames[job.kind]??job.kind} · ${job.state}`;
-    row.assignment.textContent=`${job.priority??'normal'} priority · ${job.execution?.worker_id??job.worker??'Waiting for assignment'}`;
+    row.title.textContent=`${engineNames[job.kind]??job.kind} · ${job.dispatch_hold?'held':job.state}`;
+    row.assignment.textContent=`${job.priority??'normal'} priority · ${job.execution?.worker_id??job.worker??'Waiting for assignment'}${job.execution?.parallel_members?' · member '+(job.execution.member+1):''}`;
     if(job.execution?.batch_job_ids?.length>1)row.assignment.textContent+=` · batch job ${job.execution.batch_job_ids.indexOf(job.id)+1}/${job.execution.batch_job_ids.length}${job.execution.active_job_id&&job.state==='queued'&&job.execution.active_job_id!==job.id?' · waiting for its turn':''}`;
-    row.detail.textContent=[job.detail,job.next_step].filter(Boolean).join(' ');row.detail.hidden=!job.detail;
+    row.detail.textContent=[job.dispatch_hold,job.detail,job.next_step].filter(Boolean).join(' ');row.detail.hidden=!row.detail.textContent;
     row.machine.textContent=job.execution?`Machine: ${job.execution.phase}${job.execution.detail?' — '+job.execution.detail:''}`:'';row.machine.hidden=!job.execution;
     row.retention.textContent=job.outputs?.state==='failed'?`Result retention failed: ${job.outputs.detail??'Inspect this job'}`:'';row.retention.hidden=job.outputs?.state!=='failed';
     for(const file of job.outputs?.state==='ready'?job.outputs.files??[]:[]){

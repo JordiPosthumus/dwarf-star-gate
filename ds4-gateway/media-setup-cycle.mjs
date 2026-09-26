@@ -12,6 +12,7 @@ export async function runMediaSetup(plan,io){
  const unchanged=async()=>assert.ok(isDeepStrictEqual(mediaContainerSignature(await inspect(plan.llm_container)),mediaContainerSignature(original)),'Original LLM configuration changed');
  try{
   assert.ok(Array.isArray(plan.engines)&&plan.engines.length&&new Set(plan.engines).size===plan.engines.length&&plan.engines.every(e=>['h3','ace-step'].includes(e)),'Choose supported media engines');
+  await io.pair?.capture();
   original=await inspect(plan.llm_container);
   assert.match(original.Id,/^[a-f0-9]{64}$/,'Docker inspection must identify the full original container ID');
   // Names are valid installation references. Pin this operation to the
@@ -23,11 +24,13 @@ export async function runMediaSetup(plan,io){
   assert.equal(recovery.listener,true);assert.equal(recovery.fault,null);
   assert.equal(recovery.instance,createHash('sha256').update(JSON.stringify([original.Id,original.State.StartedAt])).digest('hex').slice(0,32),'Recovery and setup must identify the same original LLM');
   save('llm-before.json',original);
+  // A stale retained-media candidate can be rejected while the LLM still serves.
+  if(io.preflight)await io.preflight(original.Id);
   progress('waiting_idle','Waiting for admitted and direct LLM work before preparing media.');
   await maintenance('prepare');assert.equal((await maintenance('transition')).owned,true);
-  await unchanged();save('stop-llm-intent.json',{container:plan.llm_container});stopped=true;
-  await stop(plan.llm_container);assert.equal((await inspect(plan.llm_container)).State.Running,false);
-  progress('preparing_media','Building and downloading only the selected media engines.');
+  await unchanged();await io.pair?.check();save('stop-llm-intent.json',{container:plan.llm_container});stopped=true;
+  if(io.pair)await io.pair.stop(plan.llm_container);else await stop(plan.llm_container);assert.equal((await inspect(plan.llm_container)).State.Running,false);
+  progress('preparing_media',plan.reuse?'Checking the exact retained media preparation before fresh qualification.':'Building and downloading only the selected media engines.');
   save('prepare-intent.json',{engines:plan.engines,target:plan.target});
   let acknowledgement;
   try{acknowledgement=await io.prepare(plan.llm_container);save('prepare-acknowledgement.json',acknowledgement);}
@@ -58,14 +61,14 @@ export async function runMediaSetup(plan,io){
     assert.equal((await maintenance('owned')).owned,true);
     for(const engine of Object.values(preparation?.engines??{}))assert.equal((await inspect(engine.container)).State.Running,false,'Media qualification has not released its engine');
     await unchanged();save('restore-llm-intent.json',{container:plan.llm_container});
-    if(!(await inspect(plan.llm_container)).State.Running)await start(plan.llm_container);
+    if(io.pair)await io.pair.restore(plan.llm_container);else if(!(await inspect(plan.llm_container)).State.Running)await start(plan.llm_container);
     progress('restoring_llm','Loading the original LLM with unchanged settings.');
     for(;;){
      let state;try{state=await recoveryInspect();}catch{await delay(5000);continue;}
      assert.equal(state.profile,plan.recovery.profile);assert.equal(state.fault,null);
      if(state.listener)break;await delay(5000);
     }
-    progress('checking_llm','Checking real responses and cold-to-warm cache reuse.');
+    progress('checking_llm',io.pair?'Verifying both original GLM containers and a native readiness response.':'Checking real responses and cold-to-warm cache reuse.');
     save('llm-proof.json',await verify());
     const result=await maintenance('finish');save('readmission.json',result);assert.equal(result.state,'readmitted');returned=true;
     progress(error?'failed_returned':'qualified_returned',error?`Setup failed; original LLM returned: ${error.message}`:'Selected media qualified; original LLM verified and returned.');

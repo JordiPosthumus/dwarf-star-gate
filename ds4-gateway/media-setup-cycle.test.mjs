@@ -56,6 +56,11 @@ test('definitive preflight refusal returns the LLM without waiting for a nonexis
  const f=fixture();f.io.prepare=async()=>({state:'refused',error:'unsupported platform'});f.io.readPreparation=async()=>{assert.fail('No installation was launched');};
  await assert.rejects(runMediaSetup(f.plan,f.io),/unsupported platform/);assert.equal(f.llm.State.Running,true);assert.ok(f.calls.includes('finish'));
 });
+test('stale retained-media preflight leaves the current LLM serving without taking a hold',async()=>{
+ const f=fixture();f.io.preflight=async id=>{assert.equal(id,f.llm.Id);assert.equal(f.llm.State.Running,true);throw Error('retained image changed');};
+ await assert.rejects(runMediaSetup(f.plan,f.io),/retained image changed/);
+ assert.deepEqual(f.calls,['phase:failed_unchanged']);assert.equal(f.llm.State.Running,true);assert.equal(f.receipts['stop-llm-intent.json'],undefined);
+});
 test('changed original settings or a still-running media engine prevents unsafe return',async()=>{
  for(const change of ['settings','media']){
   const f=fixture();f.io.qualify=async()=>{if(change==='settings')f.llm.Config.Cmd=['someone-else'];else f.media.State.Running=true;throw Error('qualification failed');};

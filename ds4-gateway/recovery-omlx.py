@@ -2,7 +2,7 @@
 """Recover an enrolled, directly launched local oMLX without rewriting its launcher.
 
 The core owns admission and post-start verification. This adapter uses the
-existing start.py/serve.sh, and an explicitly enrolled PID file and command hash.
+existing launcher/serve.sh, and an explicitly enrolled PID file and command hash.
 It does not create a launchd service or change model/cache settings.
 """
 import fcntl
@@ -14,6 +14,7 @@ from pathlib import Path
 import re
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import time
@@ -28,12 +29,51 @@ def fingerprint(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
 
+def validate_config(config):
+    required = {'root', 'binary', 'port', 'command_sha256', 'api_key_file', 'start_stopped'}
+    def absolute(value):
+        return isinstance(value, str) and value.startswith('/') and '\0' not in value
+    if (not isinstance(config, dict) or not required <= set(config)
+            or set(config) - required - {'launcher', 'profile_files'}
+            or any(not absolute(config[k]) for k in ('root', 'binary', 'api_key_file'))
+            or type(config['port']) is not int or not 1 <= config['port'] <= 65535
+            or type(config['start_stopped']) is not bool
+            or not isinstance(config['command_sha256'], str)
+            or not re.fullmatch(r'[a-f0-9]{64}', config['command_sha256'])):
+        raise ValueError('invalid_private_configuration')
+    if 'launcher' in config:
+        files = config.get('profile_files')
+        if (not absolute(config['launcher']) or not isinstance(files, list)
+                or len(files) > 32 or any(not absolute(p) for p in files)
+                or len(set(files)) != len(files)):
+            raise ValueError('invalid_launcher_configuration')
+    elif 'profile_files' in config:
+        raise ValueError('invalid_launcher_configuration')
+
+
+def enrolled_file(path, executable=False):
+    info = os.lstat(path)
+    if (not stat.S_ISREG(info.st_mode) or info.st_uid not in (0, os.getuid())
+            or info.st_mode & 0o022 or (executable and not os.access(path, os.X_OK))):
+        raise ValueError('launcher_file_unverified')
+    return mac.file_digest(path)
+
+
 def profile(config):
     root = Path(config['root'])
-    files = {str(root / name): mac.file_digest(root / name) for name in ('start.py', 'serve.sh', 'state/settings.json', 'state/model_settings.json')}
-    return fingerprint({'files': files, 'binary': str(Path(config['binary']).resolve()),
-                        'binary_sha256': mac.file_digest(config['binary']), 'port': config['port'],
-                        'command_sha256': config['command_sha256']})
+    names = ('serve.sh', 'state/settings.json', 'state/model_settings.json')
+    files = {str(root / name): mac.file_digest(root / name) for name in (names if 'launcher' in config else ('start.py', *names))}
+    value = {'files': files, 'binary': str(Path(config['binary']).resolve()),
+             'binary_sha256': mac.file_digest(config['binary']), 'port': config['port'],
+             'command_sha256': config['command_sha256']}
+    if 'launcher' in config:
+        # Include the selected executable path as well as all explicitly enrolled
+        # dependencies. Never silently substitute an installed start.py.
+        for path in config['profile_files']:
+            files[path] = enrolled_file(path)
+        files[config['launcher']] = enrolled_file(config['launcher'], executable=True)
+        value['launcher'] = config['launcher']
+    return fingerprint(value)
 
 
 def alive(pid):
@@ -104,8 +144,9 @@ def idle(config):
 def start(config, journal, action_id):
     # Preserve the installation's own startup environment and settings.
     root = Path(config['root'])
+    command = [config['launcher']] if 'launcher' in config else [sys.executable, '-I', str(root / 'start.py')]
     with (journal.parent / ('start-' + action_id + '.log')).open('ab') as log:
-        process = subprocess.Popen([sys.executable, '-I', str(root / 'start.py')], cwd=root,
+        process = subprocess.Popen(command, cwd=root,
                                    stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
                                    start_new_session=True)
     return process.pid  # Admission waits for native proof, not this acknowledgement.
@@ -163,18 +204,22 @@ def handle(config, request, journal):
 def main():
     filename = Path(sys.argv[1])
     config = mac.read_private_config(filename)
-    if (set(config) != {'root', 'binary', 'port', 'command_sha256', 'api_key_file', 'start_stopped'}
-            or any(not isinstance(config[k], str) or not config[k].startswith('/') or '\0' in config[k] for k in ('root', 'binary', 'api_key_file'))
-            or type(config['port']) is not int or not 1 <= config['port'] <= 65535
-            or type(config['start_stopped']) is not bool or not re.fullmatch(r'[a-f0-9]{64}', config['command_sha256'])):
-        raise ValueError('invalid_private_configuration')
+    validate_config(config)
     raw = sys.stdin.buffer.read(8193)
     if len(raw) > 8192: raise ValueError('adapter_input_limit')
-    print(json.dumps(handle(config, json.loads(raw), filename.with_suffix('.actions.json'))))
+    request=json.loads(raw)
+    if request.get('action') in ('transaction','start-transaction','transaction-status'):
+        spec=importlib.util.spec_from_file_location('omlx_transaction',Path(__file__).with_name('recovery_omlx_transaction.py'))
+        transaction=importlib.util.module_from_spec(spec);spec.loader.exec_module(transaction)
+        result=(transaction.transaction_status(filename,config,request) if request['action']=='transaction-status'
+                else transaction.dispatch(filename,config,request))
+    else:result=handle(config,request,filename.with_suffix('.actions.json'))
+    print(json.dumps(result))
 
 
 if __name__ == '__main__':
     try: main()
-    except Exception:
-        print(json.dumps({'error': 'adapter_check_or_operation_failed'}))
+    except Exception as error:
+        reason=str(error) if re.fullmatch(r'omlx_transaction_[a-z_]+',str(error)) else 'adapter_check_or_operation_failed'
+        print(json.dumps({'error': reason}))
         sys.exit(1)

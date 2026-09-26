@@ -2,6 +2,7 @@ import test from 'node:test';import assert from 'node:assert/strict';import fs f
 import {createMediaSetup} from './media-setup.mjs';import {saveMediaReceipt} from './media-execution.mjs';
 import http from 'node:http';import {once} from 'node:events';
 import {createGateway} from './gateway.mjs';import {workerControl} from './worker-client.mjs';
+import {mediaReuse,selectedMediaPreparation,mediaPreparationRequest} from './media-reuse.mjs';
 function fixture(t){
  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'sg-media-setup-'));t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
  const llm='a'.repeat(64),engine={container:'b'.repeat(64),image:'sha256:'+'c'.repeat(64),kind:'ace-step',port:8002,inspection:{Id:'b'.repeat(64),Image:'sha256:'+'c'.repeat(64),Config:{Cmd:['serve']},HostConfig:{},Mounts:[]}};
@@ -83,8 +84,181 @@ test('real core exposes setup status on its private socket and refuses unenrolle
  const state=await workerControl(config.control_socket,'/media-jobs');assert.equal(state.setup.connected,true);assert.equal(state.setup.hosts[0].available,false);
  await workerControl(config.control_socket,'/media-host-eligibility',{worker_id:'one',kind:'music',allowed:true});
  await assert.rejects(workerControl(config.control_socket,'/genie-media-setup',{worker_id:'one',engine:'ace-step'}),/switched off/);
+ await assert.rejects(workerControl(config.control_socket,'/genie-media-repair',{worker_id:'one',engine:'ace-step',expected_failed_at:'2026-01-01T00:00:00Z'}),/switched off/);
+ await assert.rejects(workerControl(config.control_socket,'/genie-media-audit',{}),/switched off/);
  await workerControl(config.control_socket,'/genie-capability',{key:'media',enabled:true});
  await assert.rejects(workerControl(config.control_socket,'/genie-media-setup',{worker_id:'one',engine:'ace-step'}),/matching Docker/);
  const publicAttempt=await fetch(`http://127.0.0.1:${address.port}/genie-media-setup`,{method:'POST',headers:{authorization:'Bearer fixture-key','content-type':'application/json'},body:JSON.stringify({worker_id:'one',engine:'ace-step'})});assert.equal(publicAttempt.status,404);
  assert.equal((await workerControl(config.control_socket,'/workers')).workers[0].drained,false);assert.equal((await workerControl(config.control_socket,'/media-jobs')).setup.operations.length,0);
+});
+
+test('explicit GLM pair enrollment prepares media without pretending to be a single Qwen recovery',async t=>{
+ const f=fixture(t),w=f.workers[0];f.config.recovery.workers=[];
+ const pair={kind:'glm53-docker-pair',model:'GLM',worker_binding:{id:w.id,url:w.url,ssh:w.ssh},members:[{ssh:'fixture-host',container:'a'.repeat(64)},{ssh:'fixture-rank',container:'rank'}]};
+ f.config.media_jobs.pairs={one:pair};
+ const service=createMediaSetup(f.config,f.store,{...f.options,binding:()=>false});assert.equal(service.status().hosts[0].available,true);
+ const row=await service.start({worker_id:'one',engine:'ace-step'}),plan=JSON.parse(fs.readFileSync(path.join(f.options.directory,row.operation_id,'plan.json')));
+ assert.deepEqual(plan.llm_pair,{...pair,media_member:0});assert.equal(plan.recovery.profile,'glm53-docker-pair');assert.equal(plan.endpoint.url,w.url);assert.deepEqual(f.config.recovery.workers,[]);
+ f.workers[0].url='http://changed';assert.equal(service.status().hosts[0].available,false);
+});
+
+test('paired setup assigns ACE to rank and saves its host member with native qualification',async t=>{
+ const f=fixture(t),w=f.workers[0];f.config.recovery.workers=[];
+ f.config.media_jobs.pairs={one:{kind:'glm53-docker-pair',model:'GLM',worker_binding:{id:w.id,url:w.url,ssh:w.ssh},members:[{ssh:'fixture-host',container:'a'.repeat(64)},{ssh:'fixture-rank',container:'rank'}],engine_members:{music:1,video:0}}};
+ const service=createMediaSetup(f.config,f.store,f.options),row=await service.start({worker_id:'one',engine:'ace-step'});
+ const plan=JSON.parse(fs.readFileSync(path.join(f.options.directory,row.operation_id,'plan.json')));assert.equal(plan.target.ssh,'fixture-rank');assert.equal(plan.llm_container,'rank');assert.equal(plan.llm_pair.media_member,1);
+ f.complete(row.operation_id);await service.finish({operation_id:row.operation_id});assert.equal(f.config.media_jobs.workers.one.engines.music.member,1);
+ const again=createMediaSetup(f.config,f.store,f.options);assert.equal(again.status().hosts[0].error,null);
+});
+
+test('each physical member can qualify the same engine without replacing the default or replaying work',async t=>{
+ const f=fixture(t),w=f.workers[0];f.config.recovery.workers=[];
+ f.config.media_jobs.pairs={one:{kind:'glm53-docker-pair',model:'GLM',worker_binding:{id:w.id,url:w.url,ssh:w.ssh},members:[{ssh:'fixture-host',container:'a'.repeat(64)},{ssh:'fixture-rank',container:'rank'}],engine_members:{music:1,video:0}}};
+ const baseline=structuredClone(f.config),service=createMediaSetup(f.config,f.store,f.options);
+ const first=await service.start({worker_id:'one',engine:'ace-step',member:0});
+ await assert.rejects(service.start({worker_id:'one',engine:'ace-step',member:1}),/already owns/);
+ f.complete(first.operation_id);await service.finish({operation_id:first.operation_id});
+ assert.equal(f.config.media_jobs.workers.one.engines.music.member,0);
+ const second=await service.start({worker_id:'one',engine:'ace-step',member:1});
+ assert.notEqual(second.operation_id,first.operation_id);
+ const plan=JSON.parse(fs.readFileSync(path.join(f.options.directory,second.operation_id,'plan.json')));assert.equal(plan.target.ssh,'fixture-rank');
+ f.complete(second.operation_id);await service.finish({operation_id:second.operation_id});
+ assert.equal(f.config.media_jobs.workers.one.engines.music.member,0,'First default remains intact');
+ assert.equal(f.config.media_jobs.workers.one.member_engines[1].music.member,1);
+ for(const member of [0,1])assert.equal((await service.start({worker_id:'one',engine:'ace-step',member})).phase,'enrolled');
+ assert.equal(f.launches(),2);
+ const restarted=createMediaSetup(baseline,f.store,f.options);assert.equal(restarted.status().hosts[0].error,null);
+ for(const member of [0,1])assert.equal(baseline.media_jobs.workers.one.member_engines[member].music.member,member);
+ await assert.rejects(service.start({worker_id:'one',engine:'h3',member:2}));
+});
+
+test('retained preparation is pinned to its exact engine and still requires native proof',async t=>{
+ const f=fixture(t),e=f.fresh.engines['ace-step'];
+ f.config.media_jobs.reuse={one:{0:{'ace-step':{directory:'/retained/setup',...Object.fromEntries(['container','image','kind','port'].map(k=>[k,e[k]]))}}}};
+ const reuse=mediaReuse(f.config,'one','ace-step');assert.equal(reuse.directory,'/retained/setup');
+ const service=createMediaSetup(f.config,f.store,f.options),row=await service.start({worker_id:'one',engine:'ace-step'});
+ const file=path.join(f.options.directory,row.operation_id,'plan.json'),plan=JSON.parse(fs.readFileSync(file));assert.equal(plan.target.directory,reuse.directory);assert.equal(plan.reuse.container,e.container);
+ assert.equal(f.config.media_jobs.workers.one.engines.music,undefined,'A retained container is not qualification');
+ const source={...f.fresh,state:'prepared_stopped',llm_container:'9'.repeat(64)},selected=selectedMediaPreparation(source,{...reuse,llm_container:'a'.repeat(64)});
+ assert.equal(selected.llm_container,'a'.repeat(64));assert.equal(source.llm_container,'9'.repeat(64));assert.equal(selected.source_llm_container,source.llm_container);
+ assert.throws(()=>selectedMediaPreparation(source,{...reuse,container:'0'.repeat(64),llm_container:'a'.repeat(64)}),/changed/);
+ assert.throws(()=>selectedMediaPreparation(source,{...reuse,llm_container:'name'}));
+ f.complete(row.operation_id);
+ // A source-preparation or current return-binding change still blocks enrollment.
+ f.config.media_jobs.reuse.one[0]['ace-step'].image='sha256:'+'0'.repeat(64);
+ await assert.rejects(service.finish({operation_id:row.operation_id}),/binding changed/);
+});
+
+ test('retry archives only a confirmed pre-maintenance failure under the same operation ID',async t=>{
+  const f=fixture(t),input={worker_id:'one',engine:'ace-step'},row=await f.service.start(input),folder=path.join(f.options.directory,row.operation_id),at='2026-01-01T01:02:03.000Z';
+  saveMediaReceipt(folder,'progress.json',{phase:'failed_unchanged',at,detail:'Retained original LLM no longer exists'});
+  assert.equal((await f.service.start(input)).phase,'failed_unchanged');assert.equal(f.launches(),1);
+  await assert.rejects(f.service.start({...input,expected_failed_at:'2026-01-01T01:02:04.000Z'}),/current confirmed/);
+  await assert.rejects(f.service.start({...input,expected_failed_at:at}),/may still be active/);
+  saveMediaReceipt(folder,'launched.json',{pid:2147483647});fs.mkdirSync(path.join(folder,'gateway'));
+  fs.writeFileSync(path.join(folder,'gateway/acquire.intent.json'),'{}');
+  await assert.rejects(f.service.start({...input,expected_failed_at:at}),/past read-only preflight/);assert.equal(f.launches(),1);
+  fs.unlinkSync(path.join(folder,'gateway/acquire.intent.json'));
+  const next=await f.service.start({...input,expected_failed_at:at});assert.equal(next.operation_id,row.operation_id);assert.equal(next.attempt,2);assert.equal(f.launches(),2);
+  const old=JSON.parse(fs.readFileSync(path.join(f.options.directory,'history',row.operation_id,'attempt-1','progress.json')));assert.equal(old.at,at);assert.equal(old.phase,'failed_unchanged');
+  await assert.rejects(f.service.start({...input,expected_failed_at:at}),/current confirmed/);assert.equal(f.launches(),2);
+ });
+ test('retained directory requests pin the current LLM while preserving the old LLM provenance',()=>{
+  const reuse={engine:'ace-step',directory:'/retained',llm_container:'a'.repeat(64),container:'b'.repeat(64),image:'sha256:'+'c'.repeat(64),kind:'ace-step',port:8002};
+  assert.deepEqual(mediaPreparationRequest(reuse,false),{action:'retained_media',engine:'ace-step',llm_container:reuse.llm_container,require_idle:false});
+  const current={state:'prepared_stopped',llm_container:reuse.llm_container,source_llm_container:'old-removed-llm',engines:{'ace-step':reuse}};
+  assert.equal(selectedMediaPreparation(current,reuse).source_llm_container,'old-removed-llm');
+ });
+
+test('corrected reuse selection can retry unchanged preflight only, with every other binding preserved',async t=>{
+ for(const changed of ['candidate','fresh','route','other-engine','intent','runner']){
+  const f=fixture(t),e=f.fresh.engines['ace-step'];
+  f.config.media_jobs.reuse={one:{0:{'ace-step':{directory:'/retained',...Object.fromEntries(['container','image','kind','port'].map(k=>[k,e[k]]))},h3:null}}};
+  const service=createMediaSetup(f.config,f.store,f.options),input={worker_id:'one',engine:'ace-step'},first=await service.start(input),folder=path.join(f.options.directory,first.operation_id),at='2026-01-01T00:00:00.000Z';
+  saveMediaReceipt(folder,'progress.json',{phase:'failed_unchanged',at});saveMediaReceipt(folder,'launched.json',{pid:2147483647});
+  f.config.media_jobs.reuse.one[0]['ace-step']=changed==='fresh'?null:{source:'docker',container:'8'.repeat(64),image:'sha256:'+'9'.repeat(64),kind:'ace-step',port:8002};
+  if(changed==='route')f.workers[0].url='http://changed';
+  if(changed==='other-engine'){f.config.media_jobs.reuse.one[0].h3={source:'docker'};f.config.media_jobs.reuse.one[0]['ace-step']={directory:'/retained',...Object.fromEntries(['container','image','kind','port'].map(k=>[k,e[k]]))};}
+  if(changed==='intent')saveMediaReceipt(folder,'prepare-intent.json',{});
+  if(changed==='runner')saveMediaReceipt(folder,'launched.json',{pid:process.pid});
+  const ready=service.status().operations[0].retry_ready===true;
+  if(['candidate','fresh'].includes(changed)){
+   assert.equal(ready,true);const next=await service.start({...input,expected_failed_at:at});assert.equal(next.operation_id,first.operation_id);assert.equal(next.attempt,2);
+   assert.ok(fs.existsSync(path.join(f.options.directory,'history',first.operation_id,'attempt-1','plan.json')));
+  }else {assert.equal(ready,false);await assert.rejects(service.start({...input,expected_failed_at:at}));assert.equal(f.launches(),1);}
+ }
+});
+
+test('unchanged failures identify media separately from the inspected current LLM',async t=>{
+ const f=fixture(t),e=f.fresh.engines['ace-step'];f.config.media_jobs.reuse={one:{0:{'ace-step':{source:'docker',...Object.fromEntries(['container','image','kind','port'].map(k=>[k,e[k]]))}}}};
+ const row=await f.service.start({worker_id:'one',engine:'ace-step'}),folder=path.join(f.options.directory,row.operation_id);
+ saveMediaReceipt(folder,'progress.json',{phase:'failed_unchanged',at:'2026-01-01T00:00:00Z'});saveMediaReceipt(folder,'llm-resolution.json',{container:'a'.repeat(64)});
+ const evidence=f.service.status().operations[0].failure_context;assert.equal(evidence.current_llm_container,'a'.repeat(64));assert.equal(evidence.selected_media_container,'b'.repeat(64));assert.equal(evidence.llm_stop_started,false);
+ saveMediaReceipt(folder,'prepare-intent.json',{});assert.equal(f.service.status().operations[0].failure_context,undefined);
+});
+
+test('Genie source repair is bounded, backed up, idempotent and survives restart before same-ID retry',async t=>{
+ for(const fresh of [false,true]){
+  const f=fixture(t),e=f.fresh.engines['ace-step'];f.config.recovery.workers[0].machine='1'.repeat(64);
+  f.config.media_jobs.standard={enabled:true,targets:[{worker_id:'one',engine:'ace-step'}]};
+  f.config.media_jobs.reuse={one:{0:{'ace-step':{directory:'/old',...Object.fromEntries(['container','image','kind','port'].map(k=>[k,e[k]]))}}}};
+  const baseline=structuredClone(f.config),selection=fresh?null:{source:'docker',container:'8'.repeat(64),image:'sha256:'+'9'.repeat(64),kind:'ace-step',port:8002};let reads=0;
+  const options={...f.options,transport:async(target,input)=>{reads++;assert.equal(input.action,'discover_media');assert.equal(input.missing_container,e.container);assert.equal(input.llm_container,'a'.repeat(64));return {state:'source_selected',engine:'ace-step',missing_container:e.container,current_llm_container:'a'.repeat(64),selection};}};
+  const service=createMediaSetup(f.config,f.store,options),input={worker_id:'one',engine:'ace-step'},row=await service.start(input),folder=path.join(f.options.directory,row.operation_id),at='2026-01-01T00:00:00Z';
+  saveMediaReceipt(folder,'progress.json',{phase:'failed_unchanged',at});saveMediaReceipt(folder,'llm-resolution.json',{container:'a'.repeat(64)});saveMediaReceipt(folder,'launched.json',{pid:2147483647});
+  // Earlier operations are migrated only under the exact original identity.
+  delete f.store.data.media_setups[row.operation_id].infrastructure_binding;
+  const migrated=createMediaSetup(f.config,f.store,options);assert.ok(f.store.data.media_setups[row.operation_id].infrastructure_binding);
+  await assert.rejects(migrated.repair({...input,expected_failed_at:'wrong'}));
+  const result=await migrated.repair({...input,expected_failed_at:at});assert.equal(result.retry_ready,true);assert.equal(f.launches(),1);assert.equal(reads,1);
+  await migrated.repair({...input,expected_failed_at:at});assert.equal(reads,1,'lost reply does not repeat selection');
+  assert.ok(fs.existsSync(path.join(folder,'source-correction.json')));assert.equal(f.config.media_jobs.workers.one.engines.music,undefined);
+  const restored=createMediaSetup(baseline,f.store,options);assert.equal(restored.status().operations[0].retry_ready,true);
+  const next=await restored.start({...input,expected_failed_at:at});assert.equal(next.operation_id,row.operation_id);assert.equal(next.attempt,2);
+  const plan=JSON.parse(fs.readFileSync(path.join(folder,'plan.json')));assert.equal(plan.reuse?.container,selection?.container);assert.ok(fs.existsSync(path.join(f.options.directory,'history',row.operation_id,'attempt-1','source-correction.json')));
+ }
+});
+test('source repair respects standard/inspection permission, existing engine and transition guards',async t=>{
+ for(const deny of ['standard','inspection','intent','live','llm','qualified','uncertain']){
+  const f=fixture(t),e=f.fresh.engines['ace-step'];f.config.recovery.workers[0].machine='1'.repeat(64);f.config.media_jobs.standard={enabled:true,targets:[{worker_id:'one',engine:'ace-step'}]};f.config.media_jobs.reuse={one:{0:{'ace-step':{source:'docker',...Object.fromEntries(['container','image','kind','port'].map(k=>[k,e[k]]))}}}};
+  let reads=0;const service=createMediaSetup(f.config,f.store,{...f.options,isInspectionEnabled:()=>deny!=='inspection',transport:async()=>{reads++;throw Error('must not inspect');}}),input={worker_id:'one',engine:'ace-step'},row=await service.start(input),folder=path.join(f.options.directory,row.operation_id),at='2026-01-01T00:00:00Z';
+  saveMediaReceipt(folder,'progress.json',{phase:deny==='uncertain'?'needs_attention':'failed_unchanged',at});saveMediaReceipt(folder,'llm-resolution.json',{container:'a'.repeat(64)});saveMediaReceipt(folder,'launched.json',{pid:deny==='live'?process.pid:2147483647});
+  if(deny==='standard')f.config.media_jobs.standard.enabled=false;
+  if(deny==='intent')saveMediaReceipt(folder,'stop-llm-intent.json',{});
+  if(deny==='llm')f.config.genie_chat.inspection.workers.one.container='different';
+  if(deny==='qualified')f.config.media_jobs.workers.one.engines.music=Object.fromEntries(['container','image','kind','port'].map(k=>[k,e[k]]));
+  await assert.rejects(service.repair({...input,expected_failed_at:at}));assert.equal(reads,0);assert.equal(f.launches(),1);assert.equal(f.store.data.media_setup_sources,undefined);
+ }
+});
+
+test('standard audits save native evidence without changing enrollment and invalidate changed bindings',async t=>{
+ const f=fixture(t);f.config.media_jobs.standard={enabled:true,targets:[{worker_id:'one',engine:'h3'}]};
+ let calls=0,state='present';const before=JSON.stringify(f.config.media_jobs.workers);
+ const options={...f.options,transport:async(target,input)=>{calls++;assert.equal(target.ssh,'fixture-host');assert.equal(input.action,'audit_media');return {state,engine:input.engine,expected:input.expected,current_llm_container:'a'.repeat(64)};}};
+ const service=createMediaSetup(f.config,f.store,options);assert.equal(service.status().standard_audit.targets[0].due,true);assert.equal(calls,0);
+ await assert.rejects(service.audit({command:'anything'}));assert.equal(calls,0);
+ await service.audit({});assert.equal(calls,1);assert.equal(service.status().standard_audit.targets[0].state,'present');assert.equal(service.status().standard_audit.targets[0].due,false);
+ assert.equal(JSON.stringify(f.config.media_jobs.workers),before);assert.deepEqual(f.store.data.other,{keep:true});assert.ok(fs.readdirSync(f.directory).some(s=>s.includes('.media-setup-')));
+ const restored=createMediaSetup(f.config,f.store,options);assert.equal(restored.status().standard_audit.targets[0].state,'present');
+ state='absent';await restored.audit({});assert.equal(restored.status().standard_audit.targets[0].state,'absent');assert.equal(JSON.stringify(f.config.media_jobs.workers),before,'Absence never erases an enrollment');
+ f.config.genie_chat.inspection.workers.one.ssh=['new-host'];assert.equal(restored.status().standard_audit.targets[0].state,'not_observed');assert.equal(restored.status().standard_audit.targets[0].due,true);
+});
+
+test('standard audit distinguishes unavailable evidence, defers active setup and respects inspection permission',async t=>{
+ const f=fixture(t);f.config.media_jobs.standard={enabled:true,targets:[{worker_id:'one',engine:'h3'}]};let calls=0,inspection=false;
+ const service=createMediaSetup(f.config,f.store,{...f.options,isInspectionEnabled:()=>inspection,transport:async()=>{calls++;throw Error('SSH read unavailable');}});
+ await assert.rejects(service.audit({}),/switched off/);assert.equal(calls,0);inspection=true;
+ await service.audit({});assert.equal(service.status().standard_audit.targets[0].state,'unavailable');assert.equal(calls,1);
+ await service.start({worker_id:'one',engine:'ace-step'});const result=await service.audit({});assert.equal(result.checked[0].state,'deferred');assert.equal(calls,1);
+ assert.equal(f.config.media_jobs.workers.one.engines.video.container,'d'.repeat(64));
+});
+
+test('native audits retain distinct physical pair member identities',async t=>{
+ const f=fixture(t),w=f.workers[0];f.config.recovery.workers=[];
+ f.config.media_jobs.pairs={one:{kind:'glm53-docker-pair',model:'GLM',worker_binding:{id:w.id,url:w.url,ssh:w.ssh},members:[{ssh:'fixture-host',container:'a'.repeat(64)},{ssh:'fixture-rank',container:'rank'}]}};
+ const video=f.config.media_jobs.workers.one.engines.video;f.config.media_jobs.workers.one.member_engines={0:{video:{...video,member:0}},1:{video:{...video,member:1,container:'f'.repeat(64)}}};
+ f.config.media_jobs.standard={enabled:true,targets:[0,1].map(member=>({worker_id:'one',member,engine:'h3'}))};const calls=[];
+ const service=createMediaSetup(f.config,f.store,{...f.options,transport:async(target,input)=>{calls.push([target.ssh,input.llm_container,input.expected.container]);return {state:'present',engine:input.engine,expected:input.expected,current_llm_container:'a'.repeat(64)};}});
+ await service.audit({});assert.deepEqual(calls,[['fixture-host','a'.repeat(64),'d'.repeat(64)],['fixture-rank','rank','f'.repeat(64)]]);assert.equal(service.status().standard_audit.targets.length,2);
+ f.config.media_jobs.pairs.one.members[0].ssh='unbound';assert.ok(service.status().standard_audit.targets.every(r=>r.state==='unavailable'));
 });
