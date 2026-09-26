@@ -181,6 +181,17 @@ runner retains its claimed operation and uncertain state for reconciliation;
 automatic resumption after runner death is not implemented. Do not launch a new
 runner or replay native submissions to bypass that uncertainty.
 
+The shared generation loop can resume a saved queue after a coordinator has
+established exclusive ownership and the original engine binding. It observes
+accepted native IDs and retains already-completed outputs without re-uploading
+references or submitting those clips again. New-work vetoes and queue priorities
+apply to unsubmitted clips; they do not abandon accepted work. Missing native
+history or a lost ACE-Step task ID stays uncertain. Disposable process tests
+exercise a killed generation runner, including a lost ComfyUI submission reply,
+and prove one submission with retained output hashes after reconstruction. This
+is a recovery prerequisite, not permission to take over a live or uncertain
+runner; lifecycle takeover and automatic pair restoration remain incomplete.
+
 **Native acceptance still required:** simultaneous generation on actual enrolled
 members, full autonomous film production through installed Hermes, and native
 six-machine operation. Component/fault tests prove ownership, overlapping fixture
