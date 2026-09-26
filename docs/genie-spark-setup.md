@@ -26,6 +26,14 @@ and deduplicates multiple addresses for the same observed machine. New host keys
 are recorded in a private per-scan copy of known hosts; personal SSH files are
 not rewritten. Changed keys are not accepted. An open SSH port is not proof of
 a Spark. Existing hardware identities are labelled separately from candidates.
+Machines identified through existing SSH aliases remain in the result even
+when direct-IP login fails. `addresses` contains verified direct SSH paths;
+`reported_addresses` contains interface inventory from an authenticated host,
+which does not prove gateway reachability. An unverified endpoint may carry
+`reported_by` for matching unscoped inventory addresses, never for a remote
+link-local zone. Count hardware identities, not endpoints, as machines.
+Failed SSH attempts report separate categories for authentication, connection,
+name resolution, host-key trust and inspection uncertainty, without raw stderr.
 
 The IPv6 probe can find a directly attached cable peer without an IPv4 address
 when both interfaces already have link-local IPv6. Addresses retain their exact
@@ -35,9 +43,10 @@ The probe does not assign addresses, bring links up or change routing.
 
 **This is a discovery stage, not completed automatic onboarding.** DNS-SD service
 discovery, unconfigured cable links, password credential bootstrap, peer-only
-reachability and identity-bound automatic enrollment remain unfinished. A
-neighbor address observed on a remote Spark belongs to that remote interface;
-it must not be used as though it were a local gateway interface. Discovery
+reachability and identity-bound automatic enrollment remain unfinished. An IPv6
+link-local neighbor observed on a remote Spark belongs to that remote interface;
+it must not be used as though it were a local gateway interface. An unscoped
+remote IPv4 observation alone proves neither reachability nor unreachability. Discovery
 always reports partial coverage, and no candidate is marked enrollment-ready.
 The new tools do not install models, update firmware or reboot machines.
 Native discovery and deployment still need validation for each installation.

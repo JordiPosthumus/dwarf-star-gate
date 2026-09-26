@@ -188,15 +188,45 @@ export async function localNetworkSources({interfaces=os.networkInterfaces(),pla
   return {addresses:[...new Map(addresses.filter(row=>!local.has(row.address)).map(row=>[row.address,row])).values()],issues};
 }
 
+export function discoverySSHReason(error){
+  if(['host_key_unverified','authentication_unavailable','name_resolution_unavailable','connection_unavailable','inspection_timeout','identity_probe_unavailable'].includes(error?.discovery_reason))return error.discovery_reason;
+  const stderr=typeof error?.stderr==='string'?error.stderr:'';
+  if(/REMOTE HOST IDENTIFICATION HAS CHANGED|Host key verification failed/i.test(stderr))return 'host_key_unverified';
+  if(/Permission denied \([^\n]*(?:publickey|password|keyboard-interactive)/i.test(stderr))return 'authentication_unavailable';
+  if(/Could not resolve hostname|Name or service not known/i.test(stderr))return 'name_resolution_unavailable';
+  if(/Connection refused|No route to host|Network is unreachable|Connection timed out/i.test(stderr))return 'connection_unavailable';
+  if(error?.killed||error?.code==='ETIMEDOUT')return 'inspection_timeout';
+  return 'identity_probe_unavailable';
+}
 export async function inspectDiscoverySSH(ssh,{knownHosts}){
-  const {stdout}=await execute('ssh',['-T','-o','BatchMode=yes','-o','ConnectTimeout=5','-o',`UserKnownHostsFile=${knownHosts}`,
-    '-o','StrictHostKeyChecking=accept-new','--',ssh,`python3 -I -B -c ${quote(sparkIdentityProbe)}`],{timeout:35000,maxBuffer:131072});
-  return JSON.parse(stdout);
+  try{
+    const {stdout}=await execute('ssh',['-T','-o','BatchMode=yes','-o','ConnectTimeout=5','-o',`UserKnownHostsFile=${knownHosts}`,
+      '-o','StrictHostKeyChecking=accept-new','--',ssh,`python3 -I -B -c ${quote(sparkIdentityProbe)}`],{timeout:35000,maxBuffer:131072});
+    return JSON.parse(stdout);
+  }catch(error){throw Object.assign(Error('Spark identity inspection was not confirmed.'),{discovery_reason:discoverySSHReason(error)});}
 }
 async function resolveSSH(ssh){
   const {stdout}=await execute('ssh',['-G','--',ssh],{timeout:5000,maxBuffer:131072});
   const fields=Object.fromEntries(stdout.split('\n').map(s=>{const i=s.indexOf(' ');return [s.slice(0,i),s.slice(i+1)];}));
   return {hostname:fields.hostname,username:fields.user};
+}
+
+function reportedAddresses(facts){
+  const rows=[];
+  for(const device of Array.isArray(facts?.interfaces)?facts.interfaces:[]){
+    if(!interfacePattern.test(device?.ifname??''))continue;
+    for(const entry of Array.isArray(device.addr_info)?device.addr_info:[]){
+      const base=entry?.local;if(typeof base!=='string')continue;
+      const address=net.isIP(base)===6&&/^fe[89ab]/i.test(base)?base+'%'+device.ifname:base;
+      if(localAddress(address))rows.push({address,interface:device.ifname,source:'remote_interface_inventory',scope:'Reported by this authenticated host; gateway reachability is not established by this evidence.'});
+    }
+  }
+  return rows;
+}
+function candidateRecord(facts,identity,existing){
+  return {candidate_id:identity,identity,hostname:facts.hostname??null,manufacturer:facts.manufacturer??null,product:facts.product??null,bios_version:facts.bios_version??null,
+    device_tree_model:facts.device_tree_model??null,addresses:[],reported_addresses:reportedAddresses(facts),existing_connections:existing,state:existing.length?'existing_spark':'discovered_spark',
+    enrollment_ready:false,scope:'Hardware identified; discovery did not enroll, configure, update or qualify this host.'};
 }
 
 export function createSparkDiscovery({directory,aliases=async()=>[],sources=localNetworkSources,port=probeSSHPort,inspect=inspectDiscoverySSH,resolve=resolveSSH,now=()=>new Date().toISOString(),maxCandidates=64}={}){
@@ -223,7 +253,7 @@ export function createSparkDiscovery({directory,aliases=async()=>[],sources=loca
         const facts=await inspect(ssh,{knownHosts}),identity=sparkIdentity(facts);
         known.push({ssh,hostname:resolved.hostname,identity,facts});
         if(!identity)issues.push({source:'configured_host',ssh,reason:'physical_identity_unverified'});
-      }catch{issues.push({source:'configured_host',ssh,reason:'ssh_identity_unavailable'});}
+      }catch(error){issues.push({source:'configured_host',ssh,reason:discoverySSHReason(error)});}
     });
     const network=await sources();issues.push(...network.issues);
     const addresses=new Map();
@@ -232,32 +262,42 @@ export function createSparkDiscovery({directory,aliases=async()=>[],sources=loca
     const ports=await mapLimit([...addresses.values()],32,async row=>({...row,ssh_open:await port(row.address)}));
     const open=ports.filter(row=>row.ssh_open);
     const candidates=new Map(),unverified=[];
+    // Authentication through an existing alias is hardware evidence even when
+    // literal-address login needs alias-specific keys or routing options.
+    for(const host of known.filter(k=>k.identity)){
+      let candidate=candidates.get(host.identity);
+      if(!candidate){candidate=candidateRecord(host.facts,host.identity,[]);candidates.set(host.identity,candidate);}
+      candidate.state='existing_spark';candidate.existing_connections.push(host.ssh);
+    }
     if(open.length>maxCandidates)issues.push({source:'ssh_identification',reason:'candidate_limit',limit:maxCandidates});
     if(users.size>4)issues.push({source:'ssh_identification',reason:'ambiguous_usernames'});
     const usernames=username?[username]:users.size<=4?[...users]:[];
     if(!usernames.length)issues.push({source:'ssh_identification',reason:'no_existing_ssh_username'});
     await mapLimit(open.slice(0,maxCandidates),4,async row=>{
+      const failures=[];
       for(const user of usernames){
         try{
           const facts=await inspect(`${user}@${row.address}`,{knownHosts}),identity=sparkIdentity(facts);
           if(!identity){unverified.push({...row,state:'not_verified_as_spark'});return;}
           const existing=known.filter(k=>k.identity===identity);
           let candidate=candidates.get(identity);
-          if(!candidate){candidate={candidate_id:identity,identity,hostname:facts.hostname??null,manufacturer:facts.manufacturer??null,product:facts.product??null,bios_version:facts.bios_version??null,
-            device_tree_model:facts.device_tree_model??null,addresses:[],existing_connections:existing.map(k=>k.ssh),state:existing.length?'existing_spark':'discovered_spark',
-            enrollment_ready:false,scope:'Hardware identified; not enrolled, configured, updated or qualified.'};candidates.set(identity,candidate);}
+          if(!candidate){candidate=candidateRecord(facts,identity,existing.map(k=>k.ssh));candidates.set(identity,candidate);}
           candidate.addresses.push({...row,username:user});return;
-        }catch{/* Try only previously configured usernames, never passwords. */}
+        }catch(error){failures.push({username:user,reason:discoverySSHReason(error)});}
       }
-      unverified.push({...row,state:'ssh_access_unverified'});
+      // A remote link-local zone can share its name with a local interface but
+      // still refer to a different physical link. Never match across scopes.
+      const reportedBy=row.address.includes('%')?[]:known.filter(k=>reportedAddresses(k.facts).some(a=>a.address===row.address)).map(k=>k.ssh);
+      unverified.push({...row,state:'ssh_access_unverified',attempts:failures,reported_by:reportedBy,scope:reportedBy.length?'An authenticated known host reported this address; this direct SSH path is still unverified.':'No hardware identity is established for this endpoint.'});
     });
     const peers=[];
-    for(const host of known)for(const neighbor of host.facts.neighbors??[]){
+    for(const host of known)for(const neighbor of Array.isArray(host.facts?.neighbors)?host.facts.neighbors:[]){
+      if(!interfacePattern.test(neighbor?.dev??''))continue;
       const address=net.isIP(neighbor.dst)===6&&/^fe[89ab]/i.test(neighbor.dst)?`${neighbor.dst}%${neighbor.dev}`:neighbor.dst;
-      if(localAddress(address))peers.push({via:host.ssh,address,interface:neighbor.dev,state:'peer_visible_unverified',scope:'Address is scoped to this Spark; not a gateway SSH target.'});
+      if(localAddress(address))peers.push({via:host.ssh,address,interface:neighbor.dev,state:'peer_visible_unverified',scope:address.includes('%')?'IPv6 link-local scope belongs to the remote interface, not a gateway interface.':'Remote neighbor evidence alone establishes neither gateway reachability nor unreachability.'});
     }
     state={scan_id:id,state:'complete',observed_at:now(),addresses_checked:ports.length,ssh_open:open.length,candidates:[...candidates.values()].sort((a,b)=>a.identity.localeCompare(b.identity)),unverified,peer_neighbors:peers,
-      known_hosts:known.map(({ssh,identity})=>({ssh,identity})),issues,coverage:'partial',scope:'Read-only discovery. Missing candidates may require multicast, cable configuration, peer reachability or SSH access; this result never proves absence.'};save();
+      known_hosts:known.map(({ssh,identity,hostname,facts})=>({ssh,identity,destination:hostname,reported_addresses:reportedAddresses(facts)})),issues,coverage:'partial',scope:'Read-only discovery. Missing candidates may require multicast, cable configuration, peer reachability or SSH access; this result never proves absence.'};save();
   };
   return {status:({scan_id}={})=>{
     if(scan_id===undefined||scan_id===state.scan_id)return structuredClone(state);

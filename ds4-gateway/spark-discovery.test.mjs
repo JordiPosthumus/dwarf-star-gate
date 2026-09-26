@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import {createSparkDiscovery,sparkIdentity,networkAddresses,neighborAddresses,localAddress,configuredSSH,sparkIdentityProbe,multicastInterfaces,multicastReplyAddresses,localNetworkSources} from './spark-discovery.mjs';
+import {createSparkDiscovery,sparkIdentity,networkAddresses,neighborAddresses,localAddress,configuredSSH,sparkIdentityProbe,multicastInterfaces,multicastReplyAddresses,localNetworkSources,discoverySSHReason} from './spark-discovery.mjs';
 import {createSparkSetupTools} from './genie-spark-setup.mjs';
 
 // Generate synthetic RFC1918 addresses for locality tests; never use deployment inventory.
@@ -119,9 +119,58 @@ test('a failed receipt write is reported without an unhandled background rejecti
 });
 test('unavailable SSH and neighbor-only links remain uncertain and never become enrollment-ready',async t=>{
   const f=fixture(t,{inspect:async ssh=>{if(ssh!=='existing-spark')throw Error('private authentication detail');return {...facts(),neighbors:[{dst:'fe80::2',dev:'enp1s0'}]};}});
-  await f.service.discover();await f.service.settled();const result=f.service.status();assert.equal(result.candidates.length,0);assert.equal(result.unverified.length,3);
-  assert.deepEqual(result.peer_neighbors[0],{via:'existing-spark',address:'fe80::2%enp1s0',interface:'enp1s0',state:'peer_visible_unverified',scope:'Address is scoped to this Spark; not a gateway SSH target.'});
+  await f.service.discover();await f.service.settled();const result=f.service.status();assert.equal(result.candidates.length,1);assert.equal(result.candidates[0].state,'existing_spark');assert.equal(result.unverified.length,3);
+  assert.deepEqual(result.peer_neighbors[0],{via:'existing-spark',address:'fe80::2%enp1s0',interface:'enp1s0',state:'peer_visible_unverified',scope:'IPv6 link-local scope belongs to the remote interface, not a gateway interface.'});
   assert.doesNotMatch(JSON.stringify(result),/private authentication/);
+});
+test('all authenticated configured machines survive direct-IP authentication failure without becoming new candidates',async t=>{
+  const aliases=['alpha','beta','gamma','delta','gamma-backup'],calls=[];
+  const index=alias=>alias==='gamma-backup'?2:aliases.indexOf(alias);
+  const interfaces=i=>[{ifname:'eth0',addr_info:[{local:ip(192,168,9,i+2)}]}];
+  const f=fixture(t,{aliases:async()=>aliases,resolve:async ssh=>({hostname:ip(192,168,9,index(ssh)+2),username:'owner'}),
+    sources:async()=>({addresses:[2,3,4,5,6].map(n=>({address:ip(192,168,9,n)})),issues:[]}),
+    inspect:async ssh=>{
+      calls.push(ssh);
+      if(aliases.includes(ssh)){const i=index(ssh);return {...facts('abcd'[i]),interfaces:interfaces(i)};}
+      throw Object.assign(Error('private login detail'),{stderr:'owner@private-host: Permission denied (publickey,password).'});
+    }});
+  await f.service.discover();await f.service.settled();const result=f.service.status();
+  assert.equal(result.state,'complete');assert.equal(result.candidates.length,4);assert.equal(result.known_hosts.length,5);
+  assert.ok(result.candidates.every(c=>c.state==='existing_spark'&&c.addresses.length===0&&c.reported_addresses.length===1&&!c.enrollment_ready));
+  assert.deepEqual(result.candidates.find(c=>c.identity===sparkIdentity(facts('c'))).existing_connections.sort(),['gamma','gamma-backup']);
+  assert.deepEqual(result.unverified.find(r=>r.address===ip(192,168,9,4)).reported_by.sort(),['gamma','gamma-backup']);
+  assert.deepEqual(result.unverified.find(r=>r.address===ip(192,168,9,6)).reported_by,[]);
+  assert.ok(result.unverified.every(r=>r.attempts[0].reason==='authentication_unavailable'));
+  assert.ok(result.known_hosts.every(h=>h.reported_addresses.length===1&&h.destination));
+  assert.equal(calls.length,10);assert.doesNotMatch(JSON.stringify(result),/private login|private-host|Permission denied/);
+});
+test('remote interface scope never identifies a local link just because its interface name matches',async t=>{
+  const f=fixture(t,{sources:async()=>({addresses:[{address:'fe80::2%eth0'}],issues:[]}),inspect:async ssh=>{
+    if(ssh!=='existing-spark')throw Object.assign(Error(),{stderr:'No route to host'});
+    return {...facts(),interfaces:[null,{ifname:'bad;command',addr_info:[{local:ip(10,1,0,2)}]},{ifname:'broken',addr_info:{}},{ifname:'eth0',addr_info:[null,{local:'fe80::2'},{local:ip(10,1,0,2)}]}],neighbors:[null,{dst:ip(10,1,0,3),dev:'eth0'}]};
+  }});
+  await f.service.discover();await f.service.settled();const result=f.service.status();
+  assert.equal(result.state,'complete');assert.deepEqual(result.unverified[0].reported_by,[]);
+  assert.equal(result.unverified[0].attempts[0].reason,'connection_unavailable');
+  assert.equal(result.candidates[0].reported_addresses.length,2);
+  assert.match(result.peer_neighbors[0].scope,/neither gateway reachability nor unreachability/);
+});
+test('SSH diagnostics separate access, transport, trust and probe uncertainty without exposing stderr',()=>{
+  for(const [stderr,expected] of [
+    ['Permission denied (publickey,password).','authentication_unavailable'],
+    ['Permission denied (keyboard-interactive).','authentication_unavailable'],
+    ['WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!','host_key_unverified'],
+    ['Host key verification failed.','host_key_unverified'],
+    ['Could not resolve hostname private-machine: nodename nor servname provided','name_resolution_unavailable'],
+    ['ssh: connect to host private-machine port 22: Connection refused','connection_unavailable'],
+    ['No route to host','connection_unavailable'],
+    ['Connection timed out','connection_unavailable'],
+    ['python3: command not found','identity_probe_unavailable'],
+  ])assert.equal(discoverySSHReason({stderr}),expected);
+  assert.equal(discoverySSHReason({killed:true}),'inspection_timeout');
+  assert.equal(discoverySSHReason({code:'ETIMEDOUT'}),'inspection_timeout');
+  assert.equal(discoverySSHReason({discovery_reason:'secret details'}),'identity_probe_unavailable');
+  assert.equal(discoverySSHReason({discovery_reason:'authentication_unavailable'}),'authentication_unavailable');
 });
 test('setup tool exposes discovery with capability/testing gates and strict argument schemas',async t=>{
   const f=fixture(t);let enabled=false,testing=false;
@@ -136,7 +185,7 @@ test('no configured user never invents a login, and incomplete known-host identi
   const f=fixture(t,{aliases:async()=>[]});await f.service.discover();await f.service.settled();
   assert.equal(f.calls.length,0);assert.ok(f.service.status().issues.some(i=>i.reason==='no_existing_ssh_username'));
   const g=fixture(t,{inspect:async()=>{throw Error('unreachable');}});await g.service.discover();await g.service.settled();
-  assert.ok(g.service.status().issues.some(i=>i.reason==='ssh_identity_unavailable'));
+  assert.ok(g.service.status().issues.some(i=>i.reason==='identity_probe_unavailable'));
 });
 test('read-only discovery uses inspection permission without enabling new-host enrollment',async t=>{
   const f=fixture(t);let inspection=true;
