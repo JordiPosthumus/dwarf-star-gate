@@ -234,6 +234,34 @@ before starting a stopped ACE container. Omitted fields and older saved plans
 retain their existing behavior. This source/build witness does not replace
 native image qualification, effective inference checks or audio validation.
 
+Genie can request this fixed preparation through `prepare_media_improvement`
+with `worker_id` and an optional physical pair `member`. It requires an enrolled
+ACE engine included in the enabled `media_jobs.standard`, enabled Media, Server
+inspection and Server changes capabilities, and explicit
+`"media_jobs": {"improvements": {"enabled": true}}` policy. Merge this fragment
+into the existing configuration; retain every other setting. Omission leaves
+improvement preparation disabled. A standard target without `member` authorizes
+only the enrolled default member, not both members.
+
+The core saves the operation and reserves its physical machines before spawning
+an independent fixed runner. Preparation shares ownership/budget accounting with
+media execution and setup, but does not drain or stop inference. Host holds,
+maintenance, recovery, placement, configuration and policy are checked before
+each native preparation stage. The runner retains source hashes and an exact
+stopped-original profile; its SSH transport never accepts a model-supplied
+command, Dockerfile, image, source or replacement setting. Private backups record
+the intended change. Build logs and original settings remain private.
+
+`media_job_status.improvements` exposes saved operations and recorded stages.
+These are dated journal observations, not proof that a process remains alive.
+A lost launch or native command reply retains ownership and the same operation;
+repeating the tool does not launch another runner or replay a build. Read-only
+native verification can finish a completed preparation after policy withdrawal.
+Only a currently verified `candidate_prepared` receipt releases preparation
+ownership. It does not change enrollment or grant qualification/promotion
+permission. Native audio validation, capability/benefit comparison, exact LLM
+return and conditional promotion remain separate unfinished product stages.
+
 The internal ACE candidate preparer retains the exact stopped original container
 and snapshots its writable filesystem before adding the fixed sampler/DCW patch
 in a separate image. Mounted model, cache and output files remain on the original
@@ -246,9 +274,9 @@ coordinator permission and OS leases gate preparation. Missing acknowledgements
 or records never trigger another build or create operation. An uncertain attempt
 also prevents another operation ID from rebuilding the same original.
 
-This is preparation plumbing only: it has no standalone mutation CLI and is not
-yet connected to a Genie promotion tool. It never starts, stops, renames, removes
-or enrolls a container. The stopped candidate still needs actual recipe
+The fixed runner accepts only its saved operation directory and action; the
+internal primitive is not a promotion API. Neither starts, stops, renames,
+removes or enrolls a container. The stopped candidate still needs actual recipe
 qualification, decoded output, exact LLM return and preservation/benefit proof
 before a separate promotion transaction may change enrollment. Candidate
 preparation, reconstruction and native image acceptance remain distinct.

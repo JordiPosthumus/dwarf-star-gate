@@ -16,7 +16,7 @@ export function mediaJobOverview(job){
   if(job.outputs)out.outputs={state:job.outputs.state,file_count:job.outputs.files?.length??0};
   return out;
 }
-export function createMediaTools({read,start,inspectInputs=null,setup=null,repair=null,audit=null,resources=null,isTesting=()=>false}){
+export function createMediaTools({read,start,inspectInputs=null,setup=null,repair=null,audit=null,improve=null,resources=null,isTesting=()=>false}){
   return createToolEndpoint('/api/genie/media-tools','x-sg-media-tool',async input=>{
     if(input?.action==='job'&&Object.keys(input).sort().join(',')==='action,job_id'){
       if(typeof input.job_id!=='string')throw Error('Supply a saved media job ID.');
@@ -48,6 +48,11 @@ export function createMediaTools({read,start,inspectInputs=null,setup=null,repai
       if(isTesting())throw Error('Standard media audit is suspended for testing.');
       if(!audit)throw Error('Standard media audit is not connected.');
       return audit({});
+    }
+    if(input?.action==='improve'&&mediaMemberInput(input,'action,worker_id')){
+      if(isTesting())throw Error('Media candidate preparation is suspended for testing.');
+      if(!improve)throw Error('Media candidate preparation is not connected.');
+      const {action,...target}=input;return improve(target);
     }
     if(input?.action==='repair'&&mediaMemberInput(input,'action,engine,expected_failed_at,worker_id')){
       if(isTesting())throw Error('Media source repair is suspended for testing.');

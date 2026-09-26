@@ -39,7 +39,7 @@ export function createMediaExecution(config,jobs,{isEnabled=()=>false,launchRunn
   const terminal=new Set(['returned','failed_returned','failed_unchanged']);
   const busy=worker=>jobs.list().some(j=>j.execution?.worker_id===worker&&!terminal.has(j.execution.phase));
   const budget=()=>mediaBudget(config,jobs?.list()??[],externalOperations());
-  const assertCapacity=id=>{const result=budget().admission(id);if(!result.allowed)throw Error(result.reason);return result;};
+  const assertCapacity=(id,ownOperation)=>{const result=mediaBudget(config,jobs?.list()??[],externalOperations().filter(row=>!ownOperation||row.operation_id!==ownOperation)).admission(id);if(!result.allowed)throw Error(result.reason);return result;};
   return {
     assertCapacity,
     status:()=>{const capacity=budget();return {configured:!!jobs,enabled:isEnabled(),automatic_dispatch_enabled:config.media_jobs?.automatic_dispatch!==false,batch_jobs_supported:true,film_batches_supported:true,media_budget:capacity.snapshot,batches:(jobs?.data.batches??[]).map(b=>({id:b.id,...jobs.batchScheduling(b.id)})),jobs:jobs?.list().map(j=>({...j,input_requirements:mediaInputRequirements(jobs.get(j.id))}))??[],workers:Object.entries(targets()).map(([id,t])=>({id,kinds:Object.keys(t.engines??{}).filter(kind=>isAllowed(id,kind)),parallel_kinds:parallelKinds(id),busy:jobs?busy(id):false,budget:capacity.admission(id)}))};},

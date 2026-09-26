@@ -2,6 +2,8 @@ import {createOmlxEnrollment,restoreOmlxEnrollments} from './recovery-omlx-enrol
 import {createPairEnrollment,restorePairEnrollments} from './recovery-pair-enrollment.mjs';
 import {requestAuthorized} from './request-auth.mjs';
 import {createMediaHosts} from './media-hosts.mjs';
+import {createMediaCandidates} from './media-candidates.mjs';
+import {machinesFor} from './fleet-machines.mjs';
 import {createMediaSetup} from './media-setup.mjs';
 import {genieCapabilityKeys,validateGenieCapabilities,genieCapabilities} from './genie-capabilities.mjs';
 import {createMediaExecution} from './media-execution.mjs';
@@ -404,9 +406,16 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
 
   const capabilityStatus=()=>genieCapabilities(store.data.genie_capabilities,config,recovery.state.automatic);
   const mediaHosts=createMediaHosts(serviceConfig,store,{workers:()=>registry().workers,enrollmentWorker:id=>{const n=nodes.find(n=>n.id===id);return n?definition(n):null;},binding:(id,c)=>recovery.binding(nodes.find(n=>n.id===id),c)});
-  const mediaStatus=()=>{const state=mediaExecution.status();return {...state,text_video_supported:!!mediaJobs,...mediaHosts.status(state.jobs),setup:mediaSetup?.status()??null};};
-  const mediaExecution=createMediaExecution(serviceConfig,mediaJobs,{externalOperations:()=>mediaSetup?.status().operations??[],workers:()=>nodes.map(definition),isAllowed:mediaHosts.allowed,isEnabled:()=>!draining&&capabilityStatus().media,matchesWorker:(id,c)=>{const n=nodes.find(n=>n.id===id);return !!n&&recovery.binding(n,c);}});
+  let mediaCandidates=null;
+  const mediaStatus=()=>{const state=mediaExecution.status();return {...state,text_video_supported:!!mediaJobs,...mediaHosts.status(state.jobs),setup:mediaSetup?.status()??null,improvements:mediaCandidates?.status()??null};};
+  const mediaExecution=createMediaExecution(serviceConfig,mediaJobs,{externalOperations:()=>[...(mediaSetup?.status().operations??[]),...(mediaCandidates?.operations()??[])],workers:()=>nodes.map(definition),isAllowed:mediaHosts.allowed,isEnabled:()=>!draining&&capabilityStatus().media,matchesWorker:(id,c)=>{const n=nodes.find(n=>n.id===id);return !!n&&recovery.binding(n,c);}});
   const mediaSetup=mediaJobs?createMediaSetup(serviceConfig,store,{assertCapacity:id=>mediaExecution.assertCapacity(id),directory:path.join(path.dirname(config.state_file),'media-setup'),workers:()=>nodes.map(definition),binding:(id,c)=>{const n=nodes.find(n=>n.id===id);return !!n&&recovery.binding(n,c);},isEnabled:()=>!draining&&capabilityStatus().media,isInspectionEnabled:()=>capabilityStatus().inspection,isAllowed:mediaHosts.allowed}):null;
+  mediaCandidates=mediaJobs?createMediaCandidates(serviceConfig,store,{
+    directory:path.join(path.dirname(config.state_file),'media-candidates'),workers:()=>nodes.map(definition),isAllowed:mediaHosts.allowed,
+    isEnabled:()=>!draining&&!shuttingDown&&capabilityStatus().media&&capabilityStatus().inspection&&capabilityStatus().server_changes,
+    assertCapacity:(id,ownOperation)=>mediaExecution.assertCapacity(id,ownOperation),
+    hostAvailable:id=>{const physical=machinesFor(id,serviceConfig);return nodes.filter(n=>machinesFor(n.id,serviceConfig).some(m=>physical.includes(m))).every(n=>!n.recovering&&!agents.holds(n.id).length&&!agents.maintenanceLocks(n.id).length);},
+  }):null;
   const rebalanceEnabled=()=>capabilityStatus().rebalance;
   const allocationStatus=slot=>slot.turnAllocation?{turns_used:slot.turnAllocation.used,remaining:Math.max(0,conversationTurns()-slot.turnAllocation.used),waiting_for_next_turn:!slot.active&&slot.turnAllocation.until>performance.now(),idle_remaining_ms:Math.max(0,Math.ceil(slot.turnAllocation.until-performance.now()))}:null;
   const stats = () => ({ version: 1, genie_capabilities:capabilityStatus(), genie_thinking:genieThinking(), serving_profiles:profiles, conversation_turns:conversationTurns(),conversation_turn_idle_ms:conversationTurnIdleMs, model_routes:routes?Object.fromEntries([...routes].map(([name,workers])=>[name,[...workers]])):null, agent_api_version:1, maintenance_lock_version:1,client_watch_version:1,client_watch:clientWatch.snapshot(), model: config.model, context_length: contextLimit(), queue_timeout_ms:queueTimeoutMs(), request_timeout_ms:config.request_timeout_ms??360000000, direct_reserve:{enabled:directReserveEnabled(),release_ms:directReserveMs(),reserved:nodes.filter(n=>directReserved(n)).map(n=>n.id)}, draining,startup:{...startup}, dataset:dataset.snapshot(), routing_shadow:shadow.snapshot(),recovery:{...recovery.status(),pair_enrollment:pairEnrollment.status(),omlx_enrollment:omlxEnrollment.status()},protections:visionProtection.status(),
@@ -1528,6 +1537,14 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
         if(!mediaJobs)throw Error('Media jobs are not configured.');
         return json(res,200,await inspectMediaJobInputs(serviceConfig,mediaJobs,JSON.parse(body)));
       }catch(e){return error(res,409,'media_input_inspection_failed',e.message);}})();});return;
+    }
+    if(req.method==='POST'&&['/genie-media-improvement','/media-candidate-permit','/media-candidate-complete'].includes(req.url)){
+      let body='';req.on('data',chunk=>{body+=chunk;if(Buffer.byteLength(body)>2048)req.destroy();});req.on('error',()=>{});
+      req.on('end',()=>{void serialize(async()=>{try{
+        if(!mediaCandidates)throw Error('Media improvements are not configured');
+        const input=JSON.parse(body),start=req.url==='/genie-media-improvement';
+        return json(res,start?202:200,await (start?mediaCandidates.start(input):req.url==='/media-candidate-permit'?mediaCandidates.permit(input):mediaCandidates.finish(input)));
+      }catch(e){return error(res,409,'media_candidate_unconfirmed',e.message);}});});return;
     }
     if(req.method==='POST'&&['/genie-media-start','/genie-media-setup','/genie-media-repair','/genie-media-audit','/media-setup-complete'].includes(req.url)){
       let body='';req.on('data',chunk=>{body+=chunk;if(Buffer.byteLength(body)>2048)req.destroy();});req.on('error',()=>{});

@@ -1,6 +1,6 @@
 import {machinesFor} from './fleet-machines.mjs';
 
-const released=new Set(['returned','failed_returned','failed_unchanged','enrolled','qualified_returned']);
+const released=new Set(['returned','failed_returned','failed_unchanged','enrolled','qualified_returned','candidate_prepared']);
 const physical=(worker,config)=>{
   if(typeof worker!=='string'||!worker)throw Error('Media physical ownership is unverified');
   const ids=machinesFor(worker,config);

@@ -6,7 +6,7 @@ import urllib.parse
 import urllib.request
 
 TOOLSET = 'stargate_media'
-NAMES = {'media_job_status', 'start_media_job', 'inspect_media_host', 'inspect_media_inputs', 'setup_media_host', 'repair_media_setup', 'audit_media_standard'}
+NAMES = {'media_job_status', 'start_media_job', 'inspect_media_host', 'inspect_media_inputs', 'setup_media_host', 'repair_media_setup', 'audit_media_standard', 'prepare_media_improvement'}
 
 
 def register_media(config, emit):
@@ -25,9 +25,9 @@ def register_media(config, emit):
         event = {'tool': name, 'request': args, 'at': datetime.now(timezone.utc).isoformat()}
         emit('media', event={**event, 'state': 'reading'})
         try:
-            payload = ({'action': 'job', 'job_id': args['job_id']} if 'job_id' in args else {'action': 'overview'}) if name == 'media_job_status' else {'action': 'inputs' if name == 'inspect_media_inputs' else 'inspect' if name == 'inspect_media_host' else 'setup' if name == 'setup_media_host' else 'repair' if name == 'repair_media_setup' else 'audit' if name == 'audit_media_standard' else 'start', **args}
+            payload = ({'action': 'job', 'job_id': args['job_id']} if 'job_id' in args else {'action': 'overview'}) if name == 'media_job_status' else {'action': 'inputs' if name == 'inspect_media_inputs' else 'inspect' if name == 'inspect_media_host' else 'setup' if name == 'setup_media_host' else 'repair' if name == 'repair_media_setup' else 'audit' if name == 'audit_media_standard' else 'improve' if name == 'prepare_media_improvement' else 'start', **args}
             request = urllib.request.Request(config['url'], data=json.dumps(payload).encode(), headers={'Content-Type': 'application/json', 'X-SG-Media-Tool': config['token']})
-            with opener.open(request, timeout=120 if name in ('inspect_media_host', 'inspect_media_inputs', 'repair_media_setup', 'audit_media_standard') else 30) as response:
+            with opener.open(request, timeout=360 if name == 'prepare_media_improvement' else 120 if name in ('inspect_media_host', 'inspect_media_inputs', 'repair_media_setup', 'audit_media_standard') else 30) as response:
                 raw = response.read(524289)
                 if len(raw) > 524288: raise ValueError('Media status too large')
                 result = json.loads(raw)
@@ -43,6 +43,7 @@ def register_media(config, emit):
             return json.dumps({'error': message, 'job_id': args.get('job_id')})
 
     schemas = [
+        ('prepare_media_improvement', 'Prepare the fixed ACE HTTP sampler/DCW-field improvement as a separate stopped candidate. Requires enabled media_jobs.improvements policy, an ACE target in the enabled standard, Media, Server inspection and Server changes capabilities, and free physical ownership. Uses an exact stopped enrolled original and retains its image/settings/mounts with backups. Does not stop/start services, qualify audio or promote enrollment. Supply only worker_id and optional pair member. Repeating observes the same saved operation, never rebuilds uncertain work. Read media_job_status improvements for progress; candidate_prepared is not native qualification or deployment.', {'type': 'object', 'properties': {'worker_id': {'type': 'string'}, 'member': {'type': 'integer', 'enum': [0, 1]}}, 'required': ['worker_id'], 'additionalProperties': False}),
         ('audit_media_standard', 'Read native container identity, image and port bindings for engines already enrolled in the owner-enabled media standard. Takes no arguments and uses only enrolled hosts and identities. Requires Media and Server inspection capabilities. Saves dated observations and preserves every enrollment and service. Reports present, absent, changed, unavailable or deferred separately; present is not generation, model-file integrity or runtime readiness. Never infer absence from a failed SSH read or start/replace an engine from this audit alone.', {'type': 'object', 'properties': {}, 'additionalProperties': False}),
         ('repair_media_setup', 'Correct a stale retained-media source only for an owner-enabled standard target after its exact failed_unchanged preflight. Supply the saved failure timestamp. Native read-only discovery must prove the old media container absent on the current LLM host. It selects only a unique stopped recognized engine or a separate fresh preparation if no native port candidate exists. Active, unknown, ambiguous or unconfirmed sources refuse. Saves a backed-up source decision; never starts, stops, deletes or installs anything. Read media_job_status afterward; retry_ready permits setup_media_host with the same exact failure timestamp and operation identity. Existing qualified engines cannot be replaced.', {'type': 'object', 'properties': {'worker_id': {'type': 'string'}, 'member': {'type': 'integer', 'enum': [0, 1]}, 'engine': {'type': 'string', 'enum': ['ace-step', 'h3']}, 'expected_failed_at': {'type': 'string'}}, 'required': ['worker_id', 'engine', 'expected_failed_at'], 'additionalProperties': False}),
         ('inspect_media_inputs', 'Check a saved video job’s stock LoadImage/LoadAudio files on an enrolled worker before placement. Uses the Server inspection switch. Reports mounted file presence without starting the media engine or draining its LLM. Read input_requirements in media_job_status; check workers for engine-local files and prefer one where they are present. Unknown is not missing. Uploaded references are portable. File presence does not prove decoding or reference fidelity.', {'type': 'object', 'properties': {'job_id': {'type': 'string'}, 'worker_id': {'type': 'string'}, 'member': {'type': 'integer', 'enum': [0, 1]}}, 'required': ['job_id', 'worker_id'], 'additionalProperties': False}),
