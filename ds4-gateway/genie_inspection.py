@@ -144,8 +144,96 @@ except Exception:result={'state':'unavailable','reason':'metrics_read_failed'}
 result.update(observed_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),scope='Explicit KV token allocation reported by this engine at this time, not a configured limit, cache-hit test, causal performance comparison or permission to reduce capacity. Startup memory availability can affect allocation. Raw metrics and unrelated labels are withheld.')
 print(json.dumps(result))
 '''
+def inspect_trial_progress(recipe_root, mounts, container_id=None):
+    """Read only fixed receipts for the candidate bound to this container."""
+    import pathlib, re, json, os, stat
+    if not recipe_root:return None
+    base=pathlib.Path(recipe_root).parent/'.local/share/dsg-recipe-trials'
+    candidates=set()
+    for mount in mounts:
+        source=pathlib.Path(mount.get('Source',''))
+        try:parts=source.relative_to(base).parts
+        except ValueError:continue
+        if len(parts)>=3 and parts[1]=='candidate' and re.fullmatch(r'[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}',parts[0]):candidates.add(parts[0])
+    if not candidates and container_id and base.is_dir() and not any(part.is_symlink() for part in [base,*base.parents]):
+        # Restoration changes the conventional name back to the original. Match
+        # a recorded original identity, never an arbitrary caller-selected path.
+        matches=[]
+        for folder in sorted(base.iterdir(),key=lambda p:p.stat().st_mtime,reverse=True)[:32]:
+            if not re.fullmatch(r'[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}',folder.name) or folder.is_symlink():continue
+            file=folder/'prepared.json';intent=folder/'run-intent.json'
+            try:
+                if file.is_symlink() or intent.is_symlink() or not intent.is_file() or file.stat().st_size>65536 or intent.stat().st_size>65536:continue
+                prepared=json.loads(file.read_text())
+                started=json.loads(intent.read_text()).get('started_at')
+                if prepared.get('original_container')==container_id and type(started) in [int,float]:matches.append((started,folder.name))
+            except (OSError,ValueError):continue
+        matches.sort(reverse=True)
+        if matches and (len(matches)==1 or matches[0][0]>matches[1][0]):candidates.add(matches[0][1])
+    if len(candidates)!=1:return None
+    trial_id=candidates.pop();root=base/trial_id
+    def read(relative,tail=False):
+        file=root/relative
+        for part in [file,*file.parents]:
+            if part.is_symlink():raise ValueError('Symlink trial observation')
+        fd=os.open(file,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+        try:
+            info=os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or (not tail and info.st_size>1048576):raise ValueError('Invalid trial receipt')
+            if tail:os.lseek(fd,max(0,info.st_size-6000),os.SEEK_SET)
+            raw=os.read(fd,6000 if tail else 1048577)
+            return raw.decode('utf-8',errors='replace')
+        finally:os.close(fd)
+    result={'trial_id':trial_id,'phases':{},'scope':'Read-only snapshot of fixed receipts for this mounted candidate or the latest recorded trial matching this original container identity. Incomplete phases and startup logs do not prove completion, restoration, or admission.'}
+    def compact(value):
+        if isinstance(value,dict):return {k:compact(v) for k,v in value.items() if k not in ['metrics_before','metrics_after','answer','content'] and not re.search(r'password|secret|api.key|authorization',k,re.I)}
+        if isinstance(value,list):return [compact(x) for x in value[:32]]
+        return value[:500] if isinstance(value,str) else value
+    for phase in ['A','B','A2']:
+        try:result['phases'][phase]=compact(json.loads(read(phase+'/results.json')))
+        except FileNotFoundError:pass
+        except Exception:result['phases'][phase]={'state':'unavailable'}
+    try:
+        text=read('candidate-start.log',True)
+        result['candidate_start_tail']='\n'.join('<credential-related line withheld>' if re.search(r'api[_-]?key|access[_-]?token|secret|password|authorization|hf_token|credential',line,re.I) else line for line in text.splitlines())
+    except FileNotFoundError:pass
+    except Exception:result['candidate_start_tail']='Unavailable'
+    return result
+
+def inspect_image_transfers(root='/proc'):
+    """Bounded native byte counters for Docker image streams, without environment data."""
+    from pathlib import Path
+    result=[]
+    try:entries=Path(root).iterdir()
+    except OSError:return result
+    for entry in entries:
+        if not entry.name.isdigit():continue
+        try:
+            args=(entry/'cmdline').read_bytes().decode().strip('\0').split('\0')
+            if len(args)<2 or Path(args[0]).name!='docker' or args[1] not in ['save','load']:continue
+            counters={k:int(v.strip()) for k,v in [line.split(':',1) for line in (entry/'io').read_text().splitlines()] if k in ['rchar','wchar','read_bytes','write_bytes']}
+            result.append({'pid':int(entry.name),'operation':args[1],'bytes':counters})
+            if len(result)>=16:break
+        except (OSError,ValueError,UnicodeError):continue
+    return result
+
+def peer_parameters(target):
+    aliases=target.get('ssh',[])
+    if not isinstance(aliases,list) or not aliases or not re.fullmatch(r'[A-Za-z0-9][\w.@-]{0,252}',aliases[0]):raise ValueError('Use an enrolled SSH peer')
+    alias=aliases[0]
+    resolved=subprocess.run(['ssh','-G',alias],text=True,capture_output=True,timeout=10,check=True)
+    fields=dict(line.split(' ',1) for line in resolved.stdout.splitlines() if ' ' in line)
+    host,user,port=fields.get('hostname',''),fields.get('user',''),fields.get('port','22')
+    if not re.fullmatch(r'[A-Za-z0-9][\w.-]{0,252}',host) or not re.fullmatch(r'[A-Za-z0-9_][\w.-]{0,63}',user) or not port.isdigit() or not 1<=int(port)<=65535:raise ValueError('Direct peer destination unavailable')
+    command="python3 -c 'import hashlib,pathlib; print(hashlib.sha256(pathlib.Path(\"/etc/machine-id\").read_bytes()).hexdigest()); print(pathlib.Path(\"/etc/ssh/ssh_host_ed25519_key.pub\").read_text().strip())'"
+    result=subprocess.run(['ssh','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','UpdateHostKeys=no','-o','ConnectTimeout=8',alias,command],text=True,capture_output=True,timeout=15,check=True)
+    parts=result.stdout.strip().splitlines();fingerprint=parts[0] if parts else '';key=parts[1].split()[:2] if len(parts)==2 else []
+    if not re.fullmatch(r'[a-f0-9]{64}',fingerprint) or len(key)!=2 or key[0]!='ssh-ed25519' or not re.fullmatch(r'[A-Za-z0-9+/=]{40,200}',key[1]):raise ValueError('Peer machine/host-key identity unavailable')
+    known_host=host if int(port)==22 else '['+host+']:'+port
+    return {'destination':user+'@'+host,'port':int(port),'machine_sha256':fingerprint,'known_hosts':known_host+' '+' '.join(key)+'\n'}
+
 # Arguments arrive as JSON on stdin, never interpolated into a remote shell command.
-COLLECTOR = 'SOURCE_QUERY = '+repr(SOURCE_QUERY)+'\nMODEL_CONFIG_QUERY = '+repr(MODEL_CONFIG_QUERY)+'\nRUNTIME_QUERY = '+repr(RUNTIME_QUERY)+'\nCACHE_QUERY = '+repr(CACHE_QUERY)+'\n'+r'''
+COLLECTOR = inspect.getsource(inspect_image_transfers)+'\n'+inspect.getsource(inspect_trial_progress)+'\nSOURCE_QUERY = '+repr(SOURCE_QUERY)+'\nMODEL_CONFIG_QUERY = '+repr(MODEL_CONFIG_QUERY)+'\nRUNTIME_QUERY = '+repr(RUNTIME_QUERY)+'\nCACHE_QUERY = '+repr(CACHE_QUERY)+'\n'+r'''
 import sys,json,subprocess,pathlib,re,hashlib,datetime,stat
 p=json.loads(sys.stdin.readline())
 secret=re.compile(r'api[_-]?key|access[_-]?token|secret|password|authorization|hf_token|hugging_face_hub_token|private[_-]?key|credential',re.I)
@@ -261,7 +349,58 @@ if p.get('launcher'):
  data=f.read_bytes()
  if re.search(rb'(?i)(?:api[_-]?key|access[_-]?token|secret|password|hf_token|hugging_face_hub_token)\s*=',data):raise ValueError('Launcher requires credential redaction')
  launcher={'text':data.decode(),'sha256':hashlib.sha256(data).hexdigest()}
-print(json.dumps({'observed_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'container':{'id':c['Id'],'image_id':c['Image'],'running':c['State']['Running'],'started_at':c['State']['StartedAt'],'entrypoint':config.get('Entrypoint'),'command':cmd,'environment':env,'mounts':c['Mounts'],'port_bindings':c['HostConfig'].get('PortBindings'),'restart_policy':c['HostConfig'].get('RestartPolicy'),'ipc_mode':c['HostConfig'].get('IpcMode'),'shm_size':c['HostConfig'].get('ShmSize'),'device_requests':c['HostConfig'].get('DeviceRequests')},'image':{'id':i['Id'],'created':i['Created'],'repo_digests':i.get('RepoDigests',[])},'packages':packages,'model_config':model_config,'engine_runtime':engine_runtime,'launcher':launcher,**({'sources':sources} if sources is not None else {}),'scope':'Live Docker metadata, launcher bytes, separately labelled installed distribution metadata and model configuration on disk. Package versions do not prove build ancestry or custom source integrity. Installed Python source can be requested with source_files and source_window. No inference, restart, weight hash or restoration test. Launch settings and model configuration on disk do not independently prove effective API behavior or kernel dispatch.'}))
+recipe=None
+if p.get('recipe_root'):
+ import os,shutil
+ root=pathlib.Path(p['recipe_root'])
+ if not root.is_absolute() or root.is_symlink() or not root.is_dir():raise ValueError('Recipe directory unavailable')
+ files={}
+ for name in ['.env','start.sh']:
+  try:
+   fd=os.open(root/name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+   try:
+    info=os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode) or info.st_size>262144:raise ValueError('Recipe file unavailable')
+    data=os.read(fd,262145)
+   finally:os.close(fd)
+   lines=['<credential-related line withheld>' if secret.search(line) else line for line in data.decode().splitlines()]
+   files[name]={'sha256':hashlib.sha256(data).hexdigest(),'bytes':len(data),'text':'\n'.join(lines)[:(262144 if name=='.env' else 6000)],'truncated':name!='.env' and len('\n'.join(lines))>6000}
+  except (OSError,ValueError,UnicodeError):files[name]={'state':'unavailable'}
+ recipe={'files':files,'revision':None,'tracked_changes':None}
+ try:
+  revision=run('git','-C',str(root),'rev-parse','HEAD').strip()
+  if re.fullmatch(r'[a-f0-9]{40,64}',revision):recipe.update(revision=revision,tracked_changes=bool(run('git','-C',str(root),'status','--porcelain','--untracked-files=no')))
+ except Exception:pass
+ try:
+  mem={k:int(v.split()[0])*1024 for k,v in [line.split(':',1) for line in pathlib.Path('/proc/meminfo').read_text().splitlines()] if k in ['MemTotal','MemAvailable','SwapTotal','SwapFree']}
+  recipe['host_resources']={'memory_bytes':mem,'disk_free_bytes':shutil.disk_usage(root).free}
+ except (OSError,ValueError):recipe['host_resources']={'state':'unavailable'}
+ recipe['scope']='Enrolled recipe files read without sourcing or executing them, Git revision on disk, and host resources. Secrets redacted; file hashes cover original bytes. No backup, inference or restoration proof.'
+peer_probe=None
+if p.get('peer'):
+ peer=p['peer'];peer_probe={'state':'unavailable','scope':'Read-only direct SSH reachability and exact machine identity. Pins the target public host key read through its existing trusted connection in a temporary file, then removes it. No persistent trust enrollment, installation or service changes.'}
+ try:
+  import shlex
+  code='import hashlib,pathlib; print(hashlib.sha256(pathlib.Path("/etc/machine-id").read_bytes()).hexdigest())'
+  import tempfile
+  with tempfile.TemporaryDirectory(prefix='dsg-peer-') as temp:
+   options=[]
+   if peer.get('known_hosts'):
+    pinned=pathlib.Path(temp)/'known_hosts';pinned.write_text(peer['known_hosts']);pinned.chmod(0o600);options=['-o','UserKnownHostsFile='+str(pinned)]
+   probe=subprocess.run(['ssh','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','UpdateHostKeys=no','-o','ConnectTimeout=8',*options,'-p',str(peer['port']),'--',peer['destination'],shlex.join(['python3','-I','-c',code])],text=True,capture_output=True,timeout=15)
+  actual=probe.stdout.strip()
+  peer_probe.update(state='verified' if probe.returncode==0 and actual==peer['machine_sha256'] else 'unavailable',machine_matches=probe.returncode==0 and actual==peer['machine_sha256'],exit_code=probe.returncode)
+  if probe.returncode:peer_probe['detail']='\n'.join('<credential-related line withheld>' if secret.search(line) else line for line in probe.stderr.splitlines())[-1500:]
+ except Exception:pass
+recent_runtime_log={'state':'unavailable'}
+try:
+ log=subprocess.run(['docker','logs','--since','30m','--tail','120',c['Id']],text=True,capture_output=True,timeout=20)
+ if log.returncode==0:
+  lines=(log.stdout+'\n'+log.stderr).splitlines()
+  text='\n'.join('<credential-related line withheld>' if secret.search(line) else line for line in lines)
+  recent_runtime_log={'state':'read','container':c['Id'],'tail':text[-16000:],'truncated':len(text)>16000,'scope':'At most 120 recent container log lines from the last 30 minutes. Logs are dated evidence, not a health check or proof that an error remains active.'}
+except Exception:pass
+print(json.dumps({'observed_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'container':{'id':c['Id'],'image_id':c['Image'],'running':c['State']['Running'],'started_at':c['State']['StartedAt'],'entrypoint':config.get('Entrypoint'),'command':cmd,'environment':env,'mounts':c['Mounts'],'port_bindings':c['HostConfig'].get('PortBindings'),'restart_policy':c['HostConfig'].get('RestartPolicy'),'ipc_mode':c['HostConfig'].get('IpcMode'),'shm_size':c['HostConfig'].get('ShmSize'),'device_requests':c['HostConfig'].get('DeviceRequests')},'image':{'id':i['Id'],'created':i['Created'],'size_bytes':i.get('Size'),'repo_digests':i.get('RepoDigests',[])},'recipe':recipe,'recipe_trial':inspect_trial_progress(p.get('recipe_root'),c.get('Mounts',[]),c.get('Id')),'recipe_stamp':(i.get('Config',{}).get('Labels') or {}).get('glm53.recipe.stamp'),'packages':packages,'model_config':model_config,'engine_runtime':engine_runtime,'launcher':launcher,'recent_runtime_log':recent_runtime_log,'image_transfers':inspect_image_transfers(),**({'peer_probe':peer_probe} if peer_probe is not None else {}),**({'sources':sources} if sources is not None else {}),'scope':'Live Docker metadata, launcher bytes, separately labelled installed distribution metadata and model configuration on disk. Package versions do not prove build ancestry or custom source integrity. Installed Python source can be requested with source_files and source_window. No inference, restart, weight hash or restoration test. Launch settings and model configuration on disk do not independently prove effective API behavior or kernel dispatch.'}))
 '''
 
 def read_json(file, expected_sha256=None):
@@ -334,7 +473,8 @@ def selected_defaults(root, worker):
 def register_inspection(config, context, emit):
     from tools.registry import registry
     workers=config.get('workers',{})
-    known={w['id'] for w in context.get('servers',[]) if isinstance(w.get('id'),str)}
+    # Enrolled inspection-only ranks need not have their own routed API.
+    known={w['id'] for w in context.get('servers',[]) if isinstance(w.get('id'),str)} | set(workers)
     private=context.setdefault('inspection_private_values',[])
     def remember(value):
         # Extend the web tool's private identifier guard before returning inspection results.
@@ -395,7 +535,7 @@ def register_inspection(config, context, emit):
                     references.append({'pointer':pointer,'path':reference['path'],'sha256':reference['sha256']})
                 result={'worker_id':worker,'read_at':at,'record_kind':category,'artifact':artifact,'sha256':reference['sha256'],'hash_matches_record':True,'verified_references':references,'content':scrub(data),'scope':'Dated saved artifact reached through the worker record; every traversed reference matched its recorded hash. Matching bytes do not independently prove its conclusions. A restoration receipt covers only the recorded operation, configuration and checks; it does not prove fresh-machine installation or confer recovery authority. Not fresh server inspection, renewed weight verification, approval or permission to act.'}
             elif kind=='live' and workers.get(worker,{}).get('kind')=='omlx-local':
-                if args.get('selected_default',False) is not False:raise ValueError('Selected Docker images do not apply to a local oMLX installation')
+                if args.get('selected_default',False) is not False or args.get('peer_worker_id') is not None:raise ValueError('Docker image/peer inspection does not apply to a local oMLX installation')
                 result={'worker_id':worker,**inspect_omlx(workers[worker], source_files=source_files, source_window=source_window)}
             else:
                 target=workers.get(worker)
@@ -408,6 +548,14 @@ def register_inspection(config, context, emit):
                 selected=args.get('selected_default',False)
                 if not isinstance(selected,bool):raise ValueError('Invalid selected-default option')
                 payload_config={'container':container,'launcher':launcher}
+                recipe=target.get('recipe_root')
+                if recipe is not None:
+                    if not isinstance(recipe,str) or not recipe.startswith('/') or '\n' in recipe or '..' in Path(recipe).parts:raise ValueError('Invalid enrolled recipe root')
+                    payload_config['recipe_root']=recipe
+                if args.get('peer_worker_id') is not None:
+                    peer_id=args['peer_worker_id']
+                    if peer_id not in workers or peer_id==worker or selected:raise ValueError('Choose another enrolled Docker worker')
+                    payload_config['peer']=peer_parameters(workers[peer_id])
                 if source_files is not None:payload_config['source_files']=source_files
                 if source_window is not None:payload_config['source_window']=source_window
                 if selected:
@@ -440,6 +588,7 @@ def register_inspection(config, context, emit):
     for name,kind,description in [('read_server_configuration','records','Read the full private recorded configuration, matching owner-selected defaults and their hashed selection receipts, plus launch recipes and artifact references for a configured worker. Dated records are not live evidence. selected_launch_flags is partial; omitted flags are unknown until checked against the full command or recreation capture. Never publish private fields.'),('inspect_server','live','Inspect the configured worker container and launcher now using a fixed read-only collector. Set selected_default=true to inspect the exact image ID from its owner-selected default and retained containers using that exact image, instead of the running container. Read the configuration first. For running vLLM, engine_runtime.cache_capacity reports current explicit KV token allocation and observation/start times, not a configured limit or cache-hit test. No image pull, container creation, execution of the selected image, or service changes. Metadata is not proof of a historical benchmark or effective generation settings. Supports configured Docker workers and local oMLX installations. selected_default applies only to Docker. For oMLX, inspect_server reads the enrolled launchers/settings with credentials redacted, live model metadata and the current listener; source on disk does not establish the loaded revision.'),('read_server_artifact','artifact','Read a saved baseline_reconciliation manifest, recreation_capture, or restoration_drill receipt referenced by a worker record. serving_flags_restoration reads the proof referenced by restoration.change_classes.serving_flags.drill_reference. restoration_drill uses restoration.drill.receipt_reference, and must have a recorded path and SHA256; a status label or receipt path alone is insufficient. Requires its recorded hash to match. Read the worker configuration first and use the actual record_kind and artifact reference it contains. Do not assume a proposed record or baseline manifest exists. Prefer the small baseline manifest when available; request the larger recreation capture when needed. Dated evidence, not new approval or live verification.')]:
         properties={'worker_id':{'type':'string'}}
         if kind=='live':
+            properties['peer_worker_id']={'type':'string','description':'Optional other enrolled Docker worker. Resolves its existing SSH connection and checks direct SSH from this worker against the same machine identity. Read-only; never enrolls keys, transfers files or changes services.'}
             properties['selected_default']={'type':'boolean','default':False,'description':'Inspect the image named by the matching owner-selected default and its retained container recipes.'}
             properties['source_files']={'type':'array','items':{'type':'string'},'minItems':1,'maxItems':8,'description':'Optional Python paths: vllm/... .py in the current Docker container (256KiB combined), or omlx/... .py in the enrolled local checkout (512KiB combined). Local source_on_disk.changed_python_files and untracked_python_files list current runtime changes. Up to 8 paths; read bytes and hashes without importing/executing them; missing paths reported. Not supported with selected_default. On-disk source does not prove loaded code.'}
             properties['source_window']={'type':'object','properties':{'offset':{'type':'integer','minimum':0},'length':{'type':'integer','minimum':1,'maximum':16000}},'required':['offset','length'],'additionalProperties':False,'description':'Use with ONE source_files path. Recommended for source inspection: start with offset 0, length 4000, then follow next_offset. Returns a text section with full-file hash/size; existing full reads remain available without this option. Large full results may spill to a Hermes cache this profile cannot read; use source_window instead.'}

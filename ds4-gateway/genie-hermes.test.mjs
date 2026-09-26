@@ -95,3 +95,31 @@ test('bridge exposes progress counts without reasoning content or provider metad
  const chat=new GenieChat({directory:path.join(directory,'chats'),provider});const c=chat.create();chat.submit(c.id,'Show progress.','progress-test');await chat.idle();const s=chat.get(c.id);
  assert.equal(s.messages[1].state,'complete');assert.equal(s.messages[1].progress.step,2);assert.equal(s.messages[1].progress.reasoning_chars,22);assert.doesNotMatch(JSON.stringify(s),/PRIVATE_REASONING_TEXT|PRIVATE_TOOL_METADATA/);
 });
+
+test('actual Hermes exposes and executes standalone recovery, power and admission tools',{
+  skip:!process.env.DSG_TEST_HERMES_SOURCE||!process.env.DSG_TEST_HERMES_PYTHON,timeout:120000,
+},async t=>{
+ for(const [capability,tool,route,header,args={}] of [['recovery','prepare_pair_recovery','/api/genie/recovery-tools','x-sg-recovery-tool',{worker_id:'fixture-pair'}],['power','fleet_power_status','/api/genie/power-tools','x-sg-power-tool'],['power','fleet_recipe_trial','/api/genie/power-tools','x-sg-power-tool',{profile:'fixture',stage:'prepare',trial_id:'12345678-1234-4234-8234-123456789012'}],['power','fleet_recipe_rollout','/api/genie/power-tools','x-sg-power-tool',{profile:'fixture',rollout_id:'12345678-1234-4234-8234-123456789012'}],['power','fleet_recipe_rollout','/api/genie/power-tools','x-sg-power-tool',{profile:'fixture',rollout_id:'12345678-1234-4234-8234-123456789012',expected_finished_at:123}],['admission','admission_status','/api/genie/admission-tools','x-sg-admission-tool'],['admission','admission_admit','/api/genie/admission-tools','x-sg-admission-tool',{stage:'resume',fingerprint:'fixture',action_id:'12345678-1234-4234-8234-123456789012'}],['admission','verify_serving','/api/genie/admission-tools','x-sg-admission-tool',{worker:'fixture-worker',check:'cache',action_id:'12345678-1234-4234-8234-123456789012'}],['admission','verify_serving','/api/genie/admission-tools','x-sg-admission-tool',{worker:'fixture-worker',check:'glm-cache',action_id:'12345678-1234-4234-8234-123456789012'}]]){
+  await t.test(`${capability}:${tool}`,async t=>{
+   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'genie-tool-registration-'));
+   let modelCalls=0,toolCalls=0;
+   const server=http.createServer((req,res)=>{
+    if(req.method==='GET'){res.end(JSON.stringify({data:[{id:'fixture',context_length:131072}]}));return;}
+    let raw='';req.on('data',chunk=>raw+=chunk);req.on('end',()=>{
+     if(req.url===route){assert.equal(req.headers[header],'fixture-token');const payload=JSON.parse(raw);if(tool==='prepare_pair_recovery'){assert.match(payload.action_id,/^[a-f0-9-]{36}$/);delete payload.action_id;}assert.deepEqual(payload,tool==='prepare_pair_recovery'?{action:'prepare-pair',...args}:tool==='admission_admit'?{action:'admit',...args}:tool==='verify_serving'?{action:'verify-worker',...args}:tool==='fleet_recipe_rollout'?{action:'recipe-rollout',...args}:tool==='fleet_recipe_trial'?{action:'recipe-trial',...args}:{action:'status'});toolCalls++;res.end(JSON.stringify({schema:1,fixture:'actual registered tool'}));return;}
+     const body=JSON.parse(raw);modelCalls++;
+     const message=modelCalls===1?{role:'assistant',content:null,tool_calls:[{id:'status-call',type:'function',function:{name:'tool_call',arguments:JSON.stringify({name:tool,arguments:args})}}]}:{role:'assistant',content:'The registered status tool returned its receipt.'};
+     if(modelCalls===2)assert.match(JSON.stringify(body.messages),/actual registered tool/);
+     if(body.stream){res.setHeader('content-type','text/event-stream');const delta={...message,...(message.tool_calls?{tool_calls:message.tool_calls.map((v,index)=>({...v,index}))}:{})};res.end('data: '+JSON.stringify({id:'fixture',model:'fixture',choices:[{index:0,delta,finish_reason:null}]})+'\n\ndata: '+JSON.stringify({id:'fixture',model:'fixture',choices:[{index:0,delta:{},finish_reason:modelCalls===1?'tool_calls':'stop'}]})+'\n\ndata: [DONE]\n\n');}
+     else res.end(JSON.stringify({id:'fixture',model:'fixture',choices:[{message,finish_reason:modelCalls===1?'tool_calls':'stop'}]}));
+    });
+   });await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+   const base=`http://127.0.0.1:${server.address().port}`;
+   const provider=hermesProvider({python:process.env.DSG_TEST_HERMES_PYTHON,source:process.env.DSG_TEST_HERMES_SOURCE,url:base+'/v1',model:'fixture',[capability]:{url:base+route,token:'fixture-token'}},{directory});
+   t.after(()=>{provider.close();server.closeAllConnections();server.close();fs.rmSync(directory,{recursive:true,force:true});});
+   assert.equal(provider.info.can_act,true);
+   const chat=new GenieChat({directory:path.join(directory,'chat'),provider});const c=chat.create();chat.submit(c.id,'Read status through the enrolled tool.','status-fixture');await chat.idle();
+   const reply=chat.get(c.id).messages[1];assert.equal(reply.state,'complete',JSON.stringify(reply));assert.equal(toolCalls,1);assert.equal(modelCalls,2);assert.equal(reply[capability].events.find(e=>e.state==='complete').result.fixture,'actual registered tool');
+  });
+ }
+});

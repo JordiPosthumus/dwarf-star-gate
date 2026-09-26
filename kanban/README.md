@@ -24,11 +24,12 @@ Rules of the road (matching the Genie autonomy model):
 - Anything that restarts the gate or touches serving: allowed, but use the Continuity Door and note it in the card.
 - Anything needing Jordi's taste (UI wording, priorities): leave in `backlog/` with a `Needs Jordi:` line.
 
-## Current order — 2026-09-22
+## Current order — audited 2026-09-24
 
 `doing` means active; `backlog` means pending. Keep implementation focused:
 
-1. **#032 Household recovery** — finish the outstanding M3 gateway verification.
+1. **#032 Household recovery — done** — native Door generation, cache reuse and
+   survival after dashboard reloads verified; deployment receipts remain private.
 2. **#030 Shared fleet power controls** — prevent conflicting commands and deliver
    useful UI/Genie controls while keeping household serving available.
 3. **#033 Fleet catalogue and truthful status** — reconcile models, workers,

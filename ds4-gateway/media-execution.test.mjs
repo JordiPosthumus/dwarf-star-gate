@@ -8,6 +8,21 @@ import {Readable} from 'node:stream';
 import {MediaJobs} from './media-jobs.mjs';
 import {createMediaExecution,saveMediaReceipt} from './media-execution.mjs';
 import {runMediaCycle,mediaBatchCanContinue} from './media-cycle.mjs';
+import {createMediaCommandBridge} from './media-command-bridge.mjs';
+import {musicRecipeRequirements} from './music-input.mjs';
+import {mediaBudget,mediaSparkLimit} from './media-budget.mjs';
+
+test('failed durable receipt storage preserves the previous receipt and prevents crossing the command boundary',t=>{
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'sg-media-receipt-'));t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
+  saveMediaReceipt(directory,'intent.json',{state:'previous'});
+  const before=fs.readFileSync(path.join(directory,'intent.json')),sync=fs.fsyncSync;let commands=0;
+  try{
+    fs.fsyncSync=()=>{throw Error('fixture durable storage failure');};
+    assert.throws(()=>{saveMediaReceipt(directory,'intent.json',{state:'next'});commands++;},/durable storage failure/);
+  }finally{fs.fsyncSync=sync;}
+  assert.equal(commands,0);assert.deepEqual(fs.readFileSync(path.join(directory,'intent.json')),before);
+  assert.deepEqual(fs.readdirSync(directory),['intent.json']);
+});
 
 function fixture(t,kind='video'){
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'sg-media-execution-'));t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
@@ -17,12 +32,71 @@ function fixture(t,kind='video'){
   const config={model:'fixture',context_length:262144,control_socket:'/fixture.sock',media_jobs:{workers:{one:{engines:{video:engine}}}},genie_chat:{python:'/python',inspection:{workers:{one:{container:'a'.repeat(64),ssh:['fixture-host']}}}},recovery:{workers:[{id:'one',ssh:'fixture-host',adapter:'docker',verification:'qwen_vllm',profile:'profile'}]}};
   return {directory,jobs,job,config,engine};
 }
+test('explicit recipe requirements are pinned into the original music execution plan',async t=>{
+ const r=fixture(t,'music');r.jobs.update(r.job.id,{payload:{caption:'fixture',param_obj:{sampler_mode:'heun',dcw_enabled:false}}});
+ r.config.media_jobs.workers.one.engines.music={...r.engine,kind:'ace-step',port:8002};
+ const service=createMediaExecution(r.config,r.jobs,{isEnabled:()=>true,launchRunner:async()=>({pid:1})});
+ await service.start({job_id:r.job.id,worker_id:'one'});
+ const plan=JSON.parse(fs.readFileSync(path.join(r.jobs.executionFolder(r.job.id),'plan.json')));
+ assert.deepEqual(plan.required_recipe_fields,['dcw_enabled','sampler_mode']);
+ assert.deepEqual(musicRecipeRequirements({sampler_mode:'',dcw_enabled:false,param_obj:{sampler_mode:'heun'}}),['dcw_enabled']);
+ assert.deepEqual(musicRecipeRequirements({metas:{},metadata:JSON.stringify({sampler_mode:'heun',dcw_enabled:false})}),['sampler_mode','dcw_enabled']);
+ assert.deepEqual(musicRecipeRequirements({prompt:'unchanged legacy'}),[]);
+});
+test('six-Spark budget counts complete pairs, deduplicates aliases, and retains uncertain reservations',()=>{
+ const config={media_jobs:{max_borrowed_sparks:4},machine_groups:{a:['s1','s2'],alias:['s1','s2'],b:['s3','s4'],c:['s5','s6']}};
+ const job=(worker_id,phase='generating')=>({execution:{worker_id,phase}});
+ const one=mediaBudget(config,[job('a'),job('alias')]);assert.equal(one.snapshot.borrowed_sparks,2);
+ assert.equal(one.admission('alias').allowed,false);assert.equal(one.admission('b').allowed,true);
+ const two=mediaBudget(config,[job('a'),job('b','launch_uncertain')]);assert.equal(two.snapshot.borrowed_sparks,4);assert.equal(two.admission('c').allowed,false);
+ assert.equal(mediaBudget(config,[job('a','returned'),job('b')]).admission('c').allowed,true);
+ assert.equal(mediaBudget(config,[job('a')],[{worker_id:'b',phase:'needs_attention'}]).admission('c').allowed,false);
+ const changed=mediaBudget(config,[{execution:{worker_id:'b',phase:'generating',physical_machines:['s1','s2']}}]);assert.equal(changed.snapshot.borrowed_sparks,4);
+ config.media_jobs.max_borrowed_sparks=1;assert.equal(two.snapshot.borrowed_sparks,4);assert.equal(mediaBudget(config,[job('a')]).snapshot.over_budget,true);
+ assert.equal(mediaBudget(config,[]).admission('a').allowed,false,'odd budgets cannot borrow half a pair');
+ config.media_jobs.max_borrowed_sparks=0;assert.equal(mediaBudget(config,[]).admission('a').allowed,false);
+ for(const value of [-1,1.5,'4',null])assert.throws(()=>mediaSparkLimit({media_jobs:{max_borrowed_sparks:value}}),/whole/);
+ assert.equal(mediaSparkLimit({}),null,'existing installations without a configured ceiling keep their policy');
+});
+test('concurrent film starts reserve before awaiting launch and reject excess before plan creation',async t=>{
+ const f=fixture(t);f.config.media_jobs.workers.two=structuredClone(f.config.media_jobs.workers.one);
+ f.config.genie_chat.inspection.workers.two=structuredClone(f.config.genie_chat.inspection.workers.one);
+ f.config.genie_chat.inspection.workers.two.ssh=['second-host'];
+ f.config.recovery.workers.push({...f.config.recovery.workers[0],id:'two'});
+ const batch=f.jobs.enqueueBatch({requested_parallelism:1,clips:[0,1].map(i=>({clip_id:`c${i}`,payload:{prompt:{}}}))},{key:'limited'}).batch;
+ let finishLaunch,launches=0;const service=createMediaExecution(f.config,f.jobs,{isEnabled:()=>true,launchRunner:()=>{launches++;return new Promise(resolve=>{finishLaunch=resolve;});}});
+ const input={job_id:batch.clips[0].id,worker_id:'one'},first=service.start(input);
+ await assert.rejects(service.start({job_id:batch.clips[1].id,worker_id:'two'}),/requested_parallelism/);
+ assert.equal(launches,1);assert.equal(fs.existsSync(f.jobs.executionFolder(batch.clips[1].id)),false);
+ assert.equal(service.status().batches[0].remaining_requested_slots,0);
+ finishLaunch({pid:123});await first;await service.start(input);assert.equal(launches,1);
+});
+test('budget refuses before plan creation and never cancels an existing accepted execution',async t=>{
+ const r=fixture(t);r.config.media_jobs.max_borrowed_sparks=1;r.config.machine_groups={one:['s1','s2']};let launches=0;
+ const service=createMediaExecution(r.config,r.jobs,{isEnabled:()=>true,launchRunner:async()=>{launches++;return {pid:123};}}),input={job_id:r.job.id,worker_id:'one'};
+ await assert.rejects(service.start(input),/budget/);assert.equal(launches,0);assert.equal(fs.existsSync(r.jobs.executionFolder(r.job.id)),false);
+ r.config.media_jobs.max_borrowed_sparks=2;await service.start(input);assert.equal(launches,1);
+ r.config.media_jobs.max_borrowed_sparks=0;assert.equal(service.status().media_budget.over_budget,true);
+ assert.equal((await service.start(input)).execution.phase,'starting');assert.equal(launches,1);
+});
 test('placement off rejects new execution but preserves the accepted operation',async t=>{
  const r=fixture(t);let allowed=false,launches=0;
  const service=createMediaExecution(r.config,r.jobs,{isEnabled:()=>true,isAllowed:()=>allowed,launchRunner:async()=>{launches++;return {pid:123};}});
  const input={job_id:r.job.id,worker_id:'one'};
  await assert.rejects(service.start(input),/placement is off/);assert.equal(launches,0);assert.deepEqual(service.status().workers[0].kinds,[]);
  allowed=true;await service.start(input);allowed=false;const existing=await service.start(input);assert.equal(existing.execution.phase,'starting');assert.equal(launches,1);
+});
+test('held first or following job is refused before any plan, assignment or runner is created',async t=>{
+ const r=fixture(t),fresh=r.jobs.enqueue('video',{prompt:{}},{key:'new'}).job;
+ const jobs=new MediaJobs(r.jobs.filename,{heldJobIds:[r.job.id]});let launches=0;
+ const service=createMediaExecution(r.config,jobs,{isEnabled:()=>true,launchRunner:async()=>{launches++;return {pid:123};}});
+ for(const input of [{job_id:r.job.id,worker_id:'one'},{job_id:fresh.id,worker_id:'one',following_job_ids:[r.job.id]}]){
+  await assert.rejects(service.start(input),/held/);assert.equal(launches,0);
+ }
+ assert.equal(fs.existsSync(jobs.executionFolder(fresh.id)),false);assert.equal(jobs.get(fresh.id).execution,undefined);
+ assert.match(service.status().jobs.find(j=>j.id===r.job.id).dispatch_hold,/Held/);
+ await service.start({job_id:fresh.id,worker_id:'one'});assert.equal(launches,1);
+ assert.equal(mediaBatchCanContinue({priority:'normal'},{jobs:[{state:'queued',priority:'high',dispatch_hold:'held'}]}),true);
 });
 test('one execution per job survives core restart and exposes private-runner progress',async t=>{
   const r=fixture(t);let launches=0,enabled=true;
@@ -105,6 +179,13 @@ test('native cycle drains, generates once, retains files, verifies LLM and readm
   let previous=-1;for(const item of ordered){const index=r.events.indexOf(item);assert.ok(index>previous,item);previous=index;}
   assert.equal(r.containers.get(r.plan.llm_container).State.Running,true);
 });
+test('unverified recipe leaves the LLM serving and takes no maintenance reservation',async t=>{
+ const r=cycleFixture(t);r.io.prepareCommands=async()=>{throw Error('ACE-Step recipe support is not verified');};
+ await assert.rejects(runMediaCycle(r.plan,r.io),/recipe support is not verified/);
+ assert.equal(r.submissions(),0);assert.equal(r.containers.get(r.plan.llm_container).State.Running,true);
+ assert.ok(r.events.includes('failed_unchanged'));
+ assert.ok(!r.events.some(e=>e==='prepare'||e==='finish'||e.startsWith('stop:')||e.startsWith('start:')));
+});
 test('two selected media jobs submit and retain separately with one engine start and one LLM return',async t=>{
   const r=cycleFixture(t),second=r.jobs.enqueue('video',{prompt:{one:{class_type:'Fixture'}}},{key:'second'}).job;
   r.plan.job_ids=[r.job.id,second.id];let checkpoints=0;r.io.continueBatch=async job=>{assert.equal(job.id,second.id);checkpoints++;return true;};
@@ -154,6 +235,20 @@ test('failed media startup returns the unchanged LLM without submitting generati
   await assert.rejects(runMediaCycle(r.plan,r.io),/media service failed/);
   assert.equal(r.submissions(),0);assert.equal(r.jobs.get(r.job.id).state,'failed');
   assert.ok(r.events.includes('failed_returned'));assert.ok(r.events.includes('finish'));assert.equal(r.containers.get(r.plan.llm_container).State.Running,true);
+});
+test('journal-confirmed exited startup returns the LLM without submitting media',async t=>{
+  const r=cycleFixture(t),start=r.io.start;let commands=0;
+  const bridge=createMediaCommandBridge(r.plan,'/fixture',{run:async()=>{commands++;return {stdout:JSON.stringify({operation_id:r.plan.operation_id,step:'media-start-0',state:'exited'})};}});
+  r.io.start=id=>id===r.engine.container?bridge.command('start','media',0,id):start(id);
+  await assert.rejects(runMediaCycle(r.plan,r.io),/acknowledged.*exited/);
+  assert.equal(commands,1);assert.equal(r.submissions(),0);assert.ok(r.events.includes('failed_returned'));
+  assert.ok(r.events.includes('finish'));assert.equal(r.containers.get(r.plan.llm_container).State.Running,true);
+});
+test('refused LLM stop rechecks the same running instance without starting it again',async t=>{
+  const r=cycleFixture(t);r.io.stop=async()=>{throw Error('refused before command dispatch');};
+  await assert.rejects(runMediaCycle(r.plan,r.io),/refused before command dispatch/);
+  assert.equal(r.submissions(),0);assert.ok(r.events.includes('failed_returned'));assert.ok(r.events.includes('finish'));
+  assert.ok(!r.events.some(e=>e.startsWith('start:')));
 });
 test('failed LLM verification remains visible and does not claim readmission',async t=>{
   const r=cycleFixture(t);r.io.verify=async()=>{throw new Error('cache check failed');};
@@ -286,4 +381,60 @@ test('native step receipts are display-only, clear for restoration and cannot co
  assert.equal(observations,2,'100% node progress is not native job completion');assert.equal(r.submissions(),1);assert.equal(closed,1);
  assert.ok(receipts.some(r=>r.phase==='generating'&&r.native_progress.value===20));
  assert.ok(receipts.filter(r=>['retaining_results','restoring_llm','checking_llm','returned'].includes(r.phase)).every(r=>r.native_progress===null));
+});
+
+test('paired execution sends a retained rank engine to its rank host and keeps the head endpoint for return',async t=>{
+ const f=fixture(t),worker={id:'one',url:'http://127.0.0.1:38888/v1',backend:'openai'};
+ f.config.recovery.workers=[];f.engine.member=1;
+ f.config.media_jobs.pairs={one:{kind:'glm53-docker-pair',model:'GLM',worker_binding:{id:worker.id,url:worker.url},members:[{ssh:'fixture-host',container:'a'.repeat(64)},{ssh:'fixture-rank',container:'rank'}]}};
+ const service=createMediaExecution(f.config,f.jobs,{workers:()=>[worker,{id:'other'}],isEnabled:()=>true,matchesWorker:()=>false,launchRunner:async()=>({pid:1})});
+ await service.start({job_id:f.job.id,worker_id:'one'});
+ const plan=JSON.parse(fs.readFileSync(path.join(f.jobs.executionFolder(f.job.id),'plan.json')));
+ assert.equal(plan.host,'fixture-rank');assert.equal(plan.llm_container,'rank');assert.equal(plan.llm_pair.media_member,1);assert.deepEqual(plan.endpoint,worker);assert.deepEqual(plan.separate_workers,['other']);
+});
+
+test('explicit physical member selects its qualified engine and cannot retarget an accepted job',async t=>{
+ const f=fixture(t),worker={id:'one',url:'http://127.0.0.1:38888/v1'};
+ f.config.media_jobs.pairs={one:{kind:'glm53-docker-pair',model:'GLM',worker_binding:worker,members:[{ssh:'fixture-host',container:'a'.repeat(64)},{ssh:'fixture-rank',container:'rank'}]}};
+ const rank={...f.engine,container:'d'.repeat(64),member:1};
+ f.config.media_jobs.workers.one.member_engines={1:{video:rank}};
+ let launches=0;const service=createMediaExecution(f.config,f.jobs,{workers:()=>[worker],isEnabled:()=>true,launchRunner:async()=>{launches++;return {pid:1};}});
+ await service.start({job_id:f.job.id,worker_id:'one',member:1});
+ const plan=JSON.parse(fs.readFileSync(path.join(f.jobs.executionFolder(f.job.id),'plan.json')));
+ assert.equal(plan.host,'fixture-rank');assert.equal(plan.engine.container,rank.container);assert.equal(f.config.media_jobs.workers.one.engines.video.container,f.engine.container);
+ await assert.rejects(service.start({job_id:f.job.id,worker_id:'one',member:0}),/another worker/);
+ await service.start({job_id:f.job.id,worker_id:'one',member:1});assert.equal(launches,1);
+});
+
+test('parallel member allocation requires explicit policy and both enrollments, preserves assignments across restart, and counts the pair once',async t=>{
+ const f=fixture(t),worker={id:'one',url:'http://127.0.0.1:38888/v1'};
+ const second=f.jobs.enqueue('video',{prompt:{two:{class_type:'Fixture'}}},{key:'rank-job'}).job;
+ f.config.machine_groups={one:['s1','s2']};f.config.media_jobs.max_borrowed_sparks=2;
+ f.config.media_jobs.pairs={one:{kind:'glm53-docker-pair',model:'GLM',worker_binding:worker,members:[{ssh:'fixture-host',container:'a'.repeat(64)},{ssh:'fixture-rank',container:'rank'}]}};
+ let launches=0;const options={workers:()=>[worker],isEnabled:()=>true,launchRunner:async()=>{launches++;throw Error('lost launch acknowledgement');}};
+ const input={job_id:f.job.id,following_job_ids:[second.id],worker_id:'one',parallel_members:true};
+ const service=createMediaExecution(f.config,f.jobs,options);
+ await assert.rejects(service.start(input),/explicit pair policy/);
+ f.config.media_jobs.parallel_pair_members=true;await assert.rejects(service.start(input),/both qualified/);
+ const rank={...f.engine,container:'d'.repeat(64),member:1};f.config.media_jobs.workers.one.member_engines={1:{video:rank}};
+ assert.deepEqual(service.status().workers[0].parallel_kinds,['video']);
+ const limited=f.jobs.enqueueBatch({requested_parallelism:1,clips:[0,1].map(i=>({clip_id:`c${i}`,payload:{prompt:{}}}))},{key:'limited-film'}).batch;
+ await assert.rejects(service.start({job_id:limited.clips[0].id,following_job_ids:[limited.clips[1].id],worker_id:'one',parallel_members:true}),/requested_parallelism/);
+ assert.equal(fs.existsSync(f.jobs.executionFolder(limited.clips[0].id)),false);assert.equal(launches,0);
+ await assert.rejects(service.start({...input,member:0}),/not both/);
+ await assert.rejects(service.start(input),/lost launch/);assert.equal(launches,1);
+ const plan=JSON.parse(fs.readFileSync(path.join(f.jobs.executionFolder(f.job.id),'plan.json')));
+ assert.deepEqual(plan.media_lanes.map(l=>[l.member,l.host,l.job_ids]),[[0,'fixture-host',[f.job.id]],[1,'fixture-rank',[second.id]]]);
+ assert.equal(plan.media_lanes[1].engine.container,rank.container);
+ const saved=new MediaJobs(f.jobs.filename),restored=createMediaExecution(f.config,saved,options);
+ assert.equal(saved.get(second.id).execution.member,1);assert.equal(saved.get(f.job.id).execution.member,0);
+ assert.equal(restored.status().media_budget.borrowed_sparks,2);assert.equal(restored.status().media_budget.remaining_sparks,0);
+ await restored.start(input);await restored.start({job_id:second.id,worker_id:'one',member:1});assert.equal(launches,1);
+ await assert.rejects(restored.start({...input,parallel_members:false}),/different execution mode/);
+ const folder=f.jobs.executionFolder(f.job.id);
+ saveMediaReceipt(folder,'progress.json',{phase:'generating',parallel_members:true,lanes:[{member:0,active_job_id:f.job.id,phase:'retaining_results',native_progress:null},{member:1,active_job_id:second.id,phase:'generating',native_progress:{value:2,max:20}}]});
+ assert.equal(saved.get(second.id).execution.member_phase,'generating');assert.equal(saved.get(second.id).execution.native_progress.value,2);
+ assert.equal(saved.get(f.job.id).execution.native_progress,null);
+ const native=new MediaJobs(path.join(folder,'media-jobs.json'));native.update(f.job.id,{state:'completed'});native.update(second.id,{state:'completed'});
+ saveMediaReceipt(folder,'progress.json',{phase:'returned'});assert.equal(restored.status().media_budget.borrowed_sparks,0);
 });

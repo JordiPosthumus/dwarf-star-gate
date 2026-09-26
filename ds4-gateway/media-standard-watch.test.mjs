@@ -1,0 +1,133 @@
+import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
+import {MediaStandardWatch,mediaStandardTargets} from './media-standard-watch.mjs';
+function fixture(t){
+ const folder=fs.mkdtempSync(path.join(os.tmpdir(),'media-standard-'));t.after(()=>fs.rmSync(folder,{recursive:true,force:true}));
+ const targets=[{worker_id:'pair',member:0,engine:'ace-step'},{worker_id:'pair',member:1,engine:'h3'}];
+ const config={machine_groups:{pair:['a','b'],spare:['c']},media_jobs:{standard:{enabled:true,targets}}};
+ const s={enabled:true,jobs:[],fleet:[{id:'pair',is_healthy:true,load:0,queued:0},{id:'spare',is_healthy:true}],hosts:[{id:'pair',members:[0,1].map(member=>({member,engines:[{id:'ace-step',allowed:true,enrolled:false},{id:'h3',allowed:true,enrolled:false}]}))}],setup:{hosts:[{worker_id:'pair',available:true}],operations:[]}};
+ let busy=false,enabled=true;const calls=[];
+ const chat={status:()=>({available:true,conversations:[{busy}]}),create:()=>({id:'chat'}),submit:(...args)=>calls.push(args)};
+ const options={filename:path.join(folder,'state.json'),config,chat,read:async()=>s,isEnabled:()=>enabled};
+ return {s,calls,config,options,chat,busy:v=>busy=v,enabled:v=>enabled=v};
+}
+test('standard advances through actual Genie after saved native completion and reload',async t=>{
+ const f=fixture(t),w=new MediaStandardWatch(f.options);await w.tick();assert.equal(f.calls.length,1);assert.match(f.calls[0][1],/"member":0/);
+ f.s.setup.operations.push({worker_id:'pair',member:0,engine:'ace-step',operation_id:'first',phase:'preparing_media'});
+ await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,1);
+ f.s.setup.operations[0].phase='enrolled';f.s.hosts[0].members[0].engines[0].enrolled=true;
+ const reloaded=new MediaStandardWatch(f.options);await reloaded.tick();assert.equal(f.calls.length,2);assert.match(f.calls[1][1],/"member":1/);
+ f.s.hosts[0].members[1].engines[1].enrolled=true;await reloaded.tick();assert.ok(reloaded.status().targets.every(t=>t.phase==='enrolled'));assert.equal(f.calls.length,2);
+});
+test('failure triggers read-only diagnosis once, never native retry, and other member proceeds',async t=>{
+ const f=fixture(t);f.s.setup.operations=[{worker_id:'pair',member:0,engine:'ace-step',operation_id:'failed',phase:'failed_unchanged',at:'fixed',detail:'Container missing'}];
+ const w=new MediaStandardWatch(f.options);await w.tick();assert.match(f.calls[0][1],/Do not repeat setup/);assert.equal(w.status().targets[0].phase,'needs_attention');
+ const next=new MediaStandardWatch(f.options);await next.tick();assert.equal(f.calls.length,2);assert.match(f.calls[1][1],/"member":1/);await next.tick();assert.equal(f.calls.length,2);
+});
+test('busy chat, capability, placement, active setup, demand and shared hardware defer',async t=>{
+ const f=fixture(t),w=new MediaStandardWatch(f.options);f.busy(true);await w.tick();f.busy(false);f.enabled(false);await w.tick();f.enabled(true);
+ f.config.machine_groups.spare=['a'];await w.tick();assert.equal(f.calls.length,0);f.config.machine_groups.spare=['c'];
+ f.s.fleet[0].load=1;await w.tick();assert.equal(f.calls.length,0);f.s.fleet[0].load=0;
+ for(const m of f.s.hosts[0].members)for(const e of m.engines)e.allowed=false;await w.tick();assert.equal(f.calls.length,0);
+ for(const m of f.s.hosts[0].members)for(const e of m.engines)e.allowed=true;w.close();await w.tick();assert.equal(f.calls.length,0);
+});
+test('uncertain chat submission preserves exact request across watcher reload',async t=>{
+ const f=fixture(t);f.chat.submit=(...args)=>{f.calls.push(args);if(f.calls.length===1)throw Error('lost reply');};
+ await new MediaStandardWatch(f.options).tick();await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,2);assert.deepEqual(f.calls[0],f.calls[1]);
+});
+test('qualified return requests final enrollment without reinstall; malformed targets fail closed',async t=>{
+ const f=fixture(t);f.s.setup.operations=[{worker_id:'pair',member:0,engine:'ace-step',phase:'qualified_returned',operation_id:'proof'}];
+ await new MediaStandardWatch(f.options).tick();assert.match(f.calls[0][1],/finish pending enrollment/);
+ f.config.media_jobs.standard.targets.push(f.config.media_jobs.standard.targets[0]);assert.throws(()=>mediaStandardTargets(f.config),/Duplicate/);
+ assert.deepEqual(mediaStandardTargets({}),[]);
+ assert.throws(()=>mediaStandardTargets({media_jobs:{standard:{enabled:true,targets:[{worker_id:'x',engine:'h3',member:3}]}}}));
+});
+
+test('a no-action Genie reply is visible and does not create a repeated setup loop',async t=>{
+ const f=fixture(t);f.config.media_jobs.standard.targets.splice(1);const w=new MediaStandardWatch(f.options);
+ await w.tick();await w.tick();assert.equal(f.calls.length,1);assert.equal(w.status().targets[0].phase,'needs_attention');
+ await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,1);
+});
+
+test('only a backend-verified corrected preflight gets one same-ID timestamped retry',async t=>{
+ const f=fixture(t);f.config.media_jobs.standard.targets.splice(1);
+ f.s.setup.operations=[{worker_id:'pair',member:0,engine:'ace-step',operation_id:'old',phase:'failed_unchanged',at:'2026-01-01T00:00:00Z',retry_ready:true}];
+ const w=new MediaStandardWatch(f.options);await w.tick();assert.match(f.calls[0][1],/"expected_failed_at":"2026-01-01T00:00:00Z"/);assert.match(f.calls[0][1],/same operation ID/);
+ await w.tick();assert.equal(f.calls.length,1);
+});
+
+test('native source repair progresses to exact retry without another owner prompt',async t=>{
+ const f=fixture(t);f.config.media_jobs.standard.targets.splice(1);f.s.setup.source_repair_supported=true;
+ f.s.setup.operations=[{worker_id:'pair',member:0,engine:'ace-step',operation_id:'old',phase:'failed_unchanged',at:'2026-01-01T00:00:00Z',failure_context:{stage:'read_only_preflight',selected_media_container:'missing'}}];
+ await new MediaStandardWatch(f.options).tick();assert.match(f.calls[0][1],/repair_media_setup/);
+ f.s.setup.operations[0].retry_ready=true;await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,2);assert.match(f.calls[1][1],/Call setup_media_host/);
+ f.s.setup.operations[0].phase='preparing_media';await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,2);
+});
+
+test('changed source reader reconsiders a refused read-only selection once across reloads',async t=>{
+ const f=fixture(t);f.config.media_jobs.standard.targets.splice(1);f.s.setup.source_repair_supported=true;
+ f.s.setup.source_repair_revision='reader-before';
+ f.s.setup.operations=[{worker_id:'pair',member:0,engine:'ace-step',operation_id:'old',phase:'failed_unchanged',at:'fixed-failure',failure_context:{stage:'read_only_preflight',selected_media_container:'missing'}}];
+ await new MediaStandardWatch(f.options).tick();await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,1);
+ f.s.setup.source_repair_revision='reader-after';
+ await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,2);assert.match(f.calls[1][1],/Call repair_media_setup once/);assert.match(f.calls[1][1],/"expected_failed_at":"fixed-failure"/);
+ assert.notEqual(f.calls[0][2],f.calls[1][2]);
+ await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,2);
+ // A reader update does not repeat a native setup retry.
+ f.s.setup.operations[0].retry_ready=true;await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,3);
+ f.s.setup.source_repair_revision='reader-next';await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,3);
+});
+
+test('an enrolled standard gets one periodic native audit through Genie across reloads',async t=>{
+ const f=fixture(t);for(const m of f.s.hosts[0].members)for(const e of m.engines)e.enrolled=true;
+ const target={key:JSON.stringify(['pair',0,'ace-step']),state:'not_observed',observed_at:null,due:true};f.s.setup.standard_audit={enabled:true,targets:[target]};
+ await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,1);assert.match(f.calls[0][1],/Call audit_media_standard once with no arguments/);
+ f.busy(true);await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,1);f.busy(false);
+ target.state='present';target.observed_at='2026-01-01T00:00:00Z';target.due=false;
+ const next=new MediaStandardWatch(f.options);await next.tick();assert.equal(next.status().audit.phase,'observed');assert.equal(f.calls.length,1);
+ target.due=true;await next.tick();assert.equal(f.calls.length,2);
+});
+test('audit without native evidence gets one corrective turn, with durable deduplication and a hard stop',async t=>{
+ const f=fixture(t);for(const m of f.s.hosts[0].members)for(const e of m.engines)e.enrolled=true;
+ f.s.setup.standard_audit={enabled:true,targets:[{key:JSON.stringify(['pair',0,'ace-step']),state:'not_observed',observed_at:null,due:true}]};
+ await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,1);
+ // A saved request from before attempt accounting is still just one attempt.
+ const saved=JSON.parse(fs.readFileSync(f.options.filename));delete saved.audit.attempts;fs.writeFileSync(f.options.filename,JSON.stringify(saved));
+ f.chat.submit=(...args)=>{f.calls.push(args);if(f.calls.length===2)throw Error('Corrective acknowledgement lost');};
+ await new MediaStandardWatch(f.options).tick();assert.match(f.calls[1][1],/without a fresh native audit receipt/);assert.match(f.calls[1][1],/Actually invoke the audit_media_standard tool/);
+ assert.notEqual(f.calls[0][2],f.calls[1][2]);
+ await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,3);assert.deepEqual(f.calls[1],f.calls[2]);
+ const stopped=new MediaStandardWatch(f.options);await stopped.tick();assert.equal(f.calls.length,3);assert.equal(stopped.status().audit.phase,'needs_attention');
+ // A later native receipt, even an unavailable observation, is evidence and
+ // must not provoke further corrective chat or imply successful presence.
+ Object.assign(f.s.setup.standard_audit.targets[0],{state:'unavailable',observed_at:'2026-01-01T00:00:00Z',due:false});
+ await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,4);assert.match(f.calls[3][1],/latest native audit needs attention/);
+ await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,4);
+});
+test('absent and unavailable audits request read-only diagnosis without new setup',async t=>{
+ const f=fixture(t);f.config.media_jobs.standard.targets.splice(1);f.s.hosts[0].members[0].engines[0].enrolled=true;
+ f.s.setup.standard_audit={enabled:true,targets:[{key:JSON.stringify(['pair',0,'ace-step']),state:'absent',observed_at:'2026-01-01T00:00:00Z',due:false}]};
+ const w=new MediaStandardWatch(f.options);await w.tick();assert.match(f.calls[0][1],/Do not replace or reinstall/);assert.equal(w.status().targets[0].phase,'needs_attention');
+ await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,1);
+});
+
+test('lost audit submission retains request identity and missing targets do not starve installed-engine audits',async t=>{
+ const f=fixture(t);f.s.hosts[0].members[0].engines[0].enrolled=true;f.s.hosts[0].members[1].engines[1].allowed=false;
+ f.s.setup.standard_audit={enabled:true,targets:[{key:JSON.stringify(['pair',0,'ace-step']),state:'not_observed',observed_at:null,due:true}]};
+ f.chat.submit=(...args)=>{f.calls.push(args);if(f.calls.length===1)throw Error('Lost response');};
+ await new MediaStandardWatch(f.options).tick();await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,2);assert.deepEqual(f.calls[0],f.calls[1]);
+});
+
+test('same-worker native setup defers source repair until completion, then continues once',async t=>{
+ const f=fixture(t);f.config.media_jobs.standard.targets.splice(0,1);f.s.setup.source_repair_supported=true;
+ const active={worker_id:'pair',member:0,engine:'ace-step',operation_id:'active',phase:'preparing_media'};
+ f.s.setup.operations=[active,{worker_id:'pair',member:1,engine:'h3',operation_id:'failed',phase:'failed_unchanged',at:'failure',failure_context:{stage:'read_only_preflight',selected_media_container:'missing'}}];
+ const w=new MediaStandardWatch(f.options);await w.tick();assert.equal(f.calls.length,0);assert.equal(w.status().targets[0].phase,'waiting');
+ active.phase='enrolled';active.finished_at='finished';await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,1);assert.match(f.calls[0][1],/repair_media_setup/);
+ await new MediaStandardWatch(f.options).tick();assert.equal(f.calls.length,1);
+});
+
+test('disabled native inspection preserves attention evidence without dispatching inspection',async t=>{
+ const f=fixture(t);f.config.media_jobs.standard.targets.splice(1);f.s.hosts[0].members[0].engines[0].enrolled=true;
+ f.s.setup.standard_audit={enabled:false,targets:[{key:JSON.stringify(['pair',0,'ace-step']),state:'unavailable',observed_at:'fixed',due:true}]};
+ const w=new MediaStandardWatch(f.options);await w.tick();assert.equal(f.calls.length,0);assert.equal(w.status().targets[0].phase,'needs_attention');
+});

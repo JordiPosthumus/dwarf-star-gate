@@ -91,4 +91,19 @@ test('catalogue: warnings flag routes to dead workers and unenrolled gateway wor
 test('catalogue: direct_reserved and served_model pass through for Genie agreement', () => {
   const a = catalogueEntry({ member: member('glm53f-m3'), worker: worker('glm53f-m3', { served_model: 'GLM-5.3-Flash-oQ8e-mtp', direct_reserved: true }), device: device('glm53f-m3'), mediaBusy: false, now: NOW });
   assert.equal(a.served_model, 'GLM-5.3-Flash-oQ8e-mtp');
+  assert.equal(a.state, 'paused');
+  assert.match(a.detail, /reserved for direct work/);
+  assert.doesNotMatch(a.detail, /operator/);
+});
+
+test('catalogue: maintenance does not invent an operator pause or current endpoint proof', () => {
+  const target = worker('fixture-model', { drained: true, operator_paused: false, maintenance_locks: [{ name: 'Recipe trial' }] });
+  const value = catalogueEntry({ member: member('fixture-model'), worker: target, device: device('fixture-model'), now: NOW });
+  assert.equal(value.state, 'paused');assert.match(value.detail, /held for maintenance; endpoint answering/);
+  assert.doesNotMatch(value.detail, /operator/);
+  const unknown = catalogueEntry({ member: member('fixture-model'), worker: target, device: null, now: NOW });
+  assert.match(unknown.detail, /current endpoint telemetry unavailable/);
+  assert.doesNotMatch(unknown.detail, /engine still up|endpoint answering/);
+  const both = catalogueEntry({ member: member('fixture-model'), worker: { ...target, operator_paused: true }, device: device('fixture-model'), now: NOW });
+  assert.match(both.detail, /paused by operator and held for maintenance/);
 });

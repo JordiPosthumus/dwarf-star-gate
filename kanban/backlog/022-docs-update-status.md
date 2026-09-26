@@ -15,3 +15,15 @@ rewrite; record the media pair-placement decision and engine plans.
 - Media pair-placement decision (dual-Spark pairs come down together; MiniMax M3,
   LTX, Qwen-Image 2.1 first-class engines) still to record — belongs in
   cards 004/005.
+
+
+## Updated 24 September 2026
+
+The current work plan now records the ten independent Genie switches, keeps
+direct reservation separate, and links the bounded native recipe-trial and
+serving-check behavior. The roadmap introduction acknowledges enrolled vLLM/oMLX
+workers and clearly labels its detailed DS4 designs as historical scope.
+The installation guide already explains durable-registry authority and does not
+treat a private-config mismatch as a repair instruction. Private handoff details
+and the broader media-engine plans remain installation/feature work; this card
+does not claim every historical roadmap section has been rewritten.

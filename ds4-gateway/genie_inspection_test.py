@@ -16,6 +16,11 @@ class Inspection(unittest.TestCase):
    result=self.call('inspect_server',{'worker_id':'example'});self.assertEqual(result['runtime'],'omlx');local.assert_called_once_with(target,source_files=None,source_window=None);ssh.assert_not_called()
    self.assertEqual(self.events[-1][1]['event']['state'],'complete');self.assertEqual(self.events[-1][1]['event']['result'],result)
    self.assertIn('error',self.call('inspect_server',{'worker_id':'example','selected_default':True}));self.assertEqual(local.call_count,1)
+ def test_enrolled_non_routable_rank_can_be_inspected_but_unknown_target_cannot(self):
+  self.register({'example-rank1':{'ssh':['rank-host'],'container':'worker-engine'}})
+  with patch.object(m.subprocess,'run',return_value=types.SimpleNamespace(returncode=0,stdout='{"runtime":"docker"}',stderr='')) as run:
+   result=self.call('inspect_server',{'worker_id':'example-rank1'});self.assertEqual(result['runtime'],'docker');self.assertEqual(run.call_count,1)
+   self.assertIn('error',self.call('inspect_server',{'worker_id':'unenrolled-rank'}));self.assertEqual(run.call_count,1)
  def test_records_missing_distinct_from_unknown_and_no_secret_contents(self):
   (self.root/'observed').mkdir();(self.root/'observed/example.json').write_text(json.dumps({'schema':1,'worker_id':'example','kind':'observed','configuration':{'api_key':'PRIVATE_SECRET','context':262144},'runtime':{'build':'a'*64}}));self.register()
   result=self.call('read_server_configuration',{'worker_id':'example'});self.assertNotIn('PRIVATE_SECRET',json.dumps(result));self.assertEqual(result['records']['observed']['configuration']['context'],262144);self.assertIsNone(result['records']['approved']);self.assertIn('a'*64,self.context['inspection_private_values'])
@@ -308,3 +313,92 @@ class CacheMetricsQuery(unittest.TestCase):
   for flags in [['--port','5','--port=6'],['--port','65536'],['--port','http://example'],['--port']]:self.assertEqual(self.query(flags)['state'],'unavailable')
   self.assertEqual(self.requests,[])
 if __name__=='__main__':unittest.main()
+
+class RecipeInspection(unittest.TestCase):
+ def test_enrolled_recipe_is_read_without_execution_and_secrets_are_redacted(self):
+  import io,contextlib,hashlib
+  with tempfile.TemporaryDirectory() as temporary:
+   root=pathlib.Path(temporary);marker=root/'must-not-exist'
+   env='MAX_MODEL_LEN=400000\nAPI_KEY=PRIVATE_TEST_VALUE\nSIDE_EFFECT=$(touch '+str(marker)+')\n'
+   (root/'.env').write_text(env);(root/'start.sh').write_text('# launcher\n'+'# unchanged\n'*1000)
+   container={'Id':'immutable-id','Image':'image-id','State':{'Running':False,'StartedAt':'dated'},'Config':{'Entrypoint':['bash'],'Cmd':['start.sh'],'Env':['MAX_MODEL_LEN=400000']},'HostConfig':{},'Mounts':[]}
+   def run(argv,**kwargs):
+    argv=tuple(argv)
+    if argv[:3]==('docker','image','inspect'):return json.dumps([{'Id':'image-id','Created':'dated','Config':{'Labels':{'glm53.recipe.stamp':'fixture-stamp'}}}])
+    if argv[:2]==('docker','inspect'):return json.dumps([container])
+    if argv[0]=='git':return 'a'*40+'\n' if argv[-1]=='HEAD' else ''
+    raise AssertionError(argv)
+   def collect():
+    output=io.StringIO()
+    with patch('subprocess.check_output',side_effect=run),patch('subprocess.run',return_value=__import__('types').SimpleNamespace(returncode=0,stdout='native fixture failure\n',stderr='API_KEY=PRIVATE_LOG_VALUE\n')),patch('sys.stdin',io.StringIO(json.dumps({'container':'fixture','recipe_root':str(root)}))),contextlib.redirect_stdout(output):exec(compile(m.COLLECTOR,'collector','exec'),{})
+    return json.loads(output.getvalue())
+   result=collect();recipe=result['recipe']
+   self.assertEqual(result['recent_runtime_log']['container'],'immutable-id');self.assertIn('native fixture failure',result['recent_runtime_log']['tail']);self.assertNotIn('PRIVATE_LOG_VALUE',json.dumps(result))
+   self.assertEqual(recipe['revision'],'a'*40);self.assertFalse(recipe['tracked_changes'])
+   self.assertEqual(result['recipe_stamp'],'fixture-stamp')
+   self.assertEqual(recipe['files']['.env']['sha256'],hashlib.sha256(env.encode()).hexdigest())
+   self.assertIn('MAX_MODEL_LEN=400000',recipe['files']['.env']['text']);self.assertNotIn('PRIVATE_TEST_VALUE',json.dumps(result))
+   self.assertFalse(marker.exists());self.assertTrue(recipe['files']['start.sh']['truncated']);self.assertEqual(len(recipe['files']['start.sh']['text']),6000)
+   (root/'.env').unlink();(root/'.env').symlink_to(root/'start.sh')
+   self.assertEqual(collect()['recipe']['files']['.env'],{'state':'unavailable'})
+
+class TrialProgress(unittest.TestCase):
+ def test_only_current_candidate_fixed_receipts_are_read_and_sensitive_samples_omitted(self):
+  with tempfile.TemporaryDirectory() as temp:
+   home=pathlib.Path(temp).resolve();trial='12345678-abcd-1234-abcd-123456789012';root=home/'.local/share/dsg-recipe-trials'/trial
+   (root/'A').mkdir(parents=True);(root/'candidate').mkdir()
+   (root/'A/results.json').write_text(json.dumps([{'label':'cold-A','sample':{'answer':'PRIVATE_ANSWER','metrics_before':{'private':'PRIVATE_METRIC'},'ttft_s':1.5},'passed':True}]))
+   (root/'candidate-start.log').write_text('Starting compiler\nAPI_KEY=PRIVATE_KEY\nReady\n')
+   mounts=[{'Source':str(root/'candidate/overlay/file.py')}]
+   result=m.inspect_trial_progress(str(home/'recipe'),mounts)
+   self.assertEqual(result['trial_id'],trial);self.assertEqual(result['phases']['A'][0]['sample']['ttft_s'],1.5);self.assertNotIn('PRIVATE_',json.dumps(result));self.assertIn('Ready',result['candidate_start_tail'])
+   self.assertIsNone(m.inspect_trial_progress(str(home/'recipe'),[{'Source':str(home/'arbitrary')}]));self.assertIsNone(m.inspect_trial_progress(None,mounts))
+   (root/'prepared.json').write_text(json.dumps({'original_container':'original-id'}));(root/'run-intent.json').write_text('{"started_at":2}')
+   self.assertEqual(m.inspect_trial_progress(str(home/'recipe'),[],'original-id')['trial_id'],trial)
+   self.assertIsNone(m.inspect_trial_progress(str(home/'recipe'),[],'different-id'))
+   old=root.with_name('12345678-abcd-1234-abcd-123456789013');old.mkdir()
+   (old/'prepared.json').write_text(json.dumps({'original_container':'original-id'}));(old/'run-intent.json').write_text('{"started_at":1}')
+   self.assertEqual(m.inspect_trial_progress(str(home/'recipe'),[],'original-id')['trial_id'],trial)
+   (root/'A/results.json').unlink();(root/'A/results.json').symlink_to(root/'candidate-start.log')
+   self.assertEqual(m.inspect_trial_progress(str(home/'recipe'),mounts)['phases']['A']['state'],'unavailable')
+ def test_ambiguous_candidate_or_traversal_never_selects_a_trial(self):
+  base='/srv/example/.local/share/dsg-recipe-trials/'
+  self.assertIsNone(m.inspect_trial_progress('/srv/example/recipe',[{'Source':base+'12345678-abcd-1234-abcd-123456789012/candidate/a'},{'Source':base+'12345678-abcd-1234-abcd-123456789013/candidate/b'}]))
+  self.assertIsNone(m.inspect_trial_progress('/srv/example/recipe',[{'Source':base+'../candidate/private'}]))
+
+class PeerInspection(unittest.TestCase):
+ def test_peer_is_resolved_from_enrollment_and_pinned_to_observed_machine(self):
+  from types import SimpleNamespace
+  answers=[SimpleNamespace(stdout='hostname example.invalid\nuser fixture\nport 22\n'),SimpleNamespace(stdout='a'*64+'\nssh-ed25519 '+'A'*68+' fixture\n')]
+  with patch('subprocess.run',side_effect=answers) as run:
+   result=m.peer_parameters({'ssh':['enrolled-peer']})
+   self.assertEqual(result,{'destination':'fixture@example.invalid','port':22,'machine_sha256':'a'*64,'known_hosts':'example.invalid ssh-ed25519 '+'A'*68+'\n'})
+   self.assertEqual(run.call_args_list[0].args[0],['ssh','-G','enrolled-peer'])
+   self.assertIn('StrictHostKeyChecking=yes',run.call_args.args[0]);self.assertIn('UpdateHostKeys=no',run.call_args.args[0])
+  with patch('subprocess.run') as run:
+   for alias in ['-oProxyCommand=bad','host;bad']:
+    with self.assertRaises(ValueError):m.peer_parameters({'ssh':[alias]})
+   run.assert_not_called()
+ def test_peer_identity_mismatch_is_not_reported_as_connected(self):
+  import io,contextlib
+  from types import SimpleNamespace
+  c={'Id':'immutable-id','Image':'image-id','State':{'Running':False,'StartedAt':'dated'},'Config':{'Entrypoint':['bash'],'Cmd':['start.sh'],'Env':[]},'HostConfig':{},'Mounts':[]}
+  def output(argv,**kwargs):return json.dumps([{'Id':'image-id','Created':'dated','Size':12345}]) if argv[:3]==('docker','image','inspect') else json.dumps([c])
+  for actual,expected in [('a',True),('b',False)]:
+   stdout=io.StringIO()
+   def run(argv,**kwargs):
+    if argv[0]=='ssh':
+     pinned=next(x.split('=',1)[1] for x in argv if x.startswith('UserKnownHostsFile='));self.assertEqual(pathlib.Path(pinned).read_text(),'example.invalid ssh-ed25519 '+'A'*68+'\n');self.assertIn('StrictHostKeyChecking=yes',argv)
+    return SimpleNamespace(returncode=0,stdout=actual*64+'\n' if argv[0]=='ssh' else '',stderr='')
+   payload={'container':'fixture','peer':{'destination':'fixture@example.invalid','port':22,'machine_sha256':'a'*64,'known_hosts':'example.invalid ssh-ed25519 '+'A'*68+'\n'}}
+   with patch('subprocess.check_output',side_effect=output),patch('subprocess.run',side_effect=run),patch('sys.stdin',io.StringIO(json.dumps(payload))),contextlib.redirect_stdout(stdout):exec(compile(m.COLLECTOR,'collector','exec'),{})
+   result=json.loads(stdout.getvalue());self.assertEqual(result['peer_probe']['machine_matches'],expected);self.assertEqual(result['image']['size_bytes'],12345)
+
+
+class ImageTransferInspection(unittest.TestCase):
+ def test_only_docker_image_stream_counters_are_returned(self):
+  with tempfile.TemporaryDirectory() as folder:
+   root=pathlib.Path(folder)
+   for pid,args in [('12',b'/usr/bin/docker\0save\0sha256:fixture'),('13',b'/usr/bin/docker\0load'),('14',b'/usr/bin/docker\0run\0private-argument'),('15',b'/usr/bin/ssh\0private-host')]:
+    p=root/pid;p.mkdir();(p/'cmdline').write_bytes(args);(p/'io').write_text('rchar: 1024\nwchar: 512\nsyscr: 7\nread_bytes: 0\nwrite_bytes: 0\n')
+   value=m.inspect_image_transfers(folder);self.assertEqual({x['operation'] for x in value},{'save','load'});self.assertNotIn('private',json.dumps(value));self.assertTrue(all(x['bytes']['rchar']==1024 for x in value));self.assertNotIn('syscr',value[0]['bytes'])

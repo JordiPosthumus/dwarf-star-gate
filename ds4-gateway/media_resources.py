@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -13,7 +14,44 @@ def command(*args):
     return subprocess.check_output(args, text=True, timeout=8).strip()
 
 
-def collect(target):
+def native_port_inventory(recipe_probe=None):
+    """Read a bounded Docker inventory; port matches are candidates, not engines."""
+    ids = command('docker', 'ps', '-aq', '--no-trunc').splitlines()
+    if any(not re.fullmatch(r'[a-f0-9]{64}', value) for value in ids):
+        raise ValueError('Unexpected Docker container identity')
+    rows = []
+    for offset in range(0, min(len(ids), 128), 16):
+        containers = json.loads(command('docker', 'inspect', '--type', 'container', '--', *ids[offset:offset + 16]))
+        for container in containers:
+            ports = container.get('HostConfig', {}).get('PortBindings') or {}
+            selected = {key: ports[key] for key in ('8002/tcp', '8188/tcp') if ports.get(key)}
+            if selected:
+                rows.append({'container': container['Id'], 'image': container['Image'],
+                             'running': container.get('State', {}).get('Running'), 'ports': selected})
+    # Port matches only nominate candidates. Bind each read to the exact ID and
+    # image observed above; a missing witness must never erase that observation
+    # or claim the API is incompatible. Limit extra reads on busy Docker hosts.
+    candidates = 0
+    for row in rows:
+        if '8002/tcp' not in row['ports']:
+            continue
+        row['recipe_contract'] = {'state': 'not_checked', 'scope': 'ACE candidate selected by port, not proof of enrollment or engine identity.'}
+        if recipe_probe is None or candidates >= 4:
+            continue
+        candidates += 1
+        try:
+            proof = recipe_probe(row['container'], row['image'])
+            if (proof.get('state') != 'verified' or proof.get('container') != row['container'] or
+                    proof.get('image') != row['image'] or proof.get('container_state_unchanged') is not True):
+                raise ValueError('Recipe witness does not match observed candidate')
+            row['recipe_contract'] = proof
+        except Exception:
+            row['recipe_contract'] = {'state': 'unverified', 'scope': 'Explicit sampler/DCW support is not proven for this exact image and source. This does not prove incompatibility or authorize replacement; existing services were untouched.'}
+    return {'state': 'observed', 'containers': rows, 'truncated': len(ids) > 128,
+            'scope': 'Docker containers with native media port bindings. A port match does not prove engine identity, valid models or native readiness. No container was executed or changed.'}
+
+
+def collect(target, recipe_probe=None):
     result = {'observed_at': datetime.now(timezone.utc).isoformat(),
               'system': platform.system(), 'architecture': platform.machine(),
               'memory_total_bytes': None, 'memory_available_bytes': None,
@@ -44,6 +82,11 @@ def collect(target):
                         paths.append(('existing container mount: ' + mount.get('Destination', 'unknown'), Path(mount['Source'])))
         except (OSError, ValueError, subprocess.SubprocessError):
             result['errors'].append('Docker storage inspection unavailable')
+    if result['system'] == 'Linux':
+        try:
+            result['native_port_inventory'] = native_port_inventory(recipe_probe)
+        except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+            result['native_port_inventory'] = {'state': 'unavailable', 'scope': 'Container inventory was not confirmed; unavailable does not mean absent.'}
     disks = {}
     for label, location in paths:
         try:
@@ -62,4 +105,4 @@ def collect(target):
 
 
 if __name__ == '__main__':
-    print(json.dumps(collect(json.loads(sys.stdin.readline()))))
+    print(json.dumps(collect(json.loads(sys.stdin.readline()), globals().get('_inspect_recipe'))))

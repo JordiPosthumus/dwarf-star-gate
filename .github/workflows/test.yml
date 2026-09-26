@@ -19,8 +19,11 @@ jobs:
       - run: npm run privacy-check
       - run: npm run privacy:test
       - run: python3 -m unittest discover -s ds4-gateway -p media_input_placement_test.py -v
+      - run: python3 -m unittest discover -s ds4-gateway -p test_spark_setup_remote.py -v
+      - run: python3 -m unittest discover -s ds4-gateway -p 'recovery_pair*_test.py' -v
       - run: npm test
       - run: npm run continuity:test
       - run: npm run data:test
       - run: npm run memory:test
       - run: npm run recovery:test
+      - run: npm run recipe:test

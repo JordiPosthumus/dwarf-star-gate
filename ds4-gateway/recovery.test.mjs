@@ -2,6 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {Recovery} from './recovery.mjs';
+import {recoveryOwnership} from './recovery-ownership.mjs';
 import {safeNativeRemoval,unavailableNativeRemoval} from './launchd-removal-evidence.mjs';
 import {AgentControl} from './agent-control.mjs';
 import {classifySshFailure,recoveryConfig,systemdCall} from './recovery-transport.mjs';
@@ -56,6 +57,112 @@ function rig(options={}) {
   return {recovery,n,store,deps,sample,get restarts(){return restarts;},get proofs(){return proofs;},advance(ms){time+=ms;},replace(){instance='2'.repeat(32);},
     async ready(){await recovery.tick();},input(){const s=recovery.workerStatus(n);return {worker_id:n.id,evidence_id:s.evidence_id,action_id:randomUUID()};}};
 }
+test('physical recovery ownership covers either pair member, custom mappings and secondary active slots',()=>{
+  const node={id:'custom-pair',active:null,queue:[]},peer={id:'custom-member',active:null,queue:[],drained:true},other={id:'other',active:{},queue:[]};
+  const nodes=[node,peer,other],store={data:{agent_control:{holds:[],maintenance_locks:[]}}};
+  const config={machine_groups:{'custom-pair':['box-a','box-b'],'custom-member':['box-b'],other:['box-c']}};
+  const check=options=>recoveryOwnership({node,nodes,store,config,...options});
+  assert.equal(check(),null,'an idle paused alias is not a physical-machine hold');
+  peer.slots=[{active:null},{active:{id:'second-slot'}}];assert.equal(check(),'shared_machine_has_admitted_work');
+  peer.slots=[];peer.queue.push({});assert.equal(check(),'shared_machine_has_admitted_work');peer.queue=[];
+  peer.recovering=true;assert.equal(check(),'shared_machine_recovery_in_progress');peer.recovering=false;
+  assert.equal(check({directReserved:n=>n===peer}),'native_work_reserved');
+  assert.equal(check({directReserved:n=>n===node}),'native_work_reserved');
+  assert.equal(check({directReserved:n=>n===node,phase:'readmit'}),null,'own synthetic traffic does not invalidate completed verification');
+  assert.equal(check({directReserved:n=>n===peer,phase:'readmit'}),'native_work_reserved');
+  store.data.agent_control.maintenance_locks.push({id:'lock',worker_id:peer.id,review_at:0});assert.equal(check(),'maintenance_hold_active','review time is not permission to expire an owner lock');
+  store.data.agent_control.maintenance_locks=[];store.data.agent_control.holds.push({id:'hold',worker_id:peer.id});
+  assert.equal(check({releasingHoldId:'hold'}),'maintenance_hold_active','a hand-back cannot discount a sibling hold');
+  store.data.agent_control.holds=[{id:'owned',worker_id:node.id}];assert.equal(check({releasingHoldId:'owned'}),null);
+  assert.equal(check({releasingHoldId:'invented'}),'maintenance_hold_active');
+  store.data.agent_control.holds.push({id:'another',worker_id:node.id});assert.equal(check({releasingHoldId:'owned'}),'maintenance_hold_active');
+  store.data.agent_control.holds=[];config.machine_groups['custom-pair']=['box-b','box-b'];assert.equal(check(),'physical_ownership_unverified');
+  config.machine_groups['custom-pair']=['box-b'];store.data.agent_control.holds=[{worker_id:'missing'}];assert.equal(check(),'maintenance_state_unverified');
+});
+test('paired-media machine bindings and built-in pairs also share recovery ownership',()=>{
+  for(const [pair,member,config] of [
+    ['glm53f-sparks12','spark2',{}],
+    ['configured-pair','configured-member',{media_jobs:{pairs:{'configured-pair':{kind:'glm53-docker-pair',members:[{ssh:'host-a'},{ssh:'host-b'}]}}},genie_chat:{inspection:{workers:{'configured-member':{ssh:['host-b']}}}}}]
+  ]){
+    const node={id:pair,queue:[]},peer={id:member,queue:[]},store={data:{agent_control:{holds:[],maintenance_locks:[{worker_id:member}]}}};
+    assert.equal(recoveryOwnership({node,nodes:[node,peer],store,config}),'maintenance_hold_active');
+  }
+});
+test('a maintenance hold prevents even a paused operator recovery canary from starting',async()=>{
+  const r=rig();await r.ready();r.n.drained=true;r.store.data.agent_control={holds:[],maintenance_locks:[{id:'lock',worker_id:r.n.id}]};
+  assert.throws(()=>r.recovery.request(r.input(),'operator',{canary:true}),/maintenance_hold_active/);
+  assert.equal(r.recovery.state.operations.length,0);assert.equal(r.restarts,0);await r.recovery.close();
+});
+test('a hold or admitted sibling work arriving during inspection vetoes recovery before any command',async()=>{
+  for(const interference of ['hold','work','direct']){
+    let reserved=false;const r=rig({fleetConfig:{machine_groups:{one:['shared'],sibling:['shared']}},directReserved:()=>reserved});
+    const sibling={id:'sibling',active:null,queue:[]};r.deps.nodes.push(sibling);await r.ready();
+    const original=r.recovery.call;r.recovery.call=async(c,request)=>{
+      const result=await original(c,request);
+      if(request.action==='inspect'){
+        if(interference==='hold')r.store.data.agent_control={holds:[],maintenance_locks:[{worker_id:'sibling'}]};
+        if(interference==='work')sibling.slots=[{active:null},{active:{}}];
+        if(interference==='direct')reserved=true;
+      }
+      return result;
+    };
+    r.recovery.request(r.input());await r.recovery.task;
+    const op=r.recovery.state.operations.at(-1);
+    assert.equal(op.state,'failed');assert.equal(op.service_action_issued,undefined);assert.equal(r.restarts,0);assert.equal(r.proofs,0);
+    assert.equal(op.error,{hold:'maintenance_hold_active',work:'shared_machine_has_admitted_work',direct:'native_work_reserved'}[interference]);
+    assert.ok(r.n.quarantine);await r.recovery.close();
+  }
+});
+test('a sibling hold after restart retains the issued identity and does not run verification or replay',async()=>{
+  const r=rig({fleetConfig:{machine_groups:{one:['shared'],sibling:['shared']}}});r.deps.nodes.push({id:'sibling',queue:[]});await r.ready();
+  const original=r.recovery.call;r.recovery.call=async(c,request)=>{
+    const result=await original(c,request);
+    if(request.action==='restart')r.store.data.agent_control={holds:[],maintenance_locks:[{worker_id:'sibling'}]};
+    return result;
+  };
+  r.recovery.request(r.input());await r.recovery.task;
+  const op=r.recovery.state.operations.at(-1);assert.equal(op.state,'reconciliation_needed');assert.equal(op.service_action_issued,true);assert.equal(op.error,'maintenance_hold_active');
+  assert.equal(r.restarts,1);assert.equal(r.proofs,0);assert.ok(r.n.quarantine);
+  r.recovery.reconcile({action_id:op.id});await r.recovery.task;assert.equal(r.restarts,1);assert.equal(r.proofs,0);
+  r.store.data.agent_control.maintenance_locks=[];
+  r.recovery.reconcile({action_id:op.id});await r.recovery.task;assert.equal(r.restarts,1);assert.equal(r.proofs,1);assert.equal(r.n.healthy,true);await r.recovery.close();
+});
+test('a sibling hold arriving during verification preserves proof but prevents readmission',async()=>{
+  const r=rig({fleetConfig:{machine_groups:{one:['shared'],sibling:['shared']}}});r.deps.nodes.push({id:'sibling',queue:[]});await r.ready();
+  r.recovery.verify=async()=>{r.store.data.agent_control={holds:[],maintenance_locks:[{worker_id:'sibling'}]};return {verified_at:new Date().toISOString(),samples:[]};};
+  r.recovery.request(r.input());await r.recovery.task;
+  const op=r.recovery.status().operations[0];assert.equal(op.state,'verified_paused');assert.equal(op.readmission_blocked_reason,'maintenance_hold_active');
+  assert.ok(op.proof);assert.ok(r.n.quarantine);assert.equal(r.n.healthy,false);assert.equal(r.restarts,1);await r.recovery.close();
+});
+test('gateway recovery uses configured physical groups and current direct reservations from the private control path',async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-physical-recovery-')),backends=[];
+  let gateway;
+  t.after(async()=>{if(gateway)await gateway.close();for(const server of backends){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}fs.rmSync(dir,{recursive:true,force:true});});
+  for(let i=0;i<2;i++){
+    const server=http.createServer((_req,res)=>{res.setHeader('content-type','application/json');res.end(JSON.stringify({data:[{id:'ds4',context_length:262144}]}));});
+    await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));backends.push(server);
+  }
+  const socket=path.join(dir,'core.sock');gateway=createGateway({host:'127.0.0.1',port:0,model:'ds4',api_key:'none',context_length:262144,
+    nodes:backends.map((server,i)=>({id:i?'sibling':'one',url:`http://127.0.0.1:${server.address().port}`})),
+    machine_groups:{one:['box-a','box-b'],sibling:['box-b']},state_file:path.join(dir,'state.json'),control_socket:socket});
+  await gateway.start();
+  const node=gateway.nodes[0];node.ssh=config.ssh;node.quarantine={at:new Date().toISOString(),reason:'accelerator_checkpoint_failure'};node.healthy=false;
+  gateway.recovery.configs=recoveryConfig({workers:[{...config,url:node.url}]});
+  let mutations=0;gateway.recovery.call=async(_c,request)=>{
+    if(request.action!=='inspect')mutations++;
+    return {version:1,machine:config.machine,profile:config.profile,active:true,listener:true,instance:'1'.repeat(32),started_at:Date.now()-600000,fault:{reason:'fatal_accelerator_error',at:Date.now()}};
+  };
+  await gateway.recovery.tick();assert.equal(gateway.recovery.workerStatus(node).eligible,true);
+  await workerControl(socket,'/set-direct-reserve',{enabled:true});gateway.nodes[1].directReservedUntil=Date.now()+60000;
+  let registry=await workerControl(socket,'/workers');assert.equal(registry.recovery.workers[0].reason,'native_work_reserved');
+  delete gateway.nodes[1].directReservedUntil;
+  const lock=await workerControl(socket,'/maintenance-lock',{worker_id:'sibling',name:'fixture',reason:'Fixture ownership',request_id:randomUUID(),review_after_hours:null});
+  registry=await workerControl(socket,'/workers');assert.equal(registry.recovery.workers[0].reason,'maintenance_hold_active');
+  await assert.rejects(workerControl(socket,'/recover-worker',{worker_id:'one',evidence_id:'stale'}),/maintenance_hold_active/);
+  await workerControl(socket,'/release-maintenance-lock',{lock_id:lock.result.lock_id,reason:'Fixture complete',request_id:randomUUID()});
+  registry=await workerControl(socket,'/workers');assert.equal(registry.recovery.workers[0].eligible,true,'released but paused sibling no longer owns the machines');
+  assert.equal(mutations,0);assert.equal(gateway.recovery.state.operations.length,0);
+});
 test('recovery defaults off; registered endpoints alone convey no recovery authority',()=>{
   const r=rig();assert.equal(r.recovery.status().automatic,false);assert.equal(r.recovery.status().profile_handback_automatic,true);assert.throws(()=>r.recovery.request(r.input(),'genie'),/off/);
   for(const patch of [{adapter:'unknown'},{helper:'/tmp/x;evil'},{machine:'unknown'},{shell:'reboot'}])assert.throws(()=>recoveryConfig({workers:[{...config,...patch}]}));
@@ -526,11 +633,11 @@ test('an agent maintenance hold blocks the detector until its owner explicitly h
   r.recovery.call=async()=>newer();r.recovery.setAutomatic(true);
   let scheduled=null;
   const agents=new AgentControl({store:r.store,nodes:[r.n],canResume:async()=>{},onPause:ids=>r.recovery.operatorPause(ids),
-    canHandback:n=>r.recovery.profileHandbackOffer(n,{ignorePause:true}),onHandback:()=>{scheduled=r.recovery.tick();}});
+    canHandback:(n,{releasingHoldId})=>r.recovery.profileHandbackOffer(n,{ignorePause:true,releasingHoldId}),onHandback:()=>{scheduled=r.recovery.tick();}});
   const grant=agents.grant({agent_id:'maintainer',workers:['one']});assert.ok(grant.token);
   const held=await agents.act('maintainer','drain',{worker_id:'one',reason:'upgrade test',request_id:randomUUID()});
   await r.recovery.tick();r.advance(11000);await r.recovery.tick();
-  assert.equal(r.recovery.workerStatus(r.n).reason,'operator_paused');assert.equal(r.recovery.status().operations.length,0);
+  assert.equal(r.recovery.workerStatus(r.n).reason,'maintenance_hold_active');assert.equal(r.recovery.status().operations.length,0);
   const released=await agents.act('maintainer','resume',{hold_id:held.result.hold_id,request_id:randomUUID()});
   assert.equal(released.result.state,'handback_released');assert.equal(released.result.routing_resumed,false);assert.ok(r.n.quarantine);
   await scheduled;await r.recovery.task;

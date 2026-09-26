@@ -11,8 +11,117 @@ import {Readable} from 'node:stream';
 import {MediaJobs} from './media-jobs.mjs';
 import {MediaBackend,MediaBackendError} from './media-backend.mjs';
 import {createGateway} from './gateway.mjs';
+import {videoCapabilities} from './media-capabilities.mjs';
 
 function directory(t){const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sg-media-jobs-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));return dir;}
+test('film parallelism is durable, validates atomically, and holds lane capacity through uncertainty and return',t=>{
+ const q=new MediaJobs(path.join(directory(t),'queue.json'));
+ const payload={requested_parallelism:2,clips:Array.from({length:6},(_,i)=>({clip_id:`c${i}`,payload:{prompt:{}}}))};
+ for(const requested_parallelism of [0,-1,1.5,'2',null,129]){
+  assert.throws(()=>q.enqueueBatch({...payload,requested_parallelism},{key:'film'}),e=>e.status===400);assert.equal(q.data.jobs.length,0);
+ }
+ const {batch}=q.enqueueBatch(payload,{key:'film'}),ids=batch.clips.map(c=>c.id),operation_id=ids[0];
+ assert.equal(batch.scheduling.requested_parallelism,2);
+ assert.throws(()=>q.enqueueBatch({...payload,requested_parallelism:1},{key:'film'}),e=>e.status===409);
+ q.assignExecution(ids.slice(0,4),{operation_id,phase:'launch_uncertain',parallel_members:true,member_jobs:[{member:0,job_ids:[ids[0],ids[2]]},{member:1,job_ids:[ids[1],ids[3]]}]});
+ const restored=new MediaJobs(q.filename);
+ assert.equal(restored.batch(batch.id).scheduling.reserved_generation_slots,2,'four clips on two lanes reserve two slots');
+ assert.equal(restored.batchScheduling(batch.id).remaining_requested_slots,0);
+ const before=fs.readFileSync(q.filename);
+ assert.throws(()=>restored.assignExecution([ids[4]],{phase:'starting'}),/requested_parallelism/);assert.deepEqual(fs.readFileSync(q.filename),before);
+ const folder=restored.executionFolder(operation_id);fs.mkdirSync(folder,{recursive:true});
+ fs.writeFileSync(path.join(folder,'progress.json'),'{broken');
+ assert.equal(restored.batchScheduling(batch.id).reserved_generation_slots,2,'unreadable progress keeps reservations');
+ fs.writeFileSync(path.join(folder,'progress.json'),JSON.stringify({phase:'returned'}));
+ assert.equal(restored.batchScheduling(batch.id).reserved_generation_slots,0);
+ restored.assignExecution([ids[4],ids[5]],{operation_id:ids[4],phase:'starting'});
+ assert.equal(restored.batchScheduling(batch.id).reserved_generation_slots,1,'sequential clips use one reserved generation lane');
+});
+test('mixed films reserve only their assigned lanes and omitted ceilings preserve previous capacity',t=>{
+ const q=new MediaJobs(path.join(directory(t),'queue.json'));
+ const film=(key,requested_parallelism)=>q.enqueueBatch({...(requested_parallelism?{requested_parallelism}:{}),clips:[0,1,2].map(i=>({clip_id:`c${i}`,payload:{prompt:{}}}))},{key}).batch;
+ const a=film('a',1),b=film('b',1),c=film('c');const ids=[a.clips[0].id,b.clips[0].id,a.clips[1].id,b.clips[1].id];
+ q.assignExecution(ids,{operation_id:ids[0],phase:'starting',parallel_members:true,member_jobs:[{member:0,job_ids:[ids[0],ids[2]]},{member:1,job_ids:[ids[1],ids[3]]}]});
+ assert.equal(q.batchScheduling(a.id).reserved_generation_slots,1);assert.equal(q.batchScheduling(b.id).reserved_generation_slots,1);
+ assert.throws(()=>q.assignExecution([a.clips[2].id],{phase:'starting'}),/requested_parallelism/);
+ for(const clip of c.clips)q.assignExecution([clip.id],{phase:'starting'});
+ assert.equal(q.batchScheduling(c.id).requested_parallelism,null);assert.equal(q.batchScheduling(c.id).reserved_generation_slots,3);
+ const data=JSON.parse(fs.readFileSync(q.filename));data.batches[0].requested_parallelism=0;fs.writeFileSync(q.filename,JSON.stringify(data));
+ assert.throws(()=>new MediaJobs(q.filename),/Invalid saved media batches/);
+});
+test('sixteen-clip film commits once, preserves individual recipes and deduplicates through restart',t=>{
+ const file=path.join(directory(t),'queue.json'),q=new MediaJobs(file);let writes=0;const save=q.save.bind(q);q.save=data=>{writes++;save(data);};
+ const payload={name:'Example film',defaults:{seed:42},clips:Array.from({length:16},(_,i)=>({clip_id:`c${i}`,payload:{prompt:`Scene ${i}`,...(i===3?{seed:123}:{})}}))};
+ const first=q.enqueueBatch(payload,{key:'film-one',priority:'high'});assert.equal(first.created,true);assert.equal(first.batch.clips.length,16);assert.equal(writes,1);
+ assert.equal(first.batch.clips[3].generation.seed,123);assert.equal(first.batch.clips[4].generation.seed,42);
+ assert.equal(first.batch.counts.queued,16);assert.equal(first.batch.generation_complete,false);assert.equal(first.batch.restoration_complete,false);
+ assert.ok(first.batch.clips.every(c=>c.priority==='high'&&c.batch_id===first.batch.id));assert.equal(first.batch.clips[0].payload,undefined);
+ const restored=new MediaJobs(file);assert.deepEqual(restored.enqueueBatch(payload,{key:'film-one',priority:'high'}),{batch:first.batch,created:false});
+ assert.equal(restored.data.jobs.length,16);assert.throws(()=>restored.enqueueBatch({...payload,name:'changed'},{key:'film-one',priority:'high'}),e=>e.status===409);
+ assert.throws(()=>restored.enqueue('video',{prompt:{}},{key:'film-one'}),e=>e.status===409);
+ restored.enqueue('music',{prompt:'music'},{key:'single'});assert.throws(()=>restored.enqueueBatch(payload,{key:'single'}),e=>e.status===409);
+});
+test('invalid last film clip cannot partially enqueue earlier clips; duplicate IDs and missing refs refuse',t=>{
+ const q=new MediaJobs(path.join(directory(t),'queue.json'));q.enqueue('video',{prompt:{}},{key:'existing'});const before=fs.readFileSync(q.filename);
+ const first={clip_id:'one',payload:{prompt:'Scene'}};
+ for(const clips of [[first,{clip_id:'two',payload:{prompt:''}}],[first,first],[first,{clip_id:'two',payload:{prompt:'Scene',reference_image:'missing'}}]]){
+  assert.throws(()=>q.enqueueBatch({clips},{key:'bad'}));assert.deepEqual(fs.readFileSync(q.filename),before);
+ }
+ assert.equal(q.data.jobs.length,1);
+});
+test('film reports per-clip partial output separately from final LLM restoration',t=>{
+ const q=new MediaJobs(path.join(directory(t),'queue.json'));
+ const {batch}=q.enqueueBatch({clips:[{clip_id:'first',payload:{prompt:{}}},{clip_id:'second',payload:{prompt:{}}}]},{key:'movie'});
+ const [a,b]=batch.clips;q.update(a.id,{state:'completed',outputs:{state:'ready',files:[]}});
+ assert.equal(q.batch(batch.id).counts.completed,1);assert.equal(q.batch(batch.id).generation_complete,false);
+ q.update(b.id,{state:'completed',outputs:{state:'ready',files:[]}});assert.equal(q.batch(batch.id).generation_complete,true);assert.equal(q.batch(batch.id).restoration_complete,false);
+ for(const c of batch.clips){
+  const folder=q.executionFolder(c.id);fs.mkdirSync(folder,{recursive:true});
+  fs.writeFileSync(path.join(folder,'media-jobs.json'),JSON.stringify({jobs:[q.get(c.id)]}));
+  fs.writeFileSync(path.join(folder,'progress.json'),JSON.stringify({phase:'returned'}));q.update(c.id,{execution:{phase:'restoring_llm',worker_id:'one'}});
+ }
+ assert.equal(q.batch(batch.id).state,'completed');assert.equal(q.batch(batch.id).restoration_complete,true);
+});
+test('film API accepts all clips through authenticated HTTP and restores their identities after core replacement',async t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'sg-film-api-')),config={host:'127.0.0.1',port:0,api_key:'fixture',model:'fixture',context_length:262144,nodes:[],state_file:path.join(dir,'state.json'),media_jobs:{enabled:true}};
+ let core=createGateway(config),address=await core.start();t.after(async()=>{await core.close();fs.rmSync(dir,{recursive:true,force:true});});
+ const call=(route,body,key='fixture')=>fetch(`http://127.0.0.1:${address.port}${route}`,{method:body?'POST':'GET',headers:{authorization:'Bearer '+key,'content-type':'application/json','idempotency-key':'film'},...(body?{body:JSON.stringify(body)}:{})});
+ const payload={requested_parallelism:4,clips:Array.from({length:16},(_,i)=>({clip_id:`c${i}`,payload:{prompt:`Scene ${i}`}}))};
+ assert.equal((await call('/v1/video/batches',payload,'wrong')).status,401);
+ assert.equal((await call('/v1/video/capabilities',undefined,'wrong')).status,401);
+ const capabilities=await(await call('/v1/video/capabilities')).json();assert.equal(capabilities.submission.atomic_film_batches,true);assert.equal(capabilities.submission.max_batch_clips,128);assert.equal(capabilities.submission.requested_parallelism_supported,true);
+ const response=await call('/v1/video/batches',payload);assert.equal(response.status,202);const batch=await response.json();assert.equal(batch.clips.length,16);assert.equal(batch.scheduling.requested_parallelism,4);
+ assert.equal((await call('/v1/video/batches',payload)).status,200);
+ await core.close();core=createGateway(config);address=await core.start();
+ assert.deepEqual(await(await call(batch.status_url)).json(),batch);assert.equal((await(await call('/v1/video/jobs')).json()).jobs.length,16);
+});
+test('public capability counts only physical nonoverlapping budgeted slots and distinguishes present implementation',()=>{
+ const config={media_jobs:{max_borrowed_sparks:4}},status={enabled:true,automatic_dispatch_enabled:true,
+  media_budget:{max_borrowed_sparks:4,borrowed_sparks:0,remaining_sparks:4},
+  workers:['a','alias','b','c'].map((id,i)=>({id,kinds:['video'],busy:false,budget:{allowed:true,sparks_required:2,machines:i<2?['s1','s2']:i===2?['s3','s4']:['s5','s6']}})),
+  hosts:['a','alias','b','c'].map(id=>({id,engines:[{kind:'video',ready:true}]})),jobs:[{payload:{prompt:'private scene'}}]};
+ const value=videoCapabilities(status,config);assert.equal(value.capacity.available_generation_slots,2);assert.equal(value.capacity.paired_members_parallel,false);
+ assert.equal(value.recipes.h3_short.width,608);assert.equal(value.recipes.native_workflow.preserved,true);assert.equal(value.results.estimated_wait_seconds,null);
+ assert.doesNotMatch(JSON.stringify(value),/private scene|s1|s2|alias/);
+ status.workers.forEach(w=>{w.parallel_kinds=['video'];});
+ assert.equal(videoCapabilities(status,config).capacity.available_generation_slots,4,'two budgeted pairs can expose one slot per physical member');
+ assert.equal(videoCapabilities(status,config).capacity.paired_members_parallel,true);
+ status.automatic_dispatch_enabled=false;assert.equal(videoCapabilities(status,config).capacity.available_generation_slots,0);
+ status.automatic_dispatch_enabled=true;status.media_budget.remaining_sparks=1;assert.equal(videoCapabilities(status,config).capacity.available_generation_slots,0);
+});
+test('configured job holds preserve queue bytes and idempotency while refusing assignment and native submission',async t=>{
+ const file=path.join(directory(t),'queue.json'),original=new MediaJobs(file);
+ const old=original.enqueue('video',{prompt:{}},{key:'old'}).job,next=original.enqueue('video',{prompt:{}},{key:'new'}).job;
+ const before=fs.readFileSync(file),held=new MediaJobs(file,{heldJobIds:[old.id]});
+ assert.deepEqual(fs.readFileSync(file),before);assert.equal(held.get(old.id).state,'queued');assert.match(held.get(old.id).dispatch_hold,/Held/);
+ assert.deepEqual(held.queued().map(j=>j.id),[next.id]);assert.equal(held.enqueue('video',{prompt:{}},{key:'old'}).job.id,old.id);
+ assert.throws(()=>held.assignExecution([next.id,old.id],{phase:'starting'}),/held/);
+ await assert.rejects(held.dispatch(old.id,{kind:'comfyui',submit:()=>assert.fail('must not submit')},'worker'),/held/);
+ assert.deepEqual(fs.readFileSync(file),before);assert.equal(new MediaJobs(file).get(old.id).dispatch_hold,undefined);
+ held.assignExecution([next.id],{phase:'starting'});assert.equal(held.get(next.id).execution.phase,'starting');
+ assert.equal(new MediaJobs(file,{heldJobIds:[next.id]}).get(next.id).dispatch_hold,undefined,'a later hold never cancels accepted work');
+ for(const ids of [null,'bad',[old.id,old.id],['invalid']])assert.throws(()=>new MediaJobs(file,{heldJobIds:ids}),/held_job_ids/);
+});
 test('completed job identity survives explicit deletion of its reference input',async t=>{
  const jobs=new MediaJobs(path.join(directory(t),'jobs.json')),stream=Readable.from(['image']);stream.headers={'content-type':'image/png','content-length':'5'};
  const input=await jobs.inputs.receive(stream),payload={prompt:{},input_files:[input.id]},first=jobs.enqueue('video',payload,{key:'original'});
@@ -204,6 +313,21 @@ test('ACE-Step aliases, automatic values, native precedence and advanced options
   {prompt:'music',metas:{},metadata:{inference_steps:'50',thinking:'yes'}},
  ];
  inputs.forEach((payload,i)=>assert.deepEqual(q.enqueue('music',payload,{key:'valid-music-'+i}).job.payload,payload));
+});
+
+test('explicit AceFarm recipe survives durable queueing and retries without adopting API defaults',t=>{
+ const file=path.join(directory(t),'jobs.json'),q=new MediaJobs(file);
+ const recipe={caption:'Recipe fixture',lyrics:'[Verse]\nOriginal words',thinking:true,inference_steps:80,
+  guidance_scale:3.0,audio_duration:-1,sampler_mode:'heun',infer_method:'ode',dcw_enabled:false,
+  seed:11,use_random_seed:false,batch_size:1,audio_format:'flac'};
+ for(const [i,payload] of [recipe,{param_obj:JSON.stringify(recipe)},{metadata:recipe}].entries()){
+  const key='acefarm-recipe-'+i,job=q.enqueue('music',payload,{key}).job;
+  const retry=new MediaJobs(file).enqueue('music',payload,{key}).job;
+  assert.equal(retry.id,job.id);assert.deepEqual(retry.payload,payload);
+ }
+ for(const extra of [{sampler_mode:'guess'},{sampler_mode:0},{dcw_enabled:'perhaps'},{param_obj:{sampler_mode:'guess'}}])
+  assert.throws(()=>q.enqueue('music',{prompt:'fixture',...extra},{key:'bad-explicit'}),e=>e.status===400);
+ assert.equal(q.list().length,3);
 });
 
 test('previously accepted ACE-Step requests remain retrievable even if new preflight would reject them',t=>{

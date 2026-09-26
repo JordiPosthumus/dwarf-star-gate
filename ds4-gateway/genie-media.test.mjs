@@ -7,6 +7,13 @@ import path from 'node:path';
 import {createMediaResources} from './media-resources.mjs';
 import {MediaWatch} from './media-watch.mjs';
 import {createMediaTools} from './genie-media.mjs';
+
+test('Genie parallel placement forwards explicit mode and rejects ambiguous physical selection',async()=>{
+ let received;const tools=createMediaTools({read:async()=>({}),start:async input=>{received=input;return input;}});
+ const input={action:'start',job_id:'first',worker_id:'pair',following_job_ids:['second'],parallel_members:true};
+ await tools.tool(input);assert.deepEqual(received,{job_id:'first',worker_id:'pair',following_job_ids:['second'],parallel_members:true});
+ await assert.rejects(tools.tool({...input,member:0}));await assert.rejects(tools.tool({...input,parallel_members:'yes'}));
+});
 import {hermesProvider} from './genie-hermes.mjs';
 import {GenieChat} from './genie-chat.mjs';
 import {capabilityStatus} from './genie-capability-status.mjs';
@@ -39,10 +46,10 @@ test('bounded media status keeps old queued jobs ahead of recent completed histo
   assert.equal(result.jobs.length,50);assert.equal(result.truncated,true);assert.deepEqual(result.jobs.slice(0,2).map(j=>j.id),['urgent','old-waiting']);
 });
 test('automatic queue wakeup uses pinned Hermes to start once and retain actual tool events',{skip:!process.env.DSG_TEST_HERMES_SOURCE,timeout:120000},async t=>{
-  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'sg-media-chat-'));let starts=0,calls=0,setups=0,inputChecks=0;
-  const state={enabled:true,batch_jobs_supported:true,hosts:[{id:'one'}],fleet:[{id:'one',is_healthy:true,drained:false,load:0,queued:0},{id:'two',is_healthy:true,drained:false,load:0,queued:0}],workers:[{id:'one',kinds:['video'],busy:false}],jobs:[{id,kind:'video',state:'queued'},{id:secondId,kind:'video',state:'queued'}]};
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'sg-media-chat-'));let starts=0,calls=0,setups=0,inputChecks=0,repairs=0,audits=0,improvements=0,qualifications=0,promotions=0;
+  const state={enabled:true,batch_jobs_supported:true,hosts:[{id:'one',engines:[{kind:'video',ready:true}]}],fleet:[{id:'one',is_healthy:true,drained:false,load:0,queued:0},{id:'two',is_healthy:true,drained:false,load:0,queued:0}],workers:[{id:'one',kinds:['video'],busy:false}],jobs:[{id,kind:'video',state:'queued'},{id:secondId,kind:'video',state:'queued'}]};
   const resources=createMediaResources({genie_chat:{inspection:{workers:{one:{kind:'omlx-local'}}}}},{inspect:async()=>({system:'Darwin',architecture:'arm64',gpu_names:[]})});
-  const tools=createMediaTools({inspectInputs:async input=>{assert.deepEqual(input,{job_id:id,worker_id:'one'});inputChecks++;return {files:[{state:'present'}]};},setup:async input=>{assert.deepEqual(input,{worker_id:'one',engine:'ace-step'});setups++;state.setup={operations:[{worker_id:'one',engine:'ace-step',phase:'waiting_idle'}]};return state.setup.operations[0];},resources,read:async()=>state,start:async input=>{assert.deepEqual(input,{job_id:id,worker_id:'one',following_job_ids:[secondId]});starts++;for(const job of state.jobs)job.execution={worker_id:'one',phase:'waiting_idle',detail:'Admitted work finishing'};return state.jobs[0];}});
+  const tools=createMediaTools({promote:async input=>{promotions++;assert.deepEqual(input,{operation_id:id});return {phase:'promoted',operation_id:id};},qualify:async input=>{qualifications++;assert.deepEqual(input,{operation_id:id});return {phase:'candidate_qualifying',operation_id:id};},improve:async input=>{improvements++;assert.deepEqual(input,{worker_id:'one',member:1});return {phase:'candidate_preparing',operation_id:id};},audit:async input=>{audits++;assert.deepEqual(input,{});return {checked:[{state:"present"}]};},repair:async input=>{repairs++;assert.deepEqual(input,{worker_id:'one',engine:'ace-step',expected_failed_at:'2026-01-01T00:00:00Z'});return {state:'source_selected',retry_ready:true};},inspectInputs:async input=>{assert.deepEqual(input,{job_id:id,worker_id:'one'});inputChecks++;return {files:[{state:'present'}]};},setup:async input=>{assert.deepEqual(input,{worker_id:'one',engine:'ace-step'});setups++;state.setup={operations:[{worker_id:'one',engine:'ace-step',phase:'waiting_idle'}]};return state.setup.operations[0];},resources,read:async()=>state,start:async input=>{assert.deepEqual(input,{job_id:id,worker_id:'one',following_job_ids:[secondId],parallel_members:true});starts++;for(const job of state.jobs)job.execution={worker_id:'one',phase:'waiting_idle',detail:'Admitted work finishing'};return state.jobs[0];}});
   const server=http.createServer((req,res)=>{
     if(tools.handle(req,res))return;
     if(req.method==='GET'){res.end(JSON.stringify({data:[{id:'fixture'}]}));return;}
@@ -50,10 +57,10 @@ test('automatic queue wakeup uses pinned Hermes to start once and retain actual 
       const body=JSON.parse(raw);if(req.url!=='/v1/chat/completions'){res.end('{}');return;}calls++;
       if(calls===5)assert.match(JSON.stringify(body.messages),/waiting_idle/);
       if(calls===3)assert.match(JSON.stringify(body.messages),/recipe_platform_matches/);
-      const name=calls===2?'inspect_media_host':calls===3?'inspect_media_inputs':calls===4?'start_media_job':calls===6?'setup_media_host':'media_job_status',args=calls===2?{worker_id:'one'}:calls===3?{job_id:id,worker_id:'one'}:calls===4?{job_id:id,worker_id:'one',following_job_ids:[secondId]}:calls===6?{worker_id:'one',engine:'ace-step'}:{};
-      const message=calls<=7?{role:'assistant',content:null,tool_calls:[{id:'media-'+calls,type:'function',function:{name:'tool_call',arguments:JSON.stringify({name,arguments:args})}}]}:{role:'assistant',content:'Job accepted on one; admitted LLM work is finishing. Generation has not started.'};
+      const name=calls===2?'inspect_media_host':calls===3?'inspect_media_inputs':calls===4?'start_media_job':calls===6?'setup_media_host':calls===8?'repair_media_setup':calls===10?'audit_media_standard':calls===11?'prepare_media_improvement':calls===12?'qualify_media_improvement':calls===13?'promote_media_improvement':'media_job_status',args=calls===2?{worker_id:'one'}:calls===3?{job_id:id,worker_id:'one'}:calls===4?{job_id:id,worker_id:'one',following_job_ids:[secondId],parallel_members:true}:calls===6?{worker_id:'one',engine:'ace-step'}:calls===8?{worker_id:'one',engine:'ace-step',expected_failed_at:'2026-01-01T00:00:00Z'}:calls===11?{worker_id:'one',member:1}:calls===12||calls===13?{operation_id:id}:{};
+      const message=calls<=13?{role:'assistant',content:null,tool_calls:[{id:'media-'+calls,type:'function',function:{name:'tool_call',arguments:JSON.stringify({name,arguments:args})}}]}:{role:'assistant',content:'Job accepted on one; admitted LLM work is finishing. Generation has not started.'};
       const delta={...message,...(message.tool_calls?{tool_calls:message.tool_calls.map((v,index)=>({...v,index}))}:{})};
-      res.setHeader('content-type','text/event-stream');res.end('data: '+JSON.stringify({id:'fixture',model:'fixture',choices:[{index:0,delta,finish_reason:null}]})+'\n\ndata: '+JSON.stringify({id:'fixture',model:'fixture',choices:[{index:0,delta:{},finish_reason:calls<=7?'tool_calls':'stop'}]})+'\n\ndata: [DONE]\n\n');
+      res.setHeader('content-type','text/event-stream');res.end('data: '+JSON.stringify({id:'fixture',model:'fixture',choices:[{index:0,delta,finish_reason:null}]})+'\n\ndata: '+JSON.stringify({id:'fixture',model:'fixture',choices:[{index:0,delta:{},finish_reason:calls<=13?'tool_calls':'stop'}]})+'\n\ndata: [DONE]\n\n');
     });
   });
   await new Promise(r=>server.listen(0,'127.0.0.1',r));tools.bind(server.address().port);
@@ -62,8 +69,8 @@ test('automatic queue wakeup uses pinned Hermes to start once and retain actual 
   const chat=new GenieChat({directory:path.join(directory,'chats'),provider,getSnapshot:()=>({gateway:{}})});
   const watch=new MediaWatch({filename:path.join(directory,'watch.json'),chat,read:async()=>state,isEnabled:()=>true});
   await watch.tick();const conversation={id:watch.state.conversation_id};await chat.idle();await watch.tick();
-  const answer=chat.get(conversation.id).messages[1];assert.equal(answer.state,'complete',JSON.stringify(answer));assert.equal(starts,1);assert.equal(calls,8);assert.equal(inputChecks,1);assert.equal(setups,1);assert.equal(provider.info.can_act,true);
-  assert.equal(answer.media.events.filter(e=>e.state==='complete').length,7);assert.ok(answer.media.events.some(e=>e.tool==='inspect_media_inputs'&&e.state==='complete'));assert.ok(answer.media.events.some(e=>e.tool==='start_media_job'&&e.state==='complete'));assert.equal(chat.capabilityActivity().media.state,'complete');
+  const answer=chat.get(conversation.id).messages[1];assert.equal(answer.state,'complete',JSON.stringify(answer));assert.equal(starts,1);assert.equal(calls,14);assert.equal(promotions,1);assert.equal(qualifications,1);assert.equal(improvements,1);assert.equal(audits,1);assert.equal(repairs,1);assert.equal(inputChecks,1);assert.equal(setups,1);assert.equal(provider.info.can_act,true);
+  assert.equal(answer.media.events.filter(e=>e.state==='complete').length,13);assert.ok(answer.media.events.some(e=>e.tool==='inspect_media_inputs'&&e.state==='complete'));assert.ok(answer.media.events.some(e=>e.tool==='start_media_job'&&e.state==='complete'));assert.ok(answer.media.events.some(e=>e.tool==='repair_media_setup'&&e.state==='complete'));assert.ok(answer.media.events.some(e=>e.tool==='audit_media_standard'&&e.state==='complete'));assert.equal(chat.capabilityActivity().media.state,'complete');
   const reread=new GenieChat({directory:path.join(directory,'chats'),provider});assert.deepEqual(reread.get(conversation.id).messages[1].media,answer.media);
 });
 
@@ -100,4 +107,26 @@ test('pinned Hermes reads the complete compact overview and asks for full job de
  const first=JSON.stringify(seen[1].messages);assert.match(first,/fleet-visible-at-the-front/);assert.doesNotMatch(first,/FULL_JOB_DETAIL_MARKER|<persisted-output>/);
  const second=JSON.stringify(seen[2].messages);assert.match(second,/FULL_JOB_DETAIL_MARKER/);assert.doesNotMatch(second,/<persisted-output>/);
  const events=answer.media.events.filter(e=>e.state==='complete');assert.equal(events.length,2);assert.equal(events[1].request.job_id,id);assert.deepEqual(events[1].result.job,state.jobs[0]);
+});
+
+ test('setup retry forwards only the observed timestamp and physical selection',async()=>{
+  const input={worker_id:'pair',member:1,engine:'ace-step',expected_failed_at:'2026-01-01T01:02:03.000Z'};
+  const tools=createMediaTools({setup:async observed=>{assert.deepEqual(observed,input);return {phase:'starting'};}});
+  assert.equal((await tools.tool({action:'setup',...input})).phase,'starting');
+  await assert.rejects(tools.tool({action:'setup',...input,force:true}));
+ });
+
+test('source repair forwards only the exact observed target and failure under testing gate',async()=>{
+ let testing=true,calls=0;const input={worker_id:'pair',member:0,engine:'h3',expected_failed_at:'2026-01-01T00:00:00Z'};
+ const tools=createMediaTools({isTesting:()=>testing,repair:async value=>{calls++;assert.deepEqual(value,input);return {state:'source_selected'};}});
+ await assert.rejects(tools.tool({action:'repair',...input}),/testing/);testing=false;
+ await assert.rejects(tools.tool({action:'repair',...input,container:'invented'}));
+ assert.equal((await tools.tool({action:'repair',...input})).state,'source_selected');assert.equal(calls,1);
+});
+
+// Actual-model regression: an inspection error must not redirect to job dispatch.
+test('inspection rejects setup arguments with a corrective read-only schema message',async()=>{
+ let reads=0;const tools=createMediaTools({read:async()=>{reads++;return {hosts:[{id:'pair'}]};},resources:{inspect:async()=>({state:'observed'})}});
+ await assert.rejects(tools.tool({action:'inspect',worker_id:'pair',member:0,engine:'h3'}),/inspect_media_host accepts worker_id and optional member.*Omit engine/);
+ assert.equal(reads,0);assert.equal((await tools.tool({action:'inspect',worker_id:'pair',member:0})).state,'observed');
 });
