@@ -7,13 +7,13 @@ import {bootstrapEnrollmentMatches,bootstrapProofValid} from './recovery-bootstr
 import {recoveryOwnership} from './recovery-ownership.mjs';
 import {pairPermit,pairPeers,pairBinding,pairCertified,pairQualificationEnabled,pairQualificationEvidence,reservePair,executePair} from './recovery-pair-controller.mjs';
 import {requestCapacity} from './worker-activity.mjs';
-import {omlxOperationValid,omlxPeers,reserveOmlx,omlxPermit,omlxCertified,omlxQualificationEnabled,omlxQualificationReason,omlxQualificationEvidence,requestOmlxQualification,executeOmlx,omlxReadmissionOwnsQueue} from './recovery-omlx-controller.mjs';
+import {omlxOperationValid,omlxPeers,reserveOmlx,omlxPermit,omlxCertified,omlxQualificationEnabled,omlxQualificationReason,omlxQualificationEvidence,requestOmlxQualification,executeOmlx,omlxReadmissionOwnsQueue,omlxDemandReason,omlxDemandEvidence,omlxDemandEnabled,requestOmlxDemand} from './recovery-omlx-controller.mjs';
 
 const hash=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const terminal=new Set(['recovered','verified_paused','failed','reconciliation_needed']);
 const faultReasons=new Set(['fatal_accelerator_error','accelerator_checkpoint_failure']);
 const adapterReasons=new Set(['pair_identity_or_journal_unverified','pair_ownership_unavailable','adapter_timeout','adapter_output_limit','adapter_spawn_failed','adapter_dns_failure','adapter_host_key_failure','adapter_auth_failure','adapter_connect_timeout','adapter_connection_refused','adapter_route_unreachable','adapter_connection_reset','adapter_unreachable','adapter_check_failed','adapter_local_unavailable','adapter_local_identity_unverified','adapter_local_interpreter_missing']);
-const publicOperation=op=>Object.fromEntries(['id','worker_id','actor','service_action','state','created_at','updated_at','error','proof','service_action_issued','restart_issued','operator_override','profile_adopted','bootstrap_acknowledged','readmission_blocked_reason','pair_qualification','omlx_qualification'].filter(k=>op[k]!==undefined).map(k=>[k,op[k]]));
+const publicOperation=op=>Object.fromEntries(['id','worker_id','actor','service_action','state','created_at','updated_at','error','proof','service_action_issued','restart_issued','operator_override','profile_adopted','bootstrap_acknowledged','readmission_blocked_reason','pair_qualification','omlx_qualification','omlx_demand_start','omlx_native_observation'].filter(k=>op[k]!==undefined).map(k=>[k,op[k]]));
 const digest=value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
 // Wall-clock correction must not make an old observation eligible indefinitely.
 // Use the same bounded age rule for diagnostics, offers and action admission.
@@ -47,9 +47,9 @@ const adoptionOperationValid=op=>{
 // Lives in the gateway, not the dashboard or LLM process. Intent and outcomes
 // share the gateway's atomic/fsynced metadata store. No inference text is saved.
 export class Recovery {
-  constructor(raw,{store,nodes,model,stopping,reinstate,fleetConfig={},isPairQualificationEnabled=()=>false,isOmlxQualificationEnabled=()=>false,directReserved=()=>false,log=()=>{},call=recoveryCall,verify=verifyRecovery,now=Date.now}) {
+  constructor(raw,{store,nodes,model,stopping,reinstate,fleetConfig={},isPairQualificationEnabled=()=>false,isOmlxQualificationEnabled=()=>false,omlxDemand=()=>null,directReserved=()=>false,log=()=>{},call=recoveryCall,verify=verifyRecovery,now=Date.now}) {
     this.configs=recoveryConfig(raw);this.store=store;this.nodes=nodes;this.model=model;this.stopping=stopping;this.reinstate=reinstate;this.log=log;this.call=call;this.verify=verify;this.now=now;
-    this.fleetConfig=fleetConfig;
+    this.fleetConfig=fleetConfig;this.omlxDemand=omlxDemand;
     this.isPairQualificationEnabled=isPairQualificationEnabled;this.isOmlxQualificationEnabled=isOmlxQualificationEnabled;
     this.ownershipReason=(node,options={})=>recoveryOwnership({node,nodes,store,config:fleetConfig,directReserved,...options});
     this.observations=new Map();this.stoppedSince=new Map();this.handbackSeen=new Map();this.busy=false;this.closed=false;this.task=null;this.abort=new AbortController();
@@ -62,7 +62,7 @@ export class Recovery {
     if(saved && (saved.version!==1 || typeof saved.automatic!=='boolean' || (saved.profile_handback_automatic!==undefined&&typeof saved.profile_handback_automatic!=='boolean') || !Array.isArray(saved.operations) || (saved.adopted_profiles!==undefined&&(!saved.adopted_profiles||typeof saved.adopted_profiles!=='object'||Array.isArray(saved.adopted_profiles)))))throw new Error('Invalid recovery journal; inspect manually');
     for(const [worker,profile] of Object.entries(saved?.adopted_profiles??{}))if(!/^[a-zA-Z0-9][\w-]{0,63}$/.test(worker)||!profile||!digest(profile.config_profile)||!digest(profile.machine)||!digest(profile.profile)||(profile.service_profile!==null&&!digest(profile.service_profile))||!Number.isFinite(profile.adopted_at)||!/^[a-f0-9-]{36}$/.test(profile.operation_id))throw new Error('Invalid adopted recovery profile');
     for(const op of this.state.operations) {
-      if(op.omlx_qualification!==undefined||op.omlx_reserved!==undefined){
+      if(op.omlx_qualification!==undefined||op.omlx_demand_start!==undefined||op.omlx_reserved!==undefined){
         if(!omlxOperationValid(op))throw Error('Invalid oMLX qualification journal');
         if(op.omlx_reserved)reserveOmlx(this,op,true);
       }
@@ -173,7 +173,7 @@ export class Recovery {
   validBootstrapLive(s,c,op){return this.valid(s,c)&&bootstrapEnrollmentMatches(s,c)&&s.boot_uuid===op.bootstrap_prior.boot_uuid&&s.service_profile===op.service_profile;}
   profileCandidate(s,c){return !!c&&s?.version===1&&s.machine===c.machine&&digest(s.profile)&&s.profile!==c.profile&&s.active===true&&s.listener===true&&/^[a-f0-9]{32}$/.test(s.instance)&&Number.isFinite(s.started_at)?{profile:s.profile,service_profile:digest(s.service_profile)?s.service_profile:null,instance:s.instance}:null;}
   candidateStable(id,candidate){const seen=this.handbackSeen.get(id);return !!seen&&seen.profile===candidate.profile&&seen.service_profile===candidate.service_profile&&seen.instance===candidate.instance&&seen.count>=2&&seen.last_at-seen.first_at>=10000;}
-  evidence(n,s){const c=this.config(n.id),candidate=this.profileCandidate(s,c);return c?.bootstrap_removed===true&&s?.registration==='absent'?hash([n.id,'bootstrap',this.priorIdentity(n.id),hash(c),this.removals.get(n.id)?.result]):candidate?hash([n.id,n.quarantine,'adopt',candidate.instance,s.machine,c.profile,candidate.profile,candidate.service_profile]):this.valid(s,c)?hash([n.id,n.quarantine,'restart',s.instance,s.machine,s.profile]):hash([n.id,n.quarantine,'start',s.stopped_epoch,s.machine,s.service_profile]);}
+  evidence(n,s){const c=this.config(n.id),candidate=this.profileCandidate(s,c);return c?.adapter==='omlx'&&c.verification==='glm53_omlx'&&this.validStopped(s,c)?omlxDemandEvidence(this,n,s):c?.bootstrap_removed===true&&s?.registration==='absent'?hash([n.id,'bootstrap',this.priorIdentity(n.id),hash(c),this.removals.get(n.id)?.result]):candidate?hash([n.id,n.quarantine,'adopt',candidate.instance,s.machine,c.profile,candidate.profile,candidate.service_profile]):this.valid(s,c)?hash([n.id,n.quarantine,'restart',s.instance,s.machine,s.profile]):hash([n.id,n.quarantine,'start',s.stopped_epoch,s.machine,s.service_profile]);}
   reason(n,s,{canary=false,qualification=false,ignoreOwnership=false,ignorePause=false,releasingHoldId=null}={}) {
     const c=this.config(n?.id);
     if(!this.binding(n,c))return 'manual_recovery_required';
@@ -191,6 +191,7 @@ export class Recovery {
     // operator and Genie do not imply that an empty queue alone restores
     // recovery authority. The executor still independently rechecks identity.
     const live=this.valid(s,c),stopped=this.validStopped(s,c),candidate=this.profileCandidate(s,c);
+    if(!canary&&c.adapter==='omlx'&&c.verification==='glm53_omlx'&&stopped)return omlxDemandReason(this,n,s);
     if(c.adapter==='docker-pair'){
       if(!digest(s?.pair_epoch)||s.context_length!==n.contextLength||s.concurrency!==requestCapacity(n))return 'pair_capacity_or_identity_unverified';
       const peers=pairPeers(this,n.id);
@@ -311,7 +312,7 @@ export class Recovery {
     return {worker_id:n.id,configured,adapter:configured?this.configs.get(n.id).adapter:null,transport:configured?(this.configs.get(n.id).transport??'ssh'):null,reason:configured?reason:'manual_recovery_required',eligible:configured&&!reason,
       evidence_id:configured&&!reason?this.evidence(n,s):null,inspected_at:observed?.at??null,
       removal:this.removals.get(n.id)?.result??null,enrollment:this.enrollmentChecklist(n),
-      ...(effective?.adapter==='omlx'&&effective.verification==='glm53_omlx'?{omlx_qualification:this.omlxQualificationStatus(n,observed)}:{}),
+      ...(effective?.adapter==='omlx'&&effective.verification==='glm53_omlx'?{omlx_qualification:this.omlxQualificationStatus(n,observed),omlx_demand_start:{enabled:omlxDemandEnabled(this,n.id),eligible:!reason&&this.validStopped(s,effective),reason:reason??(this.validStopped(s,effective)?null:"omlx_verified_stopped_service_required")}}:{}),
       ...(effective?.adapter==='docker-pair'?{pair_qualification:{eligible:!qualificationReason,reason:qualificationReason,evidence_id:qualificationReason?null:pairQualificationEvidence(this,n,s),certified:pairCertified(this,n,effective)}}:{}),
       ...(effective?.bootstrap_removed===true?{bootstrap:{enrolled:true,certified:this.bootstrapCertified(n,effective)}}:{}),
       state,profile_handback:candidate?{candidate:true,stable:this.candidateStable(n.id,candidate),automatic:this.state.profile_handback_automatic}:adopted?{candidate:false,stable:true,automatic:this.state.profile_handback_automatic,adopted:true}:null,last_action:last?publicOperation(last):null};
@@ -372,6 +373,7 @@ export class Recovery {
     const n=this.node(input.worker_id),observed=this.observations.get(input.worker_id),s=observed?.value;
     if(!n || !freshInspection(observed,this.now()))throw new Error('Refresh service inspection first');
     const reason=this.reason(n,s,{canary,qualification});if(reason)throw new Error(reason);
+    if(!canary&&this.config(n.id)?.adapter==='omlx'&&this.config(n.id).verification==='glm53_omlx'&&this.validStopped(s,this.config(n.id)))return publicOperation(requestOmlxDemand(this,{...input,action_id:id},actor));
     if(qualification&&input.evidence_id!==pairQualificationEvidence(this,n,s))throw new Error('Stale or invented qualification evidence');
     if(!canary && input.evidence_id!==this.evidence(n,s))throw new Error('Stale or invented recovery evidence');
     if(this.state.operations.length>=10000)throw new Error('Recovery journal full; review required');
@@ -407,7 +409,7 @@ export class Recovery {
   }
   current(op){return this.state.operations.find(o=>o.id===op.id)??op;}
   async execute(initial,reconcile) {
-    if(initial.omlx_qualification)return executeOmlx(this,initial);
+    if(initial.omlx_qualification||initial.omlx_demand_start)return executeOmlx(this,initial);
     if(this.config(initial.worker_id)?.adapter==='docker-pair')return executePair(this,initial);
     let op={...initial};const enrolled=this.configs.get(op.worker_id),effective=this.config(op.worker_id),adopting=digest(op.adopt_profile),c=adopting?{...effective,profile:op.adopt_profile,...(digest(op.adopt_service_profile)?{service_profile:op.adopt_service_profile}:{})}:effective,n=this.node(op.worker_id);
     try {

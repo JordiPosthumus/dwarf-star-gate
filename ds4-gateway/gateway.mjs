@@ -374,6 +374,11 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   const definition = n => Object.fromEntries(workerFields.filter(k => n[k] !== undefined).map(k => [k,n[k]]));
   let recovery;
   try { recovery=new Recovery(serviceConfig.recovery,{store,nodes,model:config.model,stopping:()=>shuttingDown||draining,log,fleetConfig:serviceConfig,directReserved,isPairQualificationEnabled:()=>capabilityStatus().server_changes&&capabilityStatus().inspection,isOmlxQualificationEnabled:()=>capabilityStatus().server_changes&&capabilityStatus().inspection,
+    // Only a live undispatched request can authorize waking an enrolled service.
+    // A blocked conversation or request pinned elsewhere grants no authority.
+    omlxDemand:n=>waiting.find(job=>!job.cancelled&&!job.dispatched&&!job.upstream&&!job.res.destroyed&&
+      allowsWorker(job.modelRoute,n)&&(!job.fixedHome||job.fixedHome===n)&&!sessionWork(nodes,job.key)&&
+      !(job.key&&waiting.some(prior=>prior!==job&&!prior.cancelled&&prior.key===job.key&&prior.sequence<job.sequence)))?.id??null,
     reinstate:(n,expected,recoveryState)=>{
       if(n.removed || n.drained || n.active || (n.queue.length&&!recovery.omlxReadmissionOwnsQueue(n,recoveryState)) || JSON.stringify(n.quarantine)!==JSON.stringify(expected) || shuttingDown || draining)throw new Error('reinstatement_state_changed');
       const quarantined={...store.data.quarantined};delete quarantined[n.id];

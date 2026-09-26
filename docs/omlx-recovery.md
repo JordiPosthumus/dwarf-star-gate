@@ -66,7 +66,7 @@ lets a controller join the receipt to its saved intent. It is available when
 mutation permission has been withdrawn. A missing record or pending receipt does
 not establish process liveness, service health, or permission to repeat an action.
 
-The staged `start-transaction` protocol is distinct from a restart. It requires
+The `start-transaction` protocol is distinct from a restart. It requires
 the private adapter's explicit `start_stopped: true`, a recorded stopped epoch,
 an exact static profile, an empty listener and a gateway permit bound to a demand
 UUID. It never sends a stop signal. The same durable intent and backup rules
@@ -75,13 +75,34 @@ lost or revoked permit before launch leaves it waiting; a change at the final
 launch guard preserves an uncertain receipt. The native fixture tests exercise
 this protocol and read-only observation after permission revocation.
 
-**On-demand integration is not complete:** the production controller does not yet
-issue this demand-bound start protocol or enroll its authority through Genie.
-Do not enable a deployment's stopped-start setting merely because the adapter
-protocol passes its tests. Completion still needs live-demand admission,
-cancellation handling, controller reconstruction, and native correctness/cache
-proof before queued inference is released. Existing restart qualification and
-legacy manual start behavior remain separate.
+The gateway controller can use this protocol for an explicitly enrolled stopped
+GLM/oMLX worker. Enable `omlx_recovery_setup.workers.<id>.start_on_demand: true`
+only alongside its existing `exclusive` policy, native and gateway stopped-start
+enrollment, and a successful restart qualification bound to the same complete
+enrollment, context and concurrency. A changed enrollment needs qualification
+again; an old successful receipt cannot silently grant new authority.
+
+The detector requires two consistent stopped observations at least 15 seconds
+apart and a live, compatible, undispatched HTTP request. Cancelled clients,
+requests pinned to another worker and conversations blocked by earlier work do
+not authorize a start. An operation gets its own durable demand token: if demand
+changes before launch, the exact existing transaction may resume when compatible
+live demand returns. Cancelling the last request before native dispatch releases
+the reservation. After dispatch, absent demand retains ownership and permits
+only saved-status observation until demand returns or a launch is independently
+observed. Missing receipts and observation timeouts never prove a stopped runner.
+A saved completed launch can proceed to verification without its original client;
+revoked policy still prevents mutation or readmission. Holds and all physical
+aliases remain fenced throughout. Unlike a restart, starting a proven stopped
+service does not remove a serving LLM and therefore needs no spare LLM.
+
+**Deployment remains incomplete:** Genie enrollment still captures restart-only
+authority; it does not yet grant stopped-start authority through its setup tool.
+Do not enable a deployment's stopped-start setting merely because protocol and
+controller fixtures pass. Native acceptance with the unchanged launcher, real
+cold-to-warm proof and actual queued inference is required before claiming that
+an installation supports on-demand operation. Existing restart qualification and
+legacy explicit operator canaries remain separate.
 
 Readmission additionally requires unchanged process/profile, native model context
 and two actual cold-to-warm GLM/oMLX conversations. A Spark/vLLM or Qwen receipt

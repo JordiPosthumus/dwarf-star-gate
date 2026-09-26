@@ -55,7 +55,7 @@ export function createOmlxEnrollment({config,store,recovery,isEnabled,materializ
     require(target?.kind==='omlx-local'&&target.url===n.url&&!n.ssh&&!n.ssh_fallbacks&&n.remote_port===undefined,'omlx_inspection_binding_unverified');
     const endpoint=new URL(n.url);
     require(endpoint.protocol==='http:'&&endpoint.hostname==='127.0.0.1'&&endpoint.port&&!endpoint.username&&!endpoint.password&&!endpoint.search&&!endpoint.hash,'omlx_endpoint_binding_unverified');
-    require(Object.keys(policy).filter(k=>k!=='qualify_restart').sort().join(',')==='exclusive,launcher,profile_files'&&(policy.qualify_restart===undefined||typeof policy.qualify_restart==='boolean')&&typeof policy.launcher==='string'
+    require(Object.keys(policy).filter(k=>!['qualify_restart','start_on_demand'].includes(k)).sort().join(',')==='exclusive,launcher,profile_files'&&(policy.qualify_restart===undefined||typeof policy.qualify_restart==='boolean')&&(policy.start_on_demand===undefined||typeof policy.start_on_demand==='boolean')&&typeof policy.launcher==='string'
       &&path.isAbsolute(policy.launcher)&&!policy.launcher.includes('\0')&&Array.isArray(policy.profile_files)&&policy.profile_files.length<=32
       &&policy.profile_files.every(p=>typeof p==='string'&&path.isAbsolute(p)&&!p.includes('\0'))&&new Set(policy.profile_files).size===policy.profile_files.length,'omlx_launcher_policy_invalid');
     const reason=recovery.ownershipReason(n);require(!reason,reason??'omlx_ownership_unverified');
