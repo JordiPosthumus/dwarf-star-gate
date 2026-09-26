@@ -2,6 +2,19 @@ import test from 'node:test';import assert from 'node:assert/strict';import http
 import {createRecoveryTools,recoveryEvidence} from './genie-recovery.mjs';import {hermesProvider} from './genie-hermes.mjs';import {GenieChat} from './genie-chat.mjs';
 const exact={worker_id:'worker-a',evidence_id:'a'.repeat(64),action_id:'11111111-1111-4111-8111-111111111111'};
 const state=()=>({version:1,recovery:{configured:true,automatic:true,workers:[{worker_id:'worker-a',eligible:true,evidence_id:exact.evidence_id}],operations:[]}});
+test('local oMLX qualification rejects extra authority and respects each capability without retrying uncertain calls',async()=>{
+ let calls=0,enabled=true,testing=false,inspection=true,changes=true;
+ const q=createRecoveryTools({read:async()=>state(),isEnabled:()=>enabled,isTesting:()=>testing,isInspectionEnabled:()=>inspection,isChangesEnabled:()=>changes,
+  qualifyOmlx:async input=>{calls++;assert.deepEqual(input,exact);return {id:input.action_id,worker_id:input.worker_id,actor:'genie',omlx_qualification:true,state:'queued'};}});
+ for(const key of ['gateway_socket','launcher','canary'])await assert.rejects(q.tool({action:'qualify-omlx',...exact,[key]:'untrusted'}),/Specify/);
+ enabled=false;await assert.rejects(q.tool({action:'qualify-omlx',...exact}),/suspended/);enabled=true;
+ testing=true;await assert.rejects(q.tool({action:'qualify-omlx',...exact}),/suspended/);testing=false;
+ inspection=false;await assert.rejects(q.tool({action:'qualify-omlx',...exact}),/suspended/);inspection=true;
+ changes=false;await assert.rejects(q.tool({action:'qualify-omlx',...exact}),/suspended/);changes=true;
+ assert.equal(calls,0);assert.equal((await q.tool({action:'qualify-omlx',...exact})).omlx_qualification,true);
+ const uncertain=createRecoveryTools({read:async()=>state(),isChangesEnabled:()=>true,qualifyOmlx:async()=>{calls++;return {id:exact.action_id};}});
+ await assert.rejects(uncertain.tool({action:'qualify-omlx',...exact}),/uncertain/);await uncertain.tool({action:'status'});assert.equal(calls,2);
+});
 test('pair qualification tool is separate, policy gated and never retries an uncertain acknowledgement',async()=>{
  let count=0,enabled=true;const q=createRecoveryTools({read:async()=>state(),isChangesEnabled:()=>enabled,qualify:async input=>{count++;assert.deepEqual(input,exact);return {id:input.action_id,worker_id:input.worker_id,actor:'genie',pair_qualification:true,state:'queued'};}});
  assert.equal((await q.tool({action:'qualify-pair',...exact})).pair_qualification,true);
@@ -80,6 +93,22 @@ test('installed Hermes qualifies an opted-in pair once and persists its native q
   if(calls===3)assert.match(JSON.stringify(body.messages),new RegExp(status.recovery.operations[0].id));
   const name=calls===2?'qualify_pair_recovery':'recovery_status',args=calls===2?{worker_id:exact.worker_id,evidence_id:exact.evidence_id}:{};
   const message=calls<=3?{role:'assistant',content:null,tool_calls:[{id:'recovery-'+calls,type:'function',function:{name:'tool_call',arguments:JSON.stringify({name,arguments:args})}}]}:{role:'assistant',content:'Pair qualification was accepted; native restart proof remains pending.'};
+  const delta={...message,...(message.tool_calls?{tool_calls:message.tool_calls.map((v,index)=>({...v,index}))}:{})};res.setHeader('content-type','text/event-stream');res.end('data: '+JSON.stringify({id:'recovery-fixture',model:'fixture',choices:[{index:0,delta,finish_reason:null}]})+'\n\ndata: '+JSON.stringify({id:'recovery-fixture',model:'fixture',choices:[{index:0,delta:{},finish_reason:calls<=3?'tool_calls':'stop'}]})+'\n\ndata: [DONE]\n\n');});});
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));q.bind(server.address().port);
+ const provider=hermesProvider({python:process.env.DSG_TEST_HERMES_PYTHON,source:process.env.DSG_TEST_HERMES_SOURCE,url:`http://127.0.0.1:${server.address().port}/v1`,model:'fixture',recovery:q.toolConfig},{directory});
+ t.after(()=>{provider.close();server.closeAllConnections();server.close();fs.rmSync(directory,{recursive:true,force:true});});
+ const chat=new GenieChat({directory:path.join(directory,'chats'),provider,getSnapshot:()=>({gateway:state()})}),c=chat.create();chat.submit(c.id,'Qualify worker-a using its current evidence if explicitly opted in.','recovery-test');await chat.idle();const answer=chat.get(c.id).messages[1];assert.equal(answer.state,'complete',JSON.stringify(answer));assert.equal(requests,1);assert.equal(calls,4);assert.equal(provider.info.can_act,true);
+ const completed=answer.recovery.events.filter(e=>e.state==='complete');assert.equal(completed.length,3);assert.equal(completed[1].action_id,status.recovery.operations[0].id);assert.equal(chat.capabilityActivity().recovery.state,'complete');
+ const reread=new GenieChat({directory:path.join(directory,'chats'),provider});assert.deepEqual(reread.get(c.id).messages[1].recovery,answer.recovery);
+});
+
+test('installed Hermes qualifies an opted-in local oMLX worker once and persists its native qualification tool handle',{skip:!process.env.DSG_TEST_HERMES_SOURCE,timeout:120000},async t=>{
+ const directory=fs.mkdtempSync(path.join(os.tmpdir(),'sg-recovery-chat-'));let requests=0,calls=0;const status=state();
+ const q=createRecoveryTools({read:async()=>status,isChangesEnabled:()=>true,qualifyOmlx:async e=>{requests++;assert.equal(e.worker_id,exact.worker_id);assert.equal(e.evidence_id,exact.evidence_id);const receipt={id:e.action_id,action_id:e.action_id,worker_id:e.worker_id,actor:'genie',omlx_qualification:true,state:'queued'};status.recovery.operations.push(receipt);return receipt;},recover:()=>assert.fail('Recovery requested during enrollment')});
+ const server=http.createServer((req,res)=>{if(q.handle(req,res))return;if(req.method==='GET'){res.end(JSON.stringify({data:[{id:'fixture'}]}));return;}let raw='';req.on('data',c=>raw+=c);req.on('end',()=>{const body=JSON.parse(raw);if(req.url!=='/v1/chat/completions'){res.end(JSON.stringify({}));return;}calls++;
+  if(calls===3)assert.match(JSON.stringify(body.messages),new RegExp(status.recovery.operations[0].id));
+  const name=calls===2?'qualify_omlx_recovery':'recovery_status',args=calls===2?{worker_id:exact.worker_id,evidence_id:exact.evidence_id}:{};
+  const message=calls<=3?{role:'assistant',content:null,tool_calls:[{id:'recovery-'+calls,type:'function',function:{name:'tool_call',arguments:JSON.stringify({name,arguments:args})}}]}:{role:'assistant',content:'Local oMLX qualification was accepted; native restart proof remains pending.'};
   const delta={...message,...(message.tool_calls?{tool_calls:message.tool_calls.map((v,index)=>({...v,index}))}:{})};res.setHeader('content-type','text/event-stream');res.end('data: '+JSON.stringify({id:'recovery-fixture',model:'fixture',choices:[{index:0,delta,finish_reason:null}]})+'\n\ndata: '+JSON.stringify({id:'recovery-fixture',model:'fixture',choices:[{index:0,delta:{},finish_reason:calls<=3?'tool_calls':'stop'}]})+'\n\ndata: [DONE]\n\n');});});
  await new Promise(r=>server.listen(0,'127.0.0.1',r));q.bind(server.address().port);
  const provider=hermesProvider({python:process.env.DSG_TEST_HERMES_PYTHON,source:process.env.DSG_TEST_HERMES_SOURCE,url:`http://127.0.0.1:${server.address().port}/v1`,model:'fixture',recovery:q.toolConfig},{directory});

@@ -7,12 +7,13 @@ import {bootstrapEnrollmentMatches,bootstrapProofValid} from './recovery-bootstr
 import {recoveryOwnership} from './recovery-ownership.mjs';
 import {pairPermit,pairPeers,pairBinding,pairCertified,pairQualificationEnabled,pairQualificationEvidence,reservePair,executePair} from './recovery-pair-controller.mjs';
 import {requestCapacity} from './worker-activity.mjs';
+import {omlxOperationValid,omlxPeers,reserveOmlx,omlxPermit,omlxCertified,omlxQualificationEnabled,omlxQualificationReason,omlxQualificationEvidence,requestOmlxQualification,executeOmlx,omlxReadmissionOwnsQueue} from './recovery-omlx-controller.mjs';
 
 const hash=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const terminal=new Set(['recovered','verified_paused','failed','reconciliation_needed']);
 const faultReasons=new Set(['fatal_accelerator_error','accelerator_checkpoint_failure']);
 const adapterReasons=new Set(['pair_identity_or_journal_unverified','pair_ownership_unavailable','adapter_timeout','adapter_output_limit','adapter_spawn_failed','adapter_dns_failure','adapter_host_key_failure','adapter_auth_failure','adapter_connect_timeout','adapter_connection_refused','adapter_route_unreachable','adapter_connection_reset','adapter_unreachable','adapter_check_failed','adapter_local_unavailable','adapter_local_identity_unverified','adapter_local_interpreter_missing']);
-const publicOperation=op=>Object.fromEntries(['id','worker_id','actor','service_action','state','created_at','updated_at','error','proof','service_action_issued','restart_issued','operator_override','profile_adopted','bootstrap_acknowledged','readmission_blocked_reason','pair_qualification'].filter(k=>op[k]!==undefined).map(k=>[k,op[k]]));
+const publicOperation=op=>Object.fromEntries(['id','worker_id','actor','service_action','state','created_at','updated_at','error','proof','service_action_issued','restart_issued','operator_override','profile_adopted','bootstrap_acknowledged','readmission_blocked_reason','pair_qualification','omlx_qualification'].filter(k=>op[k]!==undefined).map(k=>[k,op[k]]));
 const digest=value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
 // Wall-clock correction must not make an old observation eligible indefinitely.
 // Use the same bounded age rule for diagnostics, offers and action admission.
@@ -46,10 +47,10 @@ const adoptionOperationValid=op=>{
 // Lives in the gateway, not the dashboard or LLM process. Intent and outcomes
 // share the gateway's atomic/fsynced metadata store. No inference text is saved.
 export class Recovery {
-  constructor(raw,{store,nodes,model,stopping,reinstate,fleetConfig={},isPairQualificationEnabled=()=>false,directReserved=()=>false,log=()=>{},call=recoveryCall,verify=verifyRecovery,now=Date.now}) {
+  constructor(raw,{store,nodes,model,stopping,reinstate,fleetConfig={},isPairQualificationEnabled=()=>false,isOmlxQualificationEnabled=()=>false,directReserved=()=>false,log=()=>{},call=recoveryCall,verify=verifyRecovery,now=Date.now}) {
     this.configs=recoveryConfig(raw);this.store=store;this.nodes=nodes;this.model=model;this.stopping=stopping;this.reinstate=reinstate;this.log=log;this.call=call;this.verify=verify;this.now=now;
     this.fleetConfig=fleetConfig;
-    this.isPairQualificationEnabled=isPairQualificationEnabled;
+    this.isPairQualificationEnabled=isPairQualificationEnabled;this.isOmlxQualificationEnabled=isOmlxQualificationEnabled;
     this.ownershipReason=(node,options={})=>recoveryOwnership({node,nodes,store,config:fleetConfig,directReserved,...options});
     this.observations=new Map();this.stoppedSince=new Map();this.handbackSeen=new Map();this.busy=false;this.closed=false;this.task=null;this.abort=new AbortController();
     this.removals=new Map();
@@ -61,6 +62,10 @@ export class Recovery {
     if(saved && (saved.version!==1 || typeof saved.automatic!=='boolean' || (saved.profile_handback_automatic!==undefined&&typeof saved.profile_handback_automatic!=='boolean') || !Array.isArray(saved.operations) || (saved.adopted_profiles!==undefined&&(!saved.adopted_profiles||typeof saved.adopted_profiles!=='object'||Array.isArray(saved.adopted_profiles)))))throw new Error('Invalid recovery journal; inspect manually');
     for(const [worker,profile] of Object.entries(saved?.adopted_profiles??{}))if(!/^[a-zA-Z0-9][\w-]{0,63}$/.test(worker)||!profile||!digest(profile.config_profile)||!digest(profile.machine)||!digest(profile.profile)||(profile.service_profile!==null&&!digest(profile.service_profile))||!Number.isFinite(profile.adopted_at)||!/^[a-f0-9-]{36}$/.test(profile.operation_id))throw new Error('Invalid adopted recovery profile');
     for(const op of this.state.operations) {
+      if(op.omlx_qualification!==undefined||op.omlx_reserved!==undefined){
+        if(!omlxOperationValid(op))throw Error('Invalid oMLX qualification journal');
+        if(op.omlx_reserved)reserveOmlx(this,op,true);
+      }
       if(op.pair_qualification!==undefined&&(op.pair_qualification!==true||op.actor!=='genie'||op.canary!==true||op.was_paused!==false||op.service_action!=='restart'||!digest(op.evidence_id)||op.pair_reserved===undefined))throw new Error('Invalid pair qualification journal');
       if(!/^[a-f0-9-]{36}$/.test(op.id) || typeof op.worker_id!=='string' || typeof op.state!=='string'||!adoptionOperationValid(op)||!bootstrapOperationValid(op))throw new Error('Invalid recovery operation');
       if(op.pair_reserved!==undefined){
@@ -112,6 +117,10 @@ export class Recovery {
   update(op,fields){Object.assign(op,this.current(op),fields,{updated_at:this.now()});this.commit({...this.state,operations:this.state.operations.map(x=>x.id===op.id?{...op}:x)});this.log('worker_recovery_action',publicOperation(op));}
   setAutomatic(value){if(typeof value!=='boolean')throw new Error('Recovery enabled must be boolean');this.commit({...this.state,automatic:value});this.log('worker_recovery_policy',{automatic:value});return this.status();}
   setProfileHandbackAutomatic(value){if(typeof value!=='boolean'||!this.configs.size)throw new Error('Profile hand-back is not configured or enabled is invalid');this.commit({...this.state,profile_handback_automatic:value});this.log('worker_recovery_handback_policy',{automatic:value});return this.status();}
+  requestOmlxQualification(input){return publicOperation(requestOmlxQualification(this,input));}
+  omlxPermit(input){return omlxPermit(this,input);}
+  omlxReadmissionOwnsQueue(node,next){return omlxReadmissionOwnsQueue(this,node,next);}
+  physicalOwner(id){return this.pairOwner(id)??this.state.operations.find(op=>op.omlx_reserved&&omlxPeers(this,op.worker_id).some(n=>n.id===id))?.id??null;}
   pairPermit(input){return pairPermit(this,input);}
   pairOwner(id){return this.state.operations.find(op=>op.pair_reserved&&pairPeers(this,op.worker_id).some(n=>n.id===id))?.id??null;}
   binding(n,c){return !!n && !!c && n.url===c.url && n.ssh===c.ssh && JSON.stringify(n.ssh_fallbacks??[])===JSON.stringify(c.ssh_fallbacks??[]) && (n.remote_port??8000)===(c.remote_port??8000);}
@@ -257,7 +266,7 @@ export class Recovery {
     const identity=!usable||!bound?'unknown':this.valid(s,c)?'running_match':this.validStopped(s,c)?'stopped_match':this.profileCandidate(s,c)?'changed_profile':'unverified';
     const native=c?.adapter!=='launchd'?'not_applicable':!usable?'unknown':s?.native_disabled===false?'enabled':s?.native_disabled===true?'disabled':'unknown';
     const last=this.state.operations.filter(op=>op.worker_id===n.id&&op.canary===true&&
-      (op.actor==='operator'||(c?.adapter==='docker-pair'&&op.actor==='genie'&&op.pair_qualification===true))).at(-1);
+      (op.actor==='operator'||(c?.adapter==='docker-pair'&&op.actor==='genie'&&op.pair_qualification===true)||(c?.adapter==='omlx'&&op.actor==='genie'&&op.omlx_qualification===true))).at(-1);
     // A retained receipt is historical evidence, not certification of today's
     // helper/configuration or effective settings. Do not create action authority.
     const canary=last?{
@@ -278,7 +287,7 @@ export class Recovery {
       if(native==='disabled')steps.push('respect_native_disable');
       else if(native==='unknown')steps.push('verify_native_disable_state');
       if(n.active||n.queue.length)steps.push('wait_for_admitted_work');
-      if(!canary)steps.push(c?.adapter==='docker-pair'&&pairQualificationEnabled(this,n.id)?'request_pair_qualification_when_eligible':'request_separate_canary_window');
+      if(!canary)steps.push(c?.adapter==='omlx'&&omlxQualificationEnabled(this,n.id)?'request_omlx_qualification_when_eligible':c?.adapter==='docker-pair'&&pairQualificationEnabled(this,n.id)?'request_pair_qualification_when_eligible':'request_separate_canary_window');
       else if(!['verified_paused','recovered'].includes(canary.state)||!canary.cold_warm_proof_valid||!canary.enrolled_identity_fields_match||!canary.observed_instance_matches)steps.push('review_canary_receipt');
       if(bootstrapCertified===false)steps.push('review_removed_job_certification');
       steps.push('review_effective_settings_and_routing');
@@ -288,7 +297,7 @@ export class Recovery {
         exclusive_endpoint:c?.exclusive===true?'operator_asserted':'not_enrolled',automatic_policy:this.state.automatic,profile_handback_policy:this.state.profile_handback_automatic},
       inspection:{state:inspection,age_ms:age!==null&&age>=0?age:null,identity,native_disable:native},
       historical_canary:canary,bootstrap_certified:bootstrapCertified,
-      next_steps:steps,note:c?.adapter==='docker-pair'?'Read-only enrollment evidence. Use current pair_qualification eligibility for the separately opted-in Genie test; operator canaries require and preserve a pause. Historical receipts alone do not certify current settings.':'Read-only enrollment evidence, not permission to act or certification of current settings. A canary requires a separately approved idle window and leaves routing paused.'};
+      next_steps:steps,note:c?.adapter==='omlx'&&c.verification==='glm53_omlx'?'Read-only enrollment evidence. Use current omlx_qualification eligibility for the separately opted-in Genie test; a retained receipt does not grant stopped-start authority.':c?.adapter==='docker-pair'?'Read-only enrollment evidence. Use current pair_qualification eligibility for the separately opted-in Genie test; operator canaries require and preserve a pause. Historical receipts alone do not certify current settings.':'Read-only enrollment evidence, not permission to act or certification of current settings. A canary requires a separately approved idle window and leaves routing paused.'};
   }
   workerStatus(n) {
     const observed=this.observations.get(n.id),s=observed?.value;
@@ -302,9 +311,14 @@ export class Recovery {
     return {worker_id:n.id,configured,adapter:configured?this.configs.get(n.id).adapter:null,transport:configured?(this.configs.get(n.id).transport??'ssh'):null,reason:configured?reason:'manual_recovery_required',eligible:configured&&!reason,
       evidence_id:configured&&!reason?this.evidence(n,s):null,inspected_at:observed?.at??null,
       removal:this.removals.get(n.id)?.result??null,enrollment:this.enrollmentChecklist(n),
+      ...(effective?.adapter==='omlx'&&effective.verification==='glm53_omlx'?{omlx_qualification:this.omlxQualificationStatus(n,observed)}:{}),
       ...(effective?.adapter==='docker-pair'?{pair_qualification:{eligible:!qualificationReason,reason:qualificationReason,evidence_id:qualificationReason?null:pairQualificationEvidence(this,n,s),certified:pairCertified(this,n,effective)}}:{}),
       ...(effective?.bootstrap_removed===true?{bootstrap:{enrolled:true,certified:this.bootstrapCertified(n,effective)}}:{}),
       state,profile_handback:candidate?{candidate:true,stable:this.candidateStable(n.id,candidate),automatic:this.state.profile_handback_automatic}:adopted?{candidate:false,stable:true,automatic:this.state.profile_handback_automatic,adopted:true}:null,last_action:last?publicOperation(last):null};
+  }
+  omlxQualificationStatus(n,observed){
+    const reason=!freshInspection(observed,this.now())?'service_inspection_pending':observed.error||omlxQualificationReason(this,n,observed.value);
+    return {eligible:!reason,reason,evidence_id:reason?null:omlxQualificationEvidence(this,n,observed.value),certified:omlxCertified(this,n,this.config(n.id))};
   }
   profileHandbackOffer(n,{ignorePause=false,releasingHoldId=null}={}) {
     if(!this.state.automatic)throw new Error('automatic_recovery_off');
@@ -383,7 +397,7 @@ export class Recovery {
     this.task=this.execute(op,false).finally(()=>{this.task=null;});
     return publicOperation(op);
   }
-  operatorPause(ids){for(const op of this.state.operations.filter(o=>(ids.includes(o.worker_id)||(o.pair_reserved&&pairPeers(this,o.worker_id).some(n=>ids.includes(n.id))))&&(!terminal.has(o.state)||o.pair_reserved)))this.update({...op},{operator_override:true});}
+  operatorPause(ids){for(const op of this.state.operations.filter(o=>(ids.includes(o.worker_id)||(o.pair_reserved&&pairPeers(this,o.worker_id).some(n=>ids.includes(n.id)))||(o.omlx_reserved&&omlxPeers(this,o.worker_id).some(n=>ids.includes(n.id))))&&(!terminal.has(o.state)||o.pair_reserved||o.omlx_reserved)))this.update({...op},{operator_override:true});}
   reconcile(input) {
     if(!input || Object.keys(input).join(',')!=='action_id')throw new Error('Specify action_id only');
     const op=this.state.operations.find(o=>o.id===input.action_id),n=this.node(op?.worker_id);
@@ -393,6 +407,7 @@ export class Recovery {
   }
   current(op){return this.state.operations.find(o=>o.id===op.id)??op;}
   async execute(initial,reconcile) {
+    if(initial.omlx_qualification)return executeOmlx(this,initial);
     if(this.config(initial.worker_id)?.adapter==='docker-pair')return executePair(this,initial);
     let op={...initial};const enrolled=this.configs.get(op.worker_id),effective=this.config(op.worker_id),adopting=digest(op.adopt_profile),c=adopting?{...effective,profile:op.adopt_profile,...(digest(op.adopt_service_profile)?{service_profile:op.adopt_service_profile}:{})}:effective,n=this.node(op.worker_id);
     try {

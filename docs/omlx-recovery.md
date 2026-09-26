@@ -31,33 +31,54 @@ That normalization fix has also passed a read-only inspection through the real
 local oMLX helper; the real restart exercise above then verified the complete
 controller-to-helper-to-model path.
 
-### Staged durable restart runner
+### Durable Genie restart qualification
 
-`recovery_omlx_transaction.py` is a separate component under development. It is
-not connected to the gateway, Genie tools, or the existing adapter entry point.
-The required private `/recovery-omlx-permit` route is not yet implemented; no
-production restart authority is enabled by adding this file.
+For a previously enrolled local GLM/oMLX worker, separately set
+`omlx_recovery_setup.workers[worker_id].qualify_restart` to `true`. Automatic
+recovery, server changes and inspection must also be enabled. Genie reads current
+`recovery_status.workers[].omlx_qualification` and calls `qualify_omlx_recovery`
+with that worker's eligible evidence ID. The tool does not accept commands,
+paths, settings or replacement launchers, and does not grant stopped-start
+permission. Ordinary operator canaries retain their existing pause semantics.
 
-The runner retains a private request, exact process/profile identity, original
-launcher/settings backups, and a journal around each stop and launch. It shares
-the legacy adapter's operation lock and refuses an already attempted process.
-A detached runner can outlive its dispatching controller. A new runner can
-continue after an observed stop, or observe a replacement already launched,
-without issuing either command twice. Every mutation requires the same
-operation's current permit; native active work prevents the initial stop.
+The core requires a healthy unpaused worker, idle physical aliases, current
+native identity and another available physical LLM. It backs up metadata before
+saving intent and reserving every alias on the worker's machine. Existing active
+or waiting work prevents admission. Requests arriving after that reservation
+remain waiting; only queues held by this exact operation can be discounted during
+its subsequent ownership checks and readmission. Active slots, native reservations,
+foreign recovery operations and owner holds still block changes.
 
-The disposable macOS tests exercise a real controller exit, abrupt runner exit
-after SIGTERM, and native-busy waiting followed by the same action's continuation.
-They verify one stop, one replacement launch, and the unchanged fixture profile.
-Additional interruption tests cover ambiguous pre-command intent, changed process
-or port identity, revoked ownership, and corrupted journals/backups. They do not
-prove recovery of a real GLM model or its cache behavior.
+`recovery_omlx_transaction.py`, adjacent to the enrolled adapter, retains a private
+request, exact process/profile identity, original launcher/settings backups, and
+a journal around each stop and launch. Its detached runner survives its caller.
+A new runner can continue after an observed stop or observe a replacement already
+launched without issuing either command twice. Each mutation requires a current
+permit from the gateway's owner-only `/recovery-omlx-permit` socket route. These
+routes are not exposed on the inference HTTP listener. Native active work prevents
+the stop; the replacement listener must also report zero active/waiting requests
+and loading models before the transaction completes.
+
+Readmission additionally requires unchanged process/profile, native model context
+and two actual cold-to-warm GLM/oMLX conversations. A Spark/vLLM or Qwen receipt
+cannot qualify this worker. A late owner pause remains effective. A late hold or
+policy revocation retains the same operation and reservation. Controller restart
+restores ownership and continues observation and verification under the same ID.
+The completion watcher returns to the original Genie conversation to observe the
+terminal tool receipt; it does not issue another restart.
+
+Disposable macOS tests exercise the connected adapter entry point, controller
+exit, abrupt runner exit after SIGTERM, and native-busy waiting followed by the
+same action's continuation. They verify one stop, one replacement launch and an
+unchanged fixture profile. Controller tests cover a real HTTP request waiting
+until private-socket qualification finishes, wrong proofs, identity changes,
+owner decisions and reconstruction. Installed-Hermes tests verify the tool and
+persisted handle. These fixtures do not certify any real GLM installation.
 
 A crash between saving intent and issuing a command remains ambiguous. The runner
 observes and does not repeat that command. A saved intent alone is never proof
-that the command ran. Qualification, gateway reservation/queue handling,
-readmission after native GLM generation/cache verification, and actual Genie
-continuation still need integration and native acceptance before deployment.
+that the command ran. Native qualification of the intended model and cache must
+still be completed before claiming that installation is restart-qualified.
 
 ## Private enrollment
 
@@ -96,13 +117,15 @@ read-only capture resumes under the same ID after core replacement. A completion
 watcher returns to the originating conversation if Genie finishes before the
 receipt arrives, respecting stopped replies and paused queues. Enrollment is not
 restart qualification: this workflow does not pause routing, stop/start a process
-or grant stopped-start authority. Native restart qualification and recovery across
-an interrupted stop-to-start boundary remain separate acceptance work.
+or grant stopped-start authority. Restart qualification is a separate explicit opt-in, described above; enrollment
+alone does not establish a working restart or cache receipt.
 
 For manual enrollment of an existing supported installation:
 
 Copy `ds4-gateway/recovery-omlx.py` and its sibling dependency
 `recovery-launchd.py` into the private recovery directory. Keep both together.
+For durable Genie qualification, also retain the sibling
+`recovery_omlx_transaction.py`; do not copy only the original two-file adapter.
 Use a private configuration containing exactly:
 
 ```json
@@ -171,9 +194,11 @@ certify any particular GLM installation until native verification succeeds.
   two conversations with measured cold-to-warm cache reuse.
 - The port check permits TCP TIME_WAIT left by closed connections, while a
   listening socket prevents startup. It is a sampled check, not a port lock.
-- A helper interruption after durable intent is not automatically replayed. A
-  saved intent alone cannot prove whether stop or launch happened. Supported
-  reconciliation across that boundary remains necessary for full independence.
+- A helper interruption after durable intent is not automatically replayed. The
+  durable Genie transaction can continue after an observed stop and can observe
+  an already launched replacement. The legacy manual adapter retains its original
+  intent-only behavior. Ambiguous pre-command intent in either path remains
+  observation-only; it does not authorize another signal or launch.
 
 Before the first live drill, retain the working launcher/settings and arrange
 another serving LLM. Restore and verify the tested worker afterward. Existing
