@@ -234,6 +234,14 @@ before starting a stopped ACE container. Omitted fields and older saved plans
 retain their existing behavior. This source/build witness does not replace
 native image qualification, effective inference checks or audio validation.
 
+The read-only **Check resources** / `inspect_media_host` observation also checks
+this witness on up to four native-port ACE candidates per physical host, including
+stopped containers. Each result is bound to the observed container ID and image.
+`unverified` means the current source witness could not be established, not that
+the engine is absent or incompatible. Additional candidates are `not_checked`.
+A port match does not establish enrollment; compare the exact enrolled identity.
+This observation neither promotes an image nor starts a service.
+
 **Native acceptance still required:** simultaneous generation on actual enrolled
 members, full autonomous film production through installed Hermes, and native
 six-machine operation. Component/fault tests prove ownership, overlapping fixture
