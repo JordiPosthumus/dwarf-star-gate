@@ -1223,6 +1223,19 @@ test('Fleet projection follows the active batch job and omits private native dat
   execution.phase='restoring_llm';assert.equal(fleetMediaWorkloads({jobs:[{id:'second',kind:'video',state:'completed',execution}]}).workloads[0].phase,'restoring_llm');
   for(const phase of ['returned','failed_returned','failed_unchanged'])assert.equal(fleetMediaWorkloads({jobs:[{id:'done',execution:{worker_id:'sparkA',phase}}]}).workloads.length,0);
 });
+test('parallel Fleet progress shows both member jobs within one physical-pair operation',async()=>{
+ const {fleetMediaWorkloads}=await import('./media-workloads.mjs');
+ const lanes=[0,1].map(member=>({member,active_job_id:`job-${member}`,phase:'generating',private_graph:'must-not-export',native_progress:{connected:true,at:100000,node_type:'KSampler',value:member+1,max:20}}));
+ const jobs=lanes.map(l=>({id:l.active_job_id,kind:'video',state:'running',execution:{worker_id:'pair',operation_id:'operation',parallel_members:true,phase:'generating',active_job_id:l.active_job_id,batch_size:8,lanes}}));
+ const view=fleetMediaWorkloads({jobs},100000);assert.equal(view.workloads.length,1);assert.equal(view.workloads[0].lanes.length,2);
+ assert.doesNotMatch(JSON.stringify(view),/must-not-export|private_graph/);
+ const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
+ const context=vm.createContext({});vm.runInContext(source,context);
+ const html=vm.runInContext(`workloadMarkup(${JSON.stringify({...view.workloads[0],engine:'H3',label:'Parallel generation'})},{},100000)`,context);
+ assert.match(html,/Member 1/);assert.match(html,/Member 2/);assert.match(html,/job-0/);assert.match(html,/job-1/);
+ assert.match(html,/2 member slots · 8 jobs/);assert.equal((html.match(/<progress /g)??[]).length,2);
+});
+
 test('Fleet media UI distinguishes runner heartbeat from generation progress and preserves stale evidence',()=>{
   const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0];
   const context=vm.createContext({});vm.runInContext(source,context);

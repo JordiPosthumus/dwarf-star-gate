@@ -1,10 +1,8 @@
-import {watchMediaProgress} from './media-progress.mjs';
+import {runMediaGeneration,mediaEngineIdle} from './media-generation.mjs';
 import assert from 'node:assert/strict';
 import {isDeepStrictEqual} from 'node:util';
 import {createHash} from 'node:crypto';
-import {openAsBlob} from 'node:fs';
 import {priorityRank} from './job-priority.mjs';
-import {validateVideoCatalog} from './media-validation.mjs';
 
 export function mediaBatchCanContinue(next,status){
   return !status.jobs.some(j=>j.state==='queued'&&!j.execution&&!j.dispatch_hold&&priorityRank(j)>priorityRank(next));
@@ -33,8 +31,8 @@ export async function waitForMediaLlm(plan,{recoveryInspect,progress,delay,save}
 export async function runMediaCycle(plan,io){
   const {jobs,save,maintenance,inspect,start,stop,recoveryInspect,verify,connect,delay}=io;
   const ids=plan.job_ids??[plan.operation_id];let activeId=plan.operation_id;
-  const progress=(phase,detail)=>io.progress(phase,detail,{...(ids.length>1?{active_job_id:activeId,batch_index:ids.indexOf(activeId)+1,batch_size:ids.length}:{}),native_progress:['generating','observing_media'].includes(phase)?nativeProgress?.snapshot()??null:null});
-  let nativeProgress,before,connection,stopped=false,mediaStarted=false,ready=false,error;
+  const progress=(phase,detail,context={})=>io.progress(phase,detail,{...(ids.length>1?{active_job_id:activeId,batch_index:ids.indexOf(activeId)+1,batch_size:ids.length}:{}),native_progress:context.native_progress??null});
+  let before,connection,stopped=false,mediaStarted=false,ready=false,error;
   const unchanged=(a,b)=>{
     for(const key of ['Id','Image','Config','HostConfig']){
       // Docker normalizes the unset OOM-killer flag from false to null on the
@@ -45,16 +43,7 @@ export async function runMediaCycle(plan,io){
     const mounts=x=>[...x.Mounts].sort((a,b)=>a.Destination.localeCompare(b.Destination));
     if(!isDeepStrictEqual(mounts(a),mounts(b)))throw new Error('Container mounts changed');
   };
-  const mediaIdle=async()=>{
-    if(plan.engine.kind==='ace-step'){
-      const {data}=await connection.backend.request('/v1/stats');
-      const counts=[data?.jobs?.queued,data?.jobs?.running,data?.queue_size];
-      assert.ok(counts.every(n=>Number.isSafeInteger(n)&&n>=0),'ACE-Step queue observation unavailable');
-      return counts.every(n=>n===0);
-    }
-    const q=await connection.backend.request('/queue');
-    return q.queue_running.length+q.queue_pending.length===0;
-  };
+  const mediaIdle=()=>mediaEngineIdle(connection.backend,plan.engine.kind);
   try{
     assert.ok(['comfyui','ace-step'].includes(plan.engine.kind),'Unsupported media engine');
     await io.pair?.capture();
@@ -85,44 +74,9 @@ export async function runMediaCycle(plan,io){
       }
     }
     if(!ready)throw Error(`${plan.engine.kind}: Media readiness not established; no generation submitted. Last check: ${readinessError??'no usable readiness response'}. Inspect the engine log and enrolled endpoint.`);
-    for(const id of ids){
-      activeId=id;
-      const job=jobs.get(id);
-      if(id!==ids[0]&&io.continueBatch){
-        let proceed=false;
-        try{proceed=await io.continueBatch(job);}catch(e){save('batch-check-unavailable.json',{error:e.message});}
-        if(!proceed){
-          save('batch-yield.json',{remaining_job_ids:ids.slice(ids.indexOf(id)),reason:'Batch continuation deferred. Restore the LLM and release unstarted jobs.'});
-          break;
-        }
-      }
-      for(const input of job.payload.input_files===undefined?[]:jobs.inputs.forJob(job.payload.input_files)){
-        progress('transferring_inputs',`Sending reference file ${input.name} to the selected engine.`);
-        await connection.backend.uploadInput(await openAsBlob(jobs.inputs.file(input.id),{type:input.content_type}),input.name);
-      }
-      if(plan.engine.kind==='comfyui'){
-        const catalog=await connection.backend.request('/object_info');
-        validateVideoCatalog(job.payload,catalog);
-      }
-      assert.ok(await mediaIdle(),'Media engine already has native work');assert.equal((await maintenance('transition')).owned,true);
-      nativeProgress=(io.watchProgress??watchMediaProgress)(connection.backend,job.id,job.payload.prompt);
-      progress('generating','Submitting the saved media job once.');
-      await jobs.dispatch(job.id,connection.backend,plan.worker_id);
-      for(;;){
-        let observed;
-        try{observed=await jobs.observe(job.id,connection.backend);}
-        catch{progress('observing_media','Native progress is temporarily unavailable; observing the original job without repeating it.');await delay(3000);continue;}
-        progress('generating',`Native job: ${observed.state}.`);
-        if(['completed','failed'].includes(observed.state)){if(observed.state==='failed')throw Error(observed.detail??'Native media generation failed; inspect the saved native task receipt');break;}
-        await delay(3000);
-      }
-      nativeProgress?.close();nativeProgress=null;
-      progress('retaining_results','Saving generated files before releasing the media engine.');
-      await jobs.collect(job.id,connection.backend);
-    }
+    await runMediaGeneration(plan,{...io,backend:connection.backend,progress,onJob:id=>{activeId=id;}});
   }catch(e){error=e;if(jobs.get(activeId).state==='queued')jobs.update(activeId,{state:'failed',detail:e.message});save('failure.json',{error:e.message});}
   finally{
-    nativeProgress?.close();
     try{
       if(stopped){
         assert.equal((await maintenance('owned')).owned,true);

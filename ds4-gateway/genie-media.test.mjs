@@ -7,6 +7,13 @@ import path from 'node:path';
 import {createMediaResources} from './media-resources.mjs';
 import {MediaWatch} from './media-watch.mjs';
 import {createMediaTools} from './genie-media.mjs';
+
+test('Genie parallel placement forwards explicit mode and rejects ambiguous physical selection',async()=>{
+ let received;const tools=createMediaTools({read:async()=>({}),start:async input=>{received=input;return input;}});
+ const input={action:'start',job_id:'first',worker_id:'pair',following_job_ids:['second'],parallel_members:true};
+ await tools.tool(input);assert.deepEqual(received,{job_id:'first',worker_id:'pair',following_job_ids:['second'],parallel_members:true});
+ await assert.rejects(tools.tool({...input,member:0}));await assert.rejects(tools.tool({...input,parallel_members:'yes'}));
+});
 import {hermesProvider} from './genie-hermes.mjs';
 import {GenieChat} from './genie-chat.mjs';
 import {capabilityStatus} from './genie-capability-status.mjs';
@@ -42,7 +49,7 @@ test('automatic queue wakeup uses pinned Hermes to start once and retain actual 
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'sg-media-chat-'));let starts=0,calls=0,setups=0,inputChecks=0,repairs=0,audits=0;
   const state={enabled:true,batch_jobs_supported:true,hosts:[{id:'one',engines:[{kind:'video',ready:true}]}],fleet:[{id:'one',is_healthy:true,drained:false,load:0,queued:0},{id:'two',is_healthy:true,drained:false,load:0,queued:0}],workers:[{id:'one',kinds:['video'],busy:false}],jobs:[{id,kind:'video',state:'queued'},{id:secondId,kind:'video',state:'queued'}]};
   const resources=createMediaResources({genie_chat:{inspection:{workers:{one:{kind:'omlx-local'}}}}},{inspect:async()=>({system:'Darwin',architecture:'arm64',gpu_names:[]})});
-  const tools=createMediaTools({audit:async input=>{audits++;assert.deepEqual(input,{});return {checked:[{state:"present"}]};},repair:async input=>{repairs++;assert.deepEqual(input,{worker_id:'one',engine:'ace-step',expected_failed_at:'2026-01-01T00:00:00Z'});return {state:'source_selected',retry_ready:true};},inspectInputs:async input=>{assert.deepEqual(input,{job_id:id,worker_id:'one'});inputChecks++;return {files:[{state:'present'}]};},setup:async input=>{assert.deepEqual(input,{worker_id:'one',engine:'ace-step'});setups++;state.setup={operations:[{worker_id:'one',engine:'ace-step',phase:'waiting_idle'}]};return state.setup.operations[0];},resources,read:async()=>state,start:async input=>{assert.deepEqual(input,{job_id:id,worker_id:'one',following_job_ids:[secondId]});starts++;for(const job of state.jobs)job.execution={worker_id:'one',phase:'waiting_idle',detail:'Admitted work finishing'};return state.jobs[0];}});
+  const tools=createMediaTools({audit:async input=>{audits++;assert.deepEqual(input,{});return {checked:[{state:"present"}]};},repair:async input=>{repairs++;assert.deepEqual(input,{worker_id:'one',engine:'ace-step',expected_failed_at:'2026-01-01T00:00:00Z'});return {state:'source_selected',retry_ready:true};},inspectInputs:async input=>{assert.deepEqual(input,{job_id:id,worker_id:'one'});inputChecks++;return {files:[{state:'present'}]};},setup:async input=>{assert.deepEqual(input,{worker_id:'one',engine:'ace-step'});setups++;state.setup={operations:[{worker_id:'one',engine:'ace-step',phase:'waiting_idle'}]};return state.setup.operations[0];},resources,read:async()=>state,start:async input=>{assert.deepEqual(input,{job_id:id,worker_id:'one',following_job_ids:[secondId],parallel_members:true});starts++;for(const job of state.jobs)job.execution={worker_id:'one',phase:'waiting_idle',detail:'Admitted work finishing'};return state.jobs[0];}});
   const server=http.createServer((req,res)=>{
     if(tools.handle(req,res))return;
     if(req.method==='GET'){res.end(JSON.stringify({data:[{id:'fixture'}]}));return;}
@@ -50,7 +57,7 @@ test('automatic queue wakeup uses pinned Hermes to start once and retain actual 
       const body=JSON.parse(raw);if(req.url!=='/v1/chat/completions'){res.end('{}');return;}calls++;
       if(calls===5)assert.match(JSON.stringify(body.messages),/waiting_idle/);
       if(calls===3)assert.match(JSON.stringify(body.messages),/recipe_platform_matches/);
-      const name=calls===2?'inspect_media_host':calls===3?'inspect_media_inputs':calls===4?'start_media_job':calls===6?'setup_media_host':calls===8?'repair_media_setup':calls===10?'audit_media_standard':'media_job_status',args=calls===2?{worker_id:'one'}:calls===3?{job_id:id,worker_id:'one'}:calls===4?{job_id:id,worker_id:'one',following_job_ids:[secondId]}:calls===6?{worker_id:'one',engine:'ace-step'}:calls===8?{worker_id:'one',engine:'ace-step',expected_failed_at:'2026-01-01T00:00:00Z'}:{};
+      const name=calls===2?'inspect_media_host':calls===3?'inspect_media_inputs':calls===4?'start_media_job':calls===6?'setup_media_host':calls===8?'repair_media_setup':calls===10?'audit_media_standard':'media_job_status',args=calls===2?{worker_id:'one'}:calls===3?{job_id:id,worker_id:'one'}:calls===4?{job_id:id,worker_id:'one',following_job_ids:[secondId],parallel_members:true}:calls===6?{worker_id:'one',engine:'ace-step'}:calls===8?{worker_id:'one',engine:'ace-step',expected_failed_at:'2026-01-01T00:00:00Z'}:{};
       const message=calls<=10?{role:'assistant',content:null,tool_calls:[{id:'media-'+calls,type:'function',function:{name:'tool_call',arguments:JSON.stringify({name,arguments:args})}}]}:{role:'assistant',content:'Job accepted on one; admitted LLM work is finishing. Generation has not started.'};
       const delta={...message,...(message.tool_calls?{tool_calls:message.tool_calls.map((v,index)=>({...v,index}))}:{})};
       res.setHeader('content-type','text/event-stream');res.end('data: '+JSON.stringify({id:'fixture',model:'fixture',choices:[{index:0,delta,finish_reason:null}]})+'\n\ndata: '+JSON.stringify({id:'fixture',model:'fixture',choices:[{index:0,delta:{},finish_reason:calls<=10?'tool_calls':'stop'}]})+'\n\ndata: [DONE]\n\n');

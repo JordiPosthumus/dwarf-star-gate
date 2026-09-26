@@ -11,6 +11,11 @@ export function mediaEngine(config,id,kind,member){
 export function mediaMemberInput(input,keys){
  return [keys,[...keys.split(','),'member'].sort().join(',')].includes(Object.keys(input??{}).sort().join(','))&&(input.member===undefined||[0,1].includes(input.member));
 }
+export function mediaStartInput(input,keys){
+ const {parallel_members,...rest}=input??{};
+ return (parallel_members===undefined||typeof parallel_members==='boolean')&&
+   !(parallel_members&&rest.member!==undefined)&&mediaMemberInput(rest,keys);
+}
 
 // Gateway-owned current enrollments, including engines qualified after startup.
 // Addresses stay in the consumer's trusted inspection configuration.

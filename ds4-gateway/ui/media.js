@@ -85,7 +85,7 @@ function renderJobs(jobs,supported){
       card.append(row.title,row.id,row.assignment,row.detail,row.machine,row.retention,row.files);jobCards.set(job.id,row);
     }
     row.title.textContent=`${engineNames[job.kind]??job.kind} · ${job.dispatch_hold?'held':job.state}`;
-    row.assignment.textContent=`${job.priority??'normal'} priority · ${job.execution?.worker_id??job.worker??'Waiting for assignment'}`;
+    row.assignment.textContent=`${job.priority??'normal'} priority · ${job.execution?.worker_id??job.worker??'Waiting for assignment'}${job.execution?.parallel_members?' · member '+(job.execution.member+1):''}`;
     if(job.execution?.batch_job_ids?.length>1)row.assignment.textContent+=` · batch job ${job.execution.batch_job_ids.indexOf(job.id)+1}/${job.execution.batch_job_ids.length}${job.execution.active_job_id&&job.state==='queued'&&job.execution.active_job_id!==job.id?' · waiting for its turn':''}`;
     row.detail.textContent=[job.dispatch_hold,job.detail,job.next_step].filter(Boolean).join(' ');row.detail.hidden=!row.detail.textContent;
     row.machine.textContent=job.execution?`Machine: ${job.execution.phase}${job.execution.detail?' — '+job.execution.detail:''}`:'';row.machine.hidden=!job.execution;

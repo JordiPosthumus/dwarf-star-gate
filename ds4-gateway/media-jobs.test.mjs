@@ -68,6 +68,9 @@ test('public capability counts only physical nonoverlapping budgeted slots and d
  const value=videoCapabilities(status,config);assert.equal(value.capacity.available_generation_slots,2);assert.equal(value.capacity.paired_members_parallel,false);
  assert.equal(value.recipes.h3_short.width,608);assert.equal(value.recipes.native_workflow.preserved,true);assert.equal(value.results.estimated_wait_seconds,null);
  assert.doesNotMatch(JSON.stringify(value),/private scene|s1|s2|alias/);
+ status.workers.forEach(w=>{w.parallel_kinds=['video'];});
+ assert.equal(videoCapabilities(status,config).capacity.available_generation_slots,4,'two budgeted pairs can expose one slot per physical member');
+ assert.equal(videoCapabilities(status,config).capacity.paired_members_parallel,true);
  status.automatic_dispatch_enabled=false;assert.equal(videoCapabilities(status,config).capacity.available_generation_slots,0);
  status.automatic_dispatch_enabled=true;status.media_budget.remaining_sparks=1;assert.equal(videoCapabilities(status,config).capacity.available_generation_slots,0);
 });

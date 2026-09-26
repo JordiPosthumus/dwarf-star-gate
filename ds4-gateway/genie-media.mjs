@@ -1,4 +1,4 @@
-import {mediaMemberInput} from './media-enrollment.mjs';
+import {mediaMemberInput,mediaStartInput} from './media-enrollment.mjs';
 import {createToolEndpoint} from './genie-tool-endpoint.mjs';
 import {priorityRank} from './job-priority.mjs';
 // Keep fleet/placement facts readable without embedding historical native graphs.
@@ -10,7 +10,7 @@ export function mediaJobOverview(job){
     out[key]=job[key].slice(0,512);if(job[key].length>512)out.details_shortened=true;
   }
   if(job.execution){
-    out.execution=pick(job.execution,['worker_id','member','operation_id','phase','at','started_at','changed_at','heartbeat_at','active_job_id','batch_index','batch_size','batch_job_ids','native_progress']);
+    out.execution=pick(job.execution,['worker_id','member','parallel_members','member_phase','operation_id','phase','at','started_at','changed_at','heartbeat_at','active_job_id','batch_index','batch_size','batch_job_ids','native_progress']);
     if(typeof job.execution.detail==='string'){out.execution.detail=job.execution.detail.slice(0,512);if(job.execution.detail.length>512)out.details_shortened=true;}
   }
   if(job.outputs)out.outputs={state:job.outputs.state,file_count:job.outputs.files?.length??0};
@@ -59,8 +59,8 @@ export function createMediaTools({read,start,inspectInputs=null,setup=null,repai
       if(!setup)throw new Error('Media setup is not connected.');
       return setup({worker_id:input.worker_id,engine:input.engine,...(input.member!==undefined?{member:input.member}:{}),...(input.expected_failed_at!==undefined?{expected_failed_at:input.expected_failed_at}:{})});
     }
-    if(input?.action!=='start'||!(mediaMemberInput(input,'action,job_id,worker_id')||mediaMemberInput(input,'action,following_job_ids,job_id,worker_id')))throw new Error('Read media status, then select queued jobs and an enrolled worker.');
+    if(input?.action!=='start'||!(mediaStartInput(input,'action,job_id,worker_id')||mediaStartInput(input,'action,following_job_ids,job_id,worker_id')))throw new Error('Read media status, then select queued jobs and an enrolled worker.');
     if(isTesting())throw new Error('Media execution is suspended for testing.');
-    return start({job_id:input.job_id,worker_id:input.worker_id,...(input.member!==undefined?{member:input.member}:{}),...(input.following_job_ids!==undefined?{following_job_ids:input.following_job_ids}:{})});
+    return start({job_id:input.job_id,worker_id:input.worker_id,...(input.member!==undefined?{member:input.member}:{}),...(input.parallel_members!==undefined?{parallel_members:input.parallel_members}:{}),...(input.following_job_ids!==undefined?{following_job_ids:input.following_job_ids}:{})});
   });
 }

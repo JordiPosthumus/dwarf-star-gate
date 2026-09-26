@@ -138,14 +138,39 @@ The capabilities endpoint reports `max_borrowed_sparks`, `borrowed_sparks`,
 queues accepted films; it does not grant clients lifecycle authority. Slot counts
 do not promise immediate execution, and unknown timing estimates remain null.
 
-**Current limit:** film submission is atomic, but execution still selects one
-media member per borrowed pair and up to eight sequential jobs per allocation.
-The API reports `paired_members_parallel: false` and
-`requested_parallelism_supported: false`. Coordinated parallel use of both pair
-members, full autonomous film acceptance through installed Hermes, and native
-six-machine operation still require implementation/verification. Disposable
-gateway/client fault tests prove transport and durable identities, not those
-native generation outcomes.
+Set `media_jobs.parallel_pair_members: true` to opt an installation into shared
+pair execution after qualifying both member engines and validating the parallel
+workload. This does not alter per-engine concurrency: one generation runs per
+physical member. The selected worker must have an exact pair binding, two
+physical machine mappings, and both engines enrolled. Genie sees eligible kinds
+in `workers[].parallel_kinds` and may pass `parallel_members: true` with two to
+eight already queued compatible jobs to `start_media_job`. It cannot also select
+an individual `member`. Default single-member behavior remains available.
+
+One coordinator reserves both physical machines, checks both media engines before
+draining, captures/stops the exact original GLM pair, and runs separate sequential
+clip queues on the two members concurrently. All member/job assignments persist
+before launch. Both outputs must be retained and all accepted native work must
+settle before engines are stopped and the pair is restored and verified once.
+A failure vetoes new clips without cancelling or replaying its sibling's accepted
+job. Unsubmitted clips return to the queue only after verified pair return.
+The Fleet view shows both member jobs under the shared operation.
+
+The capability API reports `paired_members_parallel` only when an opted-in
+worker has both enrollments; its slot count counts one slot per enabled member
+while charging both physical members to the budget once. Clients still cannot
+request a per-film parallelism limit (`requested_parallelism_supported: false`).
+Detached execution survives core replacement without another launch. A killed
+runner retains its claimed operation and uncertain state for reconciliation;
+automatic resumption after runner death is not implemented. Do not launch a new
+runner or replay native submissions to bypass that uncertainty.
+
+**Native acceptance still required:** simultaneous generation on actual enrolled
+members, full autonomous film production through installed Hermes, and native
+six-machine operation. Component/fault tests prove ownership, overlapping fixture
+generations and transport identities; they do not prove native memory fit,
+throughput, output fidelity or production availability. Qualify those properties
+before enabling the parallel policy on an installation.
 
 ## Individual clips and references
 

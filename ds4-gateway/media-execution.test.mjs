@@ -346,3 +346,33 @@ test('explicit physical member selects its qualified engine and cannot retarget 
  await assert.rejects(service.start({job_id:f.job.id,worker_id:'one',member:0}),/another worker/);
  await service.start({job_id:f.job.id,worker_id:'one',member:1});assert.equal(launches,1);
 });
+
+test('parallel member allocation requires explicit policy and both enrollments, preserves assignments across restart, and counts the pair once',async t=>{
+ const f=fixture(t),worker={id:'one',url:'http://127.0.0.1:38888/v1'};
+ const second=f.jobs.enqueue('video',{prompt:{two:{class_type:'Fixture'}}},{key:'rank-job'}).job;
+ f.config.machine_groups={one:['s1','s2']};f.config.media_jobs.max_borrowed_sparks=2;
+ f.config.media_jobs.pairs={one:{kind:'glm53-docker-pair',model:'GLM',worker_binding:worker,members:[{ssh:'fixture-host',container:'a'.repeat(64)},{ssh:'fixture-rank',container:'rank'}]}};
+ let launches=0;const options={workers:()=>[worker],isEnabled:()=>true,launchRunner:async()=>{launches++;throw Error('lost launch acknowledgement');}};
+ const input={job_id:f.job.id,following_job_ids:[second.id],worker_id:'one',parallel_members:true};
+ const service=createMediaExecution(f.config,f.jobs,options);
+ await assert.rejects(service.start(input),/explicit pair policy/);
+ f.config.media_jobs.parallel_pair_members=true;await assert.rejects(service.start(input),/both qualified/);
+ const rank={...f.engine,container:'d'.repeat(64),member:1};f.config.media_jobs.workers.one.member_engines={1:{video:rank}};
+ assert.deepEqual(service.status().workers[0].parallel_kinds,['video']);
+ await assert.rejects(service.start({...input,member:0}),/not both/);
+ await assert.rejects(service.start(input),/lost launch/);assert.equal(launches,1);
+ const plan=JSON.parse(fs.readFileSync(path.join(f.jobs.executionFolder(f.job.id),'plan.json')));
+ assert.deepEqual(plan.media_lanes.map(l=>[l.member,l.host,l.job_ids]),[[0,'fixture-host',[f.job.id]],[1,'fixture-rank',[second.id]]]);
+ assert.equal(plan.media_lanes[1].engine.container,rank.container);
+ const saved=new MediaJobs(f.jobs.filename),restored=createMediaExecution(f.config,saved,options);
+ assert.equal(saved.get(second.id).execution.member,1);assert.equal(saved.get(f.job.id).execution.member,0);
+ assert.equal(restored.status().media_budget.borrowed_sparks,2);assert.equal(restored.status().media_budget.remaining_sparks,0);
+ await restored.start(input);await restored.start({job_id:second.id,worker_id:'one',member:1});assert.equal(launches,1);
+ await assert.rejects(restored.start({...input,parallel_members:false}),/different execution mode/);
+ const folder=f.jobs.executionFolder(f.job.id);
+ saveMediaReceipt(folder,'progress.json',{phase:'generating',parallel_members:true,lanes:[{member:0,active_job_id:f.job.id,phase:'retaining_results',native_progress:null},{member:1,active_job_id:second.id,phase:'generating',native_progress:{value:2,max:20}}]});
+ assert.equal(saved.get(second.id).execution.member_phase,'generating');assert.equal(saved.get(second.id).execution.native_progress.value,2);
+ assert.equal(saved.get(f.job.id).execution.native_progress,null);
+ const native=new MediaJobs(path.join(folder,'media-jobs.json'));native.update(f.job.id,{state:'completed'});native.update(second.id,{state:'completed'});
+ saveMediaReceipt(folder,'progress.json',{phase:'returned'});assert.equal(restored.status().media_budget.borrowed_sparks,0);
+});

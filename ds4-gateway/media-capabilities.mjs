@@ -11,15 +11,15 @@ export function videoCapabilities(status,config){
   for(const w of candidates.sort((a,b)=>(a.budget?.sparks_required??1)-(b.budget?.sparks_required??1))){
     const physical=w.budget?.machines??[w.id],cost=physical.length;
     if(cost>remaining||physical.some(id=>selected.has(id)))continue;
-    physical.forEach(id=>selected.add(id));remaining-=cost;slots++;
+    physical.forEach(id=>selected.add(id));remaining-=cost;slots+=w.parallel_kinds?.includes('video')?2:1;
   }
   return {schema:1,enabled:status.enabled===true,automatic_dispatch_enabled:status.automatic_dispatch_enabled===true,
     routes:{capabilities:'/v1/video/capabilities',inputs:'/v1/video/inputs',jobs:'/v1/video/jobs',batches:'/v1/video/batches'},
     submission:{formats:['text_prompt','native_workflow'],atomic_film_batches:true,max_batch_clips:128,max_json_bytes:2*1024*1024,
       priorities:['high','normal','idle-only'],idempotency_key_required:true,insufficient_capacity:'queued',requested_parallelism_supported:false},
     capacity:{...status.media_budget,available_generation_slots:status.enabled&&status.automatic_dispatch_enabled?slots:0,
-      eligible_generation_slots:slots,paired_members_parallel:false,
-      scope:'Advisory snapshot. Current executor runs one selected member per borrowed pair. All affected physical members consume budget. Ownership and serving availability are rechecked before action.'},
+      eligible_generation_slots:slots,paired_members_parallel:(status.workers??[]).some(w=>w.parallel_kinds?.includes('video')),
+      scope:'Advisory snapshot. Opted-in pairs with both enrolled engines can run one generation on each member under shared ownership. Otherwise one selected member runs. All affected physical members consume budget; ownership and serving availability are rechecked before action.'},
     recipes:{h3_short:recipe,text_prompt_fields:['prompt','seed','reference_image','reference_audio'],
       native_workflow:{preserved:true,scope:'Use a native H3 workflow for resolution, per-clip frames, steps, reference sizing and multiple references. The gateway validates its reference wiring and the selected engine validates the graph; no implicit quality reduction.'}},
     references:{portable_uploads:true,upload_route:'/v1/video/inputs',native_workflow_input_field:'input_files',

@@ -59,6 +59,14 @@ export class MediaJobs {
           for(const key of ['state','worker','backend','native_id','detail','outputs','result','updated_at'])if(Object.hasOwn(row,key))job[key]=row[key];
         }
         if(fs.existsSync(progress))job.execution={...saved.execution,...JSON.parse(fs.readFileSync(progress,'utf8'))};
+        if(saved.execution.parallel_members){
+          const member=saved.execution.member_jobs?.find(l=>l.job_ids.includes(id))?.member;
+          if(![0,1].includes(member))throw Error('Missing parallel member assignment');
+          const lane=job.execution.lanes?.find(l=>l.member===member);
+          job.execution.member=member;
+          if(lane)Object.assign(job.execution,{active_job_id:lane.active_job_id,member_phase:lane.phase,
+            native_progress:lane.active_job_id===id?lane.native_progress:null});
+        }
         // A finite batch can end early. Only unsubmitted jobs are released, and
         // only after its original LLM returned (or no machine change occurred).
         if(job.state==='queued'&&['returned','failed_returned','failed_unchanged'].includes(job.execution.phase)){
