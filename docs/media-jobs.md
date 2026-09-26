@@ -345,10 +345,30 @@ retain the same reserved operation for reconciliation, not another native run.
 
 The fixed improvement adds verified API recipe representation and parameter
 receipts. It does not establish model-weight/voice fidelity, maximum-capacity
-boundaries or a new performance benchmark. Full coordinator takeover and
-autonomous progression across improvement stages remain unfinished. Native
+boundaries or a new performance benchmark. Full coordinator takeover remains
+unfinished. Native
 candidate generation/promotion and the complete AceFarm acceptance run remain
 separate installation requirements.
+
+With `media_jobs.improvements.enabled: true`, the enabled per-machine standard
+also drives the fixed ACE improvement through Genie. The core exposes advisory
+stage offers for its exact registered target: prepare, qualify, promote, or
+verify an already-saved stage completion. Qualification offers wait for an idle
+pair and a separate healthy serving LLM. Every tool and native transition still
+checks current permission, ownership and identities; an offer is not a permit.
+
+The dashboard watcher continues the existing improvement conversation when one
+exists, otherwise creates a standard-improvement conversation. It persists chat
+request identities before submission and observes actual core stages across
+restarts. Missing acknowledgements retain the same identity. A completed reply
+without native progress does not trigger another mutation; only a real status
+tool receipt proving temporary ineligibility permits another later wakeup.
+Testing mode, capability withdrawal, removed standard targets and owner-stopped
+or paused conversations prevent new wakeups. Already-owned restoration remains
+available. `improvement_watch` reports the target, stage, operation, conversation
+and reason; uncertain work needs reconciliation. The watcher neither executes
+server commands nor changes policies, and it does not discover arbitrary new
+upstream improvements.
 
 New media executions, candidate preparations and qualifications retain a private
 copy of their fixed JavaScript/Python dependency set before recording ownership.

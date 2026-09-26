@@ -23,7 +23,7 @@ const preparationScript=folder=>{const plan=JSON.parse(readPrivate(path.join(fol
 async function launch(folder,python){const script=preparationScript(folder),log=fs.openSync(path.join(folder,'runner.log'),'ax',0o600);try{const child=spawn(python,['-I','-B',script,folder,'run'],{detached:true,stdio:['ignore',log,log]});await new Promise((resolve,reject)=>{child.once('spawn',resolve);child.once('error',reject);});child.unref();return {pid:child.pid};}finally{fs.closeSync(log);}}
 const observePromotion=(folder,python)=>new Promise((resolve,reject)=>{const plan=JSON.parse(readPrivate(path.join(folder,'plan.json')));const script=plan.runtime?mediaRuntimeScript(folder,plan,'media_candidate_promotion.py'):path.join(root,'ds4-gateway/media_candidate_promotion.py');execFile(python,['-I','-B',script,folder],{timeout:300000,maxBuffer:1024*1024},(error,stdout)=>{if(error)return reject(Error('Native postqualification proof unavailable; enrollment unchanged'));try{resolve(JSON.parse(stdout));}catch{reject(Error('Native promotion proof unreadable'));}}).stdin.end();});
 const observe=(folder,python)=>new Promise((resolve,reject)=>{const child=execFile(python,['-I','-B',preparationScript(folder),folder,'status'],{timeout:300000,maxBuffer:1024*1024},(error,stdout)=>{if(error)return reject(Error('Candidate native observation unconfirmed; preparation was not repeated'));try{resolve(JSON.parse(stdout));}catch{reject(Error('Candidate status unreadable'));}});child.stdin.end();});
-export function createMediaCandidates(config,store,{directory,workers,isEnabled,isAllowed,assertCapacity,hostAvailable=()=>true,launchRunner=launch,launchQualification=launchMediaRunner,observeRunner=observe,observePromotionRunner=observePromotion,promotions=null,bundle=frozenBundle}={}){
+export function createMediaCandidates(config,store,{directory,workers,isEnabled,isAllowed,assertCapacity,hostAvailable=()=>true,qualificationReady=()=>true,launchRunner=launch,launchQualification=launchMediaRunner,observeRunner=observe,observePromotionRunner=observePromotion,promotions=null,bundle=frozenBundle}={}){
  const policy=config.media_jobs?.improvements;
  if(policy!==undefined)assert.ok(policy&&Object.keys(policy).every(k=>k==='enabled')&&typeof policy.enabled==='boolean','media_jobs.improvements accepts enabled boolean only');
  const enabled=()=>config.media_jobs?.improvements?.enabled===true&&isEnabled();
@@ -113,9 +113,36 @@ export function createMediaCandidates(config,store,{directory,workers,isEnabled,
   if(!persist)return {root,plan,proof,audio};
   const updated={...row,phase:'qualified_returned',qualification:proof,qualification_receipts_sha256:hashes,finished_at:new Date().toISOString()};save(updated);return publicRow(updated);
  }
+ function offers(){
+  const targets=config.media_jobs?.standard?.enabled===true?config.media_jobs.standard.targets??[]:[],seen=new Set(),result=[];
+  for(const target of targets.filter(t=>t.engine==='ace-step')){
+   const offer={worker_id:target.worker_id,...(target.member!==undefined?{member:target.member}:{}),stage:null,eligible:false,reason:null};
+   try{
+    const selected=selection(target.worker_id,target.member),key=JSON.stringify([selected.worker_id,selected.member??null]);if(seen.has(key))continue;seen.add(key);
+    Object.assign(offer,{key,member:selected.member});
+    const row=rows().find(r=>r.worker_id===selected.worker_id&&r.member===selected.member&&(r.engine.container===selected.engine.container&&r.engine.image===selected.engine.image||r.phase==='promoted'&&r.candidate.container===selected.engine.container&&r.candidate.image===selected.engine.image));
+    if(row){offer.operation_id=row.operation_id;offer.phase=view(row).phase;}
+    if(offer.phase==='promoted'){offer.reason='already_promoted';result.push(offer);continue;}
+    if(offer.phase==='requires_reconciliation'){offer.reason='saved_operation_requires_reconciliation';result.push(offer);continue;}
+    offer.stage=!row?'prepare':row.phase==='candidate_prepared'?'qualify':row.phase==='qualified_returned'?'promote':
+     row.phase==='candidate_preparing'&&fs.existsSync(path.join(folder(row.operation_id),'result.json'))?'finish_preparation':
+     row.phase==='candidate_qualifying'&&fs.existsSync(path.join(qualificationFolder(row),'completion.json'))?'finish_qualification':null;
+    if(!offer.stage){offer.reason='observe_existing_operation';result.push(offer);continue;}
+    if(!enabled()){offer.reason='improvement_policy_or_capabilities_off';result.push(offer);continue;}
+    // Advisory eligibility never runs native code or grants a permit. Actual
+    // tool calls and native transitions repeat their own current-state checks.
+    if(['prepare','qualify','promote'].includes(offer.stage))permitted(row??selected);
+    if(offer.stage==='qualify'&&!qualificationReady(selected.worker_id)){offer.reason='waiting_for_idle_pair_and_separate_llm';result.push(offer);continue;}
+    if(offer.stage==='promote'&&!promotions){offer.reason='promotion_not_connected';result.push(offer);continue;}
+    offer.eligible=true;offer.evidence_id=fingerprint([selected.binding,selected.physical_machines,offer.stage,row?.operation_id??null,row?.qualification_plan_sha256??null]);
+   }catch{offer.reason='current_binding_permission_or_capacity_unverified';}
+   result.push(offer);
+  }
+  return result;
+ }
  return {
   operations:()=>rows().map(r=>({...view(r),physical_machines:r.physical_machines})),
-  status:()=>({supported:true,enabled:enabled(),improvement:'ace-api-fields-v1',qualification_supported:true,promotion_supported:!!promotions,operations:rows().map(view),scope:'Separate ACE candidate preparation and fixed one-song qualification with GLM return/cache checks. Qualification borrows an idle pair. Conditional promotion retains the original engine and changes only the qualified target enrollment.'}),
+  status:()=>({supported:true,enabled:enabled(),improvement:'ace-api-fields-v1',qualification_supported:true,promotion_supported:!!promotions,offers:offers(),operations:rows().map(view),scope:'Separate ACE candidate preparation and fixed one-song qualification with GLM return/cache checks. Qualification borrows an idle pair. Conditional promotion retains the original engine and changes only the qualified target enrollment. Offers are advisory; each native action rechecks current permission and ownership.'}),
   finish,
   finishQualification(input){
    assert.deepEqual(Object.keys(input??{}),['operation_id']);const row=get(input.operation_id);

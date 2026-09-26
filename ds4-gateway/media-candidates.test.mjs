@@ -72,6 +72,15 @@ test('private plan and frozen source hashes persist before launch',async t=>{
  for(const [key,value] of Object.entries(bundle.patch))assert.equal(plan.source_sha256[key],sha(value));
  const c=f.capture(row);fs.chmodSync(path.join(folder,'request.json'),0o644);assert.throws(()=>f.service.permit(c.permit),/private/);
 });
+test('read-only improvement offers reflect current policy, capacity and exact prepared stages',async t=>{
+ const f=fixture(t),first=f.service.status().offers[0];assert.equal(first.stage,'prepare');assert.equal(first.eligible,true);assert.match(first.evidence_id,/^[a-f0-9]{64}$/);assert.equal(f.launches,0);assert.deepEqual(f.store.data,{});
+ f.enabled=false;assert.equal(f.service.status().offers[0].eligible,false);f.enabled=true;
+ f.external.push({operation_id:'other',worker_id:'alias',phase:'preparing'});assert.equal(f.service.status().offers[0].eligible,false);f.external=[];
+ const row=await f.service.start({worker_id:'pair'});assert.equal(f.service.status().offers[0].stage,null);assert.equal(f.service.status().offers[0].operation_id,row.operation_id);
+ const c=f.capture(row);f.service.permit(c.permit);saveMediaReceipt(c.folder,'result.json',{state:'prepared_stopped'});
+ assert.equal(f.service.status().offers[0].stage,'finish_preparation','only existing completion may request a read-only finish');
+ saveMediaReceipt(c.folder,'attention.json',{state:'requires_reconciliation'});assert.equal(f.service.status().offers[0].stage,null);assert.equal(f.service.status().offers[0].eligible,false);
+});
 
 test('private core routes retain a failed launch across gateway restart; public API grants no preparation authority',async t=>{
  const {createGateway}=await import('./gateway.mjs'),{workerControl}=await import('./worker-client.mjs'),http=await import('node:http');
@@ -115,6 +124,14 @@ test('qualification holds physical capacity before launch, retains enrollment an
 test('qualification refuses changed native preparation and rechecks policy after asynchronous inspection',async t=>{
  const f=await preparedFixture(t);f.result.container='d'.repeat(64);await assert.rejects(f.service.qualify(f.input),/changed/);assert.equal(f.qualifications,0);
  f.result.container='e'.repeat(64);f.options.observeRunner=async()=>{f.enabled=false;return f.result;};f.reopen();await assert.rejects(f.service.qualify(f.input),/policy/);assert.equal(f.qualifications,0);
+});
+test('qualification offers wait for serving capacity and deduplicate implicit/explicit member targets',async t=>{
+ const f=await preparedFixture(t);f.options.qualificationReady=()=>false;f.reopen();f.config.media_jobs.standard.targets.push({worker_id:'pair',engine:'ace-step',member:0});
+ let offers=f.service.status().offers;assert.equal(offers.length,1);assert.equal(offers[0].stage,'qualify');assert.equal(offers[0].eligible,false);assert.equal(offers[0].reason,'waiting_for_idle_pair_and_separate_llm');
+ f.options.qualificationReady=()=>true;f.reopen();assert.equal(f.service.status().offers[0].eligible,true);
+ await f.service.qualify(f.input);assert.equal(f.service.status().offers[0].stage,null);
+ const q=f.qualification();saveMediaReceipt(q.root,'completion.json',{fixture:true});assert.equal(f.service.status().offers[0].stage,'finish_qualification');
+ assert.equal(f.qualifications,1);
 });
 test('saved qualification runtime is pinned before launch and cannot be replaced on restart',async t=>{
  const f=await preparedFixture(t);await f.service.qualify(f.input);const q=f.qualification();
@@ -191,7 +208,9 @@ async function qualifiedFixture(t){
 }
 test('promotion changes only the selected member/default identity, commits durable rollback and survives restoration',async t=>{
  const f=await qualifiedFixture(t),before=structuredClone(f.config.media_jobs.workers.pair),other=structuredClone(f.config.media_jobs.workers.pair.member_engines[1]);
+ assert.equal(f.service.status().offers[0].stage,'promote');assert.equal(f.service.status().offers[0].eligible,true);
  const row=await f.service.promote(f.input);assert.equal(row.phase,'promoted');assert.equal(f.observations,1);
+ assert.equal(f.service.status().offers[0].phase,'promoted');assert.equal(f.service.status().offers[0].eligible,false);
  assert.equal(f.config.media_jobs.workers.pair.engines.music.container,f.result.container);assert.deepEqual(f.config.media_jobs.workers.pair.member_engines[1],other);
  assert.equal(f.store.data.media_engine_promotions.pair[0].cells.length,2);
  assert.equal(f.store.data.media_engine_promotions.pair[0].cells[0].before.container,before.member_engines[0].music.container);

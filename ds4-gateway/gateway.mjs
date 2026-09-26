@@ -415,6 +415,11 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     isEnabled:()=>!draining&&!shuttingDown&&capabilityStatus().media&&capabilityStatus().inspection&&capabilityStatus().server_changes,
     assertCapacity:(id,ownOperation)=>mediaExecution.assertCapacity(id,ownOperation),
     hostAvailable:(id,ownLock)=>{const physical=machinesFor(id,serviceConfig);return nodes.filter(n=>machinesFor(n.id,serviceConfig).some(m=>physical.includes(m))).every(n=>!n.recovering&&!agents.holds(n.id).length&&agents.maintenanceLocks(n.id).every(lock=>n.id===id&&lock.id===ownLock&&lock.control_channel==='approved_operation'));},
+    qualificationReady:id=>{
+      const physical=machinesFor(id,serviceConfig),available=n=>n.healthy&&!n.drained&&!n.quarantine&&!n.recovering&&!agents.holds(n.id).length&&!agents.maintenanceLocks(n.id).length;
+      const selected=nodes.filter(n=>machinesFor(n.id,serviceConfig).some(m=>physical.includes(m)));
+      return selected.some(n=>n.id===id)&&selected.every(n=>available(n)&&!activeCount(n)&&!n.queue.length&&!parkedFor(n).length&&!directReserved(n))&&nodes.some(n=>available(n)&&!machinesFor(n.id,serviceConfig).some(m=>physical.includes(m)));
+    },
   }):null;
   const rebalanceEnabled=()=>capabilityStatus().rebalance;
   const allocationStatus=slot=>slot.turnAllocation?{turns_used:slot.turnAllocation.used,remaining:Math.max(0,conversationTurns()-slot.turnAllocation.used),waiting_for_next_turn:!slot.active&&slot.turnAllocation.until>performance.now(),idle_remaining_ms:Math.max(0,Math.ceil(slot.turnAllocation.until-performance.now()))}:null;
