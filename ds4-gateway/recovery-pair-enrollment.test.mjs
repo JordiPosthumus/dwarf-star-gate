@@ -83,7 +83,10 @@ test('real private core protocol queues one enrollment and reports missing evide
   const input=f.request();await assert.rejects(workerControl(config.control_socket,'/enroll-pair-recovery',input),/policy_disabled/);
   await workerControl(config.control_socket,'/recovery-policy',{enabled:true});
   const accepted=await workerControl(config.control_socket,'/enroll-pair-recovery',input);assert.equal(accepted.state,'queued');
-  let row;for(let i=0;i<100;i++){row=(await workerControl(config.control_socket,'/workers')).recovery.pair_enrollment.operations[0];if(row.state!=='queued')break;await new Promise(resolve=>setTimeout(resolve,20));}
+  // Under the complete parallel suite, macOS can take several seconds to start
+  // the fixed Python inspector. Observe the same action until a bounded deadline.
+  let row;const deadline=Date.now()+30000;
+  do{row=(await workerControl(config.control_socket,'/workers')).recovery.pair_enrollment.operations.find(r=>r.action_id===input.action_id);if(row?.state!=='queued')break;await new Promise(resolve=>setTimeout(resolve,50));}while(Date.now()<deadline);
   assert.equal(row.state,'failed');assert.equal(gateway.recovery.config('custom-pair'),undefined);
   assert.equal((await workerControl(config.control_socket,'/enroll-pair-recovery',input)).state,'failed');
   assert.equal((await workerControl(config.control_socket,'/workers')).recovery.pair_enrollment.operations.length,1);
