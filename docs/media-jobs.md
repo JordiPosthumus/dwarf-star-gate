@@ -267,6 +267,10 @@ declarations or handler receipt support prevent qualification before drain;
 a substituted or absent runtime handler fails audio qualification while the
 owned lifecycle still restores the original LLM. Historical recipe-only
 qualification can be observed but cannot authorize automatic promotion.
+Scheduling requires the selected GLM pair to be available and a separate LLM
+to remain serving. Intentionally parked model aliases on the same Sparks need
+not be healthy, but every overlapping alias must be free of active, queued,
+parked and direct work, recovery, agent holds and maintenance ownership.
 A missing receipt, changed file, other codec or parameter mismatch cannot qualify
 the result. This check is connected to the saved candidate qualification
 lifecycle below. Generated audio proof alone does not establish LLM return,

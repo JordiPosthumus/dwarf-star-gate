@@ -17,6 +17,13 @@ const root=fileURLToPath(new URL('../',import.meta.url)),runner=path.join(root,'
 const modules=['docker_profile','recovery_pair','recovery_pair_native','recovery_media_command','media_recipe_contract','media_ace_candidate'];
 const sha=b=>createHash('sha256').update(b).digest('hex'),fingerprint=v=>sha(JSON.stringify(v));
 const uuid=v=>typeof v==='string'&&/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(v);
+export function mediaQualificationReady(config,nodes,id,{available,idle}){
+ const physical=machinesFor(id,config),overlaps=n=>machinesFor(n.id,config).some(m=>physical.includes(m));
+ const selected=nodes.find(n=>n.id===id);
+ // A parked alias is not another model that must be loaded. Every alias still
+ // participates in ownership/work checks before this pair may be borrowed.
+ return !!selected&&available(selected)&&nodes.filter(overlaps).every(idle)&&nodes.some(n=>!overlaps(n)&&available(n));
+}
 const publicRow=r=>Object.fromEntries(['operation_id','worker_id','member','phase','created_at','finished_at','candidate','qualification_job_id','qualification','promotion','reason'].filter(k=>r[k]!==undefined).map(k=>[k,r[k]]));
 const readPrivate=p=>{const st=fs.lstatSync(p);assert.ok(st.isFile()&&!st.isSymbolicLink()&&(st.mode&0o077)===0&&(!process.getuid||st.uid===process.getuid())&&st.size<=4*1024*1024,'Candidate receipt is not private');return fs.readFileSync(p);};
 const frozenBundle=()=>({modules:Object.fromEntries(modules.map(name=>[name,fs.readFileSync(path.join(root,'ds4-gateway',name+'.py'),'utf8')])),patch:Object.fromEntries(['apply-recipe-fields.py','verify-api-fields.py'].map(name=>[name,fs.readFileSync(path.join(root,'examples/spark-build/ace-step',name),'utf8')]))});

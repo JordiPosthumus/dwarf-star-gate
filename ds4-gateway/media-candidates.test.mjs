@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {createMediaPromotions} from './media-promotions.mjs';
-import {createMediaCandidates} from './media-candidates.mjs';
+import {createMediaCandidates,mediaQualificationReady} from './media-candidates.mjs';
 import {createMediaExecution,saveMediaReceipt} from './media-execution.mjs';
 import {createMediaTools} from './genie-media.mjs';
 const modelNames={dit:'fixture-xl-sft',lm:'fixture-4B'},runtimeDescriptor={schema:1,source:'acestep.api.generate_music_fn.handlers',per_call:true};
@@ -266,4 +266,24 @@ test('historical recipe-only qualification cannot authorize model-preserving pro
  f.store.data.media_candidates[f.row.operation_id].qualification_plan_sha256=sha(fs.readFileSync(path.join(q.root,'plan.json')));
  await assert.rejects(f.service.promote(f.input),/historical recipe-only/);
  assert.equal(f.observations,0);assert.deepEqual(f.config,f.baseline);
+});
+test('parked aliases do not block an idle GLM pair, but all overlapping work and ownership still does',async t=>{
+ const f=await preparedFixture(t);
+ const nodes=[{id:'pair',healthy:true},{id:'old-qwen',healthy:false,drained:true},{id:'other-pair',healthy:true}];
+ f.config.machine_groups['old-qwen']=['s1'];f.config.machine_groups['other-pair']=['s3','s4'];
+ const available=n=>n.healthy&&!n.drained&&!n.quarantine&&!n.recovering&&!n.hold&&!n.maintenance;
+ const idle=n=>!['active','queued','parked','direct','hold','maintenance','recovering'].some(k=>n[k]);
+ f.options.qualificationReady=id=>mediaQualificationReady(f.config,nodes,id,{available,idle});f.reopen();
+ assert.equal(f.service.status().offers[0].eligible,true,'an intentionally parked old model must not need to load');
+ for(const key of ['active','queued','parked','direct','hold','maintenance','recovering']){
+  nodes[1][key]=1;assert.equal(f.service.status().offers[0].eligible,false,key+' on overlapping alias blocks borrowing');delete nodes[1][key];
+ }
+ for(const key of ['drained','quarantine','recovering','hold','maintenance']){
+  nodes[0][key]=true;assert.equal(f.service.status().offers[0].eligible,false);delete nodes[0][key];
+ }
+ nodes[0].healthy=false;assert.equal(f.service.status().offers[0].eligible,false);nodes[0].healthy=true;
+ nodes[2].healthy=false;assert.equal(f.service.status().offers[0].eligible,false,'another alias of the same physical pair is not spare serving capacity');
+ nodes[2].healthy=true;assert.equal(f.service.status().offers[0].eligible,true);
+ assert.equal(mediaQualificationReady(f.config,nodes,'missing',{available,idle}),false);
+ assert.equal(f.qualifications,0,'read-only offers never launch work');
 });
