@@ -6,11 +6,18 @@ export function recoveryEvidence(status){
   return {observed_at:new Date().toISOString(),...recovery,
     matched_bindings:recovery.workers.filter(w=>w.enrollment?.binding==='matched').map(w=>w.worker_id),
     unmatched_bindings:recovery.workers.filter(w=>w.enrollment?.binding!=='matched').map(w=>({worker_id:w.worker_id,binding:w.enrollment?.binding??'unknown'})),
-    scope:'Current enrolled-service eligibility and existing recovery receipts. configured and adapter describe a registered definition, not a working connection. A mismatched or absent binding is NOT connected. The switch alone does not connect a service. A queued receipt is acceptance, not successful recovery. Explicitly opted-in pairs may be enrolled from native capture receipts. Enrollment does not qualify a restart. No canary or server configuration changes are available here.'};
+    scope:'Current enrolled-service eligibility and existing recovery receipts. configured and adapter describe a registered definition, not a working connection. A mismatched or absent binding is NOT connected. The switch alone does not connect a service. A queued receipt is acceptance, not successful recovery. Explicitly opted-in pairs may be enrolled from native capture receipts. Enrollment does not qualify a restart. Explicitly opted-in idle healthy pairs offer evidence-bound restart qualification; it requires native GLM proof and preserves operator pauses. No arbitrary server configuration changes are available here.'};
 }
-export function createRecoveryTools({read,recover,preparation=null,enroll=null,isChangesEnabled=()=>false,continuation=()=>null,enrollmentContinuation=()=>null,isInspectionEnabled=()=>true,isTesting=()=>false,isEnabled=()=>true}){
+export function createRecoveryTools({read,recover,preparation=null,enroll=null,qualify=null,isChangesEnabled=()=>false,continuation=()=>null,enrollmentContinuation=()=>null,qualificationContinuation=()=>null,isInspectionEnabled=()=>true,isTesting=()=>false,isEnabled=()=>true}){
   async function tool(input){
-    if(input?.action==='status'&&Object.keys(input).length===1)return {...recoveryEvidence(await read()),...(preparation?{pair_preparations:await preparation.status(),pair_preparation_followup:continuation(),pair_enrollment_followup:enrollmentContinuation()}: {})};
+    if(input?.action==='status'&&Object.keys(input).length===1)return {...recoveryEvidence(await read()),...(preparation?{pair_preparations:await preparation.status(),pair_preparation_followup:continuation(),pair_enrollment_followup:enrollmentContinuation(),pair_qualification_followup:qualificationContinuation()}: {})};
+    if(input?.action==='qualify-pair'){
+      if(!qualify||isTesting()||!isEnabled()||!isInspectionEnabled()||!isChangesEnabled())throw Error('Pair qualification is unavailable or suspended.');
+      if(Object.keys(input).sort().join(',')!=='action,action_id,evidence_id,worker_id'||typeof input.worker_id!=='string'||!/^[a-f0-9]{64}$/.test(input.evidence_id??'')||!/^[a-f0-9-]{36}$/.test(input.action_id??''))throw Error('Specify current pair qualification evidence and one action ID');
+      const receipt=await qualify({worker_id:input.worker_id,evidence_id:input.evidence_id,action_id:input.action_id});
+      if(receipt?.id!==input.action_id||receipt.worker_id!==input.worker_id||receipt.actor!=='genie'||receipt.pair_qualification!==true)throw Error('Qualification acknowledgement is uncertain; inspect the same action ID without replaying.');
+      return receipt;
+    }
     if(input?.action==='enroll-pair'){
       if(!enroll||isTesting()||!isEnabled()||!isInspectionEnabled()||!isChangesEnabled())throw Error('Pair recovery enrollment is unavailable or suspended.');
       if(Object.keys(input).sort().join(',')!=='action,action_id,capture_id,worker_id')throw Error('Specify a worker and existing capture ID');
