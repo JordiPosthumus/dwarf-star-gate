@@ -380,6 +380,8 @@ Hermes and Python for conversational Genie, asks for your model API connection,
 and verifies a reply. No previous Hermes installation is needed. Git, tar and
 internet access are required for that download; your model must already be reachable.
 Your personal Hermes installation is preserved. See [Genie setup](docs/genie-conversation.md).
+To talk to the same Genie from your phone, open **Gate Genie → Telegram** and
+follow the [Telegram setup](docs/genie-telegram.md).
 
 Setup creates an ignored, mode-0600 `config.local.json` with a random API key and
 an empty worker list. Existing settings are preserved; adding Genie to an existing

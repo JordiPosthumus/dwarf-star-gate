@@ -1,3 +1,4 @@
+import {GenieTelegram,handleTelegramSettings} from './genie-telegram.mjs';
 import {MediaStandardWatch} from './media-standard-watch.mjs';
 import {createNativeMediaStatus} from './native-media-status.mjs';
 import {fleetMediaWorkloads} from './media-workloads.mjs';
@@ -86,6 +87,7 @@ assets.set('/current-jobs.js',['current-jobs.js','text/javascript']);
 assets.set('/genie-handoff.js',['genie-handoff.js','text/javascript']);
 assets.set('/genie-progress.js',['genie-progress.js','text/javascript']);
 assets.set('/genie-chat.js',['genie-chat.js','text/javascript']);
+assets.set('/genie-telegram.js',['genie-telegram.js','text/javascript']);
 assets.set('/genie-chat.css',['genie-chat.css','text/css']);
 assets.set('/server-operations.js',['server-operations.js','text/javascript']);
 assets.set('/genie-capabilities.js',['genie-capabilities.js','text/javascript']);
@@ -135,7 +137,7 @@ export function proxyMediaFile(config,req,res,route){
       res.on('close',()=>upstream.destroy());upstream.end();
     }
 
-export function createDashboard(getSnapshot, assetsDirectory = path.join(here, 'ui'), management = null, genie = null, requestHistory = null, currentJobs = null, testing = null, lanSharing = null, chat = null, hourglass = null, operations = null, queueTools = null, recoveryTools = null, mediaTools = null, sparkSetup = null, powerTools = null, admissionTools = null) {
+export function createDashboard(getSnapshot, assetsDirectory = path.join(here, 'ui'), management = null, genie = null, requestHistory = null, currentJobs = null, testing = null, lanSharing = null, chat = null, hourglass = null, operations = null, queueTools = null, recoveryTools = null, mediaTools = null, sparkSetup = null, powerTools = null, admissionTools = null, telegram = null) {
   const csrf = randomBytes(32).toString('base64url');
   // Freeze one complete release in memory: edits on disk cannot expose half an
   // update to a live browser. Only the dashboard needs a reload to promote it.
@@ -162,6 +164,7 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
       res.writeHead(403, headers); return res.end(dsgReport('Local same-origin dashboard only'));
     }
     const reply = (status, value) => { if (!res.destroyed && !res.headersSent) { res.writeHead(status,{...headers,'content-type':'application/json'}); res.end(JSON.stringify(status>=400&&typeof value.error==='string'?{...value,error:dsgReport(value.error)}:value)); } };
+    if(handleTelegramSettings(req,res,{telegram,csrf,reply}))return;
     if(req.method==='GET'&&/^\/api\/media\/(music|video)\/jobs\/[a-f0-9-]{36}\/files\/[a-f0-9-]{36}$/.test(req.url??'')){
       if(!management?.mediaFile)return reply(409,{error:'Media downloads are not connected.'});
       for(const [name,value] of Object.entries(headers))res.setHeader(name,value);
@@ -600,6 +603,7 @@ export async function runDashboard(configPath, port) {
   const chat=config.genie_chat?new GenieChat({directory:chatDirectory,notebook:config.genie_chat.operational_notebook===true?memory:null,getSnapshot:()=>({...snapshot(),genie:genie.status(),genie_handovers:requestHistory.snapshot().handovers}),isSuspended:isTesting,runQuestion:(answer,onWait)=>genie.answerChat(answer,onWait),provider:hermesProvider({...chatProviderConfig,spark_setup:sparkSetup?.toolConfig,operations:operations?.toolConfig,hourglass:hourglass?.toolConfig,queue:queueTools?.toolConfig,recovery:recoveryTools?.toolConfig,media:mediaTools?.toolConfig,power:powerTools?.toolConfig,admission:admissionTools?.toolConfig},{directory:chatDirectory,isCapabilityEnabled})}):null;
   const nativeMedia=createNativeMediaStatus(config);
   const fleetCatalogue=async()=>{const s=snapshot();let media={workloads:[],native_engines:[]};try{if(managementEnabled&&config.control_socket){const value=await workerControl(config.control_socket,'/media-jobs',undefined,{channel:'dashboard'});media={...fleetMediaWorkloads(value),native_engines:nativeMedia?.(value)??[]};}}catch{/* Media evidence stays empty; the catalogue stays truthful about what it could observe. */}return buildCatalogue({members:s.fleet_machines??[],workers:s.gateway?.workers??[],devices:s.devices??[],media,routes:s.gateway?.model_routes??{},now:Date.now()});};
+  const telegram=chat?new GenieTelegram({directory:path.join(path.dirname(config.state_file),'genie','telegram'),chat,snapshot}):null;
   const server = createDashboard(snapshot, path.join(here,'ui'), managementEnabled ? {
     read:()=>workerControl(config.control_socket,'/workers',undefined,{channel:'dashboard'}),
     catalogue:()=>fleetCatalogue(),
@@ -615,8 +619,9 @@ export async function runDashboard(configPath, port) {
   }:null,managementEnabled&&continuityEnabled(config)?{
     read:async()=>lanSharingDetails(await doorControl(doorSocket(config),'/lan-sharing'),config.port),
     set:async enabled=>lanSharingDetails(await doorControl(doorSocket(config),'/set-lan-sharing',{enabled}),config.port),
-  }:null,chat,hourglass,operations,queueTools,recoveryTools,mediaTools,sparkSetup,powerTools,admissionTools);
+  }:null,chat,hourglass,operations,queueTools,recoveryTools,mediaTools,sparkSetup,powerTools,admissionTools,telegram);
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
+  telegram?.start();
   sparkSetup?.bind(server.address().port);
   powerTools?.bind(server.address().port);
   admissionTools?.bind(server.address().port);
@@ -635,7 +640,7 @@ export async function runDashboard(configPath, port) {
   omlxEnrollmentWatch=chat&&recoveryTools?new PairPreparationWatch({kind:'omlx-enrollment',filename:path.join(path.dirname(config.state_file),'genie','omlx-enrollment-watch.json'),chat,read:async()=>(await recoveryTools.tool({action:'status'})).omlx_enrollment?.operations??[],isEnabled:()=>!isTesting()&&isCapabilityEnabled('inspection')}):null;
   pairQualificationWatch=chat&&recoveryTools?new PairPreparationWatch({kind:'qualification',filename:path.join(path.dirname(config.state_file),'genie','pair-qualification-watch.json'),chat,read:async()=>(await recoveryTools.tool({action:'status'})).operations.filter(o=>o.pair_qualification===true).map(o=>({...o,action_id:o.id})),isEnabled:()=>!isTesting()&&isCapabilityEnabled('inspection')}):null;
   await poll(); endpointTelemetry.poll(); const interval = setInterval(poll, 2000), endpointTimer=setInterval(()=>endpointTelemetry.poll(),2000), historyTimer=setInterval(()=>monitoringHistory.save(activity,endpointTelemetry),10000), genieTimer=setInterval(()=>{genie.tick();chat?.tick();void (async()=>{await mediaStandardWatch?.tick();await mediaWatch?.tick();await sparkSetupWatch?.tick();await pairPreparationWatch?.tick();await pairEnrollmentWatch?.tick();await pairQualificationWatch?.tick();await omlxEnrollmentWatch?.tick();await omlxQualificationWatch?.tick();})();},10000);
-  const close = () => { monitoringHistory.save(activity,endpointTelemetry);endpointTelemetry.close(); closed = true; clearInterval(interval);clearInterval(endpointTimer);clearInterval(historyTimer);clearInterval(genieTimer);mediaStandardWatch?.close();mediaWatch?.close();sparkSetupWatch?.close();pairPreparationWatch?.close();pairEnrollmentWatch?.close();pairQualificationWatch?.close();omlxEnrollmentWatch?.close();omlxQualificationWatch?.close();genie.close();chat?.close();operations?.close();hourglass?.close();hardware.close();stopGenieTunnel(); for (const t of timers) clearTimeout(t); for (const child of children) child.kill(); server.closeAllConnections(); server.close(); process.removeListener('SIGTERM', close); process.removeListener('SIGINT', close); };
+  const close = () => { monitoringHistory.save(activity,endpointTelemetry);endpointTelemetry.close(); closed = true; clearInterval(interval);clearInterval(endpointTimer);clearInterval(historyTimer);clearInterval(genieTimer);mediaStandardWatch?.close();mediaWatch?.close();sparkSetupWatch?.close();pairPreparationWatch?.close();pairEnrollmentWatch?.close();pairQualificationWatch?.close();omlxEnrollmentWatch?.close();omlxQualificationWatch?.close();telegram?.close();genie.close();chat?.close();operations?.close();hourglass?.close();hardware.close();stopGenieTunnel(); for (const t of timers) clearTimeout(t); for (const child of children) child.kill(); server.closeAllConnections(); server.close(); process.removeListener('SIGTERM', close); process.removeListener('SIGINT', close); };
   process.once('SIGTERM', close); process.once('SIGINT', close);
   console.log(`Star Gate: http://127.0.0.1:${server.address().port} (${managementEnabled ? 'local worker controls' : 'read-only'})`);
   return { server, snapshot, close };
