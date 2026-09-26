@@ -16,8 +16,9 @@ const digest=value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
 const require=(value,reason)=>{if(!value)throw Error(reason);};
 const cleanEntry=entry=>Object.fromEntries(Object.entries(entry).filter(([k])=>k!=='telemetry_service'));
 const route=n=>Object.fromEntries(['id','url','backend','ssh','ssh_fallbacks','remote_port'].filter(k=>n[k]!==undefined).map(k=>[k,n[k]]));
-const publicRow=r=>Object.fromEntries(['action_id','worker_id','state','created_at','finished_at','error','evidence_sha256'].filter(k=>r[k]!==undefined).map(k=>[k,r[k]]));
+const publicRow=r=>Object.fromEntries(['action_id','worker_id','state','reason','created_at','finished_at','error','evidence_sha256'].filter(k=>r[k]!==undefined).map(k=>[k,r[k]]));
 const rows=store=>Object.values(store.data.omlx_recovery_enrollments??{});
+const waiting=new Set(['wait_for_admitted_work','shared_machine_has_admitted_work','shared_machine_recovery_in_progress','native_work_reserved','maintenance_hold_active']);
 
 export function restoreOmlxEnrollments(config,saved={},workers){
   require(saved&&typeof saved==='object'&&!Array.isArray(saved),'omlx_enrollment_journal_invalid');
@@ -84,12 +85,16 @@ export function createOmlxEnrollment({config,store,recovery,isEnabled,materializ
         python,helper,config:path.join(destination,'omlx.json'),machine:result.machine,profile:result.profile};
       const entries=[...(config.recovery?.workers??[]).map(cleanEntry),raw];
       const checked=recoveryConfig({workers:entries}).get(row.worker_id),retained=backup();
-      save({...row,state:'enrolled',finished_at:new Date().toISOString(),entry:raw,evidence_sha256:result.evidence_sha256,
+      save({...row,state:'enrolled',reason:undefined,finished_at:new Date().toISOString(),entry:raw,evidence_sha256:result.evidence_sha256,
         config_sha256:result.config_sha256,instance:result.instance,backup:retained});
       config.recovery={workers:entries};recovery.configs.set(row.worker_id,checked);
     }catch(error){
       if(closed)return;
-      save({...row,state:'failed',finished_at:new Date().toISOString(),error:/^[a-z_]+$/.test(error.message)?error.message:'omlx_enrollment_unverified'});
+      // Genie may resume inference on this very worker while native capture is
+      // running. Keep the same read-only action pending until ownership is idle;
+      // do not turn normal serving activity into a terminal setup failure.
+      if(waiting.has(error.message)){save({...row,state:'queued',reason:error.message});return;}
+      save({...row,state:'failed',reason:undefined,finished_at:new Date().toISOString(),error:/^[a-z_]+$/.test(error.message)?error.message:'omlx_enrollment_unverified'});
     }
   }
   function launch(row){if(running.has(row.action_id))return;const task=execute(row).catch(()=>{/* Queued identity survives a persistence failure. */}).finally(()=>running.delete(row.action_id));running.set(row.action_id,task);}

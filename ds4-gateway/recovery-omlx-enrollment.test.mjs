@@ -40,10 +40,24 @@ test('explicit policy, exact inspection endpoint, ownership and healthy unpaused
     const f=fixture(t),s=f.create();change(f);assert.throws(()=>s.request(f.request()));assert.equal(f.calls.length,0);assert.equal(s.status().operations.length,0);
   }
 });
-test('late policy, credential, capacity or ownership change cannot install captured authority',async t=>{
-  for(const change of [f=>f.enabled(false),f=>f.worker.api_key_file='/different/key',f=>f.worker.contextLength=8192,f=>f.worker.active={},f=>f.worker.drained=true]){
+test('late policy, credential or capacity changes cannot install captured authority',async t=>{
+  for(const change of [f=>f.enabled(false),f=>f.worker.api_key_file='/different/key',f=>f.worker.contextLength=8192,f=>f.worker.drained=true]){
     const f=fixture(t);f.options.materialize=async()=>{change(f);return f.result;};const s=f.create();s.request(f.request());await s.idle();
     assert.equal(s.status().operations[0].state,'failed');assert.equal(f.recovery.config(f.worker.id),undefined);
+  }
+});
+test('late inference or maintenance ownership retains the action across restart and commits only after release',async t=>{
+  for(const kind of ['inference','hold']){
+    const f=fixture(t),input=f.request();let captures=0;
+    f.options.materialize=async()=>{captures++;if(captures===1){if(kind==='inference')f.worker.active={};else f.store.data.agent_control={holds:[{id:'owner',worker_id:f.worker.id}],maintenance_locks:[]};}return f.result;};
+    const first=f.create();first.request(input);await first.idle();
+    assert.equal(first.status().operations[0].state,'queued');assert.match(first.status().operations[0].reason,/admitted_work|maintenance_hold/);
+    assert.equal(f.recovery.config(f.worker.id),undefined);first.close();
+    const next=f.create();next.tick();await next.idle();assert.equal(captures,1,'owner activity cannot be bypassed');
+    f.worker.active=null;f.store.data.agent_control={holds:[],maintenance_locks:[]};next.tick();await next.idle();
+    assert.equal(captures,2);assert.equal(next.status().operations[0].state,'enrolled');assert.equal(next.status().operations[0].reason,undefined);
+    assert.equal(next.status().operations[0].action_id,input.action_id);assert.equal(next.status().operations.length,1);
+    assert.equal(f.worker.drained,false);assert.equal(f.recovery.state.operations.length,0);
   }
 });
 test('graceful replacement preserves queued identity and resumes only the same read-only capture',async t=>{
