@@ -4,10 +4,10 @@ import {endpointHeaders,endpointUrl} from './endpoint.mjs';
 // Synthetic checks have independent small budgets; model-server settings and
 // ordinary inference budgets are never rewritten. Test both resident sessions.
 export async function verifyRecovery(url,model,context,{fetchImpl=fetch,signal,kind='ds4',endpoint,onSample=()=>{}}={}) {
-  if(!['ds4','qwen_vllm','qwen_omlx','glm53_vllm'].includes(kind))throw new Error('verification_kind_unsupported');
+  if(!['ds4','qwen_vllm','qwen_omlx','glm53_vllm','glm53_omlx'].includes(kind))throw new Error('verification_kind_unsupported');
   if(endpoint&&endpoint.url!==url)throw new Error('verification_endpoint_changed');
   const worker=endpoint??{url},servedModel=worker.model_aliases?.[model]??model;
-  const qwen=['qwen_vllm','qwen_omlx'].includes(kind),glm=kind==='glm53_vllm',hybrid=qwen||glm;
+  const qwen=['qwen_vllm','qwen_omlx'].includes(kind),glm=['glm53_vllm','glm53_omlx'].includes(kind),hybrid=qwen||glm;
   async function request(route,body) {
     const r=await fetchImpl(endpointUrl(worker,route),{redirect:'error',signal:signal?AbortSignal.any([signal,AbortSignal.timeout(180000)]):AbortSignal.timeout(180000),
       headers:{...endpointHeaders(worker),...(body?{'content-type':'application/json','x-dsg-observer':'recovery-check'}:{})},
@@ -45,8 +45,8 @@ export async function verifyRecovery(url,model,context,{fetchImpl=fetch,signal,k
 
 // GLM's cache check uses a longer prefix and an explicit bounded uncached tail.
 // Keep its receipts distinct from Qwen hybrid-cache and DS4 near-full reuse.
-export function glmRecoveryProofValid(proof,context){
-  return proof?.check==='glm53_vllm_two_conversations_cold_to_warm'&&proof.context_length===context&&Number.isFinite(Date.parse(proof.verified_at))&&
+export function glmRecoveryProofValid(proof,context,kind='glm53_vllm'){
+  return ['glm53_vllm','glm53_omlx'].includes(kind)&&proof?.check===kind+'_two_conversations_cold_to_warm'&&proof.context_length===context&&Number.isFinite(Date.parse(proof.verified_at))&&
     Array.isArray(proof.samples)&&proof.samples.length===4&&proof.samples.every((s,i)=>s?.label===['cold-A','cold-B','warm-A','warm-B'][i]&&
       Number.isSafeInteger(s.prompt_tokens)&&s.prompt_tokens>=16384&&Number.isSafeInteger(s.cached_tokens)&&s.cached_tokens>=0&&s.cached_tokens<=s.prompt_tokens&&
       Number.isFinite(s.elapsed_ms)&&s.elapsed_ms>=0&&(i<2?s.cached_tokens===0:s.cached_tokens>=4096&&s.cached_tokens>=proof.samples[i-2].prompt_tokens-8192&&s.prompt_tokens>=proof.samples[i-2].prompt_tokens));

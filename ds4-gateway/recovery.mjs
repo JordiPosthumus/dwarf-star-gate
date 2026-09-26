@@ -265,7 +265,7 @@ export class Recovery {
       state:['queued','starting','restarting','bootstrapping','reconciling','waiting_for_ownership','verifying',...terminal].includes(last.state)?last.state:'unknown',
       action:['restart','start','bootstrap','adopt_verify','adopt_restart'].includes(last.service_action)?last.service_action:'unknown',
       recorded_at:Number.isFinite(last.updated_at)?last.updated_at:null,
-      cold_warm_proof_valid:c?.verification==='glm53_vllm'?glmRecoveryProofValid(last.proof,n.contextLength):['qwen_vllm','qwen_omlx'].includes(c?.verification)?qwenRecoveryProofValid(last.proof,n.contextLength,c.verification):bootstrapProofValid(last.proof,n.contextLength),
+      cold_warm_proof_valid:['glm53_vllm','glm53_omlx'].includes(c?.verification)?glmRecoveryProofValid(last.proof,n.contextLength,c.verification):['qwen_vllm','qwen_omlx'].includes(c?.verification)?qwenRecoveryProofValid(last.proof,n.contextLength,c.verification):bootstrapProofValid(last.proof,n.contextLength),
       enrolled_identity_fields_match:bound&&last.machine===c.machine&&last.profile===c.profile&&last.context_length===n.contextLength&&last.binding===hash([n.url,n.ssh,n.ssh_fallbacks??[],n.remote_port??8000]),
       observed_instance_matches:usable&&typeof last.new_instance==='string'&&last.new_instance===s?.instance
     }:null;

@@ -23,6 +23,51 @@ class OmlxRecoveryTests(unittest.TestCase):
         self.restart = {'action':'restart','action_id':'12345678-1234-1234-1234-123456789abc',
                         'instance':'b'*32,'machine':'c'*64,'profile':'d'*64,'canary':True,'fault_after':0}
 
+    def test_launcher_enrollment_is_explicit_and_bounded(self):
+        m.validate_config(self.config)
+        valid = {**self.config, 'launcher': str(self.root/'start.sh'), 'profile_files': []}
+        m.validate_config(valid)
+        for delta in [{'launcher':'relative'}, {'profile_files':None},
+                      {'profile_files':['relative']}, {'profile_files':['/a']*2},
+                      {'profile_files':['/'+str(i) for i in range(33)]}, {'extra':True}]:
+            with self.subTest(delta=delta), self.assertRaises(ValueError):
+                m.validate_config({**valid, **delta})
+        with self.assertRaises(ValueError):m.validate_config({**self.config,'profile_files':[]})
+        with self.assertRaises(ValueError):m.validate_config({**self.config,'launcher':valid['launcher']})
+
+    def test_shell_launcher_and_dependencies_are_pinned_without_start_py(self):
+        (self.root/'state').mkdir()
+        for name in ['serve.sh','state/settings.json','state/model_settings.json','python','guard.sh']:
+            (self.root/name).write_text('fixture')
+        launcher=self.root/'start.sh';launcher.write_text('#!/bin/sh\nexit 0\n');launcher.chmod(0o700)
+        guard=self.root/'guard.sh';guard.chmod(0o600)
+        config={**self.config,'binary':str(self.root/'python'),'launcher':str(launcher),'profile_files':[str(guard)]}
+        original=m.profile(config)
+        self.assertFalse((self.root/'start.py').exists())
+        guard.write_text('changed');self.assertNotEqual(m.profile(config),original)
+        guard.write_text('fixture');self.assertEqual(m.profile(config),original)
+        other=self.root/'other.sh';other.write_bytes(launcher.read_bytes());other.chmod(0o700)
+        self.assertNotEqual(m.profile({**config,'launcher':str(other)}),original)
+        for target,mode in [(launcher,0o600),(launcher,0o722),(guard,0o622)]:
+            previous=target.stat().st_mode;target.chmod(mode)
+            with self.assertRaisesRegex(ValueError,'launcher_file_unverified'):m.profile(config)
+            target.chmod(previous)
+        guard.unlink();guard.symlink_to(other)
+        with self.assertRaisesRegex(ValueError,'launcher_file_unverified'):m.profile(config)
+
+    def test_legacy_profile_is_unchanged_and_selected_launcher_is_executed_directly(self):
+        with patch.object(m.mac,'file_digest',return_value='fixture'):
+            files={str(self.root/name):'fixture' for name in ('start.py','serve.sh','state/settings.json','state/model_settings.json')}
+            expected=m.fingerprint({'files':files,'binary':'/fixture/python','binary_sha256':'fixture','port':39001,'command_sha256':'a'*64})
+            self.assertEqual(m.profile(self.config),expected)
+        config={**self.config,'launcher':str(self.root/'start with spaces.sh'),'profile_files':[]}
+        with patch.object(m.subprocess,'Popen') as spawn:
+            spawn.return_value.pid=456
+            self.assertEqual(m.start(config,self.journal,self.restart['action_id']),456)
+            self.assertEqual(spawn.call_args.args[0],[config['launcher']])
+            self.assertEqual(spawn.call_args.kwargs['cwd'],self.root)
+            self.assertNotIn('shell',spawn.call_args.kwargs)
+
     def test_exact_idle_canary_terminates_once_and_uses_original_launcher(self):
         with patch.object(m,'inspect',return_value=self.current),patch.object(m,'idle',return_value=True),patch.object(m,'alive',return_value=False),patch.object(m,'profile',return_value='d'*64),patch.object(m,'port_occupied',return_value=False),patch.object(m.os,'kill') as kill,patch.object(m,'start',return_value=456) as start:
             result=m.handle(self.config,self.restart,self.journal)
