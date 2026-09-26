@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
+import {createMediaPromotions} from './media-promotions.mjs';
 import {createMediaCandidates} from './media-candidates.mjs';
 import {createMediaExecution,saveMediaReceipt} from './media-execution.mjs';
 import {createMediaTools} from './genie-media.mjs';
@@ -35,6 +36,7 @@ test('policy, placement, ownership and binding changes revoke the next native-st
  const f=fixture(t),row=await f.service.start({worker_id:'pair'}),c=f.capture(row);
  for(const key of ['enabled','allowed','available']){f[key]=false;assert.throws(()=>f.service.permit(c.permit));f[key]=true;}
  f.config.media_jobs.improvements.enabled=false;assert.throws(()=>f.service.permit(c.permit),/policy/);f.config.media_jobs.improvements.enabled=true;
+ const physical=f.config.machine_groups.pair;f.config.machine_groups.pair=['changed-machine'];assert.throws(()=>f.service.permit(c.permit),/mapping changed/);f.config.machine_groups.pair=physical;
  f.worker.url='http://127.0.0.1:9000';assert.throws(()=>f.service.permit(c.permit),/binding/);assert.equal(f.launches,1);
 });
 test('lost launch response is retained across restart and cannot release or relaunch',async t=>{
@@ -143,7 +145,61 @@ test('read-only qualification completion needs audio, cache, original identity a
  saveMediaReceipt(q.root,'llm-pair-before.json',{members:q.plan.llm_pair.members,containers:['a','b'].map(id=>({Id:id.repeat(64),Image:'sha256:'+'b'.repeat(64)}))});
  const cache={check:'glm53_vllm_two_conversations_cold_to_warm',context_length:400000,verified_at:new Date().toISOString(),samples:['cold-A','cold-B','warm-A','warm-B'].map((label,i)=>({label,prompt_tokens:i<2?20000:20100,cached_tokens:i<2?0:14336,elapsed_ms:100}))};
  saveMediaReceipt(q.root,'llm-proof.json',{configuration_unchanged:true,context_length:400000,containers:['a','b'].map(id=>({id:id.repeat(64),image:'sha256:'+'b'.repeat(64)})),cache});
- saveMediaReceipt(q.root,'readmission.json',{state:'readmitted'});f.enabled=false;
+ saveMediaReceipt(q.root,'readmission.json',{state:'readmitted'});fillQualificationJournal(q);f.enabled=false;
  assert.equal(f.service.finishQualification(f.input).phase,'qualified_returned');assert.equal(f.execution.assertCapacity('alias').allowed,true);
  assert.equal(f.config.media_jobs.workers.pair.engines.music.container,'a'.repeat(64));assert.equal((await f.service.qualify(f.input)).phase,'qualified_returned');assert.equal(f.qualifications,1);
+});
+
+function fillQualificationJournal(q){
+ for(const name of ['llm-pair-files-before.json','containers-before.json','media-recipe-contracts.json','media-command-bindings.json'])saveMediaReceipt(q.root,name,{fixture:true});
+ fs.mkdirSync(path.join(q.root,'commands'),{mode:0o700});
+ for(const step of ['llm-stop-0','llm-start-0','llm-stop-1','llm-start-1','media-start-'+q.plan.llm_pair.media_member,'media-stop-'+q.plan.llm_pair.media_member]){
+  for(const name of [step+'.request',q.plan.operation_id+'-'+step+'.json',q.plan.operation_id+'-'+step+'.backup'])saveMediaReceipt(path.join(q.root,'commands'),name,{fixture:true});
+ }
+}
+async function qualifiedFixture(t){
+ const f=await preparedFixture(t);f.baseline=structuredClone(f.config);f.observations=0;
+ f.options.promotions=createMediaPromotions(f.config,f.store,{hostIdentity:()=> '1'.repeat(64)});f.reopen();
+ await f.service.qualify(f.input);const q=f.qualification(),engine=q.plan.engine;
+ const proof={state:'qualified_returned',candidate_operation_id:f.row.operation_id,job_id:q.plan.operation_id,container:engine.container,image:engine.image,enrollment_changed:false,source_receipt_sha256:q.plan.ace_qualification.source_proof.receipt_sha256};
+ saveMediaReceipt(q.root,'completion.json',{native_generation_verified:true,llm_return_verified:true,qualification:proof});
+ const output={id:'33333333-3333-4333-8333-333333333333',sha256:'9'.repeat(64),bytes:123};
+ saveMediaReceipt(q.root,'ace-audio-proof.json',{...proof,state:'audio_verified',output});
+ const containers=['a','b'].map(id=>({Id:id.repeat(64),Image:'sha256:'+'b'.repeat(64)}));
+ saveMediaReceipt(q.root,'llm-pair-before.json',{members:q.plan.llm_pair.members,containers});
+ const cache={check:'glm53_vllm_two_conversations_cold_to_warm',context_length:400000,verified_at:new Date().toISOString(),samples:['cold-A','cold-B','warm-A','warm-B'].map((label,i)=>({label,prompt_tokens:i<2?20000:20100,cached_tokens:i<2?0:14336,elapsed_ms:100}))};
+ saveMediaReceipt(q.root,'llm-proof.json',{configuration_unchanged:true,context_length:400000,containers:containers.map(c=>({id:c.Id,image:c.Image})),cache});
+ saveMediaReceipt(q.root,'readmission.json',{state:'readmitted'});fillQualificationJournal(q);f.service.finishQualification(f.input);
+ f.native={schema:1,state:'qualified_current',operation_id:f.row.operation_id,qualification_job_id:q.plan.operation_id,container:engine.container,image:engine.image,snapshot_image:f.result.snapshot_image,original:{container:f.row.candidate?.container??'a'.repeat(64),image:'sha256:'+'c'.repeat(64),preserved:true},source_receipt_sha256:proof.source_receipt_sha256,retained_output:output,commands:['media-stop-0','llm-start-0','llm-start-1'].map(step=>({step,epoch:{running:step.startsWith('llm-')}})),observed_at:new Date().toISOString()};
+ f.options.observePromotionRunner=async()=>{f.observations++;return structuredClone(f.native);};f.reopen();f.q=q;return f;
+}
+test('promotion changes only the selected member/default identity, commits durable rollback and survives restoration',async t=>{
+ const f=await qualifiedFixture(t),before=structuredClone(f.config.media_jobs.workers.pair),other=structuredClone(f.config.media_jobs.workers.pair.member_engines[1]);
+ const row=await f.service.promote(f.input);assert.equal(row.phase,'promoted');assert.equal(f.observations,1);
+ assert.equal(f.config.media_jobs.workers.pair.engines.music.container,f.result.container);assert.deepEqual(f.config.media_jobs.workers.pair.member_engines[1],other);
+ assert.equal(f.store.data.media_engine_promotions.pair[0].cells.length,2);
+ assert.equal(f.store.data.media_engine_promotions.pair[0].cells[0].before.container,before.member_engines[0].music.container);
+ assert.equal(f.execution.assertCapacity('alias').allowed,true);
+ f.enabled=false;assert.equal((await f.service.promote(f.input)).phase,'promoted');assert.equal((await f.service.start({worker_id:'pair'})).phase,'promoted');assert.equal(f.observations,1);
+ const restarted=structuredClone(f.baseline),restore=createMediaPromotions(restarted,f.store,{hostIdentity:()=> '1'.repeat(64)});
+ assert.deepEqual(restore.restore(),{});assert.deepEqual(restarted.media_jobs.workers,f.config.media_jobs.workers);
+});
+test('promotion requires unchanged pinned qualification and current native proof; a failure does not change enrollment',async t=>{
+ const f=await qualifiedFixture(t);f.native.original.preserved=false;
+ await assert.rejects(f.service.promote(f.input));assert.equal(f.config.media_jobs.workers.pair.engines.music.container,'a'.repeat(64));assert.throws(()=>f.execution.assertCapacity('alias'),/overlapping/);
+ f.native.original.preserved=true;saveMediaReceipt(f.q.root,'llm-proof.json',{configuration_unchanged:false});
+ await assert.rejects(f.service.promote(f.input));assert.equal(f.store.data.media_engine_promotions,undefined);
+});
+test('permission withdrawn during native promotion observation prevents the commit without native mutation',async t=>{
+ const f=await qualifiedFixture(t);f.options.observePromotionRunner=async()=>{f.enabled=false;return f.native;};f.reopen();
+ await assert.rejects(f.service.promote(f.input),/policy/);assert.equal(f.store.data.media_engine_promotions,undefined);
+ assert.equal(f.config.media_jobs.workers.pair.engines.music.container,'a'.repeat(64));
+});
+test('lost durable promotion acknowledgement never repeats the commit; restart restores the recorded replacement',async t=>{
+ const f=await qualifiedFixture(t),save=f.store.save.bind(f.store);let commits=0;
+ f.store.save=value=>{save(value);if(value.media_engine_promotions){commits++;throw Error('lost persistence acknowledgement');}};
+ await assert.rejects(f.service.promote(f.input),/persistence unconfirmed/);assert.equal(f.service.operations()[0].phase,'requires_reconciliation');
+ await assert.rejects(f.service.promote(f.input),/requires reconciliation/);assert.equal(commits,1);assert.equal(f.config.media_jobs.workers.pair.engines.music.container,'a'.repeat(64));
+ f.store.save=save;const restarted=structuredClone(f.baseline);assert.deepEqual(createMediaPromotions(restarted,f.store,{hostIdentity:()=> '1'.repeat(64)}).restore(),{});
+ assert.equal(restarted.media_jobs.workers.pair.engines.music.container,f.result.container);
 });

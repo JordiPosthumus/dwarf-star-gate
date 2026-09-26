@@ -1,3 +1,4 @@
+import {createMediaPromotions} from './media-promotions.mjs';
 import {mediaReuse,selectedMediaPreparation,mediaPreparationRequest} from './media-reuse.mjs';
 import {createMediaStandardAudit} from './media-standard-audit.mjs';
 import {mediaEngine,mediaMemberInput} from './media-enrollment.mjs';
@@ -23,7 +24,7 @@ const launch=async folder=>{
  try{const child=spawn(process.execPath,[fileURLToPath(new URL('./media-setup-runner.mjs',import.meta.url)),folder],{detached:true,stdio:['ignore',log,log]});await new Promise((resolve,reject)=>{child.once('spawn',resolve);child.once('error',reject);});child.unref();return {pid:child.pid};}finally{fs.closeSync(log);}
 };
 export function createMediaSetup(config,store,{directory,workers,binding,isEnabled,isAllowed,isInspectionEnabled=()=>true,bundle=bundleRecipes,transport=setupTransport,launchRunner=launch,assertCapacity=()=>{}}){
- const restoreErrors={};
+ const restoreErrors={},configuredWorkers=structuredClone(config.media_jobs?.workers??{});
  const identity=(id,reuse=config.media_jobs?.reuse?.[id])=>{
   const worker=workers().find(w=>w.id===id),recovery=config.recovery?.workers?.find(w=>w.id===id),inspection=config.genie_chat?.inspection?.workers?.[id];
   const pair=mediaPair(config,worker);
@@ -68,7 +69,10 @@ export function createMediaSetup(config,store,{directory,workers,binding,isEnabl
   config.media_jobs.reuse??={};config.media_jobs.reuse[saved.worker_id]??={};config.media_jobs.reuse[saved.worker_id][saved.member??0]??={};
   config.media_jobs.reuse[saved.worker_id][saved.member??0][saved.engine]=structuredClone(saved.selection);
  }
+ const promotions=createMediaPromotions(config,store,{hostIdentity,configuredWorkers});
+ const promotionRestoreErrors=promotions.restore();Object.assign(restoreErrors,promotionRestoreErrors);
  for(const [id,saved] of Object.entries(store.data.media_engine_enrollments??{})){
+  if(promotionRestoreErrors[id])continue;
   try{assert.ok(retainedMatches(id,saved),'Worker or physical-machine binding changed');apply(id,saved.engines??{});for(const [member,engines] of Object.entries(saved.member_engines??{}))apply(id,engines,member);}catch(e){restoreErrors[id]=e.message;}
  }
  const candidateCorrected=saved=>{
@@ -173,7 +177,7 @@ export function createMediaSetup(config,store,{directory,workers,binding,isEnabl
   sourceBases.set(key,structuredClone(baseline));config.media_jobs.reuse??={};config.media_jobs.reuse[prior.worker_id]??={};config.media_jobs.reuse[prior.worker_id][prior.member??0]??={};config.media_jobs.reuse[prior.worker_id][prior.member??0][prior.engine]=structuredClone(candidate);
   return {operation_id:prior.operation_id,state:'source_selected',selection:candidate,retry_ready:read(prior.operation_id).retry_ready===true,scope:'Source decision saved with backup; old records and files preserved. Fresh native qualification and exact current LLM return still required.'};
  }
- return {status,finish,repair,audit:standardAudit.run,async start(input){
+ return {status,finish,repair,promotions,audit:standardAudit.run,async start(input){
   assert.ok(input&&(mediaMemberInput(input,'engine,worker_id')||mediaMemberInput(input,'engine,expected_failed_at,worker_id'))&&Object.hasOwn(kinds,input.engine),'Choose a worker and supported engine');
   const selectedPair=mediaPair(config,workers().find(w=>w.id===input.worker_id));
   assert.ok(input.member===undefined||selectedPair,'Explicit member selection requires a matching paired LLM');

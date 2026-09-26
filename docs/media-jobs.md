@@ -313,10 +313,42 @@ The core accepts `qualified_returned` only with bound audio, original pair,
 cache and readmission receipts. Completion can be recorded after policy
 withdrawal without authorizing new work. This is dated qualification evidence;
 it releases the qualification reservation but does not replace enrollment.
-Lost launches are never repeated. Full coordinator takeover, capability/benefit
-comparison, conditional enrollment promotion and autonomous improvement-stage
-watching remain unfinished. Native Spark generation and AceFarm folder/harness
-acceptance must be proven separately from fixture tests.
+Qualification completion pins the audio, pair, source, job and command-journal
+receipts in core state; promotion refuses changed or unpinned evidence.
+Lost launches are never repeated. Native Spark generation and AceFarm
+folder/harness acceptance must be proven separately from fixture tests.
+
+`promote_media_improvement` takes that saved operation ID only and requires the
+current improvement policy, capabilities, per-member standard, placement,
+original target binding and available physical ownership. Its fixed reader
+performs no native mutations. It verifies original container/settings/process
+epoch retention and rollback images; candidate source, profile and exact stopped
+epoch after qualification; unchanged retained audio bytes; and both returned GLM
+containers, mounted settings and final start epochs. A saved successful command
+is insufficient: the reader checks native state against that command's completed
+receipt, including its previous acknowledged transition. It never recaptures a
+new baseline. Unknown, missing, active or changed command evidence refuses.
+
+The core commits the promotion record, candidate status and updated enrollment
+in one durable state write after backups. Only container/image fields change on
+the selected member; its default binding changes too if that default selects the
+same member. Original container, image and snapshot stay available. All other
+engine settings, other members and H3 enrollments are retained. The existing
+setup path still refuses replacement; it restores a promoted override only when
+its history, atomic commit record, physical binding, configured baseline and
+retained enrollment agree. Conflicts are reported without partially applying an
+override. Already committed promotions persist when mutation permission is later
+withdrawn; disabling that permission does not silently roll back an installation.
+Uncertain commit acknowledgements cannot repeat publication in the same process;
+a restarted controller resolves its saved state. Read-only promotion failures
+retain the same reserved operation for reconciliation, not another native run.
+
+The fixed improvement adds verified API recipe representation and parameter
+receipts. It does not establish model-weight/voice fidelity, maximum-capacity
+boundaries or a new performance benchmark. Full coordinator takeover and
+autonomous progression across improvement stages remain unfinished. Native
+candidate generation/promotion and the complete AceFarm acceptance run remain
+separate installation requirements.
 
 The internal ACE candidate preparer retains the exact stopped original container
 and snapshots its writable filesystem before adding the fixed sampler/DCW patch

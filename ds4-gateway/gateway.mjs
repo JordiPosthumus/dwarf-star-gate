@@ -411,7 +411,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   const mediaExecution=createMediaExecution(serviceConfig,mediaJobs,{externalOperations:()=>[...(mediaSetup?.status().operations??[]),...(mediaCandidates?.operations()??[])],workers:()=>nodes.map(definition),isAllowed:mediaHosts.allowed,isEnabled:()=>!draining&&capabilityStatus().media,matchesWorker:(id,c)=>{const n=nodes.find(n=>n.id===id);return !!n&&recovery.binding(n,c);}});
   const mediaSetup=mediaJobs?createMediaSetup(serviceConfig,store,{assertCapacity:id=>mediaExecution.assertCapacity(id),directory:path.join(path.dirname(config.state_file),'media-setup'),workers:()=>nodes.map(definition),binding:(id,c)=>{const n=nodes.find(n=>n.id===id);return !!n&&recovery.binding(n,c);},isEnabled:()=>!draining&&capabilityStatus().media,isInspectionEnabled:()=>capabilityStatus().inspection,isAllowed:mediaHosts.allowed}):null;
   mediaCandidates=mediaJobs?createMediaCandidates(serviceConfig,store,{
-    directory:path.join(path.dirname(config.state_file),'media-candidates'),workers:()=>nodes.map(definition),isAllowed:mediaHosts.allowed,
+    directory:path.join(path.dirname(config.state_file),'media-candidates'),promotions:mediaSetup.promotions,workers:()=>nodes.map(definition),isAllowed:mediaHosts.allowed,
     isEnabled:()=>!draining&&!shuttingDown&&capabilityStatus().media&&capabilityStatus().inspection&&capabilityStatus().server_changes,
     assertCapacity:(id,ownOperation)=>mediaExecution.assertCapacity(id,ownOperation),
     hostAvailable:(id,ownLock)=>{const physical=machinesFor(id,serviceConfig);return nodes.filter(n=>machinesFor(n.id,serviceConfig).some(m=>physical.includes(m))).every(n=>!n.recovering&&!agents.holds(n.id).length&&agents.maintenanceLocks(n.id).every(lock=>n.id===id&&lock.id===ownLock&&lock.control_channel==='approved_operation'));},
@@ -1538,12 +1538,12 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
         return json(res,200,await inspectMediaJobInputs(serviceConfig,mediaJobs,JSON.parse(body)));
       }catch(e){return error(res,409,'media_input_inspection_failed',e.message);}})();});return;
     }
-    if(req.method==='POST'&&['/genie-media-improvement','/genie-media-qualify','/media-qualification-complete','/media-qualification-permit','/media-candidate-permit','/media-candidate-complete'].includes(req.url)){
+    if(req.method==='POST'&&['/genie-media-improvement','/genie-media-qualify','/genie-media-promote','/media-qualification-complete','/media-qualification-permit','/media-candidate-permit','/media-candidate-complete'].includes(req.url)){
       let body='';req.on('data',chunk=>{body+=chunk;if(Buffer.byteLength(body)>2048)req.destroy();});req.on('error',()=>{});
       req.on('end',()=>{void serialize(async()=>{try{
         if(!mediaCandidates)throw Error('Media improvements are not configured');
         const input=JSON.parse(body),start=req.url==='/genie-media-improvement';
-        return json(res,start||req.url==='/genie-media-qualify'?202:200,await (start?mediaCandidates.start(input):req.url==='/genie-media-qualify'?mediaCandidates.qualify(input):req.url==='/media-qualification-complete'?mediaCandidates.finishQualification(input):req.url==='/media-qualification-permit'?mediaCandidates.qualificationPermit(input):req.url==='/media-candidate-permit'?mediaCandidates.permit(input):mediaCandidates.finish(input)));
+        return json(res,start||req.url==='/genie-media-qualify'?202:200,await (start?mediaCandidates.start(input):req.url==='/genie-media-promote'?mediaCandidates.promote(input):req.url==='/genie-media-qualify'?mediaCandidates.qualify(input):req.url==='/media-qualification-complete'?mediaCandidates.finishQualification(input):req.url==='/media-qualification-permit'?mediaCandidates.qualificationPermit(input):req.url==='/media-candidate-permit'?mediaCandidates.permit(input):mediaCandidates.finish(input)));
       }catch(e){return error(res,409,'media_candidate_unconfirmed',e.message);}});});return;
     }
     if(req.method==='POST'&&['/genie-media-start','/genie-media-setup','/genie-media-repair','/genie-media-audit','/media-setup-complete'].includes(req.url)){

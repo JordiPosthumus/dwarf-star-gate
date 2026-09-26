@@ -15,15 +15,17 @@ const root=fileURLToPath(new URL('../',import.meta.url)),runner=path.join(root,'
 const modules=['docker_profile','recovery_pair','recovery_pair_native','recovery_media_command','media_recipe_contract','media_ace_candidate'];
 const sha=b=>createHash('sha256').update(b).digest('hex'),fingerprint=v=>sha(JSON.stringify(v));
 const uuid=v=>typeof v==='string'&&/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(v);
-const publicRow=r=>Object.fromEntries(['operation_id','worker_id','member','phase','created_at','finished_at','candidate','qualification_job_id','qualification','reason'].filter(k=>r[k]!==undefined).map(k=>[k,r[k]]));
+const publicRow=r=>Object.fromEntries(['operation_id','worker_id','member','phase','created_at','finished_at','candidate','qualification_job_id','qualification','promotion','reason'].filter(k=>r[k]!==undefined).map(k=>[k,r[k]]));
 const readPrivate=p=>{const st=fs.lstatSync(p);assert.ok(st.isFile()&&!st.isSymbolicLink()&&(st.mode&0o077)===0&&(!process.getuid||st.uid===process.getuid())&&st.size<=4*1024*1024,'Candidate receipt is not private');return fs.readFileSync(p);};
 const frozenBundle=()=>({modules:Object.fromEntries(modules.map(name=>[name,fs.readFileSync(path.join(root,'ds4-gateway',name+'.py'),'utf8')])),patch:Object.fromEntries(['apply-recipe-fields.py','verify-api-fields.py'].map(name=>[name,fs.readFileSync(path.join(root,'examples/spark-build/ace-step',name),'utf8')]))});
 async function launch(folder,python){const log=fs.openSync(path.join(folder,'runner.log'),'ax',0o600);try{const child=spawn(python,['-I','-B',runner,folder,'run'],{detached:true,stdio:['ignore',log,log]});await new Promise((resolve,reject)=>{child.once('spawn',resolve);child.once('error',reject);});child.unref();return {pid:child.pid};}finally{fs.closeSync(log);}}
+const observePromotion=(folder,python)=>new Promise((resolve,reject)=>{execFile(python,['-I','-B',path.join(root,'ds4-gateway/media_candidate_promotion.py'),folder],{timeout:300000,maxBuffer:1024*1024},(error,stdout)=>{if(error)return reject(Error('Native postqualification proof unavailable; enrollment unchanged'));try{resolve(JSON.parse(stdout));}catch{reject(Error('Native promotion proof unreadable'));}}).stdin.end();});
 const observe=(folder,python)=>new Promise((resolve,reject)=>{const child=execFile(python,['-I','-B',runner,folder,'status'],{timeout:300000,maxBuffer:1024*1024},(error,stdout)=>{if(error)return reject(Error('Candidate native observation unconfirmed; preparation was not repeated'));try{resolve(JSON.parse(stdout));}catch{reject(Error('Candidate status unreadable'));}});child.stdin.end();});
-export function createMediaCandidates(config,store,{directory,workers,isEnabled,isAllowed,assertCapacity,hostAvailable=()=>true,launchRunner=launch,launchQualification=launchMediaRunner,observeRunner=observe,bundle=frozenBundle}={}){
+export function createMediaCandidates(config,store,{directory,workers,isEnabled,isAllowed,assertCapacity,hostAvailable=()=>true,launchRunner=launch,launchQualification=launchMediaRunner,observeRunner=observe,observePromotionRunner=observePromotion,promotions=null,bundle=frozenBundle}={}){
  const policy=config.media_jobs?.improvements;
  if(policy!==undefined)assert.ok(policy&&Object.keys(policy).every(k=>k==='enabled')&&typeof policy.enabled==='boolean','media_jobs.improvements accepts enabled boolean only');
  const enabled=()=>config.media_jobs?.improvements?.enabled===true&&isEnabled();
+ const uncertainCommits=new Set();
  const rows=()=>Object.values(store.data.media_candidates??{});
  const backup=()=>{if(fs.existsSync(store.filename))fs.copyFileSync(store.filename,`${store.filename}.media-candidate-${Date.now()}-${randomUUID()}.bak`,fs.constants.COPYFILE_EXCL);};
  const save=row=>{backup();store.save({...store.data,media_candidates:{...store.data.media_candidates,[row.operation_id]:row}});};
@@ -39,6 +41,7 @@ export function createMediaCandidates(config,store,{directory,workers,isEnabled,
  function permitted(row,ownLock){
   assert.ok(enabled()&&isAllowed(row.worker_id,'music'),'Media improvement policy or capabilities are off');
   const current=selection(row.worker_id,row.member);assert.equal(current.binding,row.binding,'Candidate target binding changed');
+  assert.deepEqual(current.physical_machines,row.physical_machines,'Candidate physical-machine mapping changed');
   assert.ok(config.media_jobs?.standard?.enabled===true&&config.media_jobs.standard.targets?.some(t=>t.worker_id===row.worker_id&&t.engine==='ace-step'&&(t.member??(current.member===undefined?undefined:mediaEngine(config,row.worker_id,'music')?.member??0))===current.member),'Candidate must belong to the enabled standard');
   assert.ok(hostAvailable(row.worker_id,ownLock),'Another native operation owns this host');assertCapacity(row.worker_id,row.operation_id);
   return current;
@@ -47,8 +50,9 @@ export function createMediaCandidates(config,store,{directory,workers,isEnabled,
  const folder=id=>path.join(directory,id);
  const qualificationFolder=row=>{assert.ok(uuid(row.qualification_job_id),'Saved qualification job required');return path.join(folder(row.operation_id),'qualification',row.qualification_job_id);};
  const view=row=>{
+  if(uncertainCommits.has(row.operation_id))return {...publicRow(row),phase:'requires_reconciliation',reason:'Promotion persistence unconfirmed; the same commit is not repeated in this process.'};
   if(row.qualification_job_id){
-   if(row.phase==='qualified_returned')return publicRow(row);
+   if(['qualified_returned','promoted'].includes(row.phase))return publicRow(row);
    const root=qualificationFolder(row);
    try{
     const progress=fs.existsSync(path.join(root,'progress.json'))?JSON.parse(readPrivate(path.join(root,'progress.json'))):null;
@@ -86,7 +90,7 @@ export function createMediaCandidates(config,store,{directory,workers,isEnabled,
   const plan=JSON.parse(bytes);assert.equal(plan.operation_id,row.qualification_job_id);assert.equal(plan.ace_qualification.candidate_operation_id,row.operation_id);
   return {root,plan};
  }
- function completeQualification(row){
+ function completeQualification(row,{persist=true}={}){
   const {root,plan}=qualificationPlan(row),completion=JSON.parse(readPrivate(path.join(root,'completion.json'))),proof=completion.qualification;
   assert.ok(completion.native_generation_verified===true&&completion.llm_return_verified===true&&proof?.state==='qualified_returned','Native qualification and LLM return are not complete');
   assert.equal(proof.candidate_operation_id,row.operation_id);assert.equal(proof.job_id,row.qualification_job_id);
@@ -98,15 +102,21 @@ export function createMediaCandidates(config,store,{directory,workers,isEnabled,
   assert.deepEqual(llm.containers,original.containers.map(c=>({id:c.Id,image:c.Image})),'Original GLM identity differs');
   assert.ok(audio.state==='audio_verified'&&audio.job_id===row.qualification_job_id&&audio.container===proof.container&&audio.image===proof.image&&audio.source_receipt_sha256===plan.ace_qualification.source_proof.receipt_sha256,'Audio qualification binding changed');
   assert.ok(llm.configuration_unchanged===true&&glmRecoveryProofValid(llm.cache,plan.context_length)&&readmission.state==='readmitted','Original GLM return/cache/readmission proof missing');
-  const updated={...row,phase:'qualified_returned',qualification:proof,finished_at:new Date().toISOString()};save(updated);return publicRow(updated);
+  const files=['completion.json','ace-audio-proof.json','llm-proof.json','readmission.json','llm-pair-before.json','llm-pair-files-before.json','containers-before.json','media-recipe-contracts.json','media-command-bindings.json','media-jobs.json'];
+  for(const step of ['llm-stop-0','llm-start-0','llm-stop-1','llm-start-1','media-start-'+plan.llm_pair.media_member,'media-stop-'+plan.llm_pair.media_member])files.push('commands/'+step+'.request',...['.json','.backup'].map(suffix=>'commands/'+plan.operation_id+'-'+step+suffix));
+  const hashes=Object.fromEntries(files.map(name=>[name,sha(readPrivate(path.join(root,name)))]));
+  if(row.qualification_receipts_sha256)assert.deepEqual(hashes,row.qualification_receipts_sha256,'Qualification receipts changed');
+  else assert.ok(persist,'Qualification lacks pinned evidence; fresh qualification is required');
+  if(!persist)return {root,plan,proof,audio};
+  const updated={...row,phase:'qualified_returned',qualification:proof,qualification_receipts_sha256:hashes,finished_at:new Date().toISOString()};save(updated);return publicRow(updated);
  }
  return {
   operations:()=>rows().map(r=>({...view(r),physical_machines:r.physical_machines})),
-  status:()=>({supported:true,enabled:enabled(),improvement:'ace-api-fields-v1',qualification_supported:true,operations:rows().map(view),scope:'Separate ACE candidate preparation and fixed one-song qualification with GLM return/cache checks. Qualification borrows an idle pair. Enrollment promotion is not implemented.'}),
+  status:()=>({supported:true,enabled:enabled(),improvement:'ace-api-fields-v1',qualification_supported:true,promotion_supported:!!promotions,operations:rows().map(view),scope:'Separate ACE candidate preparation and fixed one-song qualification with GLM return/cache checks. Qualification borrows an idle pair. Conditional promotion retains the original engine and changes only the qualified target enrollment.'}),
   finish,
   finishQualification(input){
    assert.deepEqual(Object.keys(input??{}),['operation_id']);const row=get(input.operation_id);
-   if(row.phase==='qualified_returned')return publicRow(row);
+   if(['qualified_returned','promoted'].includes(row.phase))return view(row);
    assert.equal(row.phase,'candidate_qualifying','Saved qualification required');
    return completeQualification(row);
   },
@@ -130,7 +140,7 @@ export function createMediaCandidates(config,store,{directory,workers,isEnabled,
   async qualify(input){
    assert.deepEqual(Object.keys(input??{}),['operation_id']);const row=get(input.operation_id);
    if(row.qualification_job_id){
-    if(row.phase!=='qualified_returned'&&fs.existsSync(path.join(qualificationFolder(row),'completion.json')))return completeQualification(row);
+    if(row.phase==='candidate_qualifying'&&fs.existsSync(path.join(qualificationFolder(row),'completion.json')))return completeQualification(row);
     return view(row);
    }
    assert.equal(row.phase,'candidate_prepared','Prepare an exact stopped candidate first');permitted(row);
@@ -162,6 +172,37 @@ export function createMediaCandidates(config,store,{directory,workers,isEnabled,
    catch{saveMediaReceipt(root,'launch-uncertain.json',{state:'launch_uncertain'});throw Error('Qualification launch unconfirmed; observe the same operation without resubmission');}
    return publicRow(updated);
   },
+  async promote(input){
+   assert.deepEqual(Object.keys(input??{}),['operation_id']);const row=get(input.operation_id);
+   assert.ok(!uncertainCommits.has(row.operation_id),'Promotion commit requires reconciliation');
+   if(row.phase==='promoted')return view(row);
+   assert.ok(promotions&&['qualified_returned','candidate_promoting'].includes(row.phase),'Saved native qualification and promotion support required');
+   permitted(row);const verified=completeQualification(row,{persist:false});
+   const reserved={...row,phase:'candidate_promoting'};save(reserved);
+   const native=await observePromotionRunner(verified.root,row.python);
+   permitted(reserved);assert.equal(get(row.operation_id).phase,'candidate_promoting');
+   const fresh=completeQualification(reserved,{persist:false});
+   assert.ok(native?.schema===1&&native.state==='qualified_current'&&native.operation_id===row.operation_id&&native.qualification_job_id===row.qualification_job_id,'Native qualification binding changed');
+   assert.equal(native.container,row.candidate.container);assert.equal(native.image,row.candidate.image);assert.equal(native.snapshot_image,row.candidate.snapshot_image);
+   assert.deepEqual(native.original,{container:row.engine.container,image:row.engine.image,preserved:true});
+   assert.equal(native.source_receipt_sha256,fresh.plan.ace_qualification.source_proof.receipt_sha256);
+   assert.equal(native.retained_output?.sha256,fresh.audio.output.sha256);assert.equal(native.retained_output?.bytes,fresh.audio.output.bytes);assert.equal(native.retained_output?.id,fresh.audio.output.id);
+   assert.deepEqual(native.commands?.map(c=>c.step),['media-stop-'+row.member,'llm-start-0','llm-start-1']);
+   assert.ok(native.commands.every(c=>c.epoch?.running===c.step.startsWith('llm-'))&&Number.isFinite(Date.parse(native.observed_at)),'Native return epochs unverified');
+   saveMediaReceipt(verified.root,'promotion-native.json',native);
+   const proposal=promotions.propose({operation_id:row.operation_id,worker_id:row.worker_id,member:row.member,original:row.engine,candidate:{...row.engine,container:row.candidate.container,image:row.candidate.image},qualification_job_id:row.qualification_job_id,proof_sha256:sha(readPrivate(path.join(verified.root,'promotion-native.json')))});
+   saveMediaReceipt(verified.root,'promotion-intent.json',{record:proposal.record,previous_enrollment:proposal.previous_enrollment,delta:'Only selected ACE container/image bindings change. Original container, image, snapshot, runtime settings and other members/engines remain retained.'});
+   const updated={...reserved,phase:'promoted',promotion:{record_sha256:proposal.record_sha256,promoted_at:proposal.record.at,previous_container:row.engine.container,previous_image:row.engine.image,container:row.candidate.container,image:row.candidate.image},finished_at:proposal.record.at};
+   backup();
+   try{
+    store.save({...store.data,media_candidates:{...store.data.media_candidates,[row.operation_id]:updated},media_engine_promotions:{...store.data.media_engine_promotions,[row.worker_id]:[...(store.data.media_engine_promotions?.[row.worker_id]??[]),proposal.record]},media_engine_enrollments:{...store.data.media_engine_enrollments,[row.worker_id]:proposal.enrollment}});
+    promotions.apply(proposal);
+   }catch{
+    uncertainCommits.add(row.operation_id);try{saveMediaReceipt(verified.root,'promotion-commit-uncertain.json',{state:'requires_reconciliation'});}catch{}
+    throw Error('Promotion persistence unconfirmed; observe durable state before another action');
+   }
+   return publicRow(updated);
+  },
   permit(input){
    assert.ok(input&&Object.keys(input).sort().join(',')==='operation_id,request_file_sha256'&&/^[a-f0-9]{64}$/.test(input.request_file_sha256),'Exact candidate request receipt required');
    const row=get(input.operation_id);assert.equal(row.phase,'candidate_preparing','This preparation no longer owns execution');permitted(row);assert.ok(!fs.existsSync(path.join(folder(row.operation_id),'attention.json')),'Candidate needs reconciliation');
@@ -175,6 +216,7 @@ export function createMediaCandidates(config,store,{directory,workers,isEnabled,
   async start(input){
    assert.ok(input&&mediaMemberInput(input,'worker_id'),'Choose worker and optional physical member only');
    const selected=selection(input.worker_id,input.member);
+   const promoted=rows().find(r=>r.phase==='promoted'&&r.worker_id===selected.worker_id&&r.member===selected.member&&r.candidate.container===selected.engine.container&&r.candidate.image===selected.engine.image);if(promoted)return view(promoted);
    const prior=rows().find(r=>r.worker_id===selected.worker_id&&r.member===selected.member&&r.engine.container===selected.engine.container&&r.engine.image===selected.engine.image);
    if(prior){if(!prior.qualification_job_id&&prior.phase!=='candidate_prepared'&&fs.existsSync(path.join(folder(prior.operation_id),'result.json')))return finish({operation_id:prior.operation_id});return view(prior);}
    const operation_id=randomUUID(),row={...selected,operation_id,phase:'candidate_preparing',created_at:new Date().toISOString()};permitted(row);

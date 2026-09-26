@@ -16,7 +16,7 @@ export function mediaJobOverview(job){
   if(job.outputs)out.outputs={state:job.outputs.state,file_count:job.outputs.files?.length??0};
   return out;
 }
-export function createMediaTools({read,start,inspectInputs=null,setup=null,repair=null,audit=null,improve=null,qualify=null,resources=null,isTesting=()=>false}){
+export function createMediaTools({read,start,inspectInputs=null,setup=null,repair=null,audit=null,improve=null,qualify=null,promote=null,resources=null,isTesting=()=>false}){
   return createToolEndpoint('/api/genie/media-tools','x-sg-media-tool',async input=>{
     if(input?.action==='job'&&Object.keys(input).sort().join(',')==='action,job_id'){
       if(typeof input.job_id!=='string')throw Error('Supply a saved media job ID.');
@@ -48,6 +48,11 @@ export function createMediaTools({read,start,inspectInputs=null,setup=null,repai
       if(isTesting())throw Error('Standard media audit is suspended for testing.');
       if(!audit)throw Error('Standard media audit is not connected.');
       return audit({});
+    }
+    if(input?.action==='promote'&&Object.keys(input).sort().join(',')==='action,operation_id'){
+      if(isTesting())throw Error('Media improvement promotion is suspended for testing.');
+      if(!promote)throw Error('Media improvement promotion is not connected.');
+      return promote({operation_id:input.operation_id});
     }
     if(input?.action==='qualify'&&Object.keys(input).sort().join(',')==='action,operation_id'){
       if(isTesting())throw Error('Media candidate qualification is suspended for testing.');
