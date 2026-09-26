@@ -31,6 +31,34 @@ That normalization fix has also passed a read-only inspection through the real
 local oMLX helper; the real restart exercise above then verified the complete
 controller-to-helper-to-model path.
 
+### Staged durable restart runner
+
+`recovery_omlx_transaction.py` is a separate component under development. It is
+not connected to the gateway, Genie tools, or the existing adapter entry point.
+The required private `/recovery-omlx-permit` route is not yet implemented; no
+production restart authority is enabled by adding this file.
+
+The runner retains a private request, exact process/profile identity, original
+launcher/settings backups, and a journal around each stop and launch. It shares
+the legacy adapter's operation lock and refuses an already attempted process.
+A detached runner can outlive its dispatching controller. A new runner can
+continue after an observed stop, or observe a replacement already launched,
+without issuing either command twice. Every mutation requires the same
+operation's current permit; native active work prevents the initial stop.
+
+The disposable macOS tests exercise a real controller exit, abrupt runner exit
+after SIGTERM, and native-busy waiting followed by the same action's continuation.
+They verify one stop, one replacement launch, and the unchanged fixture profile.
+Additional interruption tests cover ambiguous pre-command intent, changed process
+or port identity, revoked ownership, and corrupted journals/backups. They do not
+prove recovery of a real GLM model or its cache behavior.
+
+A crash between saving intent and issuing a command remains ambiguous. The runner
+observes and does not repeat that command. A saved intent alone is never proof
+that the command ran. Qualification, gateway reservation/queue handling,
+readmission after native GLM generation/cache verification, and actual Genie
+continuation still need integration and native acceptance before deployment.
+
 ## Private enrollment
 
 For Genie-controlled GLM/oMLX enrollment, configure the worker normally and add
