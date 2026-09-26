@@ -33,7 +33,7 @@ export function setupTransport(target,input){
   });
 }
 
-export function createSparkSetupTools(config,{isEnabled=()=>true,isTesting=()=>false,transport=setupTransport,bundle=bundleRecipes,registration=null,mediaQualification=null,continuation=null,enrollment=null}={}){
+export function createSparkSetupTools(config,{isEnabled=()=>true,isTesting=()=>false,transport=setupTransport,bundle=bundleRecipes,registration=null,mediaQualification=null,continuation=null,enrollment=null,discovery=null}={}){
   if(config.spark_setup?.enabled!==true)return null;
   if(config.ui_worker_management!==true)throw new Error('Spark setup requires local worker management.');
   const targets=enrollment?.targets??config.spark_setup.targets??{};
@@ -45,10 +45,22 @@ export function createSparkSetupTools(config,{isEnabled=()=>true,isTesting=()=>f
   }
   // Cache observations for frequent UI refresh; only explicit tool reads call SSH.
   const observations=new Map();
-  const present=()=>({configured:true,enrollment_available:Boolean(enrollment),targets:Object.keys(targets).map(id=>({target_id:id,...(observations.get(id)??{state:'not_observed'}),registration:registration?.read(id)??null,media_qualification:mediaQualification?.read(id)??null,media_qualification_required:!!mediaQualification,continuation:continuation?.status(id)??null})),scope:'New Spark preparation. Native qualification and gateway registration are separate steps.'});
+  const present=()=>({configured:true,enrollment_available:Boolean(enrollment),discovery:discovery?.status()??{configured:false},targets:Object.keys(targets).map(id=>({target_id:id,...(observations.get(id)??{state:'not_observed'}),registration:registration?.read(id)??null,media_qualification:mediaQualification?.read(id)??null,media_qualification_required:!!mediaQualification,continuation:continuation?.status(id)??null})),scope:'New Spark preparation. Native qualification and gateway registration are separate steps.'});
   const read=async id=>{try{const result=await transport(targets[id],{action:'status'});const row={...result,observed_at:new Date().toISOString()};observations.set(id,row);return {target_id:id,...row};}catch(error){const row={state:'unavailable',error:error.message,observed_at:new Date().toISOString()};observations.set(id,row);return {target_id:id,...row};}};
   const pending=new Set();
   const endpoint=createToolEndpoint('/api/genie/spark-setup-tools','x-sg-spark-setup-tool',async input=>{
+    if(input?.action==='discover'||input?.action==='discovery_status'){
+      if(!discovery)throw new Error('Spark network discovery is not connected.');
+      const keys=Object.keys(input).sort().join(',');
+      if(input.action==='discovery_status'){
+        if(!['action','action,scan_id'].includes(keys))throw new Error('Discovery status accepts only an optional saved scan ID; no other arguments.');
+        return discovery.status({scan_id:input.scan_id});
+      }
+      if(!['action','action,username'].includes(keys))throw new Error('Discovery accepts only an optional SSH username; no addresses, passwords or commands.');
+      if(!isEnabled())throw new Error('New Spark setup is switched off.');
+      if(isTesting())throw new Error('Spark discovery is paused in testing mode.');
+      return discovery.discover({username:input.username});
+    }
     if(input?.action==='status'&&Object.keys(input).sort().join(',')==='action'){
       await Promise.all(Object.keys(targets).map(read));return present();
     }

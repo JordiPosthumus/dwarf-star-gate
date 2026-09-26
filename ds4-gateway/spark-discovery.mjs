@@ -1,0 +1,275 @@
+// Read-only network discovery. A discovered address is not an enrolled worker.
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import net from 'node:net';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
+import {createHash,randomUUID} from 'node:crypto';
+const execute=promisify(execFile);
+const quote=s=>"'"+s.replaceAll("'","'\\''")+"'";
+const userPattern=/^[a-zA-Z_][a-zA-Z0-9_-]{0,63}$/;
+const aliasPattern=/^[a-zA-Z0-9][\w.@-]{0,252}$/;
+const interfacePattern=/^[a-zA-Z0-9][\w.-]{0,31}$/;
+const attachedInterface=name=>interfacePattern.test(name)&&!/^(lo\d*|utun\d*|tun\d*|tap\d*|docker\d*|veth.*|tailscale\d*)$/.test(name);
+const hash=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
+const scanIdPattern=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
+
+export const sparkIdentityProbe=`import hashlib,json,platform,subprocess
+from pathlib import Path
+def read(p):
+ try:return Path(p).read_text().strip()[:512]
+ except OSError:return None
+def command(args):
+ try:
+  p=subprocess.run(args,capture_output=True,text=True,timeout=8)
+  return p.stdout[:65536] if p.returncode==0 else None
+ except (OSError,subprocess.TimeoutExpired):return None
+def parsed(args):
+ try:return json.loads(command(args) or 'null')
+ except ValueError:return None
+machine=read('/etc/machine-id')
+gpu=command(['nvidia-smi','--query-gpu=name,uuid','--format=csv,noheader'])
+print(json.dumps({'system':platform.system(),'architecture':platform.machine(),'hostname':platform.node(),
+ 'machine_id':hashlib.sha256(machine.encode()).hexdigest() if machine else None,
+ 'gpus':[{'name':r.split(',')[0].strip(),'uuid':r.split(',')[1].strip()} for r in (gpu or '').splitlines() if len(r.split(','))==2],
+ 'manufacturer':read('/sys/class/dmi/id/sys_vendor'),'product':read('/sys/class/dmi/id/product_name'),
+ 'bios_version':read('/sys/class/dmi/id/bios_version'),'device_tree_model':read('/proc/device-tree/model'),
+ 'interfaces':parsed(['ip','-j','address','show']),'neighbors':parsed(['ip','-j','neighbor','show'])}))`;
+
+export function sparkIdentity(facts){
+  if(facts?.system!=='Linux'||!['aarch64','arm64'].includes(facts.architecture)||!/^([a-f0-9]{64})$/.test(facts.machine_id??'')||
+    !Array.isArray(facts.gpus)||!facts.gpus.length||facts.gpus.length>16||facts.gpus.some(g=>typeof g.name!=='string'||!g.name.includes('GB10')||!/^GPU-[a-fA-F0-9-]{16,80}$/.test(g.uuid??'')))return null;
+  const uuids=facts.gpus.map(g=>g.uuid).sort();
+  if(new Set(uuids).size!==uuids.length)return null;
+  return hash([facts.machine_id,uuids]);
+}
+
+export function localAddress(address){
+  if(typeof address!=='string'||address.length>128)return false;
+  const [base,zone,...extra]=address.split('%');
+  if(extra.length||zone&&!interfacePattern.test(zone))return false;
+  if(net.isIP(base)===4){
+    if(zone)return false;
+    const [a,b]=base.split('.').map(Number);
+    return a===10||a===172&&b>=16&&b<=31||a===192&&b===168||a===169&&b===254;
+  }
+  if(net.isIP(base)===6)return /^(fc|fd)/i.test(base)?!zone:/^fe[89ab]/i.test(base)&&!!zone;
+  return false;
+}
+
+export function networkAddresses(interfaces,{limit=1024}={}){
+  const addresses=new Map(),issues=[];
+  for(const [name,rows] of Object.entries(interfaces)){
+    if(!attachedInterface(name))continue;
+    for(const row of rows??[]){
+      if(row.internal||!(row.family==='IPv4'||row.family===4)||!localAddress(row.address)||!row.cidr)continue;
+      const bits=Number(row.cidr.split('/')[1]);
+      if(!Number.isInteger(bits)||bits<0||bits>32){issues.push({interface:name,reason:'invalid_prefix'});continue;}
+      const size=2**(32-bits);
+      if(size>1024){issues.push({interface:name,reason:'subnet_too_large_for_bounded_sweep',cidr:row.cidr});continue;}
+      const value=row.address.split('.').reduce((n,v)=>n*256+Number(v),0),base=Math.floor(value/size)*size;
+      for(let i=bits>=31?0:1;i<(bits>=31?size:size-1);i++){
+        const n=base+i,address=[24,16,8,0].map(s=>Math.floor(n/2**s)%256).join('.');
+        if(address===row.address||!localAddress(address))continue;
+        if(addresses.size>=limit&&!addresses.has(address)){issues.push({interface:name,reason:'address_limit',limit});break;}
+        addresses.set(address,{address,interface:name,source:'connected_subnet'});
+      }
+    }
+  }
+  return {addresses:[...addresses.values()],issues};
+}
+
+export function neighborAddresses(text,{linux=false}={}){
+  const rows=[];
+  if(linux){
+    let data;try{data=JSON.parse(text);}catch{return rows;}
+    for(const row of Array.isArray(data)?data:[]){
+      if(!interfacePattern.test(row.dev??'')||!row.dst||['FAILED','INCOMPLETE'].some(s=>[].concat(row.state??[]).includes(s)))continue;
+      const address=net.isIP(row.dst)===6&&/^fe[89ab]/i.test(row.dst)?`${row.dst}%${row.dev}`:row.dst;
+      if(localAddress(address))rows.push({address,interface:row.dev,source:'neighbor_cache'});
+    }
+  }else{
+    for(const line of text.split('\n')){
+      const arp=line.match(/\(([^)]+)\).*\bon\s+([\w.-]+)/);
+      const ndp=line.match(/^([a-fA-F0-9:]+%[\w.-]+)\s+/);
+      const address=arp?.[1]??ndp?.[1];
+      if(!address||/incomplete/i.test(line)||!localAddress(address))continue;
+      rows.push({address,interface:arp?.[2]??address.split('%')[1],source:'neighbor_cache'});
+    }
+  }
+  return rows;
+}
+
+export function configuredSSH(config){
+  const result=new Set();
+  const visit=value=>{
+    if(!value||typeof value!=='object')return;
+    for(const [key,v] of Object.entries(value)){
+      if(['ssh','ssh_fallbacks'].includes(key)){
+        for(const s of [].concat(v??[]))if(typeof s==='string'&&aliasPattern.test(s))result.add(s);
+      }else if(typeof v==='object')visit(v);
+    }
+  };
+  visit(config);return [...result].sort();
+}
+
+async function mapLimit(items,limit,fn){
+  let next=0;const results=Array(items.length);
+  await Promise.all(Array.from({length:Math.min(limit,items.length)},async()=>{
+    for(;;){const i=next++;if(i>=items.length)return;results[i]=await fn(items[i],i);}
+  }));return results;
+}
+export function probeSSHPort(address,{timeout=750}={}){
+  return new Promise(resolve=>{
+    const socket=net.createConnection({host:address,port:22});let done=false;
+    const finish=value=>{if(done)return;done=true;socket.destroy();resolve(value);};
+    socket.setTimeout(timeout,()=>finish(false));socket.once('connect',()=>finish(true));socket.once('error',()=>finish(false));
+  });
+}
+async function readCommand(command,args,{timeout=5000,partial=false}={}){
+  try{return {text:(await execute(command,args,{timeout,maxBuffer:1024*1024})).stdout,complete:true};}
+  catch(e){return {text:partial&&typeof e.stdout==='string'?e.stdout:'',complete:false,error:e.code==='ENOENT'?'unavailable':'incomplete'};}
+}
+export function multicastInterfaces(interfaces,{limit=16}={}){
+  const eligible=[],issues=[];
+  for(const [name,rows] of Object.entries(interfaces)){
+    if(!attachedInterface(name))continue;
+    const local=rows.filter(row=>!row.internal);
+    if(!local.length)continue;
+    if(!local.some(row=>(row.family==='IPv6'||row.family===6)&&/^fe[89ab]/i.test(row.address)&&net.isIP(row.address.split('%')[0])===6)){
+      issues.push({interface:name,reason:'no_observed_ipv6_link_local'});continue;
+    }
+    if(eligible.length>=limit){issues.push({interface:name,reason:'multicast_interface_limit',limit});continue;}
+    eligible.push(name);
+  }
+  return {interfaces:eligible,issues};
+}
+
+export function multicastReplyAddresses(text,device){
+  if(!attachedInterface(device))return [];
+  const addresses=new Set();
+  for(const line of text.split('\n')){
+    // Only echo replies are evidence: do not interpret the multicast destination,
+    // a timeout or an ICMP error as a discovered host.
+    const match=line.match(/^\s*\d+ bytes from ([a-fA-F0-9:%\w.-]+)[:,]\s+.*\b(?:icmp_seq|seq)=\d+\b/);
+    if(!match)continue;
+    const [base,zone,...extra]=match[1].split('%');
+    if(extra.length||zone&&zone!==device||net.isIP(base)!==6||!/^fe[89ab]/i.test(base))continue;
+    const address=base+'%'+device;if(localAddress(address))addresses.add(address);
+  }
+  return [...addresses].map(address=>({address,interface:device,source:'ipv6_multicast_reply'}));
+}
+
+export async function localNetworkSources({interfaces=os.networkInterfaces(),platform=process.platform,command=readCommand}={}){
+  const sweep=networkAddresses(interfaces),multicast=multicastInterfaces(interfaces),issues=[...sweep.issues,...multicast.issues],addresses=[...sweep.addresses];
+  const local=new Set(Object.entries(interfaces).flatMap(([name,rows])=>rows.map(row=>net.isIP(row.address.split('%')[0])===6&&/^fe[89ab]/i.test(row.address)?row.address.split('%')[0]+'%'+name:row.address)));
+  const append=rows=>addresses.push(...rows.filter(row=>attachedInterface(row.interface)&&!local.has(row.address)));
+  if(['darwin','linux'].includes(platform)){
+    await mapLimit(multicast.interfaces,4,async device=>{
+      const target='ff02::1%'+device;
+      const row=await command(platform==='darwin'?'/sbin/ping6':'ping',platform==='darwin'?['-n','-c','2','-I',device,target]:['-6','-n','-c','2','-I',device,target],{timeout:4000,partial:true});
+      const replies=multicastReplyAddresses(row.text,device);append(replies);
+      if(!replies.length||!row.complete)issues.push({source:'ipv6_multicast',interface:device,reason:row.error==='unavailable'?'probe_unavailable':!replies.length?'no_reply_not_absence':'probe_window_ended'});
+    });
+  }
+  // Read neighbors after the bounded echo window, so new link-local peers can
+  // be found even when the old cache was empty or replies went to the OS only.
+  if(platform==='darwin'){
+    const rows=await Promise.all([command('/usr/sbin/arp',['-an']),command('/usr/sbin/ndp',['-an'])]);
+    for(let i=0;i<rows.length;i++){append(neighborAddresses(rows[i].text));if(!rows[i].complete)issues.push({source:i?'ndp':'arp',reason:rows[i].error});}
+  }else if(platform==='linux'){
+    const row=await command('ip',['-j','neighbor','show']);append(neighborAddresses(row.text,{linux:true}));
+    if(!row.complete)issues.push({source:'ip_neighbors',reason:row.error});
+  }else issues.push({source:'platform',reason:'neighbor_discovery_unsupported'});
+  // Link-local multicast cannot enumerate disconnected/unconfigured NICs,
+  // silent peers, other broadcast domains or a known Spark's cable network.
+  issues.push({source:'discovery',reason:'silent_unconfigured_and_peer_only_links_not_excluded'});
+  return {addresses:[...new Map(addresses.filter(row=>!local.has(row.address)).map(row=>[row.address,row])).values()],issues};
+}
+
+export async function inspectDiscoverySSH(ssh,{knownHosts}){
+  const {stdout}=await execute('ssh',['-T','-o','BatchMode=yes','-o','ConnectTimeout=5','-o',`UserKnownHostsFile=${knownHosts}`,
+    '-o','StrictHostKeyChecking=accept-new','--',ssh,`python3 -I -B -c ${quote(sparkIdentityProbe)}`],{timeout:35000,maxBuffer:131072});
+  return JSON.parse(stdout);
+}
+async function resolveSSH(ssh){
+  const {stdout}=await execute('ssh',['-G','--',ssh],{timeout:5000,maxBuffer:131072});
+  const fields=Object.fromEntries(stdout.split('\n').map(s=>{const i=s.indexOf(' ');return [s.slice(0,i),s.slice(i+1)];}));
+  return {hostname:fields.hostname,username:fields.user};
+}
+
+export function createSparkDiscovery({directory,aliases=async()=>[],sources=localNetworkSources,port=probeSSHPort,inspect=inspectDiscoverySSH,resolve=resolveSSH,now=()=>new Date().toISOString(),maxCandidates=64}={}){
+  fs.mkdirSync(directory,{recursive:true,mode:0o700});
+  const file=path.join(directory,'discovery.json');let running=null;
+  let state=fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):{state:'not_started'};
+  if(state.state==='running')state={...state,state:'observation_lost',scope:'The earlier read-only scan is no longer observed by this dashboard. No enrollment or setup was performed.'};
+  const write=(destination,value)=>{const temp=destination+'.'+randomUUID(),fd=fs.openSync(temp,'wx',0o600);try{fs.writeFileSync(fd,JSON.stringify(value,null,2)+'\n');fs.fsyncSync(fd);}finally{fs.closeSync(fd);}fs.renameSync(temp,destination);};
+  const save=()=>{
+    if(scanIdPattern.test(state.scan_id??'')){const dir=path.join(directory,state.scan_id);fs.mkdirSync(dir,{recursive:true,mode:0o700});write(path.join(dir,'result.json'),state);}
+    write(file,state);
+  };
+  const run=async(username,id)=>{
+    const runDir=path.join(directory,id);fs.mkdirSync(runDir,{recursive:true,mode:0o700});
+    const knownHosts=path.join(runDir,'known_hosts'),original=path.join(os.homedir(),'.ssh','known_hosts');
+    fs.writeFileSync(knownHosts,fs.existsSync(original)?fs.readFileSync(original):'',{mode:0o600,flag:'wx'});
+    const issues=[],known=[],users=new Set(username?[username]:[]);
+    const configured=[...new Set(await aliases())];
+    if(configured.length>64)throw Error('More than 64 configured SSH connections; discovery needs an explicit bounded topology.');
+    await mapLimit(configured,4,async ssh=>{
+      if(!aliasPattern.test(ssh)){issues.push({source:'configured_host',reason:'unsupported_alias'});return;}
+      try{
+        const resolved=await resolve(ssh);if(userPattern.test(resolved.username??''))users.add(resolved.username);
+        const facts=await inspect(ssh,{knownHosts}),identity=sparkIdentity(facts);
+        known.push({ssh,hostname:resolved.hostname,identity,facts});
+        if(!identity)issues.push({source:'configured_host',ssh,reason:'physical_identity_unverified'});
+      }catch{issues.push({source:'configured_host',ssh,reason:'ssh_identity_unavailable'});}
+    });
+    const network=await sources();issues.push(...network.issues);
+    const addresses=new Map();
+    for(const row of network.addresses)if(localAddress(row.address))addresses.set(row.address,row);
+    if(addresses.size>1024)throw Error('Discovery source exceeded the 1024-address limit.');
+    const ports=await mapLimit([...addresses.values()],32,async row=>({...row,ssh_open:await port(row.address)}));
+    const open=ports.filter(row=>row.ssh_open);
+    const candidates=new Map(),unverified=[];
+    if(open.length>maxCandidates)issues.push({source:'ssh_identification',reason:'candidate_limit',limit:maxCandidates});
+    if(users.size>4)issues.push({source:'ssh_identification',reason:'ambiguous_usernames'});
+    const usernames=username?[username]:users.size<=4?[...users]:[];
+    if(!usernames.length)issues.push({source:'ssh_identification',reason:'no_existing_ssh_username'});
+    await mapLimit(open.slice(0,maxCandidates),4,async row=>{
+      for(const user of usernames){
+        try{
+          const facts=await inspect(`${user}@${row.address}`,{knownHosts}),identity=sparkIdentity(facts);
+          if(!identity){unverified.push({...row,state:'not_verified_as_spark'});return;}
+          const existing=known.filter(k=>k.identity===identity);
+          let candidate=candidates.get(identity);
+          if(!candidate){candidate={candidate_id:identity,identity,hostname:facts.hostname??null,manufacturer:facts.manufacturer??null,product:facts.product??null,bios_version:facts.bios_version??null,
+            device_tree_model:facts.device_tree_model??null,addresses:[],existing_connections:existing.map(k=>k.ssh),state:existing.length?'existing_spark':'discovered_spark',
+            enrollment_ready:false,scope:'Hardware identified; not enrolled, configured, updated or qualified.'};candidates.set(identity,candidate);}
+          candidate.addresses.push({...row,username:user});return;
+        }catch{/* Try only previously configured usernames, never passwords. */}
+      }
+      unverified.push({...row,state:'ssh_access_unverified'});
+    });
+    const peers=[];
+    for(const host of known)for(const neighbor of host.facts.neighbors??[]){
+      const address=net.isIP(neighbor.dst)===6&&/^fe[89ab]/i.test(neighbor.dst)?`${neighbor.dst}%${neighbor.dev}`:neighbor.dst;
+      if(localAddress(address))peers.push({via:host.ssh,address,interface:neighbor.dev,state:'peer_visible_unverified',scope:'Address is scoped to this Spark; not a gateway SSH target.'});
+    }
+    state={scan_id:id,state:'complete',observed_at:now(),addresses_checked:ports.length,ssh_open:open.length,candidates:[...candidates.values()].sort((a,b)=>a.identity.localeCompare(b.identity)),unverified,peer_neighbors:peers,
+      known_hosts:known.map(({ssh,identity})=>({ssh,identity})),issues,coverage:'partial',scope:'Read-only discovery. Missing candidates may require multicast, cable configuration, peer reachability or SSH access; this result never proves absence.'};save();
+  };
+  return {status:({scan_id}={})=>{
+    if(scan_id===undefined||scan_id===state.scan_id)return structuredClone(state);
+    if(!scanIdPattern.test(scan_id))throw Error('Use a saved discovery scan ID.');
+    const saved=path.join(directory,scan_id,'result.json');if(!fs.existsSync(saved))throw Error('Discovery scan is not recorded.');
+    const result=JSON.parse(fs.readFileSync(saved,'utf8'));
+    return result.state==='running'?{...result,state:'observation_lost',scope:'The earlier read-only scan is no longer observed. No enrollment or setup was performed.'}:result;
+  },async discover({username}={}){
+    if(username!==undefined&&!userPattern.test(username))throw Error('Use an SSH username, never a password or command.');
+    if(running)return structuredClone(state);
+    const id=randomUUID();state={scan_id:id,state:'running',started_at:now(),scope:'Read-only discovery; no enrollment or setup.'};save();
+    running=run(username,id).catch(()=>{state={...state,state:'failed',finished_at:now(),error:'Discovery did not finish. Inspect the same scan; no enrollment or setup was performed.'};try{save();}catch{state.error+=' The failure receipt could not be saved; retained files were not replaced with a successful result.';}}).finally(()=>{running=null;});
+    return structuredClone(state);
+  },settled:()=>running??Promise.resolve()};
+}

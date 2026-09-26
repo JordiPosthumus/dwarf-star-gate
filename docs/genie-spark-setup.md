@@ -1,5 +1,47 @@
 # Genie setup for new Sparks
 
+## Discovery implementation status
+
+The development implementation adds `discover_sparks` and
+`spark_discovery_status` to the Genie setup toolset. Ask “Find the newly connected
+Sparks.” The scan runs independently of the tool HTTP request and retains its
+scan ID, results and coverage issues in private runtime storage. Reading status
+does not restart it. An interrupted dashboard reports lost observation explicitly.
+Each scan retains its own receipt, including after later scans. When a requested
+scan finishes after Genie has answered, a durable observer returns to the
+originating conversation once to report that exact scan. It respects an owner
+stop, paused conversation, the setup capability switch and testing mode. It
+does not rescan, enroll or authorize maintenance. An uncertain chat submission
+reuses its saved request ID.
+
+Discovery currently probes SSH on bounded directly connected private IPv4
+subnets, sends at most two IPv6 all-nodes echo probes per observed link-local
+interface (at most 16 interfaces, four at once, four seconds per probe window),
+then reads refreshed IPv4/IPv6 neighbor caches. It inspects known SSH connections for
+physical identity and peer-neighbor evidence. It reuses configured SSH usernames
+and keys, verifies Linux ARM64 GB10 hardware and stable machine/GPU identities,
+and deduplicates multiple addresses for the same observed machine. New host keys
+are recorded in a private per-scan copy of known hosts; personal SSH files are
+not rewritten. Changed keys are not accepted. An open SSH port is not proof of
+a Spark. Existing hardware identities are labelled separately from candidates.
+
+The IPv6 probe can find a directly attached cable peer without an IPv4 address
+when both interfaces already have link-local IPv6. Addresses retain their exact
+local interface scope. VPN/tunnel interfaces and the gateway's own addresses are
+excluded. A silent probe or incomplete neighbor cache never proves absence.
+The probe does not assign addresses, bring links up or change routing.
+
+**This is a discovery stage, not completed automatic onboarding.** DNS-SD service
+discovery, unconfigured cable links, password credential bootstrap, peer-only
+reachability and identity-bound automatic enrollment remain unfinished. A
+neighbor address observed on a remote Spark belongs to that remote interface;
+it must not be used as though it were a local gateway interface. Discovery
+always reports partial coverage, and no candidate is marked enrollment-ready.
+The new tools do not install models, update firmware or reboot machines.
+Native discovery and deployment still need validation for each installation.
+
+The following existing addressed-host workflow remains available:
+
 Give Genie the new Spark's IPv4 address or hostname and SSH username in chat:
 
 > Set up my new Spark at ADDRESS, SSH user USERNAME, as spark3 with the standard
