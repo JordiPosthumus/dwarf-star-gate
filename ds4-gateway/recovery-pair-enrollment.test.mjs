@@ -59,6 +59,13 @@ test('failed native verification and failed durable commit cannot install author
   const g=fixture(t);g.options.materialize=async()=>{g.store.save=()=>{throw Error('disk full');};return g.result;};s=g.create();s.request(g.request());await s.idle();
   assert.equal(g.recovery.config(g.worker.id),undefined);assert.equal(s.status().operations[0].state,'queued');
 });
+test('graceful core replacement retains a pending inspection and resumes the same enrollment identity',async t=>{
+  const f=fixture(t);let finish;f.options.materialize=()=>new Promise(resolve=>finish=resolve);
+  const before=f.create(),request=f.request();before.request(request);before.close();finish(f.result);await before.idle();
+  assert.equal(before.status().operations[0].state,'queued');assert.equal(f.recovery.config(f.worker.id),undefined);
+  f.options.materialize=async()=>f.result;const after=f.create();after.tick();await after.idle();
+  assert.equal(after.status().operations[0].action_id,request.action_id);assert.equal(after.status().operations[0].state,'enrolled');
+});
 test('restore preserves static services and refuses conflicting or corrupt enrolled authority',async t=>{
   const f=fixture(t),s=f.create();s.request(f.request());await s.idle();const saved=f.store.data.pair_recovery_enrollments;
   const fresh={recovery:{workers:[structuredClone(Object.values(saved)[0].entry)]}};assert.throws(()=>restorePairEnrollments(fresh,saved,[f.worker]),/one registered/);
