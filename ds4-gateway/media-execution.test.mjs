@@ -10,6 +10,18 @@ import {createMediaExecution,saveMediaReceipt} from './media-execution.mjs';
 import {runMediaCycle,mediaBatchCanContinue} from './media-cycle.mjs';
 import {mediaBudget,mediaSparkLimit} from './media-budget.mjs';
 
+test('failed durable receipt storage preserves the previous receipt and prevents crossing the command boundary',t=>{
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'sg-media-receipt-'));t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
+  saveMediaReceipt(directory,'intent.json',{state:'previous'});
+  const before=fs.readFileSync(path.join(directory,'intent.json')),sync=fs.fsyncSync;let commands=0;
+  try{
+    fs.fsyncSync=()=>{throw Error('fixture durable storage failure');};
+    assert.throws(()=>{saveMediaReceipt(directory,'intent.json',{state:'next'});commands++;},/durable storage failure/);
+  }finally{fs.fsyncSync=sync;}
+  assert.equal(commands,0);assert.deepEqual(fs.readFileSync(path.join(directory,'intent.json')),before);
+  assert.deepEqual(fs.readdirSync(directory),['intent.json']);
+});
+
 function fixture(t,kind='video'){
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'sg-media-execution-'));t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
   const jobs=new MediaJobs(path.join(directory,'queue.json'));

@@ -192,6 +192,21 @@ and prove one submission with retained output hashes after reconstruction. This
 is a recovery prerequisite, not permission to take over a live or uncertain
 runner; lifecycle takeover and automatic pair restoration remain incomplete.
 
+An internal exact-container command journal supports that future coordinator.
+It pins each operation, physical machine, member, start/stop step, original Docker definition and
+process epoch, retaining a private backup before command intent. A per-container
+operating-system lease distinguishes a live command runner from a saved PID or
+stale timestamp. Stops additionally require a current native-idle assertion;
+the caller must supply current ownership and a graceful command adapter.
+Prepared work can continue after an exit. Once command intent exists, resumption
+only observes the original outcome and cannot issue that command again. A
+different operation or step cannot bypass an unresolved command on the same
+container. Read-only status creates no missing records or locks and can observe
+an already-issued outcome after permission withdrawal. Completion is a recorded
+container transition, not model readiness, cache proof or gateway readmission.
+This journal is not yet wired into the live media runner. Receipt files now flush
+their data and parent directory before callers may cross a command boundary.
+
 **Native acceptance still required:** simultaneous generation on actual enrolled
 members, full autonomous film production through installed Hermes, and native
 six-machine operation. Component/fault tests prove ownership, overlapping fixture

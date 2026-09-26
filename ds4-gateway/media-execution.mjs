@@ -13,8 +13,12 @@ import {randomUUID} from 'node:crypto';
 const script=fileURLToPath(new URL('./media-runner.mjs',import.meta.url));
 export function saveMediaReceipt(folder,name,value){
   const target=path.join(folder,name),temporary=target+'.'+randomUUID()+'.tmp';
-  fs.writeFileSync(temporary,JSON.stringify(value,null,2)+'\n',{mode:0o600,flag:'wx'});
-  fs.renameSync(temporary,target);
+  let fd;
+  try{
+    fd=fs.openSync(temporary,'wx',0o600);fs.writeFileSync(fd,JSON.stringify(value,null,2)+'\n');fs.fsyncSync(fd);fs.closeSync(fd);fd=undefined;
+    fs.renameSync(temporary,target);
+    const parent=fs.openSync(folder,'r');try{fs.fsyncSync(parent);}finally{fs.closeSync(parent);}
+  }finally{if(fd!==undefined)fs.closeSync(fd);if(fs.existsSync(temporary))fs.unlinkSync(temporary);}
 }
 const launch=async folder=>{
   const log=fs.openSync(path.join(folder,'runner.log'),'ax',0o600);
