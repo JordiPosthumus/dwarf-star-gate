@@ -4,7 +4,10 @@ import {execFile} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {mediaEngines} from './media-hosts.mjs';
 
-const collector=fs.readFileSync(new URL('./media_resources.py',import.meta.url),'utf8');
+// Ship the fixed read-only reader with the collector; no remote installation or
+// caller-provided code is needed. Its CLI entry point must not execute here.
+const recipeReader=fs.readFileSync(new URL('./media_recipe_contract.py',import.meta.url),'utf8');
+const collector=`_recipe_reader = {'__name__': 'media_recipe_contract'}\nexec(${JSON.stringify(recipeReader)}, _recipe_reader)\n_inspect_recipe = _recipe_reader['inspect_recipe']\n`+fs.readFileSync(new URL('./media_resources.py',import.meta.url),'utf8');
 const quote=value=>"'"+value.replaceAll("'","'\\''")+"'";
 // Registry-driven: every supported engine with a shipped recipe manifest is
 // described; engines without a manifest are honestly absent.
