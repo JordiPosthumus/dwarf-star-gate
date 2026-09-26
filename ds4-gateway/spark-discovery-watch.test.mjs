@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {SparkDiscoveryWatch} from './spark-discovery-watch.mjs';
+import {GenieChat} from './genie-chat.mjs';
 const scan='11111111-1111-4111-8111-111111111111';
 function fixture(t){
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'sg-discovery-watch-'));t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
@@ -20,9 +21,9 @@ test('terminal discovery wakes the original chat once with a durable ID and exac
   const [id,text,requestId]=f.calls[0];assert.equal(id,'original');assert.match(text,new RegExp(scan));assert.match(text,/Do not start another scan/);
   await f.watch.tick();assert.equal(f.calls.length,1);
   const restored=new SparkDiscoveryWatch(f.options);await restored.tick();assert.equal(f.calls.length,1);
-  assert.equal(restored.records[requestId].state,'dispatched');
+  assert.equal(Object.values(restored.records).find(r=>r.request_id===requestId).state,'dispatched');
   f.message.spark_setup.events.push({tool:'spark_discovery_status',state:'complete',result:f.state.result});
-  await restored.tick();assert.equal(restored.records[requestId].state,'observed');
+  await restored.tick();assert.equal(Object.values(restored.records).find(r=>r.request_id===requestId).state,'observed');
 });
 test('running, absent and mismatched scan results never claim completion',async t=>{
   for(const result of [null,{state:'running',scan_id:scan},{state:'complete',scan_id:'other'},{state:'unavailable',scan_id:scan}]){
@@ -49,4 +50,23 @@ test('uncertain submission reuses its durable request ID after restart',async t=
 test('a scan already read to terminal in the originating answer gets no redundant follow-up',async t=>{
   const f=fixture(t);f.message.spark_setup.events.push({tool:'spark_discovery_status',state:'complete',result:f.state.result});
   await f.watch.tick();assert.equal(f.calls.length,0);assert.equal(f.state.reads,0);
+});
+test('the real Genie chat accepts the follow-up and records the exact scan without duplicate generations',async t=>{
+  const f=fixture(t);let generations=0;
+  const chat=new GenieChat({directory:path.join(path.dirname(f.options.filename),'chat'),provider:{info:{mode:'fixture'},generate:async input=>{
+    generations++;input.onSparkSetup({tool:generations===1?'discover_sparks':'spark_discovery_status',state:'complete',at:new Date().toISOString(),result:{scan_id:scan,state:generations===1?'running':'complete'}});
+    return {text:generations===1?'Discovery is running.':'Saved scan is complete; no enrollment occurred.'};
+  }}});t.after(()=>chat.close());
+  const conversation=chat.create();chat.submit(conversation.id,'Find the connected Sparks.','native-chat-fixture');await chat.idle();
+  const options={...f.options,chat},watch=new SparkDiscoveryWatch(options);await watch.tick();await chat.idle();await watch.tick();
+  assert.equal(generations,2);assert.equal(chat.get(conversation.id).messages.length,4);
+  assert.equal(Object.values(watch.records)[0].state,'observed');assert.ok(Object.values(watch.records)[0].request_id.length<=80);
+  await new SparkDiscoveryWatch(options).tick();await chat.idle();assert.equal(generations,2);
+});
+test('a legacy impossible pending ID is repaired while a valid uncertain ID stays unchanged',async t=>{
+  const f=fixture(t);f.options.chat.submit=()=>{throw Error('not acknowledged');};await f.watch.tick();
+  const [key,record]=Object.entries(f.watch.records)[0];record.request_id=key;assert.equal(key.length,81);f.watch.save();
+  const accepted=[];f.options.chat.submit=(_id,_text,id)=>{assert.match(id,/^[a-zA-Z0-9-]{8,80}$/);accepted.push(id);throw Error('uncertain acknowledgment');};
+  const repaired=new SparkDiscoveryWatch(f.options);await repaired.tick();const stable=accepted[0];assert.notEqual(stable,key);
+  await new SparkDiscoveryWatch(f.options).tick();assert.deepEqual(accepted,[stable,stable]);
 });

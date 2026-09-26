@@ -50,10 +50,14 @@ export class SparkDiscoveryWatch {
           if(this.closed||!this.isEnabled()||!fresh.available||fresh.conversations.some(c=>c.busy||c.queued))return;
           if(current.queue_paused||now.requested.find(r=>r.scan_id===request.scan_id)?.stopped||now.observed.has(request.scan_id))continue;
           if(!record){
-            record={conversation_id:s.id,scan_id:request.scan_id,request_id:key,state:'pending',
+            record={conversation_id:s.id,scan_id:request.scan_id,request_id:key.replace('discovery-result-','discovery-'),state:'pending',
               text:`The previously requested Spark discovery scan ${request.scan_id} has reached ${result.state}. Read spark_discovery_status with this exact scan_id once and report the observed candidates, existing machines, SSH prerequisites and coverage limits in this original conversation. Do not start another scan, enroll a host, install engines, change networking, update firmware or reboot. Discovery does not establish setup or firmware readiness. If the receipt is missing or disagrees, report uncertainty and finish. This follow-up reports the original discovery request; it does not grant new maintenance authority.`};
             this.records[key]=record;
           }
+          // The first release's 81-character ID was rejected before submission
+          // by GenieChat's 80-character limit. Repair only that impossible-to-
+          // accept pending ID; never replace a valid or dispatched request ID.
+          if(record.state==='pending'&&record.request_id===key)record.request_id=key.replace('discovery-result-','discovery-');
           this.save();
           this.chat.submit(s.id,record.text,record.request_id,{research:false});
           record.state='dispatched';this.save();this.error=null;return;
