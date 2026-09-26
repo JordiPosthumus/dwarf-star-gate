@@ -75,7 +75,7 @@ test('local oMLX enrollment completion has its own receipt and follow-up identit
   f.conversation.messages[0].recovery.events=f.rows.map(r=>({...prepare(r),tool:'enroll_omlx_recovery'}));
   await f.watch().tick();assert.equal(f.calls.length,0);
   f.rows.forEach(r=>{r.state='enrolled';r.evidence_sha256='a'.repeat(64);});await f.watch().tick();assert.equal(f.calls.length,1);
-  assert.match(f.calls[0][1],/enrollment watcher/);assert.match(f.calls[0][1],/Native restart qualification remains required/);assert.ok(f.calls[0][2].length<=80);
+  assert.match(f.calls[0][1],/enrollment watcher/);assert.match(f.calls[0][1],/Native restart qualification remains required/);assert.match(f.calls[0][1],/fresh eligible demand_start_offers/);assert.match(f.calls[0][1],/original requested/);assert.doesNotMatch(f.calls[0][1],/Do not start or retry a capture/);assert.ok(f.calls[0][2].length<=80);
   f.conversation.messages.push({role:'assistant',recovery:{events:[{tool:'recovery_status',state:'complete',result:{omlx_enrollment:{operations:f.rows}}}]}});
   await f.watch().tick();assert.equal(f.watch().status().requests[0].state,'observed');assert.equal(f.calls.length,1);
 });

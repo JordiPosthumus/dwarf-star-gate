@@ -104,3 +104,86 @@ test('real core socket durably queues one local enrollment and refuses absent na
   assert.equal((await workerControl(config.control_socket,'/enroll-omlx-recovery',input)).state,'failed');
   assert.equal((await workerControl(config.control_socket,'/workers')).recovery.omlx_enrollment.operations.length,1);
 });
+
+async function demandFixture(t){
+  const f=fixture(t),first=f.create(),input=f.request();first.request(input);await first.idle();first.close();
+  const prior=f.store.data.omlx_recovery_enrollments[input.action_id].entry;
+  fs.mkdirSync(path.dirname(prior.config),{recursive:true,mode:0o700});fs.writeFileSync(prior.config,JSON.stringify({fixture:'retained original wrapper',start_stopped:false})+'\n',{mode:0o600});
+  f.config.omlx_recovery_setup.workers[f.worker.id].start_on_demand=true;
+  f.options.materialize=async observed=>{f.calls.push(observed);return {...f.result,previous_config_sha256:observed.expected.enable_demand.sha256};};
+  return {...f,prior,firstInput:input,original:fs.readFileSync(prior.config)};
+}
+
+test('same fixed Genie enrollment tool extends explicit demand authority with exact delta and preserves reconstruction order',async t=>{
+  const f=await demandFixture(t),s=f.create(),input=f.request();
+  assert.deepEqual(s.status().demand_start_offers,[{worker_id:f.worker.id,eligible:true,reason:null}]);
+  const accepted=s.request(input);assert.equal(accepted.demand_start,true);await s.idle();
+  const row=f.store.data.omlx_recovery_enrollments[input.action_id];assert.equal(row.state,'enrolled');
+  assert.deepEqual(row.entry,{...row.snapshot.previous_entry,config:row.entry.config,start_stopped:true,service_profile:f.prior.profile});
+  assert.notEqual(row.entry.config,f.prior.config);assert.deepEqual(fs.readFileSync(f.prior.config),f.original);assert.ok(fs.existsSync(row.backup));
+  assert.equal(f.recovery.config(f.worker.id).start_stopped,true);assert.equal(f.recovery.state.operations.length,0);
+  assert.equal(s.request(input).state,'enrolled');assert.throws(()=>s.request(f.request()),/already_requested/);
+  const restored={};restoreOmlxEnrollments(restored,Object.fromEntries(Object.entries(f.store.data.omlx_recovery_enrollments).reverse()),[f.worker]);
+  assert.deepEqual(restored.recovery.workers,[row.entry]);
+  for(const change of [{profile:'f'.repeat(64)},{python:'/other/python'},{url:'http://127.0.0.1:9999/v1'},{helper:'/different/helper'}]){
+    const bad=structuredClone(f.store.data.omlx_recovery_enrollments);Object.assign(bad[input.action_id].entry,change);
+    assert.throws(()=>restoreOmlxEnrollments({},bad,[f.worker]),/delta_invalid/);
+  }
+  assert.equal(s.status().demand_start_offers.length,0);assert.ok(!JSON.stringify(s.status()).includes(f.directory));
+});
+
+test('demand enrollment requires explicit policy and preserves existing bindings on mismatches or active ownership',async t=>{
+  for(const change of [f=>f.config.omlx_recovery_setup.workers[f.worker.id].start_on_demand=false,
+    f=>f.worker.active={id:'active'},f=>f.worker.drained=true,f=>f.worker.healthy=false,
+    f=>f.store.data.agent_control={holds:[{worker_id:f.worker.id}],maintenance_locks:[]},
+    f=>fs.chmodSync(f.prior.config,0o644),f=>f.store.data.recovery.adopted_profiles={[f.worker.id]:{}},
+    f=>f.recovery.configs.set(f.worker.id,{...f.recovery.config(f.worker.id),helper:'/different/helper'})]){
+    const f=await demandFixture(t),s=f.create(),before=structuredClone(f.config.recovery);change(f);
+    assert.throws(()=>s.request(f.request()));assert.deepEqual(f.config.recovery,before);assert.deepEqual(fs.readFileSync(f.prior.config),f.original);
+  }
+});
+
+test('late wrapper/profile changes and capability withdrawal cannot install demand authority',async t=>{
+  for(const change of ['wrapper','profile','permission']){
+    const f=await demandFixture(t),s=f.create(),before=structuredClone(f.config.recovery);
+    f.options.materialize=async observed=>({...f.result,previous_config_sha256:observed.expected.enable_demand.sha256});
+    // Create a fresh service after replacing the injected native materializer.
+    const next=createOmlxEnrollment({...f.options,materialize:async observed=>{
+      if(change==='wrapper')fs.appendFileSync(f.prior.config,' ');
+      if(change==='permission')f.enabled(false);
+      return {...f.result,...(change==='profile'?{profile:'f'.repeat(64)}:{}),previous_config_sha256:observed.expected.enable_demand.sha256};
+    }});
+    const input=f.request();next.request(input);await next.idle();assert.equal(next.request(input).state,'failed');assert.deepEqual(f.config.recovery,before);
+    assert.notEqual(f.recovery.config(f.worker.id).start_stopped,true);s.close();next.close();
+  }
+});
+
+test('pending demand enrollment survives controller replacement under the same capture identity',async t=>{
+  const f=await demandFixture(t);let release;
+  const first=createOmlxEnrollment({...f.options,materialize:observed=>new Promise(resolve=>release=()=>resolve({...f.result,previous_config_sha256:observed.expected.enable_demand.sha256}))});
+  const input=f.request();first.request(input);first.close();release();await first.idle();
+  assert.equal(f.store.data.omlx_recovery_enrollments[input.action_id].state,'queued');assert.notEqual(f.recovery.config(f.worker.id).start_stopped,true);
+  const next=f.create();next.tick();await next.idle();assert.equal(next.request(input).state,'enrolled');
+  assert.equal(f.calls.at(-1).destination,path.join(f.directory,'genie','recovery-omlx-enrollment',input.action_id));
+  assert.equal(Object.values(f.store.data.omlx_recovery_enrollments).filter(row=>row.demand_start).length,1);
+});
+
+test('demand binding invalidates prior qualification and requires a new native proof before start eligibility',async t=>{
+  const {omlxCertified}=await import('./recovery-omlx-controller.mjs');
+  const f=await demandFixture(t),r=f.recovery;
+  r.nodes.push({id:'spare',healthy:true,drained:false,queue:[],active:null});f.config.machine_groups.spare=['spare-machine'];
+  f.config.omlx_recovery_setup.workers[f.worker.id].qualify_restart=true;r.isOmlxQualificationEnabled=()=>true;
+  let epoch='c'.repeat(32),proofs=0;
+  r.call=async(c,input)=>input.action==='inspect'?{version:1,machine:c.machine,profile:c.profile,active:true,listener:true,instance:epoch,started_at:Date.now()-60000,fault:null}:
+    {action_id:input.action_id,state:'completed',new_instance:epoch=epoch==='c'.repeat(32)?'d'.repeat(32):'e'.repeat(32)};
+  r.verify=async()=>{proofs++;return {check:'glm53_omlx_two_conversations_cold_to_warm',context_length:400000,verified_at:new Date().toISOString(),samples:['cold-A','cold-B','warm-A','warm-B'].map((label,i)=>({label,prompt_tokens:20000+i*100,cached_tokens:i<2?0:14336,elapsed_ms:10}))};};
+  r.reinstate=(n,expected,state)=>{f.store.save({...f.store.data,recovery:state});n.healthy=true;};
+  async function qualify(){await r.inspect(f.worker.id);const offer=r.workerStatus(f.worker).omlx_qualification;assert.equal(offer.eligible,true);r.requestOmlxQualification({worker_id:f.worker.id,evidence_id:offer.evidence_id,action_id:randomUUID()});await r.task;}
+  await qualify();assert.equal(omlxCertified(r,f.worker,r.config(f.worker.id)),true);assert.equal(proofs,1);
+  const s=f.create();s.request(f.request());await s.idle();assert.equal(r.config(f.worker.id).start_stopped,true);
+  assert.equal(omlxCertified(r,f.worker,r.config(f.worker.id)),false);await qualify();assert.equal(proofs,2);assert.equal(omlxCertified(r,f.worker,r.config(f.worker.id)),true);
+  const restored={...f.config};delete restored.recovery;restoreOmlxEnrollments(restored,f.store.data.omlx_recovery_enrollments,r.nodes);
+  const after=new Recovery(restored.recovery,{store:f.store,nodes:r.nodes,model:'PoolModel',stopping:()=>false,reinstate:r.reinstate,fleetConfig:restored,isOmlxQualificationEnabled:()=>true});
+  assert.equal(omlxCertified(after,f.worker,after.config(f.worker.id)),true,'new binding and qualification must survive restoring both enrollment stages');
+  await after.close();await r.close();
+});

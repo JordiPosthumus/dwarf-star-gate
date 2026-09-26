@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -81,6 +82,54 @@ class OmlxEnrollmentTests(unittest.TestCase):
         self.run_capture();wrapper=self.destination/'omlx.json';wrapper.chmod(0o644)
         with self.assertRaisesRegex(ValueError,'file_unverified'):self.run_capture()
         wrapper.unlink();wrapper.symlink_to(self.destination/'evidence.json')
+        with self.assertRaisesRegex(ValueError,'file_unverified'):self.run_capture()
+
+    def demand(self):
+        self.original=self.root/'original.json'
+        self.original.write_text(json.dumps(self.config,indent=2)+'\n');self.original.chmod(0o600)
+        self.expected['enable_demand']={'config':str(self.original),'sha256':hashlib.sha256(self.original.read_bytes()).hexdigest(),
+                                        'machine':self.inspection['machine'],'profile':self.inspection['profile']}
+
+    def test_demand_enrollment_preserves_original_bytes_and_only_enables_new_wrapper(self):
+        self.demand();before=self.original.read_bytes()
+        with patch.object(m.omlx.os,'kill') as kill,patch.object(m.omlx,'start') as start:
+            result=self.run_capture();self.assertEqual(self.run_capture(),result)
+            kill.assert_not_called();start.assert_not_called()
+        self.assertEqual(self.original.read_bytes(),before)
+        self.assertEqual((self.destination/'prior-omlx.json').read_bytes(),before)
+        self.assertEqual((self.destination/'prior-omlx.json').stat().st_mode&0o777,0o600)
+        self.assertEqual(m.read_json(self.destination/'omlx.json'),{**self.config,'start_stopped':True})
+        self.assertEqual(result['previous_config_sha256'],self.expected['enable_demand']['sha256'])
+
+    def test_demand_rejects_changed_profile_or_native_configuration_without_mutation(self):
+        self.demand();before=self.original.read_bytes()
+        for change in ['profile','machine','config','hash']:
+            with self.subTest(change=change):
+                self.destination=self.root/change;expected=copy.deepcopy(self.expected);config=copy.deepcopy(self.config)
+                if change in ('profile','machine'):self.expected['enable_demand'][change]='f'*64
+                if change=='config':self.config['launcher']=str(self.root/'different.sh')
+                if change=='hash':self.expected['enable_demand']['sha256']='f'*64
+                with self.assertRaisesRegex(ValueError,'omlx_demand_original_'):self.run_capture()
+                self.assertFalse((self.destination/'omlx.json').exists());self.assertEqual(self.original.read_bytes(),before)
+                self.expected=expected;self.config=config
+
+    def test_demand_detects_source_change_during_capture_and_changed_retained_backup(self):
+        self.demand()
+        def inspect(_):
+            self.original.write_text(json.dumps({**self.config,'start_stopped':True}))
+            return copy.deepcopy(self.inspection)
+        with self.assertRaisesRegex(ValueError,'original_identity_changed'):self.run_capture(inspect=inspect)
+        self.assertFalse((self.destination/'omlx.json').exists())
+        self.demand();self.run_capture();(self.destination/'prior-omlx.json').write_text('{}')
+        with self.assertRaisesRegex(ValueError,'backup_changed'):self.run_capture()
+
+    def test_demand_permission_must_be_a_complete_private_previous_binding(self):
+        self.demand()
+        for value in [True,False,{}, {'config':'/a'}, {**self.expected['enable_demand'],'config':'relative'},
+                      {**self.expected['enable_demand'],'arbitrary':'option'}]:
+            with self.subTest(value=value),self.assertRaisesRegex(ValueError,'demand_enrollment_invalid'):
+                m.validate_expected({**self.expected,'enable_demand':value})
+        self.original.chmod(0o644)
         with self.assertRaisesRegex(ValueError,'file_unverified'):self.run_capture()
 
 

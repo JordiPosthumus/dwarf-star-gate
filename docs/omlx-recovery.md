@@ -96,13 +96,38 @@ revoked policy still prevents mutation or readmission. Holds and all physical
 aliases remain fenced throughout. Unlike a restart, starting a proven stopped
 service does not remove a serving LLM and therefore needs no spare LLM.
 
-**Deployment remains incomplete:** Genie enrollment still captures restart-only
-authority; it does not yet grant stopped-start authority through its setup tool.
-Do not enable a deployment's stopped-start setting merely because protocol and
-controller fixtures pass. Native acceptance with the unchanged launcher, real
-cold-to-warm proof and actual queued inference is required before claiming that
-an installation supports on-demand operation. Existing restart qualification and
-legacy explicit operator canaries remain separate.
+### Genie enrollment for on-demand starts
+
+Set the worker's owner-managed `start_on_demand` policy to `true` alongside
+`exclusive` and its original launcher/dependency list. Genie first reads
+`recovery_status.omlx_enrollment.demand_start_offers`. For an eligible existing
+restart-only binding, the same fixed `enroll_omlx_recovery` tool accepts only the
+worker ID; its bridge creates the durable action ID. An initial enrollment still
+captures restart-only authority. A second, separately recorded action can extend
+that binding when the explicit demand policy permits it.
+
+The native capture checks the live process/profile and metadata repeatedly,
+compares the original private wrapper against its saved hash and the newly
+captured configuration, and writes a byte-for-byte private backup. It creates a
+new wrapper with only `start_stopped` changed to `true`; the original wrapper,
+launcher, settings, model files and process stay intact. The gateway changes only
+the wrapper reference and its matching stopped-start/service-profile enrollment.
+Metadata intent and completion backups remain available. Policy changes, busy
+physical aliases, changed credentials, adopted profiles and changed native inputs
+prevent installation. Interrupted capture resumes under the same action ID.
+
+The new enrollment deliberately invalidates the previous qualification. Genie
+must obtain a new eligible `omlx_qualification` offer and complete native restart
+qualification for the new binding before demand starts become eligible. The
+completion watcher permits continuing the original requested setup through these
+eligible stages; enrollment alone is never reported as working on-demand service.
+
+**Native acceptance remains incomplete:** this enrollment/controller workflow is
+implemented and tested with disposable fixtures. It is not yet qualified on the
+owner's live M3. Each installation needs unchanged-launcher native qualification,
+real cold-to-warm proof and actual queued inference before claiming on-demand
+operation. A hung live process never becomes stopped-start authority. Existing
+restart qualification and legacy explicit operator canaries remain separate.
 
 Readmission additionally requires unchanged process/profile, native model context
 and two actual cold-to-warm GLM/oMLX conversations. A Spark/vLLM or Qwen receipt

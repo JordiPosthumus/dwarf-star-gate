@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import stat
 import sys
 import urllib.parse
@@ -28,14 +29,33 @@ def private_directory(folder):
             'omlx_enrollment_directory_unverified')
 
 
+def private_bytes(filename):
+    try:
+        fd = os.open(filename, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError as error:
+        raise ValueError('omlx_enrollment_file_unverified') from error
+    with os.fdopen(fd, 'rb') as source:
+        info = os.fstat(source.fileno())
+        require(stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid()
+                and not info.st_mode & 0o077 and info.st_size <= 65536,
+                'omlx_enrollment_file_unverified')
+        raw = source.read(65537)
+        require(len(raw) <= 65536, 'omlx_enrollment_file_unverified')
+        return raw
+
+
 def read_json(filename):
-    require(omlx.mac.owned_private_regular(filename), 'omlx_enrollment_file_unverified')
-    require(filename.stat().st_size <= 65536, 'omlx_enrollment_file_unverified')
-    return json.loads(filename.read_text())
+    return json.loads(private_bytes(filename))
 
 
 def validate_expected(expected):
-    require(isinstance(expected, dict) and set(expected) == {'worker_id', 'route', 'target', 'launcher', 'profile_files', 'model', 'context_length', 'concurrency'}, 'omlx_enrollment_request_invalid')
+    require(isinstance(expected, dict) and set(expected) - {'enable_demand'} == {'worker_id', 'route', 'target', 'launcher', 'profile_files', 'model', 'context_length', 'concurrency'}, 'omlx_enrollment_request_invalid')
+    if 'enable_demand' in expected:
+        previous = expected['enable_demand']
+        require(isinstance(previous, dict) and set(previous) == {'config', 'sha256', 'machine', 'profile'}
+                and isinstance(previous['config'], str) and Path(previous['config']).is_absolute() and '\0' not in previous['config']
+                and all(isinstance(previous[k], str) and re.fullmatch(r'[a-f0-9]{64}', previous[k])
+                        for k in ('sha256', 'machine', 'profile')), 'omlx_demand_enrollment_invalid')
     target = expected['target']
     require(isinstance(target, dict) and set(target) == {'kind', 'root', 'url', 'api_key_file'}
             and target['kind'] == 'omlx-local', 'omlx_inspection_binding_unverified')
@@ -95,6 +115,14 @@ def materialize(destination, expected, capture=candidate, inspect=omlx.inspect, 
         fcntl.flock(lock, fcntl.LOCK_EX)
         config = capture(expected)
         omlx.validate_config(config)
+        previous = expected.get('enable_demand')
+        original = None
+        if previous:
+            original = private_bytes(previous['config'])
+            require(hashlib.sha256(original).hexdigest() == previous['sha256']
+                    and json.loads(original) == config and config['start_stopped'] is False,
+                    'omlx_demand_original_configuration_changed')
+            config = {**config, 'start_stopped': True}
         before = inspect(config)
         first = read_metadata(expected)
         after = inspect(config)
@@ -102,6 +130,18 @@ def materialize(destination, expected, capture=candidate, inspect=omlx.inspect, 
         final = inspect(config)
         require(before == after == final and first == second and final['active'] and final['listener']
                 and not final['stopped'] and final['fault'] is None, 'omlx_capture_no_longer_current')
+        if previous:
+            require(all(final[k] == previous[k] for k in ('machine', 'profile'))
+                    and private_bytes(previous['config']) == original, 'omlx_demand_original_identity_changed')
+            retained = destination/'prior-omlx.json'
+            if retained.exists():
+                require(private_bytes(retained) == original, 'omlx_demand_backup_changed')
+            else:
+                fd = os.open(retained, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+                with os.fdopen(fd, 'wb') as target:
+                    target.write(original)
+                    target.flush()
+                    os.fsync(target.fileno())
         wrapper = destination/'omlx.json'
         evidence_file = destination/'evidence.json'
         if wrapper.exists():
@@ -121,7 +161,8 @@ def materialize(destination, expected, capture=candidate, inspect=omlx.inspect, 
             omlx.mac.atomic_save(wrapper, config)
         return {'machine': final['machine'], 'profile': final['profile'], 'instance': final['instance'],
                 'evidence_sha256': omlx.fingerprint(evidence), 'config_sha256': hashlib.sha256(wrapper.read_bytes()).hexdigest(),
-                'context_length': expected['context_length'], 'concurrency': expected['concurrency']}
+                'context_length': expected['context_length'], 'concurrency': expected['concurrency'],
+                **({'previous_config_sha256': previous['sha256']} if previous else {})}
 
 
 def main():

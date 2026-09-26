@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {execFile} from 'node:child_process';
-import {randomUUID} from 'node:crypto';
+import {randomUUID,createHash} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {recoveryConfig} from './recovery-transport.mjs';
 import {requestCapacity} from './worker-activity.mjs';
@@ -16,15 +16,43 @@ const digest=value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
 const require=(value,reason)=>{if(!value)throw Error(reason);};
 const cleanEntry=entry=>Object.fromEntries(Object.entries(entry).filter(([k])=>k!=='telemetry_service'));
 const route=n=>Object.fromEntries(['id','url','backend','ssh','ssh_fallbacks','remote_port'].filter(k=>n[k]!==undefined).map(k=>[k,n[k]]));
-const publicRow=r=>Object.fromEntries(['action_id','worker_id','state','reason','created_at','finished_at','error','evidence_sha256'].filter(k=>r[k]!==undefined).map(k=>[k,r[k]]));
+const publicRow=r=>Object.fromEntries(['action_id','worker_id','state','reason','created_at','finished_at','error','evidence_sha256','demand_start'].filter(k=>r[k]!==undefined).map(k=>[k,r[k]]));
 const rows=store=>Object.values(store.data.omlx_recovery_enrollments??{});
 const waiting=new Set(['wait_for_admitted_work','shared_machine_has_admitted_work','shared_machine_recovery_in_progress','native_work_reserved','maintenance_hold_active']);
+function privateHash(filename){
+  let fd;
+  try{
+    fd=fs.openSync(filename,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK);
+    const info=fs.fstatSync(fd);require(info.isFile()&&info.uid===process.getuid()&&!(info.mode&0o077)&&info.size<=65536,'omlx_enrollment_file_unverified');
+    const bytes=Buffer.alloc(65537),size=fs.readSync(fd,bytes,0,bytes.length,0);require(size<=65536,'omlx_enrollment_file_unverified');
+    return createHash('sha256').update(bytes.subarray(0,size)).digest('hex');
+  }catch{throw Error('omlx_enrollment_file_unverified');}finally{if(fd!==undefined)fs.closeSync(fd);}
+}
+const normalized=entry=>recoveryConfig({workers:[cleanEntry(entry)]}).get(entry.id);
+function demandReplacement(entries,prior,next){
+  require(prior?.adapter==='omlx'&&prior.verification==='glm53_omlx'&&prior.start_stopped!==true&&
+    next?.config!==prior.config&&next?.start_stopped===true&&next?.service_profile===prior.profile&&
+    isDeepStrictEqual(cleanEntry(next),{...cleanEntry(prior),config:next.config,start_stopped:true,service_profile:prior.profile}),
+    'omlx_demand_enrollment_delta_invalid');
+  const existing=entries.filter(e=>e.id===prior.id);
+  require(existing.length===1&&isDeepStrictEqual(normalized(existing[0]),normalized(prior)),'omlx_demand_prior_binding_changed');
+  const replaced=entries.map(e=>e.id===prior.id?cleanEntry(next):cleanEntry(e));recoveryConfig({workers:replaced});return replaced;
+}
 
 export function restoreOmlxEnrollments(config,saved={},workers){
   require(saved&&typeof saved==='object'&&!Array.isArray(saved),'omlx_enrollment_journal_invalid');
-  for(const [id,row] of Object.entries(saved)){
+  // Base enrollment must restore before its separately opted-in extension,
+  // regardless of the serialized object's property order.
+  const ordered=Object.entries(saved).sort(([,a],[,b])=>Number(a?.demand_start===true)-Number(b?.demand_start===true));
+  for(const [id,row] of ordered){
     require(uuid(id)&&row?.action_id===id&&typeof row.worker_id==='string'&&['queued','enrolled','failed'].includes(row.state),'omlx_enrollment_journal_invalid');
+    require(row.demand_start===undefined||row.demand_start===true,'omlx_enrollment_journal_invalid');
     if(row.state!=='enrolled'||!workers.some(w=>w.id===row.worker_id))continue;
+    if(row.demand_start){
+      require(row.entry?.id===row.worker_id&&row.snapshot?.previous_entry?.id===row.worker_id&&digest(row.evidence_sha256)&&digest(row.config_sha256)&&
+        digest(row.snapshot?.expected?.enable_demand?.sha256)&&['config','machine','profile'].every(k=>row.snapshot.expected.enable_demand[k]===row.snapshot.previous_entry[k]),'omlx_enrollment_journal_invalid');
+      config.recovery={workers:demandReplacement(config.recovery?.workers??[],row.snapshot.previous_entry,row.entry)};continue;
+    }
     require(row.entry?.id===row.worker_id&&row.entry.adapter==='omlx'&&row.entry.verification==='glm53_omlx'
       &&row.entry.start_stopped!==true&&digest(row.evidence_sha256)&&digest(row.config_sha256),'omlx_enrollment_journal_invalid');
     const entries=[...(config.recovery?.workers??[]).map(cleanEntry),cleanEntry(row.entry)];
@@ -51,7 +79,9 @@ export function createOmlxEnrollment({config,store,recovery,isEnabled,materializ
     require(enabled(id),'omlx_enrollment_policy_disabled');
     const n=recovery.node(id),target=config.genie_chat?.inspection?.workers?.[id],policy=config.omlx_recovery_setup.workers[id];
     require(n&&!n.removed&&!n.quarantine&&!n.recovering&&n.healthy&&!n.drained,'omlx_enrollment_requires_healthy_worker');
-    require(!recovery.config(id),'omlx_existing_recovery_binding_preserved');
+    const previous=recovery.config(id),demand=!!previous;
+    if(demand)require(policy.start_on_demand===true&&previous.adapter==='omlx'&&previous.verification==='glm53_omlx'&&previous.start_stopped!==true&&
+      previous.helper===helper&&recovery.binding(n,previous)&&!recovery.state.adopted_profiles[id],'omlx_existing_recovery_binding_preserved');
     require(target?.kind==='omlx-local'&&target.url===n.url&&!n.ssh&&!n.ssh_fallbacks&&n.remote_port===undefined,'omlx_inspection_binding_unverified');
     const endpoint=new URL(n.url);
     require(endpoint.protocol==='http:'&&endpoint.hostname==='127.0.0.1'&&endpoint.port&&!endpoint.username&&!endpoint.password&&!endpoint.search&&!endpoint.hash,'omlx_endpoint_binding_unverified');
@@ -62,8 +92,9 @@ export function createOmlxEnrollment({config,store,recovery,isEnabled,materializ
     const physical=machinesFor(id,config);require(physical.length===1,'omlx_physical_mapping_unverified');
     const model=n.model_aliases?.[config.model];
     require(typeof model==='string'&&model&&Number.isSafeInteger(n.contextLength)&&n.contextLength>0,'omlx_capacity_unverified');
-    return {physical_machines:physical,endpoint_credential_file:n.api_key_file??null,expected:{worker_id:id,route:route(n),target:structuredClone(target),launcher:policy.launcher,
-      profile_files:[...policy.profile_files],model,context_length:n.contextLength,concurrency:requestCapacity(n)}};
+    const before=demand?{config:previous.config,sha256:privateHash(previous.config),machine:previous.machine,profile:previous.profile}:null;
+    return {physical_machines:physical,endpoint_credential_file:n.api_key_file??null,...(demand?{previous_entry:cleanEntry(previous)}:{}),expected:{worker_id:id,route:route(n),target:structuredClone(target),launcher:policy.launcher,
+      profile_files:[...policy.profile_files],model,context_length:n.contextLength,concurrency:requestCapacity(n),...(demand?{enable_demand:before}:{})}};
   }
   function save(row){store.save({...store.data,omlx_recovery_enrollments:{...store.data.omlx_recovery_enrollments,[row.action_id]:row}});}
   function backup(){
@@ -76,14 +107,17 @@ export function createOmlxEnrollment({config,store,recovery,isEnabled,materializ
       require(isDeepStrictEqual(snapshot(row.worker_id),row.snapshot),'omlx_capture_binding_changed');
       fs.mkdirSync(directory,{recursive:true,mode:0o700});const info=fs.lstatSync(directory);
       require(info.isDirectory()&&!info.isSymbolicLink()&&info.uid===process.getuid()&&!(info.mode&0o077),'omlx_enrollment_directory_unverified');
-      const python=fs.realpathSync(config.genie_chat.python),destination=path.join(directory,row.action_id);
+      const python=row.demand_start?row.snapshot.previous_entry.python:fs.realpathSync(config.genie_chat.python),destination=path.join(directory,row.action_id);
       const result=await materialize({python,destination,expected:row.snapshot.expected});
       require(isDeepStrictEqual(snapshot(row.worker_id),row.snapshot),'omlx_capture_binding_changed');
       require(['machine','profile','evidence_sha256','config_sha256'].every(k=>digest(result?.[k]))&&/^[a-f0-9]{32}$/.test(result?.instance??'')
         &&result.context_length===row.snapshot.expected.context_length&&result.concurrency===row.snapshot.expected.concurrency,'omlx_enrollment_result_unverified');
-      const raw={...row.snapshot.expected.route,adapter:'omlx',transport:'local',verification:'glm53_omlx',exclusive:true,
-        python,helper,config:path.join(destination,'omlx.json'),machine:result.machine,profile:result.profile};
-      const entries=[...(config.recovery?.workers??[]).map(cleanEntry),raw];
+      if(row.demand_start)require(result.previous_config_sha256===row.snapshot.expected.enable_demand.sha256&&
+        result.machine===row.snapshot.previous_entry.machine&&result.profile===row.snapshot.previous_entry.profile,'omlx_demand_result_changed');
+      const raw=row.demand_start?{...row.snapshot.previous_entry,config:path.join(destination,'omlx.json'),start_stopped:true,service_profile:result.profile}:
+        {...row.snapshot.expected.route,adapter:'omlx',transport:'local',verification:'glm53_omlx',exclusive:true,
+          python,helper,config:path.join(destination,'omlx.json'),machine:result.machine,profile:result.profile};
+      const entries=row.demand_start?demandReplacement(config.recovery?.workers??[],row.snapshot.previous_entry,raw):[...(config.recovery?.workers??[]).map(cleanEntry),raw];
       const checked=recoveryConfig({workers:entries}).get(row.worker_id),retained=backup();
       save({...row,state:'enrolled',reason:undefined,finished_at:new Date().toISOString(),entry:raw,evidence_sha256:result.evidence_sha256,
         config_sha256:result.config_sha256,instance:result.instance,backup:retained});
@@ -102,12 +136,22 @@ export function createOmlxEnrollment({config,store,recovery,isEnabled,materializ
     require(input&&Object.keys(input).sort().join(',')==='action_id,worker_id'&&uuid(input.action_id)&&typeof input.worker_id==='string','omlx_enrollment_request_invalid');
     const previous=store.data.omlx_recovery_enrollments?.[input.action_id];
     if(previous){require(previous.worker_id===input.worker_id,'omlx_enrollment_action_conflict');return publicRow(previous);}
-    require(!rows(store).some(r=>r.worker_id===input.worker_id&&['queued','enrolled'].includes(r.state)),'omlx_enrollment_already_requested');
+    const demand=recovery.config(input.worker_id)?.start_stopped!==true&&!!recovery.config(input.worker_id)&&config.omlx_recovery_setup?.workers?.[input.worker_id]?.start_on_demand===true;
+    require(!rows(store).some(r=>r.worker_id===input.worker_id&&['queued','enrolled'].includes(r.state)&&(!demand||r.demand_start)),'omlx_enrollment_already_requested');
     const observed=snapshot(input.worker_id),retained=backup();
-    const row={...input,state:'queued',created_at:new Date().toISOString(),snapshot:observed,intent_backup:retained};save(row);launch(row);return publicRow(row);
+    const row={...input,...(observed.previous_entry?{demand_start:true}:{}),state:'queued',created_at:new Date().toISOString(),snapshot:observed,intent_backup:retained};save(row);launch(row);return publicRow(row);
+  }
+  function demandOffers(){
+    return Object.keys(config.omlx_recovery_setup?.workers??{}).filter(id=>config.omlx_recovery_setup.workers[id].start_on_demand===true&&
+      recovery.config(id)&&recovery.config(id).start_stopped!==true).map(worker_id=>{
+      let reason=null;
+      try{require(!rows(store).some(r=>r.worker_id===worker_id&&r.demand_start&&['queued','enrolled'].includes(r.state)),'omlx_enrollment_already_requested');snapshot(worker_id);}catch(error){reason=/^omlx_[a-z_]+$|^[a-z_]+$/.test(error.message)?error.message:'omlx_enrollment_unverified';}
+      return {worker_id,eligible:!reason,reason};
+    });
   }
   return {request,status:()=>({schema:1,operations:rows(store).map(publicRow),configured_workers:Object.keys(config.omlx_recovery_setup?.workers??{}).filter(enabled),
-    scope:'Read-only native capture installs an existing local GLM/oMLX binding. No restart, stopped-start authority, routing or model setting change; native recovery qualification remains required.'}),
+    demand_start_offers:demandOffers(),
+    scope:'Native capture does not signal, launch, route or change model settings. Initial enrollment grants restart-only authority. With explicit start_on_demand policy, a separate enrollment action retains the old wrapper and enables stopped-start in a new exact-profile binding; fresh native restart qualification remains required.'}),
     tick(){for(const row of rows(store)){
       const n=recovery.node(row.worker_id);
       if(row.state==='queued'&&enabled(row.worker_id)&&n?.healthy&&!n.drained&&!n.quarantine&&!n.recovering&&!recovery.ownershipReason(n))launch(row);
