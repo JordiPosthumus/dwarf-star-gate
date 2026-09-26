@@ -89,6 +89,16 @@ test('qualification watcher follows actual recovery IDs, never repeats a restart
   f.conversation.messages.push({role:'assistant',recovery:{events:[{tool:'recovery_status',state:'complete',result:{operations:f.rows}}]}});
   await f.watch().tick();assert.equal(f.watch().status().requests[0].state,'observed');assert.equal(f.calls.length,1);
 });
+test('local oMLX qualification watcher follows actual recovery IDs, never repeats a restart and observes final native proof status',async t=>{
+  const f=fixture(t);f.options.kind='omlx-qualification';
+  f.rows.forEach(r=>{r.id=r.action_id;r.omlx_qualification=true;r.state='reconciling';});
+  f.conversation.messages[0].recovery.events=f.rows.map(r=>({...prepare(r),tool:'qualify_omlx_recovery'}));
+  await f.watch().tick();assert.equal(f.calls.length,0);
+  f.rows.forEach(r=>r.state='recovered');await f.watch().tick();assert.equal(f.calls.length,1);
+  assert.match(f.calls[0][1],/without replaying the action/);assert.ok(f.calls[0][2].length<=80);
+  f.conversation.messages.push({role:'assistant',recovery:{events:[{tool:'recovery_status',state:'complete',result:{operations:f.rows}}]}});
+  await f.watch().tick();assert.equal(f.watch().status().requests[0].state,'observed');assert.equal(f.calls.length,1);
+});
 test('real persisted Genie chat deduplicates lost submission acknowledgement after both services restart',async t=>{
   const f=fixture(t);f.finish();let generates=0;
   const provider={generate:async({onRecovery})=>{generates++;onRecovery(observation(f.rows));return 'Both native receipts were observed.';}};

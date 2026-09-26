@@ -234,7 +234,7 @@ def run_transaction(filename,config,request,*,inspect=omlx.inspect,idle=omlx.idl
                 if current['active'] and current['instance']!=request['instance']:
                     if row['phase']=='launch_intent':update(phase='launch_observed',state='pending',reason=None,new_instance=current['instance'])
                     require(current['instance']==row['new_instance'],'omlx_transaction_replacement_changed')
-                    if current['listener'] and current['fault'] is None:
+                    if current['listener'] and current['fault'] is None and idle(config):
                         update(phase='completed',state='completed',reason=None);return summary(row,request)
                 elif row['phase']=='launch_observed':
                     update(state='uncertain',reason='omlx_transaction_replacement_lost');return summary(row,request)

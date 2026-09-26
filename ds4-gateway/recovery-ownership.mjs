@@ -4,7 +4,7 @@ import {activeCount} from './worker-activity.mjs';
 // Synchronous ownership checks use gateway-owned state, never a registry
 // projection (which itself computes recovery status). Different worker names
 // can occupy the same physical machines, including either member of a pair.
-export function recoveryOwnership({node,nodes,store,config={},directReserved=()=>false,releasingHoldId=null,phase='action',operationId=null}) {
+export function recoveryOwnership({node,nodes,store,config={},directReserved=()=>false,releasingHoldId=null,phase='action',operationId=null,allowReservedQueue=false}) {
   const state=store.data.agent_control;
   if(state!==undefined&&(!state||!Array.isArray(state.holds)||!Array.isArray(state.maintenance_locks??[])))return 'maintenance_state_unverified';
   const holds=state?.holds??[],locks=state?.maintenance_locks??[];
@@ -25,7 +25,8 @@ export function recoveryOwnership({node,nodes,store,config={},directReserved=()=
   if(holds.some(h=>ids.has(h.worker_id)&&!(h.worker_id===node.id&&h.id===releasingHoldId))||locks.some(h=>ids.has(h.worker_id)))return 'maintenance_hold_active';
   for(const peer of shared){
     if(peer.removed)return 'physical_ownership_unverified';
-    if(activeCount(peer)||peer.queue?.length)return peer===node?'wait_for_admitted_work':'shared_machine_has_admitted_work';
+    const heldQueue=allowReservedQueue&&operationId&&peer.recovering&&peer.recoveryOperationId===operationId;
+    if(activeCount(peer)||(peer.queue?.length&&!heldQueue))return peer===node?'wait_for_admitted_work':'shared_machine_has_admitted_work';
     if(peer!==node&&peer.recovering&&!(operationId&&peer.recoveryOperationId===operationId))return 'shared_machine_recovery_in_progress';
     // Our own synthetic verification may set a direct-traffic reservation.
     // Routing already honors it; it must not invalidate a completed proof.

@@ -110,6 +110,13 @@ class OmlxTransactionTests(unittest.TestCase):
         self.assertEqual(self.stops,[]);self.assertEqual(self.starts,[])
         self.owns.return_value=True;self.assertEqual(self.run_action()['state'],'completed')
 
+    def test_new_listener_does_not_complete_while_native_model_is_loading_or_busy(self):
+        self.idle.side_effect=lambda config:not self.starts
+        result=self.run_action();self.assertEqual(result['phase'],'launch_observed');self.assertEqual(result['state'],'pending')
+        self.idle.side_effect=None;self.idle.return_value=True
+        self.assertEqual(self.run_action()['state'],'completed')
+        self.assertEqual(self.stops,[123]);self.assertEqual(len(self.starts),1)
+
     def test_final_stop_guard_detects_pid_reuse_and_cannot_be_reenabled(self):
         def change(phase):
             if phase=='stop_intent':self.current['pid']=456

@@ -207,11 +207,18 @@ def main():
     validate_config(config)
     raw = sys.stdin.buffer.read(8193)
     if len(raw) > 8192: raise ValueError('adapter_input_limit')
-    print(json.dumps(handle(config, json.loads(raw), filename.with_suffix('.actions.json'))))
+    request=json.loads(raw)
+    if request.get('action')=='transaction':
+        spec=importlib.util.spec_from_file_location('omlx_transaction',Path(__file__).with_name('recovery_omlx_transaction.py'))
+        transaction=importlib.util.module_from_spec(spec);spec.loader.exec_module(transaction)
+        result=transaction.dispatch(filename,config,request)
+    else:result=handle(config,request,filename.with_suffix('.actions.json'))
+    print(json.dumps(result))
 
 
 if __name__ == '__main__':
     try: main()
-    except Exception:
-        print(json.dumps({'error': 'adapter_check_or_operation_failed'}))
+    except Exception as error:
+        reason=str(error) if re.fullmatch(r'omlx_transaction_[a-z_]+',str(error)) else 'adapter_check_or_operation_failed'
+        print(json.dumps({'error': reason}))
         sys.exit(1)

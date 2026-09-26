@@ -146,6 +146,15 @@ assert m.dispatch(f,c,r)['state']=='running'
         self.wait_for(lambda:self.row().get('state')=='completed')
         self.assert_one_restart();self.assertGreaterEqual(len(self.permits),5)
 
+    def test_adapter_entrypoint_dispatches_only_exact_permitted_transaction(self):
+        args=[sys.executable,'-I',m.omlx.__file__,str(self.filename)]
+        denied=subprocess.run(args,input=json.dumps({**self.request,'canary':False}),capture_output=True,text=True,timeout=15)
+        self.assertNotEqual(denied.returncode,0);self.assertEqual(json.loads(denied.stdout)['error'],'omlx_transaction_request_invalid')
+        self.assertFalse((self.root/'stops').exists())
+        accepted=subprocess.run(args,input=json.dumps(self.request),capture_output=True,text=True,timeout=15)
+        self.assertEqual(accepted.returncode,0);self.assertEqual(json.loads(accepted.stdout)['state'],'running')
+        self.wait_for(lambda:self.row().get('state')=='completed');self.assert_one_restart()
+
     def test_killed_runner_after_signal_resumes_observation_without_reissuing_stop(self):
         self.save_request();driver=self.root/'interrupt.py'
         driver.write_text('''import importlib.util,os,sys
