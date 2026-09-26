@@ -69,6 +69,8 @@ test('Genie qualifies an opted-in healthy pair under its own identity and native
   const op=f.recovery.state.operations.at(-1);assert.equal(op.state,'recovered');assert.equal(op.was_paused,false);assert.equal(f.node.drained,false);
   assert.equal(f.verifyCount,1);assert.equal(pairCertified(f.recovery,f.node,f.recovery.config(f.node.id)),true);
   assert.equal(f.recovery.workerStatus(f.node).pair_qualification.reason,'pair_already_restart_qualified');
+  const checklist=f.recovery.enrollmentChecklist(f.node);assert.equal(checklist.historical_canary.actor,'genie');
+  assert.equal(checklist.historical_canary.cold_warm_proof_valid,true);assert.equal(checklist.next_steps.includes('request_separate_canary_window'),false);
   await f.reconstruct();assert.equal(pairCertified(f.recovery,f.node,f.recovery.config(f.node.id)),true);await f.recovery.close();
 });
 
@@ -87,7 +89,7 @@ test('qualification needs explicit policy, healthy unpaused identity, idle physi
 test('qualification resumes the same native journal after core replacement and retains an intervening owner pause',async()=>{
   const f=qualificationFixture();await f.ready();const accepted=f.qualify();await f.recovery.task;
   assert.equal(f.calls.length,1);assert.equal(f.recovery.state.operations.at(-1).state,'reconciling');
-  await f.reconstruct();f.complete();await f.resume();assert.deepEqual(f.calls[0],f.calls[1]);
+  await f.reconstruct();f.complete();f.hook(()=>assert.equal(f.recovery.state.operations.at(-1).state,'reconciling'));await f.resume();assert.deepEqual(f.calls[0],f.calls[1]);
   assert.equal(f.recovery.state.operations.at(-1).id,accepted.id);assert.equal(f.recovery.state.operations.at(-1).state,'recovered');await f.recovery.close();
   const held=qualificationFixture();await held.ready();held.complete();held.recovery.verify=async()=>{held.recovery.operatorPause([held.alias.id]);held.node.drained=true;return proof();};
   held.qualify();await held.recovery.task;assert.equal(held.recovery.state.operations.at(-1).state,'verified_paused');assert.equal(held.node.drained,true);

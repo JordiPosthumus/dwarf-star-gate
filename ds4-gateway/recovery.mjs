@@ -256,10 +256,12 @@ export class Recovery {
     const inspection=!observed?'not_observed':!fresh?'stale':observed.error?'failed':'observed';
     const identity=!usable||!bound?'unknown':this.valid(s,c)?'running_match':this.validStopped(s,c)?'stopped_match':this.profileCandidate(s,c)?'changed_profile':'unverified';
     const native=c?.adapter!=='launchd'?'not_applicable':!usable?'unknown':s?.native_disabled===false?'enabled':s?.native_disabled===true?'disabled':'unknown';
-    const last=this.state.operations.filter(op=>op.worker_id===n.id&&op.canary===true&&op.actor==='operator').at(-1);
+    const last=this.state.operations.filter(op=>op.worker_id===n.id&&op.canary===true&&
+      (op.actor==='operator'||(c?.adapter==='docker-pair'&&op.actor==='genie'&&op.pair_qualification===true))).at(-1);
     // A retained receipt is historical evidence, not certification of today's
     // helper/configuration or effective settings. Do not create action authority.
     const canary=last?{
+      actor:last.actor,
       state:['queued','starting','restarting','bootstrapping','reconciling','waiting_for_ownership','verifying',...terminal].includes(last.state)?last.state:'unknown',
       action:['restart','start','bootstrap','adopt_verify','adopt_restart'].includes(last.service_action)?last.service_action:'unknown',
       recorded_at:Number.isFinite(last.updated_at)?last.updated_at:null,
@@ -276,7 +278,7 @@ export class Recovery {
       if(native==='disabled')steps.push('respect_native_disable');
       else if(native==='unknown')steps.push('verify_native_disable_state');
       if(n.active||n.queue.length)steps.push('wait_for_admitted_work');
-      if(!canary)steps.push('request_separate_canary_window');
+      if(!canary)steps.push(c?.adapter==='docker-pair'&&pairQualificationEnabled(this,n.id)?'request_pair_qualification_when_eligible':'request_separate_canary_window');
       else if(!['verified_paused','recovered'].includes(canary.state)||!canary.cold_warm_proof_valid||!canary.enrolled_identity_fields_match||!canary.observed_instance_matches)steps.push('review_canary_receipt');
       if(bootstrapCertified===false)steps.push('review_removed_job_certification');
       steps.push('review_effective_settings_and_routing');
@@ -286,7 +288,7 @@ export class Recovery {
         exclusive_endpoint:c?.exclusive===true?'operator_asserted':'not_enrolled',automatic_policy:this.state.automatic,profile_handback_policy:this.state.profile_handback_automatic},
       inspection:{state:inspection,age_ms:age!==null&&age>=0?age:null,identity,native_disable:native},
       historical_canary:canary,bootstrap_certified:bootstrapCertified,
-      next_steps:steps,note:'Read-only enrollment evidence, not permission to act or certification of current settings. A canary requires a separately approved idle window and leaves routing paused.'};
+      next_steps:steps,note:c?.adapter==='docker-pair'?'Read-only enrollment evidence. Use current pair_qualification eligibility for the separately opted-in Genie test; operator canaries require and preserve a pause. Historical receipts alone do not certify current settings.':'Read-only enrollment evidence, not permission to act or certification of current settings. A canary requires a separately approved idle window and leaves routing paused.'};
   }
   workerStatus(n) {
     const observed=this.observations.get(n.id),s=observed?.value;

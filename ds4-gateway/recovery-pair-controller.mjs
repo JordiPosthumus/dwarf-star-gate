@@ -80,7 +80,7 @@ export async function executePair(recovery,initial){
     if(!replacement){
       const currentPermit=pairPermit(recovery,pairRequest(op));
       if(!currentPermit.allowed){update({state:'waiting_for_ownership',error:currentPermit.reason});return;}
-      update({state:op.service_action==='start'?'starting':'restarting',pair_dispatched:true,error:null});
+      update({state:op.pair_dispatched?'reconciling':op.service_action==='start'?'starting':'restarting',pair_dispatched:true,error:null});
       const receipt=await recovery.call(c,pairRequest(op));
       if(receipt.action_id!==op.id)throw Error('pair_runner_receipt_unverified');
       if(receipt.state!=='completed'){
