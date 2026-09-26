@@ -5,7 +5,7 @@ import {priorityRank} from './job-priority.mjs';
 // Full records remain available through status(job_id); the dashboard keeps status.
 export function mediaJobOverview(job){
   const pick=(value,keys)=>Object.fromEntries(keys.filter(k=>value?.[k]!==undefined).map(k=>[k,value[k]]));
-  const out=pick(job,['id','kind','priority','state','created_at','updated_at','worker','backend','native_id','generation','input_requirements']);
+  const out=pick(job,['id','kind','priority','state','created_at','updated_at','worker','backend','native_id','generation','input_requirements','dispatch_hold','batch_id','clip_id']);
   for(const key of ['detail','next_step'])if(typeof job[key]==='string'){
     out[key]=job[key].slice(0,512);if(job[key].length>512)out.details_shortened=true;
   }
@@ -26,7 +26,7 @@ export function createMediaTools({read,start,inspectInputs=null,setup=null,repai
     }
     if(['status','overview'].includes(input?.action)&&Object.keys(input).length===1){
       const status=await read();
-      const active=status.jobs.filter(j=>!['completed','failed'].includes(j.state)||j.execution&&!['returned','failed_returned','failed_unchanged'].includes(j.execution.phase));
+      const active=status.jobs.filter(j=>!j.dispatch_hold&&(!['completed','failed'].includes(j.state)||j.execution&&!['returned','failed_returned','failed_unchanged'].includes(j.execution.phase)));
       const recent=status.jobs.filter(j=>!active.includes(j)).reverse();
       const jobs=[...active.sort((a,b)=>priorityRank(b)-priorityRank(a)),...recent].slice(0,50);
       const result={...status,jobs,resource_checks:resources?.status()??{},resource_inspection_connected:!!resources,truncated:status.jobs.length>jobs.length,scope:'Queued media jobs and observed independent execution. Select an enrolled host using current LLM demand. At least one other LLM must remain serving. No active work is cancelled. A completed native job does not prove its host has returned; read execution.phase. Resource checks are dated observations, not permission, installation or guaranteed fit.'};

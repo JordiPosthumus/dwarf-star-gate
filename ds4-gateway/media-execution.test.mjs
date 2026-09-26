@@ -8,6 +8,7 @@ import {Readable} from 'node:stream';
 import {MediaJobs} from './media-jobs.mjs';
 import {createMediaExecution,saveMediaReceipt} from './media-execution.mjs';
 import {runMediaCycle,mediaBatchCanContinue} from './media-cycle.mjs';
+import {mediaBudget,mediaSparkLimit} from './media-budget.mjs';
 
 function fixture(t,kind='video'){
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'sg-media-execution-'));t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
@@ -17,12 +18,47 @@ function fixture(t,kind='video'){
   const config={model:'fixture',context_length:262144,control_socket:'/fixture.sock',media_jobs:{workers:{one:{engines:{video:engine}}}},genie_chat:{python:'/python',inspection:{workers:{one:{container:'a'.repeat(64),ssh:['fixture-host']}}}},recovery:{workers:[{id:'one',ssh:'fixture-host',adapter:'docker',verification:'qwen_vllm',profile:'profile'}]}};
   return {directory,jobs,job,config,engine};
 }
+test('six-Spark budget counts complete pairs, deduplicates aliases, and retains uncertain reservations',()=>{
+ const config={media_jobs:{max_borrowed_sparks:4},machine_groups:{a:['s1','s2'],alias:['s1','s2'],b:['s3','s4'],c:['s5','s6']}};
+ const job=(worker_id,phase='generating')=>({execution:{worker_id,phase}});
+ const one=mediaBudget(config,[job('a'),job('alias')]);assert.equal(one.snapshot.borrowed_sparks,2);
+ assert.equal(one.admission('alias').allowed,false);assert.equal(one.admission('b').allowed,true);
+ const two=mediaBudget(config,[job('a'),job('b','launch_uncertain')]);assert.equal(two.snapshot.borrowed_sparks,4);assert.equal(two.admission('c').allowed,false);
+ assert.equal(mediaBudget(config,[job('a','returned'),job('b')]).admission('c').allowed,true);
+ assert.equal(mediaBudget(config,[job('a')],[{worker_id:'b',phase:'needs_attention'}]).admission('c').allowed,false);
+ const changed=mediaBudget(config,[{execution:{worker_id:'b',phase:'generating',physical_machines:['s1','s2']}}]);assert.equal(changed.snapshot.borrowed_sparks,4);
+ config.media_jobs.max_borrowed_sparks=1;assert.equal(two.snapshot.borrowed_sparks,4);assert.equal(mediaBudget(config,[job('a')]).snapshot.over_budget,true);
+ assert.equal(mediaBudget(config,[]).admission('a').allowed,false,'odd budgets cannot borrow half a pair');
+ config.media_jobs.max_borrowed_sparks=0;assert.equal(mediaBudget(config,[]).admission('a').allowed,false);
+ for(const value of [-1,1.5,'4',null])assert.throws(()=>mediaSparkLimit({media_jobs:{max_borrowed_sparks:value}}),/whole/);
+ assert.equal(mediaSparkLimit({}),null,'existing installations without a configured ceiling keep their policy');
+});
+test('budget refuses before plan creation and never cancels an existing accepted execution',async t=>{
+ const r=fixture(t);r.config.media_jobs.max_borrowed_sparks=1;r.config.machine_groups={one:['s1','s2']};let launches=0;
+ const service=createMediaExecution(r.config,r.jobs,{isEnabled:()=>true,launchRunner:async()=>{launches++;return {pid:123};}}),input={job_id:r.job.id,worker_id:'one'};
+ await assert.rejects(service.start(input),/budget/);assert.equal(launches,0);assert.equal(fs.existsSync(r.jobs.executionFolder(r.job.id)),false);
+ r.config.media_jobs.max_borrowed_sparks=2;await service.start(input);assert.equal(launches,1);
+ r.config.media_jobs.max_borrowed_sparks=0;assert.equal(service.status().media_budget.over_budget,true);
+ assert.equal((await service.start(input)).execution.phase,'starting');assert.equal(launches,1);
+});
 test('placement off rejects new execution but preserves the accepted operation',async t=>{
  const r=fixture(t);let allowed=false,launches=0;
  const service=createMediaExecution(r.config,r.jobs,{isEnabled:()=>true,isAllowed:()=>allowed,launchRunner:async()=>{launches++;return {pid:123};}});
  const input={job_id:r.job.id,worker_id:'one'};
  await assert.rejects(service.start(input),/placement is off/);assert.equal(launches,0);assert.deepEqual(service.status().workers[0].kinds,[]);
  allowed=true;await service.start(input);allowed=false;const existing=await service.start(input);assert.equal(existing.execution.phase,'starting');assert.equal(launches,1);
+});
+test('held first or following job is refused before any plan, assignment or runner is created',async t=>{
+ const r=fixture(t),fresh=r.jobs.enqueue('video',{prompt:{}},{key:'new'}).job;
+ const jobs=new MediaJobs(r.jobs.filename,{heldJobIds:[r.job.id]});let launches=0;
+ const service=createMediaExecution(r.config,jobs,{isEnabled:()=>true,launchRunner:async()=>{launches++;return {pid:123};}});
+ for(const input of [{job_id:r.job.id,worker_id:'one'},{job_id:fresh.id,worker_id:'one',following_job_ids:[r.job.id]}]){
+  await assert.rejects(service.start(input),/held/);assert.equal(launches,0);
+ }
+ assert.equal(fs.existsSync(jobs.executionFolder(fresh.id)),false);assert.equal(jobs.get(fresh.id).execution,undefined);
+ assert.match(service.status().jobs.find(j=>j.id===r.job.id).dispatch_hold,/Held/);
+ await service.start({job_id:fresh.id,worker_id:'one'});assert.equal(launches,1);
+ assert.equal(mediaBatchCanContinue({priority:'normal'},{jobs:[{state:'queued',priority:'high',dispatch_hold:'held'}]}),true);
 });
 test('one execution per job survives core restart and exposes private-runner progress',async t=>{
   const r=fixture(t);let launches=0,enabled=true;

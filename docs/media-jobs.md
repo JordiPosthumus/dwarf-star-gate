@@ -38,6 +38,9 @@ needed. The normal gateway bearer key protects every endpoint.
 | --- | --- |
 | `POST /v1/music/jobs` | Queue native ACE-Step JSON parameters. |
 | `POST /v1/video/jobs` | Queue an H3 text prompt or a native ComfyUI JSON workflow envelope. |
+| `GET /v1/video/capabilities` | Read supported submission formats, physical budget, advisory slots and current limitations. |
+| `POST /v1/video/batches` | Atomically queue a film containing 1–128 independently identified clips. |
+| `GET /v1/video/batches` or `/v1/video/batches/{id}` | Inspect film progress, partial results and restoration separately. |
 | `POST /v1/video/inputs` | Store raw image, audio or video bytes for a later video job. |
 | `GET /v1/video/inputs/{id}` | Read the uploaded file's name, size and SHA-256 receipt. |
 | `DELETE /v1/video/inputs/{id}` | Explicitly remove an input that no unfinished job uses. |
@@ -52,6 +55,99 @@ different content or priority with that key returns HTTP 409. A new job returns
 HTTP 202 with its ID and status URL. Keys apply across both media routes.
 The existing `x-dsg-priority` header accepts `high`, `normal` or `idle-only`;
 priority orders waiting jobs only and never cancels active generation.
+
+## Film submissions and client integration
+
+The film API accepts `name`, optional shared payload `defaults`, and `clips`:
+
+```json
+{
+  "name": "Example film",
+  "defaults": {"seed": 42},
+  "clips": [
+    {"clip_id": "opening", "payload": {"prompt": "Opening scene"}},
+    {"clip_id": "ending", "payload": {"prompt": "Closing scene", "seed": 43}}
+  ]
+}
+```
+
+Each clip has a unique `clip_id` (1–64 letters, digits, dots, underscores or
+hyphens, starting with a letter or digit). Clip payload fields override shared
+defaults. Native workflow envelopes are supported; use them to preserve a
+production's resolution, frame counts, reference sizing and multiple references.
+Upload shared reference assets once and reuse their IDs/names. The whole request
+has a 2 MiB JSON limit; inputs travel through the separate upload API.
+
+All clips validate before one durable queue write. A rejected last clip does not
+leave earlier clips queued. Film and individual job keys share one idempotency
+namespace. Keep the same body, priority and key after a lost acknowledgement;
+the original batch, clip IDs, seeds and job IDs survive gateway restart.
+`counts` and each clip's `outputs` expose partial completion. `generation_complete`
+and `restoration_complete` are separate: generated videos are downloadable before
+their machines have completed verified LLM return. An uncertain native operation
+needs reconciliation rather than resubmission. A requested retake uses a new
+individual job, leaving the original film and successful clips intact.
+
+The portable Hermes skill lives at `examples/hermes/stargate-media`. Copy that
+directory into your Hermes skills directory (normally
+`~/.hermes/skills/creative/stargate-media`), preserving an existing installation
+in a timestamped backup before replacing it. The bundled Python 3 client uses
+the standard library on macOS/Linux; no cloud media provider is needed. Configure
+`SG_URL` and, when required by your gateway policy, `SG_API_KEY` in your normal
+private environment. Do not put credentials in a skill or tracked file.
+
+```sh
+python3 examples/hermes/stargate-media/scripts/media_client.py capabilities
+python3 examples/hermes/stargate-media/scripts/media_client.py submit \
+  --kind batch --request film.json --receipt film-receipt.json --priority normal
+python3 examples/hermes/stargate-media/scripts/media_client.py wait \
+  --receipt film-receipt.json --seconds 45
+python3 examples/hermes/stargate-media/scripts/media_client.py download \
+  --receipt film-receipt.json --directory results
+```
+
+The private receipt is flushed to disk before submitting. Reuse the same receipt
+after interruption; after acknowledgement, repeated submit only reads status.
+Changed payloads or priorities cannot overwrite that receipt. Downloads verify
+byte count and SHA-256 and refuse to overwrite differing local files. Both native
+video and generated audio are retained. Input upload acknowledgement currently
+has no idempotent lookup: an uncertain upload is preserved and reported instead
+of silently making more copies.
+
+## Physical media budget and deferred work
+
+`media_jobs.max_borrowed_sparks` optionally limits the number of physical machines
+borrowed by media execution or setup. It is a nonnegative integer. Omitting it
+preserves the installation's existing policy; zero prevents new borrowing without
+cancelling accepted work. Configure `machine_groups` so every alias identifies
+its physical members. A two-machine GLM pair consumes two units even when only
+one member runs media. Multiple job records for the same ownership are counted
+once. Uncertain/unfinished returns retain ownership. A later mapping change
+cannot erase saved physical reservations. The budget supplements existing
+serving-floor, native-idle, owner-pause and maintenance checks.
+
+`media_jobs.held_job_ids` optionally names saved job UUIDs to keep deferred.
+Held queued/unassigned jobs remain visible with `dispatch_hold`, retain their
+idempotent identities, and are excluded from dispatch and watcher prompts. Holds
+do not cancel an already assigned operation. Before enabling automatic dispatch
+on an installation with old backlog, explicitly identify any jobs that should
+remain deferred. Removing a hold makes that queued job eligible again.
+
+The capabilities endpoint reports `max_borrowed_sparks`, `borrowed_sparks`,
+`remaining_sparks`, and nonoverlapping advisory generation slots. Missing capacity
+queues accepted films; it does not grant clients lifecycle authority. Slot counts
+do not promise immediate execution, and unknown timing estimates remain null.
+
+**Current limit:** film submission is atomic, but execution still selects one
+media member per borrowed pair and up to eight sequential jobs per allocation.
+The API reports `paired_members_parallel: false` and
+`requested_parallelism_supported: false`. Coordinated parallel use of both pair
+members, full autonomous film acceptance through installed Hermes, and native
+six-machine operation still require implementation/verification. Disposable
+gateway/client fault tests prove transport and durable identities, not those
+native generation outcomes.
+
+## Individual clips and references
 
 For a basic H3 video, agents can submit text directly:
 

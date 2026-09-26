@@ -84,10 +84,10 @@ function renderJobs(jobs,supported){
       row={card,title:el('h3'),id:el('p',job.id,'muted'),assignment:el('p'),detail:el('p',undefined,'media-job-detail'),machine:el('p'),retention:el('p',undefined,'media-job-detail'),files:el('div'),fileIds:new Set()};
       card.append(row.title,row.id,row.assignment,row.detail,row.machine,row.retention,row.files);jobCards.set(job.id,row);
     }
-    row.title.textContent=`${engineNames[job.kind]??job.kind} · ${job.state}`;
+    row.title.textContent=`${engineNames[job.kind]??job.kind} · ${job.dispatch_hold?'held':job.state}`;
     row.assignment.textContent=`${job.priority??'normal'} priority · ${job.execution?.worker_id??job.worker??'Waiting for assignment'}`;
     if(job.execution?.batch_job_ids?.length>1)row.assignment.textContent+=` · batch job ${job.execution.batch_job_ids.indexOf(job.id)+1}/${job.execution.batch_job_ids.length}${job.execution.active_job_id&&job.state==='queued'&&job.execution.active_job_id!==job.id?' · waiting for its turn':''}`;
-    row.detail.textContent=[job.detail,job.next_step].filter(Boolean).join(' ');row.detail.hidden=!job.detail;
+    row.detail.textContent=[job.dispatch_hold,job.detail,job.next_step].filter(Boolean).join(' ');row.detail.hidden=!row.detail.textContent;
     row.machine.textContent=job.execution?`Machine: ${job.execution.phase}${job.execution.detail?' — '+job.execution.detail:''}`:'';row.machine.hidden=!job.execution;
     row.retention.textContent=job.outputs?.state==='failed'?`Result retention failed: ${job.outputs.detail??'Inspect this job'}`:'';row.retention.hidden=job.outputs?.state!=='failed';
     for(const file of job.outputs?.state==='ready'?job.outputs.files??[]:[]){

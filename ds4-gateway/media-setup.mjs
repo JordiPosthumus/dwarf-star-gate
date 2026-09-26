@@ -22,7 +22,7 @@ const launch=async folder=>{
  const log=fs.openSync(path.join(folder,'runner.log'),'ax',0o600);
  try{const child=spawn(process.execPath,[fileURLToPath(new URL('./media-setup-runner.mjs',import.meta.url)),folder],{detached:true,stdio:['ignore',log,log]});await new Promise((resolve,reject)=>{child.once('spawn',resolve);child.once('error',reject);});child.unref();return {pid:child.pid};}finally{fs.closeSync(log);}
 };
-export function createMediaSetup(config,store,{directory,workers,binding,isEnabled,isAllowed,isInspectionEnabled=()=>true,bundle=bundleRecipes,transport=setupTransport,launchRunner=launch}){
+export function createMediaSetup(config,store,{directory,workers,binding,isEnabled,isAllowed,isInspectionEnabled=()=>true,bundle=bundleRecipes,transport=setupTransport,launchRunner=launch,assertCapacity=()=>{}}){
  const restoreErrors={};
  const identity=(id,reuse=config.media_jobs?.reuse?.[id])=>{
   const worker=workers().find(w=>w.id===id),recovery=config.recovery?.workers?.find(w=>w.id===id),inspection=config.genie_chat?.inspection?.workers?.[id];
@@ -190,6 +190,7 @@ export function createMediaSetup(config,store,{directory,workers,binding,isEnabl
   assert.ok(isEnabled(),'Media capability is switched off');assert.ok(isAllowed(input.worker_id,kinds[input.engine]),'Allow this engine on the machine before setup');assert.ok(canSetup(input.worker_id),'This machine needs a matching Docker LLM inspection/recovery enrollment');
   assert.ok(!mediaEngine(config,input.worker_id,kinds[input.engine],selectedMember),'This engine is already enrolled; its working installation is preserved');
   assert.ok(!Object.values(store.data.media_setups??{}).some(s=>s.worker_id===input.worker_id&&!terminal.has(read(s.operation_id).phase)),'A setup already owns this machine');
+  assertCapacity(input.worker_id);
   const operation_id=prior?.operation_id??randomUUID(),folder=path.join(directory,operation_id),worker=workers().find(w=>w.id===input.worker_id),recovery=config.recovery?.workers?.find(w=>w.id===input.worker_id),inspection=config.genie_chat.inspection.workers[input.worker_id];
   const enrolled=mediaPair(config,worker),pair=enrolled?{...enrolled,media_member:selectedMember}:null;
   const member=pair?.members[pair.media_member],reuse=mediaReuse(config,input.worker_id,input.engine,selectedMember);
@@ -197,7 +198,7 @@ export function createMediaSetup(config,store,{directory,workers,binding,isEnabl
   if(retry){const history=path.join(directory,'history',operation_id);fs.mkdirSync(history,{recursive:true,mode:0o700});fs.renameSync(folder,path.join(history,`attempt-${prior.attempt??1}`));}
   fs.mkdirSync(folder,{recursive:true,mode:0o700});saveMediaReceipt(folder,'recipe-bundle.json',recipes);
   saveMediaReceipt(folder,'plan.json',{operation_id,worker_id:input.worker_id,separate_workers:workers().filter(w=>!machinesFor(w.id,config).some(m=>machinesFor(input.worker_id,config).includes(m))).map(w=>w.id),engines:[input.engine],target:{ssh:member?.ssh??inspection.ssh[0],...(reuse?.directory?{directory:reuse.directory}:{})},...(reuse?{reuse}:{}),llm_container:member?.container??inspection.container,recovery:pair?{profile:'glm53-docker-pair',url:worker.url}:recovery,...(pair?{llm_pair:pair}:{}),endpoint:worker,model:config.model,context_length:worker.context_length??config.context_length,control_socket:config.control_socket,python:config.genie_chat.python});
-  const row={operation_id,worker_id:input.worker_id,engine:input.engine,...(input.member!==undefined?{member:input.member}:{}),binding:identity(input.worker_id),infrastructure_binding:identity(input.worker_id,null),attempt:prior?(prior.attempt??1)+1:1,phase:'starting',at:new Date().toISOString()};backup();store.save({...store.data,media_setups:{...store.data.media_setups,[operation_id]:row}});
+  const row={operation_id,worker_id:input.worker_id,physical_machines:machinesFor(input.worker_id,config),engine:input.engine,...(input.member!==undefined?{member:input.member}:{}),binding:identity(input.worker_id),infrastructure_binding:identity(input.worker_id,null),attempt:prior?(prior.attempt??1)+1:1,phase:'starting',at:new Date().toISOString()};backup();store.save({...store.data,media_setups:{...store.data.media_setups,[operation_id]:row}});
   try{saveMediaReceipt(folder,'launched.json',await launchRunner(folder));}catch(e){saveMediaReceipt(folder,'progress.json',{phase:'needs_attention',detail:'Setup launch was not confirmed; inspect this operation before retrying.'});throw e;}
   return read(operation_id);
  }};

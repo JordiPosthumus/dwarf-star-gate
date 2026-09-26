@@ -1,6 +1,7 @@
 import {mediaEngine,mediaMemberInput} from './media-enrollment.mjs';
 import {machinesFor} from './fleet-machines.mjs';
 import {mediaPair} from './media-pair.mjs';
+import {mediaBudget,mediaSparkLimit} from './media-budget.mjs';
 // One detached process owns a selected job/batch and its single LLM return.
 // It writes its own queue receipt; the core remains the sole global-queue writer.
 import fs from 'node:fs';
@@ -23,12 +24,16 @@ const launch=async folder=>{
     child.unref();return {pid:child.pid,at:new Date().toISOString()};
   }finally{fs.closeSync(log);}
 };
-export function createMediaExecution(config,jobs,{isEnabled=()=>false,launchRunner=launch,matchesWorker=()=>true,isAllowed=()=>true,workers=()=>config.workers??[]}={}){
+export function createMediaExecution(config,jobs,{isEnabled=()=>false,launchRunner=launch,matchesWorker=()=>true,isAllowed=()=>true,workers=()=>config.workers??[],externalOperations=()=>[]}={}){
+  mediaSparkLimit(config);
   const targets=()=>config.media_jobs?.workers??{};
   const terminal=new Set(['returned','failed_returned','failed_unchanged']);
   const busy=worker=>jobs.list().some(j=>j.execution?.worker_id===worker&&!terminal.has(j.execution.phase));
+  const budget=()=>mediaBudget(config,jobs?.list()??[],externalOperations());
+  const assertCapacity=id=>{const result=budget().admission(id);if(!result.allowed)throw Error(result.reason);return result;};
   return {
-    status:()=>({configured:!!jobs,enabled:isEnabled(),automatic_dispatch_enabled:config.media_jobs?.automatic_dispatch!==false,batch_jobs_supported:true,jobs:jobs?.list().map(j=>({...j,input_requirements:mediaInputRequirements(jobs.get(j.id))}))??[],workers:Object.entries(targets()).map(([id,t])=>({id,kinds:Object.keys(t.engines??{}).filter(kind=>isAllowed(id,kind)),busy:jobs?busy(id):false}))}),
+    assertCapacity,
+    status:()=>{const capacity=budget();return {configured:!!jobs,enabled:isEnabled(),automatic_dispatch_enabled:config.media_jobs?.automatic_dispatch!==false,batch_jobs_supported:true,film_batches_supported:true,media_budget:capacity.snapshot,jobs:jobs?.list().map(j=>({...j,input_requirements:mediaInputRequirements(jobs.get(j.id))}))??[],workers:Object.entries(targets()).map(([id,t])=>({id,kinds:Object.keys(t.engines??{}).filter(kind=>isAllowed(id,kind)),busy:jobs?busy(id):false,budget:capacity.admission(id)}))};},
     async start(input){
       if(!jobs||!isEnabled())throw new Error('Media execution is switched off.');
       if(!input||!(mediaMemberInput(input,'job_id,worker_id')||mediaMemberInput(input,'following_job_ids,job_id,worker_id')))throw new Error('Choose a queued job and enrolled worker.');
@@ -45,8 +50,10 @@ export function createMediaExecution(config,jobs,{isEnabled=()=>false,launchRunn
       if(!isAllowed(input.worker_id,job.kind))throw new Error('Media placement is off for this engine on this machine. Existing work continues.');
       if(job.state!=='queued')throw new Error('Only an unstarted queued job can be assigned.');
       const selected=ids.map(id=>jobs.get(id));
+      if(selected.some(j=>j.dispatch_hold))throw new Error('A selected media job is held by owner configuration; leave it queued.');
       if(selected.some(j=>j.state!=='queued'||j.execution||j.kind!==job.kind||j.priority!==job.priority))throw new Error('Batch jobs must be unassigned, queued, and use the same engine and priority.');
       if(busy(input.worker_id))throw new Error('This worker already has a media operation.');
+      const capacity=assertCapacity(input.worker_id);
       const engine=mediaEngine(config,input.worker_id,job.kind,input.member);
       const enrolled=mediaPair(config,workers().find(w=>w.id===input.worker_id)),pair=enrolled?{...enrolled,media_member:engine?.member??0}:null;
       if(input.member!==undefined&&!pair)throw Error('Explicit member selection requires a matching paired LLM');
@@ -64,7 +71,7 @@ export function createMediaExecution(config,jobs,{isEnabled=()=>false,launchRunn
       saveMediaReceipt(folder,'plan.json',plan);
       saveMediaReceipt(folder,'media-jobs.json',{schema:1,jobs:selected});
       // Persist ownership before spawning. Lost acknowledgement never launches twice.
-      jobs.assignExecution(ids,{worker_id:input.worker_id,...(pair?{member:pair.media_member}:{}),...(ids.length>1?{operation_id:job.id,batch_job_ids:ids}:{}),phase:'starting',at:new Date().toISOString()});
+      jobs.assignExecution(ids,{worker_id:input.worker_id,physical_machines:capacity.machines,...(pair?{member:pair.media_member}:{}),...(ids.length>1?{operation_id:job.id,batch_job_ids:ids}:{}),phase:'starting',at:new Date().toISOString()});
       try{saveMediaReceipt(folder,'launched.json',await launchRunner(folder));}
       catch(error){saveMediaReceipt(folder,'progress.json',{phase:'launch_uncertain',detail:'Runner launch was not confirmed. Inspect this operation before any further action.',at:new Date().toISOString()});throw error;}
       return jobs.list().find(j=>j.id===job.id);

@@ -7,6 +7,7 @@ import {genieCapabilityKeys,validateGenieCapabilities,genieCapabilities} from '.
 import {createMediaExecution} from './media-execution.mjs';
 import {sparkServiceBinding,validateServiceAddition,applyServiceAddition,restoreSparkServices} from './spark-services.mjs';
 import {MediaJobs,handleMediaRequest} from './media-jobs.mjs';
+import {videoCapabilities} from './media-capabilities.mjs';
 import {inspectMediaJobInputs} from './media-input-placement.mjs';
 import {activeJobs,activeCount,hasCapacity,requestCapacity,oldestActive} from './worker-activity.mjs';
 import {PRIORITY_HEADER,requestPriority,priorityRank,priorityIndex,priorityOrder} from './job-priority.mjs';
@@ -284,7 +285,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   if(config.media_jobs!==undefined&&(!config.media_jobs||typeof config.media_jobs!=='object'||typeof config.media_jobs.enabled!=='boolean'))throw new Error('media_jobs.enabled must be a boolean');
   const store = new AffinityStore(config.state_file);
   let mediaJobs;
-  try{if(config.media_jobs?.enabled)mediaJobs=new MediaJobs(path.join(path.dirname(config.state_file),'media-jobs.json'),{inputLimits:config.media_jobs});}catch(e){store.close();throw e;}
+  try{if(config.media_jobs?.enabled)mediaJobs=new MediaJobs(path.join(path.dirname(config.state_file),'media-jobs.json'),{inputLimits:config.media_jobs,heldJobIds:config.media_jobs.held_job_ids});}catch(e){store.close();throw e;}
   const conversationTurns=()=>store.data.conversation_turns??configuredConversationTurns;
   const queueTimeoutMs=()=>store.data.queue_timeout_ms??configuredQueueTimeout;
   // Like registered workers, an explicit UI setting survives process restarts.
@@ -399,8 +400,8 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   const capabilityStatus=()=>genieCapabilities(store.data.genie_capabilities,config,recovery.state.automatic);
   const mediaHosts=createMediaHosts(serviceConfig,store,{workers:()=>registry().workers,enrollmentWorker:id=>{const n=nodes.find(n=>n.id===id);return n?definition(n):null;},binding:(id,c)=>recovery.binding(nodes.find(n=>n.id===id),c)});
   const mediaStatus=()=>{const state=mediaExecution.status();return {...state,text_video_supported:!!mediaJobs,...mediaHosts.status(state.jobs),setup:mediaSetup?.status()??null};};
-  const mediaExecution=createMediaExecution(serviceConfig,mediaJobs,{workers:()=>nodes.map(definition),isAllowed:mediaHosts.allowed,isEnabled:()=>!draining&&capabilityStatus().media,matchesWorker:(id,c)=>{const n=nodes.find(n=>n.id===id);return !!n&&recovery.binding(n,c);}});
-  const mediaSetup=mediaJobs?createMediaSetup(serviceConfig,store,{directory:path.join(path.dirname(config.state_file),'media-setup'),workers:()=>nodes.map(definition),binding:(id,c)=>{const n=nodes.find(n=>n.id===id);return !!n&&recovery.binding(n,c);},isEnabled:()=>!draining&&capabilityStatus().media,isInspectionEnabled:()=>capabilityStatus().inspection,isAllowed:mediaHosts.allowed}):null;
+  const mediaExecution=createMediaExecution(serviceConfig,mediaJobs,{externalOperations:()=>mediaSetup?.status().operations??[],workers:()=>nodes.map(definition),isAllowed:mediaHosts.allowed,isEnabled:()=>!draining&&capabilityStatus().media,matchesWorker:(id,c)=>{const n=nodes.find(n=>n.id===id);return !!n&&recovery.binding(n,c);}});
+  const mediaSetup=mediaJobs?createMediaSetup(serviceConfig,store,{assertCapacity:id=>mediaExecution.assertCapacity(id),directory:path.join(path.dirname(config.state_file),'media-setup'),workers:()=>nodes.map(definition),binding:(id,c)=>{const n=nodes.find(n=>n.id===id);return !!n&&recovery.binding(n,c);},isEnabled:()=>!draining&&capabilityStatus().media,isInspectionEnabled:()=>capabilityStatus().inspection,isAllowed:mediaHosts.allowed}):null;
   const rebalanceEnabled=()=>capabilityStatus().rebalance;
   const allocationStatus=slot=>slot.turnAllocation?{turns_used:slot.turnAllocation.used,remaining:Math.max(0,conversationTurns()-slot.turnAllocation.used),waiting_for_next_turn:!slot.active&&slot.turnAllocation.until>performance.now(),idle_remaining_ms:Math.max(0,Math.ceil(slot.turnAllocation.until-performance.now()))}:null;
   const stats = () => ({ version: 1, genie_capabilities:capabilityStatus(), genie_thinking:genieThinking(), serving_profiles:profiles, conversation_turns:conversationTurns(),conversation_turn_idle_ms:conversationTurnIdleMs, model_routes:routes?Object.fromEntries([...routes].map(([name,workers])=>[name,[...workers]])):null, agent_api_version:1, maintenance_lock_version:1,client_watch_version:1,client_watch:clientWatch.snapshot(), model: config.model, context_length: contextLimit(), queue_timeout_ms:queueTimeoutMs(), request_timeout_ms:config.request_timeout_ms??360000000, direct_reserve:{enabled:directReserveEnabled(),release_ms:directReserveMs(),reserved:nodes.filter(n=>directReserved(n)).map(n=>n.id)}, draining,startup:{...startup}, dataset:dataset.snapshot(), routing_shadow:shadow.snapshot(),recovery:{...recovery.status(),pair_enrollment:pairEnrollment.status(),omlx_enrollment:omlxEnrollment.status()},protections:visionProtection.status(),
@@ -1037,7 +1038,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
 
   const server = http.createServer((req, res) => {
     if (!requestAuthorized(config,req)) { req.resume(); return error(res, 401, 'unauthorized', 'Bearer API key required'); }
-    if(handleMediaRequest(req,res,{jobs:mediaJobs,accepting:!draining}))return;
+    if(handleMediaRequest(req,res,{jobs:mediaJobs,accepting:!draining,capabilities:()=>videoCapabilities(mediaStatus(),serviceConfig)}))return;
     // Reject absolute URLs and encoded/normalized alternate routes; no admin forwarding.
     const discovery = req.method === 'GET' && /^\/v1\/models(?:\?[^#]*)?$/.test(req.url);
     const route = discovery ? 'GET /v1/models' : `${req.method} ${req.url}`;

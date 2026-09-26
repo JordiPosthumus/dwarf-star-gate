@@ -7,7 +7,7 @@ import {priorityRank} from './job-priority.mjs';
 import {validateVideoCatalog} from './media-validation.mjs';
 
 export function mediaBatchCanContinue(next,status){
-  return !status.jobs.some(j=>j.state==='queued'&&!j.execution&&priorityRank(j)>priorityRank(next));
+  return !status.jobs.some(j=>j.state==='queued'&&!j.execution&&!j.dispatch_hold&&priorityRank(j)>priorityRank(next));
 }
 
 // A failed observation does not mean an already-started model failed. Keep

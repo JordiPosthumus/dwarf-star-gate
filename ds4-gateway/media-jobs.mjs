@@ -18,7 +18,9 @@ const now=()=>new Date().toISOString();
 // The gateway's existing process lock owns this store. Media prompts and native
 // receipts are private local state, never fleet telemetry or repository content.
 export class MediaJobs {
-  constructor(filename,{resultsDirectory,inputsDirectory,inputLimits}={}){
+  constructor(filename,{resultsDirectory,inputsDirectory,inputLimits,heldJobIds=[]}={}){
+    if(!Array.isArray(heldJobIds)||heldJobIds.length>10000||heldJobIds.some(id=>typeof id!=='string'||!uuid.test(id))||new Set(heldJobIds).size!==heldJobIds.length)throw new Error('media_jobs.held_job_ids must contain distinct saved job UUIDs');
+    this.heldJobIds=new Set(heldJobIds);
     this.filename=filename;
     this.results=new MediaResults(resultsDirectory??path.join(path.dirname(filename),'media-results'));
     this.inputs=new MediaInputs(inputsDirectory??path.join(path.dirname(filename),'media-inputs'),inputLimits);
@@ -26,6 +28,10 @@ export class MediaJobs {
     fs.mkdirSync(path.dirname(filename),{recursive:true,mode:0o700});
     this.data=fs.existsSync(filename)?JSON.parse(fs.readFileSync(filename,'utf8')):{schema:1,jobs:[]};
     if(this.data.schema!==1||!Array.isArray(this.data.jobs)||this.data.jobs.some(j=>!uuid.test(j.id)||!states.has(j.state)||!['music','video'].includes(j.kind)||!object(j.payload)))throw new Error('Invalid saved media queue; preserved for inspection.');
+    const batches=this.data.batches??[];
+    if(!Array.isArray(batches)||batches.some(b=>!uuid.test(b.id)||!Array.isArray(b.clips)||!b.clips.length||
+      b.clips.some(c=>typeof c.clip_id!=='string'||!this.data.jobs.some(j=>j.id===c.job_id&&j.batch_id===b.id&&j.clip_id===c.clip_id))||
+      new Set(b.clips.map(c=>c.clip_id)).size!==b.clips.length||new Set(b.clips.map(c=>c.job_id)).size!==b.clips.length))throw new Error('Invalid saved media batches; preserved for inspection.');
     // A crashed submit is not evidence of rejection. Reconciliation may observe
     // a saved native ID, but must never automatically repeat the generation.
     if(this.data.jobs.some(j=>j.state==='submitting'))this.save({...this.data,jobs:this.data.jobs.map(j=>j.state==='submitting'?{...j,state:'uncertain',detail:'Gateway restarted during native submission; reconcile the original job.',updated_at:now()}:j)});
@@ -64,21 +70,28 @@ export class MediaJobs {
     }
     if(!job.detail)job.detail=nativeFailureDetail(job);
     if(job.state==='failed'&&job.detail)job.next_step=mediaErrorAdvice(job.detail);
+    // Holds govern unassigned work only. Preserve every saved job and result,
+    // and never interrupt an already accepted operation. Derive the hold from
+    // current owner configuration so removing it does not leave stale metadata.
+    delete job.dispatch_hold;
+    if(job.state==='queued'&&!job.execution&&this.heldJobIds.has(id))job.dispatch_hold='Held by owner configuration; do not dispatch or include in a batch.';
     return job;
   }
   list(kind){return this.data.jobs.filter(j=>!kind||j.kind===kind).map(j=>{const {payload,fingerprint,key_hash,...job}=this.get(j.id);return job;});}
-  queued(){return this.list().filter(j=>j.state==='queued'&&!j.execution).sort((a,b)=>priorityRank(b)-priorityRank(a));}
+  queued(){return this.list().filter(j=>j.state==='queued'&&!j.execution&&!j.dispatch_hold).sort((a,b)=>priorityRank(b)-priorityRank(a));}
   assignExecution(ids,execution){
     const selected=ids.map(id=>this.get(id));
+    if(selected.some(j=>j.dispatch_hold))throw fail(409,'A selected media job is held by owner configuration');
     if(new Set(ids).size!==ids.length||selected.some(j=>j.state!=='queued'||j.execution))throw fail(409,'Every selected job must still be queued and unassigned');
     const replacements=new Map(selected.map(j=>[j.id,{...j,execution:structuredClone(execution),updated_at:now()}]));
     this.save({...this.data,jobs:this.data.jobs.map(j=>replacements.get(j.id)??j)});
   }
-  enqueue(kind,payload,{key,priority='normal'}={}){
+  prepareJob(kind,payload,{key,priority='normal'}={}){
     if(!['music','video'].includes(kind)||!object(payload))throw fail(400,'Media payload must be a JSON object');
     if(typeof key!=='string'||!/^[\x21-\x7e]{1,200}$/.test(key))throw fail(400,'An Idempotency-Key header (1–200 printable characters) is required');
     try{requestPriority(priority);}catch(e){throw fail(400,e.message);}
     const keyHash=createHash('sha256').update(key).digest('hex');
+    if(this.data.batches?.some(b=>b.key_hash===keyHash))throw fail(409,'Idempotency-Key already identifies a film batch');
     const fingerprint=createHash('sha256').update(JSON.stringify(canonical({kind,payload,priority}))).digest('hex');
     const previous=this.data.jobs.find(j=>j.key_hash===keyHash);
     if(previous){if(previous.fingerprint!==fingerprint)throw fail(409,'Idempotency-Key already identifies a different media request');return {job:this.get(previous.id),created:false};}
@@ -89,11 +102,55 @@ export class MediaJobs {
     if(kind==='video')validateVideoReferences(prepared.payload,this.inputs.forJob(prepared.payload.input_files));
     else validateMusicInputs(payload);
     const job={id:randomUUID(),kind,...prepared,priority,key_hash:keyHash,fingerprint,state:'queued',created_at:now(),updated_at:now()};
-    this.save({...this.data,jobs:[...this.data.jobs,job]});return {job:this.get(job.id),created:true};
+    return {job,created:true};
+  }
+  enqueue(kind,payload,options){
+    const {job,created}=this.prepareJob(kind,payload,options);
+    if(created)this.save({...this.data,jobs:[...this.data.jobs,job]});
+    return {job:this.get(job.id),created};
+  }
+  enqueueBatch(payload,{key,priority='normal'}={}){
+    if(typeof key!=='string'||!/^[\x21-\x7e]{1,200}$/.test(key))throw fail(400,'An Idempotency-Key header (1–200 printable characters) is required');
+    try{requestPriority(priority);}catch(e){throw fail(400,e.message);}
+    const keyHash=createHash('sha256').update(key).digest('hex');
+    const fingerprint=createHash('sha256').update(JSON.stringify(canonical({kind:'video-batch',payload,priority}))).digest('hex');
+    if(this.data.jobs.some(j=>j.key_hash===keyHash))throw fail(409,'Idempotency-Key already identifies a media job');
+    const previous=this.data.batches?.find(b=>b.key_hash===keyHash);
+    if(previous){if(previous.fingerprint!==fingerprint)throw fail(409,'Idempotency-Key already identifies a different film batch');return {batch:this.batch(previous.id),created:false};}
+    if(!object(payload)||Object.keys(payload).some(k=>!['name','defaults','clips'].includes(k))||
+      payload.name!==undefined&&(typeof payload.name!=='string'||payload.name.length>200)||
+      payload.defaults!==undefined&&!object(payload.defaults)||!Array.isArray(payload.clips)||!payload.clips.length||payload.clips.length>128)
+      throw fail(400,'A film batch needs 1–128 clips, with optional name and shared payload defaults');
+    if(payload.clips.some(c=>!object(c)||Object.keys(c).sort().join(',')!=='clip_id,payload'||
+      typeof c.clip_id!=='string'||! /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/.test(c.clip_id)||!object(c.payload))||
+      new Set(payload.clips.map(c=>c.clip_id)).size!==payload.clips.length)throw fail(400,'Each clip needs a distinct clip_id and a payload');
+    const id=randomUUID(),prepared=payload.clips.map(c=>{
+      const {job}=this.prepareJob('video',{...payload.defaults,...c.payload},{key:`batch:${id}:${c.clip_id}`,priority});
+      return {...job,batch_id:id,clip_id:c.clip_id};
+    });
+    const batch={id,kind:'video',name:payload.name??null,key_hash:keyHash,fingerprint,priority,created_at:now(),
+      clips:prepared.map(j=>({clip_id:j.clip_id,job_id:j.id}))};
+    // Validate every clip before the one durable write. A bad final clip must
+    // not leave earlier clips eligible for dispatch from a rejected batch.
+    this.save({...this.data,jobs:[...this.data.jobs,...prepared],batches:[...(this.data.batches??[]),batch]});
+    return {batch:this.batch(id),created:true};
+  }
+  batch(id){
+    const saved=this.data.batches?.find(b=>b.id===id);if(!saved)throw fail(404,'Unknown film batch');
+    const clips=saved.clips.map(c=>({...publicJob(this.get(c.job_id)),clip_id:c.clip_id}));
+    const generationComplete=clips.every(j=>j.state==='completed');
+    const restorationComplete=clips.every(j=>['returned','failed_returned','failed_unchanged'].includes(j.execution?.phase));
+    const counts=Object.fromEntries([...states].map(s=>[s,clips.filter(j=>j.state===s).length]));
+    const needsAttention=clips.some(j=>j.state==='uncertain'||['needs_attention','launch_uncertain','observation_failed'].includes(j.execution?.phase));
+    return {id:saved.id,kind:'video',name:saved.name,priority:saved.priority,created_at:saved.created_at,
+      state:needsAttention?'needs_attention':generationComplete&&restorationComplete?'completed':restorationComplete&&counts.failed?'failed':clips.some(j=>j.execution)?'running':'queued',
+      counts,held:clips.filter(j=>j.dispatch_hold).length,generation_complete:generationComplete,restoration_complete:restorationComplete,
+      clips,status_url:`/v1/video/batches/${id}`};
   }
   update(id,changes){const job=this.get(id),next={...job,...changes,updated_at:now()};this.save({...this.data,jobs:this.data.jobs.map(j=>j.id===id?next:j)});return this.get(id);}
   async dispatch(id,backend,worker){
     const job=this.get(id);
+    if(job.dispatch_hold)throw fail(409,'This media job is held by owner configuration');
     if(job.state!=='queued')throw fail(409,'Media job has already been submitted or needs reconciliation');
     if(typeof worker!=='string'||!worker)throw fail(400,'A selected worker is required');
     if((job.kind==='music'&&backend.kind!=='ace-step')||(job.kind==='video'&&backend.kind!=='comfyui'))throw fail(400,'Media backend does not match the job kind');
@@ -130,8 +187,14 @@ export class MediaJobs {
 
 const publicJob=({payload,fingerprint,key_hash,...job})=>({...job,...(job.outputs?.files?{outputs:{...job.outputs,files:job.outputs.files.map(file=>({...file,url:`/v1/${job.kind}/jobs/${job.id}/files/${file.id}`}))}}:{})});
 const respond=(res,status,value)=>{if(!res.destroyed&&!res.headersSent){res.writeHead(status,{'content-type':'application/json','cache-control':'no-store'});res.end(JSON.stringify(value));}};
-export function handleMediaRequest(req,res,{jobs,accepting=true}){
+export function handleMediaRequest(req,res,{jobs,accepting=true,capabilities}){
   // gateway.mjs verifies the gateway bearer key before calling this handler.
+  if(req.url==='/v1/video/capabilities'){
+    if(req.method!=='GET'){req.resume();respond(res,405,{error:{code:'media_method',message:'Use GET for video capabilities.'}});return true;}
+    try{respond(res,200,capabilities?.()??{schema:1,enabled:false});}
+    catch{respond(res,503,{error:{code:'media_capabilities_unavailable',message:'Current media capability could not be verified.'}});}
+    return true;
+  }
   const input=/^\/v1\/video\/inputs(?:\/([a-f0-9-]{36}))?$/.exec(req.url);
   if(input){
     const reject=e=>respond(res,e.status??500,{error:{code:'video_input_error',message:e.status?e.message:'Video input could not be stored; inspect the gateway log.'}});
@@ -147,12 +210,14 @@ export function handleMediaRequest(req,res,{jobs,accepting=true}){
     if(!accepting){req.resume();reject(fail(503,'Gateway is draining; no new video input accepted.'));return true;}
     void jobs.inputs.receive(req).then(value=>respond(res,201,{...value,status_url:`/v1/video/inputs/${value.id}`})).catch(e=>{req.resume();reject(e);});return true;
   }
-  const match=/^\/v1\/(music|video)\/jobs(?:\/([a-f0-9-]{36})(?:\/files\/([a-f0-9-]{36}))?)?$/.exec(req.url);
+  const match=/^\/v1\/(music|video)\/(jobs|batches)(?:\/([a-f0-9-]{36})(?:\/files\/([a-f0-9-]{36}))?)?$/.exec(req.url);
   if(!match)return false;
-  const [,kind,id,fileId]=match;
+  const [,kind,resource,id,fileId]=match,isBatch=resource==='batches';
+  if(isBatch&&(kind!=='video'||fileId))return false;
   const reject=e=>respond(res,e.status??500,{error:{code:'media_job_error',message:e.status?e.message:'Could not access the media queue; inspect the gateway log.'}});
   if(!jobs){req.resume();respond(res,503,{error:{code:'media_not_configured',message:'Media jobs are not configured on this gateway.'}});return true;}
   if(req.method==='GET'){
+    if(isBatch){try{respond(res,200,id?jobs.batch(id):{batches:(jobs.data.batches??[]).map(b=>jobs.batch(b.id))});}catch(e){reject(e);}return true;}
     try{if(id){const job=jobs.get(id);if(job.kind!==kind)throw fail(404,'Unknown media job');if(fileId){if(!jobs.results.serve(req,res,job,fileId))throw fail(404,'Retained media file is not available');}else respond(res,200,publicJob(job));}else respond(res,200,{jobs:jobs.list(kind).map(publicJob)});}catch(e){reject(e);}return true;
   }
   if(req.method!=='POST'||id){req.resume();respond(res,405,{error:{code:'media_method',message:'Use POST to submit or GET to inspect jobs.'}});return true;}
@@ -166,6 +231,7 @@ export function handleMediaRequest(req,res,{jobs,accepting=true}){
     clearTimeout(timer);if(finished)return;finished=true;
     try{
       let payload;try{payload=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{throw fail(400,'Invalid media JSON');}
+      if(isBatch){const {batch,created}=jobs.enqueueBatch(payload,{key:req.headers['idempotency-key'],priority:req.headers[PRIORITY_HEADER]});respond(res,created?202:200,batch);return;}
       const {job,created}=jobs.enqueue(kind,payload,{key:req.headers['idempotency-key'],priority:req.headers[PRIORITY_HEADER]});
       respond(res,created?202:200,{...publicJob(job),status_url:`/v1/${kind}/jobs/${job.id}`});
     }catch(e){reject(e);}
