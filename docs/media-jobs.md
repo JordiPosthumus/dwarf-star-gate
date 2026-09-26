@@ -234,6 +234,25 @@ before starting a stopped ACE container. Omitted fields and older saved plans
 retain their existing behavior. This source/build witness does not replace
 native image qualification, effective inference checks or audio validation.
 
+The internal ACE candidate preparer retains the exact stopped original container
+and snapshots its writable filesystem before adding the fixed sampler/DCW patch
+in a separate image. Mounted model, cache and output files remain on the original
+bind mounts; they are not included in the Docker snapshot. It installs no new
+packages and grants no GPU access to the build. The candidate gets the original
+runtime configuration and host settings, with only its image changed. Extra
+network attachments, aliases or anonymous volumes require a separate retention
+adapter and are refused. Exact source hashes, original process epoch, current
+coordinator permission and OS leases gate preparation. Missing acknowledgements
+or records never trigger another build or create operation. An uncertain attempt
+also prevents another operation ID from rebuilding the same original.
+
+This is preparation plumbing only: it has no standalone mutation CLI and is not
+yet connected to a Genie promotion tool. It never starts, stops, renames, removes
+or enrolls a container. The stopped candidate still needs actual recipe
+qualification, decoded output, exact LLM return and preservation/benefit proof
+before a separate promotion transaction may change enrollment. Candidate
+preparation, reconstruction and native image acceptance remain distinct.
+
 The read-only **Check resources** / `inspect_media_host` observation also checks
 this witness on up to four native-port ACE candidates per physical host, including
 stopped containers. Each result is bound to the observed container ID and image.
