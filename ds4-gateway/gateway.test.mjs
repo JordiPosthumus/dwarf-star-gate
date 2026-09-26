@@ -1553,21 +1553,23 @@ test('busy home queues FIFO, never spills to idle Spark', async t => {
   assert.equal(r.backends[0].peak, 1); assert.equal(r.backends[1].records.length, 0);
 });
 test('core rebalances a mature affinity queue without Genie or dashboard',async t=>{
-  const r=await rig(t,2,{automatic_affinity_rebalance_min_wait_ms:25});
+  const r=await rig(t,2,{automatic_affinity_rebalance_min_wait_ms:300000});
   await r.request('{"seed":"a"}','a');await r.request('{"seed":"b"}','b');await r.request('{"seed":"c"}','c');
-  // The production sweep runs once per second. Keep the home occupied long
-  // enough to prove the core-owned sweep, rather than winning a timing race
-  // with the ordinary FIFO completion path.
-  const active=r.request('{"delay":1500,"active":"c"}','c');await until(()=>r.gateway.nodes[0].active);
-  const body='{"queued":"a","reasoning_effort":"xhigh"}',queued=r.request(body,'a');
-  await until(()=>r.gateway.nodes[0].queue.length===1);
-  assert.equal(r.gateway.stats().continuity.relocation.diagnostics.sources[0].automatic_reason,'automatic_wait_threshold');
-  const result=await queued;await active;
-  assert.equal(result.headers['x-ds4-node'],'spark2');assert.equal(result.headers['x-ds4-affinity'],'rebalanced');
-  assert.equal(r.backends[1].records.at(-1).body.toString(),body);
-  assert.equal(r.gateway.stats().continuity.automatic_relocation_scope,'first_unaffined_or_affinity_wait_expired');
-  assert.equal(r.gateway.stats().continuity.automatic_affinity_rebalance_min_wait_ms,25);
-  assert.equal(r.gateway.stats().continuity.relocation.last.actor,'scheduler');
+  // Hold the active response until relocation completes. Explicitly age the
+  // queued request after proving the threshold, independent of CI scheduling.
+  const active=r.request('{"wait_for_release":true,"active":"c"}','c');await until(()=>r.backends[0].releases?.length===1);
+  try{
+    const body='{"queued":"a","reasoning_effort":"xhigh"}',queued=r.request(body,'a');
+    await until(()=>r.gateway.nodes[0].queue.length===1);
+    assert.equal(r.gateway.stats().continuity.relocation.diagnostics.sources[0].automatic_reason,'automatic_wait_threshold');
+    r.gateway.nodes[0].queue[0].createdMono=performance.now()-300001;
+    const result=await queued;
+    assert.equal(result.headers['x-ds4-node'],'spark2');assert.equal(result.headers['x-ds4-affinity'],'rebalanced');
+    assert.equal(r.backends[1].records.at(-1).body.toString(),body);
+    assert.equal(r.gateway.stats().continuity.automatic_relocation_scope,'first_unaffined_or_affinity_wait_expired');
+    assert.equal(r.gateway.stats().continuity.automatic_affinity_rebalance_min_wait_ms,300000);
+    assert.equal(r.gateway.stats().continuity.relocation.last.actor,'scheduler');
+  }finally{r.backends[0].releases.shift()();await active;}
 });
 test('maintenance lock revokes a relocation offer and blocks mature automatic handover until explicit resume',async t=>{
   const r=await rig(t,2,{control_socket:true,genie_rebalance_min_wait_ms:0});

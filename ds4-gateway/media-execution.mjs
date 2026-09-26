@@ -11,6 +11,7 @@ import path from 'node:path';
 import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {randomUUID} from 'node:crypto';
+import {retainMediaRuntime,mediaRuntimeScript} from './media-runtime.mjs';
 const script=fileURLToPath(new URL('./media-runner.mjs',import.meta.url));
 export function saveMediaReceipt(folder,name,value){
   const target=path.join(folder,name),temporary=target+'.'+randomUUID()+'.tmp';
@@ -22,9 +23,11 @@ export function saveMediaReceipt(folder,name,value){
   }finally{if(fd!==undefined)fs.closeSync(fd);if(fs.existsSync(temporary))fs.unlinkSync(temporary);}
 }
 export const launchMediaRunner=async folder=>{
+  const plan=JSON.parse(fs.readFileSync(path.join(folder,'plan.json'),'utf8'));
+  const entry=plan.runtime?mediaRuntimeScript(folder,plan,'media-runtime-launch.mjs'):script;
   const log=fs.openSync(path.join(folder,'runner.log'),'ax',0o600);
   try{
-    const child=spawn(process.execPath,[script,folder],{detached:true,stdio:['ignore',log,log]});
+    const child=spawn(process.execPath,[entry,folder],{detached:true,stdio:['ignore',log,log]});
     await new Promise((resolve,reject)=>{child.once('spawn',resolve);child.once('error',reject);});
     child.unref();return {pid:child.pid,at:new Date().toISOString()};
   }finally{fs.closeSync(log);}
@@ -89,6 +92,7 @@ export function createMediaExecution(config,jobs,{isEnabled=()=>false,launchRunn
       const required_recipe_fields=job.kind==='music'?[...new Set(selected.flatMap(j=>musicRecipeRequirements(j.payload)))].sort():[];
       const plan={operation_id:job.id,command_journal_version:1,...(required_recipe_fields.length?{required_recipe_fields}:{}),...(ids.length>1?{job_ids:ids}:{}),worker_id:input.worker_id,separate_workers:workers().filter(w=>!machinesFor(w.id,config).some(m=>machinesFor(input.worker_id,config).includes(m))).map(w=>w.id),host:ssh,llm_container:member?.container??inspection.container,engine,python:config.genie_chat.python,control_socket:config.control_socket,
         recovery:pair?{profile:'glm53-docker-pair',url:pair.worker_binding.url}:recovery,...(pair?{llm_pair:pair,endpoint:workers().find(w=>w.id===input.worker_id)}:{}),...(lanes?{media_lanes:lanes}:{}),model:config.model,context_length:config.context_length,results_directory:jobs.results.directory,inputs_directory:jobs.inputs.directory};
+      plan.runtime=retainMediaRuntime(folder);
       saveMediaReceipt(folder,'plan.json',plan);
       saveMediaReceipt(folder,'media-jobs.json',{schema:1,jobs:selected});
       // Persist ownership before spawning. Lost acknowledgement never launches twice.

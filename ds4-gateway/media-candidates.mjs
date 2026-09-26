@@ -11,6 +11,7 @@ import {saveMediaReceipt,launchMediaRunner} from './media-execution.mjs';
 import {MediaJobs} from './media-jobs.mjs';
 import {aceQualificationPayload,assertAceSourceProof} from './ace-qualification.mjs';
 import {glmRecoveryProofValid} from './recovery-verify.mjs';
+import {retainMediaRuntime,verifyMediaRuntime,mediaRuntimeScript} from './media-runtime.mjs';
 const root=fileURLToPath(new URL('../',import.meta.url)),runner=path.join(root,'ds4-gateway/media-candidate-runner.py');
 const modules=['docker_profile','recovery_pair','recovery_pair_native','recovery_media_command','media_recipe_contract','media_ace_candidate'];
 const sha=b=>createHash('sha256').update(b).digest('hex'),fingerprint=v=>sha(JSON.stringify(v));
@@ -18,9 +19,10 @@ const uuid=v=>typeof v==='string'&&/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}
 const publicRow=r=>Object.fromEntries(['operation_id','worker_id','member','phase','created_at','finished_at','candidate','qualification_job_id','qualification','promotion','reason'].filter(k=>r[k]!==undefined).map(k=>[k,r[k]]));
 const readPrivate=p=>{const st=fs.lstatSync(p);assert.ok(st.isFile()&&!st.isSymbolicLink()&&(st.mode&0o077)===0&&(!process.getuid||st.uid===process.getuid())&&st.size<=4*1024*1024,'Candidate receipt is not private');return fs.readFileSync(p);};
 const frozenBundle=()=>({modules:Object.fromEntries(modules.map(name=>[name,fs.readFileSync(path.join(root,'ds4-gateway',name+'.py'),'utf8')])),patch:Object.fromEntries(['apply-recipe-fields.py','verify-api-fields.py'].map(name=>[name,fs.readFileSync(path.join(root,'examples/spark-build/ace-step',name),'utf8')]))});
-async function launch(folder,python){const log=fs.openSync(path.join(folder,'runner.log'),'ax',0o600);try{const child=spawn(python,['-I','-B',runner,folder,'run'],{detached:true,stdio:['ignore',log,log]});await new Promise((resolve,reject)=>{child.once('spawn',resolve);child.once('error',reject);});child.unref();return {pid:child.pid};}finally{fs.closeSync(log);}}
-const observePromotion=(folder,python)=>new Promise((resolve,reject)=>{execFile(python,['-I','-B',path.join(root,'ds4-gateway/media_candidate_promotion.py'),folder],{timeout:300000,maxBuffer:1024*1024},(error,stdout)=>{if(error)return reject(Error('Native postqualification proof unavailable; enrollment unchanged'));try{resolve(JSON.parse(stdout));}catch{reject(Error('Native promotion proof unreadable'));}}).stdin.end();});
-const observe=(folder,python)=>new Promise((resolve,reject)=>{const child=execFile(python,['-I','-B',runner,folder,'status'],{timeout:300000,maxBuffer:1024*1024},(error,stdout)=>{if(error)return reject(Error('Candidate native observation unconfirmed; preparation was not repeated'));try{resolve(JSON.parse(stdout));}catch{reject(Error('Candidate status unreadable'));}});child.stdin.end();});
+const preparationScript=folder=>{const plan=JSON.parse(readPrivate(path.join(folder,'plan.json')));return plan.runtime?mediaRuntimeScript(folder,plan,'media-candidate-runner.py'):runner;};
+async function launch(folder,python){const script=preparationScript(folder),log=fs.openSync(path.join(folder,'runner.log'),'ax',0o600);try{const child=spawn(python,['-I','-B',script,folder,'run'],{detached:true,stdio:['ignore',log,log]});await new Promise((resolve,reject)=>{child.once('spawn',resolve);child.once('error',reject);});child.unref();return {pid:child.pid};}finally{fs.closeSync(log);}}
+const observePromotion=(folder,python)=>new Promise((resolve,reject)=>{const plan=JSON.parse(readPrivate(path.join(folder,'plan.json')));const script=plan.runtime?mediaRuntimeScript(folder,plan,'media_candidate_promotion.py'):path.join(root,'ds4-gateway/media_candidate_promotion.py');execFile(python,['-I','-B',script,folder],{timeout:300000,maxBuffer:1024*1024},(error,stdout)=>{if(error)return reject(Error('Native postqualification proof unavailable; enrollment unchanged'));try{resolve(JSON.parse(stdout));}catch{reject(Error('Native promotion proof unreadable'));}}).stdin.end();});
+const observe=(folder,python)=>new Promise((resolve,reject)=>{const child=execFile(python,['-I','-B',preparationScript(folder),folder,'status'],{timeout:300000,maxBuffer:1024*1024},(error,stdout)=>{if(error)return reject(Error('Candidate native observation unconfirmed; preparation was not repeated'));try{resolve(JSON.parse(stdout));}catch{reject(Error('Candidate status unreadable'));}});child.stdin.end();});
 export function createMediaCandidates(config,store,{directory,workers,isEnabled,isAllowed,assertCapacity,hostAvailable=()=>true,launchRunner=launch,launchQualification=launchMediaRunner,observeRunner=observe,observePromotionRunner=observePromotion,promotions=null,bundle=frozenBundle}={}){
  const policy=config.media_jobs?.improvements;
  if(policy!==undefined)assert.ok(policy&&Object.keys(policy).every(k=>k==='enabled')&&typeof policy.enabled==='boolean','media_jobs.improvements accepts enabled boolean only');
@@ -88,6 +90,7 @@ export function createMediaCandidates(config,store,{directory,workers,isEnabled,
   const root=qualificationFolder(row),bytes=readPrivate(path.join(root,'plan.json'));
   assert.equal(sha(bytes),row.qualification_plan_sha256,'Qualification plan changed');
   const plan=JSON.parse(bytes);assert.equal(plan.operation_id,row.qualification_job_id);assert.equal(plan.ace_qualification.candidate_operation_id,row.operation_id);
+  if(plan.runtime)verifyMediaRuntime(root,plan.runtime);
   return {root,plan};
  }
  function completeQualification(row,{persist=true}={}){
@@ -166,6 +169,7 @@ export function createMediaCandidates(config,store,{directory,workers,isEnabled,
     recovery:{profile:'glm53-docker-pair',url:pair.worker_binding.url},llm_pair:pair,endpoint:worker,model:config.model,context_length:config.context_length,
     results_directory:jobs.results.directory,inputs_directory:jobs.inputs.directory,
     ace_qualification:{schema:1,candidate_operation_id:row.operation_id,preparation_directory:folder(row.operation_id),source_proof:prepared.recipe_contract,prepared_result:prepared}};
+   plan.runtime=retainMediaRuntime(root);
    saveMediaReceipt(root,'plan.json',plan);saveMediaReceipt(root,'media-jobs.json',{schema:1,jobs:[job]});
    updated.qualification_plan_sha256=sha(readPrivate(path.join(root,'plan.json')));save(updated);
    try{saveMediaReceipt(root,'launched.json',await launchQualification(root));}
@@ -208,6 +212,7 @@ export function createMediaCandidates(config,store,{directory,workers,isEnabled,
    const row=get(input.operation_id);assert.equal(row.phase,'candidate_preparing','This preparation no longer owns execution');permitted(row);assert.ok(!fs.existsSync(path.join(folder(row.operation_id),'attention.json')),'Candidate needs reconciliation');
    const bytes=readPrivate(path.join(folder(row.operation_id),'request.json'));assert.equal(sha(bytes),input.request_file_sha256);
    const request=JSON.parse(bytes),planBytes=readPrivate(path.join(folder(row.operation_id),'plan.json')),plan=JSON.parse(planBytes);assert.equal(sha(planBytes),row.plan_sha256,'Candidate plan changed');
+   if(plan.runtime)verifyMediaRuntime(folder(row.operation_id),plan.runtime);
    assert.equal(request.operation_id,row.operation_id);assert.equal(request.before.Id,row.engine.container);assert.equal(request.before.Image,row.engine.image);assert.equal(request.epoch.running,false);
    assert.match(request.machine,/^[a-f0-9]{64}$/);assert.deepEqual(request.source_sha256,plan.source_sha256);assert.equal(plan.binding,row.binding);
    if(row.request_file_sha256)assert.equal(row.request_file_sha256,input.request_file_sha256,'Candidate request changed');else save({...row,request_file_sha256:input.request_file_sha256});
@@ -223,6 +228,7 @@ export function createMediaCandidates(config,store,{directory,workers,isEnabled,
    fs.mkdirSync(directory,{recursive:true,mode:0o700});const parent=fs.lstatSync(directory);assert.ok(parent.isDirectory()&&!parent.isSymbolicLink()&&(parent.mode&0o077)===0&&(!process.getuid||parent.uid===process.getuid()),'Private candidate directory required');fs.mkdirSync(folder(operation_id),{mode:0o700});
    const frozen=bundle();saveMediaReceipt(folder(operation_id),'bundle.json',frozen);
    const plan={...row,runner_sha256:sha(fs.readFileSync(runner)),transport_sha256:sha(fs.readFileSync(path.join(root,'ds4-gateway/media_candidate_remote.py'))),bundle_sha256:sha(fs.readFileSync(path.join(folder(operation_id),'bundle.json'))),source_sha256:Object.fromEntries(Object.entries(frozen.patch).map(([k,v])=>[k,sha(v)]))};
+   plan.runtime=retainMediaRuntime(folder(operation_id));
    saveMediaReceipt(folder(operation_id),'plan.json',plan);row.plan_sha256=sha(readPrivate(path.join(folder(operation_id),'plan.json')));save(row);
    try{saveMediaReceipt(folder(operation_id),'launched.json',await launchRunner(folder(operation_id),row.python));}
    catch{saveMediaReceipt(folder(operation_id),'attention.json',{state:'launch_uncertain'});throw Error('Candidate launch unconfirmed; observe the saved operation instead of repeating it');}

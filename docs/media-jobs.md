@@ -350,6 +350,17 @@ autonomous progression across improvement stages remain unfinished. Native
 candidate generation/promotion and the complete AceFarm acceptance run remain
 separate installation requirements.
 
+New media executions, candidate preparations and qualifications retain a private
+copy of their fixed JavaScript/Python dependency set before recording ownership.
+The saved plan pins its manifest hash. Detached runners and their later Python
+helpers use that retained code, so a checkout update during generation does not
+change the implementation used to return the original LLM. Launch, native helper
+calls, qualification permits and promotion verification check the retained files;
+changed, missing, extra or symlinked files are refused. Restart never replaces a
+saved runtime with the latest checkout. Already-owned legacy jobs keep their
+existing path. This retention does not freeze external interpreters, codecs or
+Docker, and does not provide automatic takeover of a failed coordinator.
+
 The internal ACE candidate preparer retains the exact stopped original container
 and snapshots its writable filesystem before adding the fixed sampler/DCW patch
 in a separate image. Mounted model, cache and output files remain on the original

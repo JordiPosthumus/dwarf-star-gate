@@ -116,6 +116,22 @@ test('qualification refuses changed native preparation and rechecks policy after
  const f=await preparedFixture(t);f.result.container='d'.repeat(64);await assert.rejects(f.service.qualify(f.input),/changed/);assert.equal(f.qualifications,0);
  f.result.container='e'.repeat(64);f.options.observeRunner=async()=>{f.enabled=false;return f.result;};f.reopen();await assert.rejects(f.service.qualify(f.input),/policy/);assert.equal(f.qualifications,0);
 });
+test('saved qualification runtime is pinned before launch and cannot be replaced on restart',async t=>{
+ const f=await preparedFixture(t);await f.service.qualify(f.input);const q=f.qualification();
+ assert.match(q.plan.runtime.manifest_sha256,/^[a-f0-9]{64}$/);
+ const file=path.join(q.root,'runtime','media_maintenance.py');fs.chmodSync(file,0o600);fs.writeFileSync(file,'# changed after launch');
+ f.reopen();assert.throws(()=>f.service.qualificationPermit(q.permit),/runtime source changed/);
+ assert.equal((await f.service.qualify(f.input)).qualification_job_id,q.plan.operation_id);assert.equal(f.qualifications,1);
+ assert.throws(()=>f.execution.assertCapacity('alias'),/overlapping/);
+});
+test('an already-owned legacy qualification keeps its original unversioned path without recapture',async t=>{
+ const f=await preparedFixture(t);await f.service.qualify(f.input);const q=f.qualification();
+ delete q.plan.runtime;saveMediaReceipt(q.root,'plan.json',q.plan);
+ const hash=sha(fs.readFileSync(path.join(q.root,'plan.json')));f.store.data.media_candidates[f.row.operation_id].qualification_plan_sha256=hash;
+ f.reopen();assert.equal(f.service.qualificationPermit({...q.permit,plan_file_sha256:hash}).allowed,true);
+ assert.equal((await f.service.qualify(f.input)).qualification_job_id,q.plan.operation_id);assert.equal(f.qualifications,1);
+ assert.equal(JSON.parse(fs.readFileSync(path.join(q.root,'plan.json'))).runtime,undefined);
+});
 test('qualification cannot use a legacy source witness lacking native per-output parameter receipts',async t=>{
  const f=await preparedFixture(t);delete f.result.recipe_contract.generation_receipt;saveMediaReceipt(f.preparation,'result.json',f.result);
  await assert.rejects(f.service.qualify(f.input),/receipt support/);assert.equal(f.qualifications,0);

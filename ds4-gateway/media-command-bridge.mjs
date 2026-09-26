@@ -3,12 +3,13 @@ import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {fileURLToPath} from 'node:url';
 import {setTimeout as delay} from 'node:timers/promises';
+import {mediaRuntimeScript} from './media-runtime.mjs';
 const execute=promisify(execFile),script=fileURLToPath(new URL('./recovery_media_bridge.py',import.meta.url));
 
 // The private plan supplies all hosts, profiles and ownership. Callers select
 // only a fixed role/member transition and its already captured exact container.
 export function createMediaCommandBridge(plan,folder,{run=execute,wait=delay,save=()=>{}}={}){
-  const call=async(...args)=>JSON.parse((await run(plan.python,['-I','-B',script,folder,...args],{maxBuffer:1024*1024})).stdout);
+  const call=async(...args)=>JSON.parse((await run(plan.python,['-I','-B',plan.runtime?mediaRuntimeScript(folder,plan,'recovery_media_bridge.py'):script,folder,...args],{maxBuffer:1024*1024})).stdout);
   const exact=(row,step)=>{
     assert.equal(row?.operation_id,plan.operation_id,'Native command operation differs');
     if(step)assert.equal(row.step,step,'Native command step differs');
