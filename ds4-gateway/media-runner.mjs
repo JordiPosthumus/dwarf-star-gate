@@ -1,5 +1,6 @@
 import {mediaPairReturn} from './media-pair-return.mjs';
 import {runParallelMediaCycle} from './media-parallel-cycle.mjs';
+import {createMediaCommandBridge} from './media-command-bridge.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
@@ -22,14 +23,17 @@ fs.writeFileSync(path.join(folder,'runner-claim.json'),JSON.stringify({pid:proce
 const execute=promisify(execFile),quote=s=>"'"+String(s).replaceAll("'","'\\''")+"'";
 
 const save=(name,value)=>saveMediaReceipt(folder,name,{...value,at:new Date().toISOString()});
+const commands=p.command_journal_version===1?createMediaCommandBridge(p,folder,{save}):null;
 const maintenanceScript=fileURLToPath(new URL('./media_maintenance.py',import.meta.url));
 let phase='',detail='',changedAt,batch={};
 const progress=(next,message,context=batch)=>{if(next!==phase||message!==detail||context.active_job_id!==batch.active_job_id)changedAt=new Date().toISOString();phase=next;detail=message;batch=context;save('progress.json',{phase,detail,...batch,changed_at:changedAt,heartbeat_at:new Date().toISOString()});};
 const heartbeat=setInterval(()=>{if(phase)progress(phase,detail);},5000);heartbeat.unref();
-const nativeIo=(target,prefix='')=>{
+const nativeIo=(target,prefix='',member=p.llm_pair?.media_member??0)=>{
   const remote=async args=>(await execute('ssh',['-o','BatchMode=yes','-o','ConnectTimeout=10','--',target.host,args.map(quote).join(' ')],{maxBuffer:8*1024*1024})).stdout;
   return {
-    inspect:async id=>JSON.parse(await remote(['docker','inspect',id]))[0],start:id=>remote(['docker','start',id]),stop:id=>remote(['docker','stop','-t','120',id]),
+    inspect:async id=>JSON.parse(await remote(['docker','inspect',id]))[0],
+    start:id=>commands?commands.command('start',id===target.engine.container?'media':'llm',member,id):remote(['docker','start',id]),
+    stop:id=>commands?commands.command('stop',id===target.engine.container?'media':'llm',member,id):remote(['docker','stop','-t','120',id]),
     connect:async()=>{
       const listener=net.createServer();listener.listen(0,'127.0.0.1');await once(listener,'listening');const port=listener.address().port;await new Promise(resolve=>listener.close(resolve));
       const fd=fs.openSync(path.join(folder,prefix+'tunnel.log'),'a',0o600);
@@ -40,9 +44,9 @@ const nativeIo=(target,prefix='')=>{
   };
 };
 try{
-  const pair=mediaPairReturn(p,save);
+  const pair=mediaPairReturn(p,save,{command:commands?.command});
   const cycle=p.media_lanes?runParallelMediaCycle:runMediaCycle;
-  const result=await cycle(p,{pair,...nativeIo(p),forMember:lane=>nativeIo(lane,`member-${lane.member}-`),
+  const result=await cycle(p,{pair,...nativeIo(p),prepareCommands:commands?()=>commands.prepare():undefined,forMember:lane=>nativeIo(lane,`member-${lane.member}-`,lane.member),
     jobs:new MediaJobs(path.join(folder,'media-jobs.json'),{resultsDirectory:p.results_directory,inputsDirectory:p.inputs_directory}),save,progress,delay,
     continueBatch:async next=>{
       const status=await workerControl(p.control_socket,'/media-jobs');

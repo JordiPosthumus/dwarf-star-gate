@@ -46,6 +46,7 @@ export async function runMediaCycle(plan,io){
   const mediaIdle=()=>mediaEngineIdle(connection.backend,plan.engine.kind);
   try{
     assert.ok(['comfyui','ace-step'].includes(plan.engine.kind),'Unsupported media engine');
+    await io.prepareCommands?.();
     await io.pair?.capture();
     const initial=await recoveryInspect();assert.equal(initial.profile,plan.recovery.profile);assert.equal(initial.listener,true);assert.equal(initial.fault,null);
     before={llm:await inspect(plan.llm_container),media:await inspect(plan.engine.container)};
@@ -86,12 +87,21 @@ export async function runMediaCycle(plan,io){
             while(!await mediaIdle()){progress('waiting_media_idle','Waiting for direct media work before restoring the LLM.');await delay(3000);}
           }
           await stop(plan.engine.container);
+          assert.equal((await inspect(plan.engine.container)).State.Running,false,'Media engine did not stop');
         }
         // A stopped media engine's changed settings remain an error, but must
         // not strand an unchanged LLM offline after successful generation.
         try{unchanged(await inspect(plan.engine.container),before.media);}catch(e){error=e;save('media-settings-changed.json',{error:e.message});}
-        unchanged(await inspect(plan.llm_container),before.llm);
-        save('restore-llm-intent.json',{container:plan.llm_container});if(io.pair)await io.pair.restore(plan.llm_container);else await start(plan.llm_container);
+        const currentLlm=await inspect(plan.llm_container);unchanged(currentLlm,before.llm);
+        save('restore-llm-intent.json',{container:plan.llm_container});
+        if(io.pair)await io.pair.restore(plan.llm_container);
+        else if(!currentLlm.State.Running)await start(plan.llm_container);
+        else{
+          // A refused stop can leave the original running instance untouched.
+          // Do not turn that into a second start or adopt an external restart.
+          assert.equal(currentLlm.State.StartedAt,before.llm.State.StartedAt,'Original LLM running epoch changed');
+          assert.equal(currentLlm.State.FinishedAt,before.llm.State.FinishedAt,'Original LLM stopped epoch changed');
+        }
         progress('restoring_llm','Original LLM is loading with unchanged settings.');
         await waitForMediaLlm(plan,io);
         progress('checking_llm',io.pair?'Verifying both original GLM containers and a native readiness response.':'Checking real responses and cold-to-warm cache reuse.');

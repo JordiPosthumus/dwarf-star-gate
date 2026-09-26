@@ -27,6 +27,7 @@ export async function runParallelMediaCycle(plan,io){
     Object.assign(lane,{phase,detail,...context});progress('generating','Parallel member jobs are being observed under one pair reservation.');
   };
   try{
+    await io.prepareCommands?.();
     await io.pair.capture();
     const initial=await io.recoveryInspect();assert.equal(initial.profile,plan.recovery.profile);assert.equal(initial.listener,true);assert.equal(initial.fault,null);
     head=await io.inspect(plan.llm_container);assert.match(head.Id,/^[a-f0-9]{64}$/);assert.equal(head.State.Running,true);

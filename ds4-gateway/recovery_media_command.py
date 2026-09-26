@@ -75,14 +75,20 @@ def read_record(root, request):
     try:
         row = private_read(record_path(root, request))
     except FileNotFoundError:
+        require(not os.path.lexists(root / (request['operation_id'] + '-' + request['step'] + '.backup')),
+                'saved_record_missing')
         return None
     require(isinstance(row, dict) and row.get('schema') == 1 and row.get('request') == request and
-            row.get('request_hash') == digest(request) and row.get('state') in ('prepared', 'intent', 'completed'),
+            row.get('request_hash') == digest(request) and row.get('state') in ('prepared', 'intent', 'acknowledged', 'completed', 'exited'),
             'saved_request_changed')
     backup = private_read(root / (request['operation_id'] + '-' + request['step'] + '.backup'))
     require(backup == {'request': request, 'request_hash': digest(request)}, 'backup_changed')
+    if row['state'] == 'acknowledged':
+        require(row.get('command_acknowledged') is True, 'acknowledgement_unverified')
     if row['state'] == 'completed':
         require(completed(request, row.get('after')), 'completion_unverified')
+    if row['state'] == 'exited':
+        require(row.get('command_acknowledged') is True and exited(request, row.get('after')), 'exit_unverified')
     return row
 
 
@@ -102,6 +108,20 @@ def completed(request, after):
     if request['action'] == 'start':
         return after.get('running') is True and isinstance(after.get('started_at'), str) and bool(after['started_at']) and after['started_at'] != before['started_at']
     return after.get('running') is False and after.get('started_at') == before['started_at'] and isinstance(after.get('finished_at'), str) and bool(after['finished_at']) and after['finished_at'] != before['finished_at']
+
+
+def exited(request, after):
+    return request['action'] == 'start' and isinstance(after, dict) and set(after) == {'running', 'started_at', 'finished_at'} and \
+        after['running'] is False and all(isinstance(after[k], str) and after[k] and after[k] != request['before'][k]
+                                        for k in ('started_at', 'finished_at'))
+
+
+def observed(request, row, after):
+    if completed(request, after):
+        return {**row, 'state': 'completed', 'after': after, 'completion_source': 'native_observation'}
+    if row.get('command_acknowledged') is True and exited(request, after):
+        return {**row, 'state': 'exited', 'after': after, 'completion_source': 'native_observation'}
+    return row
 
 
 def lease(root, request, *, create):
@@ -153,14 +173,16 @@ def status(directory, request, io):
         require(row is None, 'saved_lease_missing')
         return summary(request, row, runner_active=False, outcome='unconfirmed')
     if fd is None:
-        return summary(request, row, runner_active=True, outcome='recorded' if row and row['state'] == 'completed' else 'unconfirmed')
+        return summary(request, row, runner_active=True, outcome='recorded' if row and row['state'] in ('completed', 'exited') else 'unconfirmed')
     try:
         # Re-read after acquiring the lease: the previous runner may have saved
         # its result between the first read and releasing its lock.
         row = read_record(root, request)
-        outcome = 'recorded' if row and row['state'] == 'completed' else 'unconfirmed'
-        if row and row['state'] == 'intent' and completed(request, current(request, io)):
-            outcome = 'observed'
+        outcome = 'recorded' if row and row['state'] in ('completed', 'exited') else 'unconfirmed'
+        if row and row['state'] in ('intent', 'acknowledged'):
+            result = observed(request, row, current(request, io))
+            if result['state'] in ('completed', 'exited'):
+                outcome = 'observed'
         return summary(request, row, runner_active=False, outcome=outcome)
     finally:
         release(fd)
@@ -181,7 +203,7 @@ def run(directory, request, io, ownership):
         return summary(request, read_record(root, request), runner_active=True)
     try:
         row = read_record(root, request)
-        if row and row['state'] == 'completed':
+        if row and row['state'] in ('completed', 'exited'):
             return summary(request, row, runner_active=False)
         # Every unresolved command on this exact container blocks a different
         # operation or stage. Never use a new action ID to escape uncertainty.
@@ -192,11 +214,11 @@ def run(directory, request, io, ownership):
             require(record_path(root, other_request) == file, 'journal_identity_changed')
             verified = read_record(root, other_request)
             if other_request['machine'] == request['machine'] and other_request['container'] == request['container'] and file != record_path(root, request):
-                require(verified['state'] == 'completed', 'other_command_unresolved')
-        if row and row['state'] == 'intent':
+                require(verified['state'] in ('completed', 'exited'), 'other_command_unresolved')
+        if row and row['state'] in ('intent', 'acknowledged'):
             after = current(request, io)
-            if completed(request, after):
-                row = {**row, 'state': 'completed', 'after': after, 'completion_source': 'native_observation'}
+            row = observed(request, row, after)
+            if row['state'] in ('completed', 'exited'):
                 private_save(record_path(root, request), row)
             return summary(request, row, runner_active=False)
         require(ownership(request) is True, 'ownership_unavailable')
@@ -221,9 +243,11 @@ def run(directory, request, io, ownership):
         row = {**row, 'state': 'intent'}
         private_save(record_path(root, request), row)
         getattr(io, request['action'])(request['container'])
+        row = {**row, 'state': 'acknowledged', 'command_acknowledged': True}
+        private_save(record_path(root, request), row)
         after = current(request, io)
-        if completed(request, after):
-            row = {**row, 'state': 'completed', 'after': after, 'completion_source': 'native_observation'}
+        row = observed(request, row, after)
+        if row['state'] in ('completed', 'exited'):
             private_save(record_path(root, request), row)
         return summary(request, row, runner_active=False)
     finally:

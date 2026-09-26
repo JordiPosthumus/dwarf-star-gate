@@ -8,6 +8,7 @@ import {Readable} from 'node:stream';
 import {MediaJobs} from './media-jobs.mjs';
 import {createMediaExecution,saveMediaReceipt} from './media-execution.mjs';
 import {runMediaCycle,mediaBatchCanContinue} from './media-cycle.mjs';
+import {createMediaCommandBridge} from './media-command-bridge.mjs';
 import {mediaBudget,mediaSparkLimit} from './media-budget.mjs';
 
 test('failed durable receipt storage preserves the previous receipt and prevents crossing the command boundary',t=>{
@@ -215,6 +216,20 @@ test('failed media startup returns the unchanged LLM without submitting generati
   await assert.rejects(runMediaCycle(r.plan,r.io),/media service failed/);
   assert.equal(r.submissions(),0);assert.equal(r.jobs.get(r.job.id).state,'failed');
   assert.ok(r.events.includes('failed_returned'));assert.ok(r.events.includes('finish'));assert.equal(r.containers.get(r.plan.llm_container).State.Running,true);
+});
+test('journal-confirmed exited startup returns the LLM without submitting media',async t=>{
+  const r=cycleFixture(t),start=r.io.start;let commands=0;
+  const bridge=createMediaCommandBridge(r.plan,'/fixture',{run:async()=>{commands++;return {stdout:JSON.stringify({operation_id:r.plan.operation_id,step:'media-start-0',state:'exited'})};}});
+  r.io.start=id=>id===r.engine.container?bridge.command('start','media',0,id):start(id);
+  await assert.rejects(runMediaCycle(r.plan,r.io),/acknowledged.*exited/);
+  assert.equal(commands,1);assert.equal(r.submissions(),0);assert.ok(r.events.includes('failed_returned'));
+  assert.ok(r.events.includes('finish'));assert.equal(r.containers.get(r.plan.llm_container).State.Running,true);
+});
+test('refused LLM stop rechecks the same running instance without starting it again',async t=>{
+  const r=cycleFixture(t);r.io.stop=async()=>{throw Error('refused before command dispatch');};
+  await assert.rejects(runMediaCycle(r.plan,r.io),/refused before command dispatch/);
+  assert.equal(r.submissions(),0);assert.ok(r.events.includes('failed_returned'));assert.ok(r.events.includes('finish'));
+  assert.ok(!r.events.some(e=>e.startsWith('start:')));
 });
 test('failed LLM verification remains visible and does not claim readmission',async t=>{
   const r=cycleFixture(t);r.io.verify=async()=>{throw new Error('cache check failed');};

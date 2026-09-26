@@ -82,6 +82,52 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(self.run_command(owned=lambda _: False)['state'], 'completed')
         self.assertEqual(len(self.io.calls), 1)
 
+    def exited_start(self):
+        self.io.container['State']['Running'] = False
+        request = self.request('start', 'media-start-0')
+        def start(cid):
+            self.io.calls.append(('start', cid))
+            self.io.container['State'].update(Running=False, StartedAt='start-2', FinishedAt='end-2')
+        self.io.start = start
+        return request
+
+    def test_acknowledged_start_that_immediately_exits_is_terminal_without_replay(self):
+        request = self.exited_start()
+        self.assertEqual(self.run_command(request)['state'], 'exited')
+        self.assertEqual(self.run_command(request, owned=lambda _:False)['state'], 'exited')
+        self.assertEqual(m.status(self.root, request, self.io)['outcome'], 'recorded')
+        self.assertEqual(len(self.io.calls), 1)
+
+    def test_exit_after_durable_ack_observes_failed_start_without_replay(self):
+        request = self.exited_start()
+        class Crash(BaseException): pass
+        save = m.private_save
+        def crash(file, value):
+            save(file, value)
+            if value.get('state') == 'acknowledged': raise Crash()
+        with patch.object(m, 'private_save', crash), self.assertRaises(Crash): self.run_command(request)
+        self.assertEqual(m.status(self.root, request, self.io)['outcome'], 'observed')
+        self.assertEqual(self.run_command(request, owned=lambda _:False)['state'], 'exited')
+        self.assertEqual(len(self.io.calls), 1)
+
+    def test_lost_start_ack_with_exited_container_remains_uncertain(self):
+        request = self.exited_start();start = self.io.start
+        def lost(cid):
+            start(cid)
+            raise OSError('fixture lost acknowledgement')
+        self.io.start = lost
+        with self.assertRaises(OSError): self.run_command(request)
+        self.assertEqual(m.status(self.root, request, self.io)['outcome'], 'unconfirmed')
+        self.assertEqual(self.run_command(request)['state'], 'intent')
+        self.assertEqual(len(self.io.calls), 1)
+
+    def test_acknowledged_row_requires_a_saved_positive_acknowledgement(self):
+        request = self.exited_start();self.run_command(request)
+        row = m.read_record(self.root, request);row['state'] = 'acknowledged';row.pop('command_acknowledged')
+        m.private_save(m.record_path(self.root, request), row)
+        with self.assertRaisesRegex(ValueError, 'acknowledgement_unverified'):
+            self.run_command(request)
+
     def test_exit_after_intent_before_command_never_replays_or_escapes_to_new_operation(self):
         class Crash(BaseException):
             pass
@@ -159,6 +205,16 @@ class CommandTests(unittest.TestCase):
         self.assertFalse(absent.exists())
         self.assertEqual(m.status(self.root, self.req, self.io)['state'], 'missing')
         self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_missing_record_with_retained_backup_never_replays(self):
+        self.run_command()
+        m.record_path(self.root, self.req).unlink()
+        # Even if an external actor restores the original epoch, the retained
+        # backup is evidence of prior execution, not authority to start over.
+        self.io.container['State'].update(Running=True, StartedAt='start-1', FinishedAt='end-0')
+        with self.assertRaisesRegex(ValueError, 'saved_record_missing'): self.run_command()
+        with self.assertRaisesRegex(ValueError, 'saved_record_missing'): m.status(self.root, self.req, self.io)
+        self.assertEqual(len(self.io.calls), 1)
 
     def test_same_logical_action_cannot_race_under_a_different_container_lock(self):
         held = m.lease(self.root, self.req, create=True)

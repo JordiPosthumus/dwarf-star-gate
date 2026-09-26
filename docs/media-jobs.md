@@ -204,8 +204,24 @@ different operation or step cannot bypass an unresolved command on the same
 container. Read-only status creates no missing records or locks and can observe
 an already-issued outcome after permission withdrawal. Completion is a recorded
 container transition, not model readiness, cache proof or gateway readmission.
-This journal is not yet wired into the live media runner. Receipt files now flush
-their data and parent directory before callers may cross a command boundary.
+New media plans opt into this journal through a fixed private Python transport.
+It captures Linux machine/GPU identity once, binds the saved original containers
+and paired recipe files, and uses the prior completed stop/start receipt for a
+return transition. External process-epoch changes are rejected. Serial member
+selection and both parallel members use their exact enrolled hosts. SSH stops
+are graceful without a forced-kill deadline; lost transport replies cause
+read-only observation of the same request. Old saved plans retain their existing
+adapter. Receipt files flush their data and parent directory before callers may
+cross a command boundary.
+
+A positively acknowledged start followed by a new exited container epoch is a
+terminal startup failure, allowing the existing lifecycle to return the LLM.
+An exited container after a lost start acknowledgement remains uncertain. A
+known pre-dispatch refusal does not claim an issued command, while missing prior
+receipts never prove non-execution. These command boundaries are wired into the
+source runner; deployment and actual native acceptance remain separate gates.
+The immutable coordinator claim is still retained: automatic takeover after a
+coordinator dies is not implemented by this transport.
 
 **Native acceptance still required:** simultaneous generation on actual enrolled
 members, full autonomous film production through installed Hermes, and native
