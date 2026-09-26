@@ -83,6 +83,20 @@ test('Hermes uploads shared inputs once and preserves uncertain uploads without 
   const retry=await f.run('upload','--file',file,'--receipt',uncertain);assert.equal(retry.code,1);assert.match(retry.value.error,/uncertain/);
   assert.deepEqual(fs.readFileSync(uncertain),before);assert.equal(f.requests.length,count);
 });
+test('music submission retains exact recipe through lost acknowledgement and streams a large retained artifact',async t=>{
+ const f=await fixture(t),request=path.join(f.dir,'music.json'),receipt=path.join(f.dir,'music-receipt.json');
+ const payload={prompt:'Fixture song',lyrics:'Fixture lyrics',model:'fixture-xl-sft',seed:11,use_random_seed:false,batch_size:1,thinking:false,inference_steps:80,guidance_scale:3,sampler_mode:'heun',dcw_enabled:false,audio_duration:-1,audio_format:'flac',infer_method:'ode'};
+ fs.writeFileSync(request,JSON.stringify(payload));const args=['submit','--kind','music','--request',request,'--receipt',receipt];
+ f.dropNext('/v1/music/jobs');assert.equal((await f.run(...args)).code,1);await f.restart();const submitted=await f.run(...args);assert.equal(submitted.code,0);
+ assert.equal(f.core.mediaJobs.data.jobs.length,1);const job=f.core.mediaJobs.data.jobs[0];assert.deepEqual(job.payload,payload);
+ const posts=f.requests.filter(r=>r.method==='POST');assert.equal(posts.length,2);assert.equal(posts[0].key,posts[1].key);
+ // Binary transport fixture only; codec validity is tested by the publisher.
+ const bytes=Buffer.alloc(32*1024*1024,37),file=retain(f,job,'song.flac',bytes);file.content_type='audio/flac';
+ f.core.mediaJobs.update(job.id,{state:'completed',outputs:{state:'ready',files:[file]},execution:{phase:'restoring_llm'}});
+ const result=await f.run('download','--receipt',receipt,'--directory',path.join(f.dir,'music-output'));assert.equal(result.code,0);assert.equal(result.value.downloaded.length,1);
+ assert.equal(result.value.status.restoration_phase,'restoring_llm');assert.deepEqual(fs.readFileSync(result.value.downloaded[0].path),bytes);
+ assert.equal((await f.run(...args)).code,0);assert.equal(f.requests.filter(r=>r.method==='POST').length,2,'an accepted song is only observed on retry');
+});
 test('Hermes client does not forward gateway credentials through redirects',async t=>{
   const f=await fixture(t);let hits=0;
   const other=http.createServer((_req,res)=>{hits++;res.end('{}');});other.listen(0,'127.0.0.1');await once(other,'listening');t.after(()=>other.close());

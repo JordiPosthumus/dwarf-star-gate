@@ -697,6 +697,87 @@ Pinned standalone image recipes and a combined preparation command are now
 included under `examples/spark-build`. They have native qualification on an
 existing Spark; a complete fresh-host run remains unverified.
 
+## AceFarm coordinator integration
+
+Use an AceFarm machine backend that calls the asynchronous music HTTP API.
+The coordinator owns YAML expansion, `lyrics-file` loading, integer seed counts
+versus explicit seed ranges, per-track folders and its complete canonical
+generation identity metadata. Submit one concrete song/seed per job with a
+durable idempotency receipt; native `batch_size` is not a multi-track YAML batch.
+DSG owns physical worker selection, waiting, draining, engine lifecycle and
+retention. Do not also dispatch or collect that same job over AceFarm's SSH path.
+
+| AceFarm value | Explicit music request field |
+| --- | --- |
+| caption / file contents | `prompt` / `lyrics` |
+| concrete seed | `seed`, `use_random_seed: false`, `batch_size: 1` |
+| thinking | `thinking` boolean |
+| cfg / steps / solver | `guidance_scale` / `inference_steps` / `sampler_mode` |
+| duration | `audio_duration`, preserving automatic `-1` |
+| DCW / integration method | `dcw_enabled` boolean / `infer_method` |
+| selected DIT / output format | `model` / `audio_format: "flac"` |
+
+Keep the installed AceFarm defaults, including model and LM selection. Sampling
+settings alone do not establish recipe parity. The engine's reported DIT and LM
+must match the coordinator's intended names; model weights and voice identity
+need separate evidence. Mac-local music reference uploads are not implemented.
+
+The bundled Python client supports `submit --kind music`, `status`, bounded
+`wait`, and streamed `download`, using the same private receipt across retries.
+The companion `acefarm_publish.py` is a collection adapter, not an installed
+AceFarm backend or batch scheduler. Invoke it after a job completes:
+
+```sh
+python3 examples/hermes/stargate-media/scripts/media_client.py submit \
+  --kind music --request song-request.json --receipt song-receipt.json
+python3 examples/hermes/stargate-media/scripts/acefarm_publish.py \
+  --receipt song-receipt.json --metadata song-identity.json \
+  --acefarm /path/to/trusted/acefarm --target-folder /path/to/listen_track1
+```
+
+`song-identity.json` is the coordinator's exact metadata passed to AceFarm's
+`short_track_id`, including full caption/lyrics, seed, recipe, track, machine,
+model and LM. It is not a reduced metadata reconstruction or a published
+sidecar. The adapter imports the explicitly supplied trusted AceFarm CLI and
+calls its canonical ID, filename and publishing functions in a private stage.
+It downloads retained gateway bytes, checks their SHA-256/size, verifies native
+per-audio parameters/model names, and fully decodes the FLAC with installed
+`ffprobe`/`ffmpeg`. Missing native receipts or differences fail publication
+without resubmitting generation. Existing engines may need receipt support
+qualified before they can satisfy this check.
+
+Publication creates real FLAC files and JSON sidecars, then atomically updates
+`track_index.json`. The sidecar includes the full canonical metadata, native
+parameters and gateway provenance. Existing index contents are backed up next
+to the private job receipt. Retries adopt only matching artifacts and preserve
+rating additions; changed files, index fields, source identity or collisions
+are refused. The adapter serializes its own publishers for a target folder.
+Other AceFarm writers do not share that file lock: use one coordinator/publisher
+per target folder, without simultaneous independent writers.
+
+Generation is observed by job ID, so a silent model load or generation is not
+an idle chat response. There is no overall generation cancellation deadline
+after native acceptance; individual network attempts and engine startup waits
+are bounded. Unknown native submission acknowledgements are retained as
+uncertain, never automatically resubmitted. Accepted-job observation can resume;
+automatic takeover of an entire abandoned media runner remains unfinished.
+Binary outputs are copied into DSG retention and served by authenticated file
+URLs with byte counts, SHA-256 and range support. Requesters need no worker SSH
+access. `outputs.state: "ready"` and `execution.phase: "returned"` are separate:
+publication can finish before the LLM has returned.
+
+Continuity drains new admissions and waits for active native work before
+eviction; it does not migrate an in-flight LLM request. Other eligible gateway
+capacity can serve new requests, subject to affinity and queueing. Fixed
+machine-specific judge endpoints do not automatically reroute. Reserve their
+capacity or explicitly qualify a compatible gateway model route before a batch.
+Do not silently replace a Qwen judge with another model. End-to-end harness
+survival and unmodified AceFarm rate/predict/view acceptance still require the
+native album test. Client fixtures prove a 32 MiB transfer and lost-acknowledgement
+recovery; publication fault tests also run against an explicitly selected
+installed AceFarm (`DSG_TEST_ACEFARM_SOURCE`) with synthetic FLAC audio. They are
+not native music generation evidence.
+
 ## Media view and machine choices
 
 Open **Media** to see ACE-Step music and MiniMax H3 video jobs, retained result

@@ -56,7 +56,7 @@ def read_receipt(filename):
         if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
             raise ValueError('Receipt must be an owner-only regular file')
         value = json.load(source)
-    if value.get('schema') != 1 or value.get('kind') not in ('batch', 'video', 'upload'):
+    if value.get('schema') != 1 or value.get('kind') not in ('batch', 'video', 'music', 'upload'):
         raise ValueError('Unknown receipt format; preserve it for inspection')
     base_url(value['gateway'])
     return value
@@ -91,8 +91,8 @@ def route_for(receipt):
     identity = receipt.get('id')
     if not isinstance(identity, str) or not ID.fullmatch(identity):
         raise ValueError('Submission is not acknowledged; retry submit with this same receipt')
-    resource = {'batch': 'batches', 'video': 'jobs', 'upload': 'inputs'}[receipt['kind']]
-    return '/v1/video/' + resource + '/' + identity
+    resource = {'batch': 'batches', 'video': 'jobs', 'music': 'jobs', 'upload': 'inputs'}[receipt['kind']]
+    return '/v1/' + ('music' if receipt['kind'] == 'music' else 'video') + '/' + resource + '/' + identity
 
 
 def status(receipt):
@@ -100,12 +100,14 @@ def status(receipt):
         value = json.load(response)
     if value.get('id') != receipt['id']:
         raise ValueError('Gateway returned a different identity')
+    if receipt['kind'] in ('music', 'video') and value.get('kind') != receipt['kind']:
+        raise ValueError('Gateway returned a different media kind')
     return value
 
 
 def submit(gateway, kind, payload, filename, priority='normal'):
-    if kind not in ('batch', 'video') or priority not in ('high', 'normal', 'idle-only'):
-        raise ValueError('Use a video or batch request and a supported priority')
+    if kind not in ('batch', 'video', 'music') or priority not in ('high', 'normal', 'idle-only'):
+        raise ValueError('Use a video, music or batch request and a supported priority')
     gateway = base_url(gateway)
     with receipt_lock(filename):
         file = Path(filename)
@@ -117,7 +119,7 @@ def submit(gateway, kind, payload, filename, priority='normal'):
         else:
             receipt = {'schema': 1, 'gateway': gateway, 'kind': kind, 'key': str(uuid.uuid4()), 'payload': payload, 'priority': priority}
             atomic(file, receipt) # Durable before the first network attempt.
-        route = '/v1/video/' + ('batches' if kind == 'batch' else 'jobs')
+        route = '/v1/' + ('music' if kind == 'music' else 'video') + '/' + ('batches' if kind == 'batch' else 'jobs')
         with request(gateway, route, data=json.dumps(payload).encode(), key=receipt['key'], priority=priority) as response:
             value = json.load(response)
         if not isinstance(value.get('id'), str) or not ID.fullmatch(value['id']):
@@ -182,7 +184,8 @@ def download(receipt, directory):
                 try:
                     fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                     digest = hashlib.sha256(); count = 0
-                    with os.fdopen(fd, 'wb') as out, request(receipt['gateway'], '/v1/video/jobs/' + job['id'] + '/files/' + meta['id']) as response:
+                    route = '/v1/' + ('music' if receipt['kind'] == 'music' else 'video') + '/jobs/' + job['id'] + '/files/' + meta['id']
+                    with os.fdopen(fd, 'wb') as out, request(receipt['gateway'], route) as response:
                         while chunk := response.read(1024 * 1024):
                             count += len(chunk)
                             if count > meta['bytes']: raise ValueError('Output exceeds its recorded byte count')
@@ -202,7 +205,7 @@ def main():
     parser.add_argument('--gateway', default=os.environ.get('SG_URL', 'http://127.0.0.1:30000'))
     subs = parser.add_subparsers(dest='action', required=True)
     subs.add_parser('capabilities')
-    p = subs.add_parser('submit'); p.add_argument('--kind', choices=['batch', 'video'], default='video'); p.add_argument('--request', required=True); p.add_argument('--receipt', required=True); p.add_argument('--priority', choices=['high', 'normal', 'idle-only'], default='normal')
+    p = subs.add_parser('submit'); p.add_argument('--kind', choices=['batch', 'video', 'music'], default='video'); p.add_argument('--request', required=True); p.add_argument('--receipt', required=True); p.add_argument('--priority', choices=['high', 'normal', 'idle-only'], default='normal')
     p = subs.add_parser('upload'); p.add_argument('--file', required=True); p.add_argument('--receipt', required=True)
     for name in ('status', 'wait', 'download'):
         p = subs.add_parser(name); p.add_argument('--receipt', required=True)
