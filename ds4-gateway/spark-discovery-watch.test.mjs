@@ -32,7 +32,7 @@ test('running, absent and mismatched scan results never claim completion',async 
 test('failed and lost observation produce one report without rescanning',async t=>{
   for(const state of ['failed','observation_lost']){const f=fixture(t);f.state.result.state=state;await f.watch.tick();assert.equal(f.calls.length,1);assert.match(f.calls[0][1],new RegExp(state));}
 });
-test('disabled setup, unavailable chat, active work, pause and owner stop prevent automatic follow-up',async t=>{
+test('disabled inspection, unavailable chat, active work, pause and owner stop prevent automatic follow-up',async t=>{
   const patches=[f=>f.state.enabled=false,f=>f.summary.available=false,f=>f.summary.conversations[0].busy=true,f=>f.summary.conversations[0].queued=1,f=>f.summary.conversations[0].queue_paused=true,f=>f.message.stop_requested_at='owner stopped'];
   for(const patch of patches){const f=fixture(t);patch(f);await f.watch.tick();assert.equal(f.calls.length,0);assert.equal(f.state.reads,0);}
 });

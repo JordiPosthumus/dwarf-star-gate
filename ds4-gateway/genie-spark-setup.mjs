@@ -33,7 +33,7 @@ export function setupTransport(target,input){
   });
 }
 
-export function createSparkSetupTools(config,{isEnabled=()=>true,isTesting=()=>false,transport=setupTransport,bundle=bundleRecipes,registration=null,mediaQualification=null,continuation=null,enrollment=null,discovery=null}={}){
+export function createSparkSetupTools(config,{isEnabled=()=>true,isDiscoveryEnabled=isEnabled,isTesting=()=>false,transport=setupTransport,bundle=bundleRecipes,registration=null,mediaQualification=null,continuation=null,enrollment=null,discovery=null}={}){
   if(config.spark_setup?.enabled!==true)return null;
   if(config.ui_worker_management!==true)throw new Error('Spark setup requires local worker management.');
   const targets=enrollment?.targets??config.spark_setup.targets??{};
@@ -57,7 +57,7 @@ export function createSparkSetupTools(config,{isEnabled=()=>true,isTesting=()=>f
         return discovery.status({scan_id:input.scan_id});
       }
       if(!['action','action,username'].includes(keys))throw new Error('Discovery accepts only an optional SSH username; no addresses, passwords or commands.');
-      if(!isEnabled())throw new Error('New Spark setup is switched off.');
+      if(!isDiscoveryEnabled())throw new Error('Server inspection is switched off; read-only Spark discovery is unavailable.');
       if(isTesting())throw new Error('Spark discovery is paused in testing mode.');
       return discovery.discover({username:input.username});
     }

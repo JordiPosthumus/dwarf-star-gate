@@ -138,3 +138,11 @@ test('no configured user never invents a login, and incomplete known-host identi
   const g=fixture(t,{inspect:async()=>{throw Error('unreachable');}});await g.service.discover();await g.service.settled();
   assert.ok(g.service.status().issues.some(i=>i.reason==='ssh_identity_unavailable'));
 });
+test('read-only discovery uses inspection permission without enabling new-host enrollment',async t=>{
+  const f=fixture(t);let inspection=true;
+  const tools=createSparkSetupTools({ui_worker_management:true,spark_setup:{enabled:true}},{discovery:f.service,isEnabled:()=>false,isDiscoveryEnabled:()=>inspection});
+  assert.equal((await tools.tool({action:'discover'})).state,'running');await f.service.settled();
+  await assert.rejects(tools.tool({action:'enroll',target_id:'new'}),/New Spark setup is switched off/);
+  inspection=false;await assert.rejects(tools.tool({action:'discover'}),/Server inspection is switched off/);
+  assert.equal((await tools.tool({action:'discovery_status'})).state,'complete','Existing receipts stay readable when inspection is disabled.');
+});

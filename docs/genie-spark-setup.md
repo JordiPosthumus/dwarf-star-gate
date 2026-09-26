@@ -7,10 +7,12 @@ The development implementation adds `discover_sparks` and
 Sparks.” The scan runs independently of the tool HTTP request and retains its
 scan ID, results and coverage issues in private runtime storage. Reading status
 does not restart it. An interrupted dashboard reports lost observation explicitly.
+Read-only discovery uses **Server inspection**; it does not turn on **New Spark
+setup**, which still governs enrollment and installation.
 Each scan retains its own receipt, including after later scans. When a requested
 scan finishes after Genie has answered, a durable observer returns to the
 originating conversation once to report that exact scan. It respects an owner
-stop, paused conversation, the setup capability switch and testing mode. It
+stop, paused conversation, the Server inspection switch and testing mode. It
 does not rescan, enroll or authorize maintenance. An uncertain chat submission
 reuses its saved request ID.
 
