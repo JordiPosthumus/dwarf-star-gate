@@ -70,6 +70,15 @@ test('enrollment completion has its own receipt and follow-up identity, separate
   f.conversation.messages.push({role:'assistant',recovery:{events:[{tool:'recovery_status',state:'complete',result:{pair_enrollment:{operations:f.rows}}}]}});
   await f.watch().tick();assert.equal(f.watch().status().requests[0].state,'observed');assert.equal(f.calls.length,1);
 });
+test('local oMLX enrollment completion has its own receipt and follow-up identity, separate from capture completion',async t=>{
+  const f=fixture(t);f.options.kind='omlx-enrollment';f.rows.forEach(r=>r.state='queued');
+  f.conversation.messages[0].recovery.events=f.rows.map(r=>({...prepare(r),tool:'enroll_omlx_recovery'}));
+  await f.watch().tick();assert.equal(f.calls.length,0);
+  f.rows.forEach(r=>{r.state='enrolled';r.evidence_sha256='a'.repeat(64);});await f.watch().tick();assert.equal(f.calls.length,1);
+  assert.match(f.calls[0][1],/enrollment watcher/);assert.match(f.calls[0][1],/Native restart qualification remains required/);assert.ok(f.calls[0][2].length<=80);
+  f.conversation.messages.push({role:'assistant',recovery:{events:[{tool:'recovery_status',state:'complete',result:{omlx_enrollment:{operations:f.rows}}}]}});
+  await f.watch().tick();assert.equal(f.watch().status().requests[0].state,'observed');assert.equal(f.calls.length,1);
+});
 test('qualification watcher follows actual recovery IDs, never repeats a restart and observes final native proof status',async t=>{
   const f=fixture(t);f.options.kind='qualification';
   f.rows.forEach(r=>{r.id=r.action_id;r.pair_qualification=true;r.state='reconciling';});

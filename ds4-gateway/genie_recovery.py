@@ -6,7 +6,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 TOOLSET='stargate_recovery'
-NAMES={'recovery_status','recover_server','prepare_pair_recovery','enroll_pair_recovery','qualify_pair_recovery'}
+NAMES={'recovery_status','recover_server','prepare_pair_recovery','enroll_pair_recovery','qualify_pair_recovery','enroll_omlx_recovery'}
 
 
 def register_recovery(config,emit):
@@ -20,11 +20,11 @@ def register_recovery(config,emit):
     opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect())
     def run(name,args):
         # The bridge creates and reports the handle before sending exactly once.
-        action_id=str(uuid.uuid4()) if name in ('recover_server', 'prepare_pair_recovery', 'enroll_pair_recovery','qualify_pair_recovery') else None
+        action_id=str(uuid.uuid4()) if name in ('recover_server', 'prepare_pair_recovery', 'enroll_pair_recovery','qualify_pair_recovery','enroll_omlx_recovery') else None
         event={'tool':name,'at':datetime.now(timezone.utc).isoformat(),'request':args,'action_id':action_id}
         emit('recovery',event={**event,'state':'reading'})
         try:
-            payload={'action':'status'} if name=='recovery_status' else {**args,'action':'prepare-pair' if name=='prepare_pair_recovery' else 'enroll-pair' if name=='enroll_pair_recovery' else 'qualify-pair' if name=='qualify_pair_recovery' else 'recover','action_id':action_id}
+            payload={'action':'status'} if name=='recovery_status' else {**args,'action':'prepare-pair' if name=='prepare_pair_recovery' else 'enroll-pair' if name=='enroll_pair_recovery' else 'qualify-pair' if name=='qualify_pair_recovery' else 'enroll-omlx' if name=='enroll_omlx_recovery' else 'recover','action_id':action_id}
             request=urllib.request.Request(config['url'],data=json.dumps(payload).encode(),headers={'Content-Type':'application/json','X-SG-Recovery-Tool':config['token']})
             with opener.open(request,timeout=15) as response:
                 raw=response.read(262145)
@@ -41,6 +41,7 @@ def register_recovery(config,emit):
             emit('recovery',event={**event,'state':'failed','finished_at':datetime.now(timezone.utc).isoformat(),'error':message})
             return json.dumps({'error':message,'action_id':action_id,'next_step':'Read recovery_status and find this action ID; do not issue another recovery for the same fault.'})
     for name,description,parameters in [
+        ('enroll_omlx_recovery','Capture and enroll one explicitly opted-in existing local GLM/oMLX installation. Uses only its configured launcher and dependencies, preserves native process/settings, and returns one durable action ID. Read recovery_status.omlx_enrollment.operations; enrollment does not restart or qualify recovery. Never replay uncertain work.',{'type':'object','properties':{'worker_id':{'type':'string'}},'required':['worker_id'],'additionalProperties':False}),
         ('qualify_pair_recovery','Qualify recovery for an explicitly opted-in idle healthy pair using its current pair_qualification evidence_id from recovery_status. Restarts only pinned existing containers while another physical LLM remains available, verifies native generation/cache reuse, and restores service only if no owner pause or hold intervenes. Preserve the action ID; observe operations in recovery_status. Never replay uncertain work.',{'type':'object','properties':{'worker_id':{'type':'string'},'evidence_id':{'type':'string'}},'required':['worker_id','evidence_id'],'additionalProperties':False}),
         ('enroll_pair_recovery','Enroll one explicitly opted-in pair from an existing prepared capture ID. Fixed native validation preserves exact identities, settings and capacity. Returns a durable action ID; observe recovery_status.pair_enrollment.operations. Does not restart, pause or qualify recovery. Never replay an uncertain request.',{'type':'object','properties':{'worker_id':{'type':'string'},'capture_id':{'type':'string'}},'required':['worker_id','capture_id'],'additionalProperties':False}),
         ('prepare_pair_recovery','Capture current native identities, exact Docker definitions and mounted-file hashes for an existing configured GLM pair. Reads both members twice and retains evidence privately. Does not enroll recovery, run inference, restart, pause or change settings. Returns an action ID promptly; observe its pair_preparations entry in recovery_status. Prepared is inspection evidence only, not restart qualification or mutation authority. Do not replay an uncertain request.',{'type':'object','properties':{'worker_id':{'type':'string'}},'required':['worker_id'],'additionalProperties':False}),

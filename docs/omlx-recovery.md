@@ -33,6 +33,46 @@ controller-to-helper-to-model path.
 
 ## Private enrollment
 
+For Genie-controlled GLM/oMLX enrollment, configure the worker normally and add
+an `omlx-local` inspection target with its existing root, URL and private API-key
+file. Its URL must exactly match the registered endpoint. Add an explicit setup
+policy for that worker, using your own paths:
+
+```json
+{
+  "omlx_recovery_setup": {
+    "workers": {
+      "my-local-glm": {
+        "exclusive": true,
+        "launcher": "/absolute/path/to/existing/start.sh",
+        "profile_files": ["/absolute/path/to/existing/guard.sh"]
+      }
+    }
+  }
+}
+```
+
+The worker needs an explicit model alias for the gateway model and a single
+physical-machine mapping. With inspection, server changes and automatic recovery
+enabled, Genie can call `enroll_omlx_recovery(worker_id)`. It supplies no command,
+path, configuration or fingerprint. The core saves an action ID and metadata
+backup, captures the native process/listener and model context repeatedly, checks
+the configured concurrency, and retains the exact launcher/settings profile in
+owner-only evidence. Ownership, policy and bindings are checked again before
+committing authority. Existing recovery bindings are preserved and collisions
+are refused. Inspection and inference may use separate existing credential files;
+neither is copied into public receipts or rewritten.
+
+`recovery_status.omlx_enrollment.operations` reports the durable result. Pending
+read-only capture resumes under the same ID after core replacement. A completion
+watcher returns to the originating conversation if Genie finishes before the
+receipt arrives, respecting stopped replies and paused queues. Enrollment is not
+restart qualification: this workflow does not pause routing, stop/start a process
+or grant stopped-start authority. Native restart qualification and recovery across
+an interrupted stop-to-start boundary remain separate acceptance work.
+
+For manual enrollment of an existing supported installation:
+
 Copy `ds4-gateway/recovery-omlx.py` and its sibling dependency
 `recovery-launchd.py` into the private recovery directory. Keep both together.
 Use a private configuration containing exactly:

@@ -57,6 +57,22 @@ test('installed Hermes enrolls an opted-in pair once and persists its native enr
  const reread=new GenieChat({directory:path.join(directory,'chats'),provider});assert.deepEqual(reread.get(c.id).messages[1].recovery,answer.recovery);
 });
 
+test('installed Hermes enrolls an opted-in local oMLX installation once and persists its native enrollment tool handle',{skip:!process.env.DSG_TEST_HERMES_SOURCE,timeout:120000},async t=>{
+ const directory=fs.mkdtempSync(path.join(os.tmpdir(),'sg-recovery-chat-'));let requests=0,calls=0;const status=state();
+ const q=createRecoveryTools({read:async()=>status,isChangesEnabled:()=>true,enrollOmlx:async e=>{requests++;assert.equal(e.worker_id,exact.worker_id);const receipt={id:e.action_id,action_id:e.action_id,worker_id:e.worker_id,state:'queued'};status.recovery.operations.push(receipt);status.recovery.omlx_enrollment={operations:[receipt]};return receipt;},recover:()=>assert.fail('Recovery requested during enrollment')});
+ const server=http.createServer((req,res)=>{if(q.handle(req,res))return;if(req.method==='GET'){res.end(JSON.stringify({data:[{id:'fixture'}]}));return;}let raw='';req.on('data',c=>raw+=c);req.on('end',()=>{const body=JSON.parse(raw);if(req.url!=='/v1/chat/completions'){res.end(JSON.stringify({}));return;}calls++;
+  if(calls===3)assert.match(JSON.stringify(body.messages),new RegExp(status.recovery.operations[0].id));
+  const name=calls===2?'enroll_omlx_recovery':'recovery_status',args=calls===2?{worker_id:exact.worker_id}:{};
+  const message=calls<=3?{role:'assistant',content:null,tool_calls:[{id:'recovery-'+calls,type:'function',function:{name:'tool_call',arguments:JSON.stringify({name,arguments:args})}}]}:{role:'assistant',content:'Local oMLX enrollment was accepted and queued; restart qualification remains required.'};
+  const delta={...message,...(message.tool_calls?{tool_calls:message.tool_calls.map((v,index)=>({...v,index}))}:{})};res.setHeader('content-type','text/event-stream');res.end('data: '+JSON.stringify({id:'recovery-fixture',model:'fixture',choices:[{index:0,delta,finish_reason:null}]})+'\n\ndata: '+JSON.stringify({id:'recovery-fixture',model:'fixture',choices:[{index:0,delta:{},finish_reason:calls<=3?'tool_calls':'stop'}]})+'\n\ndata: [DONE]\n\n');});});
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));q.bind(server.address().port);
+ const provider=hermesProvider({python:process.env.DSG_TEST_HERMES_PYTHON,source:process.env.DSG_TEST_HERMES_SOURCE,url:`http://127.0.0.1:${server.address().port}/v1`,model:'fixture',recovery:q.toolConfig},{directory});
+ t.after(()=>{provider.close();server.closeAllConnections();server.close();fs.rmSync(directory,{recursive:true,force:true});});
+ const chat=new GenieChat({directory:path.join(directory,'chats'),provider,getSnapshot:()=>({gateway:state()})}),c=chat.create();chat.submit(c.id,'Enroll worker-a using its configured existing launcher if explicitly opted in.','recovery-test');await chat.idle();const answer=chat.get(c.id).messages[1];assert.equal(answer.state,'complete',JSON.stringify(answer));assert.equal(requests,1);assert.equal(calls,4);assert.equal(provider.info.can_act,true);
+ const completed=answer.recovery.events.filter(e=>e.state==='complete');assert.equal(completed.length,3);assert.equal(completed[1].action_id,status.recovery.operations[0].id);assert.equal(chat.capabilityActivity().recovery.state,'complete');
+ const reread=new GenieChat({directory:path.join(directory,'chats'),provider});assert.deepEqual(reread.get(c.id).messages[1].recovery,answer.recovery);
+});
+
 test('installed Hermes qualifies an opted-in pair once and persists its native qualification tool handle',{skip:!process.env.DSG_TEST_HERMES_SOURCE,timeout:120000},async t=>{
  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'sg-recovery-chat-'));let requests=0,calls=0;const status=state();
  const q=createRecoveryTools({read:async()=>status,isChangesEnabled:()=>true,qualify:async e=>{requests++;assert.equal(e.worker_id,exact.worker_id);assert.equal(e.evidence_id,exact.evidence_id);const receipt={id:e.action_id,action_id:e.action_id,worker_id:e.worker_id,actor:'genie',pair_qualification:true,state:'queued'};status.recovery.operations.push(receipt);return receipt;},recover:()=>assert.fail('Recovery requested during enrollment')});
