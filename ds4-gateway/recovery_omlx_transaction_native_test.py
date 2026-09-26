@@ -36,6 +36,8 @@ from http.server import BaseHTTPRequestHandler,HTTPServer
 from socketserver import TCPServer
 r=pathlib.Path(__file__).parent
 def stopped(*args):
+ if (r/'slow-stop').exists():
+  import time;time.sleep(.2)
  with (r/'stops').open('a') as f:f.write('stop\\n');f.flush();os.fsync(f.fileno())
  os._exit(0)
 signal.signal(signal.SIGTERM,stopped)
@@ -98,7 +100,11 @@ with (r/'server.log').open('ab') as log:
             pid=int(file.read_text())
             if m.omlx.alive(pid):
                 info=m.omlx.mac.process_info(pid)
-                if str(self.root/'server.py') in info['command']:os.kill(pid,signal.SIGTERM)
+                if str(self.root/'server.py') in info['command']:
+                    os.kill(pid,signal.SIGTERM)
+                    # SIGTERM delivery is not exit. Its handler writes a final
+                    # fixture receipt; wait before TemporaryDirectory cleanup.
+                    self.wait_for(lambda:not m.omlx.alive(pid))
 
     def wait_for(self,predicate,seconds=20):
         deadline=time.monotonic()+seconds
@@ -131,6 +137,12 @@ with (r/'server.log').open('ab') as log:
         self.assertEqual((self.root/'stops').read_text().splitlines(),['stop'])
         self.assertEqual(self.dispatch()['state'],'completed')
         self.assertEqual(m.omlx.inspect(self.config)['instance'],after['instance'])
+
+    def test_fixture_cleanup_waits_for_final_receipt_and_process_exit(self):
+        (self.root/'slow-stop').touch()
+        self.stop_fixture()
+        self.assertFalse(m.omlx.alive(self.before['pid']))
+        self.assertEqual((self.root/'stops').read_text().splitlines(),['stop'])
 
     def test_detached_runner_outlives_dispatcher_and_restarts_exact_process_once(self):
         self.save_request()
