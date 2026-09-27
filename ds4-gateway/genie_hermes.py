@@ -11,6 +11,7 @@ from pathlib import Path
 import sys
 from threading import Lock
 import time
+from genie_task_contract import TASK_CONTRACT
 
 WIRE = sys.stdout
 WIRE_LOCK = Lock()
@@ -172,6 +173,8 @@ def main():
             instructions += "\nverify_serving exercises an existing healthy worker using synthetic requests, without changing or admitting a server. Use the owner verification request already present; do not ask again when it covers this check. gateway checks one routed generation, cache checks actual cold-to-warm usage, and tools checks a function call and follow-up. It returns an action ID immediately. Read admission_status once afterward and report running honestly; do not repeat the check under another ID. Only a passed receipt proves that named check. routed-context alone exercises a raw-token input context boundary through normal idle-priority scheduling. Read its native usage and observed worker; a shared route may select another worker, which does not qualify the requested one. Never automatically repeat it to force placement. These checks do not prove long-output/concurrency boundaries, chat-template capacity or isolated benchmark speed.\n"
         if review:
             instructions = operating_instructions + "\nFleet review task: return the requested structured JSON. Action requests are proposals for the existing guarded executor, not actions you performed.\n" + request["instructions"]
+        else:
+            instructions += '\n\n' + TASK_CONTRACT
         result = agent.run_conversation(
             request["message"], system_message=instructions,
             conversation_history=request["history"],
