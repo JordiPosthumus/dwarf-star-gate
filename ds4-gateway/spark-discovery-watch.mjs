@@ -59,7 +59,7 @@ export class SparkDiscoveryWatch {
           // accept pending ID; never replace a valid or dispatched request ID.
           if(record.state==='pending'&&record.request_id===key)record.request_id=key.replace('discovery-result-','discovery-');
           this.save();
-          this.chat.submit(s.id,record.text,record.request_id,{research:false});
+          await this.chat.submit(s.id,record.text,record.request_id,{research:false});
           record.state='dispatched';this.save();this.error=null;return;
         }
       }

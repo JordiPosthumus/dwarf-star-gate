@@ -104,7 +104,10 @@ export class NativeHermesChatClient{
   async submit(id,text,requestId){
     const b=this.binding(id);
     if(typeof text!=='string'||!text.trim()||text.length>32000)throw Error('Enter a message of up to 32,000 characters.');
-    return this.control({action:'send',request_id:nativeRequestId(id,requestId),session_key:b.session_key,message:text.trim()});
+    const identity=nativeRequestId(id,requestId);
+    const receipt=await this.control({action:'send',request_id:identity,session_key:b.session_key,message:text.trim()});
+    if(receipt.request_id!==identity||receipt.state!=='accepted_unverified')throw Error('Native dispatch acceptance is unconfirmed. Keep the same request identity for reconciliation.');
+    return receipt;
   }
   async receipt(id,requestId){this.binding(id);return this.control({action:'status',request_id:nativeRequestId(id,requestId)});}
 }

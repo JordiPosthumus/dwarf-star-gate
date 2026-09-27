@@ -52,7 +52,7 @@ async function fixture(t){
     if(req.headers.authorization!=='Bearer '+f[control?'control_token':'api_key']){res.statusCode=401;return res.end('{}');}
     if(f.unavailable){res.statusCode=503;return res.end('{"secret":"must-not-leak"}');}
     if(body?.action==='session'){f.reads++;return res.end(JSON.stringify({...observed,session_id:f.changed&&f.reads>1?'changed-session':'native-session'}));}
-    if(body?.action==='send')return res.end(JSON.stringify({state:'accepted_unverified',request_id:body.request_id}));
+    if(body?.action==='send')return res.end(JSON.stringify({state:f.dispatchState??'accepted_unverified',request_id:body.request_id}));
     if(body?.action==='status')return res.end(JSON.stringify({state:'unknown',request_id:body.request_id}));
     assert.match(req.url,/^\/api\/sessions\/native-session\/messages\?/);
     res.end(JSON.stringify({session_id:'native-session',data:rows,pagination:{offset:0,limit:500,returned:4}}));
@@ -79,6 +79,15 @@ test('routing changes and unavailable observations never become empty history or
   await assert.rejects(f.client.submit('conversation','Inspect','request-12345'),error=>/could not be confirmed/.test(error.message)&&!error.message.includes('must-not-leak'));
   assert.equal(f.calls.length,before+1,'Uncertain send is not retried by the client');
   await assert.rejects(f.client.read('conversation'),/could not be confirmed/);
+});
+test('native rejected and uncertain dispatch states cannot be counted as accepted follow-ups',async t=>{
+  const f=await fixture(t);
+  for(const state of ['rejected','not_accepted','unknown','dispatching']){
+    f.dispatchState=state;
+    await assert.rejects(f.client.submit('conversation','Inspect','request-12345'),/acceptance is unconfirmed/);
+  }
+  assert.equal(f.calls.length,4);
+  assert.equal(new Set(f.calls.map(c=>c.body.request_id)).size,1);
 });
 
 test('native descriptor rejects shared files and nonlocal credential destinations',async t=>{

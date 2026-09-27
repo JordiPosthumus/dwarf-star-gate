@@ -49,7 +49,7 @@ export class SparkAccessWatch {
               `Initial Spark access ${request.id} has a new saved outcome (${op.state}). Read spark_access_status for this exact ID and report it. If key access is complete and the owner originally requested onboarding, use fresh discover_sparks evidence to continue that requested enrollment; access alone is not model or firmware readiness. For credentials_required direct the owner to the local New Spark access form. For verification_pending or uncertainty report the retained operation without automatically replaying a key write. Do not infer permission for firmware, reboot or a different recipe. This continues only the original owner request.`};
             this.records[id]=record;
           }
-          this.save();this.chat.submit(conversation.id,record.text,record.request_id,{research:false});record.state='dispatched';this.save();this.error=null;return;
+          this.save();await this.chat.submit(conversation.id,record.text,record.request_id,{research:false});record.state='dispatched';this.save();this.error=null;return;
         }
       }
       this.error=null;

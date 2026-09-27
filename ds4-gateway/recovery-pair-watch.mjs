@@ -92,7 +92,7 @@ export class PairPreparationWatch {
           this.records[request_id]=record;this.save();
         }
         this.save(); // Retry a failed durable write before crossing the submission boundary.
-        this.chat.submit(record.conversation_id,record.text,record.request_id,{research:false});
+        await this.chat.submit(record.conversation_id,record.text,record.request_id,{research:false});
         record.state='dispatched';this.save();break;
       }
     }catch(error){this.error=error.message;}

@@ -230,14 +230,19 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
     if(powerTools?.handle(req,res))return;
     if(req.url==='/api/genie/admission'&&req.method==='GET'){void Promise.resolve(admissionTools?.tool({action:'status'})??{configured:false,busy:false}).then(value=>reply(200,value)).catch(()=>reply(503,{error:'Admission activity unavailable'}));return;}
     if(admissionTools?.handle(req,res))return;
-    if(req.url==='/api/genie/chat'&&req.method==='GET')return reply(200,{...(chat?.status()??{available:false,conversations:[]}),csrf_token:csrf});
+    if(req.url==='/api/genie/chat'&&req.method==='GET'){
+      void Promise.resolve().then(()=>chat?.refresh?.()).then(()=>reply(200,{...(chat?.status()??{available:false,conversations:[]}),csrf_token:csrf})).catch(()=>reply(503,{error:'Current native chat evidence is unavailable.'}));return;
+    }
     if(req.url?.startsWith('/api/genie/chat/')&&req.method==='GET'){
       const id=req.url.slice('/api/genie/chat/'.length);
-      try{
-        const conversation=chat.get(id);
-        if(!conversation.messages.some(m=>m.state==='working'&&m.gateway_call_id))return reply(200,conversation);
-        void readProgress().then(state=>reply(200,withGatewayProgress(chat.get(id),state))).catch(()=>reply(200,conversation));return;
-      }catch{return reply(404,{error:'Conversation not found.'});}
+      void (async()=>{
+        try{
+          await chat?.refresh?.(id);
+          const conversation=await chat.get(id);
+          if(!conversation.messages.some(m=>m.state==='working'&&m.gateway_call_id))return reply(200,conversation);
+          try{return reply(200,withGatewayProgress(await chat.get(id),await readProgress()));}catch{return reply(200,conversation);}
+        }catch(error){return reply(error?.code==='NATIVE_UNAVAILABLE'?503:404,{error:error?.code==='NATIVE_UNAVAILABLE'?'Current native chat evidence is unavailable.':'Conversation not found.'});}
+      })();return;
     }
     if(req.url==='/api/genie/chat'&&req.method==='POST'){
       const token=Buffer.from(req.headers['x-dsg-csrf']??''),expected=Buffer.from(csrf);
@@ -249,13 +254,13 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
       const timer=setTimeout(()=>{ended=true;reply(408,{error:'Incomplete chat request.'});},15000);
       req.on('error',()=>{ended=true;clearTimeout(timer);});req.on('aborted',()=>{ended=true;clearTimeout(timer);});
       req.on('data',chunk=>{if(ended)return;body+=chunk;if(Buffer.byteLength(body)>160000){ended=true;clearTimeout(timer);reply(413,{error:'Chat message too large.'});}});
-      req.on('end',()=>{clearTimeout(timer);if(ended)return;try{
+      req.on('end',async()=>{clearTimeout(timer);if(ended)return;try{
         const input=JSON.parse(body);
-        if(input.action?.startsWith('study-'))return reply(200,chat.study.change(input));
-        if(input.action==='new')return reply(201,chat.create());
-        if(input.action==='stop-reply'){if(Object.keys(input).sort().join(',')!=='action,conversation_id,reply_id')throw new Error('Invalid reply control.');return reply(202,chat.stop(input.conversation_id,input.reply_id));}
-        if(input.action==='continue-queue'){if(Object.keys(input).sort().join(',')!=='action,conversation_id,expected_reply_id')throw new Error('Invalid queue control.');return reply(202,chat.resume(input.conversation_id,input.expected_reply_id));}
-        if(input.action==='send')return reply(202,chat.submit(input.conversation_id,input.text,input.request_id,{research:input.research}));
+        if(input.action?.startsWith('study-'))return reply(200,await chat.study.change(input));
+        if(input.action==='new')return reply(201,await chat.create());
+        if(input.action==='stop-reply'){if(Object.keys(input).sort().join(',')!=='action,conversation_id,reply_id')throw new Error('Invalid reply control.');return reply(202,await chat.stop(input.conversation_id,input.reply_id));}
+        if(input.action==='continue-queue'){if(Object.keys(input).sort().join(',')!=='action,conversation_id,expected_reply_id')throw new Error('Invalid queue control.');return reply(202,await chat.resume(input.conversation_id,input.expected_reply_id));}
+        if(input.action==='send')return reply(202,await chat.submit(input.conversation_id,input.text,input.request_id,{research:input.research}));
         return reply(400,{error:'Unknown chat action.'});
       }catch(e){return reply(400,{error:e instanceof SyntaxError?'Invalid JSON.':e.message});}});return;
     }
