@@ -97,7 +97,15 @@ with (r/'server.log').open('ab') as log:
             pid=int(file.read_text())
             if m.omlx.alive(pid):
                 info=m.omlx.mac.process_info(pid)
-                if str(self.root/'server.py') in info['command']:os.kill(pid,signal.SIGTERM)
+                if str(self.root/'server.py') in info['command']:
+                    try:
+                        os.kill(pid,signal.SIGTERM)
+                    except ProcessLookupError:
+                        return
+                    # The fixture's signal handler writes its final receipt.
+                    # Wait for exit before TemporaryDirectory removes its files;
+                    # otherwise that write races rmtree on a busy CI runner.
+                    self.wait_for(lambda:not m.omlx.alive(pid),seconds=10)
 
     def wait_for(self,predicate,seconds=20):
         deadline=time.monotonic()+seconds
