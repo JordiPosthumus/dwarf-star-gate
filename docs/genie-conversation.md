@@ -586,6 +586,17 @@ scheduled studies can recognize their own replies. Historical receipts without
 that metadata retain their native identity. A changed identifier or uncertain
 acknowledgment never triggers an automatic replay.
 
+An explicit research choice is part of the retained native dispatch fingerprint.
+Hermes binds that saved choice to the exact current session and turn before the
+model runs. Web tools reject disabled or unverifiable turn authorization, and
+the DSG research handlers check it again using the native dispatch context even
+if a lifecycle hook is skipped. Ordinary authorized Telegram turns retain the
+installation's research capability setting. The native fixture holds two queued
+questions with different research choices, restarts the gateway, and verifies
+that only the enabled question reaches the web service after Continue. This
+preserves per-request policy; it does not yet wire scheduled studies or activate
+the production native gateway.
+
 
 ### Existing Spark connection repair
 

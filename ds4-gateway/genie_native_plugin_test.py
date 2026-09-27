@@ -1,4 +1,5 @@
 import importlib.util,json,pathlib,tempfile,threading,unittest
+from types import SimpleNamespace
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 spec=importlib.util.spec_from_file_location('native_plugin',pathlib.Path(__file__).with_name('genie_native_plugin.py'));m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 
@@ -22,10 +23,11 @@ class NativePlugin(unittest.TestCase):
   self.server=ThreadingHTTPServer(('127.0.0.1',0),Handler);threading.Thread(target=self.server.serve_forever,daemon=True).start();self.addCleanup(self.server.server_close);self.addCleanup(self.server.shutdown)
   self.origin='http://127.0.0.1:'+str(self.server.server_port);self.file=self.home/'bridge.json';self.write_descriptor()
   class Context:
-   def __init__(self):self.tools={};self.prompts={}
+   def __init__(self):self.tools={};self.prompts={};self.hooks={};self.state=SimpleNamespace(data_dir=outer.home)
    def get_config(self,key,default=None):return {'module_directory':str(pathlib.Path(__file__).parent),'bridge_descriptor':str(outer.file)}.get(key,default)
    def register_tool(self,**entry):self.tools[entry['name']]=entry
    def register_system_prompt_section(self,id,content,**kwargs):self.prompts[id]=content
+   def register_hook(self,name,callback):self.hooks[name]=callback
   self.ctx=Context()
  def write_descriptor(self):
   self.file.write_text(json.dumps({'url':self.origin+'/api/genie/native-tools','token':self.token}));self.file.chmod(0o600)

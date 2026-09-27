@@ -54,8 +54,8 @@ export function projectNativeConversation({id,title='Gate Genie',session,message
     if(row.role==='user'){
       reply=null;const text=textContent(row.content),marker=text.match(/^\[DSG request ([a-f0-9-]{36})\]\n\n/);
       const correlation=row.dsg_request;
-      if(correlation&&(correlation.schema!==1||!marker||correlation.request_id!==marker[1]||nativeRequestId(id,correlation.source_request_id)!==marker[1]))throw Error('Native request correlation is inconsistent.');
-      result.push({id:`native-${session.session_id}-${row.id}`,role:'user',text:marker?text.slice(marker[0].length):text,state:'complete',at:stamp(row.timestamp),...(marker?{request_id:correlation?.source_request_id??marker[1],native_request_id:marker[1]}:{})});
+      if(correlation&&(correlation.schema!==1||!marker||correlation.request_id!==marker[1]||nativeRequestId(id,correlation.source_request_id)!==marker[1]||('research' in correlation&&typeof correlation.research!=='boolean')))throw Error('Native request correlation is inconsistent.');
+      result.push({id:`native-${session.session_id}-${row.id}`,role:'user',text:marker?text.slice(marker[0].length):text,state:'complete',at:stamp(row.timestamp),...(marker?{request_id:correlation?.source_request_id??marker[1],native_request_id:marker[1]}:{}),...(correlation&&'research' in correlation?{research:correlation.research}:{})});
     }else if(row.role==='assistant'){
       const current=ensureReply(row),text=textContent(row.content);
       if(text)current.text+=(current.text?'\n\n':'')+text;
@@ -143,12 +143,13 @@ export class NativeHermesChatClient{
     if(after.session_id!==session.session_id)throw Error('Native session changed during observation; read it again.');
     return {...projectNativeConversation({id,title:b.title,session:{...after,session_id:resolved},messages,pagination:{offset,limit:all?messages.length:limit,returned:messages.length,total,order:'oldest'}}),purpose:b.purpose??null,created_at:stamp(b.created_at),native_history_revision:revision};
   }
-  async submit(id,text,requestId){
+  async submit(id,text,requestId,{research}={}){
     const b=this.binding(id);
     if(typeof text!=='string'||!text.trim()||text.length>32000)throw Error('Enter a message of up to 32,000 characters.');
+    if(research!==undefined&&typeof research!=='boolean')throw Error('Research option must be boolean.');
     const identity=nativeRequestId(id,requestId);
-    const receipt=await this.control({action:'send',request_id:identity,source_request_id:requestId,session_key:b.session_key,message:text.trim()});
-    if(receipt.request_id!==identity||receipt.source_request_id!==requestId||receipt.state!=='accepted_unverified')throw Error('Native dispatch acceptance is unconfirmed. Keep the same request identity for reconciliation.');
+    const receipt=await this.control({action:'send',request_id:identity,source_request_id:requestId,session_key:b.session_key,message:text.trim(),...(research===undefined?{}:{research})});
+    if(receipt.request_id!==identity||receipt.source_request_id!==requestId||(research!==undefined&&receipt.research!==research)||receipt.state!=='accepted_unverified')throw Error('Native dispatch acceptance is unconfirmed. Keep the same request identity for reconciliation.');
     return receipt;
   }
   async stop(id,turnId,holdId){

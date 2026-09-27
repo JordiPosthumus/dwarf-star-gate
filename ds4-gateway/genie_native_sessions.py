@@ -61,6 +61,17 @@ def canonical_uuid(value):
     return value
 
 
+def request_fingerprint(record):
+    values = [record['session_key'], record['message']]
+    if 'source_request_id' in record:
+        values.append(record['source_request_id'])
+    if 'research' in record:
+        if type(record['research']) is not bool:
+            raise ValueError('Research option must be boolean')
+        values.append({'research': record['research']})
+    return hashlib.sha256(json.dumps(values).encode()).hexdigest()
+
+
 class NativeConversationCatalog:
     """Private UI identity/title metadata only. Hermes stores every conversation."""
     def __init__(self, directory, owner):
@@ -174,18 +185,21 @@ class NativeSessionRequests:
             return None
         message = content[marker.end():]
         source = record['source_request_id']
-        fingerprint = hashlib.sha256(json.dumps([session_key, message, source]).encode()).hexdigest()
+        fingerprint = request_fingerprint(record)
         if (record.get('request_id') != marker[1] or record.get('session_key') != session_key
                 or record.get('message') != message or record.get('fingerprint') != fingerprint
                 or not isinstance(source, str) or re.fullmatch(r'[a-zA-Z0-9-]{8,80}', source) is None):
             raise ValueError('Native request correlation does not match its retained dispatch')
-        return {'schema': 1, 'request_id': marker[1], 'source_request_id': source}
+        return {'schema': 1, 'request_id': marker[1], 'source_request_id': source,
+                **({'research': record['research']} if 'research' in record else {})}
 
     def dispatch(self, payload):
         action = payload.get('action')
         expected = {'action', 'request_id'} if action == 'status' else {'action', 'request_id', 'session_key', 'message'}
         if action == 'send' and 'source_request_id' in payload:
             expected.add('source_request_id')
+        if action == 'send' and 'research' in payload:
+            expected.add('research')
         if action not in {'send', 'status'} or set(payload) != expected:
             raise ValueError('Use one exact send or status request')
         file = self._path(payload['request_id'])
@@ -197,13 +211,11 @@ class NativeSessionRequests:
             message = payload['message']
             if not isinstance(session, str) or session not in self.allowed or not isinstance(message, str) or not message.strip():
                 raise ValueError('Use an explicitly connected native session and nonempty message')
-            identity_input = [session, message]
             if 'source_request_id' in payload:
                 source = payload['source_request_id']
                 if not isinstance(source, str) or re.fullmatch(r'[a-zA-Z0-9-]{8,80}', source) is None:
                     raise ValueError('Use a valid original request identifier')
-                identity_input.append(source)
-            fingerprint = hashlib.sha256(json.dumps(identity_input).encode()).hexdigest()
+            fingerprint = request_fingerprint(payload)
             if prior:
                 if prior['fingerprint'] != fingerprint:
                     raise ValueError('Request identity belongs to different input')
@@ -216,6 +228,8 @@ class NativeSessionRequests:
                       'scope': 'Dispatch receipt only. Verify the matching native transcript before claiming completion. Uncertain dispatch must not be replayed.'}
             if 'source_request_id' in payload:
                 record['source_request_id'] = payload['source_request_id']
+            if 'research' in payload:
+                record['research'] = payload['research']
             self._save(file, record)
             try:
                 accepted = self.inject('[DSG request ' + payload['request_id'] + ']\n\n' + message, session_key=session)

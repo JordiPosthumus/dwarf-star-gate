@@ -65,7 +65,7 @@ async function fixture(t){
     if(req.headers.authorization!=='Bearer '+f[control?'control_token':'api_key']){res.statusCode=401;return res.end('{}');}
     if(f.unavailable){res.statusCode=503;return res.end('{"secret":"must-not-leak"}');}
     if(body?.action==='session'){f.reads++;return res.end(JSON.stringify({...observed,session_id:f.changed&&f.reads>1?'changed-session':'native-session'}));}
-    if(body?.action==='send')return res.end(JSON.stringify({state:f.dispatchState??'accepted_unverified',request_id:body.request_id,source_request_id:f.wrongCorrelation?'wrong-request':body.source_request_id}));
+    if(body?.action==='send')return res.end(JSON.stringify({state:f.dispatchState??'accepted_unverified',request_id:body.request_id,source_request_id:f.wrongCorrelation?'wrong-request':body.source_request_id,...('research' in body?{research:body.research}:{})}));
     if(body?.action==='status')return res.end(JSON.stringify({state:'unknown',request_id:body.request_id}));
     assert.equal(body?.action,'transcript');
     const data=rows.slice(body.offset,body.offset+body.limit);
@@ -110,6 +110,14 @@ test('a dispatch acknowledgment for another original request does not authorize 
   const f=await fixture(t);f.wrongCorrelation=true;
   await assert.rejects(f.client.submit('conversation','Inspect','request-12345'),/acceptance is unconfirmed/);
   assert.equal(f.calls.length,1);
+});
+
+test('research choices stay explicit in native dispatch and invalid options never send',async t=>{
+  const f=await fixture(t);
+  for(const value of ['false',null,0])await assert.rejects(f.client.submit('conversation','Inspect','request-12345',{research:value}),/must be boolean/);
+  assert.equal(f.calls.length,0);
+  const receipt=await f.client.submit('conversation','Inspect','request-12345',{research:false});
+  assert.equal(receipt.research,false);assert.equal(f.calls[0].body.research,false);
 });
 
 test('native descriptor rejects shared files and nonlocal credential destinations',async t=>{

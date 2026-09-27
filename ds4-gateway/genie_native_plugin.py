@@ -99,6 +99,10 @@ def register(ctx):
     emit = lambda *_args, **_kwargs: None
     initial = bridge_snapshot(descriptor)
     names = catalogue(initial, emit)
+    from genie_native_policy import NativeRequestPolicy
+    policy = NativeRequestPolicy(ctx.state.data_dir / 'ui-requests')
+    ctx.register_hook('pre_llm_call', policy.pre_llm)
+    ctx.register_hook('pre_tool_call', policy.pre_tool)
 
     def current_status(args, **_kwargs):
         try:
@@ -111,8 +115,12 @@ def register(ctx):
                 'parameters': {'type': 'object', 'properties': {}, 'additionalProperties': False}},
         handler=current_status)
 
-    def invoke(name, args):
+    def invoke(name, args, session_id=None):
         try:
+            if name in {'web_search', 'web_extract'}:
+                reason = policy.handler_reason(session_id)
+                if reason:
+                    return json.dumps({'error': reason})
             current = bridge_snapshot(descriptor)
             tools = catalogue(current, emit)
             if name not in tools or tools[name]['section'] not in current.get('enabled_sections', []):
@@ -127,7 +135,7 @@ def register(ctx):
         public_name = 'stargate_' + name if name in {'web_search', 'web_extract'} else name
         schema = {**entry['schema'], 'name': public_name}
         ctx.register_tool(name=public_name, toolset='stargate_native', schema=schema,
-            handler=lambda args, _name=name, **_kwargs: invoke(_name, args))
+            handler=lambda args, _name=name, **kwargs: invoke(_name, args, kwargs.get('session_id')))
     ctx.register_system_prompt_section('stargate.current-evidence',
         'You are Gate Genie, the independent DSG fleet operator. Use stargate_status for fresh evidence before fleet decisions. '
         'An accepted operation is not complete: retain its identity and inspect its terminal and native verification receipts. '
