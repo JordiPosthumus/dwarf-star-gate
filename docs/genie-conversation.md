@@ -8,6 +8,11 @@ recovery. Each capability has its own switch. Configuration changes require
 separate approval of the exact proposed plan.
 Existing background reviews and their handling of direct questions are unchanged.
 
+Invalid local fleet-status arguments report that no endpoint request was sent,
+with the exact correction needed. A transport failure still reports uncertain
+observation; it must not be mistaken for local input rejection or replayed as a
+new fleet action.
+
 Completed chat replies also retain **Hermes dispatch evidence**, including
 discovery-wrapper failures that happened before a DSG domain handler ran. This
 collapsed detail distinguishes returned tool results, errors and missing results.
