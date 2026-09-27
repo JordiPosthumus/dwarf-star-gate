@@ -107,6 +107,10 @@ export function createFleetPowerTools({runner,read,isTesting=()=>false,isEnabled
       scope:power_action==='stop'?'Stopping a Spark pair stops both machines of that pair, including any other model serving there.':'Starting may conflict with a different model already serving the same machine; the script refuses that case and reports it.'};
   }
   async function runTool(input){
+    if(input?.action==='inspect'){
+      if(Object.keys(input).sort().join(',')!=='action,worker')throw Error('Read-only service inspection accepts one enrolled worker only');
+      return runTool({action:'power',worker:input.worker,power_action:'status',action_id:randomUUID()});
+    }
     if(input?.action==='status'&&Object.keys(input).sort().join(',')==='action,action_id'){
       if(!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(input.action_id??''))throw Error('Use one exact power or routing action UUID');
       const request=requests.get(input.action_id);

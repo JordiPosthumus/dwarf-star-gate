@@ -243,6 +243,18 @@ test('exact power action lookup follows the same execution beyond the recent-his
  await assert.rejects(tools.tool({action:'status',action_id:id,trial_id:id}));
 });
 
+test('service inspection needs no invented ID and cannot request a mutation',async()=>{
+ const calls=[];
+ const runner=createPowerRunner({directory,spawn:async(command,args)=>{calls.push({command,args});return {exit_code:0,output:'Observed service state'};}});
+ const tools=createFleetPowerTools({runner,read:async()=>({version:1,workers:[]}),isEnabled:()=>false});
+ const result=await tools.tool({action:'inspect',worker:'glm53f-m3'});
+ assert.match(result.action_id,/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/);
+ assert.equal(result.receipt.action,'status');assert.equal(calls.length,1);
+ await assert.rejects(tools.tool({action:'inspect',worker:'glm53f-m3',power_action:'start'}));
+ await assert.rejects(tools.tool({action:'inspect',worker:'unregistered'}));
+ assert.equal(calls.length,1);
+});
+
 test('power receipts survive process reconstruction and uncertain actions cannot be replayed',async t=>{
  const receiptDirectory=fs.mkdtempSync(path.join(os.tmpdir(),'power-receipts-'));t.after(()=>fs.rmSync(receiptDirectory,{recursive:true,force:true}));
  let release,calls=0;
