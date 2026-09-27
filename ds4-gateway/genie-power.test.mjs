@@ -216,3 +216,12 @@ test('Genie drains and conditionally resumes through existing controls without o
  rows=[rows[0]];
  await assert.rejects(tools.tool({...input,action_id:UUID()}),/separate hardware/);
 });
+
+test('exact trial status excludes unrelated fleet history and does not call or alter routing',async()=>{
+ const id='119219df-2284-4b34-a479-aab1e8d51513',seen=[];
+ const power=createFleetPowerTools({runner:{},read:async()=>{throw Error('Unrelated fleet read');},catalogue:async()=>{throw Error('Unrelated history');},recipes:{status:query=>{seen.push(query);return [{trial_id:query,stage:'prepare',state:'failed'}];}}});
+ const result=await power.tool({action:'status',trial_id:id});
+ assert.deepEqual(seen,[id]);assert.equal(result.recipe_trials[0].state,'failed');assert.equal(result.members,undefined);
+ assert.ok(JSON.stringify(result).length<1024);
+ await assert.rejects(power.tool({action:'status',trial_id:'../anything'}),/exact enrolled trial/);
+});

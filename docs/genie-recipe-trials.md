@@ -61,6 +61,40 @@ native state before reconciling the owned hold. The remote process ignores SSH
 hangup, but host/process failures still require explicit recovery; this is not a
 host-level transaction or a guarantee against all external interference.
 
+## Qualify the currently running Spark pair
+
+An enrolled Spark plan can use `qualification_mode: serving-only` with
+`candidate_profile: baseline-cache-400k` to qualify an existing 400,000-context,
+two-request pair. Pin its `serving_containers` map with the full `head` and `rank`
+container IDs, its current image, recipe hashes and baseline provenance. Its
+`source_revision` must equal `baseline_revision`; this mode does not evaluate or
+adopt a different revision. The normal profile hash and inspection binding still
+apply, including custom pair names and independently serving hardware groups.
+
+`prepare` backs up the current environment, recipe launcher and complete Docker
+configuration for both ranks. It records container start times, mounts and bound
+launcher hashes. It does not build, tag, create, start or stop containers.
+`run` takes the same owned maintenance hold used by other trials, requires a
+separate serving LLM and waits for existing gateway and native work to finish.
+This temporarily reserves that pair for diagnostic inference; new household
+requests use the remaining serving capacity. The owner must have authorized
+that qualification window, including through an applicable standing instruction.
+
+The native protocol exercises arithmetic, a tool-result exchange, two interleaved
+128k histories with proved cold-to-warm reuse, edits/branches, near-limit chat
+input and two simultaneous requests. It then checks unchanged running identities,
+settings, mounts, launcher hashes and recipe bytes, and runs a readiness canary.
+The owned hold is released and routing conditionally resumes only after those
+preservation/readiness checks. A newer owner pause or an uncertain observation
+keeps its protection. No model restart, cache reset or production knob change is
+part of this mode.
+
+Inspect `result.qualification_passed`, the individual native samples,
+`result.restoration` and `readmission` together. `state: complete` alone means
+the operation finished and handed back safely; a failed capability check can
+still coexist with verified unchanged serving. Long-output capacity and general
+answer quality remain outside this protocol. Do not replay an uncertain stage.
+
 
 The local oMLX trial pins the source revision and original launcher/global/model
 settings hashes. Its worker name, installation root, credential-file path and
@@ -134,3 +168,23 @@ upgrade of a published recipe can use `baseline_kind: "published-rollout"` with
 the SHA-256 of its retained deployment receipt in `baseline_deployment_sha256`;
 the executor verifies the image, source receipt and complete backed-up recipe
 manifest instead of pretending that a published archive is a Git checkout.
+
+For a terminal `serving-only` preparation, Genie may invoke `fleet_recipe_trial`
+with `stage: "inspect"` and the same profile/trial ID. This preserves the failed
+preparation and saves a separate diagnostic receipt. It compares the exact native
+backup to two fresh observations and reports differing fields and hashes, with
+mount-order-only differences labelled explicitly. No environment values, inference,
+maintenance hold, model restart or repair are involved. The comparison guard is
+unchanged. Inspection is deduplicated: repeated calls return the original dated
+receipt, not a new observation. A diagnostic is neither preparation nor qualification.
+
+Use `fleet_power_status({trial_id: "<the same UUID>"})` to read that trial's
+saved stages without the unrelated fleet catalogue and history. This can retrieve
+older trials outside the global recent window. It makes no claim about current
+fleet availability. Use the unfiltered fleet status before lifecycle decisions.
+
+Serving snapshots order mounts by their unique absolute destination before
+comparison. All mount entries and fields remain part of equality; changing a
+source, writability, propagation or any other field still refuses qualification.
+Duplicate destinations refuse inspection rather than hiding ambiguous order.
+The read-only diagnostic retains raw mount order to explain older backup failures.

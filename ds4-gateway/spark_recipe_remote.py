@@ -164,6 +164,7 @@ class Remote:
             time.sleep(2)
         raise RuntimeError('Native work did not become verifiably idle; no stop was issued')
     def prepare(self):
+        if self.plan.get('qualification_mode')=='serving-only':return self.prepare_serving()
         self.baseline_unchanged()
         head,rank=self.inspect(),self.inspect(True)
         if any(x['Image']!=self.plan['baseline_image'] or not x['State']['Running'] for x in [head,rank]):
@@ -464,7 +465,116 @@ print(json.dumps(result))
         file=self.backup/'worker-launcher-path.json'
         return json.loads(file.read_text()) if file.exists() else '/tmp/glm53-exl3-worker.sh'
 
+    def serving_snapshot(self,canonical_mounts=True):
+        self.baseline_unchanged()
+        result={}
+        for name,rank in [('head',False),('rank',True)]:
+            current=self.inspect(rank)
+            if (current['Id']!=self.plan['serving_containers'][name] or current['Image']!=self.plan['baseline_image']
+                    or current['State']['Running'] is not True or not current['State'].get('StartedAt')
+                    or envmap(current).get('MAX_MODEL_LEN')!='400000' or envmap(current).get('MAX_NUM_SEQS')!='2'):
+                raise RuntimeError('Current serving container identity, image or 400000/2 capacity differs')
+            mounts=[m['Source'] for m in current['Mounts'] if m['Type']=='bind' and m['Destination']=='/start.sh']
+            if len(mounts)!=1:raise RuntimeError('Expected one current serving launcher bind')
+            script=(self.rank if rank else self.command)(['cat',mounts[0]],timeout=30)
+            if len(script)>1048576:raise RuntimeError('Serving launcher exceeds inspection allowance')
+            destinations=[m.get('Destination') for m in current['Mounts']]
+            if (any(not isinstance(d,str) or not d.startswith('/') for d in destinations)
+                    or len(destinations)!=len(set(destinations))):
+                raise RuntimeError('Serving mounts require unique absolute destinations')
+            result[name]={**{key:current[key] for key in ['Id','Image','Config','HostConfig','Mounts']},
+                          'started_at':current['State']['StartedAt'],'launcher_sha256':hashlib.sha256(script).hexdigest()}
+            if canonical_mounts:
+                # Docker's mount list order can vary across identical inspections.
+                # Preserve every entry/field; only order by the unique destination.
+                result[name]['Mounts']=sorted(current['Mounts'],key=lambda m:m['Destination'])
+        return result
+
+    def prepare_serving(self):
+        # This branch never builds, tags, creates, starts or stops a container.
+        # Pin and retain the actual running identities before the owned hold.
+        if (self.root/'prepared.json').exists():raise RuntimeError('Preparation already recorded; inspect the original trial')
+        snapshot=self.serving_snapshot();self.backup.mkdir(mode=0o700)
+        write(self.backup/'serving.json',snapshot)
+        for name in ['.env','start.sh']:
+            shutil.copy2(self.recipe/name,self.backup/name);os.chmod(self.backup/name,0o600)
+        if self.plan.get('baseline_kind')=='published-rollout':
+            write(self.backup/'recipe-manifest.json',recipe_manifest(self.recipe))
+        if self.serving_snapshot()!=snapshot:raise RuntimeError('Serving identity changed during preparation')
+        result={'state':'prepared','qualification_mode':'serving-only','original_container':snapshot['head']['Id'],
+                'original_rank_container':snapshot['rank']['Id'],'image':self.plan['baseline_image'],
+                'serving_sha256':sha(self.backup/'serving.json'),
+                'scope':'Current serving identity and recipe backup only. No candidate image, inference or lifecycle change.'}
+        write(self.root/'prepared.json',result);return result
+
+    def inspect_serving(self):
+        """Diagnose an existing backup without inference, writes or lifecycle work."""
+        if self.plan.get('qualification_mode')!='serving-only':
+            raise RuntimeError('Serving inspection requires a current-serving plan')
+        file=self.backup/'serving.json'
+        if any(p.is_symlink() for p in [file,*file.parents]) or not file.is_file() or file.stat().st_size>1048576:
+            raise RuntimeError('No bounded regular serving backup is available')
+        before=json.loads(file.read_text())
+        observations=[]
+        for _ in range(2):
+            current=self.serving_snapshot(canonical_mounts=False)
+            changes=[]
+            for member in ['head','rank']:
+                for key in ['Id','Image','Config','HostConfig','Mounts','started_at','launcher_sha256']:
+                    old,new=before[member][key],current[member][key]
+                    if old==new:continue
+                    encode=lambda value:json.dumps(value,sort_keys=True,separators=(',',':')).encode()
+                    row={'member':member,'field':key,'before_sha256':hashlib.sha256(encode(old)).hexdigest(),
+                         'current_sha256':hashlib.sha256(encode(new)).hexdigest()}
+                    if key=='Mounts':
+                        row['order_only']=sorted(encode(m) for m in old)==sorted(encode(m) for m in new)
+                    changes.append(row)
+            observations.append({'observed_at':time.time(),'matches_backup':not changes,'differences':changes})
+        return {'state':'inspected','trial_id':self.plan['trial_id'],'observations':observations,
+                'scope':'Two read-only comparisons against the original serving backup. Field names and hashes only; no configuration values, inference, hold, restart, repair or qualification. An order-only diagnostic does not relax the equality guard.'}
+
+    def run_serving(self):
+        prepared=json.loads((self.root/'prepared.json').read_text())
+        if prepared.get('qualification_mode')!='serving-only' or prepared.get('serving_sha256')!=sha(self.backup/'serving.json'):
+            raise RuntimeError('Current-serving preparation does not match this operation')
+        before=json.loads((self.backup/'serving.json').read_text())
+        if self.serving_snapshot()!=before:raise RuntimeError('Current serving identity changed since preparation')
+        if (self.root/'run-intent.json').exists():raise RuntimeError('Qualification already submitted; inspect the same trial')
+        self.wait_idle()
+        write(self.root/'run-intent.json',{'started_at':time.time(),'trial_id':self.plan['trial_id'],'qualification_mode':'serving-only'})
+        result={'state':'running','qualification_mode':'serving-only','qualification_passed':False,'phases':{},
+                'scope':'Native correctness, cache, near-limit chat input and two-request concurrency on the exact existing pair under its owned maintenance hold. No build, restart, container switch, cache reset or production setting change. Diagnostic output budgets do not prove long-output capacity.'}
+        try:
+            models=json.loads(self.request('/v1/models',timeout=15)).get('data',[])
+            if not any(m.get('id')=='GLM-5.3-Flash-EXL3' and m.get('max_model_len')==400000 for m in models):
+                raise RuntimeError('Current native model/context does not match')
+            checks=self.checks('current',400000);result['phases']['current']=checks
+            rows={r['label']:r for r in checks}
+            quality=['arithmetic','tool_call_and_followup','cold-A','cold-B','append-A','append-B','edit-90-percent','branch-90-percent']
+            result['qualification_passed']=(len(checks)==len(rows)==10 and all(rows.get(k,{}).get('passed') is True for k in quality)
+                and all(rows.get('cold-'+k,{}).get('cold_cache_proved') is True for k in ['A','B'])
+                and all(rows.get('append-'+k,{}).get('substantial_reuse_proved') is True for k in ['A','B'])
+                and rows.get('context-boundary',{}).get('accepted') is True
+                and rows.get('concurrency-two',{}).get('two_active_requests_observed') is True)
+        except Exception as error:result['error']=str(error)
+        finally:
+            try:
+                self.wait_idle()
+                if self.serving_snapshot()!=before:raise RuntimeError('Serving identity/settings changed during qualification; inspect before readmission')
+                sample,reply=self.chat([{'role':'user','content':'Serving readiness check. Reply with exactly READY_7319.'}])
+                if sample['finish_reason']!='stop' or reply['content'].strip()!='READY_7319':raise RuntimeError('Current serving readiness was not verified')
+                if self.serving_snapshot()!=before:raise RuntimeError('Serving identity changed during readiness check')
+                result['restoration']={'state':'verified','serving_unchanged':True,'readiness':sample,
+                    'head_container':before['head']['Id'],'rank_container':before['rank']['Id'],
+                    'image':self.plan['baseline_image'],'serving_sha256':prepared['serving_sha256'],
+                    'scope':'Same running containers/start times, images, complete Config/HostConfig/mounts, launcher hashes and pinned recipe. Serving was never switched or restarted.'}
+            except Exception as error:result['restoration']={'state':'unverified','error':str(error)}
+            result['state']='complete' if result['restoration']['state']=='verified' else 'restoration_required'
+            result['finished_at']=time.time();write(self.root/'run-result.json',result)
+        return result
+
     def run(self):
+        if self.plan.get('qualification_mode')=='serving-only':return self.run_serving()
         prepared=json.loads((self.root/'prepared.json').read_text());self.baseline_unchanged()
         if (self.root/'run-intent.json').exists():raise RuntimeError('Trial already started; inspect its existing receipt rather than running it again')
         if self.inspect()['Id']!=prepared['original_container'] or self.inspect(True)['Id']!=prepared['original_rank_container']:raise RuntimeError('Original pair identity changed since preparation')
@@ -572,6 +682,7 @@ if __name__=='__main__':
     signal.signal(signal.SIGHUP,signal.SIG_IGN)
     action,encoded=sys.argv[1:];plan=json.loads(base64.b64decode(encoded));runner=Remote(plan)
     if action=='idle':result={'idle':runner.idle()}
+    elif action=='inspect_serving':result=runner.inspect_serving()
     elif action in ['prepare','run','deploy','rollout_preflight','rollback']:
         with open(runner.root/'operation.lock','a') as lock:
             fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)

@@ -16,7 +16,7 @@ export function createRecipeTrials({config,powerBusy=()=>false,launch=spawn}={})
     const entries=[];
     for(const id of fs.existsSync(directory)?fs.readdirSync(directory):[]){
       if(!uuid.test(id))continue;
-      for(const stage of ['prepare','run','rollout']){
+      for(const stage of ['prepare','run','rollout','inspect']){
         const value=read(path.join(directory,id,`${stage}.status.json`));
         if(value)entries.push(value);
       }
@@ -24,10 +24,13 @@ export function createRecipeTrials({config,powerBusy=()=>false,launch=spawn}={})
     return entries;
   };
   const compact=value=>Array.isArray(value)?value.map(compact):value&&typeof value==='object'?Object.fromEntries(Object.entries(value).filter(([key])=>!['metrics_before','metrics_after'].includes(key)).map(([key,item])=>[key,key==='answer'&&typeof item==='string'?item.slice(0,160):compact(item)])):value;
-  const status=()=>allStatus().sort((a,b)=>String(b.started_at).localeCompare(String(a.started_at))).slice(0,32).map(compact);
-  const busy=worker=>allStatus().some(r=>['starting','running','restoration_required'].includes(r.state)&&machinesFor(r.worker,config).some(g=>machinesFor(worker,config).includes(g)));
+  const status=(trial_id)=>{
+    if(trial_id!==undefined&&!uuid.test(trial_id))throw Error('Use one exact trial UUID');
+    return allStatus().filter(r=>trial_id===undefined||r.trial_id===trial_id).sort((a,b)=>String(b.started_at).localeCompare(String(a.started_at))).slice(0,32).map(compact);
+  };
+  const busy=worker=>allStatus().some(r=>r.stage!=='inspect'&&['starting','running','restoration_required'].includes(r.state)&&machinesFor(r.worker,config).some(g=>machinesFor(worker,config).includes(g)));
   async function start({profile,stage,trial_id,expected_finished_at}){
-    if(!uuid.test(trial_id??'')||!['prepare','run','rollout'].includes(stage)||!Object.hasOwn(enrolled,profile))throw Error('Use an enrolled recipe profile, supported stage and one operation UUID.');
+    if(!uuid.test(trial_id??'')||!['prepare','run','rollout','inspect'].includes(stage)||!Object.hasOwn(enrolled,profile))throw Error('Use an enrolled recipe profile, supported stage and one operation UUID.');
     const binding=enrolled[profile];
     if(!path.isAbsolute(binding.plan_file??'')||!/^[a-f0-9]{64}$/.test(binding.plan_sha256??''))throw Error('Recipe plan enrollment is incomplete');
     const bytes=fs.readFileSync(binding.plan_file);if(hash(bytes)!==binding.plan_sha256)throw Error('Enrolled recipe plan changed; leave serving unchanged');
@@ -38,6 +41,7 @@ export function createRecipeTrials({config,powerBusy=()=>false,launch=spawn}={})
     const spark=plan.kind==='glm53-spark-pair-long-coding'&&(legacyPair||customPair);
     const rollout=plan.kind==='glm53-spark-pair-rollout'&&(legacyPair||customPair);
     if(plan.schema!==1||(!localMtp&&!spark&&!rollout)||rollout!==(stage==='rollout'))throw Error('Unsupported enrolled recipe plan or operation stage');
+    if(stage==='inspect'&&(!spark||plan.qualification_mode!=='serving-only'))throw Error('Inspection requires an existing current-serving trial');
     if(localMtp){
       const endpoint=typeof plan.url==='string'&&plan.url.trim()===plan.url&&/^http:\/\/(?:127\.0\.0\.1|\[::1\]):([1-9][0-9]*)\/v1$/.exec(plan.url);
       if(!endpoint||Number(endpoint[1])>65535)throw Error('Local MTP trials require an explicit numeric loopback endpoint and port');
@@ -59,11 +63,16 @@ export function createRecipeTrials({config,powerBusy=()=>false,launch=spawn}={})
     const target=config.genie_chat?.inspection?.workers?.[plan.worker];
     if(localMtp?target?.kind!=='omlx-local'||target.root!==plan.root||target.url!==plan.url||target.api_key_file!==plan.api_key_file:!target?.ssh?.includes(plan.ssh)||target.recipe_root!==plan.recipe_root)throw Error('Recipe plan does not match the enrolled worker inspection binding');
     if(powerBusy(plan.worker)||busy(plan.worker))throw Error('An operation on this hardware is already running or needs restoration; inspect its existing receipt');
+    if(stage==='inspect'){
+      const preparation=read(path.join(folder,'prepare.status.json'));
+      if(!preparation||!['failed','prepared'].includes(preparation.state)||preparation.profile!==profile||preparation.plan_sha256!==binding.plan_sha256||hash(fs.readFileSync(path.join(folder,'plan.json')))!==binding.plan_sha256)
+        throw Error('Inspect only the same terminal preparation and unchanged saved plan');
+    }
     fs.mkdirSync(folder,{recursive:true,mode:0o700});
     const savedPlan=path.join(folder,'plan.json');
     if(resume){if(hash(fs.readFileSync(savedPlan))!==binding.plan_sha256)throw Error('Saved rollout plan changed');}
     else if(stage==='prepare'||rollout)fs.writeFileSync(savedPlan,bytes,{flag:'wx',mode:0o600});
-    else{
+    else if(stage!=='inspect'){
       if(hash(fs.readFileSync(savedPlan))!==binding.plan_sha256||read(path.join(folder,'prepare.status.json'))?.state!=='prepared')throw Error('Prepare this exact trial before running it');
     }
     const receipt={trial_id,...(rollout?{rollout_id:trial_id,operation_kind:'permanent_rollout'}:{}),profile,worker:plan.worker,stage,plan_sha256:binding.plan_sha256,state:'starting',started_at:new Date().toISOString(),...(resume?{resume_copy:true,phase:'copying_qualified_image',attempt:(prior.attempt??1)+1,accepted_resume_finished_at:[...(prior.accepted_resume_finished_at??[]),expected_finished_at]}:{})};

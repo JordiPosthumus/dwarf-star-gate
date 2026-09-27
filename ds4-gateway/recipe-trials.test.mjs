@@ -114,3 +114,44 @@ test('custom pair names require configured independent hardware and reserve ever
   assert.deepEqual(machinesFor('spark2',config),['spark2']);
   assert.ok(machinesFor('glm53f-sparks12',config).includes(machinesFor('spark1',config)[0]));
  });
+
+test('read-only serving inspection retains the failed preparation and cannot qualify or replay it',async t=>{
+ const f=fixture(t),binding=f.config.recipe_trials.fixture;
+ const plan=JSON.parse(fs.readFileSync(binding.plan_file));plan.qualification_mode='serving-only';fs.writeFileSync(binding.plan_file,JSON.stringify(plan));binding.plan_sha256=createHash('sha256').update(fs.readFileSync(binding.plan_file)).digest('hex');
+ const manager=createRecipeTrials(f),args={profile:'fixture',trial_id:id};
+ await assert.rejects(manager.start({...args,stage:'inspect'}),/terminal preparation/);
+ assert.equal(fs.existsSync(f.folder),false);
+ await manager.start({...args,stage:'prepare'});
+ await assert.rejects(manager.start({...args,stage:'inspect'}),/already running/);
+ const file=path.join(f.folder,'prepare.status.json');const failed={...JSON.parse(fs.readFileSync(file)),state:'failed',finished_at:123};fs.writeFileSync(file,JSON.stringify(failed));
+ const result=await manager.start({...args,stage:'inspect'});
+ assert.equal(result.stage,'inspect');assert.equal(result.state,'starting');assert.equal(manager.busy(plan.worker),false);
+ assert.deepEqual(JSON.parse(fs.readFileSync(file)),failed);
+ assert.equal(f.launched.length,2);assert.equal(f.launched[1][1][1],'inspect');
+ await manager.start({...args,stage:'inspect'});assert.equal(f.launched.length,2);
+ await assert.rejects(manager.start({...args,stage:'run'}),/Prepare this exact trial/);
+ assert.equal(manager.status().find(r=>r.stage==='inspect').state,'starting');
+});
+
+test('inspection rejects candidate trials and changed saved plans',async t=>{
+ const f=fixture(t),manager=createRecipeTrials(f),args={profile:'fixture',trial_id:id};
+ await manager.start({...args,stage:'prepare'});
+ await assert.rejects(manager.start({...args,stage:'inspect'}),/current-serving trial/);
+ const binding=f.config.recipe_trials.fixture,plan=JSON.parse(fs.readFileSync(binding.plan_file));plan.qualification_mode='serving-only';fs.writeFileSync(binding.plan_file,JSON.stringify(plan));binding.plan_sha256=createHash('sha256').update(fs.readFileSync(binding.plan_file)).digest('hex');
+ const file=path.join(f.folder,'prepare.status.json');fs.writeFileSync(file,JSON.stringify({...JSON.parse(fs.readFileSync(file)),state:'failed',plan_sha256:binding.plan_sha256}));
+ await assert.rejects(manager.start({...args,stage:'inspect'}),/unchanged saved plan/);
+ assert.equal(f.launched.length,1);
+});
+
+test('exact trial status includes older evidence outside the recent global window',t=>{
+ const f=fixture(t),directory=path.dirname(f.folder);fs.mkdirSync(directory,{recursive:true});
+ for(let index=0;index<35;index++){
+  const trial_id=index===0?id:`119219df-2284-4b34-a479-${String(index).padStart(12,'0')}`;
+  const folder=path.join(directory,trial_id);fs.mkdirSync(folder);
+  fs.writeFileSync(path.join(folder,'prepare.status.json'),JSON.stringify({trial_id,stage:'prepare',state:'failed',started_at:new Date(index*1000).toISOString()}));
+ }
+ const manager=createRecipeTrials(f);
+ assert.equal(manager.status().length,32);assert.equal(manager.status().some(r=>r.trial_id===id),false);
+ assert.deepEqual(manager.status(id).map(r=>r.trial_id),[id]);
+ assert.throws(()=>manager.status('../anything'),/exact trial UUID/);
+});
