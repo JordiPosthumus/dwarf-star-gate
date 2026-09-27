@@ -20,7 +20,17 @@ runtime storage, not this directory.
 
 The implementation has passed an isolated actual-upstream-gateway test with a
 local fake model and tool server. It is **not yet a production migration**.
-Outstanding work includes dashboard endpoint/lifecycle wiring, a dedicated
-messaging dependency environment, shared session serialization, transcript and
-owner migration, operation-follow-up delivery, and live Telegram acceptance.
+The opt-in `genie_chat.native_hermes.enabled: true` dashboard setting publishes
+`genie/native-hermes/bridge.json` beside the configured gateway state file. The
+containing directory is private, the descriptor has mode 0600, and restart
+rotates its token. This setting exposes domain tools; it does not start a native
+gateway or replace the existing Telegram channel.
+
+`installHermes(root, {nativeGateway: true})` in `scripts/genie-runtime.mjs`
+installs the pinned Hermes source, private Python and locked messaging
+requirements under `runtime/genie-native-runtime`, independently of the existing
+core runtime. It does not start a process or configure a bot.
+
+Outstanding work includes shared session serialization, transcript and owner
+migration, operation-follow-up delivery, and live Telegram acceptance.
 Do not launch this against the live bot while the existing poller is running.

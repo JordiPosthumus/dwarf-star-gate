@@ -1,3 +1,4 @@
+import {createNativeHermesContext,publishNativeHermesDescriptor} from './genie-native-context.mjs';
 import {SparkAccess,handleSparkAccessSettings} from './spark-access.mjs';
 import {createSparkAccessTransport} from './spark-access-transport.mjs';
 import {SparkAccessWatch} from './spark-access-watch.mjs';
@@ -144,7 +145,7 @@ export function proxyMediaFile(config,req,res,route){
       res.on('close',()=>upstream.destroy());upstream.end();
     }
 
-export function createDashboard(getSnapshot, assetsDirectory = path.join(here, 'ui'), management = null, genie = null, requestHistory = null, currentJobs = null, testing = null, lanSharing = null, chat = null, hourglass = null, operations = null, queueTools = null, recoveryTools = null, mediaTools = null, sparkSetup = null, powerTools = null, admissionTools = null, telegram = null, sparkAccess = null) {
+export function createDashboard(getSnapshot, assetsDirectory = path.join(here, 'ui'), management = null, genie = null, requestHistory = null, currentJobs = null, testing = null, lanSharing = null, chat = null, hourglass = null, operations = null, queueTools = null, recoveryTools = null, mediaTools = null, sparkSetup = null, powerTools = null, admissionTools = null, telegram = null, sparkAccess = null, nativeHermes = null) {
   const csrf = randomBytes(32).toString('base64url');
   // Freeze one complete release in memory: edits on disk cannot expose half an
   // update to a live browser. Only the dashboard needs a reload to promote it.
@@ -221,6 +222,7 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
         if(['prepare','start'].includes(input.action)&&getSnapshot().gateway?.genie_capabilities?.hourglass===false)return reply(409,{error:'Hourglass measurements are switched off. Existing runs continue.'});
         void (tool?hourglass.tool(input):hourglass.change(input)).then(value=>reply(200,tool?value:hourglass.status())).catch(e=>reply(409,{error:e.message}));});return;
     }
+    if(nativeHermes?.handle(req,res))return;
     if(sparkSetup?.handle(req,res))return;
     if(mediaTools?.handle(req,res))return;
     if(queueTools?.handle(req,res))return;
@@ -613,6 +615,12 @@ export async function runDashboard(configPath, port) {
   const applyGenieThinking=value=>{if(!value)return {applied:false};const applied={};if(value.chat){chatProviderConfig.reasoning_effort=value.chat;applied.chat=value.chat;}if(value.reviewer){runtimeGenie.reasoning_effort=value.reviewer;if(runtimeGenie.fallback&&typeof runtimeGenie.fallback==='object')runtimeGenie.fallback.reasoning_effort=value.reviewer;applied.reviewer=value.reviewer;}return {applied:true,...applied};};
   const admissionTools=managementEnabled?createAdmissionTools({config,resolveNativeWorker:async id=>(await workerControl(config.control_socket,'/workers',undefined,{channel:'dashboard'})).workers?.find(w=>w.id===id),control:(route,body)=>workerControl(config.control_socket,route,body,{channel:'dashboard'}),read:()=>readService('gateway',config),readDoor:async()=>doorControl(doorSocket(config),'/status'),isTesting,isEnabled:()=>isCapabilityEnabled('server_changes')}):null;
   const chat=config.genie_chat?new GenieChat({directory:chatDirectory,notebook:config.genie_chat.operational_notebook===true?memory:null,getSnapshot:()=>({...snapshot(),genie:genie.status(),genie_handovers:requestHistory.snapshot().handovers}),isSuspended:isTesting,runQuestion:(answer,onWait)=>genie.answerChat(answer,onWait),provider:hermesProvider({...chatProviderConfig,spark_setup:sparkSetup?.toolConfig,operations:operations?.toolConfig,hourglass:hourglass?.toolConfig,queue:queueTools?.toolConfig,recovery:recoveryTools?.toolConfig,media:mediaTools?.toolConfig,power:powerTools?.toolConfig,admission:admissionTools?.toolConfig},{directory:chatDirectory,isCapabilityEnabled})}):null;
+  const nativeHermes=config.genie_chat?.native_hermes?.enabled===true?createNativeHermesContext({
+    snapshot:()=>({...snapshot(),genie:genie.status(),genie_handovers:requestHistory.snapshot().handovers}),
+    tools:()=>({research:chatProviderConfig.research,inspection:chatProviderConfig.inspection,spark_setup:sparkSetup?.toolConfig,operations:operations?.toolConfig,hourglass:hourglass?.toolConfig,queue:queueTools?.toolConfig,recovery:recoveryTools?.toolConfig,media:mediaTools?.toolConfig,power:powerTools?.toolConfig,admission:admissionTools?.toolConfig}),
+    isEnabled:isCapabilityEnabled,isTesting,
+  }):null;
+  let removeNativeDescriptor=null;
   const nativeMedia=createNativeMediaStatus(config);
   const fleetCatalogue=async()=>{const s=snapshot();let media={workloads:[],native_engines:[]};try{if(managementEnabled&&config.control_socket){const value=await workerControl(config.control_socket,'/media-jobs',undefined,{channel:'dashboard'});media={...fleetMediaWorkloads(value),native_engines:nativeMedia?.(value)??[]};}}catch{/* Media evidence stays empty; the catalogue stays truthful about what it could observe. */}return buildCatalogue({members:s.fleet_machines??[],workers:s.gateway?.workers??[],devices:s.devices??[],media,routes:s.gateway?.model_routes??{},now:Date.now()});};
   const telegram=chat?new GenieTelegram({directory:path.join(path.dirname(config.state_file),'genie','telegram'),chat,snapshot}):null;
@@ -631,7 +639,7 @@ export async function runDashboard(configPath, port) {
   }:null,managementEnabled&&continuityEnabled(config)?{
     read:async()=>lanSharingDetails(await doorControl(doorSocket(config),'/lan-sharing'),config.port),
     set:async enabled=>lanSharingDetails(await doorControl(doorSocket(config),'/set-lan-sharing',{enabled}),config.port),
-  }:null,chat,hourglass,operations,queueTools,recoveryTools,mediaTools,sparkSetup,powerTools,admissionTools,telegram,sparkAccess);
+  }:null,chat,hourglass,operations,queueTools,recoveryTools,mediaTools,sparkSetup,powerTools,admissionTools,telegram,sparkAccess,nativeHermes);
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
   telegram?.start();
   sparkSetup?.bind(server.address().port);
@@ -642,6 +650,11 @@ export async function runDashboard(configPath, port) {
   recoveryTools?.bind(server.address().port);
   operations?.bind(server.address().port);
   hourglass?.bind(server.address().port);
+  if(nativeHermes){
+    nativeHermes.bind(server.address().port);
+    try{removeNativeDescriptor=publishNativeHermesDescriptor(path.join(path.dirname(config.state_file),'genie','native-hermes','bridge.json'),nativeHermes.toolConfig);}
+    catch(error){telegram?.close();server.closeAllConnections();server.close();throw error;}
+  }
   hourglass?.startObserving();
   sparkAccessWatch=chat&&sparkAccess?new SparkAccessWatch({filename:path.join(path.dirname(config.state_file),'genie','spark-access-watch.json'),chat,access:sparkAccess,isEnabled:()=>!isTesting()&&gateway?.genie_capabilities?.spark_setup===true}):null;
   sparkDiscoveryWatch=chat&&sparkSetup?new SparkDiscoveryWatch({filename:path.join(path.dirname(config.state_file),'genie','spark-discovery-watch.json'),chat,read:scan_id=>sparkSetup.tool({action:'discovery_status',scan_id}),isEnabled:()=>!isTesting()&&gateway?.genie_capabilities?.inspection===true}):null;
@@ -654,7 +667,7 @@ export async function runDashboard(configPath, port) {
   omlxEnrollmentWatch=chat&&recoveryTools?new PairPreparationWatch({kind:'omlx-enrollment',filename:path.join(path.dirname(config.state_file),'genie','omlx-enrollment-watch.json'),chat,read:async()=>(await recoveryTools.tool({action:'status'})).omlx_enrollment?.operations??[],isEnabled:()=>!isTesting()&&isCapabilityEnabled('inspection')}):null;
   pairQualificationWatch=chat&&recoveryTools?new PairPreparationWatch({kind:'qualification',filename:path.join(path.dirname(config.state_file),'genie','pair-qualification-watch.json'),chat,read:async()=>(await recoveryTools.tool({action:'status'})).operations.filter(o=>o.pair_qualification===true).map(o=>({...o,action_id:o.id})),isEnabled:()=>!isTesting()&&isCapabilityEnabled('inspection')}):null;
   await poll(); endpointTelemetry.poll(); const interval = setInterval(poll, 2000), endpointTimer=setInterval(()=>endpointTelemetry.poll(),2000), historyTimer=setInterval(()=>monitoringHistory.save(activity,endpointTelemetry),10000), genieTimer=setInterval(()=>{genie.tick();chat?.tick();void (async()=>{await mediaStandardWatch?.tick();await mediaWatch?.tick();await sparkSetupWatch?.tick();await sparkDiscoveryWatch?.tick();await sparkAccessWatch?.tick();await pairPreparationWatch?.tick();await pairEnrollmentWatch?.tick();await pairQualificationWatch?.tick();await omlxEnrollmentWatch?.tick();await omlxQualificationWatch?.tick();})();},10000);
-  const close = () => { monitoringHistory.save(activity,endpointTelemetry);endpointTelemetry.close(); closed = true; clearInterval(interval);clearInterval(endpointTimer);clearInterval(historyTimer);clearInterval(genieTimer);mediaStandardWatch?.close();mediaWatch?.close();sparkSetupWatch?.close();sparkDiscoveryWatch?.close();sparkAccessWatch?.close();sparkAccess?.close();pairPreparationWatch?.close();pairEnrollmentWatch?.close();pairQualificationWatch?.close();omlxEnrollmentWatch?.close();omlxQualificationWatch?.close();telegram?.close();genie.close();chat?.close();operations?.close();hourglass?.close();hardware.close();stopGenieTunnel(); for (const t of timers) clearTimeout(t); for (const child of children) child.kill(); server.closeAllConnections(); server.close(); process.removeListener('SIGTERM', close); process.removeListener('SIGINT', close); };
+  const close = () => { removeNativeDescriptor?.();monitoringHistory.save(activity,endpointTelemetry);endpointTelemetry.close(); closed = true; clearInterval(interval);clearInterval(endpointTimer);clearInterval(historyTimer);clearInterval(genieTimer);mediaStandardWatch?.close();mediaWatch?.close();sparkSetupWatch?.close();sparkDiscoveryWatch?.close();sparkAccessWatch?.close();sparkAccess?.close();pairPreparationWatch?.close();pairEnrollmentWatch?.close();pairQualificationWatch?.close();omlxEnrollmentWatch?.close();omlxQualificationWatch?.close();telegram?.close();genie.close();chat?.close();operations?.close();hourglass?.close();hardware.close();stopGenieTunnel(); for (const t of timers) clearTimeout(t); for (const child of children) child.kill(); server.closeAllConnections(); server.close(); process.removeListener('SIGTERM', close); process.removeListener('SIGINT', close); };
   process.once('SIGTERM', close); process.once('SIGINT', close);
   console.log(`Star Gate: http://127.0.0.1:${server.address().port} (${managementEnabled ? 'local worker controls' : 'read-only'})`);
   return { server, snapshot, close };

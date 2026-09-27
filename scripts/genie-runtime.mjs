@@ -20,10 +20,12 @@ export function run(command,args,options={}){
     child.on('close',code=>code===0?resolve(output.trim()):reject(new Error(`${path.basename(command)} failed (${code}). ${output}`)));
   });
 }
-export async function installHermes(root,{log=console.log}={}){
+export async function installHermes(root,{log=console.log,nativeGateway=false}={}){
   const target=UV_ARCHIVES[`${process.platform}-${process.arch}`];
   if(!target)throw new Error('Genie setup currently supports macOS and glibc Linux on ARM64 or x64.');
-  const base=path.join(root,'runtime','genie-runtime');
+  // Native channels need messaging dependencies. Use a separate environment so
+  // staging the gateway cannot change a running reviewer or personal Hermes.
+  const base=path.join(root,'runtime',nativeGateway?'genie-native-runtime':'genie-runtime');
   fs.mkdirSync(base,{recursive:true,mode:0o700});
   const env={PATH:process.env.PATH??'/usr/bin:/bin',HOME:path.join(base,'installer-home'),
     UV_CACHE_DIR:path.join(base,'cache'),UV_PYTHON_INSTALL_DIR:path.join(base,'python'),
@@ -32,18 +34,21 @@ export async function installHermes(root,{log=console.log}={}){
   fs.mkdirSync(env.HOME,{recursive:true,mode:0o700});
   const source=path.join(base,'hermes-'+HERMES_REVISION),python=path.join(source,'.venv','bin','python');
   const receipt=path.join(source,'star-gate-install.json');
+  const verify=async()=>{
+    await run(python,['-I','-c','import sys; sys.path.insert(0,sys.argv[1]); from run_agent import AIAgent'+(nativeGateway?'; import aiohttp, telegram; from gateway.run import GatewayRunner':''),source],{cwd:source,env});
+  };
   if(fs.existsSync(receipt)){
     const saved=JSON.parse(fs.readFileSync(receipt));
-    if(saved.revision!==HERMES_REVISION||!fs.existsSync(path.join(source,'.git'))||
+    if(saved.revision!==HERMES_REVISION||(nativeGateway&&saved.native_gateway!==true)||!fs.existsSync(path.join(source,'.git'))||
       fs.realpathSync(await run('git',['rev-parse','--show-toplevel'],{cwd:source,env}))!==fs.realpathSync(source)||
       await run('git',['rev-parse','HEAD'],{cwd:source,env})!==HERMES_REVISION||
       await run('git',['status','--porcelain','--untracked-files=no'],{cwd:source,env})!=='')
       throw new Error('The dedicated Hermes runtime differs from its installation record; nothing replaced.');
-    await run(python,['-I','-c','import sys; sys.path.insert(0,sys.argv[1]); from run_agent import AIAgent',source],{cwd:source,env});
+    await verify();
     return {source,python};
   }
   const lock=path.join(base,'.install-lock');
-  try{fs.mkdirSync(lock);}catch{throw new Error('A Genie installation is already running or was interrupted. Check it before removing runtime/genie-runtime/.install-lock and retrying.');}
+  try{fs.mkdirSync(lock);}catch{throw new Error(`A Genie installation is already running or was interrupted. Check it before removing ${lock} and retrying.`);}
   try{
     const tools=path.join(base,'uv-'+UV_VERSION);fs.mkdirSync(tools,{recursive:true});
     const uv=path.join(tools,'uv-'+target[0],'uv');
@@ -65,9 +70,9 @@ export async function installHermes(root,{log=console.log}={}){
     await run('git',['fetch','--depth','1','https://github.com/NousResearch/hermes-agent.git',HERMES_REVISION],{cwd:source,env});
     await run('git',['checkout','--detach',HERMES_REVISION],{cwd:source,env});
     log('Installing private Python 3.12 and Hermes dependencies. This may take a few minutes…');
-    await run(uv,['sync','--frozen','--no-dev','--python','3.12','--managed-python'],{cwd:source,env});
-    await run(python,['-I','-c','import sys; sys.path.insert(0,sys.argv[1]); from run_agent import AIAgent',source],{cwd:source,env});
-    fs.writeFileSync(receipt,JSON.stringify({revision:HERMES_REVISION,uv:UV_VERSION,installed_at:new Date().toISOString()},null,2)+'\n',{mode:0o600});
+    await run(uv,['sync','--frozen','--no-dev','--python','3.12','--managed-python',...(nativeGateway?['--extra','messaging']:[])],{cwd:source,env});
+    await verify();
+    fs.writeFileSync(receipt,JSON.stringify({revision:HERMES_REVISION,uv:UV_VERSION,...(nativeGateway?{native_gateway:true}:{}),installed_at:new Date().toISOString()},null,2)+'\n',{mode:0o600});
     return {source,python};
   }finally{fs.rmdirSync(lock);}
 }
