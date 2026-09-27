@@ -45,6 +45,12 @@ export function projectNativeConversation({id,title='Gate Genie',session,message
     return reply;
   };
   for(const row of messages){
+    if(row.display_kind==='dsg_legacy'){
+      const legacy=row.dsg_legacy,message=legacy?.message;
+      if(legacy?.schema!==1||legacy.conversation_id!==id||typeof legacy.source_sha256!=='string'||!/^[a-f0-9]{64}$/.test(legacy.source_sha256)||!message||message.role!==row.role||message.text!==textContent(row.content)||typeof message.id!=='string'||!['complete','failed','interrupted'].includes(message.state))throw Error('Migrated native history evidence is inconsistent.');
+      result.push({...message,native_row_id:row.id,legacy_source_sha256:legacy.source_sha256});reply=null;
+      continue;
+    }
     if(row.role==='user'){
       reply=null;const text=textContent(row.content),marker=text.match(/^\[DSG request ([a-f0-9-]{36})\]\n\n/);
       result.push({id:`native-${session.session_id}-${row.id}`,role:'user',text:marker?text.slice(marker[0].length):text,state:'complete',at:stamp(row.timestamp),...(marker?{request_id:marker[1]}:{})});

@@ -505,3 +505,23 @@ unfinished reply interrupted; it never replays the request. A newer conversation
 save supersedes older checkpoints. Unreadable checkpoints are preserved and
 reported without hiding healthy conversations. Back up the whole chat directory,
 including checkpoints, when preserving an in-progress reply.
+
+
+### Staged native history migration
+
+The native migration helper `stage_legacy_history` creates a separate private
+bundle containing Hermes's canonical `state.db`, byte-for-byte legacy source
+files, and a hashed manifest. Every conversation needs an explicit native owner
+and origin binding. Active or held work, source drift, duplicate destinations,
+and occupied bundles cause refusal; they are never replayed or overwritten.
+
+Historical text, timestamps, failed/interrupted states and domain receipts remain
+available in the native dashboard transcript. Existing domain receipts stay
+historical evidence; migration does not manufacture native tool invocations or
+promote them to successful operations. Native replies extend the imported
+conversation through Hermes's existing session store.
+
+This helper does not activate a profile or transfer credentials, pending work,
+Telegram ownership, or the live poller. Cutover still requires a current idle
+snapshot, complete configuration and owner migration, preserved Stop/Continue
+and study behavior, and exclusive-poller acceptance.

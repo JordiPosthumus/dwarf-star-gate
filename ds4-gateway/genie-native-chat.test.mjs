@@ -145,3 +145,17 @@ test('native creation and discovery cannot replace an existing Telegram binding'
   f.client.control=async()=>({state:'unknown'});
   await assert.rejects(f.client.create({id}),/creation is unconfirmed/);
 });
+
+test('migrated history preserves failed/interrupted messages and original domain receipts without inventing native tool calls',()=>{
+ const id='11111111-1111-4111-8111-111111111111';
+ const originals=[{id:'old-user',role:'user',state:'complete',text:'Original question',at:100000},
+  {id:'old-reply',role:'assistant',state:'failed',text:'Unverified recovery',at:101000,error:'Old observation failure',power:{events:[{tool:'fleet_power',state:'complete',result:{ok:false,action_id:'retained-action'}}]}},
+  {id:'old-interrupted',role:'assistant',state:'interrupted',text:'Saved partial reply',at:102000}];
+ const imported=originals.map((message,index)=>({id:index+1,role:message.role,content:message.text,timestamp:message.at/1000,display_kind:'dsg_legacy',dsg_legacy:{schema:1,conversation_id:id,source_sha256:'a'.repeat(64),message}}));
+ const actual=projectNativeConversation({id,session:observed,messages:[...imported,{id:10,role:'user',content:'New native question',timestamp:103},{id:11,role:'assistant',content:'New native reply',timestamp:104,finish_reason:'stop'}]});
+ assert.deepEqual(actual.messages.slice(0,3).map(({native_row_id,legacy_source_sha256,...m})=>m),originals);
+ assert.equal(actual.messages.length,5);assert.equal(actual.messages.at(-1).state,'complete');
+ assert.equal(actual.messages[1].native_tools,undefined,'Historical receipt remains historical, not an invented Hermes invocation');
+ assert.throws(()=>projectNativeConversation({id:'another-conversation',session:observed,messages:imported}),/inconsistent/);
+ assert.throws(()=>projectNativeConversation({id,session:observed,messages:[{...imported[1],content:'Changed text'}]}),/inconsistent/);
+});

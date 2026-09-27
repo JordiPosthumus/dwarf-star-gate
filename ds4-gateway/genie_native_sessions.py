@@ -117,6 +117,12 @@ def native_display_page(db, session_id, offset, limit, revision=None):
     _, display = db.get_resume_conversations(resolved)
     keys = ('role', 'content', 'tool_call_id', 'tool_calls', 'tool_name', 'timestamp', 'finish_reason', 'display_kind')
     rows = [{'id': row['_row_id'], **{key: row[key] for key in keys if key in row}} for row in display]
+    for row, original in zip(rows, display):
+        if original.get('display_kind') == 'dsg_legacy':
+            legacy = (original.get('display_metadata') or {}).get('dsg_legacy')
+            if not isinstance(legacy, dict) or legacy.get('schema') != 1:
+                raise ValueError('Migrated conversation evidence is unavailable')
+            row['dsg_legacy'] = legacy
     digest = hashlib.sha256(json.dumps([resolved, rows], sort_keys=True).encode()).hexdigest()
     if revision is not None and revision != digest:
         raise ValueError('Native display changed during observation; read it again')
