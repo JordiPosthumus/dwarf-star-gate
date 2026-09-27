@@ -271,7 +271,7 @@ COLLECTOR = inspect.getsource(inspect_image_transfers)+'\n'+inspect.getsource(in
 import sys,json,subprocess,pathlib,re,hashlib,datetime,stat
 p=json.loads(sys.stdin.readline())
 secret=re.compile(r'api[_-]?key|access[_-]?token|secret|password|authorization|hf_token|hugging_face_hub_token|private[_-]?key|credential',re.I)
-def run(*a):return subprocess.check_output(a,text=True,timeout=20)
+def run(*a):return subprocess.check_output(a,text=True,stderr=subprocess.PIPE,timeout=20)
 if p.get('selected_image'):
  image_id=p['selected_image']
  if not re.fullmatch(r'sha256:[a-f0-9]{64}',image_id):raise ValueError('Invalid selected image')
@@ -296,7 +296,12 @@ if p.get('selected_image'):
  # Docker's ancestor filter also matches derived images. Keep exact image matches only.
  recipes=[{'id':c['Id'],'name':c['Name'],'image_id':c['Image'],'created_at':c['Created'],'running':c['State']['Running'],'started_at':c['State']['StartedAt'],'config':clean(c['Config']),'host_config':clean(c['HostConfig']),'mounts':clean(c['Mounts'])} for c in containers if c['Image']==image_id]
  print(json.dumps({'observed_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'selected_image':image_id,'image_present':True,'image':{'id':image['Id'],'created_at':image['Created'],'tags':image.get('RepoTags',[]),'repo_digests':image.get('RepoDigests',[]),'config':clean(image['Config'])},'retained_containers':recipes,'retained_containers_checked':True,'scope':'Read-only metadata for the exact owner-selected image and retained containers using that image. No container execution, image pull, restart, benchmark or file-content verification. A retained recipe is evidence, not proof it served the selected historical run or is ready to deploy.'}));sys.exit(0)
-c=json.loads(run('docker','inspect','--type','container','--',p['container']))[0]
+try:
+ c=json.loads(run('docker','inspect','--type','container','--',p['container']))[0]
+except subprocess.CalledProcessError as error:
+ if 'No such container:' in (error.stderr or '') or 'No such object:' in (error.stderr or ''):
+  print(json.dumps({'observed_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'container':{'name':p['container'],'present':False},'scope':'Docker explicitly reports the enrolled container absent on this reachable host. This does not explain why it is absent, prove other services idle, or authorize a restart. No server changes were made.'}));sys.exit(0)
+ print(json.dumps({'inspection_failure':{'stage':'container_inspection','kind':'docker_query_failed','exit_code':error.returncode},'scope':'SSH reached the host, but Docker inspection failed. Container presence and service state are unknown. No server changes were made.'}));sys.exit(0)
 i=json.loads(run('docker','image','inspect','--',c['Image']))[0]
 config=c['Config']
 # Query distribution metadata without importing the inference framework or writing bytecode.
@@ -553,7 +558,7 @@ def register_inspection(config, context, emit):
         event_kind='records' if kind=='artifact' else kind
         operation={'records':'read_server_configuration','live':'inspect_server','artifact':'read_server_artifact'}[kind]
         if not isinstance(worker,str) or worker not in known or not re.fullmatch(r'[a-zA-Z0-9][\w-]{0,63}',worker):return json.dumps({'error':'Unknown configured worker.'})
-        details={}
+        details={};diagnostic=None
         if kind=='artifact':
             details={key:value for key,value,allowed in [('artifact',args.get('artifact'),ARTIFACTS),('record_kind',args.get('record_kind','proposed'),['observed','approved','proposed'])] if value in allowed}
         if kind=='live' and isinstance(args.get('selected_default'),bool):details['selected_default']=args['selected_default']
@@ -632,11 +637,29 @@ def register_inspection(config, context, emit):
                 payload=json.dumps(payload_config)+'\n'+COLLECTOR
                 command='python3 -c '+"'import sys; import io; p=sys.stdin.readline(); code=sys.stdin.read(); sys.stdin=io.StringIO(p); exec(compile(code, \"<stargate-read-only>\", \"exec\"))'"
                 result=None
-                for alias in aliases:
-                    completed=subprocess.run(['ssh','-o','BatchMode=yes','-o','ConnectTimeout=8',alias,command],input=payload,text=True,capture_output=True,timeout=65)
+                for attempt,alias in enumerate(aliases,1):
+                    diagnostic={'stage':'ssh_collector','attempt':attempt,'kind':'unknown'}
+                    try:
+                        completed=subprocess.run(['ssh','-o','BatchMode=yes','-o','ConnectTimeout=8',alias,command],input=payload,text=True,capture_output=True,timeout=65)
+                    except subprocess.TimeoutExpired:
+                        diagnostic['kind']='timeout';raise
+                    diagnostic['exit_code']=completed.returncode
                     if completed.returncode==0:
-                        if len(completed.stdout)>512000:raise ValueError('Inspection too large')
-                        result=json.loads(completed.stdout);break
+                        diagnostic['stage']='collector_response'
+                        if len(completed.stdout)>512000:
+                            diagnostic['kind']='response_too_large';raise ValueError('Inspection too large')
+                        diagnostic['kind']='invalid_json'
+                        result=json.loads(completed.stdout)
+                        if 'inspection_failure' in result:
+                            diagnostic=result['inspection_failure'];result=None
+                        break
+                    diagnostic['kind']='ssh_failed' if completed.returncode==255 else 'collector_failed'
+                    # Classify known errors without disclosing arbitrary stderr,
+                    # credentials, command text, network names or tracebacks.
+                    error_text=(completed.stderr or '').lower()
+                    if completed.returncode==255:
+                        for marker,category in [('no route to host','network_unreachable'),('network is unreachable','network_unreachable'),('could not resolve hostname','name_resolution_failed'),('permission denied','authentication_failed'),('host key verification failed','host_key_verification_failed'),('connection refused','connection_refused'),('operation timed out','connection_timeout'),('connection timed out','connection_timeout')]:
+                            if marker in error_text:diagnostic['kind']=category;break
                     # Retry connection failures only; never hide a collector error by another target.
                     if completed.returncode!=255:break
                 if result is None:raise ValueError('Inspection unavailable')
@@ -646,9 +669,10 @@ def register_inspection(config, context, emit):
             emit('inspection',event={'kind':event_kind,'operation':operation,'worker_id':worker,**details,'state':'complete','at':at,'finished_at':datetime.now(timezone.utc).isoformat(),'revision':revision,'result':result})
             return encoded
         except Exception:
-            message='Saved artifact unavailable or different from its recorded hash. Existing files were preserved; do not treat this as verified evidence.' if kind=='artifact' else 'Read-only inspection unavailable. No server changes were made; ask the operator to check the configured record or inspection target.'
-            emit('inspection',event={'kind':event_kind,'operation':operation,'worker_id':worker,**details,'state':'failed','at':at,'finished_at':datetime.now(timezone.utc).isoformat(),'error':message})
-            return json.dumps({'error':message})
+            message='Saved artifact unavailable or different from its recorded hash. Existing files were preserved; do not treat this as verified evidence.' if kind=='artifact' else 'Read-only inspection unavailable. No server changes were made. Use the diagnostic and other enrolled evidence to investigate; failed observation does not establish native service state.'
+            evidence={'diagnostic':{**diagnostic,'scope':'Failed observation only. This does not prove a missing container, stopped service, bad configuration or failed physical machine.'}} if diagnostic else {}
+            emit('inspection',event={'kind':event_kind,'operation':operation,'worker_id':worker,**details,'state':'failed','at':at,'finished_at':datetime.now(timezone.utc).isoformat(),'error':message,**evidence})
+            return json.dumps({'error':message,**evidence})
     for name,kind,description in [('read_server_configuration','records','Read the full private recorded configuration, matching owner-selected defaults and their hashed selection receipts, plus launch recipes and artifact references for a configured worker. Dated records are not live evidence. selected_launch_flags is partial; omitted flags are unknown until checked against the full command or recreation capture. Never publish private fields.'),('inspect_server','live','Inspect the configured worker container and launcher now using a fixed read-only collector. Set selected_default=true to inspect the exact image ID from its owner-selected default and retained containers using that exact image, instead of the running container. Read the configuration first. For running vLLM, engine_runtime.cache_capacity reports current explicit KV token allocation and observation/start times, not a configured limit or cache-hit test. No image pull, container creation, execution of the selected image, or service changes. Metadata is not proof of a historical benchmark or effective generation settings. Supports configured Docker workers and local oMLX installations. selected_default applies only to Docker. For oMLX, inspect_server reads the enrolled launchers/settings with credentials redacted, live model metadata and the current listener; source on disk does not establish the loaded revision.'),('read_server_artifact','artifact','Read a saved baseline_reconciliation manifest, recreation_capture, or restoration_drill receipt referenced by a worker record. serving_flags_restoration reads the proof referenced by restoration.change_classes.serving_flags.drill_reference. restoration_drill uses restoration.drill.receipt_reference, and must have a recorded path and SHA256; a status label or receipt path alone is insufficient. Requires its recorded hash to match. Read the worker configuration first and use the actual record_kind and artifact reference it contains. Do not assume a proposed record or baseline manifest exists. Prefer the small baseline manifest when available; request the larger recreation capture when needed. Dated evidence, not new approval or live verification.')]:
         properties={'worker_id':{'type':'string'}}
         if kind=='live':

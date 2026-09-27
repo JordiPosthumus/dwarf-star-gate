@@ -47,6 +47,28 @@ class Inspection(unittest.TestCase):
   self.register({'example':{'ssh':['example-a','example-b'],'container':'example-engine'}})
   with patch.object(m.subprocess,'run',return_value=types.SimpleNamespace(returncode=1,stdout='',stderr='PRIVATE_FAILURE')) as run:
    result=self.call('inspect_server',{'worker_id':'example'});self.assertIn('error',result);self.assertNotIn('PRIVATE_FAILURE',json.dumps(result));self.assertEqual(run.call_count,1)
+ def test_transport_failure_has_bounded_diagnostic_not_missing_container_claim(self):
+  self.register({'example':{'ssh':['example-a'],'container':'example-engine'}})
+  for stderr,kind in [('ssh: connect to PRIVATE_HOST: No route to host','network_unreachable'),('Permission denied PRIVATE_KEY','authentication_failed'),('PRIVATE_FAILURE','ssh_failed')]:
+   with patch.object(m.subprocess,'run',return_value=types.SimpleNamespace(returncode=255,stdout='',stderr=stderr)):
+    result=self.call('inspect_server',{'worker_id':'example'})
+   self.assertEqual(result['diagnostic']['kind'],kind);self.assertEqual(result['diagnostic']['exit_code'],255)
+   self.assertNotIn('PRIVATE_',json.dumps(result));self.assertNotIn('container',result);self.assertEqual(self.events[-1][1]['event']['diagnostic'],result['diagnostic'])
+ def test_remote_collector_reports_docker_failure_without_raw_output(self):
+  self.register({'example':{'ssh':['example-a'],'container':'example-engine'}})
+  diagnostic={'stage':'container_inspection','kind':'docker_query_failed','exit_code':1}
+  with patch.object(m.subprocess,'run',return_value=types.SimpleNamespace(returncode=0,stdout=json.dumps({'inspection_failure':diagnostic}),stderr='')):
+   result=self.call('inspect_server',{'worker_id':'example'})
+  self.assertIn('error',result);self.assertEqual(result['diagnostic']['kind'],'docker_query_failed')
+ def test_collector_distinguishes_explicit_absence_from_unavailable_docker(self):
+  import contextlib,io,subprocess
+  for stderr,absent in [('Error: No such container: example-engine',True),('Cannot connect to PRIVATE_DOCKER',False)]:
+   output=io.StringIO()
+   with patch('subprocess.check_output',side_effect=subprocess.CalledProcessError(1,['docker'],stderr=stderr)),patch('sys.stdin',io.StringIO(json.dumps({'container':'example-engine'}))),contextlib.redirect_stdout(output):
+    with self.assertRaises(SystemExit):exec(compile(m.COLLECTOR,'collector','exec'),{})
+   result=json.loads(output.getvalue());self.assertNotIn('PRIVATE_',json.dumps(result))
+   if absent:self.assertFalse(result['container']['present']);self.assertIn('does not explain why',result['scope'])
+   else:self.assertEqual(result['inspection_failure']['kind'],'docker_query_failed');self.assertNotIn('container',result)
  def test_source_files_reach_fixed_collector_and_existing_receipts(self):
   self.register({'example':{'ssh':['example-host'],'container':'example-engine'}})
   sources={'status':'read','files':[{'path':'vllm/example.py','status':'read','text':'value = 1','sha256':'c'*64}]}

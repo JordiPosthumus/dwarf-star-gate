@@ -225,3 +225,41 @@ test('exact trial status excludes unrelated fleet history and does not call or a
  assert.ok(JSON.stringify(result).length<1024);
  await assert.rejects(power.tool({action:'status',trial_id:'../anything'}),/exact enrolled trial/);
 });
+
+test('exact power action lookup follows the same execution beyond the recent-history window',async()=>{
+ let release,calls=0;
+ const runner=createPowerRunner({directory,spawn:async()=>{calls++;await new Promise(resolve=>{release=resolve;});return {exit_code:1,output:'Launch could not be confirmed'};},verify:async()=>({state:'timeout'})});
+ const tools=createFleetPowerTools({runner,read:async()=>({version:1,workers:[{id:'glm53f-m3'}]}),recipes:{busy:()=>false,status:()=>{throw Error('Do not read unrelated recipe history');}}});
+ const id=UUID();await tools.tool({action:'power',worker:'glm53f-m3',power_action:'start',action_id:id});
+ const pending=await tools.tool({action:'status',action_id:id});
+ assert.equal(pending.state,'running');assert.equal(pending.receipt.verified.state,'pending');assert.equal(calls,1);
+ release();await new Promise(resolve=>setImmediate(resolve));
+ runner.receipts=()=>[]; // Model a receipt falling out of the runner's bounded history.
+ const result=await tools.tool({action:'status',action_id:id});
+ assert.equal(result.state,'complete');assert.equal(result.receipt.exit_code,1);assert.equal(result.receipt.ok,false);assert.equal(result.receipt.verified.state,'timeout');assert.equal(calls,1);
+ assert.equal(result.recipe_trials,undefined);assert.equal(result.members,undefined);assert.ok(JSON.stringify(result).length<3000);
+ const unknown=await tools.tool({action:'status',action_id:UUID()});assert.equal(unknown.state,'unknown');assert.equal(unknown.receipt,null);assert.equal(calls,1);
+ await assert.rejects(tools.tool({action:'status',action_id:'../bad'}),/exact power/);
+ await assert.rejects(tools.tool({action:'status',action_id:id,trial_id:id}));
+});
+
+test('power receipts survive process reconstruction and uncertain actions cannot be replayed',async t=>{
+ const receiptDirectory=fs.mkdtempSync(path.join(os.tmpdir(),'power-receipts-'));t.after(()=>fs.rmSync(receiptDirectory,{recursive:true,force:true}));
+ let release,calls=0;
+ const read=async()=>({version:1,workers:[{id:'glm53f-m3'}]});
+ const runner=createPowerRunner({directory,spawn:async()=>{calls++;await new Promise(resolve=>{release=resolve;});return {exit_code:1,output:'Observed failure'};},verify:async()=>({state:'timeout'})});
+ const first=createFleetPowerTools({runner,read,receiptDirectory});
+ const input={action:'power',worker:'glm53f-m3',power_action:'start',action_id:UUID()};await first.tool(input);
+ const nextRunner=createPowerRunner({directory,spawn:async()=>{throw Error('Must not replay');}});
+ const resumed=createFleetPowerTools({runner:nextRunner,read,receiptDirectory});
+ assert.equal((await resumed.tool({action:'status',action_id:input.action_id})).state,'unknown');
+ assert.equal((await resumed.tool(input)).state,'unknown');
+ await assert.rejects(resumed.tool({...input,action_id:UUID()}),/no terminal receipt/);
+ assert.equal(calls,1);release();await new Promise(resolve=>setImmediate(resolve));
+ const finished=createFleetPowerTools({runner:nextRunner,read,receiptDirectory});
+ const result=await finished.tool({action:'status',action_id:input.action_id});
+ assert.equal(result.state,'complete');assert.equal(result.receipt.ok,false);assert.equal(result.receipt.exit_code,1);assert.equal(result.receipt.output,'Observed failure');assert.equal(result.receipt.verified.state,'timeout');
+ assert.equal((await finished.tool(input)).receipt.exit_code,1);assert.equal(calls,1);
+ assert.equal(fs.statSync(path.join(receiptDirectory,input.action_id+'.json')).mode&0o777,0o600);
+ await assert.rejects(finished.tool({...input,power_action:'stop'}),/another action/);
+});
