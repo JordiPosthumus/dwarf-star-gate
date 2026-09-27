@@ -40,6 +40,34 @@ class NativeSessions(unittest.TestCase):
         self.assertEqual(restarted.dispatch(self.payload)['message'], self.payload['message'])
         self.assertEqual(self.inject.call_count, 1)
 
+    def test_original_request_identity_survives_restart_and_cannot_be_reassigned(self):
+        payload = {**self.payload, 'source_request_id': 'study-follow-up-12345'}
+        receipt = self.requests.dispatch(payload)
+        self.assertEqual(receipt['source_request_id'], payload['source_request_id'])
+        restarted = NativeSessionRequests(self.directory, ['owner-session', 'other-session'], self.inject)
+        self.assertEqual(restarted.dispatch(payload), receipt)
+        metadata = restarted.transcript_metadata('owner-session', self.inject.call_args.args[0])
+        self.assertEqual(metadata, {'schema': 1, 'request_id': payload['request_id'],
+                                    'source_request_id': payload['source_request_id']})
+        for change in ({'source_request_id': 'another-request'}, {'source_request_id': '../invalid'},
+                       {'source_request_id': None}, {'source_request_id': 12345}):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                restarted.dispatch({**payload, **change})
+        with self.assertRaises(ValueError):
+            restarted.dispatch(self.payload)
+        self.assertEqual(self.inject.call_count, 1)
+        with self.assertRaisesRegex(ValueError, 'correlation'):
+            restarted.transcript_metadata('other-session', self.inject.call_args.args[0])
+        with self.assertRaisesRegex(ValueError, 'correlation'):
+            restarted.transcript_metadata('owner-session', self.inject.call_args.args[0] + ' altered')
+
+    def test_unrecorded_or_legacy_markers_do_not_invent_original_request_identity(self):
+        content = '[DSG request ' + self.payload['request_id'] + ']\n\n' + self.payload['message']
+        self.assertIsNone(self.requests.transcript_metadata('owner-session', content))
+        self.requests.dispatch(self.payload)
+        self.assertIsNone(self.requests.transcript_metadata('owner-session', content))
+        self.assertIsNone(self.requests.transcript_metadata('owner-session', '[DSG request ' + '-' * 36 + ']\n\ntext'))
+
     def test_rejects_other_sessions_changed_instructions_and_extra_fields(self):
         for change in ({'session_key': 'other'}, {'session_key': []}, {'request_id': '../escape'},
                        {'message': ''}, {'command': 'start'}):

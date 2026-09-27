@@ -53,7 +53,9 @@ export function projectNativeConversation({id,title='Gate Genie',session,message
     }
     if(row.role==='user'){
       reply=null;const text=textContent(row.content),marker=text.match(/^\[DSG request ([a-f0-9-]{36})\]\n\n/);
-      result.push({id:`native-${session.session_id}-${row.id}`,role:'user',text:marker?text.slice(marker[0].length):text,state:'complete',at:stamp(row.timestamp),...(marker?{request_id:marker[1]}:{})});
+      const correlation=row.dsg_request;
+      if(correlation&&(correlation.schema!==1||!marker||correlation.request_id!==marker[1]||nativeRequestId(id,correlation.source_request_id)!==marker[1]))throw Error('Native request correlation is inconsistent.');
+      result.push({id:`native-${session.session_id}-${row.id}`,role:'user',text:marker?text.slice(marker[0].length):text,state:'complete',at:stamp(row.timestamp),...(marker?{request_id:correlation?.source_request_id??marker[1],native_request_id:marker[1]}:{})});
     }else if(row.role==='assistant'){
       const current=ensureReply(row),text=textContent(row.content);
       if(text)current.text+=(current.text?'\n\n':'')+text;
@@ -145,8 +147,8 @@ export class NativeHermesChatClient{
     const b=this.binding(id);
     if(typeof text!=='string'||!text.trim()||text.length>32000)throw Error('Enter a message of up to 32,000 characters.');
     const identity=nativeRequestId(id,requestId);
-    const receipt=await this.control({action:'send',request_id:identity,session_key:b.session_key,message:text.trim()});
-    if(receipt.request_id!==identity||receipt.state!=='accepted_unverified')throw Error('Native dispatch acceptance is unconfirmed. Keep the same request identity for reconciliation.');
+    const receipt=await this.control({action:'send',request_id:identity,source_request_id:requestId,session_key:b.session_key,message:text.trim()});
+    if(receipt.request_id!==identity||receipt.source_request_id!==requestId||receipt.state!=='accepted_unverified')throw Error('Native dispatch acceptance is unconfirmed. Keep the same request identity for reconciliation.');
     return receipt;
   }
   async stop(id,turnId,holdId){

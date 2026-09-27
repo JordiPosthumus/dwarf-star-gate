@@ -132,6 +132,8 @@ assert.deepEqual(nativeAfter.messages.slice(0,2).map(({native_row_id,legacy_sour
 const queuedFirst=nativeAfter.messages.findIndex(m=>m.role==='user'&&m.text===queuedRequest.message);
 const queuedSecond=nativeAfter.messages.findIndex(m=>m.role==='user'&&m.text==='A second distinct dashboard follow-up must run in order.');
 assert.ok(queuedFirst>=0&&queuedSecond>queuedFirst,'Separate native FIFO instructions retain arrival order');
+assert.equal(nativeAfter.messages[queuedFirst].request_id,'watcher-follow-up-fixture','Original follow-up identity survives native queuing and gateway restart');
+assert.equal(nativeAfter.messages[queuedSecond].request_id,'watcher-second-follow-up-fixture','Each queued input retains its own original identity');
 assert.equal((await control({action:'transcript',session_key:'agent:main:telegram:dm:54321',session_id:nativeAfter.native_session_id,offset:0,limit:2,revision:null})).body.state,'rejected','Display history is limited to the explicitly bound owner session');
 assert.equal((await nativeChat.receipt('11111111-1111-4111-8111-111111111111','watcher-follow-up-fixture')).state,'accepted_unverified','Dispatch state is not silently promoted to operational success');
 write('native-transcript.json',nativeAfter);

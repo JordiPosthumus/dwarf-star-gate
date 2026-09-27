@@ -577,6 +577,15 @@ in order. This is still a staged read/control component: submission/research
 policy, study scheduling, watcher freshness, complete profile migration and
 exclusive-poller cutover must be finished before selecting it in production.
 
+Native dispatch receipts retain both the caller's original request identifier
+and the derived native dispatch UUID. Dashboard history exposes the original
+identifier only when the saved receipt matches the session and exact injected
+message, and the client verifies the UUID belongs to that conversation and
+original identifier. Queuing and process restart preserve this correlation so
+scheduled studies can recognize their own replies. Historical receipts without
+that metadata retain their native identity. A changed identifier or uncertain
+acknowledgment never triggers an automatic replay.
+
 
 ### Existing Spark connection repair
 

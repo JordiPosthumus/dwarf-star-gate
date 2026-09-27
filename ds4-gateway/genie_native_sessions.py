@@ -8,6 +8,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import stat
 from datetime import datetime, timezone
 from pathlib import Path
@@ -103,7 +104,7 @@ class NativeConversationCatalog:
         return row
 
 
-def native_display_page(db, session_id, offset, limit, revision=None):
+def native_display_page(db, session_id, offset, limit, revision=None, *, request_metadata=None):
     """Project Hermes's canonical display lineage, never its compressed model context.
 
     get_resume_conversations reads one native snapshot and preserves archived
@@ -123,6 +124,10 @@ def native_display_page(db, session_id, offset, limit, revision=None):
             if not isinstance(legacy, dict) or legacy.get('schema') != 1:
                 raise ValueError('Migrated conversation evidence is unavailable')
             row['dsg_legacy'] = legacy
+        elif row.get('role') == 'user' and request_metadata is not None:
+            metadata = request_metadata(row.get('content'))
+            if metadata is not None:
+                row['dsg_request'] = metadata
     digest = hashlib.sha256(json.dumps([resolved, rows], sort_keys=True).encode()).hexdigest()
     if revision is not None and revision != digest:
         raise ValueError('Native display changed during observation; read it again')
@@ -152,9 +157,35 @@ class NativeSessionRequests:
     def _save(self, file, value):
         private_save(file, value)
 
+    def transcript_metadata(self, session_key, content):
+        """Recover correlation from the saved dispatch, never from model prose."""
+        if session_key not in self.allowed or not isinstance(content, str):
+            return None
+        marker = re.match(r'^\[DSG request ([a-f0-9-]{36})\]\n\n', content)
+        if marker is None:
+            return None
+        try:
+            file = self._path(marker[1])
+        except ValueError:
+            return None
+        with self.lock:
+            record = self._read(file)
+        if record is None or 'source_request_id' not in record:
+            return None
+        message = content[marker.end():]
+        source = record['source_request_id']
+        fingerprint = hashlib.sha256(json.dumps([session_key, message, source]).encode()).hexdigest()
+        if (record.get('request_id') != marker[1] or record.get('session_key') != session_key
+                or record.get('message') != message or record.get('fingerprint') != fingerprint
+                or not isinstance(source, str) or re.fullmatch(r'[a-zA-Z0-9-]{8,80}', source) is None):
+            raise ValueError('Native request correlation does not match its retained dispatch')
+        return {'schema': 1, 'request_id': marker[1], 'source_request_id': source}
+
     def dispatch(self, payload):
         action = payload.get('action')
         expected = {'action', 'request_id'} if action == 'status' else {'action', 'request_id', 'session_key', 'message'}
+        if action == 'send' and 'source_request_id' in payload:
+            expected.add('source_request_id')
         if action not in {'send', 'status'} or set(payload) != expected:
             raise ValueError('Use one exact send or status request')
         file = self._path(payload['request_id'])
@@ -166,7 +197,13 @@ class NativeSessionRequests:
             message = payload['message']
             if not isinstance(session, str) or session not in self.allowed or not isinstance(message, str) or not message.strip():
                 raise ValueError('Use an explicitly connected native session and nonempty message')
-            fingerprint = hashlib.sha256(json.dumps([session, message]).encode()).hexdigest()
+            identity_input = [session, message]
+            if 'source_request_id' in payload:
+                source = payload['source_request_id']
+                if not isinstance(source, str) or re.fullmatch(r'[a-zA-Z0-9-]{8,80}', source) is None:
+                    raise ValueError('Use a valid original request identifier')
+                identity_input.append(source)
+            fingerprint = hashlib.sha256(json.dumps(identity_input).encode()).hexdigest()
             if prior:
                 if prior['fingerprint'] != fingerprint:
                     raise ValueError('Request identity belongs to different input')
@@ -177,6 +214,8 @@ class NativeSessionRequests:
                       'fingerprint': fingerprint, 'message': message, 'state': 'dispatching',
                       'created_at': datetime.now(timezone.utc).isoformat(),
                       'scope': 'Dispatch receipt only. Verify the matching native transcript before claiming completion. Uncertain dispatch must not be replayed.'}
+            if 'source_request_id' in payload:
+                record['source_request_id'] = payload['source_request_id']
             self._save(file, record)
             try:
                 accepted = self.inject('[DSG request ' + payload['request_id'] + ']\n\n' + message, session_key=session)
@@ -282,7 +321,8 @@ def register_native_sessions(ctx):
             if db is None:
                 return {'state': 'unavailable', 'session_key': key}
             page = await asyncio.to_thread(native_display_page, db, before['session_id'],
-                                          payload['offset'], payload['limit'], payload['revision'])
+                                          payload['offset'], payload['limit'], payload['revision'],
+                                          request_metadata=lambda content: self.requests.transcript_metadata(key, content))
             after = await self.observe_session({'action': 'session', 'session_key': key})
             if after.get('state') != 'observed' or after['session_id'] != before['session_id']:
                 raise ValueError('Native session changed during observation; read it again')

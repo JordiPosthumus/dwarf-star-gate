@@ -43,6 +43,18 @@ test('request identity is stable across retries and distinct across conversation
   assert.throws(()=>nativeRequestId('one','bad/id'));
 });
 
+test('native history recovers the original study request identity and rejects mismatched correlation',()=>{
+  const id='conversation',source='study-follow-up-12345',native=nativeRequestId(id,source);
+  const row={id:10,role:'user',content:`[DSG request ${native}]\n\nInspect the service.`,timestamp:100,
+    dsg_request:{schema:1,request_id:native,source_request_id:source}};
+  const project=message=>projectNativeConversation({id,session:observed,messages:[message],pagination:{offset:0,returned:1,total:1}}).messages[0];
+  assert.equal(project(row).request_id,source);assert.equal(project(row).native_request_id,native);
+  assert.equal(project(row).text,'Inspect the service.');
+  for(const change of [{source_request_id:'another-request'},{request_id:nativeRequestId('other',source)},{schema:2}])
+    assert.throws(()=>project({...row,dsg_request:{...row.dsg_request,...change}}),/correlation/);
+  const {dsg_request,...legacy}=row;assert.equal(project(legacy).request_id,native,'Existing uncorrelated receipts retain their native identity');
+});
+
 async function fixture(t){
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'dsg-native-client-'));t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
   const f={calls:[],api_key:'fixture-api-key-000000',control_token:'fixture-control-key-000000',changed:false,unavailable:false,reads:0};
@@ -53,7 +65,7 @@ async function fixture(t){
     if(req.headers.authorization!=='Bearer '+f[control?'control_token':'api_key']){res.statusCode=401;return res.end('{}');}
     if(f.unavailable){res.statusCode=503;return res.end('{"secret":"must-not-leak"}');}
     if(body?.action==='session'){f.reads++;return res.end(JSON.stringify({...observed,session_id:f.changed&&f.reads>1?'changed-session':'native-session'}));}
-    if(body?.action==='send')return res.end(JSON.stringify({state:f.dispatchState??'accepted_unverified',request_id:body.request_id}));
+    if(body?.action==='send')return res.end(JSON.stringify({state:f.dispatchState??'accepted_unverified',request_id:body.request_id,source_request_id:f.wrongCorrelation?'wrong-request':body.source_request_id}));
     if(body?.action==='status')return res.end(JSON.stringify({state:'unknown',request_id:body.request_id}));
     assert.equal(body?.action,'transcript');
     const data=rows.slice(body.offset,body.offset+body.limit);
@@ -92,6 +104,12 @@ test('native rejected and uncertain dispatch states cannot be counted as accepte
   }
   assert.equal(f.calls.length,4);
   assert.equal(new Set(f.calls.map(c=>c.body.request_id)).size,1);
+});
+
+test('a dispatch acknowledgment for another original request does not authorize a retry',async t=>{
+  const f=await fixture(t);f.wrongCorrelation=true;
+  await assert.rejects(f.client.submit('conversation','Inspect','request-12345'),/acceptance is unconfirmed/);
+  assert.equal(f.calls.length,1);
 });
 
 test('native descriptor rejects shared files and nonlocal credential destinations',async t=>{
