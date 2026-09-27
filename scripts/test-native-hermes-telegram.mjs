@@ -65,12 +65,15 @@ for(let i=0;i<100&&!heldModel;i++)await new Promise(r=>setTimeout(r,100));
 assert.ok(heldModel,'Native Telegram turn reached the delayed provider');
 const callsWhileHeld=modelCalls;
 const queuedRequest={...nativeRequest,request_id:'12345678-1234-4234-8234-123456789abd',message:'Dashboard input queued while the Telegram turn is still running.'};
-assert.equal((await nativeChat.session('fixture-conversation')).busy,true,'Native scheduler reports the held turn as busy');
+const heldSession=await nativeChat.session('fixture-conversation');
+assert.equal(heldSession.busy,true,'Native scheduler reports the held turn as busy');
+assert.match(heldSession.turn_id,/^[a-f0-9-]{36}:[a-f0-9-]{36}:\d+$/,'Held execution has an exact native guard/generation identity');
 assert.equal((await nativeChat.submit('fixture-conversation',queuedRequest.message,'watcher-follow-up-fixture')).state,'accepted_unverified');
 assert.equal((await nativeChat.submit('fixture-conversation',queuedRequest.message,'watcher-follow-up-fixture')).state,'accepted_unverified');
 await nativeChat.submit('fixture-conversation','A second distinct dashboard follow-up must run in order.','watcher-second-follow-up-fixture');
 await new Promise(r=>setTimeout(r,1000));
 assert.equal((await nativeChat.session('fixture-conversation')).queued,2,'Native FIFO depth includes both pending dashboard instructions');
+assert.equal((await nativeChat.session('fixture-conversation')).turn_id,heldSession.turn_id,'Queued inputs do not replace the current execution identity');
 assert.equal(modelCalls,callsWhileHeld,'Dashboard input must not start a competing agent turn or interrupt the active turn');
 releaseModel();
 for(let i=0;i<150;i++){if(telegramCalls.filter(c=>c.method==='sendMessage'&&c.body.text?.includes('executed the enrolled tool')).length>=5)break;await new Promise(r=>setTimeout(r,200));}

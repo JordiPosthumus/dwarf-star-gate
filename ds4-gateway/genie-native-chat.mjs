@@ -70,7 +70,7 @@ export function projectNativeConversation({id,title='Gate Genie',session,message
     }
   }
   return {id,title,messages:result,native_session_id:session.session_id,native_session_key:session.session_key,
-    busy:session.busy,queued:session.queued,observed_at:session.observed_at,updated_at:Math.max(0,...result.map(m=>Number.isFinite(m.at)?m.at:0)),
+    busy:session.busy,queued:session.queued,native_turn_id:session.turn_id??null,observed_at:session.observed_at,updated_at:Math.max(0,...result.map(m=>Number.isFinite(m.at)?m.at:0)),
     pagination,history_complete:pagination?.offset===0&&Number.isSafeInteger(pagination?.total)&&pagination.returned===pagination.total,
     scope:'Native Hermes transcript. A completed reply or tool call does not prove the requested fleet outcome.'};
 }

@@ -189,6 +189,8 @@ def register_native_sessions(ctx):
     class NativeUIAdapter(BasePlatformAdapter):
         def __init__(self, config):
             super().__init__(config, Platform('stargate_control'))
+            from genie_native_queue import NativeTurnIdentities
+            self.turn_identities = NativeTurnIdentities()
             self.requests = NativeSessionRequests(ctx.state.data_dir / 'ui-requests',
                                                   config.extra.get('allowed_session_keys', []), ctx.inject_message)
             self.conversations = NativeConversationCatalog(ctx.state.data_dir / 'ui-conversations',
@@ -281,6 +283,7 @@ def register_native_sessions(ctx):
                 return {'state': 'unavailable', 'session_key': key}
             return {'state': 'observed', 'session_key': key, 'session_id': entry.session_id,
                     'busy': key in active or bool(entry.active_turn_token),
+                    'turn_id': self.turn_identities.current(runner, adapter, key),
                     'queued': runner._queue_depth(key, adapter=adapter),
                     'suspended': bool(entry.suspended), 'resume_pending': bool(entry.resume_pending),
                     'platform': entry.origin.platform.value, 'user_id': entry.origin.user_id,

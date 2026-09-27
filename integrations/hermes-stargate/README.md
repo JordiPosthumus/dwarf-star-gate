@@ -189,3 +189,18 @@ Notebook contents remain private context and are not operational authorization.
 
 The live dashboard backend switch, stop/continue controls, study scheduling and
 owner/history migration still require completion before production cutover.
+
+The session observation now includes `turn_id` only when a live native adapter
+guard matches the runner's current execution generation. The identity changes
+on a new guard, generation, or process. A missing or invalidated execution has
+no stoppable identity; old transcript IDs must never substitute for it.
+
+`genie_native_queue.py` provides the staged save-before-detach checkpoint for
+native pending events. It preserves all normalized event fields, Telegram raw
+message data, attachments, reply context, order and command trust flags in
+private records. Unsupported metadata or an oversized checkpoint leaves the
+native queue intact. `prepared` records are uncertain and must not be replayed;
+`held` confirms queue detachment, not interruption of an agent. Failed writes
+after atomic replacement require reconciliation rather than duplication.
+This primitive does not install the hold gate, stop a turn, or resume input.
+Those controls remain disabled until their native integration is tested.
