@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {spawn} from 'node:child_process';
+import {NATIVE_POLICY_VERSION,applyNativeHermesPolicy,verifyNativeHermesPolicy} from './hermes-native-policy.mjs';
 
 export const HERMES_REVISION='2237be355906fbe6065ce1815711eee52b2d646e';
 const UV_VERSION='0.11.8';
@@ -32,17 +33,17 @@ export async function installHermes(root,{log=console.log,nativeGateway=false}={
     UV_PYTHON_BIN_DIR:path.join(base,'bin'),UV_NO_CONFIG:'1',
     GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null',GIT_TERMINAL_PROMPT:'0',LANG:'en_US.UTF-8'};
   fs.mkdirSync(env.HOME,{recursive:true,mode:0o700});
-  const source=path.join(base,'hermes-'+HERMES_REVISION),python=path.join(source,'.venv','bin','python');
+  const source=path.join(base,'hermes-'+HERMES_REVISION+(nativeGateway?'-telegram-policy'+NATIVE_POLICY_VERSION:'')),python=path.join(source,'.venv','bin','python');
   const receipt=path.join(source,'star-gate-install.json');
   const verify=async()=>{
     await run(python,['-I','-c','import sys; sys.path.insert(0,sys.argv[1]); from run_agent import AIAgent'+(nativeGateway?'; import aiohttp, telegram; from gateway.run import GatewayRunner':''),source],{cwd:source,env});
   };
   if(fs.existsSync(receipt)){
     const saved=JSON.parse(fs.readFileSync(receipt));
-    if(saved.revision!==HERMES_REVISION||(nativeGateway&&saved.native_gateway!==true)||!fs.existsSync(path.join(source,'.git'))||
+    if(saved.revision!==HERMES_REVISION||(nativeGateway&&(saved.native_gateway!==true||saved.native_policy!==NATIVE_POLICY_VERSION))||!fs.existsSync(path.join(source,'.git'))||
       fs.realpathSync(await run('git',['rev-parse','--show-toplevel'],{cwd:source,env}))!==fs.realpathSync(source)||
       await run('git',['rev-parse','HEAD'],{cwd:source,env})!==HERMES_REVISION||
-      await run('git',['status','--porcelain','--untracked-files=no'],{cwd:source,env})!=='')
+      (nativeGateway?!verifyNativeHermesPolicy(source,env):await run('git',['status','--porcelain','--untracked-files=no'],{cwd:source,env})!==''))
       throw new Error('The dedicated Hermes runtime differs from its installation record; nothing replaced.');
     await verify();
     return {source,python};
@@ -69,10 +70,11 @@ export async function installHermes(root,{log=console.log,nativeGateway=false}={
     log('Downloading the pinned Hermes source…');
     await run('git',['fetch','--depth','1','https://github.com/NousResearch/hermes-agent.git',HERMES_REVISION],{cwd:source,env});
     await run('git',['checkout','--detach',HERMES_REVISION],{cwd:source,env});
+    if(nativeGateway)applyNativeHermesPolicy(source,env);
     log('Installing private Python 3.12 and Hermes dependencies. This may take a few minutes…');
     await run(uv,['sync','--frozen','--no-dev','--python','3.12','--managed-python',...(nativeGateway?['--extra','messaging']:[])],{cwd:source,env});
     await verify();
-    fs.writeFileSync(receipt,JSON.stringify({revision:HERMES_REVISION,uv:UV_VERSION,...(nativeGateway?{native_gateway:true}:{}),installed_at:new Date().toISOString()},null,2)+'\n',{mode:0o600});
+    fs.writeFileSync(receipt,JSON.stringify({revision:HERMES_REVISION,uv:UV_VERSION,...(nativeGateway?{native_gateway:true,native_policy:NATIVE_POLICY_VERSION}:{}),installed_at:new Date().toISOString()},null,2)+'\n',{mode:0o600});
     return {source,python};
   }finally{fs.rmdirSync(lock);}
 }

@@ -1,0 +1,21 @@
+import {test} from 'node:test';import assert from 'node:assert/strict';
+import fs from 'node:fs';import path from 'node:path';import os from 'node:os';import {execFileSync} from 'node:child_process';
+import {applyNativeHermesPolicy,verifyNativeHermesPolicy,telegramPreservationPatch} from './hermes-native-policy.mjs';
+test('native policy refuses source drift and rejects changes beyond its recorded patch',t=>{
+ const source=fs.mkdtempSync(path.join(os.tmpdir(),'hermes-policy-'));t.after(()=>fs.rmSync(source,{recursive:true,force:true}));
+ const relative='plugins/platforms/telegram/adapter.py',file=path.join(source,relative);
+ fs.mkdirSync(path.dirname(file),{recursive:true});
+ const original=['# Native adapter fixture','drop_pending_updates=not is_reconnect, # webhook','drop_pending_updates=not is_reconnect, # poll','app, drop_pending_updates=True, error_callback=self._polling_error_callback_ref',''].join('\n');
+ fs.writeFileSync(file,original);fs.writeFileSync(path.join(source,'unrelated.py'),'preserved\n');
+ const git=(...args)=>execFileSync('git',args,{cwd:source,stdio:'pipe'});
+ git('init','-q');git('add','.');git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','Fixture');
+ fs.appendFileSync(file,'# operator edit\n');assert.throws(()=>applyNativeHermesPolicy(source),/Refusing/);
+ assert.ok(fs.readFileSync(file,'utf8').endsWith('# operator edit\n'));
+ fs.writeFileSync(file,original);applyNativeHermesPolicy(source);assert.equal(verifyNativeHermesPolicy(source),true);
+ applyNativeHermesPolicy(source);assert.equal(verifyNativeHermesPolicy(source),true,'Interrupted dependency installation can resume its exact patch');
+ assert.equal(fs.readFileSync(path.join(source,'unrelated.py'),'utf8'),'preserved\n');
+ fs.appendFileSync(path.join(source,'unrelated.py'),'unexpected\n');assert.equal(verifyNativeHermesPolicy(source),false);
+ fs.writeFileSync(path.join(source,'unrelated.py'),'preserved\n');
+ fs.appendFileSync(file,'# unrecorded edit\n');assert.equal(verifyNativeHermesPolicy(source),false);
+ assert.throws(()=>telegramPreservationPatch(original.replace('drop_pending_updates=not is_reconnect','changed upstream behavior')),/sites changed/);
+});

@@ -34,3 +34,22 @@ core runtime. It does not start a process or configure a bot.
 Outstanding work includes shared session serialization, transcript and owner
 migration, operation-follow-up delivery, and live Telegram acceptance.
 Do not launch this against the live bot while the existing poller is running.
+
+The native runtime carries a versioned three-site patch to the pinned Hermes
+Telegram adapter. Setting `platforms.telegram.extra.preserve_pending_updates:
+true` prevents queue deletion during cold startup, webhook startup and polling
+conflict recovery. DSG's migrated profile must enable it. The default remains
+upstream behavior for profiles that omit the setting. This patch contains no
+poller or session implementation; the native adapter still handles the channel.
+A competing poller must be stopped rather than resolved by discarding messages.
+
+The installer uses a separate policy-version directory, keeps the earlier
+runtime intact, verifies the exact patch on reuse, and refuses unrelated tracked
+source changes. Review all three source sites when updating the Hermes pin.
+
+Run `npm run genie:native-channel-test -- /absolute/path/to/installed/hermes-source`
+after installing the native runtime. The test starts the actual upstream gateway
+and Telegram adapter against local fake endpoints in a temporary profile. It
+checks startup message preservation, typing, an enrolled tool receipt, rejected
+unauthorized input, and history plus queued-message delivery across restart.
+It never reads the installation's Telegram token or invokes production tools.
