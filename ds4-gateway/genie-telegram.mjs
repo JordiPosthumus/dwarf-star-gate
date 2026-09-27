@@ -13,6 +13,22 @@ export function telegramChunks(text){
   while(rest){let length=Math.min(3500,rest.length);if(length<rest.length&&/[\uD800-\uDBFF]/.test(rest[length-1]))length--;result.push(rest.slice(0,length));rest=rest.slice(length);}
   return result;
 }
+export function telegramFormattedChunks(value){
+  // Telegram entities use UTF-16 offsets, as do JavaScript string indices.
+  // Code spans/fences remain literal; only balanced prose emphasis is formatted.
+  const source=String(value),entities=[];let text='',cursor=0;
+  for(const match of source.matchAll(/```[\s\S]*?```|`[^`\n]+`|\*\*([^*\n]+)\*\*/g)){
+    text+=source.slice(cursor,match.index);
+    if(match[1]!==undefined){entities.push({type:'bold',offset:text.length,length:match[1].length});text+=match[1];}
+    else text+=match[0];
+    cursor=match.index+match[0].length;
+  }
+  text+=source.slice(cursor);let offset=0;
+  return telegramChunks(text).map(chunk=>{
+    const start=offset,end=start+chunk.length;offset=end;
+    return {text:chunk,entities:entities.filter(e=>e.offset<end&&e.offset+e.length>start).map(e=>({type:e.type,offset:Math.max(start,e.offset)-start,length:Math.min(end,e.offset+e.length)-Math.max(start,e.offset)}))};
+  });
+}
 export async function telegramAPI(token,method,body={}, {signal}={}){
   if(!tokenPattern.test(token)||!['getMe','getWebhookInfo','getUpdates','sendMessage','sendChatAction'].includes(method))throw Error('Invalid Telegram request.');
   let response,data;
@@ -90,9 +106,9 @@ export class GenieTelegram {
   }
   enqueue(key,text,chatId=this.state.owner?.chat_id){
     if(!positiveId(chatId))return;
-    for(const [index,chunk] of telegramChunks(text).entries()){
+    for(const [index,chunk] of telegramFormattedChunks(text).entries()){
       const id=`${key}-${index}`;
-      if(!this.state.outbox[id])this.state.outbox[id]={id,group:key,chat_id:chatId,text:chunk,state:'pending',created_at:this.now()};
+      if(!this.state.outbox[id])this.state.outbox[id]={id,group:key,chat_id:chatId,text:chunk.text,...(chunk.entities.length?{entities:chunk.entities}:{}),state:'pending',created_at:this.now()};
     }
     this.save();
   }
@@ -182,7 +198,7 @@ export class GenieTelegram {
         if(Object.values(this.state.outbox).some(previous=>previous.group===row.group&&['failed','uncertain'].includes(previous.state)))continue;
         row.state='sending';this.save();
         try{
-          const sent=await this.call(this.token,'sendMessage',{chat_id:row.chat_id,text:row.text,link_preview_options:{is_disabled:true}},{signal:this.controller.signal});
+          const sent=await this.call(this.token,'sendMessage',{chat_id:row.chat_id,text:row.text,...(row.entities?.length?{entities:row.entities}:{}),link_preview_options:{is_disabled:true}},{signal:this.controller.signal});
           if(generation!==this.generation)return;
           if(!positiveId(sent?.message_id))throw Object.assign(Error('Unconfirmed Telegram delivery'),{uncertain:true});
           row.state='sent';row.message_id=sent.message_id;this.state.last_sent_at=this.now();

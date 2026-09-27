@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {GenieChat} from './genie-chat.mjs';
-import {GenieTelegram,telegramChunks,telegramAPI} from './genie-telegram.mjs';
+import {GenieTelegram,telegramChunks,telegramFormattedChunks,telegramAPI} from './genie-telegram.mjs';
 import {createDashboard} from './dashboard.mjs';
 
 const token='123456789:'+('test_only_').repeat(4);
@@ -165,4 +165,20 @@ test('Telegram typing API uses the fixed action endpoint without transmitting qu
  const original=globalThis.fetch;t.after(()=>globalThis.fetch=original);
  globalThis.fetch=async(url,options)=>{assert.ok(url.endsWith('/sendChatAction'));assert.equal(options.redirect,'error');assert.deepEqual(JSON.parse(options.body),{chat_id:42,action:'typing'});return {ok:true,json:async()=>({ok:true,result:true})};};
  assert.equal(await telegramAPI(token,'sendChatAction',{chat_id:42,action:'typing'}),true);
+});
+
+test('Telegram bold uses explicit UTF-16 entities while code and HTML stay literal',()=>{
+ const chunks=telegramFormattedChunks('🙂 **spark1 & spark2** <b>literal</b> `**code**`\n```\n**fenced**\n```');
+ assert.equal(chunks[0].text,'🙂 spark1 & spark2 <b>literal</b> `**code**`\n```\n**fenced**\n```');
+ assert.deepEqual(chunks[0].entities,[{type:'bold',offset:3,length:15}]);
+ const long=telegramFormattedChunks('**'+('🙂'.repeat(2200))+'**');
+ assert.equal(long.map(c=>c.text).join(''),'🙂'.repeat(2200));assert.ok(long.length>1);
+ for(const c of long){assert.deepEqual(c.entities,[{type:'bold',offset:0,length:c.text.length}]);assert.ok(!/[\uD800-\uDBFF]$/.test(c.text));}
+ assert.equal(telegramFormattedChunks('Unclosed **marker')[0].text,'Unclosed **marker');
+});
+
+test('Telegram queues formatted entities durably and sends them without Markdown parsing',async t=>{
+ const f=fixture(t);await pair(f);f.bridge.enqueue('format-check','**Healthy**');
+ const restored=new GenieTelegram(f.options);await restored.flush();restored.close();
+ assert.deepEqual(f.sent.at(-1).entities,[{type:'bold',offset:0,length:7}]);assert.equal(f.sent.at(-1).text,'Healthy');assert.equal(f.sent.at(-1).parse_mode,undefined);
 });

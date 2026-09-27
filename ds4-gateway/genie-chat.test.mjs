@@ -296,3 +296,18 @@ test('unreadable progress is preserved and reported without hiding its healthy c
  finish({text:'Hello back'});await chat.idle();assert.equal(chat.get(c.id).messages.at(-1).state,'complete');
  assert.deepEqual(new GenieChat({directory:d}).status().unreadable_conversations,[preserved]);
 });
+
+test('fleet context distinguishes paused model entries from serving shared machines and retains exact probe/action facts',()=>{
+ const snapshot={gateway:{workers:[
+  {id:'spark1',is_healthy:false,drained:true,probe_error:'ECONNREFUSED',health_state_source:'model_probe',last_probe:'2026-09-27T00:00:00Z',last_operator_action:{action:'pause',time:'2026-09-19T03:43:42Z',control_channel:'dashboard',private_note:'DO_NOT_INCLUDE'}},
+  {id:'glm53f-sparks12',is_healthy:true,drained:false},
+  {id:'custom-service',physical_machines:['custom-a','custom-b'],is_healthy:true,drained:false},
+  {id:'custom-old',physical_machines:['custom-b'],is_healthy:false,drained:true}
+ ],recovery:{workers:[{worker_id:'spark1',configured:false,reason:'adapter_missing'}]}}};
+ const c=chatContext(snapshot),old=c.servers[0];
+ assert.deepEqual(old.physical_machines,['spark1']);assert.deepEqual(old.serving_on_shared_hardware,['glm53f-sparks12']);
+ assert.equal(old.last_operator_action.time,'2026-09-19T03:43:42Z');assert.equal(old.health_probe.probe_error,'ECONNREFUSED');
+ assert.deepEqual(c.servers[3].serving_on_shared_hardware,['custom-service']);assert.equal(c.recovery.workers[0].configured,false);
+ assert.doesNotMatch(JSON.stringify(c),/DO_NOT_INCLUDE/);assert.match(c.scope,/does not identify the human actor/);
+ assert.equal(chatContext({gateway:{workers:[{id:'unmapped'}]}}).servers[0].physical_machines,null);
+});
