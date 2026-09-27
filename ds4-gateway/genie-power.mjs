@@ -58,6 +58,15 @@ export function createFleetPowerTools({runner,read,isTesting=()=>false,isEnabled
     }
     saved.set(value.action_id,value);
   }
+  function recentReceipts(kind,live,limit){
+    const combined=new Map([...saved.values()]
+      .filter(value=>value.kind===kind&&value.state==='complete'&&value.receipt)
+      .map(value=>[value.action_id,value.receipt]));
+    // Live evidence wins when a running action becomes terminal in this process.
+    for(const receipt of live)combined.set(receipt.action_id,receipt);
+    const time=row=>Date.parse(row.finished_at??row.started_at??'')||0;
+    return [...combined.values()].sort((a,b)=>time(b)-time(a)).slice(0,limit);
+  }
   let admission=Promise.resolve();
   async function snapshotWorkers(){
     const value=await read();
@@ -114,7 +123,11 @@ export function createFleetPowerTools({runner,read,isTesting=()=>false,isEnabled
     }
     if(input?.action==='status'&&Object.keys(input).length===1){
       const cat=catalogue?await catalogue().catch(e=>({unavailable:e.message})):null;
-      return {...fleetPowerEvidence({runner,workers:await snapshotWorkers(),catalogue:cat}),routing_recent:[...routingReceipts.values()].slice(-16).reverse(),unresolved_actions:[...saved.values()].filter(value=>value.state==='unknown'),recipe_trials:recipes?.status()??[]};
+      return {...fleetPowerEvidence({runner,workers:await snapshotWorkers(),catalogue:cat}),
+        recent:recentReceipts('power',runner.receipts(),8),
+        routing_recent:recentReceipts('routing',[...routingReceipts.values()].reverse(),16),
+        unresolved_actions:[...saved.values()].filter(value=>value.state==='unknown'),recipe_trials:recipes?.status()??[],
+        scope:'Enrolled power scripts with physical-machine groups and recent retained receipts, including earlier dashboard processes. Dated receipts are historical evidence, not current service health. Read an exact action_id for its full retained result; unknown actions must not be replayed. Start/stop receipts require real endpoint verification; timeout means unproven. Stopping a Spark pair stops both machines, including any other model serving there.'};
     }
     if(input?.action==='recipe-trial'){
       if(Object.keys(input).sort().join(',')!=='action,profile,stage,trial_id'||!recipes)throw Error('Use an enrolled recipe trial profile and stage');
@@ -143,7 +156,7 @@ export function createFleetPowerTools({runner,read,isTesting=()=>false,isEnabled
       if(!current||!machineGroup(worker))throw Error('Use an enrolled current fleet worker');
       if(routing_action==='drain'&&!workers.some(w=>w.id!==worker&&w.is_healthy&&!w.drained&&!runner.busy(w.id)&&!(machineGroup(w.id)??[]).some(g=>(machineGroup(worker)??[]).includes(g))))throw Error('Keep a healthy worker on separate hardware before draining.');
       if(routing_action==='resume'&&(runner.busy(worker)||!Object.hasOwn(input,'expected_operator_action')||(expected_operator_action!==null&&!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(expected_operator_action))))throw Error('Wait for power completion and supply the observed operator-action ID before resuming.');
-      const receipt={worker,routing_action,action_id,state:'running',was_drained:current.drained===true};
+      const receipt={worker,routing_action,action_id,state:'running',started_at:new Date().toISOString(),was_drained:current.drained===true};
       save({kind:'routing',worker,routing_action,action_id,state:'running'});routingReceipts.set(action_id,receipt);
       try{
         await control(routing_action==='drain'?'/drain-workers':'/resume-workers',{workers:[worker],...(routing_action==='resume'?{expected_operator_actions:{[worker]:expected_operator_action}}:{})});
@@ -151,6 +164,7 @@ export function createFleetPowerTools({runner,read,isTesting=()=>false,isEnabled
         if(!after||after.drained!==(routing_action==='drain'))throw Error('Routing state was not confirmed');
         Object.assign(receipt,{state:'complete',drained:after.drained,load:after.load,queued:after.queued,operator_action:after.last_operator_action?.id??null,scope:'Routing only; existing work continues and the model process is unchanged. Preserve preexisting pauses.'});
       }catch(error){Object.assign(receipt,{state:'unverified',error:error.message});}
+      receipt.finished_at=new Date().toISOString();
       save({kind:'routing',worker,routing_action,action_id,state:receipt.state,receipt});return receipt;
     }
     const keys=Object.keys(input??{}).sort().join(',');

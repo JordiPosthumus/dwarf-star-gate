@@ -253,6 +253,8 @@ test('power receipts survive process reconstruction and uncertain actions cannot
  const nextRunner=createPowerRunner({directory,spawn:async()=>{throw Error('Must not replay');}});
  const resumed=createFleetPowerTools({runner:nextRunner,read,receiptDirectory});
  assert.equal((await resumed.tool({action:'status',action_id:input.action_id})).state,'unknown');
+ const interrupted=await resumed.tool({action:'status'});
+ assert.equal(interrupted.recent.length,0);assert.equal(interrupted.unresolved_actions[0].action_id,input.action_id);
  assert.equal((await resumed.tool(input)).state,'unknown');
  await assert.rejects(resumed.tool({...input,action_id:UUID()}),/no terminal receipt/);
  assert.equal(calls,1);release();await new Promise(resolve=>setImmediate(resolve));
@@ -260,6 +262,10 @@ test('power receipts survive process reconstruction and uncertain actions cannot
  const result=await finished.tool({action:'status',action_id:input.action_id});
  assert.equal(result.state,'complete');assert.equal(result.receipt.ok,false);assert.equal(result.receipt.exit_code,1);assert.equal(result.receipt.output,'Observed failure');assert.equal(result.receipt.verified.state,'timeout');
  assert.equal((await finished.tool(input)).receipt.exit_code,1);assert.equal(calls,1);
+ const overview=await finished.tool({action:'status'});
+ assert.equal(overview.recent[0].action_id,input.action_id);assert.equal(overview.recent[0].ok,false);
+ assert.equal(overview.recent[0].verified.state,'timeout');assert.equal(calls,1);
+ assert.match(overview.scope,/historical evidence, not current service health/);
  assert.equal(fs.statSync(path.join(receiptDirectory,input.action_id+'.json')).mode&0o777,0o600);
  await assert.rejects(finished.tool({...input,power_action:'stop'}),/another action/);
 });
