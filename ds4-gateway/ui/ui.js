@@ -250,6 +250,8 @@ function buildRoutingSummary(s,g,workers,stale){
   const quarantined=info.filter(x=>x.r.cause==='quarantined').map(x=>x.w);
   const held=info.filter(x=>['maintenance_lock','reserved','recovering'].includes(x.r.cause)).map(x=>x.w);
   const excluded=[...paused,...unavailable,...quarantined,...held];
+  const grouped=fleetPresentation(workers).owner;
+  if(!g?.draining&&excluded.length&&excluded.every(w=>grouped.has(w.id)))return {hidden:true,level:'info',text:''};
   if(!excluded.length&&!g?.draining)return {hidden:true,level:'info',text:''};
   const poolModel=g?.model||'PoolModel';
   const servingModels=[...new Set(routing.map(w=>w.served_model||workerModelName(s,w.id)).filter(Boolean))];
@@ -266,7 +268,7 @@ function buildRoutingSummary(s,g,workers,stale){
   if(unavailable.length)lines.push(`Unavailable: ${unavailable.map(w=>w.id).join(', ')}`);
   if(quarantined.length)lines.push(`Quarantined: ${quarantined.map(w=>w.id).join(', ')}`);
   if(held.length)lines.push(`Held or locked: ${held.map(w=>w.id).join(', ')}`);
-  if(!unavailable.length&&!quarantined.length)lines.push('No server is unhealthy.');
+  if(!unavailable.length&&!quarantined.length)lines.push('All routing-enabled servers are healthy.');
   const routes=g?.model_routes;
   if(routes&&typeof routes==='object'){
     const routingIds=new Set(routing.map(w=>w.id));
@@ -318,14 +320,14 @@ function managementPathDetail(w) {
 }
 function recoveryRecheckable(action){return !!(action?.restart_issued||action?.service_action_issued)&&['reconciliation_needed','failed'].includes(action.state);}
 function recoveryIssuanceText(op){return !op.service_action_issued?'':op.service_action==='bootstrap'?(op.bootstrap_acknowledged===true?' · bootstrap acknowledged':' · bootstrap attempted · acknowledgement unknown'):` · ${op.service_action} issued`;}
-function routingMarkup(w,{stale=false,controls=true,recovering=false,busy=workerBusy}={}) {
+function routingMarkup(w,{stale=false,controls=true,recovering=false,busy=workerBusy,blockedBy=[]}={}) {
   const info=routingInfo(w,{stale,recovering});
   if(!controls||!info.action)return `<span class="worker-routing" data-level="${info.level}" aria-label="${esc(info.label)}"></span>`;
   const name=String(w.id).replace(/^spark/i,'Spark '),at=w?.quarantine?.at;
   const recorded=at&&Number.isFinite(Date.parse(at))?` Excluded ${new Date(at).toLocaleString()}; recorded by Star Gate.`:'';
-  const tooltip=`${info.label} for ${name}. ${info.detail}${recorded} ${info.title}`;
+  const tooltip=`${info.label} for ${name}. ${info.detail}${recorded} ${info.title}${blockedBy.length?' Shared hardware is active on '+blockedBy.join(', ')+'. Manage that service before resuming this one.':''}`;
   const icon=info.action==='drain'?'<path d="M5 4h4v16H5zM15 4h4v16h-4z"/>':'<path d="M6 4l14 8-14 8z"/>';
-  return `<span class="worker-routing" data-level="${info.level}"><button class="routing-toggle" type="button" data-action="${info.action}" data-id="${esc(w.id)}" data-tooltip="${esc(tooltip)}" aria-label="${esc(tooltip)}" ${stale||busy||info.blocked||!workerControlsReady?'disabled':''}><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">${icon}</svg></button></span>`;
+  return `<span class="worker-routing" data-level="${info.level}"><button class="routing-toggle" type="button" data-action="${info.action}" data-id="${esc(w.id)}" data-tooltip="${esc(tooltip)}" aria-label="${esc(tooltip)}" ${stale||busy||info.blocked||!workerControlsReady||blockedBy.length&&info.action!=='drain'?'disabled':''}><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">${icon}</svg></button></span>`;
 }
 function updateRoutingNode(current,fresh) {
   // Keep the button DOM stable during normal polling so keyboard focus, hover
@@ -341,6 +343,37 @@ function renderCatalogue(s,now){
   container.innerHTML=`<details class="catalogue"${serving?' open':''}><summary>Fleet catalogue — model to machine mapping${warnings.length?` · ${warnings.length} note${warnings.length===1?'':'s'}`:''}</summary>${warnings.length?`<ul class="catalogue-warnings">${warnings.map(w=>`<li>${esc(w)}</li>`).join('')}</ul>`:''}<table class="catalogue-table"><thead><tr><th scope="col">Model</th><th scope="col">Machines</th><th scope="col">State</th><th scope="col">Routes</th><th scope="col">Observed</th></tr></thead><tbody>${rows}</tbody></table></details>`;
 }
 
+function physicalMachines(worker){
+  const values=worker?.physical_machines;
+  return Array.isArray(values)&&values.length&&values.every(v=>typeof v==='string'&&v.trim())&&new Set(values).size===values.length?[...values]:[];
+}
+const machineLabel=id=>String(id).replace(/^spark(\d+)$/i,'Spark $1');
+function fleetPresentation(workers,mediaIds=[]){
+  const media=new Set(mediaIds),nested=new Map(),owner=new Map(),conflicts=new Map(),sharedWith=new Map();
+  const machines=new Map(workers.map(w=>[w.id,physicalMachines(w)]));
+  const occupied=w=>w.load>0||media.has(w.id)||w.is_healthy===true&&w.drained!==true;
+  for(const w of workers){
+    const own=machines.get(w.id);if(!own.length)continue;
+    const overlaps=workers.filter(other=>other.id!==w.id&&occupied(other)&&machines.get(other.id).some(m=>own.includes(m)));
+    if(overlaps.length)sharedWith.set(w.id,overlaps.map(other=>other.id));
+    if(occupied(w)&&overlaps.length)conflicts.set(w.id,overlaps.map(other=>other.id));
+    // Fold only explicitly paused, empty alternative records. Never fold queued,
+    // active, quarantined, or ambiguous records, or infer topology from names.
+    if(w.drained!==true||w.load!==0||w.queued!==0||media.has(w.id)||w.quarantine||w.maintenance_lock||w.maintenance_locks?.length||w.recovery_waiting||w.direct_reserved)continue;
+    const candidates=workers.filter(other=>other.id!==w.id&&machines.get(other.id).length>own.length&&own.every(m=>machines.get(other.id).includes(m))&&(other.drained===false||occupied(other)));
+    if(candidates.length===1){const parent=candidates[0];owner.set(w.id,parent.id);nested.set(parent.id,[...(nested.get(parent.id)??[]),w]);}
+  }
+  return {owner,nested,conflicts,sharedWith};
+}
+function alternativeServicesMarkup(records,parent,{controls=false,stale=false,devices=null,now=Date.now()}={}){
+  if(!records.length)return '';
+  return `<details class="device-alternatives"><summary>${records.length} paused alternative service${records.length===1?'':'s'}</summary><p>These are separate model endpoints on the same physical machines. Their endpoint status is not the health of the machines running ${esc(parent.id)}.</p>${records.map(w=>{
+    const block=`Shared hardware is assigned to ${parent.id}. Manage the active group before resuming this alternative.`;
+    const power=controls&&fleetPower?.enabled&&fleetPower.members?.some(m=>m.worker_id===w.id)?`<div class="device-power">${['status','start','stop'].map(action=>`<button type="button" class="power-button" data-power-action="${action}" data-power-worker="${esc(w.id)}"${action!=='status'||stale||fleetPowerBusy.has(w.id)?' disabled':''} title="${esc(action==='status'?'Read this alternative service status.':block)}">${{status:'Status',start:'Start',stop:'Stop'}[action]}</button>`).join('')}</div>`:'';
+    return `<div class="alternative-service" data-service-id="${esc(w.id)}"><strong>${esc(physicalMachines(w).map(machineLabel).join(' + '))} · ${esc(w.id)}</strong><span>Routing paused · endpoint ${w.is_healthy===true?'ready':'unavailable'}</span>${w.probe_error?`<span>Last probe: ${esc(w.probe_error)}</span>`:''}<p>${esc(managementDetail(w))}</p>${controls?`<button class="button" type="button" disabled title="${esc(block)}">Resume routing</button>`:''}${power}<small>${esc(block)}</small>${devices?.get(w.id)?.hardware?hardwareMarkup(devices.get(w.id).hardware,now):'<p>Individual hardware telemetry unavailable; endpoint readiness does not establish machine health.</p>'}</div>`;
+  }).join('')}</details>`;
+}
+function mediaWorkerIds(workers,now,devices=[]){return workers.filter(w=>{const engine=devices.find(d=>d.id===w.id)?.endpoint_metrics;return engine?.connected&&Number.isFinite(engine.at)&&now>=engine.at&&now-engine.at<15000&&engine.running>0||workloadInfo(w.id,now)||!fleetWorkloadsUnavailable&&(fleetWorkloads.native_engines??[]).some(row=>row.worker_id===w.id&&row.state==='busy'&&Number.isFinite(row.observed_at)&&now>=row.observed_at&&now-row.observed_at<20000)}).map(w=>w.id);}
 function renderDevices(devices,workers,now,stale,scales,controls) {
   const viewport={x:window.scrollX,y:window.scrollY};
   const container=$('devices'),existing=new Map([...container.querySelectorAll('.device')].map(el=>[el.dataset.workerId,el]));
@@ -352,11 +385,13 @@ function renderDevices(devices,workers,now,stale,scales,controls) {
     const nativeBusy=!fleetWorkloadsUnavailable&&(fleetWorkloads.native_engines??[]).some(row=>row.worker_id===d.id&&row.state==='busy'&&Number.isFinite(row.observed_at)&&now>=row.observed_at&&now-row.observed_at<20000);
     return Boolean(worker?.is_healthy&&!worker.drained&&!worker.quarantine||media&&!media.old&&!media.warning||nativeBusy);
   };
-  const ordered=[...devices].sort((a,b)=>stale
+  const mediaIds=mediaWorkerIds(workers,now,devices);
+  const presentation=fleetPresentation(workers.filter(w=>devices.some(d=>d.id===w.id)),mediaIds);presentation.devices=new Map(devices.map(d=>[d.id,d]));
+  const ordered=devices.filter(d=>!presentation.owner.has(d.id)).sort((a,b)=>stale
     ?(existingOrder.get(a.id)??devices.length)-(existingOrder.get(b.id)??devices.length)
     :Number(serving(b))-Number(serving(a)));
   ordered.forEach((d,i)=>{
-    const template=document.createElement('template');template.innerHTML=device(d,workers.find(w=>w.id===d.id),now,stale,i+1,scales,controls);
+    const template=document.createElement('template');template.innerHTML=device(d,workers.find(w=>w.id===d.id),now,stale,i+1,scales,controls,presentation);
     const fresh=template.content.firstElementChild;let current=existing.get(d.id);
     if(!current)current=fresh;
     else{
@@ -365,6 +400,31 @@ function renderDevices(devices,workers,now,stale,scales,controls) {
       if(current.querySelector('.measurement-info')?.open)fresh.querySelector('.measurement-info')?.setAttribute('open','');
       if(current.querySelector('.device-details')?.open)fresh.querySelector('.device-details')?.setAttribute('open','');
       for(const selector of ['.device-identity','.device-live','.device-details>summary','.fleet-media']){const before=current.querySelector(selector),after=fresh.querySelector(selector);if(!before||!after)continue;if(before.innerHTML!==after.innerHTML)before.innerHTML=after.innerHTML;if(before.className!==after.className)before.className=after.className;for(const name of ['data-level','title','hidden']){const value=after.getAttribute(name);if(value===null)before.removeAttribute(name);else before.setAttribute(name,value);}}
+      current.className=fresh.className;
+      for(const selector of ['.device-bar','.device-minicharts','.fleet-media-warning','.device-service','.device-topology-warning',':scope>.device-power']){
+        const before=current.querySelector(selector),after=fresh.querySelector(selector);
+        if(before&&after&&before.innerHTML!==after.innerHTML)before.innerHTML=after.innerHTML;
+        else if(before&&!after)before.remove();
+        else if(!before&&after)current.insertBefore(after,current.querySelector('.fleet-native-media,.device-details'));
+      }
+      const previousWork=current.querySelector('.device-details .fleet-media'),nextWork=fresh.querySelector('.device-details .fleet-media');
+      if(previousWork&&!nextWork)previousWork.remove();
+      else if(!previousWork&&nextWork){const drawer=current.querySelector('.device-details');drawer.querySelector('summary').after(nextWork);drawer.open=true;}
+      const previousAlternatives=current.querySelector('.device-alternatives'),nextAlternatives=fresh.querySelector('.device-alternatives');
+      if(previousAlternatives&&nextAlternatives){
+        nextAlternatives.open=previousAlternatives.open;
+        const focused=previousAlternatives.querySelector('summary')===document.activeElement;
+        if(previousAlternatives.innerHTML!==nextAlternatives.innerHTML){previousAlternatives.replaceWith(nextAlternatives);if(focused)nextAlternatives.querySelector('summary').focus({preventScroll:true});}
+      }else if(previousAlternatives)previousAlternatives.remove();
+      else if(nextAlternatives)current.querySelector('.device-details').append(nextAlternatives);
+      const previousMedia=current.querySelector('.fleet-native-media'),nextMedia=fresh.querySelector('.fleet-native-media');
+      if(previousMedia&&nextMedia){
+        const previousDetails=previousMedia.querySelector('details'),nextDetails=nextMedia.querySelector('details');
+        if(previousDetails?.open)nextDetails.open=true;
+        const focused=previousDetails?.querySelector('summary')===document.activeElement;
+        if(previousMedia.innerHTML!==nextMedia.innerHTML){previousMedia.replaceWith(nextMedia);if(focused)nextDetails?.querySelector('summary')?.focus({preventScroll:true});}
+      }else if(previousMedia)previousMedia.remove();
+      else if(nextMedia)current.insertBefore(nextMedia,current.querySelector('.device-details'));
       // Keep the details drawer open state stable across refreshes.
       if(current.querySelector('.device-details')?.open)fresh.querySelector('.device-details')?.setAttribute('open','');
       if(focusedLight)current.querySelector(`[data-light="${focusedLight}"]`)?.focus({preventScroll:true});
@@ -384,7 +444,7 @@ function refreshRoutingControls() {
   // The fresh-install onboarding tile is not a worker and has no routing node.
   for(const el of $('devices').querySelectorAll('.device[data-worker-id]')){
     const w=visibleWorkers.find(w=>w.id===el.dataset.workerId),template=document.createElement('template');
-    template.innerHTML=routingMarkup(w,{stale:workerUiStale,controls:workerControlsVisible,recovering:recoveryState?.workers?.some(r=>r.worker_id===w?.id&&r.state==='recovering')});
+    template.innerHTML=routingMarkup(w,{stale:workerUiStale,controls:workerControlsVisible,blockedBy:fleetPresentation(visibleWorkers,mediaWorkerIds(visibleWorkers,Date.now(),lastDevicesSpec?.devices??[])).sharedWith.get(w?.id)??[],recovering:recoveryState?.workers?.some(r=>r.worker_id===w?.id&&r.state==='recovering')});
     updateRoutingNode(el.querySelector('.worker-routing'),template.content.firstElementChild);
   }
 }
@@ -392,6 +452,7 @@ function serverVerdict(d,w,now,stale=false) {
   if(stale||!w)return {level:'unknown',label:'Status stale',detail:'Live gateway status is unavailable; values are historical.'};
   if(w.quarantine)return {level:'bad',label:'Quarantined',detail:'Star Gate isolated this server after a generation fault. Use the recovery/readmission controls only after reviewing the evidence.'};
   if(w.maintenance_locks?.length)return {level:'paused',label:'Maintenance',detail:`Named lock${w.maintenance_locks.length===1?'':'s'} ${w.maintenance_locks.map(lock=>lock.name).join(', ')} prevent all routing and automatic recovery. Review deadlines only warn; they never auto-release.`};
+  if(w.drained&&w.load===0&&!w.queued)return {level:'paused',label:'Paused',detail:`Routing is explicitly paused. Endpoint ${w.is_healthy?'ready':'unavailable'}; this does not establish physical-machine health. ${managementDetail(w)}`};
   if(!w.is_healthy)return {level:'bad',label:'LLM unavailable',detail:managementDetail(w)};
   if(w.drained)return {level:'paused',label:w.load?'Pausing':'Paused',detail:w.load?'No new work is admitted; an already admitted request is still finishing.':'No new gateway requests are admitted to this server.'};
   const waiting=Number.isSafeInteger(w.queued)?w.queued:0,oldest=Number.isFinite(w.oldest_queue_seconds)?w.oldest_queue_seconds:null;
@@ -483,16 +544,26 @@ function workloadMarkup(job,w,now) {
   const llm=job.phase==='waiting_idle'?'Finishing existing LLM work before switching.':job.phase==='checking_llm'?'Checking real responses and cache reuse before readmission.':job.phase==='restoring_llm'?'Original LLM is loading; return is not yet verified.':job.phase==='needs_attention'?'Return failed or needs attention. Inspect the operation.':'Original LLM will be restored and checked after media work.';
   return `<section class="fleet-media" aria-label="${esc(job.engine)} workload"><div class="fleet-media-heading"><strong>${esc(job.engine)}</strong><span>${esc(job.label)}</span></div><div class="fleet-media-facts"><div><span class="label">OPERATION ELAPSED</span><strong>${elapsed(job.started_at)}</strong></div><div><span class="label">CURRENT STAGE</span><strong>${elapsed(job.changed_at)}</strong></div><div><span class="label">BATCH</span><strong>${job.batch_size>1?`${fmt(job.batch_index)} / ${fmt(job.batch_size)}`:'Single job'}</strong></div></div><p class="fleet-media-job">Job <code>${esc(job.job_id)}</code> · ${esc(job.state)}${job.outputs_state?' · outputs '+esc(job.outputs_state):''}</p><p class="fleet-media-heartbeat" data-level="${fresh?'good':'warning'}">${fresh?'Runner heartbeat received':'Runner heartbeat unavailable or old'}${Number.isFinite(heartbeat)?' · '+age(heartbeat,now):''}. This is a runner check-in, not measured generation progress.</p>${['generating','observing_media'].includes(job.phase)?job.kind==='video'?nativeMediaProgressMarkup(job,now):'<p class="muted">Generation steps and completion time are not reported by this engine connection.</p>':''}<p class="fleet-media-return"><strong>Return to LLM:</strong> ${job.old?'Status is out of date; return is not confirmed.':esc(llm)}${w?.quarantine?' LLM is quarantined.':''}</p><a href="#media" data-media-engine="${job.kind==='video'?'h3':'ace-step'}">View ${job.kind==='video'?'video':'music'} jobs, results and errors →</a></section>`;
 }
-function nativeMediaMarkup(id,now){
-  return (fleetWorkloads.native_engines??[]).filter(row=>row.worker_id===id).map(row=>{
+function nativeMediaMarkup(id,now,machines=[]){
+  const rows=(fleetWorkloads.native_engines??[]).filter(row=>row.worker_id===id);
+  if(!rows.length)return '';
+  const observed=rows.map(row=>{
     const fresh=!fleetWorkloadsUnavailable&&Number.isFinite(row.observed_at)&&now>=row.observed_at&&now-row.observed_at<20000;
-    if(!fresh)return '';
-    const state=row.state,name=row.engine==='comfyui'?'H3 / ComfyUI':row.engine==='ace-step'?'ACE-Step':'Media';
-    const detail=state==='busy'?`${row.running_count} running · ${row.waiting_count} waiting`:'Native queue empty';
-    return `<section class="fleet-media"><strong>${esc(name)} · ${esc(state)}</strong><p>${esc(detail)} · ${age(row.observed_at,now)}</p>${state==='busy'&&row.running?`<p>Native jobs: ${[...row.running,...row.waiting].map(esc).join(', ')}</p>`:''}<p class="muted">Includes direct clients. Queue status is not whole-job progress or whole-machine idleness.</p></section>`;
-  }).join('');
+    const state=fresh?row.state:'unknown',name=row.engine==='comfyui'?'H3 / ComfyUI':row.engine==='ace-step'?'ACE-Step':'Media';
+    const machine=(Number.isSafeInteger(row.member)?machines?.[row.member]:machines?.length===1?machines[0]:null);
+    const host=machine?machine.replace(/^spark(\d+)$/i,'Spark $1'):Number.isSafeInteger(row.member)?`Member ${row.member+1}`:id;
+    const counts=Number.isSafeInteger(row.running_count)&&Number.isSafeInteger(row.waiting_count);
+    const label=!fresh?(row.observed_at==null?'Awaiting status':'Stale'):state==='busy'?(counts?`${row.running_count} running · ${row.waiting_count} queued`:'Busy'):state==='idle'?'Queue empty':'Unknown';
+    const detail=!fresh?'Current queue observation unavailable.':state==='unknown'?(row.reason??'Native queue unavailable.'):state==='idle'?'Native queue observed empty.':label;
+    return {row,state,name,host,label,detail};
+  });
+  const active=observed.filter(item=>item.state==='busy'),inactive=observed.filter(item=>item.state!=='busy');
+  const uncertain=inactive.filter(item=>item.state!=='idle').length;
+  const summary=[active.length?`${active.length} active engine${active.length===1?'':'s'}`:null,uncertain?`${uncertain} unavailable`:null,!active.length&&!uncertain?'Queues empty':null].filter(Boolean).join(' · ');
+  const rowMarkup=({row,state,name,host,label,detail})=>`<div class="fleet-native-row" data-state="${esc(state)}" title="${esc(detail)}"><span class="fleet-native-host">${esc(host)}</span><strong>${esc(name)}</strong><span class="fleet-native-state">${esc(label)}</span><span class="fleet-native-age">${Number.isFinite(row.observed_at)?age(row.observed_at,now):'—'}</span></div>`;
+  return `<div class="fleet-native-media" aria-label="Native media engines">${active.map(rowMarkup).join('')}<details class="fleet-native-details"><summary${uncertain?' class="media-uncertain"':''}>Media · ${esc(summary)}</summary>${inactive.map(rowMarkup).join('')}<p>Queues include direct clients. An empty queue does not prove whole-machine idleness or job completion.</p><dl>${observed.map(({row,name,host,detail})=>`<dt>${esc(host)} · ${esc(name)}</dt><dd>${esc(detail)}${row.state==='busy'&&Array.isArray(row.running)?` Native jobs: ${[...row.running,...(row.waiting??[])].map(esc).join(', ')}.`:''}</dd>`).join('')}</dl></details></div>`;
 }
-function device(d, w, now, stale, index = 1, scales={}, controls=false) {
+function device(d, w, now, stale, index = 1, scales={}, controls=false, presentation=null) {
   const workload=workloadInfo(d.id,now);
   const nativeActive=!stale&&!fleetWorkloadsUnavailable&&(fleetWorkloads.native_engines??[]).some(row=>row.worker_id===d.id&&row.state==='busy'&&Number.isFinite(row.observed_at)&&now>=row.observed_at&&now-row.observed_at<20000);
   if(workload&&stale){workload.old=true;workload.warning=true;workload.label='Last known media operation';}
@@ -537,7 +608,7 @@ function device(d, w, now, stale, index = 1, scales={}, controls=false) {
   // Compact face: status dot + name + state word, one live line, conditional chips.
   const dotLevel={ok:'ok',busy:'busy',warn:'warn',bad:'bad',paused:'paused',unknown:'unknown'}[verdict.level]??'unknown';
   const thinkingLevel=(()=>{const info=thinkingInfo(w?.load?w.requested_thinking:w?.last_requested_thinking);return info.label&&info.label!=='—'?info.label.toLowerCase():null;})();
-  const stateWord=!stale&&w?.quarantine?'quarantined':w?.direct_reserved===true?'direct use':state==='mixed'?'prefill + generation':state==='decode'?(d.endpoint_metrics?'gen':'answering'):state==='thinking'?`thinking${thinkingLevel?` · ${thinkingLevel}`:''}`:state;
+  const stateWord=!stale&&w?.quarantine?'quarantined':w?.direct_reserved===true?'direct use':w?.drained&&w.load===0&&!workload&&!nativeActive?'paused'+(w.is_healthy?'':' · endpoint unavailable'):state==='mixed'?'prefill + generation':state==='decode'?(d.endpoint_metrics?'gen':'answering'):state==='thinking'?`thinking${thinkingLevel?` · ${thinkingLevel}`:''}`:state;
   const liveRates=(()=>{
     const e=d.endpoint_metrics;
     if(e){
@@ -568,9 +639,9 @@ function device(d, w, now, stale, index = 1, scales={}, controls=false) {
   const liveLine=`<div class="device-live"><span class="state-word" data-level="${dotLevel}">${esc(stateWord)}</span>${gatewayActivity}${liveRates}${cacheUsage}${mediaWarning?'<span class="cache-chip warn">media?</span>':''}</div>`;
   // Face-level utilization strip: always-visible phase bar (split per machine for
   // tensor-parallel pairs) plus small decode/prefill rate charts without captions.
-  const machines=/sparks\d/i.test(d.id)?2:1;
-  const machineNote=machines>1?' Both machines of this tensor-parallel pair run the same phases together; one strip shows pair scope, not separate measurements.':'';
-  const bar=`<div class="device-bar" data-lanes="1"><div class="bar-label">ACTIVITY · 15m</div>${timeline(d,now,1)}<span class="bar-note${machines>1?' pair':''}" title="Blue is prefill, green is decode or generation, grey is idle or off, empty gaps mean the phase is unavailable.${esc(machineNote)}">${machines>1?'×2':'×1'}</span></div>`;
+  const mappedMachines=physicalMachines(w),machines=mappedMachines.length||1;
+  const machineNote=machines>1?` This service maps to ${machines} physical machines. One strip shows service-level history, not separate machine measurements.`:!mappedMachines.length?' Physical machine mapping is unavailable.':'';
+  const bar=`<div class="device-bar" data-lanes="1"><div class="bar-label">ACTIVITY · 15m</div>${timeline(d,now,1)}<span class="bar-note${machines>1?' pair':''}" title="Blue is prefill, green is decode or generation, grey is idle or off, empty gaps mean the phase is unavailable.${esc(machineNote)}">${mappedMachines.length?'×'+machines:'scope ?'}</span></div>`;
   const miniChart=kind=>{
     const e=d.endpoint_metrics;
     const svg=e?chart(e.series,kind,now):chart(d.series,kind,now,scales[kind]);
@@ -581,7 +652,8 @@ function device(d, w, now, stale, index = 1, scales={}, controls=false) {
   const miniCharts=`<div class="device-minicharts">${miniChart('decode')}${miniChart('prefill')}</div>`;
   const detailBody=`<div class="metrics">${metric('decode','DECODE')}${metric('prefill','PREFILL')}</div>${metricsInfo}${hardwareMarkup(d.hardware,now)}${performance}`;
   const detailOpen=!!workload;
-  const details=`<details class="device-details"${detailOpen?' open':''}><summary>Details</summary>${workload?workloadMarkup(workload,w,now):''}${unavailableLlm?offlineReadings:''}${historicalLlm&&!unavailableLlm?llmReadings:detailOpen?llmReadings:detailBody}</details>`;
+  const alternatives=alternativeServicesMarkup(presentation?.nested.get(d.id)??[],w,{controls,stale,devices:presentation?.devices,now});
+  const details=`<details class="device-details"${detailOpen?' open':''}><summary>Details${alternatives?' · '+(presentation?.nested.get(d.id)?.length??0)+' alternative services':''}</summary>${workload?workloadMarkup(workload,w,now):''}${unavailableLlm?offlineReadings:''}${historicalLlm&&!unavailableLlm?llmReadings:detailOpen?llmReadings:detailBody}${alternatives}</details>`;
   const powerInfo=controls&&fleetPower?.enabled?fleetPower.members?.find(m=>m.worker_id===d.id):null;
   const latestReceipt=fleetPower?.recent?.find(r=>r.worker===d.id);
   const powerLabel=state=>({ready:'ready ✓',stopped:'stopped ✓',timeout:'timeout — unproven',failed:'failed ✗'}[state]??'');
@@ -590,9 +662,10 @@ function device(d, w, now, stale, index = 1, scales={}, controls=false) {
   // Connectivity describes this poll, not the retained activity window. Keep
   // its timeline visible; unknown phases remain gaps rather than invented idle.
   const compactBar=bar,compactCharts=offline?'':miniCharts;
+  const sharedWith=presentation?.sharedWith.get(d.id)??[];
   const powerTitles={status:'Run the enrolled status script for this model.',start:'Start this model through its enrolled script. Readiness is verified against the endpoint before reporting Started.',stop:'Stop this model through its enrolled script. Refuses when gateway or direct work is active, when a same-hardware model still holds work, or when this is the last healthy LLM. Stopping a Spark pair stops both machines of that pair.'};
-  const powerStrip=powerInfo?`<div class="device-power">${['status','start','stop'].map(a=>`<button type="button" class="power-button" data-power-action="${a}" data-power-worker="${esc(d.id)}"${fleetPowerBusy.has(d.id)||powerInfo.busy?' disabled':''} title="${esc(powerTitles[a])}">${{status:'Status',start:'Start',stop:'Stop'}[a]}</button>`).join('')}<span class="power-status" title="${esc(latestReceipt?.output??'')}">${esc(powerLine)}</span></div>`:'';
-  return `<article class="device ${workload?'is-media':nativeActive?'is-native':''}" data-worker-id="${esc(d.id)}"><div class="device-top"><div class="device-identity"><span class="device-dot" data-level="${dotLevel}" title="${esc(verdict.detail)}"></span><span class="device-name-text" title="${esc(verdict.label)} — ${esc(verdict.detail)}${w?.served_model?` · serving ${esc(w.served_model)}`:''}">${esc(d.id.replace(/^spark/, 'Spark '))}</span>${activityDuration}${routingMarkup(w,{stale,controls,recovering:recoveryState?.workers?.some(r=>r.worker_id===w?.id&&r.state==='recovering')})}</div></div>${liveLine}${compactBar}${compactCharts}${mediaWarning}${nativeMediaMarkup(d.id,now)}${offline?'':chips}${powerStrip}${details}</article>`;
+  const powerStrip=powerInfo?`<div class="device-power">${['status','start','stop'].map(a=>`<button type="button" class="power-button" data-power-action="${a}" data-power-worker="${esc(d.id)}"${fleetPowerBusy.has(d.id)||powerInfo.busy||a!=='status'&&sharedWith.length?' disabled':''} title="${esc(a!=='status'&&sharedWith.length?'Shared hardware is active on '+sharedWith.join(', ')+'. Manage the active services first.':powerTitles[a])}">${{status:'Status',start:'Start',stop:'Stop'}[a]}</button>`).join('')}<span class="power-status" title="${esc(latestReceipt?.output??'')}">${esc(powerLine)}</span></div>`:'';
+  return `<article class="device ${workload?'is-media':nativeActive?'is-native':''}" data-worker-id="${esc(d.id)}"><div class="device-top"><div class="device-identity"><span class="device-dot" data-level="${dotLevel}" title="${esc(verdict.detail)}"></span><span class="device-name-text" title="${esc(verdict.label)} — ${esc(verdict.detail)}${w?.served_model?` · serving ${esc(w.served_model)}`:''}">${esc(mappedMachines.length?mappedMachines.map(machineLabel).join(' + '):d.id.replace(/^spark/, 'Spark '))}</span>${activityDuration}${routingMarkup(w,{stale,controls,blockedBy:sharedWith,recovering:recoveryState?.workers?.some(r=>r.worker_id===w?.id&&r.state==='recovering')})}</div></div>${mappedMachines.length?`<div class="device-service">${workload||nativeActive?'Media active · ':w?.is_healthy&&!w?.drained?'Serving ': 'Model profile: '}${w?.served_model?esc(w.served_model):'unreported'} · ${esc(d.id)}</div>`:'<div class="device-service">Physical machine mapping unavailable</div>'}${presentation?.conflicts.has(d.id)?`<p class="device-topology-warning">Shared hardware also active: ${esc(presentation.conflicts.get(d.id).join(', '))}. Inspect the overlap.</p>`:sharedWith.length?`<p class="device-topology-warning">Hardware serving ${esc(sharedWith.join(', '))}; this is an alternative model profile.</p>`:''}${liveLine}${compactBar}${compactCharts}${mediaWarning}${nativeMediaMarkup(d.id,now,w?.physical_machines)}${offline?'':chips}${powerStrip}${details}</article>`;
 }
 const headlineSeverity=value=>['good','info','warning','critical'].includes(value)?value:'info';
 function deterministicHealthAlerts(snapshot) {
@@ -1400,13 +1473,14 @@ let performanceDialogTarget=null;
 performanceDialog.addEventListener('close',()=>{
   if(performanceDialogTarget?.id){$(performanceDialogTarget.id)?.focus({preventScroll:true});return;}
   const card=[...document.querySelectorAll('.device')].find(el=>el.dataset.workerId===performanceDialogTarget?.worker);
-  card?.querySelector(`[data-light="${performanceDialogTarget?.kind}"]`)?.focus({preventScroll:true});
+  const source=performanceDialogTarget?.service?card?.querySelector(`[data-service-id="${CSS.escape(performanceDialogTarget.service)}"]`):card;
+  source?.querySelector(`[data-light="${performanceDialogTarget?.kind}"]`)?.focus({preventScroll:true});
 });
 document.body.append(performanceDialog);
 document.addEventListener('click',event=>{
   const powerButton=event.target.closest?.('[data-power-action]');if(powerButton&&!powerButton.disabled){void powerAction(powerButton.dataset.powerWorker,powerButton.dataset.powerAction);return;}
   const button=event.target.closest?.('.performance-light, .temperature-reading, #fleet-speed-value');if(!button)return;
-  performanceDialogTarget={id:button.id,worker:button.closest('.device')?.dataset.workerId,kind:button.dataset.light};
+  performanceDialogTarget={id:button.id,worker:button.closest('.device')?.dataset.workerId,service:button.closest('.alternative-service')?.dataset.serviceId,kind:button.dataset.light};
   performanceDialog.querySelector('h2').textContent=button.dataset.lightTitle;
   performanceDialog.querySelector('p').textContent=button.dataset.lightDetail;
   performanceDialog.querySelector('.hardware-evidence-plots').innerHTML=button.dataset.lightChart??'';

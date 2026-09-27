@@ -1256,6 +1256,22 @@ test('Fleet native progress shows current node steps and disconnected evidence w
  assert.match(render({...p,node_type:'VAEDecode'}),/Node progress: 12 of 20/);
 });
 
+test('Native media rows label pair members and never report an unknown or stale queue as empty',()=>{
+ const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0],context=vm.createContext({});vm.runInContext(source,context);
+ const rows=[{worker_id:'pair',member:0,engine:'ace-step',state:'unknown',reason:'Queue unavailable',observed_at:9900},{worker_id:'pair',member:1,engine:'comfyui',state:'idle',observed_at:9900}];
+ const render=()=>vm.runInContext("nativeMediaMarkup('pair',10000,['spark1','spark2'])",context);
+ vm.runInContext(`fleetWorkloads={native_engines:${JSON.stringify(rows)}}`,context);
+ const html=render();assert.match(html,/Spark 1/);assert.match(html,/Spark 2/);assert.match(html,/Unknown/);assert.equal((html.match(/Queue empty/g)??[]).length,1);assert.match(html,/<details class="fleet-native-details">/);
+ assert.match(html,/<summary class="media-uncertain">Media · 1 unavailable<\/summary>/);
+ assert.ok(html.indexOf('<details')<html.indexOf('fleet-native-row'),'Inactive queues start inside the closed disclosure');
+ vm.runInContext("fleetWorkloads.native_engines[0]={...fleetWorkloads.native_engines[0],state:'busy',running_count:2,waiting_count:1}",context);
+ const busy=render();assert.ok(busy.indexOf('fleet-native-row')<busy.indexOf('<details'),'Current work remains on the card face');assert.match(busy,/2 running · 1 queued/);assert.match(busy,/Media · 1 active engine/);
+ vm.runInContext('fleetWorkloadsUnavailable=true',context);
+ assert.doesNotMatch(render(),/Queue empty/);assert.match(render(),/Stale/);
+ vm.runInContext('fleetWorkloadsUnavailable=false;fleetWorkloads.native_engines[0].observed_at=null;fleetWorkloads.native_engines.pop()',context);
+ assert.match(render(),/Awaiting status/);assert.doesNotMatch(render(),/Queue empty/);
+});
+
 test('Fleet catalogue route assembles enrolled members, machines and routes',async()=>{
   const catalogue=async()=>({built_at:1,entries:[{id:'glm53f-sparks12',machines:['spark1'],scripts:['status'],routes:['GLM-5.3-Flash-EXL3'],state:'serving-llm',detail:'healthy, idle',gateway_worker:true,observed_at:null,sources:{}}],warnings:['route orphan targets ghost-worker, which has no enrolled scripts']});
   const server=createDashboard(()=>({version:1,read_only:true,devices:[],gateway:{workers:[],model_routes:{}}}),undefined,{catalogue});
@@ -1282,4 +1298,30 @@ test('Fleet catalogue is included in fleet power status evidence for Genie agree
   const value=await withCat.tool({action:'status'});
   assert.equal(value.catalogue.entries[0].id,'glm53f-m3');assert.equal(value.catalogue.entries[0].state,'engine-stopped');
   assert.throws(()=>createFleetPowerTools({runner,read:async()=>({}),catalogue:'nope'}),/catalogue must be a function/);
+});
+
+
+test('Fleet presentation groups only mapped paused alternatives and preserves failures, media and conflicts',()=>{
+ const source=fs.readFileSync(new URL('./ui/ui.js',import.meta.url),'utf8').replace(/^import [^;]*;\n/gm,'').split('\npoll();')[0],context=vm.createContext({});vm.runInContext(source,context);
+ const pair={id:'paired-service',physical_machines:['spark1','spark2'],is_healthy:true,drained:false,load:1,queued:0};
+ const first={id:'single-a',physical_machines:['spark1'],is_healthy:false,drained:true,load:0,queued:0},second={...first,id:'single-b',physical_machines:['spark2']};
+ const project=(workers,media=[])=>vm.runInContext(`fleetPresentation(${JSON.stringify(workers)},${JSON.stringify(media)})`,context);
+ const grouped=project([pair,first,second]);assert.equal(grouped.owner.get('single-a'),'paired-service');assert.equal(grouped.nested.get('paired-service').length,2);
+ assert.equal(project([{...pair,is_healthy:false,load:0},first,second]).owner.size,2,'The unavailable intended pair remains primary; its failure is not disguised as two failed machines');
+ assert.equal(project([{...pair,drained:true,load:0},{...first,drained:false,is_healthy:true},{...second,drained:false,is_healthy:true}]).owner.size,0,'Independent serving members stay separate');
+ assert.equal(project([pair,{...first,load:1},second]).owner.has('single-a'),false);
+ assert.equal(project([pair,{...first,queued:1},second]).owner.has('single-a'),false);
+ assert.equal(project([pair,{...first,quarantine:{reason:'fault'}},second]).owner.has('single-a'),false);
+ assert.equal(project([pair,{...first,maintenance_locks:[{name:'owner'}]},second]).owner.has('single-a'),false);
+ assert.equal(project([pair,{...first,direct_reserved:true},second]).owner.has('single-a'),false);
+ assert.equal(project([pair,{...first,queued:undefined},second]).owner.has('single-a'),false);
+ const direct=vm.runInContext(`mediaWorkerIds(${JSON.stringify([pair,first])},10000,[{id:'single-a',endpoint_metrics:{connected:true,at:9900,running:1}}])`,context);assert.ok(direct.includes('single-a'));
+ assert.equal(project([pair,first,second],['single-a']).owner.has('single-a'),false,'An independently active media member stays visible');
+ const conflict=project([pair,{...first,is_healthy:true,drained:false},second]);assert.ok(conflict.conflicts.get('paired-service').includes('single-a'));
+ assert.equal(project([pair,{...pair,id:'second-pair'},first]).owner.size,0,'Ambiguous group owners are not guessed');
+ assert.equal(project([pair,{...first,physical_machines:undefined}]).owner.size,0,'Names cannot substitute for missing topology');
+ assert.equal(project([{...pair,physical_machines:['spark1','spark1']},first]).owner.size,0,'Invalid duplicate mappings cannot form a group');
+ const split=project([{...pair,drained:true,load:0},{...first,is_healthy:true,drained:false,load:1}]);assert.ok(split.sharedWith.get('paired-service').includes('single-a'));
+ vm.runInContext('workerControlsReady=true',context);
+ const blocked=vm.runInContext(`routingMarkup(${JSON.stringify(first)},{blockedBy:['paired-service']})`,context);assert.match(blocked,/disabled/);assert.match(blocked,/Manage that service before resuming/);
 });
