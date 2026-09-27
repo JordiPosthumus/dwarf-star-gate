@@ -168,3 +168,21 @@ test('exact trial status includes older evidence outside the recent global windo
  assert.deepEqual(manager.status(id).map(r=>r.trial_id),[id]);
  assert.throws(()=>manager.status('../anything'),/exact trial UUID/);
 });
+
+
+test('published recipe root is reported as a static binding mismatch before any native action',async t=>{
+ const f=fixture(t),manager=createRecipeTrials(f);
+ assert.equal(manager.index()[0].inspection_binding.state,'matched');
+ f.config.genie_chat.inspection.workers['glm53f-sparks34'].recipe_root='/fixture/published-rollout/candidate';
+ const evidence=manager.index()[0].inspection_binding;
+ assert.equal(evidence.state,'changed');assert.deepEqual(evidence.different_fields,['recipe_root']);
+ assert.match(evidence.scope,/Static enrolled configuration/);
+ assert.doesNotMatch(JSON.stringify(evidence),/fixture-host|published-rollout|private-key/);
+ await assert.rejects(manager.start({profile:'fixture',stage:'prepare',trial_id:id}),error=>{
+  assert.match(error.message,/changed fields: recipe_root/);
+  assert.match(error.message,/not an SSH or health check/);
+  assert.match(error.message,/No native command was issued/);
+  return true;
+ });
+ assert.equal(f.launched.length,0);assert.equal(fs.existsSync(f.folder),false);
+});

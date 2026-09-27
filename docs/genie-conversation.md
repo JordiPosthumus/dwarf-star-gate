@@ -13,6 +13,11 @@ with the exact correction needed. A transport failure still reports uncertain
 observation; it must not be mistaken for local input rejection or replayed as a
 new fleet action.
 
+Recipe discovery separately reports whether the pinned plan matches its current
+inspection binding. A changed recipe directory is a static configuration mismatch;
+it does not establish an SSH, host-key, container or serving-health failure. A
+rejected baseline never starts a native command.
+
 Completed chat replies also retain **Hermes dispatch evidence**, including
 discovery-wrapper failures that happened before a DSG domain handler ran. This
 collapsed detail distinguishes returned tool results, errors and missing results.
