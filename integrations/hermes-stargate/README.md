@@ -31,6 +31,14 @@ installs the pinned Hermes source, private Python and locked messaging
 requirements under `runtime/genie-native-runtime`, independently of the existing
 core runtime. It does not start a process or configure a bot.
 
+Native runtime generation 2 pins uv 0.12.19 with platform-specific archive
+checksums and uses separate source and managed-Python directories. Earlier
+environments remain intact. Before accepting either an installation or reuse,
+the installer checks the actual Python 3.12 runtime against the pinned Hermes
+SQLite WAL-reset vulnerability predicate. Its private installation receipt
+records the Python build, SQLite version and SQLite source ID; reuse refuses a
+changed runtime. The existing core installer is unchanged.
+
 Outstanding work includes the dashboard transcript facade, transcript and owner
 migration, operation-follow-up delivery, and live Telegram acceptance.
 Do not launch this against the live bot while the existing poller is running.
