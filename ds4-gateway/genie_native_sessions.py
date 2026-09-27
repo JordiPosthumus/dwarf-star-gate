@@ -15,14 +15,14 @@ import threading
 import uuid
 
 
-def private_read(file):
+def private_read(file, *, max_bytes=262144):
     try:
         fd = os.open(file, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except FileNotFoundError:
         return None
     with os.fdopen(fd) as source:
         info = os.fstat(source.fileno())
-        if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077 or info.st_uid != os.getuid() or info.st_size > 262144:
+        if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077 or info.st_uid != os.getuid() or (max_bytes is not None and info.st_size > max_bytes):
             raise ValueError('Invalid private native UI record')
         return json.load(source)
 

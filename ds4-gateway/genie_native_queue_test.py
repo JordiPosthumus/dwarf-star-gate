@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from genie_native_queue import NativeQueueCheckpoints, NativeTurnIdentities, checkpoint_pending, pack_event, unpack_event
+from genie_native_sessions import private_read
 
 NATIVE = importlib.util.find_spec('gateway') is not None and importlib.util.find_spec('telegram') is not None
 
@@ -115,11 +116,68 @@ class NativeQueue(unittest.TestCase):
             self.checkpoint()
         self.assert_intact()
 
-    def test_oversized_queue_is_preserved_and_schema_drift_cannot_drop_fields(self):
-        self.second.text = 'x' * 270000
-        with self.assertRaisesRegex(ValueError, 'record limit'):
-            self.checkpoint()
-        self.assert_intact()
+    def test_large_native_queue_survives_detachment_confirmation_and_restart(self):
+        self.second.text = 'Native queued movie planning 🎬\n' * 40000
+        original = [pack_event(self.first), pack_event(self.second)]
+        saved = self.checkpoint()
+        self.assertEqual(saved['state'], 'held')
+        self.assertNotIn(self.key, self.adapter._pending_messages)
+        self.assertFalse(self.state.conversation.queued_events)
+        restarted = NativeQueueCheckpoints(self.store.directory)
+        restored = restarted.read(self.hold_id)
+        self.assertEqual([pack_event(unpack_event(row)) for row in restored['events']], original)
+        self.assertGreater((self.store.directory / (self.hold_id + '.json')).stat().st_size, 1000000)
+        with self.assertRaisesRegex(ValueError, 'Invalid private native UI record'):
+            private_read(self.store.directory / (self.hold_id + '.json'))
+
+    def check_buffered_text(self, failure=None):
+        from gateway.platforms.base import TextDebounceState
+        from gateway.platforms.event import MessageEvent
+        async def exercise():
+            event = MessageEvent(text='A new Telegram burst waiting for its debounce timer', source=self.first.source)
+            timer = asyncio.create_task(asyncio.sleep(60))
+            buffered = TextDebounceState(event=event, task=timer, first_ts=10, last_ts=11)
+            self.adapter._text_debounce = {self.key: buffered}
+            original = self.store.confirm_detached
+            def fail(hold_id):
+                if failure == 'after_replace':
+                    original(hold_id)
+                raise OSError('Fixture checkpoint failure')
+            try:
+                if failure:
+                    with patch.object(self.store, 'confirm_detached', side_effect=fail):
+                        with self.assertRaises(OSError):
+                            self.checkpoint()
+                else:
+                    self.checkpoint()
+                await asyncio.sleep(0)
+                saved = NativeQueueCheckpoints(self.store.directory).read(self.hold_id)
+                self.assertEqual(pack_event(unpack_event(saved['buffered_text'])), pack_event(event))
+                self.assertEqual(len(saved['events']), 2, 'Debounced input remains distinct from pending/FIFO slots')
+                if failure == 'before_replace':
+                    self.assert_intact()
+                    self.assertIs(self.adapter._text_debounce[self.key], buffered)
+                    self.assertFalse(timer.cancelled(), 'Restored native buffer keeps its original live timer')
+                    self.assertEqual(saved['state'], 'prepared')
+                else:
+                    self.assertNotIn(self.key, self.adapter._text_debounce)
+                    self.assertTrue(timer.cancelled(), 'Detached input cannot flush back into the native queue')
+                    self.assertEqual(saved['state'], 'held')
+            finally:
+                timer.cancel()
+                await asyncio.gather(timer, return_exceptions=True)
+        asyncio.run(exercise())
+
+    def test_native_debounce_buffer_is_preserved_separately_and_timer_cancelled_only_after_detachment(self):
+        self.check_buffered_text()
+
+    def test_debounce_receipt_failure_restores_the_live_native_buffer_and_timer(self):
+        self.check_buffered_text('before_replace')
+
+    def test_debounce_receipt_failure_after_replace_keeps_only_the_held_copy(self):
+        self.check_buffered_text('after_replace')
+
+    def test_schema_drift_cannot_drop_fields(self):
         row = pack_event(self.first)
         del row['reply_to_text']
         with self.assertRaisesRegex(ValueError, 'schema changed'):

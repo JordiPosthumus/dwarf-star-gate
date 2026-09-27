@@ -85,30 +85,39 @@ class NativeQueueCheckpoints:
 
     def read(self, hold_id):
         canonical_uuid(hold_id)
-        record = private_read(self.directory / (hold_id + '.json'))
+        # These records contain events already admitted into Hermes's queue,
+        # including media/reply metadata. The small UI metadata limit must not
+        # reduce the native queue's capacity. Private ownership/type checks and
+        # the complete-content fingerprint still apply.
+        record = private_read(self.directory / (hold_id + '.json'), max_bytes=None)
         if record is not None:
-            if not isinstance(record, dict) or set(record) != {'schema', 'hold_id', 'session_key', 'turn_id', 'fingerprint', 'state', 'events'} or record.get('hold_id') != hold_id or record.get('schema') != 1 or record.get('state') not in ('prepared', 'held') or not isinstance(record.get('events'), list):
+            expected = {'schema', 'hold_id', 'session_key', 'turn_id', 'fingerprint', 'state', 'events'}
+            if isinstance(record, dict) and record.get('schema') == 2:
+                expected.add('buffered_text')
+            if not isinstance(record, dict) or set(record) != expected or record.get('hold_id') != hold_id or record.get('schema') not in (1, 2) or record.get('state') not in ('prepared', 'held') or not isinstance(record.get('events'), list):
                 raise ValueError('Invalid native queue checkpoint')
-            fingerprint = hashlib.sha256(json.dumps([record['session_key'], record['turn_id'], record['events']], sort_keys=True).encode()).hexdigest()
+            contents = [record['session_key'], record['turn_id'], record['events']]
+            if record['schema'] == 2:
+                contents.append(record['buffered_text'])
+            fingerprint = hashlib.sha256(json.dumps(contents, sort_keys=True).encode()).hexdigest()
             if record['fingerprint'] != fingerprint:
                 raise ValueError('Native queue checkpoint contents changed')
         return record
 
-    def save(self, *, hold_id, session_key, turn_id, events):
+    def save(self, *, hold_id, session_key, turn_id, events, buffered_text=None):
         canonical_uuid(hold_id)
         if not isinstance(session_key, str) or not session_key or not isinstance(turn_id, str) or not turn_id:
             raise ValueError('An exact native session and turn identity are required')
         packed = [pack_event(event) for event in events]
-        fingerprint = hashlib.sha256(json.dumps([session_key, turn_id, packed], sort_keys=True).encode()).hexdigest()
+        buffered = pack_event(buffered_text) if buffered_text is not None else None
+        fingerprint = hashlib.sha256(json.dumps([session_key, turn_id, packed, buffered], sort_keys=True).encode()).hexdigest()
         prior = self.read(hold_id)
         if prior is not None:
             if prior.get('fingerprint') != fingerprint:
                 raise ValueError('Queue checkpoint identity belongs to another native turn or input')
             return prior
-        record = {'schema': 1, 'hold_id': hold_id, 'session_key': session_key, 'turn_id': turn_id,
-                  'fingerprint': fingerprint, 'state': 'prepared', 'events': packed}
-        if len((json.dumps(record) + '\n').encode()) > 262144:
-            raise ValueError('Queue checkpoint exceeds the private record limit; leave the native queue intact')
+        record = {'schema': 2, 'hold_id': hold_id, 'session_key': session_key, 'turn_id': turn_id,
+                  'fingerprint': fingerprint, 'state': 'prepared', 'events': packed, 'buffered_text': buffered}
         private_save(self.directory / (hold_id + '.json'), record)
         return record
 
@@ -135,18 +144,24 @@ def checkpoint_pending(*, store, hold_id, session_key, turn_id, adapter, runner,
     if state is None or not isinstance(adapter._pending_messages, dict):
         raise ValueError('Native queue evidence is unavailable')
     overflow = state.conversation.queued_events
+    debounce_store = getattr(adapter, '_text_debounce', {})
+    if not isinstance(debounce_store, dict):
+        raise ValueError('Native buffered-text evidence is unavailable')
+    debounce = debounce_store.get(session_key)
     head = adapter._pending_messages.get(session_key)
     tail = list(overflow)
     events = ([head] if head is not None else []) + tail
-    record = store.save(hold_id=hold_id, session_key=session_key, turn_id=turn_id, events=events)
+    record = store.save(hold_id=hold_id, session_key=session_key, turn_id=turn_id, events=events,
+                        buffered_text=debounce.event if debounce is not None else None)
     if current_turn() != turn_id or adapter._pending_messages.get(session_key) is not head or (
         len(overflow) != len(tail) or any(a is not b for a, b in zip(overflow, tail))
-    ):
+    ) or debounce_store.get(session_key) is not debounce:
         raise ValueError('Native queue changed during checkpoint; leave it intact')
     adapter._pending_messages.pop(session_key, None)
     overflow.clear()
+    debounce_store.pop(session_key, None)
     try:
-        return store.confirm_detached(hold_id)
+        held = store.confirm_detached(hold_id)
     except BaseException:
         # A failed fsync may occur AFTER atomic replacement. Restore native
         # ownership only when the record is observably still prepared. A held
@@ -160,4 +175,13 @@ def checkpoint_pending(*, store, hold_id, session_key, turn_id, adapter, runner,
             if head is not None:
                 adapter._pending_messages[session_key] = head
             overflow.extend(tail)
+            if debounce is not None:
+                # No await occurred: the original timer has not run or been
+                # cancelled and still owns exactly this native buffer.
+                debounce_store[session_key] = debounce
+        elif debounce is not None:
+            debounce.cancel_timer()
         raise
+    if debounce is not None:
+        debounce.cancel_timer()
+    return held

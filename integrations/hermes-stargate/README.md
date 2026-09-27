@@ -206,8 +206,13 @@ no stoppable identity; old transcript IDs must never substitute for it.
 `genie_native_queue.py` provides the staged save-before-detach checkpoint for
 native pending events. It preserves all normalized event fields, Telegram raw
 message data, attachments, reply context, order and command trust flags in
-private records. Unsupported metadata or an oversized checkpoint leaves the
-native queue intact. `prepared` records are uncertain and must not be replayed;
+private records. Checkpoints preserve large native inputs without applying the
+small UI metadata record limit; unreadable or unrepresentable events leave the
+native queue intact. Schema 2 also retains the native text-debounce buffer
+separately from the pending slot and FIFO overflow, so a future resume can
+restore its native role. Its timer is cancelled only once ownership detaches;
+a failure before the held receipt restores the original buffer and live timer.
+Earlier schema-1 checkpoints remain readable. `prepared` records are uncertain and must not be replayed;
 `held` confirms queue detachment, not interruption of an agent. Failed writes
 after atomic replacement require reconciliation rather than duplication.
 This primitive does not install the hold gate, stop a turn, or resume input.
