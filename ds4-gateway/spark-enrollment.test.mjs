@@ -79,3 +79,8 @@ test('pinned inspection cannot accept a global/DNS key or reuse a previously con
  for(const option of ['UserKnownHostsFile='+knownHosts,'StrictHostKeyChecking=yes','GlobalKnownHostsFile=/dev/null','VerifyHostKeyDNS=no','UpdateHostKeys=no','ControlMaster=no','ControlPath=none'])assert.ok(args.includes(option));
  assert.equal(args.includes('StrictHostKeyChecking=accept-new'),false);assert.equal(fs.readdirSync(f.directory).length,0);
 });
+test('the connected discovery UI asks Genie to find hosts instead of asking the owner for their IPs',t=>{
+ const f=discoveryFixture(t),tools=createSparkSetupTools({ui_worker_management:true,spark_setup:{enabled:true}},{enrollment:f.enrollment,discovery:{status:()=>({state:'not_started'})}});
+ const row=capabilityStatus({gateway:{genie_capabilities:{spark_setup:true}}},{management:true,chat:{capabilities_configured:{spark_setup:true}},sparkSetup:tools.status()}).capabilities.find(r=>r.key==='spark_setup');
+ assert.equal(row.connected,true);assert.match(row.detail,/Ask Genie to find and enroll/);assert.doesNotMatch(row.detail,/address and SSH username/);assert.equal(f.sequence.length,0);
+});
