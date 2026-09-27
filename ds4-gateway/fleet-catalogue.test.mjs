@@ -4,7 +4,7 @@ import { buildCatalogue, catalogueEntry, CATALOGUE_RANK } from './ui/fleet-catal
 
 const member = id => ({ id, machine: id.includes('m3') ? ['m3-ultra'] : [id.includes('sparks12') ? 'spark1' : 'spark3'], scripts: ['status', 'start', 'stop'] });
 const worker = (id, over = {}) => ({ id, is_healthy: true, drained: false, quarantine: false, load: 0, queued: 0, ...over });
-const device = (id, over = {}) => ({ id, endpoint_metrics: { connected: true, running: 0, at: 1000 }, hardware: { state: 'connected' }, ...over });
+const device = (id, over = {}) => ({ id, endpoint_metrics: { connected: true, running: 0, at: 1000 }, hardware: { state: 'connected', current: {time:1000} }, ...over });
 const NOW = 5000;
 
 test('catalogue: serving pair and active-first ordering', () => {
@@ -20,14 +20,14 @@ test('catalogue: serving pair and active-first ordering', () => {
   assert.deepEqual(entries[0].routes, ['GLM-5.3-Flash-EXL3']);
   assert.match(entries[0].detail, /2 active/);
   assert.ok(CATALOGUE_RANK[entries[0].state] < CATALOGUE_RANK[entries[2].state]);
-  assert.equal(entries[2].state, 'configured-stopped');
+  assert.equal(entries[2].state, 'configured');
   assert.equal(entries[2].gateway_worker, false);
 });
 
-test('catalogue: offline endpoint with machine reachable is engine-stopped, not machine-down; without telemetry it is unknown', () => {
+test('catalogue: offline endpoint with machine reachable is endpoint-unavailable, not machine-down; without telemetry it is unknown', () => {
   const down = { ...device('glm53f-m3'), endpoint_metrics: { connected: false, running: 0, at: 1000 } };
   const a = catalogueEntry({ member: member('glm53f-m3'), worker: worker('glm53f-m3', { is_healthy: false }), device: down, mediaBusy: false, now: NOW });
-  assert.equal(a.state, 'engine-stopped');
+  assert.equal(a.state, 'endpoint-unavailable');
   assert.match(a.detail, /machine reachable/);
   const b = catalogueEntry({ member: member('glm53f-m3'), worker: worker('glm53f-m3', { is_healthy: false }), device: { ...down, hardware: { state: 'disconnected' } }, mediaBusy: false, now: NOW });
   assert.equal(b.state, 'unknown');
@@ -91,4 +91,33 @@ test('catalogue: warnings flag routes to dead workers and unenrolled gateway wor
 test('catalogue: direct_reserved and served_model pass through for Genie agreement', () => {
   const a = catalogueEntry({ member: member('glm53f-m3'), worker: worker('glm53f-m3', { served_model: 'GLM-5.3-Flash-oQ8e-mtp', direct_reserved: true }), device: device('glm53f-m3'), mediaBusy: false, now: NOW });
   assert.equal(a.served_model, 'GLM-5.3-Flash-oQ8e-mtp');
+  assert.equal(a.state, 'paused');
+  assert.match(a.detail, /reserved for direct work/);
+  assert.doesNotMatch(a.detail, /operator/);
+});
+
+test('catalogue: maintenance does not invent an operator pause or current endpoint proof', () => {
+  const target = worker('fixture-model', { drained: true, operator_paused: false, maintenance_locks: [{ name: 'Recipe trial' }] });
+  const value = catalogueEntry({ member: member('fixture-model'), worker: target, device: device('fixture-model'), now: NOW });
+  assert.equal(value.state, 'paused');assert.match(value.detail, /held for maintenance; endpoint answering/);
+  assert.doesNotMatch(value.detail, /operator/);
+  const unknown = catalogueEntry({ member: member('fixture-model'), worker: target, device: null, now: NOW });
+  assert.match(unknown.detail, /current endpoint telemetry unavailable/);
+  assert.doesNotMatch(unknown.detail, /engine still up|endpoint answering/);
+  const both = catalogueEntry({ member: member('fixture-model'), worker: { ...target, operator_paused: true }, device: device('fixture-model'), now: NOW });
+  assert.match(both.detail, /paused by operator and held for maintenance/);
+});
+
+
+test('catalogue treats quarantine objects, stale telemetry and queued media honestly',()=>{
+  const id='m3';
+  assert.equal(catalogueEntry({member:member(id),worker:worker(id,{quarantine:{reason:'inference_failure'}}),device:device(id),now:NOW}).state,'failed');
+  const stale=catalogueEntry({member:member(id),worker:worker(id),device:device(id),now:100000});
+  assert.equal(stale.state,'unknown');
+  const future=catalogueEntry({member:member(id),worker:worker(id),device:device(id,{endpoint_metrics:{connected:true,at:NOW+1}}),now:NOW});
+  assert.notEqual(future.state,'serving-llm');
+  for(const row of [{state:'queued',heartbeat_at:new Date(NOW).toISOString()},{state:'running',heartbeat_at:new Date(0).toISOString()}]){
+    const {entries}=buildCatalogue({members:[member(id)],workers:[],media:{workloads:[{worker_id:id,...row}]},now:100000});
+    assert.notEqual(entries[0].state,'serving-media');
+  }
 });

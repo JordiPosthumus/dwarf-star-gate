@@ -14,7 +14,7 @@ test('dashboard queues a text video through the authenticated core once, preserv
   const core=createGateway(config),address=await core.start();config.port=address.port;
   t.after(async()=>{await core.close();fs.rmSync(folder,{recursive:true,force:true});});
   const management={media:()=>workerControl(config.control_socket,'/media-jobs'),act:(action,input)=>{assert.equal(action,'media-video-submit');return submitVideoFromDashboard(config,input);}};
-  const dashboard=createDashboard(()=>({gateway:{workers:[]}}),undefined,management);await new Promise(r=>dashboard.listen(0,'127.0.0.1',r));
+  const dashboard=createDashboard(()=>({gateway:{workers:[]}}), {management});await new Promise(r=>dashboard.listen(0,'127.0.0.1',r));
   t.after(()=>{dashboard.closeAllConnections();dashboard.close();});const origin=`http://127.0.0.1:${dashboard.address().port}`;
   const status=await (await fetch(origin+'/api/media')).json();assert.equal(status.text_video_supported,true);assert.equal(status.enabled,false);
   const request={key:'same-browser-request',prompt:'A paper boat on a calm pond.'};

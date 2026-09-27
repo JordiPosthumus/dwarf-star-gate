@@ -11,11 +11,11 @@ function render(next){
     if(typeof job.request_id!=='string')continue;
     const row=document.createElement('tr');row.dataset.request=job.request_id;
     const preview=typeof job.request_preview?.text==='string'?job.request_preview.text:null;
-    const label=job.title||(preview?`Request: ${preview}`:`Request not yet identified · ${job.request_id.slice(0,8)}`);
-    for(const value of [label,job.state==='running'?'Running':job.state==='queued'?'Queued':'Blocked',priorities.find(([value])=>value===job.priority)?.[1]??'Normal',job.machine||'Unassigned',job.state==='running'?`Waited ${elapsed(job.waiting_ms)}\nRunning ${elapsed(job.running_ms)}`:`Waiting ${elapsed(job.waiting_ms)}`,job.request_reason==='Request is already running'?'':job.request_reason||'']){
+    const label=(job.priority_policy==='genie'?'Gate Genie':job.title)||(preview?`Request: ${preview}`:`Request not yet identified · ${job.request_id.slice(0,8)}`);
+    for(const value of [label,job.state==='running'?'Running':job.state==='queued'?'Queued':'Blocked',job.priority_policy==='genie'?'Genie · next slot':priorities.find(([value])=>value===job.priority)?.[1]??'Normal',job.machine||'Unassigned',job.state==='running'?`Waited ${elapsed(job.waiting_ms)}\nRunning ${elapsed(job.running_ms)}`:`Waiting ${elapsed(job.waiting_ms)}`,job.request_reason==='Request is already running'?'':job.request_reason||'']){
       const cell=document.createElement('td');cell.textContent=value;row.append(cell);
     }
-    if(next.priority_edit_enabled&&['queued','blocked'].includes(job.state)&&priorities.some(([value])=>value===job.priority)){
+    if(job.priority_policy!=='genie'&&next.priority_edit_enabled&&['queued','blocked'].includes(job.state)&&priorities.some(([value])=>value===job.priority)){
       const select=document.createElement('select');select.setAttribute('aria-label',`Priority for ${label}`);
       for(const [value,label]of priorities){const option=document.createElement('option');option.value=value;option.textContent=label;select.append(option);}
       select.value=job.priority;select.addEventListener('change',()=>void changePriority(job,select));row.children[2].replaceChildren(select);

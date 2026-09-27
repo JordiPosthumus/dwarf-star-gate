@@ -5,7 +5,7 @@ import {Recovery} from './recovery.mjs';
 import {recoveryConfig} from './recovery-transport.mjs';
 import {bootstrapProofValid} from './recovery-bootstrap.mjs';
 import {AgentControl} from './agent-control.mjs';
-import {briefing} from './genie.mjs';
+
 
 const c={id:'mac',url:'http://127.0.0.1:39001',ssh:'fixture-host',adapter:'launchd',helper:'/opt/dsg/helper.py',config:'/opt/dsg/private.json',
   machine:'a'.repeat(64),profile:'b'.repeat(64),service_profile:'c'.repeat(64),exclusive:true,
@@ -180,16 +180,7 @@ test('restart reconciliation only observes and validates; malformed or rebound b
   assert.equal(rebound.state.operations[0].state,'failed');assert.equal(rebound.state.operations[0].error,'bootstrap_enrollment_changed');assert.equal(r.bootstraps,1);await rebound.close();
   assert.equal(bootstrapProofValid(op.proof,262144),true);assert.equal(bootstrapProofValid(op.proof,131072),false);
 });
-test('an external replacement does not earn a bootstrap certificate, and Genie sees no private enrollment',async()=>{
-  const r=rig();await r.ready();await r.remove();r.restore();
-  const op=await r.canary();assert.equal(op.state,'verified_paused');assert.equal(r.bootstraps,0);
-  assert.equal(r.recovery.workerStatus(r.node).bootstrap.certified,false);
-  const state=r.recovery.status();state.workers[0].bootstrap.private_path='/PRIVATE/enrollment';
-  const value=briefing({gateway:{workers:[{id:c.id}],recovery:state},devices:[]});
-  assert.deepEqual(value.workers[0].recovery_evidence.bootstrap,{enrolled:true,certified:false});
-  const text=JSON.stringify(value);for(const hidden of ['/PRIVATE/enrollment',c.profile,c.retained_definition_sha256,boot])assert.ok(!text.includes(hidden));
-  await r.recovery.close();
-});
+
 test('automatic policy revoked during fresh inspection cannot issue a previously accepted bootstrap',async()=>{
   const r=rig();await r.ready();await r.remove();await r.canary();r.node.drained=false;r.advance(31*60000);await r.remove('loginwindow');
   r.recovery.setAutomatic(true);r.hooks.removal=value=>{r.recovery.setAutomatic(false);return value;};

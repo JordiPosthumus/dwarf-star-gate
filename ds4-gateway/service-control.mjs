@@ -33,9 +33,13 @@ export async function readService(kind,config) {
 }
 export async function assertDashboardIdle(config,{interrupt=false,fetchImpl=fetch}={}) {
   if(interrupt)return;
-  const read=async route=>{const response=await fetchImpl(`http://127.0.0.1:${dashboardPort(config)}${route}`,{signal:AbortSignal.timeout(3000)});if(!response.ok)throw Error('Dashboard activity unavailable; leave it running');return response.json();};
-  const [chat,reviewer]=await Promise.all([read('/api/genie/chat'),read('/api/genie')]);
+  const read=async (route,{legacyOptional=false}={})=>{const response=await fetchImpl(`http://127.0.0.1:${dashboardPort(config)}${route}`,{signal:AbortSignal.timeout(3000)});if(route.startsWith('/api/genie')&&response.status===410)return {busy:false,conversations:[],removed:true};if(legacyOptional&&response.status===404)return {busy:false,unsupported:true};if(!response.ok)throw Error('Dashboard activity unavailable; leave it running');return response.json();};
+  const [chat,reviewer,power,admission,access,connections]=await Promise.all([read('/api/genie/chat'),read('/api/genie'),read('/api/workers/power'),read('/api/genie/admission',{legacyOptional:true}),read('/api/genie/spark-access',{legacyOptional:true}),read('/api/genie/spark-connections',{legacyOptional:true})]);
+  if((!Array.isArray(power.members)&&power.enabled!==false)||(power.members??[]).some(member=>member.busy))throw Error('Fleet power activity is running or unknown; leave the dashboard running until it finishes');
   if(!Array.isArray(chat.conversations)||chat.conversations.some(c=>c.busy||c.queued>0)||reviewer.busy)throw Error('Genie has active or queued work; leave the dashboard running until it finishes');
+  if(connections.busy!==false)throw Error('Spark connection repair is running or unknown; leave the dashboard running until it finishes');
+  if(access.busy!==false)throw Error('Initial Spark access is running or unknown; leave the dashboard running until it finishes');
+  if(admission.busy!==false)throw Error('Admission or serving checks are running or unknown; leave the dashboard running until they finish');
 }
 export function assertIdle(status,interrupt=false) {
   if(!interrupt&&(!status||status.active!==0||status.queued!==0||(status.media_uploads??0)!==0))throw new Error('Gateway is busy or its state is unknown. Wait for idle, or explicitly use --interrupt.');
@@ -184,13 +188,9 @@ export async function serviceCommand(command,kinds=['gateway','door','dashboard'
     }});
     return {stopped:['gateway'],kept_running:['door'],model_servers_unchanged:true,continuity};
   }
-  let genie;
   if(command==='stop'||command==='restart'){
     if(kinds.includes('gateway')&&loaded('gateway')){let status;try{status=await readService('gateway',config);}catch{}assertIdle(status,interrupt);}
     if(kinds.includes('door')&&loaded('door')){let status;try{status=await readService('door',config);}catch{}assertDoorIdle(status,interrupt);}
-    if(kinds.includes('dashboard')&&loaded('dashboard')){
-      try{const response=await fetch(`http://127.0.0.1:${dashboardPort(config)}/api/genie`,{signal:AbortSignal.timeout(3000)});if(!response.ok)throw new Error();genie=await response.json();const archive=path.join(path.dirname(config.state_file),'dashboard','backups');fs.mkdirSync(archive,{recursive:true,mode:0o700});fs.writeFileSync(path.join(archive,`genie-${Date.now()}.json`),JSON.stringify(genie,null,2)+'\n',{mode:0o600,flag:'wx'});}catch{throw new Error('Could not preserve Genie reports; inspect before stopping the dashboard');}
-    }
     // Fence admission before the final idle check: an idle snapshot alone races
     // with newly arriving work. On a refused stop, restore our temporary fence.
     if(!interrupt&&kinds.includes('gateway')&&loaded('gateway')){
@@ -215,8 +215,6 @@ export async function serviceCommand(command,kinds=['gateway','door','dashboard'
     if(!ready)throw new Error(`${kind} did not become ready. Inspect ${expected(kind).stderr}. Other services were not rolled back automatically.`);
   }
   const resumed=command==='start'&&kinds.includes('gateway')&&loaded('door')?await releaseParkedCore(config):null;
-  if(genie?.configured){const url=`http://127.0.0.1:${dashboardPort(config)}/api/genie`,fresh=await(await fetch(url,{signal:AbortSignal.timeout(3000)})).json();for(const body of [...(fresh.source===genie.source?[]:[{action:'source',source:genie.source}]),...(fresh.enabled===genie.enabled?[]:[{action:'enable',enabled:genie.enabled}])]){
-    const r=await fetch(url,{method:'POST',headers:{'content-type':'application/json',origin:`http://127.0.0.1:${dashboardPort(config)}`,'x-dsg-csrf':fresh.csrf_token},body:JSON.stringify(body)});if(!r.ok)throw new Error('Services started, but Genie settings could not be restored');}}
   return {started:[...(coordinated?['gateway']:[]),...kinds],...(coordinated?{kept_running:['door'],continuity:coordinated}:{}),...(resumed?.released?{continuity_resumed:resumed}:{}),model_servers_unchanged:true};
 }
 if(isMain(import.meta.url)){

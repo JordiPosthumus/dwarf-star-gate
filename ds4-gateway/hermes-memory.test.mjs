@@ -1,0 +1,32 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import {once} from 'node:events';
+import {createMemoryView} from './hermes-memory.mjs';
+import {createDashboard} from './dashboard.mjs';
+
+test('native memory is read-only, reflects disk changes, and includes learned skill references',async t=>{
+  const home=await fs.mkdtemp(path.join(os.tmpdir(),'hermes-memory-'));
+  t.after(()=>fs.rm(home,{recursive:true,force:true}));
+  const store=createMemoryView(home);
+  const initial=await store.read();assert.equal(initial.documents.length,2);
+  assert.ok(initial.documents.every(d=>!d.present));assert.deepEqual(await fs.readdir(home),[]);
+  await fs.mkdir(path.join(home,'memories'));
+  await fs.writeFile(path.join(home,'memories/MEMORY.md'),'Native memory <script>never HTML</script>');
+  await fs.mkdir(path.join(home,'skills/fleet/references'),{recursive:true});
+  await fs.writeFile(path.join(home,'skills/fleet/SKILL.md'),'Learned fleet skill');
+  await fs.writeFile(path.join(home,'skills/fleet/references/notes.md'),'Actual observations');
+  const server=createDashboard(()=>({}),{memory:store});server.listen(0,'127.0.0.1');await once(server,'listening');
+  t.after(()=>{server.closeAllConnections();server.close();});
+  const url=`http://127.0.0.1:${server.address().port}/api/memory`;
+  const response=await fetch(url);assert.equal(response.status,200);
+  const data=await response.json();assert.equal(data.documents[0].content,'Native memory <script>never HTML</script>');
+  assert.equal(data.documents.find(d=>d.kind==='skill').content,'Learned fleet skill');
+  assert.equal(data.documents.find(d=>d.kind==='note').content,'Actual observations');
+  assert.equal((await fetch(url,{method:'PUT',body:'erase'})).status,405);
+  await fs.writeFile(path.join(home,'memories/MEMORY.md'),'Fresh native update');
+  assert.equal((await (await fetch(url)).json()).documents[0].content,'Fresh native update');
+  assert.equal((await fetch(url,{headers:{Origin:'https://unrelated.example'}})).status,403);
+});

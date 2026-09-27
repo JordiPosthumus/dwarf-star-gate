@@ -57,15 +57,17 @@ export async function runMediaCycle(plan,io){
   };
   try{
     assert.ok(['comfyui','ace-step'].includes(plan.engine.kind),'Unsupported media engine');
+    await io.pair?.capture();
     const initial=await recoveryInspect();assert.equal(initial.profile,plan.recovery.profile);assert.equal(initial.listener,true);assert.equal(initial.fault,null);
     before={llm:await inspect(plan.llm_container),media:await inspect(plan.engine.container)};
+    assert.match(before.llm.Id,/^[a-f0-9]{64}$/);plan={...plan,llm_container:before.llm.Id};
     const instance=createHash('sha256').update(JSON.stringify([before.llm.Id,before.llm.State.StartedAt])).digest('hex').slice(0,32);
     assert.equal(initial.instance,instance,'Media enrollment and recovery must identify the same LLM container');
     assert.equal(before.llm.State.Running,true);assert.equal(before.media.State.Running,false);assert.equal(before.media.Image,plan.engine.image);save('containers-before.json',before);
     progress('waiting_idle','Waiting for this worker’s admitted and direct LLM work to finish.');
     await maintenance('prepare');assert.equal((await maintenance('transition')).owned,true);
     unchanged(await inspect(plan.llm_container),before.llm);unchanged(await inspect(plan.engine.container),before.media);
-    save('stop-llm-intent.json',{container:plan.llm_container});stopped=true;await stop(plan.llm_container);
+    save('stop-llm-intent.json',{container:plan.llm_container});stopped=true;if(io.pair)await io.pair.stop(plan.llm_container);else await stop(plan.llm_container);
     assert.equal((await inspect(plan.llm_container)).State.Running,false);
     progress('starting_media','LLM drained and stopped; starting its enrolled media engine.');
     connection=await connect();save('start-media-intent.json',{container:plan.engine.container});mediaStarted=true;await start(plan.engine.container);
@@ -135,10 +137,10 @@ export async function runMediaCycle(plan,io){
         // not strand an unchanged LLM offline after successful generation.
         try{unchanged(await inspect(plan.engine.container),before.media);}catch(e){error=e;save('media-settings-changed.json',{error:e.message});}
         unchanged(await inspect(plan.llm_container),before.llm);
-        save('restore-llm-intent.json',{container:plan.llm_container});await start(plan.llm_container);
+        save('restore-llm-intent.json',{container:plan.llm_container});if(io.pair)await io.pair.restore(plan.llm_container);else await start(plan.llm_container);
         progress('restoring_llm','Original LLM is loading with unchanged settings.');
         await waitForMediaLlm(plan,io);
-        progress('checking_llm','Checking real responses and cold-to-warm cache reuse.');
+        progress('checking_llm',io.pair?'Verifying both original GLM containers and a native readiness response.':'Checking real responses and cold-to-warm cache reuse.');
         save('llm-proof.json',await verify());
         const result=await maintenance('finish');save('readmission.json',result);assert.equal(result.state,'readmitted');
         progress(error?'failed_returned':'returned',error?`Media failed: ${error.message}. Original LLM returned to the gateway.`:'Generated files retained; original LLM verified and returned to the gateway.');

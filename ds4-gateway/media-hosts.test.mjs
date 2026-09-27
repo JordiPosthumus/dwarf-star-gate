@@ -18,7 +18,7 @@ test('placement defaults preserve installed engines; choices persist without gra
 
 test('Media dashboard keeps placement writes behind existing same-origin controls',async t=>{
  const changes=[];const management={read:async()=>({workers:[]}),media:async()=>({configured:true,media_host_controls_version:1,hosts:[],jobs:[]}),act:async(action,input)=>{changes.push({action,input});return input;}};
- const server=createDashboard(()=>({gateway:{}}),undefined,management);await new Promise(r=>server.listen(0,'127.0.0.1',r));t.after(()=>{server.closeAllConnections();server.close();});const base=`http://127.0.0.1:${server.address().port}`;
+ const server=createDashboard(()=>({gateway:{}}), {management});await new Promise(r=>server.listen(0,'127.0.0.1',r));t.after(()=>{server.closeAllConnections();server.close();});const base=`http://127.0.0.1:${server.address().port}`;
  const response=await fetch(base+'/api/media');assert.equal(response.status,200);const state=await response.json();assert.equal(state.controls_enabled,true);
  assert.equal((await fetch(base+'/api/media/eligibility',{method:'POST',headers:{'content-type':'application/json'},body:'{}'})).status,403);
  const input={worker_id:'one',kind:'music',allowed:false};assert.equal((await fetch(base+'/api/media/eligibility',{method:'POST',headers:{'content-type':'application/json',origin:base,'x-dsg-csrf':state.csrf_token},body:JSON.stringify(input)})).status,200);assert.deepEqual(changes,[{action:'media-eligibility',input}]);
@@ -31,7 +31,7 @@ test('Media dashboard keeps placement writes behind existing same-origin control
 
 test('retained media downloads use server-side credentials and preserve byte ranges',async t=>{
  const backend=http.createServer((req,res)=>{assert.equal(req.headers.authorization,'Bearer fixture-key');assert.equal(req.headers.range,'bytes=0-3');assert.match(req.url,/^\/v1\/music\/jobs\//);res.writeHead(206,{'content-type':'audio/flac','content-range':'bytes 0-3/8','content-length':'4'});res.end('fLaC');});await new Promise(r=>backend.listen(0,'127.0.0.1',r));
- const server=createDashboard(()=>({}),undefined,{mediaFile:(req,res,route)=>proxyMediaFile({port:backend.address().port,api_key:'fixture-key'},req,res,route)});await new Promise(r=>server.listen(0,'127.0.0.1',r));t.after(()=>{server.closeAllConnections();server.close();backend.closeAllConnections();backend.close();});
+ const server=createDashboard(()=>({}), {management:{mediaFile:(req,res,route)=>proxyMediaFile({port:backend.address().port,api_key:'fixture-key'},req,res,route)}});await new Promise(r=>server.listen(0,'127.0.0.1',r));t.after(()=>{server.closeAllConnections();server.close();backend.closeAllConnections();backend.close();});
  const base=`http://127.0.0.1:${server.address().port}`,route='/api/media/music/jobs/aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa/files/bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb';
  const r=await fetch(base+route,{headers:{range:'bytes=0-3'}});assert.equal(r.status,206);assert.equal(r.headers.get('content-range'),'bytes 0-3/8');assert.equal(r.headers.get('authorization'),null);assert.equal(await r.text(),'fLaC');
  assert.equal((await fetch(base+route,{headers:{origin:'https://untrusted.example'}})).status,403);
@@ -69,4 +69,16 @@ test('engine registry carries complete kinds and planned engines stay honestly u
  assert.deepEqual(mediaEngines.find(e=>e.id==='minimax-m3').kind,'video');
  const qwen=mediaEngines.find(e=>e.id==='qwen-image');
  assert.equal(qwen.kind,'image');assert.equal(qwen.supported,false);
+});
+
+test('custom installations use configured physical groups and report each member honestly',()=>{
+ const worker={id:'custom-pair',url:'http://fixture'},pair={kind:'glm53-docker-pair',model:'GLM',worker_binding:{...worker},members:[{ssh:'host-a',container:'head'},{ssh:'host-b',container:'rank'}]};
+ const config={workers:[worker],machine_groups:{'custom-pair':['gpu-a','gpu-b'],overlap:['gpu-b'],independent:['gpu-c']},media_jobs:{pairs:{'custom-pair':pair},workers:{'custom-pair':{engines:{video:{member:0}},member_engines:{1:{music:{member:1}}}}}},genie_chat:{inspection:{workers:{'custom-pair':{container:'head',ssh:['host-a']}}}}};
+ const fleet=[{id:'custom-pair',is_healthy:true},{id:'overlap',is_healthy:true}],store={data:{media_host_eligibility:{'custom-pair':{music:true,video:true}}}};
+ const service=createMediaHosts(config,store,{workers:()=>fleet,binding:()=>false});
+ assert.equal(service.status().hosts[0].members[0].engines.find(e=>e.kind==='video').enrolled,true);
+ assert.equal(service.status().hosts[0].members[1].engines.find(e=>e.kind==='video').enrolled,false);
+ assert.equal(service.status().hosts[0].members[1].engines.find(e=>e.kind==='music').ready,false);
+ fleet.push({id:'independent',is_healthy:true});
+ assert.equal(service.status().hosts[0].members[1].engines.find(e=>e.kind==='music').ready,true);
 });

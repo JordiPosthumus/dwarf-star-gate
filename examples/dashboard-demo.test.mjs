@@ -19,13 +19,11 @@ test('public demo has synthetic mixed servers, current panels and no promoted mo
   assert.ok(s.devices.every(d=>d.hardware?.state==='connected'&&d.hardware.series.length===90));
   assert.deepEqual(s.devices.map(d=>d.hardware.power_scope??d.hardware.current.power_scope),['compute_module','compute_module','system']);
   const registry=await get('/api/workers');assert.equal(registry.queued_relocation.automatic,true);assert.equal(registry.queued_relocation.offers.length,1);
-  const g=await get('/api/genie');assert.match(g.reports[0].text,/Synthetic demonstration/);
-  assert.equal(g.last_served_by,'pool_assigned');
+  assert.equal((await fetch(url+'/api/genie')).status,410);
   assert.equal(s.performance_lights.workers.sparkA.decode.level,'green');
   assert.equal(s.performance_lights.workers.sparkA.prefill.level,'red');
   assert.equal(s.performance_lights.workers.sparkB.decode.level,'amber');
   assert.equal(s.performance_lights.workers['mac-ultra'].decode.level,'grey');
-  assert.ok(g.ticker.entries.every(e=>e.text.startsWith('Demo:')));
   const a=await get('/api/request-history');assert.equal(a.demo,true);
   const html=await (await fetch(url)).text();assert.match(html,/<h1>Star Gate<\/h1>/);
 });

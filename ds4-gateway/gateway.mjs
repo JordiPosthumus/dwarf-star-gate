@@ -1,13 +1,15 @@
+import {createOmlxEnrollment,restoreOmlxEnrollments} from './recovery-omlx-enrollment.mjs';
+import {createPairEnrollment,restorePairEnrollments} from './recovery-pair-enrollment.mjs';
 import {requestAuthorized} from './request-auth.mjs';
 import {createMediaHosts} from './media-hosts.mjs';
 import {createMediaSetup} from './media-setup.mjs';
-import {genieCapabilityKeys,validateGenieCapabilities,genieCapabilities} from './genie-capabilities.mjs';
+import {genieCapabilityKeys,validateGenieCapabilities,genieCapabilities} from './fleet-feature-config.mjs';
 import {createMediaExecution} from './media-execution.mjs';
 import {sparkServiceBinding,validateServiceAddition,applyServiceAddition,restoreSparkServices} from './spark-services.mjs';
 import {MediaJobs,handleMediaRequest} from './media-jobs.mjs';
 import {inspectMediaJobInputs} from './media-input-placement.mjs';
 import {activeJobs,activeCount,hasCapacity,requestCapacity,oldestActive} from './worker-activity.mjs';
-import {PRIORITY_HEADER,requestPriority,priorityRank,priorityIndex,priorityOrder} from './job-priority.mjs';
+import {GENIE_KEY_HEADER,isGenieRequest,PRIORITY_HEADER,requestPriority,priorityRank,priorityIndex,priorityOrder} from './job-priority.mjs';
 import {outputShape} from './output-shape.mjs';
 import http from 'node:http';
 import {compose} from 'node:stream';
@@ -294,11 +296,14 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   try { definitions = store.data.workers === undefined ? initial : workerConfigs(store.data.workers); }
   catch (e) { store.close(); throw e; }
   const serviceConfig={...config,recovery:structuredClone(config.recovery),media_jobs:structuredClone(config.media_jobs),genie_chat:structuredClone(config.genie_chat)};
-  try { restoreSparkServices(serviceConfig,store.data.spark_services??{},definitions); }
+  try { restoreSparkServices(serviceConfig,store.data.spark_services??{},definitions); restorePairEnrollments(serviceConfig,store.data.pair_recovery_enrollments??{},definitions); restoreOmlxEnrollments(serviceConfig,store.data.omlx_recovery_enrollments??{},definitions); }
   catch(e){store.close();throw e;}
-  let profiles;try{profiles=servingProfiles(config.serving_profiles,definitions);}catch(e){store.close();throw e;}
+  // Persisted registrations are authoritative after removals. Keep dormant profile/route
+  // definitions intact, but they cannot make a removed worker routable or block restart.
+  const registryOptions={allowUnregistered:store.data.workers!==undefined};
+  let profiles;try{profiles=servingProfiles(config.serving_profiles,definitions,registryOptions);}catch(e){store.close();throw e;}
   const nodes = definitions.map(makeNode);
-  let routes;try{routes=modelRoutes(config.model_routes,definitions);}catch(e){store.close();throw e;}
+  let routes;try{routes=modelRoutes(config.model_routes,definitions,registryOptions);}catch(e){store.close();throw e;}
   const dataset = new Dataset(path.join(path.dirname(config.state_file),'requests'),{enabled:config.dataset_enabled===true});
   const shadow = new RoutingShadow({enabled:config.routing_shadow_enabled===true && config.dataset_enabled===true});
   const observe = fn => {if(shadow.enabled)try{return fn();}catch{shadow.state.errors++;}};
@@ -332,7 +337,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   function currentJobsStatus(){
     const jobs=currentJobs();
     return {schema:1,queue_priority_version:1,genie_progress_version:1,observed_at:Date.now(),queued_body:{buffered_bytes:queuedBodyBudget.used,budget_bytes:queuedBodyBudget.limit},jobs:jobs.slice(0,512).map(job=>({
-      request_id:job.id,call_id:job.trafficClass==='genie'?job.callId:null,traffic_class:job.trafficClass,priority:job.priority,chat:job.key??null,title:null,request_preview:job.preview??null,machine:job.node?.id??job.fixedHome?.id??null,
+      request_id:job.id,call_id:job.trafficClass==='genie'?job.callId:null,traffic_class:job.trafficClass,priority:job.priority,priority_policy:job.geniePriority?'genie':null,chat:job.key??null,title:null,request_preview:job.preview??null,machine:job.node?.id??job.fixedHome?.id??null,
       state:job.dispatched?'running':job.waitReason||!jobEligible(job)?'blocked':'queued',
       request_reason:job.dispatched?'Request is already running':job.waitReason??(job.node?.drained?'Routing is paused':!jobEligible(job)?'Worker or conversation is not eligible':null),
       waiting_ms:job.dispatched?Math.max(0,job.dispatchedMono-job.createdMono):Math.max(0,performance.now()-job.createdMono),
@@ -370,16 +375,18 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   const serialize = fn => { const next = mutation.then(fn); mutation = next.catch(() => {}); return next; };
   const definition = n => Object.fromEntries(workerFields.filter(k => n[k] !== undefined).map(k => [k,n[k]]));
   let recovery;
-  try { recovery=new Recovery(serviceConfig.recovery,{store,nodes,model:config.model,stopping:()=>shuttingDown||draining,log,
+  try { recovery=new Recovery(serviceConfig.recovery,{store,nodes,model:config.model,stopping:()=>shuttingDown||draining,log,fleetConfig:serviceConfig,directReserved,isPairQualificationEnabled:()=>capabilityStatus().server_changes&&capabilityStatus().inspection,isOmlxQualificationEnabled:()=>capabilityStatus().server_changes&&capabilityStatus().inspection,
     reinstate:(n,expected,recoveryState)=>{
-      if(n.removed || n.drained || n.active || n.queue.length || JSON.stringify(n.quarantine)!==JSON.stringify(expected) || shuttingDown || draining)throw new Error('reinstatement_state_changed');
+      if(n.removed || n.drained || n.active || (n.queue.length&&!recovery.omlxReadmissionOwnsQueue(n,recoveryState)) || JSON.stringify(n.quarantine)!==JSON.stringify(expected) || shuttingDown || draining)throw new Error('reinstatement_state_changed');
       const quarantined={...store.data.quarantined};delete quarantined[n.id];
       store.save({...store.data,quarantined,recovery:recoveryState});
       n.quarantine=null;n.inferenceFailures=0;n.healthy=true;n.failures=0;
       observe(()=>shadow.reset(n.id));
     }}); } catch(e){store.close();throw e;}
+  const pairEnrollment=createPairEnrollment({config:serviceConfig,store,recovery,isEnabled:()=>!draining&&!shuttingDown&&capabilityStatus().server_changes&&capabilityStatus().inspection&&recovery.state.automatic});
+  const omlxEnrollment=createOmlxEnrollment({config:serviceConfig,store,recovery,isEnabled:()=>!draining&&!shuttingDown&&capabilityStatus().server_changes&&capabilityStatus().inspection&&recovery.state.automatic});
   let agents;
-  try {agents=new AgentControl({store,nodes,log,onPause:ids=>recovery.operatorPause(ids),canHandback:async n=>recovery.profileHandbackOffer(n,{ignorePause:true}),onHandback:()=>void recovery.tick(),canResume:async n=>{
+  try {agents=new AgentControl({store,nodes,log,onPause:ids=>recovery.operatorPause(ids),canHandback:async (n,{releasingHoldId})=>recovery.profileHandbackOffer(n,{ignorePause:true,releasingHoldId}),onHandback:()=>void recovery.tick(),canResume:async n=>{
     if(shuttingDown||draining)throw new Error('Gateway is draining; hold retained');
     await freshProbe(n);
     if(shuttingDown||draining||n.recovering||n.quarantine||n.probeError||!n.modelMatches||!validContext(n.contextLength)||n.contextLength<requiredContext(n))throw new Error('Fresh compatible worker readiness required; hold retained');
@@ -393,13 +400,13 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
   const oldestQueued=queue=>queue.reduce((oldest,job)=>!oldest||job.createdMono<oldest.createdMono?job:oldest,null);
 
   const capabilityStatus=()=>genieCapabilities(store.data.genie_capabilities,config,recovery.state.automatic);
-  const mediaHosts=createMediaHosts(serviceConfig,store,{workers:()=>registry().workers,binding:(id,c)=>recovery.binding(nodes.find(n=>n.id===id),c)});
+  const mediaHosts=createMediaHosts(serviceConfig,store,{workers:()=>registry().workers,enrollmentWorker:id=>{const n=nodes.find(n=>n.id===id);return n?definition(n):null;},binding:(id,c)=>recovery.binding(nodes.find(n=>n.id===id),c)});
   const mediaStatus=()=>{const state=mediaExecution.status();return {...state,text_video_supported:!!mediaJobs,...mediaHosts.status(state.jobs),setup:mediaSetup?.status()??null};};
-  const mediaExecution=createMediaExecution(serviceConfig,mediaJobs,{isAllowed:mediaHosts.allowed,isEnabled:()=>!draining&&capabilityStatus().media,matchesWorker:(id,c)=>{const n=nodes.find(n=>n.id===id);return !!n&&recovery.binding(n,c);}});
-  const mediaSetup=mediaJobs?createMediaSetup(serviceConfig,store,{directory:path.join(path.dirname(config.state_file),'media-setup'),workers:()=>nodes.map(definition),binding:(id,c)=>{const n=nodes.find(n=>n.id===id);return !!n&&recovery.binding(n,c);},isEnabled:()=>!draining&&capabilityStatus().media,isAllowed:mediaHosts.allowed}):null;
+  const mediaExecution=createMediaExecution(serviceConfig,mediaJobs,{workers:()=>nodes.map(definition),isAllowed:mediaHosts.allowed,isEnabled:()=>!draining&&capabilityStatus().media,matchesWorker:(id,c)=>{const n=nodes.find(n=>n.id===id);return !!n&&recovery.binding(n,c);}});
+  const mediaSetup=mediaJobs?createMediaSetup(serviceConfig,store,{directory:path.join(path.dirname(config.state_file),'media-setup'),workers:()=>nodes.map(definition),binding:(id,c)=>{const n=nodes.find(n=>n.id===id);return !!n&&recovery.binding(n,c);},isEnabled:()=>!draining&&capabilityStatus().media,isInspectionEnabled:()=>capabilityStatus().inspection,isAllowed:mediaHosts.allowed}):null;
   const rebalanceEnabled=()=>capabilityStatus().rebalance;
   const allocationStatus=slot=>slot.turnAllocation?{turns_used:slot.turnAllocation.used,remaining:Math.max(0,conversationTurns()-slot.turnAllocation.used),waiting_for_next_turn:!slot.active&&slot.turnAllocation.until>performance.now(),idle_remaining_ms:Math.max(0,Math.ceil(slot.turnAllocation.until-performance.now()))}:null;
-  const stats = () => ({ version: 1, genie_capabilities:capabilityStatus(), genie_thinking:genieThinking(), serving_profiles:profiles, conversation_turns:conversationTurns(),conversation_turn_idle_ms:conversationTurnIdleMs, model_routes:routes?Object.fromEntries([...routes].map(([name,workers])=>[name,[...workers]])):null, agent_api_version:1, maintenance_lock_version:1,client_watch_version:1,client_watch:clientWatch.snapshot(), model: config.model, context_length: contextLimit(), queue_timeout_ms:queueTimeoutMs(), request_timeout_ms:config.request_timeout_ms??360000000, direct_reserve:{enabled:directReserveEnabled(),release_ms:directReserveMs(),reserved:nodes.filter(n=>directReserved(n)).map(n=>n.id)}, draining,startup:{...startup}, dataset:dataset.snapshot(), routing_shadow:shadow.snapshot(),recovery:recovery.status(),protections:visionProtection.status(),
+  const stats = () => ({ version: 1, genie_capabilities:capabilityStatus(), genie_thinking:genieThinking(), serving_profiles:profiles, conversation_turns:conversationTurns(),conversation_turn_idle_ms:conversationTurnIdleMs, model_routes:routes?Object.fromEntries([...routes].map(([name,workers])=>[name,[...workers]])):null, agent_api_version:1, maintenance_lock_version:1,client_watch_version:1,client_watch:clientWatch.snapshot(), model: config.model, context_length: contextLimit(), queue_timeout_ms:queueTimeoutMs(), request_timeout_ms:config.request_timeout_ms??360000000, direct_reserve:{enabled:directReserveEnabled(),release_ms:directReserveMs(),reserved:nodes.filter(n=>directReserved(n)).map(n=>n.id)}, draining,startup:{...startup}, dataset:dataset.snapshot(), routing_shadow:shadow.snapshot(),recovery:{...recovery.status(),pair_enrollment:pairEnrollment.status(),omlx_enrollment:omlxEnrollment.status()},protections:visionProtection.status(),
     genie_admission_version:1,genie_flexible_assignment:true,continuity:{schema:1,recent_rejections:rejections.slice(0,20),safe_retry_contract:true,queued_relocation:true,automatic_relocation:true,automatic_relocation_scope:automaticRelocationScope,automatic_affinity_rebalance_min_wait_ms:automaticAffinityWait,patient_wait:true,
       relocation:{completed:relocation.completed,rejected:relocation.rejected,offers:relocationOffers().length,genie_enabled:rebalanceEnabled(),genie_offers:genieRelocationOffers(),diagnostics:relocationDiagnostics(),last:relocation.last},
       waiting:waiting.length,oldest_wait_seconds:waiting.length?Math.max(0,(performance.now()-oldestQueued(waiting).createdMono)/1000):null,
@@ -636,9 +643,9 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     clientWatch.observeRequest(job.watchId,job.id,'queued');
     evaluateShadow(node,job,wasAdmitted?'worker_free':'admission');schedule(node);
   }
-  const freeGenieNode=(modelRoute,priority='normal',arrival=Number.MAX_SAFE_INTEGER)=>nodes.filter(node=>{
+  const freeGenieNode=(modelRoute,priority='normal',arrival=Number.MAX_SAFE_INTEGER,geniePriority=false)=>nodes.filter(node=>{
     if(!allowsWorker(modelRoute,node)||!node.healthy||node.drained||node.quarantine||node.recovering||node.removed||!hasCapacity(node))return false;
-    const candidate={key:null,priority,sequence:arrival};
+    const candidate={key:null,priority,sequence:arrival,geniePriority};
     return canStartNow(node,candidate,[...node.queue,...parkedFor(node),candidate]);
   }).sort((a,b)=>store.count(a.id)-store.count(b.id)||a.id.localeCompare(b.id))[0];
   function pumpWaiting() {
@@ -648,7 +655,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     for(const job of priorityOrder(waiting)){
       if(job.cancelled)continue;
       heartbeat(job);
-      if(job.genieFlexible){const free=freeGenieNode(job.modelRoute,job.priority,job.sequence);if(free)admit(job,free);else job.waitReason='no_ready_worker';continue;}
+      if(job.genieFlexible){const free=freeGenieNode(job.modelRoute,job.priority,job.sequence,job.geniePriority);if(free)admit(job,free);else job.waitReason='no_ready_worker';continue;}
       if(job.key&&waiting.some(j=>j!==job&&j.sequence<job.sequence&&j.key===job.key)){job.waitReason='same_session_queued';continue;}
       const home=job.key&&store.get(job.key),outstanding=sessionWork(nodes,job.key);
       let node=job.fixedHome??(home&&nodes.find(n=>n.id===home.node));
@@ -773,6 +780,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     // are intentionally unauthenticated behind loopback or an SSH tunnel, so
     // the ingress secret must never cross the worker boundary.
     delete headers.authorization;
+    delete headers[GENIE_KEY_HEADER]; // Local scheduling credential never reaches model servers.
     delete headers['x-api-key'];
     delete headers[MODEL_ROUTE_HEADER];
     Object.assign(headers, node.upstreamHeaders ?? {});
@@ -1051,10 +1059,11 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     }
     if (!accepted.has(route)) { req.resume(); return error(res, 404, 'unsupported_route', 'Endpoint is not on the inference allowlist'); }
     let priority;try{priority=requestPriority(req.headers[PRIORITY_HEADER]);}catch(e){req.resume();return error(res,400,'invalid_priority',e.message);}
+    const geniePriority=isGenieRequest(config,req.headers);
     const admissionMetadata=clientMetadata(req.headers[CLIENT_METADATA_HEADER]);
     const keyValue = req.headers['x-session-affinity'] || req.headers['x-ds4-conversation-id'] || req.headers['x-session-id'] || req.headers.session_id;
     const key = keyValue && req.method === 'POST' ? digest(String(keyValue)) : null;
-    const requestId=randomUUID(),callId=validCallId(req.headers[CALL_ID_HEADER]),watchId=validClientWatchId(req.headers[CLIENT_WATCH_HEADER]),trafficClass=req.headers['x-dsg-observer']==='gate-genie'?'genie':'unclassified';
+    const requestId=randomUUID(),callId=validCallId(req.headers[CALL_ID_HEADER]),watchId=validClientWatchId(req.headers[CLIENT_WATCH_HEADER]),trafficClass=geniePriority||req.headers['x-dsg-observer']==='gate-genie'?'genie':'unclassified';
     if(req.method==='POST')clientWatch.observeRequest(watchId,requestId,'received');
     if(draining)return reject(req,res,503,'draining','Gateway is draining; no new requests admitted',{id:requestId,callId,key,reason:'gateway_draining'});
     let modelRoute;try{modelRoute=routeSelection(routes,req.headers[MODEL_ROUTE_HEADER]);}catch(e){req.resume();return error(res,400,'unknown_model_route',e.message);}
@@ -1108,8 +1117,8 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
       res.on('close', () => probe.destroy());
       return;
     }
-    const genieFlexible=trafficClass==='genie'&&!key&&req.headers['x-dsg-review-flexible']==='1';
-    if(genieFlexible){node=freeGenieNode(modelRoute,priority);waitReason=node?null:'no_ready_worker';}
+    const genieFlexible=!key&&(geniePriority||(trafficClass==='genie'&&req.headers['x-dsg-review-flexible']==='1'));
+    if(genieFlexible){node=freeGenieNode(modelRoute,priority,Number.MAX_SAFE_INTEGER,geniePriority);waitReason=node?null:'no_ready_worker';}
     if(trafficClass==='genie'&&req.headers['x-dsg-review-no-wait']==='1'){
       // Check atomically at admission. A previously free snapshot cannot grant
       // permission to put an advisory review behind user work after a race.
@@ -1117,7 +1126,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     }
     if ((node&&node.queue.length+parkedFor(node).length>=queueBound())||(!node&&waiting.length>=waitingBound()))return reject(req,res,429,'queue_full','DSG waiting capacity is full; request was not dispatched. Wait for capacity or use the patient client adapter.',{id:requestId,callId,key,node,reason:'queue_full'});
     const job = { req, res, key, affinity, id:requestId,callId,watchId, sequence:sequence++,admissionMetadata,created: Date.now(), createdMono:performance.now(), cancelled: false,queueTimeoutMs:queueTimeoutMs(),
-      trafficClass,genieFlexible,modelRoute,priority };
+      trafficClass,geniePriority,genieFlexible,modelRoute,priority };
     job.previewFromRequest=req.headers['x-dsg-priority-intent']!=='off'&&trafficClass!=='genie'&&req.url==='/v1/chat/completions';
     const cancel = () => {
       if (res.writableFinished) return;
@@ -1233,7 +1242,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
     context_limit_source:store.data.pool_context_length === undefined ? 'config' : 'saved',
     conversation_turns:conversationTurns(),conversation_turn_idle_ms:conversationTurnIdleMs,conversation_turns_control:true,conversation_turns_source:store.data.conversation_turns!==undefined?'saved':config.conversation_turns!==undefined?'config':'default',
     queue_timeout_ms:queueTimeoutMs(),queue_timeout_control:true,queue_timeout_source:store.data.queue_timeout_ms!==undefined?'saved':config.queue_timeout_ms!==undefined?'config':'default',
-    recovery:recovery.status(),protections:visionProtection.status(),queued_relocation:{schema:1,automatic:true,automatic_scope:automaticRelocationScope,automatic_affinity_rebalance_min_wait_ms:automaticAffinityWait,offers:relocationOffers(),diagnostics:relocationDiagnostics(),completed:relocation.completed,rejected:relocation.rejected},
+    recovery:{...recovery.status(),pair_enrollment:pairEnrollment.status(),omlx_enrollment:omlxEnrollment.status()},protections:visionProtection.status(),queued_relocation:{schema:1,automatic:true,automatic_scope:automaticRelocationScope,automatic_affinity_rebalance_min_wait_ms:automaticAffinityWait,offers:relocationOffers(),diagnostics:relocationDiagnostics(),completed:relocation.completed,rejected:relocation.rejected},
     workers: nodes.map(n => ({ ...definition(n), ...stats().workers.find(w => w.id === n.id),...agents.pauseStatus(n.id,{includeReason:true}) })) });
   async function freshProbe(node) {
     while (node.probing) await delay(10);
@@ -1384,6 +1393,8 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
         applyServiceAddition(serviceConfig,binding);recovery.configs.set(node.id,binding.recovery);
       }else store.setWorkers([...nodes.map(definition), settings], { ...store.data.drained, [node.id]: true });
       nodes.push(node);
+      const recoveryOwner=recovery.physicalOwner(node.id);
+      if(recoveryOwner){node.recoveryOperationId=recoveryOwner;node.recovering=true;node.healthy=false;}
       agent.maxSockets=tlsAgent.maxSockets=Math.max(16,nodes.reduce((sum,worker)=>sum+requestCapacity(worker),0));
       log('worker_registered', { node: node.id, context_length: node.contextLength, drained: true });
       return registry();
@@ -1517,11 +1528,11 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
         return json(res,200,await inspectMediaJobInputs(serviceConfig,mediaJobs,JSON.parse(body)));
       }catch(e){return error(res,409,'media_input_inspection_failed',e.message);}})();});return;
     }
-    if(req.method==='POST'&&['/genie-media-start','/genie-media-setup','/media-setup-complete'].includes(req.url)){
+    if(req.method==='POST'&&['/genie-media-start','/genie-media-setup','/genie-media-repair','/genie-media-audit','/media-setup-complete'].includes(req.url)){
       let body='';req.on('data',chunk=>{body+=chunk;if(Buffer.byteLength(body)>2048)req.destroy();});req.on('error',()=>{});
-      req.on('end',()=>{void serialize(async()=>{try{const input=JSON.parse(body);return json(res,202,await (req.url==='/genie-media-start'?mediaExecution.start(input):req.url==='/genie-media-setup'?mediaSetup.start(input):mediaSetup.finish(input)));}catch(e){return error(res,409,'media_start_failed',e.message);}});});return;
+      req.on('end',()=>{void serialize(async()=>{try{const input=JSON.parse(body);return json(res,202,await (req.url==='/genie-media-start'?mediaExecution.start(input):req.url==='/genie-media-setup'?mediaSetup.start(input):req.url==='/genie-media-repair'?mediaSetup.repair(input):req.url==='/genie-media-audit'?mediaSetup.audit(input):mediaSetup.finish(input)));}catch(e){return error(res,409,'media_start_failed',e.message);}});});return;
     }
-    if (req.method !== 'POST' || !['/set-genie-thinking','/media-host-eligibility','/drain-workers', '/resume-workers', '/maintenance-lock','/release-maintenance-lock','/maintenance-receipt','/add-worker', '/edit-endpoint', '/check-endpoint', '/remove-worker', '/set-ssh-fallbacks','/set-context-limit','/set-conversation-turns','/set-queue-timeout','/set-protection','/set-job-priority','/set-worker-concurrency','/set-direct-reserve','/relocate-queued','/genie-relocate-queued','/genie-capability','/recovery-policy','/recovery-handback-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/grant-agent','/revoke-agent','/release-agent-hold','/agent/v1/drain','/agent/v1/resume','/agent/v1/receipt'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
+    if (req.method !== 'POST' || !['/set-genie-thinking','/media-host-eligibility','/drain-workers', '/resume-workers', '/maintenance-lock','/release-maintenance-lock','/maintenance-receipt','/add-worker', '/edit-endpoint', '/check-endpoint', '/remove-worker', '/set-ssh-fallbacks','/set-context-limit','/set-conversation-turns','/set-queue-timeout','/set-protection','/set-job-priority','/set-worker-concurrency','/set-direct-reserve','/relocate-queued','/genie-relocate-queued','/genie-capability','/recovery-policy','/recovery-handback-policy','/recover-worker','/genie-recover-worker','/recovery-canary','/recovery-recheck','/recovery-pair-permit','/enroll-pair-recovery','/enroll-omlx-recovery','/qualify-omlx-recovery','/recovery-omlx-permit','/qualify-pair-recovery','/grant-agent','/revoke-agent','/release-agent-hold','/agent/v1/drain','/agent/v1/resume','/agent/v1/receipt'].includes(req.url)) return error(res, 404, 'not_found', 'Unknown control action');
     let body = '';
     req.on('data', chunk => { body += chunk; if (Buffer.byteLength(body) > 4096) req.destroy(); });
     req.on('error', () => {});
@@ -1538,6 +1549,12 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
           if(req.url==='/maintenance-lock')return json(res,201,agents.maintenanceLock(input,req.headers['x-dsg-control-channel']));
           if(req.url==='/release-maintenance-lock')return json(res,200,agents.maintenanceRelease(input,req.headers['x-dsg-control-channel']));
           if(req.url==='/maintenance-receipt')return json(res,200,agents.maintenanceReceipt(input));
+          if(req.url==='/qualify-omlx-recovery')return json(res,202,recovery.requestOmlxQualification(input));
+          if(req.url==='/recovery-omlx-permit')return json(res,200,recovery.omlxPermit(input));
+          if(req.url==='/qualify-pair-recovery')return json(res,202,recovery.request(input,'genie',{canary:true,qualification:true}));
+          if(req.url==='/enroll-pair-recovery')return json(res,202,pairEnrollment.request(input));
+          if(req.url==='/enroll-omlx-recovery')return json(res,202,omlxEnrollment.request(input));
+          if(req.url==='/recovery-pair-permit')return json(res,200,recovery.pairPermit(input));
           if(req.url==='/recovery-recheck')return json(res,202,recovery.reconcile(input));
           if(req.url==='/genie-capability') {
             if(Object.keys(input).sort().join(',')!=='enabled,key'||![...genieCapabilityKeys,'recovery'].includes(input.key)||typeof input.enabled!=='boolean')throw new Error('Specify a known capability and boolean enabled');
@@ -1598,7 +1615,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
             const recovered=[];
             for(const n of selected.filter(n=>n.quarantine)) {
               if(n.active || n.queue.length)throw new Error('Wait for this worker to become idle before recovery verification');
-              const proof=await verifyGeneration(n.url,n.probeModel ?? config.model,{worker:n});
+              const proof=await verifyGeneration(n.url,n.probeModel ?? config.model,{worker:n,timeoutMs:config.request_timeout_ms});
               if(shuttingDown || draining)throw new Error('Gateway is draining');
               recovered.push({node:n,proof});
             }
@@ -1650,7 +1667,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
       if(!startup.barrier){await Promise.all(nodes.map(probe));startup.complete=true;startup.completed_at=new Date().toISOString();startup.unavailable=nodes.filter(n=>!n.healthy&&!n.drained&&!n.quarantine).map(n=>n.id);}
       healthTimer = setInterval(() => { for (const n of nodes) void probe(n); }, config.health_interval_ms ?? 5000);
       waitingTimer=setInterval(pumpWaiting,1000);waitingTimer.unref?.();
-      void recovery.tick();recoveryTimer=setInterval(()=>void recovery.tick(),30000);
+      void recovery.tick();pairEnrollment.tick();omlxEnrollment.tick();recoveryTimer=setInterval(()=>{void recovery.tick();pairEnrollment.tick();omlxEnrollment.tick();},30000);
       return server.address();
     },
     drain(value = true) { draining = value; log('drain_changed', { draining }); },
@@ -1660,7 +1677,7 @@ export function createGateway(config,{visionTranscode,tunnelFactory=superviseTun
       for(const node of nodes)releaseTurns(node);
       clearInterval(waitingTimer);
       for(const job of [...waiting]){detach(job);reject(job.req,job.res,503,'draining','Gateway is stopping; the waiting request was not dispatched. A compatible patient client may retry after DSG returns.',{...job,node:job.fixedHome,reason:'gateway_draining'});job.cleanup();}
-      clearInterval(recoveryTimer);await recovery.close();
+      clearInterval(recoveryTimer);pairEnrollment.close();omlxEnrollment.close();await Promise.all([pairEnrollment.idle(),omlxEnrollment.idle()]);await recovery.close();
       if (control) await new Promise(resolve => control.close(resolve));
       await new Promise(resolve => { server.close(resolve); server.closeIdleConnections(); });
       clearInterval(healthTimer); agent.destroy(); tlsAgent.destroy(); store.close();await dataset.close();

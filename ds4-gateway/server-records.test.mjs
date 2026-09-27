@@ -2,16 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
 import {ServerRecords,recordsForChat} from './server-records.mjs';
-import {chatContext} from './genie-chat.mjs';
+
 import {loadConfig} from './config.mjs';
 const record=(kind='observed')=>({schema:1,worker_id:'example',kind,recorded_at:'2026-01-01T00:00:00Z',runtime:{name:'vLLM',version:'example-version'},model:{name:'example-model'},settings:{context_length:262144,server_concurrency:2,prefix_caching:true},configuration:{credential_reference:'/private/example-secret',command:['PRIVATE_COMMAND']},evidence:[{path:'/private/example-evidence'}],restoration:{retention:'unverified'},discrepancies:['recovery_binding_differs']});
 function fixture(t){const root=fs.mkdtempSync(path.join(os.tmpdir(),'server-records-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));for(const k of ['observed','approved','proposed'])fs.mkdirSync(path.join(root,k));return {root,reader:new ServerRecords(root),write:(r,kind=r.kind)=>fs.writeFileSync(path.join(root,kind,'example.json'),JSON.stringify(r))};}
 
-test('records keep observed, approved and proposed separate and expose no private recipe material',t=>{
- const {reader,write}=fixture(t);write(record());write({...record('approved'),approval:{at:'2026-01-02T00:00:00Z',reference:'private approval receipt'}});write({...record('proposed'),settings:{server_concurrency:4}});
- const s=reader.snapshot(['example']),r=s.records[0];assert.equal(r.observed.settings.server_concurrency,2);assert.equal(r.proposed.settings.server_concurrency,4);assert.equal(r.approved.approval.at,'2026-01-02T00:00:00Z');assert.notEqual(r.observed.revision,r.proposed.revision);assert.equal(s.authority,'none');
- const context=chatContext({server_records:s});assert.equal(context.configuration_records.records[0].observed.runtime.name,'vLLM');assert.doesNotMatch(JSON.stringify(context),/PRIVATE_COMMAND|private approval|private\/example|credential_reference/);assert.equal(r.observed.restoration.drill.status,'unproven');
-});
+
 test('an observation cannot become approved by copying it into the approved directory',t=>{
  const {reader,write}=fixture(t);write(record(),'approved');assert.equal(reader.snapshot(['example']).records[0].approved,null);
  write(record('approved'));assert.equal(reader.snapshot(['example']).records[0].approved,null);

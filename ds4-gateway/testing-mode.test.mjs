@@ -8,7 +8,7 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {createDoor} from './door.mjs';
 import {doorControl} from './door-client.mjs';
 import {readTestingMode,writeTestingMode,testingModeFile,testingSuspended} from './testing-mode.mjs';
-import {Genie} from './genie.mjs';
+
 import {createDashboard} from './dashboard.mjs';
 const listen=s=>new Promise(r=>s.listen(0,'127.0.0.1',()=>r(s.address().port)));
 async function until(fn){const end=Date.now()+3000;while(!fn()){if(Date.now()>end)throw Error('Condition timed out');await delay(5);}}
@@ -57,20 +57,11 @@ test('Testing persists across Door restart and invalid state fails closed',async
  fs.writeFileSync(filename,'bad state');assert.throws(()=>readTestingMode(filename));assert.equal(testingSuspended(filename),true);assert.throws(()=>createDoor(r.config));assert.throws(()=>writeTestingMode(filename,false));
 });
 const snapshot=()=>({time:Date.now(),gateway:{workers:[],active:0,queued:0},devices:[],events:[]});
-test('Genie suspension prevents scheduled/manual calls and preserves the enabled preference',async()=>{
- let testing=true,calls=0;const g=new Genie({url:'http://127.0.0.1:9001/v1'},snapshot,{isTesting:()=>testing,fetchImpl:async()=>{calls++;throw Error('mock failure')}});
- g.tick();assert.throws(()=>g.submit('test'),/testing/);await assert.rejects(g.ask('test'),/testing/);assert.throws(()=>g.setEnabled(false),/testing/);assert.equal(calls,0);assert.equal(g.status().enabled,true);assert.equal(g.status().suspended_for_testing,true);
- testing=false;await g.ask('test');assert.equal(calls,1);g.setEnabled(false);testing=true;g.tick();testing=false;g.tick();assert.equal(calls,1);assert.equal(g.enabled,false);g.close();
-});
-test('An in-flight Genie request finishes without abort but cannot start another action during Testing',async()=>{
- let testing=false,finish,calls=0,signal;const g=new Genie({url:'http://127.0.0.1:9001/v1'},snapshot,{isTesting:()=>testing,fetchImpl:async(_url,opts)=>{calls++;signal=opts.signal;return await new Promise(r=>{finish=r})}});
- const pending=g.ask('test');await until(()=>!!finish);testing=true;assert.equal(signal.aborted,false);
- finish(Response.json({choices:[{finish_reason:'stop',message:{content:'The active request finished.'}}]}));await pending;
- assert.equal(calls,1);assert.equal(g.busy,false);assert.equal(g.reports.length,0);g.tick();assert.equal(calls,1);g.close();
-});
+
+
 test('Dashboard testing control requires same-origin CSRF and exposes no mutation on GET',async t=>{
  let enabled=false,changes=0;const state=()=>({testing:{enabled,held:0,normal_active:0,test_active:0},endpoint:'http://127.0.0.1:30000/testing/v1'});
- const server=createDashboard(()=>({}),undefined,null,null,null,null,{read:async()=>state(),set:async value=>{enabled=value;changes++;return state()}});const port=await listen(server);t.after(()=>{server.closeAllConnections();server.close()});
+ const server=createDashboard(()=>({}), {testing:{read:async()=>state(),set:async value=>{enabled=value;changes++;return state()}}});const port=await listen(server);t.after(()=>{server.closeAllConnections();server.close()});
  const base=`http://127.0.0.1:${port}`,first=await (await fetch(base+'/api/testing')).json();assert.equal(changes,0);
  assert.equal((await fetch(base+'/api/testing',{method:'POST',headers:{'content-type':'application/json'},body:'{"enabled":true}'})).status,403);
  const headers={origin:base,'content-type':'application/json','x-dsg-csrf':first.csrf_token};

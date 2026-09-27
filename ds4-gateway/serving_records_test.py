@@ -8,7 +8,7 @@ import serving_operation_test as fixture
 from docker_profile import digest
 from serving_qualification_test import CONTRACT
 from serving_records import ServingRecordPublisher
-from genie_inspection import read_artifact_reference, reference_at
+from serving_artifacts import read_artifact_reference, reference_at
 
 
 class PublicationTest(unittest.TestCase):

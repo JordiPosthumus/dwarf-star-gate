@@ -100,15 +100,16 @@ test('changed approved record rejects before launch and permits a fresh review',
   await runs.change({action:'prepare',model:'example'});assert.notEqual(runs.status().prepared.id,p.id);
 });
 
-test('owner HTTP Start is required; Genie tool cannot approve an owned measurement',async t=>{
-  const f=fixture(t),{runs,service}=f.make(),server=createDashboard(()=>({}),undefined,null,null,null,null,null,null,null,runs);
+test('Hourglass UI prepares and starts an owned measurement; retired bot route remains removed',async t=>{
+  const f=fixture(t),{runs,service}=f.make(),server=createDashboard(()=>({}), {hourglass:runs});
   server.listen(0,'127.0.0.1');await once(server,'listening');t.after(()=>{server.closeAllConnections();server.close();});
   const origin=`http://127.0.0.1:${server.address().port}`;
   const status=()=>fetch(origin+'/api/hourglass').then(r=>r.json());let s=await status();
   const post=(route,body,headers)=>fetch(origin+route,{method:'POST',headers:{'content-type':'application/json',...headers},body:JSON.stringify(body)});
-  assert.equal((await post('/api/genie/hourglass-tools',{action:'prepare',model:'example'},{'x-sg-hourglass-tool':runs.toolConfig.token})).status,200);
+  assert.equal((await post('/api/genie/hourglass-tools',{action:'prepare',model:'example'},{})).status,410);
+  assert.equal((await post('/api/hourglass',{action:'prepare',model:'example'},{origin,'x-dsg-csrf':s.csrf_token})).status,200);
   s=await status();const p=s.prepared,body={action:'start',id:p.id,plan_revision:p.maintenance.plan_revision};
-  assert.equal((await post('/api/genie/hourglass-tools',body,{'x-sg-hourglass-tool':runs.toolConfig.token})).status,409);
+  assert.equal((await post('/api/genie/hourglass-tools',body,{})).status,410);
   assert.equal((await post('/api/hourglass',body,{})).status,403);
   assert.equal(service.store.read(p.id,'approved.json'),null);
   assert.equal((await post('/api/hourglass',body,{origin,'x-dsg-csrf':s.csrf_token})).status,200);

@@ -10,13 +10,12 @@ export const CATALOGUE_RANK = {
   'serving-media': 1,
   'engine-up': 2,
   paused: 3,
-  'engine-stopped': 4,
-  'configured-stopped': 5,
+  'endpoint-unavailable': 4,
+  'configured': 5,
   failed: 6,
   unknown: 7
 };
 
-const MEDIA_TERMINAL = new Set(['done', 'failed', 'cancelled', 'completed']);
 const NATIVE_FRESH_MS = 20000;
 
 function probeAge(lastProbe, now) {
@@ -26,11 +25,17 @@ function probeAge(lastProbe, now) {
 
 export function catalogueEntry({ member, worker, device, mediaBusy, mediaDetail, routes = {}, now = Date.now() }) {
   const telemetry = device?.endpoint_metrics ?? null;
-  const connected = telemetry?.connected === true;
-  const hardwareUp = device?.hardware?.state === 'connected';
+  const connected = telemetry?.connected === true && Number.isFinite(telemetry.at) && now >= telemetry.at && now - telemetry.at < 15000;
+  const hardwareAt = device?.hardware?.current?.time;
+  const hardwareUp = device?.hardware?.state === 'connected' && Number.isFinite(hardwareAt) && now >= hardwareAt && now - hardwareAt < 15000;
   const healthy = worker?.is_healthy === true;
   const drained = worker?.drained === true;
-  const quarantined = worker?.quarantine === true || worker?.quarantine === 'true';
+  const maintenance = (worker?.maintenance_locks?.length ?? 0) > 0;
+  const held = (worker?.holds?.length ?? 0) > 0;
+  const directReserved = worker?.direct_reserved === true;
+  const operatorPaused = worker?.operator_paused === true;
+  const routingBlocked = drained || maintenance || held || directReserved || operatorPaused;
+  const quarantined = !!worker?.quarantine && worker.quarantine !== 'false';
   const running = telemetry?.running ?? 0;
   const routeNames = Object.entries(routes).filter(([, ids]) => Array.isArray(ids) && ids.includes(member.id)).map(([name]) => name);
   const age = probeAge(worker?.last_probe, now);
@@ -56,23 +61,25 @@ export function catalogueEntry({ member, worker, device, mediaBusy, mediaDetail,
     if (!gatewayWorker) detail = `media workload active despite no gateway worker · ${detail}`;
   } else if (quarantined) {
     state = 'failed';
-    detail = `quarantined${worker.quarantine_reason ? `: ${worker.quarantine_reason}` : ''}`;
-  } else if (healthy && !drained && connected) {
+    detail = `quarantined${(worker.quarantine?.reason || worker.quarantine_reason) ? `: ${worker.quarantine?.reason || worker.quarantine_reason}` : ''}`;
+  } else if (healthy && !routingBlocked && connected) {
     state = 'serving-llm';
     const load = worker?.load ?? 0, queued = worker?.queued ?? 0;
     detail = load > 0 ? `${load} active request${load === 1 ? '' : 's'}${queued ? ` · ${queued} queued` : ''}` : running > 0 ? `engine reports ${running} active outside gateway accounting` : 'healthy, idle';
-  } else if (healthy && drained) {
+  } else if (healthy && routingBlocked) {
     state = 'paused';
-    detail = 'routing paused by operator; engine still up';
+    const reasons = [operatorPaused && 'paused by operator', maintenance && 'held for maintenance',
+      held && 'held by a gateway operation', directReserved && 'reserved for direct work'].filter(Boolean);
+    detail = `routing ${reasons.length ? reasons.join(' and ') : 'paused'}; ${connected ? 'endpoint answering' : 'last gateway readiness check passed; current endpoint telemetry unavailable'}`;
   } else if (connected) {
     state = 'engine-up';
     detail = `endpoint answers${running > 0 ? ` · ${running} active` : ''}; gateway health ${age === null ? 'never probed' : `last probed ${Math.round(age / 1000)}s ago`}${worker?.probe_error ? ` · ${worker.probe_error}` : ''} — may be loading or a probe mismatch`;
   } else if (!gatewayWorker) {
-    state = 'configured-stopped';
-    detail = 'enrolled scripts only; not a gateway worker, so DSG never routes to it until added';
+    state = 'configured';
+    detail = 'enrolled scripts only; not a gateway worker, so Star Gate does not route to it; process state unverified';
   } else if (hardwareUp) {
-    state = 'engine-stopped';
-    detail = 'endpoint not answering; machine reachable through hardware agent — model process is down or still starting';
+    state = 'endpoint-unavailable';
+    detail = 'endpoint not answering; machine reachable through hardware agent — model process state unverified';
   } else {
     state = 'unknown';
     detail = 'endpoint not answering and machine state unknown — an offline endpoint does not prove the machine is down';
@@ -83,7 +90,10 @@ export function catalogueEntry({ member, worker, device, mediaBusy, mediaDetail,
 export function buildCatalogue({ members = [], workers = [], devices = [], media = { workloads: [], native_engines: [] }, routes = {}, now = Date.now() } = {}) {
   const byId = new Map(workers.map(w => [w.id, w]));
   const deviceById = new Map(devices.map(d => [d.id, d]));
-  const mediaByWorker = new Map((media.workloads ?? []).filter(row => row.worker_id && !MEDIA_TERMINAL.has(row.state)).map(row => [row.worker_id, row]));
+  const mediaByWorker = new Map((media.workloads ?? []).filter(row => {
+    const at=Date.parse(row.heartbeat_at??row.changed_at??'');
+    return row.worker_id && row.state==='running' && Number.isFinite(at) && now>=at && now-at<NATIVE_FRESH_MS;
+  }).map(row => [row.worker_id, row]));
   const nativeBusy = new Set((media.native_engines ?? []).filter(row => row.state === 'busy' && Number.isFinite(row.observed_at) && now >= row.observed_at && now - row.observed_at < NATIVE_FRESH_MS).map(row => row.worker_id));
   const entries = members.map(member => {
     const worker = byId.get(member.id) ?? null;

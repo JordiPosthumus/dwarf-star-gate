@@ -1,15 +1,17 @@
-// Owner-supplied new hosts only. Enrollment never starts a model or modifies a launcher.
+// Owner-addressed or hardware-verified discovered new hosts only. Enrollment never starts a model or modifies a launcher.
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {randomUUID} from 'node:crypto';
+import {sparkIdentity,discoverySSHReason} from './spark-discovery.mjs';
+import {promoteDiscoveryTrust} from './spark-discovery-trust.mjs';
 const execute=promisify(execFile);
 const idPattern=/^[a-zA-Z0-9][\w-]{0,63}$/;
 const hostPattern=/^[a-zA-Z0-9][a-zA-Z0-9.-]{0,252}$/;
 const userPattern=/^[a-zA-Z_][a-zA-Z0-9_-]{0,63}$/;
-const probe=`import json,os,platform,shutil,subprocess,sys
+const probe=`import json,os,platform,shutil,subprocess,sys,hashlib
 from pathlib import Path
 def read(args):
  try:
@@ -17,25 +19,28 @@ def read(args):
   return p.stdout.strip() if p.returncode==0 else None
  except (OSError,subprocess.TimeoutExpired):return None
 home=str(Path.home())
-print(json.dumps({'home':home,'system':platform.system(),'architecture':platform.machine(),'python':list(sys.version_info[:3]),'docker_arch':read(['docker','version','--format','{{.Server.Arch}}']),'gpu':read(['nvidia-smi','--query-gpu=name','--format=csv,noheader']),'gpu_processes':read(['nvidia-smi','--query-compute-apps=pid','--format=csv,noheader,nounits']),'free_bytes':shutil.disk_usage(home).free}))`;
+try:machine=Path('/etc/machine-id').read_text().strip()
+except OSError:machine=None
+gpus=read(['nvidia-smi','--query-gpu=name,uuid','--format=csv,noheader'])
+print(json.dumps({'home':home,'system':platform.system(),'architecture':platform.machine(),'machine_id':hashlib.sha256(machine.encode()).hexdigest() if machine else None,'gpus':[{'name':r.split(',')[0].strip(),'uuid':r.split(',')[1].strip()} for r in (gpus or '').splitlines() if len(r.split(','))==2],'python':list(sys.version_info[:3]),'docker_arch':read(['docker','version','--format','{{.Server.Arch}}']),'gpu':read(['nvidia-smi','--query-gpu=name','--format=csv,noheader']),'gpu_processes':read(['nvidia-smi','--query-compute-apps=pid','--format=csv,noheader,nounits']),'free_bytes':shutil.disk_usage(home).free}))`;
 const quote=s=>"'"+s.replaceAll("'","'\\''")+"'";
 export async function sshDestination(ssh){
   const {stdout}=await execute('ssh',['-G','--',ssh],{timeout:10000,maxBuffer:131072});
   return stdout.split('\n').find(s=>s.startsWith('hostname '))?.slice(9).toLowerCase();
 }
-export async function inspectNewSpark(ssh,{directory}){
+export async function inspectNewSpark(ssh,{directory,knownHosts,strict=false,command=execute}){
   // Accept a previously unknown host, never a changed host key. Keep the prior
   // known_hosts bytes before OpenSSH appends its first-use entry.
   const known=path.join(os.homedir(),'.ssh','known_hosts');
-  if(fs.existsSync(known)){const backup=path.join(directory,`known-hosts-before-${Date.now()}-${randomUUID()}`);fs.copyFileSync(known,backup,fs.constants.COPYFILE_EXCL);fs.chmodSync(backup,0o600);}
+  if(!knownHosts&&!strict&&fs.existsSync(known)){const backup=path.join(directory,`known-hosts-before-${Date.now()}-${randomUUID()}`);fs.copyFileSync(known,backup,fs.constants.COPYFILE_EXCL);fs.chmodSync(backup,0o600);}
   try{
-    const {stdout}=await execute('ssh',['-T','-o','BatchMode=yes','-o','ConnectTimeout=10','-o','StrictHostKeyChecking=accept-new','--',ssh,`python3 -I -B -c ${quote(probe)}`],{timeout:45000,maxBuffer:65536});
+    const {stdout}=await command('ssh',['-T','-o','BatchMode=yes','-o','ConnectTimeout=10',...(knownHosts?['-o',`UserKnownHostsFile=${knownHosts}`,'-o','GlobalKnownHostsFile=/dev/null','-o','KnownHostsCommand=none','-o','VerifyHostKeyDNS=no','-o','UpdateHostKeys=no','-o','ControlMaster=no','-o','ControlPath=none']:[]),...(strict&&!knownHosts?['-o','UpdateHostKeys=no','-o','ControlMaster=no','-o','ControlPath=none']:[]),'-o',`StrictHostKeyChecking=${knownHosts||strict?'yes':'accept-new'}`,'--',ssh,`python3 -I -B -c ${quote(probe)}`],{timeout:45000,maxBuffer:65536});
     const result=JSON.parse(stdout);
     if(typeof result.home!=='string'||!result.home.startsWith('/')||result.home.includes('\n')||result.home.split('/').includes('..'))throw Error('Invalid home directory');
     return result;
-  }catch{throw Error('Could not inspect this Spark through SSH. Check its address, username and SSH key access. A changed host key must be checked explicitly. No setup was started; do not put passwords or private keys in chat.');}
+  }catch(error){throw Object.assign(Error('Could not inspect this Spark through SSH. Check its address, username and SSH key access. A changed host key must be checked explicitly. No setup was started; do not put passwords or private keys in chat.'),{discovery_reason:discoverySSHReason(error)});}
 }
-export function createSparkEnrollment({directory,targets:staticTargets={},workers=async()=>[],inspect=inspectNewSpark,resolve=sshDestination}){
+export function createSparkEnrollment({directory,targets:staticTargets={},workers=async()=>[],inspect=inspectNewSpark,resolve=sshDestination,discovery=null,promote=promoteDiscoveryTrust}){
   fs.mkdirSync(directory,{recursive:true,mode:0o700});
   const filename=path.join(directory,'targets.json');
   const saved=fs.existsSync(filename)?JSON.parse(fs.readFileSync(filename,'utf8')):{};
@@ -46,7 +51,7 @@ export function createSparkEnrollment({directory,targets:staticTargets={},worker
     targets[id]=t;
   }
   let busy=false;
-  return {targets,async enroll(input){
+  const enroll=async(input,proof=null)=>{
     if(!input||Object.keys(input).sort().join(',')!=='host,target_id,username'||!idPattern.test(input.target_id)||typeof input.host!=='string'||!hostPattern.test(input.host)||typeof input.username!=='string'||!userPattern.test(input.username))throw Error('Give the new Spark a target ID, IPv4 address or hostname, and SSH username. No commands, passwords or paths.');
     const {target_id:id,username}=input,host=input.host.toLowerCase(),ssh=`${username}@${host}`;
     if(ssh.length>253)throw Error('SSH username and host are too long for gateway registration.');
@@ -54,9 +59,10 @@ export function createSparkEnrollment({directory,targets:staticTargets={},worker
     busy=true;
     try{
       if(Object.hasOwn(targets,id)){
-        if(targets[id].ssh!==ssh)throw Error('This target ID already names another SSH connection; nothing was changed.');
+        if(targets[id].ssh!==ssh||proof&&targets[id].identity!==proof.identity)throw Error('This target ID already names another SSH connection; nothing was changed.');
         return {target_id:id,state:'enrolled',target:targets[id],scope:'Existing enrollment returned unchanged. No setup started.'};
       }
+      if(proof&&Object.values(targets).some(t=>t.identity===proof.identity))throw Error('This hardware identity is already enrolled under another target ID.');
       const existing=await workers();
       if(existing.some(w=>w.id===id))throw Error('This worker already belongs to the gateway; use its existing controls.');
       const destination=await resolve(ssh);
@@ -64,9 +70,18 @@ export function createSparkEnrollment({directory,targets:staticTargets={},worker
       for(const t of [...existing,...Object.values(targets)])for(const alias of [t.ssh,...(t.ssh_fallbacks??[])].filter(Boolean)){
         if(alias===ssh||await resolve(alias)===destination)throw Error('This SSH destination is already enrolled or serving; it was not changed.');
       }
-      const observed=await inspect(ssh,{directory});
+      let hostTrust=null,observed=await inspect(ssh,{directory,...(proof?{knownHosts:proof.knownHosts,strict:true}:{})});
+      if(proof){
+        if(sparkIdentity(observed)!==proof.identity)throw Error('The machine at this address no longer matches the discovery identity; no trust or enrollment was changed.');
+        hostTrust=await promote({...proof,ssh,directory});
+        // Prove that the ordinary setup/recovery transport now sees this exact
+        // machine through normal SSH trust, without accepting a new key.
+        try{observed=await inspect(ssh,{directory,strict:true});}
+        catch{throw Error('Normal SSH verification was not confirmed after checking host trust. Retain the host-key backup and inspect the same target; no enrollment or setup was saved.');}
+        if(sparkIdentity(observed)!==proof.identity)throw Error('The final SSH identity differs from discovery. Retain the host-key backup; no target was saved.');
+      }
       if(observed.system!=='Linux'||!['aarch64','arm64'].includes(observed.architecture)||!observed.gpu?.split('\n').every(s=>s.includes('GB10')))throw Error('This target did not identify as a Linux ARM64 GB10 Spark; no enrollment or setup was performed.');
-      const target={ssh,directory:path.posix.join(observed.home,'.local/share/star-gate/spark-setup',id)};
+      const target={ssh,...(proof?{identity:proof.identity,discovery:{scan_id:proof.scan_id,candidate_id:proof.candidate_id}}:{}),directory:path.posix.join(observed.home,'.local/share/star-gate/spark-setup',id)};
       const next={...saved,[id]:target},temp=filename+'.'+randomUUID()+'.tmp';
       if(fs.existsSync(filename))fs.copyFileSync(filename,filename+`.before-${Date.now()}-${randomUUID()}`,fs.constants.COPYFILE_EXCL);
       try{fs.writeFileSync(temp,JSON.stringify(next,null,2)+'\n',{flag:'wx',mode:0o600});fs.renameSync(temp,filename);}finally{if(fs.existsSync(temp))fs.unlinkSync(temp);}
@@ -76,7 +91,18 @@ export function createSparkEnrollment({directory,targets:staticTargets={},worker
       if(observed.docker_arch!=='arm64')issues.push('Docker ARM64 access is not ready for this SSH account.');
       if(observed.gpu_processes===null)issues.push('GPU activity could not be checked.');else if(observed.gpu_processes)issues.push('GPU work is active; leave it running and wait before setup.');
       if(observed.free_bytes<227190220529)issues.push('Insufficient free space for the 227 GB of model files alone; images and caches need additional space.');
-      return {target_id:id,state:'enrolled',target,readiness:issues.length?'needs_attention':'prerequisites_observed',issues,observed,scope:'SSH and host facts inspected; target saved. No engines built or started. Native setup and qualification are still required. Use setup_spark when prerequisites are ready.'};
+      return {target_id:id,state:'enrolled',target,...(proof?{host_trust:hostTrust}:{}),readiness:issues.length?'needs_attention':'prerequisites_observed',issues,observed,scope:'SSH and host facts inspected; target saved. No engines built or started. Native setup and qualification are still required. Use setup_spark when prerequisites are ready.'};
     }finally{busy=false;}
+  };
+  return {targets,enroll,async enrollDiscovered(input){
+    if(!input||Object.keys(input).sort().join(',')!=='candidate_id,scan_id,target_id'||!idPattern.test(input.target_id)||!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(input.scan_id??'')||!/^[a-f0-9]{64}$/.test(input.candidate_id??''))throw Error('Use only a saved scan ID, candidate ID and new target ID; no addresses or credentials.');
+    if(Object.hasOwn(targets,input.target_id)){
+      const target=targets[input.target_id];
+      if(target.discovery?.scan_id!==input.scan_id||target.discovery?.candidate_id!==input.candidate_id)throw Error('This target ID already names a different enrollment; nothing was changed.');
+      return {target_id:input.target_id,state:'enrolled',target,scope:'Existing discovery enrollment returned unchanged. No setup started.'};
+    }
+    if(!discovery)throw Error('Saved discovery enrollment is not connected.');
+    const proof=await discovery.candidate(input);
+    return enroll({target_id:input.target_id,host:proof.host,username:proof.username},proof);
   }};
 }

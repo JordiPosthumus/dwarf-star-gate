@@ -118,7 +118,7 @@ function telemetryStatus(d) {
   if (d.telemetry_configured === false) return 'Engine timings not configured';
   return `${d.telemetry_source === 'file' ? 'Model log' : 'Journal'} ${d.connected ? 'connected' : 'disconnected'}`;
 }
-let requestHistoryState=null,requestHistoryLoading=false,genieState=null;
+let requestHistoryState=null,requestHistoryLoading=false;
 const fleetSpeedWindows=new Set(['1h','12h','24h']);let fleetSpeedWindow='12h';
 try{const saved=globalThis.localStorage?.getItem('dsg-fleet-speed-window-v1');if(fleetSpeedWindows.has(saved))fleetSpeedWindow=saved;}catch{/* Browser privacy settings may deny storage; 12h remains the safe default. */}
 function compactValue(n){return !Number.isFinite(n)?'—':n>=1000000?fmt(n/1000000)+'M':n>=1000?fmt(n/1000)+'k':fmtWhole(n);}
@@ -135,12 +135,12 @@ function renderFleetSpeed(a){
   setGauge('decode');setGauge('prefill');
   const energy=window?.energy,estimated=energy?.estimated_kwh;
   const observed=new Set([...(window?.decode?.workers??[]),...(window?.prefill?.workers??[])]).size,total=window?.decode?.worker_count??0;
-  const coverage=observed?`${observed}/${total} servers`:'Awaiting samples';
+  const coverage=observed?`${observed}/${total} profiles sampled`:'Awaiting samples';
   const energyText=Number.isFinite(estimated)?`≈${fmt(estimated)} kWh`:energy?.measured_kwh>0?`${energy.measured_kwh.toFixed(3)} kWh*`:'Energy unavailable';
   $('fleet-speed-value').textContent=ready?`${coverage} · ${energyText}`:'Loading history…';
   const state=({catching_up:'Loading saved measurements.',rescanning:'Rebuilding saved measurements.',waiting:'No saved measurements yet.',unavailable:'Measurement history unavailable.'})[speed?.status]||'Measurement history unavailable.';
   const partial=!!(speed?.partial_history||speed?.malformed_lines||speed?.rejected_records||speed?.evicted_intervals);
-  const detail=ready?`Observed average speed over ${fleetSpeedWindow}, not combined fleet throughput. vLLM uses total tokens divided by total phase seconds for requests completed within the window; cached prefill tokens are excluded. Native engines use token/time deltas. oMLX uses time-weighted samples of reported active rates; its prefill and decode rate scopes differ from vLLM. Missing history is excluded, not treated as zero. Server counts indicate evidence present, not full-period coverage. Gauge ceilings use the padded 24-hour 95th percentile. Endpoint history starts when this collector was enabled; it is not reconstructed from lifetime averages. ${partial?'Some evidence is incomplete.':''}`:state;
+  const detail=ready?`Observed average speed over ${fleetSpeedWindow}, not combined fleet throughput. vLLM uses total tokens divided by total phase seconds for requests completed within the window; cached prefill tokens are excluded. Native engines use token/time deltas. oMLX uses time-weighted samples of reported active rates; its prefill and decode rate scopes differ from vLLM. Missing history is excluded, not treated as zero. Profile counts indicate evidence present, not full-period coverage. Gauge ceilings use the padded 24-hour 95th percentile. Endpoint history starts when this collector was enabled; it is not reconstructed from lifetime averages. ${partial?'Some evidence is incomplete.':''}`:state;
   const energyButton=$('fleet-speed-value');
   energyButton.dataset.lightTitle=`Fleet history · ${fleetSpeedWindow}`;
   energyButton.dataset.lightDetail=energy?`${detail}\n\nDecode: ${window?.decode?.observed_workers??0}/${total} servers. Prefill: ${window?.prefill?.observed_workers??0}/${total} servers.\n* kWh is the measured subtotal when coverage is incomplete.\n\nPeriod ${new Date(energy.window_start).toLocaleString()} to ${new Date(energy.window_end).toLocaleString()}. Measured subtotal ${(energy.measured_kwh??0).toFixed(4)} kWh; fleet estimate ${Number.isFinite(estimated)?estimated.toFixed(4)+' kWh':'unavailable'}. Adjacent power readings are integrated trapezoidally; gaps over 60 seconds are excluded. Each worker needs at least 80% coverage and one measurement scope for extrapolation. System and compute-module measurements have different boundaries; this is not utility-meter energy. GPU-only readings are excluded.\n\n${(energy.workers??[]).map(row=>`${row.worker}: ${row.measured_kwh.toFixed(4)} kWh measured, ${fmt(row.coverage_pct)}% coverage; ${row.scopes.join(', ')||'no eligible scope'}${row.sensors.length?' ('+row.sensors.join(', ')+')':''}; ${row.status.replaceAll('_',' ')}.`).join('\n')}`:state;
@@ -150,7 +150,7 @@ async function loadRequestHistory() {
   if(requestHistoryLoading)return;requestHistoryLoading=true;
   try{const response=await fetch('/api/request-history');if(!response.ok)throw new Error();requestHistoryState=await response.json();}
   catch{requestHistoryState={...requestHistoryState,status:'unavailable'};}
-  finally{requestHistoryLoading=false;renderFleetSpeed(requestHistoryState);renderGenieActionLedger();}
+  finally{requestHistoryLoading=false;renderFleetSpeed(requestHistoryState);}
 }
 function cacheCostText(result) {
   const part=p=>p?.estimated_ms===null||p?.estimated_ms===undefined?
@@ -198,13 +198,13 @@ function schedulingExplanation(g,workers,capacity) {
     const threshold=continuity.automatic_affinity_rebalance_min_wait_ms,remaining=Number.isFinite(threshold)?threshold/1000-row.waiting_seconds:null,wait=compactWait(remaining);
     return ` ${route}${row.source}'s next queued session keeps its warm home${wait?` for up to ${wait} more`:''}; then the Star Gate core may hand it over automatically.`;
   }
-  if(row.automatic_reason==='affinity_automatic_disabled')return ` ${route}strict affinity keeps ${row.source}'s queued session at home until an exact manual or Genie handover.`;
+  if(row.automatic_reason==='affinity_automatic_disabled')return ` ${route}strict affinity keeps ${row.source}'s queued session at home until an exact manual handover.`;
   if(row.automatic_reason==='automatic_ready')return ` ${route}${row.source}'s queued request is eligible for automatic core handover now.`;
   return ` ${route}${row.source}'s queue cannot move yet: ${relocationReason(row)}.`;
 }
 function timeline(d,now,lanes=1) {
   const rows=d.activity||[],start=now-900000,height=10*lanes;
-  const band=phase=>phase==='mixed'?'mixed':phase==='prefill'?'prefill':phase==='thinking'||phase==='decode'?'decode':['idle','paused'].includes(phase)?'idle-off':'unknown';
+  const band=phase=>phase==='working'?'working':phase==='mixed'?'mixed':phase==='prefill'?'prefill':phase==='thinking'||phase==='decode'?'decode':['idle','paused'].includes(phase)?'idle-off':'unknown';
   // Tensor-parallel pairs draw one strip with a mid divider: both machines run
   // the same phases together, so one strip plus the "×2" scope chip is honest
   // about pair coverage without pretending to be per-machine measurements.
@@ -212,9 +212,9 @@ function timeline(d,now,lanes=1) {
     const left=Math.max(start,r.start),right=Math.min(now,r.end),width=Math.max(0,(right-left)/9000),x=Math.max(0,(left-start)/9000);
     if(width<=0)return '';
     if(r.phase==='mixed')return `<rect class="phase-prefill" x="${x}" width="${width}" y="${lane*10}" height="5"><title>Prefill and generation observed together</title></rect><rect class="phase-decode" x="${x}" width="${width}" y="${lane*10+5}" height="5"><title>Prefill and generation observed together</title></rect>`;
-    return `<rect class="phase-${band(r.phase)}" x="${x}" width="${width}" y="${lane*10}" height="10"><title>${esc(r.phase)} · ${Math.round((right-left)/1000)}s</title></rect>`;
+    return `<rect class="phase-${band(r.phase)}" x="${x}" width="${width}" y="${lane*10}" height="10"><title>${r.phase==='working'?'Busy; phase unavailable':esc(r.phase)} · ${Math.round((right-left)/1000)}s</title></rect>`;
   }).join('');
-  return `<svg class="activity-timeline" viewBox="0 0 100 ${height}" preserveAspectRatio="none" role="img" aria-label="Observed activity over the last fifteen minutes: blue is prefill, green is decode or generation, grey is idle or off, and empty gaps mean the phase is unavailable${lanes>1?'; one strip covering the two-machine pair, which runs the same phases together':''}">${Array.from({length:lanes},(_,lane)=>laneContent(lane)).join('')}${lanes>1?`<line class="lane-divider" x1="0" x2="100" y1="10" y2="10"/>`:''}${(d.endpoint_metrics?.source==='vllm'?[]:d.activity_markers??[]).filter(row=>row.basis==='completed_request'&&Number.isFinite(row.time)&&row.time>=start&&row.time<=now&&row.phase==='prefill').map(row=>`<line class="prefill-evidence-marker" x1="${(row.time-start)/9000}" x2="${(row.time-start)/9000}" y1="0" y2="${height}"><title>${row.basis==='completed_request'?'Completed request included':'Poll interval included'} ${fmtWhole(row.tokens)} computed prefill tokens. Tick marks observation time; prefill duration is not known.</title></line>`).join('')}</svg>${d.endpoint_metrics?.source!=='vllm'&&d.activity_markers?.some(row=>row.basis==='completed_request')?`<span class="timeline-evidence-note" title="Blue ticks mark observed prefill; the duration is not known.">ticks = prefill seen</span>`:''}`;
+  return `<svg class="activity-timeline" viewBox="0 0 100 ${height}" preserveAspectRatio="none" role="img" aria-label="Observed activity over the last fifteen minutes: blue is prefill, green is decode or generation, amber is busy with phase unavailable, grey is idle or off, and empty gaps mean the phase is unavailable${lanes>1?'; one strip covering the two-machine pair, which runs the same phases together':''}">${Array.from({length:lanes},(_,lane)=>laneContent(lane)).join('')}${lanes>1?`<line class="lane-divider" x1="0" x2="100" y1="10" y2="10"/>`:''}${(d.endpoint_metrics?.source==='vllm'?[]:d.activity_markers??[]).filter(row=>row.basis==='completed_request'&&Number.isFinite(row.time)&&row.time>=start&&row.time<=now&&row.phase==='prefill').map(row=>`<line class="prefill-evidence-marker" x1="${(row.time-start)/9000}" x2="${(row.time-start)/9000}" y1="0" y2="${height}"><title>${row.basis==='completed_request'?'Completed request included':'Poll interval included'} ${fmtWhole(row.tokens)} computed prefill tokens. Tick marks observation time; prefill duration is not known.</title></line>`).join('')}</svg>${d.endpoint_metrics?.source!=='vllm'&&d.activity_markers?.some(row=>row.basis==='completed_request')?`<span class="timeline-evidence-note" title="Blue ticks mark observed prefill; the duration is not known.">ticks = prefill seen</span>`:''}`;
 }
 function routingInfo(w,{stale=false,recovering=false}={}) {
   if(stale||!w)return {level:'unknown',label:'STATUS UNKNOWN',detail:'Live gateway status is unavailable. Routing controls are disabled until it returns.',action:null};
@@ -238,45 +238,6 @@ function routingInfo(w,{stale=false,recovering=false}={}) {
     title:locked?'Release the exact named maintenance lock in Settings first; review times never auto-release it.':held?'Release agent holds first.':recovering?'Wait for service recovery.':w.quarantine&&busy?'Wait for admitted work to settle before verification.':excluded?'Check readiness and return to routing. Does not start or restart the model server.':'Stop new gateway admission. Existing admitted work, model process and caches stay intact; the model listener remains running.'};
 }
 function workerModelName(s,id){const records=s?.server_records?.records;if(!Array.isArray(records))return null;const record=records.find(r=>r.worker_id===id);return record?.observed?.model?.name||record?.candidate?.model?.name||null;}
-function modelFamily(name){const text=String(name||'').toLowerCase();if(text.includes('qwen'))return 'Qwen';if(text.includes('deepseek'))return 'DeepSeek';return null;}
-function familyGroups(s,workers){const groups=new Map();for(const w of workers){const family=modelFamily(workerModelName(s,w.id))||'Other';if(!groups.has(family))groups.set(family,[]);groups.get(family).push(w.id);}return [...groups].map(([family,ids])=>`${family} — ${ids.join(', ')}`).join(' · ');}
-function buildRoutingSummary(s,g,workers,stale){
-  if(stale)return {hidden:false,level:'warning',text:'Routing status is stale. Controls are disabled until live status returns.'};
-  if(!workers.length)return {hidden:true,level:'info',text:''};
-  const info=workers.map(w=>({w,r:routingInfo(w)}));
-  const routing=info.filter(x=>!x.r.excluded).map(x=>x.w);
-  const paused=info.filter(x=>x.r.cause==='paused').map(x=>x.w);
-  const unavailable=info.filter(x=>x.r.cause==='unavailable').map(x=>x.w);
-  const quarantined=info.filter(x=>x.r.cause==='quarantined').map(x=>x.w);
-  const held=info.filter(x=>['maintenance_lock','reserved','recovering'].includes(x.r.cause)).map(x=>x.w);
-  const excluded=[...paused,...unavailable,...quarantined,...held];
-  if(!excluded.length&&!g?.draining)return {hidden:true,level:'info',text:''};
-  const poolModel=g?.model||'PoolModel';
-  const servingModels=[...new Set(routing.map(w=>w.served_model||workerModelName(s,w.id)).filter(Boolean))];
-  const lines=[],draining=g?.draining?'The gateway is draining: all new admission is stopped.':'';
-  if(routing.length){
-    lines.push(`● Pool live · ${routing.length} of ${workers.length} server${workers.length===1?'':'s'} routing${draining?' · '+draining:''}`);
-    lines.push(`${poolModel}${servingModels.length?' → '+servingModels.join(', '):''}`);
-    lines.push(`Serving: ${routing.map(w=>w.id).join(', ')}`);
-  }else{
-    lines.push(`● No server can accept requests${draining?' · '+draining:''}`);
-    lines.push(`All ${workers.length} server${workers.length===1?'':'s'} are paused or unavailable.`);
-  }
-  if(paused.length)lines.push(`Paused by an operator: ${familyGroups(s,paused)}`);
-  if(unavailable.length)lines.push(`Unavailable: ${unavailable.map(w=>w.id).join(', ')}`);
-  if(quarantined.length)lines.push(`Quarantined: ${quarantined.map(w=>w.id).join(', ')}`);
-  if(held.length)lines.push(`Held or locked: ${held.map(w=>w.id).join(', ')}`);
-  if(!unavailable.length&&!quarantined.length)lines.push('No server is unhealthy.');
-  const routes=g?.model_routes;
-  if(routes&&typeof routes==='object'){
-    const routingIds=new Set(routing.map(w=>w.id));
-    const down=Object.entries(routes).filter(([,ids])=>Array.isArray(ids)&&!ids.some(id=>routingIds.has(id))).map(([name])=>name);
-    if(down.length)lines.push(`Routes with no live server: ${down.join(', ')}`);
-  }
-  lines.push('See each server card for its reason and routing control.');
-  const level=!routing.length?'error':(unavailable.length||quarantined.length)?'warning':'info';
-  return {hidden:false,level,text:lines.join('\n')};
-}
 function managementDetail(w) {
   const probe={
     ECONNREFUSED:'The last model readiness connection was refused at the configured endpoint. This does not identify whether the listener, tunnel forwarding or another network boundary caused it.',
@@ -318,14 +279,14 @@ function managementPathDetail(w) {
 }
 function recoveryRecheckable(action){return !!(action?.restart_issued||action?.service_action_issued)&&['reconciliation_needed','failed'].includes(action.state);}
 function recoveryIssuanceText(op){return !op.service_action_issued?'':op.service_action==='bootstrap'?(op.bootstrap_acknowledged===true?' · bootstrap acknowledged':' · bootstrap attempted · acknowledgement unknown'):` · ${op.service_action} issued`;}
-function routingMarkup(w,{stale=false,controls=true,recovering=false,busy=workerBusy}={}) {
+function routingMarkup(w,{stale=false,controls=true,recovering=false,busy=workerBusy,blockedBy=[]}={}) {
   const info=routingInfo(w,{stale,recovering});
   if(!controls||!info.action)return `<span class="worker-routing" data-level="${info.level}" aria-label="${esc(info.label)}"></span>`;
   const name=String(w.id).replace(/^spark/i,'Spark '),at=w?.quarantine?.at;
   const recorded=at&&Number.isFinite(Date.parse(at))?` Excluded ${new Date(at).toLocaleString()}; recorded by Star Gate.`:'';
-  const tooltip=`${info.label} for ${name}. ${info.detail}${recorded} ${info.title}`;
+  const tooltip=`${info.label} for ${name}. ${info.detail}${recorded} ${info.title}${blockedBy.length?' Shared hardware is active on '+blockedBy.join(', ')+'. Manage that service before resuming this one.':''}`;
   const icon=info.action==='drain'?'<path d="M5 4h4v16H5zM15 4h4v16h-4z"/>':'<path d="M6 4l14 8-14 8z"/>';
-  return `<span class="worker-routing" data-level="${info.level}"><button class="routing-toggle" type="button" data-action="${info.action}" data-id="${esc(w.id)}" data-tooltip="${esc(tooltip)}" aria-label="${esc(tooltip)}" ${stale||busy||info.blocked||!workerControlsReady?'disabled':''}><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">${icon}</svg></button></span>`;
+  return `<span class="worker-routing" data-level="${info.level}"><button class="routing-toggle" type="button" data-action="${info.action}" data-id="${esc(w.id)}" data-tooltip="${esc(tooltip)}" aria-label="${esc(tooltip)}" ${stale||busy||info.blocked||!workerControlsReady||blockedBy.length&&info.action!=='drain'?'disabled':''}><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">${icon}</svg></button></span>`;
 }
 function updateRoutingNode(current,fresh) {
   // Keep the button DOM stable during normal polling so keyboard focus, hover
@@ -336,11 +297,91 @@ function updateRoutingNode(current,fresh) {
 function renderCatalogue(s,now){
   const container=$('fleet-catalogue');if(!container)return;
   const {entries,warnings}=buildCatalogue({members:s.fleet_machines??[],workers:s.gateway?.workers??[],devices:s.devices??[],media:fleetWorkloadsUnavailable?{workloads:[],native_engines:[]}:fleetWorkloads,routes:s.gateway?.model_routes??{},now});
-  const serving=entries.some(e=>e.state==='serving-llm'||e.state==='serving-media');
+  const wasOpen=container.querySelector('details')?.open??false;
   const rows=entries.map(e=>`<tr data-state="${e.state}"><td title="${esc(e.detail)}">${esc(e.id)}</td><td>${esc(e.machines.length?e.machines.join(' + '):'—')}</td><td><span class="catalogue-state" data-state="${e.state}">${e.state.replace(/-/g,' ')}</span> <span class="catalogue-detail">${esc(e.detail)}</span></td><td>${esc(e.routes.length?e.routes.join(', '):'—')}</td><td>${e.observed_at?esc(new Date(e.observed_at).toLocaleTimeString()):'—'}</td></tr>`).join('');
-  container.innerHTML=`<details class="catalogue"${serving?' open':''}><summary>Fleet catalogue — model to machine mapping${warnings.length?` · ${warnings.length} note${warnings.length===1?'':'s'}`:''}</summary>${warnings.length?`<ul class="catalogue-warnings">${warnings.map(w=>`<li>${esc(w)}</li>`).join('')}</ul>`:''}<table class="catalogue-table"><thead><tr><th scope="col">Model</th><th scope="col">Machines</th><th scope="col">State</th><th scope="col">Routes</th><th scope="col">Observed</th></tr></thead><tbody>${rows}</tbody></table></details>`;
+  container.innerHTML=`<details class="catalogue"${wasOpen?' open':''}><summary>Fleet catalogue — model to machine mapping${warnings.length?` · ${warnings.length} note${warnings.length===1?'':'s'}`:''}</summary>${warnings.length?`<ul class="catalogue-warnings">${warnings.map(w=>`<li>${esc(w)}</li>`).join('')}</ul>`:''}<table class="catalogue-table"><thead><tr><th scope="col">Model</th><th scope="col">Machines</th><th scope="col">State</th><th scope="col">Routes</th><th scope="col">Observed</th></tr></thead><tbody>${rows}</tbody></table></details>`;
 }
 
+function physicalMachines(worker){
+  const values=worker?.physical_machines;
+  return Array.isArray(values)&&values.length&&values.every(v=>typeof v==='string'&&v.trim())&&new Set(values).size===values.length?[...values]:[];
+}
+const machineLabel=id=>String(id).replace(/^spark(\d+)$/i,'Spark $1');
+function fleetPresentation(workers,mediaIds=[]){
+  const media=new Set(mediaIds),nested=new Map(),owner=new Map(),conflicts=new Map(),sharedWith=new Map();
+  const machines=new Map(workers.map(w=>[w.id,physicalMachines(w)]));
+  const occupied=w=>w.load>0||media.has(w.id)||w.is_healthy===true&&w.drained!==true;
+  const representative=new Map();
+  for(const w of workers){
+    const own=machines.get(w.id);if(!own.length)continue;
+    const same=workers.filter(other=>machines.get(other.id).length===own.length&&own.every(m=>machines.get(other.id).includes(m)));
+    const active=same.filter(occupied);
+    // An unavailable endpoint must not turn one physical machine into two.
+    // With no active profile, retain the most recently used one as the card.
+    {
+      const primary=(active.length?active:same).slice().sort((a,b)=>Number(b.is_healthy&&!b.drained&&!b.quarantine)-Number(a.is_healthy&&!a.drained&&!a.quarantine)||(Date.parse(b.last_request_finished_at)||0)-(Date.parse(a.last_request_finished_at)||0)||a.id.localeCompare(b.id))[0];
+      representative.set(w.id,primary.id);
+    }
+  }
+  for(const w of workers){
+    const own=machines.get(w.id);if(!own.length)continue;
+    const overlaps=workers.filter(other=>other.id!==w.id&&occupied(other)&&machines.get(other.id).some(m=>own.includes(m)));
+    if(overlaps.length)sharedWith.set(w.id,overlaps.map(other=>other.id));
+    if(occupied(w)&&overlaps.length)conflicts.set(w.id,overlaps.map(other=>other.id));
+    const sameOwner=representative.get(w.id);
+    if(sameOwner&&sameOwner!==w.id){
+      owner.set(w.id,sameOwner);nested.set(sameOwner,[...(nested.get(sameOwner)??[]),w]);continue;
+    }
+    // Empty alternative profiles belong under their physical hardware's active
+    // service. Paused single-machine records can also belong to a larger pair.
+    // Keep active, queued, quarantined and ambiguous services visible.
+    if(occupied(w)||w.load!==0||w.queued!==0||w.quarantine||w.maintenance_lock||w.maintenance_locks?.length||w.recovery_waiting||w.direct_reserved)continue;
+    const candidates=workers.filter(other=>{
+      const otherMachines=machines.get(other.id);
+      if(other.id===w.id||!own.every(m=>otherMachines.includes(m)))return false;
+      return otherMachines.length===own.length?representative.get(w.id)===other.id:
+        otherMachines.length>own.length&&representative.get(other.id)===other.id&&w.drained===true&&(other.drained===false||occupied(other));
+    });
+    if(candidates.length===1){const parent=candidates[0];owner.set(w.id,parent.id);nested.set(parent.id,[...(nested.get(parent.id)??[]),w]);}
+  }
+  // Flatten alternatives if their representative itself belongs to a larger pair.
+  for(const [id,parent] of owner){let root=parent;while(owner.has(root))root=owner.get(root);owner.set(id,root);}
+  nested.clear();for(const w of workers)if(owner.has(w.id)){const root=owner.get(w.id);nested.set(root,[...(nested.get(root)??[]),w]);}
+  return {owner,nested,conflicts,sharedWith};
+}
+function fleetAvailability(workers,mediaIds=[]){
+  const {owner}=fleetPresentation(workers,mediaIds);
+  const group=w=>owner.get(w.id)??w.id;
+  return {total:new Set(workers.map(group)).size,
+    available:new Set(workers.filter(w=>w.is_healthy===true&&!routingInfo(w).excluded).map(group)).size};
+}
+function alternativeServicesMarkup(records,parent,{controls=false,stale=false,devices=null,now=Date.now()}={}){
+  if(!records.length)return '';
+  return `<details class="device-alternatives"><summary>${records.length} alternative model${records.length===1?'':'s'}</summary><p>These are separate model endpoints on the same physical machines. Their endpoint status is not the health of the machines running ${esc(parent.id)}.</p>${records.map(w=>{
+    const block=`Shared hardware is assigned to ${parent.id}. Manage the active group before resuming this alternative.`;
+    const power=controls&&fleetPower?.enabled&&fleetPower.members?.some(m=>m.worker_id===w.id)?`<div class="device-power">${['status','start','stop'].map(action=>`<button type="button" class="power-button" data-power-action="${action}" data-power-worker="${esc(w.id)}"${action!=='status'||stale||fleetPowerBusy.has(w.id)?' disabled':''} title="${esc(action==='status'?'Read this alternative service status.':block)}">${{status:'Status',start:'Start',stop:'Stop'}[action]}</button>`).join('')}</div>`:'';
+    return `<div class="alternative-service" data-service-id="${esc(w.id)}"><strong>${esc(physicalMachines(w).map(machineLabel).join(' + '))} · ${esc(w.id)}</strong><span>${esc(routingInfo(w,{stale}).label)}${w.load>0?' · '+fmt(w.load)+' active':''}${w.queued>0?' · '+fmt(w.queued)+' queued':''} · endpoint ${w.is_healthy===true?'ready':'unavailable'}</span>${w.probe_error?`<span>Last probe: ${esc(w.probe_error)}</span>`:''}<p>${esc(managementDetail(w))}</p>${controls?`<button class="button" type="button" disabled title="${esc(block)}">Resume routing</button>`:''}${power}<small>${esc(block)}</small>${devices?.get(w.id)?.hardware?hardwareMarkup(devices.get(w.id).hardware,now):'<p>Individual hardware telemetry unavailable; endpoint readiness does not establish machine health.</p>'}</div>`;
+  }).join('')}</details>`;
+}
+function mediaWorkerIds(workers,now,devices=[]){return workers.filter(w=>{const engine=devices.find(d=>d.id===w.id)?.endpoint_metrics;return engine?.connected&&Number.isFinite(engine.at)&&now>=engine.at&&now-engine.at<15000&&engine.running>0||workloadInfo(w.id,now)||!fleetWorkloadsUnavailable&&(fleetWorkloads.native_engines??[]).some(row=>row.worker_id===w.id&&row.state==='busy'&&Number.isFinite(row.observed_at)&&now>=row.observed_at&&now-row.observed_at<20000)}).map(w=>w.id);}
+// Reconcile the entire card without replacing focused buttons or disclosure state.
+// Matching stable section classes also handles sections being inserted or removed.
+function patchDeviceNode(current,fresh){
+  if(current.nodeType===3||current.nodeType===8){if(current.nodeValue!==fresh.nodeValue)current.nodeValue=fresh.nodeValue;return;}
+  if(current.classList?.contains('worker-routing')){updateRoutingNode(current,fresh);return;}
+  for(const attr of [...current.attributes])if(!(current.tagName==='DETAILS'&&attr.name==='open')&&!fresh.hasAttribute(attr.name))current.removeAttribute(attr.name);
+  for(const attr of [...fresh.attributes])if(!(current.tagName==='DETAILS'&&attr.name==='open')&&current.getAttribute(attr.name)!==attr.value)current.setAttribute(attr.name,attr.value);
+  const key=node=>node.nodeType!==1?String(node.nodeType):[node.tagName,node.id,node.getAttribute('data-service-id'),node.getAttribute('data-power-action'),node.getAttribute('data-light'),node.classList?.[0]].join('|');
+  let cursor=current.firstChild;
+  for(const next of [...fresh.childNodes]){
+    let match=cursor;
+    while(match&&key(match)!==key(next))match=match.nextSibling;
+    if(!match){current.insertBefore(next,cursor);continue;}
+    if(match!==cursor)current.insertBefore(match,cursor);
+    patchDeviceNode(match,next);cursor=match.nextSibling;
+  }
+  while(cursor){const next=cursor.nextSibling;cursor.remove();cursor=next;}
+}
 function renderDevices(devices,workers,now,stale,scales,controls) {
   const viewport={x:window.scrollX,y:window.scrollY};
   const container=$('devices'),existing=new Map([...container.querySelectorAll('.device')].map(el=>[el.dataset.workerId,el]));
@@ -352,23 +393,17 @@ function renderDevices(devices,workers,now,stale,scales,controls) {
     const nativeBusy=!fleetWorkloadsUnavailable&&(fleetWorkloads.native_engines??[]).some(row=>row.worker_id===d.id&&row.state==='busy'&&Number.isFinite(row.observed_at)&&now>=row.observed_at&&now-row.observed_at<20000);
     return Boolean(worker?.is_healthy&&!worker.drained&&!worker.quarantine||media&&!media.old&&!media.warning||nativeBusy);
   };
-  const ordered=[...devices].sort((a,b)=>stale
+  const mediaIds=mediaWorkerIds(workers,now,devices);
+  const presentation=fleetPresentation(workers.filter(w=>devices.some(d=>d.id===w.id)),mediaIds);presentation.devices=new Map(devices.map(d=>[d.id,d]));
+  const ordered=devices.filter(d=>!presentation.owner.has(d.id)).sort((a,b)=>stale
     ?(existingOrder.get(a.id)??devices.length)-(existingOrder.get(b.id)??devices.length)
     :Number(serving(b))-Number(serving(a)));
   ordered.forEach((d,i)=>{
-    const template=document.createElement('template');template.innerHTML=device(d,workers.find(w=>w.id===d.id),now,stale,i+1,scales,controls);
+    const template=document.createElement('template');template.innerHTML=device(d,workers.find(w=>w.id===d.id),now,stale,i+1,scales,controls,presentation);
     const fresh=template.content.firstElementChild;let current=existing.get(d.id);
     if(!current)current=fresh;
     else{
-      const focusedLight=current.contains(document.activeElement)?document.activeElement?.dataset?.light:null;
-      if(current.querySelector('.fleet-llm-history')?.open)fresh.querySelector('.fleet-llm-history')?.setAttribute('open','');
-      if(current.querySelector('.measurement-info')?.open)fresh.querySelector('.measurement-info')?.setAttribute('open','');
-      if(current.querySelector('.device-details')?.open)fresh.querySelector('.device-details')?.setAttribute('open','');
-      for(const selector of ['.device-identity','.device-live','.device-details>summary','.fleet-media']){const before=current.querySelector(selector),after=fresh.querySelector(selector);if(!before||!after)continue;if(before.innerHTML!==after.innerHTML)before.innerHTML=after.innerHTML;if(before.className!==after.className)before.className=after.className;for(const name of ['data-level','title','hidden']){const value=after.getAttribute(name);if(value===null)before.removeAttribute(name);else before.setAttribute(name,value);}}
-      // Keep the details drawer open state stable across refreshes.
-      if(current.querySelector('.device-details')?.open)fresh.querySelector('.device-details')?.setAttribute('open','');
-      if(focusedLight)current.querySelector(`[data-light="${focusedLight}"]`)?.focus({preventScroll:true});
-      updateRoutingNode(current.querySelector('.worker-routing'),fresh.querySelector('.worker-routing'));
+      patchDeviceNode(current,fresh);
     }
     if(container.children[i]!==current)container.insertBefore(current,container.children[i]||null);
     existing.delete(d.id);
@@ -384,7 +419,7 @@ function refreshRoutingControls() {
   // The fresh-install onboarding tile is not a worker and has no routing node.
   for(const el of $('devices').querySelectorAll('.device[data-worker-id]')){
     const w=visibleWorkers.find(w=>w.id===el.dataset.workerId),template=document.createElement('template');
-    template.innerHTML=routingMarkup(w,{stale:workerUiStale,controls:workerControlsVisible,recovering:recoveryState?.workers?.some(r=>r.worker_id===w?.id&&r.state==='recovering')});
+    template.innerHTML=routingMarkup(w,{stale:workerUiStale,controls:workerControlsVisible,blockedBy:fleetPresentation(visibleWorkers,mediaWorkerIds(visibleWorkers,Date.now(),lastDevicesSpec?.devices??[])).sharedWith.get(w?.id)??[],recovering:recoveryState?.workers?.some(r=>r.worker_id===w?.id&&r.state==='recovering')});
     updateRoutingNode(el.querySelector('.worker-routing'),template.content.firstElementChild);
   }
 }
@@ -392,11 +427,12 @@ function serverVerdict(d,w,now,stale=false) {
   if(stale||!w)return {level:'unknown',label:'Status stale',detail:'Live gateway status is unavailable; values are historical.'};
   if(w.quarantine)return {level:'bad',label:'Quarantined',detail:'Star Gate isolated this server after a generation fault. Use the recovery/readmission controls only after reviewing the evidence.'};
   if(w.maintenance_locks?.length)return {level:'paused',label:'Maintenance',detail:`Named lock${w.maintenance_locks.length===1?'':'s'} ${w.maintenance_locks.map(lock=>lock.name).join(', ')} prevent all routing and automatic recovery. Review deadlines only warn; they never auto-release.`};
+  if(w.drained&&w.load===0&&!w.queued)return {level:'paused',label:'Paused',detail:`Routing is explicitly paused. Endpoint ${w.is_healthy?'ready':'unavailable'}; this does not establish physical-machine health. ${managementDetail(w)}`};
   if(!w.is_healthy)return {level:'bad',label:'LLM unavailable',detail:managementDetail(w)};
   if(w.drained)return {level:'paused',label:w.load?'Pausing':'Paused',detail:w.load?'No new work is admitted; an already admitted request is still finishing.':'No new gateway requests are admitted to this server.'};
   const waiting=Number.isSafeInteger(w.queued)?w.queued:0,oldest=Number.isFinite(w.oldest_queue_seconds)?w.oldest_queue_seconds:null;
   if(waiting>0)return {level:waiting>=3||oldest>=60?'warn':'busy',label:`Backed up · ${fmt(waiting)} waiting`,detail:`${fmt(waiting)} request${waiting===1?' is':'s are'} queued${oldest===null?'':`; oldest has waited ${fmt(oldest)} seconds`}.`};
-  if(w.load)return {level:'busy',label:'Serving',detail:'One request is active and no request is waiting behind it.'};
+  if(w.load)return {level:'busy',label:'Serving',detail:`${w.load===1?'One request is':fmt(w.load)+' requests are'} active and no request is waiting behind ${w.load===1?'it':'them'}.`};
   if(d?.backend==='openai'||d?.endpoint_metrics){
     const engine=d.endpoint_metrics,at=engine?.activity_at??engine?.at;
     const known=engine?.connected&&Number.isFinite(at)&&now>=at&&now-at<15000&&engine.live_activity!==false&&engine.phase==='idle'&&engine.running===0;
@@ -483,16 +519,26 @@ function workloadMarkup(job,w,now) {
   const llm=job.phase==='waiting_idle'?'Finishing existing LLM work before switching.':job.phase==='checking_llm'?'Checking real responses and cache reuse before readmission.':job.phase==='restoring_llm'?'Original LLM is loading; return is not yet verified.':job.phase==='needs_attention'?'Return failed or needs attention. Inspect the operation.':'Original LLM will be restored and checked after media work.';
   return `<section class="fleet-media" aria-label="${esc(job.engine)} workload"><div class="fleet-media-heading"><strong>${esc(job.engine)}</strong><span>${esc(job.label)}</span></div><div class="fleet-media-facts"><div><span class="label">OPERATION ELAPSED</span><strong>${elapsed(job.started_at)}</strong></div><div><span class="label">CURRENT STAGE</span><strong>${elapsed(job.changed_at)}</strong></div><div><span class="label">BATCH</span><strong>${job.batch_size>1?`${fmt(job.batch_index)} / ${fmt(job.batch_size)}`:'Single job'}</strong></div></div><p class="fleet-media-job">Job <code>${esc(job.job_id)}</code> · ${esc(job.state)}${job.outputs_state?' · outputs '+esc(job.outputs_state):''}</p><p class="fleet-media-heartbeat" data-level="${fresh?'good':'warning'}">${fresh?'Runner heartbeat received':'Runner heartbeat unavailable or old'}${Number.isFinite(heartbeat)?' · '+age(heartbeat,now):''}. This is a runner check-in, not measured generation progress.</p>${['generating','observing_media'].includes(job.phase)?job.kind==='video'?nativeMediaProgressMarkup(job,now):'<p class="muted">Generation steps and completion time are not reported by this engine connection.</p>':''}<p class="fleet-media-return"><strong>Return to LLM:</strong> ${job.old?'Status is out of date; return is not confirmed.':esc(llm)}${w?.quarantine?' LLM is quarantined.':''}</p><a href="#media" data-media-engine="${job.kind==='video'?'h3':'ace-step'}">View ${job.kind==='video'?'video':'music'} jobs, results and errors →</a></section>`;
 }
-function nativeMediaMarkup(id,now){
-  return (fleetWorkloads.native_engines??[]).filter(row=>row.worker_id===id).map(row=>{
+function nativeMediaMarkup(id,now,machines=[]){
+  const rows=(fleetWorkloads.native_engines??[]).filter(row=>row.worker_id===id);
+  if(!rows.length)return '';
+  const observed=rows.map(row=>{
     const fresh=!fleetWorkloadsUnavailable&&Number.isFinite(row.observed_at)&&now>=row.observed_at&&now-row.observed_at<20000;
-    if(!fresh)return '';
-    const state=row.state,name=row.engine==='comfyui'?'H3 / ComfyUI':row.engine==='ace-step'?'ACE-Step':'Media';
-    const detail=state==='busy'?`${row.running_count} running · ${row.waiting_count} waiting`:'Native queue empty';
-    return `<section class="fleet-media"><strong>${esc(name)} · ${esc(state)}</strong><p>${esc(detail)} · ${age(row.observed_at,now)}</p>${state==='busy'&&row.running?`<p>Native jobs: ${[...row.running,...row.waiting].map(esc).join(', ')}</p>`:''}<p class="muted">Includes direct clients. Queue status is not whole-job progress or whole-machine idleness.</p></section>`;
-  }).join('');
+    const state=fresh?row.state:'unknown',name=row.engine==='comfyui'?'H3 / ComfyUI':row.engine==='ace-step'?'ACE-Step':'Media';
+    const machine=(Number.isSafeInteger(row.member)?machines?.[row.member]:machines?.length===1?machines[0]:null);
+    const host=machine?machine.replace(/^spark(\d+)$/i,'Spark $1'):Number.isSafeInteger(row.member)?`Member ${row.member+1}`:id;
+    const counts=Number.isSafeInteger(row.running_count)&&Number.isSafeInteger(row.waiting_count);
+    const label=!fresh?(row.observed_at==null?'Awaiting status':'Stale'):state==='busy'?(counts?`${row.running_count} running · ${row.waiting_count} queued`:'Busy'):state==='idle'?'Queue empty':'Unknown';
+    const detail=!fresh?'Current queue observation unavailable.':state==='unknown'?(row.reason??'Native queue unavailable.'):state==='idle'?'Native queue observed empty.':label;
+    return {row,state,name,host,label,detail};
+  });
+  const active=observed.filter(item=>item.state==='busy'),inactive=observed.filter(item=>item.state!=='busy');
+  const uncertain=inactive.filter(item=>item.state!=='idle').length;
+  const summary=[active.length?`${active.length} active engine${active.length===1?'':'s'}`:null,uncertain?`${uncertain} unavailable`:null,!active.length&&!uncertain?'Queues empty':null].filter(Boolean).join(' · ');
+  const rowMarkup=({row,state,name,host,label,detail})=>`<div class="fleet-native-row" data-state="${esc(state)}" title="${esc(detail)}"><span class="fleet-native-host">${esc(host)}</span><strong>${esc(name)}</strong><span class="fleet-native-state">${esc(label)}</span><span class="fleet-native-age">${Number.isFinite(row.observed_at)?age(row.observed_at,now):'—'}</span></div>`;
+  return `<div class="fleet-native-media" aria-label="Native media engines">${active.map(rowMarkup).join('')}<details class="fleet-native-details"><summary${uncertain?' class="media-uncertain"':''}>Media · ${esc(summary)}</summary>${inactive.map(rowMarkup).join('')}<p>Queues include direct clients. An empty queue does not prove whole-machine idleness or job completion.</p><dl>${observed.map(({row,name,host,detail})=>`<dt>${esc(host)} · ${esc(name)}</dt><dd>${esc(detail)}${row.state==='busy'&&Array.isArray(row.running)?` Native jobs: ${[...row.running,...(row.waiting??[])].map(esc).join(', ')}.`:''}</dd>`).join('')}</dl></details></div>`;
 }
-function device(d, w, now, stale, index = 1, scales={}, controls=false) {
+function device(d, w, now, stale, index = 1, scales={}, controls=false, presentation=null) {
   const workload=workloadInfo(d.id,now);
   const nativeActive=!stale&&!fleetWorkloadsUnavailable&&(fleetWorkloads.native_engines??[]).some(row=>row.worker_id===d.id&&row.state==='busy'&&Number.isFinite(row.observed_at)&&now>=row.observed_at&&now-row.observed_at<20000);
   if(workload&&stale){workload.old=true;workload.warning=true;workload.label='Last known media operation';}
@@ -537,7 +583,7 @@ function device(d, w, now, stale, index = 1, scales={}, controls=false) {
   // Compact face: status dot + name + state word, one live line, conditional chips.
   const dotLevel={ok:'ok',busy:'busy',warn:'warn',bad:'bad',paused:'paused',unknown:'unknown'}[verdict.level]??'unknown';
   const thinkingLevel=(()=>{const info=thinkingInfo(w?.load?w.requested_thinking:w?.last_requested_thinking);return info.label&&info.label!=='—'?info.label.toLowerCase():null;})();
-  const stateWord=!stale&&w?.quarantine?'quarantined':w?.direct_reserved===true?'direct use':state==='mixed'?'prefill + generation':state==='decode'?(d.endpoint_metrics?'gen':'answering'):state==='thinking'?`thinking${thinkingLevel?` · ${thinkingLevel}`:''}`:state;
+  const stateWord=!stale&&w?.quarantine?'quarantined':w?.direct_reserved===true?'direct use':w?.drained&&w.load===0&&!workload&&!nativeActive?'paused'+(w.is_healthy?'':' · endpoint unavailable'):!stale&&state==='unknown'&&w?.is_healthy===false?'endpoint unavailable':state==='mixed'?'prefill + generation':state==='decode'?(d.endpoint_metrics?'gen':'answering'):state==='thinking'?`thinking${thinkingLevel?` · ${thinkingLevel}`:''}`:state;
   const liveRates=(()=>{
     const e=d.endpoint_metrics;
     if(e){
@@ -568,9 +614,9 @@ function device(d, w, now, stale, index = 1, scales={}, controls=false) {
   const liveLine=`<div class="device-live"><span class="state-word" data-level="${dotLevel}">${esc(stateWord)}</span>${gatewayActivity}${liveRates}${cacheUsage}${mediaWarning?'<span class="cache-chip warn">media?</span>':''}</div>`;
   // Face-level utilization strip: always-visible phase bar (split per machine for
   // tensor-parallel pairs) plus small decode/prefill rate charts without captions.
-  const machines=/sparks\d/i.test(d.id)?2:1;
-  const machineNote=machines>1?' Both machines of this tensor-parallel pair run the same phases together; one strip shows pair scope, not separate measurements.':'';
-  const bar=`<div class="device-bar" data-lanes="1"><div class="bar-label">ACTIVITY · 15m</div>${timeline(d,now,1)}<span class="bar-note${machines>1?' pair':''}" title="Blue is prefill, green is decode or generation, grey is idle or off, empty gaps mean the phase is unavailable.${esc(machineNote)}">${machines>1?'×2':'×1'}</span></div>`;
+  const mappedMachines=physicalMachines(w),machines=mappedMachines.length||1;
+  const machineNote=machines>1?` This service maps to ${machines} physical machines. One strip shows service-level history, not separate machine measurements.`:!mappedMachines.length?' Physical machine mapping is unavailable.':'';
+  const bar=`<div class="device-bar" data-lanes="1"><div class="bar-label">ACTIVITY · 15m</div>${timeline(d,now,1)}<span class="bar-note${machines>1?' pair':''}" title="Blue is prefill, green is decode or generation, amber is busy with phase unavailable, grey is idle or off, empty gaps mean the phase is unavailable.${esc(machineNote)}">${mappedMachines.length?'×'+machines:'scope ?'}</span></div>`;
   const miniChart=kind=>{
     const e=d.endpoint_metrics;
     const svg=e?chart(e.series,kind,now):chart(d.series,kind,now,scales[kind]);
@@ -581,16 +627,20 @@ function device(d, w, now, stale, index = 1, scales={}, controls=false) {
   const miniCharts=`<div class="device-minicharts">${miniChart('decode')}${miniChart('prefill')}</div>`;
   const detailBody=`<div class="metrics">${metric('decode','DECODE')}${metric('prefill','PREFILL')}</div>${metricsInfo}${hardwareMarkup(d.hardware,now)}${performance}`;
   const detailOpen=!!workload;
-  const details=`<details class="device-details"${detailOpen?' open':''}><summary>Details</summary>${workload?workloadMarkup(workload,w,now):''}${unavailableLlm?offlineReadings:''}${historicalLlm&&!unavailableLlm?llmReadings:detailOpen?llmReadings:detailBody}</details>`;
+  const alternatives=alternativeServicesMarkup(presentation?.nested.get(d.id)??[],w,{controls,stale,devices:presentation?.devices,now});
+  const details=`<details class="device-details"${detailOpen?' open':''}><summary>Details${alternatives?' · '+(presentation?.nested.get(d.id)?.length??0)+' alternative services':''}</summary>${workload?workloadMarkup(workload,w,now):''}${unavailableLlm?offlineReadings:''}${historicalLlm&&!unavailableLlm?llmReadings:detailOpen?llmReadings:detailBody}${alternatives}</details>`;
   const powerInfo=controls&&fleetPower?.enabled?fleetPower.members?.find(m=>m.worker_id===d.id):null;
   const latestReceipt=fleetPower?.recent?.find(r=>r.worker===d.id);
   const powerLabel=state=>({ready:'ready ✓',stopped:'stopped ✓',timeout:'timeout — unproven',failed:'failed ✗'}[state]??'');
   const powerLine=fleetPowerBusy.has(d.id)?'working…':latestReceipt?`${latestReceipt.action} · ${latestReceipt.verified&&latestReceipt.verified.state!=='unverified'?powerLabel(latestReceipt.verified.state):latestReceipt.ok?'ok':`exit ${latestReceipt.exit_code?? '?'}`} · ${new Date(latestReceipt.finished_at).toLocaleTimeString()}`:powerInfo?.busy?'working…':'';
   const offline=!workload&&!nativeActive&&(!endpoint||endpoint.connected!==true);
-  const compactBar=offline?'':bar,compactCharts=offline?'':miniCharts;
+  // Connectivity describes this poll, not the retained activity window. Keep
+  // its timeline visible; unknown phases remain gaps rather than invented idle.
+  const compactBar=bar,compactCharts=offline?'':miniCharts;
+  const sharedWith=presentation?.sharedWith.get(d.id)??[];
   const powerTitles={status:'Run the enrolled status script for this model.',start:'Start this model through its enrolled script. Readiness is verified against the endpoint before reporting Started.',stop:'Stop this model through its enrolled script. Refuses when gateway or direct work is active, when a same-hardware model still holds work, or when this is the last healthy LLM. Stopping a Spark pair stops both machines of that pair.'};
-  const powerStrip=powerInfo?`<div class="device-power">${['status','start','stop'].map(a=>`<button type="button" class="power-button" data-power-action="${a}" data-power-worker="${esc(d.id)}"${fleetPowerBusy.has(d.id)||powerInfo.busy?' disabled':''} title="${esc(powerTitles[a])}">${{status:'Status',start:'Start',stop:'Stop'}[a]}</button>`).join('')}<span class="power-status" title="${esc(latestReceipt?.output??'')}">${esc(powerLine)}</span></div>`:'';
-  return `<article class="device ${workload?'is-media':nativeActive?'is-native':''}" data-worker-id="${esc(d.id)}"><div class="device-top"><div class="device-identity"><span class="device-dot" data-level="${dotLevel}" title="${esc(verdict.detail)}"></span><span class="device-name-text" title="${esc(verdict.label)} — ${esc(verdict.detail)}${w?.served_model?` · serving ${esc(w.served_model)}`:''}">${esc(d.id.replace(/^spark/, 'Spark '))}</span>${activityDuration}${routingMarkup(w,{stale,controls,recovering:recoveryState?.workers?.some(r=>r.worker_id===w?.id&&r.state==='recovering')})}</div></div>${liveLine}${compactBar}${compactCharts}${mediaWarning}${nativeMediaMarkup(d.id,now)}${offline?'':chips}${powerStrip}${details}</article>`;
+  const powerStrip=powerInfo?`<div class="device-power">${['status','start','stop'].map(a=>`<button type="button" class="power-button" data-power-action="${a}" data-power-worker="${esc(d.id)}"${fleetPowerBusy.has(d.id)||powerInfo.busy||a!=='status'&&sharedWith.length?' disabled':''} title="${esc(a!=='status'&&sharedWith.length?'Shared hardware is active on '+sharedWith.join(', ')+'. Manage the active services first.':powerTitles[a])}">${{status:'Status',start:'Start',stop:'Stop'}[a]}</button>`).join('')}<span class="power-status" title="${esc(latestReceipt?.output??'')}">${esc(powerLine)}</span></div>`:'';
+  return `<article class="device ${workload?'is-media':nativeActive?'is-native':''}" data-worker-id="${esc(d.id)}"><div class="device-top"><div class="device-identity"><span class="device-dot" data-level="${dotLevel}" title="${esc(verdict.detail)}"></span><span class="device-name-text" title="${esc(verdict.label)} — ${esc(verdict.detail)}${w?.served_model?` · serving ${esc(w.served_model)}`:''}">${esc(mappedMachines.length?mappedMachines.map(machineLabel).join(' + '):d.id.replace(/^spark/, 'Spark '))}</span>${activityDuration}${routingMarkup(w,{stale,controls,blockedBy:sharedWith,recovering:recoveryState?.workers?.some(r=>r.worker_id===w?.id&&r.state==='recovering')})}</div></div>${mappedMachines.length?`<div class="device-service">${workload||nativeActive?'Media active · ':w?.is_healthy&&!w?.drained?'Serving ': 'Model profile: '}${w?.served_model?esc(w.served_model):'unreported'} · ${esc(d.id)}</div>`:'<div class="device-service">Physical machine mapping unavailable</div>'}${presentation?.conflicts.has(d.id)?`<p class="device-topology-warning">Shared hardware also active: ${esc(presentation.conflicts.get(d.id).join(', '))}. Inspect the overlap.</p>`:sharedWith.length?`<p class="device-topology-warning">Hardware serving ${esc(sharedWith.join(', '))}; this is an alternative model profile.</p>`:''}${liveLine}${compactBar}${compactCharts}${mediaWarning}${nativeMediaMarkup(d.id,now,w?.physical_machines)}${offline?'':chips}${powerStrip}${details}</article>`;
 }
 const headlineSeverity=value=>['good','info','warning','critical'].includes(value)?value:'info';
 function deterministicHealthAlerts(snapshot) {
@@ -654,54 +704,17 @@ function renderAgentWatch(watch){
   const labels={local_tool_active:'tool execution',waiting_inside_dsg:'waiting inside Star Gate',model_response_active:'model response active',no_request_reached_dsg:'no request reached Star Gate',waiting_to_reach_dsg:'waiting to reach Star Gate',client_processing_after_dsg:'client processing after Star Gate',client_reported_error:'client reports a failed turn',heartbeat_stale_unknown:'heartbeat stale · state unknown',idle:'no local tool reported',done:'done',unknown:'state unknown'};
   $('agent-watch-items').innerHTML=runs.length?runs.slice(0,24).map(run=>`<li data-activity="${run.fresh&&run.process_alive&&run.state==='local_tool'&&run.diagnosis==='local_tool_active'?'tool':run.fresh&&run.process_alive&&run.state==='idle'?'idle':'unknown'}" data-level="${needsAttention(run)?'attention':run.fresh?'current':'unknown'}"><time>${esc(age(Date.parse(run.last_seen_at),Date.now()))}</time><strong>${esc(run.client)} · ${esc(run.watch_ref)}</strong><span>${esc(labels[run.diagnosis]??'state unknown')}${run.request?` · Star Gate ${esc(run.request.state.replaceAll('_',' '))}`:''}</span></li>`).join(''):'<li class="muted">No enrolled clients reporting.</li>';
 }
-function healthHeadlines(snapshot, ticker) {
-  if(!snapshot?.gateway || snapshot.gateway_error)return {level:'unknown',items:[{severity:'info',text:'Gateway status unavailable; recommendations withheld until fresh evidence returns.'}]};
-  const safety=deterministicHealthAlerts(snapshot),genie=ticker?.state==='ready'&&ticker.entries?.length?ticker.entries.map(e=>({severity:headlineSeverity(e.severity),text:`${e.text}${e.recommendation?` Recommendation: ${e.recommendation}`:''}`})):[];
-  if(safety.length||genie.length) {
-    const items=[...safety,...genie],prefix=safety.length?'Star Gate safety alert'+(genie.length?' + Genie assessment':' · observed gateway evidence'):'Genie assessment';
-    return {level:items.some(e=>e.severity==='critical')?'critical':items.some(e=>e.severity==='warning')?'warn':items.some(e=>e.severity==='good')?'ok':'info',evidence_at:ticker?.evidence_at,
-      label:`${prefix}${genie.length?` · evidence ${clock(ticker.evidence_at)}${ticker.refreshing?' · updating':ticker.review_error?' · latest refresh failed':''}`:''}`,items};
-  }
-  const updating=ticker?.refreshing && !['off','unavailable'].includes(ticker?.state);
-  const message={off:'Gate Genie is off. Enable him below for generated health observations.',
-    reviewing:'Gate Genie is reviewing fleet evidence. His observations and recommendations will appear here.',
-    pending:'Waiting for a Genie assessment from the selected server.',
-    stale:'The last assessment is over 10 minutes old or has no valid evidence time. Request a fresh review below.',
-    changed:'Fleet health or membership changed since the last assessment. Request a fresh review before acting on old advice.',
-    invalid:'Genie returned no valid ticker entries. Read his assessment below or request another review.',
-    error:Number.isInteger(ticker?.model_http_status)&&ticker.model_http_status>=400&&ticker.model_http_status<600
-      ?`Genie's model rejected the review (HTTP ${ticker.model_http_status}). Check the reviewer's model and request settings. Gateway status is still live.`
-      :ticker?.provider_attempts?.length>1
-      ?`The Genie review failed after both the dedicated provider and Star Gate pool fallback were tried (${ticker.provider_attempts.map(a=>`${String(a.provider).replaceAll('_',' ')}: ${String(a.reason||a.outcome).replaceAll('_',' ')}`).join('; ')}). The gateway is unaffected.`
-      :'Genie could not complete the latest review. Check his status below. Gateway status is still live.',
-    unavailable:'Genie status is unavailable. Waiting for a fresh assessment.'};
-  const g=snapshot.gateway,counts=[g.healthy,g.total,g.active,g.queued];
-  const observed=counts.every(n=>Number.isSafeInteger(n)&&n>=0)?`Fleet: ${g.healthy}/${g.total} servers healthy; ${g.active} running; ${g.queued} waiting. `:'';
-  return {level:'unknown',label:observed?'Live fleet status · Genie status':'Genie status',items:[{severity:'info',text:observed+(updating?'Genie is preparing a fresh assessment. The banner will update when it finishes.':message[ticker?.state] || 'Connecting to Gate Genie…')}]};
+function healthHeadlines(snapshot) {
+  if(!snapshot?.gateway||snapshot.gateway_error)return {level:'unknown',label:'Gateway status',items:[{severity:'info',text:'Gateway status unavailable.'}]};
+  const items=deterministicHealthAlerts(snapshot),g=snapshot.gateway;
+  if(items.length)return {level:items.some(e=>e.severity==='critical')?'critical':'warn',label:'Star Gate safety alert · observed gateway evidence',items};
+  return {level:'unknown',label:'Gateway-only mode',items:[{severity:'info',text:`Fleet: ${g.healthy??'unknown'}/${g.total??'unknown'} servers healthy; ${g.active??'unknown'} running; ${g.queued??'unknown'} waiting. Legacy Genie removed.`}]};
 }
-let wireSnapshot=null,wireSignature=null,wireState=null,requestFilter='all';
+let requestEvents=[],requestFilter='all';
 function renderRequests(events) {
   const recent=events.filter(e=>e.event==='request_finished').reverse();
   const rows=recent.filter(e=>requestFilter==='problems'?!['complete','vision_guidance'].includes(e.outcome):requestFilter==='slow'?e.elapsed_ms>=300000||e.queue_ms>=60000:true).slice(0,12);
   $('requests').innerHTML = rows.length ? rows.map(e => `<tr><td>${e.time ? clock(e.time) : '—'}</td><td>${esc(e.node)}</td><td class="${e.outcome === 'complete' ? 'success' : e.outcome === 'vision_guidance' ? 'protected' : e.outcome === 'client_cancelled' ? 'cancelled' : 'failure'}">${esc(e.outcome?.replaceAll('_',' ') || 'unknown')}</td><td>${fmt(e.elapsed_ms / 1000)}s</td><td>${fmt(e.queue_ms)}ms</td><td>${fmt(e.usage?.cached_tokens)} / ${fmt(e.usage?.prompt_tokens)}</td><td>${fmt(e.usage?.completion_tokens)}</td><td class="mono" title="${esc(e.request_id)}">${esc(e.request_id?.slice(0,8))}</td></tr>`).join('') : `<tr><td colspan="8" class="muted">No ${requestFilter==='all'?'request completions in the observed log tail':requestFilter} requests match the current filter.</td></tr>`;
-}
-function renderHealthWire(snapshot) {
-  wireSnapshot=snapshot;
-  const wire=$('health-wire');
-  if(wire.matches(':hover, :focus-within'))return;
-  const news=healthHeadlines(snapshot,wireState),signature=JSON.stringify(news);
-  if(signature===wireSignature)return;
-  wireSignature=signature;wire.dataset.level=news.level;
-  for(const id of ['health-wire-text','health-wire-copy']) {
-    const group=$(id);group.replaceChildren(...news.items.map(entry=>{
-      const item=document.createElement('span');item.className='health-wire-item';item.dataset.severity=headlineSeverity(entry.severity);
-      const label=document.createElement('span');label.className='health-wire-severity';label.textContent={good:'Good',info:'Info',warning:'Warning',critical:'Critical'}[item.dataset.severity]+': ';
-      const text=document.createElement('span');text.textContent=entry.text;item.append(label,text);return item;
-    }));
-  }
-  // Measure one complete group, including the deliberate gaps, at 52px/s.
-  // Polling preserves the animated track rather than restarting its animation.
-  $('health-wire-track').style.animationDuration=`${Math.max(12,$('health-wire-text').getBoundingClientRect().width/52)}s`;
 }
 function configurationRows(row){
   const fields=[['Runtime','runtime.name'],['Runtime version','runtime.version'],['Build','runtime.build'],['Model','model.name'],['Quantization','model.quantization'],
@@ -769,7 +782,7 @@ function render(s) {
   renderServerRecords(s.server_records);
   renderHourglassReports(s.hourglass_reports);
   const g = s.gateway, now = s.time, stale = !!s.gateway_error;
-  renderHealthWire(s);
+  requestEvents=s.events??[];
   renderAgentWatch(g?.client_watch);
   const rejected=g?.continuity?.recent_rejections??[];
   $('patient-wait-status').hidden=stale||!g?.continuity?.waiting;
@@ -781,19 +794,17 @@ function render(s) {
   $('warning').textContent = [s.gateway_error,s.telemetry_error].filter(Boolean).join(' · ');
   $('model').textContent = s.demo ? `${g?.model || 'Model gateway'} · illustrative data · no real model servers connected` : `${g?.model || 'Model gateway'} · ${g?.workers?.some(w=>(w.max_concurrent_requests??1)>1)?'configured concurrent request capacity':'one active gateway request per model server'} · session-affinity routing`;
   const door=s.continuity_door,waiting=knownWaiting(g,door);
-  $('available').textContent = g ? `${g.available} / ${g.total}` : '—'; $('active').textContent = fmt(g?.active); $('queued').textContent = g?fmt(waiting.total):'—';
+  const fleetWorkers=(g?.workers??[]).filter(w=>s.devices.some(d=>d.id===w.id));
+  const fleetCount=fleetAvailability(fleetWorkers,mediaWorkerIds(fleetWorkers,now,s.devices));
+  $('available').textContent = g&&!stale ? `${g.draining?0:fleetCount.available} / ${fleetCount.total}` : '—'; $('active').textContent = fmt(g?.active); $('queued').textContent = g?fmt(waiting.total):'—';
   $('queued').title=door?.holding?`${fmt(waiting.core)} admitted in the gateway core + ${fmt(waiting.held)} held safely at the Continuity Door. Pi/Hermes work not yet sent to Star Gate is not visible here.`:'Requests known to Star Gate and not yet dispatched. Pi/Hermes work not yet sent to Star Gate is not visible here.';
   const cap=capacity(g,stale),scales=rateScales(s.devices,s.rate_peaks,now);
-  $('capacity-value').textContent=cap?.percent!=null?`${cap.percent}% occupied`:'Unknown';
-  $('capacity-note').textContent=cap?`${cap.occupied} / ${cap.eligible} eligible slots occupied · ${cap.free} immediately free · ${fmt(waiting.total)} waiting in Star Gate${waiting.held?` (${fmt(waiting.core)} core + ${fmt(waiting.held)} Continuity Door)`:''}`:'Gateway status is unavailable';
+  $('capacity-value').textContent=cap?.percent!=null?`${cap.occupied} of ${cap.eligible} concurrent requests`:'Unknown';
+  $('capacity-note').textContent=cap?(g.workers.filter(w=>w.is_healthy&&!w.drained&&!w.quarantine).map(w=>`${physicalMachines(w).map(machineLabel).join(' + ')||w.id}: ${w.load??0}/${w.max_concurrent_requests??1}`).join(' · ')):'Gateway status is unavailable';
   $('capacity-meter').value=cap?.percent||0;$('capacity-meter').hidden=cap?.percent==null;
   $('continuity-door-status').textContent=s.continuity_door_error?`${s.continuity_door_error}.`:!door?'Continuity Door is not enabled.':door.holding?`Continuity Door holding ${fmt(door.held)} new request${door.held===1?'':'s'} while ${door.core_ready?'core dispatch is ready':'core dispatch is not ready (including when every eligible server is paused or unavailable)'}; existing streams remain connected.`:`Continuity Door ready · ${fmt(door.active)} active proxied stream${door.active===1?'':'s'} · no request-body spooling or replay.`;
   visibleWorkers=g?.workers??[];workerUiStale=stale;workerControlsVisible=s.worker_management===true;
   $('capacity-note').title=stale?'Live gateway status is unavailable.':!g?.total?'No model servers are registered. Open Settings to add your first endpoint.':schedulingExplanation(g,visibleWorkers,cap).trim();
-  const routing=buildRoutingSummary(s,g,visibleWorkers,stale);
-  $('routing-summary').hidden=routing.hidden;
-  $('routing-summary').className='routing-summary '+routing.level;
-  $('routing-summary').textContent=routing.text;
   if(s.fleet_power?.control&&workerControlsReady&&!fleetPowerPolling){fleetPowerPolling=true;void fetch('/api/workers/power',{headers:{}}).then(r=>r.ok?r.json():null).then(p=>{fleetPower=p&&p.enabled!==undefined?p:null;renderDevices(lastDevicesSpec.devices,lastDevicesSpec.workers,lastDevicesSpec.now,lastDevicesSpec.stale,lastDevicesSpec.scales,lastDevicesSpec.controls);}).catch(()=>{}).finally(()=>{fleetPowerPolling=false;});}
   lastDevicesSpec={devices:s.devices.map(d=>({...d,cache_continuity:s.cache_continuity,performance_history:s.performance_lights})),workers:visibleWorkers,now,stale,scales,controls:workerControlsVisible};
   renderDevices(lastDevicesSpec.devices,lastDevicesSpec.workers,now,stale,scales,workerControlsVisible);
@@ -816,7 +827,7 @@ function render(s) {
     wireWorkerControls(); void loadWorkers();
   } else if(currentWorkspace==='settings')activateWorkspaceTab('fleet',{updateHash:true});
   renderRequests(s.events);
-  renderGenieActionLedger();
+
   $('updated').textContent = `Gateway checked ${s.gateway_at ? clock(s.gateway_at) : '—'} · dashboard started ${clock(s.started)}`;
 }
 let lanSharingToken=null,lanSharingEnabled=false,lanSharingBusy=false;
@@ -853,7 +864,7 @@ function renderTesting(value){
   toggle.disabled=testingBusy;toggle.setAttribute('aria-checked',String(testingEnabled));toggle.textContent=testingEnabled?'Testing on':'Testing off';
   line.hidden=!testingEnabled;
   const draining=value.testing.normal_active>0||value.genie_draining;
-  $('testing-summary').textContent=testingEnabled?`${draining?'Existing work finishing':'Testing active'} · ${value.testing.held} normal requests waiting · Genie suspended`:'';
+  $('testing-summary').textContent=testingEnabled?`${draining?'Existing work finishing':'Testing active'} · ${value.testing.held} normal requests waiting`:'';
   const field=$('testing-url');if(field.value!==value.endpoint)field.value=value.endpoint;
 }
 async function loadTesting(){
@@ -865,7 +876,7 @@ async function toggleTesting(){
   if(testingBusy||!testingToken)return;testingBusy=true;$('testing-toggle').disabled=true;
   try{const response=await fetch('/api/testing',{method:'POST',headers:{'content-type':'application/json','x-dsg-csrf':testingToken},body:JSON.stringify({enabled:!testingEnabled}),signal:AbortSignal.timeout(10000)});const value=await response.json();if(!response.ok)throw new Error(value.error||'Testing change failed');renderTesting(value);}
   catch(error){$('testing-status').hidden=false;$('testing-summary').textContent=error.message;}
-  finally{testingBusy=false;await loadTesting();void loadGenie();}
+  finally{testingBusy=false;await loadTesting();}
 }
 async function poll() {
   try {
@@ -873,7 +884,7 @@ async function poll() {
       fetch('/api/fleet-workloads',{cache:'no-store',signal:AbortSignal.timeout(2000)}).then(async response=>{if(!response.ok)throw Error();fleetWorkloads=await response.json();fleetWorkloadsUnavailable=false;}).catch(()=>{fleetWorkloadsUnavailable=true;})]);
     if(!r.ok)throw Error();render(await r.json());
   }
-  catch { workerUiStale=true;refreshRoutingControls();$('connection').textContent = 'Disconnected'; $('warning').hidden = false; $('warning').textContent = 'Dashboard connection lost. Values below are historical, not live.'; renderHealthWire({time:Date.now(),gateway_error:true}); }
+  catch { workerUiStale=true;refreshRoutingControls();$('connection').textContent = 'Disconnected'; $('warning').hidden = false; $('warning').textContent = 'Dashboard connection lost. Values below are historical, not live.'; }
   finally { setTimeout(poll, document.hidden ? 10000 : 2000); }
 }
 let controlsWired = false, workerBusy = false, workersLoading = false, csrfToken = null,recoveryState=null;
@@ -1101,85 +1112,7 @@ function wireWorkerControls() {
     void workerAction('relocate',{request_id:offer.request_id,source:offer.source,destination:offer.destination,evidence_id:offer.evidence_id});
   });
 }
-function renderGenieReports(reports = []) {
-  const container = $('genie-reports');
-  const existing = new Map([...container.children].map(node => [node.dataset.reportId, node]));
-  const keep = new Set();
-  let position = 0;
-  for (const [index, report] of reports.entries()) {
-    let node = existing.get(report.id);
-    if (index >= 3 && !node?.open && !node?.contains(document.activeElement)) continue;
-    if (keep.has(report.id)) continue;
-    keep.add(report.id);
-    if (!node) {
-      node = document.createElement('details');
-      node.dataset.reportId = report.id;
-      const summary = document.createElement('summary');
-      summary.textContent = `${clock(report.time)} · ${report.source} · ${report.actions_taken?.length?'action requested; see executor receipts':'assessment, no actions'}${report.evidence_at?` · evidence ${clock(report.evidence_at)}`:''}`;
-      const answer = document.createElement('p');
-      answer.className = 'genie-answer';
-      answer.textContent = report.text;
-      if(report.actions_taken?.length)answer.textContent+='\n\nAction request results: '+report.actions_taken.map(a=>`${a.relocation?'relocation '+a.relocation:a.worker_id}: ${a.state??a.status??'pending'}${a.id?` (${a.id})`:''}`).join('; ');
-      if(report.memory_used?.length)answer.textContent+='\n\nHistorical notebook references: '+report.memory_used.map(n=>`${n.id} r${n.revision}`).join(', ');
-      node.append(summary, answer);
-    }
-    // Completed reports are immutable. Keep their actual DOM nodes so polling
-    // cannot reset disclosure state, keyboard focus or a selected passage.
-    if (container.children[position] !== node) container.insertBefore(node, container.children[position] || null);
-    position++;
-  }
-  for (const node of [...container.children]) {
-    // Even a report rotated out of the server's history stays readable until
-    // the reader closes it. This is page-local, not persistent report storage.
-    if (!keep.has(node.dataset.reportId) && !node.open && !node.contains(document.activeElement)) node.remove();
-  }
-}
-function genieActionRows(snapshot,genie,analytics) {
-  const clean=value=>String(value??'').replaceAll('_',' ').replace(/\s+/g,' ').trim().slice(0,240);
-  const rows=[];
-  for(const report of genie?.provider_actions??genie?.reports??[])if(['pool_fallback','pool_assigned'].includes(report.served_by)&&Number.isFinite(report.time))rows.push({
-    id:`provider:${report.id}`,kind:'provider',at:report.time,level:'good',
-    title:`Pool commandeered${report.served_on?` · ${clean(report.served_on)}`:''}`,
-    detail:`${report.served_by==='pool_assigned'?'Pool selected before dispatch':'Dedicated provider unavailable'} · review completed${report.served_on?' on the named Star Gate server':' on an unpinned Star Gate slot; exact server unproven'}`
-  });
-  for(const op of snapshot?.gateway?.recovery?.operations??[])if(op.actor==='genie'&&Number.isFinite(op.updated_at??op.created_at)){
-    const state=clean(op.state),good=['recovered','verified paused'].includes(state),attention=['failed','reconciliation needed'].includes(state);
-    rows.push({id:`recovery:${op.id}`,kind:'recovery',at:op.updated_at??op.created_at,level:attention?'attention':good?'good':'pending',
-      title:`Recovery · ${clean(op.worker_id)}`,detail:`${clean(op.service_action)||'service check'} · ${state}${op.profile_adopted?' · verified profile hand-back':''}${op.proof?' · cache proof recorded':''}`});
-  }
-  for(const move of analytics?.handovers?.rows??[])if(move.actor==='genie'&&Number.isFinite(move.at)){
-    const state=clean(move.service_state),cache=Number.isFinite(move.cached_fraction)?` · ${Math.round(move.cached_fraction*100)}% prompt reused`:'';
-    rows.push({id:`routing:${move.at}:${move.source}:${move.destination}`,kind:'routing',at:move.at,level:state==='complete'?'good':state==='pending'?'pending':'attention',
-      title:`Queue move · ${clean(move.source)} → ${clean(move.destination)}`,detail:`after ${compactWait(move.waiting_before_move_ms/1000)??'an unknown wait'} · ${state}${cache}`});
-  }
-  return rows.sort((a,b)=>b.at-a.at||a.id.localeCompare(b.id)).slice(0,30);
-}
-let genieLedgerSignature='';
-function renderGenieActionLedger() {
-  const rows=genieActionRows(wireSnapshot,genieState,requestHistoryState),filter=$('genie-action-filter')?.value??'all';
-  const visible=rows.filter(row=>filter==='all'?true:filter==='attention'?row.level==='attention':row.kind===filter),attention=rows.filter(row=>row.level==='attention').length;
-  $('genie-action-summary').textContent=rows.length?`${visible.length} shown · latest ${rows.length} available / 30 · newest first${attention?` · ${attention} need attention`:''}`:'No evidenced Genie actions yet';
-  const storageError=genieState?.provider_action_storage?.error||genieState?.provider_assignment_storage?.error;
-  if(storageError)$('genie-action-summary').textContent+=' · pool history not saved';
-  $('genie-action-summary').title=storageError?'Pool action storage needs attention; new receipts remain session-only. Inspect Genie status. Nothing was deleted.':'';
-  const signature=JSON.stringify([filter,visible]);if(signature===genieLedgerSignature)return;
-  const items=visible.map(row=>{
-    const item=document.createElement('li');item.dataset.level=row.level;
-    const time=document.createElement('time'),date=new Date(row.at);
-    if(Number.isFinite(date.getTime()))time.dateTime=date.toISOString();
-    time.textContent=clock(row.at);
-    const title=document.createElement('strong');title.textContent=row.title;
-    const detail=document.createElement('span');detail.textContent=row.detail;detail.title=row.detail;
-    item.append(time,title,detail);return item;
-  });
-  if(!items.length){const empty=document.createElement('li');empty.className='muted';empty.textContent=rows.length?'No actions match this filter.':'Waiting for action evidence.';items.push(empty);}
-  const list=$('genie-action-items'),scrollTop=list.scrollTop;
-  list.replaceChildren(...items);
-  list.scrollTop=scrollTop;
-  // Only a completed render may suppress an identical future refresh.
-  genieLedgerSignature=signature;
-}
-const workspaceNames=['fleet','genie','media','analytics','activity','settings'];
+const workspaceNames=['fleet','media','analytics','activity','brain','memory','soul','settings'];
 let currentWorkspace='fleet';
 function activateWorkspaceTab(requested,{focus=false,updateHash=false}={}) {
   const name=workspaceNames.includes(requested)?requested:'fleet';
@@ -1219,9 +1152,8 @@ $('testing-copy')?.addEventListener('click',async()=>{
   catch{field.focus();field.select();result.textContent='URL selected — press Ctrl+C or ⌘C to copy';}
 });
 void loadTesting();setInterval(()=>{if(!document.hidden)void loadTesting();},2000);
-$('genie-action-filter').addEventListener('change',renderGenieActionLedger);
 setupWorkspaceTabs();
-$('request-filter').addEventListener('change',()=>{requestFilter=$('request-filter').value;renderRequests(wireSnapshot?.events??[]);});
+$('request-filter').addEventListener('change',()=>{requestFilter=$('request-filter').value;renderRequests(requestEvents);});
 function openServerSettings({focus=false}={}){activateWorkspaceTab('settings',{updateHash:true});const panel=$('worker-management');panel.scrollIntoView({behavior:'smooth',block:'start'});if(focus)panel.querySelector('input[name="id"]')?.focus({preventScroll:true});}
 $('devices').addEventListener('click',event=>{if(!event.target.closest('[data-add-first]'))return;openServerSettings({focus:true});});
 $('fleet-speed-window').addEventListener('change',()=>{const value=$('fleet-speed-window').value;if(!fleetSpeedWindows.has(value))return;fleetSpeedWindow=value;try{globalThis.localStorage?.setItem('dsg-fleet-speed-window-v1',value);}catch{/* Selection still works for this page. */}renderFleetSpeed(requestHistoryState);});
@@ -1235,104 +1167,6 @@ $('cache-cost-form').addEventListener('submit',async event=>{
   finally{button.disabled=false;cacheCostBusy=false;}
 });
 void loadRequestHistory();setInterval(()=>{if(!document.hidden)void loadRequestHistory();},10000);
-$('health-wire').addEventListener('mouseleave',()=>{if(wireSnapshot)renderHealthWire(wireSnapshot);});
-$('health-wire').addEventListener('focusout',()=>queueMicrotask(()=>{if(wireSnapshot)renderHealthWire(wireSnapshot);}));
-let genieToken=null,memoryEditing=null,memoryBusy=false;
-let hardeningSignature=null;
-function renderHardeningNotes(notes=[],memory={}){
-  const panel=$('genie-hardening'),items=$('genie-hardening-items');panel.hidden=!genieState?.configured;
-  const durable=notes.filter(note=>note.durable).length;
-  $('genie-hardening-status').textContent=notes.length?`${fmt(notes.length)} suggestion${notes.length===1?'':'s'} · ${durable} durable · newest first`:`No evidence-backed suggestions yet${memory.enabled?'':' · memory is off'}`;
-  const signature=JSON.stringify(notes);
-  if(signature===hardeningSignature)return;hardeningSignature=signature;
-  items.replaceChildren(...notes.map(note=>{
-    const article=document.createElement('article');article.className='genie-hardening-item';
-    const title=document.createElement('strong');title.textContent=note.title;
-    const meta=document.createElement('p');meta.className='genie-hardening-meta';meta.textContent=`${note.scope??'fleet'} · ${String(note.failure_class??'failure').replaceAll('_',' ')} · evidence ${clock(note.observed_at)} · continuity ${String(note.continuity??'unknown').replaceAll('_',' ')}${note.durable?` · private notebook r${note.revision}`:' · page-local until memory is enabled'}`;
-    const evidence=document.createElement('p');evidence.className='genie-hardening-meta';evidence.textContent=`Observed class: ${String(note.reason??'unknown').replaceAll('_',' ')}`;
-    const suggestion=document.createElement('p');suggestion.textContent=note.suggestion;
-    article.append(title,meta,evidence,suggestion);return article;
-  }));
-}
-function memoryText(note){
-  const d=note.data,yes=v=>v===true?'yes':v===false?'no':'unknown';
-  if(note.kind==='operator_note')return d.text;
-  if(note.kind==='hardening_note')return `${d.title}\n${d.suggestion}\nObserved ${d.failure_class.replaceAll('_',' ')} / ${d.reason.replaceAll('_',' ')} at ${clock(d.observed_at)}. Developer suggestion only; no action or diagnosis is implied.`;
-  if(note.kind==='incident')return `Recorded ${d.reason.replaceAll('_',' ')} at ${clock(d.recorded_at)}.\nRequest: ${d.request_id}\nHistorical incident; check current evidence before acting.`;
-  if(note.kind==='recovery')return `Executor recorded: ${d.state.replaceAll('_',' ')} at ${clock(d.recorded_at)}.\nReceipt: ${d.operation_id}\nThis records a past action, not current health or a cure for the underlying fault.`;
-  return `Gateway healthy: ${yes(d.gateway_healthy)} · paused: ${yes(d.paused)}\nContext: ${fmt(d.context_length)} tokens · agent holds: ${fmt(d.agent_hold_count)}\n${d.quarantine?'Recorded quarantine: '+d.quarantine.replaceAll('_',' ')+'\n':''}Process/cache continuity: unknown. Generation success is not inferred.\n`+(note.recent_transitions??[]).map(p=>`${clock(p.at)}: healthy ${yes(p.data.gateway_healthy)}, paused ${yes(p.data.paused)}, quarantine ${p.data.quarantine??'none observed'}`).join('\n');
-}
-function renderMemory(m){
-  $('memory-status').textContent=m?.error?'· storage needs attention':m?.enabled?'· on':'· off';
-  $('memory-toggle').textContent=m?.enabled?'Turn memory off':'Enable memory';$('memory-toggle').disabled=memoryBusy||(!m?.enabled&&!m?.available);
-  $('memory-note-save').disabled=memoryBusy||!m?.enabled||!m?.available;
-  $('memory-detail').textContent=m?.error||`${fmt(m?.note_count??0)} indexed notes · ${fmt((m?.bytes??0)/1024)} / ${fmt((m?.max_bytes??16777216)/1024)} KiB · ${m?.truncated?'retrieval truncated to 12 notes / 16 KiB':'bounded retrieval'} · off retains records. Old observations are history, not live health.`;
-  const root=$('memory-notes'),existing=new Map([...root.children].map(n=>[n.dataset.noteId,n])),keep=new Set();
-  for(const note of m?.notes??[]){
-    let node=existing.get(note.id);keep.add(note.id);
-    if(!node){node=document.createElement('details');node.dataset.noteId=note.id;node.append(document.createElement('summary'),document.createElement('p'));root.append(node);}
-    if(node.dataset.revision!==String(note.revision)){
-      node.dataset.revision=String(note.revision);node.children[0].textContent=`${note.data.worker??'Fleet'} · ${note.kind.replaceAll('_',' ')} · ${clock(note.at)} · r${note.revision}`;
-      node.children[1].className='genie-answer';node.children[1].textContent=memoryText(note);
-      for(const b of node.querySelectorAll('button'))b.remove();
-      if(note.kind==='operator_note')for(const action of ['edit','archive']){const b=document.createElement('button');b.type='button';b.className='button';b.dataset.memoryAction=action;b.dataset.noteId=note.id;b.textContent=action==='edit'?'Edit':'Archive';node.append(b);}
-    }
-  }
-  for(const node of [...root.children]){
-    const current=keep.has(node.dataset.noteId);
-    if(!current&&!node.open&&!node.contains(document.activeElement)){node.remove();continue;}
-    for(const b of node.querySelectorAll('button'))b.disabled=!current||memoryBusy||!m?.enabled||!m?.available;
-    node.title=current?'':'Retained while you read; not in the current notebook retrieval.';
-  }
-}
-async function genieAction(input) {
-  try {const r=await fetch('/api/genie',{method:'POST',headers:{'content-type':'application/json','x-dsg-csrf':genieToken},body:JSON.stringify(input),signal:AbortSignal.timeout(15000)});
-    const data=await r.json();if(!r.ok)throw new Error(data.error||'Genie request failed');await loadGenie();return data;
-  } catch(e){$('genie-status').textContent=e.name==='TimeoutError'?'Genie chat request timed out before it was accepted; no question receipt was created.':e.message;return null;}
-}
-async function loadGenie() {
-  try {const r=await fetch('/api/genie',{signal:AbortSignal.timeout(5000)});if(!r.ok)throw new Error();const s=await r.json();genieToken=s.csrf_token;genieState=s;wireState={...s.ticker,refreshing:!!s.busy&&!!s.enabled,provider_attempts:s.provider_attempts};
-    if(wireSnapshot)renderHealthWire(wireSnapshot);
-    const now=Date.now(),activeProvider=s.active_provider==='pool_fallback'?'Star Gate pool fallback':['pool','pool_assigned'].includes(s.active_provider)?'Star Gate pool':'dedicated provider',providerProgress=s.busy&&s.provider_started_at?`${activeProvider} · ${age(s.provider_started_at,now)} elapsed${s.provider_deadline_at?` · deadline in ${remaining(s.provider_deadline_at,now)}`:''}`:null;
-    const q=s.question,qtext=q?.state==='queued'?(s.review_kind==='action'?'Your question is queued behind an evidence-gated action review':'Your question is queued; a routine review is being yielded'):q?.state==='answering'?`Answering your question · ${providerProgress??'provider starting…'}`:q?.state==='answered'?`Question answered ${age(q.finished_at,now)}`:['failed','cancelled'].includes(q?.state)?`Question ${q.state}: ${q.error}`:null;
-    const provider=s.last_served_by==='pool_assigned'?' · last review was assigned to free Star Gate capacity before dispatch':s.last_served_by==='pool_fallback'?' · last review used fallback after a proven connection refusal':s.last_served_by==='pool'?' · last review used the Star Gate pool':s.last_served_by==='dedicated'?' · last review used the dedicated provider':'';
-    const attempts=(s.provider_attempts||[]).slice(0,s.error&&s.fallback_available?2:1),attemptText=attempts.length?` · ${attempts.map(attempt=>`${attempt.provider.replaceAll('_',' ')} ${attempt.outcome}${attempt.reason?` (${attempt.reason.replaceAll('_',' ')})`:''}`).join(' · ')}`:'';
-    $('genie-status').textContent=s.suspended_for_testing?(s.busy?'Testing · current review finishing':'Suspended for testing'):!s.configured?'Not configured':!s.enabled?'Off · enable Gate Genie before asking':qtext||(s.error?`${s.error}${attemptText}`:(s.busy?`Scheduled fleet review · ${providerProgress??'provider starting…'}`:`Enabled · last review ${age(s.last_check,now)}${provider}${attemptText}`));
-    $('genie-mode').textContent=s.action_supervision?'evidence-gated actions':'observation';
-    $('genie-toggle').disabled=s.suspended_for_testing||!s.configured;$('genie-toggle').textContent=s.enabled?'Turn off':'Enable';
-    $('genie-source').disabled=s.suspended_for_testing||!s.fallback_available||s.busy;$('genie-source').value=s.source||'primary';
-    $('genie-review').disabled=$('genie-send').disabled=s.suspended_for_testing||!s.enabled||q?.state==='queued'||q?.state==='answering';
-    renderHardeningNotes(s.hardening_notes||[],s.memory||{});
-    renderGenieReports(s.reports || []);
-    renderMemory(s.memory);
-    renderGenieActionLedger();
-  } catch{$('genie-status').textContent='Genie status unavailable';wireState={state:'unavailable'};if(wireSnapshot)renderHealthWire(wireSnapshot);}
-}
-$('genie-toggle').addEventListener('click',()=>genieAction({action:'enable',enabled:!genieState?.enabled}));
-$('genie-source').addEventListener('change',()=>genieAction({action:'source',source:$('genie-source').value}));
-$('genie-review').addEventListener('click',async()=>{if($('genie-review').disabled)return;$('genie-status').textContent='Submitting a fleet review…';$('genie-review').disabled=true;await genieAction({action:'ask'});});
-$('genie-chat').addEventListener('submit',async e=>{
-  e.preventDefault();const question=$('genie-question').value.trim();
-  if(!question){$('genie-status').textContent='Type a question first, or use Review now for the standard fleet review.';$('genie-question').focus();return;}
-  $('genie-status').textContent='Submitting your question…';$('genie-send').disabled=true;
-  const result=await genieAction({action:'ask',question});
-  if(result?.accepted){$('genie-question').value='';$('genie-status').textContent=result.question?.state==='queued'?'Question accepted and queued behind the current review.':'Question accepted; Gate Genie is answering.';}
-});
-$('memory-toggle').addEventListener('click',async()=>{if(memoryBusy)return;memoryBusy=true;renderMemory(genieState?.memory);try{await genieAction({action:'memory',enabled:!genieState?.memory?.enabled});}finally{memoryBusy=false;renderMemory(genieState?.memory);}});
-$('memory-note-cancel').addEventListener('click',()=>{memoryEditing=null;$('memory-note-text').value='';$('memory-note-cancel').hidden=true;});
-$('memory-note-form').addEventListener('submit',async e=>{
-  e.preventDefault();if(memoryBusy)return;memoryBusy=true;renderMemory(genieState?.memory);
-  try{const note={worker:memoryEditing?.data.worker??null,text:$('memory-note-text').value,state:'active',...(memoryEditing?{id:memoryEditing.id,expected_revision:memoryEditing.revision}:{})};
-    const result=await genieAction({action:'memory-note',note});if(result?.memory_receipt){$('memory-message').textContent=`Saved ${result.memory_receipt.id} r${result.memory_receipt.revision}. No permissions changed.`;memoryEditing=null;$('memory-note-text').value='';$('memory-note-cancel').hidden=true;}else $('memory-message').textContent='Note was not saved; inspect the error above.';
-  }finally{memoryBusy=false;renderMemory(genieState?.memory);}
-});
-$('memory-notes').addEventListener('click',async e=>{
-  const b=e.target.closest('button[data-memory-action]');if(!b||memoryBusy)return;const n=genieState?.memory?.notes?.find(n=>n.id===b.dataset.noteId);if(!n)return;
-  if(b.dataset.memoryAction==='edit'){memoryEditing=n;$('memory-note-text').value=n.data.text;$('memory-note-cancel').hidden=false;$('memory-note-text').focus();return;}
-  memoryBusy=true;try{const result=await genieAction({action:'memory-note',note:{id:n.id,expected_revision:n.revision,...n.data,state:'archived'}});$('memory-message').textContent=result?.memory_receipt?'Archived in retrieval; journal history retained.':'Archive was not saved.';}finally{memoryBusy=false;renderMemory(genieState?.memory);}
-});
-void loadGenie();setInterval(loadGenie,5000);
-
 function renderRecovery(state) {
   recoveryState=state;
   $('recovery-status').textContent=!state?.configured?'Not configured. Endpoint registration alone grants no restart authority.':`${state.automatic?'Automatic recovery ON · GG + known-fatal watcher':'Automatic recovery OFF · operator recovery available'} · verified profile hand-back ${state.profile_handback_automatic?'ON':'OFF'}`;
@@ -1398,13 +1232,14 @@ let performanceDialogTarget=null;
 performanceDialog.addEventListener('close',()=>{
   if(performanceDialogTarget?.id){$(performanceDialogTarget.id)?.focus({preventScroll:true});return;}
   const card=[...document.querySelectorAll('.device')].find(el=>el.dataset.workerId===performanceDialogTarget?.worker);
-  card?.querySelector(`[data-light="${performanceDialogTarget?.kind}"]`)?.focus({preventScroll:true});
+  const source=performanceDialogTarget?.service?card?.querySelector(`[data-service-id="${CSS.escape(performanceDialogTarget.service)}"]`):card;
+  source?.querySelector(`[data-light="${performanceDialogTarget?.kind}"]`)?.focus({preventScroll:true});
 });
 document.body.append(performanceDialog);
 document.addEventListener('click',event=>{
   const powerButton=event.target.closest?.('[data-power-action]');if(powerButton&&!powerButton.disabled){void powerAction(powerButton.dataset.powerWorker,powerButton.dataset.powerAction);return;}
   const button=event.target.closest?.('.performance-light, .temperature-reading, #fleet-speed-value');if(!button)return;
-  performanceDialogTarget={id:button.id,worker:button.closest('.device')?.dataset.workerId,kind:button.dataset.light};
+  performanceDialogTarget={id:button.id,worker:button.closest('.device')?.dataset.workerId,service:button.closest('.alternative-service')?.dataset.serviceId,kind:button.dataset.light};
   performanceDialog.querySelector('h2').textContent=button.dataset.lightTitle;
   performanceDialog.querySelector('p').textContent=button.dataset.lightDetail;
   performanceDialog.querySelector('.hardware-evidence-plots').innerHTML=button.dataset.lightChart??'';

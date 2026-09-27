@@ -57,7 +57,7 @@ test('turning LAN off blocks new remote requests, ignores spoofed headers and pr
 });
 test('LAN dashboard toggle requires same origin and CSRF and reveals the exact configured key',{timeout:5000},async t=>{
  let enabled=true,changes=0;const value=()=>({available:true,enabled,urls:[lanUrl(lanA)],api_key:'none'});
- const server=createDashboard(()=>({}),undefined,null,null,null,null,null,{read:async()=>value(),set:async next=>{enabled=next;changes++;return value();}});
+ const server=createDashboard(()=>({}), {lanSharing:{read:async()=>value(),set:async next=>{enabled=next;changes++;return value();}}});
  const port=await listen(server);t.after(()=>{server.closeAllConnections();server.close();});const url=`http://127.0.0.1:${port}`;
  const initial=await(await fetch(url+'/api/lan-sharing')).json();assert.equal(initial.api_key,'none');assert.equal(initial.urls[0],lanUrl(lanA));
  const post=(headers,body={enabled:false})=>fetch(url+'/api/lan-sharing',{method:'POST',headers,body:JSON.stringify(body)});

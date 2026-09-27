@@ -1,23 +1,18 @@
+import {createMemoryView} from './hermes-memory.mjs';
+import {createBrainStore} from './hermes-brain.mjs';
+import {createSoulStore,hermesHome} from './hermes-profile.mjs';
 import {createNativeMediaStatus} from './native-media-status.mjs';
 import {fleetMediaWorkloads} from './media-workloads.mjs';
+import {machinesFor} from './fleet-machines.mjs';
 import {createMediaResources} from './media-resources.mjs';
-import {createSparkMediaQualification} from './spark-media-qualification.mjs';
 import {sparkInspectionSync} from './spark-inspection.mjs';
-import {createSparkEnrollment} from './spark-enrollment.mjs';
-import {SparkSetupWatch} from './spark-setup-watch.mjs';
-import {createSparkRegistration} from './spark-registration.mjs';
-import {createSparkSetupTools,setupTransport} from './genie-spark-setup.mjs';
-import {MediaWatch} from './media-watch.mjs';
-import {createMediaTools} from './genie-media.mjs';
-import {createQueueTools} from './genie-queue.mjs';
-import {createRecoveryTools} from './genie-recovery.mjs';
-import {createFleetPowerTools} from './genie-power.mjs';
-import {createAdmissionTools} from './genie-admission.mjs';
+import {createFleetPowerService} from './fleet-power-service.mjs';
+import {createRecipeTrials} from './recipe-trials.mjs';
 import {createPowerRunner,createReadinessVerifier,powerWorkers,machineGroup} from './power-scripts.mjs';
 import {buildCatalogue} from './ui/fleet-catalogue.js';
 import {endpointHeaders} from './endpoint.mjs';
 import {readService} from './service-control.mjs';
-import {capabilityStatus} from './genie-capability-status.mjs';
+import {safeGenieThinking} from './fleet-thinking-status.mjs';
 import {testingModeFile,testingSuspended} from './testing-mode.mjs';
 import {HourglassReports} from './hourglass-reports.mjs';
 import {HourglassRuns} from './hourglass-runs.mjs';
@@ -28,7 +23,6 @@ import {EndpointTelemetry} from './endpoint-telemetry.mjs';
 import {MonitoringHistory} from './monitoring-history.mjs';
 import {lanSharingDetails} from './lan-sharing.mjs';
 import fs from 'node:fs';
-import {withGatewayProgress} from './genie-request-progress.mjs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
@@ -38,15 +32,8 @@ import { safeRequestedThinking } from './requested-thinking.mjs';
 import { workerControl } from './worker-client.mjs';
 import { FileLogReader, telemetryFiles } from './file-telemetry.mjs';
 import { Activity } from './ui/activity.js';
-import { Genie } from './genie.mjs';
-import {GenieChat} from './genie-chat.mjs';
 import {ServerRecords} from './server-records.mjs';
 import {createOperationService} from './operation-service.mjs';
-import {hermesProvider} from './genie-hermes.mjs';
-import {hermesReviewFetch} from './genie-hermes-review.mjs';
-import {GenieMemory} from './genie-memory.mjs';
-import {GenieProviderLedger} from './genie-provider-ledger.mjs';
-import { genieTunnel } from './genie-tunnel.mjs';
 import { safeQuarantine } from './generation-health.mjs';
 import { RequestHistoryReader } from './request-history.mjs';
 import {FleetSpeedReader,endpointFleetSamples} from './fleet-speed.mjs';
@@ -73,18 +60,18 @@ function safeManagementPath(raw){
     last_verified_at:typeof raw.last_verified_at==='string'&&Number.isFinite(Date.parse(raw.last_verified_at))?raw.last_verified_at:null};
 }
 const assets = new Map([['/', ['index.html', 'text/html']], ['/ui.css', ['ui.css', 'text/css']], ['/brand.css', ['brand.css', 'text/css']], ['/ui.js', ['ui.js', 'text/javascript']], ['/logo.png', ['logo.png', 'image/png']]]);
+assets.set('/memory.js',['memory.js','text/javascript']);
+assets.set('/memory.css',['memory.css','text/css']);
+assets.set('/brain.js',['brain.js','text/javascript']);
+assets.set('/brain.css',['brain.css','text/css']);
+assets.set('/soul.js',['soul.js','text/javascript']);
+assets.set('/soul.css',['soul.css','text/css']);
 assets.set('/hourglass.js',['hourglass.js','text/javascript']);
 assets.set('/activity.js',['activity.js','text/javascript']);
 assets.set('/fleet-catalogue.js',['fleet-catalogue.js','text/javascript']);
 assets.set('/logo.svg',['logo.svg','image/svg+xml']);
 assets.set('/media.js',['media.js','text/javascript']);
 assets.set('/current-jobs.js',['current-jobs.js','text/javascript']);
-assets.set('/genie-handoff.js',['genie-handoff.js','text/javascript']);
-assets.set('/genie-progress.js',['genie-progress.js','text/javascript']);
-assets.set('/genie-chat.js',['genie-chat.js','text/javascript']);
-assets.set('/genie-chat.css',['genie-chat.css','text/css']);
-assets.set('/server-operations.js',['server-operations.js','text/javascript']);
-assets.set('/genie-capabilities.js',['genie-capabilities.js','text/javascript']);
 for(const [route,file,mime] of [
   ['favicon.ico','favicon.ico','image/x-icon'],['favicon-v2.ico','favicon.ico','image/x-icon'],
   ['favicon-v1.svg','favicon-v1.svg','image/svg+xml'],['favicon-v2.svg','favicon-v1.svg','image/svg+xml'],
@@ -92,26 +79,6 @@ for(const [route,file,mime] of [
   ['favicon-v1.png','favicon-v1.png','image/png'],['favicon-v2.png','favicon-v1.png','image/png'],
   ['apple-touch-icon.png','apple-touch-icon.png','image/png'],['apple-touch-icon-v2.png','apple-touch-icon.png','image/png'],
 ])assets.set('/'+route,[file,mime]);
-export function genieRuntimeConfig(config){
-  if(config.genie===false)return null;
-  const pool={url:`http://127.0.0.1:${config.port}/v1`,model:config.model,api_key:config.api_key};
-  const thinking=endpoint=>{
-    const chat=config.genie_chat;
-    if(Object.hasOwn(endpoint,'reasoning_effort')||!chat||!Object.hasOwn(chat,'reasoning_effort')||chat.model!==endpoint.model||chat.url?.replace(/\/$/,'')!==endpoint.url?.replace(/\/$/,''))return endpoint;
-    // The same configured connection must use its working reasoning contract.
-    // A separate provider or an explicit reviewer choice keeps its own setting.
-    return {...endpoint,reasoning_effort:chat.reasoning_effort};
-  };
-  if(config.genie?.url)return {...thinking(config.genie),enabled:config.genie.enabled!==false,fallback:thinking(config.genie.fallback??pool)};
-  return {...thinking(pool),enabled:config.genie?.enabled!==false,fallback:thinking(pool),default_source:'pool'};
-}
-// Reuse the gateway credential only for this installation's exact local pool.
-export function genieChatConfig(config){
-  const chat=config.genie_chat;if(!chat)return null;
-  if(chat.operational_notebook!==undefined&&typeof chat.operational_notebook!=='boolean')throw new Error('genie_chat.operational_notebook must be boolean.');
-  const local=new URL(chat.url).href===`http://127.0.0.1:${config.port}/v1`;
-  return {...chat,gateway_tracking:local,...(chat.inspection?{inspection:{...chat.inspection,records_directory:config.server_records_directory}}:{}),...(local&&chat.api_key===undefined?{api_key:config.api_key}:{})};
-}
 export async function submitVideoFromDashboard(config,input){
   if(!input||Object.keys(input).sort().join(',')!=='key,prompt'||typeof input.key!=='string'||typeof input.prompt!=='string')throw Error('A video prompt and request key are required.');
   const status=await workerControl(config.control_socket,'/media-jobs');
@@ -131,7 +98,7 @@ export function proxyMediaFile(config,req,res,route){
       res.on('close',()=>upstream.destroy());upstream.end();
     }
 
-export function createDashboard(getSnapshot, assetsDirectory = path.join(here, 'ui'), management = null, genie = null, requestHistory = null, currentJobs = null, testing = null, lanSharing = null, chat = null, hourglass = null, operations = null, queueTools = null, recoveryTools = null, mediaTools = null, sparkSetup = null, powerTools = null, admissionTools = null) {
+export function createDashboard(getSnapshot, {assetsDirectory = path.join(here, 'ui'), management = null, requestHistory = null, currentJobs = null, testing = null, lanSharing = null, hourglass = null, mediaTools = null, powerTools = null, soul = null, brain = null, memory = null} = {}) {
   const csrf = randomBytes(32).toString('base64url');
   // Freeze one complete release in memory: edits on disk cannot expose half an
   // update to a live browser. Only the dashboard needs a reload to promote it.
@@ -140,14 +107,6 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
     if (!bundle.has(match[1]) && !['/api/status', '/api/diagnostics'].includes(match[1])) throw new Error(`Unserved dashboard asset: ${match[1]}`);
   // Share a single in-flight read; a slow core must not stall chat or multiply polls.
   let workloadRead=null;
-  let progressRead=null;
-  const readProgress=async()=>{
-    if(!currentJobs)return null;
-    progressRead??=Promise.resolve().then(()=>currentJobs.read()).catch(()=>null).finally(()=>{progressRead=null;});
-    let timer;
-    try{return await Promise.race([progressRead,new Promise(resolve=>{timer=setTimeout(()=>resolve(null),1500);})]);}
-    finally{clearTimeout(timer);}
-  };
   return http.createServer((req, res) => {
     const port = res.socket.localPort;
     const hosts = [`127.0.0.1:${port}`, `localhost:${port}`];
@@ -158,6 +117,57 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
       res.writeHead(403, headers); return res.end(dsgReport('Local same-origin dashboard only'));
     }
     const reply = (status, value) => { if (!res.destroyed && !res.headersSent) { res.writeHead(status,{...headers,'content-type':'application/json'}); res.end(JSON.stringify(status>=400&&typeof value.error==='string'?{...value,error:dsgReport(value.error)}:value)); } };
+    if(req.url==='/api/memory'){
+      if(req.method!=='GET')return reply(405,{error:'Memory is read-only.'});
+      if(!memory)return reply(503,{error:'Native Hermes profile is not configured.'});
+      void memory.read().then(value=>reply(200,value)).catch(()=>reply(503,{error:'Could not read native Hermes memory files.'}));return;
+    }
+    if(req.url==='/api/brain/status'&&req.method==='GET')return reply(200,brain?.runtime()??{state:'unavailable'});
+    if(req.url==='/api/brain'||req.url==='/api/brain/test'){
+      if(!brain)return reply(503,{error:'Native Hermes profile is not configured.'});
+      if(req.method==='GET'&&req.url==='/api/brain'){
+        void brain.read().then(value=>reply(200,{...value,csrf_token:csrf})).catch(error=>reply(503,{error:error.message}));return;
+      }
+      if(!((req.method==='PUT'&&req.url==='/api/brain')||(req.method==='POST'&&req.url==='/api/brain/test')))return reply(405,{error:'Unsupported method.'});
+      const token=Buffer.from(req.headers['x-dsg-csrf']??''),expected=Buffer.from(csrf);
+      if(req.headers.origin!==`http://${req.headers.host}`||token.length!==expected.length||!timingSafeEqual(token,expected))return reply(403,{error:'Reload this local dashboard before changing brain settings.'});
+      if(req.headers['content-type']!=='application/json')return reply(415,{error:'JSON required.'});
+      let body='',ended=false;req.setEncoding('utf8');
+      const timer=setTimeout(()=>{ended=true;reply(408,{error:'Request incomplete. Settings were not changed.'});},10000);
+      req.on('aborted',()=>{ended=true;clearTimeout(timer);});req.on('error',()=>{ended=true;clearTimeout(timer);});
+      req.on('data',chunk=>{if(ended)return;body+=chunk;if(Buffer.byteLength(body)>65536){ended=true;clearTimeout(timer);reply(413,{error:'Settings request is too large.'});}});
+      req.on('end',()=>{clearTimeout(timer);if(ended)return;ended=true;
+        let input;try{input=JSON.parse(body);}catch{return reply(400,{error:'Invalid JSON.'});}
+        void (req.url==='/api/brain/test'?brain.test(input):brain.save(input)).then(value=>reply(200,{...value,csrf_token:csrf})).catch(error=>reply(error.status??500,{error:error.message}));
+      });return;
+    }
+    if(req.url==='/api/soul') {
+      if(!soul)return reply(503,{error:'Hermes profile is not configured.'});
+      if(req.method==='GET') {
+        try{return reply(200,{...soul.read(),csrf_token:csrf});}
+        catch{return reply(500,{error:'Unable to read SOUL from the Hermes profile.'});}
+      }
+      if(req.method!=='PUT')return reply(405,{error:'Use GET or PUT.'});
+      const token=Buffer.from(req.headers['x-dsg-csrf']??''),expected=Buffer.from(csrf);
+      if(req.headers.origin!==`http://${req.headers.host}`||token.length!==expected.length||!timingSafeEqual(token,expected))
+        return reply(403,{error:'Reload this local dashboard before saving SOUL.'});
+      if(req.headers['content-type']!=='application/json')return reply(415,{error:'JSON required.'});
+      let body='',ended=false;
+      req.setEncoding('utf8');
+      const timer=setTimeout(()=>{ended=true;reply(408,{error:'Save request was incomplete. Your draft has not been changed.'});},30000);
+      req.on('error',()=>{ended=true;clearTimeout(timer);});
+      req.on('aborted',()=>{ended=true;clearTimeout(timer);});
+      req.on('data',chunk=>{if(ended)return;body+=chunk;if(Buffer.byteLength(body)>8*1024*1024){ended=true;clearTimeout(timer);body='';reply(413,{error:'Save request exceeds 8 MiB. The file has not been changed.'});}});
+      req.on('end',()=>{
+        clearTimeout(timer);if(ended)return;ended=true;
+        let input;try{input=JSON.parse(body);}catch{return reply(400,{error:'Invalid JSON.'});}
+        try{return reply(200,{...soul.save(input),csrf_token:csrf});}
+        catch(error){return reply(error.status??500,{error:error.status?error.message:'SOUL could not be saved. Your draft is still here; check profile filesystem access.'});}
+      });
+      return;
+    }
+    if(req.url==='/api/genie'||req.url?.startsWith('/api/genie/'))return reply(410,{available:false,error:'The custom Genie API was removed. Gate Genie runs in native Hermes.'});
+
     if(req.method==='GET'&&/^\/api\/media\/(music|video)\/jobs\/[a-f0-9-]{36}\/files\/[a-f0-9-]{36}$/.test(req.url??'')){
       if(!management?.mediaFile)return reply(409,{error:'Media downloads are not connected.'});
       for(const [name,value] of Object.entries(headers))res.setHeader(name,value);
@@ -165,37 +175,17 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
     }
     if(req.url==='/api/fleet-workloads'&&req.method==='GET'){
       // Share in-flight I/O, but do not let it stall the separate Fleet telemetry endpoint.
-      workloadRead??=Promise.resolve().then(()=>management?.media?.()??{jobs:[]}).then(value=>({...fleetMediaWorkloads(value),native_engines:management?.nativeMedia?.()??[]})).finally(()=>{workloadRead=null;});
+      workloadRead??=Promise.resolve().then(()=>management?.media?.()??{jobs:[]}).then(value=>({...fleetMediaWorkloads(value),native_engines:management?.nativeMedia?.(value)??[]})).finally(()=>{workloadRead=null;});
       const timer=setTimeout(()=>reply(503,{error:'Media status unavailable; existing work may still be running.'}),1500);
       void workloadRead.then(value=>reply(200,value)).catch(()=>reply(503,{error:'Media status unavailable; existing work may still be running.'})).finally(()=>clearTimeout(timer));return;
     }
     if(req.url==='/api/media'&&req.method==='GET'){
       void (mediaTools?mediaTools.tool({action:'status'}):management?.media?.()??Promise.resolve({configured:false,enabled:false,jobs:[],hosts:[]})).then(value=>{const snapshot=getSnapshot(),devices=snapshot.devices??[];reply(200,{...value,hosts:(value.hosts??[]).map(host=>{const h=devices.find(d=>d.id===host.id)?.hardware,w=snapshot.gateway?.workers?.find(w=>w.id===host.id);return {...host,memory:h?.state==='connected'?h.current:null,llm_model:snapshot.gateway?.model??null,maintenance:(w?.maintenance_locks??[]).map(lock=>lock.name),holds:(w?.holds??[]).map(hold=>hold.name),paused:w?.drained===true,quarantined:!!w?.quarantine};}),controls_enabled:!!management,csrf_token:csrf});}).catch(()=>reply(503,{error:'Media status is unavailable. Existing work may still be running.'}));return;
     }
-    if(req.url==='/api/genie/capabilities'&&req.method==='GET'){
-      void Promise.all([operations?.status()??{},mediaTools?.tool({action:'status'}).catch(()=>({unavailable:true}))??{},sparkSetup?.status()??{},powerTools?powerTools.tool({action:'status'}).catch(()=>({unavailable:true})):Promise.resolve(null)]).then(([op,media,sparkSetup,power])=>reply(200,{...capabilityStatus(getSnapshot(),{media,sparkSetup,genie:genie?.status(),chat:chat?.status(),activity:chat?.capabilityActivity?.(),operations:op,hourglass:hourglass?.status(),management:!!management,fleet_power:power}),csrf_token:csrf})).catch(()=>reply(503,{error:'Capability status unavailable; existing work continues.'}));return;
-    }
-    if(req.url==='/api/genie/operations'&&req.method==='GET'){
-      void Promise.resolve(operations?.status()??{configured:false,operations:[]}).then(value=>reply(200,{...value,csrf_token:csrf})).catch(()=>reply(503,{error:'Operation status unavailable; existing operations may still be running.'}));return;
-    }
-    if(['/api/genie/operations','/api/genie/operation-tools'].includes(req.url)&&req.method==='POST'){
-      const tool=req.url.endsWith('operation-tools');
-      const token=Buffer.from(req.headers[tool?'x-sg-operation-tool':'x-dsg-csrf']??''),expected=Buffer.from(tool?(operations?.toolConfig.token??''):csrf);
-      if(!expected.length||token.length!==expected.length||!timingSafeEqual(token,expected)||(!tool&&req.headers.origin!==`http://${req.headers.host}`))return reply(403,{error:'An authorized operation session is required.'});
-      if(!operations)return reply(409,{error:'Server operations are not enrolled for this installation.'});
-      if(req.headers['content-type']!=='application/json')return reply(415,{error:'JSON required.'});
-      let body='',ended=false;req.setEncoding('utf8');
-      const timer=setTimeout(()=>{ended=true;reply(408,{error:'Incomplete operation request.'});},15000);
-      req.on('error',()=>{ended=true;clearTimeout(timer);});req.on('aborted',()=>{ended=true;clearTimeout(timer);});
-      req.on('data',chunk=>{if(ended)return;body+=chunk;if(Buffer.byteLength(body)>(tool?80000:2048)){ended=true;clearTimeout(timer);reply(413,{error:'Operation request too large.'});}});
-      req.on('end',()=>{clearTimeout(timer);if(ended)return;ended=true;let input;try{input=JSON.parse(body);}catch{return reply(400,{error:'Invalid JSON.'});}
-        void (tool?operations.tool(input):operations.change(input)).then(value=>reply(200,value)).catch(e=>reply(409,{error:e.message}));});return;
-    }
     if(req.url==='/api/hourglass'&&req.method==='GET')return reply(200,{...(hourglass?.status()??{configured:false}),csrf_token:csrf});
-    if(['/api/hourglass','/api/genie/hourglass-tools'].includes(req.url)&&req.method==='POST'){
-      const tool=req.url.endsWith('hourglass-tools');
-      const token=Buffer.from(req.headers[tool?'x-sg-hourglass-tool':'x-dsg-csrf']??''),expected=Buffer.from(tool?(hourglass?.toolConfig.token??''):csrf);
-      if(!expected.length||(!tool&&req.headers.origin!==`http://${req.headers.host}`)||token.length!==expected.length||!timingSafeEqual(token,expected))return reply(403,{error:'An authorized Hourglass session is required.'});
+    if(req.url==='/api/hourglass'&&req.method==='POST'){
+      const token=Buffer.from(req.headers['x-dsg-csrf']??''),expected=Buffer.from(csrf);
+      if(!expected.length||req.headers.origin!==`http://${req.headers.host}`||token.length!==expected.length||!timingSafeEqual(token,expected))return reply(403,{error:'An authorized Hourglass session is required.'});
       if(!hourglass)return reply(409,{error:'Hourglass console is not configured.'});
       if(req.headers['content-type']!=='application/json')return reply(415,{error:'JSON required.'});
       let body='',ended=false;req.setEncoding('utf8');
@@ -204,42 +194,7 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
       req.on('data',chunk=>{if(ended)return;body+=chunk;if(Buffer.byteLength(body)>2048){ended=true;clearTimeout(timer);reply(413,{error:'Hourglass request too large.'});}});
       req.on('end',()=>{clearTimeout(timer);if(ended)return;ended=true;let input;try{input=JSON.parse(body);}catch{return reply(400,{error:'Invalid JSON.'});}
         if(['prepare','start'].includes(input.action)&&getSnapshot().gateway?.genie_capabilities?.hourglass===false)return reply(409,{error:'Hourglass measurements are switched off. Existing runs continue.'});
-        void (tool?hourglass.tool(input):hourglass.change(input)).then(value=>reply(200,tool?value:hourglass.status())).catch(e=>reply(409,{error:e.message}));});return;
-    }
-    if(sparkSetup?.handle(req,res))return;
-    if(mediaTools?.handle(req,res))return;
-    if(queueTools?.handle(req,res))return;
-    if(recoveryTools?.handle(req,res))return;
-    if(powerTools?.handle(req,res))return;
-    if(admissionTools?.handle(req,res))return;
-    if(req.url==='/api/genie/chat'&&req.method==='GET')return reply(200,{...(chat?.status()??{available:false,conversations:[]}),csrf_token:csrf});
-    if(req.url?.startsWith('/api/genie/chat/')&&req.method==='GET'){
-      const id=req.url.slice('/api/genie/chat/'.length);
-      try{
-        const conversation=chat.get(id);
-        if(!conversation.messages.some(m=>m.state==='working'&&m.gateway_call_id))return reply(200,conversation);
-        void readProgress().then(state=>reply(200,withGatewayProgress(chat.get(id),state))).catch(()=>reply(200,conversation));return;
-      }catch{return reply(404,{error:'Conversation not found.'});}
-    }
-    if(req.url==='/api/genie/chat'&&req.method==='POST'){
-      const token=Buffer.from(req.headers['x-dsg-csrf']??''),expected=Buffer.from(csrf);
-      if(req.headers.origin!==`http://${req.headers.host}`||token.length!==expected.length||!timingSafeEqual(token,expected))return reply(403,{error:'Same-origin chat session required.'});
-      if(!chat)return reply(409,{error:'Conversational Genie is not configured.'});
-      if(req.headers['content-type']!=='application/json')return reply(415,{error:'JSON required.'});
-      req.setEncoding('utf8');
-      let body='',ended=false;
-      const timer=setTimeout(()=>{ended=true;reply(408,{error:'Incomplete chat request.'});},15000);
-      req.on('error',()=>{ended=true;clearTimeout(timer);});req.on('aborted',()=>{ended=true;clearTimeout(timer);});
-      req.on('data',chunk=>{if(ended)return;body+=chunk;if(Buffer.byteLength(body)>160000){ended=true;clearTimeout(timer);reply(413,{error:'Chat message too large.'});}});
-      req.on('end',()=>{clearTimeout(timer);if(ended)return;try{
-        const input=JSON.parse(body);
-        if(input.action?.startsWith('study-'))return reply(200,chat.study.change(input));
-        if(input.action==='new')return reply(201,chat.create());
-        if(input.action==='stop-reply'){if(Object.keys(input).sort().join(',')!=='action,conversation_id,reply_id')throw new Error('Invalid reply control.');return reply(202,chat.stop(input.conversation_id,input.reply_id));}
-        if(input.action==='continue-queue'){if(Object.keys(input).sort().join(',')!=='action,conversation_id,expected_reply_id')throw new Error('Invalid queue control.');return reply(202,chat.resume(input.conversation_id,input.expected_reply_id));}
-        if(input.action==='send')return reply(202,chat.submit(input.conversation_id,input.text,input.request_id,{research:input.research}));
-        return reply(400,{error:'Unknown chat action.'});
-      }catch(e){return reply(400,{error:e instanceof SyntaxError?'Invalid JSON.':e.message});}});return;
+        void hourglass.change(input).then(value=>reply(200,hourglass.status())).catch(e=>reply(409,{error:e.message}));});return;
     }
     // Content-bearing previews belong only on this same-origin local surface.
     if(req.url==='/api/current-jobs'&&req.method==='GET'){
@@ -278,29 +233,6 @@ export function createDashboard(getSnapshot, assetsDirectory = path.join(here, '
       req.on('end',()=>{clearTimeout(timer);if(ended)return;ended=true;let input;try{input=JSON.parse(body);}catch{return reply(400,{error:'Invalid JSON'});}
         if(!input||Object.keys(input).join(',')!=='enabled'||typeof input.enabled!=='boolean')return reply(400,{error:'Only boolean enabled is accepted'});
         void testing.set(input.enabled).then(value=>reply(200,{available:true,...value,csrf_token:csrf})).catch(()=>reply(503,{error:'Testing change could not be confirmed; refresh its status before retrying'}));
-      });return;
-    }
-    if(req.url==='/api/genie' && req.method==='GET')return reply(200,{...(genie?.status()||{configured:false}),csrf_token:csrf});
-    if(req.url==='/api/genie' && req.method==='POST' && genie) {
-      const token=Buffer.from(req.headers['x-dsg-csrf']||''), expected=Buffer.from(csrf);
-      if(req.headers.origin!==`http://${req.headers.host}` || token.length!==expected.length || !timingSafeEqual(token,expected))return reply(403,{error:'Same-origin Genie control session required'});
-      if(req.headers['content-type']!=='application/json')return reply(415,{error:'JSON required'});
-      let body='',ended=false;
-      const timer=setTimeout(()=>{ended=true;reply(408,{error:'Incomplete request'});req.destroy();},5000);
-      const stop=()=>{ended=true;clearTimeout(timer);};req.on('error',stop);req.on('aborted',stop);
-      req.on('data',chunk=>{body+=chunk;if(Buffer.byteLength(body)>8192){stop();reply(413,{error:'Question too large'});req.destroy();}});
-      req.on('end',()=>{clearTimeout(timer);if(ended)return;
-        try {const input=JSON.parse(body);
-          if(input.action==='enable')return reply(200,genie.setEnabled(input.enabled));
-          if(input.action==='source')return reply(200,genie.setSource(input.source));
-          if(input.action==='memory'&&genie.memory){genie.memory.setEnabled(input.enabled);return reply(200,genie.status());}
-          if(input.action==='memory-note'&&genie.memory){const receipt=genie.memory.saveOperatorNote(input.note,getSnapshot());return reply(200,{...genie.status(),memory_receipt:receipt});}
-          if(input.action!=='ask')return reply(400,{error:'Unknown Genie action'});
-          if(!genie.enabled)return reply(409,{error:'Gate Genie is off. Enable him before asking; the question was not queued.'});
-          if(input.question!==undefined && (typeof input.question!=='string'||input.question.length>2000))return reply(400,{error:'Question too long'});
-          try{return reply(202,{accepted:true,question:genie.submit(input.question)});}
-          catch(e){return reply(409,{error:e.message});}
-        } catch {reply(400,{error:'Invalid Genie request'});}
       });return;
     }
     if (req.url === '/api/workers' && req.method === 'GET') {
@@ -525,9 +457,9 @@ export async function runDashboard(configPath, port) {
       if (!r.ok) throw new Error('Status unavailable');
       const s = await r.json();
       if (s.version !== 1 || !Array.isArray(s.workers)) throw new Error('Unsupported gateway');
-      gateway = { genie_capabilities:s.genie_capabilities,genie_flexible_assignment:s.genie_flexible_assignment===true,genie_admission_version:s.genie_admission_version===1?1:null,model: s.model,model_routes:s.model_routes&&typeof s.model_routes==='object'?s.model_routes:null, context_length: s.context_length,direct_reserve_control:s.direct_reserve!==undefined,direct_reserve_enabled:s.direct_reserve?.enabled===true,direct_reserve_reserved:s.direct_reserve?.reserved??[],queue_timeout_ms:s.queue_timeout_ms,conversation_turns:s.conversation_turns,conversation_turn_idle_ms:s.conversation_turn_idle_ms,request_timeout_ms:s.request_timeout_ms, total: s.total, healthy: s.healthy, available: s.available, active: s.active, queued: s.queued, draining: s.draining, dataset:s.dataset,recovery:s.recovery,protections:s.protections,agent_api_version:s.agent_api_version,maintenance_lock_version:s.maintenance_lock_version,client_watch_version:s.client_watch_version,client_watch:clientWatchForDisplay(s.client_watch),
+      gateway = { genie_thinking:safeGenieThinking(s.genie_thinking),genie_capabilities:s.genie_capabilities,genie_flexible_assignment:s.genie_flexible_assignment===true,genie_admission_version:s.genie_admission_version===1?1:null,model: s.model,model_routes:s.model_routes&&typeof s.model_routes==='object'?s.model_routes:null, context_length: s.context_length,direct_reserve_control:s.direct_reserve!==undefined,direct_reserve_enabled:s.direct_reserve?.enabled===true,direct_reserve_reserved:s.direct_reserve?.reserved??[],queue_timeout_ms:s.queue_timeout_ms,conversation_turns:s.conversation_turns,conversation_turn_idle_ms:s.conversation_turn_idle_ms,request_timeout_ms:s.request_timeout_ms, total: s.total, healthy: s.healthy, available: s.available, active: s.active, queued: s.queued, draining: s.draining, dataset:s.dataset,recovery:s.recovery,protections:s.protections,agent_api_version:s.agent_api_version,maintenance_lock_version:s.maintenance_lock_version,client_watch_version:s.client_watch_version,client_watch:clientWatchForDisplay(s.client_watch),
         continuity:continuityForDisplay(s.continuity),
-        workers: s.workers.map(w => ({ id: w.id, is_healthy: w.is_healthy, drained: w.drained, quarantine:safeQuarantine(w.quarantine), load: w.load, max_concurrent_requests:Number.isSafeInteger(w.max_concurrent_requests)&&w.max_concurrent_requests>0?w.max_concurrent_requests:1, queued: w.queued, active_seconds: w.active_seconds, completed: w.completed, failed: w.failed, assigned_sessions: w.assigned_sessions,
+        workers: s.workers.map(w => ({ id: w.id, physical_machines:machinesFor(w.id,config), is_healthy: w.is_healthy, drained: w.drained, quarantine:safeQuarantine(w.quarantine), load: w.load, max_concurrent_requests:Number.isSafeInteger(w.max_concurrent_requests)&&w.max_concurrent_requests>0?w.max_concurrent_requests:1, queued: w.queued, active_seconds: w.active_seconds, completed: w.completed, failed: w.failed, assigned_sessions: w.assigned_sessions,
           gateway_drained:w.gateway_drained,recovery_waiting:Number.isSafeInteger(w.recovery_waiting)?w.recovery_waiting:0,operator_paused:w.operator_paused,holds:Array.isArray(w.holds)?w.holds.slice(0,1024).map(h=>({id:h.id,owner_id:h.owner_id,created_at:h.created_at})):[],maintenance_locks:Array.isArray(w.maintenance_locks)?w.maintenance_locks.slice(0,1024).flatMap(l=>typeof l.id==='string'&&typeof l.name==='string'&&Number.isFinite(l.created_at)?[{id:l.id,name:l.name.slice(0,64),created_at:l.created_at,review_at:Number.isFinite(l.review_at)?l.review_at:null,control_channel:typeof l.control_channel==='string'?l.control_channel:null}]:[]):[],
           last_operator_action:w.last_operator_action&&['pause','resume'].includes(w.last_operator_action.action)&&typeof w.last_operator_action.time==='string'&&Number.isFinite(Date.parse(w.last_operator_action.time))&&typeof w.last_operator_action.control_channel==='string'&&/^[a-z][a-z0-9_]{0,31}$/.test(w.last_operator_action.control_channel)?{action:w.last_operator_action.action,time:w.last_operator_action.time,control_channel:w.last_operator_action.control_channel}:null,
           oldest_queue_seconds:w.oldest_queue_seconds??null,oldest_queue_remaining_seconds:w.oldest_queue_remaining_seconds??null,
@@ -544,7 +476,7 @@ export async function runDashboard(configPath, port) {
       // Keep installed static targets intact. Only the local core supplies new
       // setup enrollments; an older core can continue without this endpoint.
       void sparkInspection?.refresh().catch(()=>{});
-      applyGenieThinking(gateway?.genie_thinking);
+
     } catch { gatewayError = 'Gateway status unavailable; last snapshot is stale'; }
     finally { activity.update([...devices.values()].map(d=>({...d,endpoint_metrics:endpointTelemetry.snapshot(d.id)})),gateway?.workers||[],Date.now(),!!gatewayError);if(config.control_socket&&gateway?.direct_reserve?.enabled){const rows=(gateway?.workers??[]).filter(w=>!w.drained&&!w.quarantine).map(w=>{const e=endpointTelemetry.snapshot(w.id);return {id:w.id,connected:e?.connected===true,running:e?.running??0,at:e?.at??0};}).filter(r=>r.running>0||r.connected);void workerControl(config.control_socket,'/direct-activity',{rows:rows.filter(r=>r.running>0).length?rows:[]},{channel:'dashboard'}).catch(()=>{});}try{if(!isTesting())memory.observe(snapshot());}catch{/* A notebook fault cannot stop fleet polling. */}polling = false; }
   }
@@ -559,67 +491,46 @@ export async function runDashboard(configPath, port) {
     fleet_power:powerTools?{enabled:isCapabilityEnabled('fleet_power'),control:true}:null,
     fleet_machines:powerWorkers().map(id=>({id,machine:machineGroup(id),scripts:['status','start','stop']})),
     devices: [...devices.values()].map(d => ({...d.snapshot(),rolling_rates:fleetSpeed.workerRates(d.id),activity:activity.get(d.id),activity_markers:activity.getMarkers(d.id),hardware:hardware.snapshot(d.id),endpoint_metrics:endpointTelemetry.snapshot(d.id)})), events, attribution:attribution.snapshot(), notes: 'Engine-log rates are measurements from configured log collectors; OpenAI endpoint rates have separately labeled scopes. Cache counts cover observed prompt starts, not lifetime requests. Raw prompts and responses are excluded.' });
-  const memory=new GenieMemory(path.join(path.dirname(config.state_file),'genie','memory'));
-  const providerLedger=new GenieProviderLedger(path.join(path.dirname(config.state_file),'genie','actions'));
-  const assignmentLedger=new GenieProviderLedger(path.join(path.dirname(config.state_file),'genie','actions'),{kind:'pool_assigned'});
   const isTesting=()=>continuityEnabled(config)&&testingSuspended(testingModeFile(config));
-  const chatDirectory=path.join(path.dirname(config.state_file),'genie','chat');
-  const runtimeGenie=genieRuntimeConfig(config);
-  const reviewer=config.genie_chat?hermesReviewFetch(config.genie_chat,{directory:chatDirectory}):undefined;
-  const genie=new Genie(runtimeGenie,snapshot,{fetchImpl:reviewer,isTesting,memory,providerLedger,assignmentLedger,poolUrl:`http://127.0.0.1:${config.port}/v1`,recover:managementEnabled?input=>workerControl(config.control_socket,'/genie-recover-worker',input,{channel:'gate_genie'}):null,rebalance:managementEnabled?input=>workerControl(config.control_socket,'/genie-relocate-queued',input,{channel:'gate_genie'}):null});
-  const stopGenieTunnel=genieTunnel(config.genie);
   const isCapabilityEnabled=key=>gateway?.genie_capabilities?.[key]!==false;
-  let sparkSetupWatch=null;
-  const sparkSetup=managementEnabled?createSparkSetupTools(config,{enrollment:config.spark_setup?.enabled?createSparkEnrollment({directory:path.join(path.dirname(config.state_file),'genie','spark-enrollment'),targets:config.spark_setup.targets??{},workers:async()=>{const state=await workerControl(config.control_socket,'/workers');return state.workers;}}):null,mediaQualification:config.spark_setup?.enabled?createSparkMediaQualification({directory:path.join(path.dirname(config.state_file),'genie','spark-media-qualification'),transport:setupTransport}):null,continuation:{resumePreparation:id=>sparkSetupWatch?.resumePreparation(id),status:id=>sparkSetupWatch?.status(id)??null,request:id=>{if(!sparkSetupWatch)throw new Error('Setup continuation requires Genie chat.');return sparkSetupWatch.request(id);}},isTesting,isEnabled:()=>gateway?.genie_capabilities?.spark_setup===true,registration:config.spark_setup?.enabled?createSparkRegistration({directory:path.join(path.dirname(config.state_file),'genie','spark-registration'),recordsDirectory:config.server_records_directory,control:(route,input)=>workerControl(config.control_socket,route,input,{channel:'gate_genie'})}):null}):null;
   operations=createOperationService(config,{directory:path.join(path.dirname(config.state_file),'genie','operations'),isTesting,isEnabled:()=>isCapabilityEnabled('server_changes')});
-  const queueTools=managementEnabled?createQueueTools({read:()=>readService('gateway',config),move:input=>workerControl(config.control_socket,'/genie-relocate-queued',input,{channel:'gate_genie'}),isTesting,isEnabled:()=>isCapabilityEnabled('rebalance')}):null;
-  const mediaTools=managementEnabled&&config.media_jobs?.enabled?createMediaTools({inspectInputs:input=>workerControl(config.control_socket,'/genie-media-inputs',input,{channel:'gate_genie'}),setup:input=>workerControl(config.control_socket,'/genie-media-setup',input,{channel:'gate_genie'}),resources:createMediaResources(config,{isEnabled:()=>isCapabilityEnabled('inspection')}),read:async()=>{const [media,fleet]=await Promise.all([workerControl(config.control_socket,'/media-jobs'),workerControl(config.control_socket,'/workers')]);return {...media,fleet:fleet.workers.map(w=>({id:w.id,is_healthy:w.is_healthy,drained:w.drained,load:w.load,queued:w.queued}))};},start:input=>workerControl(config.control_socket,'/genie-media-start',input,{channel:'gate_genie'}),isTesting}):null;
-  const recoveryTools=managementEnabled?createRecoveryTools({read:()=>readService('gateway',config),recover:input=>workerControl(config.control_socket,'/genie-recover-worker',input,{channel:'gate_genie'}),isTesting,isEnabled:()=>isCapabilityEnabled('recovery')}):null;
   const powerResolveEndpoint=managementEnabled?async worker=>{
     const registry=await workerControl(config.control_socket,'/workers',undefined,{channel:'dashboard'});
     const row=(registry?.workers??[]).find(w=>w.id===worker);
     if(!row?.url)return null;
     let headers={};try{headers=endpointHeaders(row);}catch{headers={};}
-    return {url:row.url,headers};
+    return {url:row.url,headers,model:row.served_model};
   }:null;
-  const powerRunner=managementEnabled?createPowerRunner({verify:createReadinessVerifier({resolveEndpoint:powerResolveEndpoint})}):null;
-  const powerTools=managementEnabled?createFleetPowerTools({runner:powerRunner,read:()=>readService('gateway',config),isTesting,isEnabled:()=>isCapabilityEnabled('fleet_power'),directRunning:id=>endpointTelemetry.snapshot(id)?.running??0,catalogue:()=>fleetCatalogue()}):null;
-  const chatProviderConfig={...genieChatConfig(config)};
-  const applyGenieThinking=value=>{if(!value)return {applied:false};const applied={};if(value.chat){chatProviderConfig.reasoning_effort=value.chat;applied.chat=value.chat;}if(value.reviewer){runtimeGenie.reasoning_effort=value.reviewer;if(runtimeGenie.fallback&&typeof runtimeGenie.fallback==='object')runtimeGenie.fallback.reasoning_effort=value.reviewer;applied.reviewer=value.reviewer;}return {applied:true,...applied};};
-  const admissionTools=managementEnabled?createAdmissionTools({config,control:(route,body)=>workerControl(config.control_socket,route,body,{channel:'dashboard'}),read:()=>readService('gateway',config),readDoor:async()=>doorControl(doorSocket(config),'/status'),isTesting,isEnabled:()=>isCapabilityEnabled('server_changes')}):null;
-  const chat=config.genie_chat?new GenieChat({directory:chatDirectory,notebook:config.genie_chat.operational_notebook===true?memory:null,getSnapshot:()=>({...snapshot(),genie:genie.status(),genie_handovers:requestHistory.snapshot().handovers}),isSuspended:isTesting,runQuestion:(answer,onWait)=>genie.answerChat(answer,onWait),provider:hermesProvider({...chatProviderConfig,spark_setup:sparkSetup?.toolConfig,operations:operations?.toolConfig,hourglass:hourglass?.toolConfig,queue:queueTools?.toolConfig,recovery:recoveryTools?.toolConfig,media:mediaTools?.toolConfig,power:powerTools?.toolConfig,admission:admissionTools?.toolConfig},{directory:chatDirectory,isCapabilityEnabled})}):null;
+  const rawPowerRunner=managementEnabled?createPowerRunner({verify:createReadinessVerifier({resolveEndpoint:powerResolveEndpoint})}):null;
+  const recipeTrials=managementEnabled?createRecipeTrials({config,powerBusy:id=>rawPowerRunner.busy(id)}):null;
+  const powerRunner=rawPowerRunner?{...rawPowerRunner,busy:id=>rawPowerRunner.busy(id)||recipeTrials.busy(id)}:null;
+  const powerTools=managementEnabled?createFleetPowerService({runner:powerRunner,receiptDirectory:path.join(path.dirname(config.state_file),'genie','power-actions'),recipes:recipeTrials,read:()=>readService('gateway',config),isTesting,isEnabled:()=>isCapabilityEnabled('fleet_power'),directRunning:id=>{const s=endpointTelemetry.snapshot(id);return s?.connected&&Date.now()-s.at<10000&&Number.isFinite(s.running)&&Number.isFinite(s.waiting)?s.running+s.waiting:null;},catalogue:()=>fleetCatalogue(),control:(route,body)=>workerControl(config.control_socket,route,body,{channel:'gate_genie'})}):null;
   const nativeMedia=createNativeMediaStatus(config);
-  const fleetCatalogue=async()=>{const s=snapshot();let media={workloads:[],native_engines:[]};try{if(managementEnabled&&config.control_socket){const value=await workerControl(config.control_socket,'/media-jobs',undefined,{channel:'dashboard'});media={...fleetMediaWorkloads(value),native_engines:nativeMedia?.()??[]};}}catch{/* Media evidence stays empty; the catalogue stays truthful about what it could observe. */}return buildCatalogue({members:s.fleet_machines??[],workers:s.gateway?.workers??[],devices:s.devices??[],media,routes:s.gateway?.model_routes??{},now:Date.now()});};
-  const server = createDashboard(snapshot, path.join(here,'ui'), managementEnabled ? {
+  const fleetCatalogue=async()=>{const s=snapshot();let media={workloads:[],native_engines:[]};try{if(managementEnabled&&config.control_socket){const value=await workerControl(config.control_socket,'/media-jobs',undefined,{channel:'dashboard'});media={...fleetMediaWorkloads(value),native_engines:nativeMedia?.(value)??[]};}}catch{/* Media evidence stays empty; the catalogue stays truthful about what it could observe. */}return buildCatalogue({members:s.fleet_machines??[],workers:s.gateway?.workers??[],devices:s.devices??[],media,routes:s.gateway?.model_routes??{},now:Date.now()});};
+
+  const server = createDashboard(snapshot, {assetsDirectory:path.join(here,'ui'), management:managementEnabled ? {
     read:()=>workerControl(config.control_socket,'/workers',undefined,{channel:'dashboard'}),
     catalogue:()=>fleetCatalogue(),
-    media:()=>workerControl(config.control_socket,'/media-jobs'),
+    media:async()=>({...await workerControl(config.control_socket,'/media-jobs'),standard_setup:null}),
     nativeMedia,
     mediaFile:(req,res,route)=>proxyMediaFile(config,req,res,route),
-    act:async(action,input)=>{if(action==='power'){if(input?.mode==='check')return powerTools.tool({...input,action:'power'});if(input?.power_action==='status'){void powerTools.tool({action:'power',worker:input.worker,power_action:'status',action_id:input.action_id}).catch(()=>{});return {started:true,worker:input.worker,power_action:'status'};}const check=await powerTools.tool({action:'power',mode:'check',worker:input.worker,power_action:input.power_action,action_id:input.action_id});void powerTools.tool({action:'power',worker:input.worker,power_action:input.power_action,action_id:input.action_id}).catch(()=>{});return {started:true,...check};}if(action==='media-video-submit')return submitVideoFromDashboard(config,input);if(action==='media-inspect'||action==='media-setup'){if(!mediaTools)throw Error('Media inspection is not connected.');return mediaTools.tool({...input,action:action==='media-setup'?'setup':'inspect'});}const value=await workerControl(config.control_socket,({'media-eligibility':'/media-host-eligibility','job-priority':'/set-job-priority',concurrency:'/set-worker-concurrency','direct-reserve':'/set-direct-reserve',add:'/add-worker',endpoint:'/edit-endpoint',test:'/check-endpoint',remove:'/remove-worker',drain:'/drain-workers',resume:'/resume-workers',lock:'/maintenance-lock',unlock:'/release-maintenance-lock',fallbacks:'/set-ssh-fallbacks',context:'/set-context-limit','conversation-turns':'/set-conversation-turns','queue-timeout':'/set-queue-timeout',protection:'/set-protection',relocate:'/relocate-queued',recover:'/recover-worker','genie-capability':'/genie-capability','genie-thinking':'/set-genie-thinking','recovery-policy':'/recovery-policy','recovery-handback-policy':'/recovery-handback-policy','recovery-recheck':'/recovery-recheck'})[action],input,{channel:'dashboard'});if(action==='genie-capability'&&gateway)gateway.genie_capabilities=value;if(action==='genie-thinking')applyGenieThinking(value?.genie_thinking??value);return value;},
-  } : null,genie,()=>({...requestHistory.snapshot(),fleet_speed:fleetSpeed.snapshot(Date.now(),gateway?.workers?.map(worker=>worker.id)??[])}),config.control_socket?{
+    act:async(action,input)=>{if(action==='power'){if(input?.mode==='check')return powerTools.tool({...input,action:'power'});if(input?.power_action==='status'){void powerTools.tool({action:'power',worker:input.worker,power_action:'status',action_id:input.action_id}).catch(()=>{});return {started:true,worker:input.worker,power_action:'status'};}const check=await powerTools.tool({action:'power',mode:'check',worker:input.worker,power_action:input.power_action,action_id:input.action_id});void powerTools.tool({action:'power',worker:input.worker,power_action:input.power_action,action_id:input.action_id}).catch(()=>{});return {started:true,...check};}if(action==='media-video-submit')return submitVideoFromDashboard(config,input);if(action==='media-inspect')return createMediaResources(config,{isEnabled:()=>true}).inspect(input.worker_id,input.member);if(action==='media-setup')return workerControl(config.control_socket,'/genie-media-setup',input,{channel:'dashboard'});const value=await workerControl(config.control_socket,({'media-eligibility':'/media-host-eligibility','job-priority':'/set-job-priority',concurrency:'/set-worker-concurrency','direct-reserve':'/set-direct-reserve',add:'/add-worker',endpoint:'/edit-endpoint',test:'/check-endpoint',remove:'/remove-worker',drain:'/drain-workers',resume:'/resume-workers',lock:'/maintenance-lock',unlock:'/release-maintenance-lock',fallbacks:'/set-ssh-fallbacks',context:'/set-context-limit','conversation-turns':'/set-conversation-turns','queue-timeout':'/set-queue-timeout',protection:'/set-protection',relocate:'/relocate-queued',recover:'/recover-worker','genie-capability':'/genie-capability','genie-thinking':'/set-genie-thinking','recovery-policy':'/recovery-policy','recovery-handback-policy':'/recovery-handback-policy','recovery-recheck':'/recovery-recheck'})[action],input,{channel:'dashboard'});if(action==='genie-capability'&&gateway)gateway.genie_capabilities=value;return value;},
+  } : null, requestHistory:()=>({...requestHistory.snapshot(),fleet_speed:fleetSpeed.snapshot(Date.now(),gateway?.workers?.map(worker=>worker.id)??[])}), currentJobs:config.control_socket?{
     read:()=>workerControl(config.control_socket,'/current-jobs',undefined,{channel:'dashboard'}),
-  }:null,continuityEnabled(config)?{
-    read:async()=>{const value=await doorControl(doorSocket(config),'/status');if(!value.testing)throw new Error('Testing mode not deployed');return {testing:value.testing,genie_draining:genie.busy,endpoint:`http://127.0.0.1:${config.port}/testing/v1`};},
-    set:async enabled=>{const value=await doorControl(doorSocket(config),'/testing',{enabled});return {testing:value.testing,genie_draining:genie.busy,endpoint:`http://127.0.0.1:${config.port}/testing/v1`};},
-  }:null,managementEnabled&&continuityEnabled(config)?{
+  }:null, testing:continuityEnabled(config)?{
+    read:async()=>{const value=await doorControl(doorSocket(config),'/status');if(!value.testing)throw new Error('Testing mode not deployed');return {testing:value.testing,genie_draining:false,endpoint:`http://127.0.0.1:${config.port}/testing/v1`};},
+    set:async enabled=>{const value=await doorControl(doorSocket(config),'/testing',{enabled});return {testing:value.testing,genie_draining:false,endpoint:`http://127.0.0.1:${config.port}/testing/v1`};},
+  }:null, lanSharing:managementEnabled&&continuityEnabled(config)?{
     read:async()=>lanSharingDetails(await doorControl(doorSocket(config),'/lan-sharing'),config.port),
     set:async enabled=>lanSharingDetails(await doorControl(doorSocket(config),'/set-lan-sharing',{enabled}),config.port),
-  }:null,chat,hourglass,operations,queueTools,recoveryTools,mediaTools,sparkSetup,powerTools,admissionTools);
+  }:null, hourglass, powerTools, soul:createSoulStore(hermesHome(config)), brain:createBrainStore(hermesHome(config)), memory:createMemoryView(hermesHome(config))});
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
-  sparkSetup?.bind(server.address().port);
-  powerTools?.bind(server.address().port);
-  admissionTools?.bind(server.address().port);
-  mediaTools?.bind(server.address().port);
-  queueTools?.bind(server.address().port);
-  recoveryTools?.bind(server.address().port);
   operations?.bind(server.address().port);
   hourglass?.bind(server.address().port);
   hourglass?.startObserving();
-  sparkSetupWatch=chat&&sparkSetup?new SparkSetupWatch({filename:path.join(path.dirname(config.state_file),'genie','spark-setup-requests.json'),targets:sparkSetup.targets,chat,read:()=>sparkSetup.tool({action:'status'}),isEnabled:()=>!isTesting()&&gateway?.genie_capabilities?.spark_setup===true}):null;
-  const mediaWatch=chat&&mediaTools?new MediaWatch({filename:path.join(path.dirname(config.state_file),'genie','media-watch.json'),chat,read:()=>mediaTools.tool({action:'status'}),isEnabled:()=>!isTesting()&&isCapabilityEnabled('media')}):null;
-  await poll(); endpointTelemetry.poll(); const interval = setInterval(poll, 2000), endpointTimer=setInterval(()=>endpointTelemetry.poll(),2000), historyTimer=setInterval(()=>monitoringHistory.save(activity,endpointTelemetry),10000), genieTimer=setInterval(()=>{genie.tick();chat?.tick();void mediaWatch?.tick();void sparkSetupWatch?.tick();},10000);
-  const close = () => { monitoringHistory.save(activity,endpointTelemetry);endpointTelemetry.close(); closed = true; clearInterval(interval);clearInterval(endpointTimer);clearInterval(historyTimer);clearInterval(genieTimer);mediaWatch?.close();sparkSetupWatch?.close();genie.close();chat?.close();operations?.close();hourglass?.close();hardware.close();stopGenieTunnel(); for (const t of timers) clearTimeout(t); for (const child of children) child.kill(); server.closeAllConnections(); server.close(); process.removeListener('SIGTERM', close); process.removeListener('SIGINT', close); };
+  await poll(); endpointTelemetry.poll(); const interval = setInterval(poll, 2000), endpointTimer=setInterval(()=>endpointTelemetry.poll(),2000), historyTimer=setInterval(()=>monitoringHistory.save(activity,endpointTelemetry),10000);
+  const close = () => { monitoringHistory.save(activity,endpointTelemetry);endpointTelemetry.close(); closed = true; clearInterval(interval);clearInterval(endpointTimer);clearInterval(historyTimer);operations?.close();hourglass?.close();hardware.close(); for (const t of timers) clearTimeout(t); for (const child of children) child.kill(); server.closeAllConnections(); server.close(); process.removeListener('SIGTERM', close); process.removeListener('SIGINT', close); };
+
   process.once('SIGTERM', close); process.once('SIGINT', close);
   console.log(`Star Gate: http://127.0.0.1:${server.address().port} (${managementEnabled ? 'local worker controls' : 'read-only'})`);
   return { server, snapshot, close };

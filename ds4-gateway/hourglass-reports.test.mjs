@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {HourglassReports,hourglassForChat} from './hourglass-reports.mjs';
-import {GenieChat} from './genie-chat.mjs';
+
 import {loadConfig} from './config.mjs';
 import http from 'node:http';
 import {once} from 'node:events';
@@ -46,23 +46,7 @@ test('symlinks, named pipes, oversized and unrelated files are rejected without 
   assert.ok(fs.lstatSync(pipe).isFIFO());assert.equal(fs.statSync(large).size,1048577);
 });
 
-test('chat reapplies the allowlist, stores exact evidence and retains it after a later report edit',async t=>{
-  const {root,file}=fixture(t);fs.writeFileSync(file,JSON.stringify(report()));
-  const reader=new HourglassReports([{file,worker_id:'example',route:'direct',contention:'owner-confirmed-idle',approved_configuration_revision:'a'.repeat(64)}]);
-  const value=reader.snapshot(),revision=value.reports[0].report_revision;value.reports[0].summary.private_field='PRIVATE_ALTERNATE';
-  value.reports[0].association.file='/private/PRIVATE_ALTERNATE';
-  assert.doesNotMatch(JSON.stringify(hourglassForChat(value)),/PRIVATE_/);
-  assert.doesNotMatch(JSON.stringify(reader.snapshot()),/PRIVATE_/,'consumers cannot contaminate cached summaries');
-  const calls=[],directory=path.join(root,'chat'),provider={generate:async input=>{calls.push(input);return {text:'Recorded score is zero.'};}};
-  let chat=new GenieChat({directory,provider,getSnapshot:()=>({hourglass_reports:reader.snapshot()})});const conversation=chat.create();
-  chat.submit(conversation.id,'What was the recorded score?','hourglass-request');await chat.idle();
-  assert.equal(calls[0].context.hourglass_reports.reports[0].summary.score.value,0);
-  assert.equal(calls[0].context.hourglass_reports.reports[0].association.route,'direct');
-  fs.writeFileSync(file,JSON.stringify({...report(),hourglass_score:99}));
-  chat=new GenieChat({directory,provider});const saved=chat.get(conversation.id).messages.at(-1).context.hourglass_reports;
-  assert.equal(saved.reports[0].summary.score.value,0);assert.equal(saved.reports[0].report_revision,revision);
-  assert.match(saved.scope,/not inferred or verified/);
-});
+
 
 test('invalid reference configuration is explicit and cannot introduce arbitrary association fields',()=>{
   for(const entries of [null,{},Array(51).fill({file:'report.json'}),[{file:'report.json',command:'run'}],
@@ -80,23 +64,4 @@ test('normal dashboard startup serves configured summaries and assets without ex
   assert.doesNotMatch(JSON.stringify(value),/PRIVATE_NOTES|PRIVATE_QUESTIONS|report\.json/);
   const html=await(await fetch(origin)).text();assert.match(html,/id="hourglass-reports"/);
   assert.equal((await fetch(origin+'/report.json')).status,404);
-});
-
-
-test('chat retains owned measurement provenance without upgrading imported associations',async t=>{
-  const {root}=fixture(t);
-  const source='Reviewed gateway mapping and observed native target; full settings equivalence is not implied.';
-  const summary=(await import('./hourglass-report.mjs')).hourglassReportSummary({...report(),timeouts:1,raw_correct:20,completed_questions:20,efficiency:{median_output_tokens:1391}});
-  const supplied={configured:true,reports:[{report_revision:'b'.repeat(64),association:{worker_id:'example',route:'direct',contention:'owned-maintenance',approved_configuration_revision:'a'.repeat(64),source},summary}]};
-  const calls=[],chat=new GenieChat({directory:path.join(root,'chat'),provider:{generate:async input=>{calls.push(input);return {text:'The recorded run used an owned window.'};}},getSnapshot:()=>({hourglass_reports:supplied})});
-  const conversation=chat.create();chat.submit(conversation.id,'Was the recorded run kept off gateway traffic?','owned-window');await chat.idle();
-  const evidence=calls[0].context.hourglass_reports;
-  assert.equal(evidence.reports[0].association.contention,'owned-maintenance');assert.equal(evidence.reports[0].association.source,source);
-  assert.equal(evidence.reports[0].summary.timeouts,1);assert.equal(evidence.reports[0].summary.raw_correct,20);assert.equal(evidence.reports[0].summary.efficiency.median_output_tokens,1391);
-  assert.match(evidence.scope,/does not prove complete settings equivalence or exclude new direct traffic/);
-  assert.deepEqual(chat.get(conversation.id).messages.at(-1).context.hourglass_reports,evidence);
-  const unknown=structuredClone(supplied);unknown.reports[0].association.source='PRIVATE arbitrary claim';unknown.reports[0].association.contention='fully-isolated';
-  const sanitized=hourglassForChat(unknown).reports[0].association;
-  assert.equal(sanitized.contention,'unknown');assert.equal(sanitized.source,'operator-supplied association; not independently verified');
-  assert.throws(()=>new HourglassReports([{file:path.join(root,'missing'),contention:'owned-maintenance'}]),'An imported report cannot opt into an owned workflow');
 });
