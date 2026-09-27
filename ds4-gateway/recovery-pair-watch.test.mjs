@@ -55,7 +55,7 @@ test('capability, active work, owner stop, queue pause and changes during inspec
 });
 test('status error and closure during read preserve operation identity without submission',async t=>{
   const f=fixture(t);f.finish();f.options.read=async()=>{throw Error('status unavailable');};const w=f.watch();await w.tick();assert.equal(w.status().error,'status unavailable');assert.equal(f.calls.length,0);
-  let resolve;f.options.read=()=>new Promise(r=>resolve=r);const next=f.watch(),pending=next.tick();next.close();resolve(f.rows);await pending;assert.equal(f.calls.length,0);
+  let resolve;f.options.read=()=>new Promise(r=>resolve=r);const next=f.watch(),pending=next.tick();while(!resolve)await new Promise(r=>setImmediate(r));next.close();resolve(f.rows);await pending;assert.equal(f.calls.length,0);
 });
 test('a failed journal write cannot dispatch on a later tick until the write succeeds',async t=>{
   const f=fixture(t);f.finish();const w=f.watch(),save=w.save.bind(w);w.save=()=>{throw Error('disk full');};

@@ -1,8 +1,8 @@
+import {saveFollowupJournal,followupStatus,followupReady} from './genie-followup.mjs';
 // Resume the originating conversation when its native capture finishes.
 // This observer never starts a capture, enrolls a service or restarts a server.
 import fs from 'node:fs';
-import path from 'node:path';
-import {createHash,randomUUID} from 'node:crypto';
+import {createHash} from 'node:crypto';
 
 const uuid=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const kinds={
@@ -37,20 +37,13 @@ export class PairPreparationWatch {
     Object.assign(this,{filename,chat,read,isEnabled});this.busy=false;this.closed=false;
     this.records=fs.existsSync(filename)?JSON.parse(fs.readFileSync(filename,'utf8')):{};
   }
-  save(){
-    fs.mkdirSync(path.dirname(this.filename),{recursive:true,mode:0o700});
-    const temp=this.filename+'.'+randomUUID()+'.tmp',fd=fs.openSync(temp,'wx',0o600);
-    try{fs.writeFileSync(fd,JSON.stringify(this.records,null,2)+'\n');fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
-    fs.renameSync(temp,this.filename);
-    const parent=fs.openSync(path.dirname(this.filename),'r');try{fs.fsyncSync(parent);}finally{fs.closeSync(parent);}
-  }
+  save(){saveFollowupJournal(this.filename,this.records);}
   status(){return {error:this.error??null,requests:Object.values(this.records).map(r=>({conversation_id:r.conversation_id,request_id:r.request_id,action_ids:r.action_ids,state:r.state}))};}
   async tick(){
     if(this.closed||this.busy||!this.isEnabled())return;
-    const summary=this.chat.status();
-    if(!summary.available||summary.conversations.some(c=>c.busy||c.queued))return;
     this.busy=true;
     try{
+      const summary=await followupStatus(this.chat);if(this.closed||!this.isEnabled()||!followupReady(summary))return;
       const conversations=summary.conversations.filter(c=>!c.queue_paused).map(c=>this.chat.get(c.id)).filter(conversation=>{
         const {latest,observed,observedActions}=captures(conversation,this.kind);
         const records=Object.values(this.records).filter(r=>r.conversation_id===conversation.id);
@@ -63,11 +56,11 @@ export class PairPreparationWatch {
       });
       if(!conversations.length)return;
       const rows=await this.read();this.error=null;
-      if(this.closed||!this.isEnabled()||!this.chat.status().available)return;
+      if(this.closed||!this.isEnabled()||!followupReady(await followupStatus(this.chat)))return;
       for(const original of conversations){
         // Owner stop/pause or new work may have arrived while native status was read.
-        const currentSummary=this.chat.status();
-        if(currentSummary.conversations.some(c=>c.busy||c.queued))return;
+        const currentSummary=await followupStatus(this.chat);
+        if(!followupReady(currentSummary))return;
         const conversation=this.chat.get(original.id);
         if(conversation.queue_paused)continue;
         const {latest,observed}=captures(conversation,this.kind);

@@ -594,6 +594,15 @@ is explicitly labelled. Automatic studies wait for unresolved input across all
 observed conversations. Study context remains expandable without requiring a
 fleet snapshot.
 
+The automatic follow-up watchers refresh native state before deciding to send
+and after asynchronous fleet observations, so an open dashboard is unnecessary.
+Unobserved, held and unconfirmed questions block automatic follow-ups. Studies
+and watchers run in one awaited sequence. A native conversation ID is saved
+before creation, preserving the same identity when an acknowledgment is lost.
+All watcher journals flush their file and directory before dispatch. Dated
+capability activity remains derived from actual tool receipts. This staged
+path still needs Stop-history correlation and live profile/channel cutover.
+
 Native dispatch receipts retain both the caller's original request identifier
 and the derived native dispatch UUID. Dashboard history exposes the original
 identifier only when the saved receipt matches the session and exact injected

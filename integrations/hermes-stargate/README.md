@@ -227,6 +227,19 @@ in the native request, rather than passed only through a bounded hook preview.
 Production selection still requires watcher integration,
 complete provider/owner configuration and a final idle history migration.
 
+Automatic follow-up watchers now refresh native conversation state themselves,
+without relying on a browser poll. They wait for busy, queued, paused,
+unobserved or unconfirmed inputs and recheck after asynchronous fleet reads.
+The dashboard awaits scheduled studies and serializes the watcher sequence.
+Native conversation creation records an exact ID before sending; a lost reply
+reconciles that ID after restart. Watcher journals flush both the new file and
+its parent directory before crossing an external boundary. The native fixture
+exercises an actual media watcher, including a lost creation acknowledgment and
+one completed native follow-up. This verifies orchestration, using fake fleet
+endpoints; it does not prove a media generation or fleet recovery outcome.
+Historical capability activity uses the same completed/failed tool receipts as
+legacy chat. Stop-history correlation and complete live cutover remain required.
+
 Pending inputs are read from Hermes's native FIFO, buffered text and durable
 hold checkpoints. The dashboard shows saved questions separately from completed
 history, including Telegram questions received while paused. When only an

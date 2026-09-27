@@ -1,3 +1,4 @@
+import {chatCapabilityActivity} from './genie-capability-activity.mjs';
 import fs from 'node:fs';
 import {activityForChat} from './genie-chat-activity.mjs';
 import {recordsForChat} from './server-records.mjs';
@@ -120,16 +121,7 @@ export class GenieChat {
       reply.progress=p;reply.text=saved.text;
     }catch{this.loadErrors.push(name);this.corruptProgress.set(s.id,true);}
   }
-  capabilityActivity() {
-    const latest={};
-    for(const session of this.sessions.values())for(const message of session.messages)for(const key of ['research','inspection','queue','recovery','media','spark_setup'])for(const event of message[key]?.events??[]){
-      if(!['complete','failed'].includes(event.state))continue;
-      const at=Date.parse(event.finished_at??event.at);
-      if(!Number.isFinite(at)||at<=(latest[key==='queue'?'rebalance':key]?.at??0))continue;
-      latest[key==='queue'?'rebalance':key]={at,state:event.state,service:key==='research'?(event.kind==='search'?'Web search':'Page extraction'):key==='queue'?'Queue balancing':key==='spark_setup'?(event.request?.target_id??'Spark setup'):key==='media'?(event.request?.worker_id??'Media jobs'):key==='recovery'?(event.request?.worker_id??'Server recovery'):event.worker_id,error:event.state==='failed'?event.error:null};
-    }
-    return latest;
-  }
+  capabilityActivity() {return chatCapabilityActivity(this.sessions.values());}
   status() {
     return {stop_reply_supported:true,notebook_access:Boolean(this.notebook),available:Boolean(this.provider)&&!this.closed&&!this.isSuspended(),suspended:this.isSuspended(),...(this.provider?.info??{}),
       study:this.study.status(),unreadable_conversations:[...this.loadErrors],conversations:[...this.sessions.values()].sort((a,b)=>b.updated_at-a.updated_at).map(s=>({id:s.id,title:s.title,updated_at:s.updated_at,busy:this.jobs.has(s.id),queued:s.messages.filter(m=>m.state==='queued').length,queue_paused:s.queue_paused??null}))};

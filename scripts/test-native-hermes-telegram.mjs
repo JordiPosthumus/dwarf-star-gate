@@ -5,6 +5,7 @@ import {NativeHermesChatClient} from '../ds4-gateway/genie-native-chat.mjs';
 import {NativeDashboardChat} from '../ds4-gateway/genie-native-dashboard.mjs';
 import {STUDY_PROMPT,STUDY_INSTRUCTIONS} from '../ds4-gateway/genie-study.mjs';
 import {createDashboard} from '../ds4-gateway/dashboard.mjs';
+import {MediaWatch} from '../ds4-gateway/media-watch.mjs';
 import fs from 'node:fs';import path from 'node:path';import http from 'node:http';import net from 'node:net';import {spawn,execFileSync} from 'node:child_process';import assert from 'node:assert/strict';
 const repo=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),source=process.argv[2];
 if(!source||!path.isAbsolute(source)||!fs.existsSync(path.join(source,'.venv/bin/python')))throw Error('Provide the absolute installed native Hermes source directory');
@@ -265,6 +266,26 @@ const studyView=await nativeChat.read(lastStudy.last_run.conversation_id,{all:tr
 assert.equal(studyView.messages[0].text,STUDY_PROMPT,'Display shows the exact original question while native input retains its full study context');
 assert.equal(studyView.messages[1].context.previous_study.latest_completed_answer.text,studyAnswer);
 write('native-study-transcript.json',studyView);
+// The real automatic watcher must work without a dashboard GET and reconcile a
+// lost native creation acknowledgment before sending one exact follow-up.
+const watcherClient=new NativeHermesChatClient({descriptor:home+'/native-gateway.json',bindings:[{id:migratedId,session_key:'agent:main:telegram:dm:12345'}]});
+const watcherChat=new NativeDashboardChat({client:watcherClient});
+const originalCreate=watcherClient.create.bind(watcherClient),watcherCreates=[];let loseCreation=true;
+watcherClient.create=async intent=>{watcherCreates.push({...intent});const made=await originalCreate(intent);if(loseCreation){loseCreation=false;throw Error('Fixture lost creation acknowledgment');}return made;};
+const watchOptions={filename:home+'/native-media-watch.json',chat:watcherChat,isEnabled:()=>true,now:()=>100000,
+ read:async()=>({enabled:true,jobs:[{id:'fixture-job',kind:'video',state:'queued'}],workers:[{id:'fixture-a',busy:false,kinds:['video']}],fleet:[{id:'fixture-a',is_healthy:true,drained:false},{id:'fixture-b',is_healthy:true,drained:false}]})};
+assert.equal(watcherChat.status().available,false);
+await new MediaWatch(watchOptions).tick();
+const uncertainCreation=JSON.parse(fs.readFileSync(watchOptions.filename));assert.ok(uncertainCreation.conversation_intent);assert.equal(uncertainCreation.conversation_id,undefined);
+await new MediaWatch(watchOptions).tick();
+const acceptedWatch=JSON.parse(fs.readFileSync(watchOptions.filename));assert.equal(acceptedWatch.conversation_id,uncertainCreation.conversation_intent.id);assert.equal(acceptedWatch.pending,undefined);
+assert.equal(watcherCreates.length,2);assert.deepEqual(watcherCreates[0],watcherCreates[1]);
+let watchView;
+for(let i=0;i<100;i++){await watcherChat.refresh();watchView=watcherChat.get(acceptedWatch.conversation_id);if(!watchView.busy&&watchView.messages.some(m=>m.role==='assistant'&&m.state==='complete'))break;await new Promise(r=>setTimeout(r,100));}
+assert.equal(watchView.busy,false);assert.equal(watchView.messages.filter(m=>m.role==='user').length,1);assert.equal(watchView.messages.at(-1).state,'complete');
+assert.equal(missingNativePolicy,0);assert.equal(toolCalls,5);
+const watchModelCalls=modelCalls;await new MediaWatch(watchOptions).tick();assert.equal(modelCalls,watchModelCalls,'Watcher reconstruction does not duplicate the completed native follow-up');
+write('native-watcher-acceptance.json',{conversation_id:acceptedWatch.conversation_id,creation_attempts:watcherCreates.length,requests:watchView.messages.filter(m=>m.role==='user').length,state:'passed'});
 // Owner-sized synthetic catalogue, native SQLite history and real loopback HTTP.
 // No real owner transcript or model request is used by this performance check.
 const bulkRows=[];
@@ -296,7 +317,7 @@ assert.ok(measuredDashboard.get(bulkRows[76].id).messages.at(-1).text==='Retaine
 assert.equal(measuredDashboard.status().available,true);
 const bulkRefresh={syntheticConversations:77,catalogueSize:measuredClient.bindings.size,cold:coldRefresh,warm:warmRefresh};
 write('bulk-refresh-acceptance.json',bulkRefresh);
-const result={native_pending_input_preserved:true,bulkRefresh,native_study_context_preserved:true,native_dashboard_http_stop_continue:true,native_stop_continue_preserved:true,continued_questions:resumedInputs.length,final_telegram_replies:telegramCalls.filter(c=>c.method==='sendMessage'&&c.body.text?.includes('executed the enrolled tool')).length,legacy_history_preserved:true,legacyHistoryRequests,native_operating_policy_preserved:true,nativeAgentCalls,nativeTitleCalls,at:new Date().toISOString(),state:!dropped&&replied&&toolCalls===4&&typing?'passed':'failed',dropped,replied,typing,modelCalls,toolCalls,replyCount,unauthorized_sender_rejected:true,restart_history_preserved:true,shared_dashboard_telegram_history:true,idempotent_ui_dispatch:true,shared_turn_serialization:true,dashboard_transcript_read:true,native_busy_observation:true,native_fifo_depth_verified:true,native_dashboard_creation:true,native_dashboard_binding_recovered:true,restartPortWaitMs,scope:'Actual pinned upstream Telegram adapter and gateway against local fake Bot API, model and fleet endpoints; fake credentials only.'};
+const result={native_watcher_preserved:true,native_pending_input_preserved:true,bulkRefresh,native_study_context_preserved:true,native_dashboard_http_stop_continue:true,native_stop_continue_preserved:true,continued_questions:resumedInputs.length,final_telegram_replies:telegramCalls.filter(c=>c.method==='sendMessage'&&c.body.text?.includes('executed the enrolled tool')).length,legacy_history_preserved:true,legacyHistoryRequests,native_operating_policy_preserved:true,nativeAgentCalls,nativeTitleCalls,at:new Date().toISOString(),state:!dropped&&replied&&toolCalls===5&&typing?'passed':'failed',dropped,replied,typing,modelCalls,toolCalls,replyCount,unauthorized_sender_rejected:true,restart_history_preserved:true,shared_dashboard_telegram_history:true,idempotent_ui_dispatch:true,shared_turn_serialization:true,dashboard_transcript_read:true,native_busy_observation:true,native_fifo_depth_verified:true,native_dashboard_creation:true,native_dashboard_binding_recovered:true,restartPortWaitMs,scope:'Actual pinned upstream Telegram adapter and gateway against local fake Bot API, model and fleet endpoints; fake credentials only.'};
 write('telegram-calls.json',telegramCalls);write('acceptance.json',result);console.log(JSON.stringify({...result,home}));
 assert.deepEqual(serverErrors,[]);assert.equal(result.state,'passed');
 }finally{if(dashboardServer){dashboardServer.closeAllConnections();await new Promise(r=>dashboardServer.close(r));}releaseModel?.();if(child&&child.exitCode===null){child.kill('SIGTERM');await Promise.race([new Promise(r=>child.once('exit',r)),new Promise(r=>setTimeout(r,5000))]);if(child.exitCode===null)child.kill('SIGKILL');}server.closeAllConnections();await new Promise(r=>server.close(r));fs.closeSync(log);}
