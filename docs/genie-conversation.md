@@ -576,3 +576,29 @@ restarts both sides while held, and verifies four saved questions run once each
 in order. This is still a staged read/control component: submission/research
 policy, study scheduling, watcher freshness, complete profile migration and
 exclusive-poller cutover must be finished before selecting it in production.
+
+
+### Existing Spark connection repair
+
+`spark_connection_status` lists configured connection names and retained
+hardware-verified discovery evidence, or reads one saved repair receipt.
+`repair_spark_connection` takes that existing connection and a stable repair UUID.
+It selects the newest authenticated retained scan matching the current IPv4
+configuration, refuses conflicting historical identities, rechecks the pinned
+host key and hardware identity, backs up normal `known_hosts` before adding only
+missing trust, and verifies the same alias through ordinary strict SSH. Alias
+identity files and routing are preserved. It never replaces conflicting keys,
+changes SSH configuration, or modifies remote services, models or firmware.
+
+The existing Spark setup capability and testing-mode gates apply. A stopped chat
+does not cancel an accepted connection operation. Dashboard restart guards check
+connection work independently. Receipts distinguish failure before promotion
+from an unconfirmed promotion or final verification; after uncertainty/restart,
+the same UUID only performs read-only normal-path reconciliation. Completed or
+failed IDs return their original receipts. New IDs cannot bypass an unresolved
+repair. A confirmed connection is not a recovered or qualified model service.
+
+This path requires a retained authenticated discovery identity and its private
+host-key receipt. An unauthenticated scan pin cannot establish that identity.
+Connection drift, missing evidence and unsupported destinations remain explicit
+failures, with no blind acceptance or fallback that weakens host-key checking.

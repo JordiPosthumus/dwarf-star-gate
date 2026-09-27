@@ -22,8 +22,8 @@ async function matchingKeys(file,host,command){
     return fields[1]+' '+fields[2];
   });
 }
-export async function promoteDiscoveryTrust({ssh,host,username,knownHosts,directory},{home=os.homedir(),command=execute}={}){
-  if(net.isIP(host)!==4||ssh!==`${username}@${host}`)throw Error('Trust promotion requires the verified IPv4 discovery destination.');
+export async function promoteDiscoveryTrust({ssh,host,username,knownHosts,directory,configuredAlias=false},{home=os.homedir(),command=execute}={}){
+  if(net.isIP(host)!==4||!(ssh===`${username}@${host}`||configuredAlias&&/^[a-zA-Z0-9][\w.@-]{0,252}$/.test(ssh)))throw Error('Trust promotion requires the verified IPv4 discovery destination.');
   const {stdout}=await command('ssh',['-G','--',ssh],{timeout:10000,maxBuffer:131072});
   const settings=Object.fromEntries(stdout.split('\n').map(line=>{const i=line.indexOf(' ');return [line.slice(0,i),line.slice(i+1)];}));
   const known=path.join(home,'.ssh','known_hosts');
