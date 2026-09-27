@@ -555,3 +555,24 @@ admission hook, and marks successfully buffered native text as accepted while
 preserving native burst merging. Previous private runtime installations remain
 untouched. Dashboard facade and live profile/cutover wiring remain separate;
 these staged controls do not switch the production bot.
+
+
+### Staged native dashboard read/control facade
+
+`NativeDashboardChat` reads Hermes's complete canonical display history and
+fresh native execution state through the private client. Its in-memory view is
+not another transcript store. A live execution gets a separate exact-turn
+control even before Hermes saves an assistant response; unfinished historical
+text remains unverified. Stale observations become unavailable, not idle.
+
+The existing same-origin dashboard GET, Stop and Continue routes work with this
+facade. Stop derives a stable hold identity from the native guard/generation;
+Continue requires the currently observed, confirmed hold. Lost acknowledgments
+remain visible after reconstructing the dashboard and native gateway. Uncertain
+holds cannot enable Continue. Already accepted fleet actions remain independent.
+
+The pinned gateway fixture exercises those actual dashboard HTTP routes,
+restarts both sides while held, and verifies four saved questions run once each
+in order. This is still a staged read/control component: submission/research
+policy, study scheduling, watcher freshness, complete profile migration and
+exclusive-poller cutover must be finished before selecting it in production.

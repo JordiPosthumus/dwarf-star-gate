@@ -1,10 +1,12 @@
 // Full native channel test: isolated profile, fake Bot API/model/tools, no real secrets.
 import {fileURLToPath} from 'node:url';
 import {NativeHermesChatClient} from '../ds4-gateway/genie-native-chat.mjs';
+import {NativeDashboardChat} from '../ds4-gateway/genie-native-dashboard.mjs';
+import {createDashboard} from '../ds4-gateway/dashboard.mjs';
 import fs from 'node:fs';import path from 'node:path';import http from 'node:http';import net from 'node:net';import {spawn,execFileSync} from 'node:child_process';import assert from 'node:assert/strict';
 const repo=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),source=process.argv[2];
 if(!source||!path.isAbsolute(source)||!fs.existsSync(path.join(source,'.venv/bin/python')))throw Error('Provide the absolute installed native Hermes source directory');
-const home=fs.mkdtempSync('/tmp/dsg-hermes-fixture-');fs.chmodSync(home,0o700);let child,modelCalls=0,toolCalls=0;let holdNextModel=false,heldModel=false,releaseModel;const serverErrors=[],telegramCalls=[],fakeToken='999999:fixture-not-a-real-bot-token';let updates=[{update_id:100,message:{message_id:101,date:Math.floor(Date.now()/1000),chat:{id:12345,type:'private',first_name:'Fixture'},from:{id:12345,is_bot:false,first_name:'Fixture'},text:'Read the existing fixture action status.'}}];const key='native-fixture-key-0123456789abcdef',token='native-bridge-fixture-0123456789';
+const home=fs.mkdtempSync('/tmp/dsg-hermes-fixture-');fs.chmodSync(home,0o700);let child,dashboardServer,modelCalls=0,toolCalls=0;let holdNextModel=false,heldModel=false,releaseModel;const serverErrors=[],telegramCalls=[],fakeToken='999999:fixture-not-a-real-bot-token';let updates=[{update_id:100,message:{message_id:101,date:Math.floor(Date.now()/1000),chat:{id:12345,type:'private',first_name:'Fixture'},from:{id:12345,is_bot:false,first_name:'Fixture'},text:'Read the existing fixture action status.'}}];const key='native-fixture-key-0123456789abcdef',token='native-bridge-fixture-0123456789';
 execFileSync(source+'/.venv/bin/python',['-B',repo+'/ds4-gateway/genie_native_identity.py','--source-home',repo+'/genie','--home',home],{stdio:['ignore','pipe','pipe']});
 const migratedId='11111111-1111-4111-8111-111111111111';
 const legacySource=home+'/legacy-input',migrationBundle=home+'/history-staging';fs.mkdirSync(legacySource,{mode:0o700});
@@ -161,7 +163,21 @@ holdNextModel=true;heldModel=false;
 updates.push({update_id:104,message:{message_id:105,date:Math.floor(Date.now()/1000),chat:{id:12345,type:'private'},from:{id:12345,is_bot:false,first_name:'Fixture'},text:'Hold this native turn for the exact Stop test.'}});
 for(let i=0;i<100&&!heldModel;i++)await new Promise(r=>setTimeout(r,100));
 assert.ok(heldModel,'Stop fixture reached the held native provider');
-const stoppable=await nativeChat.session(migratedId),stopHoldId='33333333-3333-4333-8333-333333333333';
+const stoppable=await nativeChat.session(migratedId);
+const startDashboard=async()=>{
+ const client=new NativeHermesChatClient({descriptor:home+'/native-gateway.json',bindings:[{id:migratedId,session_key:stoppable.session_key}]});
+ const facade=new NativeDashboardChat({client});
+ dashboardServer=createDashboard(()=>({}),undefined,null,null,null,null,null,null,facade);
+ await new Promise(r=>dashboardServer.listen(0,'127.0.0.1',r));
+ const url='http://127.0.0.1:'+dashboardServer.address().port;
+ const status=await (await fetch(url+'/api/genie/chat')).json();assert.equal(status.mode,'native');assert.equal(status.available,true);
+ return async(payload)=>{const r=await fetch(url+'/api/genie/chat'+(payload?'':'/'+migratedId),payload?{method:'POST',headers:{'content-type':'application/json',origin:url,'x-dsg-csrf':status.csrf_token},body:JSON.stringify(payload)}:{});return {status:r.status,body:await r.json()};};
+};
+let dashboardRequest=await startDashboard();
+const liveDashboard=await dashboardRequest();assert.equal(liveDashboard.status,200);
+const liveExecution=liveDashboard.body.messages.find(m=>m.native_execution&&m.native_turn_id===stoppable.turn_id);
+assert.ok(liveExecution,'Dashboard exposes the actual native execution before the final answer exists');
+assert.equal((await dashboardRequest({action:'stop-reply',conversation_id:migratedId,reply_id:'old-transcript-row'})).status,400,'Dashboard rejects stale displayed controls');
 await nativeChat.submit(migratedId,'Preserved before Stop: first queued question.','stop-first-queued');
 await nativeChat.submit(migratedId,'Preserved before Stop: second queued question.','stop-second-queued');
 for(let i=0;i<50&&(await nativeChat.session(migratedId)).queued!==2;i++)await new Promise(r=>setTimeout(r,100));
@@ -169,8 +185,11 @@ assert.equal((await nativeChat.session(migratedId)).queued,2);
 const wrongStop=await control({action:'stop',session_key:stoppable.session_key,turn_id:'a-stale-turn',hold_id:'44444444-4444-4444-8444-444444444444'});
 assert.equal(wrongStop.body.state,'rejected','A stale Stop cannot interrupt the current turn');
 assert.equal((await nativeChat.session(migratedId)).turn_id,stoppable.turn_id);
-const stopped=await nativeChat.stop(migratedId,stoppable.turn_id,stopHoldId);
-assert.equal(stopped.state,'held',JSON.stringify(stopped));assert.equal(stopped.queued,2);
+const dashboardStopped=await dashboardRequest({action:'stop-reply',conversation_id:migratedId,reply_id:liveExecution.id});
+assert.equal(dashboardStopped.status,202,JSON.stringify(dashboardStopped));
+const stopped=dashboardStopped.body.native_hold,stopHoldId=stopped.hold_id;
+assert.equal(stopped.state,'held');assert.equal(stopped.queued,2);assert.equal(dashboardStopped.body.queue_paused,liveExecution.id);
+write('native-dashboard-held.json',dashboardStopped.body);
 releaseModel();
 const callsAfterStop=modelCalls;
 await nativeChat.submit(migratedId,'Preserved while stopped: dashboard input.','stop-late-dashboard');
@@ -189,7 +208,10 @@ assert.ok(holdPortReady);child=launch();
 let heldAfterRestart;
 for(let i=0;i<100;i++){try{heldAfterRestart=await nativeChat.session(migratedId);if(heldAfterRestart.hold)break;}catch{}await new Promise(r=>setTimeout(r,200));}
 assert.equal(heldAfterRestart.hold.hold_id,stopHoldId);assert.equal(heldAfterRestart.hold.state,'held');assert.equal(heldAfterRestart.hold.queued,4);
-const resumed=await nativeChat.resume(migratedId,stopHoldId);assert.equal(resumed.admitted,4);
+dashboardServer.closeAllConnections();await new Promise(r=>dashboardServer.close(r));dashboardRequest=await startDashboard();
+const heldDashboard=await dashboardRequest();assert.equal(heldDashboard.body.queue_paused,liveExecution.id);assert.equal(heldDashboard.body.queued,4);assert.equal(heldDashboard.body.queue_resume_supported,true);
+const dashboardResumed=await dashboardRequest({action:'continue-queue',conversation_id:migratedId,expected_reply_id:liveExecution.id});assert.equal(dashboardResumed.status,202,JSON.stringify(dashboardResumed));
+const resumed=await nativeChat.resume(migratedId,stopHoldId);assert.equal(resumed.admitted,4);assert.equal(resumed.state,'released');
 assert.deepEqual(await nativeChat.resume(migratedId,stopHoldId),resumed,'Repeated continuation cannot redispatch held input');
 let continued;
 for(let i=0;i<150;i++){continued=await nativeChat.read(migratedId,{all:true});if(!continued.busy&&continued.queued===0&&continued.messages.filter(m=>m.role==='user'&&m.text.startsWith('Preserved ')).length===4)break;await new Promise(r=>setTimeout(r,200));}
@@ -198,7 +220,7 @@ assert.deepEqual(resumedInputs,['Preserved before Stop: first queued question.',
 assert.equal(continued.native_hold,null);
 assert.equal(missingNativePolicy,0);assert.equal(nativeAgentCalls,15);assert.equal(legacyHistoryRequests,12);
 write('native-stop-transcript.json',continued);
-const result={native_stop_continue_preserved:true,continued_questions:resumedInputs.length,final_telegram_replies:telegramCalls.filter(c=>c.method==='sendMessage'&&c.body.text?.includes('executed the enrolled tool')).length,legacy_history_preserved:true,legacyHistoryRequests,native_operating_policy_preserved:true,nativeAgentCalls,nativeTitleCalls,at:new Date().toISOString(),state:!dropped&&replied&&toolCalls===2&&typing?'passed':'failed',dropped,replied,typing,modelCalls,toolCalls,replyCount,unauthorized_sender_rejected:true,restart_history_preserved:true,shared_dashboard_telegram_history:true,idempotent_ui_dispatch:true,shared_turn_serialization:true,dashboard_transcript_read:true,native_busy_observation:true,native_fifo_depth_verified:true,native_dashboard_creation:true,native_dashboard_binding_recovered:true,restartPortWaitMs,scope:'Actual pinned upstream Telegram adapter and gateway against local fake Bot API, model and fleet endpoints; fake credentials only.'};
+const result={native_dashboard_http_stop_continue:true,native_stop_continue_preserved:true,continued_questions:resumedInputs.length,final_telegram_replies:telegramCalls.filter(c=>c.method==='sendMessage'&&c.body.text?.includes('executed the enrolled tool')).length,legacy_history_preserved:true,legacyHistoryRequests,native_operating_policy_preserved:true,nativeAgentCalls,nativeTitleCalls,at:new Date().toISOString(),state:!dropped&&replied&&toolCalls===2&&typing?'passed':'failed',dropped,replied,typing,modelCalls,toolCalls,replyCount,unauthorized_sender_rejected:true,restart_history_preserved:true,shared_dashboard_telegram_history:true,idempotent_ui_dispatch:true,shared_turn_serialization:true,dashboard_transcript_read:true,native_busy_observation:true,native_fifo_depth_verified:true,native_dashboard_creation:true,native_dashboard_binding_recovered:true,restartPortWaitMs,scope:'Actual pinned upstream Telegram adapter and gateway against local fake Bot API, model and fleet endpoints; fake credentials only.'};
 write('telegram-calls.json',telegramCalls);write('acceptance.json',result);console.log(JSON.stringify({...result,home}));
 assert.deepEqual(serverErrors,[]);assert.equal(result.state,'passed');
-}finally{releaseModel?.();if(child&&child.exitCode===null){child.kill('SIGTERM');await Promise.race([new Promise(r=>child.once('exit',r)),new Promise(r=>setTimeout(r,5000))]);if(child.exitCode===null)child.kill('SIGKILL');}server.closeAllConnections();await new Promise(r=>server.close(r));fs.closeSync(log);}
+}finally{if(dashboardServer){dashboardServer.closeAllConnections();await new Promise(r=>dashboardServer.close(r));}releaseModel?.();if(child&&child.exitCode===null){child.kill('SIGTERM');await Promise.race([new Promise(r=>child.once('exit',r)),new Promise(r=>setTimeout(r,5000))]);if(child.exitCode===null)child.kill('SIGKILL');}server.closeAllConnections();await new Promise(r=>server.close(r));fs.closeSync(log);}

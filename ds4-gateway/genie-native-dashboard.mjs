@@ -1,0 +1,101 @@
+// Read/control projection for the dashboard. Native Hermes remains the sole
+// transcript, scheduler and owner of pending questions. No production backend
+// selects this facade until submission, research and watcher migration is ready.
+import {createHash} from 'node:crypto';
+import {nativeRequestId} from './genie-native-chat.mjs';
+
+const digest=value=>createHash('sha256').update(value).digest('hex');
+export const nativeReplyId=(id,turn)=>`native-turn-${digest(JSON.stringify([id,turn]))}`;
+const holdId=(id,turn)=>nativeRequestId(id,`stop-${digest(turn)}`);
+const unavailable=()=>Object.assign(Error('Current native chat evidence is unavailable.'),{code:'NATIVE_UNAVAILABLE'});
+
+export function nativeDashboardView(conversation,previous,now=Date.now()){
+  const view=structuredClone(conversation),hold=view.native_hold;
+  if(view.history_complete!==true||typeof view.busy!=='boolean'||!Number.isInteger(view.queued)||view.queued<0)throw unavailable();
+  // Missing final native messages remain unverified. In particular, do not
+  // attach a new execution's Stop control to an old unfinished transcript row.
+  for(const message of view.messages)if(message.state==='working'){
+    message.state='unverified';
+    message.error='The native transcript has not recorded a final response for this turn.';
+  }
+  view.queue_paused=null;view.queue_resume_supported=false;
+  if(hold){
+    if(typeof hold.turn_id!=='string'||typeof hold.hold_id!=='string'||!Number.isInteger(hold.queued)||hold.queued<0||!['preparing','stopping','held','resuming','uncertain'].includes(hold.state))throw unavailable();
+    view.queue_paused=nativeReplyId(view.id,hold.turn_id);
+    view.queue_resume_supported=hold.state==='held'&&!view.busy;
+    view.queued=Math.max(view.queued,hold.queued);
+    view.queue_pause_message=hold.state==='held'
+      ?'This reply was stopped. Saved questions will resume in their original order when you continue. Previously accepted fleet operations may still be running.'
+      :'The native queue control has not been confirmed. Saved questions remain held; review the native receipt before continuing.';
+  }
+  if(view.busy){
+    const exact=typeof view.native_turn_id==='string'&&view.native_turn_id.length>0;
+    const id=exact?nativeReplyId(view.id,view.native_turn_id):`native-execution-${digest(view.native_session_key)}`;
+    const prior=previous?.messages.find(m=>m.id===id&&m.native_execution===true);
+    view.messages.push({id,role:'assistant',state:exact&&!hold?'working':'unverified',text:'',at:prior?.at??now,
+      native_execution:true,native_turn_id:exact?view.native_turn_id:null,
+      native_observation:{observed_at:view.observed_at,stoppable:exact&&!hold},
+      ...(!exact?{error:'Hermes reports an active session, but its exact turn identity is not yet available.'}:{})});
+  }
+  return view;
+}
+
+export class NativeDashboardChat{
+  constructor({client,now=Date.now,isSuspended=()=>false,maxAgeMs=15000}){
+    this.client=client;this.now=now;this.isSuspended=isSuspended;this.maxAgeMs=maxAgeMs;
+    this.sessions=new Map();this.observed=new Map();this.failures=new Set();this.closed=false;
+    this.refreshing=null;this.catalogueObserved=false;
+  }
+  async refresh(id){
+    // Serial observations prevent a slower earlier read replacing fresher state.
+    const prior=this.refreshing;
+    const operation=(async()=>{
+      if(prior)await prior.catch(()=>{});
+      if(this.closed)throw unavailable();
+      try{
+        if(id===undefined)await this.client.discover();
+        const ids=id===undefined?[...this.client.bindings.keys()]:[id];
+        for(const key of ids){
+          try{
+            const conversation=await this.client.read(key,{all:true});
+            if(this.closed)throw unavailable();
+            this.sessions.set(key,nativeDashboardView(conversation,this.sessions.get(key),this.now()));
+            this.observed.set(key,this.now());this.failures.delete(key);
+          }catch{this.failures.add(key);throw unavailable();}
+        }
+      }catch{if(id===undefined)this.failures.add('*');throw unavailable();}
+      if(id===undefined){this.failures.delete('*');this.catalogueObserved=true;}
+    })();
+    this.refreshing=operation;
+    try{await operation;}finally{if(this.refreshing===operation)this.refreshing=null;}
+  }
+  fresh(id){return !this.closed&&!this.failures.has('*')&&!this.failures.has(id)&&this.observed.has(id)&&this.now()-this.observed.get(id)>=0&&this.now()-this.observed.get(id)<=this.maxAgeMs;}
+  get(id){if(!this.fresh(id)||!this.sessions.has(id))throw unavailable();return structuredClone(this.sessions.get(id));}
+  status(){
+    const fresh=this.catalogueObserved&&!this.failures.has('*')&&[...this.client.bindings.keys()].every(id=>this.fresh(id));
+    return {engine:'Hermes',mode:'native',available:!this.closed&&fresh&&!this.isSuspended(),suspended:this.isSuspended(),
+      stop_reply_supported:true,native_observation_available:fresh,unreadable_conversations:[...this.failures],
+      conversations:[...this.sessions.values()].sort((a,b)=>b.updated_at-a.updated_at).map(c=>({id:c.id,title:c.title,updated_at:c.updated_at,
+        busy:this.fresh(c.id)?c.busy:null,queued:this.fresh(c.id)?c.queued:null,queue_paused:c.queue_paused,observation_available:this.fresh(c.id)}))};
+  }
+  async stop(id,replyId){
+    await this.refresh(id);const conversation=this.get(id);
+    if(conversation.queue_paused===replyId&&conversation.native_hold?.state==='held')return conversation;
+    const current=conversation.messages.find(m=>m.id===replyId&&m.native_execution===true&&m.native_observation?.stoppable);
+    if(!current)throw Error('That native turn is no longer the current stoppable reply. Refresh before trying again.');
+    // Deterministic per-turn identity also reconciles a lost response after the
+    // dashboard restarts; it never targets a later turn.
+    try{await this.client.stop(id,current.native_turn_id,holdId(id,current.native_turn_id));}
+    finally{await this.refresh(id);}
+    return this.get(id);
+  }
+  async resume(id,expectedReplyId){
+    if(this.closed||this.isSuspended())throw Error('Chat is not ready to continue queued questions.');
+    await this.refresh(id);const conversation=this.get(id);
+    if(conversation.queue_paused!==expectedReplyId||!conversation.queue_resume_supported)throw Error('The held queue changed or continuation is unconfirmed. Review its latest state.');
+    try{await this.client.resume(id,conversation.native_hold.hold_id);}
+    finally{await this.refresh(id);}
+    return this.get(id);
+  }
+  close(){this.closed=true;}
+}
