@@ -465,7 +465,7 @@ print(json.dumps(result))
         file=self.backup/'worker-launcher-path.json'
         return json.loads(file.read_text()) if file.exists() else '/tmp/glm53-exl3-worker.sh'
 
-    def serving_snapshot(self):
+    def serving_snapshot(self,canonical_mounts=True):
         self.baseline_unchanged()
         result={}
         for name,rank in [('head',False),('rank',True)]:
@@ -478,8 +478,16 @@ print(json.dumps(result))
             if len(mounts)!=1:raise RuntimeError('Expected one current serving launcher bind')
             script=(self.rank if rank else self.command)(['cat',mounts[0]],timeout=30)
             if len(script)>1048576:raise RuntimeError('Serving launcher exceeds inspection allowance')
+            destinations=[m.get('Destination') for m in current['Mounts']]
+            if (any(not isinstance(d,str) or not d.startswith('/') for d in destinations)
+                    or len(destinations)!=len(set(destinations))):
+                raise RuntimeError('Serving mounts require unique absolute destinations')
             result[name]={**{key:current[key] for key in ['Id','Image','Config','HostConfig','Mounts']},
                           'started_at':current['State']['StartedAt'],'launcher_sha256':hashlib.sha256(script).hexdigest()}
+            if canonical_mounts:
+                # Docker's mount list order can vary across identical inspections.
+                # Preserve every entry/field; only order by the unique destination.
+                result[name]['Mounts']=sorted(current['Mounts'],key=lambda m:m['Destination'])
         return result
 
     def prepare_serving(self):
@@ -509,7 +517,7 @@ print(json.dumps(result))
         before=json.loads(file.read_text())
         observations=[]
         for _ in range(2):
-            current=self.serving_snapshot()
+            current=self.serving_snapshot(canonical_mounts=False)
             changes=[]
             for member in ['head','rank']:
                 for key in ['Id','Image','Config','HostConfig','Mounts','started_at','launcher_sha256']:

@@ -65,7 +65,7 @@ class CurrentServingQualification(unittest.TestCase):
             c['Mounts'].append({'Type':'bind','Source':'/private/models','Destination':'/models','RW':False})
         self.remote.prepare()
         before={str(p.relative_to(self.root)):p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
-        self.containers['head']['Mounts'].reverse()
+        self.containers['head']['Mounts'].sort(key=lambda m:m['Destination'],reverse=True)
         self.containers['rank']['HostConfig']['ShmSize']=4096
         self.containers['rank']['Config']['Env'].append('PRIVATE_TOKEN=must-not-appear')
         result=self.remote.inspect_serving()
@@ -86,6 +86,30 @@ class CurrentServingQualification(unittest.TestCase):
         file=self.remote.backup/'serving.json';saved=file.read_bytes();file.unlink()
         target=self.root/'elsewhere.json';target.write_bytes(saved);file.symlink_to(target)
         with self.assertRaisesRegex(RuntimeError,'regular serving backup'):self.remote.inspect_serving()
+
+    def test_reordered_identical_mounts_prepare_and_qualify_but_changed_mounts_refuse(self):
+        for c in self.containers.values():
+            c['Mounts'].append({'Type':'bind','Source':'/fixture/models','Destination':'/models','RW':False,'Propagation':'rprivate'})
+        def inspect(rank=False):
+            container=self.containers['rank' if rank else 'head']
+            container['Mounts'].reverse()
+            return copy.deepcopy(container)
+        self.remote.inspect=inspect
+        self.remote.prepare()
+        self.assertTrue(self.remote.run()['qualification_passed'])
+        # All fields remain part of equality, even if Docker reorders the entries.
+        (self.root/'run-intent.json').unlink()
+        for field,value in [('RW',True),('Source','/other/models'),('Propagation','rshared')]:
+            mount=next(m for m in self.containers['head']['Mounts'] if m['Destination']=='/models')
+            before=mount[field];mount[field]=value
+            with self.assertRaisesRegex(RuntimeError,'changed since preparation'):self.remote.run()
+            mount[field]=before
+
+    def test_ambiguous_mount_destinations_cannot_be_normalized(self):
+        self.containers['head']['Mounts'].extend([
+            {'Type':'bind','Source':'/first','Destination':'/models','RW':False},
+            {'Type':'bind','Source':'/second','Destination':'/models','RW':False}])
+        with self.assertRaisesRegex(RuntimeError,'unique absolute destinations'):self.remote.prepare()
 
     def test_missing_cache_boundary_or_concurrency_evidence_cannot_pass(self):
         for label,key in [('arithmetic','passed'),('cold-A','cold_cache_proved'),('cold-B','cold_cache_proved'),
