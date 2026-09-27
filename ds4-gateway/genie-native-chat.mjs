@@ -4,6 +4,8 @@ import path from 'node:path';
 import {createHash} from 'node:crypto';
 
 const sections={
+  inspection:['read_server_configuration','inspect_server','read_server_artifact'],
+  research:['stargate_web_search','stargate_web_extract'],
   spark_setup:['request_spark_access','bootstrap_spark_access','spark_access_status','discover_sparks','spark_discovery_status','resume_spark_preparation','enroll_spark','enroll_discovered_spark','qualify_spark_media','setup_spark','spark_setup_status','prepare_spark','qualify_spark_llm','register_spark_llm'],
   recovery:['recovery_status','recover_server','prepare_pair_recovery','enroll_pair_recovery','qualify_pair_recovery','qualify_omlx_recovery','enroll_omlx_recovery'],
   power:['fleet_power_status','inspect_fleet_service','fleet_power','fleet_routing','fleet_recipe_trial','fleet_recipe_rollout'],
@@ -61,13 +63,15 @@ export function projectNativeConversation({id,title='Gate Genie',session,message
       const call=calls.get(row.tool_call_id),name=call?.name??row.tool_name,current=call?.reply??ensureReply(row),section=sectionFor.get(name);
       const body=textContent(row.content),value=parse(body),failed=Boolean(value?.error)||value?.is_error===true;
       const event={tool:name??'native_tool',tool_call_id:row.tool_call_id,state:failed?'failed':'complete',at:new Date(stamp(row.timestamp)).toISOString(),request:call?.request??null,result:value??{raw_text:body},...(failed?{error:typeof value.error==='string'?value.error:'Native tool reported an error.'}:{})};
+      if(section==='inspection')Object.assign(event,{operation:name,kind:name==='inspect_server'?'live':'records',worker_id:call?.request?.worker_id??value?.worker_id,...(call?.request?.selected_default!==undefined?{selected_default:call.request.selected_default}:{}),...(value?.diagnostic?{diagnostic:value.diagnostic}:{})});
+      if(section==='research')Object.assign(event,{kind:name==='stargate_web_search'?'search':'read',...(name==='stargate_web_search'?{query:call?.request?.query,sources:Array.isArray(value?.results)?value.results:[]}:{sources:typeof value?.url==='string'?[{url:value.url}]:[],content_sha256:value?.content_sha256,truncated:value?.truncated})});
       current.native_tools??={events:[]};current.native_tools.events.push(event);
       if(section){current[section]??={events:[]};current[section].events.push(event);}
     }
   }
   return {id,title,messages:result,native_session_id:session.session_id,native_session_key:session.session_key,
     busy:session.busy,queued:session.queued,observed_at:session.observed_at,updated_at:Math.max(0,...result.map(m=>Number.isFinite(m.at)?m.at:0)),
-    pagination,history_complete:pagination?.offset===0&&pagination?.returned<pagination?.limit,
+    pagination,history_complete:pagination?.offset===0&&Number.isSafeInteger(pagination?.total)&&pagination.returned===pagination.total,
     scope:'Native Hermes transcript. A completed reply or tool call does not prove the requested fleet outcome.'};
 }
 
@@ -90,16 +94,23 @@ export class NativeHermesChatClient{
   }
   async control(payload){return this.request('/api/platforms/stargate_control/events',{body:payload,control:true});}
   async session(id){const b=this.binding(id);const s=await this.control({action:'session',session_key:b.session_key});if(s.session_key!==b.session_key||s.state!=='observed'||typeof s.session_id!=='string'||typeof s.busy!=='boolean'||!Number.isInteger(s.queued))throw Error('Fresh native session evidence is unavailable.');return s;}
-  async read(id,{offset=0,limit=500}={}){
+  async read(id,{offset=0,limit=500,all=false}={}){
     if(!Number.isSafeInteger(offset)||offset<0||!Number.isSafeInteger(limit)||limit<1||limit>500)throw Error('Invalid native transcript page.');
+    if(typeof all!=='boolean'||(all&&offset!==0))throw Error('Complete native history starts at the first page.');
     const b=this.binding(id),session=await this.session(id);
-    const page=await this.request(`/api/sessions/${encodeURIComponent(session.session_id)}/messages?order=latest&limit=${limit}&offset=${offset}`);
-    // Compression may change the resolved transcript ID; require a coherent
-    // response and retain it explicitly instead of rewriting native history.
-    if(!Array.isArray(page.data)||typeof page.session_id!=='string'||!page.pagination)throw Error('Native transcript evidence is unavailable.');
+    let page,revision=null,resolved=null,total=null,cursor=offset;const messages=[];
+    do{
+      page=await this.control({action:'transcript',session_key:b.session_key,session_id:session.session_id,offset:cursor,limit,revision});
+      const p=page.pagination;
+      if(page.state!=='observed'||page.session_key!==b.session_key||!Array.isArray(page.data)||typeof page.session_id!=='string'||!page.session_id||!p||p.offset!==cursor||p.limit!==limit||p.returned!==page.data.length||p.returned>limit||p.order!=='oldest'||!Number.isSafeInteger(p.total)||p.total<0||p.returned!==Math.min(limit,Math.max(0,p.total-cursor))||typeof page.revision!=='string'||!/^[a-f0-9]{64}$/.test(page.revision))throw Error('Native transcript evidence is unavailable.');
+      if(revision!==null&&(page.revision!==revision||page.session_id!==resolved||p.total!==total))throw Error('Native history changed during observation; read it again.');
+      revision=page.revision;resolved=page.session_id;total=p.total;messages.push(...page.data);cursor+=p.returned;
+    }while(all&&cursor<total);
+    // Recheck the native routing entry after all pages; a concurrent compression
+    // or reset must not silently stitch different conversations together.
     const after=await this.session(id);
     if(after.session_id!==session.session_id)throw Error('Native session changed during observation; read it again.');
-    return projectNativeConversation({id,title:b.title,session:{...after,session_id:page.session_id},messages:page.data,pagination:page.pagination});
+    return {...projectNativeConversation({id,title:b.title,session:{...after,session_id:resolved},messages,pagination:{offset,limit:all?messages.length:limit,returned:messages.length,total,order:'oldest'}}),native_history_revision:revision};
   }
   async submit(id,text,requestId){
     const b=this.binding(id);

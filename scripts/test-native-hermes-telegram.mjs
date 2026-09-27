@@ -102,9 +102,11 @@ const replyCount=telegramCalls.filter(c=>c.method==='sendMessage'&&c.body.text?.
 assert.equal(replyCount,5,'Native history survives restart and pending owner message gets a reply');
 assert.equal(toolCalls,1,'Second turn retains the original tool result rather than losing history and repeating the tool');
 assert.deepEqual((await control(nativeRequest)).body,submitted.body,'Restart preserves the UI dispatch receipt without replay');
-const nativeAfter=await nativeChat.read('fixture-conversation');
+const nativeAfter=await nativeChat.read('fixture-conversation',{all:true,limit:2});
 assert.equal(nativeAfter.native_session_id,nativeBefore.native_session_id,'Restart retains the original native session');
 assert.equal(nativeAfter.messages.filter(m=>m.role==='assistant'&&m.state==='complete').length,5,'Dashboard sees every completed native reply after restart');
+assert.equal(nativeAfter.history_complete,true,'Every native display page was joined under the same revision');
+assert.equal((await control({action:'transcript',session_key:'agent:main:telegram:dm:54321',session_id:nativeAfter.native_session_id,offset:0,limit:2,revision:null})).body.state,'rejected','Display history is limited to the explicitly bound owner session');
 assert.equal((await nativeChat.receipt('fixture-conversation','watcher-follow-up-fixture')).state,'accepted_unverified','Dispatch state is not silently promoted to operational success');
 write('native-transcript.json',nativeAfter);
 const dropped=telegramCalls.some(c=>c.method==='deleteWebhook'&&(c.body.drop_pending_updates===true||c.body.drop_pending_updates==='true'));

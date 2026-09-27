@@ -116,8 +116,8 @@ implemented by this adapter alone.
 
 ## Reading native history
 
-`NativeHermesChatClient` in `ds4-gateway/genie-native-chat.mjs` reads messages from
-Hermes's authenticated transcript API and uses the control adapter's `session`
+`NativeHermesChatClient` in `ds4-gateway/genie-native-chat.mjs` reads messages through
+the authenticated control adapter's `transcript` action and uses its `session`
 observation to resolve the current routing entry. That observation reads the
 pinned native adapter's active and pending session maps, including its durable
 active-turn marker. Missing scheduler evidence is unavailable, never idle.
@@ -128,13 +128,25 @@ It rereads credentials for every request and rejects remote destinations or
 shared descriptor files. `read(id, {offset, limit})` returns a paginated
 projection of native user/assistant messages plus original tool results. It
 checks the routing entry before and after reading; a changed session invalidates
-the observation. A full page is not represented as complete history.
+the observation. `read(id, {all: true})` joins all display pages under one content
+revision; concurrent history changes reject the observation instead of mixing
+pages. A partial page range is not represented as complete history.
+
+The control adapter uses the pinned Hermes store's `get_resume_conversations`
+display projection, which includes original messages archived during in-place
+compaction and the native continuation lineage. It excludes unrelated branches
+using Hermes's own rules. The ordinary API message endpoint exposes active model
+context and would omit archived messages. No parallel conversation database or
+transcript rewrite is introduced. The display endpoint only accepts explicitly
+bound sessions and strips reasoning before returning its pages.
 
 Tool receipts retain their native operation state: a completed tool call that
 returned a running operation remains a running operation. Only a final native
 assistant record marks a reply complete. Reasoning text is not copied into the
 dashboard projection. The client never writes a native transcript and never
 uses the native API's separate agent execution route.
+Inspection and public research receipts are projected into the existing study
+evidence fields so their provenance remains usable by the dashboard.
 
 `submit` maps existing dashboard/watcher request identities deterministically to
 the ingress UUID, preserving duplicate protection across retries and restarts.
@@ -143,3 +155,8 @@ including busy-state observation and five visible replies after restart.
 This client is staged infrastructure: selecting it as the live dashboard chat
 backend, migrating historical conversations and preserving the other chat
 controls remain required before cutover.
+
+`genie_native_history_test.py` exercises actual native compaction, continuation,
+branch exclusion, and revision changes in a disposable database. Run it with the
+installed native runtime's Python and its source directory on `PYTHONPATH`; the
+test is explicitly skipped when that runtime is unavailable.

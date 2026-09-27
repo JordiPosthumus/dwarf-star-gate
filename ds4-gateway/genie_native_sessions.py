@@ -3,6 +3,7 @@
 This adapter has no agent loop, Telegram SDK calls or conversation database.
 Hermes's plugin injector owns session routing, authorization and delivery.
 """
+import asyncio
 import hashlib
 import hmac
 import json
@@ -11,6 +12,30 @@ from datetime import datetime, timezone
 from pathlib import Path
 import threading
 import uuid
+
+
+def native_display_page(db, session_id, offset, limit, revision=None):
+    """Project Hermes's canonical display lineage, never its compressed model context.
+
+    get_resume_conversations reads one native snapshot and preserves archived
+    display generations. It does not rewrite the transcript or run an agent.
+    """
+    if type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 500:
+        raise ValueError('Invalid native display page')
+    if revision is not None and (not isinstance(revision, str) or len(revision) != 64):
+        raise ValueError('Invalid native display revision')
+    resolved = db.resolve_resume_session_id(session_id)
+    _, display = db.get_resume_conversations(resolved)
+    keys = ('role', 'content', 'tool_call_id', 'tool_calls', 'tool_name', 'timestamp', 'finish_reason', 'display_kind')
+    rows = [{'id': row['_row_id'], **{key: row[key] for key in keys if key in row}} for row in display]
+    digest = hashlib.sha256(json.dumps([resolved, rows], sort_keys=True).encode()).hexdigest()
+    if revision is not None and revision != digest:
+        raise ValueError('Native display changed during observation; read it again')
+    return {'state': 'observed', 'session_id': resolved, 'revision': digest,
+            'data': rows[offset:offset + limit],
+            'pagination': {'offset': offset, 'limit': limit, 'returned': len(rows[offset:offset + limit]),
+                           'total': len(rows), 'order': 'oldest'},
+            'scope': 'Native Hermes display lineage, including compacted history; reasoning is excluded.'}
 
 
 class NativeSessionRequests:
@@ -111,9 +136,31 @@ def register_native_sessions(ctx):
             try:
                 if payload.get('action') == 'session':
                     return await self.observe_session(payload)
+                if payload.get('action') == 'transcript':
+                    return await self.read_transcript(payload)
                 return self.requests.dispatch(payload)
             except ValueError as error:
                 return {'state': 'rejected', 'error': str(error)}
+
+        async def read_transcript(self, payload):
+            expected = {'action', 'session_key', 'session_id', 'offset', 'limit', 'revision'}
+            key = payload.get('session_key')
+            if set(payload) != expected or not isinstance(key, str) or key not in self.requests.allowed:
+                raise ValueError('Use an explicitly connected native session')
+            before = await self.observe_session({'action': 'session', 'session_key': key})
+            if before.get('state') != 'observed' or payload.get('session_id') != before['session_id']:
+                raise ValueError('Native session changed during observation; read it again')
+            # Resolve the existing native store by session key so background UI
+            # reads use the same profile as the Telegram conversation.
+            db = await self.gateway_runner.async_session_store._db_for_key(key)
+            if db is None:
+                return {'state': 'unavailable', 'session_key': key}
+            page = await asyncio.to_thread(native_display_page, db, before['session_id'],
+                                          payload['offset'], payload['limit'], payload['revision'])
+            after = await self.observe_session({'action': 'session', 'session_key': key})
+            if after.get('state') != 'observed' or after['session_id'] != before['session_id']:
+                raise ValueError('Native session changed during observation; read it again')
+            return {**page, 'session_key': key}
 
         async def observe_session(self, payload):
             key = payload.get('session_key')
