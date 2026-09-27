@@ -90,6 +90,9 @@ def register(ctx):
     if not isinstance(descriptor, str):
         raise ValueError('Configure the private bridge descriptor')
     sys.path.insert(0, str(module_directory))
+    if ctx.get_config('enable_ui_bridge', False) is True:
+        from genie_native_sessions import register_native_sessions
+        register_native_sessions(ctx)
     # Native Hermes records tool calls/results itself. Do not create a second
     # transport, conversation store, message queue or competing tool-event log.
     emit = lambda *_args, **_kwargs: None

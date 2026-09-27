@@ -31,7 +31,7 @@ installs the pinned Hermes source, private Python and locked messaging
 requirements under `runtime/genie-native-runtime`, independently of the existing
 core runtime. It does not start a process or configure a bot.
 
-Outstanding work includes shared session serialization, transcript and owner
+Outstanding work includes the dashboard transcript facade, transcript and owner
 migration, operation-follow-up delivery, and live Telegram acceptance.
 Do not launch this against the live bot while the existing poller is running.
 
@@ -53,3 +53,60 @@ and Telegram adapter against local fake endpoints in a temporary profile. It
 checks startup message preservation, typing, an enrolled tool receipt, rejected
 unauthorized input, and history plus queued-message delivery across restart.
 It never reads the installation's Telegram token or invokes production tools.
+
+## Shared native conversation input
+
+The opt-in session control adapter routes dashboard input with Hermes's supported
+`PluginContext.inject_message` into an **existing** Telegram session. The native
+Telegram adapter owns turn scheduling, authorization, history and replies. Do
+not use `/api/sessions/{id}/chat` as the shared input path: at the pinned version
+that API starts its own agent execution outside the Telegram turn scheduler.
+
+In the dedicated native profile, configure:
+
+```yaml
+display:
+  busy_input_mode: queue
+plugins:
+  entries:
+    stargate:
+      allow_gateway_injection: true
+      settings:
+        enable_ui_bridge: true
+        # Also retain module_directory and bridge_descriptor above.
+platforms:
+  stargate_control:
+    enabled: true
+    token: <private-random-control-token>
+    gateway_restart_notification: false
+    extra:
+      allowed_session_keys:
+        - <existing-owner-native-session-key>
+```
+
+Start with the native runtime's Python, the runtime source on `PYTHONPATH`, and
+DSG's `scripts/run-native-hermes.py --config /private/profile/config.yaml`.
+This small entry point discovers configured plugin platforms before Hermes
+parses its explicit configuration; Hermes otherwise omits unknown platform names
+at that stage. It delegates execution entirely to `gateway.run`.
+
+Authenticated `POST /api/platforms/stargate_control/events` takes exactly
+`action: send`, a canonical UUID `request_id`, an allowed `session_key`, and
+`message`. Use `Authorization: Bearer <private-random-control-token>`.
+Read its dispatch receipt with `action: status` and the same `request_id`.
+Identical retries return the saved receipt; a different instruction under the
+same UUID is rejected. Receipts survive restart in private plugin storage.
+
+`accepted_unverified` means scheduled, **not delivered or completed**. Correlate
+`[DSG request <UUID>]` in the native transcript before reporting an outcome.
+An uncertain dispatch is never automatically replayed. The adapter rejects
+sessions outside its explicit allowlist, and Hermes rechecks authorization and
+session identity when dispatching. It creates no new session or agent loop.
+
+The native channel test also exercises this route, retained tool history,
+duplicate handling and an input arriving while a Telegram turn is running.
+On macOS the upstream API deliberately disables socket address reuse; the test
+waits for the same port to become available before restarting. A production
+supervisor must account for that release delay and verify API readiness as well
+as Telegram readiness. The dashboard facade and production supervisor are not
+implemented by this adapter alone.

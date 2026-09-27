@@ -1,0 +1,122 @@
+"""Route authorized DSG UI input into an existing native Hermes conversation.
+
+This adapter has no agent loop, Telegram SDK calls or conversation database.
+Hermes's plugin injector owns session routing, authorization and delivery.
+"""
+import hashlib
+import hmac
+import json
+import os
+from pathlib import Path
+import threading
+import uuid
+
+
+class NativeSessionRequests:
+    def __init__(self, directory, allowed, inject):
+        if not isinstance(allowed, list) or any(not isinstance(key, str) or not key for key in allowed):
+            raise ValueError('Configure an explicit list of native session keys')
+        self.directory = Path(directory)
+        self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        info = self.directory.lstat()
+        if self.directory.is_symlink() or info.st_mode & 0o077 or info.st_uid != os.getuid():
+            raise ValueError('Native UI receipts require a private owned directory')
+        self.allowed = frozenset(allowed)
+        self.inject = inject
+        self.lock = threading.Lock()
+
+    def _path(self, request_id):
+        if not isinstance(request_id, str) or str(uuid.UUID(request_id)) != request_id:
+            raise ValueError('Use a canonical request UUID')
+        return self.directory / (request_id + '.json')
+
+    def _read(self, file):
+        if file.is_symlink():
+            raise ValueError('Invalid native UI receipt')
+        return json.loads(file.read_text()) if file.exists() else None
+
+    def _save(self, file, value):
+        temporary = file.with_name('.' + str(uuid.uuid4()))
+        try:
+            with temporary.open('x') as output:
+                os.chmod(temporary, 0o600)
+                output.write(json.dumps(value) + '\n')
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(temporary, file)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def dispatch(self, payload):
+        action = payload.get('action')
+        expected = {'action', 'request_id'} if action == 'status' else {'action', 'request_id', 'session_key', 'message'}
+        if action not in {'send', 'status'} or set(payload) != expected:
+            raise ValueError('Use one exact send or status request')
+        file = self._path(payload['request_id'])
+        with self.lock:
+            prior = self._read(file)
+            if action == 'status':
+                return prior or {'request_id': payload['request_id'], 'state': 'unknown'}
+            session = payload['session_key']
+            message = payload['message']
+            if not isinstance(session, str) or session not in self.allowed or not isinstance(message, str) or not message.strip():
+                raise ValueError('Use an explicitly connected native session and nonempty message')
+            fingerprint = hashlib.sha256(json.dumps([session, message]).encode()).hexdigest()
+            if prior:
+                if prior['fingerprint'] != fingerprint:
+                    raise ValueError('Request identity belongs to different input')
+                # Even a process dying between acceptance and recording cannot
+                # replay a possibly executing fleet instruction.
+                return prior
+            record = {'request_id': payload['request_id'], 'session_key': session,
+                      'fingerprint': fingerprint, 'state': 'dispatching',
+                      'scope': 'Dispatch receipt only. Verify the matching native transcript before claiming completion. Uncertain dispatch must not be replayed.'}
+            self._save(file, record)
+            try:
+                accepted = self.inject('[DSG request ' + payload['request_id'] + ']\n\n' + message, session_key=session)
+                record['state'] = 'accepted_unverified' if accepted else 'not_accepted'
+            except Exception:
+                record['state'] = 'unknown'
+            self._save(file, record)
+            return record
+
+
+def register_native_sessions(ctx):
+    from gateway.config import Platform
+    from gateway.platforms.base import BasePlatformAdapter, SendResult
+
+    class NativeUIAdapter(BasePlatformAdapter):
+        def __init__(self, config):
+            super().__init__(config, Platform('stargate_control'))
+            self.requests = NativeSessionRequests(ctx.state.data_dir / 'ui-requests',
+                                                  config.extra.get('allowed_session_keys', []), ctx.inject_message)
+
+        async def connect(self, *, is_reconnect=False):
+            if not isinstance(self.config.token, str) or len(self.config.token) < 16:
+                return False
+            self._mark_connected()
+            return True
+
+        async def disconnect(self):
+            self._running = False
+
+        async def verify_http_event_request(self, authorization):
+            expected = 'Bearer ' + (self.config.token or '')
+            return (bool(self._running and self.config.token) and hmac.compare_digest(
+                str(authorization).encode(), expected.encode()), 'native_ui_authorization')
+
+        async def dispatch_http_event(self, payload):
+            try:
+                return self.requests.dispatch(payload)
+            except ValueError as error:
+                return {'state': 'rejected', 'error': str(error)}
+
+        async def send(self, chat_id, content, reply_to=None, metadata=None):
+            return SendResult(success=False, error='Replies belong to the existing native session adapter')
+
+        async def get_chat_info(self, chat_id):
+            return {'name': 'DSG native session control', 'type': 'dm'}
+
+    ctx.register_platform(name='stargate_control', label='DSG session control',
+                          adapter_factory=NativeUIAdapter, check_fn=lambda: True,
+                          validate_config=lambda config: bool(config.token), allow_update_command=False)
