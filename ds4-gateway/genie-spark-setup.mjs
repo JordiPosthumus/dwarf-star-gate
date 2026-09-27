@@ -49,9 +49,14 @@ export function createSparkSetupTools(config,{isEnabled=()=>true,isDiscoveryEnab
   const read=async id=>{try{const result=await transport(targets[id],{action:'status'});const row={...result,observed_at:new Date().toISOString()};observations.set(id,row);return {target_id:id,...row};}catch(error){const row={state:'unavailable',error:error.message,observed_at:new Date().toISOString()};observations.set(id,row);return {target_id:id,...row};}};
   const pending=new Set();
   const endpoint=createToolEndpoint('/api/genie/spark-setup-tools','x-sg-spark-setup-tool',async input=>{
-    if(['connection_status','repair_connection'].includes(input?.action)){
+    if(['connection_status','inspect_connection','repair_connection'].includes(input?.action)){
       if(!connectionRepair)throw Error('Existing Spark connection repair is not connected.');
       const {action,...details}=input;
+      if(action==='inspect_connection'){
+        if(!isDiscoveryEnabled())throw Error('Server inspection is switched off.');
+        if(isTesting())throw Error('Connection inspection is paused in testing mode.');
+        return connectionRepair.inspect(details);
+      }
       if(action==='connection_status'){
         if(!['','repair_id'].includes(Object.keys(details).sort().join(',')))throw Error('Connection status accepts only an optional saved repair_id.');
         return connectionRepair.status(details);
