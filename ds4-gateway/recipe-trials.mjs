@@ -24,7 +24,10 @@ export function createRecipeTrials({config,powerBusy=()=>false,launch=spawn}={})
     return entries;
   };
   const compact=value=>Array.isArray(value)?value.map(compact):value&&typeof value==='object'?Object.fromEntries(Object.entries(value).filter(([key])=>!['metrics_before','metrics_after'].includes(key)).map(([key,item])=>[key,key==='answer'&&typeof item==='string'?item.slice(0,160):compact(item)])):value;
-  const status=()=>allStatus().sort((a,b)=>String(b.started_at).localeCompare(String(a.started_at))).slice(0,32).map(compact);
+  const status=(trial_id)=>{
+    if(trial_id!==undefined&&!uuid.test(trial_id))throw Error('Use one exact trial UUID');
+    return allStatus().filter(r=>trial_id===undefined||r.trial_id===trial_id).sort((a,b)=>String(b.started_at).localeCompare(String(a.started_at))).slice(0,32).map(compact);
+  };
   const busy=worker=>allStatus().some(r=>r.stage!=='inspect'&&['starting','running','restoration_required'].includes(r.state)&&machinesFor(r.worker,config).some(g=>machinesFor(worker,config).includes(g)));
   async function start({profile,stage,trial_id,expected_finished_at}){
     if(!uuid.test(trial_id??'')||!['prepare','run','rollout','inspect'].includes(stage)||!Object.hasOwn(enrolled,profile))throw Error('Use an enrolled recipe profile, supported stage and one operation UUID.');

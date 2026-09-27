@@ -142,3 +142,16 @@ test('inspection rejects candidate trials and changed saved plans',async t=>{
  await assert.rejects(manager.start({...args,stage:'inspect'}),/unchanged saved plan/);
  assert.equal(f.launched.length,1);
 });
+
+test('exact trial status includes older evidence outside the recent global window',t=>{
+ const f=fixture(t),directory=path.dirname(f.folder);fs.mkdirSync(directory,{recursive:true});
+ for(let index=0;index<35;index++){
+  const trial_id=index===0?id:`119219df-2284-4b34-a479-${String(index).padStart(12,'0')}`;
+  const folder=path.join(directory,trial_id);fs.mkdirSync(folder);
+  fs.writeFileSync(path.join(folder,'prepare.status.json'),JSON.stringify({trial_id,stage:'prepare',state:'failed',started_at:new Date(index*1000).toISOString()}));
+ }
+ const manager=createRecipeTrials(f);
+ assert.equal(manager.status().length,32);assert.equal(manager.status().some(r=>r.trial_id===id),false);
+ assert.deepEqual(manager.status(id).map(r=>r.trial_id),[id]);
+ assert.throws(()=>manager.status('../anything'),/exact trial UUID/);
+});

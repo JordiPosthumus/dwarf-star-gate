@@ -72,6 +72,10 @@ export function createFleetPowerTools({runner,read,isTesting=()=>false,isEnabled
       scope:power_action==='stop'?'Stopping a Spark pair stops both machines of that pair, including any other model serving there.':'Starting may conflict with a different model already serving the same machine; the script refuses that case and reports it.'};
   }
   async function runTool(input){
+    if(input?.action==='status'&&Object.keys(input).sort().join(',')==='action,trial_id'){
+      if(!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(input.trial_id??'')||!recipes)throw Error('Use one exact enrolled trial UUID');
+      return {trial_id:input.trial_id,observed_at:new Date().toISOString(),recipe_trials:recipes.status(input.trial_id),scope:'Saved receipts for this trial only. No current fleet health or unrelated operation history. Empty means no saved receipt for this exact ID.'};
+    }
     if(input?.action==='status'&&Object.keys(input).length===1){
       const cat=catalogue?await catalogue().catch(e=>({unavailable:e.message})):null;
       return {...fleetPowerEvidence({runner,workers:await snapshotWorkers(),catalogue:cat}),routing_recent:[...routingReceipts.values()].slice(-16).reverse(),recipe_trials:recipes?.status()??[]};

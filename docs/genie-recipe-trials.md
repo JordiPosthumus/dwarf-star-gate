@@ -177,3 +177,8 @@ mount-order-only differences labelled explicitly. No environment values, inferen
 maintenance hold, model restart or repair are involved. The comparison guard is
 unchanged. Inspection is deduplicated: repeated calls return the original dated
 receipt, not a new observation. A diagnostic is neither preparation nor qualification.
+
+Use `fleet_power_status({trial_id: "<the same UUID>"})` to read that trial's
+saved stages without the unrelated fleet catalogue and history. This can retrieve
+older trials outside the global recent window. It makes no claim about current
+fleet availability. Use the unfiltered fleet status before lifecycle decisions.
